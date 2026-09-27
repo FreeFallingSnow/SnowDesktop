@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -566,6 +567,169 @@ void Write(const std::filesystem::path& path, std::string_view text)
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output << text;
     Check(static_cast<bool>(output), "preview fixture is written");
+}
+
+void CheckSystemMonitorMenu(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root,
+    const std::filesystem::path& monitorSource)
+{
+    const auto source = root / L"system-monitor-menu";
+    Check(std::filesystem::create_directory(source), "monitor menu fixture is created");
+    std::filesystem::copy_file(monitorSource / L"widget.json", source / L"widget.json");
+    std::filesystem::copy(monitorSource / L"modules", source / L"modules",
+        std::filesystem::copy_options::recursive);
+    std::ifstream input(monitorSource / L"main.lua", std::ios::binary);
+    const std::string entry((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    Check(!entry.empty() && !input.bad(), "actual monitor entry is read for the lifecycle fixture");
+    // Only the external data/storage/menu boundary is controlled. Load the
+    // actual entry and modules, so restoring the old All item or losing a
+    // migration/selection in main.lua fails without copying its menu logic.
+    const std::string prefix = R"lua(
+local hostWidget, hostDraw = widget, draw
+local function loadMonitor(f)
+    local widget = {
+        define = function(spec) return spec end, theme = hostWidget.theme,
+        invalidate = function() end, hasPermission = function() return true end,
+        hasFeature = function(feature)
+            if feature == "data.system.gpu.details" then return f.details end
+            if feature == "interaction.contextMenu.submenu" then return f.submenu end
+            return true
+        end,
+    }
+    local storage = {
+        get = function(key) return f.values[key] end,
+        set = function(key, value)
+            assert(not f.rendering, "monitor must not persist selection during render")
+            f.writes = f.writes + 1; f.values[key] = value
+        end,
+    }
+    local data = { subscribe = function(topic, options)
+        assert(topic == "system.gpu", "fixture exposes only the shared GPU source")
+        assert(options.includeDetails == (f.details and true or nil), "old hosts must not receive includeDetails")
+        f.subscriptions = f.subscriptions + 1
+        return { value = function() return f.snapshot end,
+            unsubscribe = function() f.releases = f.releases + 1 end }
+    end }
+    local ui = { menu = function(items) return items end }
+    local draw = {
+        rect = hostDraw.rect, strokeRect = hostDraw.strokeRect,
+        measureText = hostDraw.measureText, pushClip = hostDraw.pushClip, popClip = hostDraw.popClip,
+        text = function(x, y, text, ...)
+            f.texts[text] = true; return hostDraw.text(x, y, text, ...)
+        end,
+        marqueeText = function(spec)
+            f.texts[spec.text] = true; return hostDraw.marqueeText(spec)
+        end,
+    }
+    return (function()
+)lua";
+    const std::string suffix = R"lua(
+    end)()
+end
+local function gpu(id, name, capacity, used, usage, aliases)
+    return { id = id, name = name, dedicatedMemoryBytes = capacity, dedicatedUsedBytes = used,
+        sharedMemoryBytes = 1000, sharedUsedBytes = 100, usagePercent = usage,
+        usageAvailable = true, dedicatedUsageAvailable = true, sharedUsageAvailable = true, aliasIds = aliases }
+end
+local a = gpu("adapter-8", "Discrete fixture", 8000, 3200, 25)
+local b = gpu("adapter-9", "Second fixture", 8000, 1600, 60)
+local integrated = gpu("adapter-1", "Integrated fixture", 0, 0, 90)
+local function ready(adapters) return { available = true, value = { adapters = adapters } } end
+local function instance(saved, snapshot, legacy)
+    local f = { values = saved or {}, snapshot = snapshot, details = not legacy, submenu = not legacy,
+        writes = 0, subscriptions = 0, releases = 0, texts = {} }
+    for _, card in ipairs({"cpu", "memory", "network", "battery", "storage", "disk_io", "uptime"}) do
+        f.values["show_" .. card] = false
+    end
+    f.component = loadMonitor(f); f.model = f.component.setup()
+    assert(f.subscriptions == 1, "GPU and VRAM must share their source")
+    return f
+end
+local function checkMenu(f, selected, unavailable)
+    local checked, missing, choices = 0, false, 0
+    local function inspect(items)
+        for _, item in ipairs(items) do
+            assert(item.id ~= "system.gpu.all", "All GPUs must not return to the real menu")
+            if item.children then inspect(item.children) end
+            if item.id and item.id:sub(1, 18) == "system.gpu.select." then
+                choices = choices + 1
+                if item.checked then
+                    checked = checked + 1
+                    assert(item.id == "system.gpu.select." .. selected, "checked GPU must match the concrete device")
+                end
+            elseif item.id == "system.gpu.unavailable" then missing = item.enabled == false end
+        end
+    end
+    inspect(f.component.menu(nil, f.model, {id = "system.menu"}))
+    assert(checked == (selected and 1 or 0) and missing == unavailable,
+        "real menu must keep one selection or an explicit unavailable row")
+    return choices
+end
+local function action(f, id) f.component.event(nil, f.model, {kind = "action", id = "system.gpu.select." .. id}) end
+local active
+return hostWidget.define({
+    useCustomStyle = true, followPersonalizationDefault = false,
+    bg = 0x20242C, alpha = 1, borderAlpha = 0,
+    setup = function()
+        local f = instance({gpu_scope = "all", gpu_adapter_id = integrated.id}, ready({b, integrated, a}))
+        assert(f.values.gpu_adapter_id == a.id and f.values.gpu_scope == "selected", "legacy all must persist a concrete default")
+        assert(checkMenu(f, a.id, false) == 3, "same-capacity real GPUs must remain separate")
+        local writes = f.writes
+        checkMenu(f, a.id, false)
+        assert(f.writes == writes, "unchanged menus must not rewrite storage")
+        f.snapshot = {available = false, error = "unavailable"}; checkMenu(f, nil, true)
+        f.snapshot = ready({b, integrated}); checkMenu(f, nil, true)
+        assert(f.values.gpu_adapter_id == a.id and f.writes == writes, "temporary loss must not pick another card")
+        f.snapshot = ready({a, b}); action(f, b.id); checkMenu(f, b.id, false)
+        writes = f.writes; action(f, "missing")
+        assert(f.writes == writes and f.values.gpu_adapter_id == b.id, "stale unknown menu actions must not change selection")
+        local replacement = gpu("adapter-10", a.name, 8000, 3200, 25, {a.id})
+        f.snapshot = ready({b, replacement}); action(f, a.id)
+        assert(f.values.gpu_adapter_id == replacement.id, "an old menu action must follow a proven alias")
+        checkMenu(f, replacement.id, false)
+        f.component.dispose(); assert(f.releases == 1)
+
+        local alias = instance({gpu_scope = "selected", gpu_adapter_id = a.id}, ready({replacement, b}))
+        assert(alias.values.gpu_adapter_id == replacement.id, "saved alias must be persisted as canonical")
+        replacement.aliasIds = nil; checkMenu(alias, replacement.id, false)
+        alias.component.dispose()
+        local reloaded = instance(alias.values, ready({replacement, b})); checkMenu(reloaded, replacement.id, false)
+        reloaded.component.dispose()
+        local missing = instance({gpu_scope = "selected", gpu_adapter_id = "gone"}, ready({a, b}))
+        checkMenu(missing, nil, true); assert(missing.writes == 0); missing.component.dispose()
+        local legacy = instance({}, ready({b, a}), true)
+        assert(checkMenu(legacy, a.id, false) == 2 and legacy.values.gpu_adapter_id == a.id,
+            "legacy hosts need a concrete default and a flat single-selection menu without aliases")
+        legacy.component.dispose()
+        active = instance({}, {available = false, warmingUp = true})
+        assert(active.writes == 0, "warm-up cannot persist an invented device")
+        active.snapshot = ready({b, integrated, a})
+        checkMenu(active, a.id, false)
+        return {}
+    end,
+    render = function(context)
+        active.texts = {}; active.rendering = true
+        active.component.render(context, active.model)
+        active.rendering = false
+        assert(active.texts["25%"] and active.texts["40%"] and not active.texts["60%"],
+            "GPU and VRAM numbers must both describe the menu's selected device")
+        local named = false
+        for text in pairs(active.texts) do if text:find(a.name, 1, true) then named = true end end
+        assert(named, "the selected GPU name must accompany its numbers")
+    end,
+    dispose = function()
+        if active then active.component.dispose(); assert(active.releases == 1) end
+    end,
+})
+)lua";
+    Write(source / L"main.lua", prefix + entry + suffix);
+    const auto output = root / L"system-monitor-menu.png";
+    const auto [exit, json] = Run(snowwidget, {L"preview", source.wstring(), output.wstring(),
+        L"--locale", L"en-US", L"--columns", L"2", L"--rows", L"1", L"--host", host.wstring()});
+    if (exit != 0) std::cerr << json << '\n';
+    Check(exit == 0 && json.find("\"ok\":true") != std::string::npos,
+        "actual System Monitor menu, migration, stale actions and selected rendering pass one controlled preview");
+    CheckPng(output);
 }
 
 // Exercise both public controls through the real Lua validator and renderer.
@@ -2279,7 +2443,7 @@ int wmain(int argc, wchar_t** argv) try
     // persisted GPU selection, rendering, or the component's dispose hook.
     const auto monitorSource = repository / L"widgets" / L"system-monitor";
     std::vector<RgbaBitmap> monitorPreviews;
-    for (const auto* selection : { L"all", L"adapter-1", L"missing-adapter" })
+    for (const auto* selection : { L"all", L"default", L"adapter-1", L"missing-adapter" })
     {
         const std::wstring selectedId(selection);
         const auto monitorOutput = temporary.path /
@@ -2290,7 +2454,7 @@ int wmain(int argc, wchar_t** argv) try
             L"--data-state", L"ready", L"--columns", L"3", L"--rows", L"2",
             L"--storage", selectedId == L"all" ? L"gpu_scope=all" :
                 L"gpu_scope=selected",
-            L"--storage", L"gpu_adapter_id=" + selectedId,
+            L"--storage", L"gpu_adapter_id=" + (selectedId == L"default" ? L"" : selectedId),
             L"--storage", L"gpu_adapter_name=Saved GPU",
             L"--host", host.wstring() });
         if (monitorExit != 0) std::cerr << monitorJson << '\n';
@@ -2300,9 +2464,11 @@ int wmain(int argc, wchar_t** argv) try
         CheckPng(monitorOutput);
         monitorPreviews.push_back(ReadPng(monitorOutput));
     }
-    Check(monitorPreviews[0].pixels != monitorPreviews[1].pixels &&
-            monitorPreviews[1].pixels != monitorPreviews[2].pixels,
-        "System Monitor distinguishes all GPUs, the selected GPU, and an unavailable saved GPU");
+    Check(monitorPreviews[0].pixels == monitorPreviews[1].pixels &&
+            monitorPreviews[1].pixels == monitorPreviews[2].pixels &&
+            monitorPreviews[2].pixels != monitorPreviews[3].pixels,
+        "System Monitor defaults and migrates legacy all-GPU selection to a concrete device while preserving unavailable saved selection");
+    CheckSystemMonitorMenu(snowwidget, host, temporary.path, monitorSource);
 
     const auto environmentSource =
         CreateEnvironmentFixture(temporary.path);

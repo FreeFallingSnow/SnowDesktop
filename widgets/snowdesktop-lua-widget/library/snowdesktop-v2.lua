@@ -1361,6 +1361,7 @@ function animation.cancelFrame(id) end
 ---@field dedicatedUsageAvailable? boolean With includeDetails: whether dedicatedUsedBytes is valid (zero can be valid).
 ---@field sharedUsageAvailable? boolean With includeDetails: whether sharedUsedBytes is valid independently of dedicated memory.
 ---@field engines? SnowGpuEngineDataValue[] With includeDetails: valid engine intervals, empty when usage is unavailable or warming up.
+---@field aliasIds? string[] With includeDetails and data.system.gpu.identity (host 1.0.8.0): other opaque IDs proven to represent this same single physical GPU during the current shared sampler lifetime. Excludes id; may be empty. Match id first, then aliasIds. No PnP path or persistent hardware ID is exposed.
 
 ---@class SnowGpuEngineDataValue
 ---@field physicalIndex integer Physical GPU index within this adapter.
@@ -1372,7 +1373,7 @@ function animation.cancelFrame(id) end
 ---@field includeDetails? boolean Requires data.system.gpu.details (host 1.0.8.0; also feature-check earlier builds). Defaults to false. When true, available means adapter topology is present; check per-adapter validity before using counters. No additional sampling.
 
 ---@class SnowGpuDataValue
----@field adapters SnowGpuAdapterDataValue[]
+---@field adapters SnowGpuAdapterDataValue[] Logical aliases are merged only when the host proves the same single physical GPU. Same-model distinct devices and unknown/linked mappings remain separate. Older hosts can return duplicate physical devices; never deduplicate by name or unavailable counters.
 
 ---@class SnowPowerDataValue
 ---@field acPower boolean

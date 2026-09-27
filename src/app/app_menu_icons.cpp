@@ -675,14 +675,19 @@ UINT DesktopApp::ShowModernMenu(
             !IsWindow(host->hwnd) || !IsWindowVisible(host->hwnd)) continue;
         RECT inputBounds = host->container->GetInteractiveBounds();
         OffsetRect(&inputBounds, virtualLeft_, virtualTop_);
-        if (owner == host->hwnd || PtInRect(&inputBounds, screenPoint))
+        // The side controls belong to the same merged strip as the center
+        // Dock. Its native menu owner must stay above both windows, while
+        // Options::owner still restores keyboard focus to the bar itself.
+        const bool mergedBarSource = host->container->IsMergedWithStatusBar() &&
+            statusBar_ && owner == statusBar_->InteractionWindow(host->monitor);
+        if (owner == host->hwnd || mergedBarSource || PtInRect(&inputBounds, screenPoint))
         { menuDockHost = host.get(); break; }
     }
     const bool floatingDockHostWindowVisible = menuDockHost != nullptr;
     const bool floatingDockHostEffectivelyFloating =
         menuDockHost &&
-        IsPersistentDockHostEffectivelyFloating(
-            *menuDockHost);
+        (menuDockHost->container->IsMergedWithStatusBar() ||
+            IsPersistentDockHostEffectivelyFloating(*menuDockHost));
     const HWND zOrderOwner =
         snowdesktop::floating_popup_rules::
             ResolveMenuZOrderOwner(

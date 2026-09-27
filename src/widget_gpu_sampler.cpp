@@ -1,7 +1,11 @@
 #include "widget_gpu_sampler.h"
 #include "widget_gpu_usage.h"
 #include "widget_gpu_counter_buffer.h"
+#include "widget_gpu_identity.h"
+#include <windows.h>
+#include <winternl.h> // NTSTATUS is required by the user-mode D3DKMT declarations.
 #include <dxgi1_6.h>
+#include <d3dkmthk.h>
 #include <wrl/client.h>
 #include <array>
 #include <chrono>
@@ -41,6 +45,56 @@ std::string Utf8(std::wstring_view value)
 bool Valid(DWORD status) { return status == PDH_CSTATUS_VALID_DATA || status == PDH_CSTATUS_NEW_DATA; }
 std::uint64_t FileTime(const FILETIME& value)
 { return static_cast<std::uint64_t>(value.dwHighDateTime) << 32 | value.dwLowDateTime; }
+
+WidgetGpuAdapterIdentity QueryIdentity(LUID luid)
+{
+    WidgetGpuAdapterIdentity result;
+    D3DKMT_OPENADAPTERFROMLUID open{};
+    open.AdapterLuid = luid;
+    if (D3DKMTOpenAdapterFromLuid(&open) < 0) return result;
+    struct CloseAdapter
+    {
+        D3DKMT_HANDLE handle;
+        ~CloseAdapter() { D3DKMT_CLOSEADAPTER close{handle}; D3DKMTCloseAdapter(&close); }
+    } close{open.hAdapter};
+    const auto query = [&](KMTQUERYADAPTERINFOTYPE type, auto& data) {
+        D3DKMT_QUERYADAPTERINFO info{};
+        info.hAdapter = open.hAdapter; info.Type = type;
+        info.pPrivateDriverData = &data; info.PrivateDriverDataSize = static_cast<UINT>(sizeof(data));
+        return D3DKMTQueryAdapterInfo(&info) >= 0;
+    };
+    D3DKMT_ADAPTERTYPE type{};
+    if (query(KMTQAITYPE_ADAPTERTYPE, type))
+    {
+        result.typeKnown = true;
+        result.renderSupported = type.RenderSupported != 0;
+        result.indirectDisplay = type.IndirectDisplayDevice != 0;
+    }
+    D3DKMT_PHYSICAL_ADAPTER_COUNT count{};
+    // A linked-adapter group may overlap a standalone physical device without
+    // being its alias. Unknown or multi-GPU mappings remain separate records.
+    if (!query(KMTQAITYPE_PHYSICALADAPTERCOUNT, count) || count.Count != 1) return result;
+    std::vector<wchar_t> key(512);
+    UINT characters = static_cast<UINT>(key.size());
+    D3DKMT_QUERY_PHYSICAL_ADAPTER_PNP_KEY pnp{};
+    pnp.PnPKeyType = D3DKMT_PNP_KEY_HARDWARE;
+    pnp.pDest = key.data(); pnp.pCchDest = &characters;
+    bool read = query(KMTQAITYPE_PHYSICALADAPTERPNPKEY, pnp);
+    if (!read && characters > key.size() && characters <= 32768)
+    {
+        key.resize(characters); pnp.pDest = key.data();
+        read = query(KMTQAITYPE_PHYSICALADAPTERPNPKEY, pnp);
+    }
+    if (!read || characters < 2 || characters > key.size() || key[characters - 1] != L'\0') return result;
+    const auto end = std::find(key.begin(), key.begin() + characters, L'\0');
+    if (end != key.begin() + characters - 1) return result;
+    // Registry keys are case-insensitive. Normalize the complete key, never a
+    // hardware/model prefix; the instance portion distinguishes identical GPUs.
+    result.physicalKey.resize(characters - 1);
+    if (!LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, key.data(), static_cast<int>(characters - 1),
+        result.physicalKey.data(), static_cast<int>(characters - 1), nullptr, nullptr, 0)) result.physicalKey.clear();
+    return result;
+}
 }
 struct WidgetGpuSampler::Impl
 {
@@ -56,6 +110,7 @@ struct WidgetGpuSampler::Impl
     DWORD cookie = 0;
     bool registered = false;
     std::vector<WidgetGpuAdapterDataSnapshot> topology;
+    WidgetGpuIdentityInventory identities;
     HRESULT topologyStatus = S_OK;
     HQUERY query = nullptr;
     std::array<Counter, 3> counters;
@@ -89,6 +144,7 @@ struct WidgetGpuSampler::Impl
         ++statistics.topologyRefreshes;
         topologyStatus = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
         if (FAILED(topologyStatus)) return true;
+        std::vector<WidgetGpuTopologyEntry> entries;
         for (UINT index = 0; ; ++index)
         {
             ComPtr<IDXGIAdapter1> adapter;
@@ -104,9 +160,10 @@ struct WidgetGpuSampler::Impl
             entry.vendor = description.VendorId; entry.device = description.DeviceId;
             entry.dedicatedMemoryBytes = description.DedicatedVideoMemory;
             entry.sharedMemoryBytes = description.SharedSystemMemory;
-            topology.push_back(std::move(entry));
+            entries.push_back({std::move(entry), QueryIdentity(description.AdapterLuid)});
         }
         if (FAILED(topologyStatus)) { CloseTopology(); return true; }
+        topology = identities.Resolve(std::move(entries));
         if (SUCCEEDED(factory.As(&notifications)))
         {
             changed = CreateEventW(nullptr, FALSE, FALSE, nullptr);

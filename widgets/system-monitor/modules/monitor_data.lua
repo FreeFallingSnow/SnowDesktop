@@ -14,7 +14,10 @@ function M.gpuChoices(value)
             local name = adapter.name and adapter.name ~= "" and
                 adapter.name or adapter.id
             names[name] = (names[name] or 0) + 1
-            choices[#choices + 1] = { id = adapter.id, name = name }
+            choices[#choices + 1] = {
+                id = adapter.id, name = name, aliasIds = adapter.aliasIds,
+                dedicatedMemoryBytes = adapter.dedicatedMemoryBytes,
+            }
         end
     end
     table.sort(choices, function(a, b) return a.id < b.id end)
@@ -25,12 +28,54 @@ function M.gpuChoices(value)
     return choices
 end
 
--- nil selects all adapters; an empty or missing stable ID never selects the
--- first adapter. Persist the host's LUID-derived ID, not enumeration order.
+-- Only the host can prove that different LUIDs represent the same device.
+-- A saved missing device stays missing; never remap it by a display name.
+function M.resolveGpuChoice(value, selectedId)
+    local choices = M.gpuChoices(value)
+    if selectedId and selectedId ~= "" then
+        for _, choice in ipairs(choices) do
+            if choice.id == selectedId then return choice end
+        end
+        for _, choice in ipairs(choices) do
+            for _, alias in ipairs(type(choice.aliasIds) == "table" and
+                    choice.aliasIds or {}) do
+                if alias == selectedId then return choice end
+            end
+        end
+        return nil
+    end
+    -- Prefer a dedicated adapter for GPU/VRAM monitoring. Enumeration order,
+    -- changing workload and temporarily missing counters never change the choice.
+    local preferred, preferredCapacity
+    for _, choice in ipairs(choices) do
+        local capacity = nonnegative(choice.dedicatedMemoryBytes) and
+            choice.dedicatedMemoryBytes or 0
+        if not preferred or capacity > preferredCapacity then
+            preferred, preferredCapacity = choice, capacity
+        end
+    end
+    return preferred
+end
+
+-- Rendering may remember a proven choice, but persistence belongs to a
+-- lifecycle/menu callback. Keep the chosen device through temporary loss.
+function M.rememberGpuChoice(state, value, savedId)
+    local sourceId = savedId or ""
+    if state.sourceId ~= sourceId then
+        state.sourceId, state.choice = sourceId, nil
+    end
+    local choice = M.resolveGpuChoice(value, state.choice and state.choice.id or savedId)
+    if choice then state.choice = { id = choice.id, name = choice.name } end
+    return state.choice
+end
+
+-- A card always describes one concrete device, including on legacy hosts.
 function M.summarizeGpu(value, selectedId, detailsAvailable)
     if not value or not value.adapters or #value.adapters == 0 then
         return nil
     end
+    local choice = M.resolveGpuChoice(value, selectedId)
+    if not choice then return nil end
     local summary = {
         usagePercent = 0,
         dedicatedMemoryBytes = 0,
@@ -44,7 +89,7 @@ function M.summarizeGpu(value, selectedId, detailsAvailable)
     local dedicatedKnown = detailsAvailable == true
     local sharedKnown = detailsAvailable == true
     for _, adapter in ipairs(value.adapters) do
-        if selectedId == nil or adapter.id == selectedId then
+        if adapter.id == choice.id then
             summary.count = summary.count + 1
             local name = adapter.name and adapter.name ~= "" and
                 adapter.name or adapter.id or "GPU"
@@ -64,8 +109,7 @@ function M.summarizeGpu(value, selectedId, detailsAvailable)
             if nonnegative(capacity) then
                 summary.dedicatedMemoryBytes =
                     summary.dedicatedMemoryBytes + capacity
-                -- An integrated adapter with no dedicated memory contributes
-                -- no dedicated channel; it must not invalidate other GPUs.
+                -- UMA without dedicated memory has no dedicated channel.
                 if capacity > 0 then
                     if adapter.dedicatedUsageAvailable == true and
                             nonnegative(adapter.dedicatedUsedBytes) then
@@ -80,8 +124,7 @@ function M.summarizeGpu(value, selectedId, detailsAvailable)
             end
             local sharedCapacity = adapter.sharedMemoryBytes
             if nonnegative(sharedCapacity) then
-                -- Shared capacity is the same system-RAM allowance, not
-                -- independent VRAM that can be added for every adapter.
+                -- This is the selected adapter's system-RAM allowance.
                 summary.sharedMemoryBytes = math.max(summary.sharedMemoryBytes,
                     sharedCapacity)
                 if sharedCapacity > 0 then
@@ -96,11 +139,11 @@ function M.summarizeGpu(value, selectedId, detailsAvailable)
             else
                 sharedKnown = false
             end
+            break
         end
     end
     if summary.count == 0 then return nil end
-    -- An aggregate is unknown when any contributing channel is unknown.
-    -- A partial sum or maximum would understate the advertised all-GPU value.
+    -- Missing counters remain unknown, independently for each channel.
     if not usageKnown then
         summary.usagePercent, summary.busiestName = nil, nil
     end

@@ -30,6 +30,8 @@ struct WidgetGpuAdapterDataSnapshot
     std::uint64_t luid = 0;
     std::uint32_t vendor = 0, device = 0;
     std::vector<WidgetGpuEngineDataSnapshot> engines;
+    // Proven logical-adapter aliases for selection migration, not PnP paths.
+    std::vector<std::string> aliasIds;
 };
 struct WidgetGpuDataSnapshot
 {

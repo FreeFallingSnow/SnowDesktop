@@ -1760,6 +1760,14 @@ GPU；adapter `id` 在同一 Windows 会话内不随枚举顺序改变，不能�
 最后一个 GPU 订阅释放后会关闭 PDH
 query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 
+支持 `data.system.gpu.identity` 的 1.0.8.0 构建会在拓扑刷新时读取 Windows 的物理
+适配器身份，只把已确认完整硬件 PnP key 相同、且各自仅含一个物理 GPU 的逻辑别名
+合成一项；同型号不同物理设备、身份查询失败和多物理 GPU 的 linked adapter 保留独立项。
+组内优先选择支持渲染的适配器，并稳定按 LUID 决定同等候选；不按名称、负载或计数器
+是否可用判断重复。容量与读数只来自选中的 LUID，不把别名的容量或计数相加。
+这会改变旧宿主可能返回的重复条目数量及其中保留的 `id`，API v2、权限和原有字段不变。
+完整 PnP key 仅在宿主内部使用，不公开设备路径、PCI 实例序列或永久硬件标识。
+
 1.0.8.0 新增可选 feature `data.system.gpu.details`。同版本早期构建可能没有此能力，
 必须先用 `widget.hasFeature("data.system.gpu.details")` 检测，才能传入
 `data.subscribe("system.gpu", { includeDetails = true })`；参数只接受 boolean，默认 false。
@@ -1773,12 +1781,21 @@ API v2、原有权限和采样频率不变，普通订阅保持上述整体有�
   false 时不可使用相应数值；true 的 0 是测得的空闲／零用量。容量仍来自 DXGI，不能因 used 不可用就把容量误认成 0。
 - `engines`：有效占用区间的数组，包含 `physicalIndex`、`engineIndex`、`type`、`usagePercent`。
   身份使用适配器 id＋两个编号；类型仅为显示标签，允许为空或重复。预热或占用无效时数组为空。
+- `aliasIds`：支持 `data.system.gpu.identity` 时提供的可选字符串数组，列出当前共享
+  GPU sampler 生命周期内已证明属于同一物理 GPU 的其他不透明 adapter ID，排除当前
+  `id`，无别名时为空。拓扑刷新后仍保留已观察到的别名；最后一个 GPU 消费者释放采样器
+  或宿主退出后清除，不承诺跨重启或未观察过的旧 ID 能被映射。预热不清除此身份信息。
 
 这些新增字段只在 includeDetails=true 时出现。新组件设置 `minHostVersion="1.0.8.0"`，
 并将 feature 列入 optionalFeatures 后检测；缺少能力时使用旧订阅，不传新参数。
-指定 GPU 应匹配 id，不按数组下标或名称；重启后的 id 可能改变，保留失效选择并提示重新选择，不能静默改选另一块卡。
+指定 GPU 应先精确匹配 `id`，没有匹配时再检查可选 `aliasIds`，成功后可把已保存的
+选择迁移到该项当前 `id`。不要按数组下标或名称迁移；没有身份依据的失效显式选择应提示
+不可用或重新选择，不能静默改选另一块卡。支持别名迁移的组件设置最低宿主版本并检测
+`widget.hasFeature("data.system.gpu.identity")`，同时允许字段缺失；同版本早期构建或旧宿主
+只能精确匹配旧 `id`，可能仍显示重复物理设备，不可在组件侧按同名或无读数擅自删除。
 全部 GPU 的占用是所有有效适配器的最大值，显存是有效适配器的 used／容量之和；有缺失项时应明确标记部分数据。
-该能力不增加设备扫描、PDH 查询或采样线程，原始计数器和状态码使用独立 gpu-diagnostics CLI 导出。
+详情订阅不增加 PDH 查询或采样线程；物理身份只在既有拓扑刷新时查询，不随每个订阅或
+每次计数采样重复枚举。原始计数器和状态码使用独立 gpu-diagnostics CLI 导出。
 
 网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
 （`none/ethernet/wifi/cellular/other`）、`costKnown/metered/roaming/overLimit`。

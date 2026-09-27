@@ -316,7 +316,10 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         // still owns its visibility; menu holds never move it between bands.
         host.mergedPresentation.topmost = true;
         host.mergedPresentation.insertAfter = host.hwnd;
-        host.backdrop.SetPopupWindowPairZOrder(host.hwnd, HWND_TOPMOST, true);
+        // Merged chrome belongs to the bar; the center has no separate glass
+        // pair. Reapplying TOPMOST would raise it above a side-control menu
+        // before that menu's message pump repairs its order on the next turn.
+        snowdesktop::popup_window_pair_z_order::MaintainContentBand(host.hwnd, true);
         if (statusBar_ && host.mergedPresentationActive)
             statusBar_->ApplyMergedDockPresentation(host.monitor, host.mergedPresentation);
         ApplyDragPreviewLayerPolicy();

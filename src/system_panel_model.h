@@ -101,7 +101,8 @@ public:
     std::string ControlFocusTarget() const;
     bool ControlBack();
     void CancelControlInput();
-    bool BeginPowerConfirmation(std::string_view task);
+    bool BeginPowerConfirmation(std::string_view task,bool dismissOnCancel=false);
+    bool TakeDismissRequest();
 private:
     SystemPanelSource source_;
     StatusBarSettings settings_;
@@ -114,6 +115,8 @@ private:
     std::string calendarNotice_;
     std::shared_ptr<SystemCalendarEditorState> calendarEditor_;
     std::map<std::string,std::wstring> calendarText_;
+    enum class CalendarDeleteOrigin { Editor, ContextMenu };
+    CalendarDeleteOrigin calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
     bool calendarConfirmDelete_=false, calendarReminderOpen_=false;
     float calendarReturnScroll_=0;
     std::optional<native_ui::DateTimePicker> calendarPicker_;
@@ -128,12 +131,14 @@ private:
     struct ActionBinding { std::string group, target, indicator, radioGroup; };
     struct ControlDraft
     {
+        enum class ReturnRoute { PreviousPage, ClosePanel };
         system_control::Request request;
         std::string control, passwordId;
         std::optional<ActionBinding> binding;
         std::wstring ssid, error;
         std::uint64_t task=0;
         bool hidden=false;
+        ReturnRoute returnRoute=ReturnRoute::PreviousPage;
     };
     std::optional<ControlDraft> controlDraft_;
     std::uint64_t controlSerial_=0;
@@ -155,7 +160,7 @@ private:
     std::string errorControl_, errorGroup_, errorTarget_;
     float available_ = 800, availableWidth_ = 960, scroll_ = 0, maxScroll_ = 0, bodyStart_ = 0, bodyLeft_ = 0;
     D2D1_RECT_F scrollViewport_{};
-    bool closed_ = false, scan_ = false;
+    bool closed_ = false, scan_ = false, dismissRequested_=false;
     JsonValue Current(const char*) const;
     JsonValue Wifi() const;
     void SyncSubscriptions();

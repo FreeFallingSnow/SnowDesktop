@@ -20,7 +20,7 @@ inline void PushWidgetGpuAdapters(lua_State* state,
     int adapterIndex = 1;
     for (const auto& adapter : snapshot.adapters)
     {
-        lua_createtable(state, 0, includeDetails ? 11 : 7);
+        lua_createtable(state, 0, includeDetails ? 12 : 7);
         const auto string = [state](const char* key, const std::string& value) {
             lua_pushlstring(state, value.data(), value.size()); lua_setfield(state, -2, key);
         };
@@ -40,6 +40,14 @@ inline void PushWidgetGpuAdapters(lua_State* state,
         bytes("sharedUsedBytes", adapter.sharedUsedBytes);
         if (includeDetails)
         {
+            lua_createtable(state, static_cast<int>(adapter.aliasIds.size()), 0);
+            int aliasIndex = 1;
+            for (const auto& id : adapter.aliasIds)
+            {
+                lua_pushlstring(state, id.data(), id.size());
+                lua_rawseti(state, -2, aliasIndex++);
+            }
+            lua_setfield(state, -2, "aliasIds");
             flag("usageAvailable", adapter.usageAvailable && !snapshot.warmingUp);
             flag("dedicatedUsageAvailable", adapter.dedicatedUsageAvailable);
             flag("sharedUsageAvailable", adapter.sharedUsageAvailable);

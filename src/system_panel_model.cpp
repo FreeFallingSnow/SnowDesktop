@@ -83,7 +83,7 @@ void SystemPanelModel::Close()
 {
     if(closed_)return;
     CancelControlInput();
-    closed_=true;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();ClearError();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarAnnotationKey_.clear();lastStarted_=0;
+    closed_=true;dismissRequested_=false;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();ClearError();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarAnnotationKey_.clear();lastStarted_=0;
     // A close callback may pump messages. Detach all effects before calling it,
     // and keep its callable alive even if the callback re-enters Close().
     auto close=std::move(source_.close);source_={};if(close)close();
@@ -274,7 +274,7 @@ void SystemPanelModel::Command(std::string id,std::function<void()> fn)
 { actions_[std::move(id)]=[fn=std::move(fn)](auto){fn();}; }
 bool SystemPanelModel::Invoke(std::string_view id,std::optional<float> value)
 {
-    if(closed_)return false;
+    if(closed_||dismissRequested_)return false;
     const std::string key(id);const auto* node=scene_.Find(key);
     if(!node||!node->Interactive()||(value&&(node->role!=ui::Role::Slider||!std::isfinite(*value))))return false;
     if(value)*value=std::clamp(*value,0.f,1.f);
@@ -288,7 +288,7 @@ bool SystemPanelModel::Invoke(std::string_view id,std::optional<float> value)
     Refresh(available_);return true;
 }
 void SystemPanelModel::Select(std::string page)
-{ if(closed_)return;CancelControlInput();++navigation_;page_=std::move(page);scroll_=0;scan_=page_=="wifi";ClearError();Refresh(available_); }
+{ if(closed_)return;CancelControlInput();if(CalendarEditing())LeaveCalendarEditor(false);dismissRequested_=false;++navigation_;page_=std::move(page);scroll_=0;scan_=page_=="wifi";ClearError();Refresh(available_); }
 void SystemPanelModel::CancelControlInput()
 {
     if(!controlDraft_)return;
@@ -300,16 +300,21 @@ void SystemPanelModel::CancelControlInput()
         const auto cancel=source_.cancel;if(cancel)cancel(task);
     }
 }
-bool SystemPanelModel::BeginPowerConfirmation(std::string_view task)
+bool SystemPanelModel::BeginPowerConfirmation(std::string_view task,bool dismissOnCancel)
 {
     if(closed_||(task!="system.power.sleep"&&task!="system.power.restart"&&task!="system.power.shutdown"))return false;
-    CancelControlInput();page_="power";scroll_=0;
-    Start(std::string(task),{},"power.confirmation");Refresh(available_);return controlDraft_.has_value();
+    CancelControlInput();dismissRequested_=false;page_="power";scroll_=0;
+    Start(std::string(task),{},"power.confirmation");
+    if(controlDraft_)controlDraft_->returnRoute=dismissOnCancel?ControlDraft::ReturnRoute::ClosePanel:ControlDraft::ReturnRoute::PreviousPage;
+    Refresh(available_);return controlDraft_.has_value();
 }
+bool SystemPanelModel::TakeDismissRequest(){return std::exchange(dismissRequested_,false);}
 bool SystemPanelModel::ControlBack()
 {
     if(!controlDraft_&&page_!="wifi-hidden")return false;
+    const bool dismiss=controlDraft_&&controlDraft_->returnRoute==ControlDraft::ReturnRoute::ClosePanel;
     const bool hidden=page_=="wifi-hidden";CancelControlInput();
+    if(dismiss){dismissRequested_=true;return true;}
     if(hidden){page_="wifi";scroll_=0;}
     ClearError();Refresh(available_);return true;
 }
@@ -442,6 +447,19 @@ bool SystemPanelModel::Reveal(std::string_view id)
 ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool shift)
 {
     if(closed_)return {};
+    if(calendarPicker_&&calendarPicker_->Type()==ui::DateTimePicker::Kind::Time)
+    {
+        if(key==VK_TAB)
+        {
+            const auto target=calendarPicker_->TimeTabTarget(input.Focused(),shift);
+            input.Sync(scene_);input.Focus(target,true);Reveal(target);input.Sync(scene_);return {};
+        }
+        if(calendarPicker_->TimeKey(input.Focused(),key))
+        {
+            Refresh(available_);input.Sync(scene_);input.Focus(calendarPicker_->FocusTarget(),true);
+            Reveal(input.Focused());input.Sync(scene_);return {};
+        }
+    }
     auto result=input.Key(scene_,key,shift);
     // A slider owns its direction and range keys, including at either limit.
     // Otherwise a list can scroll without triggering a device control.
@@ -458,6 +476,9 @@ ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool s
 void SystemPanelModel::Wheel(D2D1_POINT_2F point,float notches)
 {
     if(closed_||!std::isfinite(notches)||notches==0)return;
+    if(calendarPicker_)
+        if(const auto* target=scene_.Hit(point,false);target&&calendarPicker_->TimeWheel(target->id,notches))
+        {Refresh(available_);return;}
     const auto* node=scene_.Hit(point);
     if(node&&node->role==ui::Role::Slider)
     {
@@ -785,7 +806,7 @@ void SystemPanelModel::Finish(float bodyEnd,bool withMedia,float minimumBodyHeig
 }
 void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
 {
-    if(closed_)return;available_=std::isfinite(availableHeight)?(std::max)(96.f,availableHeight):800;scene_={};actions_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();bodyStart_=16;bodyLeft_=0;scrollViewport_={};
+    if(closed_||dismissRequested_)return;available_=std::isfinite(availableHeight)?(std::max)(96.f,availableHeight):800;scene_={};actions_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();bodyStart_=16;bodyLeft_=0;scrollViewport_={};
     if(std::isfinite(availableWidth)&&availableWidth>0)availableWidth_=(std::max)(200.f,availableWidth);
     const auto completions=source_.completions?source_.completions():std::vector<system_control::Completion>{};
     for(const auto& completion:completions)std::erase_if(pendingValues_,[&](const auto& item){return item.second.task==completion.id;});
@@ -824,6 +845,8 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     {
         inlineCompletion=completion.id;
         controlDraft_->task=0;
+        if((completion.ok||completion.error=="canceled")&&controlDraft_->returnRoute==ControlDraft::ReturnRoute::ClosePanel)
+        {controlDraft_.reset();dismissRequested_=true;return;}
         if(completion.ok){const bool hidden=controlDraft_->hidden;controlDraft_.reset();if(hidden){page_="wifi";scroll_=0;}}
         else if(completion.error=="canceled"){controlDraft_.reset();if(page_=="wifi-hidden")page_="wifi";}
         else if(completion.error=="passwordRequired")controlDraft_->error=_LW("controlCenter.invalidPassword");
@@ -831,7 +854,12 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         else if(completion.error=="timeout")controlDraft_->error=_LW("controlCenter.timeout");
         else controlDraft_->error.clear();
     }
-    if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
+    const bool standalone=controlDraft_&&controlDraft_->returnRoute==ControlDraft::ReturnRoute::ClosePanel;
+    if(standalone)
+    {
+        auto& heading=Add("title",ui::Role::Text,Rect(16,10,scene_.width-32,36),_LW(title));heading.bold=true;heading.fontSize=17;bodyStart_=56;
+    }
+    else if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
     if(controlDraft_&&controlDraft_->request.name!="network.wifi.connect")ControlForm(y);
     else if(page_.empty())Overview(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);
     PrunePendingActions();
@@ -860,7 +888,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         }
     }
     ApplyError(y);
-    Finish(y,settings_.mediaControls);
+    Finish(y,settings_.mediaControls&&!standalone);
     ApplyPendingActions();
     std::erase_if(pendingValues_,[&](const auto& entry){const auto* node=scene_.Find(entry.first);if(!node)return false;const auto target=sliderTargets_.find(entry.first);return !node->enabled||target==sliderTargets_.end()||target->second!=entry.second.target;});
     for(auto& node:scene_.nodes)
@@ -1056,7 +1084,7 @@ void SystemPanelModel::EditCalendar(calendar::CalendarEvent event)
 {
     if(closed_||!source_.calendar.mutations.save)return;
     calendarReturnScroll_=scroll_;scroll_=0;++navigation_;page_="calendar-edit";calendarNotice_.clear();
-    calendarConfirmDelete_=calendarReminderOpen_=false;
+    calendarConfirmDelete_=calendarReminderOpen_=false;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
     calendarPicker_.reset();calendarPickerField_.clear();calendarFocus_="calendar.edit.title";
     calendarEditor_=std::make_shared<SystemCalendarEditorState>();
     calendarEditor_->original=event;calendarEditor_->draft=std::move(event);
@@ -1074,13 +1102,16 @@ bool SystemPanelModel::CalendarEditing() const
 {return !closed_&&action_==StatusBarAction::Calendar&&page_=="calendar-edit"&&calendarEditor_;}
 std::string SystemPanelModel::CalendarFocusTarget() const
 {
-    if(!CalendarEditing())return {};
+    if(closed_||action_!=StatusBarAction::Calendar)return {};
+    if(!CalendarEditing())return calendarFocus_.empty()?std::string{}:
+        scene_.Find(calendarFocus_)?calendarFocus_:std::string("calendar.add");
     if(calendarPicker_)return calendarPicker_->FocusTarget();
     return calendarConfirmDelete_?"calendar.edit.cancelDelete":calendarFocus_;
 }
 std::vector<SystemCalendarInputField> SystemPanelModel::CalendarInputFields() const
 {
-    std::vector<SystemCalendarInputField> fields;if(!CalendarEditing()||calendarPicker_)return fields;
+    std::vector<SystemCalendarInputField> fields;if(!CalendarEditing()||calendarPicker_||
+        (calendarConfirmDelete_&&calendarDeleteOrigin_==CalendarDeleteOrigin::ContextMenu))return fields;
     for(const auto* suffix:{"title","notes"})
     {
         const std::string id="calendar.edit."+std::string(suffix);
@@ -1107,15 +1138,21 @@ void SystemPanelModel::LeaveCalendarEditor(bool followSavedDate)
     if(followSavedDate&&calendar::CalendarService::GetDateInfo(calendarEditor_->draft.date))
     {date_=calendarEditor_->draft.date;month_=date_.substr(0,7)+"-01";scroll_=0;}
     else scroll_=calendarReturnScroll_;
+    const auto& returning=followSavedDate?calendarEditor_->draft:calendarEditor_->original;
+    calendarFocus_=returning.id.empty()?"calendar.add":"event:"+returning.date+":"+returning.id;
     ++navigation_;page_.clear();calendarEditor_.reset();calendarText_.clear();
-    calendarConfirmDelete_=calendarReminderOpen_=false;
-    calendarPicker_.reset();calendarPickerField_.clear();calendarFocus_.clear();
+    calendarConfirmDelete_=calendarReminderOpen_=false;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
+    calendarPicker_.reset();calendarPickerField_.clear();
 }
 bool SystemPanelModel::CalendarBack()
 {
     if(!CalendarEditing())return false;
     if(calendarPicker_){calendarPicker_.reset();calendarFocus_=calendarPickerField_;calendarPickerField_.clear();scroll_=calendarEditorScroll_;}
-    else if(calendarConfirmDelete_){calendarConfirmDelete_=false;calendarEditor_->error.clear();}
+    else if(calendarConfirmDelete_)
+    {
+        if(calendarDeleteOrigin_==CalendarDeleteOrigin::ContextMenu)LeaveCalendarEditor(false);
+        else{calendarConfirmDelete_=false;calendarEditor_->error.clear();}
+    }
     else if(calendarReminderOpen_)calendarReminderOpen_=false;
     else LeaveCalendarEditor(false);
     Refresh(available_);return true;
@@ -1140,7 +1177,8 @@ bool SystemPanelModel::CalendarEventCommand(std::string_view nodeId,bool remove)
     if(!present||present->id!=event.id||present->revision!=event.revision||present->date!=event.date)
     {calendarNotice_="settings.calendar.conflict";Refresh(available_);return false;}
     EditCalendar(event);if(!CalendarEditing())return false;
-    calendarConfirmDelete_=remove;Refresh(available_);return true;
+    calendarConfirmDelete_=remove;calendarDeleteOrigin_=remove?CalendarDeleteOrigin::ContextMenu:CalendarDeleteOrigin::Editor;
+    Refresh(available_);return true;
 }
 void SystemPanelModel::SaveCalendar()
 {
@@ -1179,6 +1217,25 @@ void SystemPanelModel::CalendarEditor()
 {
     const auto editor=calendarEditor_;if(!editor)return;
     if(calendarPicker_){CalendarPicker();return;}
+    if(calendarConfirmDelete_&&calendarDeleteOrigin_==CalendarDeleteOrigin::ContextMenu)
+    {
+        scene_.width=(std::min)(440.f,availableWidth_);bodyLeft_=0;bodyStart_=56;const float width=scene_.width-32;
+        auto& heading=Add("calendar.delete.heading",ui::Role::Text,Rect(16,10,width,36),_LW("app.settings.delete"));heading.bold=true;heading.fontSize=17;
+        auto& title=Add("calendar.delete.target",ui::Role::Text,Rect(16,64,width,48),Wide(editor->original.title));title.wrap=true;title.bold=true;
+        Add("calendar.delete.date",ui::Role::Text,Rect(16,116,width,28),Wide(editor->original.date)).secondary=true;
+        auto& question=Add("calendar.edit.confirmation",ui::Role::Text,Rect(16,152,width,52),_LW("settings.calendar.confirmDelete"));question.wrap=true;
+        float y=212;
+        if(!editor->error.empty())
+        {
+            const auto key=editor->error=="conflict"||editor->error=="not_found"?"settings.calendar.conflict":"settings.calendar.failed";
+            auto& message=Add("calendar.edit.error",ui::Role::Text,Rect(16,y,width,48),_LW(key));message.wrap=true;y+=56;
+        }
+        const float button=(width-12)/2;
+        Add("calendar.edit.cancelDelete",ui::Role::Button,Rect(16,y,button,36),_LW("settings.dialog.cancel"));
+        Command("calendar.edit.cancelDelete",[this]{CalendarBack();});
+        Add("calendar.edit.confirmDelete",ui::Role::Button,Rect(28+button,y,button,36),_LW("app.settings.delete")).accent=true;
+        Command("calendar.edit.confirmDelete",[this]{RemoveCalendar();});Finish(y+36,false);return;
+    }
     scene_.width=(std::min)(720.f,availableWidth_);bodyLeft_=0;bodyStart_=56;
     Add("calendar.edit.back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("settings.shell.back");
     Command("calendar.edit.back",[this]{CalendarBack();});
@@ -1234,7 +1291,7 @@ void SystemPanelModel::CalendarEditor()
         auto& question=Add("calendar.edit.confirmation",ui::Role::Text,Rect(16,footer,width,36),_LW("settings.calendar.confirmDelete"));question.wrap=true;footer+=44;
         const float buttonWidth=(width-12)/2;
         Add("calendar.edit.cancelDelete",ui::Role::Button,Rect(16,footer,buttonWidth,36),_LW("settings.dialog.cancel"));
-        Command("calendar.edit.cancelDelete",[this]{calendarConfirmDelete_=false;calendarEditor_->error.clear();});
+        Command("calendar.edit.cancelDelete",[this]{CalendarBack();});
         Add("calendar.edit.confirmDelete",ui::Role::Button,Rect(28+buttonWidth,footer,buttonWidth,36),_LW("app.settings.delete"));
         Command("calendar.edit.confirmDelete",[this]{RemoveCalendar();});
     }
@@ -1246,7 +1303,7 @@ void SystemPanelModel::CalendarEditor()
         if(existing)
         {
             Add("calendar.edit.delete",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("app.settings.delete"));
-            Command("calendar.edit.delete",[this]{calendarConfirmDelete_=true;calendarReminderOpen_=false;calendarEditor_->error.clear();});x+=buttonWidth+12;
+            Command("calendar.edit.delete",[this]{calendarConfirmDelete_=true;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;calendarReminderOpen_=false;calendarEditor_->error.clear();});x+=buttonWidth+12;
         }
         Add("calendar.edit.cancel",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("settings.dialog.cancel"));
         Command("calendar.edit.cancel",[this]{LeaveCalendarEditor(false);});x+=buttonWidth+12;
@@ -1298,7 +1355,7 @@ void SystemPanelModel::CalendarPickerCommand(std::string_view id)
     {
         calendarFocus_=calendarPickerField_;calendarPicker_.reset();calendarPickerField_.clear();scroll_=calendarEditorScroll_;
     }
-    else if(result==ui::DateTimePicker::Result::Changed)scroll_=0;
+    else if(result==ui::DateTimePicker::Result::Changed&&calendarPicker_->Type()==ui::DateTimePicker::Kind::Date)scroll_=0;
 }
 void SystemPanelModel::Resources()
 {

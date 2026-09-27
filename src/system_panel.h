@@ -16,6 +16,7 @@ public:
     ~SystemPanel();
     void Show(StatusBarAction,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
         std::shared_ptr<tray::Service>,std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
+    // Standalone system-menu confirmation: cancel/success dismisses this panel.
     void ShowPowerConfirmation(std::string task,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
         std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
     void Hide();
@@ -30,6 +31,7 @@ public:
     bool DropTrayIcon(std::string_view,POINT);
     bool PreviewTrayDrop(std::string_view,POINT);
     void SetTrayDragFeedback(TrayDragFeedback);
+    void SetTrayStateChanged(std::function<void(HMONITOR,bool)>);
     void SetNativeControlsHandler(std::function<void(HWND,RECT)>);
 private:
     struct Impl;std::unique_ptr<Impl> impl_;

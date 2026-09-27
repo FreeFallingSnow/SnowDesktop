@@ -180,6 +180,7 @@ struct StatusBar::Impl
         std::string pressedTray;
         POINT trayPress{};
         bool trayDragging = false;
+        bool trayExpanded = false;
         bool trayPreview = false;
         std::optional<RECT> dropIndicator;
         StatusBarActivationQueue activation;
@@ -514,6 +515,7 @@ struct StatusBar::Impl
             }
             snapshot.power = owner.data->Power();
             if (owner.tray) snapshot.tray = owner.tray->Current().icons;
+            snapshot.trayExpanded = trayExpanded;
             items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
@@ -1119,6 +1121,18 @@ void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)
 bool StatusBar::DropTrayIcon(std::string_view key, POINT screen) { return impl_->Drop(key, screen); }
 bool StatusBar::PreviewTrayDrop(std::string_view key, POINT screen) { return impl_->PreviewDrop(key,screen); }
 void StatusBar::SetTrayDragFeedback(TrayDragFeedback feedback) { impl_->dragFeedback=std::move(feedback); }
+void StatusBar::SetTrayExpanded(HMONITOR monitor, bool expanded)
+{
+    if (impl_->removingWindows) return;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->monitor != monitor || window->trayExpanded == expanded) continue;
+        window->trayExpanded = expanded;
+        window->paintDirty = true;
+        if (window->hwnd) InvalidateRect(window->hwnd, nullptr, FALSE);
+    }
+}
 void StatusBar::SetDockChanged(std::function<void(bool)> changed) { impl_->dockChanged = std::move(changed); }
 void StatusBar::SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider)
 { impl_->dockStateProvider = std::move(provider); }

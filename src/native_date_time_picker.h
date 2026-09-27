@@ -5,6 +5,7 @@
 #include "l10n.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <string_view>
 #include <utility>
@@ -34,7 +35,35 @@ public:
         return result;
     }
     std::string FocusTarget() const
-    {return kind_==Kind::Date?"picker.day:"+date_:std::string(minutesOpen_?"picker.minute:":"picker.hour:")+std::to_string(minutesOpen_?minutes_%60:minutes_/60);}
+    {return kind_==Kind::Date?"picker.day:"+date_:TimeTarget(activeMinutes_);}
+    std::string TimeTabTarget(std::string_view focused,bool shift) const
+    {
+        if(kind_!=Kind::Time)return {};
+        const std::array<std::string,5> order{"picker.back",TimeTarget(false),TimeTarget(true),"picker.cancel","picker.confirm"};
+        const auto part=TimePart(focused);const auto current=part?TimeTarget(*part):std::string(focused);
+        const auto found=std::find(order.begin(),order.end(),current);
+        const auto index=found==order.end()?(shift?order.size()-1:0):
+            (static_cast<std::size_t>(found-order.begin())+(shift?order.size()-1:1))%order.size();
+        return order[index];
+    }
+    bool TimeKey(std::string_view focused,unsigned key)
+    {
+        if(kind_!=Kind::Time)return false;const auto part=TimePart(focused);if(!part)return false;
+        activeMinutes_=*part;
+        if(key==VK_LEFT||key==VK_RIGHT){activeMinutes_=key==VK_RIGHT;return true;}
+        if(key==VK_HOME||key==VK_END){SetPart(*part,key==VK_HOME?0:(*part?59:23));return true;}
+        if(key!=VK_UP&&key!=VK_DOWN&&key!=VK_PRIOR&&key!=VK_NEXT)return false;
+        const int step=key==VK_PRIOR?-5:key==VK_NEXT?5:key==VK_UP?-1:1;
+        SetPart(*part,PartValue(*part)+step);return true;
+    }
+    bool TimeWheel(std::string_view target,float notches)
+    {
+        if(kind_!=Kind::Time||!std::isfinite(notches))return false;
+        const auto part=TimePart(target);if(!part)return false;
+        activeMinutes_=*part;auto& remainder=wheel_[*part?1:0];remainder+=std::clamp(notches,-120.f,120.f);
+        const int steps=static_cast<int>(remainder);remainder-=static_cast<float>(steps);
+        if(steps)SetPart(*part,PartValue(*part)-steps);return true;
+    }
     Scene Build(float width,std::wstring title,const std::string& today) const
     {
         Scene scene;scene.width=width;
@@ -80,21 +109,24 @@ public:
         else
         {
             auto& value=add("picker.time",Role::Text,rect(left,64,content,44),TimeText(minutes_));value.centered=value.bold=true;value.fontSize=24;
+            const float column=(content-12)/2;
             for(int part=0;part<2;++part)
             {
-                auto& tab=add(part?"picker.minutes":"picker.hours",Role::Button,rect(left+part*(content+12)/2,120,(content-12)/2,36),_LW(part?"app.widget.time_picker.minute":"app.widget.time_picker.hour"));
-                tab.selected=tab.accent=(part!=0)==minutesOpen_;
+                const bool minute=part!=0;const float x=left+part*(column+12);const std::string prefix=minute?"picker.minute:":"picker.hour:";
+                const auto label=_LW(minute?"app.widget.time_picker.minute":"app.widget.time_picker.hour");
+                auto& columnLabel=add(prefix+"label",Role::Text,rect(x,120,column,28),label);columnLabel.centered=columnLabel.secondary=true;
+                add(prefix+"column",Role::Card,rect(x,156,column,196));
+                const int selected=PartValue(minute);
+                for(int offset=-2;offset<=2;++offset)
+                {
+                    const int choice=selected+offset;if(choice<0||choice>(minute?59:23))continue;
+                    const auto text=choice<10?L"0"+std::to_wstring(choice):std::to_wstring(choice);
+                    auto& valueNode=add(prefix+(offset==0?std::string("current"):std::to_string(choice)),Role::ListItem,rect(x+4,160+(offset+2)*38.f,column-8,36),text);
+                    valueNode.centered=true;valueNode.selected=valueNode.accent=offset==0;valueNode.secondary=offset!=0;
+                    valueNode.fontSize=offset==0?22.f:17.f;valueNode.accessibilityLabel=std::wstring(label)+L" "+text;
+                }
             }
-            const int count=minutesOpen_?60:24;const float cell=content/6;
-            for(int i=0;i<count;++i)
-            {
-                const auto label=i<10?L"0"+std::to_wstring(i):std::to_wstring(i);
-                auto& valueNode=add(std::string(minutesOpen_?"picker.minute:":"picker.hour:")+std::to_string(i),Role::Button,
-                    rect(left+(i%6)*cell,168+(i/6)*36.f,cell-4,32),label);
-                valueNode.centered=true;valueNode.selected=valueNode.accent=i==(minutesOpen_?minutes_%60:minutes_/60);
-                valueNode.accessibilityLabel=std::wstring(_LW(minutesOpen_?"app.widget.time_picker.minute":"app.widget.time_picker.hour"))+L" "+label;
-            }
-            bottom=168+((count+5)/6)*36.f+12;
+            bottom=364;
         }
         add("picker.cancel",Role::Button,rect(left,bottom,(content-12)/2,36),_LW("settings.dialog.cancel"));
         add("picker.confirm",Role::Button,rect(left+(content+12)/2,bottom,(content-12)/2,36),_LW("app.widget.date_picker.confirm")).accent=true;
@@ -116,17 +148,28 @@ public:
             if(!calendar::CalendarService::GetDateInfo(value))return Result::None;
             date_=value;month_=date_.substr(0,7)+"-01";return Result::Changed;
         }
-        if(id=="picker.hours"||id=="picker.minutes"){minutesOpen_=id=="picker.minutes";return Result::Changed;}
         const bool hour=id.starts_with("picker.hour:"),minute=id.starts_with("picker.minute:");if(!hour&&!minute)return Result::None;
-        const auto digits=id.substr(hour?12:14);if(digits.empty()||digits.size()>2)return Result::None;
+        const auto digits=id.substr(hour?12:14);if(digits=="current"){activeMinutes_=minute;return Result::Changed;}
+        if(digits.empty()||digits.size()>2)return Result::None;
         int value=0;for(const auto digit:digits){if(digit<'0'||digit>'9')return Result::None;value=value*10+digit-'0';}
         if(value>=(hour?24:60))return Result::None;
-        minutes_=hour?value*60+minutes_%60:(minutes_/60)*60+value;minutesOpen_=true;return Result::Changed;
+        SetPart(minute,value);return Result::Changed;
     }
 private:
     Kind kind_;
     std::string date_,month_;
     int minutes_=0;
-    bool minutesOpen_=false;
+    bool activeMinutes_=false;
+    std::array<float,2> wheel_{};
+    static std::optional<bool> TimePart(std::string_view id)
+    {if(id.starts_with("picker.hour:"))return false;if(id.starts_with("picker.minute:"))return true;return {};}
+    int PartValue(bool minute)const{return minute?minutes_%60:minutes_/60;}
+    std::string TimeTarget(bool minute)const
+    {return minute?"picker.minute:current":"picker.hour:current";}
+    void SetPart(bool minute,int value)
+    {
+        activeMinutes_=minute;value=std::clamp(value,0,minute?59:23);
+        minutes_=minute?(minutes_/60)*60+value:value*60+minutes_%60;
+    }
 };
 }

@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 233> kHostFeatures = {
+constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "animation.frame",
     "calendar.annotations",
     "calendar.dateMath",
@@ -57,6 +57,7 @@ constexpr std::array<std::string_view, 233> kHostFeatures = {
     "data.system.display.current",
     "data.system.gpu",
     "data.system.gpu.details",
+    "data.system.gpu.identity",
     "data.system.memory",
     "data.system.network.status",
     "data.system.network.traffic",
@@ -254,7 +255,7 @@ constexpr std::array<std::string_view, 233> kHostFeatures = {
     "view.transition.transform",
     "view.transition.visual",
     "view.tree.core",
-};
+});
 using FunctionParameter = SystemFunctionParameterContract;
 constexpr std::array<FunctionParameter, 0> kNoFunctionParameters{};
 constexpr auto kCapabilityParameters = std::to_array<FunctionParameter>({

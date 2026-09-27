@@ -1,6 +1,7 @@
 -- system-monitor/main.lua - API v2 system data subscriptions
 local subscriptions = {}
 local gpuSubscriptionDetails
+local gpuSelection = {}
 local cardLayout = module.require("modules/card_layout.lua")
 local monitorData = module.require("modules/monitor_data.lua")
 local monitorSources = module.require("modules/monitor_sources.lua")
@@ -24,18 +25,6 @@ local settings = {
         { key = "show_memory", label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = monitorSources.defaults.memory },
         { key = "show_gpu", label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = monitorSources.defaults.gpu },
         { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = monitorSources.defaults.vram },
-        {
-            key = "gpu_scope",
-            label = l10n.tr("lua_widget.system_monitor.gpu_scope"),
-            description = l10n.tr("lua_widget.system_monitor.gpu_selection_hint"),
-            type = "select",
-            default = "all",
-            options = { "all", "selected" },
-            optionLabels = {
-                l10n.tr("lua_widget.system_monitor.gpu_all"),
-                l10n.tr("lua_widget.system_monitor.gpu_selected"),
-            },
-        },
         { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = monitorSources.defaults.network },
         { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = monitorSources.defaults.battery },
         { key = "show_storage", label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = monitorSources.defaults.storage },
@@ -280,8 +269,41 @@ local function reconcileSubscriptions()
         gpuSubscriptionDetails)
 end
 
+local function selectedGpu(value)
+    -- Migrate legacy "all" lazily without writing storage during rendering.
+    local savedId = storage.get("gpu_scope") ~= "all" and
+        storage.get("gpu_adapter_id") or nil
+    local choice = monitorData.rememberGpuChoice(gpuSelection, value, savedId)
+    return choice and choice.id or savedId, choice and choice.name or
+        storage.get("gpu_adapter_name")
+end
+
+local function persistGpuSelection()
+    local remembered = gpuSelection.choice
+    if remembered and storage.get("gpu_adapter_id") == remembered.id and
+            storage.get("gpu_adapter_name") == remembered.name and
+            storage.get("gpu_scope") == "selected" then
+        return
+    end
+    local value = subscriptionValue(subscriptions.gpu)
+    local id = selectedGpu(value)
+    local choice = monitorData.resolveGpuChoice(value, id)
+    if not choice then return end
+    if storage.get("gpu_adapter_id") ~= choice.id then
+        storage.set("gpu_adapter_id", choice.id)
+    end
+    if storage.get("gpu_adapter_name") ~= choice.name then
+        storage.set("gpu_adapter_name", choice.name)
+    end
+    if storage.get("gpu_scope") ~= "selected" then
+        storage.set("gpu_scope", "selected")
+    end
+    gpuSelection.sourceId = choice.id
+end
+
 local function setup()
     reconcileSubscriptions()
+    persistGpuSelection()
     return {
         previousColumns = 0,
         previousRows = 0,
@@ -293,18 +315,13 @@ local function buildCards()
     local cpu, cpuState = subscriptionValue(subscriptions.cpu)
     local memory, memoryState = subscriptionValue(subscriptions.memory)
     local gpuValue, gpuState = subscriptionValue(subscriptions.gpu)
-    local gpuSelected = storage.get("gpu_scope") == "selected"
-    local gpuId = gpuSelected and (storage.get("gpu_adapter_id") or "") or nil
+    local gpuId, gpuIdentity = selectedGpu(gpuValue)
     local gpuDetails = widget.hasFeature("data.system.gpu.details")
     local gpu = monitorData.summarizeGpu(gpuValue, gpuId, gpuDetails)
     if not gpu and not gpuState then gpuState = "notPresent" end
-    local gpuIdentity = gpuSelected and (gpu and gpu.name or
-        storage.get("gpu_adapter_name")) or
-        l10n.tr("lua_widget.system_monitor.gpu_all")
-    if gpuSelected and gpuId == "" then
-        gpuIdentity = l10n.tr("lua_widget.system_monitor.gpu_choose_hint")
-        gpuState = nil
-    elseif gpuSelected and not gpu then
+    if gpu then
+        gpuIdentity = gpu.name
+    elseif gpuId and gpuId ~= "" then
         gpuIdentity = l10n.formatList({
             gpuIdentity or l10n.tr("lua_widget.system_monitor.gpu_selected"),
             l10n.tr("lua_widget.system_monitor.gpu_choose_hint"),
@@ -368,9 +385,6 @@ local function buildCards()
             details[#details + 1] = l10n.tr(gpuDetails and
                 "lua_widget.system_monitor.gpu_busiest" or
                 "lua_widget.system_monitor.gpu_details_unavailable")
-            if not gpuSelected and gpu.busiestName then
-                details[#details + 1] = gpu.busiestName
-            end
         end
         cards[#cards + 1] = {
             id = "gpu",
@@ -626,6 +640,7 @@ local function render(_context, model)
 end
 
 local function event(_context, _model, value)
+    persistGpuSelection()
     if value.kind == "settings.changed" or value.kind == "environment" then
         reconcileSubscriptions()
         widget.invalidate()
@@ -634,20 +649,16 @@ local function event(_context, _model, value)
     if value.kind ~= "action" then return end
     if value.id == "system.refresh" then
         widget.invalidate()
-    elseif value.id == "system.gpu.all" then
-        storage.set("gpu_scope", "all")
-        widget.invalidate()
     elseif value.id and value.id:sub(1, 18) == "system.gpu.select." then
         local id = value.id:sub(19)
         local gpuValue = subscriptionValue(subscriptions.gpu)
-        for _, choice in ipairs(monitorData.gpuChoices(gpuValue)) do
-            if choice.id == id then
-                storage.set("gpu_adapter_id", choice.id)
-                storage.set("gpu_adapter_name", choice.name)
-                storage.set("gpu_scope", "selected")
-                widget.invalidate()
-                break
-            end
+        local choice = monitorData.resolveGpuChoice(gpuValue, id)
+        if choice then
+            storage.set("gpu_adapter_id", choice.id)
+            storage.set("gpu_adapter_name", choice.name)
+            storage.set("gpu_scope", "selected")
+            gpuSelection = { sourceId = choice.id, choice = choice }
+            widget.invalidate()
         end
     elseif value.id == "system.resetStyle" then
         storage.set("bg", tostring(style.bg))
@@ -661,30 +672,26 @@ end
 
 local function menu(_context, _model, request)
     if request.id ~= "system.menu" then return nil end
+    persistGpuSelection()
     local items = {}
     if showCard("gpu") or showCard("vram") then
-        local selected = storage.get("gpu_scope") == "selected"
-        local selectedId = storage.get("gpu_adapter_id")
         local gpuValue, gpuState = subscriptionValue(subscriptions.gpu)
+        local selectedId, selectedName = selectedGpu(gpuValue)
         local choices = monitorData.gpuChoices(gpuValue)
-        local gpuItems = {
-            { id = "system.gpu.all",
-                label = l10n.tr("lua_widget.system_monitor.gpu_all"),
-                checked = not selected },
-        }
+        local gpuItems = {}
         local found = false
         for _, choice in ipairs(choices) do
             found = found or choice.id == selectedId
             gpuItems[#gpuItems + 1] = {
                 id = "system.gpu.select." .. choice.id,
                 label = choice.label,
-                checked = selected and choice.id == selectedId,
+                checked = choice.id == selectedId,
             }
         end
-        if selected and selectedId and selectedId ~= "" and not found then
+        if selectedId and selectedId ~= "" and not found then
             gpuItems[#gpuItems + 1] = {
                 id = "system.gpu.unavailable",
-                label = detailsWithStatus(storage.get("gpu_adapter_name") or
+                label = detailsWithStatus(selectedName or
                     l10n.tr("lua_widget.system_monitor.gpu_selected"),
                     gpuState or "notPresent"),
                 enabled = false,
@@ -730,11 +737,13 @@ local function menu(_context, _model, request)
 end
 
 local function dispose(_context, _model)
+    persistGpuSelection()
     for _, handle in pairs(subscriptions) do
         handle:unsubscribe()
     end
     subscriptions = {}
     gpuSubscriptionDetails = nil
+    gpuSelection = {}
 end
 
 return widget.define({

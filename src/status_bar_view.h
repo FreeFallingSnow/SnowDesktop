@@ -23,6 +23,7 @@ struct StatusBarItem
     std::array<std::wstring, 3> controlGlyphs;
     StatusBarBatteryTone batteryTone = StatusBarBatteryTone::Normal;
     int batteryLevel = -1;
+    bool flipGlyph = false;
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.
@@ -39,6 +40,7 @@ struct StatusBarSnapshot
     std::optional<widget_runtime::WidgetAudioOutputVolumeDataSnapshot> audio;
     std::optional<widget_runtime::WidgetPowerDataSnapshot> power;
     std::vector<tray::Icon> tray;
+    bool trayExpanded = false;
 };
 struct StatusBarPalette
 {

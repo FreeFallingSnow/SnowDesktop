@@ -242,6 +242,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             if (preset == "bottom") settings.position = DockPosition::Bottom;
             if (preset == "updated")
             {
+                data.trayExpanded = true;
                 data.cpu->usagePercent = 100; data.memory->usedBytes = data.memory->totalBytes;
                 data.gpu->adapters[0].usagePercent = 100;
                 data.traffic->downloadBytesPerSecond = data.traffic->uploadBytesPerSecond = 999ull << 40;
@@ -275,6 +276,17 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     tooltip.text == currentTip && tooltip.readyAt == 500,
                     "stationary tooltip must update volume without resetting its hover delay");
                 auto changedTray = data;
+                changedTray.trayExpanded = true;
+                const auto expanded = BuildStatusBarItems(settings, changedTray);
+                Require(!SameStatusBarContent(items, expanded) &&
+                    !Item(items, "tray").flipGlyph && Item(expanded, "tray").flipGlyph,
+                    "top tray chevron must point down when closed and up when expanded");
+                auto bottomSettings = settings;
+                bottomSettings.position = DockPosition::Bottom;
+                Require(Item(BuildStatusBarItems(bottomSettings, data), "tray").flipGlyph &&
+                    !Item(BuildStatusBarItems(bottomSettings, changedTray), "tray").flipGlyph,
+                    "bottom tray chevron must point up when closed and down when expanded");
+                changedTray.trayExpanded = false;
                 changedTray.tray.front().tip = L"New tray tooltip";
                 changedTray.tray.front().application = L"New application label";
                 Require(SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),

@@ -1027,6 +1027,77 @@ void CheckCalendarNames(const ui::Scene& scene)
         "same-number calendar days lack distinct full year/month/date accessibility names");
 }
 
+void CheckTimePickerInput()
+{
+    auto source=FixtureSource(std::make_shared<PreviewState>());int saves=0;
+    source.calendar.mutations.save=[&](const auto&){++saves;return calendar::MutationResult{};};
+    SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);model.Refresh(800,720);
+    ui::Input input;
+    const auto click=[&](std::string_view id){
+        model.Reveal(id);const auto point=VisibleCenter(model.View(),id);
+        Require(input.Press(model.View(),point),"time picker rejected a visible pointer target");
+        const auto result=input.Release(model.View(),point);
+        Require(result.kind==ui::InputResult::Kind::Invoke&&result.id==id&&model.Invoke(result.id),
+            "time picker pointer action did not reach the production model");input.Sync(model.View());
+        const auto focus=model.CalendarFocusTarget();if(!focus.empty())input.Focus(focus,false);
+    };
+    const auto key=[&](unsigned value,bool shift=false){
+        const auto result=model.HandleKey(input,value,shift);
+        if(result.kind==ui::InputResult::Kind::Invoke)Require(model.Invoke(result.id),"time picker keyboard activation was lost");
+        input.Sync(model.View());
+    };
+    Require(model.Invoke("calendar.add")&&model.SetCalendarInput("calendar.edit.title",L"Time draft"),"time picker draft setup failed");
+    click("calendar.edit.start");
+    const auto hour=Node(model.View(),"picker.hour:current").bounds,minute=Node(model.View(),"picker.minute:current").bounds;
+    Require(hour.right<minute.left&&hour.top==minute.top&&model.View().height<440&&
+        !model.View().Find("picker.hours")&&!model.View().Find("picker.minutes")&&model.CalendarInputFields().empty(),
+        "shared time picker is not a compact simultaneous two-column control");
+    click("picker.hour:11");
+    Require(Node(model.View(),"picker.time").text==L"11:00"&&model.CalendarFocusTarget()=="picker.hour:current",
+        "hour choice changed the minute or jumped to another page");
+    Require(input.Focus(model.CalendarFocusTarget(),true),"time value lost its stable focus target");
+    key(VK_RIGHT);Require(input.Focused()=="picker.minute:current","Right did not focus the minute value");
+    key(VK_DOWN);Require(Node(model.View(),"picker.time").text==L"11:01"&&input.Focused()=="picker.minute:current",
+        "Down failed to update the focused minute without losing focus");
+    const auto minutePoint=VisibleCenter(model.View(),"picker.minute:current");
+    for(int i=0;i<3;++i)model.Wheel(minutePoint,-.25f);
+    Require(Node(model.View(),"picker.time").text==L"11:01","fractional wheel deltas rounded up before a complete step");
+    model.Wheel(minutePoint,-.25f);
+    Require(Node(model.View(),"picker.time").text==L"11:02","minute wheel did not accumulate precise input");
+    model.Wheel(VisibleCenter(model.View(),"picker.minute:label"),1);
+    const auto minuteColumn=Node(model.View(),"picker.minute:column").bounds;
+    model.Wheel({minuteColumn.left+1,minuteColumn.top+1},-1);
+    Require(Node(model.View(),"picker.time").text==L"11:02","time label/card gaps failed to route wheel input to their own column");
+    key(VK_END);Require(Node(model.View(),"picker.time").text==L"11:59","End did not reach the last minute");
+    const auto before=model.ScrollOffset();key(VK_DOWN);model.Wheel(minutePoint,-1);
+    Require(Node(model.View(),"picker.time").text==L"11:59"&&model.ScrollOffset()==before,
+        "minute boundary carried into hours or scrolled the enclosing panel");
+    key(VK_HOME);key(VK_LEFT);key(VK_HOME);key(VK_PRIOR);
+    Require(Node(model.View(),"picker.time").text==L"00:00"&&input.Focused()=="picker.hour:current","hour lower boundary or Left focus failed");
+    key(VK_END);key(VK_NEXT);
+    Require(Node(model.View(),"picker.time").text==L"23:00","hour upper boundary escaped the day");
+    key(VK_TAB);Require(input.Focused()=="picker.minute:current","Tab visited every hour instead of the minute column");
+    key(VK_TAB);Require(input.Focused()=="picker.cancel","Tab could not leave the time columns");
+    key(VK_TAB,true);Require(input.Focused()=="picker.minute:current","Shift+Tab did not return to the minute column");
+    click("picker.cancel");
+    Require(Node(model.View(),"calendar.edit.start").text==L"09:00"&&model.CalendarFocusTarget()=="calendar.edit.start"&&saves==0,
+        "canceling a time draft committed its value or lost the originating field");
+    click("calendar.edit.start");click("picker.hour:10");
+    model.Wheel(VisibleCenter(model.View(),"picker.minute:current"),-15);
+    click("picker.confirm");
+    Require(Node(model.View(),"calendar.edit.start").text==L"10:15"&&Node(model.View(),"calendar.edit.end").text==L"10:00"&&saves==0,
+        "time confirmation changed another field or persisted the calendar draft");
+    const auto fields=model.CalendarInputFields();
+    Require(std::any_of(fields.begin(),fields.end(),[](const auto& field){return field.id=="calendar.edit.title"&&field.text==L"Time draft";}),
+        "time editing lost the native text draft");
+    click("calendar.edit.start");key(VK_UP);Require(model.CalendarBack()&&Node(model.View(),"calendar.edit.start").text==L"10:15",
+        "Escape committed the unconfirmed time draft");
+    click("calendar.edit.start");model.Select("audio");
+    Require(!model.CalendarEditing()&&!model.Invoke("picker.confirm")&&saves==0,"page navigation kept a stale time picker alive");
+    model.Select("");Require(model.Invoke("calendar.add")&&model.Invoke("calendar.edit.start"),"closing time fixture did not reopen");
+    model.Close();Require(!model.Invoke("picker.confirm")&&!model.CalendarEditing()&&saves==0,"closed time picker retained a commit path");
+}
+
 void CheckCalendarManagement()
 {
     const auto state=std::make_shared<PreviewState>();auto source=FixtureSource(state);
@@ -1068,7 +1139,9 @@ void CheckCalendarManagement()
     Require(model.Invoke("picker.day:2026-09-28")&&model.CalendarBack()&&
         Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&field("calendar.edit.title").text==L"Unsaved draft"&&
         model.CalendarFocusTarget()=="calendar.edit.date","canceling a date choice lost text or changed the form value");
-    Require(model.Invoke("calendar.edit.start")&&model.Invoke("picker.hour:11")&&model.Invoke("picker.minute:30")&&
+    Require(model.Invoke("calendar.edit.start")&&model.Invoke("picker.hour:11"),"shared time control did not expose its hour column");
+    model.Wheel(VisibleCenter(model.View(),"picker.minute:current"),-30.f);
+    Require(
         model.Invoke("picker.confirm")&&Node(model.View(),"calendar.edit.start").text==L"11:30"&&
         model.CalendarFocusTarget()=="calendar.edit.start","shared time control did not return its confirmed value and focus");
     model.Refresh(800,720);
@@ -1112,10 +1185,16 @@ void CheckCalendarManagement()
     model.Refresh(800,720);
     Require(model.CalendarEventCommand(changedNode,true)&&model.View().Find("calendar.edit.confirmDelete")&&deletes==0,
         "right-click delete skipped its in-panel confirmation");
-    for(const auto& input:model.CalendarInputFields())Require(!input.enabled,"delete confirmation left its fields editable");
-    Require(!model.SetCalendarInput("calendar.edit.title",L"unexpected")&&model.CalendarBack()&&model.CalendarEditing()&&
-        !model.View().Find("calendar.edit.confirmDelete"),"canceling delete did not return safely to the editor");
-    Require(model.SetCalendarInput("calendar.edit.notes",L"Conflict draft"),"calendar conflict draft setup failed");
+    Require(model.CalendarInputFields().empty()&&!model.View().Find("calendar.edit.back")&&!model.View().Find("header.settings"),
+        "context delete confirmation exposed editor fields or an unrelated parent route");
+    ui::Input cancelDelete;const auto cancelPoint=VisibleCenter(model.View(),"calendar.edit.cancelDelete");
+    Require(!model.SetCalendarInput("calendar.edit.title",L"unexpected")&&cancelDelete.Press(model.View(),cancelPoint)&&
+        model.Invoke(cancelDelete.Release(model.View(),cancelPoint).id)&&!model.CalendarEditing()&&model.View().Find(changedNode)&&
+        model.CalendarFocusTarget()==changedNode&&deletes==0,
+        "canceling context delete did not return to its original agenda");
+    Require(model.CalendarEventCommand(changedNode,true)&&model.CalendarBack()&&!model.CalendarEditing()&&model.View().Find(changedNode),
+        "Escape from context delete opened the editor instead of restoring the agenda");
+    Require(model.CalendarEventCommand(changedNode,false)&&model.SetCalendarInput("calendar.edit.notes",L"Conflict draft"),"calendar conflict draft setup failed");
     ++events.front().revision;
     Require(model.Invoke("calendar.edit.save")&&model.CalendarEditing()&&field("calendar.edit.notes").text==L"Conflict draft"&&
         Node(model.View(),"calendar.edit.error").text==_LW("settings.calendar.conflict"),"revision conflict lost the user's draft");
@@ -1150,10 +1229,13 @@ void CheckCalendarManagement()
         Require(narrow.MaximumScroll()>0&&narrow.Reveal("calendar.edit.save"),"short editor lost scroll access to saving");
         const auto& save=Node(narrow.View(),"calendar.edit.save");
         Require(save.bounds.top>=save.clip.top&&save.bounds.bottom<=save.clip.bottom,"calendar save could not be revealed");
-        Require(narrow.Invoke("calendar.edit.start")&&narrow.Invoke("picker.minutes"),"constrained shared time picker did not open");
-        CheckLayout(narrow.View());Require(narrow.Reveal("picker.minute:59"),"last minute option cannot be reached in a short viewport");
-        const auto& minute=Node(narrow.View(),"picker.minute:59");
-        Require(minute.bounds.top>=minute.clip.top&&minute.bounds.bottom<=minute.clip.bottom&&narrow.CalendarBack(),"time option escaped its scroll viewport");
+        Require(narrow.Invoke("calendar.edit.start"),"constrained shared time picker did not open");
+        CheckLayout(narrow.View());ui::Input timeInput;timeInput.Sync(narrow.View());
+        Require(timeInput.Focus("picker.minute:current",true),"short time picker lost logical minute focus");
+        narrow.HandleKey(timeInput,VK_END,false);
+        const auto& minute=Node(narrow.View(),"picker.minute:current");
+        Require(minute.text==L"59"&&minute.bounds.top>=minute.clip.top&&minute.bounds.bottom<=minute.clip.bottom&&narrow.CalendarBack(),
+            "keyboard could not reach the last minute inside a short viewport");
         Require(narrow.CalendarBack(),"short editor lost its back route");
     }
     const auto leapDays=ui::DateTimePicker::MonthDates("2024-02-01");
@@ -1328,11 +1410,53 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
     return pixels;
 }
 
+void CheckPowerConfirmationOrigin()
+{
+    for(const bool standalone:{false,true})
+    {
+        auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+        auto source=FixtureSource(state);std::uint64_t started=0;std::vector<std::uint64_t> canceled;
+        source.start=[&](system_control::Request request){
+            Require(request.hostConfirmed&&request.name=="system.power.restart","power confirmation changed its requested action");return ++started;};
+        source.cancel=[&](std::uint64_t task){canceled.push_back(task);return true;};
+        SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
+        const auto click=[&](std::string_view id){model.Reveal(id);ui::Input input;const auto point=VisibleCenter(model.View(),id);
+            Require(input.Press(model.View(),point),"power confirmation rejected a pointer target");const auto result=input.Release(model.View(),point);
+            Require(result.kind==ui::InputResult::Kind::Invoke&&result.id==id&&model.Invoke(result.id),"power confirmation pointer action was lost");};
+        const auto open=[&]{
+            if(standalone)Require(model.BeginPowerConfirmation("system.power.restart",true),"system-menu confirmation origin setup failed");
+            else{model.Select("power");click("power.restart");}
+            Require(model.View().Find("control.confirm")&&(model.View().Find("back")!=nullptr)==!standalone&&
+                (model.View().Find("header.settings")!=nullptr)==!standalone,
+                "power confirmation inherited an unrelated back/settings route");};
+        const auto returned=[&]{Require(model.TakeDismissRequest()==standalone&&!model.TakeDismissRequest(),
+                "power confirmation did not request exactly the source-specific dismissal");
+            if(!standalone)Require(model.Page()=="power"&&!model.View().Find("control.confirm")&&model.View().Find("back"),
+                "control-panel confirmation failed to restore the power page");};
+        open();click("control.cancel");returned();Require(started==0,"canceling power confirmation performed an operation");
+        open();Require(model.ControlBack(),"power confirmation lost its Escape route");returned();
+        open();click("control.confirm");
+        system_control::Completion denied;denied.id=started;denied.error="accessDenied";state->completions.push_back(denied);model.Refresh();
+        Require(!model.TakeDismissRequest()&&model.View().Find("control.error")&&Node(model.View(),"control.confirm").enabled,
+            "failed power operation dismissed its retryable confirmation");
+        click("control.cancel");returned();
+        for(const bool succeeded:{true,false})
+        {
+            open();click("control.confirm");system_control::Completion completion;completion.id=started;
+            completion.ok=succeeded;if(!succeeded)completion.error="canceled";state->completions.push_back(completion);model.Refresh();returned();
+        }
+        open();click("control.confirm");const auto task=started;click("control.cancel");returned();
+        Require(canceled==std::vector<std::uint64_t>{task},"canceling pending power confirmation failed to cancel its own task once");
+        model.Close();system_control::Completion late;late.id=task;late.ok=true;state->completions.push_back(late);model.Refresh();
+        Require(!model.TakeDismissRequest()&&!model.Invoke("control.confirm"),"late power completion revived a closed confirmation");
+    }
+}
+
 void CheckInlineControlForms(ID2D1Device* device,IDWriteFactory* text,
     const native_component_preview::Request& request,native_component_preview::Result& result,
     const PersonalizationSettings& appearance,const SystemPanel::Background& background,const widget_preview::Wallpaper& stage)
 {
-    CheckSystemControlPasswordInput();
+    CheckSystemControlPasswordInput();CheckPowerConfirmationOrigin();
     const float scale=static_cast<float>(request.dpi)/96.f;
     for(int mode=0;mode<4;++mode)
     {
@@ -1349,7 +1473,7 @@ void CheckInlineControlForms(ID2D1Device* device,IDWriteFactory* text,
         source.cancel=[&](std::uint64_t id){canceled.push_back(id);return true;};
         StatusBarSettings settings;if(mode==3)settings.powerControls=false;
         SystemPanelModel model(std::move(source),settings,StatusBarAction::ControlCenter);
-        if(mode==3)Require(model.BeginPowerConfirmation("system.power.restart"),"system-menu power action could not enter the shared confirmation page");
+        if(mode==3)Require(model.BeginPowerConfirmation("system.power.restart",true),"system-menu power action could not enter the shared confirmation page");
         else
         {
             model.Select("wifi");
@@ -1472,7 +1596,8 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         if(picker)
         {
             Require(model.Invoke(datePicker?"calendar.edit.date":"calendar.edit.start"),"calendar visual fixture did not enter its shared picker");
-            if(timePicker)Require(model.Invoke("picker.minutes"),"time visual fixture did not expose minute choices");
+            if(timePicker)Require(model.View().Find("picker.hour:current")&&model.View().Find("picker.minute:current"),
+                "time visual fixture did not expose both columns together");
         }
         const auto& scene=model.View();CheckLayout(scene);
         for(const auto* id:{"calendar.edit.save","calendar.edit.cancel","calendar.edit.delete","calendar.edit.confirmDelete","calendar.edit.cancelDelete"})
@@ -1487,12 +1612,13 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                     "calendar primary and destructive action labels must not be truncated");
             }
         Require(model.CalendarEditing()&&scene.cards.size()==1&&!scene.Find("calendar.month")&&
-            (picker?scene.Find("picker.confirm")!=nullptr:Node(scene,"calendar.edit.reminder").text==_LW(creating?"settings.calendar.reminder.-1":"settings.calendar.reminder.15")),
+            (picker?scene.Find("picker.confirm")!=nullptr:confirmation?scene.Find("calendar.edit.confirmDelete")!=nullptr:
+                Node(scene,"calendar.edit.reminder").text==_LW(creating?"settings.calendar.reminder.-1":"settings.calendar.reminder.15")),
             "calendar secondary page lost its shared card or reminder selection");
         const int width=static_cast<int>(std::ceil(scene.width*scale)),height=static_cast<int>(std::ceil(scene.height*scale));
         const int left=(request.canvasWidth-width)/2,top=(request.canvasHeight-height)/2;
         auto pixels=Render(device,text,request,scene,appearance,background,stage,left,top);
-        auto fields=model.CalendarInputFields();Require(fields.size()==(picker?0u:2u),"calendar secondary page lost an embedded native input or overlaid a date/time picker");
+        auto fields=model.CalendarInputFields();Require(fields.size()==(picker||confirmation?0u:2u),"calendar secondary page lost an embedded native input or overlaid a picker/confirmation");
         for(auto& field:fields)
         {
             const float dx=static_cast<float>(left)/scale,dy=static_cast<float>(top)/scale;
@@ -1504,8 +1630,8 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         // text and actual notes scrolling, over the production scene itself.
         const auto scenePixels=pixels;
         OverlaySystemCalendarInputs(fields,appearance,static_cast<UINT>(request.dpi),request.canvasWidth,request.canvasHeight,pixels);
-        Require(picker||pixels!=scenePixels,"calendar page preview omitted its real embedded input controls");
-        if(!creating&&!picker)
+        Require(picker||confirmation||pixels!=scenePixels,"calendar page preview omitted its real embedded input controls");
+        if(!creating&&!picker&&!confirmation)
         {
             auto emptyNotes=fields;const auto notes=std::find_if(emptyNotes.begin(),emptyNotes.end(),[](const auto& field){return field.id=="calendar.edit.notes";});
             Require(notes!=emptyNotes.end()&&!notes->text.empty(),"calendar notes fixture has no actual text");notes->text.clear();
@@ -1973,7 +2099,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             }
             if (trayPanel && preset == "grid") { CheckTrayInput(model.View());CheckTrayDropTargets(trayFixture); }
             if (calendarPanel && preset == "agenda") CheckCalendarResponsive();
-            if (calendarPanel && preset == "agenda") {CheckCalendarManagement();CheckCalendarPageVisuals(device,text,request,result,appearance,background,stage);}
+            if (calendarPanel && preset == "agenda") {CheckTimePickerInput();CheckCalendarManagement();CheckCalendarPageVisuals(device,text,request,result,appearance,background,stage);}
             if (resources && preset == "gpu")
                 Require(model.Invoke("gpu.select") && model.Invoke("gpu:gpu-preview-1") &&
                     Node(model.View(),"resource.card:0").text == L"61%", "GPU selection did not switch reading and history");

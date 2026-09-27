@@ -132,7 +132,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     if (action == Action::Dismiss)
     {
         quickNavigationPostCloseAction_ = {};
-        snowdesktop::modern_menu::DismissActive();
+        DismissActiveContextMenuForPopupTransition();
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();
         statusBarActivationMonitor_ = nullptr;
@@ -237,6 +237,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     brushCache_.clear(); brushCacheContext_ = nullptr;
                 });
         systemPanel_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
+        systemPanel_->SetTrayStateChanged([this](HMONITOR monitor,bool expanded) {
+            if(statusBar_)statusBar_->SetTrayExpanded(monitor,expanded);
+        });
         systemPanel_->SetNativeControlsHandler([this](HWND source, RECT location) {
             ActivateStatusBar(Action::SystemControlCenter, source, location);
         });
@@ -250,10 +253,10 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     };
     // A bar click can arrive inside the menu's nested message loop. Wait until
     // menu focus restoration has finished before opening another surface.
-    if (snowdesktop::modern_menu::IsActive())
+    if (HasActiveContextMenuSession())
     {
         TraceStatusBarShellActivation(action, generation, L"wait-menu", hold->shortcutStartedMilliseconds);
-        snowdesktop::modern_menu::DismissActive();
+        DismissActiveContextMenuForPopupTransition();
         statusBarActivationToken_ = uiAnimationScheduler_.ScheduleInterval(16, [this, lifetime, current, resume](auto token) {
             if (lifetime.expired()) return;
             if (!current())
@@ -262,7 +265,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 if (token == statusBarActivationToken_) statusBarActivationToken_ = 0;
                 return;
             }
-            if (token != statusBarActivationToken_ || snowdesktop::modern_menu::IsActive()) return;
+            if (token != statusBarActivationToken_ || HasActiveContextMenuSession()) return;
             uiAnimationScheduler_.Cancel(token);
             statusBarActivationToken_ = 0;
             resume();

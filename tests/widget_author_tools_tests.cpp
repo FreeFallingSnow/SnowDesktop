@@ -38,6 +38,7 @@ void TestGpuLuaDetails()
     idle.id = "idle"; idle.name = "same name"; idle.usageAvailable = true;
     idle.sharedUsageAvailable = true; idle.sharedUsedBytes = 9007199254740993ull;
     idle.engines = { { 0, 2, "", 0, 0, 1 }, { 1, 2, "", 0, 0, 2 } };
+    idle.aliasIds = {"adapter-old-display", "adapter-old-render"};
     WidgetGpuAdapterDataSnapshot missing;
     missing.id = "missing"; missing.name = idle.name; missing.usagePercent = 99;
     missing.dedicatedUsageAvailable = true; missing.dedicatedUsedBytes = 0;
@@ -54,12 +55,16 @@ void TestGpuLuaDetails()
     const int result = luaL_dostring(state, R"lua(
         local count = 0
         for _ in pairs(legacy[1]) do count = count + 1 end
-        assert(count == 7 and legacy[1].usageAvailable == nil and legacy[1].engines == nil,
+        assert(count == 7 and legacy[1].usageAvailable == nil and legacy[1].engines == nil and legacy[1].aliasIds == nil,
             "old subscribers retain exactly their existing adapter fields")
         assert(legacy[1].sharedUsedBytes == 9007199254740993 and math.type(legacy[1].sharedUsedBytes) == "integer",
             "64-bit memory counters must not round through a floating point value")
         assert(details[1].id == "idle" and details[2].id == "missing" and details[1].name == details[2].name,
             "same-name adapters must retain distinct identities")
+        assert(#details[1].aliasIds == 2 and details[1].aliasIds[1] == "adapter-old-display" and
+            details[1].aliasIds[2] == "adapter-old-render" and #details[2].aliasIds == 0 and
+            warming[1].aliasIds[1] == "adapter-old-display",
+            "detailed subscriptions expose proven opaque aliases even during warm-up; no alias is invented for another card")
         assert(details[1].usageAvailable == true and details[1].usagePercent == 0 and
             details[2].usageAvailable == false and details[2].usagePercent == 99,
             "valid idle and invalid stale counters must remain distinguishable")

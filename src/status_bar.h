@@ -86,6 +86,8 @@ public:
     bool DropTrayIcon(std::string_view key, POINT screen);
     bool PreviewTrayDrop(std::string_view key, POINT screen);
     void SetTrayDragFeedback(TrayDragFeedback feedback);
+    // Actual panel visibility, not the last click; monitor-local and UI-thread only.
+    void SetTrayExpanded(HMONITOR monitor, bool expanded);
     std::optional<RECT> MergedDockArea(HMONITOR monitor) const;
     std::optional<RECT> MergedStripBounds(HMONITOR monitor) const;
     void SetDockChanged(std::function<void(bool geometry)> changed);

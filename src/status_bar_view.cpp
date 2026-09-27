@@ -140,6 +140,9 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
                     items.push_back({icon.tip, StatusBarAction::Tray, {}, std::move(icon), "tray", {}, {}, false});
         }
         add("tray", L"", StatusBarAction::Tray, kTray);
+        // The closed chevron points into the desktop. Once open it points
+        // back to its bar, independently for every monitor.
+        items.back().flipGlyph = (s.position == DockPosition::Bottom) != snapshot.trayExpanded;
     }
     const auto audio = snapshot.audio;
     const auto power = snapshot.power;
@@ -172,7 +175,8 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
         if (a.icon) return a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
             a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
         return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
-            a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel;
+            a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel &&
+            a.flipGlyph == b.flipGlyph;
     });
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
@@ -351,7 +355,16 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 {
                     auto iconRect = rect;
                     if (!item.text.empty()) { iconRect.right = iconRect.left + 28.f * scale; textRect.left += 22.f * scale; }
+                    D2D1_MATRIX_3X2_F originalTransform{};
+                    if (item.flipGlyph)
+                    {
+                        context->GetTransform(&originalTransform);
+                        context->SetTransform(D2D1::Matrix3x2F::Rotation(180.f,
+                            D2D1::Point2F((iconRect.left + iconRect.right) / 2,
+                                (iconRect.top + iconRect.bottom) / 2)) * originalTransform);
+                    }
                     context->DrawText(item.glyph.c_str(), static_cast<UINT32>(item.glyph.size()), iconFormat.Get(), iconRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    if (item.flipGlyph) context->SetTransform(originalTransform);
                 }
                 if (!item.text.empty())
                 {

@@ -2,6 +2,7 @@
 #include "widget_gpu_usage.h"
 #include "widget_gpu_presentation.h"
 #include "widget_gpu_counter_buffer.h"
+#include "widget_gpu_identity.h"
 #include "widget_storage_usage.h"
 #include "system_power_status.h"
 
@@ -70,6 +71,66 @@ void TestPowerStatusTruth()
         Check(!value.onAC && value.charging == true && !value.saver,
             "unknown AC/saver bytes must not override a known charging flag");
     }
+}
+
+void TestGpuPhysicalIdentity()
+{
+    using namespace snowdesktop::widget_runtime;
+    const auto entry = [](std::uint64_t luid, std::wstring key, bool render, bool indirect) {
+        WidgetGpuTopologyEntry result;
+        result.adapter.luid = luid; result.adapter.id = WidgetGpuAdapterId(luid);
+        result.adapter.name = "Same GPU model"; result.adapter.dedicatedMemoryBytes = 12000;
+        result.identity = {std::move(key), true, render, indirect};
+        return result;
+    };
+    // OS-query boundary fixture from the reported machine: three DXGI LUIDs
+    // have the same complete hardware PnP key, two are indirect display-only.
+    // Resolve is the production topology path, before PDH and Lua serialization.
+    auto render = entry(91543, L"pci/model/physical-a/device parameters", true, false);
+    auto aliasA = entry(134772, render.identity.physicalKey, false, true);
+    auto aliasB = entry(133730, render.identity.physicalKey, false, true);
+    auto twin = entry(97207, L"pci/model/physical-b/device parameters", true, false);
+    WidgetGpuIdentityInventory inventory;
+    auto adapters = inventory.Resolve({aliasA, twin, aliasB, render});
+    Check(adapters.size() == 2 && adapters[0].id == "adapter-91543" && adapters[1].id == "adapter-97207" &&
+        adapters[0].aliasIds == std::vector<std::string>{"adapter-133730", "adapter-134772"} && adapters[1].aliasIds.empty(),
+        "proven physical aliases collapse while a second real same-model GPU remains distinct and selectable");
+    Check(adapters[0].dedicatedMemoryBytes == 12000 && !adapters[0].usageAvailable,
+        "canonical capacity is not multiplied by logical alias count and unknown usage does not become idle");
+    aliasA.adapter.usageAvailable = true; aliasA.adapter.usagePercent = 90;
+    const auto reordered = inventory.Resolve({render, aliasB, twin, aliasA});
+    Check(reordered.size() == 2 && reordered[0].id == "adapter-91543" && !reordered[0].usageAvailable &&
+        reordered[0].aliasIds == adapters[0].aliasIds,
+        "enumeration order and a valid alias counter never replace the render-capable representative");
+
+    WidgetGpuMemoryAccumulator dedicated, shared;
+    dedicated.AddSample(L"luid_0x0_0x16597_phys_0", 100);
+    dedicated.AddSample(L"luid_0x0_0x20e74_phys_0", 900);
+    shared.AddSample(L"luid_0x0_0x16597_phys_0", 20);
+    Check(ApplyWidgetGpuMemory(adapters, dedicated, shared) && adapters[0].dedicatedUsedBytes == 100 &&
+        adapters[0].sharedUsedBytes == 20 && !adapters[1].dedicatedUsageAvailable,
+        "PDH remains owned by the canonical LUID without summing aliases or borrowing values for a real twin");
+
+    const auto refreshed = inventory.Resolve({twin, render});
+    Check(refreshed.size() == 2 && refreshed[1].aliasIds == reordered[0].aliasIds,
+        "known aliases remain migratable when their logical DXGI records disappear during the sampler lifetime");
+    auto replacement = entry(200000, render.identity.physicalKey, true, false);
+    const auto replaced = inventory.Resolve({replacement, twin});
+    Check(replaced[0].id == "adapter-200000" && replaced[0].aliasIds ==
+        std::vector<std::string>{"adapter-133730", "adapter-134772", "adapter-91543"},
+        "a verified same-physical replacement exposes the previous canonical ID as an alias");
+
+    auto unknown = aliasA; unknown.identity.physicalKey.clear();
+    auto linked = aliasB; linked.identity.physicalKey.clear();
+    // Failed PnP/count queries and multi-physical adapters enter Resolve with
+    // no key; matching names/capacity/vendor must never substitute identity.
+    const auto uncertain = inventory.Resolve({render, unknown, linked, twin});
+    Check(uncertain.size() == 4 && uncertain[0].aliasIds == std::vector<std::string>{"adapter-200000"},
+        "unknown or linked physical mappings remain separate and currently independent IDs cannot also be aliases");
+    WidgetGpuIdentityInventory fresh;
+    const auto reset = fresh.Resolve({render});
+    Check(reset.size() == 1 && reset[0].aliasIds.empty(),
+        "a fresh sampling session must not invent migration evidence from an earlier session");
 }
 
 void TestGpuEngineUsageAggregation()
@@ -942,6 +1003,7 @@ int main()
     TestSystemControls();
     TestNetworkInterfaceTrafficDeltas();
     TestPhysicalDiskBusyTime();
+    TestGpuPhysicalIdentity();
     TestGpuEngineUsageAggregation();
     TestPowerStatusTruth();
     TestGpuCounterValidityAndReuse();
