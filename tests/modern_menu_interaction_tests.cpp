@@ -4,6 +4,7 @@
 #include "menu_label.h"
 #include "desktop_input_activation.h"
 #include "status_bar_interaction.h"
+#include "floating_dock_rules.h"
 
 #include <windows.h>
 
@@ -921,11 +922,24 @@ int wmain()
     options.eventPump.scheduledWorkHandle = zOrderRefresh;
     std::vector<std::wstring> zOrderDiagnostics;
     bool observedActiveRootWindow = false;
+    bool ownedMenuRetainedDock = false;
+    bool ownedMenuRetainedOtherDock = false;
     options.eventPump.traceDiagnostic =
         [&](const std::wstring& message) {
             zOrderDiagnostics.push_back(message);
             observedActiveRootWindow = observedActiveRootWindow ||
                 snowdesktop::modern_menu::ActiveRootWindow() != nullptr;
+            const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+            if (root)
+            {
+                namespace dock = snowdesktop::floating_dock_rules;
+                ownedMenuRetainedDock = ownedMenuRetainedDock ||
+                    dock::ResolvePassiveDragRevealUpdate(true, false, true, false,
+                        dock::IsMenuOwnedByDock(root, zOrderOwner), true, true) ==
+                            dock::PassiveDragRevealAction::CancelLeave;
+                ownedMenuRetainedOtherDock = ownedMenuRetainedOtherDock ||
+                    dock::IsMenuOwnedByDock(root, owner);
+            }
         };
     options.eventPump.dispatchScheduledWork = [&]() {
         SetWindowPos(
@@ -961,6 +975,12 @@ int wmain()
     Expect(observedActiveRootWindow &&
             snowdesktop::modern_menu::ActiveRootWindow() == nullptr,
         "the active root menu diagnostic is scoped to the menu session");
+    Expect(ownedMenuRetainedDock && !ownedMenuRetainedOtherDock &&
+        snowdesktop::floating_dock_rules::ResolvePassiveDragRevealUpdate(true, false, true, false,
+            snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
+                snowdesktop::modern_menu::ActiveRootWindow(), zOrderOwner), true, true) ==
+                    snowdesktop::floating_dock_rules::PassiveDragRevealAction::Hide,
+        "a real object menu retains only its source Dock past the leave deadline and releases that hold on exit");
     Expect(hasZOrderDiagnostic(L"stage=session-start") &&
             hasZOrderDiagnostic(L"stage=session-end"),
         "Z-order diagnostics record the menu session boundaries");

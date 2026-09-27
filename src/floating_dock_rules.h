@@ -117,6 +117,22 @@ inline bool ShouldPassivelyRevealDockForDragAtEdge(
         (internalDragActive || oleDragActive);
 }
 
+inline bool IsPointInMergedDockInteraction(
+    POINT point, const RECT& dockInteraction, const RECT& strip)
+{
+    // Keep the real magnification envelope and the strip as separate targets:
+    // their bounding rectangle would also retain unrelated desktop corners.
+    return PtInRect(&dockInteraction, point) || PtInRect(&strip, point);
+}
+
+inline bool IsMenuOwnedByDock(HWND menuRoot, HWND dockWindow)
+{
+    // Both modern menus and the native Shell tracker use the actual source
+    // HWND as their native owner. A menu on another monitor grants no hold.
+    return menuRoot && dockWindow && IsWindow(menuRoot) && IsWindow(dockWindow) &&
+        GetWindow(menuRoot, GW_OWNER) == dockWindow;
+}
+
 enum class PassiveDragRevealAction
 {
     None,

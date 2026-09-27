@@ -271,20 +271,18 @@ void DesktopApp::HandleFloatingPopupExternalPointerDown(
     const bool dragActive =
         dragSession_.IsActive() ||
         dragDropController_.IsExternalDragActive();
-    // The merged bar is a separate HWND and never enters Dock pointer-down
-    // handling. Its side controls/blank area are outside this Dock popup even
-    // though they belong to our process. Keep Dock's own HWND internal so an
-    // existing folder button still performs its normal toggle on release.
-    const bool mergedBarOutsideCollection = !pointOnHostedPopup && statusBar_ &&
-        collectionPopupDockHost_ && collectionPopupDockHost_->active &&
-        collectionPopupDockHost_->container &&
-        collectionPopupDockHost_->container->IsMergedWithStatusBar() &&
-        targetWindow == statusBar_->InteractionWindow(collectionPopupDockHost_->monitor);
+    // Every status bar is a separate HWND and never enters Dock pointer-down
+    // handling. Use the clicked monitor, not the popup's source monitor: both
+    // merged side controls and independent bars are outside this collection.
+    // Keep Dock's own HWND internal so its folder button toggles on release.
+    const HMONITOR hitMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONULL);
+    const bool statusBarOutsideCollection = !pointOnHostedPopup && targetWindow &&
+        statusBar_ && hitMonitor && targetWindow == statusBar_->InteractionWindow(hitMonitor);
     const bool dismissCollection =
         snowdesktop::floating_popup_rules::
             ShouldDismissForExternalPointerDown(
                 IsCollectionPopupHostedByFloatingWindow(),
-                targetBelongsToInternalSurface && !mergedBarOutsideCollection,
+                targetBelongsToInternalSurface && !statusBarOutsideCollection,
                 dragActive);
     const bool dismissLuaPanel =
         snowdesktop::floating_popup_rules::

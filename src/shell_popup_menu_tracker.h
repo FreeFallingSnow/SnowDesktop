@@ -40,10 +40,19 @@ inline LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wp, LPARAM 
 // leaving an empty submenu. The caller supplies its nested-loop animation pump.
 inline UINT Track(HMENU menu, UINT flags, POINT screenPoint, HWND forwardingOwner,
     bool topmost, std::atomic<HWND>& activeOwner,
-    const std::atomic<bool>& cancelRequested)
+    const std::atomic<bool>& cancelRequested, HWND nativeOwner = nullptr)
 {
     if (!menu || !IsWindow(forwardingOwner) ||
         GetWindowThreadProcessId(forwardingOwner, nullptr) != GetCurrentThreadId())
+        return 0;
+    // Ownership is only for the invoking Dock's lifetime/Z-order. Shell menu
+    // initialization still goes to forwardingOwner on this same STA. Never
+    // attach a foreign thread's input queue through an owner relationship.
+    if (nativeOwner && (!IsWindow(nativeOwner) ||
+        GetWindowThreadProcessId(nativeOwner, nullptr) != GetCurrentThreadId() ||
+        (GetWindowLongPtrW(nativeOwner, GWL_STYLE) & WS_CHILD) != 0 ||
+        GetAncestor(nativeOwner, GA_ROOT) != nativeOwner ||
+        GetParent(nativeOwner) == HWND_MESSAGE))
         return 0;
 
     const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -58,11 +67,11 @@ inline UINT Track(HMENU menu, UINT flags, POINT screenPoint, HWND forwardingOwne
     detail::WindowContext context{ forwardingOwner };
     HWND tracker = CreateWindowExW(WS_EX_TOOLWINDOW | (topmost ? WS_EX_TOPMOST : 0),
         className, L"SnowDesktop Shell Menu Tracker", WS_POPUP,
-        -32000, -32000, 1, 1, nullptr, nullptr, instance, &context);
+        -32000, -32000, 1, 1, nativeOwner, nullptr, instance, &context);
     if (!tracker)
         return 0;
 
-    activeOwner.store(tracker, std::memory_order_release);
+    const HWND previousOwner = activeOwner.exchange(tracker, std::memory_order_acq_rel);
     ShowWindow(tracker, SW_SHOWNA);
     SetForegroundWindow(tracker);
     UINT command = 0;
@@ -71,7 +80,12 @@ inline UINT Track(HMENU menu, UINT flags, POINT screenPoint, HWND forwardingOwne
         command = TrackPopupMenuEx(menu, flags,
             screenPoint.x, screenPoint.y, tracker, nullptr);
     }
-    activeOwner.store(nullptr, std::memory_order_release);
+    // A nested tracker restores its still-live outer session. If shutdown has
+    // already reset/replaced the slot, do not resurrect the old owner.
+    HWND expected = tracker;
+    activeOwner.compare_exchange_strong(expected,
+        previousOwner && IsWindow(previousOwner) ? previousOwner : nullptr,
+        std::memory_order_acq_rel);
     DestroyWindow(tracker);
     PostMessageW(forwardingOwner, WM_NULL, 0, 0);
     return command;

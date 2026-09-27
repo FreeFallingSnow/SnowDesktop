@@ -4856,6 +4856,36 @@ int main(int argc, char** argv)
 
     using PassiveDragAction =
         floatingDock::PassiveDragRevealAction;
+    for (const auto position : { DockPosition::Top, DockPosition::Bottom })
+    {
+        const RECT strip = position == DockPosition::Top
+            ? RECT{ -1920, -1080, 0, -1008 } : RECT{ -1920, -72, 0, 0 };
+        const RECT baseDock{ -1280, strip.top, -640, strip.bottom };
+        const RECT icon{ -996, strip.top + 4, -932, strip.top + 68 };
+        const RECT raisedIcon = snowdesktop::dock_magnification::MagnifyRect(
+            icon, position, 2.0f, 64);
+        const RECT interaction = snowdesktop::dock_magnification::ExpandInteractionBounds(
+            baseDock, position, 64, 2.0f);
+        const POINT raisedPoint{ (raisedIcon.left + raisedIcon.right) / 2,
+            position == DockPosition::Top ? raisedIcon.bottom - 1 : raisedIcon.top + 1 };
+        Check(PtInRect(&interaction, raisedPoint) && !PtInRect(&strip, raisedPoint),
+            "the real top/bottom magnification fixture reaches outside the merged strip");
+        const bool retained = floatingDock::IsPointInMergedDockInteraction(
+            raisedPoint, interaction, strip);
+        Check(floatingDock::ResolvePassiveDragRevealUpdate(
+                true, false, true, false, retained, true, true) == PassiveDragAction::CancelLeave,
+            "an expired passive leave must be cancelled while the pointer is on a raised merged Dock icon");
+        const POINT sideControl{ strip.left + 20, strip.top + 20 };
+        const POINT desktopCorner{ sideControl.x, raisedPoint.y };
+        Check(floatingDock::IsPointInMergedDockInteraction(sideControl, interaction, strip) &&
+                !floatingDock::IsPointInMergedDockInteraction(desktopCorner, interaction, strip),
+            "the merged retention union includes side controls without capturing the empty corner beside raised icons");
+        Check(floatingDock::ResolvePassiveDragRevealUpdate(
+                true, false, true, false,
+                floatingDock::IsPointInMergedDockInteraction(desktopCorner, interaction, strip),
+                true, true) == PassiveDragAction::Hide,
+            "leaving both actual interaction regions still releases the merged Dock after the existing delay");
+    }
     Check(floatingDock::ResolvePassiveDragRevealUpdate(
               true, false, false, true,
               false, false, false) ==

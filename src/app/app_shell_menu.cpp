@@ -33,6 +33,20 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     if (!menu || !owner || !IsWindow(owner))
         return 0;
 
+    HWND dockOwner = nullptr;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active || !host->container || !host->hwnd ||
+            !IsWindow(host->hwnd) || !IsWindowVisible(host->hwnd) ||
+            !IsDockContainerInteractionVisible(host->container)) continue;
+        RECT inputBounds = host->container->GetInteractiveBounds();
+        OffsetRect(&inputBounds, virtualLeft_, virtualTop_);
+        const bool mergedBarSource = host->container->IsMergedWithStatusBar() &&
+            statusBar_ && owner == statusBar_->InteractionWindow(host->monitor);
+        if (owner == host->hwnd || mergedBarSource || PtInRect(&inputBounds, screenPoint))
+        { dockOwner = host->hwnd; break; }
+    }
+
     // The native menu loop must share the Shell context menu's STA. Keep
     // widget and composition deadlines running through the existing modal
     // animation pump instead of moving TrackPopupMenuEx to another thread.
@@ -48,7 +62,7 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     const UINT command = snowdesktop::shell_popup_menu_tracker::Track(
         menu, flags, screenPoint, owner,
         ShouldKeepFloatingPopupTopmostForShellMenu(),
-        shellPopupTrackerOwnerHwnd_, shellPopupTrackerCancelRequested_);
+        shellPopupTrackerOwnerHwnd_, shellPopupTrackerCancelRequested_, dockOwner);
     shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
     return command;
 }

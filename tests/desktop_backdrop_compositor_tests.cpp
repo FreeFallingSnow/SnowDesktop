@@ -10,6 +10,7 @@
 
 #include <array>
 #include <iostream>
+#include <thread>
 
 namespace
 {
@@ -67,6 +68,115 @@ bool WaitForCommit(HWND window, WPARAM token)
             static_cast<DWORD>(deadline - now),
             QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }
+}
+
+int CheckHiddenPopupKeyboardFocus()
+{
+    int failures = 0;
+    const auto check = [&](bool value, const char* message) {
+        if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
+        return value;
+    };
+    const std::wstring desktopName = L"SnowDesktop.BackdropFocus." +
+        std::to_wstring(GetCurrentProcessId());
+    const HDESK desktop = CreateDesktopW(desktopName.c_str(), nullptr, nullptr,
+        0, GENERIC_ALL, nullptr);
+    if (!check(desktop != nullptr, "create a private desktop for popup focus checks"))
+        return failures;
+
+    std::thread([&] {
+        // Never SwitchDesktop or inject input. Showing/focusing these windows
+        // cannot interact with the user's input desktop or desktop host.
+        if (!check(SetThreadDesktop(desktop) != FALSE,
+                "attach the focus test thread to its private desktop")) return;
+        struct Apartment
+        {
+            HRESULT result = RoInitialize(RO_INIT_SINGLETHREADED);
+            ~Apartment() { if (SUCCEEDED(result)) RoUninitialize(); }
+        };
+        // Construct before the production thread-local WinComp context, so
+        // that context is released before this apartment at thread exit.
+        static thread_local Apartment apartment;
+        if (!check(SUCCEEDED(apartment.result),
+                "initialize the private focus thread's Windows Runtime apartment")) return;
+        struct Window
+        {
+            HWND handle = nullptr;
+            ~Window() { if (handle) DestroyWindow(handle); }
+        };
+        Window outside{CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"outside",
+            WS_POPUP, 480, 80, 240, 160, nullptr, nullptr,
+            GetModuleHandleW(nullptr), nullptr)};
+        Window content{CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP,
+            L"STATIC", L"popup", WS_POPUP, 80, 80, 320, 240, nullptr, nullptr,
+            GetModuleHandleW(nullptr), nullptr)};
+        if (!check(content.handle && outside.handle,
+                "create only test-owned popup focus windows")) return;
+        DesktopBackdropCompositor glass;
+        if (!check(glass.InitializePopup(content.handle, true, false),
+                "initialize the real popup compositor for focus regression")) return;
+        glass.BeginFrame(true);
+        if (!check(glass.AddPanel({0, 0, 320, 240}, 12, 24, 1),
+                "register the focus fixture's real backdrop panel")) return;
+        glass.EndFrame();
+        const HWND helper = GetWindow(content.handle, GW_HWNDNEXT);
+        if (!check(glass.IsBackdropWindow(helper),
+                "focus checks address only this compositor's helper")) return;
+
+        enum class Case { Content, Child, DestroyedChild, Outside };
+        for (const auto scenario : {Case::Content, Case::Child,
+                 Case::DestroyedChild, Case::Outside})
+        {
+            Window edit{CreateWindowExW(0, L"EDIT", L"draft",
+                WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 12, 12, 200, 30,
+                content.handle, nullptr, GetModuleHandleW(nullptr), nullptr)};
+            if (!check(edit.handle != nullptr, "create a real native EDIT child")) return;
+            ShowWindow(outside.handle, SW_SHOWNOACTIVATE);
+            glass.ShowPopupWindowPair(content.handle);
+            SetActiveWindow(content.handle);
+            const HWND initialFocus = scenario == Case::Content ? content.handle : edit.handle;
+            SetFocus(initialFocus);
+            if (!check(GetActiveWindow() == content.handle && GetFocus() == initialFocus,
+                    "the popup must own keyboard focus before testing hide")) return;
+            if (scenario == Case::DestroyedChild)
+            {
+                // SystemPanel clears native inputs before hiding its window.
+                DestroyWindow(edit.handle);
+                edit.handle = nullptr;
+                if (!check(GetFocus() == content.handle,
+                        "destroying the focused EDIT transfers focus to its popup")) return;
+            }
+            if (scenario == Case::Outside)
+            {
+                SetActiveWindow(outside.handle);
+                SetFocus(outside.handle);
+                if (!check(GetActiveWindow() == outside.handle && GetFocus() == outside.handle,
+                        "another test window owns active/focus before popup hide")) return;
+            }
+            glass.HidePopupWindowPair(content.handle);
+            check(!IsWindowVisible(content.handle) && !IsWindowVisible(helper),
+                "the production pair hide removes content and backdrop together");
+            if (scenario == Case::Outside)
+            {
+                check(GetFocus() == outside.handle && GetActiveWindow() == outside.handle,
+                    "hiding a popup preserves another window's keyboard focus and activation");
+                glass.HidePopupWindowPair(content.handle);
+                check(GetFocus() == outside.handle && GetActiveWindow() == outside.handle,
+                    "hiding an already-hidden popup still preserves another focus owner");
+            }
+            else
+            {
+                check(GetFocus() == nullptr,
+                    "hidden popup and native input must not retain keyboard focus");
+                glass.HidePopupWindowPair(content.handle);
+                check(GetFocus() == nullptr,
+                    "repeating pair hide must not restore hidden keyboard focus");
+            }
+        }
+    }).join();
+    // The thread and its WinComp context have ended before releasing desktop.
+    check(CloseDesktop(desktop) != FALSE, "release the private popup focus desktop");
+    return failures;
 }
 
 int CheckPopupRoundedEdgeCoverage()
@@ -201,6 +311,7 @@ int RunDesktopBackdropCompositorTests()
         return failures;
 
     failures += CheckPopupRoundedEdgeCoverage();
+    failures += CheckHiddenPopupKeyboardFocus();
 
     {
         // Status-bar control and media cards move without another AddPanel /

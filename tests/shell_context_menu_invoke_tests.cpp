@@ -8,6 +8,7 @@
 #include "menu_label.h"
 #include "shell_new_item_capture.h"
 #include "shell_popup_menu_tracker.h"
+#include "floating_dock_rules.h"
 
 #include <cstdlib>
 #include <chrono>
@@ -19,6 +20,7 @@
 #include <iostream>
 #include <string>
 #include <stdexcept>
+#include <thread>
 #include <wrl/client.h>
 
 namespace
@@ -124,7 +126,7 @@ void TestRealNewFolderCapture()
         "released New handler retires its completed capture");
 }
 
-void TestNativeCascadeOwnerThread()
+void TestNativeCascadeOnPrivateDesktop()
 {
     // WinRAR's deferred cascade needs the menu loop on the context menu's STA.
     // Keep the real production tracker/window/message loop; replace only the
@@ -135,13 +137,19 @@ void TestNativeCascadeOwnerThread()
         std::atomic<bool> cancelled{ false };
         HMENU menu = CreatePopupMenu();
         HWND window = nullptr;
+        HWND dockOwner = nullptr;
+        HWND observedOwner = nullptr;
         bool initializedOnOwnerThread = false;
         bool displayed = false;
+        bool sourceRetained = false;
+        bool forwardingOwnerRetained = false;
+        bool resetDuringClose = false;
         unsigned initializationCount = 0;
         ULONGLONG displayDeadline = 0;
         ~LazyCascade()
         {
             if (window) DestroyWindow(window);
+            if (dockOwner) DestroyWindow(dockOwner);
             if (menu) DestroyMenu(menu);
         }
         static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wp, LPARAM lp)
@@ -158,6 +166,14 @@ void TestNativeCascadeOwnerThread()
                 DeleteMenu(self->menu, 0, MF_BYPOSITION);
                 self->initializedOnOwnerThread =
                     GetWindowThreadProcessId(self->tracker.load(), nullptr) == GetCurrentThreadId();
+                const HWND root = self->tracker.load();
+                self->observedOwner = GetWindow(root, GW_OWNER);
+                namespace dock = snowdesktop::floating_dock_rules;
+                self->sourceRetained = dock::ResolvePassiveDragRevealUpdate(
+                    true, false, true, false,
+                    dock::IsMenuOwnedByDock(root, self->dockOwner), true, true) ==
+                        dock::PassiveDragRevealAction::CancelLeave;
+                self->forwardingOwnerRetained = dock::IsMenuOwnedByDock(root, self->window);
                 if (self->initializedOnOwnerThread)
                 {
                     AppendMenuW(self->menu, MF_STRING, 71, L"Deferred archive command");
@@ -177,7 +193,9 @@ void TestNativeCascadeOwnerThread()
                     return 0;
                 // Cancel on the tracker's thread, including in the negative
                 // control that restores the old cross-thread implementation.
-                PostMessageW(self->tracker.load(), WM_CANCELMODE, 0, 0);
+                const HWND root = self->tracker.load();
+                if (self->resetDuringClose) self->tracker.store(nullptr);
+                PostMessageW(root, WM_CANCELMODE, 0, 0);
                 KillTimer(window, 1);
                 return 0;
             }
@@ -195,22 +213,117 @@ void TestNativeCascadeOwnerThread()
     cascade.window = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, L"Cascade owner test",
         WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, &cascade);
     Expect(cascade.window != nullptr, "create isolated cascade owner");
+    cascade.dockOwner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Source Dock",
+        WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, nullptr);
+    Expect(cascade.dockOwner != nullptr, "create a distinct source Dock owner");
+    ShowWindow(cascade.dockOwner, SW_SHOWNOACTIVATE);
     cascade.displayDeadline = GetTickCount64() + 2000;
     Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the native popup lifetime");
     const auto selected = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
         TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
-        cascade.tracker, cascade.cancelled);
+        cascade.tracker, cascade.cancelled, cascade.dockOwner);
     Expect(cascade.initializedOnOwnerThread && GetMenuItemCount(cascade.menu) == 2,
         "deferred cascade initializes on the menu-tracking STA and keeps its commands");
     Expect(cascade.displayed, "initialized deferred commands have visible native menu bounds");
+    Expect(cascade.observedOwner == cascade.dockOwner && cascade.sourceRetained &&
+        !cascade.forwardingOwnerRetained,
+        "the real native menu retains only its source Dock while forwarding initialization to the original STA owner");
     Expect(selected == 0 && cascade.tracker.load() == nullptr,
         "cancellation invokes no command and releases the transient owner");
+    Expect(!snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
+        cascade.tracker.load(), cascade.dockOwner),
+        "the exited native menu releases its source Dock hold");
+
+    // An unrelated native menu keeps the existing ownerless tracker behavior.
+    // Simulate shutdown resetting the slot before Track returns; cleanup must
+    // not restore a still-valid earlier session over that explicit reset.
+    while (GetMenuItemCount(cascade.menu) > 0) DeleteMenu(cascade.menu, 0, MF_BYPOSITION);
+    AppendMenuW(cascade.menu, MF_STRING, 70, L"");
+    cascade.displayed = false;
+    cascade.resetDuringClose = true;
+    cascade.tracker.store(cascade.dockOwner);
+    cascade.displayDeadline = GetTickCount64() + 2000;
+    Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the ownerless native popup lifetime");
+    Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
+        cascade.tracker, cascade.cancelled) == 0 && cascade.displayed &&
+        cascade.observedOwner == nullptr && !cascade.sourceRetained &&
+        cascade.tracker.load() == nullptr,
+        "a default native menu grants no Dock hold and an explicit session reset is not resurrected on exit");
     cascade.cancelled.store(true);
     const auto before = cascade.initializationCount;
     Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
         TPM_RETURNCMD, {100, 100}, cascade.window, false, cascade.tracker, cascade.cancelled) == 0 &&
         cascade.initializationCount == before && cascade.tracker.load() == nullptr,
         "early cancellation never opens or initializes the native menu");
+
+    cascade.tracker.store(cascade.dockOwner);
+    Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+        TPM_RETURNCMD, {100, 100}, cascade.window, false,
+        cascade.tracker, cascade.cancelled, cascade.dockOwner) == 0 &&
+        cascade.tracker.load() == cascade.dockOwner,
+        "a cancelled inner tracker restores its still-live outer session slot");
+    cascade.tracker.store(nullptr);
+    HWND child = CreateWindowExW(0, L"STATIC", L"Child is not an owner", WS_CHILD,
+        0, 0, 1, 1, cascade.dockOwner, nullptr, cls.hInstance, nullptr);
+    HWND messageOnly = CreateWindowExW(0, L"STATIC", L"Message-only is not an owner", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, cls.hInstance, nullptr);
+    Expect(child && messageOnly, "create invalid native owner fixtures");
+    cascade.cancelled.store(false);
+    for (const HWND invalid : { child, messageOnly })
+        Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+            TPM_RETURNCMD, {100, 100}, cascade.window, false,
+            cascade.tracker, cascade.cancelled, invalid) == 0 &&
+            cascade.initializationCount == before && cascade.tracker.load() == nullptr,
+            "child/message-only HWNDs cannot acquire native menu ownership");
+    DestroyWindow(child);
+    DestroyWindow(messageOnly);
+
+    std::promise<HWND> foreignReady;
+    std::promise<void> foreignRelease;
+    auto foreignReleased = foreignRelease.get_future();
+    const HDESK desktop = GetThreadDesktop(GetCurrentThreadId());
+    std::thread foreign([&] {
+        HWND window = nullptr;
+        if (SetThreadDesktop(desktop))
+            window = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Other thread Dock",
+                WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, nullptr);
+        foreignReady.set_value(window);
+        foreignReleased.wait();
+        if (window) DestroyWindow(window);
+    });
+    const HWND foreignOwner = foreignReady.get_future().get();
+    const bool rejectedForeign = foreignOwner && snowdesktop::shell_popup_menu_tracker::Track(
+        cascade.menu, TPM_RETURNCMD, {100, 100}, cascade.window, false,
+        cascade.tracker, cascade.cancelled, foreignOwner) == 0 &&
+        cascade.initializationCount == before && cascade.tracker.load() == nullptr;
+    foreignRelease.set_value();
+    foreign.join();
+    Expect(rejectedForeign, "a real top-level HWND on another thread cannot join the menu's input queue");
+}
+
+void TestNativeCascadeOwnerThread()
+{
+    const std::wstring name = L"SnowDesktop.ShellTrackerTests." + std::to_wstring(GetCurrentProcessId());
+    const HDESK desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+    Expect(desktop != nullptr, "create a private desktop for real native tracker menus");
+    std::exception_ptr failure;
+    std::thread task([&] {
+        try
+        {
+            Expect(SetThreadDesktop(desktop) != FALSE, "attach the tracker test thread to its private desktop");
+            Expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
+                "the private tracker thread preserves the Shell owner STA");
+            try { TestNativeCascadeOnPrivateDesktop(); }
+            catch (...) { CoUninitialize(); throw; }
+            CoUninitialize();
+        }
+        catch (...) { failure = std::current_exception(); }
+    });
+    task.join();
+    const bool closed = CloseDesktop(desktop) != FALSE;
+    if (failure) std::rethrow_exception(failure);
+    Expect(closed, "release the private desktop after the tracker thread exits");
 }
 
 void RunTests()

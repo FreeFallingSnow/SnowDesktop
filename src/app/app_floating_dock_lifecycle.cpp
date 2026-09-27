@@ -244,8 +244,9 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 virtualLeft_, virtualTop_);
         }
         const bool merged = host.container->IsMergedWithStatusBar();
+        RECT edgeScreenRect = dockScreenRect;
         if (merged && statusBar_)
-            if (const auto strip = statusBar_->MergedStripBounds(host.monitor)) dockScreenRect = *strip;
+            if (const auto strip = statusBar_->MergedStripBounds(host.monitor)) edgeScreenRect = *strip;
 
         UINT dpiX = 96;
         UINT dpiY = 96;
@@ -266,7 +267,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 IsPointInDockEdgeProjection(
                     cursorScreen,
                     monitorInfo.rcMonitor,
-                    dockScreenRect,
+                    edgeScreenRect,
                     dockSettings_.position,
                     edgeBand);
         const bool passiveDragRevealRequested =
@@ -283,7 +284,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 IsPointInDockEdgeCorridor(
                     cursorScreen,
                     monitorInfo.rcMonitor,
-                    dockScreenRect,
+                    edgeScreenRect,
                     dockSettings_.position);
 
         bool previewAssociated = false;
@@ -304,11 +305,17 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
         const bool associatedSurfaceActive =
             collectionPopupDockHost_ == &host ||
             quickNavigationDockHost_ == &host ||
-            previewAssociated;
+            previewAssociated ||
+            snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
+                snowdesktop::modern_menu::ActiveRootWindow(), host.hwnd) ||
+            snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
+                shellPopupTrackerOwnerHwnd_.load(std::memory_order_acquire), host.hwnd);
         const bool keepPassiveDragReveal =
             associatedSurfaceActive ||
             (merged && ((statusBar_ && statusBar_->HasInteractionSession(host.monitor)) ||
-                pointerInEdgeCorridor || PtInRect(&dockScreenRect, cursorScreen))) ||
+                pointerInEdgeCorridor ||
+                snowdesktop::floating_dock_rules::IsPointInMergedDockInteraction(
+                    cursorScreen, dockScreenRect, edgeScreenRect))) ||
             (dragRevealActive &&
                 pointerInEdgeCorridor);
         const bool leaveDelayElapsed =
