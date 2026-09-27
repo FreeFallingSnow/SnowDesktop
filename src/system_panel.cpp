@@ -1,6 +1,5 @@
 #include "system_panel.h"
 #include "system_panel_model.h"
-#include "system_control_prompt.h"
 #include "system_calendar_editor.h"
 #include "modern_menu.h"
 #include "popup_round_geometry.h"
@@ -27,10 +26,10 @@ namespace wr=widget_runtime;
 namespace
 {
 constexpr UINT kOpenPending=WM_APP+211;
+constexpr UINT kControlInputChanged=WM_APP+212;
 constexpr UINT_PTR kTrayMenuTimer=2;
 bool HighContrast(){HIGHCONTRASTW h{sizeof(h)};SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(h),&h,0);return(h.dwFlags&HCF_HIGHCONTRASTON)!=0;}
 D2D1_COLOR_F SystemColor(int index){const auto c=GetSysColor(index);return D2D1::ColorF(GetRValue(c)/255.f,GetGValue(c)/255.f,GetBValue(c)/255.f);}
-using PromptState=SystemControlPromptState;
 struct PanelLifetime { bool alive=true; };
 std::string PanelUtf8(std::wstring_view value)
 {
@@ -43,7 +42,7 @@ std::string PanelUtf8(std::wstring_view value)
 }
 struct SystemPanel::Impl
 {
-    struct Request{StatusBarAction action;HWND owner;RECT anchor;PersonalizationSettings appearance;StatusBarSettings settings;std::shared_ptr<tray::Service> tray;std::shared_ptr<wr::WidgetSystemDataProvider> data;};
+    struct Request{StatusBarAction action;HWND owner;RECT anchor;PersonalizationSettings appearance;StatusBarSettings settings;std::shared_ptr<tray::Service> tray;std::shared_ptr<wr::WidgetSystemDataProvider> data;std::string confirmPower;};
     SettingsChanged changed;SystemCalendarActions calendar;std::function<bool(std::string_view,POINT)> dropOutside;Background background;
     TrayDragFeedback dragFeedback;std::function<void(HWND,RECT)> nativeControls;
     UiAnimationScheduler* scheduler=nullptr;UiScheduleToken animationToken=0;quick_navigation_animation_rules::State slide;
@@ -53,9 +52,9 @@ struct SystemPanel::Impl
     std::unique_ptr<SystemCalendarInputs> calendarInputs;
     bool calendarMenu=false;
     std::shared_ptr<SystemPanelModel> model;ui::Input input;std::string hovered;std::function<void()> afterClose;
-    std::shared_ptr<PromptState> promptState;
     std::shared_ptr<PanelLifetime> lifetime=std::make_shared<PanelLifetime>();
     bool paintDirty=true;
+    bool controlInputRefreshPending=false;
     bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
     bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;HWND retainedAbove=nullptr;
     std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;tray::MenuRetentionSession context;WPARAM closeGeneration=0;
@@ -66,9 +65,19 @@ struct SystemPanel::Impl
     {
         if(window&&target&&visual)return true;if(window){calendarInputs.reset();tooltip.Close();if(accessibility)accessibility->DetachWindow(window);DestroyWindow(window);window=nullptr;}if(!composition||!text)return false;WNDCLASSEXW cls{sizeof(cls)};cls.lpfnWndProc=Procedure;cls.hInstance=GetModuleHandleW(nullptr);cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.lpszClassName=L"SnowDesktop.NativeSystemPanel";cls.style=CS_DBLCLKS;RegisterClassExW(&cls);
         window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOREDIRECTIONBITMAP,cls.lpszClassName,L"",WS_POPUP|WS_CLIPCHILDREN,0,0,1,1,nullptr,nullptr,cls.hInstance,this);if(!window)return false;
-        calendarInputs=std::make_unique<SystemCalendarInputs>(window,[this,life=lifetime](const auto& id,const auto& value){
-            if(life->alive&&model&&!closing&&!modal){model->SetCalendarInput(id,value);paintDirty=true;if(accessibility)accessibility->RefreshEvents();}
-        },[this,life=lifetime](const auto& id,UINT key,bool shift,bool control){if(life->alive)CalendarKey(id,key,shift,control);});
+        calendarInputs=std::make_unique<SystemCalendarInputs>(window,[this,life=lifetime](const auto& id,std::wstring value){
+            struct Erase{std::wstring& value;bool secret;~Erase(){if(secret&&!value.empty())SecureZeroMemory(value.data(),value.size()*sizeof(wchar_t));}} erase{value,id.starts_with("control.password:")};
+            if(life->alive&&model&&!closing&&!modal)
+            {
+                const bool controlInput=model->SetControlInput(id,value);
+                if(controlInput)
+                {
+                    if(!controlInputRefreshPending&&PostMessageW(window,kControlInputChanged,0,0))controlInputRefreshPending=true;
+                }
+                else model->SetCalendarInput(id,std::move(value));
+                paintDirty=true;if(accessibility&&!controlInput)accessibility->RefreshEvents();
+            }
+        },[this,life=lifetime](const auto& id,UINT key,bool shift,bool control){if(life->alive){if(id.starts_with("control."))ControlKey(id,key,shift);else CalendarKey(id,key,shift,control);}});
         accessibility=std::make_unique<WidgetAccessibilityProviderHost>([this]{return Accessible();},[this](const auto&,const auto& id){if(!showing||closing||modal||slide.IsAnimating()||!model||!input.Focus(id))return false;if(model->Reveal(id))Arrange();if(!calendarInputs||!calendarInputs->Focus(id))SetFocus(window);Paint();if(accessibility)accessibility->RefreshEvents();return true;},[this](const auto& request){return AccessibleAction(request);});
         accessibility->AttachWindow(window);
         return SUCCEEDED(composition->CreateTargetForHwnd(window,FALSE,&target))&&SUCCEEDED(composition->CreateVisual(&visual))&&SUCCEEDED(target->SetRoot(visual.Get()));
@@ -108,6 +117,12 @@ struct SystemPanel::Impl
     {
         return SystemPanelPalette(current->appearance,HighContrast());
     }
+    std::vector<SystemCalendarInputField> InputFields() const
+    {
+        if(!model)return {};
+        auto fields=model->CalendarInputFields();auto controls=model->ControlInputFields();
+        for(auto& field:controls)fields.push_back(std::move(field));return fields;
+    }
     std::vector<LuaWidgetAccessibilitySnapshot> Accessible() const
     {
         if(!showing||closing||modal||slide.IsAnimating()||!model)return {};
@@ -127,7 +142,7 @@ struct SystemPanel::Impl
             if(!wr::CollectInteractionAccessibilityNodes(batch,model->View().width,model->View().height,focus,nodes,snapshot.error)){snapshot.nodes.clear();return {std::move(snapshot)};}
             for(auto& node:nodes)snapshot.nodes.push_back(std::move(node));
         }
-        const auto fields=model->CalendarInputFields();
+        const auto fields=InputFields();
         for(auto& node:snapshot.nodes)
         {
             node.key=input.Identity(node.key);node.bounds.x*=scale;node.bounds.y*=scale;node.bounds.width*=scale;node.bounds.height*=scale;
@@ -138,6 +153,9 @@ struct SystemPanel::Impl
                 node.patterns=wr::ViewAccessibilityPattern::Value;node.valueReadOnly=!field->enabled;
             }
         }
+        // Real ES_PASSWORD children provide their native IsPassword contract;
+        // never shadow them with a synthetic ordinary Value provider.
+        std::erase_if(snapshot.nodes,[](const auto& node){return node.key.starts_with("control.password:");});
         if(model->MaximumScroll()>0)
         {
             const auto clip=model->ScrollViewport();wr::ViewAccessibilityNode scroll;scroll.semanticId=scroll.key="panel.scroll";scroll.role="group";scroll.controlType="pane";scroll.name=snapshot.name;scroll.patterns=wr::ViewAccessibilityPattern::Scroll;
@@ -174,22 +192,8 @@ struct SystemPanel::Impl
         auto source=LiveSystemPanelSource(r.data);source.calendar=calendar;source.tray=[service=r.tray]{return service?service->Current():tray::Snapshot{};};
         source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
-        source.prompt=[this,life=lifetime](auto& request)
-        {
-            if(!life->alive||modal||!showing||closing)return false;
-            tooltip.Hide();modal=true;const auto activeModel=model;
-            const auto state=promptState=std::make_shared<PromptState>();
-            const auto wifi=current&&current->data?current->data->Controls()->Current("network.wifi"):std::nullopt;
-            const bool result=ConfirmSystemControl(window,request,state,current->appearance,{},wifi?&*wifi:nullptr);
-            if(!life->alive)return false;
-            promptState.reset();modal=false;
-            // A replacement is opened only after the dialog's nested loop has
-            // restored its owner, so it cannot steal focus back from the new UI.
-            if(!showing&&!destroying&&(pending||afterClose))PostMessageW(window,kOpenPending,++closeGeneration,0);
-            return result&&!state->cancelled&&showing&&!closing&&model==activeModel;
-        };
         tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};scrollbarDragging=false;paintDirty=true;
-        model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action);showing=true;closing=false;Arrange();Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);SetTimer(window,1,500,nullptr);
+        model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower);showing=true;closing=false;Arrange();Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);if(!r.confirmPower.empty())FocusControlPage(false);SetTimer(window,1,500,nullptr);
     }
     void Arrange()
     {
@@ -215,7 +219,7 @@ struct SystemPanel::Impl
             backdrop.SetVisible(showing);
         }
         else if(!Glass())backdrop.Reset();if(moved||shape)Pose();if(moved||shape||contentChanged)PublishGeometry();
-        if(calendarInputs){calendarInputs->Sync(model->CalendarInputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));calendarInputs->Pose(SlideOffset(),showing&&!closing&&!modal&&!slide.IsAnimating());}
+        if(calendarInputs){const bool hadInputFocus=calendarInputs->Contains(GetFocus());calendarInputs->Sync(InputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));calendarInputs->Pose(SlideOffset(),showing&&!closing&&!modal&&!slide.IsAnimating());if(hadInputFocus&&!GetFocus()&&showing&&!closing&&!modal)SetFocus(window);}
         if(!hovered.empty())Tip(scene.Find(hovered));
         if(accessibility&&(contentChanged||moved||shape))accessibility->RefreshEvents();
     }
@@ -259,6 +263,7 @@ struct SystemPanel::Impl
     }
     void Animate(bool opening)
     {
+        if(!opening&&model){model->CancelControlInput();if(calendarInputs)calendarInputs->Sync(model->CalendarInputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));}
         if(!opening){KillTimer(window,kTrayMenuTimer);EndDragFeedback();dropIndicator.reset();if(GetCapture()==window)ReleaseCapture();}
         if(!opening&&modal){if(model)model->Close();CancelPrompt();}
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;
@@ -267,7 +272,7 @@ struct SystemPanel::Impl
         if(opening){slide.ResetHidden();slide.Open(now);}else{closing=true;input.Cancel();Tip(nullptr);slide.Close(now);}Pose();
         animationToken=scheduler->StartAnimation(UiAnimationSurface::Popup,[this](double time){slide.Advance(static_cast<std::uint64_t>(time));Pose();if(slide.IsAnimating())return true;animationToken=0;if(slide.IsHidden())FinishClose();else if(accessibility)accessibility->RefreshEvents();return false;});
     }
-    void CancelPrompt(){if(calendarMenu)modern_menu::DismissActive();if(promptState){promptState->cancelled=true;if(promptState->window)EndDialog(promptState->window,IDCANCEL);}}
+    void CancelPrompt(){if(calendarMenu)modern_menu::DismissActive();}
     void FinishClose(){HideNow();if(!destroying&&!modal&&(pending||afterClose))PostMessageW(window,kOpenPending,++closeGeneration,0);}
     void HideNow()
     {
@@ -280,7 +285,7 @@ struct SystemPanel::Impl
     }
     void Queue(Request request)
     {
-        afterClose={};if(showing&&!closing&&current&&current->action==request.action&&current->owner==request.owner){pending.reset();Animate(false);return;}
+        afterClose={};if(showing&&!closing&&current&&current->action==request.action&&current->owner==request.owner&&current->confirmPower==request.confirmPower){pending.reset();Animate(false);return;}
         if(showing||closing||modal){pending=std::move(request);if(!closing)Animate(false);}else{pending.reset();++closeGeneration;Open(std::move(request));}
     }
     void ArmContext(const std::string& key)
@@ -305,6 +310,24 @@ struct SystemPanel::Impl
         if(!wasObserved&&context.tracker.ObservedMenu())WriteDiagnosticLogEntry(L"Tray overflow retained for the gesture's observed menu",DiagnosticLogLevel::Debug);
         if(!context.process||context.tracker.ObservedMenu())KillTimer(window,kTrayMenuTimer);
         return retained;
+    }
+    void ControlKey(const std::string& id,UINT key,bool shift)
+    {
+        if(!showing||closing||modal||slide.IsAnimating()||!model)return;
+        input.Focus(id,true);tooltip.Hide();
+        if(key==VK_ESCAPE)model->ControlBack();
+        else if(key==VK_TAB)model->HandleKey(input,key,shift);
+        // Enter in an input moves to the safe cancel action. Authorizing a
+        // connection or destructive command requires its explicit button.
+        else if(key==VK_RETURN){input.Focus("control.cancel",true);model->Reveal("control.cancel");}
+        Arrange();if(!calendarInputs||!calendarInputs->Focus(input.Focused(),true))SetFocus(window);
+        Paint();if(accessibility)accessibility->RefreshEvents();
+    }
+    void FocusControlPage(bool keyboard)
+    {
+        if(!model)return;const auto id=model->ControlFocusTarget();if(id.empty())return;
+        if(model->Reveal(id))Arrange();input.Focus(id,keyboard);
+        if(!calendarInputs||!calendarInputs->Focus(id,keyboard))SetFocus(window);
     }
     void CalendarKey(const std::string& id,UINT key,bool shift,bool control)
     {
@@ -372,9 +395,9 @@ struct SystemPanel::Impl
         }
         if(result.kind==ui::InputResult::Kind::Context){CalendarContext(result.id,screen);return;}
         if(calendarInputs&&calendarInputs->Focus(result.id,keyboard)){input.Focus(result.id,keyboard);Paint();return;}
-        const auto life=lifetime;auto activeModel=model;const auto calendarFocus=activeModel->CalendarFocusTarget();
+        const auto life=lifetime;auto activeModel=model;const auto calendarFocus=activeModel->CalendarFocusTarget();const auto controlFocus=activeModel->ControlFocusTarget();
         activeModel->Invoke(result.id,result.kind==ui::InputResult::Kind::Value?std::optional(result.value):std::nullopt);
-        if(life->alive&&model){Arrange();if(calendarFocus!=model->CalendarFocusTarget())FocusCalendarPage(keyboard);if(model->View().Find("calendar.edit.error")&&model->Reveal("calendar.edit.error"))Arrange();Paint();}
+        if(life->alive&&model){Arrange();if(calendarFocus!=model->CalendarFocusTarget())FocusCalendarPage(keyboard);if(controlFocus!=model->ControlFocusTarget()){if(model->ControlFocusTarget().empty())SetFocus(window);else FocusControlPage(keyboard);}if(model->View().Find("calendar.edit.error")&&model->Reveal("calendar.edit.error"))Arrange();if(model->View().Find("control.error")&&model->Reveal("control.error"))Arrange();Paint();}
     }
     static LRESULT CALLBACK Procedure(HWND w,UINT m,WPARAM wp,LPARAM lp)
     {
@@ -383,6 +406,12 @@ struct SystemPanel::Impl
         const auto life=self->lifetime;
         try
         {
+            if(m==kControlInputChanged)
+            {
+                self->controlInputRefreshPending=false;
+                if(self->showing&&!self->closing&&!self->modal&&self->model){self->Arrange();self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}
+                return 0;
+            }
             if(m==kOpenPending){if(wp!=self->closeGeneration||self->showing||self->modal)return 0;if(self->pending){auto next=std::move(*self->pending);self->pending.reset();self->Open(std::move(next));}else if(auto fn=std::move(self->afterClose)){self->afterClose={};fn();}return 0;}
             if(m==WM_ERASEBKGND)return 1;
             if((m==WM_CTLCOLOREDIT||m==WM_CTLCOLORSTATIC)&&self->calendarInputs)
@@ -471,7 +500,7 @@ struct SystemPanel::Impl
             if(m==WM_SETFOCUS||m==WM_KILLFOCUS){self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}
             if(m==WM_KEYDOWN)
             {
-                if(wp==VK_ESCAPE){if(self->model->CalendarBack()){self->Arrange();self->FocusCalendarPage(true);self->Paint();}else{self->pending.reset();self->Animate(false);}return 0;}
+                if(wp==VK_ESCAPE){if(self->model->ControlBack()){self->Arrange();SetFocus(w);self->Paint();}else if(self->model->CalendarBack()){self->Arrange();self->FocusCalendarPage(true);self->Paint();}else{self->pending.reset();self->Animate(false);}return 0;}
                 self->input.Cancel();self->scrollbarDragging=false;if(GetCapture()==w)ReleaseCapture();
                 const auto result=self->model->HandleKey(self->input,static_cast<unsigned>(wp),(GetKeyState(VK_SHIFT)&0x8000)!=0);self->Arrange();POINT p{};
                 if(const auto* n=self->model->View().Find(result.id)){p={static_cast<LONG>(n->bounds.left*self->scale),static_cast<LONG>(n->bounds.bottom*self->scale)};ClientToScreen(w,&p);}
@@ -486,7 +515,12 @@ SystemPanel::SystemPanel(SettingsChanged c,SystemCalendarActions d,std::function
     :impl_(std::make_unique<Impl>(std::move(c),std::move(d),std::move(drop),timer,graphics,text,std::move(background))){}
 SystemPanel::~SystemPanel()=default;
 void SystemPanel::Show(StatusBarAction a,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<tray::Service> tray,std::shared_ptr<wr::WidgetSystemDataProvider> data)
-{impl_->Queue({a,owner,anchor,appearance,settings,std::move(tray),std::move(data)});}
+{impl_->Queue({a,owner,anchor,appearance,settings,std::move(tray),std::move(data),{}});}
+void SystemPanel::ShowPowerConfirmation(std::string task,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<wr::WidgetSystemDataProvider> data)
+{
+    if(task!="system.power.sleep"&&task!="system.power.restart"&&task!="system.power.shutdown")return;
+    impl_->Queue({StatusBarAction::ControlCenter,owner,anchor,appearance,settings,{},std::move(data),std::move(task)});
+}
 void SystemPanel::Hide(){impl_->pending.reset();impl_->afterClose={};if(impl_->showing)impl_->Animate(false);}
 void SystemPanel::CloseThen(std::function<void()> next){impl_->pending.reset();impl_->afterClose=std::move(next);if(impl_->showing||impl_->modal)impl_->Animate(false);else if(auto fn=std::move(impl_->afterClose)){impl_->afterClose={};fn();}}
 bool SystemPanel::IsOpen()const{return impl_->showing||impl_->modal;}
@@ -502,7 +536,6 @@ bool SystemPanel::ContainsPoint(POINT screen)const
 {
     if(!IsOpen())return false;
     const auto contains=[&](HWND window){RECT bounds{};return window&&IsWindowVisible(window)&&GetWindowRect(window,&bounds)&&PtInRect(&bounds,screen);};
-    if(impl_->promptState&&contains(impl_->promptState->window))return true;
     const HWND menu=modern_menu::ActiveRootWindow();
     if(impl_->calendarMenu&&menu&&GetWindow(menu,GW_OWNER)==impl_->window)
     {

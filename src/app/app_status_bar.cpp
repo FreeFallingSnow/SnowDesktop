@@ -178,6 +178,69 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             statusBar_->IsInteractionAvailable(monitor);
     };
     if (!current() || action == Action::None) return;
+    const auto ensureSystemPanel = [this] {
+        if (!systemPanel_)
+            systemPanel_ = std::make_unique<snowdesktop::SystemPanel>([this](const auto& changed) {
+                if (!settingsController_) return;
+                auto settings = settingsController_->Snapshot()->values.general;
+                // The popup owns only tray preferences. Do not overwrite
+                // a concurrent settings-page edit with its old snapshot.
+                settings.statusBar.pinnedTrayItems = changed.pinnedTrayItems;
+                settings.statusBar.trayOrder = changed.trayOrder;
+                settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+                uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
+                    if (settingsController_) (void)settingsController_->FlushPending();
+                });
+            }, snowdesktop::SystemCalendarActions{
+                [this](const std::string& date) {
+                    return widgetEngine_ ? widgetEngine_->RuntimeCalendarEvents(date, date) :
+                        std::vector<snowdesktop::calendar::CalendarEvent>{};
+                },
+                [this] {
+                    if (systemPanel_) systemPanel_->Hide();
+                    ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Calendar, "calendar.events"));
+                }, {}, [this](const std::string& date) {
+                    if (!widgetEngine_) return std::string{};
+                    const auto& days = widgetEngine_->RuntimeCalendarAnnotations(date, date);
+                    return !days.empty() && days.front().calendarAvailable ? days.front().fullDate : std::string{};
+                }, [this](const std::string& from, const std::string& to) {
+                    std::map<std::string, std::string> result;
+                    if (widgetEngine_)
+                        for (const auto& day : widgetEngine_->RuntimeCalendarAnnotations(from, to))
+                            if (day.calendarAvailable && !day.fullDate.empty())
+                                result.emplace(day.date, day.fullDate);
+                    return result;
+                }, [this] {
+                    const auto& display = generalSettings_.calendarDisplay;
+                    return std::string(display.enabled ? "1:" : "0:") + display.calendar;
+                }, {
+                    [this](const snowdesktop::calendar::CalendarEvent& draft) {
+                        if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,{},0,"canceled"};
+                        return draft.id.empty()?widgetEngine_->RuntimeCalendarCreate(draft):
+                            widgetEngine_->RuntimeCalendarUpdate(draft.id,draft.revision,draft);
+                    },
+                    [this](const snowdesktop::calendar::CalendarEvent& original) -> std::optional<snowdesktop::calendar::CalendarEvent> {
+                        if(exitRequested_||!widgetEngine_)return {};
+                        for(const auto& current:widgetEngine_->RuntimeCalendarEvents(original.date,original.date))
+                            if(current.id==original.id)return current;
+                        return {};
+                    },
+                    [this](const std::string& id){if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,{},0,"canceled"};return widgetEngine_->RuntimeCalendarRemove(id);}
+                }}, [this](std::string_view key, POINT screen) {
+                    return statusBar_ && statusBar_->DropTrayIcon(key, screen);
+                }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),
+                [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
+                    DrawWidgetPanelBackground(context, frame, appearance.cornerRadius * scale,
+                        D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
+                        D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
+                        false, 0, &appearance, false, 0, scale);
+                    brushCache_.clear(); brushCacheContext_ = nullptr;
+                });
+        systemPanel_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
+        systemPanel_->SetNativeControlsHandler([this](HWND source, RECT location) {
+            ActivateStatusBar(Action::SystemControlCenter, source, location);
+        });
+    };
     TraceStatusBarShellActivation(action, generation, L"continue", hold->shortcutStartedMilliseconds);
     const auto resume = [this, current, generation, action, owner, anchor, hold] {
         if (!current()) return;
@@ -299,13 +362,19 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         }
         else if (command >= 4 && command <= 7)
         {
-            if (command >= 5 && MessageBoxW(owner, _LW(command == 5 ? "controlCenter.confirmSleep" : command == 6 ? "controlCenter.confirmRestart" : "controlCenter.confirmShutdown"),
-                    _LW(labels[command - 1]), MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) != IDOK) return;
-            if (!current()) return;
-            snowdesktop::system_control::Request request;
             const char* tasks[]{"system.power.lock", "system.power.sleep", "system.power.restart", "system.power.shutdown"};
-            request.name = tasks[command - 4]; request.hostConfirmed = command >= 5;
-            if (!systemDataProvider_->Controls()->Start("statusBarVolume", std::move(request))) MessageBeep(MB_ICONWARNING);
+            if (command >= 5)
+            {
+                ensureSystemPanel();
+                systemPanel_->ShowPowerConfirmation(tasks[command - 4], owner, anchor,
+                    collectionPopupAppearance_, generalSettings_.statusBar, systemDataProvider_);
+            }
+            else
+            {
+                snowdesktop::system_control::Request request;
+                request.name = tasks[command - 4];
+                if (!systemDataProvider_->Controls()->Start("statusBarVolume", std::move(request))) MessageBeep(MB_ICONWARNING);
+            }
         }
     }
     else if (action == Action::Menu)
@@ -348,67 +417,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::StatusBar));
     else if (statusBar_ && statusBar_->IsInteractionAvailable(monitor))
     {
-        if (!systemPanel_)
-            systemPanel_ = std::make_unique<snowdesktop::SystemPanel>([this](const auto& changed) {
-                if (!settingsController_) return;
-                auto settings = settingsController_->Snapshot()->values.general;
-                // The popup owns only tray preferences. Do not overwrite
-                // a concurrent settings-page edit with its old snapshot.
-                settings.statusBar.pinnedTrayItems = changed.pinnedTrayItems;
-                settings.statusBar.trayOrder = changed.trayOrder;
-                settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
-                uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
-                    if (settingsController_) (void)settingsController_->FlushPending();
-                });
-            }, snowdesktop::SystemCalendarActions{
-                [this](const std::string& date) {
-                    return widgetEngine_ ? widgetEngine_->RuntimeCalendarEvents(date, date) :
-                        std::vector<snowdesktop::calendar::CalendarEvent>{};
-                },
-                [this] {
-                    if (systemPanel_) systemPanel_->Hide();
-                    ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Calendar, "calendar.events"));
-                }, {}, [this](const std::string& date) {
-                    if (!widgetEngine_) return std::string{};
-                    const auto& days = widgetEngine_->RuntimeCalendarAnnotations(date, date);
-                    return !days.empty() && days.front().calendarAvailable ? days.front().fullDate : std::string{};
-                }, [this](const std::string& from, const std::string& to) {
-                    std::map<std::string, std::string> result;
-                    if (widgetEngine_)
-                        for (const auto& day : widgetEngine_->RuntimeCalendarAnnotations(from, to))
-                            if (day.calendarAvailable && !day.fullDate.empty())
-                                result.emplace(day.date, day.fullDate);
-                    return result;
-                }, [this] {
-                    const auto& display = generalSettings_.calendarDisplay;
-                    return std::string(display.enabled ? "1:" : "0:") + display.calendar;
-                }, {
-                    [this](const snowdesktop::calendar::CalendarEvent& draft) {
-                        if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,{},0,"canceled"};
-                        return draft.id.empty()?widgetEngine_->RuntimeCalendarCreate(draft):
-                            widgetEngine_->RuntimeCalendarUpdate(draft.id,draft.revision,draft);
-                    },
-                    [this](const snowdesktop::calendar::CalendarEvent& original) -> std::optional<snowdesktop::calendar::CalendarEvent> {
-                        if(exitRequested_||!widgetEngine_)return {};
-                        for(const auto& current:widgetEngine_->RuntimeCalendarEvents(original.date,original.date))
-                            if(current.id==original.id)return current;
-                        return {};
-                    },
-                    [this](const std::string& id){if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,{},0,"canceled"};return widgetEngine_->RuntimeCalendarRemove(id);}
-                }}, [this](std::string_view key, POINT screen) {
-                    return statusBar_ && statusBar_->DropTrayIcon(key, screen);
-                }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),
-                [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
-                    DrawWidgetPanelBackground(context, frame, appearance.cornerRadius * scale,
-                        D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
-                        D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
-                        false, 0, &appearance, false, 0, scale);
-                    brushCache_.clear(); brushCacheContext_ = nullptr;
-                });
-        systemPanel_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
-        systemPanel_->SetNativeControlsHandler([this](HWND source, RECT location) {
-            ActivateStatusBar(Action::SystemControlCenter, source, location);
-        });
+        ensureSystemPanel();
         systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
             statusBar_->Tray(), systemDataProvider_);
     }

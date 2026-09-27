@@ -1847,6 +1847,17 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 字段类型见随附 Lua 类型库。所有 ID 只作为所属主题的设备令牌使用，不解析其格式；
 亮度端点 ID 与显示拓扑 ID 不等价。移除设备后应丢弃旧 ID，重新读取列表。
 
+`system.display.brightness.monitors` 按完整显示器设备实例合并已确认对应同一物理屏幕的
+WMI/DDC 记录：优先选择可用端点，同样可用时优先内置屏 WMI。名称取友好硬件名；
+同名但身份不同的真实屏幕保留，无法证明对应关系的端点也保留，不按名称或数组位置去重。
+合并只影响返回的记录集合，不删除底层控制端点：当前设备仍存在时，先前读取的 DDC/WMI
+令牌仍可交给 `system.display.setBrightness`，按原端点执行并验证真实结果。失败或不支持
+仍报告错误，不借另一端点的数值声称成功。端点令牌不是可跨拔插持久化的物理显示器 ID；
+列表、数量和主记录 ID 可能随设备状态变化，组件应使用最新快照并处理目标消失。
+早期宿主可能把同一物理屏幕的端点分别返回，组件应允许重复名称和可变列表数量，不能依赖
+去重后的固定项数。此修订不增加字段、feature，不提高 API v2 或主题原有最低宿主版本；
+不代表依赖旧重复记录行为的组件已经完成实机兼容验证。
+
 订阅 Wi-Fi 只读取 Windows 缓存，不触发主动扫描；网卡 `networks` 包含
 `id/ssid/signal/security/connected/connectable/profileName?`，`profiles` 包含
 `name/managed`。不提供已保存密码。无线/位置权限拒绝返回 `accessDenied`；不要把

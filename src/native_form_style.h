@@ -45,9 +45,21 @@ inline HFONT CreateFormFont(UINT dpi,int dip=13,int weight=FW_NORMAL)
 // A DirectComposition host can intentionally have no such bitmap. Give only
 // those children a native, opaque redirected surface; EDIT still owns painting,
 // caret, selection, IME and accessibility. No captured bitmap is presented.
-inline bool EnsureOpaqueChildRedirection(HWND window)
+struct EditStyleFailure
 {
-    if(!window)return false;
+    const char* operation=nullptr;
+    DWORD error=ERROR_SUCCESS;
+};
+inline bool EditStyleFailed(EditStyleFailure* failure,const char* operation,DWORD error)
+{
+    if(!error)error=ERROR_INVALID_FUNCTION;
+    if(failure)*failure={operation,error};
+    SetLastError(error);return false;
+}
+inline bool EnsureOpaqueChildRedirection(HWND window,EditStyleFailure* failure=nullptr)
+{
+    if(failure)*failure={};
+    if(!window||!IsWindow(window))return EditStyleFailed(failure,"IsWindow",ERROR_INVALID_WINDOW_HANDLE);
     if(!(GetWindowLongPtrW(window,GWL_STYLE)&WS_CHILD))return true;
     bool required=false;
     for(auto parent=GetParent(window);parent;)
@@ -61,11 +73,23 @@ inline bool EnsureOpaqueChildRedirection(HWND window)
     if(!(style&WS_EX_LAYERED))
     {
         SetLastError(ERROR_SUCCESS);
-        if(!SetWindowLongPtrW(window,GWL_EXSTYLE,style|WS_EX_LAYERED)&&GetLastError()!=ERROR_SUCCESS)return false;
+        SetWindowLongPtrW(window,GWL_EXSTYLE,style|WS_EX_LAYERED);
+        const auto error=GetLastError();
+        // A successful change returns the previous style (often zero).
+        // Synchronous style messages can also leave a nonzero last error.
+        // Verify the requested bit instead of mistaking that pair for failure.
+        if(!(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_LAYERED))
+            return EditStyleFailed(failure,"SetWindowLongPtr(GWL_EXSTYLE)",error);
     }
     COLORREF key=0;BYTE opacity=0;DWORD flags=0;
     if(GetLayeredWindowAttributes(window,&key,&opacity,&flags)&&flags==LWA_ALPHA&&opacity==255)return true;
-    return SetLayeredWindowAttributes(window,0,255,LWA_ALPHA)!=FALSE;
+    if(!SetLayeredWindowAttributes(window,0,255,LWA_ALPHA))
+        return EditStyleFailed(failure,"SetLayeredWindowAttributes",GetLastError());
+    if(!GetLayeredWindowAttributes(window,&key,&opacity,&flags))
+        return EditStyleFailed(failure,"GetLayeredWindowAttributes",GetLastError());
+    if(flags!=LWA_ALPHA||opacity!=255)
+        return EditStyleFailed(failure,"LayeredWindowAttributesReadback",ERROR_INVALID_DATA);
+    return true;
 }
 namespace detail
 {
@@ -373,21 +397,24 @@ inline LRESULT CALLBACK EditProcedure(HWND window,UINT message,WPARAM wp,LPARAM 
 }
 // Attach after setting the native font. No wrapper/reparenting: ids, EN_*
 // notifications and the standard accessibility provider remain unchanged.
-inline bool AttachEdit(HWND window,const Palette& palette,UINT dpi,float radiusDip=6.f)
+inline bool AttachEdit(HWND window,const Palette& palette,UINT dpi,float radiusDip=6.f,EditStyleFailure* failure=nullptr)
 {
-    if(!window||!EnsureOpaqueChildRedirection(window))return false;
-    wchar_t className[16]{};if(!GetClassNameW(window,className,static_cast<int>(std::size(className)))||lstrcmpiW(className,L"EDIT")!=0)return false;
+    if(failure)*failure={};
+    if(!EnsureOpaqueChildRedirection(window,failure))return false;
+    wchar_t className[16]{};
+    if(!GetClassNameW(window,className,static_cast<int>(std::size(className))))return EditStyleFailed(failure,"GetClassName",GetLastError());
+    if(lstrcmpiW(className,L"EDIT")!=0)return EditStyleFailed(failure,"EditClass",ERROR_INVALID_PARAMETER);
     auto* state=detail::State(window);
     if(!state)
     {
-        state=new(std::nothrow) detail::EditState;if(!state)return false;
+        state=new(std::nothrow) detail::EditState;if(!state)return EditStyleFailed(failure,"AllocateEditState",ERROR_NOT_ENOUGH_MEMORY);
         state->window=window;state->palette=palette;state->dpi=dpi?dpi:96;state->radius=radiusDip;
-        state->brush=CreateSolidBrush(palette.field);if(!state->brush){delete state;return false;}
+        state->brush=CreateSolidBrush(palette.field);if(!state->brush){const auto error=GetLastError();delete state;return EditStyleFailed(failure,"CreateSolidBrush",error);}
         state->multiline=(GetWindowLongPtrW(window,GWL_STYLE)&ES_MULTILINE)!=0;
-        if(!SetWindowSubclass(window,detail::EditProcedure,detail::kEditSubclass,reinterpret_cast<DWORD_PTR>(state))){delete state;return false;}
+        if(!SetWindowSubclass(window,detail::EditProcedure,detail::kEditSubclass,reinterpret_cast<DWORD_PTR>(state))){const auto error=GetLastError();delete state;return EditStyleFailed(failure,"SetWindowSubclass",error);}
     }
     detail::EditCall call(state);
-    const auto brush=CreateSolidBrush(palette.field);if(!brush)return false;
+    const auto brush=CreateSolidBrush(palette.field);if(!brush)return EditStyleFailed(failure,"CreateSolidBrush",GetLastError());
     if(state->brush)DeleteObject(state->brush);state->brush=brush;state->palette=palette;state->dpi=dpi?dpi:96;state->radius=radiusDip;
     auto style=GetWindowLongPtrW(window,GWL_STYLE)&~static_cast<LONG_PTR>(WS_BORDER);
     if(state->multiline)style|=WS_VSCROLL;
@@ -395,7 +422,8 @@ inline bool AttachEdit(HWND window,const Palette& palette,UINT dpi,float radiusD
     SetWindowLongPtrW(window,GWL_EXSTYLE,GetWindowLongPtrW(window,GWL_EXSTYLE)&~static_cast<LONG_PTR>(WS_EX_CLIENTEDGE|WS_EX_STATICEDGE));
     detail::Measure(*state);SendMessageW(window,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,0);
     SetWindowPos(window,nullptr,0,0,0,0,SWP_FRAMECHANGED|SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOZORDER);
-    if(state->window)RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_FRAME|RDW_ERASE);return state->window!=nullptr;
+    if(!state->window)return EditStyleFailed(failure,"EditDestroyed",ERROR_INVALID_WINDOW_HANDLE);
+    RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_FRAME|RDW_ERASE);return true;
 }
 inline void UpdateEdit(HWND window,const Palette& palette,UINT dpi,float radiusDip=6.f)
 {AttachEdit(window,palette,dpi,radiusDip);}

@@ -82,6 +82,11 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         const auto owner=entry->owner.lock();
         if(!owner||!owner->alive)return DefSubclassProc(window,message,wp,lp);
         const bool ctrl=(GetKeyState(VK_CONTROL)&0x8000)!=0,shift=(GetKeyState(VK_SHIFT)&0x8000)!=0;
+        // Keep copying forbidden without EDIT's extra password balloon. This
+        // applies only to the in-panel protected field, not external dialogs.
+        if(entry->field.password&&(message==WM_COPY||message==WM_CUT||
+            (message==WM_KEYDOWN&&((ctrl&&(wp=='C'||wp=='X'||wp==VK_INSERT))||(shift&&wp==VK_DELETE)))||
+            (message==WM_CHAR&&(wp==3||wp==24))))return 0;
         if(message==WM_IME_STARTCOMPOSITION)entry->composing=true;
         if(message==WM_GETDLGCODE)
         {
@@ -126,6 +131,7 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         entry->removing=true;
         if(const auto window=entry->window)
         {
+            if(entry->field.password){SetWindowTextW(window,L"");SendMessageW(window,EM_EMPTYUNDOBUFFER,0,0);}
             if(accessibility){const MSAAPROPID properties[]{PROPID_ACC_NAME};accessibility->ClearHwndProps(window,static_cast<DWORD>(OBJID_CLIENT),CHILDID_SELF,properties,1);}
             DestroyWindow(window);
         }
@@ -159,8 +165,9 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
     }
     std::shared_ptr<Entry> Create(const SystemCalendarInputField& field)
     {
-        auto entry=std::make_shared<Entry>();entry->owner=shared_from_this();entry->field=field;entry->modelText=field.text;
-        const DWORD style=WS_CHILD|WS_TABSTOP|ES_LEFT|ES_NOHIDESEL|
+        auto entry=std::make_shared<Entry>();entry->owner=shared_from_this();entry->field=field;
+        if(field.password)entry->field.text.clear();else entry->modelText=field.text;
+        const DWORD style=WS_CHILD|WS_TABSTOP|ES_LEFT|ES_NOHIDESEL|(field.password?ES_PASSWORD:0)|
             (field.multiline?(ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL):ES_AUTOHSCROLL);
         auto holder=std::make_unique<std::shared_ptr<Entry>>(entry);
         if(nextControl>=0x7fff)nextControl=0x6000;
@@ -173,9 +180,12 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         try
         {
             SendMessageW(entry->window,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
-            if(!native_form::AttachEdit(entry->window,palette,dpi))throw std::runtime_error("calendar input style unavailable");
+            native_form::EditStyleFailure failure;
+            if(!native_form::AttachEdit(entry->window,palette,dpi,6.f,&failure))
+                throw std::runtime_error(std::string("calendar input style unavailable: ")+
+                    (failure.operation?failure.operation:"unknown")+"; win32="+std::to_string(failure.error));
             SendMessageW(entry->window,EM_SETLIMITTEXT,static_cast<WPARAM>((std::max)(0,field.limit)),0);
-            entry->muting=true;SetWindowTextW(entry->window,field.text.c_str());entry->muting=false;Name(entry);
+            entry->muting=true;SetWindowTextW(entry->window,field.password?L"":field.text.c_str());entry->muting=false;Name(entry);
         }
         catch(...){Destroy(entry);throw;}
         return entry;
@@ -233,7 +243,7 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         {
             if(field.id.empty()||!Finite(field.bounds)||!Finite(field.clip)||!wanted.insert(field.id).second)continue;
             auto found=entries.find(field.id);
-            if(found!=entries.end()&&found->second->field.multiline!=field.multiline)
+            if(found!=entries.end()&&(found->second->field.multiline!=field.multiline||found->second->field.password!=field.password))
             {const auto previous=found->second;entries.erase(found);Destroy(previous);found=entries.end();}
             std::shared_ptr<Entry> entry;
             if(found==entries.end())
@@ -246,8 +256,8 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
                 entry=found->second;const bool labelChanged=entry->field.label!=field.label;
                 const bool textChanged=entry->modelText!=field.text;
                 if(entry->field.limit!=field.limit)SendMessageW(entry->window,EM_SETLIMITTEXT,static_cast<WPARAM>((std::max)(0,field.limit)),0);
-                entry->field=field;entry->modelText=field.text;if(labelChanged)Name(entry);
-                if(textChanged)ExternalText(entry,field.text);
+                entry->field=field;if(field.password){entry->field.text.clear();entry->modelText.clear();}else entry->modelText=field.text;if(labelChanged)Name(entry);
+                if(textChanged&&!field.password)ExternalText(entry,field.text);
             }
             if(!alive)return;Place(entry);
         }
@@ -261,8 +271,19 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
     {
         const auto entry=Find(window);if(!entry)return false;
         if(!alive||entry->muting||entry->removing||(entry->composing&&entry->pending))return true;
-        ++entry->changes;const auto callback=change;const auto id=entry->field.id;const auto text=InputText(window);
-        if(callback)callback(id,text);
+        ++entry->changes;const auto callback=change;const auto id=entry->field.id;
+        if(entry->field.password)
+        {
+            // The only copy outside EDIT is a bounded, explicitly erased bridge
+            // buffer. The receiving panel immediately moves it into Secret.
+            struct Buffer{wchar_t text[64]{};~Buffer(){SecureZeroMemory(text,sizeof(text));}} buffer;
+            GetWindowTextW(window,buffer.text,64);
+            // Keep even a short draft off small-string inline move copies.
+            std::wstring value;value.reserve(64);value.assign(buffer.text);
+            struct Erase{std::wstring& value;~Erase(){if(!value.empty())SecureZeroMemory(value.data(),value.size()*sizeof(wchar_t));}} erase{value};
+            if(callback)callback(id,std::move(value));
+        }
+        else if(callback)callback(id,InputText(window));
         return true;
     }
 };
@@ -287,7 +308,7 @@ bool SystemCalendarInputs::SetValue(std::string_view id,const std::wstring& text
 {
     const auto impl=impl_;const auto found=impl->entries.find(std::string(id));if(!impl->alive||found==impl->entries.end())return false;
     const auto entry=found->second;
-    if(!entry->window||!impl->interactive||!entry->field.enabled||entry->composing||(entry->field.limit>0&&text.size()>static_cast<std::size_t>(entry->field.limit)))return false;
+    if(!entry->window||!impl->interactive||!entry->field.enabled||entry->field.password||entry->composing||(entry->field.limit>0&&text.size()>static_cast<std::size_t>(entry->field.limit)))return false;
     if(InputText(entry->window)==text)return true;
     const auto revision=entry->changes;if(!SetWindowTextW(entry->window,text.c_str()))return false;
     if(!impl->alive||!entry->window)return true;
@@ -373,6 +394,50 @@ struct PreviewMutations
 HWND PreviewInput(const PreviewParent& parent,const SystemCalendarInputs& inputs,std::string_view id)
 {for(auto w=GetWindow(parent.window,GW_CHILD);w;w=GetWindow(w,GW_HWNDNEXT))if(inputs.FieldId(w)==id)return w;return nullptr;}
 void Require(bool result,const char* message){if(!result)throw std::runtime_error(message);}
+void CheckChildRedirectionErrors()
+{
+    PreviewParent parent(160,80);
+    for(const bool reject:{false,true})
+    {
+        struct Window
+        {
+            HWND value=nullptr;
+            ~Window(){if(value)DestroyWindow(value);}
+        } control{CreateWindowExW(0,L"EDIT",L"",WS_CHILD,0,0,120,36,parent.window,nullptr,GetModuleHandleW(nullptr),nullptr)};
+        Require(control.value!=nullptr,"calendar redirection fixture unavailable");
+        struct StyleMessages
+        {
+            HWND window;bool reject;
+            StyleMessages(HWND w,bool denied):window(w),reject(denied)
+            {if(!SetWindowSubclass(window,Procedure,kInputSubclass+3,reinterpret_cast<DWORD_PTR>(this)))throw std::runtime_error("calendar style observer unavailable");}
+            ~StyleMessages(){RemoveWindowSubclass(window,Procedure,kInputSubclass+3);}
+            static LRESULT CALLBACK Procedure(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR data)
+            {
+                if(m==WM_STYLECHANGING&&static_cast<int>(wp)==GWL_EXSTYLE&&reinterpret_cast<StyleMessages*>(data)->reject)
+                    reinterpret_cast<STYLESTRUCT*>(lp)->styleNew&=~static_cast<DWORD>(WS_EX_LAYERED);
+                const auto result=DefSubclassProc(w,m,wp,lp);
+                if(m==WM_STYLECHANGED)SetLastError(ERROR_INVALID_HANDLE);
+                return result;
+            }
+        } messages(control.value,reject);
+        native_form::EditStyleFailure failure;
+        const bool applied=native_form::EnsureOpaqueChildRedirection(control.value,&failure);
+        if(reject)
+            Require(!applied&&failure.operation&&std::string_view(failure.operation)=="SetWindowLongPtr(GWL_EXSTYLE)"&&
+                !(GetWindowLongPtrW(control.value,GWL_EXSTYLE)&WS_EX_LAYERED),
+                "calendar redirection accepted a rejected layered style change");
+        else
+        {
+            COLORREF key=0;BYTE opacity=0;DWORD flags=0;
+            Require(applied&&!failure.operation&&GetLayeredWindowAttributes(control.value,&key,&opacity,&flags)&&
+                opacity==255&&flags==LWA_ALPHA,
+                "calendar redirection rejected a successful zero-old-style change after a style message set last error");
+        }
+    }
+    native_form::EditStyleFailure invalid;
+    Require(!native_form::EnsureOpaqueChildRedirection(nullptr,&invalid)&&invalid.error==ERROR_INVALID_WINDOW_HANDLE,
+        "calendar redirection discarded the invalid HWND diagnostic");
+}
 void CheckRedirectedInputPaint()
 {
     // The ordinary hidden-parent WM_PRINT preview cannot expose a missing GDI
@@ -482,8 +547,41 @@ void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>& fi
         }
     }
 }
+void CheckSystemControlPasswordInput()
+{
+    PreviewApartment apartment;PreviewParent parent(360,140);PersonalizationSettings appearance;
+    system_control::Secret captured;unsigned changes=0;
+    SystemCalendarInputs inputs(parent.window,[&](std::string,std::wstring value){
+        captured=system_control::Secret(value);if(!value.empty())SecureZeroMemory(value.data(),value.size()*sizeof(wchar_t));++changes;
+    },{});PreviewBinding binding(parent,inputs);
+    const std::vector<SystemCalendarInputField> fields{
+        {"control.password:offline",L"Password",L"",{16,16,344,52},{0,0,360,140},false,true,63,true}};
+    inputs.Sync(fields,appearance,96);const auto password=PreviewInput(parent,inputs,fields.front().id);
+    Require(password&&GetParent(password)==parent.window&&(GetWindowLongPtrW(password,GWL_STYLE)&ES_PASSWORD)&&
+        SendMessageW(password,EM_GETPASSWORDCHAR,0,0)!=0,"embedded password lost its real protected EDIT or created a separate window");
+    Microsoft::WRL::ComPtr<IAccessible> accessible;
+    Require(SUCCEEDED(AccessibleObjectFromWindow(password,OBJID_CLIENT,IID_PPV_ARGS(&accessible)))&&accessible,
+        "embedded password has no native accessibility provider");
+    VARIANT child{};child.vt=VT_I4;child.lVal=CHILDID_SELF;VARIANT state{};VariantInit(&state);
+    const auto status=accessible->get_accState(child,&state);const bool protectedState=SUCCEEDED(status)&&state.vt==VT_I4&&(state.lVal&STATE_SYSTEM_PROTECTED);VariantClear(&state);
+    Require(protectedState,"embedded password did not expose native protected accessibility semantics");
+    SetWindowTextW(password,L"offline-only-password");
+    Require(changes>0&&captured.View()==L"offline-only-password","protected EDIT did not deliver its production input callback");
+    inputs.Sync(fields,appearance,96);
+    Require(GetWindowTextLengthW(password)==21&&!inputs.SetValue(fields.front().id,L"Synthetic UIA value"),
+        "refresh cleared the password or synthetic Value exposed its ordinary textbox path");
+    const auto clipboard=GetClipboardSequenceNumber();SendMessageW(password,EM_SETSEL,0,-1);
+    SendMessageW(password,WM_COPY,0,0);SendMessageW(password,WM_CUT,0,0);SendMessageW(password,WM_CHAR,3,0);SendMessageW(password,WM_CHAR,24,0);
+    Require(GetClipboardSequenceNumber()==clipboard&&GetWindowTextLengthW(password)==21,
+        "protected copy/cut changed the clipboard or deleted the in-panel secret");
+    BSTR value=nullptr;const auto read=accessible->get_accValue(child,&value);const bool leaked=SUCCEEDED(read)&&value&&std::wstring_view(value)==L"offline-only-password";if(value)SysFreeString(value);
+    Require(!leaked,"native protected accessibility exposed a password value");
+    inputs.Clear();captured.Clear();
+    Require(!IsWindow(password)&&!GetWindow(parent.window,GW_CHILD),"cancel retained the protected child or its undo buffer");
+}
 void CheckSystemCalendarInputs()
 {
+    CheckChildRedirectionErrors();
     CheckRedirectedInputPaint();
     {
         PersonalizationSettings glass;glass.contentTheme=0;glass.widgetAlpha=.25f;

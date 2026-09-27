@@ -1,5 +1,4 @@
 #include "system_panel_model.h"
-#include "system_control_prompt.h"
 #include "status_bar_battery.h"
 #include "system_control_wifi_presentation.h"
 #include "system_control_audio_presentation.h"
@@ -83,6 +82,7 @@ SystemPanelModel::~SystemPanelModel(){Close();}
 void SystemPanelModel::Close()
 {
     if(closed_)return;
+    CancelControlInput();
     closed_=true;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();ClearError();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarAnnotationKey_.clear();lastStarted_=0;
     // A close callback may pump messages. Detach all effects before calling it,
     // and keep its callable alive even if the callback re-enters Close().
@@ -114,21 +114,38 @@ JsonValue SystemPanelModel::Wifi()const
 void SystemPanelModel::Start(std::string task,system_control::Arguments args,std::string_view control)
 {
     if(closed_||!source_.start)return;
-    const auto generation=navigation_;
     const std::string controlId=control.empty()?invokingControl_:std::string(control);
     const auto found=actionBindings_.find(controlId);
     const auto binding=found==actionBindings_.end()?std::optional<ActionBinding>{}:std::optional<ActionBinding>(found->second);
     if(binding&&(pendingActions_.contains(binding->group)||RadioTransitionPending(*binding)))return;
     system_control::Request request;request.name=std::move(task);request.arguments=std::move(args);
-    const bool hiddenNetwork = request.name == "network.wifi.connect" && request.arguments.contains("hidden");
-    if(hiddenNetwork||system_control::RequiresConfirmation(request.name)||system_control::RequiresPasswordPrompt(request))
+    const bool connect=request.name=="network.wifi.connect"&&!request.arguments.contains("profileName");
+    const bool hiddenNetwork=connect&&request.arguments.contains("hidden");
+    if(connect&&!hiddenNetwork)
     {
-        const auto prompt=source_.prompt;
-        if(!prompt||!prompt(request))return;
+        const auto networks=system_control::WifiPresentationNetworks(Wifi());
+        const auto network=std::find_if(networks.begin(),networks.end(),[&](const auto& n){return j::String(n,"id")==request.arguments["networkId"];});
+        if(network==networks.end())return;
+        request.arguments["security"]=j::String(*network,"security");
+        if(request.arguments["security"]!="open"&&request.arguments["security"]!="wpa2"&&request.arguments["security"]!="wpa3")return;
     }
-    // Confirmation runs a nested message loop: dismissal can invalidate this
-    // model while Invoke() deliberately retains its lifetime.
-    if(closed_||!source_.start||generation!=navigation_)return;
+    if(hiddenNetwork||system_control::RequiresConfirmation(request.name)||(connect&&request.arguments["security"]!="open"))
+    {
+        CancelControlInput();
+        ControlDraft draft;draft.request=std::move(request);draft.control=controlId;draft.binding=binding;draft.hidden=hiddenNetwork;
+        draft.passwordId="control.password:"+std::to_string(++controlSerial_);
+        if(hiddenNetwork){page_="wifi-hidden";scroll_=0;draft.request.arguments["security"]="wpa2";}
+        controlDraft_=std::move(draft);ClearError();return;
+    }
+    CancelControlInput();SubmitControl(std::move(request),controlId);
+}
+void SystemPanelModel::SubmitControl(system_control::Request request,const std::string& controlId)
+{
+    if(closed_||!source_.start)return;
+    const auto generation=navigation_;
+    const auto found=actionBindings_.find(controlId);
+    const auto binding=found==actionBindings_.end()?std::optional<ActionBinding>{}:std::optional<ActionBinding>(found->second);
+    if(binding&&(pendingActions_.contains(binding->group)||RadioTransitionPending(*binding)))return;
     if(binding)
     {
         const auto current=actionBindings_.find(controlId);
@@ -271,7 +288,141 @@ bool SystemPanelModel::Invoke(std::string_view id,std::optional<float> value)
     Refresh(available_);return true;
 }
 void SystemPanelModel::Select(std::string page)
-{ if(closed_)return;++navigation_;page_=std::move(page);scroll_=0;scan_=page_=="wifi";ClearError();Refresh(available_); }
+{ if(closed_)return;CancelControlInput();++navigation_;page_=std::move(page);scroll_=0;scan_=page_=="wifi";ClearError();Refresh(available_); }
+void SystemPanelModel::CancelControlInput()
+{
+    if(!controlDraft_)return;
+    const auto task=controlDraft_->task;controlDraft_.reset();
+    if(task)
+    {
+        feedback_.Take(task);
+        std::erase_if(pendingActions_,[&](const auto& item){return item.second.task==task;});
+        const auto cancel=source_.cancel;if(cancel)cancel(task);
+    }
+}
+bool SystemPanelModel::BeginPowerConfirmation(std::string_view task)
+{
+    if(closed_||(task!="system.power.sleep"&&task!="system.power.restart"&&task!="system.power.shutdown"))return false;
+    CancelControlInput();page_="power";scroll_=0;
+    Start(std::string(task),{},"power.confirmation");Refresh(available_);return controlDraft_.has_value();
+}
+bool SystemPanelModel::ControlBack()
+{
+    if(!controlDraft_&&page_!="wifi-hidden")return false;
+    const bool hidden=page_=="wifi-hidden";CancelControlInput();
+    if(hidden){page_="wifi";scroll_=0;}
+    ClearError();Refresh(available_);return true;
+}
+std::string SystemPanelModel::ControlFocusTarget() const
+{
+    if(!controlDraft_)return {};
+    if(controlDraft_->task)return "control.cancel";
+    if(controlDraft_->hidden)return "control.ssid";
+    return controlDraft_->request.name=="network.wifi.connect"?controlDraft_->passwordId:"control.cancel";
+}
+std::vector<SystemCalendarInputField> SystemPanelModel::ControlInputFields() const
+{
+    std::vector<SystemCalendarInputField> fields;if(!controlDraft_)return fields;
+    for(const auto& id:{std::string("control.ssid"),controlDraft_->passwordId})
+    {
+        const auto* node=scene_.Find(id);if(!node)continue;
+        SystemCalendarInputField field;field.id=id;field.label=node->accessibilityLabel;
+        field.bounds=node->bounds;field.clip=node->clip;field.enabled=node->enabled;
+        field.password=id==controlDraft_->passwordId;field.limit=field.password?63:32;
+        if(!field.password)field.text=controlDraft_->ssid;
+        fields.push_back(std::move(field));
+    }
+    return fields;
+}
+bool SystemPanelModel::SetControlInput(std::string_view id,std::wstring& text)
+{
+    if(!id.starts_with("control."))return false;
+    if(controlDraft_&&!controlDraft_->task&&!closed_)
+    {
+        if(id==controlDraft_->passwordId)controlDraft_->request.password=system_control::Secret(text);
+        else if(id=="control.ssid")controlDraft_->ssid=text;
+        controlDraft_->error.clear();
+    }
+    // No password enters scene strings, the EDIT descriptor, UIA or settings.
+    if(id.starts_with("control.password:")&&!text.empty())SecureZeroMemory(text.data(),text.size()*sizeof(wchar_t));
+    return true;
+}
+void SystemPanelModel::ConfirmControl()
+{
+    if(!controlDraft_||controlDraft_->task||closed_)return;
+    auto& draft=*controlDraft_;const bool connect=draft.request.name=="network.wifi.connect";
+    if(connect)
+    {
+        const auto adapter=Wifi();
+        if(draft.request.arguments["interfaceId"]!=interface_||!j::Flag(adapter,"available")||!j::Flag(adapter,"enabled"))
+        {draft.error=_LW("controlCenter.unavailable");return;}
+        if(draft.hidden)
+        {
+            const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,draft.ssid.data(),static_cast<int>(draft.ssid.size()),nullptr,0,nullptr,nullptr);
+            if(count<=0||count>32)return;
+            std::string ssid(static_cast<std::size_t>(count),' ');
+            WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,draft.ssid.data(),static_cast<int>(draft.ssid.size()),ssid.data(),count,nullptr,nullptr);
+            draft.request.arguments["ssid"]=std::move(ssid);
+        }
+        else
+        {
+            const auto networks=system_control::WifiPresentationNetworks(adapter);
+            const auto found=std::find_if(networks.begin(),networks.end(),[&](const auto& n){return j::String(n,"id")==draft.request.arguments["networkId"]&&j::String(n,"security")==draft.request.arguments["security"]&&j::Flag(n,"connectable");});
+            if(found==networks.end()){draft.error=_LW("controlCenter.unavailable");return;}
+        }
+        const auto password=draft.request.password.View();
+        if(draft.request.arguments["security"]!="open"&&(password.size()<8||password.size()>63||std::any_of(password.begin(),password.end(),[](wchar_t ch){return ch<32||ch>126;})))
+        {draft.error=_LW("controlCenter.invalidPassword");return;}
+    }
+    system_control::Request request;request.name=draft.request.name;request.arguments=draft.request.arguments;
+    request.password=std::move(draft.request.password);request.hostConfirmed=true;
+    const auto control=draft.control;
+    if(draft.binding)actionBindings_[control]=*draft.binding;
+    lastStarted_=0;SubmitControl(std::move(request),control);
+    if(closed_||!controlDraft_)return;
+    controlDraft_->task=lastStarted_;
+    // Recreate the protected child after submission to erase its old contents.
+    controlDraft_->passwordId="control.password:"+std::to_string(++controlSerial_);
+    if(!lastStarted_)controlDraft_->error.clear();
+}
+void SystemPanelModel::ControlForm(float& y,bool inCard)
+{
+    if(!controlDraft_)return;auto& draft=*controlDraft_;const float left=inCard?24.f:16.f,right=scene_.width-left,width=right-left;
+    const bool connect=draft.request.name=="network.wifi.connect",busy=draft.task!=0;
+    if(draft.binding)actionBindings_[draft.control]=*draft.binding;
+    const auto field=[&](const std::string& id,const wchar_t* label)
+    {
+        Add(id+".label",ui::Role::Text,Rect(left,y,width,22),label).fontSize=12;y+=26;
+        auto& node=Add(id,ui::Role::Button,Rect(left,y,width,36));node.accessibilityLabel=label;node.enabled=!busy;
+        y+=44;
+    };
+    if(draft.hidden)
+    {
+        field("control.ssid",_LW("controlCenter.ssid"));
+        Add("control.security.label",ui::Role::Text,Rect(left,y,width,22),_LW("controlCenter.security")).fontSize=12;y+=26;
+        for(const auto* security:{"open","wpa2","wpa3"})
+        {
+            const std::string id="control.security:"+std::string(security);
+            auto& node=Add(id,ui::Role::ListItem,Rect(left,y,width,36),std::string_view(security)=="open"?_LW("controlCenter.openNetwork"):std::string_view(security)=="wpa2"?L"WPA2-Personal":L"WPA3-Personal");
+            node.selected=draft.request.arguments["security"]==security;node.enabled=!busy;
+            Command(id,[this,value=std::string(security)]{if(controlDraft_&&!controlDraft_->task){controlDraft_->request.arguments["security"]=value;controlDraft_->request.password.Clear();controlDraft_->passwordId="control.password:"+std::to_string(++controlSerial_);controlDraft_->error.clear();}});y+=38;
+        }
+        y+=8;
+    }
+    if(connect&&draft.request.arguments["security"]!="open")field(draft.passwordId,_LW("controlCenter.password"));
+    if(!connect)
+    {
+        if(draft.request.name=="network.wifi.forget"){Add("control.target",ui::Role::Text,Rect(left,y,width,28),Wide(draft.request.arguments["profileName"]));y+=32;}
+        const auto* key=draft.request.name=="network.wifi.forget"?"controlCenter.confirmForget":draft.request.name=="system.power.sleep"?"controlCenter.confirmSleep":draft.request.name=="system.power.restart"?"controlCenter.confirmRestart":"controlCenter.confirmShutdown";
+        auto& text=Add("control.confirmation",ui::Role::Text,Rect(left,y,width,68),_LW(key));text.wrap=true;y+=76;
+    }
+    if(!draft.error.empty()){auto& error=Add("control.error",ui::Role::Text,Rect(left,y,width,52),draft.error);error.wrap=true;error.fontSize=12;y+=60;}
+    const float button=(std::min)(134.f,(width-8)/2);
+    Add("control.cancel",ui::Role::Button,Rect(right-2*button-8,y,button,36),_LW("settings.dialog.cancel"));Command("control.cancel",[this]{ControlBack();});
+    auto& confirm=Add("control.confirm",ui::Role::Button,Rect(right-button,y,button,36),_LW(connect?"controlCenter.connect":"settings.dialog.confirm"));confirm.enabled=!busy;confirm.busy=busy;confirm.accent=true;
+    if(draft.hidden){const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,draft.ssid.data(),static_cast<int>(draft.ssid.size()),nullptr,0,nullptr,nullptr);confirm.enabled=confirm.enabled&&count>0&&count<=32;}
+    Command("control.confirm",[this]{ConfirmControl();});y+=44;
+}
 void SystemPanelModel::Scroll(float delta)
 {
     if(closed_||!std::isfinite(delta))return;
@@ -334,7 +485,7 @@ void SystemPanelModel::UpdateSettings(const StatusBarSettings& settings)
 }
 void SystemPanelModel::Header(std::wstring title)
 {
-    Add("back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("controlCenter.overview");Command("back",[this]{Select(page_=="wifi-adapters"?"wifi":"");});
+    Add("back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("controlCenter.overview");Command("back",[this]{if(!ControlBack())Select(page_=="wifi-adapters"?"wifi":"");});
     const wchar_t* uri=page_=="audio"?L"ms-settings:sound":page_=="brightness"?L"ms-settings:display":page_.starts_with("wifi")?L"ms-settings:network-wifi":page_=="bluetooth"?L"ms-settings:bluetooth":page_=="power"?L"ms-settings:powersleep":nullptr;
     const float settingsLeft=scene_.width-(page_=="wifi"||page_=="bluetooth"?112.f:52.f);
     auto& node=Add("title",ui::Role::Text,Rect(58,10,uri?settingsLeft-(page_=="wifi"?110.f:70.f):scene_.width-126,36),std::move(title));node.bold=true;node.fontSize=17;
@@ -478,6 +629,7 @@ void SystemPanelModel::WifiPage(float& y)
 {
     const auto snapshot=source_.current?source_.current("network.wifi"):std::nullopt;
     const auto value=snapshot&&snapshot->available?snapshot->value:j::Object();const auto& adapters=Items(value,"interfaces");
+    if(page_=="wifi-hidden"){ControlForm(y);return;}
     if(page_=="wifi-adapters")
     {
         for(const auto& a:adapters){const auto id=j::String(a,"id");auto& n=Add("adapter:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,48),Wide(j::String(a,"name")));n.selected=id==interface_;Command(n.id,[this,id]{interface_=id;network_.clear();Select("wifi");});y+=50;}return;
@@ -499,15 +651,23 @@ void SystemPanelModel::WifiPage(float& y)
     for(const auto& n:networks)
     {
         const auto id=j::String(n,"id"),profile=j::String(n,"profileName");const bool connected=j::Flag(n,"connected"),open=id==network_;
-        const auto card="wifi.card:"+id;
+        const auto card="wifi.card:"+id;const float cardTop=y;
         Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?100.f:56.f)).hoverGroup=card;
         auto& row=Add("wifi.network:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,56),Wide(j::String(n,"ssid")),L"\uE701");row.detail=(connected?std::wstring(_LW("controlCenter.connected"))+L" · ":L"")+Percent(j::Numeric(n,"signal"));
         row.hoverGroup=card;
         BindAction("wifi.connect:"+id,"wifi.connection:"+interface_,id,row.id,radioGroup);
         if(!profile.empty())BindAction("wifi.forget:"+id,"wifi.forget:"+interface_,profile,row.id,radioGroup);
-        Command(row.id,[this,id]{network_=network_==id?std::string{}:id;});y+=56;
+        Command(row.id,[this,id]{CancelControlInput();network_=network_==id?std::string{}:id;});y+=56;
         if(open)
         {
+            const bool editing=controlDraft_&&controlDraft_->request.name=="network.wifi.connect"&&!controlDraft_->hidden&&controlDraft_->request.arguments["networkId"]==id;
+            if(editing)
+            {
+                ControlForm(y,true);
+                for(auto& node:scene_.nodes)if(node.id==card)node.bounds.bottom=y;
+                for(auto& node:scene_.nodes)if(node.bounds.top>=cardTop&&node.bounds.bottom<=y)node.hoverGroup=card;
+                y+=8;continue;
+            }
             auto& button=Add("wifi.connect:"+id,ui::Role::Button,Rect(scene_.width-158,y,134,36),_LW(connected?"controlCenter.disconnect":"controlCenter.connect"));button.enabled=powered&&(connected||j::Flag(n,"connectable"));
             button.hoverGroup=card;
             const auto security=j::String(n,"security");Command(button.id,[this,id,profile,connected,security]{if(connected)Start("network.wifi.disconnect",{{"interfaceId",interface_}});else if(!profile.empty())Start("network.wifi.connect",{{"interfaceId",interface_},{"profileName",profile}});else if(security=="system")OpenSettings(L"ms-settings:network-wifi");else Start("network.wifi.connect",{{"interfaceId",interface_},{"networkId",id}});});
@@ -551,7 +711,8 @@ void SystemPanelModel::Bluetooth(float& y)
         Command(row.id,[this,id]{bluetooth_=bluetooth_==id?std::string{}:id;});y+=62;
         if(open)
         {
-            auto& button=Add("bluetooth.connect:"+id,ui::Role::Button,Rect(24,y,scene_.width-48,36),_LW(!supported?"settings.taskbar.systemSettings.open":connected?"controlCenter.disconnect":"controlCenter.connect"));button.enabled=devicePowered;
+            const float buttonWidth=(std::min)(supported?134.f:196.f,scene_.width-48);
+            auto& button=Add("bluetooth.connect:"+id,ui::Role::Button,Rect(scene_.width-24-buttonWidth,y,buttonWidth,36),_LW(!supported?"settings.taskbar.systemSettings.open":connected?"controlCenter.disconnect":"controlCenter.connect"));button.enabled=devicePowered;
             button.hoverGroup=card;
             Command(button.id,[this,id,connected,supported]{if(supported)Start(connected?"bluetooth.disconnect":"bluetooth.connect",{{"deviceId",id}});else OpenSettings(L"ms-settings:bluetooth");});y+=44;
         }
@@ -629,13 +790,21 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     const auto completions=source_.completions?source_.completions():std::vector<system_control::Completion>{};
     for(const auto& completion:completions)std::erase_if(pendingValues_,[&](const auto& item){return item.second.task==completion.id;});
     if(page_=="media"||(page_=="audio"&&!settings_.audioControls)||(page_=="brightness"&&!settings_.brightnessControls)||
-        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls)){++navigation_;page_.clear();ClearError();}
+        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls&&!controlDraft_)){CancelControlInput();++navigation_;page_.clear();ClearError();}
     SyncSubscriptions();
     if(subscriptions_.contains("network.wifi"))
     {
         const auto wifi=Current("network.wifi");const auto& adapters=Items(wifi,"interfaces");
         if(std::none_of(adapters.begin(),adapters.end(),[this](const auto& a){return j::String(a,"id")==interface_;}))
-        {interface_=adapters.empty()?std::string{}:j::String(adapters.front(),"id");network_.clear();}
+        {CancelControlInput();if(page_=="wifi-hidden")page_="wifi";interface_=adapters.empty()?std::string{}:j::String(adapters.front(),"id");network_.clear();}
+        if(controlDraft_&&controlDraft_->request.name=="network.wifi.connect")
+        {
+            const auto adapter=Wifi();const auto networks=system_control::WifiPresentationNetworks(adapter);
+            const auto& args=controlDraft_->request.arguments;
+            const bool targetPresent=controlDraft_->hidden||std::any_of(networks.begin(),networks.end(),[&](const auto& n){return j::String(n,"id")==args.at("networkId")&&j::String(n,"security")==args.at("security");});
+            if(!j::Flag(adapter,"available")||!j::Flag(adapter,"enabled")||!targetPresent)
+            {CancelControlInput();if(page_=="wifi-hidden"){page_="wifi";scroll_=0;}}
+        }
         if(scan_&&page_=="wifi"&&!interface_.empty()&&j::Flag(Wifi(),"enabled"))
         {
             scan_=false;
@@ -650,8 +819,21 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     if(page_=="media")page_.clear();
     PrepareMedia();
     const char* title=page_=="audio"?"statusBar.audioControls":page_=="brightness"?"statusBar.brightnessControls":page_.starts_with("wifi")?"statusBar.wifiControls":page_=="bluetooth"?"statusBar.bluetoothControls":"statusBar.powerControls";
-    if(!page_.empty())Header(_LW(title));float y=bodyStart_;
-    if(page_.empty())Overview(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);
+    std::uint64_t inlineCompletion=0;
+    for(const auto& completion:completions)if(controlDraft_&&controlDraft_->task&&completion.id==controlDraft_->task)
+    {
+        inlineCompletion=completion.id;
+        controlDraft_->task=0;
+        if(completion.ok){const bool hidden=controlDraft_->hidden;controlDraft_.reset();if(hidden){page_="wifi";scroll_=0;}}
+        else if(completion.error=="canceled"){controlDraft_.reset();if(page_=="wifi-hidden")page_="wifi";}
+        else if(completion.error=="passwordRequired")controlDraft_->error=_LW("controlCenter.invalidPassword");
+        else if(completion.error=="accessDenied")controlDraft_->error=_LW("controlCenter.accessDenied");
+        else if(completion.error=="timeout")controlDraft_->error=_LW("controlCenter.timeout");
+        else controlDraft_->error.clear();
+    }
+    if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
+    if(controlDraft_&&controlDraft_->request.name!="network.wifi.connect")ControlForm(y);
+    else if(page_.empty())Overview(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);
     PrunePendingActions();
     for(const auto& completion:completions)
     {
@@ -667,7 +849,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
             if(relevant)origin=pending->second;
             pendingActions_.erase(pending);
         }
-        if(feedback_.Take(completion.id)&&relevant&&!completion.ok&&completion.error!="canceled")
+        if(feedback_.Take(completion.id)&&completion.id!=inlineCompletion&&relevant&&!completion.ok&&completion.error!="canceled")
         {
             ClearError();
             // Generic failures provide no useful next step. Restore the real

@@ -4,6 +4,7 @@
 #include "system_control_wifi_presentation.h"
 #include "system_control_wifi_sampling.h"
 #include "system_control_audio_presentation.h"
+#include "system_control_brightness_identity.h"
 #include "system_control_windows.h"
 #include "widget_system_control_tasks.h"
 #include <algorithm>
@@ -799,6 +800,99 @@ void FreshReadbackOnlyConfirmsTheRequestedTarget()
     Require(!ControlReadbackMatches(request, snapshots),
         "a radio presentation flag meaning any PHY is on cannot prove that all requested PHY changes succeeded");
 }
+void BrightnessIdentityAndLegacyTargets()
+{
+    const auto panel = BrightnessMonitorIdentity(L"DISPLAY\\BOE0D55\\5&fixture&0&UID8448_0", true);
+    const auto panelPath = BrightnessMonitorIdentity(L"\\\\?\\display#boe0d55#5&fixture&0&uid8448#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}");
+    const auto external = BrightnessMonitorIdentity(L"DISPLAY\\XMI3005\\5&fixture&0&UID8449_0", true);
+    const auto secondPanel = BrightnessMonitorIdentity(L"DISPLAY\\BOE0D55\\5&fixture&0&UID8450_0", true);
+    Require(!panel.empty() && panel == panelPath && panel != secondPanel,
+        "WMI and monitor-interface forms identify the same complete PnP instance, not every panel of the same model");
+    Require(BrightnessMonitorIdentity(L"Generic PnP Monitor").empty() &&
+        BrightnessMonitorIdentity(L"DISPLAY\\BOE0D55\\").empty(), "names and incomplete paths cannot become physical identities");
+    std::vector<BrightnessDisplayTarget> targets{{panel, L"Generic PnP Monitor", true}};
+    Require(BrightnessDdcIdentity(targets, 1) == panel, "a sole active target and sole physical handle have an unambiguous mapping");
+    Require(BrightnessDdcIdentity(targets, 2).empty(), "one logical display cannot identify several physical handles by array order");
+    targets.push_back({secondPanel, L"Generic PnP Monitor", true});
+    Require(BrightnessDdcIdentity(targets, 1).empty(), "a cloned GDI view with two real targets must not borrow the first target identity");
+    targets[1].active = false;
+    Require(BrightnessDdcIdentity(targets, 1) == panel && BrightnessMonitorActive(secondPanel, targets) == false &&
+        !BrightnessMonitorActive(external, targets).has_value(), "explicit inactive targets differ from targets whose identity mapping is unknown");
+    Require(BrightnessMonitorName(L" NE160QDM-NZL ", L"Generic PnP Monitor", panel) == L"NE160QDM-NZL" &&
+        BrightnessMonitorName(L"", L"Generic PnP Monitor", external) == L"Generic PnP Monitor" &&
+        BrightnessMonitorName(L"DISPLAY\\BOE0D55\\instance", L"\\\\?\\DISPLAY#bad", panel) == L"BOE0D55",
+        "EDID names take precedence and even fallback labels cannot expose instance paths");
+    const auto sample = [](std::string id, std::wstring identity, std::string name, bool internal, std::optional<double> level) {
+        auto value = json::Object(); value.object["id"] = json::Text(std::move(id));
+        value.object["name"] = json::Text(std::move(name)); value.object["kind"] = json::Text(internal ? "internal" : "ddc");
+        value.object["available"] = json::Boolean(level.has_value());
+        if (level) value.object["brightness"] = json::Number(*level); else value.object["error"] = json::Text("actionUnsupported");
+        return BrightnessMonitorSample{std::move(identity), std::move(value)};
+    };
+    const std::string oldDdc = "ddc:display2:0";
+    std::vector<BrightnessMonitorSample> samples{
+        sample("wmi:panel", panel, "NE160QDM-NZL", true, 64),
+        sample("ddc:display1:0", external, "Mi Monitor", false, 80),
+        sample(oldDdc, panel, "Generic PnP Monitor", false, {})};
+    auto merged = MergeBrightnessMonitors(samples);
+    Require(merged.array.size() == 2 && json::String(merged.array[0], "id") == "wmi:panel" &&
+        json::Numeric(merged.array[0], "brightness") == 64 && json::Numeric(merged.array[1], "brightness") == 80 && samples.size() == 3,
+        "the internal WMI/DDC alias becomes one accurate row without mutating the endpoint inventory");
+    samples.push_back(sample("ddc:display3:0", secondPanel, "Mi Monitor", false, 35));
+    samples.push_back(sample("ddc:unknown1:0", {}, "Mi Monitor", false, {}));
+    samples.push_back(sample("ddc:unknown2:0", {}, "Mi Monitor", false, 50));
+    merged = MergeBrightnessMonitors(samples);
+    Require(merged.array.size() == 5 && json::String(merged.array[2], "id") == "ddc:display3:0" &&
+        !json::Flag(merged.array[3], "available") && !merged.array[3].Find("brightness"),
+        "same-name real displays and unknown mappings remain separate, and unsupported brightness never becomes zero");
+    samples[0].value.object["available"] = json::Boolean(false); samples[0].value.object.erase("brightness");
+    samples[2].value.object["available"] = json::Boolean(true); samples[2].value.object["brightness"] = json::Number(72);
+    samples[2].value.object.erase("error");
+    Require(json::String(MergeBrightnessMonitors(samples).array.front(), "id") == oldDdc,
+        "an actually available DDC endpoint remains usable when its WMI alias cannot be read");
+
+    struct LegacyBackend final : Backend
+    {
+        struct Endpoint { std::string id; int physical; };
+        std::vector<Endpoint> endpoints{{"ddc:display1:0", 1}, {"ddc:display2:0", 2}};
+        std::vector<BrightnessMonitorSample> samples;
+        Result outcome;
+        int executedPhysical = 0;
+        std::mutex mutex; std::condition_variable changed; bool released = false;
+        std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation&) override
+        {
+            auto value = json::Object(); value.object["monitors"] = MergeBrightnessMonitors(samples);
+            return {{"system.display.brightness", {true, std::move(value), {}, 0, 0}}};
+        }
+        Result Execute(const Request& request, const Cancellation&) override
+        {
+            return WithBrightnessEndpoint(endpoints, request.arguments.at("monitorId"), [&](const Endpoint& endpoint) {
+                executedPhysical = endpoint.physical; return outcome;
+            });
+        }
+        void Release(std::string_view) override
+        { std::lock_guard guard(mutex); released = true; changed.notify_all(); }
+    };
+    for (const bool ok : {true, false})
+    {
+        auto backend = std::make_shared<LegacyBackend>();
+        backend->samples = {sample("wmi:panel", panel, "NE160QDM-NZL", true, 64), sample(oldDdc, panel, "Generic PnP Monitor", false, {})};
+        backend->outcome = {ok, ok ? "" : "stateMismatch", 0};
+        Service service(backend); auto request = BrightnessRequest();
+        request.arguments = {{"monitorId", oldDdc}, {"brightness", "64"}};
+        const auto id = service.Start("legacy-widget", std::move(request));
+        Require(id != 0, "an old brightness endpoint token remains a valid task argument");
+        { std::unique_lock guard(backend->mutex); Require(backend->changed.wait_for(guard, 3s, [&] { return backend->released; }), "legacy brightness operation completes and releases"); }
+        const auto completed = service.DrainCompletions("legacy-widget");
+        Require(backend->executedPhysical == 2 && completed.size() == 1 && completed.front().id == id && completed.front().ok == ok,
+            "hidden legacy DDC IDs still execute on their original endpoint and retain the real result through service readback");
+        if (!ok) Require(completed.front().error == "stateMismatch", "a WMI alias value cannot manufacture success for a failed DDC operation");
+        int calls = 0;
+        const auto missing = WithBrightnessEndpoint(backend->endpoints, "ddc:removed:0", [&](const auto&) { ++calls; return Result{true, {}, 0}; });
+        Require(!missing.ok && missing.error == "deviceGone" && calls == 0, "a removed token cannot fall through to another physical display");
+        service.Shutdown();
+    }
+}
 void BluetoothPowerAndDeviceReadFailures()
 {
     Cancellation cancel{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 3s};
@@ -863,6 +957,7 @@ void TestSystemControls()
     WidgetControlBridgeOwnsTaskLifetimes();
     ReusedConsumerCannotReceiveDetachedWork();
     BrightnessSettlingAndStaleFeedback();
+    BrightnessIdentityAndLegacyTargets();
     BluetoothPowerAndDeviceReadFailures();
     AudioPresentationKeepsRealEndpoints();
     WifiOffStillHasManageableInterface();

@@ -35,6 +35,7 @@ struct SystemCalendarInputField
     D2D1_RECT_F bounds{}, clip{};
     bool multiline=false, enabled=true;
     int limit=0;
+    bool password=false;
 };
 // All live effects live at this boundary; offline rendering supplies fixtures.
 struct SystemPanelSource
@@ -95,6 +96,12 @@ public:
     bool SetCalendarInput(std::string_view id, std::wstring text);
     bool CalendarBack();
     bool CalendarEventCommand(std::string_view nodeId, bool remove);
+    std::vector<SystemCalendarInputField> ControlInputFields() const;
+    bool SetControlInput(std::string_view id, std::wstring& text);
+    std::string ControlFocusTarget() const;
+    bool ControlBack();
+    void CancelControlInput();
+    bool BeginPowerConfirmation(std::string_view task);
 private:
     SystemPanelSource source_;
     StatusBarSettings settings_;
@@ -119,6 +126,17 @@ private:
     std::map<std::string,std::string> sliderTargets_;
     std::map<std::string,std::string> valueControls_;
     struct ActionBinding { std::string group, target, indicator, radioGroup; };
+    struct ControlDraft
+    {
+        system_control::Request request;
+        std::string control, passwordId;
+        std::optional<ActionBinding> binding;
+        std::wstring ssid, error;
+        std::uint64_t task=0;
+        bool hidden=false;
+    };
+    std::optional<ControlDraft> controlDraft_;
+    std::uint64_t controlSerial_=0;
     struct PendingAction
     {
         std::uint64_t task = 0;
@@ -142,6 +160,9 @@ private:
     JsonValue Wifi() const;
     void SyncSubscriptions();
     void Start(std::string, system_control::Arguments = {}, std::string_view control = {});
+    void SubmitControl(system_control::Request, const std::string& control);
+    void ConfirmControl();
+    void ControlForm(float&, bool inCard=false);
     void BindAction(std::string control, std::string group, std::string target, std::string indicator = {}, std::string radioGroup = {});
     bool RadioTransitionPending(const ActionBinding&) const;
     void ClearError();

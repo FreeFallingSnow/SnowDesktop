@@ -41,6 +41,8 @@ void Require(HRESULT result)
 void CheckControlPromptVisuals(const native_component_preview::Request& request,
     native_component_preview::Result& result,const PersonalizationSettings& appearance)
 {
+    // Independent forms remain the external Lua-task confirmation boundary.
+    // The native panel exercises its own inline/page forms below instead.
     for(const auto& preview:RenderSystemControlPromptPreviews(appearance,request.dpi))
     {
         const auto name="prompt-"+preview.name;
@@ -383,8 +385,8 @@ void CheckMute(SystemPanelModel& model, const std::shared_ptr<PreviewState>& sta
 
 void CheckClosedCallbacks()
 {
-    // A native confirmation runs a nested message loop: closing or replacing
-    // the panel during it must invalidate the old action before it can submit.
+    // The panel owns an unsubmitted confirmation. Closing it must discard the
+    // draft without ever invoking the independent external-task prompt.
     auto state = std::make_shared<PreviewState>();
     auto source = FixtureSource(state);
     SystemPanelModel* active = nullptr;
@@ -393,7 +395,10 @@ void CheckClosedCallbacks()
     source.prompt = [&](system_control::Request&) { ++prompts; active->Close(); return true; };
     SystemPanelModel model(std::move(source), {}, StatusBarAction::ControlCenter);
     active = &model; model.Select("power");
-    Require(!model.Invoke("power.shutdown") && prompts == 1 && starts == 0 && state->closes == 1,
+    Require(model.Invoke("power.shutdown")&&model.View().Find("control.confirm")&&prompts==0&&starts==0,
+        "native confirmation escaped its panel or submitted before explicit confirmation");
+    model.Close();
+    Require(!model.Invoke("control.confirm") && prompts == 0 && starts == 0 && state->closes == 1,
         "closed confirmation submitted an obsolete action or closed its source twice");
     const auto reads = state->reads;
     model.Refresh(); model.Close();
@@ -1323,6 +1328,104 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
     return pixels;
 }
 
+void CheckInlineControlForms(ID2D1Device* device,IDWriteFactory* text,
+    const native_component_preview::Request& request,native_component_preview::Result& result,
+    const PersonalizationSettings& appearance,const SystemPanel::Background& background,const widget_preview::Wallpaper& stage)
+{
+    CheckSystemControlPasswordInput();
+    const float scale=static_cast<float>(request.dpi)/96.f;
+    for(int mode=0;mode<4;++mode)
+    {
+        auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+        auto source=FixtureSource(state);const auto read=source.current;
+        const auto start=source.start;std::vector<system_control::Request> requests;std::vector<std::uint64_t> canceled;
+        source.current=[read,mode](std::string_view topic){auto snapshot=read(topic);if(snapshot&&topic=="network.wifi"){
+            auto& network=snapshot->value.object["interfaces"].array.front().object["networks"].array.front();
+            network.object["connected"]=j::Boolean(false);network.object["connectable"]=j::Boolean(true);network.object["security"]=j::Text("wpa2");
+            network.object["profileName"]=j::Text(mode==2?"Saved preview network":"");}return snapshot;};
+        source.start=[&](system_control::Request value)->std::uint64_t{if(value.name=="network.wifi.scan")return start(std::move(value));
+            Require(system_control::ValidateRequest(value)&&value.hostConfirmed,"inline form submitted an invalid or unconfirmed request");
+            requests.push_back(std::move(value));return std::uint64_t{1000}+requests.size();};
+        source.cancel=[&](std::uint64_t id){canceled.push_back(id);return true;};
+        StatusBarSettings settings;if(mode==3)settings.powerControls=false;
+        SystemPanelModel model(std::move(source),settings,StatusBarAction::ControlCenter);
+        if(mode==3)Require(model.BeginPowerConfirmation("system.power.restart"),"system-menu power action could not enter the shared confirmation page");
+        else
+        {
+            model.Select("wifi");
+            if(mode==1)Require(model.Invoke("wifi.hidden")&&model.Page()=="wifi-hidden","hidden network did not enter its third-level panel page");
+            else Require(model.Invoke("wifi.network:network-preview")&&model.Invoke(mode==2?"wifi.forget:network-preview":"wifi.connect:network-preview"),
+                "network did not expand its own input/confirmation");
+        }
+        model.Refresh(static_cast<float>(request.canvasHeight-2*request.padding)/scale,
+            static_cast<float>(request.canvasWidth-2*request.padding)/scale);
+        Require(requests.empty()&&model.View().Find("control.confirm"),"opening a panel form executed its action");
+        if(mode==0)
+        {
+            const auto fields=model.ControlInputFields();Require(fields.size()==1&&fields.front().password&&fields.front().text.empty(),"Wi-Fi card omitted its protected inline field");
+            const auto& card=Node(model.View(),"wifi.card:network-preview");
+            Require(fields.front().bounds.top>=card.bounds.top&&fields.front().bounds.bottom<=card.bounds.bottom&&
+                Node(model.View(),"control.confirm").bounds.bottom<=card.bounds.bottom,"Wi-Fi password escaped its expanded network card");
+        }
+        if(mode==1)
+        {
+            std::wstring tooLong(20,L'\u4e2d');model.SetControlInput("control.ssid",tooLong);model.Refresh();
+            Require(!Node(model.View(),"control.confirm").enabled,"hidden SSID limit counted characters instead of UTF-8 bytes");
+            std::wstring ssid=L"SnowDesktop hidden preview";model.SetControlInput("control.ssid",ssid);model.Refresh();
+            Require(model.ControlInputFields().size()==2&&Node(model.View(),"control.confirm").enabled,"hidden SSID/security/password did not share one page");
+        }
+        CheckLayout(model.View());
+        const int width=static_cast<int>(std::ceil(model.View().width*scale)),height=static_cast<int>(std::ceil(model.View().height*scale));
+        const int left=(request.canvasWidth-width)/2,top=(request.canvasHeight-height)/2;
+        auto pixels=Render(device,text,request,model.View(),appearance,background,stage,left,top);
+        auto fields=model.ControlInputFields();for(auto& field:fields){field.bounds.left+=left/scale;field.bounds.right+=left/scale;field.bounds.top+=top/scale;field.bounds.bottom+=top/scale;field.clip.left+=left/scale;field.clip.right+=left/scale;field.clip.top+=top/scale;field.clip.bottom+=top/scale;}
+        if(!fields.empty())
+        {
+            const auto withoutInputs=pixels;OverlaySystemCalendarInputs(fields,appearance,request.dpi,request.canvasWidth,request.canvasHeight,pixels);
+            Require(pixels!=withoutInputs,"control panel preview omitted the real native EDIT children");
+        }
+        const std::string name=mode==0?"inline-wifi-password":mode==1?"hidden-network-page":mode==2?"inline-forget-confirmation":"inline-power-confirmation";
+        const auto path=request.outputDirectory/(request.component+"-"+name+".png");
+        if(!preview_png::Save(path,request.canvasWidth,request.canvasHeight,pixels,result.error))throw std::runtime_error(result.error);
+        result.outputs.push_back({request.component,name,path,false,false,false,false,false,false,static_cast<int>(std::lround(appearance.cornerRadius*scale)),width,height,left,top});
+        if(mode<2)
+        {
+            if(mode==0)
+            {
+                ui::Input cancelInput;const auto cancelPoint=VisibleCenter(model.View(),"control.cancel");
+                Require(cancelInput.Press(model.View(),cancelPoint)&&model.Invoke(cancelInput.Release(model.View(),cancelPoint).id)&&model.ControlInputFields().empty()&&requests.empty(),
+                    "canceling an unsubmitted password card retained its input or executed a request");
+                Require(model.Invoke("wifi.connect:network-preview"),"cancelled password card could not be reopened");
+            }
+            auto id=model.ControlInputFields().back().id;std::wstring invalid=L"short";model.SetControlInput(id,invalid);
+            Require(std::all_of(invalid.begin(),invalid.end(),[](wchar_t ch){return ch==0;}),"password bridge retained its temporary input buffer");
+            model.Invoke("control.confirm");Require(requests.empty()&&model.View().Find("control.error"),"invalid password bypassed explicit validation");
+            std::wstring password=L"offline-only-password";model.SetControlInput(id,password);model.Refresh();
+            for(const auto& field:model.ControlInputFields())if(field.password)Require(field.text.empty(),"password entered an ordinary EDIT descriptor");
+            for(const auto& node:model.View().nodes)Require(node.text.find(L"offline-only-password")==std::wstring::npos&&node.tooltip.find(L"offline-only-password")==std::wstring::npos,
+                "password leaked into the render/accessibility scene");
+            if(mode==1){Require(model.Invoke("control.security:open")&&model.ControlInputFields().size()==1,"open security kept its password child");}
+        }
+        model.Reveal("control.confirm");ui::Input input;input.Sync(model.View());const auto point=VisibleCenter(model.View(),"control.confirm");
+        Require(input.Press(model.View(),point),"inline confirm lost pointer input");const auto action=input.Release(model.View(),point);
+        Require(action.kind==ui::InputResult::Kind::Invoke&&model.Invoke(action.id)&&requests.size()==1,"inline confirmation did not dispatch exactly once");
+        Require(!model.Invoke("control.confirm")&&requests.size()==1,"in-flight confirmation allowed duplicate submission");
+        if(mode==1)Require(requests.front().password.View().empty()&&requests.front().arguments.at("security")=="open","open hidden network retained a secret");
+        if(mode==0)Require(requests.front().password.View()==L"offline-only-password","protected inline password never reached the internal request");
+        if(mode==3)
+        {
+            system_control::Completion failed;failed.id=1001;failed.error="unavailable";state->completions.push_back(failed);model.Refresh();
+            Require(!model.View().Find("control.error")&&Node(model.View(),"control.confirm").enabled&&model.Invoke("control.confirm")&&requests.size()==2,
+                "generic confirmation failure added a vague banner or prevented retry");
+        }
+        const auto activeTask=std::uint64_t{1000}+requests.size();
+        if(mode%2==0)model.Select("audio");else model.Close();
+        Require(canceled==std::vector<std::uint64_t>{activeTask}&&model.ControlInputFields().empty(),"navigation/close retained a pending sensitive control operation");
+        system_control::Completion late;late.id=activeTask;late.error="accessDenied";state->completions.push_back(late);model.Refresh();
+        Require(mode%2==0?!model.View().Find("control.error"):!model.Invoke("control.confirm"),"obsolete inline completion leaked into the replacement page");
+    }
+}
+
 void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
     const native_component_preview::Request& request,native_component_preview::Result& result,
     const PersonalizationSettings& appearance,const SystemPanel::Background& background,const widget_preview::Wallpaper& stage)
@@ -1552,6 +1655,14 @@ void CheckDeviceCardHover(ID2D1Device* device,IDWriteFactory* text,
         Require(gap&&gap->id==card,"expanded card padding lost its hover identity");
         ui::Input input;input.Sync(scene);Require(input.Focus(row)&&input.Focus(button)&&!input.Focus(card),
             "shared card hover changed row/button accessibility identities or made decoration focusable");
+        if(!wifi)
+        {
+            const auto& action=Node(scene,button);const auto& bounds=Node(scene,card).bounds;
+            Require(action.bounds.right==bounds.right-8&&action.bounds.right-action.bounds.left<=196&&action.bounds.left>bounds.left+48,
+                "Bluetooth expanded action still spans the device card instead of aligning compactly right");
+            const auto point=VisibleCenter(scene,button);Require(input.Press(scene,point)&&input.Release(scene,point).id==button,
+                "compact Bluetooth child action lost its independent pointer target");
+        }
         const auto idle=Render(device,text,request,scene,appearance,background,{},0,0);
         const auto overRow=Render(device,text,request,scene,appearance,background,{},0,0,nullptr,{},row);
         const auto overButton=Render(device,text,request,scene,appearance,background,{},0,0,nullptr,{},button);
@@ -1813,6 +1924,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             {
                 CheckClosedCallbacks();
                 CheckControlPromptVisuals(request,result,appearance);
+                CheckInlineControlForms(device,text,request,result,appearance,background,stage);
                 CheckLogicalFocus();
                 CheckModelScrolling();
                 CheckPendingActions();

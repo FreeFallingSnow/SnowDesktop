@@ -1476,7 +1476,7 @@ function animation.cancelFrame(id) end
 ---@class SnowAudioInputVolumeDataValue: SnowAudioOutputVolumeDataValue
 
 ---@class SnowBrightnessMonitor
----@field id string Brightness endpoint token, distinct from display.topology IDs.
+---@field id string Opaque brightness endpoint token, distinct from display.topology IDs; discard after device removal and reread the list.
 ---@field name string
 ---@field kind 'internal'|'ddc'
 ---@field available boolean
@@ -1484,7 +1484,7 @@ function animation.cancelFrame(id) end
 ---@field error? string
 
 ---@class SnowDisplayBrightnessDataValue
----@field monitors SnowBrightnessMonitor[] Empty when no supported display path exists.
+---@field monitors SnowBrightnessMonitor[] Proven WMI/DDC aliases share one row (available endpoint preferred, then internal WMI). Unknown mappings and distinct same-name displays remain separate; older hosts may return aliases as separate rows.
 
 ---@class SnowWifiNetwork
 ---@field id string Network token scoped to its interface; do not persist or parse.

@@ -16,6 +16,8 @@ public:
     ~SystemPanel();
     void Show(StatusBarAction,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
         std::shared_ptr<tray::Service>,std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
+    void ShowPowerConfirmation(std::string task,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
+        std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
     void Hide();
     void HideForMonitor(HMONITOR);
     void CloseThen(std::function<void()>);
