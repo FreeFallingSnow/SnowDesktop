@@ -91,7 +91,7 @@ void TestPublishedV2Catalog(const fs::path& repository)
     const std::string published = api + '\n' + skill + '\n' + luaLs;
 
     const auto features = QuotedStrings(Section(registry,
-        "kHostFeatures = {",
+        "kHostFeatures",
         "using FunctionParameter = SystemFunctionParameterContract;"));
     Check(!features.empty(),
         "host feature catalog must be available for documentation checks");

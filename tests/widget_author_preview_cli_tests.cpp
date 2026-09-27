@@ -569,6 +569,62 @@ void Write(const std::filesystem::path& path, std::string_view text)
     Check(static_cast<bool>(output), "preview fixture is written");
 }
 
+void CheckModuleRequireErrors(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root,
+    const std::filesystem::path& manifestSource)
+{
+    const auto source = root / L"module-errors";
+    Check(std::filesystem::create_directories(source / L"modules"),
+        "module error fixture is created");
+    std::filesystem::copy_file(manifestSource / L"widget.json", source / L"widget.json");
+    Write(source / L"modules" / L"good.lua", "return { value = 42 }");
+    Write(source / L"modules" / L"runtime.lua", "error('intentional module failure')");
+    Write(source / L"modules" / L"syntax.lua", "return {");
+    Write(source / L"modules" / L"circular.lua", "return module.require('modules/circular.lua')");
+    Write(source / L"main.lua", R"lua(
+local function rejected(path, message)
+    local ok, failure = pcall(module.require, path)
+    assert(not ok and tostring(failure):find(message, 1, true), "wrong module rejection: " .. tostring(failure))
+end
+rejected("bad.txt", "path must name a .lua file")
+rejected("modules/missing.lua", "module is missing or exceeds the 1 MiB limit")
+rejected("modules/runtime.lua", "intentional module failure")
+rejected("modules/syntax.lua", "syntax.lua")
+rejected("modules/circular.lua", "circular dependency detected")
+rejected("modules/runtime.lua", "intentional module failure")
+local good = module.require("modules/good.lua")
+assert(good.value == 42 and module.require("modules/good.lua") == good,
+    "caught module errors must preserve loading and cache state")
+return widget.define({
+    setup = function()
+        -- Cached modules still obey the entry-loading restriction. This must
+        -- reach the normal engine.load diagnostic, never terminate the host.
+        return module.require("modules/good.lua")
+    end,
+    render = function() error("rejected setup must not reach render") end,
+})
+)lua");
+    const auto output = root / L"module-errors.png";
+    const auto [exit, json] = Run(snowwidget, {L"preview", source.wstring(), output.wstring(),
+        L"--host", host.wstring()});
+    Check(exit != 0 && json.find("\"stage\":\"engine.load\"") != std::string::npos &&
+            json.find("modules can only be loaded while the entry script is loading") != std::string::npos &&
+            json.find("host.result") == std::string::npos && !std::filesystem::exists(output),
+        "module validation, execution and forbidden-stage errors are Lua errors, not host crashes");
+    for (const auto* module : {"syntax", "runtime"})
+    {
+        Write(source / L"main.lua", "return module.require('modules/" + std::string(module) + ".lua')");
+        const auto [moduleExit, moduleJson] = Run(snowwidget,
+            {L"preview", source.wstring(), output.wstring(), L"--host", host.wstring()});
+        const auto expected = std::string_view(module) == "syntax"
+            ? "syntax.lua" : "intentional module failure";
+        Check(moduleExit != 0 && moduleJson.find("\"stage\":\"engine.load\"") != std::string::npos &&
+                moduleJson.find(expected) != std::string::npos &&
+                moduleJson.find("host.result") == std::string::npos && !std::filesystem::exists(output),
+            "uncaught module syntax and runtime errors return the structured engine.load failure");
+    }
+}
+
 void CheckSystemMonitorMenu(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& root,
     const std::filesystem::path& monitorSource)
@@ -641,7 +697,11 @@ local function instance(saved, snapshot, legacy)
     for _, card in ipairs({"cpu", "memory", "network", "battery", "storage", "disk_io", "uptime"}) do
         f.values["show_" .. card] = false
     end
-    f.component = loadMonitor(f); f.model = f.component.setup()
+    f.component = loadMonitor(f)
+    return f
+end
+local function start(f)
+    f.model = f.component.setup()
     assert(f.subscriptions == 1, "GPU and VRAM must share their source")
     return f
 end
@@ -666,12 +726,20 @@ local function checkMenu(f, selected, unavailable)
     return choices
 end
 local function action(f, id) f.component.event(nil, f.model, {kind = "action", id = "system.gpu.select." .. id}) end
-local active
+-- Actual entry/module loading is confined to the host's entry-loading phase;
+-- setup/menu/event/render/dispose below still run the real captured callbacks.
+local replacement = gpu("adapter-10", a.name, 8000, 3200, 25, {a.id})
+local f = instance({gpu_scope = "all", gpu_adapter_id = integrated.id}, ready({b, integrated, a}))
+local alias = instance({gpu_scope = "selected", gpu_adapter_id = a.id}, ready({replacement, b}))
+local reloaded = instance({}, ready({replacement, b}))
+local missing = instance({gpu_scope = "selected", gpu_adapter_id = "gone"}, ready({a, b}))
+local legacy = instance({}, ready({b, a}), true)
+local active = instance({}, {available = false, warmingUp = true})
 return hostWidget.define({
     useCustomStyle = true, followPersonalizationDefault = false,
     bg = 0x20242C, alpha = 1, borderAlpha = 0,
     setup = function()
-        local f = instance({gpu_scope = "all", gpu_adapter_id = integrated.id}, ready({b, integrated, a}))
+        start(f)
         assert(f.values.gpu_adapter_id == a.id and f.values.gpu_scope == "selected", "legacy all must persist a concrete default")
         assert(checkMenu(f, a.id, false) == 3, "same-capacity real GPUs must remain separate")
         local writes = f.writes
@@ -683,25 +751,24 @@ return hostWidget.define({
         f.snapshot = ready({a, b}); action(f, b.id); checkMenu(f, b.id, false)
         writes = f.writes; action(f, "missing")
         assert(f.writes == writes and f.values.gpu_adapter_id == b.id, "stale unknown menu actions must not change selection")
-        local replacement = gpu("adapter-10", a.name, 8000, 3200, 25, {a.id})
         f.snapshot = ready({b, replacement}); action(f, a.id)
         assert(f.values.gpu_adapter_id == replacement.id, "an old menu action must follow a proven alias")
         checkMenu(f, replacement.id, false)
         f.component.dispose(); assert(f.releases == 1)
 
-        local alias = instance({gpu_scope = "selected", gpu_adapter_id = a.id}, ready({replacement, b}))
+        start(alias)
         assert(alias.values.gpu_adapter_id == replacement.id, "saved alias must be persisted as canonical")
         replacement.aliasIds = nil; checkMenu(alias, replacement.id, false)
         alias.component.dispose()
-        local reloaded = instance(alias.values, ready({replacement, b})); checkMenu(reloaded, replacement.id, false)
+        reloaded.values = alias.values; start(reloaded); checkMenu(reloaded, replacement.id, false)
         reloaded.component.dispose()
-        local missing = instance({gpu_scope = "selected", gpu_adapter_id = "gone"}, ready({a, b}))
+        start(missing)
         checkMenu(missing, nil, true); assert(missing.writes == 0); missing.component.dispose()
-        local legacy = instance({}, ready({b, a}), true)
+        start(legacy)
         assert(checkMenu(legacy, a.id, false) == 2 and legacy.values.gpu_adapter_id == a.id,
             "legacy hosts need a concrete default and a flat single-selection menu without aliases")
         legacy.component.dispose()
-        active = instance({}, {available = false, warmingUp = true})
+        start(active)
         assert(active.writes == 0, "warm-up cannot persist an invented device")
         active.snapshot = ready({b, integrated, a})
         checkMenu(active, a.id, false)
@@ -2468,6 +2535,7 @@ int wmain(int argc, wchar_t** argv) try
             monitorPreviews[1].pixels == monitorPreviews[2].pixels &&
             monitorPreviews[2].pixels != monitorPreviews[3].pixels,
         "System Monitor defaults and migrates legacy all-GPU selection to a concrete device while preserving unavailable saved selection");
+    CheckModuleRequireErrors(snowwidget, host, temporary.path, monitorSource);
     CheckSystemMonitorMenu(snowwidget, host, temporary.path, monitorSource);
 
     const auto environmentSource =

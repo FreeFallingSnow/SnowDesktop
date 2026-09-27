@@ -9251,38 +9251,34 @@ static void ClearModuleCacheEntry(lua_State* L, int cache,
     lua_setfield(L, cache, key.c_str());
 }
 
-static int lua_ModuleRequire(lua_State* L)
+// Return ordinary validation/load errors before raising them in Lua. Lua uses
+// longjmp on this build, so a rejection must not unwind the C++ file/path/string
+// locals below. Keep the worker out of the object-free Lua callback's frame.
+static __declspec(noinline) int LoadRequiredWidgetModule(lua_State* L,
+    const char* pathRaw, size_t pathLength, const char*& error)
 {
-    size_t pathLength = 0;
-    const char* pathRaw = luaL_checklstring(L, 1, &pathLength);
-    if (pathLength == 0 || pathLength > 512)
-        return luaL_error(L, "module.require: path length is invalid");
-
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_loading");
-    const bool loading = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
-    if (!loading)
-    {
-        return luaL_error(L,
-            "module.require: modules can only be loaded while the entry script is loading");
-    }
-
     const std::wstring relativePath = Utf8ToWideLocal(
         std::string(pathRaw, pathLength));
     if (relativePath.empty() ||
         _wcsicmp(std::filesystem::path(relativePath).extension().c_str(),
             L".lua") != 0)
-        return luaL_error(L, "module.require: path must name a .lua file");
+    {
+        error = "module.require: path must name a .lua file";
+        return 0;
+    }
     const auto fullPath = ResolveCurrentPackageAsset(L, relativePath);
     if (!fullPath)
-        return luaL_error(L, "module.require: path is outside the component package");
+    {
+        error = "module.require: path is outside the component package";
+        return 0;
+    }
 
     std::error_code fileError;
     const auto fileSize = std::filesystem::file_size(*fullPath, fileError);
     if (fileError || fileSize > snowdesktop::widget::kMaxEntryLuaBytes)
     {
-        return luaL_error(L,
-            "module.require: module is missing or exceeds the 1 MiB limit");
+        error = "module.require: module is missing or exceeds the 1 MiB limit";
+        return 0;
     }
     const std::string cacheKey = WidgetWideToUtf8(*fullPath);
     lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_cache");
@@ -9296,7 +9292,10 @@ static int lua_ModuleRequire(lua_State* L)
     const int cache = lua_absindex(L, -1);
     lua_getfield(L, cache, cacheKey.c_str());
     if (lua_touserdata(L, -1) == &kModuleLoadingMarker)
-        return luaL_error(L, "module.require: circular dependency detected");
+    {
+        error = "module.require: circular dependency detected";
+        return 0;
+    }
     if (!lua_isnil(L, -1))
     {
         lua_remove(L, cache);
@@ -9315,8 +9314,8 @@ static int lua_ModuleRequire(lua_State* L)
         fileSize > 4ull * 1024ull * 1024ull -
             static_cast<std::uint64_t>(moduleBytes))
     {
-        return luaL_error(L,
-            "module.require: per-instance module count or byte quota exceeded");
+        error = "module.require: per-instance module count or byte quota exceeded";
+        return 0;
     }
 
     lua_pushlightuserdata(L, &kModuleLoadingMarker);
@@ -9327,7 +9326,8 @@ static int lua_ModuleRequire(lua_State* L)
         !file.read(source.data(), static_cast<std::streamsize>(fileSize))))
     {
         ClearModuleCacheEntry(L, cache, cacheKey);
-        return luaL_error(L, "module.require: module could not be read");
+        error = "module.require: module could not be read";
+        return 0;
     }
     const std::string chunkName = "@module/" +
         WidgetWideToUtf8(std::filesystem::path(relativePath).
@@ -9336,19 +9336,20 @@ static int lua_ModuleRequire(lua_State* L)
             chunkName.c_str()) != LUA_OK)
     {
         ClearModuleCacheEntry(L, cache, cacheKey);
-        return lua_error(L);
+        return 0;
     }
     lua_getfield(L, LUA_REGISTRYINDEX, "__widget_environment");
     if (!lua_istable(L, -1) || lua_setupvalue(L, -2, 1) == nullptr)
     {
         if (lua_isnil(L, -1)) lua_pop(L, 1);
         ClearModuleCacheEntry(L, cache, cacheKey);
-        return luaL_error(L, "module.require: sandbox environment is unavailable");
+        error = "module.require: sandbox environment is unavailable";
+        return 0;
     }
     if (snowdesktop::lua_runtime::ProtectedCall(L, 0, 1) != LUA_OK)
     {
         ClearModuleCacheEntry(L, cache, cacheKey);
-        return lua_error(L);
+        return 0;
     }
     if (lua_isnil(L, -1))
     {
@@ -9363,6 +9364,29 @@ static int lua_ModuleRequire(lua_State* L)
     lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
     lua_remove(L, cache);
     return 1;
+}
+
+static int lua_ModuleRequire(lua_State* L)
+{
+    size_t pathLength = 0;
+    const char* pathRaw = luaL_checklstring(L, 1, &pathLength);
+    if (pathLength == 0 || pathLength > 512)
+        return luaL_error(L, "module.require: path length is invalid");
+
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_loading");
+    const bool loading = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (!loading)
+    {
+        return luaL_error(L,
+            "module.require: modules can only be loaded while the entry script is loading");
+    }
+
+    const char* error = nullptr;
+    const int results = LoadRequiredWidgetModule(L, pathRaw, pathLength, error);
+    if (results != 0) return results;
+    if (error) return luaL_error(L, "%s", error);
+    return lua_error(L);
 }
 
 static int lua_WidgetHasPermission(lua_State* L)
