@@ -1126,16 +1126,37 @@ void CheckCalendarManagement()
         return calendar::MutationResult{true,id,0,{}};
     };
     SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);active=&model;model.Refresh(800,720);
+    const float calendarHeight=model.View().height;const auto monthBounds=Node(model.View(),"calendar.month").bounds;
     const auto field=[&](std::string_view id){
         const auto fields=model.CalendarInputFields();const auto found=std::find_if(fields.begin(),fields.end(),[&](const auto& item){return item.id==id;});
         Require(found!=fields.end(),"calendar embedded input descriptor is missing");return *found;
     };
     Require(model.Invoke("calendar.add")&&model.CalendarEditing()&&model.View().width==720&&
         model.CalendarInputFields().size()==2&&Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&
-        !model.View().Find("calendar.month"),"calendar add did not become a secondary page in the same panel");
-    Require(model.SetCalendarInput("calendar.edit.title",L"Unsaved draft")&&model.Invoke("calendar.edit.date")&&
+        Node(model.View(),"calendar.month").bounds.left==monthBounds.left&&Node(model.View(),"calendar.month").bounds.top==monthBounds.top&&
+        model.View().height==calendarHeight&&field("calendar.edit.title").bounds.left>=model.ScrollViewport().left,
+        "calendar add replaced its month or escaped the fixed agenda column");
+    Require(model.SetCalendarInput("calendar.edit.title",L"Unsaved draft")&&model.Invoke("calendar.next")&&
+        field("calendar.edit.title").text==L"Unsaved draft"&&Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&model.Invoke("calendar.previous"),
+        "browsing the retained month discarded or changed the unsaved event draft");
+    Require(model.Reveal("calendar.edit.notes"),"agenda editor could not reveal its native notes input");
+    const auto notes=field("calendar.edit.notes");const auto editorOffset=model.ScrollOffset();
+    Require(notes.bounds.top>=notes.clip.top&&notes.bounds.bottom<=notes.clip.bottom&&notes.clip.left==model.ScrollViewport().left,
+        "native calendar input did not receive the translated agenda clip");
+    model.Wheel(VisibleCenter(model.View(),"date:2026-09-26"),-1);
+    ui::Input calendarInput;calendarInput.Sync(model.View());Require(calendarInput.Focus("date:2026-09-26",true),"retained month lost keyboard focus");
+    model.HandleKey(calendarInput,VK_NEXT,false);model.Reveal("date:2026-09-26");
+    Require(model.ScrollOffset()==editorOffset&&Node(model.View(),"calendar.month").bounds.top==monthBounds.top,
+        "fixed month wheel, keyboard or focus changed the agenda scroll");
+    Require(calendarInput.Focus("calendar.edit.notes",true),"native notes lost their semantic focus target");
+    model.HandleKey(calendarInput,VK_TAB,false);model.HandleKey(calendarInput,VK_TAB,false);
+    Require(calendarInput.Focused()=="calendar.edit.save"&&Node(model.View(),"calendar.edit.save").bounds.bottom<=model.ScrollViewport().bottom,
+        "Tab could not reveal the save action below the scrollable native form");
+    Require(model.Invoke("calendar.edit.date")&&
         model.CalendarInputFields().empty()&&model.CalendarEditing()&&model.View().Find("picker.day:2026-09-26")&&
-        !model.Invoke("calendar.edit.save"),"date selection did not stay inside the panel with a separate unsaved draft");
+        model.View().Find("calendar.month")&&model.View().height==calendarHeight&&
+        Node(model.View(),"picker.month").bounds.left>=model.ScrollViewport().left&&!model.Invoke("calendar.edit.save"),
+        "date selection replaced the month, grew the panel or exposed an unrelated save action");
     Require(model.Invoke("picker.day:2026-09-28")&&model.CalendarBack()&&
         Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&field("calendar.edit.title").text==L"Unsaved draft"&&
         model.CalendarFocusTarget()=="calendar.edit.date","canceling a date choice lost text or changed the form value");
@@ -1187,6 +1208,9 @@ void CheckCalendarManagement()
         "right-click delete skipped its in-panel confirmation");
     Require(model.CalendarInputFields().empty()&&!model.View().Find("calendar.edit.back")&&!model.View().Find("header.settings"),
         "context delete confirmation exposed editor fields or an unrelated parent route");
+    Require(model.View().Find("calendar.month")&&model.View().height==calendarHeight&&
+        Node(model.View(),"calendar.delete.target").bounds.left>=model.ScrollViewport().left,
+        "context delete confirmation replaced the month or escaped the agenda column");
     ui::Input cancelDelete;const auto cancelPoint=VisibleCenter(model.View(),"calendar.edit.cancelDelete");
     Require(!model.SetCalendarInput("calendar.edit.title",L"unexpected")&&cancelDelete.Press(model.View(),cancelPoint)&&
         model.Invoke(cancelDelete.Release(model.View(),cancelPoint).id)&&!model.CalendarEditing()&&model.View().Find(changedNode)&&
@@ -1629,10 +1653,10 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 Require(metrics.widthIncludingTrailingWhitespace<=action->bounds.right-action->bounds.left-24,
                     "calendar primary and destructive action labels must not be truncated");
             }
-        Require(model.CalendarEditing()&&scene.cards.size()==1&&!scene.Find("calendar.month")&&
+        Require(model.CalendarEditing()&&scene.cards.size()==1&&(scene.width>=560?scene.Find("calendar.month")!=nullptr:scene.Find("calendar.month")==nullptr)&&
             (picker?scene.Find("picker.confirm")!=nullptr:confirmation?scene.Find("calendar.edit.confirmDelete")!=nullptr:
                 Node(scene,"calendar.edit.reminder").text==_LW(creating?"settings.calendar.reminder.-1":"settings.calendar.reminder.15")),
-            "calendar secondary page lost its shared card or reminder selection");
+            "calendar secondary page lost its retained month, shared card or reminder selection");
         const int width=static_cast<int>(std::ceil(scene.width*scale)),height=static_cast<int>(std::ceil(scene.height*scale));
         const int left=(request.canvasWidth-width)/2,top=(request.canvasHeight-height)/2;
         auto pixels=Render(device,text,request,scene,appearance,background,stage,left,top);

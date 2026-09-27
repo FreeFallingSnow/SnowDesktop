@@ -370,7 +370,11 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
             else if (!n.glyph.empty())
             {
                 const auto glyphRect = iconOnly ? r : D2D1::RectF(r.left+10,r.top,r.left+38,r.bottom);
-                text(n.glyph,glyphRect,18,n.positiveGlyph&&!p.highContrast?D2D1::ColorF(0x34c759):ink,false,true,true); if (!iconOnly) label.left += 44;
+                // Navigation is a secondary affordance. Keep its visual weight
+                // below device/action icons without shrinking the hit target.
+                const bool chevron=n.glyph==L"\uE76B"||n.glyph==L"\uE76C"||n.glyph==L"\uE70D"||n.glyph==L"\uE70E";
+                text(n.glyph,glyphRect,chevron?12.f:18.f,n.positiveGlyph&&!p.highContrast?D2D1::ColorF(0x34c759):ink,false,true,true);
+                if (!iconOnly) label.left += 44;
             }
             else if (n.role != Role::Text && !n.centered) label.left += 12;
             if (!iconOnly)

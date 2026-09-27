@@ -425,8 +425,8 @@ void SystemPanelModel::ControlForm(float& y,bool inCard)
     }
     if(!draft.error.empty()){auto& error=Add("control.error",ui::Role::Text,Rect(left,y,width,52),draft.error);error.wrap=true;error.fontSize=12;y+=60;}
     const float button=(std::min)(134.f,(width-8)/2);
-    Add("control.cancel",ui::Role::Button,Rect(right-2*button-8,y,button,36),_LW("settings.dialog.cancel"));Command("control.cancel",[this]{ControlBack();});
-    auto& confirm=Add("control.confirm",ui::Role::Button,Rect(right-button,y,button,36),_LW(connect?"controlCenter.connect":"settings.dialog.confirm"));confirm.enabled=!busy;confirm.busy=busy;confirm.accent=true;
+    Add("control.cancel",ui::Role::Button,Rect(right-2*button-8,y,button,36),_LW("settings.dialog.cancel")).centered=true;Command("control.cancel",[this]{ControlBack();});
+    auto& confirm=Add("control.confirm",ui::Role::Button,Rect(right-button,y,button,36),_LW(connect?"controlCenter.connect":"settings.dialog.confirm"));confirm.enabled=!busy;confirm.busy=busy;confirm.centered=confirm.accent=true;
     if(draft.hidden){const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,draft.ssid.data(),static_cast<int>(draft.ssid.size()),nullptr,0,nullptr,nullptr);confirm.enabled=confirm.enabled&&count>0&&count<=32;}
     Command("control.confirm",[this]{ConfirmControl();});y+=44;
 }
@@ -451,7 +451,7 @@ ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool s
     if(closed_)return {};
     if(calendarPicker_&&calendarPicker_->Type()==ui::DateTimePicker::Kind::Time)
     {
-        if(key==VK_TAB)
+        if(key==VK_TAB&&input.Focused().starts_with("picker."))
         {
             const auto target=calendarPicker_->TimeTabTarget(input.Focused(),shift);
             input.Sync(scene_);input.Focus(target,true);Reveal(target);input.Sync(scene_);return {};
@@ -465,7 +465,9 @@ ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool s
     auto result=input.Key(scene_,key,shift);
     // A slider owns its direction and range keys, including at either limit.
     // Otherwise a list can scroll without triggering a device control.
-    if(result.kind==ui::InputResult::Kind::None)
+    const auto* focused=scene_.Find(input.Focused());
+    const bool fixedCalendar=action_==StatusBarAction::Calendar&&bodyLeft_>0&&focused&&focused->bounds.right<=bodyLeft_;
+    if(result.kind==ui::InputResult::Kind::None&&!fixedCalendar)
     {
         const float page=(std::max)(42.f,scrollViewport_.bottom-scrollViewport_.top-32);
         if(key==VK_UP||key==VK_DOWN)Scroll(key==VK_UP?-42.f:42.f);
@@ -487,7 +489,8 @@ void SystemPanelModel::Wheel(D2D1_POINT_2F point,float notches)
         const auto next=std::clamp(node->value+notches*.02f,0.f,1.f);
         if(next!=node->value)Invoke(node->id,next);
     }
-    else Scroll(-notches*42.f);
+    else if(action_!=StatusBarAction::Calendar||bodyLeft_<=0||
+        (point.x>=scrollViewport_.left&&point.x<scrollViewport_.right&&point.y>=scrollViewport_.top&&point.y<scrollViewport_.bottom))Scroll(-notches*42.f);
 }
 widget_scroll_rules::ScrollbarAxisGeometry SystemPanelModel::ScrollbarGeometry() const
 {
@@ -794,10 +797,11 @@ void SystemPanelModel::Media(float& y)
     }
     y+=32;
 }
-void SystemPanelModel::Finish(float bodyEnd,bool withMedia,float minimumBodyHeight)
+void SystemPanelModel::Finish(float bodyEnd,bool withMedia,float minimumBodyHeight,float maximumBodyHeight)
 {
     float mediaHeight=0;if(withMedia&&mediaState_&&mediaState_->available&&!mediaState_->sessions.empty())mediaHeight=48;
-    const float maxBody=(std::max)(32.f,available_-mediaHeight-(mediaHeight?8:0));
+    float maxBody=(std::max)(32.f,available_-mediaHeight-(mediaHeight?8:0));
+    if(maximumBodyHeight>0)maxBody=(std::min)(maxBody,maximumBodyHeight);
     const float end=(std::min)((std::max)(bodyEnd+8,minimumBodyHeight),maxBody);maxScroll_=(std::max)(0.f,bodyEnd+8-end);scroll_=std::clamp(scroll_,0.f,maxScroll_);
     if(end<bodyStart_+48)bodyStart_=0;
     const auto clip=Rect(bodyLeft_,bodyStart_,scene_.width-bodyLeft_,(std::max)(0.f,end-bodyStart_-8));scrollViewport_=clip;
@@ -960,7 +964,6 @@ bool SystemPanelModel::Drop(std::string_view key,D2D1_POINT_2F p)
 }
 void SystemPanelModel::Calendar()
 {
-    if(CalendarEditing()){CalendarEditor();return;}
     calendarEvents_.clear();
     scene_.width=(std::min)(720.f,availableWidth_);
     auto today=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
@@ -970,6 +973,11 @@ void SystemPanelModel::Calendar()
     const auto month=calendar::CalendarService::GetDateInfo(month_);
     if(!month)return;
     const bool two=scene_.width>=560;
+    if(CalendarEditing()&&!two)
+    {
+        bodyLeft_=0;bodyStart_=56;
+        const float end=CalendarEditor(scene_.width);Finish(end,false);return;
+    }
     const float monthLeft=16,monthTop=16;
     const float monthWidth=two?(scene_.width-48)/2:scene_.width-32,toolbar=monthWidth<280?72.f:36.f;
     const float buttonsTop=monthTop+(toolbar>36?36.f:0.f),gridTop=monthTop+toolbar+12;
@@ -1005,15 +1013,15 @@ void SystemPanelModel::Calendar()
     if(!calendarAnnotations_.contains(date_)&&source_.calendar.secondaryDate)
         calendarAnnotations_[date_]=source_.calendar.secondaryDate(date_);
     auto& monthLabel=Add("calendar.month",ui::Role::Text,Rect(monthLeft,monthTop,toolbar>36?monthWidth:monthWidth-150,32),std::to_wstring(month->year)+L" / "+std::to_wstring(month->month));monthLabel.bold=true;monthLabel.fontSize=16;
-    Add("calendar.today",ui::Role::Button,Rect(monthLeft+monthWidth-144,buttonsTop,68,32),_LW("app.widget.date_picker.today")).fontSize=12;
-    Command("calendar.today",[this,today]{date_=today;month_=date_.substr(0,7)+"-01";scroll_=0;calendarNotice_.clear();});
+    auto& todayButton=Add("calendar.today",ui::Role::Button,Rect(monthLeft+monthWidth-144,buttonsTop,68,32),_LW("app.widget.date_picker.today"));todayButton.centered=true;todayButton.fontSize=12;
+    Command("calendar.today",[this,today]{date_=today;month_=date_.substr(0,7)+"-01";if(!CalendarEditing())scroll_=0;calendarNotice_.clear();});
     for(int i=0;i<2;++i)
     {
         const auto id=i?"calendar.next":"calendar.previous";
         auto& n=Add(id,ui::Role::Icon,Rect(monthLeft+monthWidth-70+i*36.f,buttonsTop,32,32),L"",i?L"\uE76C":L"\uE76B");
         n.tooltip=_LW(i?"app.widget.date_picker.next":"app.widget.date_picker.previous");
         n.enabled=i?month->year<9999||month->month<12:month->year>1||month->month>1;
-        Command(id,[this,i]{const auto d=calendar::CalendarService::GetDateInfo(month_);if(!d)return;int m=d->month+(i?1:-1),year=d->year;if(m<1){m=12;--year;}if(m>12){m=1;++year;}if(year>=1&&year<=9999){month_=Date(year,m,1);scroll_=0;calendarNotice_.clear();}});
+        Command(id,[this,i]{const auto d=calendar::CalendarService::GetDateInfo(month_);if(!d)return;int m=d->month+(i?1:-1),year=d->year;if(m<1){m=12;--year;}if(m>12){m=1;++year;}if(year>=1&&year<=9999){month_=Date(year,m,1);if(!CalendarEditing())scroll_=0;calendarNotice_.clear();}});
     }
     const float cell=monthWidth/7;
     for(int i=0;i<7;++i)
@@ -1037,6 +1045,29 @@ void SystemPanelModel::Calendar()
         Command(n.id,[this,date=*date]{date_=date;month_=date.substr(0,7)+"-01";calendarNotice_.clear();});
     }
     const float monthEnd=gridTop+28+6*34,agendaLeft=two?monthLeft+monthWidth+16:16,agendaWidth=scene_.width-agendaLeft-16;
+    const bool fixedMonth=two&&available_>=monthEnd+4;
+    if(CalendarEditing())
+    {
+        // Secondary calendar content owns only the right column. Keep the
+        // original month nodes and actions while the form/picker builds in its
+        // own local coordinates; live EDIT descriptors use the final geometry.
+        auto monthScene=std::move(scene_);scene_={};
+        const float end=CalendarEditor(agendaWidth+32),offsetX=agendaLeft-16,offsetY=monthTop-10;
+        auto editorNodes=std::move(scene_.nodes);scene_=std::move(monthScene);
+        for(auto& node:editorNodes)
+        {
+            node.bounds.left+=offsetX;node.bounds.right+=offsetX;node.bounds.top+=offsetY;node.bounds.bottom+=offsetY;
+            // Finish supplies the column viewport rather than keeping a
+            // picker's old local per-node clip after translation.
+            node.clip={};
+            for(auto& path:node.paths)for(auto& point:path){point.x+=offsetX;point.y+=offsetY;}
+            scene_.nodes.push_back(std::move(node));
+        }
+        bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?monthTop:0;
+        if(fixedMonth)Finish(end+offsetY,false,monthEnd+8,monthEnd+8);
+        else Finish((std::max)(monthEnd,end+offsetY),false);
+        return;
+    }
     float y=two?16.f:monthEnd+16;
     Add("calendar.selected",ui::Role::Text,Rect(agendaLeft,y,agendaWidth-80,32),Wide(date_)).bold=true;
     Add("calendar.add",ui::Role::Icon,Rect(scene_.width-84,y,32,32),L"",L"\uE710").tooltip=_LW("settings.calendar.add");
@@ -1084,9 +1115,8 @@ void SystemPanelModel::Calendar()
     if(!hasEvents){auto& empty=Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,48),_LW("settings.calendar.empty"));empty.fontSize=12;empty.centered=empty.wrap=true;y+=two?48.f:104.f;}
     // Keep month navigation and the day grid stationary when the
     // full month fits. Short/narrow viewports retain one accessible scroll flow.
-    const bool fixedMonth=two&&available_>=monthEnd+4;
     bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?agendaStart:0;
-    if(fixedMonth)Finish(y,false,monthEnd+8);else Finish((std::max)(monthEnd,y),false);
+    if(fixedMonth)Finish(y,false,monthEnd+8,monthEnd+8);else Finish((std::max)(monthEnd,y),false);
     if(!hasEvents)
         for(auto& node:scene_.nodes)if(node.id=="calendar.empty")
         {
@@ -1231,13 +1261,14 @@ void SystemPanelModel::RemoveCalendar()
     if(closed_||calendarEditor_!=editor)return;
     if(removed)LeaveCalendarEditor(false);
 }
-void SystemPanelModel::CalendarEditor()
+float SystemPanelModel::CalendarEditor(float viewportWidth)
 {
-    const auto editor=calendarEditor_;if(!editor)return;
-    if(calendarPicker_){CalendarPicker();return;}
+    const auto editor=calendarEditor_;if(!editor)return 0;
+    if(calendarPicker_)return CalendarPicker(viewportWidth);
+    scene_.width=viewportWidth;
     if(calendarConfirmDelete_&&calendarDeleteOrigin_==CalendarDeleteOrigin::ContextMenu)
     {
-        scene_.width=(std::min)(440.f,availableWidth_);bodyLeft_=0;bodyStart_=56;const float width=scene_.width-32;
+        const float width=scene_.width-32;
         auto& heading=Add("calendar.delete.heading",ui::Role::Text,Rect(16,10,width,36),_LW("app.settings.delete"));heading.bold=true;heading.fontSize=17;
         auto& title=Add("calendar.delete.target",ui::Role::Text,Rect(16,64,width,48),Wide(editor->original.title));title.wrap=true;title.bold=true;
         Add("calendar.delete.date",ui::Role::Text,Rect(16,116,width,28),Wide(editor->original.date)).secondary=true;
@@ -1249,13 +1280,12 @@ void SystemPanelModel::CalendarEditor()
             auto& message=Add("calendar.edit.error",ui::Role::Text,Rect(16,y,width,48),_LW(key));message.wrap=true;y+=56;
         }
         const float button=(width-12)/2;
-        Add("calendar.edit.cancelDelete",ui::Role::Button,Rect(16,y,button,36),_LW("settings.dialog.cancel"));
+        Add("calendar.edit.cancelDelete",ui::Role::Button,Rect(16,y,button,36),_LW("settings.dialog.cancel")).centered=true;
         Command("calendar.edit.cancelDelete",[this]{CalendarBack();});
-        Add("calendar.edit.confirmDelete",ui::Role::Button,Rect(28+button,y,button,36),_LW("app.settings.delete")).accent=true;
-        Command("calendar.edit.confirmDelete",[this]{RemoveCalendar();});Finish(y+36,false);return;
+        auto& confirm=Add("calendar.edit.confirmDelete",ui::Role::Button,Rect(28+button,y,button,36),_LW("app.settings.delete"));confirm.centered=confirm.accent=true;
+        Command("calendar.edit.confirmDelete",[this]{RemoveCalendar();});return y+36;
     }
-    scene_.width=(std::min)(720.f,availableWidth_);bodyLeft_=0;bodyStart_=56;
-    Add("calendar.edit.back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("settings.shell.back");
+    Add("calendar.edit.back",ui::Role::Icon,Rect(16,10,36,36),L"",L"\uE76B").tooltip=_LW("settings.shell.back");
     Command("calendar.edit.back",[this]{CalendarBack();});
     auto& heading=Add("calendar.edit.heading",ui::Role::Text,Rect(56,10,scene_.width-72,36),
         _LW(editor->original.id.empty()?"settings.calendar.add":"settings.calendar.edit"));heading.bold=true;heading.fontSize=17;
@@ -1308,9 +1338,9 @@ void SystemPanelModel::CalendarEditor()
     {
         auto& question=Add("calendar.edit.confirmation",ui::Role::Text,Rect(16,footer,width,36),_LW("settings.calendar.confirmDelete"));question.wrap=true;footer+=44;
         const float buttonWidth=(width-12)/2;
-        Add("calendar.edit.cancelDelete",ui::Role::Button,Rect(16,footer,buttonWidth,36),_LW("settings.dialog.cancel"));
+        Add("calendar.edit.cancelDelete",ui::Role::Button,Rect(16,footer,buttonWidth,36),_LW("settings.dialog.cancel")).centered=true;
         Command("calendar.edit.cancelDelete",[this]{CalendarBack();});
-        Add("calendar.edit.confirmDelete",ui::Role::Button,Rect(28+buttonWidth,footer,buttonWidth,36),_LW("app.settings.delete"));
+        Add("calendar.edit.confirmDelete",ui::Role::Button,Rect(28+buttonWidth,footer,buttonWidth,36),_LW("app.settings.delete")).centered=true;
         Command("calendar.edit.confirmDelete",[this]{RemoveCalendar();});
     }
     else
@@ -1320,16 +1350,16 @@ void SystemPanelModel::CalendarEditor()
         float x=16;
         if(existing)
         {
-            Add("calendar.edit.delete",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("app.settings.delete"));
+            Add("calendar.edit.delete",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("app.settings.delete")).centered=true;
             Command("calendar.edit.delete",[this]{calendarConfirmDelete_=true;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;calendarReminderOpen_=false;calendarEditor_->error.clear();});x+=buttonWidth+12;
         }
-        Add("calendar.edit.cancel",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("settings.dialog.cancel"));
+        Add("calendar.edit.cancel",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("settings.dialog.cancel")).centered=true;
         Command("calendar.edit.cancel",[this]{LeaveCalendarEditor(false);});x+=buttonWidth+12;
         if(separateSave){x=16;footer+=44;}
-        auto& save=Add("calendar.edit.save",ui::Role::Button,Rect(x,footer,separateSave?width:buttonWidth,36),_LW("settings.calendar.save"));save.accent=true;
+        auto& save=Add("calendar.edit.save",ui::Role::Button,Rect(x,footer,separateSave?width:buttonWidth,36),_LW("settings.calendar.save"));save.centered=save.accent=true;
         Command(save.id,[this]{SaveCalendar();});
     }
-    Finish(footer+36,false);
+    return footer+36;
 }
 void SystemPanelModel::OpenCalendarPicker(std::string field)
 {
@@ -1349,14 +1379,13 @@ void SystemPanelModel::OpenCalendarPicker(std::string field)
     else return;
     calendarPickerField_=std::move(field);calendarEditorScroll_=scroll_;calendarReminderOpen_=false;scroll_=0;
 }
-void SystemPanelModel::CalendarPicker()
+float SystemPanelModel::CalendarPicker(float width)
 {
     const auto key="settings.calendar."+calendarPickerField_.substr(14);
     const auto today=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
-    scene_=calendarPicker_->Build((std::min)(720.f,availableWidth_),_LW(key.c_str()),today);
-    bodyLeft_=0;bodyStart_=56;
+    scene_=calendarPicker_->Build(width,_LW(key.c_str()),today);
     for(const auto& node:scene_.nodes)if(node.Interactive())Command(node.id,[this,id=node.id]{CalendarPickerCommand(id);});
-    Finish(scene_.height,false);
+    return scene_.height;
 }
 void SystemPanelModel::CalendarPickerCommand(std::string_view id)
 {

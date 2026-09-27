@@ -72,7 +72,7 @@ public:
             Node n;n.id=std::move(id);n.role=role;n.bounds=n.clip=bounds;n.text=std::move(text);
             scene.nodes.push_back(std::move(n));return scene.nodes.back();
         };
-        auto& back=add("picker.back",Role::Icon,rect(12,10,36,36));back.glyph=L"\uE76B";back.tooltip=_LW("settings.shell.back");
+        auto& back=add("picker.back",Role::Icon,rect(16,10,36,36));back.glyph=L"\uE76B";back.tooltip=_LW("settings.shell.back");
         auto& heading=add("picker.heading",Role::Text,rect(56,10,width-72,36),std::move(title));heading.fontSize=17;heading.bold=true;
         const float content=(std::min)(408.f,width-32),left=(width-content)/2;
         float bottom=0;
@@ -82,7 +82,7 @@ public:
             const bool compact=content<280;const float controls=compact?104.f:64.f,grid=controls+44;
             auto& label=add("picker.month",Role::Text,rect(left,64,compact?content:content-150,32),
                 std::to_wstring(month->year)+L" / "+std::to_wstring(month->month));label.bold=true;label.fontSize=16;
-            auto& now=add("picker.today",Role::Button,rect(left+content-144,controls,68,32),_LW("app.widget.date_picker.today"));now.fontSize=12;now.enabled=calendar::CalendarService::GetDateInfo(today).has_value();
+            auto& now=add("picker.today",Role::Button,rect(left+content-144,controls,68,32),_LW("app.widget.date_picker.today"));now.centered=true;now.fontSize=12;now.enabled=calendar::CalendarService::GetDateInfo(today).has_value();
             for(int i=0;i<2;++i)
             {
                 auto& arrow=add(i?"picker.next":"picker.previous",Role::Icon,rect(left+content-70+i*36.f,controls,32,32));
@@ -128,8 +128,8 @@ public:
             }
             bottom=364;
         }
-        add("picker.cancel",Role::Button,rect(left,bottom,(content-12)/2,36),_LW("settings.dialog.cancel"));
-        add("picker.confirm",Role::Button,rect(left+(content+12)/2,bottom,(content-12)/2,36),_LW("app.widget.date_picker.confirm")).accent=true;
+        add("picker.cancel",Role::Button,rect(left,bottom,(content-12)/2,36),_LW("settings.dialog.cancel")).centered=true;
+        auto& confirm=add("picker.confirm",Role::Button,rect(left+(content+12)/2,bottom,(content-12)/2,36),_LW("app.widget.date_picker.confirm"));confirm.centered=confirm.accent=true;
         scene.height=bottom+44;return scene;
     }
     Result Invoke(std::string_view id,const std::string& today)

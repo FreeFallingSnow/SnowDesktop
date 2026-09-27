@@ -190,9 +190,9 @@ private:
     void Media(float&);
     void Calendar();
     void EditCalendar(calendar::CalendarEvent);
-    void CalendarEditor();
+    float CalendarEditor(float width);
     void OpenCalendarPicker(std::string field);
-    void CalendarPicker();
+    float CalendarPicker(float width);
     void CalendarPickerCommand(std::string_view id);
     void SaveCalendar();
     void RemoveCalendar();
@@ -203,6 +203,6 @@ private:
     std::optional<TrayDropTarget> ResolveTrayDrop(std::string_view, D2D1_POINT_2F) const;
     void Radio(std::string_view, D2D1_RECT_F, bool compact);
     void Volume(std::string_view, float&);
-    void Finish(float bodyEnd, bool withMedia, float minimumBodyHeight = 0);
+    void Finish(float bodyEnd, bool withMedia, float minimumBodyHeight = 0, float maximumBodyHeight = 0);
 };
 }
