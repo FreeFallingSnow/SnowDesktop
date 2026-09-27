@@ -1,6 +1,6 @@
-# 通知唤起卡顿现场分析（2026-09-27）
+# 通知关闭后输入积压现场分析（2026-09-27）
 
-用户在候选 68 修改期间再次报告“唤起通知菜单导致全应用卡顿”，要求先分析当前现场。本轮未关闭 SnowDesktop、未重启 Explorer，未操作或枚举桌面宿主窗口；采用非侵入进程转储、线程与对象状态读取、CPU 采样及现有日志分析。
+用户在候选 68 修改期间再次报告“唤起通知菜单导致全应用卡顿”，要求先分析当前现场。该次候选 68 现场诊断未关闭 SnowDesktop、未重启 Explorer，未操作或枚举桌面宿主窗口；采用非侵入进程转储、线程与对象状态读取、CPU 采样及现有日志分析。
 
 ## 实际采集
 
@@ -44,3 +44,27 @@
 原始证据保存在本机忽略目录 `.codex-probes/statusbar-implementation/notification-hang-68/`：`20260927-155602-33624.dmp`、`20260927-155602-33624-capture.log`、`inspect-main.log`、`inspect-state.log`、`inspect-hoststate.log`、`inspect-finalstate.log`、`cpu-samples.json`、同时间日志副本与匹配的 EXE／PDB。转储不进入发行包或 Git。
 
 本轮现场诊断不等于 UI 实机验收；其他反馈见 [反馈账本](STATUS_BAR_FEEDBACK_20260927.md) 和 [复核报告](STATUS_BAR_AUDIT_20260927.md)。
+
+## 75–76：用户明确关闭方式与隔离复核
+
+用户随后补充：卡住出现在关闭通知之后，关闭方式是**点击通知面板外的空白处**。当前定位以这一最新复现路径为准；快捷键打开 QuickNav、用键盘启动应用后，积压鼠标点击集中执行并恢复。此前“唤起后”的笼统描述不作为卡住阶段的精确证据。
+
+只读核对 `app_status_bar.cpp`：通知链在发出 Win+N 后结束，没有 Shell 通知窗口的关闭回调。因此 send-input／finished 记录不能证明外部点击关闭时的输入状态。75 的自有面板隐藏发生在发键之前，不能推断 Shell 随后关闭时不会重新激活或聚焦旧窗口。`system_panel.cpp` 对已经关闭模型的 WM_ACTIVATE 交给默认处理；缺少现场证据，不据此添加拦截激活或强抢前台的修复。
+
+本轮实际调用改动前的 `DesktopBackdropCompositor::HidePopupWindowPair`，在从不切换到输入桌面的私有桌面复现：隐藏 content／真实 EDIT 后仍保留自有键盘焦点；子框销毁后焦点落回 content。先 SW_HIDE 或只改变 SWP_NOACTIVATE 未完整消除；最后仅对仍属于已隐藏内容窗的焦点执行 SetFocus(nullptr)，可释放且不改变另一个自有测试窗口的焦点。SetActiveWindow(nullptr) 在该环境没有清除 active，未加入生产改动。此处 GetForegroundWindow 始终为空，不能视为实际外部进程前台交接。
+
+75 `96a0cd64` 已加入上述最后一步焦点清理；76 本次全量 119/120，其中真实 compositor 的 content、EDIT、已销毁子框、其他窗口和重复隐藏检查通过，失败项是测试选择器超时。本项只证明隐藏后的键盘焦点后置条件，**没有证明通知原卡顿已解决**。菜单非法 owner 回归中发现的超时另行修订，与通知现场不混为同一原因。
+
+原始诊断：`.codex-probes/statusbar-implementation/notification-hide-75/README.md`、`commands-results.log`、`null-active-results.log`。其中 `notification-hide-73/` 是同轮新建的早期目录名，非历史候选 73 的验证；原文件保留。读取的 `.build/Release/data/SnowDesktop.log.1` 副本 SHA256 `7e2442b675559f2b895dd65cce5a00d2d25e83193f9ea9b711e2947c743cd714`。17:40:42 日志显示发送输入接受，但之后仍有鼠标消息处理，未出现足以对应本次故障的 InputMessageDelayed，不能把这个片段当作确定卡住现场。
+
+下一次原现场最关键的证据是：**点击外部空白关闭之后、使用 QuickNav 恢复之前**，读取 UI／前台／Explorer 线程的 active、focus、capture 和 GUI flags，并对齐第一条鼠标消息及 focus-request 的时间。空白点击若进入自有桌面处理，会经过 `app_pointer_down.cpp` 的 RestoreInteractionInputFocus；记录是否进入可区分“尚未投递”与“处理后仍异常”。恢复后的 InputMessageDelayed 才能确认积压时长。当前没有为取得证据而自动操作、枚举或重新启动桌面宿主。
+
+## 77–78 后续边界
+
+本批继续只读复核通知发键、输入捕获、低级鼠标钩子、AttachThreadInput 成功后的解绑，以及桌面鼠标入口，未找到可直接证明此次积压症状的漏清理。通知关闭时没有本应用的等待循环；跨线程 Explorer 父窗口带来的输入队列关联仍只是需要故障瞬间证据的方向，未贸然拆分父窗口或强制抢焦点。
+
+77 修订独立状态栏全屏显隐，78 补日历检查，与 Shell 通知关闭后的输入交接是不同问题。本次未重新运行全量；原选择器失败已定向补验通过，不改变本通知缺陷“根因未确认、未验证修复”的状态。
+
+## 79–80 范围说明
+
+这两批只调整日历右栏／按钮比例和电池供电标记。生产离屏检查通过不改变本报告结论：通知外部点击关闭后的鼠标积压仍无已确认根因或修复，未重跑全量、未自动启动或操作桌面宿主。
