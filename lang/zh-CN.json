@@ -1889,6 +1889,7 @@
     "settings.calendar.notes": "备注",
     "settings.calendar.allDay": "全天",
     "settings.calendar.add": "新建日程",
+    "settings.calendar.edit": "编辑日程",
     "settings.calendar.refresh": "刷新",
     "settings.calendar.save": "保存日程",
     "settings.calendar.confirmDelete": "删除此日程？",

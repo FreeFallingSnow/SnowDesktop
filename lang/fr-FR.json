@@ -1889,6 +1889,7 @@
     "settings.calendar.notes": "Notes",
     "settings.calendar.allDay": "Toute la journée",
     "settings.calendar.add": "Nouvel événement",
+    "settings.calendar.edit": "Modifier l’événement",
     "settings.calendar.refresh": "Actualiser",
     "settings.calendar.save": "Enregistrer l’événement",
     "settings.calendar.confirmDelete": "Supprimer cet événement ?",

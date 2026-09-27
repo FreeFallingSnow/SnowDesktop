@@ -1889,6 +1889,7 @@
     "settings.calendar.notes": "Notizen",
     "settings.calendar.allDay": "Ganztägig",
     "settings.calendar.add": "Neuer Termin",
+    "settings.calendar.edit": "Termin bearbeiten",
     "settings.calendar.refresh": "Aktualisieren",
     "settings.calendar.save": "Termin speichern",
     "settings.calendar.confirmDelete": "Diesen Termin löschen?",

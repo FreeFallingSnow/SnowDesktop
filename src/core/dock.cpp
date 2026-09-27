@@ -335,7 +335,7 @@ bool DockContainer::SharesStatusBarAppearance() const
     RECT screen = area_;
     OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
     const auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL);
-    return monitor && !app_->statusBar_->IsFullscreen(monitor);
+    return monitor && app_->statusBar_->IsInteractionAvailable(monitor);
 }
 
 void DockContainer::RefreshEntryGroupCounts() const
@@ -2022,13 +2022,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t folderEnd = folderBegin + folderCount;
     const bool hasRecycleBin = count > 0 && app_ &&
         app_->IsRecycleBinDockEntry(entries_->back());
-    const bool lt = [this] {
-        if (!SharesStatusBarAppearance()) return app_->CurrentDockAppearance().contentTheme == 1;
-        RECT screen = area_;
-        OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
-        return app_->statusBar_->AppearanceForMonitor(
-            MonitorFromRect(&screen, MONITOR_DEFAULTTONULL)).contentTheme == 1;
-    }();
+    const bool lt = app_->CurrentDockAppearance().contentTheme == 1;
     std::wstring hoveredTitle;
     const RECT magnificationFocus =
         ResolveMagnificationFocusRect(app_->lastMousePoint_);

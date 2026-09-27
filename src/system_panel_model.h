@@ -3,6 +3,7 @@
 #include "status_bar.h"
 #include "tray_service.h"
 #include "calendar_service.h"
+#include "system_calendar_editor_state.h"
 #include "system_controls.h"
 #include "system_control_feedback.h"
 #include "widget_system_data_provider.h"
@@ -22,8 +23,17 @@ struct SystemCalendarActions
     std::function<std::string(const std::string&)> secondaryDate;
     std::function<std::map<std::string,std::string>(const std::string&,const std::string&)> secondaryDates;
     std::function<std::string()> secondaryRevision;
-    std::function<bool(HWND,calendar::CalendarEvent&,const PersonalizationSettings&,
-        std::shared_ptr<SystemControlPromptState>)> edit;
+    SystemCalendarEditorActions mutations;
+};
+// Native EDIT children share the calendar panel's layout, draft and lifetime.
+// Bounds and clip are in panel-local DIPs, after scrolling.
+struct SystemCalendarInputField
+{
+    std::string id;
+    std::wstring label, text;
+    D2D1_RECT_F bounds{}, clip{};
+    bool multiline=false, enabled=true;
+    int limit=0;
 };
 // All live effects live at this boundary; offline rendering supplies fixtures.
 struct SystemPanelSource
@@ -48,6 +58,8 @@ struct SystemPanelSource
     std::function<tray::Snapshot()> tray;
     std::function<void(const StatusBarSettings&)> trayChanged;
     SystemCalendarActions calendar;
+    // Internal task boundary; optional for deterministic offline sources.
+    std::function<bool(std::uint64_t)> cancel;
 };
 SystemPanelSource LiveSystemPanelSource(std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
 native_ui::Palette SystemPanelPalette(const PersonalizationSettings&, bool highContrast = false);
@@ -76,6 +88,11 @@ public:
     const native_ui::Scene& View() const { return scene_; }
     const StatusBarSettings& Settings() const { return settings_; }
     const std::string& Page() const { return page_; }
+    bool CalendarEditing() const;
+    std::vector<SystemCalendarInputField> CalendarInputFields() const;
+    bool SetCalendarInput(std::string_view id, std::wstring text);
+    bool CalendarBack();
+    bool CalendarEventCommand(std::string_view nodeId, bool remove);
 private:
     SystemPanelSource source_;
     StatusBarSettings settings_;
@@ -84,18 +101,24 @@ private:
     std::string page_, interface_, network_, bluetooth_, gpu_, media_, date_, month_;
     std::string calendarAnnotationKey_;
     std::map<std::string,std::string> calendarAnnotations_;
+    std::map<std::string,calendar::CalendarEvent> calendarEvents_;
+    std::string calendarNotice_;
+    std::shared_ptr<SystemCalendarEditorState> calendarEditor_;
+    std::map<std::string,std::wstring> calendarText_;
+    bool calendarConfirmDelete_=false, calendarReminderOpen_=false;
+    float calendarReturnScroll_=0;
     std::map<std::string,std::function<void(std::optional<float>)>> actions_;
     system_control::ControlFeedback feedback_;
     struct PendingValue { std::uint64_t task = 0; float value = 0; std::string target; };
     std::map<std::string,PendingValue> pendingValues_;
     std::map<std::string,std::string> sliderTargets_;
     std::map<std::string,std::string> valueControls_;
-    struct ActionBinding { std::string group, target, indicator; };
+    struct ActionBinding { std::string group, target, indicator, radioGroup; };
     struct PendingAction
     {
         std::uint64_t task = 0;
         std::uint64_t navigation = 0;
-        std::string control, target, topic, collection, device;
+        std::string control, target, topic, collection, device, radioGroup;
     };
     std::map<std::string,ActionBinding> actionBindings_;
     // Visual bindings are rebuilt per page; in-flight guards survive navigation.
@@ -106,6 +129,7 @@ private:
     std::set<std::string> subscriptions_;
     std::uint64_t lastStarted_ = 0;
     std::wstring error_;
+    std::string errorControl_, errorGroup_, errorTarget_;
     float available_ = 800, availableWidth_ = 960, scroll_ = 0, maxScroll_ = 0, bodyStart_ = 0, bodyLeft_ = 0;
     D2D1_RECT_F scrollViewport_{};
     bool closed_ = false, scan_ = false;
@@ -113,7 +137,10 @@ private:
     JsonValue Wifi() const;
     void SyncSubscriptions();
     void Start(std::string, system_control::Arguments = {}, std::string_view control = {});
-    void BindAction(std::string control, std::string group, std::string target, std::string indicator = {});
+    void BindAction(std::string control, std::string group, std::string target, std::string indicator = {}, std::string radioGroup = {});
+    bool RadioTransitionPending(const ActionBinding&) const;
+    void ClearError();
+    void ApplyError(float& bodyEnd);
     void PrunePendingActions();
     void ApplyPendingActions();
     void PrepareMedia();
@@ -130,6 +157,10 @@ private:
     void Media(float&);
     void Calendar();
     void EditCalendar(calendar::CalendarEvent);
+    void CalendarEditor();
+    void SaveCalendar();
+    void RemoveCalendar();
+    void LeaveCalendarEditor(bool followSavedDate);
     void Resources();
     void Tray();
     struct TrayDropTarget { StatusBarSettings settings; D2D1_RECT_F indicator{}; };

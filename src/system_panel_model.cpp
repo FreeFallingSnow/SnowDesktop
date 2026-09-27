@@ -60,6 +60,7 @@ SystemPanelSource LiveSystemPanelSource(std::shared_ptr<wr::WidgetSystemDataProv
     SystemPanelSource s;auto service=data->Controls();
     s.current=[service](auto topic){return service->Current(topic);};
     s.start=[service](auto request){return service->Start("nativeSystemPanel",std::move(request));};
+    s.cancel=[service](auto id){return service->Cancel(id);};
     s.completions=[service]{return service->DrainCompletions("nativeSystemPanel");};
     s.subscribe=[data](auto topic,auto period){data->StartTopic("nativeSystemPanel",topic,period);};
     s.unsubscribe=[data](auto topic){data->StopTopic("nativeSystemPanel",topic);};
@@ -82,7 +83,7 @@ SystemPanelModel::~SystemPanelModel(){Close();}
 void SystemPanelModel::Close()
 {
     if(closed_)return;
-    closed_=true;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarAnnotationKey_.clear();lastStarted_=0;
+    closed_=true;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();ClearError();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarAnnotationKey_.clear();lastStarted_=0;
     // A close callback may pump messages. Detach all effects before calling it,
     // and keep its callable alive even if the callback re-enters Close().
     auto close=std::move(source_.close);source_={};if(close)close();
@@ -117,7 +118,7 @@ void SystemPanelModel::Start(std::string task,system_control::Arguments args,std
     const std::string controlId=control.empty()?invokingControl_:std::string(control);
     const auto found=actionBindings_.find(controlId);
     const auto binding=found==actionBindings_.end()?std::optional<ActionBinding>{}:std::optional<ActionBinding>(found->second);
-    if(binding&&pendingActions_.contains(binding->group))return;
+    if(binding&&(pendingActions_.contains(binding->group)||RadioTransitionPending(*binding)))return;
     system_control::Request request;request.name=std::move(task);request.arguments=std::move(args);
     const bool hiddenNetwork = request.name == "network.wifi.connect" && request.arguments.contains("hidden");
     if(hiddenNetwork||system_control::RequiresConfirmation(request.name)||system_control::RequiresPasswordPrompt(request))
@@ -131,13 +132,27 @@ void SystemPanelModel::Start(std::string task,system_control::Arguments args,std
     if(binding)
     {
         const auto current=actionBindings_.find(controlId);
-        if(current==actionBindings_.end()||current->second.group!=binding->group||current->second.target!=binding->target||pendingActions_.contains(binding->group))return;
+        if(current==actionBindings_.end()||current->second.group!=binding->group||current->second.target!=binding->target||pendingActions_.contains(binding->group)||RadioTransitionPending(current->second))return;
+        if(binding->group==binding->radioGroup&&source_.cancel)
+        {
+            // Service serializes execution/readback for each source. Cancel a
+            // predecessor before queuing its radio transition, so it cannot
+            // execute afterwards or report an obsolete connection failure.
+            // Unknown Bluetooth ownership is deliberately not guessed here.
+            std::vector<std::uint64_t> canceled;
+            std::erase_if(pendingActions_,[&](const auto& entry) {
+                if(entry.second.radioGroup!=binding->radioGroup)return false;
+                canceled.push_back(entry.second.task);feedback_.Take(entry.second.task);return true;
+            });
+            const auto cancel=source_.cancel;
+            for(const auto id:canceled){cancel(id);if(closed_||generation!=navigation_)return;}
+        }
     }
     const auto start=source_.start;
     PendingAction pending;pending.control=controlId;pending.navigation=generation;
     if(binding)
     {
-        pending.target=binding->target;
+        pending.target=binding->target;pending.radioGroup=binding->radioGroup;
         const auto argument=[&](const char* field){const auto at=request.arguments.find(field);return at==request.arguments.end()?std::string{}:at->second;};
         if(request.name.starts_with("network.wifi.")){pending.topic="network.wifi";pending.collection="interfaces";pending.device=argument("interfaceId");}
         else if(request.name.starts_with("bluetooth.")){pending.topic="bluetooth.devices";pending.collection=request.name=="bluetooth.setRadio"?"radios":"devices";pending.device=argument(request.name=="bluetooth.setRadio"?"radioId":"deviceId");}
@@ -149,10 +164,41 @@ void SystemPanelModel::Start(std::string task,system_control::Arguments args,std
     if(closed_||generation!=navigation_)return;
     feedback_.Track(key,id);lastStarted_=id;
     if(id&&binding){pending.task=id;pendingActions_[binding->group]=std::move(pending);}
-    error_=id?L"":_LW("controlCenter.failed");
+    ClearError();
+    if(!id){error_=_LW("controlCenter.failed");if(binding){errorControl_=controlId;errorGroup_=binding->group;errorTarget_=binding->target;}}
 }
-void SystemPanelModel::BindAction(std::string control,std::string group,std::string target,std::string indicator)
-{actionBindings_[std::move(control)]={std::move(group),std::move(target),std::move(indicator)};}
+void SystemPanelModel::BindAction(std::string control,std::string group,std::string target,std::string indicator,std::string radioGroup)
+{actionBindings_[std::move(control)]={std::move(group),std::move(target),std::move(indicator),std::move(radioGroup)};}
+bool SystemPanelModel::RadioTransitionPending(const ActionBinding& binding) const
+{
+    if(binding.radioGroup.empty())return false;
+    if(binding.radioGroup=="bluetooth.unknown")
+        return std::any_of(pendingActions_.begin(),pendingActions_.end(),[](const auto& entry){return entry.first.starts_with("bluetooth.radio:");});
+    return binding.group!=binding.radioGroup&&pendingActions_.contains(binding.radioGroup);
+}
+void SystemPanelModel::ClearError()
+{error_.clear();errorControl_.clear();errorGroup_.clear();errorTarget_.clear();}
+void SystemPanelModel::ApplyError(float& bodyEnd)
+{
+    if(error_.empty())return;
+    if(!errorControl_.empty())
+    {
+        const auto binding=actionBindings_.find(errorControl_);
+        if(binding==actionBindings_.end()||binding->second.group!=errorGroup_||binding->second.target!=errorTarget_){ClearError();return;}
+        const auto& row=binding->second.indicator.empty()?errorControl_:binding->second.indicator;
+        for(auto& node:scene_.nodes)if(node.id==row&&node.role==ui::Role::ListItem)
+        {
+            node.detail=error_;node.tooltip=node.text+L"\n"+error_;node.accessibilityLabel=node.text+L" · "+error_;return;
+        }
+    }
+    // Header/slider errors have no device row. Reserve a fixed, visible line
+    // above the scroll viewport; moving it with the list hides real failures.
+    const float top=bodyStart_,height=44;
+    for(auto& node:scene_.nodes)if(node.bounds.top>=top)
+    {node.bounds.top+=height;node.bounds.bottom+=height;}
+    bodyStart_+=height;bodyEnd+=height;
+    auto& node=Add("status",ui::Role::Text,Rect(16,top,scene_.width-32,40),error_);node.fontSize=12;node.wrap=true;
+}
 void SystemPanelModel::PrunePendingActions()
 {
     std::erase_if(pendingActions_,[this](const auto& entry) {
@@ -177,6 +223,8 @@ void SystemPanelModel::PrunePendingActions()
 void SystemPanelModel::ApplyPendingActions()
 {
     const std::wstring working=_LW("controlCenter.working");
+    for(auto& node:scene_.nodes)
+        if(const auto binding=actionBindings_.find(node.id);binding!=actionBindings_.end()&&RadioTransitionPending(binding->second))node.enabled=false;
     for(const auto& [group,pending]:pendingActions_)
     {
         const auto origin=actionBindings_.find(pending.control);
@@ -224,7 +272,7 @@ bool SystemPanelModel::Invoke(std::string_view id,std::optional<float> value)
     Refresh(available_);return true;
 }
 void SystemPanelModel::Select(std::string page)
-{ if(closed_)return;++navigation_;page_=std::move(page);scroll_=0;scan_=page_=="wifi";error_.clear();Refresh(available_); }
+{ if(closed_)return;++navigation_;page_=std::move(page);scroll_=0;scan_=page_=="wifi";ClearError();Refresh(available_); }
 void SystemPanelModel::Scroll(float delta)
 {
     if(closed_||!std::isfinite(delta))return;
@@ -290,7 +338,7 @@ void SystemPanelModel::Header(std::wstring title)
     Add("back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("controlCenter.overview");Command("back",[this]{Select(page_=="wifi-adapters"?"wifi":"");});
     const wchar_t* uri=page_=="audio"?L"ms-settings:sound":page_=="brightness"?L"ms-settings:display":page_.starts_with("wifi")?L"ms-settings:network-wifi":page_=="bluetooth"?L"ms-settings:bluetooth":page_=="power"?L"ms-settings:powersleep":nullptr;
     const float settingsLeft=scene_.width-(page_=="wifi"||page_=="bluetooth"?112.f:52.f);
-    auto& node=Add("title",ui::Role::Text,Rect(58,10,uri?settingsLeft-70:scene_.width-126,36),std::move(title));node.bold=true;node.fontSize=17;
+    auto& node=Add("title",ui::Role::Text,Rect(58,10,uri?settingsLeft-(page_=="wifi"?110.f:70.f):scene_.width-126,36),std::move(title));node.bold=true;node.fontSize=17;
     if(uri)
     {
         auto& settings=Add("header.settings",ui::Role::Icon,Rect(settingsLeft,10,36,36),L"",L"\uE713");
@@ -301,20 +349,25 @@ void SystemPanelModel::Header(std::wstring title)
 }
 void SystemPanelModel::Radio(std::string_view key,D2D1_RECT_F rect,bool compact)
 {
-    const bool wifi=key=="wifi";const auto v=Current(wifi?"network.wifi":"bluetooth.devices");
+    const bool wifi=key=="wifi";const auto snapshot=source_.current?source_.current(wifi?"network.wifi":"bluetooth.devices"):std::nullopt;
+    const auto v=snapshot&&snapshot->available?snapshot->value:j::Object();
     const auto& radios=Items(v,wifi?"interfaces":"radios");const JsonValue* radio=nullptr;
     for(const auto& r:radios)if(!wifi||interface_.empty()||j::String(r,"id")==interface_)
     {if(!radio)radio=&r;if(j::Flag(r,"available")){radio=&r;break;}}
-    const bool available=radio&&j::Flag(*radio,"available"),on=available&&j::Flag(*radio,"enabled");
+    const auto* enabled=radio?radio->Find("enabled"):nullptr;
+    const bool available=radio&&j::Flag(*radio,"available")&&enabled&&enabled->IsBoolean(),on=available&&enabled->boolean;
+    const auto status=_LW(available?(on?"controlCenter.on":"controlCenter.off"):
+        snapshot&&snapshot->available&&snapshot->error.empty()&&radios.empty()?"controlCenter.noDevices":"controlCenter.unavailable");
     std::wstring label=_LW(wifi?"statusBar.wifiControls":"statusBar.bluetoothControls");
     if(wifi&&radio)for(const auto& n:Items(*radio,"networks"))if(j::Flag(n,"connected")){label=Wide(j::String(n,"ssid"));break;}
     if(!wifi)for(const auto& d:Items(v,"devices"))if(j::Flag(d,"connected")){label=Wide(j::String(d,"name"));break;}
     const auto id="radio:"+std::string(key);auto& button=Add(id,ui::Role::Toggle,rect,compact?L"":label,wifi?L"\uE701":L"\uE702");
-    button.enabled=available;button.selected=on;button.switchStyle=compact;button.tooltip=label+L" · "+_LW(on?"controlCenter.on":"controlCenter.off");
+    button.enabled=available;button.selected=on;button.switchStyle=compact;button.tooltip=label+L" · "+status;
     button.accessibilityLabel=_LW(wifi?"statusBar.wifiControls":"statusBar.bluetoothControls");
-    if(!compact)button.detail=_LW(!available?"controlCenter.unavailable":on?"controlCenter.on":"controlCenter.off");
+    if(!compact)button.detail=status;
     const auto radioId=radio?j::String(*radio,"id"):std::string{};
-    if(available&&!radioId.empty())BindAction(id,(wifi?"wifi.radio:":"bluetooth.radio:")+radioId,radioId);
+    if(!radioId.empty())
+    {const auto group=(wifi?"wifi.radio:":"bluetooth.radio:")+radioId;BindAction(id,group,radioId,{},group);}
     Command(id,[this,wifi,radioId,on]{Start(wifi?"network.wifi.setRadio":"bluetooth.setRadio",{{wifi?"interfaceId":"radioId",radioId},{"enabled",on?"0":"1"}});});
 }
 void SystemPanelModel::Volume(std::string_view direction,float& y)
@@ -424,7 +477,8 @@ void SystemPanelModel::Brightness(float& y)
 }
 void SystemPanelModel::WifiPage(float& y)
 {
-    const auto value=Current("network.wifi");const auto& adapters=Items(value,"interfaces");
+    const auto snapshot=source_.current?source_.current("network.wifi"):std::nullopt;
+    const auto value=snapshot&&snapshot->available?snapshot->value:j::Object();const auto& adapters=Items(value,"interfaces");
     if(page_=="wifi-adapters")
     {
         for(const auto& a:adapters){const auto id=j::String(a,"id");auto& n=Add("adapter:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,48),Wide(j::String(a,"name")));n.selected=id==interface_;Command(n.id,[this,id]{interface_=id;network_.clear();Select("wifi");});y+=50;}return;
@@ -432,7 +486,16 @@ void SystemPanelModel::WifiPage(float& y)
     if(adapters.size()>1){Add("wifi.adapter",ui::Role::Button,Rect(16,y,scene_.width-32,38),Wide(j::String(Wifi(),"name")),L"\uE701");Command("wifi.adapter",[this]{Select("wifi-adapters");});y+=46;}
     Radio("wifi",Rect(scene_.width-64,10,48,36),true);
     const auto current=Wifi();const auto networks=system_control::WifiPresentationNetworks(current);
-    if(j::String(current,"error")=="accessDenied")
+    const auto* enabled=current.Find("enabled");
+    const bool available=snapshot&&snapshot->available&&j::Flag(current,"available")&&enabled&&enabled->IsBoolean();
+    const bool powered=available&&enabled->boolean;
+    const bool denied=(snapshot&&snapshot->error=="accessDenied")||j::String(current,"error")=="accessDenied";
+    const auto radioGroup="wifi.radio:"+interface_;
+    auto& scan=Add("wifi.scan",ui::Role::Icon,Rect(scene_.width-152,10,36,36),L"",L"\uE72C");scan.enabled=powered;
+    scan.tooltip=scan.accessibilityLabel=_LW("controlCenter.scan");
+    if(!interface_.empty())BindAction("wifi.scan","wifi.scan:"+interface_,interface_,{},radioGroup);
+    Command("wifi.scan",[this]{Start("network.wifi.scan",{{"interfaceId",interface_}});});
+    if(denied)
     {Add("wifi.denied",ui::Role::Text,Rect(16,y,scene_.width-32,44),_LW("controlCenter.locationDenied")).fontSize=12;y+=48;Add("wifi.location",ui::Role::Button,Rect(16,y,scene_.width-32,36),_LW("controlCenter.locationSettings"));Command("wifi.location",[this]{OpenSettings(L"ms-settings:privacy-location");});y+=44;}
     for(const auto& n:networks)
     {
@@ -441,45 +504,55 @@ void SystemPanelModel::WifiPage(float& y)
         Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?100.f:56.f)).hoverGroup=card;
         auto& row=Add("wifi.network:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,56),Wide(j::String(n,"ssid")),L"\uE701");row.detail=(connected?std::wstring(_LW("controlCenter.connected"))+L" · ":L"")+Percent(j::Numeric(n,"signal"));
         row.hoverGroup=card;
-        BindAction("wifi.connect:"+id,"wifi.connection:"+interface_,id,row.id);
-        if(!profile.empty())BindAction("wifi.forget:"+id,"wifi.forget:"+interface_,profile,row.id);
+        BindAction("wifi.connect:"+id,"wifi.connection:"+interface_,id,row.id,radioGroup);
+        if(!profile.empty())BindAction("wifi.forget:"+id,"wifi.forget:"+interface_,profile,row.id,radioGroup);
         Command(row.id,[this,id]{network_=network_==id?std::string{}:id;});y+=56;
         if(open)
         {
-            auto& button=Add("wifi.connect:"+id,ui::Role::Button,Rect(scene_.width-158,y,134,36),_LW(connected?"controlCenter.disconnect":"controlCenter.connect"));button.enabled=connected||j::Flag(n,"connectable");
+            auto& button=Add("wifi.connect:"+id,ui::Role::Button,Rect(scene_.width-158,y,134,36),_LW(connected?"controlCenter.disconnect":"controlCenter.connect"));button.enabled=powered&&(connected||j::Flag(n,"connectable"));
             button.hoverGroup=card;
             const auto security=j::String(n,"security");Command(button.id,[this,id,profile,connected,security]{if(connected)Start("network.wifi.disconnect",{{"interfaceId",interface_}});else if(!profile.empty())Start("network.wifi.connect",{{"interfaceId",interface_},{"profileName",profile}});else if(security=="system")OpenSettings(L"ms-settings:network-wifi");else Start("network.wifi.connect",{{"interfaceId",interface_},{"networkId",id}});});
             if(!profile.empty()){auto& forget=Add("wifi.forget:"+id,ui::Role::Icon,Rect(24,y,36,36),L"",L"\uE74D");forget.hoverGroup=card;forget.tooltip=_LW("controlCenter.forget");Command(forget.id,[this,profile]{Start("network.wifi.forget",{{"interfaceId",interface_},{"profileName",profile}});});}y+=44;
         }
         y+=8;
     }
-    if(networks.empty()){Add("wifi.empty",ui::Role::Text,Rect(16,y,scene_.width-32,48),_LW(j::Flag(current,"enabled")?"controlCenter.noDevices":"controlCenter.off"));y+=56;}
-    Add("wifi.hidden",ui::Role::Button,Rect(16,y,scene_.width-84,36),_LW("controlCenter.hiddenNetwork"),L"\uE72E").enabled=j::Flag(current,"enabled");
-    if(j::Flag(current,"enabled")){BindAction("wifi.hidden","wifi.connection:"+interface_,interface_);BindAction("wifi.scan","wifi.scan:"+interface_,interface_);}
+    if(networks.empty()&&!denied)
+    {
+        const char* label=!snapshot||!snapshot->available||!snapshot->error.empty()?"controlCenter.unavailable":adapters.empty()?"controlCenter.noDevices":
+            !available||!j::String(current,"error").empty()?"controlCenter.unavailable":powered?"controlCenter.noDevices":"controlCenter.off";
+        Add("wifi.empty",ui::Role::Text,Rect(16,y,scene_.width-32,48),_LW(label));y+=56;
+    }
+    Add("wifi.hidden",ui::Role::Button,Rect(16,y,scene_.width-32,36),_LW("controlCenter.hiddenNetwork"),L"\uE72E").enabled=powered;
+    if(!interface_.empty())BindAction("wifi.hidden","wifi.connection:"+interface_,interface_,{},radioGroup);
     Command("wifi.hidden",[this]{Start("network.wifi.connect",{{"interfaceId",interface_},{"hidden","1"}});});
-    auto& scan=Add("wifi.scan",ui::Role::Icon,Rect(scene_.width-52,y,36,36),L"",L"\uE72C");scan.enabled=j::Flag(current,"enabled");scan.tooltip=scan.accessibilityLabel=_LW("controlCenter.scan");Command("wifi.scan",[this]{Start("network.wifi.scan",{{"interfaceId",interface_}});});y+=44;
+    y+=44;
 }
 void SystemPanelModel::Bluetooth(float& y)
 {
     const auto value=Current("bluetooth.devices");const auto& radios=Items(value,"radios");Radio("bluetooth",Rect(scene_.width-64,10,48,36),true);
     const bool available=std::any_of(radios.begin(),radios.end(),[](const auto& r){return j::Flag(r,"available");});
     const bool powered=std::any_of(radios.begin(),radios.end(),[](const auto& r){return j::Flag(r,"available")&&j::Flag(r,"enabled");});
-    if(radios.size()>1)for(const auto& r:radios){const auto id=j::String(r,"id");auto& n=Add("bluetooth.radio:"+id,ui::Role::Toggle,Rect(16,y,scene_.width-32,42),Wide(j::String(r,"name")));n.switchStyle=true;n.selected=j::Flag(r,"enabled");n.enabled=j::Flag(r,"available");if(n.enabled)BindAction(n.id,"bluetooth.radio:"+id,id);const bool on=n.selected;Command(n.id,[this,id,on]{Start("bluetooth.setRadio",{{"radioId",id},{"enabled",on?"0":"1"}});});y+=50;}
+    if(radios.size()>1)for(const auto& r:radios){const auto id=j::String(r,"id"),group="bluetooth.radio:"+id;auto& n=Add(group,ui::Role::Toggle,Rect(16,y,scene_.width-32,42),Wide(j::String(r,"name")));n.switchStyle=true;n.selected=j::Flag(r,"enabled");n.enabled=j::Flag(r,"available");if(n.enabled)BindAction(n.id,group,id,{},group);const bool on=n.selected;Command(n.id,[this,id,on]{Start("bluetooth.setRadio",{{"radioId",id},{"enabled",on?"0":"1"}});});y+=50;}
     const auto& devices=Items(value,"devices");
     for(const auto& d:devices)
     {
         const auto id=j::String(d,"id");const bool connected=j::Flag(d,"connected"),supported=j::Flag(d,"canConnect"),open=id==bluetooth_;
+        // The public snapshot does not promise adapter ownership. A single
+        // radio is unambiguous; otherwise only an explicit identity is used.
+        auto radioId=j::String(d,"radioId");if(radioId.empty()&&radios.size()==1)radioId=j::String(radios.front(),"id");
+        const auto radioGroup=radioId.empty()?std::string("bluetooth.unknown"):"bluetooth.radio:"+radioId;
+        const bool devicePowered=radioId.empty()?powered:std::any_of(radios.begin(),radios.end(),[&](const auto& r){return j::String(r,"id")==radioId&&j::Flag(r,"available")&&j::Flag(r,"enabled");});
         const auto card="bluetooth.card:"+id;
         Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?106.f:62.f)).hoverGroup=card;
         auto& row=Add("bluetooth.device:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,62),Wide(j::String(d,"name")),L"\uE702");
         row.hoverGroup=card;
-        row.enabled=powered;
-        if(supported)BindAction("bluetooth.connect:"+id,"bluetooth.connection:"+id,id,row.id);
+        row.enabled=devicePowered;
+        if(supported)BindAction("bluetooth.connect:"+id,"bluetooth.connection:"+id,id,row.id,radioGroup);
         row.detail=_LW(connected?"controlCenter.connected":"controlCenter.connect");if(const auto* level=d.Find("batteryPercent");level&&level->IsNumber())row.detail+=L" · "+Percent(level->number);
         Command(row.id,[this,id]{bluetooth_=bluetooth_==id?std::string{}:id;});y+=62;
         if(open)
         {
-            auto& button=Add("bluetooth.connect:"+id,ui::Role::Button,Rect(24,y,scene_.width-48,36),_LW(!supported?"settings.taskbar.systemSettings.open":connected?"controlCenter.disconnect":"controlCenter.connect"));button.enabled=powered;
+            auto& button=Add("bluetooth.connect:"+id,ui::Role::Button,Rect(24,y,scene_.width-48,36),_LW(!supported?"settings.taskbar.systemSettings.open":connected?"controlCenter.disconnect":"controlCenter.connect"));button.enabled=devicePowered;
             button.hoverGroup=card;
             Command(button.id,[this,id,connected,supported]{if(supported)Start(connected?"bluetooth.disconnect":"bluetooth.connect",{{"deviceId",id}});else OpenSettings(L"ms-settings:bluetooth");});y+=44;
         }
@@ -490,9 +563,19 @@ void SystemPanelModel::Bluetooth(float& y)
 void SystemPanelModel::Power(float& y)
 {
     const auto value=Current("system.power.plans");
-    for(const auto& p:Items(value,"plans")){const auto id=j::String(p,"id");auto& n=Add("power.plan:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),Wide(j::String(p,"name")),L"\uE945");n.selected=j::Flag(p,"active");BindAction(n.id,"power.plan",id);Command(n.id,[this,id]{Start("system.power.setPlan",{{"planId",id}});});y+=48;}
-    if(j::Flag(value,"modeSupported"))for(const auto* mode:{"efficiency","balanced","performance"})
-    {auto& n=Add(std::string("power.mode:")+mode,ui::Role::ListItem,Rect(16,y,scene_.width-32,42),_LW((std::string("controlCenter.")+mode).c_str()));n.selected=j::String(value,j::Flag(value,"onAC")?"acMode":"dcMode")==mode;BindAction(n.id,"power.mode",mode);Command(n.id,[this,mode]{Start("system.power.setMode",{{"mode",mode}});});y+=46;}
+    const auto& plans=Items(value,"plans");
+    if(plans.size()>1)
+    {
+        Add("power.plans.heading",ui::Role::Text,Rect(16,y,scene_.width-32,28),_LW("controlCenter.powerPlan")).bold=true;y+=34;
+        for(const auto& p:plans){const auto id=j::String(p,"id");auto& n=Add("power.plan:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),Wide(j::String(p,"name")),L"\uE945");n.selected=j::Flag(p,"active");BindAction(n.id,"power.plan",id);Command(n.id,[this,id]{Start("system.power.setPlan",{{"planId",id}});});y+=48;}
+        y+=8;
+    }
+    if(j::Flag(value,"modeSupported"))
+    {
+        Add("power.modes.heading",ui::Role::Text,Rect(16,y,scene_.width-32,28),_LW("controlCenter.powerMode")).bold=true;y+=34;
+        for(const auto* mode:{"efficiency","balanced","performance"})
+        {auto& n=Add(std::string("power.mode:")+mode,ui::Role::ListItem,Rect(16,y,scene_.width-32,42),_LW((std::string("controlCenter.")+mode).c_str()));n.selected=j::String(value,j::Flag(value,"onAC")?"acMode":"dcMode")==mode;BindAction(n.id,"power.mode",mode);Command(n.id,[this,mode]{Start("system.power.setMode",{{"mode",mode}});});y+=46;}
+    }
     y+=8;int index=0;const float w=(scene_.width-40)/2;
     for(const auto* action:{"lock","sleep","restart","shutdown"}){const std::string id=std::string("power.")+action;Add(id,ui::Role::Button,Rect(16+(index%2)*(w+8),y+(index/2)*48,w,40),_LW((std::string("controlCenter.")+action).c_str()));BindAction(id,"power.action",action);Command(id,[this,action]{Start(std::string("system.power.")+action);});++index;}y+=96;
 }
@@ -547,7 +630,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     const auto completions=source_.completions?source_.completions():std::vector<system_control::Completion>{};
     for(const auto& completion:completions)std::erase_if(pendingValues_,[&](const auto& item){return item.second.task==completion.id;});
     if(page_=="media"||(page_=="audio"&&!settings_.audioControls)||(page_=="brightness"&&!settings_.brightnessControls)||
-        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls)){++navigation_;page_.clear();error_.clear();}
+        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls)){++navigation_;page_.clear();ClearError();}
     SyncSubscriptions();
     if(subscriptions_.contains("network.wifi"))
     {
@@ -560,7 +643,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
             // Returning to Wi-Fi must not queue another automatic scan behind
             // an operation already using this adapter.
             const bool busy=std::any_of(pendingActions_.begin(),pendingActions_.end(),[this](const auto& entry){return entry.second.topic=="network.wifi"&&entry.second.device==interface_;});
-            if(!busy){BindAction("wifi.scan","wifi.scan:"+interface_,interface_);Start("network.wifi.scan",{{"interfaceId",interface_}},"wifi.scan");}
+            if(!busy){BindAction("wifi.scan","wifi.scan:"+interface_,interface_,{},"wifi.radio:"+interface_);Start("network.wifi.scan",{{"interfaceId",interface_}},"wifi.scan");}
         }
     }
     if(action_==StatusBarAction::Tray){Tray();return;}if(action_==StatusBarAction::Calendar){Calendar();return;}if(IsSystemResourceAction(action_)){Resources();return;}
@@ -574,6 +657,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     for(const auto& completion:completions)
     {
         bool relevant=true;
+        std::optional<PendingAction> origin;
         const auto pending=std::find_if(pendingActions_.begin(),pendingActions_.end(),[&](const auto& item){return item.second.task==completion.id;});
         if(pending!=pendingActions_.end())
         {
@@ -581,12 +665,17 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
             // Returning to a page restores its guard, but a completion from an
             // earlier visit must not display an error against a new selection.
             relevant=pending->second.navigation==navigation_&&binding!=actionBindings_.end()&&binding->second.group==pending->first&&binding->second.target==pending->second.target;
+            if(relevant)origin=pending->second;
             pendingActions_.erase(pending);
         }
         if(feedback_.Take(completion.id)&&relevant&&!completion.ok&&completion.error!="canceled")
+        {
+            ClearError();
             error_=_LW(completion.error=="accessDenied"?"controlCenter.accessDenied":completion.error=="timeout"?"controlCenter.timeout":"controlCenter.failed");
+            if(origin){errorControl_=origin->control;errorTarget_=origin->target;errorGroup_=actionBindings_.at(errorControl_).group;}
+        }
     }
-    if(!error_.empty()){auto& n=Add("status",ui::Role::Text,Rect(16,y,scene_.width-32,40),error_);n.fontSize=12;y+=44;}
+    ApplyError(y);
     Finish(y,settings_.mediaControls);
     ApplyPendingActions();
     std::erase_if(pendingValues_,[&](const auto& entry){const auto* node=scene_.Find(entry.first);if(!node)return false;const auto target=sliderTargets_.find(entry.first);return !node->enabled||target==sliderTargets_.end()||target->second!=entry.second.target;});
@@ -656,6 +745,8 @@ bool SystemPanelModel::Drop(std::string_view key,D2D1_POINT_2F p)
 }
 void SystemPanelModel::Calendar()
 {
+    if(CalendarEditing()){CalendarEditor();return;}
+    calendarEvents_.clear();
     scene_.width=(std::min)(720.f,availableWidth_);
     auto today=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
     if(!calendar::CalendarService::GetDateInfo(today))today=calendar::CalendarService::CurrentLocalNow().date;
@@ -685,14 +776,14 @@ void SystemPanelModel::Calendar()
         calendarAnnotations_[date_]=source_.calendar.secondaryDate(date_);
     auto& monthLabel=Add("calendar.month",ui::Role::Text,Rect(monthLeft,monthTop,toolbar>36?monthWidth:monthWidth-150,32),std::to_wstring(month->year)+L" / "+std::to_wstring(month->month));monthLabel.bold=true;monthLabel.fontSize=16;
     Add("calendar.today",ui::Role::Button,Rect(monthLeft+monthWidth-144,buttonsTop,68,32),_LW("app.widget.date_picker.today")).fontSize=12;
-    Command("calendar.today",[this,today]{date_=today;month_=date_.substr(0,7)+"-01";scroll_=0;});
+    Command("calendar.today",[this,today]{date_=today;month_=date_.substr(0,7)+"-01";scroll_=0;calendarNotice_.clear();});
     for(int i=0;i<2;++i)
     {
         const auto id=i?"calendar.next":"calendar.previous";
         auto& n=Add(id,ui::Role::Icon,Rect(monthLeft+monthWidth-70+i*36.f,buttonsTop,32,32),L"",i?L"\uE76C":L"\uE76B");
         n.tooltip=_LW(i?"app.widget.date_picker.next":"app.widget.date_picker.previous");
         n.enabled=i?month->year<9999||month->month<12:month->year>1||month->month>1;
-        Command(id,[this,i]{const auto d=calendar::CalendarService::GetDateInfo(month_);if(!d)return;int m=d->month+(i?1:-1),year=d->year;if(m<1){m=12;--year;}if(m>12){m=1;++year;}if(year>=1&&year<=9999){month_=Date(year,m,1);scroll_=0;}});
+        Command(id,[this,i]{const auto d=calendar::CalendarService::GetDateInfo(month_);if(!d)return;int m=d->month+(i?1:-1),year=d->year;if(m<1){m=12;--year;}if(m>12){m=1;++year;}if(year>=1&&year<=9999){month_=Date(year,m,1);scroll_=0;calendarNotice_.clear();}});
     }
     const float cell=monthWidth/7;
     for(int i=0;i<7;++i)
@@ -712,7 +803,7 @@ void SystemPanelModel::Calendar()
         n.tooltip=Wide(*date);if(weekday[0])n.tooltip+=L" · "+std::wstring(weekday);
         if(const auto secondary=calendarAnnotations_.find(*date);secondary!=calendarAnnotations_.end()&&!secondary->second.empty())n.tooltip+=L"\n"+Wide(secondary->second);
         n.accessibilityLabel=n.tooltip;
-        Command(n.id,[this,date=*date]{date_=date;month_=date.substr(0,7)+"-01";});
+        Command(n.id,[this,date=*date]{date_=date;month_=date.substr(0,7)+"-01";calendarNotice_.clear();});
     }
     const float monthEnd=gridTop+28+6*34,agendaLeft=two?monthLeft+monthWidth+16:16,agendaWidth=scene_.width-agendaLeft-16;
     float y=two?16.f:monthEnd+16;
@@ -725,6 +816,11 @@ void SystemPanelModel::Calendar()
     {
         const auto text=Wide(selected->second);
         if(!text.empty()){auto& n=Add("calendar.selectedSecondary",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,36),text);n.fontSize=12;n.secondary=n.wrap=true;y+=40;}
+    }
+    if(!calendarNotice_.empty())
+    {
+        auto& notice=Add("calendar.notice",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,52),_LW(calendarNotice_.c_str()));
+        notice.wrap=true;notice.fontSize=13;notice.tooltip=notice.text;y+=60;
     }
     const float agendaStart=y;
     std::array<std::pair<std::string,std::vector<calendar::CalendarEvent>>,3> agenda;
@@ -750,7 +846,8 @@ void SystemPanelModel::Calendar()
             n.detail=e.allDay?_LW("settings.calendar.allDay"):when;n.tooltip=Wide(e.title)+L"\n"+Wide(e.date)+L" · "+n.detail;
             if(!e.notes.empty())n.tooltip+=L"\n"+Wide(e.notes);
             n.accessibilityLabel=Wide(e.title)+L" · "+Wide(e.date)+L" · "+n.detail;
-            Command(n.id,[this,event=e]{EditCalendar(event);});y+=64;
+            calendarEvents_[n.id]=e;
+            Command(n.id,[this,id=n.id]{CalendarEventCommand(id,false);});y+=64;
         }
     }
     if(!hasEvents){auto& empty=Add("calendar.empty",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,48),_LW("settings.calendar.empty"));empty.fontSize=12;empty.centered=empty.wrap=true;y+=two?48.f:104.f;}
@@ -772,16 +869,193 @@ void SystemPanelModel::Calendar()
 }
 void SystemPanelModel::EditCalendar(calendar::CalendarEvent event)
 {
-    const auto edit=source_.calendar.edit;if(closed_||!edit)return;
-    const auto state=std::make_shared<SystemControlPromptState>();
-    state->valid=[this]{return !closed_;};
-    // Unlike a one-shot system-control confirmation, writing a calendar draft
-    // has no arbitrary time limit. The owning popup still revokes it on close.
-    state->deadline=(std::chrono::steady_clock::time_point::max)();
-    const bool changed=edit(nullptr,event,PersonalizationSettings{},state);
-    if(closed_||state->cancelled||!changed)return;
-    if(calendar::CalendarService::GetDateInfo(event.date))
-    {date_=event.date;month_=date_.substr(0,7)+"-01";scroll_=0;}
+    if(closed_||!source_.calendar.mutations.save)return;
+    calendarReturnScroll_=scroll_;scroll_=0;++navigation_;page_="calendar-edit";calendarNotice_.clear();
+    calendarConfirmDelete_=calendarReminderOpen_=false;
+    calendarEditor_=std::make_shared<SystemCalendarEditorState>();
+    calendarEditor_->original=event;calendarEditor_->draft=std::move(event);
+    calendarEditor_->actions=source_.calendar.mutations;
+    calendarEditor_->valid=[this,weak=std::weak_ptr(calendarEditor_)]{
+        return !closed_&&page_=="calendar-edit"&&weak.lock()==calendarEditor_;
+    };
+    const auto time=[](int minutes){wchar_t value[16]{};swprintf_s(value,L"%02d:%02d",minutes/60,minutes%60);return std::wstring(value);};
+    const auto& draft=calendarEditor_->draft;
+    calendarText_={{"calendar.edit.title",Wide(draft.title)},{"calendar.edit.date",Wide(draft.date)},
+        {"calendar.edit.start",time(draft.startMinutes)},{"calendar.edit.end",time(draft.endMinutes)},
+        {"calendar.edit.notes",Wide(draft.notes)}};
+}
+bool SystemPanelModel::CalendarEditing() const
+{return !closed_&&action_==StatusBarAction::Calendar&&page_=="calendar-edit"&&calendarEditor_;}
+std::vector<SystemCalendarInputField> SystemPanelModel::CalendarInputFields() const
+{
+    std::vector<SystemCalendarInputField> fields;if(!CalendarEditing())return fields;
+    for(const auto* suffix:{"title","date","start","end","notes"})
+    {
+        const std::string id="calendar.edit."+std::string(suffix);
+        const auto* node=scene_.Find(id);const auto value=calendarText_.find(id);
+        if(!node||value==calendarText_.end())continue;
+        const bool notes=std::string_view(suffix)=="notes",date=std::string_view(suffix)=="date";
+        fields.push_back({id,node->accessibilityLabel,value->second,node->bounds,node->clip,notes,node->enabled,
+            notes?8192:date?10:std::string_view(suffix)=="title"?512:5});
+    }
+    return fields;
+}
+bool SystemPanelModel::SetCalendarInput(std::string_view id,std::wstring text)
+{
+    if(!CalendarEditing()||calendarConfirmDelete_)return false;
+    const auto found=calendarText_.find(std::string(id));if(found==calendarText_.end())return false;
+    if(calendarEditor_->draft.allDay&&(id=="calendar.edit.start"||id=="calendar.edit.end"))return false;
+    // Preserve partial dates/times and IME text verbatim. Validation belongs to
+    // Save, and typing must not rebuild or reset the live native EDIT selection.
+    found->second=std::move(text);return true;
+}
+void SystemPanelModel::LeaveCalendarEditor(bool followSavedDate)
+{
+    if(!CalendarEditing())return;
+    if(followSavedDate&&calendar::CalendarService::GetDateInfo(calendarEditor_->draft.date))
+    {date_=calendarEditor_->draft.date;month_=date_.substr(0,7)+"-01";scroll_=0;}
+    else scroll_=calendarReturnScroll_;
+    ++navigation_;page_.clear();calendarEditor_.reset();calendarText_.clear();
+    calendarConfirmDelete_=calendarReminderOpen_=false;
+}
+bool SystemPanelModel::CalendarBack()
+{
+    if(!CalendarEditing())return false;
+    if(calendarConfirmDelete_){calendarConfirmDelete_=false;calendarEditor_->error.clear();}
+    else if(calendarReminderOpen_)calendarReminderOpen_=false;
+    else LeaveCalendarEditor(false);
+    Refresh(available_);return true;
+}
+bool SystemPanelModel::CalendarEventCommand(std::string_view nodeId,bool remove)
+{
+    if(closed_||action_!=StatusBarAction::Calendar||CalendarEditing())return false;
+    const auto found=calendarEvents_.find(std::string(nodeId));
+    if(found==calendarEvents_.end()||!scene_.Find(nodeId))
+    {
+        if(nodeId.starts_with("event:")){calendarNotice_="settings.calendar.conflict";Refresh(available_);}
+        return false;
+    }
+    const auto event=found->second;
+    const auto generation=navigation_;
+    const auto current=source_.calendar.mutations.current;
+    if(!current){calendarNotice_="settings.calendar.failed";Refresh(available_);return false;}
+    const auto present=current(event);
+    // A context menu may have stayed open while this event was removed or
+    // rescheduled. Never substitute a different row or silently adopt its edit.
+    if(closed_||generation!=navigation_||CalendarEditing())return false;
+    if(!present||present->id!=event.id||present->revision!=event.revision||present->date!=event.date)
+    {calendarNotice_="settings.calendar.conflict";Refresh(available_);return false;}
+    EditCalendar(event);if(!CalendarEditing())return false;
+    calendarConfirmDelete_=remove;Refresh(available_);return true;
+}
+void SystemPanelModel::SaveCalendar()
+{
+    if(!CalendarEditing()||calendarConfirmDelete_)return;
+    const auto editor=calendarEditor_;
+    const auto utf8=[](const std::wstring& value)->std::optional<std::string>{
+        if(value.empty())return std::string{};
+        if(value.size()>static_cast<std::size_t>((std::numeric_limits<int>::max)()))return {};
+        const int length=static_cast<int>(value.size());
+        const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),length,nullptr,0,nullptr,nullptr);
+        if(count<=0)return {};
+        std::string result(static_cast<std::size_t>(count),'\0');
+        if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),length,result.data(),count,nullptr,nullptr)!=count)return {};
+        return result;
+    };
+    auto candidate=editor->draft;
+    const auto title=utf8(calendarText_.at("calendar.edit.title")),date=utf8(calendarText_.at("calendar.edit.date")),notes=utf8(calendarText_.at("calendar.edit.notes"));
+    const auto start=ParseCalendarEditorTime(calendarText_.at("calendar.edit.start")),end=ParseCalendarEditorTime(calendarText_.at("calendar.edit.end"));
+    if(!title||!date||!notes||!calendar::CalendarService::GetDateInfo(*date)||
+        (!candidate.allDay&&(!start||!end||*end<*start)))
+    {editor->error="invalid_time";return;}
+    candidate.title=*title;candidate.date=*date;candidate.notes=*notes;
+    candidate.startMinutes=candidate.allDay?0:*start;candidate.endMinutes=candidate.allDay?1439:*end;
+    const bool saved=editor->Save(std::move(candidate));
+    if(closed_||calendarEditor_!=editor)return;
+    if(saved)LeaveCalendarEditor(true);
+}
+void SystemPanelModel::RemoveCalendar()
+{
+    if(!CalendarEditing()||!calendarConfirmDelete_)return;
+    const auto editor=calendarEditor_;const bool removed=editor->Remove();
+    if(closed_||calendarEditor_!=editor)return;
+    if(removed)LeaveCalendarEditor(false);
+}
+void SystemPanelModel::CalendarEditor()
+{
+    const auto editor=calendarEditor_;if(!editor)return;
+    scene_.width=(std::min)(720.f,availableWidth_);bodyLeft_=0;bodyStart_=56;
+    Add("calendar.edit.back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("settings.shell.back");
+    Command("calendar.edit.back",[this]{CalendarBack();});
+    auto& heading=Add("calendar.edit.heading",ui::Role::Text,Rect(56,10,scene_.width-72,36),
+        _LW(editor->original.id.empty()?"settings.calendar.add":"settings.calendar.edit"));heading.bold=true;heading.fontSize=17;
+    const bool wide=scene_.width>=560;const float width=scene_.width-32;
+    const float leftWidth=wide?(width-16)*.56f:width,right=wide?32+leftWidth:16,rightWidth=wide?width-leftWidth-16:width;
+    const auto field=[&](const char* suffix,float x,float y,float w,float h,bool enabled=true){
+        const std::string id="calendar.edit."+std::string(suffix),key="settings.calendar."+std::string(suffix);
+        const auto label=_LW(key.c_str());
+        auto& caption=Add(id+".label",ui::Role::Text,Rect(x,y,w,20),label);caption.fontSize=13;caption.secondary=true;
+        auto& node=Add(id,ui::Role::Button,Rect(x,y+24,w,h));node.accessibilityLabel=node.tooltip=label;
+        node.enabled=enabled&&!calendarConfirmDelete_;
+    };
+    field("title",16,64,leftWidth,36);
+    field("date",right,wide?64.f:136.f,rightWidth,36);
+    const float allDayY=wide?136.f:208.f;
+    auto& allDay=Add("calendar.edit.allDay",ui::Role::Toggle,Rect(right,allDayY,rightWidth,36),_LW("settings.calendar.allDay"));
+    allDay.switchStyle=true;allDay.selected=editor->draft.allDay;allDay.enabled=!calendarConfirmDelete_;
+    Command(allDay.id,[this]{calendarEditor_->draft.allDay=!calendarEditor_->draft.allDay;});
+    const float timeY=allDayY+48,timeWidth=(rightWidth-12)/2;
+    field("start",right,timeY,timeWidth,36,!editor->draft.allDay);
+    field("end",right+timeWidth+12,timeY,timeWidth,36,!editor->draft.allDay);
+    const float reminderY=timeY+72;
+    auto& reminderLabel=Add("calendar.edit.reminder.label",ui::Role::Text,Rect(right,reminderY,rightWidth,20),_LW("settings.calendar.reminder"));reminderLabel.fontSize=13;reminderLabel.secondary=true;
+    const auto reminderKey="settings.calendar.reminder."+std::to_string(editor->draft.reminderMinutes);
+    auto& reminder=Add("calendar.edit.reminder",ui::Role::Button,Rect(right,reminderY+24,rightWidth,36),_LW(reminderKey.c_str()));
+    reminder.enabled=!calendarConfirmDelete_;reminder.tooltip=std::wstring(_LW("settings.calendar.reminder"))+L" · "+reminder.text;
+    reminder.accessibilityLabel=reminder.tooltip;
+    Command(reminder.id,[this]{calendarReminderOpen_=!calendarReminderOpen_;});
+    float rightEnd=reminderY+72;
+    if(calendarReminderOpen_&&!calendarConfirmDelete_)
+        for(const auto minutes:SystemCalendarReminderMinutes)
+        {
+            const auto id="calendar.edit.reminder:"+std::to_string(minutes),key="settings.calendar.reminder."+std::to_string(minutes);
+            auto& choice=Add(id,ui::Role::ListItem,Rect(right,rightEnd,rightWidth,32),_LW(key.c_str()));choice.selected=minutes==editor->draft.reminderMinutes;choice.fontSize=13;
+            Command(id,[this,minutes]{calendarEditor_->draft.reminderMinutes=minutes;calendarReminderOpen_=false;});rightEnd+=36;
+        }
+    const float notesY=wide?136.f:rightEnd;
+    field("notes",16,notesY,leftWidth,wide?164.f:100.f);
+    float footer=(std::max)(rightEnd,notesY+24+(wide?164.f:100.f))+16;
+    if(!editor->error.empty())
+    {
+        const auto& error=editor->error;
+        const char* key=error=="conflict"||error=="not_found"?"settings.calendar.conflict":
+            error=="title_required"||error=="text_too_long"||error=="invalid_date"||error=="invalid_time"||error=="invalid_reminder"?"settings.calendar.invalid":"settings.calendar.failed";
+        auto& message=Add("calendar.edit.error",ui::Role::Text,Rect(16,footer,width,48),_LW(key));message.wrap=true;message.fontSize=13;footer+=56;
+    }
+    if(calendarConfirmDelete_)
+    {
+        auto& question=Add("calendar.edit.confirmation",ui::Role::Text,Rect(16,footer,width,36),_LW("settings.calendar.confirmDelete"));question.wrap=true;footer+=44;
+        const float buttonWidth=(width-12)/2;
+        Add("calendar.edit.cancelDelete",ui::Role::Button,Rect(16,footer,buttonWidth,36),_LW("settings.dialog.cancel"));
+        Command("calendar.edit.cancelDelete",[this]{calendarConfirmDelete_=false;calendarEditor_->error.clear();});
+        Add("calendar.edit.confirmDelete",ui::Role::Button,Rect(28+buttonWidth,footer,buttonWidth,36),_LW("app.settings.delete"));
+        Command("calendar.edit.confirmDelete",[this]{RemoveCalendar();});
+    }
+    else
+    {
+        const bool existing=!editor->original.id.empty();const float buttonWidth=(width-(existing?24.f:12.f))/(existing?3.f:2.f);
+        float x=16;
+        if(existing)
+        {
+            Add("calendar.edit.delete",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("app.settings.delete"));
+            Command("calendar.edit.delete",[this]{calendarConfirmDelete_=true;calendarReminderOpen_=false;calendarEditor_->error.clear();});x+=buttonWidth+12;
+        }
+        Add("calendar.edit.cancel",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("settings.dialog.cancel"));
+        Command("calendar.edit.cancel",[this]{LeaveCalendarEditor(false);});x+=buttonWidth+12;
+        auto& save=Add("calendar.edit.save",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("settings.calendar.save"));save.accent=true;
+        Command(save.id,[this]{SaveCalendar();});
+    }
+    Finish(footer+36,false);
 }
 void SystemPanelModel::Resources()
 {

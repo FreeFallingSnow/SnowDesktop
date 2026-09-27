@@ -35,6 +35,7 @@ struct StatusBarDockState
     bool promoted = false;
     HWND window = nullptr; // Visible merged content window, never owned by bar.
     RECT inputBounds{}; // Screen pixels, only for a visible merged Dock.
+    bool interacting = false; // This monitor's bar-owned activation/menu/panel.
 };
 class StatusBar final
 {
@@ -65,6 +66,12 @@ public:
     // UI-thread summon boundary: sample before any Dock window/focus changes.
     void PrepareDockReveal(HMONITOR monitor);
     void SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider);
+    void SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider);
+    void RefreshDockState(HMONITOR monitor);
+    bool IsInteractionAvailable(HMONITOR monitor) const;
+    bool HasInteractionSession(HMONITOR monitor) const;
+    bool ContainsPoint(POINT screen) const;
+    RECT AvailableWorkArea(HMONITOR monitor, RECT screenWorkArea) const;
     std::shared_ptr<tray::Service> Tray() const;
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);

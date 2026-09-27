@@ -695,12 +695,44 @@ int wmain()
         gOwnerFocusCallback = {};
         gMenuScript = {};
         Expect(!gWatchdogFired && gInputPosted &&
-                closeResult.command == (selectCommand ? 21U : 0U),
+                closeResult.command == (selectCommand ? 21U : 0U) &&
+                closeResult.reason == (selectCommand ? snowdesktop::modern_menu::ExitReason::Command :
+                    snowdesktop::modern_menu::ExitReason::Cancelled),
             "teardown presentation covers command selection and cancellation");
         Expect(focusRepaintObserved,
             "restoring owner focus after popup destruction generates a host repaint");
         Expect(contentSubmittedAfterTeardown && !contentPending,
             "menu exit submits focus-triggered content before returning to the Shell caller");
+    }
+    // Same private desktop, but an independent window takes activation while
+    // the menu is open. The real WM_ACTIVATE/cancellation/teardown chain must
+    // preserve that choice rather than returning focus to the old popup host.
+    {
+        HWND other = CreateWindowExW(WS_EX_TOOLWINDOW, kOwnerClass, L"",
+            WS_POPUP | WS_VISIBLE, -32000, -32000, 20, 20,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(other != nullptr, "independent focus target exists on the isolated desktop");
+        for(const bool chooseBeforeActivation : {false,true})
+        {
+            SetActiveWindow(owner);SetFocus(owner);
+            gDriveMode = DriveMode::Script;gInputPosted = false;gWatchdogFired = false;
+            bool externalAcquiredFocus = false;
+            gMenuScript = [&](HWND root) {
+                if(chooseBeforeActivation)
+                {SendMessageW(root,WM_KEYDOWN,VK_HOME,0);SendMessageW(root,WM_KEYDOWN,VK_RETURN,0);}
+                SetActiveWindow(other);SetFocus(other);
+                externalAcquiredFocus = GetActiveWindow() == other && GetFocus() == other;
+            };
+            SetTimer(owner, kDriveTimer, 10, nullptr);SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+            const auto externalResult = snowdesktop::modern_menu::Show(adjustmentItems, options);
+            KillTimer(owner, kWatchdogTimer);gMenuScript = {};
+            Expect(!gWatchdogFired && gInputPosted && externalAcquiredFocus && externalResult.command == 0 &&
+                    externalResult.reason == snowdesktop::modern_menu::ExitReason::ExternalActivation,
+                "external activation must discard a command and return an explicit dismissal");
+            Expect(GetActiveWindow() == other && GetFocus() == other,
+                "menu teardown stole activation or keyboard focus back from the user's new window");
+        }
+        DestroyWindow(other);SetActiveWindow(owner);SetFocus(owner);
     }
     // Regression for the user's desktop-click flash investigation. Exercise
     // the host's owner resolver and real menu activation/teardown on an
@@ -767,7 +799,9 @@ int wmain()
                 KillTimer(owner, kWatchdogTimer);
                 CloseHandle(wake);
                 Expect(scriptRan && !gWatchdogFired &&
-                        focusResult.command == (outsideClick ? 0U : 21U),
+                        focusResult.command == (outsideClick ? 0U : 21U) &&
+                        focusResult.reason == (outsideClick ? snowdesktop::modern_menu::ExitReason::Cancelled :
+                            snowdesktop::modern_menu::ExitReason::Command),
                     "proxy-owned menus support outside dismissal and keyboard commands");
                 Expect(nativeOwnerMatches && gDesktopParentActivations == 0,
                     "desktop menus must not own or activate the rendering child's parent");
@@ -1885,7 +1919,7 @@ int wmain()
         "a replacement menu completed inside the first modal loop");
     Expect(gNestedMenuCommand == 31,
         "the replacement menu remains interactive");
-    Expect(replacedResult.command == 0,
+    Expect(replacedResult.command == 0 && replacedResult.reason == snowdesktop::modern_menu::ExitReason::Replaced,
         "opening a replacement dismisses the previous menu session");
     std::cout << "modern menu interaction tests passed\n";
     return 0;

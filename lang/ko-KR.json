@@ -1889,6 +1889,7 @@
     "settings.calendar.notes": "메모",
     "settings.calendar.allDay": "하루 종일",
     "settings.calendar.add": "새 일정",
+    "settings.calendar.edit": "일정 편집",
     "settings.calendar.refresh": "새로 고침",
     "settings.calendar.save": "일정 저장",
     "settings.calendar.confirmDelete": "이 일정을 삭제할까요?",

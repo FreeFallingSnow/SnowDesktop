@@ -16,6 +16,7 @@
 #include "popup_window_pair_z_order.h"
 #include "../dock_genie_rules.h"
 #include "../quick_navigation_genie_rules.h"
+#include "../popup_round_geometry.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
@@ -325,7 +326,8 @@ struct DesktopBackdropCompositor::Impl
         RECT frame{};
         RECT regionFrame{};
         std::uintptr_t ownerKey = 0;
-        int cornerRadius = 0;
+        float cornerRadius = 0;
+        float regionCornerRadius = 0;
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
@@ -349,7 +351,7 @@ struct DesktopBackdropCompositor::Impl
     std::vector<GenieOutlinePoint> genieOutline;
     RECT geniePanelFrame{};
     SIZE genieHostSize{};
-    int genieCornerRadius = 0;
+    float genieCornerRadius = 0;
     bool genieVertical = true;
     float genieSourceOpacity = 1.0f;
     float genieOpacity = 1.0f;
@@ -553,15 +555,10 @@ struct DesktopBackdropCompositor::Impl
             return false;
         for (const PanelVisual& panel : panels)
         {
-            // The CompositionRoundedRectangleGeometry below supplies the
-            // antialiased clip. Limit this helper HWND only to each panel's
-            // rectangular bounds so a binary GDI region cannot cut off the
-            // partially covered pixels along the rounded edge.
-            HRGN frameRegion = CreateRectRgn(
-                panel.regionFrame.left,
-                panel.regionFrame.top,
-                panel.regionFrame.right + 1,
-                panel.regionFrame.bottom + 1);
+            // Composition owns the AA contour. The outward region preserves
+            // its coverage but excludes the fully transparent outer corners.
+            HRGN frameRegion = snowdesktop::popup_round_geometry::CreateWindowFence(
+                panel.regionFrame, panel.regionCornerRadius);
             if (!frameRegion)
             {
                 DeleteObject(panelRegion);
@@ -1473,7 +1470,8 @@ bool DesktopBackdropCompositor::AddPanel(
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
-    const int cornerKey = std::max(0, static_cast<int>(std::lround(cornerRadius)));
+    const auto rounded = snowdesktop::popup_round_geometry::Resolve(frame, cornerRadius);
+    const float resolvedRadius = rounded.radiusX;
     const int blurKey = std::clamp(static_cast<int>(std::lround(blurRadius)), 0, 48);
 
     try
@@ -1490,7 +1488,7 @@ bool DesktopBackdropCompositor::AddPanel(
             Impl::PanelVisual panel{};
             panel.frame = frame;
             panel.ownerKey = ownerKey;
-            panel.cornerRadius = cornerKey;
+            panel.cornerRadius = resolvedRadius;
             panel.blurRadius = blurKey;
             panel.visual = impl_->compositor.CreateSpriteVisual();
             panel.geometry = impl_->compositor.CreateRoundedRectangleGeometry();
@@ -1520,7 +1518,8 @@ bool DesktopBackdropCompositor::AddPanel(
             existing->blurRadius = blurKey;
             existing->visual.Brush(impl_->CreateBlurBrush(blurKey));
         }
-        existing->cornerRadius = cornerKey;
+        existing->cornerRadius = resolvedRadius;
+        existing->regionCornerRadius = resolvedRadius;
         existing->visual.Offset(wfn::float3{
             static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f });
         const wfn::float2 panelSize{
@@ -1529,7 +1528,7 @@ bool DesktopBackdropCompositor::AddPanel(
         existing->visual.Size(panelSize);
         existing->geometry.Size(panelSize);
         existing->geometry.CornerRadius(wfn::float2{
-            static_cast<float>(cornerKey), static_cast<float>(cornerKey) });
+            resolvedRadius, resolvedRadius });
         // AddPanel represents an ordinarily rendered, visible panel. A
         // floating-Dock hand-off can temporarily set an existing panel to
         // zero opacity; reusing that same rectangle on the next desktop paint
@@ -1570,7 +1569,15 @@ bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
             matrix._21, matrix._22, matrix._23, matrix._24,
             matrix._31, matrix._32, matrix._33, matrix._34,
             matrix._41, matrix._42, matrix._43, matrix._44 });
-        if (!EqualRect(&found->regionFrame, &projectedFrame)) impl_->transformedRegionDirty = true;
+        // A projected/folded quad is not an axis-aligned rounded rectangle.
+        // Use its conservative rectangle until the ordinary pose returns.
+        const bool translated = matrix._11 == 1 && matrix._22 == 1 && matrix._33 == 1 && matrix._44 == 1 &&
+            matrix._12 == 0 && matrix._13 == 0 && matrix._14 == 0 && matrix._21 == 0 && matrix._23 == 0 &&
+            matrix._24 == 0 && matrix._31 == 0 && matrix._32 == 0 && matrix._34 == 0 && matrix._43 == 0;
+        const float regionRadius = translated ? found->cornerRadius : 0.f;
+        if (!EqualRect(&found->regionFrame, &projectedFrame) || found->regionCornerRadius != regionRadius)
+            impl_->transformedRegionDirty = true;
+        found->regionCornerRadius = regionRadius;
         found->regionFrame = projectedFrame;
         return true;
     }

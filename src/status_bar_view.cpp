@@ -202,7 +202,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         const auto extentOf = [&](const StatusBarItem& item) {
             if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
             if (item.icon || item.text.empty()) return 32.f * scale;
-            auto reserved = item.text;
+            auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, mergedDock) : item.text;
             if (item.key == "memory") reserved = std::wstring(_LW("statusBar.memory")) + L" 100%";
             // Reserve equal digit advances for the date/time too.
             if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
@@ -293,6 +293,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             { items[i].bounds = {leftCursor, 0, leftCursor + widths[i], viewportHeight}; leftCursor += widths[i]; }
         for (std::size_t i = 0; i < rightIndices.size(); ++i)
             items[rightIndices[i]].bounds = bounds[i + (mergedDock ? 2 : 1)];
+        if (mergedDock)
+            for (auto& item : items)
+                item.bounds = StatusBarCompactTarget(item.bounds, scale, item.key == "clock");
         ComPtr<ID2D1SolidColorBrush> hoverBrush;
         context->CreateSolidColorBrush(hc ? palette.highlight :
             D2D1::ColorF(a.contentTheme == 1 ? 0x000000 : 0xffffff, .08f), &hoverBrush);
@@ -303,9 +306,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
 
                 continue;
             }
-            const auto rect = D2D1::RectF(static_cast<float>(item.bounds.left), 0,
-                static_cast<float>(item.bounds.right), static_cast<float>(h));
-            const auto inset = D2D1::RoundedRect(D2D1::RectF(rect.left + 2 * scale, 3 * scale,
+            const auto rect = D2D1::RectF(static_cast<float>(item.bounds.left), static_cast<float>(item.bounds.top),
+                static_cast<float>(item.bounds.right), static_cast<float>(item.bounds.bottom));
+            const auto inset = D2D1::RoundedRect(D2D1::RectF(rect.left + 2 * scale, rect.top + 3 * scale,
                 rect.right - 2 * scale, rect.bottom - 3 * scale), 4 * scale, 4 * scale);
             const bool hover = hovered && *hovered == static_cast<std::size_t>(&item - items.data());
             if (hover && item.action != StatusBarAction::None && hoverBrush) context->FillRoundedRectangle(inset, hoverBrush.Get());
@@ -368,7 +371,11 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     if (!item.text.empty()) { iconRect.right = iconRect.left + 28.f * scale; textRect.left += 22.f * scale; }
                     context->DrawText(item.glyph.c_str(), static_cast<UINT32>(item.glyph.size()), iconFormat.Get(), iconRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 }
-                if (!item.text.empty()) context->DrawText(item.text.c_str(), static_cast<UINT32>(item.text.size()), format.Get(), textRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                if (!item.text.empty())
+                {
+                    const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, mergedDock) : item.text;
+                    context->DrawText(displayed.c_str(), static_cast<UINT32>(displayed.size()), format.Get(), textRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])
                 context->DrawRoundedRectangle(inset, brush.Get(), 1.f);

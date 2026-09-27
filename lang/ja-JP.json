@@ -1889,6 +1889,7 @@
     "settings.calendar.notes": "メモ",
     "settings.calendar.allDay": "終日",
     "settings.calendar.add": "予定を追加",
+    "settings.calendar.edit": "予定を編集",
     "settings.calendar.refresh": "更新",
     "settings.calendar.save": "予定を保存",
     "settings.calendar.confirmDelete": "この予定を削除しますか？",

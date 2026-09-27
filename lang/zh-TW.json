@@ -1889,6 +1889,7 @@
     "settings.calendar.notes": "備註",
     "settings.calendar.allDay": "全天",
     "settings.calendar.add": "新增行程",
+    "settings.calendar.edit": "編輯行程",
     "settings.calendar.refresh": "重新整理",
     "settings.calendar.save": "儲存行程",
     "settings.calendar.confirmDelete": "刪除此行程？",

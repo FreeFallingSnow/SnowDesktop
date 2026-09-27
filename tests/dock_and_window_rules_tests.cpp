@@ -1068,14 +1068,14 @@ void CheckStatusBarFullscreenDockSession()
         "the summon boundary observes fullscreen before the Dock input proxy takes focus");
     firstMonitor.BeginDockReveal();
     Check(firstMonitor.Observe(HWND{}, true, true, true) && firstMonitor.Source() == fullWindow,
-        "an exclusive fullscreen source minimized by our Dock input proxy keeps its bar hidden");
+        "an exclusive fullscreen source minimized by our Dock input proxy remains observed");
     firstMonitor.BeginDockReveal();
     Check(firstMonitor.Observe(HWND{}, true, true, true),
         "opening another associated Dock surface preserves an already retained fullscreen source");
     Check(!secondMonitor.Observe(HWND{}, true, true, true),
         "summoning on another monitor never inherits the first monitor's fullscreen source");
     Check(firstMonitor.Observe(std::nullopt, true, true, true),
-        "a failed monitor or window observation cannot reveal the bar during the summon");
+        "a failed monitor or window observation cannot erase fullscreen during the summon");
     Check(!firstMonitor.Observe(HWND{}, true, true, false) && !firstMonitor.DockSource(),
         "a source restored to an ordinary window, moved away or destroyed releases the summon hold");
     firstMonitor.Observe(fullWindow, false, false, false); firstMonitor.BeginDockReveal();
@@ -1086,6 +1086,28 @@ void CheckStatusBarFullscreenDockSession()
         "closing Dock releases retention without depending on a later foreground event");
     Check(firstMonitor.Observe(fullWindow, false, false, false),
         "closing Dock cannot reveal the bar when the fullscreen application remains visible");
+
+    Check(StatusBarHiddenForFullscreen(true, false, true, true),
+        "a separate bar stays hidden even when Dock or a bar action is active");
+    Check(StatusBarHiddenForFullscreen(true, true, false, false),
+        "passive merged chrome stays hidden in fullscreen");
+    Check(!StatusBarHiddenForFullscreen(true, true, true, false),
+        "explicit Dock promotion reveals merged bar controls");
+    Check(!StatusBarHiddenForFullscreen(true, true, false, true),
+        "a pending activation or owned popup keeps the merged bar available after Dock closes");
+    Check(!StatusBarHiddenForFullscreen(false, true, false, false),
+        "ordinary desktop merged chrome does not depend on a floating session");
+    const RECT monitorArea{1920, 0, 3840, 1080}, strip{1920, 1016, 3840, 1080};
+    const auto available = ConstrainStatusBarWorkArea(monitorArea, strip, ABE_BOTTOM);
+    Check(available.bottom == strip.top && available.left == monitorArea.left && available.right == monitorArea.right,
+        "merged-to-island Dock geometry must exclude the still-registered AppBar on its own monitor");
+    const auto repeated = ConstrainStatusBarWorkArea(available, strip, ABE_BOTTOM);
+    Check(EqualRect(&available, &repeated) != FALSE,
+        "reapplying the AppBar reservation must not consume the strip twice");
+    const RECT otherMonitor{0, 0, 1920, 1080};
+    const auto unaffected = ConstrainStatusBarWorkArea(otherMonitor, strip, ABE_BOTTOM);
+    Check(EqualRect(&otherMonitor, &unaffected) != FALSE,
+        "an AppBar on another monitor cannot move the island Dock");
 
     WINDOWPOS attemptedReveal{};
     attemptedReveal.hwndInsertAfter = HWND_TOPMOST;

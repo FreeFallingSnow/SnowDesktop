@@ -158,6 +158,7 @@ struct StatusBar::Impl
         int mergedDockHeight = 0;
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
+        bool fullscreenObserved = false; // fullscreen is the effective hide/input gate.
         bool checkingFullscreen = false;
         StatusBarFullscreenState fullscreenState;
         DWORD dockFullscreenProcess = 0;
@@ -206,12 +207,14 @@ struct StatusBar::Impl
         bool UpdateAppearance()
         {
             const auto scene = owner.sceneProvider ? owner.sceneProvider(monitor) : StatusBarSceneState{};
-            const auto next = ResolveStatusBarAppearance(owner.settings, owner.globalAppearance, scene);
+            const auto next = mergedDockHeight && owner.mergedAppearanceProvider
+                ? owner.mergedAppearanceProvider(monitor)
+                : ResolveStatusBarAppearance(owner.settings, owner.globalAppearance, scene);
             if (next == appearance) return false;
             appearance = next;
             appearanceDirty = backgroundDirty = paintDirty = true;
-            // The merged Dock paints content on another HWND, but consumes
-            // this exact resolved appearance instead of resolving a default.
+            ClearHover();
+            // The shared strip follows Dock's appearance; refresh both HWNDs.
             if (mergedDockHeight && owner.dockChanged) owner.dockChanged(false);
             return true;
         }
@@ -235,6 +238,9 @@ struct StatusBar::Impl
             auto body = item.icon ? (item.icon->tip.empty() ? item.icon->application : item.icon->tip) : item.tip;
             auto key = item.icon ? "tray/" + item.icon->key : "bar/" + item.key;
             RECT anchor = item.bounds;
+            // Compact hover targets must not pull the tooltip into the taller
+            // merged strip. Place owned surfaces beyond its outer edge.
+            if (mergedDockHeight) { anchor.top = 0; anchor.bottom = static_cast<LONG>(height); }
             if (item.key == "controlCenter" && tooltipControlPart)
             {
                 const auto part = *tooltipControlPart;
@@ -283,9 +289,11 @@ struct StatusBar::Impl
             const auto dock = owner.dockStateProvider ? owner.dockStateProvider(monitor) : StatusBarDockState{};
             DWORD foregroundProcess = 0;
             GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
-            const bool next = fullscreenState.Observe(observed, dock.promoted,
+            fullscreenObserved = fullscreenState.Observe(observed, dock.promoted || dock.interacting,
                 foregroundProcess == GetCurrentProcessId(),
                 DockFullscreenSourceEligible(fullscreenState.DockSource(), dockFullscreenProcess, monitor));
+            const bool next = StatusBarHiddenForFullscreen(fullscreenObserved,
+                mergedDockHeight > 0, dock.promoted, dock.interacting);
             const HWND source = fullscreenState.Source();
             const bool changed = next != fullscreen;
             fullscreen = next;
@@ -558,6 +566,8 @@ struct StatusBar::Impl
             const auto invocation = ResolveStatusBarInvocation(items, index, context);
             if (fullscreen || !invocation || !owner.activate) return;
             RECT anchor = invocation->bounds;
+            if (mergedDockHeight && !invocation->isTray)
+            { anchor.top = 0; anchor.bottom = static_cast<LONG>(height); }
             MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
             if (invocation->isTray)
             {
@@ -904,6 +914,7 @@ struct StatusBar::Impl
     TrayDragFeedback dragFeedback;
     std::function<void(bool)> dockChanged;
     std::function<StatusBarDockState(HMONITOR)> dockStateProvider;
+    std::function<PersonalizationSettings(HMONITOR)> mergedAppearanceProvider;
     std::function<StatusBarSceneState(HMONITOR)> sceneProvider;
     std::function<void(HRESULT)> graphicsFailure;
     StatusBarSettings settings;
@@ -1019,6 +1030,55 @@ void StatusBar::SetTrayDragFeedback(TrayDragFeedback feedback) { impl_->dragFeed
 void StatusBar::SetDockChanged(std::function<void(bool)> changed) { impl_->dockChanged = std::move(changed); }
 void StatusBar::SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider)
 { impl_->dockStateProvider = std::move(provider); }
+void StatusBar::SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider)
+{ impl_->mergedAppearanceProvider = std::move(provider); }
+void StatusBar::RefreshDockState(HMONITOR monitor)
+{
+    if (impl_->removingWindows) return;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor) window->CheckFullscreen();
+    }
+}
+bool StatusBar::IsInteractionAvailable(HMONITOR monitor) const
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor)
+            return !window->closing && !window->fullscreen && !window->failed && IsWindowVisible(window->hwnd);
+    }
+    return false;
+}
+bool StatusBar::HasInteractionSession(HMONITOR monitor) const
+{
+    return !impl_->removingWindows && impl_->dockStateProvider &&
+        impl_->dockStateProvider(monitor).interacting;
+}
+bool StatusBar::ContainsPoint(POINT screen) const
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || !window->mergedDockHeight || window->closing) continue;
+        auto local = screen; ScreenToClient(window->hwnd, &local);
+        if (window->OwnsPointer(local)) return true;
+    }
+    return false;
+}
+RECT StatusBar::AvailableWorkArea(HMONITOR monitor, RECT area) const
+{
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && window->appbar.Registered())
+            return ConstrainStatusBarWorkArea(area, window->appbar.Bounds(), window->appbar.Edge());
+    }
+    return area;
+}
 void StatusBar::PrepareDockReveal(HMONITOR monitor)
 {
     for (const auto& [id, window] : impl_->windows)
@@ -1072,7 +1132,7 @@ bool StatusBar::IsFullscreen(HMONITOR monitor) const
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
-        if (window && window->monitor == monitor) return window->fullscreen;
+        if (window && window->monitor == monitor) return window->fullscreenObserved;
     }
     return false;
 }
@@ -1155,6 +1215,12 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         window->monitor = monitor.monitor;
         window->tooltip.Configure(window->hwnd, composition, text, self.tooltipAppearance, self.drawTooltipBackground);
         const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight;
+        if (mergedChanged || changed)
+        {
+            window->EndDragFeedback(); window->ClearHover(); window->interaction.CancelPointer();
+            window->pressedTray.clear(); window->trayDragging = false;
+            if (GetCapture() == window->hwnd) ReleaseCapture();
+        }
         window->mergedDockHeight = monitor.mergedDockHeight;
         window->UpdateAppearance();
         window->appearanceDirty = window->appearanceDirty || changed || mergedChanged;

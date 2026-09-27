@@ -1,4 +1,5 @@
 #include "app.h"
+#include <algorithm>
 
 // Floating-Dock hotkey and edge-swipe lifecycle.
 
@@ -500,7 +501,19 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 DockAssociatedPopupInteractionRect(
                     popupAnchoredToDock_,
                     floatingPopupCollectionRegion_);
-        if (!IsPointOnPromotedDock(desktopPoint) &&
+        const auto pointerMonitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL);
+        const bool barSession = statusBar_ && std::any_of(
+            persistentDockHosts_.begin(), persistentDockHosts_.end(), [this, pointerMonitor](const auto& host) {
+                return host && host->promoted && host->container &&
+                    host->monitor == pointerMonitor &&
+                    host->container->IsMergedWithStatusBar() &&
+                    statusBar_->HasInteractionSession(host->monitor);
+            });
+        // The bar and its owned surface are one interaction session with the
+        // merged Dock. Its own dismissal logic releases this hold; the global
+        // pointer sampler must not tear the owner down between down and up.
+        if (!barSession && !(statusBar_ && statusBar_->ContainsPoint(cursor)) &&
+            !IsPointOnPromotedDock(desktopPoint) &&
             snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
                     dragSession_.IsActive() ||

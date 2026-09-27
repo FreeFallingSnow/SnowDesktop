@@ -1109,8 +1109,9 @@ private:
     void ApplyDockWorkAreaReservation();
     void SyncStatusBar();
     void ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor);
+    struct StatusBarActivationHold;
     void ContinueStatusBarActivation(snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
-        std::uint64_t generation);
+        std::uint64_t generation, std::shared_ptr<StatusBarActivationHold> hold);
     void CancelStatusBarActivation(HMONITOR monitor = nullptr);
     snowdesktop::TrayDragFeedback MakeStatusBarTrayDragFeedback();
     /** @brief 将已重算的预留区域应用到现有 Dock 容器。 */

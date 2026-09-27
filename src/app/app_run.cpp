@@ -1381,7 +1381,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const auto state=std::make_shared<snowdesktop::SystemControlPromptState>();
             state->valid=[this,valid=std::move(valid)] { return !exitRequested_ && valid(); };
             const auto wifi=systemDataProvider_?systemDataProvider_->Controls()->Current("network.wifi"):std::nullopt;
-            const bool accepted=snowdesktop::ConfirmSystemControl(controlHwnd_?controlHwnd_:hwnd_,request,state,identity,wifi?&*wifi:nullptr);
+            const bool accepted=snowdesktop::ConfirmSystemControl(controlHwnd_?controlHwnd_:hwnd_,request,state,collectionPopupAppearance_,identity,wifi?&*wifi:nullptr);
             return snowdesktop::system_control::Result{accepted,state->error,0};
         });
         widgetEngine_->SetLogicalSlotPickerCallback(

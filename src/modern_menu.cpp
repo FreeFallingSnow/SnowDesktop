@@ -346,11 +346,29 @@ public:
         }
 
         TraceOwnedPopupZOrder(L"session-end", nullptr, true);
+        // Activation can change before its posted cancellation is dispatched.
+        // Sample while our popup HWNDs still exist so their normal destruction
+        // cannot be mistaken for the user switching to an unrelated window.
+        const HWND foreground = GetForegroundWindow();
+        if (foreground && !IsPopupWindow(foreground) &&
+            !IsOwnerWindow(foreground))
+            externalActivation_ = true;
+        result_.reason = superseded_ ? ExitReason::Replaced :
+            externalActivation_ ? ExitReason::ExternalActivation :
+            result_.command ? ExitReason::Command : ExitReason::Cancelled;
+        if (superseded_ || externalActivation_)
+        {
+            // Existing hosts only consume command. They must also see a
+            // cancelled operation when focus moved after an item was chosen.
+            result_.command = 0;
+            result_.itemScreenRect = {};
+        }
         HWND expectedRoot = rootWindow;
         gActiveRootMenu.compare_exchange_strong(expectedRoot, nullptr);
         CloseFromDepth(0);
         TraceOwnedPopupZOrder(L"after-popup-destroy", nullptr, true);
-        if (!superseded_ && options_.owner && IsWindow(options_.owner))
+        if (!superseded_ && !externalActivation_ && options_.owner &&
+            IsWindow(options_.owner) && IsWindowVisible(options_.owner))
         {
             SetForegroundWindow(options_.owner);
             SetFocus(options_.owner);
@@ -478,7 +496,13 @@ public:
             if (popup.depth == 0 && LOWORD(wParam) == WA_INACTIVE &&
                 !closing_ && !IsPopupWindow(
                     reinterpret_cast<HWND>(lParam)))
+            {
+                // Returning to the owner is an ordinary dismissal; another
+                // application or independent window keeps its new activation.
+                if (!IsOwnerWindow(reinterpret_cast<HWND>(lParam)))
+                    externalActivation_ = true;
                 PostMessageW(hwnd, kCancelMessage, 0, 0);
+            }
             return 0;
         case WM_MOUSEACTIVATE:
             // Cascaded popup windows deliberately do not take activation away
@@ -1414,6 +1438,14 @@ private:
         return std::ranges::any_of(popups_, [hwnd](const auto& popup) {
             return popup && popup->hwnd == hwnd;
         });
+    }
+
+    bool IsOwnerWindow(HWND hwnd) const
+    {
+        if (!hwnd || !options_.owner)
+            return false;
+        return hwnd == options_.owner ||
+            GetAncestor(hwnd, GA_ROOT) == GetAncestor(options_.owner, GA_ROOT);
     }
 
     void HandleKey(WPARAM key)
@@ -2754,6 +2786,7 @@ private:
     bool pointerPressed_ = false;
     bool closing_ = false;
     bool superseded_ = false;
+    bool externalActivation_ = false;
     bool hasTracedZOrderSnapshot_ = false;
     OwnedPopupZOrderSnapshot tracedZOrderSnapshot_{};
     Result result_{};

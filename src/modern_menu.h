@@ -161,10 +161,22 @@ struct Options
     EventPump eventPump;
 };
 
+enum class ExitReason
+{
+    None,
+    Command,
+    Cancelled,
+    ExternalActivation,
+    Replaced,
+};
+
 struct Result
 {
     UINT command = 0;
     RECT itemScreenRect{};
+    // Internal host signal: a containing popup must not restore itself after
+    // the user has activated a different window while its menu was open.
+    ExitReason reason = ExitReason::None;
 };
 
 /**

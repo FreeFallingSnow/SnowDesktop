@@ -1,8 +1,12 @@
 #include "app/desktop_backdrop_compositor.h"
 #include "app/desktop_backdrop_update_rules.h"
+#include "popup_round_geometry.h"
 
 #include <roapi.h>
 #include <d2d1_1helper.h>
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <wrl/client.h>
 
 #include <array>
 #include <iostream>
@@ -65,6 +69,110 @@ bool WaitForCommit(HWND window, WPARAM token)
     }
 }
 
+int CheckPopupRoundedEdgeCoverage()
+{
+    using Microsoft::WRL::ComPtr;
+    namespace rounded = snowdesktop::popup_round_geometry;
+    int failures = 0;
+    const auto check = [&](bool value, const char* message) {
+        if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
+        return value;
+    };
+    ComPtr<ID3D11Device> device;
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory;
+    ComPtr<ID2D1Device> drawing;
+    ComPtr<ID2D1DeviceContext> context;
+    if (!check(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+            &device, nullptr, nullptr)) && SUCCEEDED(device.As(&dxgi)) &&
+            SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) &&
+            SUCCEEDED(factory->CreateDevice(dxgi.Get(), &drawing)) &&
+            SUCCEEDED(drawing->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)),
+            "rounded-edge regression creates an offscreen D2D WARP target")) return failures;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (!check(SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(1.f, 1.f, 1.f, 1.f), &brush)),
+            "rounded-edge regression creates its opaque coverage brush")) return failures;
+
+    std::size_t fractionalCoverage = 0, oldMaskLoss = 0;
+    for (const float scale : {1.f, 1.25f, 1.5f, 2.f, 3.f})
+    {
+        const UINT width = static_cast<UINT>(std::ceil(200 * scale));
+        const UINT height = static_cast<UINT>(std::ceil(160 * scale));
+        const RECT frame{static_cast<LONG>(std::lround(12 * scale)), static_cast<LONG>(std::lround(16 * scale)),
+            static_cast<LONG>(std::lround(164 * scale)), static_cast<LONG>(std::lround(120 * scale))};
+        // Fractional radius and pose cover both DPI conversion and an animation
+        // between physical rows. Neither may be snapped before alpha rasterizing.
+        const float radius = 12.25f * scale, pose = .375f;
+        const auto shape = rounded::Resolve(frame, radius, pose);
+        check(shape.radiusX == radius && shape.radiusY == radius,
+            "popup radius was rounded to integer physical pixels before rendering");
+        const auto clamped = rounded::Resolve(frame, 10000.f);
+        check(clamped.radiusX == static_cast<float>((std::min)(frame.right-frame.left, frame.bottom-frame.top)) / 2.f,
+            "content and backdrop do not clamp oversized corner radii to the same short edge");
+        const auto fence = rounded::WindowFence(frame, pose);
+        HRGN region = rounded::CreateWindowFence(frame, radius, pose);
+        const int diameter = static_cast<int>(std::lround(radius * 2));
+        HRGN oldRegion = CreateRoundRectRgn(frame.left,
+            frame.top + static_cast<int>(std::floor(pose)), frame.right + 1,
+            frame.bottom + static_cast<int>(std::ceil(pose)) + 1, diameter, diameter);
+        if (!check(region && oldRegion, "rounded-edge regression creates the old and current window fences"))
+        { if (region) DeleteObject(region); if (oldRegion) DeleteObject(oldRegion); return failures; }
+        check(!PtInRegion(region, frame.left, frame.top) &&
+                PtInRegion(region, (frame.left + frame.right) / 2, frame.top),
+            "conservative rounded HWND fence must exclude the transparent corner while retaining the top edge");
+
+        ComPtr<ID2D1Bitmap1> target, readable;
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
+        const auto readProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
+        bool rendered = SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, properties, &target)) &&
+            SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0, readProperties, &readable));
+        if (rendered)
+        {
+            context->SetTarget(target.Get()); context->SetDpi(96, 96); context->BeginDraw();
+            context->Clear(D2D1::ColorF(0, 0.f));
+            context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            context->FillRoundedRectangle(shape, brush.Get());
+            context->DrawRoundedRectangle(shape, brush.Get(), 1.f);
+            rendered = SUCCEEDED(context->EndDraw()); context->SetTarget(nullptr);
+            rendered = rendered && SUCCEEDED(readable->CopyFromBitmap(nullptr, target.Get(), nullptr));
+        }
+        D2D1_MAPPED_RECT mapped{};
+        rendered = rendered && SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ, &mapped));
+        if (check(rendered, "rounded-edge regression reads real antialiased D2D pixels"))
+        {
+            std::size_t lost = 0;
+            for (UINT y = 0; y < height; ++y)
+                for (UINT x = 0; x < width; ++x)
+                {
+                    const auto alpha = mapped.bits[static_cast<std::size_t>(y) * mapped.pitch + x * 4 + 3];
+                    if (!alpha) continue;
+                    if (!PtInRegion(region, static_cast<int>(x), static_cast<int>(y))) ++lost;
+                    if (alpha < 255)
+                    {
+                        ++fractionalCoverage;
+                        if (!PtInRegion(oldRegion, static_cast<int>(x), static_cast<int>(y))) ++oldMaskLoss;
+                    }
+                }
+            readable->Unmap();
+            check(lost == 0, "the current HWND fence still cuts antialiased rounded-edge pixels");
+        }
+        check(!rounded::Contains(shape, {shape.rect.left, shape.rect.top}) &&
+                rounded::Contains(shape, {(shape.rect.left+shape.rect.right)/2, (shape.rect.top+shape.rect.bottom)/2}),
+            "conservative visibility fence changed the popup's transparent-corner hit geometry");
+        const RECT media{frame.left, frame.bottom + 8, frame.right, frame.bottom + 32};
+        const auto mediaFence = rounded::WindowFence(media, pose);
+        check(fence.bottom < mediaFence.top,
+            "AA coverage fences joined the separate control and media cards across their transparent gap");
+        DeleteObject(region); DeleteObject(oldRegion);
+    }
+    check(fractionalCoverage > 100 && oldMaskLoss > 0,
+        "rounded-edge oracle cannot distinguish the old binary GDI mask from antialiased content");
+    return failures;
+}
+
 } // namespace
 
 int RunDesktopBackdropCompositorTests()
@@ -90,6 +198,8 @@ int RunDesktopBackdropCompositorTests()
     if (!check(content.handle && otherContent.handle,
             "backdrop integration creates only its own hidden popup windows"))
         return failures;
+
+    failures += CheckPopupRoundedEdgeCoverage();
 
     {
         // Status-bar control and media cards move without another AddPanel /

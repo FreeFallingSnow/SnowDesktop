@@ -149,7 +149,15 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                 Require(r.right - r.left <= (item.key == "traffic" ? 152 : 68) * scale + 1,
                     "system information wastes horizontal space");
         }
-        Require(r.left >= 0 && r.top == 0 && r.right <= width && r.bottom == height, "status bar item escaped its viewport");
+        Require(r.left >= 0 && r.top >= 0 && r.right <= width && r.bottom <= height, "status bar item escaped its viewport");
+        if (merged)
+        {
+            Require(r.bottom - r.top <= std::ceil((item.key == "clock" ? 40.f : 32.f) * scale) &&
+                std::abs(r.top + r.bottom - height) <= 1,
+                "merged hover and hit targets must remain compact and vertically centered");
+            if (r.top > 0) Require(!HitTestStatusBarItems(items, {(r.left + r.right) / 2, r.top - 1}),
+                "empty merged strip above a button must not invoke it");
+        }
         Require(HitTestStatusBarItems(items, {(r.left + r.right) / 2, height / 2}) == i,
             "status bar hit target does not match its rendered item");
         for (const auto& previous : rectangles)
@@ -157,8 +165,12 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         rectangles.push_back(r);
         if (item.text.empty() || item.icon) continue;
         ComPtr<IDWriteTextLayout> layout;
-        Require(text->CreateTextLayout(item.text.c_str(), static_cast<UINT32>(item.text.size()), font.Get(), 4000, 100, &layout));
+        const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, merged) : item.text;
+        Require(text->CreateTextLayout(displayed.c_str(), static_cast<UINT32>(displayed.size()), font.Get(), 4000, 400, &layout));
         DWRITE_TEXT_METRICS metrics{}; Require(layout->GetMetrics(&metrics));
+        if (merged && item.key == "clock")
+            Require(metrics.lineCount == 2 && metrics.height <= r.bottom - r.top + 1,
+                "merged date and time must occupy two fully visible lines");
         const float reserved = item.key == "controlCenter" ? 94.f * scale : 0.f;
         Require(metrics.widthIncludingTrailingWhitespace <= r.right - r.left - reserved + 1,
             "status bar fixed width clips visible text");
@@ -349,7 +361,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "volume level must change its speaker glyph");
             }
             std::optional<std::size_t> hover;
-            if (preset == "hover" || preset == "high-contrast")
+            if (preset == "hover" || preset == "high-contrast" || preset == "merged")
                 hover = static_cast<std::size_t>(&Item(items, "controlCenter") - items.data());
             StatusBarPalette palette{preset == "high-contrast", D2D1::ColorF(0x000000), D2D1::ColorF(0xffffff),
                 D2D1::ColorF(0xffff00), D2D1::ColorF(0x000000)};
@@ -431,6 +443,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 compactLayout(false, true, 640, scale);
                 compactLayout(true, true, 640, scale);
                 compactLayout(true, true, 480, 1.5f * scale);
+                compactLayout(true, true, 1920, 1.25f * scale);
+                compactLayout(true, true, 1920, 3.f);
                 compactLayout(true, true, 320, 3.f);
                 compactLayout(true, true, 240, 3.f);
                 compactLayout(true, false, 320, scale);

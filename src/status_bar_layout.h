@@ -1,11 +1,31 @@
 #pragma once
 #include <windows.h>
 #include <algorithm>
+#include <cmath>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace snowdesktop
 {
+inline std::wstring StatusBarClockDisplay(std::wstring_view value, bool merged)
+{
+    std::wstring result(value);
+    if (merged)
+        if (const auto separator = result.find(L"   "); separator != std::wstring::npos)
+            result.replace(separator, 3, L"\n");
+    return result;
+}
+inline RECT StatusBarCompactTarget(RECT bounds, float scale, bool twoLineClock)
+{
+    if (IsRectEmpty(&bounds)) return bounds;
+    const LONG height = (std::min)(bounds.bottom - bounds.top,
+        static_cast<LONG>(std::ceil((twoLineClock ? 40.f : 32.f) * scale)));
+    bounds.top += (bounds.bottom - bounds.top - height) / 2;
+    bounds.bottom = bounds.top + height;
+    return bounds;
+}
 // Keep the center symmetric. Overflowing side items are omitted whole by the
 // normal layout, while the Dock uses its existing horizontal scrolling.
 inline RECT MergedStatusBarCenter(LONG width, LONG height, float scale)

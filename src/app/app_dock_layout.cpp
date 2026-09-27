@@ -137,6 +137,17 @@ void DesktopApp::ApplyDockWorkAreaReservation()
     dockReservedAreas_.clear();
     dockWorkAreaReservationApplied_ = false;
     SyncStatusBar();
+    // Undoing a previous Dock reservation can expand a cached page past the
+    // Shell AppBar edge. Reapply the registered strip before placing any
+    // separate/island Dock, including the asynchronous merged-to-island turn.
+    if (statusBar_)
+        for (auto& page : gridPages_)
+        {
+            RECT screen = page.bounds; OffsetRect(&screen, virtualLeft_, virtualTop_);
+            RECT work = page.workArea; OffsetRect(&work, virtualLeft_, virtualTop_);
+            work = statusBar_->AvailableWorkArea(MonitorFromRect(&screen, MONITOR_DEFAULTTONULL), work);
+            OffsetRect(&work, -virtualLeft_, -virtualTop_); page.workArea = work;
+        }
     if (!generalSettings_.dockEnabled || gridPages_.empty()) return;
 
     const bool reserveDesktopWorkArea =

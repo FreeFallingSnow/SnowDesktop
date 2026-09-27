@@ -61,6 +61,7 @@ public:
         if (registered_) send_(message, data_);
     }
     RECT Bounds() const { return approved_; }
+    UINT Edge() const { return edge_; }
     bool Registered() const { return registered_; }
     static void SetThickness(RECT& rect, UINT edge, int thickness)
     {
@@ -100,8 +101,8 @@ inline bool StatusBarFullscreenCandidate(LONG_PTR style, LONG_PTR extendedStyle,
 
 // Shared by the production fullscreen observer and its lifecycle regression.
 // An explicit Dock summon may activate our input proxy and minimize an
-// exclusive-fullscreen application. That focus handoff must not reveal the
-// bar. Only retain the sampled source during this Dock's own interaction;
+// exclusive-fullscreen application. Keep that observation separate from the
+// merged bar's explicit reveal policy. Retain it during this interaction;
 // closing the Dock, switching applications or restoring the source to an
 // ordinary window ends the retention. nullopt is an observation failure.
 class StatusBarFullscreenState final
@@ -122,6 +123,28 @@ private:
     HWND source_ = nullptr;
     HWND dockSource_ = nullptr;
 };
+
+inline bool StatusBarHiddenForFullscreen(bool fullscreen, bool merged,
+    bool dockPromoted, bool barInteraction)
+{
+    return fullscreen && !(merged && (dockPromoted || barInteraction));
+}
+
+// AppBar registration is authoritative even while its window is hidden or
+// a Dock reservation is being undone. Applying this twice is idempotent.
+inline RECT ConstrainStatusBarWorkArea(RECT area, RECT reserved, UINT edge)
+{
+    RECT overlap{};
+    if (!IntersectRect(&overlap, &area, &reserved)) return area;
+    switch (edge)
+    {
+    case ABE_TOP: area.top = (std::min)(area.bottom, reserved.bottom); break;
+    case ABE_BOTTOM: area.bottom = (std::max)(area.top, reserved.top); break;
+    case ABE_LEFT: area.left = (std::min)(area.right, reserved.right); break;
+    case ABE_RIGHT: area.right = (std::max)(area.left, reserved.left); break;
+    }
+    return area;
+}
 
 inline void ConstrainHiddenStatusBarPosition(bool hidden, WINDOWPOS& position)
 {

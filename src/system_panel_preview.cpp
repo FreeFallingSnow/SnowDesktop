@@ -1,6 +1,7 @@
 #include "system_panel_preview.h"
 #include "system_panel_model.h"
 #include "system_calendar_editor.h"
+#include "system_control_prompt.h"
 #include "calendar_display.h"
 #include "l10n.h"
 #include "preview_png_writer.h"
@@ -35,6 +36,27 @@ void Require(bool condition, const char* message)
 void Require(HRESULT result)
 {
     if (FAILED(result)) throw std::runtime_error("native panel rendering failed: " + std::to_string(result));
+}
+
+void CheckControlPromptVisuals(const native_component_preview::Request& request,
+    native_component_preview::Result& result,const PersonalizationSettings& appearance)
+{
+    for(const auto& preview:RenderSystemControlPromptPreviews(appearance,request.dpi))
+    {
+        const auto name="prompt-"+preview.name;
+        const auto path=request.outputDirectory/(request.component+"-"+name+".png");
+        Require(preview.width>0&&preview.height>0&&preview.pixels.size()==
+            static_cast<std::size_t>(preview.width)*preview.height,"system prompt produced invalid pixels");
+        if(!preview_png::Save(path,preview.width,preview.height,preview.pixels,result.error))
+            throw std::runtime_error(result.error);
+        result.outputs.push_back({request.component,name,path,false,false,false,false,false,false,
+            static_cast<int>(std::lround(appearance.cornerRadius*request.dpi/96.f)),preview.width,preview.height,0,0});
+        Require(preview.width<=static_cast<int>(std::lround(480*request.dpi/96.f))&&
+            preview.height<=static_cast<int>(std::lround(720*request.dpi/96.f)),
+            "system prompt ignored its compact form bounds");
+        if(appearance.cornerRadius>=2)
+            Require((preview.pixels.front()>>24)==0,"system prompt lost the shared rounded corner mask");
+    }
 }
 
 // Sources below are fixtures at the production model boundary. They never
@@ -651,6 +673,220 @@ void CheckModelScrolling()
         "fractional volume wheel input lost its pending percentage or replaced the stable UIA name with transient feedback");
 }
 
+void CheckControlRadioTransitions()
+{
+    // Drive the production pointer adapter and model while source completions
+    // are withheld. No Windows device action or timing assumption is involved.
+    const auto click=[](SystemPanelModel& model,const std::string& id) {
+        ui::Input input;const auto point=VisibleCenter(model.View(),id);
+        const bool pressed=input.Press(model.View(),point);
+        const auto action=input.Release(model.View(),point);
+        return pressed&&action.kind==ui::InputResult::Kind::Invoke&&action.id==id&&model.Invoke(id);
+    };
+    {
+        auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+        auto source=FixtureSource(state);const auto read=source.current;
+        std::vector<system_control::Request> requests;std::vector<std::uint64_t> canceled;
+        source.current=[read](std::string_view topic) {
+            auto snapshot=read(topic);
+            if(snapshot&&topic=="network.wifi")
+            {
+                auto& adapters=snapshot->value.object["interfaces"].array;
+                auto other=adapters.front();other.object["id"]=j::Text("wifi-other");other.object["name"]=j::Text("Other Wi-Fi");
+                other.object["networks"].array.front().object["id"]=j::Text("network-other");adapters.push_back(std::move(other));
+            }
+            return snapshot;
+        };
+        source.start=[&](system_control::Request request){requests.push_back(std::move(request));return static_cast<std::uint64_t>(requests.size());};
+        source.cancel=[&](std::uint64_t id){canceled.push_back(id);return true;};
+        SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);model.Select("wifi");
+        Require(click(model,"wifi.network:network-preview")&&click(model,"wifi.connect:network-preview"),"first adapter could not start a connection transition");
+        const auto firstConnection=static_cast<std::uint64_t>(requests.size());
+        model.Select("wifi-adapters");Require(model.Invoke("adapter:wifi-other"),"second Wi-Fi adapter cannot be selected");
+        Require(click(model,"wifi.network:network-other")&&click(model,"wifi.connect:network-other"),"second adapter could not start its independent transition");
+        const auto otherConnection=static_cast<std::uint64_t>(requests.size());
+        model.Select("wifi-adapters");Require(model.Invoke("adapter:wifi-preview")&&click(model,"radio:wifi"),"first adapter radio cannot supersede its old transition");
+        const auto radioTask=static_cast<std::uint64_t>(requests.size());const auto count=requests.size();
+        Require(canceled.size()==2&&std::set<std::uint64_t>(canceled.begin(),canceled.end())==std::set<std::uint64_t>{1,firstConnection}&&
+            std::find(canceled.begin(),canceled.end(),otherConnection)==canceled.end(),
+            "radio transition failed to cancel its scan/connection or canceled another adapter's task");
+        Require(click(model,"wifi.network:network-preview")&&!click(model,"wifi.connect:network-preview")&&
+            !click(model,"wifi.scan")&&!click(model,"radio:wifi")&&!model.Invoke("wifi.hidden")&&requests.size()==count,
+            "radio transition still accepted dependent pointer input, duplicates or hidden-network requests");
+        // Even a late non-canceled failure from a canceled predecessor must
+        // lose display ownership; the new radio request remains in progress.
+        system_control::Completion late;late.id=firstConnection;late.ok=false;late.error="unavailable";
+        state->completions.push_back(late);model.Refresh();
+        Require(!model.View().Find("status")&&Node(model.View(),"wifi.network:network-preview").detail!=_LW("controlCenter.failed")&&
+            Node(model.View(),"radio:wifi").busy,"superseded connection failure replaced current radio feedback");
+        model.Select("wifi-adapters");Require(model.Invoke("adapter:wifi-other"),"radio transition prevented switching adapters");
+        Require(Node(model.View(),"radio:wifi").enabled&&click(model,"wifi.network:network-other")&&
+            !Node(model.View(),"wifi.connect:network-other").enabled&&requests.size()==count,
+            "another adapter lost its own pending state or inherited the first adapter's radio guard");
+        late.id=radioTask;late.ok=true;late.error.clear();state->completions.push_back(late);model.Refresh();
+    }
+    for(const bool multiple:{false,true})
+    {
+        auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+        auto source=FixtureSource(state);const auto read=source.current;
+        std::vector<system_control::Request> requests;std::vector<std::uint64_t> canceled;
+        source.current=[read,multiple](std::string_view topic) {
+            auto snapshot=read(topic);
+            if(snapshot&&topic=="bluetooth.devices")
+            {
+                auto& radios=snapshot->value.object["radios"].array;radios.front().object["id"]=j::Text("radio-a");
+                if(multiple){auto other=radios.front();other.object["id"]=j::Text("radio-b");radios.push_back(std::move(other));}
+                auto& devices=snapshot->value.object["devices"].array;auto device=devices.front();devices.clear();
+                device.object["id"]=j::Text("known-a");device.object["canConnect"]=j::Boolean(true);
+                if(multiple)device.object["radioId"]=j::Text("radio-a");devices.push_back(device);
+                if(multiple)
+                {
+                    device.object["id"]=j::Text("known-b");device.object["radioId"]=j::Text("radio-b");devices.push_back(device);
+                    device.object.erase("radioId");device.object["id"]=j::Text("unknown-old");devices.push_back(device);
+                    device.object["id"]=j::Text("unknown-new");devices.push_back(device);
+                }
+            }
+            return snapshot;
+        };
+        source.start=[&](system_control::Request request){requests.push_back(std::move(request));return static_cast<std::uint64_t>(requests.size());};
+        source.cancel=[&](std::uint64_t id){canceled.push_back(id);return true;};
+        SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);model.Select("bluetooth");
+        Require(click(model,"bluetooth.device:known-a")&&click(model,"bluetooth.connect:known-a"),"Bluetooth fixture could not start its owned connection");
+        if(multiple)Require(click(model,"bluetooth.device:unknown-old")&&click(model,"bluetooth.connect:unknown-old"),"unknown-ownership predecessor could not start");
+        Require(click(model,"radio:bluetooth")&&canceled==std::vector<std::uint64_t>{1},"Bluetooth radio canceled a task without confirmed ownership");
+        const auto count=requests.size();
+        Require((model.View().Find("bluetooth.connect:known-a")||click(model,"bluetooth.device:known-a"))&&
+            !click(model,"bluetooth.connect:known-a")&&requests.size()==count,
+            "Bluetooth radio transition accepted a dependent connection");
+        if(multiple)
+        {
+            Require(click(model,"bluetooth.device:unknown-new")&&!click(model,"bluetooth.connect:unknown-new")&&requests.size()==count,
+                "unknown-ownership Bluetooth device raced a radio transition");
+            Require(click(model,"bluetooth.device:known-b")&&click(model,"bluetooth.connect:known-b")&&canceled.size()==1,
+                "Bluetooth radio transition disabled another explicitly owned radio's device");
+            system_control::Completion failure;failure.id=2;failure.ok=false;failure.error="accessDenied";
+            state->completions.push_back(failure);model.Refresh();
+            Require(Node(model.View(),"bluetooth.device:unknown-old").detail==_LW("controlCenter.accessDenied"),
+                "conservative unknown-ownership guard hid an existing task's real failure");
+        }
+    }
+}
+
+void CheckControlVisibleFeedback()
+{
+    auto state=std::make_shared<PreviewState>();state->emptyMedia=true;state->manySection="wifi";
+    auto source=FixtureSource(state);std::uint64_t task=0;
+    source.start=[&](system_control::Request){return ++task;};
+    SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);model.Select("wifi");model.Refresh(300);
+    const auto scan=Node(model.View(),"wifi.scan").bounds;
+    Require(model.MaximumScroll()>0&&Node(model.View(),"wifi.scan").busy&&!HasArea(Node(model.View(),"wifi.scan").clip),
+        "long Wi-Fi list hid its initial scan feedback inside the scroll viewport");
+    model.Scroll(model.MaximumScroll());CheckLayout(model.View());
+    Require(Node(model.View(),"wifi.scan").bounds.top==scan.top&&Node(model.View(),"wifi.scan").bounds.bottom==scan.bottom,
+        "scrolling a long Wi-Fi list moved its scan action out of view");
+    system_control::Completion completion;completion.id=task;completion.ok=false;completion.error="timeout";
+    state->completions.push_back(completion);model.Refresh(300);CheckLayout(model.View());
+    const auto error=Node(model.View(),"status").bounds;
+    Require(Node(model.View(),"status").text==_LW("controlCenter.timeout")&&!HasArea(Node(model.View(),"status").clip)&&error.bottom<=model.ScrollViewport().top,
+        "long-list scan failure was placed after the devices or clipped by their scroll viewport");
+    model.Scroll(-model.MaximumScroll());
+    Require(Node(model.View(),"status").bounds.top==error.top&&Node(model.View(),"status").bounds.bottom==error.bottom,
+        "scrolling discarded fixed radio/scan failure feedback");
+    Require(model.Invoke("wifi.scan")&&!model.View().Find("status"),"scan retry retained the previous failure");
+    completion.id=task;completion.ok=true;completion.error.clear();state->completions.push_back(completion);model.Refresh(300);
+    Require(model.Invoke("wifi.network:network-preview"),"long-list failure fixture cannot expand its first network");
+    ui::Input input;const auto point=VisibleCenter(model.View(),"wifi.connect:network-preview");
+    Require(input.Press(model.View(),point),"long-list connection cannot receive pointer input");
+    const auto action=input.Release(model.View(),point);
+    Require(action.kind==ui::InputResult::Kind::Invoke&&model.Invoke(action.id),"long-list connection was not dispatched by pointer input");
+    const auto offset=model.ScrollOffset(),height=model.View().height;
+    completion.id=task;completion.ok=false;completion.error="accessDenied";state->completions.push_back(completion);model.Refresh(300);
+    const auto& row=Node(model.View(),"wifi.network:network-preview");
+    Require(row.detail==_LW("controlCenter.accessDenied")&&row.tooltip.find(row.detail)!=std::wstring::npos&&
+        row.bounds.top>=row.clip.top&&row.bounds.bottom<=row.clip.bottom&&!model.View().Find("status")&&
+        model.ScrollOffset()==offset&&model.View().height==height,
+        "a first-row connection failure disappeared below a long list or moved its viewport");
+    // Independent negative geometry: the old footer position is provably off
+    // screen in this same fixture; checking only text presence would miss it.
+    const auto& footer=Node(model.View(),"wifi.hidden");
+    Require(footer.bounds.top>=footer.clip.bottom,"long-list feedback oracle has no offscreen footer counterexample");
+}
+
+void CheckControlUnavailableStates()
+{
+    for(int mode=0;mode<5;++mode)
+    {
+        auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+        auto source=FixtureSource(state);const auto read=source.current;
+        source.current=[read,mode](std::string_view topic)->std::optional<system_control::Snapshot> {
+            auto snapshot=read(topic);if(topic!="network.wifi")return snapshot;
+            if(mode==0)return std::nullopt;
+            if(mode==1){snapshot->available=false;snapshot->error="unavailable";return snapshot;}
+            auto& adapters=snapshot->value.object["interfaces"].array;
+            if(mode==2)adapters.clear();
+            else {auto& adapter=adapters.front();adapter.object["networks"].array.clear();adapter.object["enabled"]=j::Boolean(false);
+                if(mode==4){adapter.object["available"]=j::Boolean(false);adapter.object["error"]=j::Text("accessDenied");}}
+            return snapshot;
+        };
+        unsigned starts=0;source.start=[&](system_control::Request){++starts;return std::uint64_t{1};};
+        SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);model.Select("wifi");
+        const auto& radio=Node(model.View(),"radio:wifi");
+        Require(starts==0&&!Node(model.View(),"wifi.scan").enabled&&radio.enabled==(mode==3),
+            "unknown/missing/off Wi-Fi state scanned or advertised a false radio capability");
+        if(mode==4)Require(model.View().Find("wifi.denied")&&!model.View().Find("wifi.empty")&&
+            radio.tooltip.find(_LW("controlCenter.off"))==std::wstring::npos,"permission failure was rendered as a switched-off radio");
+        else
+        {
+            const auto expected=_LW(mode<2?"controlCenter.unavailable":mode==2?"controlCenter.noDevices":"controlCenter.off");
+            Require(Node(model.View(),"wifi.empty").text==expected&&radio.tooltip.find(expected)!=std::wstring::npos,
+                "Wi-Fi detail conflated unknown sampling, missing hardware and a known off radio");
+        }
+    }
+}
+
+void CheckControlPowerSections()
+{
+    auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+    auto source=FixtureSource(state);const auto read=source.current;
+    bool multiple=false,selectedOther=false,modes=true;unsigned starts=0;
+    source.current=[&](std::string_view topic) {
+        auto snapshot=read(topic);
+        if(snapshot&&topic=="system.power.plans")
+        {
+            auto& value=snapshot->value;value.object["modeSupported"]=j::Boolean(modes);
+            auto& plans=value.object["plans"].array;plans.front().object["active"]=j::Boolean(!selectedOther);
+            if(multiple){auto other=plans.front();other.object["id"]=j::Text("power-other");other.object["name"]=j::Text("Other power plan");
+                other.object["active"]=j::Boolean(selectedOther);plans.push_back(std::move(other));}
+        }
+        return snapshot;
+    };
+    source.start=[&](system_control::Request request) {
+        Require(request.name=="system.power.setPlan"&&request.arguments.at("planId")=="power-other",
+            "power plan selection was dispatched as a similarly named power mode");
+        selectedOther=true;++starts;system_control::Completion done;done.id=starts;done.ok=true;state->completions.push_back(done);
+        return static_cast<std::uint64_t>(starts);
+    };
+    SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);model.Select("power");CheckLayout(model.View());
+    Require(!model.View().Find("power.plans.heading")&&!model.View().Find("power.plan:power-plan-preview")&&
+        Node(model.View(),"power.modes.heading").text==_LW("controlCenter.powerMode")&&Node(model.View(),"power.mode:balanced").selected,
+        "single-plan power page retained its redundant plan row or omitted the mode group heading");
+    multiple=true;model.Refresh();CheckLayout(model.View());
+    Require(Node(model.View(),"power.plans.heading").text==_LW("controlCenter.powerPlan")&&
+        Node(model.View(),"power.plans.heading").bounds.bottom<Node(model.View(),"power.plan:power-plan-preview").bounds.top&&
+        Node(model.View(),"power.plan:power-other").bounds.bottom<Node(model.View(),"power.modes.heading").bounds.top&&
+        Node(model.View(),"power.modes.heading").bounds.bottom<Node(model.View(),"power.mode:efficiency").bounds.top,
+        "multiple power plans and power modes were mixed into an unlabeled selection list");
+    ui::Input input;const auto point=VisibleCenter(model.View(),"power.plan:power-other");
+    Require(input.Press(model.View(),point),"second power plan cannot receive pointer input");
+    const auto action=input.Release(model.View(),point);
+    Require(action.kind==ui::InputResult::Kind::Invoke&&model.Invoke(action.id)&&starts==1&&
+        Node(model.View(),"power.plan:power-other").selected&&Node(model.View(),"power.mode:balanced").selected,
+        "selecting a power plan failed to update its own group or changed the independent power mode");
+    modes=false;model.Refresh();
+    Require(!model.View().Find("power.modes.heading")&&!model.View().Find("power.mode:balanced")&&model.View().Find("power.plans.heading"),
+        "unsupported power modes left an empty heading or removed valid plan choices");
+}
+
 void CheckPendingActions()
 {
     // Delay the production task boundary rather than sleeping. The model must
@@ -710,7 +946,7 @@ void CheckPendingActions()
             "re-expanded device duplicated pending text instead of restoring its button feedback");
         complete(task,false);
         Require(Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.connect")&&
-            model.View().Find("status"),"failed connection did not restore the true device state and actionable failure");
+            Node(model.View(),row).detail==_LW("controlCenter.failed"),"failed connection did not restore the true device state and actionable failure");
         Require(model.Invoke(command),"failed connection could not be retried");const auto successful=started.back().id;
         connected=true;complete(successful,true);
         Require(Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.disconnect")&&
@@ -744,6 +980,10 @@ void CheckPendingActions()
         Require(state->reads==reads&&!model.Invoke(command)&&state->closes==1,
             "a completion after close revived the panel or dispatched a stale action");
     }
+    CheckControlRadioTransitions();
+    CheckControlVisibleFeedback();
+    CheckControlUnavailableStates();
+    CheckControlPowerSections();
 }
 
 void CheckCalendarNames(const ui::Scene& scene)
@@ -765,65 +1005,119 @@ void CheckCalendarNames(const ui::Scene& scene)
 void CheckCalendarManagement()
 {
     const auto state=std::make_shared<PreviewState>();auto source=FixtureSource(state);
-    std::vector<calendar::CalendarEvent> events;int mode=0,calls=0;SystemPanelModel* active=nullptr;
+    std::vector<calendar::CalendarEvent> events;int saves=0,deletes=0;bool failSave=false,closeOnSave=false;
+    SystemPanelModel* active=nullptr;
     source.calendar.events=[&](const std::string& date){std::vector<calendar::CalendarEvent> result;for(const auto& event:events)if(event.date==date)result.push_back(event);return result;};
-    source.calendar.edit=[&](HWND,calendar::CalendarEvent& event,const PersonalizationSettings&,std::shared_ptr<SystemControlPromptState> lifetime){
-        ++calls;Require(lifetime&&lifetime->valid&&lifetime->valid(),"calendar editor was opened without a live owner");
-        if(mode==0){event.date="2030-01-01";return false;}
-        if(mode==1){Require(event.id.empty()&&event.date=="2026-09-26","calendar add lost the selected date");event.id="direct-event";event.revision=1;event.title="Direct event";events.push_back(event);return true;}
-        if(mode==2){Require(event.id=="direct-event"&&event.revision==1,"calendar edit did not receive the displayed event revision");event.title="Changed here";event.date="2026-09-28";event.revision=2;events.front()=event;return true;}
-        if(mode==3){events.clear();return true;}
-        active->Close();Require(!lifetime->valid(),"closed calendar left its modal write capability valid");return true;
+    source.calendar.mutations.current=[&](const calendar::CalendarEvent& event)->std::optional<calendar::CalendarEvent>{
+        for(const auto& stored:events)if(stored.id==event.id)return stored;return {};
+    };
+    source.calendar.mutations.save=[&](const calendar::CalendarEvent& draft){
+        ++saves;if(closeOnSave){active->Close();return calendar::MutationResult{true,"closed",1,{}};}
+        if(failSave)return calendar::MutationResult{false,{},0,"save_failed"};
+        if(draft.title.empty())return calendar::MutationResult{false,{},0,"title_required"};
+        auto next=draft;
+        if(draft.id.empty()){next.id="direct-event";next.revision=1;events.push_back(next);}
+        else
+        {
+            const auto found=std::find_if(events.begin(),events.end(),[&](const auto& e){return e.id==draft.id;});
+            if(found==events.end()||found->revision!=draft.revision)return calendar::MutationResult{false,{},0,"conflict"};
+            ++next.revision;*found=next;
+        }
+        return calendar::MutationResult{true,next.id,next.revision,{}};
+    };
+    source.calendar.mutations.remove=[&](const std::string& id){
+        ++deletes;std::erase_if(events,[&](const auto& event){return event.id==id;});
+        return calendar::MutationResult{true,id,0,{}};
     };
     SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);active=&model;model.Refresh(800,720);
-    Require(model.Invoke("calendar.add")&&Node(model.View(),"calendar.selected").text==L"2026-09-26"&&events.empty(),"canceling calendar editor changed the selected date or data");
-    mode=1;Require(model.Invoke("calendar.add")&&model.View().Find("event:2026-09-26:direct-event"),"calendar add did not refresh its own agenda");
-    mode=2;Require(model.Invoke("event:2026-09-26:direct-event")&&Node(model.View(),"calendar.selected").text==L"2026-09-28"&&
-        Node(model.View(),"event:2026-09-28:direct-event").text==L"Changed here","editing in the popup did not follow the saved event date");
-    mode=3;Require(model.Invoke("event:2026-09-28:direct-event")&&model.View().Find("calendar.empty")&&events.empty(),"deletion did not restore the agenda empty state");
-    mode=4;Require(!model.Invoke("calendar.add")&&calls==5&&state->closes==1,"modal completion revived a closed calendar model");
-}
-void CheckCalendarEditorVisuals(const native_component_preview::Request& request,
-    native_component_preview::Result& result,const PersonalizationSettings& appearance)
-{
-    calendar::CalendarEvent event;event.id="offline-calendar-editor";event.revision=2;
-    event.title=_L("settings.calendar.events");event.date="2026-09-26";event.startMinutes=630;event.endMinutes=690;
-    event.reminderMinutes=15;event.notes=_L("settings.calendar.pageDescription");
-    for(const bool confirmation:{false,true})
+    const auto field=[&](std::string_view id){
+        const auto fields=model.CalendarInputFields();const auto found=std::find_if(fields.begin(),fields.end(),[&](const auto& item){return item.id==id;});
+        Require(found!=fields.end(),"calendar embedded input descriptor is missing");return *found;
+    };
+    Require(model.Invoke("calendar.add")&&model.CalendarEditing()&&model.View().width==720&&
+        model.CalendarInputFields().size()==5&&field("calendar.edit.date").text==L"2026-09-26"&&
+        !model.View().Find("calendar.month"),"calendar add did not become a secondary page in the same panel");
+    Require(model.SetCalendarInput("calendar.edit.title",L"Unsaved draft")&&model.SetCalendarInput("calendar.edit.date",L"2026-"),
+        "calendar rejected intermediate native edit text");
+    model.Refresh(800,720);
+    Require(field("calendar.edit.date").text==L"2026-"&&model.Invoke("calendar.edit.save")&&saves==0&&
+        model.CalendarEditing()&&model.View().Find("calendar.edit.error"),"invalid partial date was lost or reached persistence");
+    Require(model.CalendarBack()&&!model.CalendarEditing()&&events.empty()&&
+        Node(model.View(),"calendar.selected").text==L"2026-09-26","back changed the calendar selection or saved a discarded draft");
+
+    Require(model.Invoke("calendar.add")&&model.SetCalendarInput("calendar.edit.title",L"Direct event"),"calendar create setup failed");
+    Require(model.Invoke("calendar.edit.allDay")&&!field("calendar.edit.start").enabled&&
+        !model.SetCalendarInput("calendar.edit.start",L"broken"),"all-day disabled times retained editable input");
+    Require(model.Invoke("calendar.edit.allDay")&&field("calendar.edit.start").text==L"09:00","all-day toggle discarded the raw time draft");
+    Require(model.Invoke("calendar.edit.reminder")&&model.Invoke("calendar.edit.reminder:15")&&
+        Node(model.View(),"calendar.edit.reminder").text==_LW("settings.calendar.reminder.15"),"same-page reminder selection lost its value");
+    Require(model.Invoke("calendar.edit.save")&&!model.CalendarEditing()&&events.size()==1&&events.front().reminderMinutes==15&&
+        model.View().Find("event:2026-09-26:direct-event"),"calendar save did not refresh the existing agenda");
+
+    const std::string originalNode="event:2026-09-26:direct-event";
+    Require(!model.CalendarEventCommand("event:2026-09-26:removed",false)&&!model.CalendarEditing()&&
+        Node(model.View(),"calendar.notice").text==_LW("settings.calendar.conflict"),"stale context identity opened another event or failed silently");
+    const auto bounds=Node(model.View(),originalNode).bounds;ui::Input context;const D2D1_POINT_2F point{bounds.left+12,bounds.top+12};
+    Require(context.Press(model.View(),point,true),"calendar event rejected a context press");
+    const auto contextResult=context.Release(model.View(),point,true);
+    Require(contextResult.kind==ui::InputResult::Kind::Context&&contextResult.id==originalNode&&
+        model.CalendarEventCommand(contextResult.id,false),"right-click context lost its stable calendar event identity");
+    Require(model.SetCalendarInput("calendar.edit.title",L"Changed here")&&model.SetCalendarInput("calendar.edit.date",L"2026-09-28")&&
+        model.SetCalendarInput("calendar.edit.notes",L"Keep this draft"),"calendar edit did not accept its existing event draft");
+    failSave=true;
+    Require(model.Invoke("calendar.edit.save")&&model.CalendarEditing()&&field("calendar.edit.notes").text==L"Keep this draft"&&
+        events.front().date=="2026-09-26","failed persistence discarded the draft or modified stored data");
+    failSave=false;
+    Require(model.Invoke("calendar.edit.save")&&!model.CalendarEditing()&&events.front().revision==2&&
+        Node(model.View(),"calendar.selected").text==L"2026-09-28"&&Node(model.View(),"event:2026-09-28:direct-event").text==L"Changed here",
+        "editing in the popup did not follow the saved event date");
+
+    const std::string changedNode="event:2026-09-28:direct-event";
+    ++events.front().revision;
+    Require(!model.CalendarEventCommand(changedNode,false)&&!model.CalendarEditing()&&
+        Node(model.View(),"calendar.notice").text==_LW("settings.calendar.conflict"),"context command silently adopted an event changed while its menu was open");
+    model.Refresh(800,720);
+    Require(model.CalendarEventCommand(changedNode,true)&&model.View().Find("calendar.edit.confirmDelete")&&deletes==0,
+        "right-click delete skipped its in-panel confirmation");
+    for(const auto& input:model.CalendarInputFields())Require(!input.enabled,"delete confirmation left its fields editable");
+    Require(!model.SetCalendarInput("calendar.edit.title",L"unexpected")&&model.CalendarBack()&&model.CalendarEditing()&&
+        !model.View().Find("calendar.edit.confirmDelete"),"canceling delete did not return safely to the editor");
+    Require(model.SetCalendarInput("calendar.edit.notes",L"Conflict draft"),"calendar conflict draft setup failed");
+    ++events.front().revision;
+    Require(model.Invoke("calendar.edit.save")&&model.CalendarEditing()&&field("calendar.edit.notes").text==L"Conflict draft"&&
+        Node(model.View(),"calendar.edit.error").text==_LW("settings.calendar.conflict"),"revision conflict lost the user's draft");
+    Require(model.Invoke("calendar.edit.delete")&&model.Invoke("calendar.edit.confirmDelete")&&deletes==0&&model.CalendarEditing(),
+        "delete removed an event that changed after it was opened");
+    Require(model.CalendarBack()&&field("calendar.edit.notes").text==L"Conflict draft"&&model.CalendarBack()&&!model.CalendarEditing(),
+        "delete cancellation discarded the draft or failed to return to the calendar");
+    Require(model.CalendarEventCommand(changedNode,true)&&model.Invoke("calendar.edit.confirmDelete")&&deletes==1&&events.empty()&&
+        model.View().Find("calendar.empty")&&!model.CalendarEditing(),"confirmed delete failed to return to the agenda empty state");
+
+    Require(model.Invoke("calendar.add")&&model.SetCalendarInput("calendar.edit.title",L"Closing"),"calendar close fixture setup failed");
+    closeOnSave=true;
+    Require(!model.Invoke("calendar.edit.save")&&!model.CalendarEditing()&&state->closes==1&&
+        !model.SetCalendarInput("calendar.edit.title",L"late")&&!model.CalendarBack(),"late save completion revived a closed calendar page");
+
+    auto revokedSource=FixtureSource(std::make_shared<PreviewState>());calendar::CalendarEvent existing;
+    existing.id="revoked";existing.date="2026-09-26";existing.title="Revoked";existing.revision=1;
+    revokedSource.calendar.events=[existing](const std::string& date){return date==existing.date?std::vector{existing}:std::vector<calendar::CalendarEvent>{};};
+    revokedSource.calendar.mutations.save=[](const auto&)->calendar::MutationResult{throw std::runtime_error("revoked context wrote data");};
+    revokedSource.calendar.mutations.current=[&](const auto& event){active->Close();return std::optional(event);};
+    SystemPanelModel revoked(std::move(revokedSource),{},StatusBarAction::Calendar);active=&revoked;
+    Require(!revoked.CalendarEventCommand("event:2026-09-26:revoked",true)&&!revoked.CalendarEditing(),"context lookup revived a synchronously closed calendar");
+
+    auto scrolling=FixtureSource(std::make_shared<PreviewState>());
+    scrolling.calendar.mutations.save=[](const auto&){return calendar::MutationResult{};};
+    SystemPanelModel narrow(std::move(scrolling),{},StatusBarAction::Calendar);
+    for(const float width:{720.f,420.f,260.f})
     {
-        const std::string name=confirmation?"delete-confirmation":"editor";
-        const auto rendered=RenderSystemCalendarEditorPreview(event,appearance,confirmation,static_cast<unsigned>(request.dpi));
-        Require(rendered.width>0&&rendered.height>0&&rendered.pixels.size()==static_cast<std::size_t>(rendered.width)*rendered.height,
-            "native calendar editor did not render its actual form");
-        if(appearance.cornerRadius>0)Require((rendered.pixels[0]>>24)==0,"calendar editor preview lost the live rounded window mask");
-        const auto path=request.outputDirectory/(request.component+"-"+name+".png");
-        if(!preview_png::Save(path,rendered.width,rendered.height,rendered.pixels,result.error))throw std::runtime_error(result.error);
-        result.outputs.push_back({request.component,name,path,false,false,false,false,false,false,
-            static_cast<int>(std::lround(appearance.cornerRadius*request.dpi/96.f)),rendered.width,rendered.height,0,0});
-        Require(rendered.reminderSelection==_LW("settings.calendar.reminder.15"),
-            "calendar reminder lost its selected native text");
-        const auto px=[&](int value){return MulDiv(value,static_cast<int>(request.dpi),96);};
-        const auto pixel=[&](int x,int y){return rendered.pixels[static_cast<std::size_t>(y)*rendered.width+x]&0xffffffu;};
-        const auto contrast=[](std::uint32_t a,std::uint32_t b){int difference=0;for(const int shift:{0,8,16})difference=(std::max)(difference,std::abs(static_cast<int>((a>>shift)&255)-static_cast<int>((b>>shift)&255)));return difference;};
-        const auto contrasting=[&](RECT region,std::uint32_t background){
-            int count=0;for(int y=px(region.top);y<px(region.bottom);++y)for(int x=px(region.left);x<px(region.right);++x)
-                if(contrast(pixel(x,y),background)>64)++count;return count;
-        };
-        const auto panel=pixel(px(200),px(70)),reminder=pixel(px(40),px(294));
-        // The checkbox box and combo arrow are outside these regions: only
-        // readable caption/selection ink can satisfy these independent checks.
-        Require(contrasting({268,152,440,180},panel)>px(12),
-            "calendar all-day caption disappeared into the background");
-        Require(contrasting({30,296,400,316},reminder)>px(12),
-            "calendar reminder selected text is visually blank");
-        if(appearance.contentTheme==0)Require(contrast(reminder,panel)<80,
-            "dark calendar reminder retained the system white surface");
-        for(const int left:{20,200,332})
-        {
-            if(confirmation&&left==332)continue;
-            for(const int x:{px(left),px(left+120)-1})for(const int y:{px(504),px(538)-1})
-                Require(contrast(pixel(x,y),panel)<12,"calendar rounded button left system-colored corner pixels");
-        }
+        narrow.Refresh(240,width);Require(narrow.Invoke("calendar.add"),"constrained editor did not open");CheckLayout(narrow.View());
+        for(const auto& input:narrow.CalendarInputFields())
+            Require(input.bounds.left>=0&&input.bounds.right<=narrow.View().width&&!input.label.empty(),"calendar input escaped its monitor width or lost its accessible label");
+        Require(narrow.MaximumScroll()>0&&narrow.Reveal("calendar.edit.save"),"short editor lost scroll access to saving");
+        const auto& save=Node(narrow.View(),"calendar.edit.save");
+        Require(save.bounds.top>=save.clip.top&&save.bounds.bottom<=save.clip.bottom,"calendar save could not be revealed");
+        Require(narrow.CalendarBack(),"short editor lost its back route");
     }
 }
 void CheckFeedbackLayouts()
@@ -989,6 +1283,77 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
             mapped.bits+static_cast<std::size_t>(y)*mapped.pitch,static_cast<std::size_t>(request.canvasWidth)*4);
     Require(readback->Unmap());
     return pixels;
+}
+
+void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
+    const native_component_preview::Request& request,native_component_preview::Result& result,
+    const PersonalizationSettings& appearance,const SystemPanel::Background& background,const widget_preview::Wallpaper& stage)
+{
+    CheckSystemCalendarInputs();
+    calendar::CalendarEvent event;event.id="offline-calendar-page";event.revision=2;
+    event.title=_L("settings.calendar.events");event.date="2026-09-26";event.startMinutes=630;event.endMinutes=690;
+    event.reminderMinutes=15;event.notes=_L("settings.calendar.pageDescription");
+    const float scale=static_cast<float>(request.dpi)/96.f;
+    for(int page=0;page<5;++page)
+    {
+        const bool creating=page==0,confirmation=page==2,overflow=page==3,narrow=page==4;
+        auto source=FixtureSource(std::make_shared<PreviewState>());
+        source.calendar.events=[event](const std::string& date){return date==event.date?std::vector{event}:std::vector<calendar::CalendarEvent>{};};
+        source.calendar.mutations.current=[event](const auto&){return std::optional(event);};
+        source.calendar.mutations.save=[](const auto&)->calendar::MutationResult{throw std::runtime_error("calendar visual preview attempted persistence");};
+        source.calendar.mutations.remove=[](const auto&)->calendar::MutationResult{throw std::runtime_error("calendar visual preview attempted deletion");};
+        SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);
+        model.Refresh(static_cast<float>(request.canvasHeight-2*request.padding)/scale,
+            (std::min)(narrow?320.f:720.f,static_cast<float>(request.canvasWidth-2*request.padding)/scale));
+        Require(creating?model.Invoke("calendar.add"):model.CalendarEventCommand("event:2026-09-26:offline-calendar-page",confirmation),
+            "calendar visual fixture did not enter the real secondary page");
+        if(overflow)
+        {
+            std::wstring notes;
+            for(int line=0;line<24;++line)notes+=std::to_wstring(line+1)+L". "+_LW("settings.calendar.pageDescription")+L"\r\n";
+            Require(model.SetCalendarInput("calendar.edit.notes",std::move(notes)),"long calendar notes did not reach the page draft");
+        }
+        if(!creating)model.Reveal("calendar.edit.notes");
+        const auto& scene=model.View();CheckLayout(scene);
+        Require(model.CalendarEditing()&&scene.cards.size()==1&&!scene.Find("calendar.month")&&
+            Node(scene,"calendar.edit.reminder").text==_LW(creating?"settings.calendar.reminder.-1":"settings.calendar.reminder.15"),
+            "calendar secondary page lost its shared card or reminder selection");
+        const int width=static_cast<int>(std::ceil(scene.width*scale)),height=static_cast<int>(std::ceil(scene.height*scale));
+        const int left=(request.canvasWidth-width)/2,top=(request.canvasHeight-height)/2;
+        auto pixels=Render(device,text,request,scene,appearance,background,stage,left,top);
+        auto fields=model.CalendarInputFields();Require(fields.size()==5,"calendar secondary page lost an embedded native input");
+        for(auto& field:fields)
+        {
+            const float dx=static_cast<float>(left)/scale,dy=static_cast<float>(top)/scale;
+            field.bounds.left+=dx;field.bounds.right+=dx;field.bounds.top+=dy;field.bounds.bottom+=dy;
+            field.clip.left+=dx;field.clip.right+=dx;field.clip.top+=dy;field.clip.bottom+=dy;
+            if(confirmation)Require(!field.enabled,"calendar delete visual fixture retained writable inputs");
+        }
+        // Composite the production EDIT children, including IME-compatible
+        // text and actual notes scrolling, over the production scene itself.
+        const auto scenePixels=pixels;
+        OverlaySystemCalendarInputs(fields,appearance,static_cast<UINT>(request.dpi),request.canvasWidth,request.canvasHeight,pixels);
+        Require(pixels!=scenePixels,"calendar page preview omitted its real embedded input controls");
+        if(!creating)
+        {
+            auto emptyNotes=fields;const auto notes=std::find_if(emptyNotes.begin(),emptyNotes.end(),[](const auto& field){return field.id=="calendar.edit.notes";});
+            Require(notes!=emptyNotes.end()&&!notes->text.empty(),"calendar notes fixture has no actual text");notes->text.clear();
+            auto withoutNotes=scenePixels;
+            OverlaySystemCalendarInputs(emptyNotes,appearance,static_cast<UINT>(request.dpi),request.canvasWidth,request.canvasHeight,withoutNotes);
+            auto inside=notes->bounds;inside.left+=12;inside.right-=28;inside.top+=8;inside.bottom-=8;inside=Intersection(inside,notes->clip);
+            const int x0=(std::max)(0,static_cast<int>(std::ceil(inside.left*scale))),x1=(std::min)(request.canvasWidth,static_cast<int>(std::floor(inside.right*scale)));
+            const int y0=(std::max)(0,static_cast<int>(std::ceil(inside.top*scale))),y1=(std::min)(request.canvasHeight,static_cast<int>(std::floor(inside.bottom*scale)));
+            bool visibleText=false;
+            for(int y=y0;y<y1&&!visibleText;++y)for(int x=x0;x<x1;++x)
+                if(pixels[static_cast<std::size_t>(y)*request.canvasWidth+x]!=withoutNotes[static_cast<std::size_t>(y)*request.canvasWidth+x]){visibleText=true;break;}
+            Require(visibleText,"calendar notes text did not appear in the actual native EDIT overlay");
+        }
+        const std::string name=creating?"new-event":confirmation?"delete-confirmation":overflow?"editor-notes-overflow":narrow?"editor-narrow":"editor";
+        const auto path=request.outputDirectory/(request.component+"-"+name+".png");
+        if(!preview_png::Save(path,request.canvasWidth,request.canvasHeight,pixels,result.error))throw std::runtime_error(result.error);
+        result.outputs.push_back({request.component,name,path,false,false,false,false,false,false,
+            static_cast<int>(std::lround(appearance.cornerRadius*scale)),width,height,left,top});
+    }
 }
 
 void CheckBatteryStates(ID2D1Device* device, IDWriteFactory* text,
@@ -1393,6 +1758,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (controls && preset == "overview")
             {
                 CheckClosedCallbacks();
+                CheckControlPromptVisuals(request,result,appearance);
                 CheckLogicalFocus();
                 CheckModelScrolling();
                 CheckPendingActions();
@@ -1412,7 +1778,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             }
             if (trayPanel && preset == "grid") { CheckTrayInput(model.View());CheckTrayDropTargets(trayFixture); }
             if (calendarPanel && preset == "agenda") CheckCalendarResponsive();
-            if (calendarPanel && preset == "agenda") {CheckCalendarManagement();CheckCalendarEditorVisuals(request,result,appearance);}
+            if (calendarPanel && preset == "agenda") {CheckCalendarManagement();CheckCalendarPageVisuals(device,text,request,result,appearance,background,stage);}
             if (resources && preset == "gpu")
                 Require(model.Invoke("gpu.select") && model.Invoke("gpu:gpu-preview-1") &&
                     Node(model.View(),"resource.card:0").text == L"61%", "GPU selection did not switch reading and history");

@@ -53,8 +53,8 @@ void DesktopApp::ShowFloatingDock(
     floatingDockHost_->passiveRevealTick = 0;
     floatingDockHost_->passiveLeaveStartTick = 0;
     RefreshFloatingDockVisibilityState();
-    // Rebuild the independent Dock background/region for a fullscreen reveal,
-    // even when its stable merged placement has not changed.
+    if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
+    // Rebuild shared chrome and hit regions before the first revealed frame.
     UpdateFloatingDockWindowBounds(*floatingDockHost_, false, true);
     floatingDockLastPointerPresentTick_ = 0;
     bool revealFramePrepared = false;
@@ -88,6 +88,7 @@ void DesktopApp::ShowFloatingDock(
             // composition surface after recovery.
             floatingDockHost_->promoted = false;
             RefreshFloatingDockVisibilityState();
+            if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
             InvalidateFloatingDockWindow(
                 *floatingDockHost_, true);
             if (previouslySelectedMonitor &&
@@ -197,6 +198,7 @@ void DesktopApp::CloseFloatingDock(
     host.passiveRevealTick = 0;
     host.passiveLeaveStartTick = 0;
     RefreshFloatingDockVisibilityState();
+    if (statusBar_) statusBar_->RefreshDockState(host.monitor);
     UpdatePersistentDockHostVisibility(host);
     InvalidateFloatingDockWindow(host, true);
     if (endKeyboardSession)
@@ -252,6 +254,7 @@ void DesktopApp::CloseAllFloatingDocks(
     {
         if (!host)
             continue;
+        if (statusBar_) statusBar_->RefreshDockState(host->monitor);
         UpdatePersistentDockHostVisibility(*host);
         InvalidateFloatingDockWindow(*host, true);
     }
