@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace snowdesktop
 {
@@ -79,7 +80,7 @@ SystemPanelModel::~SystemPanelModel(){Close();}
 void SystemPanelModel::Close()
 {
     if(closed_)return;
-    closed_=true;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();subscriptions_.clear();lastStarted_=0;
+    closed_=true;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();lastStarted_=0;
     // A close callback may pump messages. Detach all effects before calling it,
     // and keep its callable alive even if the callback re-enters Close().
     auto close=std::move(source_.close);source_={};if(close)close();
@@ -107,9 +108,14 @@ JsonValue SystemPanelModel::Current(const char* topic)const
 { if(source_.current)if(auto s=source_.current(topic);s&&s->available)return s->value;return j::Object(); }
 JsonValue SystemPanelModel::Wifi()const
 { const auto v=Current("network.wifi");for(const auto& a:Items(v,"interfaces"))if(j::String(a,"id")==interface_)return a;return j::Object(); }
-void SystemPanelModel::Start(std::string task,system_control::Arguments args)
+void SystemPanelModel::Start(std::string task,system_control::Arguments args,std::string_view control)
 {
     if(closed_||!source_.start)return;
+    const auto generation=navigation_;
+    const std::string controlId=control.empty()?invokingControl_:std::string(control);
+    const auto found=actionBindings_.find(controlId);
+    const auto binding=found==actionBindings_.end()?std::optional<ActionBinding>{}:std::optional<ActionBinding>(found->second);
+    if(binding&&pendingActions_.contains(binding->group))return;
     system_control::Request request;request.name=std::move(task);request.arguments=std::move(args);
     const bool hiddenNetwork = request.name == "network.wifi.connect" && request.arguments.contains("hidden");
     if(hiddenNetwork||system_control::RequiresConfirmation(request.name)||system_control::RequiresPasswordPrompt(request))
@@ -119,12 +125,74 @@ void SystemPanelModel::Start(std::string task,system_control::Arguments args)
     }
     // Confirmation runs a nested message loop: dismissal can invalidate this
     // model while Invoke() deliberately retains its lifetime.
-    if(closed_||!source_.start)return;
+    if(closed_||!source_.start||generation!=navigation_)return;
+    if(binding)
+    {
+        const auto current=actionBindings_.find(controlId);
+        if(current==actionBindings_.end()||current->second.group!=binding->group||current->second.target!=binding->target||pendingActions_.contains(binding->group))return;
+    }
     const auto start=source_.start;
+    PendingAction pending;pending.control=controlId;pending.navigation=generation;
+    if(binding)
+    {
+        pending.target=binding->target;
+        const auto argument=[&](const char* field){const auto at=request.arguments.find(field);return at==request.arguments.end()?std::string{}:at->second;};
+        if(request.name.starts_with("network.wifi.")){pending.topic="network.wifi";pending.collection="interfaces";pending.device=argument("interfaceId");}
+        else if(request.name.starts_with("bluetooth.")){pending.topic="bluetooth.devices";pending.collection=request.name=="bluetooth.setRadio"?"radios":"devices";pending.device=argument(request.name=="bluetooth.setRadio"?"radioId":"deviceId");}
+        else if(request.name.starts_with("audio.")){pending.topic="audio.devices";pending.collection="devices";pending.device=binding->target;}
+        else if(request.name.starts_with("media.")){pending.topic="media.sessions";pending.device=argument("sessionId");}
+        else if(request.name=="system.power.setPlan"){pending.topic="system.power.plans";pending.collection="plans";pending.device=argument("planId");}
+    }
     const auto key=system_control::ControlFeedback::Key(request);const auto id=start(std::move(request));
-    if(closed_)return;
+    if(closed_||generation!=navigation_)return;
     feedback_.Track(key,id);lastStarted_=id;
+    if(id&&binding){pending.task=id;pendingActions_[binding->group]=std::move(pending);}
     error_=id?L"":_LW("controlCenter.failed");
+}
+void SystemPanelModel::BindAction(std::string control,std::string group,std::string target,std::string indicator)
+{actionBindings_[std::move(control)]={std::move(group),std::move(target),std::move(indicator)};}
+void SystemPanelModel::PrunePendingActions()
+{
+    std::erase_if(pendingActions_,[this](const auto& entry) {
+        const auto& pending=entry.second;bool removed=false;
+        if(pending.topic=="media.sessions")
+            removed=mediaState_&&mediaState_->available&&std::none_of(mediaState_->sessions.begin(),mediaState_->sessions.end(),[&](const auto& session){return session.id==pending.device;});
+        else if(!pending.topic.empty()&&!pending.device.empty()&&source_.current)
+        {
+            const auto snapshot=source_.current(pending.topic);
+            // An unreadable or unsubscribed source does not prove removal. The
+            // backend's bounded completion still owns the task's final outcome.
+            if(snapshot&&snapshot->available&&snapshot->error.empty())
+            {
+                const auto* items=snapshot->value.Find(pending.collection);
+                if(items&&items->IsArray())removed=std::none_of(items->array.begin(),items->array.end(),[&](const auto& item){return j::String(item,"id")==pending.device&&
+                    (pending.topic!="audio.devices"||(j::Flag(item,"available")&&j::String(item,"state")=="active"));});
+            }
+        }
+        if(removed)feedback_.Take(pending.task);return removed;
+    });
+}
+void SystemPanelModel::ApplyPendingActions()
+{
+    const std::wstring working=_LW("controlCenter.working");
+    for(const auto& [group,pending]:pendingActions_)
+    {
+        const auto origin=actionBindings_.find(pending.control);
+        const bool sameTarget=origin!=actionBindings_.end()&&origin->second.group==group&&origin->second.target==pending.target;
+        const auto indicator=sameTarget?origin->second.indicator:std::string{};
+        for(auto& node:scene_.nodes)
+        {
+            const auto binding=actionBindings_.find(node.id);
+            if(binding!=actionBindings_.end()&&binding->second.group==group)node.enabled=false;
+            if(!sameTarget||(node.id!=pending.control&&node.id!=indicator))continue;
+            const auto label=!node.accessibilityLabel.empty()?node.accessibilityLabel:!node.text.empty()?node.text:node.tooltip;
+            node.tooltip=label.empty()?working:label+L" · "+working;
+            if(node.id==pending.control)node.accessibilityLabel=node.tooltip;
+            if(node.role==ui::Role::Button)node.text=working;
+            else if(node.role==ui::Role::Text&&node.id.ends_with(".label"))node.text=node.tooltip;
+            else if(!node.text.empty())node.detail=working;
+        }
+    }
 }
 void SystemPanelModel::OpenSettings(const wchar_t* uri)
 {if(closed_)return;const auto open=source_.settings;if(open)open(uri);}
@@ -141,13 +209,14 @@ bool SystemPanelModel::Invoke(std::string_view id,std::optional<float> value)
     const auto it=actions_.find(key);if(it==actions_.end())return false;
     const auto target=sliderTargets_.contains(key)?sliderTargets_.at(key):std::string{};
     // Navigation/close rebuilds or clears actions_ during the call.
-    const auto fn=it->second;lastStarted_=0;fn(value);
+    const auto fn=it->second;const auto previous=std::exchange(invokingControl_,key);lastStarted_=0;fn(value);
     if(closed_)return false;
+    invokingControl_=previous;
     if(value){if(lastStarted_)pendingValues_[key]={lastStarted_,*value,target};else pendingValues_.erase(key);}
     Refresh(available_);return true;
 }
 void SystemPanelModel::Select(std::string page)
-{ if(closed_)return;page_=std::move(page);scroll_=0;scan_=page_=="wifi";error_.clear();Refresh(available_); }
+{ if(closed_)return;++navigation_;page_=std::move(page);scroll_=0;scan_=page_=="wifi";error_.clear();Refresh(available_); }
 void SystemPanelModel::Scroll(float delta)
 {
     if(closed_||!std::isfinite(delta))return;
@@ -211,13 +280,16 @@ void SystemPanelModel::UpdateSettings(const StatusBarSettings& settings)
 void SystemPanelModel::Header(std::wstring title)
 {
     Add("back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("controlCenter.overview");Command("back",[this]{Select(page_=="wifi-adapters"?"wifi":"");});
-    auto& node=Add("title",ui::Role::Text,Rect(58,10,scene_.width-126,36),std::move(title));node.bold=true;node.fontSize=17;
+    const wchar_t* uri=page_=="audio"?L"ms-settings:sound":page_=="brightness"?L"ms-settings:display":page_.starts_with("wifi")?L"ms-settings:network-wifi":page_=="bluetooth"?L"ms-settings:bluetooth":page_=="power"?L"ms-settings:powersleep":nullptr;
+    const float settingsLeft=scene_.width-(page_=="wifi"||page_=="bluetooth"?112.f:52.f);
+    auto& node=Add("title",ui::Role::Text,Rect(58,10,uri?settingsLeft-70:scene_.width-126,36),std::move(title));node.bold=true;node.fontSize=17;
+    if(uri)
+    {
+        auto& settings=Add("header.settings",ui::Role::Icon,Rect(settingsLeft,10,36,36),L"",L"\uE713");
+        settings.tooltip=settings.accessibilityLabel=_LW("controlCenter.moreSettings");
+        const std::wstring target=uri;Command("header.settings",[this,target]{OpenSettings(target.c_str());});
+    }
     bodyStart_=56;
-}
-void SystemPanelModel::Footer(const wchar_t* uri,float& y)
-{
-    Add("footer.settings",ui::Role::Icon,Rect(16,y,scene_.width-32,32),_LW("settings.taskbar.systemSettings.open"),L"\uE713").fontSize=12;
-    const auto target=std::wstring(uri);Command("footer.settings",[this,target]{OpenSettings(target.c_str());});y+=40;
 }
 void SystemPanelModel::Radio(std::string_view key,D2D1_RECT_F rect,bool compact)
 {
@@ -234,6 +306,7 @@ void SystemPanelModel::Radio(std::string_view key,D2D1_RECT_F rect,bool compact)
     button.accessibilityLabel=_LW(wifi?"statusBar.wifiControls":"statusBar.bluetoothControls");
     if(!compact)button.detail=_LW(!available?"controlCenter.unavailable":on?"controlCenter.on":"controlCenter.off");
     const auto radioId=radio?j::String(*radio,"id"):std::string{};
+    if(available&&!radioId.empty())BindAction(id,(wifi?"wifi.radio:":"bluetooth.radio:")+radioId,radioId,compact?"title":"");
     Command(id,[this,wifi,radioId,on]{Start(wifi?"network.wifi.setRadio":"bluetooth.setRadio",{{wifi?"interfaceId":"radioId",radioId},{"enabled",on?"0":"1"}});});
 }
 void SystemPanelModel::Volume(std::string_view direction,float& y)
@@ -248,6 +321,7 @@ void SystemPanelModel::Volume(std::string_view direction,float& y)
     const wchar_t* speaker=muted?L"\uE74F":volume<=0?L"\uE992":volume<.34f?L"\uE993":volume<.67f?L"\uE994":L"\uE995";
     auto& mute=Add(prefix+".mute",ui::Role::Icon,Rect(12,y,40,40),L"",direction=="input"?(muted?L"\uF781":L"\uE720"):speaker);
     mute.enabled=valid;mute.tooltip=label+L" · "+_LW(muted?"controlCenter.unmute":"controlCenter.mute");
+    if(valid)BindAction(prefix+".mute",prefix+".mute:"+endpoint,endpoint,prefix+".label");
     Command(prefix+".mute",[this,prefix,endpoint]{const auto s=source_.current?source_.current(prefix+".volume"):std::nullopt;if(s&&s->available&&j::String(s->value,"endpointId")==endpoint&&InRange(Number(s->value,"volume")))Start(prefix+".setMute",{{"muted",j::Flag(s->value,"muted")?"0":"1"}});});
     const auto sliderId=prefix+".volume:"+endpoint;
     auto& slider=Add(sliderId,ui::Role::Slider,Rect(58,y,scene_.width-(page_.empty()?116:74),40));slider.enabled=valid;slider.value=volume;slider.tooltip=slider.accessibilityLabel=label;
@@ -309,11 +383,12 @@ void SystemPanelModel::Audio(float& y)
         {
             found=true;const auto endpoint=j::String(d,"id"),id=prefix+".device:"+endpoint;
             auto& node=Add(id,ui::Role::ListItem,Rect(16,y,scene_.width-32,48),Wide(j::String(d,"name")),std::string_view(direction)=="input"?L"\uE720":L"\uE767");node.selected=endpoint==active;
+            BindAction(id,prefix+".selectDevice",endpoint);
             Command(id,[this,prefix,endpoint]{Start(prefix+".selectDevice",{{"endpointId",endpoint}});});y+=50;
         }
         if(!found){Add(prefix+".empty",ui::Role::Text,Rect(16,y,scene_.width-32,32),_LW("controlCenter.unavailable"));y+=36;}
-        y+=8;Volume(direction,y);y+=8;
-    }Footer(L"ms-settings:sound",y);
+        y+=8;Volume(direction,y);
+    }
 }
 void SystemPanelModel::Brightness(float& y)
 {
@@ -328,7 +403,7 @@ void SystemPanelModel::Brightness(float& y)
         sliderTargets_[sliderId]=valid?id:std::string{};valueControls_["display.value:"+id]=sliderId;
         actions_[sliderId]=[this,id](auto v){const auto current=Current("system.display.brightness");const auto& displays=Items(current,"monitors");if(v&&std::any_of(displays.begin(),displays.end(),[&](const auto& d){return j::String(d,"id")==id&&j::Flag(d,"available");}))Start("system.display.setBrightness",{{"monitorId",id},{"brightness",std::to_string(*v*100)}});};y+=58;
     }
-    if(monitors.empty()){Add("empty",ui::Role::Text,Rect(16,y,scene_.width-32,56),_LW("controlCenter.unsupportedHint"));y+=64;}Footer(L"ms-settings:display",y);
+    if(monitors.empty()){Add("empty",ui::Role::Text,Rect(16,y,scene_.width-32,56),_LW("controlCenter.unsupportedHint"));y+=64;}
 }
 void SystemPanelModel::WifiPage(float& y)
 {
@@ -345,8 +420,10 @@ void SystemPanelModel::WifiPage(float& y)
     for(const auto& n:networks)
     {
         const auto id=j::String(n,"id"),profile=j::String(n,"profileName");const bool connected=j::Flag(n,"connected"),open=id==network_;
-        Add("wifi.card:"+id,ui::Role::Card,Rect(16,y,scene_.width-32,open?100.f:56.f)).outlined=open;
+        Add("wifi.card:"+id,ui::Role::Card,Rect(16,y,scene_.width-32,open?100.f:56.f));
         auto& row=Add("wifi.network:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,56),Wide(j::String(n,"ssid")),L"\uE701");row.detail=(connected?std::wstring(_LW("controlCenter.connected"))+L" · ":L"")+Percent(j::Numeric(n,"signal"));
+        BindAction("wifi.connect:"+id,"wifi.connection:"+interface_,id,row.id);
+        if(!profile.empty())BindAction("wifi.forget:"+id,"wifi.forget:"+interface_,profile,row.id);
         Command(row.id,[this,id]{network_=network_==id?std::string{}:id;});y+=56;
         if(open)
         {
@@ -358,22 +435,24 @@ void SystemPanelModel::WifiPage(float& y)
     }
     if(networks.empty()){Add("wifi.empty",ui::Role::Text,Rect(16,y,scene_.width-32,48),_LW(j::Flag(current,"enabled")?"controlCenter.noDevices":"controlCenter.off"));y+=56;}
     Add("wifi.hidden",ui::Role::Button,Rect(16,y,scene_.width-84,36),_LW("controlCenter.hiddenNetwork"),L"\uE72E").enabled=j::Flag(current,"enabled");
+    if(j::Flag(current,"enabled")){BindAction("wifi.hidden","wifi.connection:"+interface_,interface_);BindAction("wifi.scan","wifi.scan:"+interface_,interface_,"title");}
     Command("wifi.hidden",[this]{Start("network.wifi.connect",{{"interfaceId",interface_},{"hidden","1"}});});
-    Add("wifi.scan",ui::Role::Icon,Rect(scene_.width-52,y,36,36),L"",L"\uE72C").enabled=j::Flag(current,"enabled");Command("wifi.scan",[this]{Start("network.wifi.scan",{{"interfaceId",interface_}});});y+=48;Footer(L"ms-settings:network-wifi",y);
+    auto& scan=Add("wifi.scan",ui::Role::Icon,Rect(scene_.width-52,y,36,36),L"",L"\uE72C");scan.enabled=j::Flag(current,"enabled");scan.tooltip=scan.accessibilityLabel=_LW("controlCenter.scan");Command("wifi.scan",[this]{Start("network.wifi.scan",{{"interfaceId",interface_}});});y+=44;
 }
 void SystemPanelModel::Bluetooth(float& y)
 {
     const auto value=Current("bluetooth.devices");const auto& radios=Items(value,"radios");Radio("bluetooth",Rect(scene_.width-64,10,48,36),true);
     const bool available=std::any_of(radios.begin(),radios.end(),[](const auto& r){return j::Flag(r,"available");});
     const bool powered=std::any_of(radios.begin(),radios.end(),[](const auto& r){return j::Flag(r,"available")&&j::Flag(r,"enabled");});
-    if(radios.size()>1)for(const auto& r:radios){const auto id=j::String(r,"id");auto& n=Add("bluetooth.radio:"+id,ui::Role::Toggle,Rect(16,y,scene_.width-32,42),Wide(j::String(r,"name")));n.switchStyle=true;n.selected=j::Flag(r,"enabled");n.enabled=j::Flag(r,"available");const bool on=n.selected;Command(n.id,[this,id,on]{Start("bluetooth.setRadio",{{"radioId",id},{"enabled",on?"0":"1"}});});y+=50;}
+    if(radios.size()>1)for(const auto& r:radios){const auto id=j::String(r,"id");auto& n=Add("bluetooth.radio:"+id,ui::Role::Toggle,Rect(16,y,scene_.width-32,42),Wide(j::String(r,"name")));n.switchStyle=true;n.selected=j::Flag(r,"enabled");n.enabled=j::Flag(r,"available");if(n.enabled)BindAction(n.id,"bluetooth.radio:"+id,id,"title");const bool on=n.selected;Command(n.id,[this,id,on]{Start("bluetooth.setRadio",{{"radioId",id},{"enabled",on?"0":"1"}});});y+=50;}
     const auto& devices=Items(value,"devices");
     for(const auto& d:devices)
     {
         const auto id=j::String(d,"id");const bool connected=j::Flag(d,"connected"),supported=j::Flag(d,"canConnect"),open=id==bluetooth_;
-        Add("bluetooth.card:"+id,ui::Role::Card,Rect(16,y,scene_.width-32,open?106.f:62.f)).outlined=open;
+        Add("bluetooth.card:"+id,ui::Role::Card,Rect(16,y,scene_.width-32,open?106.f:62.f));
         auto& row=Add("bluetooth.device:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,62),Wide(j::String(d,"name")),L"\uE702");
         row.enabled=powered;
+        if(supported)BindAction("bluetooth.connect:"+id,"bluetooth.connection:"+id,id,row.id);
         row.detail=_LW(connected?"controlCenter.connected":"controlCenter.connect");if(const auto* level=d.Find("batteryPercent");level&&level->IsNumber())row.detail+=L" · "+Percent(level->number);
         Command(row.id,[this,id]{bluetooth_=bluetooth_==id?std::string{}:id;});y+=62;
         if(open)
@@ -383,22 +462,31 @@ void SystemPanelModel::Bluetooth(float& y)
         }
         y+=8;
     }
-    if(devices.empty()){Add("bluetooth.empty",ui::Role::Text,Rect(16,y,scene_.width-32,52),_LW(!available?"controlCenter.unavailable":!powered?"controlCenter.off":"controlCenter.noDevices"));y+=60;}Footer(L"ms-settings:bluetooth",y);
+    if(devices.empty()){Add("bluetooth.empty",ui::Role::Text,Rect(16,y,scene_.width-32,52),_LW(!available?"controlCenter.unavailable":!powered?"controlCenter.off":"controlCenter.noDevices"));y+=60;}
 }
 void SystemPanelModel::Power(float& y)
 {
     const auto value=Current("system.power.plans");
-    for(const auto& p:Items(value,"plans")){const auto id=j::String(p,"id");auto& n=Add("power.plan:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),Wide(j::String(p,"name")),L"\uE945");n.selected=j::Flag(p,"active");Command(n.id,[this,id]{Start("system.power.setPlan",{{"planId",id}});});y+=48;}
+    for(const auto& p:Items(value,"plans")){const auto id=j::String(p,"id");auto& n=Add("power.plan:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),Wide(j::String(p,"name")),L"\uE945");n.selected=j::Flag(p,"active");BindAction(n.id,"power.plan",id);Command(n.id,[this,id]{Start("system.power.setPlan",{{"planId",id}});});y+=48;}
     if(j::Flag(value,"modeSupported"))for(const auto* mode:{"efficiency","balanced","performance"})
-    {auto& n=Add(std::string("power.mode:")+mode,ui::Role::ListItem,Rect(16,y,scene_.width-32,42),_LW((std::string("controlCenter.")+mode).c_str()));n.selected=j::String(value,j::Flag(value,"onAC")?"acMode":"dcMode")==mode;Command(n.id,[this,mode]{Start("system.power.setMode",{{"mode",mode}});});y+=46;}
+    {auto& n=Add(std::string("power.mode:")+mode,ui::Role::ListItem,Rect(16,y,scene_.width-32,42),_LW((std::string("controlCenter.")+mode).c_str()));n.selected=j::String(value,j::Flag(value,"onAC")?"acMode":"dcMode")==mode;BindAction(n.id,"power.mode",mode);Command(n.id,[this,mode]{Start("system.power.setMode",{{"mode",mode}});});y+=46;}
     y+=8;int index=0;const float w=(scene_.width-40)/2;
-    for(const auto* action:{"lock","sleep","restart","shutdown"}){const std::string id=std::string("power.")+action;Add(id,ui::Role::Button,Rect(16+(index%2)*(w+8),y+(index/2)*48,w,40),_LW((std::string("controlCenter.")+action).c_str()));Command(id,[this,action]{Start(std::string("system.power.")+action);});++index;}y+=104;Footer(L"ms-settings:powersleep",y);
+    for(const auto* action:{"lock","sleep","restart","shutdown"}){const std::string id=std::string("power.")+action;Add(id,ui::Role::Button,Rect(16+(index%2)*(w+8),y+(index/2)*48,w,40),_LW((std::string("controlCenter.")+action).c_str()));BindAction(id,"power.action",action);Command(id,[this,action]{Start(std::string("system.power.")+action);});++index;}y+=96;
+}
+void SystemPanelModel::PrepareMedia()
+{
+    mediaState_=settings_.mediaControls&&source_.media?source_.media():std::nullopt;
+    if(!mediaState_||!mediaState_->available||mediaState_->sessions.empty()){media_.clear();return;}
+    auto selected=std::find_if(mediaState_->sessions.begin(),mediaState_->sessions.end(),[&](const auto& session){return session.id==mediaState_->currentSessionId;});
+    if(selected==mediaState_->sessions.end())selected=mediaState_->sessions.begin();media_=selected->id;
+    for(const auto* command:{"previous","toggle","next"})
+    {const auto id=std::string("media.")+command;BindAction(id,id+":"+media_,media_,"media.title");}
 }
 void SystemPanelModel::Media(float& y)
 {
-    const auto state=source_.media?source_.media():std::nullopt;if(!state||!state->available||state->sessions.empty())return;
-    auto selected=std::find_if(state->sessions.begin(),state->sessions.end(),[&](const auto& s){return s.id==state->currentSessionId;});
-    if(selected==state->sessions.end())selected=state->sessions.begin();media_=selected->id;
+    if(!mediaState_||!mediaState_->available||mediaState_->sessions.empty())return;
+    const auto selected=std::find_if(mediaState_->sessions.begin(),mediaState_->sessions.end(),[&](const auto& session){return session.id==media_;});
+    if(selected==mediaState_->sessions.end())return;
     auto& art=Add("media.artwork",ui::Role::Image,Rect(16,y,32,32),L"",L"\uE8D6");
     if(const auto a=source_.artwork?source_.artwork():std::nullopt;a&&a->available&&a->sessionId==media_&&a->pixels&&wr::IsValidWidgetRuntimeImage(*a->pixels))
     {auto image=std::make_shared<ui::Image>();image->width=a->pixels->width;image->height=a->pixels->height;image->stride=a->pixels->stride;image->pixels.resize(a->pixels->bgraPremultiplied.size()/4);std::memcpy(image->pixels.data(),a->pixels->bgraPremultiplied.data(),a->pixels->bgraPremultiplied.size());art.image=std::move(image);}
@@ -419,7 +507,7 @@ void SystemPanelModel::Media(float& y)
 }
 void SystemPanelModel::Finish(float bodyEnd,bool withMedia,float minimumBodyHeight)
 {
-    float mediaHeight=0;const auto state=withMedia&&source_.media?source_.media():std::nullopt;if(state&&state->available&&!state->sessions.empty())mediaHeight=56;
+    float mediaHeight=0;if(withMedia&&mediaState_&&mediaState_->available&&!mediaState_->sessions.empty())mediaHeight=56;
     const float maxBody=(std::max)(32.f,available_-mediaHeight-(mediaHeight?8:0));
     const float end=(std::min)((std::max)(bodyEnd+8,minimumBodyHeight),maxBody);maxScroll_=(std::max)(0.f,bodyEnd+8-end);scroll_=std::clamp(scroll_,0.f,maxScroll_);
     if(end<bodyStart_+48)bodyStart_=0;
@@ -431,15 +519,12 @@ void SystemPanelModel::Finish(float bodyEnd,bool withMedia,float minimumBodyHeig
 }
 void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
 {
-    if(closed_)return;available_=std::isfinite(availableHeight)?(std::max)(96.f,availableHeight):800;scene_={};actions_.clear();sliderTargets_.clear();valueControls_.clear();bodyStart_=16;bodyLeft_=0;scrollViewport_={};
+    if(closed_)return;available_=std::isfinite(availableHeight)?(std::max)(96.f,availableHeight):800;scene_={};actions_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();bodyStart_=16;bodyLeft_=0;scrollViewport_={};
     if(std::isfinite(availableWidth)&&availableWidth>0)availableWidth_=(std::max)(200.f,availableWidth);
-    if(source_.completions)for(const auto& completion:source_.completions())
-    {
-        std::erase_if(pendingValues_,[&](const auto& item){return item.second.task==completion.id;});
-        if(feedback_.Take(completion.id)&&completion.error!="canceled")error_=completion.ok?L"":_LW(completion.error=="accessDenied"?"controlCenter.accessDenied":completion.error=="timeout"?"controlCenter.timeout":"controlCenter.failed");
-    }
+    const auto completions=source_.completions?source_.completions():std::vector<system_control::Completion>{};
+    for(const auto& completion:completions)std::erase_if(pendingValues_,[&](const auto& item){return item.second.task==completion.id;});
     if(page_=="media"||(page_=="audio"&&!settings_.audioControls)||(page_=="brightness"&&!settings_.brightnessControls)||
-        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls))page_.clear();
+        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls)){++navigation_;page_.clear();error_.clear();}
     SyncSubscriptions();
     if(subscriptions_.contains("network.wifi"))
     {
@@ -447,16 +532,34 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         if(std::none_of(adapters.begin(),adapters.end(),[this](const auto& a){return j::String(a,"id")==interface_;}))
         {interface_=adapters.empty()?std::string{}:j::String(adapters.front(),"id");network_.clear();}
         if(scan_&&page_=="wifi"&&!interface_.empty()&&j::Flag(Wifi(),"enabled"))
-        {scan_=false;Start("network.wifi.scan",{{"interfaceId",interface_}});}
+        {scan_=false;BindAction("wifi.scan","wifi.scan:"+interface_,interface_,"title");Start("network.wifi.scan",{{"interfaceId",interface_}},"wifi.scan");}
     }
     if(action_==StatusBarAction::Tray){Tray();return;}if(action_==StatusBarAction::Calendar){Calendar();return;}if(IsSystemResourceAction(action_)){Resources();return;}
     // The old offline "media" preset still selects the overview; media has no detail page.
     if(page_=="media")page_.clear();
+    PrepareMedia();
     const char* title=page_=="audio"?"statusBar.audioControls":page_=="brightness"?"statusBar.brightnessControls":page_.starts_with("wifi")?"statusBar.wifiControls":page_=="bluetooth"?"statusBar.bluetoothControls":"statusBar.powerControls";
     if(!page_.empty())Header(_LW(title));float y=bodyStart_;
     if(page_.empty())Overview(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);
+    PrunePendingActions();
+    for(const auto& completion:completions)
+    {
+        bool relevant=true;
+        const auto pending=std::find_if(pendingActions_.begin(),pendingActions_.end(),[&](const auto& item){return item.second.task==completion.id;});
+        if(pending!=pendingActions_.end())
+        {
+            const auto binding=actionBindings_.find(pending->second.control);
+            // Returning to a page restores its guard, but a completion from an
+            // earlier visit must not display an error against a new selection.
+            relevant=pending->second.navigation==navigation_&&binding!=actionBindings_.end()&&binding->second.group==pending->first&&binding->second.target==pending->second.target;
+            pendingActions_.erase(pending);
+        }
+        if(feedback_.Take(completion.id)&&relevant&&!completion.ok&&completion.error!="canceled")
+            error_=_LW(completion.error=="accessDenied"?"controlCenter.accessDenied":completion.error=="timeout"?"controlCenter.timeout":"controlCenter.failed");
+    }
     if(!error_.empty()){auto& n=Add("status",ui::Role::Text,Rect(16,y,scene_.width-32,40),error_);n.fontSize=12;y+=44;}
     Finish(y,settings_.mediaControls);
+    ApplyPendingActions();
     std::erase_if(pendingValues_,[&](const auto& entry){const auto* node=scene_.Find(entry.first);if(!node)return false;const auto target=sliderTargets_.find(entry.first);return !node->enabled||target==sliderTargets_.end()||target->second!=entry.second.target;});
     for(auto& node:scene_.nodes)
     {

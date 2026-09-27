@@ -68,12 +68,15 @@ public:
     void Sync(const Scene&);
     // Logical focus includes clipped nodes; the host reveals Focused() before
     // drawing focus or dispatching an action. Pointer input remains clipped.
-    bool Focus(std::string_view);
+    bool Focus(std::string_view, bool visible = true);
+    // Mouse input keeps logical/UIA focus without painting keyboard cues.
+    bool PointerInput();
     // Includes offscreen nodes. Host UIA collection may need bounded batches.
     std::vector<widget_runtime::InteractionRegion> AccessibilityRegions() const;
     std::string Identity(std::string_view regionKey) const;
     std::string Pressed() const;
     const std::string& Focused() const { return focused_; }
+    std::string_view VisibleFocus() const { return focusVisible_ ? std::string_view(focused_) : std::string_view{}; }
     bool Dragging() const { return dragging_; }
 private:
     widget_runtime::WidgetInteractionRegions regions_;
@@ -83,6 +86,7 @@ private:
     std::string focused_;
     D2D1_POINT_2F origin_{};
     bool right_ = false, dragging_ = false;
+    bool focusVisible_ = false;
     InputResult Resolve(const std::optional<widget_runtime::InteractionResolvedAction>&) const;
 };
 HRESULT Draw(ID2D1DeviceContext*, IDWriteFactory*, const Scene&, const Palette&,

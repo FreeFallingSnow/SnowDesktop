@@ -98,12 +98,30 @@ const StatusBarItem& Item(const std::vector<StatusBarItem>& items, std::string_v
     Require(found != items.end(), "a required status bar item is missing");
     return *found;
 }
-void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale, bool merged)
+void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale, bool merged,
+    bool expectNotification = true)
 {
-    const auto& clock = Item(items, "clock");
-    if (!merged) Require(std::abs(clock.bounds.left + clock.bounds.right - width) <= 1, "clock is not centered on the complete bar");
-    Require(!IsRectEmpty(&Item(items, "controlCenter").bounds) && !IsRectEmpty(&Item(items, "notifications").bounds),
+    const auto clock = std::find_if(items.begin(), items.end(), [](const auto& item) { return item.key == "clock"; });
+    const bool dateVisible = clock != items.end() && !IsRectEmpty(&clock->bounds);
+    const auto& notification = Item(items, "notifications").bounds;
+    if (clock != items.end() && width >= (merged ? 1600 : 640) * scale)
+        Require(dateVisible, "date disappeared despite sufficient status bar width");
+    if (dateVisible)
+    {
+        if (!merged) Require(std::abs(clock->bounds.left + clock->bounds.right - width) <= 1,
+            "date itself is not centered on the complete bar");
+        Require(notification.left == clock->bounds.right,
+            "notification button must immediately follow the date without shifting it");
+    }
+    else if (!merged) Require(std::abs(notification.left + notification.right - width) <= 1,
+        "notification button must remain centered when the date is absent");
+    Require(!IsRectEmpty(&Item(items, "controlCenter").bounds) && (!IsRectEmpty(&notification) == expectNotification),
         "narrow status bar removed essential controls");
+    if (expectNotification) Require(notification.right - notification.left == static_cast<LONG>(std::ceil(32.f * scale)),
+        "notification button must remain a complete independent hit target");
+    const auto& controls = Item(items, "controlCenter").bounds;
+    Require(controls.right - controls.left == static_cast<LONG>(std::ceil(92.f * scale)),
+        "system control group must remain complete at narrow widths");
     std::vector<RECT> rectangles;
     ComPtr<IDWriteTextFormat> font;
     Require(text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
@@ -120,7 +138,9 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         }
         if (item.key == "cpu" || item.key == "memory" || item.key == "gpu" || item.key == "traffic")
         {
-            Require(item.left && r.right < clock.bounds.left && r.left >= Item(items, "quickSearch").bounds.right,
+            const LONG informationEnd = dateVisible ? clock->bounds.left : merged ?
+                MergedStatusBarCenter(width, height, scale).left : notification.left;
+            Require(item.left && r.right < informationEnd && r.left >= Item(items, "quickSearch").bounds.right,
                 "system information must follow the launch buttons on the left");
             if (item.key != "memory")
                 Require(r.right - r.left <= (item.key == "traffic" ? 152 : 68) * scale + 1,
@@ -331,6 +351,38 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 const auto folded=ResolveStatusBarTrayDrop(items,{overflow.bounds.left+1,height/2},5,2);
                 Require(folded&&!folded->pinned&&tray::PlaceIcon(dropped,snapshot,key,folded->pinned,folded->before)&&
                     dropped.pinnedTrayItems.size()==1,"only the overflow button must unpin the dragged icon");
+                // Exercise the real renderer's fallback paths without adding
+                // CLI presets or altering the exported normal frame.
+                const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale) {
+                    auto compactSettings = settings; compactSettings.clock = date;
+                    compactSettings.cpu = compactSettings.memory = compactSettings.gpu = compactSettings.traffic = true;
+                    auto compact = BuildStatusBarItems(compactSettings, data);
+                    Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "clock"; }) == date,
+                        "the existing date visibility flag must be respected");
+                    const UINT testWidth = static_cast<UINT>(std::lround(logicalWidth * testScale));
+                    const UINT testHeight = static_cast<UINT>(std::lround((merged ? 64 : 32) * testScale));
+                    ComPtr<ID2D1Bitmap1> scratch;
+                    Require(context->CreateBitmap(D2D1::SizeU(testWidth, testHeight), nullptr, 0, targetProperties, &scratch));
+                    context->SetTarget(scratch.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
+                    context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
+                    const auto content = DrawStatusBarContent(context.Get(), text, compact, testWidth, testHeight,
+                        testScale, appearance, palette, {}, false, 0, merged);
+                    const auto end = context->EndDraw(); context->SetTarget(nullptr); Require(content); Require(end);
+                    const auto dockCenter = MergedStatusBarCenter(static_cast<LONG>(testWidth), static_cast<LONG>(testHeight), testScale);
+                    const bool notificationFits = !merged || static_cast<LONG>(testWidth) - dockCenter.right >=
+                        static_cast<LONG>(std::ceil(32.f * testScale) + std::ceil(92.f * testScale));
+                    CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged, notificationFits);
+                    if (date && (logicalWidth == 320 || (merged && logicalWidth <= 640)))
+                        Require(IsRectEmpty(&Item(compact, "clock").bounds),
+                            "crowded date must yield as a whole while its notification target remains available");
+                };
+                compactLayout(false, false, 640, scale);
+                compactLayout(false, true, 640, scale);
+                compactLayout(true, true, 640, scale);
+                compactLayout(true, true, 480, 1.5f * scale);
+                compactLayout(true, true, 320, 3.f);
+                compactLayout(true, true, 240, 3.f);
+                compactLayout(true, false, 320, scale);
             }
             if (preset == "information" && width >= 1800 * scale)
                 for (const auto* key : {"cpu", "memory", "gpu", "traffic"})

@@ -327,7 +327,7 @@ struct SystemPanel::Impl
             else if(background)background(dc.Get(),card,current->appearance,scale);
         }
         dc->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),static_cast<float>(offset.y)));dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-        const auto result=ui::Draw(dc.Get(),text.Get(),model->View(),Palette(),hovered,GetFocus()==window?input.Focused():std::string{},input.Pressed());
+        const auto result=ui::Draw(dc.Get(),text.Get(),model->View(),Palette(),hovered,GetFocus()==window?input.VisibleFocus():std::string_view{},input.Pressed());
         if(dropIndicator)
         {
             ComPtr<ID2D1SolidColorBrush> line;if(SUCCEEDED(dc->CreateSolidColorBrush(Palette().accent,&line)))
@@ -425,6 +425,7 @@ struct SystemPanel::Impl
             if(self->slide.IsAnimating()&&((m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_KEYDOWN))return 0;
             if(m==WM_LBUTTONDOWN||m==WM_RBUTTONDOWN)
             {
+                const bool focusChanged=self->input.PointerInput();
                 self->context.Reset();self->tooltip.Hide();const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};
                 const auto axis=self->model->ScrollbarGeometry();const auto viewport=self->model->ScrollViewport();
                 if(m==WM_LBUTTONDOWN&&axis.CanDrag()&&p.x>=self->model->View().width-12&&p.x<self->model->View().width&&p.y>=viewport.top&&p.y<viewport.bottom)
@@ -433,9 +434,10 @@ struct SystemPanel::Impl
                     if(p.y>=axis.thumbStart&&p.y<axis.thumbEnd)
                     {self->scrollbarDragging=true;self->scrollbarPointerStart=static_cast<int>(std::lround(p.y));self->scrollbarOffsetStart=static_cast<int>(std::lround(self->model->ScrollOffset()));SetCapture(w);}
                     else{self->model->Scroll((p.y<axis.thumbStart?-1.f:1.f)*(viewport.bottom-viewport.top));self->Arrange();self->Paint();}
-                    return 0;
+                    if(focusChanged)self->Paint();return 0;
                 }
-                if(self->input.Press(self->model->View(),p,m==WM_RBUTTONDOWN)){SetCapture(w);SetFocus(w);self->Paint();}return 0;
+                if(self->input.Press(self->model->View(),p,m==WM_RBUTTONDOWN)){SetCapture(w);SetFocus(w);self->Paint();}
+                else if(focusChanged)self->Paint();return 0;
             }
             if(m==WM_MOUSEMOVE)
             {
@@ -452,6 +454,7 @@ struct SystemPanel::Impl
             }
             if(m==WM_LBUTTONDBLCLK)
             {
+                if(self->input.PointerInput())self->Paint();
                 const auto* node=self->model->View().Hit({GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale});
                 if(node&&node->id.starts_with("tray:")&&self->current->tray)
                 {
@@ -462,8 +465,14 @@ struct SystemPanel::Impl
                 }
                 return 0;
             }
-            if(m==WM_CAPTURECHANGED||m==WM_CANCELMODE){self->EndDragFeedback();self->input.Cancel();self->scrollbarDragging=false;if(m==WM_CANCELMODE&&GetCapture()==w)ReleaseCapture();return 0;}
-            if(m==WM_MOUSEWHEEL){if(self->scrollbarDragging||!self->input.Pressed().empty())return 0;POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);auto activeModel=self->model;activeModel->Wheel({point.x/self->scale,point.y/self->scale},static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/WHEEL_DELTA);if(life->alive){self->Arrange();self->Paint();}return 0;}
+            if(m==WM_CAPTURECHANGED||m==WM_CANCELMODE)
+            {
+                const bool wasPressed=!self->input.Pressed().empty();
+                self->EndDragFeedback();self->input.Cancel();self->scrollbarDragging=false;
+                if(m==WM_CANCELMODE&&GetCapture()==w)ReleaseCapture();
+                if(life->alive&&wasPressed)self->Paint();return 0;
+            }
+            if(m==WM_MOUSEWHEEL){if(self->scrollbarDragging||!self->input.Pressed().empty())return 0;self->input.PointerInput();POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);auto activeModel=self->model;activeModel->Wheel({point.x/self->scale,point.y/self->scale},static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/WHEEL_DELTA);if(life->alive){self->Arrange();self->Paint();}return 0;}
             if(m==WM_SETFOCUS||m==WM_KILLFOCUS){self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}
             if(m==WM_KEYDOWN)
             {

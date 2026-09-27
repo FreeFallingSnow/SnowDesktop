@@ -82,9 +82,23 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     };
     if (s.menu) add("menu", L"", StatusBarAction::SystemMenu, kMenu, true);
     if (s.quickSearch) add("quickSearch", L"", StatusBarAction::QuickSearch, kSearch, true);
+    if (s.clock)
     {
         add("clock", snapshot.clock, StatusBarAction::Calendar);
     }
+    const auto& notifications = snapshot.notifications;
+    const auto* notificationGlyph = kNotifications;
+    const auto* notificationTip = "statusBar.notifications";
+    if (notifications.quiet.value_or(false))
+    { notificationGlyph = kNotificationsQuiet; notificationTip = "statusBar.notificationsQuiet"; }
+    else if (notifications.unreadCount && *notifications.unreadCount > 0)
+    { notificationGlyph = kNotificationsPending; notificationTip = "statusBar.notificationsPending"; }
+    else if (notifications.totalCount && *notifications.totalCount > 0)
+    { notificationGlyph = kNotificationsPresent; notificationTip = "statusBar.notificationsPresent"; }
+    else if (!notifications.unreadCount && !notifications.totalCount)
+    { notificationGlyph = kUnknown; notificationTip = "statusBar.notificationsUnknown"; }
+    add("notifications", L"", StatusBarAction::Notifications, notificationGlyph);
+    items.back().tip = _LW(notificationTip);
     if (s.cpu)
     {
         const auto value = snapshot.cpu;
@@ -146,21 +160,6 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         control.controlTips[2] = std::wstring(_LW(power->charging ? "statusBar.charging" :
             power->acPower && power->batteryPercent >= 99.5 ? "statusBar.fullyCharged" :
             power->acPower ? "statusBar.pluggedIn" : "statusBar.battery")) + L"  " + Percent(power->batteryPercent);
-    // Left: launch buttons and information. Right: tray and system controls.
-    // Old experimental rightOrder values cannot split this group.
-    const auto& notifications = snapshot.notifications;
-    const auto* notificationGlyph = kNotifications;
-    const auto* notificationTip = "statusBar.notifications";
-    if (notifications.quiet.value_or(false))
-    { notificationGlyph = kNotificationsQuiet; notificationTip = "statusBar.notificationsQuiet"; }
-    else if (notifications.unreadCount && *notifications.unreadCount > 0)
-    { notificationGlyph = kNotificationsPending; notificationTip = "statusBar.notificationsPending"; }
-    else if (notifications.totalCount && *notifications.totalCount > 0)
-    { notificationGlyph = kNotificationsPresent; notificationTip = "statusBar.notificationsPresent"; }
-    else if (!notifications.unreadCount && !notifications.totalCount)
-    { notificationGlyph = kUnknown; notificationTip = "statusBar.notificationsUnknown"; }
-    add("notifications", L"", StatusBarAction::Notifications, notificationGlyph);
-    items.back().tip = _LW(notificationTip);
     return items;
 }
 
@@ -213,27 +212,83 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             const float paddingDip = item.key == "memory" ? 12.f : item.glyph.empty() ? 16.f : 36.f;
             return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 32.f * scale, 260.f * scale);
         };
-        LONG centerWidth = 0;
-        std::vector<LONG> leftWidths, rightWidths;
-        for (const auto& item : items)
-            if (!mergedDock && item.action == StatusBarAction::Calendar) centerWidth = static_cast<LONG>(std::ceil(extentOf(item)));
-            else if (item.left) leftWidths.push_back(static_cast<LONG>(std::ceil(extentOf(item))));
-            else rightWidths.push_back(static_cast<LONG>(std::ceil(extentOf(item))));
+        std::optional<std::size_t> clockIndex, notificationIndex;
+        std::vector<std::size_t> leftIndices, rightIndices;
+        std::vector<LONG> widths(items.size()), rightWidths;
+        LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0;
+        for (std::size_t i = 0; i < items.size(); ++i)
+        {
+            auto& item = items[i]; item.bounds = {};
+            widths[i] = static_cast<LONG>(std::ceil(extentOf(item)));
+            if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
+            else if (item.action == StatusBarAction::Notifications) { notificationIndex = i; notificationWidth = widths[i]; }
+            else if (item.left) leftIndices.push_back(i);
+            else { rightIndices.push_back(i); rightWidths.push_back(widths[i]); }
+            if (item.key == "controlCenter") controlWidth = widths[i];
+        }
+        const LONG viewportWidth = static_cast<LONG>(w), viewportHeight = static_cast<LONG>(h);
+        const LONG edgePadding = static_cast<LONG>(padding);
+        // Keep the date itself centered. The symmetric reservation protects
+        // its trailing notification button without shifting the date left.
+        if (!mergedDock && clockWidth + 2 * notificationWidth + 2 * (edgePadding + controlWidth) > viewportWidth)
+            clockWidth = 0;
+        LONG centerWidth = clockWidth ? clockWidth + 2 * notificationWidth : notificationWidth;
         if (mergedDock)
         {
-            const auto center = MergedStatusBarCenter(static_cast<LONG>(w), static_cast<LONG>(h), scale);
+            const auto center = MergedStatusBarCenter(viewportWidth, viewportHeight, scale);
             centerWidth = center.right - center.left;
+            rightWidths.insert(rightWidths.begin(), clockWidth + notificationWidth);
         }
-        const auto bounds = StatusBarHorizontalLayout(static_cast<LONG>(w), static_cast<LONG>(h),
-            static_cast<LONG>(padding), leftWidths, centerWidth, rightWidths);
-        std::size_t leftIndex = 0, rightIndex = leftWidths.size() + 1;
+        LONG rightPadding = edgePadding;
+        const auto arrange = [&] { return StatusBarHorizontalLayout(viewportWidth, viewportHeight,
+            rightPadding, std::span<const LONG>{}, centerWidth, rightWidths); };
+        auto bounds = arrange();
+        if (mergedDock && IsRectEmpty(&bounds[1]))
+        {
+            // Keep a complete notification target when the date no longer
+            // fits beside the Dock. Optional tray icons yield before it does.
+            clockWidth = 0; rightWidths[0] = notificationWidth; bounds = arrange();
+            for (std::size_t i = 0; IsRectEmpty(&bounds[1]) && i < rightIndices.size(); ++i)
+                if (items[rightIndices[i]].key != "controlCenter")
+                { rightWidths[i + 1] = 0; bounds = arrange(); }
+            if (IsRectEmpty(&bounds[1]))
+            {
+                // The Dock reservation never shrinks. Spend the remaining
+                // right-side padding before dropping an essential button.
+                const LONG available = viewportWidth - bounds[0].right;
+                rightPadding = (std::min)(edgePadding,
+                    (std::max)(0L, (available - notificationWidth - controlWidth) / 2));
+                bounds = arrange();
+                // If even zero padding cannot fit both, the existing reverse
+                // packing keeps the complete system control group first, then
+                // notifications only if they fit. Never clip a partial target.
+            }
+        }
+        RECT dateAndNotification = mergedDock ? bounds[1] : bounds[0];
+        if (!IsRectEmpty(&dateAndNotification))
+        {
+            if (clockWidth && clockIndex)
+            {
+                const LONG dateLeft = dateAndNotification.left + (mergedDock ? 0 : notificationWidth);
+                items[*clockIndex].bounds = {dateLeft, 0, dateLeft + clockWidth, viewportHeight};
+                dateAndNotification.left = dateLeft + clockWidth;
+            }
+            if (notificationIndex)
+                items[*notificationIndex].bounds = dateAndNotification;
+        }
+        LONG leftCursor = edgePadding;
+        const LONG leftLimit = (mergedDock ? bounds[0].left :
+            clockWidth && clockIndex ? items[*clockIndex].bounds.left : bounds[0].left) - edgePadding;
+        for (const auto i : leftIndices)
+            if (leftCursor + widths[i] <= leftLimit)
+            { items[i].bounds = {leftCursor, 0, leftCursor + widths[i], viewportHeight}; leftCursor += widths[i]; }
+        for (std::size_t i = 0; i < rightIndices.size(); ++i)
+            items[rightIndices[i]].bounds = bounds[i + (mergedDock ? 2 : 1)];
         ComPtr<ID2D1SolidColorBrush> hoverBrush;
         context->CreateSolidColorBrush(hc ? palette.highlight :
             D2D1::ColorF(a.contentTheme == 1 ? 0x000000 : 0xffffff, .08f), &hoverBrush);
         for (auto& item : items)
         {
-            const bool center = !mergedDock && item.action == StatusBarAction::Calendar;
-            item.bounds = bounds[item.left ? leftIndex++ : center ? leftWidths.size() : rightIndex++];
             if (IsRectEmpty(&item.bounds))
             {
 

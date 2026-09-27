@@ -195,7 +195,9 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
         }
         Require(request.name == "network.wifi.scan" && request.arguments.at("interfaceId") == "wifi-preview",
             "offline panel unexpectedly dispatched a device mutation");
-        return ++state->scans;
+        const auto id=++state->scans;
+        system_control::Completion completion;completion.id=id;completion.ok=true;
+        state->completions.push_back(std::move(completion));return id;
     };
     source.completions = [state] { return std::exchange(state->completions, {}); };
     source.subscribe = [state](std::string topic, std::chrono::milliseconds) { state->subscriptions.insert(std::move(topic)); };
@@ -632,6 +634,91 @@ void CheckModelScrolling()
         "fractional volume wheel input lost its pending percentage or replaced the stable UIA name with transient feedback");
 }
 
+void CheckPendingActions()
+{
+    // Delay the production task boundary rather than sleeping. The model must
+    // immediately acknowledge input while every reported device state is old.
+    for(const auto* page:{"wifi","bluetooth"})
+    {
+        const bool wifi=std::string_view(page)=="wifi";
+        auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+        auto source=FixtureSource(state);const auto read=source.current;
+        bool connected=false,present=true;std::uint64_t nextId=100;
+        struct Started {std::uint64_t id;std::string name;};std::vector<Started> started;
+        source.current=[&](std::string_view topic) {
+            auto snapshot=read(topic);
+            if(snapshot&&topic==(wifi?"network.wifi":"bluetooth.devices"))
+            {
+                auto& entries=wifi?snapshot->value.object["interfaces"].array.front().object["networks"].array:
+                    snapshot->value.object["devices"].array;
+                if(!present)entries.clear();else entries.front().object["connected"]=j::Boolean(connected);
+            }
+            return snapshot;
+        };
+        source.start=[&](system_control::Request request) {const auto id=++nextId;started.push_back({id,request.name});return id;};
+        SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);model.Select(page);
+        const auto complete=[&](std::uint64_t id,bool ok) {
+            system_control::Completion completion;completion.id=id;completion.ok=ok;completion.error=ok?"":"unavailable";
+            state->completions.push_back(std::move(completion));model.Refresh();
+        };
+        if(wifi&&!started.empty())
+        {
+            const auto scans=started.size();
+            Require(Node(model.View(),"title").detail==_LW("controlCenter.working")&&!Node(model.View(),"wifi.scan").enabled&&
+                !model.Invoke("wifi.scan")&&started.size()==scans,"page-entry scan lacked feedback or allowed a duplicate scan");
+            complete(started.back().id,true);
+        }
+        const auto suffix=wifi?"network-preview":"bluetooth-device-preview";
+        const auto row=std::string(page)+(wifi?".network:":".device:")+suffix;
+        const auto command=std::string(page)+".connect:"+suffix;
+        const auto card=std::string(page)+".card:"+suffix;
+        const auto expand=[&] {if(!model.View().Find(command))Require(model.Invoke(row),"pending fixture could not expand its device");};
+        expand();const auto height=model.View().height;
+        Require(!Node(model.View(),card).outlined,"mouse-expanded device card retained its accent outline");
+        const auto count=started.size();
+        Require(model.Invoke(command)&&started.size()==count+1,"connect button did not start exactly one device task");
+        const auto task=started.back().id;
+        Require(!Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.working")&&
+            Node(model.View(),row).detail.find(_LW("controlCenter.working"))!=std::wstring::npos&&
+            model.View().height==height&&!model.View().Find("status.pending"),
+            "connect input did not show immediate in-place feedback or shifted the whole device list");
+        Require(!model.Invoke(command)&&started.size()==count+1,"repeated clicks dispatched duplicate connection tasks");
+        model.Refresh();Require(!Node(model.View(),command).enabled,"ordinary refresh cleared the in-flight device guard");
+        complete(task,false);
+        Require(Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.connect")&&
+            model.View().Find("status"),"failed connection did not restore the true device state and actionable failure");
+        Require(model.Invoke(command),"failed connection could not be retried");const auto successful=started.back().id;
+        connected=true;complete(successful,true);
+        Require(Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.disconnect")&&
+            !model.View().Find("status"),"successful connection did not use the latest device readback");
+        Require(model.Invoke(command),"disconnect fixture could not start");const auto stale=started.back().id;
+        model.Select("audio");Require(!model.View().Find("status.pending"),"another page inherited unrelated pending feedback");
+        model.Select(page);expand();
+        const auto returningCount=started.size();
+        Require(!Node(model.View(),command).enabled&&!model.Invoke(command)&&started.size()==returningCount,
+            "leaving and returning to the page bypassed the in-flight device guard");
+        present=false;model.Refresh();Require(!model.View().Find(row),"removed pending device remained visible");
+        complete(stale,false);Require(!model.View().Find("status")&&!model.View().Find("status.pending"),
+            "a removed device's delayed failure leaked into the current panel");
+        present=true;model.Refresh();expand();
+        for(const auto& scanTask:started)if(scanTask.name=="network.wifi.scan")complete(scanTask.id,true);
+        const auto radio=std::string("radio:")+page;const auto actualRadio=Node(model.View(),radio).selected;
+        const auto radioHeight=model.View().height;
+        Require(model.Invoke(radio)&&Node(model.View(),"title").detail==_LW("controlCenter.working")&&
+            Node(model.View(),radio).selected==actualRadio&&!Node(model.View(),radio).enabled&&model.View().height==radioHeight,
+            "compact switch lacked immediate visible feedback, shifted layout or optimistically changed device state");
+        const auto radioTask=started.back().id;const auto radioCount=started.size();
+        Require(!model.Invoke(radio)&&started.size()==radioCount,"compact switch dispatched a duplicate radio task");
+        complete(radioTask,true);Require(Node(model.View(),radio).enabled&&Node(model.View(),"title").detail.empty(),
+            "completed compact switch retained pending feedback");
+        Require(model.Invoke(command),"reappeared device could not start a new task");
+        const auto afterClose=started.back().id;model.Close();const auto reads=state->reads;
+        complete(afterClose,false);
+        Require(state->reads==reads&&!model.Invoke(command)&&state->closes==1,
+            "a completion after close revived the panel or dispatched a stale action");
+    }
+}
+
 void CheckCalendarNames(const ui::Scene& scene)
 {
     const std::string september="date:2026-09-01",october="date:2026-10-01";
@@ -651,6 +738,7 @@ void CheckFeedbackLayouts()
 {
     auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
     auto source=FixtureSource(state);const auto read=source.current;
+    std::wstring openedSettings;source.settings=[&](const wchar_t* uri){openedSettings=uri;};
     source.current=[read](std::string_view topic) {
         auto result=read(topic);
         if(result&&topic=="audio.devices")
@@ -684,9 +772,24 @@ void CheckFeedbackLayouts()
         Require(!model.View().Find(command)&&model.Invoke(id)&&model.View().Find(command),"device row did not expand without dispatching a device mutation");
         CheckLayout(model.View());
         Require(model.Invoke(id)&&!model.View().Find(command),"device row could not collapse its actions");
-        input.Sync(model.View());Require(input.Focus("footer.settings"),"compact settings footer lost keyboard focus");
-        const auto footer=model.HandleKey(input,VK_RETURN,false);
-        Require(footer.kind==ui::InputResult::Kind::Invoke&&footer.id=="footer.settings","compact footer lost its settings action identity");
+        input.Sync(model.View());Require(input.Focus("header.settings"),"header settings icon lost keyboard focus");
+        const auto settings=model.HandleKey(input,VK_RETURN,false);
+        Require(settings.kind==ui::InputResult::Kind::Invoke&&settings.id=="header.settings","header settings icon lost its action identity");
+    }
+    for(const auto& [page,uri]:std::vector<std::pair<std::string,const wchar_t*>>{
+        {"audio",L"ms-settings:sound"},{"brightness",L"ms-settings:display"},{"wifi",L"ms-settings:network-wifi"},
+        {"wifi-adapters",L"ms-settings:network-wifi"},{"bluetooth",L"ms-settings:bluetooth"},{"power",L"ms-settings:powersleep"}})
+    {
+        model.Select(page);CheckLayout(model.View());const auto& scene=model.View();
+        const auto& settings=Node(scene,"header.settings");const auto& title=Node(scene,"title");
+        Require(!scene.Find("footer.settings")&&settings.role==ui::Role::Icon&&settings.text.empty()&&
+            settings.bounds.right-settings.bounds.left==36&&settings.bounds.top==title.bounds.top&&
+            settings.bounds.left>=title.bounds.right&&!settings.tooltip.empty()&&!settings.accessibilityLabel.empty(),
+            "settings entry is not a labeled compact icon to the right of its title");
+        if(const auto* radio=scene.Find("radio:"+page))Require(settings.bounds.right+8<=radio->bounds.left,
+            "header settings icon overlaps its radio switch");
+        openedSettings.clear();Require(model.Invoke("header.settings")&&openedSettings==uri,
+            "header settings icon lost its page-specific system destination");
     }
 }
 
@@ -730,7 +833,8 @@ void CheckCalendarResponsive()
 std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
     const native_component_preview::Request& request, const ui::Scene& scene,
     const PersonalizationSettings& appearance, const SystemPanel::Background& background,
-    const widget_preview::Wallpaper& stage, int left, int top,const ui::Palette* palette=nullptr)
+    const widget_preview::Wallpaper& stage, int left, int top,const ui::Palette* palette=nullptr,
+    std::string_view focused={})
 {
     const float scale = static_cast<float>(request.dpi) / 96.f;
     ComPtr<ID2D1DeviceContext> context; Require(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,&context));
@@ -753,7 +857,7 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
                 static_cast<LONG>(std::lround(card.right*scale)),static_cast<LONG>(std::lround(card.bottom*scale))},appearance,scale);
     context->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*
         D2D1::Matrix3x2F::Translation(static_cast<float>(left),static_cast<float>(top)));
-    const auto contentResult = ui::Draw(context.Get(),text,scene,palette?*palette:SystemPanelPalette(appearance));
+    const auto contentResult = ui::Draw(context.Get(),text,scene,palette?*palette:SystemPanelPalette(appearance),{},focused);
     const auto drawResult = context->EndDraw(); context->SetTarget(nullptr); Require(contentResult); Require(drawResult);
     ComPtr<ID2D1Bitmap1> readback;
     Require(context->CreateBitmap(size,nullptr,0,D2D1::BitmapProperties1(
@@ -766,6 +870,44 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
             mapped.bits+static_cast<std::size_t>(y)*mapped.pitch,static_cast<std::size_t>(request.canvasWidth)*4);
     Require(readback->Unmap());
     return pixels;
+}
+
+void CheckFocusModality(ID2D1Device* device, IDWriteFactory* text,
+    native_component_preview::Request request,const PersonalizationSettings& appearance,const SystemPanel::Background& background)
+{
+    request.canvasWidth=240;request.canvasHeight=160;request.dpi=96;request.transparent=request.contentOnly=true;
+    ui::Scene scene;scene.width=240;scene.height=160;
+    ui::Node button;button.id="device";button.role=ui::Role::ListItem;button.bounds={16,16,224,72};button.text=L"Headphones";
+    scene.nodes.push_back(button);button.id="connect";button.role=ui::Role::Button;button.bounds={16,80,224,136};button.text=L"Connect";
+    scene.nodes.push_back(button);
+    ui::Input input;
+    const auto baseline=Render(device,text,request,scene,appearance,background,{},0,0);
+    Require(input.Press(scene,{40,40}),"mouse focus fixture could not press its device row");
+    const auto click=input.Release(scene,{40,40});input.Sync(scene);
+    Require(click.kind==ui::InputResult::Kind::Invoke&&click.id=="device"&&input.Focused()=="device"&&input.VisibleFocus().empty(),
+        "mouse selection lost logical focus or exposed a keyboard focus cue after refresh");
+    Require(Render(device,text,request,scene,appearance,background,{},0,0,nullptr,input.VisibleFocus())==baseline,
+        "pure mouse selection painted a keyboard focus outline");
+    // A deliberately wrong logical-focus render must differ: this ensures the
+    // pixel oracle would catch the original mouse-ring regression.
+    Require(Render(device,text,request,scene,appearance,background,{},0,0,nullptr,input.Focused())!=baseline,
+        "focus pixel oracle cannot distinguish the original mouse-ring regression");
+    input.Key(scene,VK_TAB,false);
+    Require(input.Focused()=="connect"&&input.VisibleFocus()=="connect"&&
+        Render(device,text,request,scene,appearance,background,{},0,0,nullptr,input.VisibleFocus())!=baseline,
+        "keyboard navigation did not display its focus outline");
+    const auto activate=input.Key(scene,VK_RETURN,false);
+    Require(activate.kind==ui::InputResult::Kind::Invoke&&activate.id=="connect"&&input.VisibleFocus()=="connect",
+        "keyboard activation lost its target or visible cue");
+    Require(input.PointerInput()&&input.Focused()=="connect"&&input.VisibleFocus().empty(),
+        "pointer wheel/scroll input did not hide its cue while retaining logical focus");
+    Require(input.Focus("device")&&input.VisibleFocus()=="device","assistive focus did not reveal its target");
+    Require(!input.Press(scene,{2,2})&&input.Focused()=="device"&&input.VisibleFocus().empty(),
+        "blank-area mouse input retained a keyboard cue or destroyed logical focus");
+    Require(input.Focus("device"),"disabled focus fixture could not select its initial row");
+    scene.nodes[0].enabled=false;input.Sync(scene);
+    Require(input.Focused().empty()&&input.VisibleFocus().empty()&&input.Key(scene,VK_RETURN,false).kind==ui::InputResult::Kind::None,
+        "a disabled target retained visible focus or keyboard activation");
 }
 
 void CheckSplitOpacity(ID2D1Device* device, IDWriteFactory* text,
@@ -920,8 +1062,11 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             SystemPanelModel model(FixtureSource(state),settings,action);
             model.Refresh(available,availableWidth);
             if (controls)
+            {
                 model.Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" || preset == "media-empty" ? "" :
                     !state->manySection.empty() ? state->manySection : preset);
+                model.Refresh(available,availableWidth); // Drain deterministic fixture scan completion before rendering.
+            }
             if (resources && preset == "gpu-partial")
             {
                 Require(model.Invoke("gpu.select") && model.Invoke("gpu:gpu-preview-1"), "GPU fixture selection failed");
@@ -999,7 +1144,9 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 CheckClosedCallbacks();
                 CheckLogicalFocus();
                 CheckModelScrolling();
+                CheckPendingActions();
                 CheckFeedbackLayouts();
+                CheckFocusModality(device,text,request,appearance,background);
                 CheckSplitOpacity(device,text,request,appearance,background);
                 CheckSelectedDetailContrast(device,text,request,appearance,background);
                 CheckControlInput(model,state,available);

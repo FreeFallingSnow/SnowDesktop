@@ -136,8 +136,10 @@ std::string Input::Pressed()const
 {const auto it=identities_.find(regions_.PressedKey());return it==identities_.end()?std::string{}:it->second;}
 std::string Input::Identity(std::string_view key)const
 {const auto it=identities_.find(std::string(key));return it==identities_.end()?std::string{}:it->second;}
-bool Input::Focus(std::string_view id)
-{if(std::find(focusable_.begin(),focusable_.end(),id)==focusable_.end())return false;focused_=id;return true;}
+bool Input::Focus(std::string_view id,bool visible)
+{if(std::find(focusable_.begin(),focusable_.end(),id)==focusable_.end())return false;focused_=id;focusVisible_=visible;return true;}
+bool Input::PointerInput()
+{const bool changed=focusVisible_;focusVisible_=false;return changed;}
 std::vector<widget_runtime::InteractionRegion> Input::AccessibilityRegions()const{return semanticRegions_;}
 InputResult Input::Resolve(const std::optional<widget_runtime::InteractionResolvedAction>& action)const
 {
@@ -147,9 +149,9 @@ InputResult Input::Resolve(const std::optional<widget_runtime::InteractionResolv
 }
 bool Input::Press(const Scene& scene,D2D1_POINT_2F p,bool right)
 {
-    Cancel();Sync(scene);const auto pressed=regions_.PointerDown(p.x,p.y,right?2:1);
+    PointerInput();Cancel();Sync(scene);const auto pressed=regions_.PointerDown(p.x,p.y,right?2:1);
     const auto it=identities_.find(pressed.targetKey);if(it==identities_.end())return false;
-    Focus(it->second);origin_=p;right_=right;return true;
+    Focus(it->second,false);origin_=p;right_=right;return true;
 }
 InputResult Input::Move(const Scene& scene,D2D1_POINT_2F p)
 {
@@ -173,6 +175,9 @@ InputResult Input::Release(const Scene& scene,D2D1_POINT_2F p,bool right)
 InputResult Input::Key(const Scene& scene,unsigned key,bool shift)
 {
     Sync(scene);
+    if(key==VK_TAB||key==VK_LEFT||key==VK_RIGHT||key==VK_UP||key==VK_DOWN||
+        key==VK_HOME||key==VK_END||key==VK_PRIOR||key==VK_NEXT||key==VK_RETURN||
+        key==VK_SPACE||key==VK_APPS||(key==VK_F10&&shift))focusVisible_=true;
     if(key==VK_TAB)
     {
         if(focusable_.empty()){focused_.clear();return {};}

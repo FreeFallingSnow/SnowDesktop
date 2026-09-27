@@ -1338,10 +1338,10 @@ void TestStatusBarPreview(const std::filesystem::path& snowwidget,
             "narrow and scaled bars preserve their requested geometry");
         const auto full = read(L"full"), charging = read(L"charging"), unavailable = read(L"unavailable");
         const auto chargingLow = read(L"charging-low"), lowBattery = read(L"low-battery");
-        const RECT power{bounds.right - 76 * scale, bounds.top + 3 * scale,
-            bounds.right - 48 * scale, bounds.bottom - 3 * scale};
+        const RECT power{bounds.right - 44 * scale, bounds.top + 3 * scale,
+            bounds.right - 16 * scale, bounds.bottom - 3 * scale};
         // The compact control group is three 28-DIP cells plus 8 DIP padding;
-        // the separate notification cell and outer padding follow it.
+        // only the outer padding follows it now that notifications follow the date.
         // Only inspect the battery cell so changed network/notification states
         // cannot substitute for a missing fill level or charging bolt.
         unsigned powerDifferences = 0;
@@ -1357,17 +1357,23 @@ void TestStatusBarPreview(const std::filesystem::path& snowwidget,
             }
         Check(powerDifferences > 10 && chargeLevelDifferences > 4 && greenPixels > 5 && lowRedPixels > 5 && unavailable.pixels != normal.pixels,
             "battery levels, green charging bolt, low warning and unknown states reach native pixels without percentage text");
-        const RECT network{bounds.right - 132 * scale, bounds.top + 3 * scale,
-            bounds.right - 104 * scale, bounds.bottom - 3 * scale};
+        const RECT network{bounds.right - 100 * scale, bounds.top + 3 * scale,
+            bounds.right - 72 * scale, bounds.bottom - 3 * scale};
         const auto wifiOff = read(L"wifi-off"), offline = read(L"offline");
         Check(CountDifferingPixels(normal, full, network) > 10 &&
                 CountDifferingPixels(normal, lowBattery, network) > 5 &&
                 CountDifferingPixels(wifiOff, offline, network) > 5 &&
                 CountDifferingPixels(offline, unavailable, network) > 5,
             "wired, Wi-Fi signal levels, radio-off, offline and unknown states have distinct network-cell pixels");
+        // These two frames have identical date text and no changing left-side
+        // data. Only the notification state changes in the date's right flank.
+        const LONG center = (bounds.left + bounds.right) / 2;
+        const RECT besideDate{center, bounds.top + 3 * scale, center + 180 * scale, bounds.bottom - 3 * scale};
+        Check(CountDifferingPixels(normal, unavailable, besideDate) > 5,
+            "notification state pixels appear beside the centered date instead of at the far right");
         unsigned coloredTrayPixels = 0;
         for (LONG y = bounds.top + 3 * scale; y < bounds.bottom - 3 * scale; ++y)
-            for (LONG x = bounds.right - 232 * scale; x < bounds.right - 168 * scale; ++x)
+            for (LONG x = bounds.right - 200 * scale; x < bounds.right - 136 * scale; ++x)
             {
                 const auto pixel = PixelAt(normal, x, y);
                 if (*std::max_element(pixel.begin(), pixel.begin() + 3) - *std::min_element(pixel.begin(), pixel.begin() + 3) > 30)

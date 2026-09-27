@@ -83,6 +83,19 @@ private:
     std::map<std::string,PendingValue> pendingValues_;
     std::map<std::string,std::string> sliderTargets_;
     std::map<std::string,std::string> valueControls_;
+    struct ActionBinding { std::string group, target, indicator; };
+    struct PendingAction
+    {
+        std::uint64_t task = 0;
+        std::uint64_t navigation = 0;
+        std::string control, target, topic, collection, device;
+    };
+    std::map<std::string,ActionBinding> actionBindings_;
+    // Visual bindings are rebuilt per page; in-flight guards survive navigation.
+    std::map<std::string,PendingAction> pendingActions_;
+    std::string invokingControl_;
+    std::uint64_t navigation_ = 0;
+    std::optional<widget_runtime::WidgetMediaSessionsDataSnapshot> mediaState_;
     std::set<std::string> subscriptions_;
     std::uint64_t lastStarted_ = 0;
     std::wstring error_;
@@ -92,7 +105,11 @@ private:
     JsonValue Current(const char*) const;
     JsonValue Wifi() const;
     void SyncSubscriptions();
-    void Start(std::string, system_control::Arguments = {});
+    void Start(std::string, system_control::Arguments = {}, std::string_view control = {});
+    void BindAction(std::string control, std::string group, std::string target, std::string indicator = {});
+    void PrunePendingActions();
+    void ApplyPendingActions();
+    void PrepareMedia();
     void OpenSettings(const wchar_t*);
     native_ui::Node& Add(std::string, native_ui::Role, D2D1_RECT_F, std::wstring = {}, std::wstring = {});
     void Command(std::string, std::function<void()>);
@@ -111,7 +128,6 @@ private:
     std::optional<TrayDropTarget> ResolveTrayDrop(std::string_view, D2D1_POINT_2F) const;
     void Radio(std::string_view, D2D1_RECT_F, bool compact);
     void Volume(std::string_view, float&);
-    void Footer(const wchar_t*, float&);
     void Finish(float bodyEnd, bool withMedia, float minimumBodyHeight = 0);
 };
 }
