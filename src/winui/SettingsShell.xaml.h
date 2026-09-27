@@ -7,6 +7,7 @@
 #include "backup_data_page_presenter.h"
 #include "animation_performance_page_presenter.h"
 #include "desktop_page_presenter.h"
+#include "desktop_style_page_presenter.h"
 #include "dock_page_presenter.h"
 #include "status_bar_page_presenter.h"
 #include "general_page_presenter.h"
@@ -235,7 +236,6 @@ private:
     void RenderBreadcrumb();
     void RenderPageCards(bool forcePageCards = false);
     void EnsurePresentersForPage(snowdesktop::SettingsPage page);
-    void RenderDesktopStyleCards();
     void ApplyDesktopStyle(std::string preset, bool animations);
     [[nodiscard]] bool EnsureWidgetSettingsPresenter() noexcept;
     void RenderConditionalPages();
@@ -306,6 +306,7 @@ private:
     std::unique_ptr<snowdesktop::winui::PersonalizationPagePresenter>
         personalizationPage_;
     std::unique_ptr<snowdesktop::winui::DesktopPagePresenter> desktopPage_;
+    std::unique_ptr<snowdesktop::winui::DesktopStylePagePresenter> desktopStylePage_;
     std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
     std::unique_ptr<snowdesktop::winui::StatusBarPagePresenter> statusBarPage_;
     std::unique_ptr<snowdesktop::winui::AnimationPerformancePagePresenter> animationPage_;

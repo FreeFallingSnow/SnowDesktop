@@ -11,6 +11,7 @@ inline bool ApplyDesktopStylePreset(std::wstring_view key, GeneralSettings& gene
 {
     if (key != L"native" && key != L"taskbar-dock" && key != L"island" && key != L"merged" && key != L"side")
         return false;
+    dock.reserveScreenSpace = key == L"side";
     if (key == L"native")
     {
         general.dockEnabled = false;
@@ -26,9 +27,8 @@ inline bool ApplyDesktopStylePreset(std::wstring_view key, GeneralSettings& gene
     {
         general.statusBar.enabled = false;
         dock.suppressSystemTaskbar = false;
-        dock.showOnlyWhenSummoned = true;
+        dock.showOnlyWhenSummoned = false;
         dock.floatingEdgeSwipeEnabled = true;
-        dock.reserveScreenSpace = false;
         return true;
     }
     general.statusBar.enabled = true;
@@ -37,7 +37,6 @@ inline bool ApplyDesktopStylePreset(std::wstring_view key, GeneralSettings& gene
     dock.position = key == L"side" ? DockPosition::Left : DockPosition::Bottom;
     dock.edgeAttached = key != L"island";
     dock.showOnlyWhenSummoned = false;
-    dock.reserveScreenSpace = true;
     dock.allowDesktopContentOverlap = false;
     dock.suppressSystemTaskbar = true;
     return true;

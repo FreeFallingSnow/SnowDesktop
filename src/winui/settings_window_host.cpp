@@ -2322,17 +2322,22 @@ struct SettingsWindowHost::Impl
         };
         dock.invokeHost = [weak](
             std::uint64_t generation,
-            SettingsHostActions::Request request) {
+            SettingsHostActions::Request request) -> SettingsActionResult {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner ||
                 !state->owner->controller ||
                 !state->owner->controller->IsGenerationCurrent(generation))
             {
-                return;
+                return SettingsActionResult::Busy(L"The settings page is no longer active.");
             }
-            const SettingsActionResult result =
+            SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
+            // The optional animation dialog follows an accepted layout commit,
+            // not merely a queued draft or a failed host action.
+            if (result.Succeeded() && request.action == SettingsHostActions::Action::ApplyDesktopStylePreset)
+                result = state->owner->controller->FlushPending();
             state->owner->ShowActionError(result);
+            return result;
         };
         dock.openTaskbarSettings = [weak](std::uint64_t generation) {
             const auto state = weak.lock();

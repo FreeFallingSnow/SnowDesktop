@@ -464,13 +464,13 @@ void TestDesktopStylePresetScope()
         DockPosition barPosition;
     };
     const Expected cases[] = {
-        {L"native", false, false, false, false, true, false, true, true, false,
+        {L"native", false, false, false, false, true, false, false, true, false,
             true, DockPosition::Right, false, DockPosition::Bottom},
-        {L"taskbar-dock", true, false, false, true, false, true, false, true, true,
+        {L"taskbar-dock", true, false, false, true, false, false, false, true, true,
             true, DockPosition::Right, false, DockPosition::Bottom},
-        {L"island", true, true, true, true, false, false, true, false, false,
+        {L"island", true, true, true, true, false, false, false, false, false,
             false, DockPosition::Bottom, false, DockPosition::Top},
-        {L"merged", true, true, true, true, false, false, true, false, false,
+        {L"merged", true, true, true, true, false, false, false, false, false,
             false, DockPosition::Bottom, true, DockPosition::Bottom},
         {L"side", true, true, true, true, false, false, true, false, false,
             false, DockPosition::Left, true, DockPosition::Top},
@@ -542,6 +542,8 @@ void TestDesktopStyleQueuedCommit()
     auto store = std::make_shared<FakeStore>();
     store->loaded.general.dockEnabled = true;
     store->loaded.dock.position = DockPosition::Right;
+    store->loaded.dock.reserveScreenSpace = true;
+    store->loaded.dock.showOnlyWhenSummoned = true;
     FakeHostActions host;
     SettingsController controller(store, &host);
     (void)controller.Initialize();
@@ -564,9 +566,10 @@ void TestDesktopStyleQueuedCommit()
     const auto queued = controller.Snapshot();
     Check(queued->dirtyDomains == domains && queued->pendingCommitDomains == domains &&
             queued->pendingPreviewDomains == SettingsDomain::None && scheduled == 1 &&
+            !queued->values.dock.reserveScreenSpace && !queued->values.dock.showOnlyWhenSummoned &&
             host.commitCount == 0 && host.invokeCount == 0 && host.previewCount == 0 &&
             store->generalSaveCount == 0 && store->dockSaveCount == 0,
-        "preset acceptance queues one joint commit without claiming host application or persistence");
+        "switching from a reserved summon-only Dock queues the visible non-reserving layout in one joint commit");
     Check(queued->revision == original->revision + 1 &&
             queued->domainRevisions.general == queued->revision &&
             queued->domainRevisions.dock == queued->revision &&

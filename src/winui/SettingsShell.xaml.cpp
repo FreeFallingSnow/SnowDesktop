@@ -452,6 +452,16 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::AppearanceIconBeautification:
         ensureDesktop();
         break;
+    case SettingsPage::DesktopStyle:
+        if (!desktopStylePage_)
+        {
+            desktopStylePage_ = std::make_unique<snowdesktop::winui::DesktopStylePagePresenter>(
+                localize, cardStyle(), [weak = get_weak()](std::string preset) {
+                    if (const auto shell = weak.get()) shell->ApplyDesktopStyle(std::move(preset), false);
+                });
+            desktopStylePage_->SetActions(dockPageActions_);
+        }
+        break;
     case SettingsPage::Dock:
         ensureGeneral();
         ensureDock();
@@ -569,6 +579,8 @@ void SettingsShell::Close() noexcept
     dockPage_.reset();
     if (statusBarPage_) statusBarPage_->Close();
     statusBarPage_.reset();
+    if (desktopStylePage_) desktopStylePage_->Close();
+    desktopStylePage_.reset();
     animationPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
@@ -676,6 +688,8 @@ void SettingsShell::ReleaseSessionResources() noexcept
     dockPage_.reset();
     if (statusBarPage_) statusBarPage_->Close();
     statusBarPage_.reset();
+    if (desktopStylePage_) desktopStylePage_->Close();
+    desktopStylePage_.reset();
     animationPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
@@ -764,6 +778,7 @@ void SettingsShell::RefreshLocalizedText()
     if (dockPage_)
         dockPage_->RefreshLocalizedText();
     if (statusBarPage_) statusBarPage_->RefreshLocalizedText();
+    if (desktopStylePage_) desktopStylePage_->RefreshLocalizedText();
     if (animationPage_)
         animationPage_->RefreshLocalizedText();
     if (homeAboutPage_)
@@ -946,6 +961,7 @@ void SettingsShell::SetDockPageActions(
 {
     dockPageActions_ = std::move(actions);
     if (statusBarPage_) statusBarPage_->SetActions(dockPageActions_);
+    if (desktopStylePage_) desktopStylePage_->SetActions(dockPageActions_);
     if (dockPage_)
         dockPage_->SetActions(dockPageActions_);
     if (animationPage_)
@@ -1245,6 +1261,7 @@ void SettingsShell::SuspendInteraction() noexcept
             animationPage_->Deactivate();
         if (calendarPage_) calendarPage_->Deactivate();
         if (statusBarPage_) statusBarPage_->Deactivate();
+        if (desktopStylePage_) desktopStylePage_->Deactivate();
         if (contextMenuPage_) contextMenuPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
@@ -1308,6 +1325,7 @@ bool SettingsShell::ApplySnapshot(
         if (dockPage_)
             dockPage_->ApplySnapshot(snapshot);
         if (statusBarPage_) statusBarPage_->ApplySnapshot(snapshot);
+        if (desktopStylePage_) desktopStylePage_->ApplySnapshot(snapshot);
         if (animationPage_)
             animationPage_->ApplySnapshot(snapshot);
         if (homeAboutPage_)
@@ -2021,7 +2039,7 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg",
             L"\xE793"},
         IconDescriptor{DesktopStyleItem(),
-            L"ms-appx:///Assets/Settings/Icons/desktop.svg", L"\xE7F4"},
+            L"ms-appx:///Assets/Settings/Icons/desktop-style.svg", L"\xE7F4"},
         IconDescriptor{DesktopItem(),
             L"ms-appx:///Assets/Settings/Icons/desktop.svg", L"\xE7F4"},
         IconDescriptor{PagesItem(),
@@ -2149,7 +2167,26 @@ void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations)
             : snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
         request.value = winrt::to_hstring(preset).c_str();
         request.boolValue = needsConfirmation;
-        shell->dockPageActions_.invokeHost(generation, std::move(request));
+        const auto invokeHost = shell->dockPageActions_.invokeHost;
+        const auto result = invokeHost(generation, std::move(request));
+        if (!result.Succeeded() || animations || shell->closed_ || !shell->sessionActive_ ||
+            shell->navigation_.Generation() != generation ||
+            shell->navigation_.Route().page != SettingsPage::DesktopStyle ||
+            (preset != "island" && preset != "merged" && preset != "side"))
+            return;
+        SettingsShellDialogRequest recommendation;
+        recommendation.generation = generation;
+        recommendation.title = shell->Localize("settings.desktopStyle.animationPrompt.title");
+        recommendation.message = shell->Localize("settings.desktopStyle.animationPrompt.description") + L"\n\n" +
+            shell->Localize("settings.desktopStyle." + preset + ".animations");
+        recommendation.primaryButtonText = shell->Localize("settings.desktopStyle.applyAnimations");
+        recommendation.closeButtonText = shell->Localize("settings.desktopStyle.animationPrompt.keep");
+        shell->ShowConfirmation(std::move(recommendation), [weak, generation, preset](bool recommended) {
+            if (const auto current = weak.get(); recommended && current && !current->closed_ &&
+                current->sessionActive_ && current->navigation_.Generation() == generation &&
+                current->navigation_.Route().page == SettingsPage::DesktopStyle)
+                current->ApplyDesktopStyle(preset, true);
+        });
     };
     if (needsConfirmation)
     {
@@ -2163,76 +2200,6 @@ void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations)
         ShowConfirmation(std::move(request), invoke);
     }
     else invoke(true);
-}
-
-void SettingsShell::RenderDesktopStyleCards()
-{
-    for (const std::string preset : {"native", "taskbar-dock", "island", "merged", "side"})
-    {
-        const std::string prefix = "settings.desktopStyle." + preset;
-        const std::string focusId = "desktopStyle." + preset;
-        auto card = CreatePlaceholderCard(focusId, prefix + ".title", prefix + ".description");
-        card.IsTabStop(false);
-        const auto content = card.Child().as<muxc::StackPanel>();
-        content.Spacing(12);
-        muxc::Expander details;
-        details.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        details.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        details.Header(winrt::box_value(Localize("settings.desktopStyle.changes")));
-        muxc::StackPanel detailContent;
-        detailContent.Spacing(8);
-        muxc::TextBlock changes;
-        changes.Text(Localize(prefix + ".changes"));
-        changes.TextWrapping(mux::TextWrapping::Wrap);
-        detailContent.Children().Append(changes);
-        for (const auto page : {SettingsPage::Dock, SettingsPage::Taskbar, SettingsPage::StatusBar})
-        {
-            muxc::HyperlinkButton link;
-            link.HorizontalAlignment(mux::HorizontalAlignment::Left);
-            link.Content(winrt::box_value(PageTitleText(page)));
-            link.Click([weak = get_weak(), page](const auto&, const auto&) {
-                if (const auto shell = weak.get(); shell && !shell->closed_)
-                    shell->RequestRoute(SettingsRoute::ForPage(page));
-            });
-            detailContent.Children().Append(link);
-        }
-        details.Content(detailContent);
-        content.Children().Append(details);
-        muxc::Grid buttons;
-        buttons.ColumnSpacing(8);
-        const bool hasRecommendedAnimations = preset == "island" || preset == "merged" || preset == "side";
-        for (int column = 0; column != (hasRecommendedAnimations ? 2 : 1); ++column)
-        {
-            muxc::ColumnDefinition definition;
-            definition.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
-            buttons.ColumnDefinitions().Append(definition);
-            const bool animations = column == 1;
-            muxc::Button button;
-            button.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-            muxc::TextBlock label;
-            const auto title = Localize(animations ? "settings.desktopStyle.applyAnimations" : "settings.desktopStyle.applyLayout");
-            label.Text(title);
-            label.TextWrapping(mux::TextWrapping::Wrap);
-            button.Content(label);
-            muxa::AutomationProperties::SetName(button, Localize(prefix + ".title") + L": " + title);
-            button.Click([weak = get_weak(), preset, animations](const auto&, const auto&) {
-                if (const auto shell = weak.get()) shell->ApplyDesktopStyle(preset, animations);
-            });
-            muxc::Grid::SetColumn(button, column);
-            buttons.Children().Append(button);
-            RegisterFocusTarget(focusId + (animations ? ".animations" : ""), button);
-            if (preset == "native" && !animations) RegisterFocusTarget("desktopStyle", button);
-        }
-        content.Children().Append(buttons);
-        if (hasRecommendedAnimations)
-        {
-            muxc::TextBlock animationHint;
-            animationHint.Text(Localize(prefix + ".animations"));
-            animationHint.TextWrapping(mux::TextWrapping::Wrap);
-            content.Children().Append(animationHint);
-        }
-        PageCards().Children().Append(card);
-    }
 }
 
 void SettingsShell::RenderPageCards(bool forcePageCards)
@@ -2301,6 +2268,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         animationPage_->Deactivate();
     if (calendarPage_ && pageRoute.page != SettingsPage::Calendar) calendarPage_->Deactivate();
     if (statusBarPage_ && pageRoute.page != SettingsPage::StatusBar) statusBarPage_->Deactivate();
+    if (desktopStylePage_ && pageRoute.page != SettingsPage::DesktopStyle) desktopStylePage_->Deactivate();
     if (contextMenuPage_ && pageRoute.page != SettingsPage::ContextMenu) contextMenuPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
         (renderedPageRoute_->page == SettingsPage::Home ||
@@ -2377,7 +2345,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     switch (navigation_.Route().page)
     {
     case SettingsPage::DesktopStyle:
-        RenderDesktopStyleCards();
+        if (desktopStylePage_)
+        {
+            PageCards().Children().Append(desktopStylePage_->Content());
+            desktopStylePage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
+                RegisterFocusTarget(std::move(id), element);
+            });
+            desktopStylePage_->Activate();
+        }
         break;
     case SettingsPage::ContextMenu:
         if (personalizationPage_)
@@ -2825,6 +2800,8 @@ void SettingsShell::FocusPendingTarget()
         return;
     }
     const auto& focusId = navigation_.Route().focusId;
+    if (navigation_.Route().page == SettingsPage::DesktopStyle && desktopStylePage_)
+        desktopStylePage_->Activate(focusId);
     if (navigation_.Route().page == SettingsPage::General &&
         focusId.starts_with("start."))
     {

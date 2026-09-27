@@ -33,7 +33,7 @@ struct DockPageActions
         DockEdit edit)> updateDock;
 
     /** Routes non-setting work through SettingsHostActions. */
-    std::function<void(
+    std::function<SettingsActionResult(
         std::uint64_t generation,
         SettingsHostActions::Request request)> invokeHost;
 

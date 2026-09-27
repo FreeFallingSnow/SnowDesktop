@@ -370,6 +370,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
     src/winui/status_bar_page_presenter.cpp
+    src/winui/desktop_style_page_presenter.cpp
+    src/winui/desktop_style_page_presenter.h
     src/native_ui_scene.cpp
     src/native_ui_scene.h
     src/system_panel.cpp
