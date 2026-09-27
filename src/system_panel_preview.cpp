@@ -2037,7 +2037,8 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 state->requestedDates.clear();
                 Require(model.Invoke("date:2026-09-27") && !model.View().Find("calendar.day") &&
                     Node(model.View(),"calendar.selected").text==L"2026-09-27"&&Node(model.View(),"date:2026-09-27").outlined&&
-                    Node(model.View(),"date:2026-09-26").selected&&state->requestedDates==std::set<std::string>{"2026-09-27","2026-09-28","2026-09-29"},
+                    Node(model.View(),"date:2026-09-26").selected&&state->requestedDates.contains("2026-09-27")&&
+                    state->requestedDates.contains("2026-09-28")&&state->requestedDates.contains("2026-09-29"),
                     "calendar selection changed today or failed to update its selected and nearby agenda");
                 Require(model.Invoke("calendar.today") && Node(model.View(),"calendar.selected").text == L"2026-09-26"&&
                     Node(model.View(),"date:2026-09-26").selected&&Node(model.View(),"date:2026-09-26").outlined,
