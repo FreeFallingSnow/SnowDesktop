@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "status_bar_page_presenter.h"
 #include "settings_presenter_controls.h"
+#include "../status_bar_shell_shortcut.h"
 #include "panel_appearance_editor.h"
 #include "../status_bar_appearance.h"
 
@@ -15,12 +16,13 @@ struct StatusBarPagePresenter::Impl
     DockPageActions actions;
     muxc::StackPanel root, basic, leftItems, infoItems;
     muxc::Expander leftSection, infoSection;
-    muxc::ComboBox edge, monitors;
+    muxc::ComboBox edge, monitors, clockPanel, controlPanel;
     muxc::Slider scale;
     muxc::NumberBox scaleNumber;
     muxc::Button scaleReset;
-    SettingRow edgeRow, monitorsRow, scaleRow;
-    muxc::TextBlock defaultThemeTitle, rulesTitle, rulesHint;
+    SettingRow edgeRow, monitorsRow, scaleRow, clockPanelRow, controlPanelRow;
+    muxc::TextBlock defaultThemeTitle, rulesTitle, rulesHint, behaviorTitle, behaviorHint;
+    const bool systemQuickSettings = StatusBarSupportsSystemQuickSettings();
     struct ThemeControl
     {
         muxc::StackPanel root;
@@ -199,10 +201,31 @@ struct StatusBarPagePresenter::Impl
         leftSection.Content(leftItems); infoSection.Content(infoItems);
         ToggleRow(leftItems, "statusBar.menu", "statusBar.menu", &StatusBarSettings::menu);
         ToggleRow(leftItems, "statusBar.quickSearch", "statusBar.quickSearch", &StatusBarSettings::quickSearch);
+        ToggleRow(leftItems, "statusBar.taskView", "statusBar.taskView", &StatusBarSettings::taskView);
         ToggleRow(infoItems, "statusBar.cpu", "statusBar.cpu", &StatusBarSettings::cpu);
         ToggleRow(infoItems, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory);
         ToggleRow(infoItems, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu);
         ToggleRow(infoItems, "statusBar.traffic", "statusBar.traffic", &StatusBarSettings::traffic);
+        auto behavior = Card(style);
+        Title(behaviorTitle); behavior.Children().Append(behaviorTitle);
+        clockPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        controlPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        clockPanelRow.Initialize(clockPanel); controlPanelRow.Initialize(controlPanel);
+        behavior.Children().Append(clockPanelRow.root);
+        if (systemQuickSettings) behavior.Children().Append(controlPanelRow.root);
+        behaviorHint.TextWrapping(mux::TextWrapping::Wrap); behaviorHint.Opacity(.72);
+        behavior.Children().Append(behaviorHint);
+        const auto clockSelection = clockPanel.SelectionChanged([this](const auto&, const auto&) {
+            const auto selected = clockPanel.SelectedIndex();
+            if (selected >= 0 && selected <= 1) Emit([selected](auto& settings) { settings.clockSystemPanel = selected == 1; });
+        });
+        revoke.push_back([control = clockPanel, clockSelection] { control.SelectionChanged(clockSelection); });
+        const auto controlSelection = controlPanel.SelectionChanged([this](const auto&, const auto&) {
+            const auto selected = controlPanel.SelectedIndex();
+            if (systemQuickSettings && selected >= 0 && selected <= 1)
+                Emit([selected](auto& settings) { settings.controlCenterSystemPanel = selected == 1; });
+        });
+        revoke.push_back([control = controlPanel, controlSelection] { control.SelectionChanged(controlSelection); });
         auto appearance = Card(style);
         Title(defaultThemeTitle); appearance.Children().Append(defaultThemeTitle);
         InitializeTheme(defaultTheme, appearance);
@@ -262,6 +285,8 @@ struct StatusBarPagePresenter::Impl
         syncing = true;
         for (auto& toggle : toggles) toggle->control.IsOn(value.*(toggle->member));
         edge.SelectedIndex(static_cast<int>(value.position)); monitors.SelectedIndex(static_cast<int>(value.monitorScope));
+        clockPanel.SelectedIndex(value.clockSystemPanel ? 1 : 0);
+        controlPanel.SelectedIndex(systemQuickSettings && value.controlCenterSystemPanel ? 1 : 0);
         if (!scaleDirty)
         {
             const double percent = presenter_controls::QuantizeNumericValue(value.scale * 100., 75, 300, 5);
@@ -295,6 +320,16 @@ struct StatusBarPagePresenter::Impl
         for (auto& toggle : toggles) toggle->row.SetText(L(toggle->key));
         leftSection.Header(winrt::box_value(L("statusBar.leftItems")));
         infoSection.Header(winrt::box_value(L("statusBar.information")));
+        behaviorTitle.Text(L("statusBar.clickBehavior"));
+        behaviorHint.Text(L("statusBar.systemPanelPlacement"));
+        clockPanelRow.SetText(L("statusBar.clockPanel")); controlPanelRow.SetText(L("statusBar.controlCenterPanel"));
+        mux::Automation::AutomationProperties::SetName(clockPanel, clockPanelRow.label.Text());
+        mux::Automation::AutomationProperties::SetName(controlPanel, controlPanelRow.label.Text());
+        clockPanel.Items().Clear(); controlPanel.Items().Clear();
+        clockPanel.Items().Append(winrt::box_value(L("statusBar.panelCustom")));
+        clockPanel.Items().Append(winrt::box_value(L(systemQuickSettings ? "statusBar.panelSystemCalendar" : "statusBar.panelSystemDateTime")));
+        controlPanel.Items().Append(winrt::box_value(L("statusBar.panelCustom")));
+        if (systemQuickSettings) controlPanel.Items().Append(winrt::box_value(L("statusBar.panelSystemControls")));
         presenter_controls::ConfigureRestoreDefaultButton(scaleReset, L("app.settings.restore_default"));
         mux::Automation::AutomationProperties::SetName(scale, L("statusBar.scale"));
         mux::Automation::AutomationProperties::SetName(scaleNumber, L("statusBar.scale"));
@@ -359,6 +394,8 @@ void StatusBarPagePresenter::RegisterFocusTargets(const std::function<void(std::
 {
     target("statusBar.position", impl_->edgeRow.root); target("statusBar.monitor", impl_->monitorsRow.root);
     target("statusBar.scale", impl_->scaleRow.root);
+    target("statusBar.clockPanel", impl_->clockPanelRow.root);
+    if (impl_->systemQuickSettings) target("statusBar.controlCenterPanel", impl_->controlPanelRow.root);
     target("statusBar.theme", impl_->defaultTheme.row.root);
     for (auto& rule : impl_->rules) target(rule->focus, rule->enabledRow.root);
     for (auto& toggle : impl_->toggles) target(toggle->focus, toggle->row.root);

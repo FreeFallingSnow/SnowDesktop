@@ -6,6 +6,7 @@ namespace snowdesktop::status_bar_glyphs
 // microsoft/fluentui-system-icons@21d5d02f724be2aaf586564775fff73a18a76eb6.
 inline constexpr wchar_t kMenu[] = L"\uF132"; // apps_16_regular
 inline constexpr wchar_t kSearch[] = L"\uEA7C"; // search_16_regular
+inline constexpr wchar_t kTaskView[] = L"\uF125"; // app_recent_24_regular
 // Fluent's numeric suffix counts removed arcs: wifi_1 is the strongest.
 inline constexpr wchar_t kWifi[] = L"\uF8AC"; // wifi_1_20_regular
 inline constexpr wchar_t kWifiLow[] = L"\uF8B2"; // wifi_4_20_regular

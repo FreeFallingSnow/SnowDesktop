@@ -1,4 +1,5 @@
 #include "settings_controller.h"
+#include "desktop_style_presets.h"
 
 #include <array>
 #include <stdexcept>
@@ -548,6 +549,27 @@ SettingsActionResult SettingsController::InvokeHostAction(
     {
         return ExternalReplacementPendingResult();
     }
+    if (request.action == SettingsHostActions::Action::ApplyDesktopStylePreset ||
+        request.action == SettingsHostActions::Action::ApplyDesktopStyleAnimations)
+    {
+        auto general = values_.general;
+        auto dock = values_.dock;
+        const bool layout = request.action == SettingsHostActions::Action::ApplyDesktopStylePreset;
+        const bool valid = layout ? ApplyDesktopStylePreset(request.value, general, dock)
+            : ApplyDesktopStyleAnimations(request.value, dock);
+        if (!valid) return SettingsActionResult::Failure(L"Unknown desktop style preset.");
+        if (layout && values_.general.dockEnabled && !general.dockEnabled && !request.boolValue)
+            return SettingsActionResult::Busy(L"Confirm before disabling Dock.");
+        systemTaskbarAutoHideEdited_ = systemTaskbarAutoHideEdited_ ||
+            dock.systemTaskbarAutoHide != values_.dock.systemTaskbarAutoHide;
+        values_.general = std::move(general);
+        values_.dock = std::move(dock);
+        const auto domains = layout ? SettingsDomain::General | SettingsDomain::Dock : SettingsDomain::Dock;
+        // One publication and one commit, without an intermediate mixed layout.
+        pendingPreviewDomains_ &= ~domains;
+        MarkChanged(domains, SettingsUpdateMode::Commit);
+        return SettingsActionResult::Success(domains);
+    }
     if (!hostActions_)
     {
         return SettingsActionResult::Failure(
@@ -663,8 +685,10 @@ void SettingsController::MarkChanged(
     if (HasUpdateFlag(mode, SettingsUpdateMode::Commit))
         pendingCommitDomains_ |= domain;
     ++revision_;
-    domainRevisions_[DomainIndex(domain)] = revision_;
-    if (domain == SettingsDomain::Dock)
+    for (auto part : {SettingsDomain::Personalization, SettingsDomain::Dock,
+        SettingsDomain::Navigation, SettingsDomain::General, SettingsDomain::Category, SettingsDomain::Desktop})
+        if (HasSettingsDomain(domain, part)) domainRevisions_[DomainIndex(part)] = revision_;
+    if (HasSettingsDomain(domain, SettingsDomain::Dock))
         systemTaskbarRevision_ = revision_;
     PublishSnapshot();
     SchedulePendingWorkIfNeeded(previouslyPending);

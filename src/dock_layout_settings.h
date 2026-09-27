@@ -39,6 +39,7 @@ struct DockLayoutSettings
     bool showFrequentItems = false;
     bool keepWhenDesktopHidden = false;
     bool allowDesktopContentOverlap = false;
+    bool reserveScreenSpace = false;
     bool showOnlyWhenSummoned = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;

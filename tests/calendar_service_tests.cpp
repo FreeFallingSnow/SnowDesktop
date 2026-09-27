@@ -1,5 +1,6 @@
 #include "calendar_service.h"
 #include "calendar_display.h"
+#include "l10n.h"
 #include "system_calendar_editor_state.h"
 
 #include <windows.h>
@@ -81,8 +82,34 @@ void CheckNativeCalendarEditor(const std::filesystem::path& root)
 }
 }
 
-int main()
+int wmain(int argc, wchar_t* argv[])
 {
+    if (argc != 2)
+    {
+        std::cerr << "usage: SnowDesktopCalendarServiceTests <project-root>\n";
+        return 2;
+    }
+    auto& locale = Locale::Instance();
+    locale.Init((std::filesystem::path(argv[1]) / L"lang").c_str());
+    Expect(!locale.GetAvailableLanguages().empty(), "calendar label tests load the real language catalogs");
+    const auto rocLabel = [](const std::string& language) {
+        for (const auto& option : snowdesktop::calendar::CalendarOptions(language))
+            if (option.id == "roc") return option.label;
+        return std::wstring{};
+    };
+    locale.SetLanguage("en-US");
+    Expect(rocLabel("zh-CN") == L"民国纪年（公历）",
+        "ROC calendar name describes its era and Gregorian dates in simplified Chinese");
+    for (const auto& language : locale.GetAvailableLanguages())
+    {
+        locale.SetLanguage(language.code.c_str());
+        const std::wstring expected = locale.TrW("settings.calendar.rocName");
+        locale.SetLanguage(language.code == "en-US" ? "zh-CN" : "en-US");
+        const std::string active = locale.GetLanguage();
+        Expect(rocLabel(language.code) == expected && expected != L"settings.calendar.rocName",
+            "calendar options use the requested language rather than the active UI language");
+        Expect(locale.GetLanguage() == active, "calendar option lookup must not switch the active UI catalog");
+    }
     const auto root =
         std::filesystem::temp_directory_path() /
         (L"SnowDesktopCalendarServiceTests-" +

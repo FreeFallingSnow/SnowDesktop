@@ -47,6 +47,8 @@ int main()
             "new and migrated settings must keep the bar off and follow the global theme");
         Check(!firstEnable.noWindow.enabled && !firstEnable.maximizedWindow.enabled,
             "legacy status bar settings without scene rules must retain the default appearance in every scene");
+        Check(firstEnable.taskView && !firstEnable.clockSystemPanel && !firstEnable.controlCenterSystemPanel,
+            "task view starts visible while existing clock and controls retain the SnowDesktop panels");
         JsonValue legacyJson; StatusBarSettings legacy;
         ParseJson("{\"theme\":{\"mode\":4,\"customized\":true,\"appearance\":{\"backgroundR\":0.125,\"opacity\":0.42}},"
             "\"pinnedTrayItems\":[\"guid:legacy\"]}", legacyJson);
@@ -79,7 +81,9 @@ int main()
         value.statusBar.monitorScope = DockMonitorScope::All;
         value.statusBar.scale = 1.5f;
         value.statusBar.menu = false;
-        value.statusBar.leftOrder = {"quickSearch", "menu"};
+        value.statusBar.taskView = false;
+        value.statusBar.clockSystemPanel = value.statusBar.controlCenterSystemPanel = true;
+        value.statusBar.leftOrder = {"quickSearch", "menu", "taskView"};
         std::reverse(value.statusBar.rightOrder.begin(), value.statusBar.rightOrder.end());
         value.statusBar.pinnedTrayItems = {"C:\\测试\\app.exe|42", "guid:\"test\""};
         value.statusBar.trayOrder = {"guid:\"test\"", "C:\\测试\\app.exe|42"};
@@ -181,7 +185,7 @@ int main()
         value.statusBar.leftOrder = {"quickSearch", "unknown", "quickSearch"};
         value.statusBar.rightOrder = {"volume", "clock", "menu", "volume"};
         NormalizeStatusBarSettings(value.statusBar);
-        Check(value.statusBar.leftOrder == std::vector<std::string>{"quickSearch", "menu"} &&
+        Check(value.statusBar.leftOrder == std::vector<std::string>{"quickSearch", "menu", "taskView"} &&
                 value.statusBar.rightOrder.front() == "volume" && value.statusBar.rightOrder.size() == 9 &&
                 std::find(value.statusBar.rightOrder.begin(), value.statusBar.rightOrder.end(), "clock") == value.statusBar.rightOrder.end(),
             "saved bar order excludes invalid or duplicate items and restores supported missing entries");

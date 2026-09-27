@@ -210,7 +210,7 @@ struct SystemPanel::Impl
         if(modal){pending=std::move(request);return;}
         if(!Ensure())return;current=std::move(request);const auto& r=*current;monitor=MonitorFromRect(&r.anchor,MONITOR_DEFAULTTONEAREST);scale=GetDpiForWindow(r.owner)/96.f;
         auto source=LiveSystemPanelSource(r.data);source.calendar=calendar;source.tray=[service=r.tray]{return service?service->Current():tray::Snapshot{};};
-        source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
+        if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
         tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};scrollbarDragging=false;paintDirty=true;
         model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);if(!r.confirmPower.empty())FocusControlPage(false);SetTimer(window,1,500,nullptr);

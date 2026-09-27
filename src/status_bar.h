@@ -24,7 +24,7 @@ struct TrayDragFeedback
     std::function<void(std::string_view, POINT)> move;
     std::function<void()> end;
 };
-enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter };
+enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar };
 struct StatusBarMonitor
 {
     std::wstring id;
@@ -96,6 +96,7 @@ public:
     // Actual panel visibility, not the last click; monitor-local and UI-thread only.
     void SetTrayExpanded(HMONITOR monitor, bool expanded);
     std::optional<RECT> MergedDockArea(HMONITOR monitor) const;
+    bool MergesDock(HMONITOR monitor) const;
     std::optional<RECT> MergedStripBounds(HMONITOR monitor) const;
     void SetDockChanged(std::function<void(bool geometry)> changed);
     // Application-owned window observations; must not enable taskbar effects.

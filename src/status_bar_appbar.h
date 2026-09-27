@@ -154,6 +154,40 @@ inline RECT ConstrainStatusBarWorkArea(RECT area, RECT reserved, UINT edge)
     return area;
 }
 
+// Restore only a contiguous owned strip adjoining this exact work-area edge.
+// An inner AppBar, another monitor, or an already-restored area must stay put.
+inline RECT RestoreAppBarWorkArea(RECT work, RECT reserved, UINT edge)
+{
+    if (IsRectEmpty(&work) || IsRectEmpty(&reserved)) return work;
+    const bool spansWidth = reserved.left <= work.left && reserved.right >= work.right;
+    const bool spansHeight = reserved.top <= work.top && reserved.bottom >= work.bottom;
+    switch (edge)
+    {
+    case ABE_TOP: if (spansWidth && work.top == reserved.bottom) work.top = reserved.top; break;
+    case ABE_BOTTOM: if (spansWidth && work.bottom == reserved.top) work.bottom = reserved.bottom; break;
+    case ABE_LEFT: if (spansHeight && work.left == reserved.right) work.left = reserved.left; break;
+    case ABE_RIGHT: if (spansHeight && work.right == reserved.left) work.right = reserved.right; break;
+    }
+    return work;
+}
+
+// Record the actual edge delta, not the Shell rectangle's entire thickness:
+// the original work area may already exclude part or all of that rectangle.
+inline RECT AppBarReservedWorkArea(RECT before, RECT after, UINT edge)
+{
+    if (IsRectEmpty(&before)) return {};
+    RECT reserved = before;
+    switch (edge)
+    {
+    case ABE_TOP: reserved.bottom = (std::clamp)(after.top, before.top, before.bottom); break;
+    case ABE_BOTTOM: reserved.top = (std::clamp)(after.bottom, before.top, before.bottom); break;
+    case ABE_LEFT: reserved.right = (std::clamp)(after.left, before.left, before.right); break;
+    case ABE_RIGHT: reserved.left = (std::clamp)(after.right, before.left, before.right); break;
+    default: return {};
+    }
+    return IsRectEmpty(&reserved) ? RECT{} : reserved;
+}
+
 inline void ConstrainHiddenStatusBarPosition(bool hidden, WINDOWPOS& position)
 {
     if (!hidden) return;

@@ -235,6 +235,8 @@ public:
         SetDebugProfileEnabled,
         SetDebugDesktopDirectory,
         ClearDebugProfile,
+        ApplyDesktopStylePreset,
+        ApplyDesktopStyleAnimations,
     };
 
     struct Request

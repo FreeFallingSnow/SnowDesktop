@@ -33,6 +33,9 @@ public:
 
     const char* Tr(const char* key) const;
     const wchar_t* TrW(const char* key) const;
+    // Resolve an explicit language without changing the active UI catalog or
+    // its cached strings. The returned value owns its text.
+    std::wstring TrWForLanguage(const char* key, const std::string& language) const;
     bool IsTranslationValue(const char* key, const std::wstring& value) const;
     std::vector<std::wstring> TranslationValues(const char* key) const;
     std::string TrFormat(const char* key,

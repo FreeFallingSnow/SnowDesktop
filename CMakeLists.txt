@@ -167,6 +167,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_dock_drop.cpp
     src/app/app_dock_launch.cpp
     src/app/app_dock_layout.cpp
+    src/dock_appbar.cpp
+    src/dock_appbar.h
     src/app/app_status_bar.cpp
     src/status_bar_view.cpp
     src/status_bar_view.h
@@ -1463,8 +1465,10 @@ if (BUILD_TESTING)
             tests/calendar_service_tests.cpp
             src/calendar_service.cpp
     src/calendar_display.cpp
+            src/l10n.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS service)
 
     snowdesktop_add_test(

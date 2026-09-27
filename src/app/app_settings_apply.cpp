@@ -1081,7 +1081,9 @@ public:
 
         DockSettings requestedDockSettings = snapshot.values.dock;
         NormalizeDockSettings(requestedDockSettings);
-        if (HasSettingsDomain(domains, SettingsDomain::Dock))
+        const bool dockCommitted = HasSettingsDomain(domains, SettingsDomain::Dock);
+        const bool generalCommitted = HasSettingsDomain(domains, SettingsDomain::General);
+        if (dockCommitted)
         {
             const bool autoHideChanged =
                 app_.dockSettings_.systemTaskbarAutoHide !=
@@ -1111,6 +1113,16 @@ public:
             }
         }
 
+        const bool dockEnabledChanged = generalCommitted &&
+            app_.generalSettings_.dockEnabled != snapshot.values.general.dockEnabled;
+        const bool languageChanged = generalCommitted && std::strcmp(
+            app_.generalSettings_.language, snapshot.values.general.language) != 0;
+        // Publish both domain mirrors before any layout, surface or hotkey
+        // observes a desktop-style preset. Shell request rejection above must
+        // still leave both mirrors untouched.
+        if (dockCommitted) app_.dockSettings_ = requestedDockSettings;
+        if (generalCommitted) app_.generalSettings_ = snapshot.values.general;
+
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
@@ -1121,35 +1133,32 @@ public:
             app_.RefreshSystemTaskbarAppearance(false);
             app_.InvalidateAllWidgetSlots();
         }
-        if (HasSettingsDomain(domains, SettingsDomain::Dock))
+        if (dockCommitted)
         {
-            app_.dockSettings_ = requestedDockSettings;
             app_.ApplyPersistentDockHostAppearance();
-            app_.SyncStatusBar();
-            app_.ApplyAnimationPreferences();
-            if (app_.widgetEngine_)
-                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
-            app_.ApplyFloatingDockHotkey();
-            app_.UpdateLayoutWorkArea();
-            app_.LayoutItems();
-            app_.SaveLayoutSlots();
-            app_.InvalidateDragStaticScene();
-            app_.RefreshSystemTaskbarAppearance(true);
+            // A combined commit runs these shared effects in General below,
+            // including Dock entry restoration before the single layout pass.
+            if (!generalCommitted)
+            {
+                app_.SyncStatusBar();
+                app_.ApplyAnimationPreferences();
+                if (app_.widgetEngine_)
+                    app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
+                app_.ApplyFloatingDockHotkey();
+                app_.UpdateLayoutWorkArea();
+                app_.LayoutItems();
+                app_.SaveLayoutSlots();
+                app_.InvalidateDragStaticScene();
+                app_.RefreshSystemTaskbarAppearance(true);
+            }
         }
         if (HasSettingsDomain(domains, SettingsDomain::Navigation))
         {
             app_.navigationSettings_ = snapshot.values.navigation;
             app_.ApplyNavigationHotkey();
         }
-        if (HasSettingsDomain(domains, SettingsDomain::General))
+        if (generalCommitted)
         {
-            const bool dockEnabledChanged =
-                app_.generalSettings_.dockEnabled !=
-                    snapshot.values.general.dockEnabled;
-            const bool languageChanged = std::strcmp(
-                app_.generalSettings_.language,
-                snapshot.values.general.language) != 0;
-            app_.generalSettings_ = snapshot.values.general;
             app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
@@ -1170,8 +1179,11 @@ public:
                     (void)app_.settingsController_->SynchronizeDesktop(
                         std::move(desktop));
                 }
+            }
+            if (dockCommitted || dockEnabledChanged)
+            {
                 app_.UpdateLayoutWorkArea();
-                if (!app_.generalSettings_.dockEnabled)
+                if (dockEnabledChanged && !app_.generalSettings_.dockEnabled)
                     app_.RestoreDockEntriesToDesktop();
                 app_.LayoutItems();
                 app_.SaveLayoutSlots();
@@ -1181,6 +1193,8 @@ public:
             app_.ApplyCollectionPopupAppearance();
             if (languageChanged)
                 app_.ApplyLanguageChange();
+            if (dockCommitted)
+                app_.RefreshSystemTaskbarAppearance(true);
         }
         if (HasSettingsDomain(domains, SettingsDomain::Category))
         {
@@ -1222,9 +1236,10 @@ public:
         const snowdesktop::SettingsRoute& route) override
     {
         // Windows owns these taskbar values. Reconcile them whenever the
-        // already-open settings window enters the Taskbar route; reopening the
-        // window is not the only path that can expose this page.
-        if (route.page == snowdesktop::SettingsPage::Taskbar)
+        // already-open settings window enters either route that exposes them;
+        // reopening the window is not the only way to reveal those controls.
+        if (route.page == snowdesktop::SettingsPage::Taskbar ||
+            route.page == snowdesktop::SettingsPage::DesktopStyle)
             app_.SyncSystemTaskbarSettingsFromWindows();
         return snowdesktop::SettingsActionResult::Success();
     }

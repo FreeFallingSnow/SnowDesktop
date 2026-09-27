@@ -1049,6 +1049,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.keepWhenDesktopHidden);
     ReadBoolField(text, "allowDesktopContentOverlap",
         settings.allowDesktopContentOverlap);
+    ReadBoolField(text, "reserveScreenSpace", settings.reserveScreenSpace);
     bool loadedLegacyAutoHide = false;
     if (!ReadBoolField(text, "showOnlyWhenSummoned",
             settings.showOnlyWhenSummoned))
@@ -1179,6 +1180,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << ",\n";
     file << "  \"showOnlyWhenSummoned\": "
          << (settings.showOnlyWhenSummoned ? "true" : "false") << ",\n";
+    file << "  \"reserveScreenSpace\": "
+         << (settings.reserveScreenSpace ? "true" : "false") << ",\n";
     file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";

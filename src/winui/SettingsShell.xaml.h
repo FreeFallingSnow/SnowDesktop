@@ -235,6 +235,8 @@ private:
     void RenderBreadcrumb();
     void RenderPageCards(bool forcePageCards = false);
     void EnsurePresentersForPage(snowdesktop::SettingsPage page);
+    void RenderDesktopStyleCards();
+    void ApplyDesktopStyle(std::string preset, bool animations);
     [[nodiscard]] bool EnsureWidgetSettingsPresenter() noexcept;
     void RenderConditionalPages();
     void RenderAgentSkillUpdateBadge();
@@ -351,6 +353,7 @@ private:
     bool updatingSearch_ = false;
     bool focusSearchWhenPaneOpens_ = false;
     bool sessionActive_ = false;
+    bool desktopStyleDockEnabled_ = false;
     bool closed_ = false;
     bool agentSkillUpdateAvailable_ = false;
     std::optional<bool> navigationIconsHighContrast_;

@@ -4,6 +4,7 @@
 #include "../pending_window_message.h"
 #include "../performance_trace.h"
 #include "../shell_launch_worker.h"
+#include "../status_bar_shell_shortcut.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -216,6 +217,16 @@ struct StaticSearchDefinition
 };
 
 constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
+    {SettingsPage::StatusBar, "statusBar.taskView", "statusBar.taskView", "statusBar.leftItems"},
+    {SettingsPage::StatusBar, "statusBar.clockPanel", "statusBar.clockPanel", "statusBar.clickBehavior"},
+    {SettingsPage::StatusBar, "statusBar.controlCenterPanel", "statusBar.controlCenterPanel", "statusBar.clickBehavior"},
+    {SettingsPage::DesktopStyle, "desktopStyle.native", "settings.desktopStyle.native.title", "settings.desktopStyle.native.description"},
+    {SettingsPage::DesktopStyle, "desktopStyle.taskbar-dock", "settings.desktopStyle.taskbar-dock.title", "settings.desktopStyle.taskbar-dock.description"},
+    {SettingsPage::DesktopStyle, "desktopStyle.island", "settings.desktopStyle.island.title", "settings.desktopStyle.island.description"},
+    {SettingsPage::DesktopStyle, "desktopStyle.merged", "settings.desktopStyle.merged.title", "settings.desktopStyle.merged.description"},
+    {SettingsPage::DesktopStyle, "desktopStyle.side", "settings.desktopStyle.side.title", "settings.desktopStyle.side.description"},
+    {SettingsPage::Dock, "dock.reserveScreenSpace", "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description"},
+    {SettingsPage::Taskbar, "taskbar.suppressSystemTaskbar", "settings.dock.suppressTaskbar", "settings.dock.suppressTaskbar.description"},
     {SettingsPage::AnimationPerformance, "animation.mode",
         "settings.animation.mode", "settings.animation.mode.description"},
     {SettingsPage::AnimationPerformance, "animation.popup",
@@ -1275,6 +1286,8 @@ struct SettingsWindowHost::Impl
                     return L("settings.nav.taskbar");
                 case SettingsPage::StatusBar:
                     return L("settings.nav.statusBar");
+                case SettingsPage::DesktopStyle:
+                    return L("settings.desktopStyle.title");
                 case SettingsPage::Widgets:
                     return L("app.settings.widgets");
                 case SettingsPage::BackupAndData:
@@ -1292,6 +1305,8 @@ struct SettingsWindowHost::Impl
             input.staticSettings.reserve(std::size(kStaticSearchDefinitions));
             for (const auto& definition : kStaticSearchDefinitions)
             {
+                if (std::string_view(definition.focusId) == "statusBar.controlCenterPanel" &&
+                    !StatusBarSupportsSystemQuickSettings()) continue;
                 StaticSettingSearchDescriptor descriptor;
                 descriptor.page = definition.page;
                 descriptor.focusId = definition.focusId;

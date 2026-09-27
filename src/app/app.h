@@ -50,6 +50,7 @@ namespace snowdesktop::tray { struct Icon; }
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "../status_bar.h"
+#include "../dock_appbar.h"
 #include "../system_panel.h"
 #include "desktop_passthrough_indicator.h"
 #include "shell_extension_menu.h"
@@ -3632,6 +3633,7 @@ private:
     bool systemTaskbarTaskViewActive_ = false;
     UINT systemTaskbarTaskViewStateMsg_ = 0;
     std::vector<RECT> dockAreas_;
+    std::unique_ptr<snowdesktop::DockAppBars> dockAppBars_;
     std::vector<RECT> dockReservedAreas_; // Excludes the AppBar's own reservation.
     bool dockWorkAreaReservationApplied_ = false;
     DockPosition dockWorkAreaReservationPosition_ =

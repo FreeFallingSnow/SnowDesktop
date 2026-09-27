@@ -701,6 +701,8 @@ void SettingsShell::RefreshLocalizedText()
         return;
 
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
+    DesktopStyleItem().Content(winrt::box_value(Localize("settings.desktopStyle.title")));
+    AppearanceHeader().Content(winrt::box_value(Localize("settings.nav.group.appearance")));
     AnimationItem().Content(winrt::box_value(Localize("settings.nav.animation")));
     CalendarItem().Content(winrt::box_value(Localize("settings.calendar.page")));
     ContextMenuItem().Content(winrt::box_value(Localize("settings.contextMenu.page")));
@@ -1292,6 +1294,7 @@ bool SettingsShell::ApplySnapshot(
             return false;
         }
         sessionActive_ = snapshot.sessionActive;
+        desktopStyleDockEnabled_ = snapshot.values.general.dockEnabled;
         if (sessionActive_)
             EnsurePresentersForPage(navigation_.Route().page);
         if (generalPage_)
@@ -1772,7 +1775,7 @@ void SettingsShell::HookEvents()
                      SettingsPage::AppearanceIconBeautification,
                      SettingsPage::Desktop, SettingsPage::DesktopPages,
                      SettingsPage::DesktopCategories,
-                     SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
+                     SettingsPage::DesktopStyle, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
                      SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ContextMenu,
                      SettingsPage::BackupAndData, SettingsPage::About,
                      SettingsPage::DeveloperTools, SettingsPage::Debug})
@@ -2017,6 +2020,8 @@ void SettingsShell::ApplyNavigationIcons()
         IconDescriptor{AppearanceIconBeautificationItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg",
             L"\xE793"},
+        IconDescriptor{DesktopStyleItem(),
+            L"ms-appx:///Assets/Settings/Icons/desktop.svg", L"\xE7F4"},
         IconDescriptor{DesktopItem(),
             L"ms-appx:///Assets/Settings/Icons/desktop.svg", L"\xE7F4"},
         IconDescriptor{PagesItem(),
@@ -2121,6 +2126,113 @@ void SettingsShell::RenderBreadcrumb()
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
     PageBreadcrumb().ItemsSource(items);
+}
+
+void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations)
+{
+    if (closed_ || !sessionActive_ || activeDialog_ ||
+        navigation_.Route().page != SettingsPage::DesktopStyle ||
+        !dockPageActions_.invokeHost)
+        return;
+    const auto generation = navigation_.Generation();
+    const bool needsConfirmation = !animations && preset == "native" && desktopStyleDockEnabled_;
+    const auto invoke = [weak = get_weak(), generation, preset, animations, needsConfirmation](bool accepted) {
+        const auto shell = weak.get();
+        if (!accepted || !shell || shell->closed_ || !shell->sessionActive_ ||
+            shell->navigation_.Generation() != generation ||
+            shell->navigation_.Route().page != SettingsPage::DesktopStyle ||
+            !shell->dockPageActions_.invokeHost)
+            return;
+        snowdesktop::SettingsHostActions::Request request;
+        request.action = animations
+            ? snowdesktop::SettingsHostActions::Action::ApplyDesktopStyleAnimations
+            : snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
+        request.value = winrt::to_hstring(preset).c_str();
+        request.boolValue = needsConfirmation;
+        shell->dockPageActions_.invokeHost(generation, std::move(request));
+    };
+    if (needsConfirmation)
+    {
+        SettingsShellDialogRequest request;
+        request.generation = generation;
+        request.title = Localize("settings.dock.disableConfirm.title");
+        request.message = Localize("settings.dock.disableConfirm.description");
+        request.primaryButtonText = Localize("settings.desktopStyle.applyLayout");
+        request.closeButtonText = Localize("settings.dialog.cancel");
+        request.destructive = true;
+        ShowConfirmation(std::move(request), invoke);
+    }
+    else invoke(true);
+}
+
+void SettingsShell::RenderDesktopStyleCards()
+{
+    for (const std::string preset : {"native", "taskbar-dock", "island", "merged", "side"})
+    {
+        const std::string prefix = "settings.desktopStyle." + preset;
+        const std::string focusId = "desktopStyle." + preset;
+        auto card = CreatePlaceholderCard(focusId, prefix + ".title", prefix + ".description");
+        card.IsTabStop(false);
+        const auto content = card.Child().as<muxc::StackPanel>();
+        content.Spacing(12);
+        muxc::Expander details;
+        details.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        details.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        details.Header(winrt::box_value(Localize("settings.desktopStyle.changes")));
+        muxc::StackPanel detailContent;
+        detailContent.Spacing(8);
+        muxc::TextBlock changes;
+        changes.Text(Localize(prefix + ".changes"));
+        changes.TextWrapping(mux::TextWrapping::Wrap);
+        detailContent.Children().Append(changes);
+        for (const auto page : {SettingsPage::Dock, SettingsPage::Taskbar, SettingsPage::StatusBar})
+        {
+            muxc::HyperlinkButton link;
+            link.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            link.Content(winrt::box_value(PageTitleText(page)));
+            link.Click([weak = get_weak(), page](const auto&, const auto&) {
+                if (const auto shell = weak.get(); shell && !shell->closed_)
+                    shell->RequestRoute(SettingsRoute::ForPage(page));
+            });
+            detailContent.Children().Append(link);
+        }
+        details.Content(detailContent);
+        content.Children().Append(details);
+        muxc::Grid buttons;
+        buttons.ColumnSpacing(8);
+        const bool hasRecommendedAnimations = preset == "island" || preset == "merged" || preset == "side";
+        for (int column = 0; column != (hasRecommendedAnimations ? 2 : 1); ++column)
+        {
+            muxc::ColumnDefinition definition;
+            definition.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+            buttons.ColumnDefinitions().Append(definition);
+            const bool animations = column == 1;
+            muxc::Button button;
+            button.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            muxc::TextBlock label;
+            const auto title = Localize(animations ? "settings.desktopStyle.applyAnimations" : "settings.desktopStyle.applyLayout");
+            label.Text(title);
+            label.TextWrapping(mux::TextWrapping::Wrap);
+            button.Content(label);
+            muxa::AutomationProperties::SetName(button, Localize(prefix + ".title") + L": " + title);
+            button.Click([weak = get_weak(), preset, animations](const auto&, const auto&) {
+                if (const auto shell = weak.get()) shell->ApplyDesktopStyle(preset, animations);
+            });
+            muxc::Grid::SetColumn(button, column);
+            buttons.Children().Append(button);
+            RegisterFocusTarget(focusId + (animations ? ".animations" : ""), button);
+            if (preset == "native" && !animations) RegisterFocusTarget("desktopStyle", button);
+        }
+        content.Children().Append(buttons);
+        if (hasRecommendedAnimations)
+        {
+            muxc::TextBlock animationHint;
+            animationHint.Text(Localize(prefix + ".animations"));
+            animationHint.TextWrapping(mux::TextWrapping::Wrap);
+            content.Children().Append(animationHint);
+        }
+        PageCards().Children().Append(card);
+    }
 }
 
 void SettingsShell::RenderPageCards(bool forcePageCards)
@@ -2264,6 +2376,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     };
     switch (navigation_.Route().page)
     {
+    case SettingsPage::DesktopStyle:
+        RenderDesktopStyleCards();
+        break;
     case SettingsPage::ContextMenu:
         if (personalizationPage_)
         {
@@ -2492,7 +2607,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.floatingEdgeSwipeBlockFullscreen",
                 "dock.suppressSystemTaskbar", "dock.showWindowsButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
-                "dock.allowDesktopContentOverlap",
+                "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace",
                 "dock.showOnlyWhenSummoned"});
             generalPage_->Activate();
             dockPage_->Activate();
@@ -2504,7 +2619,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             dockPage_->ActivateTaskbar();
             PageCards().Children().Append(dockPage_->TaskbarContent());
             registerDockFocus({
-                "taskbar.systemSettings", "taskbar.autoHide", "taskbar.alignment",
+                "taskbar.suppressSystemTaskbar", "taskbar.systemSettings", "taskbar.autoHide", "taskbar.alignment",
                 "taskbar.systemTheme", "taskbar.theme",
                 "taskbar.contentTheme", "taskbar.backgroundColor",
                 "taskbar.borderColor", "taskbar.backgroundOpacity",
@@ -2902,6 +3017,7 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::ContextMenu: return Localize("settings.contextMenu.page");
     case SettingsPage::Calendar: return Localize("settings.calendar.page");
     case SettingsPage::AnimationPerformance: return Localize("settings.nav.animation");
+    case SettingsPage::DesktopStyle: return Localize("settings.desktopStyle.title");
     case SettingsPage::Dock: return Localize("settings.nav.dock");
     case SettingsPage::Taskbar: return Localize("settings.nav.taskbar");
     case SettingsPage::StatusBar: return Localize("settings.nav.statusBar");
@@ -2923,6 +3039,7 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
     switch (page)
     {
     case SettingsPage::ContextMenu: return Localize("settings.contextMenu.description");
+    case SettingsPage::DesktopStyle: return Localize("settings.desktopStyle.description");
     case SettingsPage::Calendar: return Localize("settings.calendar.pageDescription");
     case SettingsPage::AnimationPerformance: return Localize("settings.page.animation.description");
     case SettingsPage::Home: return Localize("settings.page.home.description");
@@ -2990,6 +3107,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::DesktopCategories: return CategoriesItem();
     case SettingsPage::Dock:
     case SettingsPage::DockAndTaskbar: return DockItem();
+    case SettingsPage::DesktopStyle: return DesktopStyleItem();
     case SettingsPage::Taskbar: return TaskbarItem();
     case SettingsPage::StatusBar: return StatusBarItem();
     case SettingsPage::Widgets:

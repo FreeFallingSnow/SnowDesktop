@@ -115,11 +115,14 @@ void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
     using Action = snowdesktop::StatusBarAction;
+    if (action == Action::SystemControlCenter && !snowdesktop::StatusBarSupportsSystemQuickSettings())
+        action = Action::ControlCenter;
     uiAnimationScheduler_.Cancel(statusBarActivationToken_);
     statusBarActivationToken_ = 0;
     const auto generation = ++*statusBarActivationGeneration_;
     statusBarActivationMonitor_ = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
-    const double shortcutStarted = action == Action::Notifications || action == Action::SystemControlCenter
+    const double shortcutStarted = action == Action::Notifications || action == Action::SystemControlCenter ||
+        action == Action::TaskView || action == Action::SystemCalendar
         ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
     const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
@@ -244,9 +247,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         systemPanel_->SetTrayStateChanged([this](HMONITOR monitor,bool expanded) {
             if(statusBar_)statusBar_->SetTrayExpanded(monitor,expanded);
         });
-        systemPanel_->SetNativeControlsHandler([this](HWND source, RECT location) {
-            ActivateStatusBar(Action::SystemControlCenter, source, location);
-        });
+        if (snowdesktop::StatusBarSupportsSystemQuickSettings())
+            systemPanel_->SetNativeControlsHandler([this](HWND source, RECT location) {
+                ActivateStatusBar(Action::SystemControlCenter, source, location);
+            });
+        else systemPanel_->SetNativeControlsHandler({});
     };
     TraceStatusBarShellActivation(action, generation, L"continue", hold->shortcutStartedMilliseconds);
     const auto resume = [this, current, generation, action, owner, anchor, hold] {
@@ -285,21 +290,24 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     }
     const bool externalSurface = action == Action::SystemMenu || action == Action::Menu ||
         action == Action::QuickSearch || action == Action::Settings ||
-        action == Action::Notifications || action == Action::SystemControlCenter;
+        action == Action::Notifications || action == Action::SystemControlCenter ||
+        action == Action::TaskView || action == Action::SystemCalendar;
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {
         TraceStatusBarShellActivation(action, generation, L"wait-system-panel", hold->shortcutStartedMilliseconds);
         systemPanel_->CloseThen(resume);
         return;
     }
-    const bool systemControls = action == Action::SystemControlCenter;
-    if (action == Action::Notifications || systemControls)
+    const auto chord = snowdesktop::ResolveStatusBarShellChord(action,
+        snowdesktop::StatusBarSupportsSystemQuickSettings(), IsClassicSystemTaskbar());
+    if (chord.key)
     {
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();
-        const WORD key = systemControls || IsClassicSystemTaskbar() ? 'A' : 'N';
         const HWND foreground = GetForegroundWindow();
-        statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, key, {
+        // Shell shortcut activation has no supported custom popup anchor. Let
+        // Windows place its own surface; never move or reparent its window.
+        statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, chord, {
             [](int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; },
             [action, generation, started = hold->shortcutStartedMilliseconds](UINT count, INPUT* input, int size) {
                 TraceStatusBarShellActivation(action, generation, L"send-input-begin", started);
@@ -446,7 +454,8 @@ void DesktopApp::SyncStatusBar()
             [this](snowdesktop::StatusBarAction action, HWND owner, RECT anchor) {
                 // Sample once at the input boundary. Deferred activation must
                 // not reinterpret either an ordinary click or a Ctrl click.
-                action = snowdesktop::ResolveStatusBarClick(action, (GetKeyState(VK_CONTROL) & 0x8000) != 0);
+                action = snowdesktop::ResolveStatusBarClick(action, (GetKeyState(VK_CONTROL) & 0x8000) != 0,
+                    generalSettings_.statusBar, snowdesktop::StatusBarSupportsSystemQuickSettings());
                 ActivateStatusBar(action, owner, anchor);
             },
             [this](HMONITOR monitor) { CancelStatusBarActivation(monitor); },

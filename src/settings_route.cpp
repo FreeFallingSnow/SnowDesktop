@@ -234,6 +234,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::Calendar:
     case SettingsPage::ContextMenu:
     case SettingsPage::StatusBar:
+    case SettingsPage::DesktopStyle:
         break;
     default:
         return false;
@@ -277,6 +278,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::Calendar: return "calendar";
     case SettingsPage::ContextMenu: return "context-menu";
     case SettingsPage::StatusBar: return "status-bar";
+    case SettingsPage::DesktopStyle: return "desktop-style";
     }
     return "home";
 }

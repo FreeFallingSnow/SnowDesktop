@@ -134,6 +134,24 @@ void TestStatusBarShellShortcuts()
     Check(ResolveStatusBarClick(Action::ControlCenter, false) == Action::ControlCenter &&
         ResolveStatusBarClick(Action::Dismiss, true) == Action::Dismiss,
         "ordinary click opens the local panel and blank click still dismisses with Ctrl held");
+    StatusBarSettings settings;
+    Check(ResolveStatusBarClick(Action::Calendar, false, settings, true) == Action::Calendar &&
+        ResolveStatusBarClick(Action::ControlCenter, false, settings, true) == Action::ControlCenter,
+        "new click options preserve the existing local-panel defaults");
+    settings.clockSystemPanel = settings.controlCenterSystemPanel = true;
+    Check(ResolveStatusBarClick(Action::Calendar, false, settings, false) == Action::SystemCalendar &&
+        ResolveStatusBarClick(Action::ControlCenter, false, settings, true) == Action::SystemControlCenter &&
+        ResolveStatusBarClick(Action::ControlCenter, true, settings, false) == Action::ControlCenter &&
+        ResolveStatusBarClick(Action::SystemControlCenter, false, settings, false) == Action::ControlCenter,
+        "native clock works on both OS versions but Windows 10 cannot select Quick Settings even with stored preferences or Ctrl");
+    Check(!StatusBarSupportsSystemQuickSettings(10, 19045) && !StatusBarSupportsSystemQuickSettings(0, 0) &&
+        StatusBarSupportsSystemQuickSettings(10, 22000), "Quick Settings uses the OS version rather than taskbar appearance");
+    const auto legacyClock = ResolveStatusBarShellChord(Action::SystemCalendar, false, true);
+    Check(legacyClock.key == 'D' && legacyClock.alt &&
+        ResolveStatusBarShellChord(Action::SystemCalendar, true, true).key == 'N' &&
+        ResolveStatusBarShellChord(Action::TaskView, false, true).key == VK_TAB &&
+        !ResolveStatusBarShellChord(Action::SystemControlCenter, false, true).key,
+        "clock and Task View select their own Shell entries without replacing the Windows 10 date panel with Action Center");
 
     UiAnimationScheduler scheduler;
     Check(scheduler.Initialize(), "status bar shortcut scheduler initializes");
@@ -142,13 +160,13 @@ void TestStatusBarShellShortcuts()
     std::vector<std::vector<INPUT>> batches;
     UINT sentCount = 4;
     std::vector<Result> outcomes;
-    const auto queue = [&](WORD key, UINT timeout = 5000) {
-        return ScheduleStatusBarShellShortcut(scheduler, key, {
+    const auto queue = [&](WORD key, UINT timeout = 5000, bool alt = false) {
+        return ScheduleStatusBarShellShortcut(scheduler, StatusBarShellChord{key, alt}, {
             [&](int code) { return code == held; },
             [&](UINT count, INPUT* input, int size) {
                 Check(size == sizeof(INPUT), "shortcut uses the native INPUT size");
                 batches.emplace_back(input, input + count);
-                return count == 4 ? sentCount : count;
+                return count >= 4 ? sentCount : count;
             },
             [&](auto) { return current; },
             [&](auto, Result result) { outcomes.push_back(result); }}, timeout);
@@ -179,6 +197,23 @@ void TestStatusBarShellShortcuts()
     batches.clear(); outcomes.clear();
     queue('N'); WaitAndDispatch(scheduler); expectChord('N');
     batches.clear(); outcomes.clear();
+    queue(VK_TAB); WaitAndDispatch(scheduler); expectChord(VK_TAB);
+    batches.clear(); outcomes.clear();
+    sentCount = 6;
+    queue('D', 5000, true); held = VK_MENU; WaitAndDispatch(scheduler);
+    Check(batches.empty() && outcomes.empty(), "date-panel shortcut waits for a physically held Alt key");
+    held = 0; WaitAndDispatch(scheduler);
+    Check(batches.size() == 1 && batches.front().size() == 6 && outcomes == std::vector<Result>{Result::Sent},
+        "Windows 10 clock sends one complete Win+Alt+D chord");
+    if (batches.size() == 1 && batches.front().size() == 6)
+    {
+        const WORD keys[]{VK_LWIN, VK_MENU, 'D', 'D', VK_MENU, VK_LWIN};
+        for (std::size_t index = 0; index < 6; ++index)
+            Check(batches.front()[index].ki.wVk == keys[index] &&
+                ((batches.front()[index].ki.dwFlags & KEYEVENTF_KEYUP) != 0) == (index >= 3),
+                "date-panel modifier presses and releases are balanced in reverse order");
+    }
+    batches.clear(); outcomes.clear(); sentCount = 4;
 
     held = VK_CONTROL;
     const auto cancelled = queue('A');
@@ -212,6 +247,23 @@ void TestStatusBarShellShortcuts()
                 Check((input.ki.dwFlags & KEYEVENTF_KEYUP) != 0 &&
                     (input.ki.wVk == VK_LWIN || input.ki.wVk == 'A'),
                     "recovery only releases unmatched synthetic presses");
+        }
+        batches.clear(); outcomes.clear();
+    }
+    for (UINT partial = 1; partial < 6; ++partial)
+    {
+        sentCount = partial; queue('D', 5000, true); WaitAndDispatch(scheduler);
+        Check(outcomes == std::vector<Result>{Result::Failed} && batches.size() == 2 && !scheduler.HasScheduledWork(),
+            "partially inserted date-panel chord fails without retrying the system toggle");
+        if (batches.size() == 2)
+        {
+            const std::vector<WORD> expected = partial == 1 || partial == 5 ? std::vector<WORD>{VK_LWIN} :
+                partial == 2 || partial == 4 ? std::vector<WORD>{VK_MENU, VK_LWIN} : std::vector<WORD>{'D', VK_MENU, VK_LWIN};
+            const auto& release = batches.back();
+            Check(release.size() == expected.size(), "partial date chord releases only its remaining synthetic keys");
+            for (std::size_t index = 0; index < release.size() && index < expected.size(); ++index)
+                Check(release[index].ki.wVk == expected[index] && (release[index].ki.dwFlags & KEYEVENTF_KEYUP),
+                    "date chord cleanup does not leave Alt pressed or release an unrelated key");
         }
         batches.clear(); outcomes.clear();
     }

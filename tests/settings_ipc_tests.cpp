@@ -38,6 +38,14 @@ HANDLE CurrentProcessHandle()
 
 void TestCodec()
 {
+    DockSettings dockSpace;
+    dockSpace.reserveScreenSpace = true;
+    Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
+        "system Dock space reservation must cross the settings-process boundary");
+    const auto styleRoute = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::DesktopStyle);
+    const auto restoredRoute = Unpack<snowdesktop::SettingsRoute>(Pack(styleRoute));
+    Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
+        "desktop style navigation retains its appended page identity across IPC");
     GeneralSettings extensions;
     extensions.statusBar.enabled = true;
     extensions.statusBar.position = DockPosition::Left;

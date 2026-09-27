@@ -39,6 +39,7 @@ enum class SettingsPage : std::uint8_t
     Calendar,
     ContextMenu,
     StatusBar,
+    DesktopStyle,
 };
 
 /**

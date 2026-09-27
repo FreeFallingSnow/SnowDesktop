@@ -612,8 +612,12 @@ void SystemPanelModel::Overview(float& y)
     batteryNode.tooltip=batteryNode.accessibilityLabel=std::wstring(_LW(visual.label))+L" · "+batteryNode.text;
     Add("power.more",ui::Role::Icon,Rect(scene_.width-100,y,36,36),L"",L"\uE7E8").tooltip=_LW("statusBar.powerControls");Command("power.more",[this]{Select("power");});
     }
-    auto& native=Add("system.settings",ui::Role::Icon,Rect(scene_.width-52,y,36,36),L"",L"\uE713");native.tooltip=_LW("statusBar.nativeControls");native.enabled=bool(source_.nativeControls);
-    Command("system.settings",[this]{const auto open=source_.nativeControls;if(open)open();});y+=40;
+    if(source_.nativeControls)
+    {
+        Add("system.settings",ui::Role::Icon,Rect(scene_.width-52,y,36,36),L"",L"\uE713").tooltip=_LW("statusBar.nativeControls");
+        Command("system.settings",[this]{const auto open=source_.nativeControls;if(open)open();});
+    }
+    if(settings_.powerControls||source_.nativeControls)y+=40;
 }
 void SystemPanelModel::Audio(float& y)
 {

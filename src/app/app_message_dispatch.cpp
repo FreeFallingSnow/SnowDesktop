@@ -1081,7 +1081,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // Explorer also broadcasts this message for view options such as
         // "Hidden items". Theme and taskbar notifications do not change the
         // desktop namespace, so avoid a synchronous full item reload for them.
-        if (!traySettings && !immersiveColor)
+        if (!traySettings && !immersiveColor && wp != SPI_SETWORKAREA)
             ReloadItems(false);
         return 0;
     }

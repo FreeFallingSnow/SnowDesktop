@@ -82,6 +82,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     };
     if (s.menu) add("menu", L"", StatusBarAction::SystemMenu, kMenu, true);
     if (s.quickSearch) add("quickSearch", L"", StatusBarAction::QuickSearch, kSearch, true);
+    if (s.taskView) add("taskView", L"", StatusBarAction::TaskView, kTaskView, true);
     if (s.clock)
     {
         add("clock", snapshot.clock, StatusBarAction::Calendar);

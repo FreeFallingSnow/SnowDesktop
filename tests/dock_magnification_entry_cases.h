@@ -60,4 +60,85 @@ void CheckDockMagnificationEntry()
         "slow Dock entry also finishes at its configured deadline");
     Check(entry.FocusScale(magnification::ResolveFocusScale(2, 2.0f, false)) == 1.0f,
         "disabling global motion removes magnification even after entry completes");
+
+    magnification::SingleFocusAnimation single;
+    RECT next = base;
+    OffsetRect(&next, 76, 0);
+    single.SetTarget(base, 3000.0, 1.0);
+    Check(single.ScaleFor(base) == 1.0f && single.IsAnimating(),
+        "single-icon hover enters from the existing icon geometry");
+    single.Advance(3080.0);
+    const float singleMiddle = single.ScaleFor(base);
+    Check(singleMiddle > 1.0f && singleMiddle < magnification::kSingleFocusScale &&
+            single.ScaleFor(next) == 1.0f,
+        "single-icon entry enlarges only its target through an intermediate frame");
+    single.SetTarget(base, 3080.0, 1.0);
+    Check(single.ScaleFor(base) == singleMiddle,
+        "repeated hit tests do not restart single-icon animation");
+    single.SetTarget(next, 3080.0, 1.0);
+    Check(single.ScaleFor(base) == singleMiddle && single.ScaleFor(next) == 1.0f,
+        "switching icons preserves the outgoing frame rather than jumping the growth to the new target");
+    single.Advance(3120.0);
+    Check(single.ScaleFor(base) > 1.0f && single.ScaleFor(base) < singleMiddle &&
+            single.ScaleFor(next) == 1.0f,
+        "the outgoing icon contracts before another icon can magnify");
+    single.Advance(3160.0);
+    Check(single.ScaleFor(base) == 1.0f && single.ScaleFor(next) == 1.0f && single.IsAnimating(),
+        "single-icon ownership changes only at normal size");
+    single.Advance(3200.0);
+    Check(single.ScaleFor(base) == 1.0f && single.ScaleFor(next) > 1.0f &&
+            single.ScaleFor(next) < magnification::kSingleFocusScale,
+        "the newly hovered icon grows smoothly while the previous icon stays normal");
+    single.Advance(3240.0);
+    Check(single.ScaleFor(next) == magnification::kSingleFocusScale && !single.IsAnimating(),
+        "a single-icon switch settles and releases its animation frame subscription");
+    single.SetTarget({}, 3240.0, 1.0);
+    Check(single.ScaleFor(next) == magnification::kSingleFocusScale && single.IsAnimating(),
+        "leaving preserves the first exit frame instead of snapping to normal size");
+    single.Advance(3320.0);
+    const float leavingScale = single.ScaleFor(next);
+    Check(leavingScale > 1.0f && leavingScale < magnification::kSingleFocusScale,
+        "single-icon exit renders a partially contracted frame without pointer motion");
+    single.SetTarget(next, 3320.0, 1.0);
+    Check(single.ScaleFor(next) == leavingScale,
+        "re-entering the outgoing icon reverses continuously from its current size");
+    single.Advance(3480.0);
+    single.SetTarget({}, 3480.0, 1.0);
+    single.Advance(3640.0);
+    Check(!single.IsAnimating() && IsRectEmpty(&single.CurrentRect()) && single.ScaleFor(next) == 1.0f,
+        "completed exit restores normal geometry and leaves no perpetual animation");
+    single.SetTarget(base, 4000.0, 2.0);
+    single.Advance(4160.0);
+    Check(single.ScaleFor(base) > 1.0f && single.ScaleFor(base) < magnification::kSingleFocusScale,
+        "single-icon animation honors the shared duration preference");
+    single.Advance(4320.0);
+    for (const auto position : {DockPosition::Bottom, DockPosition::Top,
+            DockPosition::Left, DockPosition::Right})
+    {
+        const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+        RECT before = base, after = base;
+        OffsetRect(&before, vertical ? 0 : -76, vertical ? -76 : 0);
+        OffsetRect(&after, vertical ? 0 : 76, vertical ? 76 : 0);
+        const RECT focused = magnification::MagnifyRect(base, position, single.ScaleFor(base), 64, 0, true);
+        const RECT left = magnification::MagnifyRect(before, position, single.ScaleFor(before), 64,
+            magnification::SingleFocusAxisShift(-76, 64, single.Scale()), true);
+        const RECT right = magnification::MagnifyRect(after, position, single.ScaleFor(after), 64,
+            magnification::SingleFocusAxisShift(76, 64, single.Scale()), true);
+        Check(focused.left + focused.right == base.left + base.right &&
+                focused.top + focused.bottom == base.top + base.bottom,
+            "single-icon growth preserves the icon center on every Dock edge");
+        Check(left.right - left.left == before.right - before.left &&
+                left.bottom - left.top == before.bottom - before.top &&
+                right.right - right.left == after.right - after.left &&
+                right.bottom - right.top == after.bottom - after.top,
+            "neighbors make room without enlarging their icons");
+        Check(vertical ? left.bottom <= focused.top && focused.bottom <= right.top :
+                left.right <= focused.left && focused.right <= right.left,
+            "symmetric single-icon displacement prevents overlap on either side");
+        const RECT interaction = magnification::ExpandInteractionBounds(
+            base, position, 64, magnification::kSingleFocusScale, true);
+        Check(interaction.left <= focused.left && interaction.top <= focused.top &&
+                interaction.right >= focused.right && interaction.bottom >= focused.bottom,
+            "single-icon input and composition reserve include centered growth in both directions");
+    }
 }

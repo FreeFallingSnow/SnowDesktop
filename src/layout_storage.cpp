@@ -91,6 +91,7 @@ JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
         {"keepWhenDesktopHidden", BooleanValue(settings.keepWhenDesktopHidden)},
         {"allowDesktopContentOverlap", BooleanValue(settings.allowDesktopContentOverlap)},
         {"showOnlyWhenSummoned", BooleanValue(settings.showOnlyWhenSummoned)},
+        {"reserveScreenSpace", BooleanValue(settings.reserveScreenSpace)},
         {"frequentItemCount", NumberValue(settings.frequentItemCount)},
         {"thicknessScale", NumberValue(settings.thicknessScale)},
     };
@@ -589,7 +590,8 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
         !ReadBoolean(*value, "showFrequentItems", "dockLayout.showFrequentItems", decoded.showFrequentItems, error) ||
         !ReadBoolean(*value, "keepWhenDesktopHidden", "dockLayout.keepWhenDesktopHidden", decoded.keepWhenDesktopHidden, error) ||
         !ReadBoolean(*value, "allowDesktopContentOverlap", "dockLayout.allowDesktopContentOverlap", decoded.allowDesktopContentOverlap, error) ||
-        !ReadBoolean(*value, "showOnlyWhenSummoned", "dockLayout.showOnlyWhenSummoned", decoded.showOnlyWhenSummoned, error))
+        !ReadBoolean(*value, "showOnlyWhenSummoned", "dockLayout.showOnlyWhenSummoned", decoded.showOnlyWhenSummoned, error) ||
+        !ReadBoolean(*value, "reserveScreenSpace", "dockLayout.reserveScreenSpace", decoded.reserveScreenSpace, error))
         return false;
     if (position < 0 || position > 3)
         return Fail(error, "dockLayout.position", "must be between 0 and 3");

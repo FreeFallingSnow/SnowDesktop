@@ -5,12 +5,44 @@
 
 namespace snowdesktop
 {
+inline constexpr bool StatusBarSupportsSystemQuickSettings(DWORD major, DWORD build)
+{ return major > 10 || (major == 10 && build >= 22000); }
+inline bool StatusBarSupportsSystemQuickSettings()
+{
+    static const bool supported = [] {
+        using GetVersion = LONG(WINAPI*)(OSVERSIONINFOW*);
+        const auto getVersion = reinterpret_cast<GetVersion>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+        OSVERSIONINFOW version{sizeof(version)};
+        return getVersion && getVersion(&version) == 0 &&
+            StatusBarSupportsSystemQuickSettings(version.dwMajorVersion, version.dwBuildNumber);
+    }();
+    return supported;
+}
 // Resolve the click before a nested menu unwinds: Ctrl may be released while
 // that happens, but it must not turn a system-panel request into our panel.
 inline StatusBarAction ResolveStatusBarClick(StatusBarAction action, bool controlDown)
 {
     return action == StatusBarAction::ControlCenter && controlDown ?
         StatusBarAction::SystemControlCenter : action;
+}
+inline StatusBarAction ResolveStatusBarClick(StatusBarAction action, bool controlDown,
+    const StatusBarSettings& settings, bool systemQuickSettings)
+{
+    if (action == StatusBarAction::Calendar && settings.clockSystemPanel) return StatusBarAction::SystemCalendar;
+    if (action == StatusBarAction::ControlCenter && systemQuickSettings &&
+        (controlDown || settings.controlCenterSystemPanel)) return StatusBarAction::SystemControlCenter;
+    if (action == StatusBarAction::SystemControlCenter && !systemQuickSettings) return StatusBarAction::ControlCenter;
+    return action;
+}
+
+struct StatusBarShellChord { WORD key = 0; bool alt = false; };
+inline StatusBarShellChord ResolveStatusBarShellChord(StatusBarAction action, bool windows11, bool classicTaskbar)
+{
+    if (action == StatusBarAction::TaskView) return {VK_TAB};
+    if (action == StatusBarAction::SystemCalendar) return windows11 ? StatusBarShellChord{'N'} : StatusBarShellChord{'D', true};
+    if (action == StatusBarAction::SystemControlCenter) return windows11 ? StatusBarShellChord{'A'} : StatusBarShellChord{};
+    if (action == StatusBarAction::Notifications) return {static_cast<WORD>(classicTaskbar ? 'A' : 'N')};
+    return {};
 }
 
 enum class StatusBarShortcutResult { Sent, Cancelled, TimedOut, Failed };
@@ -27,37 +59,49 @@ struct StatusBarShortcutCallbacks
 // token on another bar action, dismissal or shutdown; the context guard also
 // rejects a hidden bar, fullscreen or a changed foreground window.
 inline UiScheduleToken ScheduleStatusBarShellShortcut(UiAnimationScheduler& scheduler,
-    WORD key, StatusBarShortcutCallbacks callbacks, UINT timeoutMilliseconds = 5000)
+    StatusBarShellChord chord, StatusBarShortcutCallbacks callbacks, UINT timeoutMilliseconds = 5000)
 {
     const double deadline = UiAnimationScheduler::MonotonicMilliseconds() + timeoutMilliseconds;
     return scheduler.ScheduleInterval(16,
-        [&scheduler, key, deadline, callbacks = std::move(callbacks)](UiScheduleToken token) {
+        [&scheduler, chord, deadline, callbacks = std::move(callbacks)](UiScheduleToken token) {
             const auto finish = [&](StatusBarShortcutResult result) {
                 scheduler.Cancel(token);
                 callbacks.finished(token, result);
             };
             if (!callbacks.current(token)) { finish(StatusBarShortcutResult::Cancelled); return; }
+            if (!chord.key) { finish(StatusBarShortcutResult::Failed); return; }
             if (UiAnimationScheduler::MonotonicMilliseconds() >= deadline)
             { finish(StatusBarShortcutResult::TimedOut); return; }
             for (const int modifier : {VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN})
                 if (callbacks.keyDown(modifier)) return;
-            if (callbacks.keyDown(key)) return;
+            if (callbacks.keyDown(chord.key)) return;
 
-            INPUT input[4]{};
+            INPUT input[6]{};
             for (auto& item : input) item.type = INPUT_KEYBOARD;
-            input[0].ki.wVk = VK_LWIN; input[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-            input[1].ki.wVk = key;
-            input[2].ki.wVk = key; input[2].ki.dwFlags = KEYEVENTF_KEYUP;
-            input[3].ki.wVk = VK_LWIN; input[3].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
-            const UINT sent = callbacks.send(4, input, sizeof(INPUT));
-            if (sent > 0 && sent < 4)
+            const UINT presses = chord.alt ? 3u : 2u, count = presses * 2;
+            const WORD keys[]{VK_LWIN, chord.alt ? static_cast<WORD>(VK_MENU) : chord.key, chord.key};
+            for (UINT index = 0; index < presses; ++index)
+            {
+                input[index].ki.wVk = keys[index];
+                input[index].ki.dwFlags = index == 0 ? KEYEVENTF_EXTENDEDKEY : 0;
+                input[count - 1 - index] = input[index];
+                input[count - 1 - index].ki.dwFlags |= KEYEVENTF_KEYUP;
+            }
+            const UINT sent = callbacks.send(count, input, sizeof(INPUT));
+            if (sent > 0 && sent < count)
             {
                 // Best-effort release of only our unmatched synthetic presses.
                 // Never retry the chord: it toggles the system surface.
-                INPUT release[2]{input[2], input[3]};
-                callbacks.send(sent == 2 ? 2 : 1, release + (sent == 2 ? 0 : 1), sizeof(INPUT));
+                INPUT release[3]{}; UINT releases = 0;
+                for (UINT index = presses; index-- > 0;)
+                    if (sent > index && sent <= count - 1 - index)
+                        release[releases++] = input[count - 1 - index];
+                if (releases) callbacks.send(releases, release, sizeof(INPUT));
             }
-            finish(sent == 4 ? StatusBarShortcutResult::Sent : StatusBarShortcutResult::Failed);
+            finish(sent == count ? StatusBarShortcutResult::Sent : StatusBarShortcutResult::Failed);
         });
 }
+inline UiScheduleToken ScheduleStatusBarShellShortcut(UiAnimationScheduler& scheduler,
+    WORD key, StatusBarShortcutCallbacks callbacks, UINT timeoutMilliseconds = 5000)
+{ return ScheduleStatusBarShellShortcut(scheduler, StatusBarShellChord{key}, std::move(callbacks), timeoutMilliseconds); }
 }

@@ -320,7 +320,7 @@ struct AnimationPerformancePagePresenter::Impl
         speed.row.SetEnabled(enabled);
         for (auto* choice : {&hover, &launch, &window})
             choice->row.SetEnabled(enabled && dockEnabled);
-        scaleRow.SetEnabled(enabled && dockEnabled && hover.combo.SelectedIndex() != 0);
+        scaleRow.SetEnabled(enabled && dockEnabled && hover.combo.SelectedIndex() == 2);
         dockNotice.Visibility(dockEnabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
     }
 

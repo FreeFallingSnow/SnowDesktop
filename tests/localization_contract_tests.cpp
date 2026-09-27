@@ -1253,6 +1253,17 @@ void TestRuntimeCatalogMatrix(
         "Simplified Chinese must be the second selectable language");
 
     locale.SetLanguage("zh-CN");
+    Check(locale.TrWForLanguage("settings.calendar.rocName", "zh-Hans-SG") == L"民国纪年（公历）" &&
+            locale.TrWForLanguage("settings.calendar.rocName", "zh-HK") == L"民國紀年（公曆）",
+        "explicit calendar-name lookups must retain script-aware language fallback");
+    Check(locale.TrWForLanguage("settings.calendar.rocName", "en-US") == L"Minguo era (Gregorian)" &&
+            locale.TrWForLanguage("settings.calendar.rocName", "not-a-registered-language") == L"Minguo era (Gregorian)" &&
+            std::string(locale.GetLanguage()) == "zh-CN" &&
+            std::wstring(locale.TrW("settings.calendar.rocName")) == L"民国纪年（公历）",
+        "an explicit-language lookup falls back to English without changing active UI text");
+    Check(locale.TrWForLanguage("missing.translation.key", "en-US") == L"missing.translation.key" &&
+            locale.TrWForLanguage(nullptr, "en-US").empty(),
+        "explicit-language lookup preserves missing and empty key behavior");
     for (const LanguageInfo& language :
         locale.GetAvailableLanguages())
     {

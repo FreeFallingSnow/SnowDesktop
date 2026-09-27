@@ -1171,6 +1171,42 @@ void CheckStatusBarFullscreenDockSession()
     Check(EqualRect(&otherMonitor, &unaffected) != FALSE,
         "an AppBar on another monitor cannot move the island Dock");
 
+    const RECT previousWork{-1920, -200, 0, 880};
+    struct EdgeReservationCase { UINT edge; RECT approved, after, removed; };
+    const EdgeReservationCase edgeCases[]{
+        {ABE_TOP, {-1920, -240, 0, -140}, {-1920, -140, 0, 880}, {-1920, -200, 0, -140}},
+        {ABE_BOTTOM, {-1920, 820, 0, 920}, {-1920, -200, 0, 820}, {-1920, 820, 0, 880}},
+        {ABE_LEFT, {-1960, -200, -1860, 880}, {-1860, -200, 0, 880}, {-1920, -200, -1860, 880}},
+        {ABE_RIGHT, {-60, -200, 40, 880}, {-1920, -200, -60, 880}, {-60, -200, 0, 880}}
+    };
+    for (const auto& test : edgeCases)
+    {
+        const auto constrained = ConstrainStatusBarWorkArea(previousWork, test.approved, test.edge);
+        const auto removed = AppBarReservedWorkArea(previousWork, constrained, test.edge);
+        Check(EqualRect(&constrained, &test.after) && EqualRect(&removed, &test.removed),
+            "all AppBar edges record only newly removed pixels, preserving the existing outer Shell strip");
+        const auto restored = RestoreAppBarWorkArea(constrained, removed, test.edge);
+        const auto restoredAgain = RestoreAppBarWorkArea(restored, removed, test.edge);
+        Check(EqualRect(&restored, &previousWork) && EqualRect(&restoredAgain, &previousWork),
+            "negative-origin work areas restore their actual reservation once without crossing an existing Shell edge");
+        const auto noShrink = AppBarReservedWorkArea(constrained, previousWork, test.edge);
+        Check(IsRectEmpty(&noShrink), "an expanded work area must not create an undo reservation");
+        const auto noReservation = RestoreAppBarWorkArea(previousWork, {}, test.edge);
+        const auto noWork = RestoreAppBarWorkArea({}, removed, test.edge);
+        Check(EqualRect(&noReservation, &previousWork) && IsRectEmpty(&noWork),
+            "empty AppBar geometry cannot invent a work area");
+    }
+    const RECT innerWork{0, 0, 1920, 980}, outerDock{0, 1000, 1920, 1040};
+    const auto unchangedWork = ConstrainStatusBarWorkArea(innerWork, outerDock, ABE_BOTTOM);
+    const auto noDelta = AppBarReservedWorkArea(innerWork, unchangedWork, ABE_BOTTOM);
+    const auto keptInner = RestoreAppBarWorkArea(innerWork, outerDock, ABE_BOTTOM);
+    Check(IsRectEmpty(&noDelta) && EqualRect(&keptInner, &innerWork),
+        "a Dock outside an inner AppBar cannot add its full thickness back across that AppBar");
+    const RECT unrelatedStrip{1920, 980, 3840, 1040};
+    const auto keptMonitor = RestoreAppBarWorkArea(innerWork, unrelatedStrip, ABE_BOTTOM);
+    Check(EqualRect(&keptMonitor, &innerWork),
+        "an equal edge coordinate on another monitor is not an owned adjacent strip");
+
     WINDOWPOS attemptedReveal{};
     attemptedReveal.hwndInsertAfter = HWND_TOPMOST;
     attemptedReveal.flags = SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE;
@@ -1266,6 +1302,22 @@ int main(int argc, char** argv)
         // Exercise the production Shell boundary with approved geometry,
         // including a taskbar occupying part of a non-primary monitor.
         std::vector<DWORD> messages;
+        {
+            int registrations = 0, placements = 0;
+            snowdesktop::StatusBarAppBar stable([&](DWORD message, APPBARDATA&) -> UINT_PTR {
+                registrations += message == ABM_NEW;
+                placements += message == ABM_SETPOS;
+                return TRUE;
+            });
+            const HWND endpoint = reinterpret_cast<HWND>(static_cast<UINT_PTR>(2));
+            for (int notice = 0; notice < 20; ++notice)
+                stable.Place(endpoint, WM_APP + 1, ABE_BOTTOM, 64, {0, 0, 1920, 1080});
+            Check(registrations == 1 && placements == 1,
+                "repeated work-area notifications must not register or set the same Shell strip again");
+            stable.Place(endpoint, WM_APP + 1, ABE_LEFT, 72, {0, 0, 1920, 1080});
+            Check(registrations == 1 && placements == 2 && stable.Bounds().right == 72,
+                "moving a reserved Dock to another edge reuses its registration and commits one new geometry");
+        }
         snowdesktop::StatusBarAppBar reservation([&](DWORD message, APPBARDATA& data) -> UINT_PTR {
             messages.push_back(message);
             if (message == ABM_QUERYPOS) data.rc.left = -1880;
@@ -5904,6 +5956,9 @@ int main(int argc, char** argv)
     CheckDockMagnificationEntry();
     CheckDockHoverTitleCases();
     Check(magnification::ResolveFocusScale(0, 2.0f, true) == 1.0f &&
+            magnification::ResolveFocusScale(1, 2.0f, true) == magnification::kSingleFocusScale &&
+            magnification::ResolveFocusScale(1, 1.0f, true) == magnification::kSingleFocusScale &&
+            magnification::ResolveFocusScale(1, 2.0f, false) == 1.0f &&
             magnification::ResolveFocusScale(2, 2.0f, false) == 1.0f &&
             magnification::ResolveFocusScale(2, 0.5f, true) == 1.0f &&
             magnification::ResolveFocusScale(2, 3.0f, true) == 2.0f &&
@@ -5912,7 +5967,7 @@ int main(int argc, char** argv)
                 magnification::kFocusScale,
         "Dock hover settings must honor global off and keep magnification within safe limits");
     Check(magnification::ScaleForEffect(0, true, 0.0f, 76, 2.0f) == 1.0f &&
-            magnification::ScaleForEffect(1, true, 0.0f, 76, 2.0f) == 2.0f &&
+            magnification::ScaleForEffect(1, true, 0.0f, 76, 2.0f) == magnification::kSingleFocusScale &&
             magnification::ScaleForEffect(1, false, 76.0f, 76, 2.0f) == 1.0f &&
             std::abs(magnification::ScaleForEffect(2, false, 76.0f, 76, 2.0f) -
                 1.5f) < 0.001f,
@@ -5924,12 +5979,12 @@ int main(int argc, char** argv)
     const RECT singleFocusBase{ 0, 100, 76, 176 };
     const RECT singleNeighborBase{ 76, 100, 152, 176 };
     const RECT singleFocusVisual = magnification::MagnifyRect(
-        singleFocusBase, DockPosition::Bottom, 2.0f, 64);
+        singleFocusBase, DockPosition::Bottom, magnification::kSingleFocusScale, 64, 0, true);
     const RECT singleNeighborVisual = magnification::MagnifyRect(
         singleNeighborBase, DockPosition::Bottom, 1.0f, 64,
-        magnification::SingleFocusAxisShift(76, 64, 2.0f));
+        magnification::SingleFocusAxisShift(76, 64, magnification::kSingleFocusScale), true);
     Check(singleFocusVisual.right <= singleNeighborVisual.left,
-        "a 2x single hover must push its unscaled neighbor out of the enlarged icon");
+        "fixed gentle single hover must make room without enlarging its neighbor");
     Check(!magnification::ShouldSuppressMagnification(
               false, false, false) &&
             magnification::ShouldSuppressMagnification(

@@ -33,7 +33,8 @@ struct StatusBarSettings
     // Retired scenes are read and round-tripped under their original JSON keys
     // only. Never reinterpret "has visible windows" as "has no windows".
     StatusBarAppearanceRule legacyShellUi, legacyVisibleWindow;
-    bool menu = true, quickSearch = true;
+    bool menu = true, quickSearch = true, taskView = true;
+    bool clockSystemPanel = false, controlCenterSystemPanel = false;
     bool clock = true, tray = true, network = true, volume = true, battery = true;
     bool controlCenter = true;
     bool cpu = false, memory = false, gpu = false, traffic = false;
@@ -41,7 +42,7 @@ struct StatusBarSettings
     bool bluetoothControls = true, mediaControls = true, powerControls = true;
     std::vector<std::string> pinnedTrayItems;
     std::vector<std::string> trayOrder;
-    std::vector<std::string> leftOrder = {"menu", "quickSearch"};
+    std::vector<std::string> leftOrder = {"menu", "quickSearch", "taskView"};
     std::vector<std::string> rightOrder = {"tray", "cpu", "memory", "gpu", "traffic", "network", "volume", "battery", "controlCenter"};
     friend bool operator==(const StatusBarSettings&, const StatusBarSettings&) = default;
 };
@@ -64,6 +65,9 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
     visit("enabled", &StatusBarSettings::enabled);
     visit("menu", &StatusBarSettings::menu);
     visit("quickSearch", &StatusBarSettings::quickSearch);
+    visit("taskView", &StatusBarSettings::taskView);
+    visit("clockSystemPanel", &StatusBarSettings::clockSystemPanel);
+    visit("controlCenterSystemPanel", &StatusBarSettings::controlCenterSystemPanel);
     visit("clock", &StatusBarSettings::clock);
     visit("tray", &StatusBarSettings::tray);
     visit("network", &StatusBarSettings::network);

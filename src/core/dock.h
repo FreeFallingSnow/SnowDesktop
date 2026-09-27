@@ -186,6 +186,7 @@ private:
     int GetMagnificationAxisShift(
         const RECT& baseRect, const RECT& focusRect,
         POINT pointer) const;
+    RECT MagnifyElementRect(const RECT& baseRect, const RECT& focusRect, POINT pointer) const;
     RECT CalculateTitleTooltipBounds(
         const std::wstring& title,
         const RECT& hoveredBounds,
@@ -229,4 +230,6 @@ private:
     mutable RECT magnificationFocusRect_{};
     mutable snowdesktop::dock_magnification::HoverEntryAnimation
         magnificationEntry_;
+    mutable snowdesktop::dock_magnification::SingleFocusAnimation
+        singleMagnification_;
 };

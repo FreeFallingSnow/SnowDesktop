@@ -310,6 +310,7 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             saved.showFrequentItems = true;
             saved.keepWhenDesktopHidden = true;
             saved.allowDesktopContentOverlap = true;
+            saved.reserveScreenSpace = position % 2 == 0;
             saved.showOnlyWhenSummoned = true;
             saved.frequentItemCount = 7;
             saved.thicknessScale = 0.73f;
@@ -326,7 +327,7 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             Expect(layout::LoadDocument(primary, restored).status == layout::LoadStatus::LoadedPrimary &&
                     restored.dockEnabled == attached && restored.dockLayout &&
                     *restored.dockLayout == saved,
-                "all four Dock edges and both forms survive a layout backup round trip");
+                "all Dock edges, forms and both screen-reservation choices survive a layout backup round trip");
 
             Expect(contents.find("customAppearance") == std::string::npos &&
                     contents.find("floatingHotkey") == std::string::npos &&
@@ -347,12 +348,16 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
     Expect(layout::ParseDocument("{\"dockEnabled\":true}", legacy) &&
             legacy.dockEnabled == true && !legacy.dockLayout,
         "old layout backups preserve their switch without inventing Dock geometry");
+    Expect(layout::ParseDocument(R"({"dockLayout":{"edgeAttached":true}})", legacy) &&
+            legacy.dockLayout && !legacy.dockLayout->reserveScreenSpace,
+        "legacy Dock layouts do not opt into screen reservation when the field is absent");
     for (const char* malformed : {
              R"({"dockLayout":false})",
              R"({"dockLayout":{"position":4}})",
              R"({"dockLayout":{"position":1.5}})",
              R"({"dockLayout":{"monitorScope":-1}})",
              R"({"dockLayout":{"edgeAttached":1}})",
+             R"({"dockLayout":{"reserveScreenSpace":1}})",
              R"({"dockLayout":{"frequentItemCount":0}})",
              R"({"dockLayout":{"thicknessScale":0.1}})"})
     {

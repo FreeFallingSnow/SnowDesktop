@@ -109,7 +109,8 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
     for (std::size_t i = 0; i < items.size(); ++i)
     {
         const auto& item = items[i];
-        if (item.key == "menu" || item.key == "quickSearch") launchEnd = std::max(launchEnd, item.bounds.right);
+        if (item.key == "menu" || item.key == "quickSearch" || item.key == "taskView")
+            launchEnd = std::max(launchEnd, item.bounds.right);
         if (merged && item.key == "quickSearch")
             Require(IsRectEmpty(&item.bounds) && !ResolveStatusBarInvocation(items, i, false),
                 "merged status bar must not expose a duplicate Dock search action");
@@ -450,15 +451,17 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     dropped.pinnedTrayItems.size()==1,"only the overflow button must unpin the dragged icon");
                 // Exercise the real renderer's fallback paths without adding
                 // CLI presets or altering the exported normal frame.
-                const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale, bool search = true) {
+                const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale, bool search = true, bool taskView = true) {
                     auto compactSettings = settings; compactSettings.clock = date;
-                    compactSettings.quickSearch = search;
+                    compactSettings.quickSearch = search; compactSettings.taskView = taskView;
                     compactSettings.cpu = compactSettings.memory = compactSettings.gpu = compactSettings.traffic = true;
                     auto compact = BuildStatusBarItems(compactSettings, data);
                     Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "clock"; }) == date,
                         "the existing date visibility flag must be respected");
                     Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "quickSearch"; }) == search,
                         "merged presentation must not rewrite the stored standalone search choice");
+                    Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "taskView"; }) == taskView,
+                        "Task View must respect its visibility setting in both bar layouts");
                     const UINT testWidth = static_cast<UINT>(std::lround(logicalWidth * testScale));
                     const UINT testHeight = static_cast<UINT>(std::lround((merged ? 64 : 32) * testScale));
                     ComPtr<ID2D1Bitmap1> scratch;
@@ -475,6 +478,15 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     if (!merged && search && logicalWidth >= 640)
                         Require(!IsRectEmpty(&Item(compact, "quickSearch").bounds),
                             "standalone status bar lost its enabled search entry");
+                    if (taskView && logicalWidth >= 640)
+                    {
+                        const auto& entry = Item(compact, "taskView");
+                        const auto invocation = ResolveStatusBarInvocation(compact,
+                            static_cast<std::size_t>(&entry - compact.data()), false);
+                        Require(entry.bounds.right - entry.bounds.left == static_cast<LONG>(std::ceil(32.f * testScale)) &&
+                            invocation && invocation->action == StatusBarAction::TaskView,
+                            "Task View must retain a complete independent hit target and keyboard action");
+                    }
                     if (date && (logicalWidth == 320 || (merged && logicalWidth <= 480)))
                         Require(IsRectEmpty(&Item(compact, "clock").bounds),
                             "crowded date must yield as a whole while its notification target remains available");
@@ -483,6 +495,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 compactLayout(false, false, 640, scale, false);
                 compactLayout(false, true, 640, scale);
                 compactLayout(false, true, 640, scale, false);
+                compactLayout(false, false, 640, scale, true, false);
+                compactLayout(false, true, 640, scale, true, false);
                 compactLayout(true, true, 640, scale);
                 compactLayout(true, true, 480, 1.5f * scale);
                 compactLayout(true, true, 1920, 1.25f * scale);

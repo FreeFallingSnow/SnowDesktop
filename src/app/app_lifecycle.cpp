@@ -15,6 +15,7 @@ DesktopApp::~DesktopApp()
     if(systemDataProvider_)systemDataProvider_->Controls()->SetWake({});
     systemPanel_.reset();
     CancelStatusBarActivation();
+    dockAppBars_.reset();
     statusBar_.reset();
     // The shared service is constructed before the caches its asynchronous
     // scans use. Stop it before CRT static destruction reverses that order.

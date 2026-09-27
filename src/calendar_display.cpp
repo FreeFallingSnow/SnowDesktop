@@ -1,5 +1,6 @@
 #include "calendar_display.h"
 #include "calendar_service.h"
+#include "l10n.h"
 #include <windows.h>
 #include <icu.h>
 #include <algorithm>
@@ -54,6 +55,17 @@ std::vector<DisplayOption> CalendarOptions(std::string_view language)
     const auto locale = LocaleId(language);
     for (auto id : calendars)
     {
+        if (std::string_view(id) == "roc")
+        {
+            const auto label = Locale::Instance().TrWForLanguage(
+                L10N_KEY("settings.calendar.rocName"), std::string(language));
+            if (!label.empty() && label != L"settings.calendar.rocName")
+            {
+                result.push_back({id, label});
+                continue;
+            }
+            // Keep ICU's usable name when language resources are unavailable.
+        }
         UErrorCode status = U_ZERO_ERROR;
         const std::string source = "en@calendar=" + std::string(id);
         UChar label[128]{};

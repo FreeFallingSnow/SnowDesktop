@@ -39,7 +39,7 @@ namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
     kActivate = WM_APP + 45;
-constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2;
+constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3;
 std::map<HWND, bool> liveBars; // All access, including out-of-context hooks, on the UI thread.
 void CALLBACK WindowEvent(HWINEVENTHOOK, DWORD event, HWND target, LONG object, LONG, DWORD, DWORD time)
 {
@@ -202,17 +202,20 @@ struct StatusBar::Impl
             ClearHover(); interaction.CancelPointer();
             liveBars.erase(hwnd);
             if (owner.hidden) owner.hidden(monitor);
-            if (hwnd) KillTimer(hwnd, kClockTimer);
+            if (hwnd) { KillTimer(hwnd, kClockTimer); KillTimer(hwnd, kPlacementTimer); }
             tooltip.Close();
             appbar.Remove();
             backdrop.Reset();
             if (hwnd) DestroyWindow(hwnd);
         }
-        void QueuePlace()
+        void QueuePlace(bool settingsChanged = false)
         {
-            if (closing || placing || queued) return;
+            if (closing || placing || (queued && !settingsChanged)) return;
             queued = true;
-            PostMessageW(hwnd, kPlace, 0, 0);
+            // First presentation is immediate. Continuous settings changes
+            // settle before asking Shell to resize the system work area.
+            if (!positioned) PostMessageW(hwnd, kPlace, 0, 0);
+            else SetTimer(hwnd, kPlacementTimer, 120, nullptr);
         }
         bool UpdateAppearance()
         {
@@ -423,6 +426,7 @@ struct StatusBar::Impl
         }
         void Place()
         {
+            KillTimer(hwnd, kPlacementTimer);
             queued = false;
             if (closing || placing) return;
             placing = true;
@@ -877,6 +881,7 @@ struct StatusBar::Impl
                     self->PollTrayMenu();
                 }
                 else if (wp == kTrayMenuTimer) self->PollTrayMenu();
+                else if (wp == kPlacementTimer) self->Place();
                 return 0;
             case WM_DPICHANGED:
             case WM_DISPLAYCHANGE:
@@ -1415,6 +1420,15 @@ PersonalizationSettings StatusBar::AppearanceForMonitor(HMONITOR monitor) const
     }
     return ResolveStatusBarAppearance(impl_->settings.theme, impl_->globalAppearance);
 }
+bool StatusBar::MergesDock(HMONITOR monitor) const
+{
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && window->mergedDockHeight) return true;
+    }
+    return false;
+}
 std::optional<RECT> StatusBar::MergedDockArea(HMONITOR monitor) const
 {
     for (const auto& [id, window] : impl_->windows)
@@ -1552,7 +1566,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         window->appearanceDirty = window->appearanceDirty || changed || mergedChanged;
         window->paintDirty = window->paintDirty || changed || mergedChanged;
         if (mergedChanged && self.dockChanged) self.dockChanged(true);
-        window->QueuePlace();
+        window->QueuePlace(changed || mergedChanged);
     }
     if (self.hooks.empty())
         for (const auto range : {std::pair{EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND},

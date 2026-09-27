@@ -143,6 +143,14 @@ bool DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
         }
         page.workArea = MakeRect(work->left, work->top,
             work->right, work->bottom);
+        if (dockAppBars_)
+        {
+            RECT screen = page.bounds; OffsetRect(&screen, virtualLeft_, virtualTop_);
+            RECT available = page.workArea; OffsetRect(&available, virtualLeft_, virtualTop_);
+            available = dockAppBars_->RestoreWorkArea(MonitorFromRect(&screen, MONITOR_DEFAULTTONULL), available);
+            OffsetRect(&available, -virtualLeft_, -virtualTop_);
+            page.workArea = available;
+        }
         page.visualWorkArea = page.workArea;
         ConfigureGridPage(page);
         ApplyIconSpacingToPage(page);
@@ -168,6 +176,8 @@ bool DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
     // "restores" that stale reservation into the fresh work area and can
     // expand it across the Windows taskbar.
     dockAreas_.clear();
+    dockReservedAreas_.clear();
+    dockWorkAreaReservationApplied_ = false;
     gridPages_ = std::move(nextPages);
 
     // 从枚举结果提取系统主屏 monitorId（供双锚点回退解析使用）
@@ -182,7 +192,6 @@ bool DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
     });
 
     ApplyPageMapping();
-    ApplyDockWorkAreaReservation();
     return true;
 }
 

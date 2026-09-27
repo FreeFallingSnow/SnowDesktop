@@ -11,6 +11,7 @@
 namespace snowdesktop::dock_magnification
 {
 constexpr float kFocusScale = 1.28f;
+constexpr float kSingleFocusScale = 1.12f;
 constexpr float kFirstNeighborScale = 1.14f;
 constexpr float kSecondNeighborScale = 1.05f;
 constexpr float kInfluenceRadiusInItems = 3.0f;
@@ -23,6 +24,8 @@ inline float ResolveFocusScale(
 {
     if (!animationsEnabled || effect == 0)
         return 1.0f;
+    if (effect == 1)
+        return kSingleFocusScale;
     return std::isfinite(configuredScale)
         ? std::clamp(configuredScale, 1.0f, 2.0f)
         : kFocusScale;
@@ -174,6 +177,70 @@ private:
     float progress_ = 0.0f;
 };
 
+// Keep a single visual owner even while the semantic hover moves to another
+// item. Shrink the old owner before growing the new one; repeated pointer
+// samples never restart a phase, and reversals continue from the current size.
+class SingleFocusAnimation
+{
+public:
+    static constexpr double kDurationMilliseconds = 160.0;
+    static constexpr double kSwitchPhaseMilliseconds = 80.0;
+
+    void SetTarget(RECT target, double now, double durationScale)
+    {
+        if (EqualRect(&target, &requested_)) return;
+        Advance(now);
+        requested_ = target;
+        const double speed = std::isfinite(durationScale) ? std::max(0.01, durationScale) : 1.0;
+        const bool switching = !IsRectEmpty(&target) && !IsRectEmpty(&current_) &&
+            !EqualRect(&target, &current_);
+        nextDuration_ = (switching ? kSwitchPhaseMilliseconds : kDurationMilliseconds) * speed;
+        if (IsRectEmpty(&current_) || amount_ == 0.0f)
+        {
+            current_ = target;
+            Begin(IsRectEmpty(&target) ? 0.0f : 1.0f, now, nextDuration_);
+        }
+        else
+            Begin(EqualRect(&target, &current_) ? 1.0f : 0.0f, now, nextDuration_);
+    }
+
+    void Advance(double now)
+    {
+        if (!animating_) return;
+        const float progress = static_cast<float>(std::clamp((now - started_) / duration_, 0.0, 1.0));
+        amount_ = InterpolateScale(from_, to_, progress);
+        if (progress < 1.0f) return;
+        animating_ = false;
+        if (to_ == 0.0f)
+        {
+            current_ = requested_;
+            if (!IsRectEmpty(&current_))
+            {
+                Begin(1.0f, started_ + duration_, nextDuration_);
+                Advance(now); // At most one follow-up phase, including a late frame.
+            }
+        }
+    }
+
+    bool IsAnimating() const { return animating_; }
+    const RECT& CurrentRect() const { return current_; }
+    float Scale() const { return 1.0f + (kSingleFocusScale - 1.0f) * amount_; }
+    float ScaleFor(const RECT& rect) const
+    { return EqualRect(&rect, &current_) && !IsRectEmpty(&rect) ? Scale() : 1.0f; }
+
+private:
+    void Begin(float to, double now, double duration)
+    {
+        from_ = amount_; to_ = to; started_ = now; duration_ = duration;
+        animating_ = from_ != to_;
+    }
+    RECT current_{}, requested_{};
+    float amount_ = 0.0f, from_ = 0.0f, to_ = 0.0f;
+    double started_ = 0.0, duration_ = kDurationMilliseconds;
+    double nextDuration_ = kDurationMilliseconds;
+    bool animating_ = false;
+};
+
 inline int GrowthForScale(float scale, int baseIconSize)
 {
     return std::max(0, static_cast<int>(std::round(
@@ -216,7 +283,8 @@ inline float ScaleForEffect(
     if (effect == 0)
         return 1.0f;
     if (effect == 1)
-        return focused ? ResolveFocusScale(effect, focusScale, true) : 1.0f;
+        return focused ? (std::isfinite(focusScale) ?
+            std::clamp(focusScale, 1.0f, kSingleFocusScale) : kSingleFocusScale) : 1.0f;
     return ScaleForAxisDistance(centerDistance, itemPitch, focusScale);
 }
 
@@ -347,7 +415,7 @@ inline int PackedAxisShift(
 
 inline RECT MagnifyRect(
     RECT base, DockPosition position, float scale, int baseIconSize,
-    int axisShift = 0)
+    int axisShift = 0, bool centered = false)
 {
     const bool vertical = position == DockPosition::Left ||
         position == DockPosition::Right;
@@ -360,6 +428,12 @@ inline RECT MagnifyRect(
 
     const int leadingGrowth = growth / 2;
     const int trailingGrowth = growth - leadingGrowth;
+    if (centered)
+    {
+        base.left -= leadingGrowth; base.right += trailingGrowth;
+        base.top -= leadingGrowth; base.bottom += trailingGrowth;
+        return base;
+    }
     switch (position)
     {
     case DockPosition::Top:
@@ -433,7 +507,7 @@ inline RECT AnchorTooltipBounds(
 
 inline RECT ExpandInteractionBounds(
     RECT bounds, DockPosition position, int baseIconSize,
-    float focusScale = kFocusScale)
+    float focusScale = kFocusScale, bool centered = false)
 {
     const int growth = GrowthForScale(focusScale, baseIconSize);
     if (growth == 0)
@@ -441,6 +515,15 @@ inline RECT ExpandInteractionBounds(
     const int axisPadding = std::max(1,
         MaximumAxisShift(baseIconSize, focusScale) +
         (growth + 1) / 2);
+    if (centered)
+    {
+        const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+        bounds.left -= vertical ? growth / 2 : axisPadding;
+        bounds.right += vertical ? growth - growth / 2 : axisPadding;
+        bounds.top -= vertical ? axisPadding : growth / 2;
+        bounds.bottom += vertical ? axisPadding : growth - growth / 2;
+        return bounds;
+    }
     switch (position)
     {
     case DockPosition::Top:
@@ -470,9 +553,16 @@ inline RECT ExpandInteractionBounds(
 
 inline RECT ExpandPerpendicularBounds(
     RECT bounds, DockPosition position, int baseIconSize,
-    float focusScale = kFocusScale)
+    float focusScale = kFocusScale, bool centered = false)
 {
     const int growth = GrowthForScale(focusScale, baseIconSize);
+    if (centered)
+    {
+        const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+        if (vertical) { bounds.left -= growth / 2; bounds.right += growth - growth / 2; }
+        else { bounds.top -= growth / 2; bounds.bottom += growth - growth / 2; }
+        return bounds;
+    }
     switch (position)
     {
     case DockPosition::Top:
