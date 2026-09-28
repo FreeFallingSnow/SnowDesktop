@@ -2,6 +2,9 @@
 #include "desktop_style_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "../desktop_style_presets.h"
+#include "../dock_collection_icon_rules.h"
+#include "../status_bar_view.h"
+#include "../status_bar_layout.h"
 
 #include <array>
 #include <shellapi.h>
@@ -20,6 +23,8 @@ namespace
 {
 constexpr std::array<std::string_view, 5> kPresets{
     "native", "taskbar-dock", "island", "merged", "side"};
+constexpr double kPreviewWidth = 960, kPreviewHeight = 540;
+constexpr double kPreviewStatusHeight = 32, kPreviewDockHeight = 64;
 
 muxc::Border PreviewSurface()
 {
@@ -60,16 +65,34 @@ muxc::FontIcon PreviewGlyph(std::wstring_view glyph, double size)
     return icon;
 }
 
-mux::UIElement PreviewAppIcon(std::wstring_view asset, std::wstring_view fallback, bool highContrast)
+mux::UIElement PreviewAppIcon(std::wstring_view asset, std::wstring_view fallback, bool highContrast, double size = 40)
 {
-    if (highContrast) return PreviewGlyph(fallback, 23);
+    if (highContrast) return PreviewGlyph(fallback, size * .8);
     muxmi::SvgImageSource source;
     source.UriSource(winrt::Windows::Foundation::Uri(winrt::hstring(asset)));
     muxc::Image image;
     image.Source(source);
-    image.Width(26); image.Height(26);
+    image.Width(size); image.Height(size);
     image.Stretch(muxm::Stretch::Uniform);
     return image;
+}
+
+muxc::FontIcon PreviewFluentGlyph(std::wstring_view glyph, double size = 18)
+{
+    auto icon = PreviewGlyph(glyph, size);
+    icon.FontFamily(muxm::FontFamily(L"ms-appx:///Assets/Fonts/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular"));
+    return icon;
+}
+
+muxc::Viewbox FitPreviewContent(const mux::UIElement& child, mux::HorizontalAlignment alignment)
+{
+    muxc::Viewbox view;
+    view.Child(child);
+    view.Stretch(muxm::Stretch::Uniform);
+    view.StretchDirection(muxc::StretchDirection::DownOnly);
+    view.HorizontalAlignment(alignment);
+    view.VerticalAlignment(mux::VerticalAlignment::Center);
+    return view;
 }
 
 void ConfigureText(const muxc::TextBlock& text, bool heading = false)
@@ -283,10 +306,12 @@ struct DesktopStylePagePresenter::Impl
         presetDetails.VerticalAlignment(mux::VerticalAlignment::Center);
         presetDetails.Children().Append(presetDescription);
         preview = PreviewSurface();
-        preview.Width(480); preview.Height(270);
+        preview.Width(kPreviewWidth); preview.Height(kPreviewHeight);
+        preview.BorderThickness({0, 0, 0, 0});
+        preview.CornerRadius({0, 0, 0, 0});
         preview.IsHitTestVisible(false);
         previewWallpaper = mux::Markup::XamlReader::Load(LR"(
-            <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" CornerRadius="7" Opacity="0.26">
+            <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Opacity="0.26">
                 <Border.Background>
                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                         <GradientStop Color="{ThemeResource SystemAccentColorLight2}" Offset="0" />
@@ -443,113 +468,264 @@ struct DesktopStylePagePresenter::Impl
         previewView.HorizontalAlignment(wide ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Center);
         if (width > 0) previewView.Width(std::min(520.0, wide ? width / 2.25 * 1.25 : width));
     }
-    muxc::StackPanel PreviewApps(bool vertical, bool highContrast)
+    mux::UIElement PreviewCollection(bool highContrast)
     {
+        auto group = PreviewSurface();
+        group.Width(40); group.Height(40);
+        group.CornerRadius({9, 9, 9, 9});
+        muxc::Canvas content;
+        const auto layout = dock_collection_icon_rules::CalculateLayout({0, 0, 40, 40});
+        const std::array<std::pair<std::wstring_view, std::wstring_view>, 4> icons{{
+            {L"browser", L"\xE774"}, {L"mail", L"\xE715"},
+            {L"media", L"\xE714"}, {L"terminal", L"\xE756"}}};
+        for (std::size_t i = 0; i < icons.size(); ++i)
+        {
+            const auto cell = dock_collection_icon_rules::CellRect(layout, static_cast<int>(i % 2), static_cast<int>(i / 2));
+            const auto asset = L"ms-appx:///Assets/Settings/Icons/preview-" + std::wstring(icons[i].first) + L".svg";
+            auto icon = PreviewAppIcon(asset, icons[i].second, highContrast, cell.right - cell.left);
+            muxc::Canvas::SetLeft(icon, cell.left);
+            muxc::Canvas::SetTop(icon, cell.top);
+            content.Children().Append(icon);
+        }
+        group.Child(content);
+        return group;
+    }
+    muxc::StackPanel PreviewApps(const DockSettings& settings, bool highContrast, bool nativeTaskbar = false)
+    {
+        const auto position = nativeTaskbar ? nativeTaskbarPosition : settings.position;
+        const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
         muxc::StackPanel items;
         items.Orientation(vertical ? muxc::Orientation::Vertical : muxc::Orientation::Horizontal);
-        items.Spacing(2);
+        items.Spacing(3);
         items.HorizontalAlignment(mux::HorizontalAlignment::Center);
         items.VerticalAlignment(mux::VerticalAlignment::Center);
-        constexpr std::array<std::wstring_view, 6> assets{
-            L"ms-appx:///Assets/Settings/Icons/dock.svg",
-            L"ms-appx:///Assets/Settings/Icons/categories.svg",
-            L"ms-appx:///Assets/Settings/Icons/calendar.svg",
-            L"ms-appx:///Assets/Settings/Icons/appearance.svg",
-            L"ms-appx:///Assets/Settings/Icons/widgets.svg",
-            L"ms-appx:///Assets/Settings/Icons/general.svg"};
-        constexpr std::array<std::wstring_view, 6> glyphs{L"\xE80F", L"\xE8B7", L"\xE787", L"\xE771", L"\xECA5", L"\xE713"};
-        for (std::size_t index = 0; index != assets.size(); ++index)
-        {
+        const double extent = nativeTaskbar ? 40 : 48;
+        const auto append = [&](const mux::UIElement& icon, bool running = false) {
             muxc::Grid cell;
-            cell.Width(34); cell.Height(34);
-            cell.Children().Append(PreviewAppIcon(assets[index], glyphs[index], highContrast));
+            cell.Width(extent); cell.Height(extent);
+            cell.Children().Append(icon);
+            if (running)
+            {
+                auto dot = mux::Markup::XamlReader::Load(
+                    LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="4" Height="4" CornerRadius="2" Background="{ThemeResource TextFillColorPrimaryBrush}" />)").as<muxc::Border>();
+                dot.HorizontalAlignment(position == DockPosition::Left ? mux::HorizontalAlignment::Left :
+                    position == DockPosition::Right ? mux::HorizontalAlignment::Right : mux::HorizontalAlignment::Center);
+                dot.VerticalAlignment(position == DockPosition::Top ? mux::VerticalAlignment::Top :
+                    position == DockPosition::Bottom ? mux::VerticalAlignment::Bottom : mux::VerticalAlignment::Center);
+                cell.Children().Append(dot);
+            }
             items.Children().Append(cell);
+        };
+        const auto app = [&](std::wstring_view name, std::wstring_view fallback, bool running = false) {
+            const auto asset = L"ms-appx:///Assets/Settings/Icons/preview-" + std::wstring(name) + L".svg";
+            append(PreviewAppIcon(asset, fallback, highContrast, nativeTaskbar ? 30 : 40), running);
+        };
+        const auto divider = [&] {
+            auto line = mux::Markup::XamlReader::Load(
+                LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />)").as<muxc::Border>();
+            line.Width(vertical ? 28 : 1); line.Height(vertical ? 1 : 28);
+            line.Margin({5, 5, 5, 5});
+            line.HorizontalAlignment(mux::HorizontalAlignment::Center);
+            line.VerticalAlignment(mux::VerticalAlignment::Center);
+            items.Children().Append(line);
+        };
+        if (nativeTaskbar || ShowDockWindowsButton(settings))
+        {
+            append(PreviewGlyph(L"\xE782", nativeTaskbar ? 24 : 28));
+            if (!nativeTaskbar) divider();
+        }
+        app(L"browser", L"\xE774", true);
+        app(nativeTaskbar ? L"mail" : L"terminal", nativeTaskbar ? L"\xE715" : L"\xE756", true);
+        if (!nativeTaskbar) { append(PreviewCollection(highContrast)); divider(); }
+        app(L"folder", L"\xE8B7");
+        if (!nativeTaskbar)
+        {
+            append(PreviewGlyph(L"\xE721", 26));
+            app(L"trash", L"\xE74D");
         }
         return items;
     }
-    muxc::StackPanel PreviewStatus(bool clock)
+    muxc::StackPanel PreviewSystemControls(bool vertical = false)
     {
         muxc::StackPanel status;
         status.Orientation(muxc::Orientation::Horizontal);
-        status.Spacing(8);
+        status.Spacing(vertical ? 3 : 8);
         status.VerticalAlignment(mux::VerticalAlignment::Center);
-        status.Children().Append(PreviewGlyph(L"\xE702", 11));
-        status.Children().Append(PreviewGlyph(L"\xE767", 11));
-        status.Children().Append(PreviewGlyph(L"\xE83F", 14));
-        if (clock)
-        {
-            muxc::TextBlock text;
-            text.Text(L"09:41");
-            text.FontSize(11);
-            text.VerticalAlignment(mux::VerticalAlignment::Center);
-            status.Children().Append(text);
-        }
+        status.Children().Append(PreviewGlyph(L"\xE702", 13));
+        status.Children().Append(PreviewGlyph(L"\xE767", 13));
+        status.Children().Append(PreviewGlyph(L"\xE83F", 16));
         return status;
     }
-    void AddPreviewBar(DockPosition position, bool island, bool dockBar, bool highContrast,
-        bool merged = false, bool topBar = false)
+    muxc::Grid PreviewStatusBar(const StatusBarSettings& settings, bool merged,
+        const mux::UIElement& dockContent = nullptr)
     {
+        // Illustrative data only. Reuse the production item builder so controls,
+        // glyphs, metric labels and visibility follow the real bar's semantics.
+        StatusBarSnapshot data;
+        data.clock = L"2026/9/28   09:41";
+        data.notifications.unreadCount = 0;
+        data.cpu.emplace(); data.cpu->available = true; data.cpu->warmingUp = false; data.cpu->usagePercent = 25;
+        data.memory.emplace(); data.memory->available = true;
+        data.memory->totalBytes = 32ull << 30; data.memory->usedBytes = 12ull << 30;
+        data.gpu.emplace(); data.gpu->available = true; data.gpu->warmingUp = false;
+        widget_runtime::WidgetGpuAdapterDataSnapshot adapter;
+        adapter.usageAvailable = true; adapter.usagePercent = 18;
+        data.gpu->adapters.push_back(adapter);
+        data.traffic.emplace(); data.traffic->available = true; data.traffic->warmingUp = false;
+        data.traffic->downloadBytesPerSecond = 2400; data.traffic->uploadBytesPerSecond = 800;
+        data.network.emplace(); data.network->available = true;
+        data.network->connectivity = "internet"; data.network->transport = "ethernet";
+        data.audio.emplace(); data.audio->available = true; data.audio->volume = .45;
+        data.power.emplace(); data.power->available = true; data.power->batteryPercent = 76;
+        const auto items = BuildStatusBarItems(settings, data);
+        muxc::StackPanel left, center, right;
+        for (const auto& panel : {left, center, right})
+        {
+            panel.Orientation(muxc::Orientation::Horizontal);
+            panel.VerticalAlignment(mux::VerticalAlignment::Center);
+        }
+        mux::UIElement clock = nullptr, notification = nullptr;
+        for (const auto& item : items)
+        {
+            if (merged && item.key == "quickSearch") continue;
+            muxc::Grid cell;
+            cell.Height(merged ? 44 : 32);
+            if (item.key == "controlCenter")
+            {
+                muxc::StackPanel controls;
+                controls.Orientation(muxc::Orientation::Horizontal);
+                controls.Spacing(10);
+                controls.VerticalAlignment(mux::VerticalAlignment::Center);
+                controls.HorizontalAlignment(mux::HorizontalAlignment::Center);
+                for (const auto& glyph : item.controlGlyphs) controls.Children().Append(PreviewFluentGlyph(glyph));
+                cell.Width(92); cell.Children().Append(controls);
+            }
+            else if (!item.text.empty())
+            {
+                muxc::TextBlock text;
+                text.Text(item.key == "clock" ? StatusBarClockDisplay(item.text, merged) : item.text);
+                text.FontSize(12);
+                text.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+                text.TextAlignment(mux::TextAlignment::Center);
+                text.VerticalAlignment(mux::VerticalAlignment::Center);
+                text.Margin({8, 0, 8, 0});
+                cell.Children().Append(text);
+            }
+            else
+            {
+                auto icon = PreviewFluentGlyph(item.glyph);
+                if (item.flipGlyph)
+                {
+                    muxm::ScaleTransform flip;
+                    flip.ScaleY(-1);
+                    icon.RenderTransformOrigin({.5f, .5f}); icon.RenderTransform(flip);
+                }
+                cell.Width(32); cell.Children().Append(icon);
+            }
+            if (item.key == "clock") clock = cell;
+            else if (item.key == "notifications") notification = cell;
+            else (item.left ? left : right).Children().Append(cell);
+        }
+        if (merged)
+        {
+            if (clock) right.Children().Append(clock);
+            if (notification) right.Children().Append(notification);
+        }
+        else
+        {
+            if (clock && notification) { muxc::Grid balance; balance.Width(32); center.Children().Append(balance); }
+            if (clock) center.Children().Append(clock);
+            if (notification) center.Children().Append(notification);
+        }
+        muxc::Grid content;
+        content.Padding({10, 0, 10, 0});
+        for (int index = 0; index < 3; ++index)
+        {
+            muxc::ColumnDefinition column;
+            column.Width(index == 1 && !merged ? mux::GridLengthHelper::Auto() :
+                mux::GridLengthHelper::FromValueAndType(index == 1 ? 1.5 : 1.0, mux::GridUnitType::Star));
+            content.ColumnDefinitions().Append(column);
+        }
+        auto leading = FitPreviewContent(left, mux::HorizontalAlignment::Left);
+        auto middle = FitPreviewContent(merged ? dockContent : center.as<mux::UIElement>(), mux::HorizontalAlignment::Center);
+        auto trailing = FitPreviewContent(right, mux::HorizontalAlignment::Right);
+        muxc::Grid::SetColumn(middle, 1); muxc::Grid::SetColumn(trailing, 2);
+        content.Children().Append(leading); content.Children().Append(middle); content.Children().Append(trailing);
+        return content;
+    }
+    void AddPreviewBar(const GeneralSettings& values, const DockSettings& settings,
+        bool dockBar, bool highContrast, bool merged = false)
+    {
+        const auto position = dockBar ? settings.position : values.statusBar.position;
+        const bool island = dockBar && !settings.edgeAttached;
         const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
         auto bar = PreviewSurface();
-        const double thickness = dockBar ? 48.0 : 24.0;
+        // Edge bars are flush and square. Only the island has an inset/radius.
+        bar.BorderThickness({0, 0, 0, 0});
+        bar.CornerRadius(island ? mux::CornerRadius{14, 14, 14, 14} : mux::CornerRadius{0, 0, 0, 0});
+        const double thickness = dockBar ? kPreviewDockHeight : kPreviewStatusHeight;
         bar.HorizontalAlignment(vertical
             ? (position == DockPosition::Left ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right)
             : mux::HorizontalAlignment::Stretch);
         bar.VerticalAlignment(vertical ? mux::VerticalAlignment::Stretch
             : (position == DockPosition::Top ? mux::VerticalAlignment::Top : mux::VerticalAlignment::Bottom));
-        if (vertical)
+        if (vertical) bar.Width(thickness); else bar.Height(thickness);
+        mux::Thickness inset{};
+        if (island) inset = {12, 12, 12, 12};
+        if (dockBar && !merged && values.statusBar.enabled)
         {
-            bar.Width(thickness);
-            if (island) { bar.Height(226); bar.VerticalAlignment(mux::VerticalAlignment::Center); }
+            if (values.statusBar.position == DockPosition::Top) inset.Top += kPreviewStatusHeight;
+            else inset.Bottom += kPreviewStatusHeight;
         }
-        else
-        {
-            bar.Height(thickness);
-            if (island) { bar.Width(232); bar.HorizontalAlignment(mux::HorizontalAlignment::Center); }
-        }
-        bar.Margin(island ? mux::Thickness{10, 10, 10, 10}
-            : mux::Thickness{1, vertical && topBar ? 25.0 : 1.0, 1, 1});
-        bar.CornerRadius(island ? mux::CornerRadius{12, 12, 12, 12} : mux::CornerRadius{4, 4, 4, 4});
-        muxc::Grid barContent;
+        bar.Margin(inset);
         if (dockBar)
         {
-            barContent.Children().Append(PreviewApps(vertical, highContrast));
-            if (merged)
+            const auto apps = PreviewApps(settings, highContrast);
+            if (island)
             {
-                auto search = PreviewGlyph(L"\xE721", 16);
-                search.HorizontalAlignment(mux::HorizontalAlignment::Left);
-                search.Margin({14, 0, 0, 0});
-                barContent.Children().Append(search);
-                auto status = PreviewStatus(true);
-                status.HorizontalAlignment(mux::HorizontalAlignment::Right);
-                status.Margin({0, 0, 8, 0});
-                barContent.Children().Append(status);
+                apps.Measure({2000, 2000});
+                if (vertical) { bar.Height(apps.DesiredSize().Height + 20); bar.VerticalAlignment(mux::VerticalAlignment::Center); }
+                else { bar.Width(apps.DesiredSize().Width + 20); bar.HorizontalAlignment(mux::HorizontalAlignment::Center); }
             }
+            bar.Child(merged ? PreviewStatusBar(values.statusBar, true, apps).as<mux::UIElement>() :
+                FitPreviewContent(apps, mux::HorizontalAlignment::Center).as<mux::UIElement>());
         }
-        else
-        {
-            muxc::StackPanel tools;
-            tools.Orientation(muxc::Orientation::Horizontal);
-            tools.Spacing(12);
-            tools.HorizontalAlignment(mux::HorizontalAlignment::Left);
-            tools.VerticalAlignment(mux::VerticalAlignment::Center);
-            tools.Margin({10, 0, 0, 0});
-            tools.Children().Append(PreviewGlyph(L"\xE7C4", 12));
-            tools.Children().Append(PreviewGlyph(L"\xE721", 12));
-            barContent.Children().Append(tools);
-            muxc::TextBlock clock;
-            clock.Text(L"09:41");
-            clock.FontSize(11);
-            clock.HorizontalAlignment(mux::HorizontalAlignment::Center);
-            clock.VerticalAlignment(mux::VerticalAlignment::Center);
-            barContent.Children().Append(clock);
-            auto status = PreviewStatus(false);
-            status.HorizontalAlignment(mux::HorizontalAlignment::Right);
-            status.Margin({0, 0, 10, 0});
-            barContent.Children().Append(status);
-        }
-        bar.Child(barContent);
+        else bar.Child(PreviewStatusBar(values.statusBar, false));
         previewLayout.Children().Append(bar);
+    }
+    muxc::Grid PreviewTaskbarContent(const DockSettings& settings, bool highContrast, bool vertical)
+    {
+        muxc::Grid content;
+        const bool centered = !vertical && settings.systemTaskbarAlignment != 0;
+        for (int index = 0; index < (centered ? 3 : 2); ++index)
+        {
+            const auto length = index == 1 ? mux::GridLengthHelper::Auto() :
+                mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star);
+            if (vertical) { muxc::RowDefinition row; row.Height(length); content.RowDefinitions().Append(row); }
+            else { muxc::ColumnDefinition column; column.Width(length); content.ColumnDefinitions().Append(column); }
+        }
+        auto apps = FitPreviewContent(PreviewApps(settings, highContrast, true),
+            !vertical && settings.systemTaskbarAlignment == 0 ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Center);
+        apps.Margin({8, 4, 8, 4});
+        if (centered) muxc::Grid::SetColumn(apps, 1);
+        content.Children().Append(apps);
+        muxc::StackPanel info;
+        info.Orientation(vertical ? muxc::Orientation::Vertical : muxc::Orientation::Horizontal);
+        info.Spacing(vertical ? 5 : 10);
+        info.VerticalAlignment(vertical ? mux::VerticalAlignment::Bottom : mux::VerticalAlignment::Center);
+        info.HorizontalAlignment(vertical ? mux::HorizontalAlignment::Center : mux::HorizontalAlignment::Right);
+        info.Margin(vertical ? mux::Thickness{3, 8, 3, 8} : mux::Thickness{12, 0, 10, 0});
+        info.Children().Append(PreviewGlyph(nativeTaskbarPosition == DockPosition::Top ? L"\xE70D" : L"\xE70E", 10));
+        info.Children().Append(PreviewSystemControls(vertical));
+        muxc::TextBlock clock;
+        clock.Text(L"09:41\n2026/9/28"); clock.FontSize(10);
+        clock.TextAlignment(vertical ? mux::TextAlignment::Center : mux::TextAlignment::Right);
+        clock.VerticalAlignment(mux::VerticalAlignment::Center);
+        info.Children().Append(clock);
+        info.Children().Append(PreviewGlyph(L"\xE7F4", 13));
+        if (vertical) muxc::Grid::SetRow(info, 1); else muxc::Grid::SetColumn(info, centered ? 2 : 1);
+        content.Children().Append(info);
+        return content;
     }
     void UpdatePreset()
     {
@@ -570,26 +746,25 @@ struct DesktopStylePagePresenter::Impl
         const bool merged = previewGeneral.dockEnabled && previewGeneral.statusBar.enabled && previewDock.edgeAttached &&
             previewDock.position == previewGeneral.statusBar.position;
         if (previewGeneral.statusBar.enabled && !merged)
-            AddPreviewBar(previewGeneral.statusBar.position, false, false, highContrast);
+            AddPreviewBar(previewGeneral, previewDock, false, highContrast);
         if (previewGeneral.dockEnabled)
-            AddPreviewBar(previewDock.position, !previewDock.edgeAttached, true, highContrast, merged,
-                previewGeneral.statusBar.enabled && previewGeneral.statusBar.position == DockPosition::Top);
+            AddPreviewBar(previewGeneral, previewDock, true, highContrast, merged);
         if (!previewDock.suppressSystemTaskbar)
         {
             // The native taskbar is illustrative: this preset preserves its
             // Windows-owned position and its saved Dock edge/layout.
             auto taskbar = PreviewSurface();
             const bool vertical = nativeTaskbarPosition == DockPosition::Left || nativeTaskbarPosition == DockPosition::Right;
-            const double thickness = previewDock.systemTaskbarAutoHide ? 3.0 : 34.0;
+            const double thickness = previewDock.systemTaskbarAutoHide ? 3.0 : (vertical ? 64.0 : 48.0);
             if (vertical) taskbar.Width(thickness); else taskbar.Height(thickness);
-            taskbar.CornerRadius({2, 2, 2, 2});
-            taskbar.Margin({1, 1, 1, 1});
+            taskbar.CornerRadius({0, 0, 0, 0});
+            taskbar.BorderThickness({0, 0, 0, 0});
             taskbar.HorizontalAlignment(vertical
                 ? (nativeTaskbarPosition == DockPosition::Left ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right)
                 : mux::HorizontalAlignment::Stretch);
             taskbar.VerticalAlignment(vertical ? mux::VerticalAlignment::Stretch
                 : (nativeTaskbarPosition == DockPosition::Top ? mux::VerticalAlignment::Top : mux::VerticalAlignment::Bottom));
-            if (!previewDock.systemTaskbarAutoHide) taskbar.Child(PreviewApps(vertical, highContrast));
+            if (!previewDock.systemTaskbarAutoHide) taskbar.Child(PreviewTaskbarContent(previewDock, highContrast, vertical));
             previewLayout.Children().Append(taskbar);
         }
     }
