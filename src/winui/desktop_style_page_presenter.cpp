@@ -65,6 +65,27 @@ muxc::FontIcon PreviewGlyph(std::wstring_view glyph, double size)
     return icon;
 }
 
+// The real Dock draws its Start control as four panes, without a font glyph.
+muxc::Grid PreviewStartIcon(double size, bool highContrast)
+{
+    muxc::Grid icon;
+    icon.Width(size); icon.Height(size);
+    icon.ColumnSpacing(size * .09); icon.RowSpacing(size * .09);
+    for (int i = 0; i != 2; ++i)
+    {
+        icon.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+        icon.RowDefinitions().Append(muxc::RowDefinition{});
+    }
+    for (int i = 0; i != 4; ++i)
+    {
+        auto pane = mux::Markup::XamlReader::Load(LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource TextFillColorPrimaryBrush}" />)").as<muxc::Border>();
+        if (!highContrast) pane.Background(muxm::SolidColorBrush(winrt::Windows::UI::Color{255, 0, 120, 214}));
+        muxc::Grid::SetRow(pane, i / 2); muxc::Grid::SetColumn(pane, i % 2);
+        icon.Children().Append(pane);
+    }
+    return icon;
+}
+
 mux::UIElement PreviewAppIcon(std::wstring_view asset, std::wstring_view fallback, bool highContrast, double size = 40)
 {
     if (highContrast) return PreviewGlyph(fallback, size * .8);
@@ -144,6 +165,9 @@ struct DesktopStylePagePresenter::Impl
     muxc::StackPanel root;
     muxc::ComboBox presets;
     SettingRow presetRow;
+    muxc::StackPanel companionOptions;
+    muxc::ComboBox companionPosition, companionForm;
+    SettingRow companionPositionRow, companionFormRow;
     muxc::TextBlock presetDescription, presetChanges, adjustmentTitle;
     muxc::Button apply;
     muxc::Viewbox previewView;
@@ -300,6 +324,19 @@ struct DesktopStylePagePresenter::Impl
         presets.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presetRow.Initialize(presets);
         presetCard.Children().Append(presetRow.root);
+        companionOptions.Spacing(8);
+        companionPositionRow.Initialize(companionPosition);
+        companionFormRow.Initialize(companionForm);
+        companionOptions.Children().Append(companionPositionRow.root);
+        companionOptions.Children().Append(companionFormRow.root);
+        presetCard.Children().Append(companionOptions);
+        for (const auto& control : {companionPosition, companionForm})
+        {
+            const auto optionToken = control.SelectionChanged([this](const auto&, const auto&) {
+                if (!closed && !syncing) UpdatePreset();
+            });
+            revoke.push_back([control, optionToken] { control.SelectionChanged(optionToken); });
+        }
         ConfigureText(presetDescription, true);
         presetDescription.FontSize(16);
         presetDetails.Spacing(16);
@@ -366,7 +403,9 @@ struct DesktopStylePagePresenter::Impl
         token = apply.Click([this](const auto&, const auto&) {
             const int index = presets.SelectedIndex();
             if (CanEdit() && applyPreset && index >= 0 && index < static_cast<int>(kPresets.size()))
-                applyPreset(std::string(kPresets[static_cast<std::size_t>(index)]));
+                applyPreset(std::string(kPresets[static_cast<std::size_t>(index)]),
+                    static_cast<DockPosition>(std::max(0, companionPosition.SelectedIndex())),
+                    companionForm.SelectedIndex() == 1);
         });
         revoke.push_back([control = apply, token] { control.Click(token); });
         ConfigureText(adjustmentTitle, true);
@@ -531,7 +570,7 @@ struct DesktopStylePagePresenter::Impl
         };
         if (nativeTaskbar || ShowDockWindowsButton(settings))
         {
-            append(PreviewGlyph(L"\xE782", nativeTaskbar ? 24 : 28));
+            append(PreviewStartIcon(nativeTaskbar ? 24 : 28, highContrast));
             if (!nativeTaskbar) divider();
         }
         app(L"browser", L"\xE774", true);
@@ -559,25 +598,18 @@ struct DesktopStylePagePresenter::Impl
     muxc::Grid PreviewStatusBar(const StatusBarSettings& settings, bool merged,
         const mux::UIElement& dockContent = nullptr)
     {
-        // Illustrative data only. Reuse the production item builder so controls,
-        // glyphs, metric labels and visibility follow the real bar's semantics.
+        // Demonstrate the controls using the real item builder. Performance
+        // metrics clutter the miniature; suppress them only in this local copy.
+        auto previewSettings = settings;
+        previewSettings.cpu = previewSettings.memory = previewSettings.gpu = previewSettings.traffic = false;
         StatusBarSnapshot data;
         data.clock = L"2026/9/28   09:41";
         data.notifications.unreadCount = 0;
-        data.cpu.emplace(); data.cpu->available = true; data.cpu->warmingUp = false; data.cpu->usagePercent = 25;
-        data.memory.emplace(); data.memory->available = true;
-        data.memory->totalBytes = 32ull << 30; data.memory->usedBytes = 12ull << 30;
-        data.gpu.emplace(); data.gpu->available = true; data.gpu->warmingUp = false;
-        widget_runtime::WidgetGpuAdapterDataSnapshot adapter;
-        adapter.usageAvailable = true; adapter.usagePercent = 18;
-        data.gpu->adapters.push_back(adapter);
-        data.traffic.emplace(); data.traffic->available = true; data.traffic->warmingUp = false;
-        data.traffic->downloadBytesPerSecond = 2400; data.traffic->uploadBytesPerSecond = 800;
         data.network.emplace(); data.network->available = true;
         data.network->connectivity = "internet"; data.network->transport = "ethernet";
         data.audio.emplace(); data.audio->available = true; data.audio->volume = .45;
         data.power.emplace(); data.power->available = true; data.power->batteryPercent = 76;
-        const auto items = BuildStatusBarItems(settings, data);
+        const auto items = BuildStatusBarItems(previewSettings, data);
         muxc::StackPanel left, center, right;
         for (const auto& panel : {left, center, right})
         {
@@ -733,6 +765,7 @@ struct DesktopStylePagePresenter::Impl
         if (index < 0 || index >= static_cast<int>(kPresets.size())) return;
         const std::string key(kPresets[static_cast<std::size_t>(index)]);
         const std::string prefix = "settings.desktopStyle." + key;
+        companionOptions.Visibility(key == "taskbar-dock" ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         presetDescription.Text(L(prefix + ".description"));
         presetChanges.Text(L(prefix + ".changes"));
         muxa::AutomationProperties::SetName(apply, L(prefix + ".title") + L": " + L("settings.desktopStyle.applyLayout"));
@@ -742,7 +775,8 @@ struct DesktopStylePagePresenter::Impl
         previewWallpaper.Visibility(highContrast ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         auto previewGeneral = general;
         auto previewDock = dock;
-        ApplyDesktopStylePreset(std::wstring(key.begin(), key.end()), previewGeneral, previewDock);
+        ApplyDesktopStylePreset(std::wstring(key.begin(), key.end()), previewGeneral, previewDock,
+            static_cast<DockPosition>(std::max(0, companionPosition.SelectedIndex())), companionForm.SelectedIndex() == 1);
         const bool merged = previewGeneral.dockEnabled && previewGeneral.statusBar.enabled && previewDock.edgeAttached &&
             previewDock.position == previewGeneral.statusBar.position;
         if (previewGeneral.statusBar.enabled && !merged)
@@ -752,7 +786,7 @@ struct DesktopStylePagePresenter::Impl
         if (!previewDock.suppressSystemTaskbar)
         {
             // The native taskbar is illustrative: this preset preserves its
-            // Windows-owned position and its saved Dock edge/layout.
+            // Windows-owned position; Dock follows the preset's draft choices.
             auto taskbar = PreviewSurface();
             const bool vertical = nativeTaskbarPosition == DockPosition::Left || nativeTaskbarPosition == DockPosition::Right;
             const double thickness = previewDock.systemTaskbarAutoHide ? 3.0 : (vertical ? 64.0 : 48.0);
@@ -818,6 +852,18 @@ struct DesktopStylePagePresenter::Impl
         presetRow.SetText(L("settings.desktopStyle.presets"), {});
         muxa::AutomationProperties::SetName(presets, presetRow.label.Text());
         muxa::AutomationProperties::SetHelpText(presets, presetRow.help.Text());
+        const auto localizeDraft = [this](const muxc::ComboBox& control, SettingRow& row,
+            std::string_view label, std::initializer_list<std::string_view> options) {
+            const int selectedIndex = control.SelectedIndex();
+            row.SetText(L(label), {});
+            muxa::AutomationProperties::SetName(control, row.label.Text());
+            control.Items().Clear();
+            for (const auto option : options) control.Items().Append(winrt::box_value(L(option)));
+            control.SelectedIndex(selectedIndex >= 0 ? selectedIndex : 0);
+        };
+        localizeDraft(companionPosition, companionPositionRow, "app.settings.dock_position",
+            {"app.dock.bottom", "app.dock.top", "app.dock.left", "app.dock.right"});
+        localizeDraft(companionForm, companionFormRow, "app.dock.layout", {"app.dock.island", "app.dock.edge"});
         apply.Content(winrt::box_value(L("settings.desktopStyle.applyLayout")));
         changes.Header(winrt::box_value(L("settings.desktopStyle.changes")));
         adjustmentTitle.Text(L("settings.desktopStyle.adjustments"));

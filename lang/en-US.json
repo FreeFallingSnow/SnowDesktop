@@ -2064,7 +2064,7 @@
   "settings.desktopStyle.native.changes": "Turn off Dock and the status bar. Turn off always-hide and auto-hide for the taskbar. Enable taskbar styling while keeping its current material and colors.",
   "settings.desktopStyle.taskbar-dock.title": "Dock with the taskbar",
   "settings.desktopStyle.taskbar-dock.description": "Keep the Windows taskbar and use Dock to launch apps quickly.",
-  "settings.desktopStyle.taskbar-dock.changes": "Enable Dock and edge swipes. Turn off hover-only display and do not reserve Dock screen space. Enable taskbar auto-hide, disable always-hide and turn off the status bar. Keep Dock position, shape, size and animations. On the same edge, swipe along it for Dock; pause at it for the taskbar.",
+  "settings.desktopStyle.taskbar-dock.changes": "Keep Dock visible at the position and in the form selected above, defaulting to a bottom island. Do not reserve Dock screen space. Auto-hide the taskbar; turn off always-hide and the status bar. On the same edge, swipe for Dock and pause for the taskbar. Keep size and animations.",
   "settings.desktopStyle.island.title": "Bottom island Dock + top status bar",
   "settings.desktopStyle.island.description": "Like macOS: launch apps at the bottom and see status at the top.",
   "settings.desktopStyle.island.changes": "Use an island Dock at the bottom and a status bar at the top. Keep Dock visible without reserving screen space for it. Always hide the taskbar and enable auto-hide to release its reserved space. Keep animations unchanged.",

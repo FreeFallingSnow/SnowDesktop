@@ -2064,7 +2064,7 @@
   "settings.desktopStyle.native.changes": "Desactivar Dock y la barra de estado. Desactivar la ocultación permanente y automática de la barra de tareas. Activar su personalización y conservar los materiales y colores actuales.",
   "settings.desktopStyle.taskbar-dock.title": "Dock con barra de tareas",
   "settings.desktopStyle.taskbar-dock.description": "Conserva la barra de tareas de Windows y abre aplicaciones rápidamente desde Dock.",
-  "settings.desktopStyle.taskbar-dock.changes": "Activar Dock y el gesto por el borde. Desactivar la opción de mostrarlo solo al pasar el puntero y no reservar espacio para Dock. Ocultar automáticamente la barra de tareas, sin ocultarla permanentemente; desactivar la barra de estado. Conservar la posición, forma, tamaño y animaciones de Dock. En el mismo borde, desliza a lo largo para Dock y detén el puntero para la barra de tareas.",
+  "settings.desktopStyle.taskbar-dock.changes": "Mantener Dock visible en la posición y forma elegidas arriba, por defecto como isla inferior. No reservar espacio para Dock. Ocultar automáticamente la barra de tareas; desactivar la ocultación permanente y la barra de estado. En el mismo borde, desliza para Dock y detén el puntero para la barra de tareas. Conservar tamaño y animaciones.",
   "settings.desktopStyle.island.title": "Dock flotante abajo + barra de estado arriba",
   "settings.desktopStyle.island.description": "Como en macOS: abre aplicaciones abajo y consulta el estado arriba.",
   "settings.desktopStyle.island.changes": "Colocar Dock flotante abajo y la barra de estado arriba. Mantener Dock visible sin reservar espacio para él. Ocultar siempre la barra de tareas y activar su ocultación automática para liberar el espacio reservado. Conservar las animaciones.",

@@ -10,7 +10,7 @@ class DesktopStylePagePresenter final
 {
 public:
     using LocalizeCallback = DockPagePresenter::LocalizeCallback;
-    using ApplyPresetCallback = std::function<void(std::string)>;
+    using ApplyPresetCallback = std::function<void(std::string, DockPosition, bool)>;
 
     DesktopStylePagePresenter(LocalizeCallback localize,
         const winrt::Microsoft::UI::Xaml::Style& cardStyle,

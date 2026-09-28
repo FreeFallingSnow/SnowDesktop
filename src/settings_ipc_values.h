@@ -101,7 +101,8 @@ SD_IPC_FIELDS(SettingsSnapshot,
     v.lastActionMessage);
 SD_IPC_FIELDS(SettingsHostActions::Request,
     v.action, v.widgetInstanceId, v.value, v.boolValue,
-    v.hotkeyTarget, v.modifiers, v.virtualKey);
+    v.hotkeyTarget, v.modifiers, v.virtualKey,
+    v.desktopStyleDockPosition, v.desktopStyleDockAttached);
 SD_IPC_FIELDS(PageLayoutEntry,
     v.id, v.columns, v.rows, v.itemCount,
     v.widgetCount, v.role, v.monitorOrdinal, v.visible,

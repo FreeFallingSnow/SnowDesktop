@@ -467,7 +467,7 @@ void TestDesktopStylePresetScope()
         {L"native", false, false, false, false, true, false, false, true, false,
             true, DockPosition::Right, false, DockPosition::Bottom},
         {L"taskbar-dock", true, false, false, true, false, false, false, true, true,
-            true, DockPosition::Right, false, DockPosition::Bottom},
+            false, DockPosition::Bottom, false, DockPosition::Bottom},
         {L"island", true, true, true, true, false, false, false, false, false,
             false, DockPosition::Bottom, false, DockPosition::Top},
         {L"merged", true, true, true, true, false, false, false, false, false,
@@ -636,6 +636,30 @@ void TestDesktopStyleQueuedCommit()
     Check(controller.InvokeHostAction(request).Succeeded() && controller.FlushPending().Succeeded() &&
         host.previewCount == previews && host.commitDomains == domains,
         "a layout preset absorbs old slider previews before its joint commit to avoid a mixed layout");
+    for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+    {
+        for (const bool attached : {false, true})
+        {
+            request.value = L"taskbar-dock";
+            request.desktopStyleDockPosition = position;
+            request.desktopStyleDockAttached = attached;
+            const auto before = controller.Snapshot();
+            const int commits = host.commitCount;
+            Check(controller.InvokeHostAction(request).Succeeded() &&
+                controller.Snapshot()->values.dock.position == position &&
+                controller.Snapshot()->values.dock.edgeAttached == attached &&
+                controller.Snapshot()->values.dock.hoverEffect == before->values.dock.hoverEffect &&
+                !controller.Snapshot()->values.dock.reserveScreenSpace &&
+                !controller.Snapshot()->values.dock.showOnlyWhenSummoned &&
+                !controller.Snapshot()->values.general.statusBar.enabled &&
+                controller.FlushPending().Succeeded() && host.commitCount == commits + 1,
+                "companion draft choices reach one layout commit without changing animations or reserving space");
+        }
+    }
+    request.desktopStyleDockPosition = static_cast<DockPosition>(99);
+    const auto validRevision = controller.Snapshot()->revision;
+    Check(!controller.InvokeHostAction(request).Succeeded() && controller.Snapshot()->revision == validRevision,
+        "invalid companion geometry cannot partially apply either preset domain");
 }
 
 void TestTypedHotkeyRequestTransport()

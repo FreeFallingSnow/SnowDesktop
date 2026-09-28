@@ -236,7 +236,8 @@ private:
     void RenderBreadcrumb();
     void RenderPageCards(bool forcePageCards = false);
     void EnsurePresentersForPage(snowdesktop::SettingsPage page);
-    void ApplyDesktopStyle(std::string preset, bool animations);
+    void ApplyDesktopStyle(std::string preset, bool animations,
+        DockPosition companionPosition = DockPosition::Bottom, bool companionAttached = false);
     [[nodiscard]] bool EnsureWidgetSettingsPresenter() noexcept;
     void RenderConditionalPages();
     void RenderAgentSkillUpdateBadge();

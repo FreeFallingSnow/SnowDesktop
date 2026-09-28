@@ -152,6 +152,14 @@ bool DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
             page.workArea = available;
         }
         page.visualWorkArea = page.workArea;
+        if (statusBar_)
+        {
+            RECT screen = page.bounds; OffsetRect(&screen, virtualLeft_, virtualTop_);
+            RECT sizing = page.visualWorkArea; OffsetRect(&sizing, virtualLeft_, virtualTop_);
+            sizing = statusBar_->MergedSizingWorkArea(MonitorFromRect(&screen, MONITOR_DEFAULTTONULL), sizing);
+            OffsetRect(&sizing, -virtualLeft_, -virtualTop_);
+            page.visualWorkArea = sizing;
+        }
         ConfigureGridPage(page);
         ApplyIconSpacingToPage(page);
     }
@@ -250,28 +258,10 @@ void DesktopApp::ApplyIconSpacingToPage(GridPage& page)
     const int visualH = static_cast<int>(std::max<LONG>(
         1, visualArea.bottom - visualArea.top));
 
-    const float pageVisualScale = std::max(0.1f, std::min(
-        static_cast<float>(visualW) /
-            static_cast<float>(page.columns * kCellWidth),
-        static_cast<float>(visualH) /
-            static_cast<float>(page.rows * kMinCellHeight)));
-    const int baseMarginX = std::max(1, static_cast<int>(
-        std::round(kGridMarginX * pageVisualScale)));
-    const int baseMarginY = std::max(1, static_cast<int>(
-        std::round(kGridMarginY * pageVisualScale)));
-
-    const int innerWidth = std::max(
-        page.columns, visualW - baseMarginX * 2);
-    const int innerHeight = std::max(
-        page.rows, visualH - baseMarginY * 2);
-    page.itemPitchWidth = std::max(
-        1, static_cast<int>(std::round(
-            static_cast<float>(innerWidth) /
-            static_cast<float>(page.columns))));
-    page.itemPitchHeight = std::max(
-        1, static_cast<int>(std::round(
-            static_cast<float>(innerHeight) /
-            static_cast<float>(page.rows))));
+    const auto sizing = snowdesktop::ResolvePageVisualSizing(visualW, visualH, page.columns, page.rows);
+    const int baseMarginX = sizing.marginX, baseMarginY = sizing.marginY;
+    page.itemPitchWidth = sizing.pitchWidth;
+    page.itemPitchHeight = sizing.pitchHeight;
     const auto visualMetrics = GetPageItemVisualMetrics(page);
 
     const auto horizontal = snowdesktop::grid_spacing_rules::ResolveAxis(

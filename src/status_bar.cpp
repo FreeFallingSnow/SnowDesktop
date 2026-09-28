@@ -1366,6 +1366,16 @@ RECT StatusBar::AvailableWorkArea(HMONITOR monitor, RECT area) const
     }
     return area;
 }
+RECT StatusBar::MergedSizingWorkArea(HMONITOR monitor, RECT area) const
+{
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && window->mergedDockHeight)
+            return window->appbar.RestoreWorkArea(area);
+    }
+    return area;
+}
 void StatusBar::PrepareDockReveal(HMONITOR monitor)
 {
     for (const auto& [id, window] : impl_->windows)

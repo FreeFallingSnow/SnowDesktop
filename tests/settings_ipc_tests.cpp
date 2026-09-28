@@ -38,6 +38,15 @@ HANDLE CurrentProcessHandle()
 
 void TestCodec()
 {
+    snowdesktop::SettingsHostActions::Request companion;
+    companion.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
+    companion.value = L"taskbar-dock";
+    companion.desktopStyleDockPosition = DockPosition::Right;
+    companion.desktopStyleDockAttached = true;
+    const auto companionWire = Unpack<snowdesktop::SettingsHostActions::Request>(Pack(companion));
+    Check(companionWire.action == companion.action && companionWire.value == companion.value &&
+        companionWire.desktopStyleDockPosition == DockPosition::Right && companionWire.desktopStyleDockAttached,
+        "preset position and form survive the settings-process action transport together");
     DockSettings dockSpace;
     dockSpace.reserveScreenSpace = true;
     Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,

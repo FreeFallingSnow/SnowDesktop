@@ -248,6 +248,9 @@ public:
         HotkeyTarget hotkeyTarget = HotkeyTarget::None;
         UINT modifiers = 0;
         UINT virtualKey = 0;
+        // Host-private desktop style draft, applied atomically with the preset.
+        DockPosition desktopStyleDockPosition = DockPosition::Bottom;
+        bool desktopStyleDockAttached = false;
     };
 
     virtual ~SettingsHostActions() = default;

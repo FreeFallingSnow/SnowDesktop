@@ -2064,7 +2064,7 @@
   "settings.desktopStyle.native.changes": "Dock und Statusleiste ausschalten. Dauerhaftes und automatisches Ausblenden der Taskleiste ausschalten. Taskleistengestaltung aktivieren und vorhandenes Material und Farben behalten.",
   "settings.desktopStyle.taskbar-dock.title": "Dock mit Taskleiste",
   "settings.desktopStyle.taskbar-dock.description": "Behalten Sie die Windows-Taskleiste und starten Sie Apps schnell über das Dock.",
-  "settings.desktopStyle.taskbar-dock.changes": "Dock und Randwischgeste aktivieren. Anzeige nur bei Zeigerkontakt ausschalten und keine Arbeitsfläche für das Dock reservieren. Taskleiste automatisch statt dauerhaft ausblenden; Statusleiste ausschalten. Position, Form, Größe und Animationen des Docks bleiben erhalten. Am gleichen Rand: entlangwischen für das Dock, verweilen für die Taskleiste.",
+  "settings.desktopStyle.taskbar-dock.changes": "Dock dauerhaft an der oben gewählten Position und in der gewählten Form anzeigen, standardmäßig als schwebendes Dock unten. Keine Arbeitsfläche für das Dock reservieren. Taskleiste automatisch ausblenden; dauerhaftes Ausblenden und Statusleiste ausschalten. Am gleichen Rand: wischen für das Dock, verweilen für die Taskleiste. Größe und Animationen beibehalten.",
   "settings.desktopStyle.island.title": "Insel-Dock unten + Statusleiste oben",
   "settings.desktopStyle.island.description": "Wie bei macOS: Apps unten starten, Status oben sehen.",
   "settings.desktopStyle.island.changes": "Dock als Insel unten und Statusleiste oben anordnen. Dock dauerhaft anzeigen, ohne Arbeitsfläche dafür zu reservieren. Taskleiste immer ausblenden und automatisches Ausblenden aktivieren, um ihre reservierte Fläche freizugeben. Animationen bleiben erhalten.",

@@ -555,7 +555,8 @@ SettingsActionResult SettingsController::InvokeHostAction(
         auto general = values_.general;
         auto dock = values_.dock;
         const bool layout = request.action == SettingsHostActions::Action::ApplyDesktopStylePreset;
-        const bool valid = layout ? ApplyDesktopStylePreset(request.value, general, dock)
+        const bool valid = layout ? ApplyDesktopStylePreset(request.value, general, dock,
+            request.desktopStyleDockPosition, request.desktopStyleDockAttached)
             : ApplyDesktopStyleAnimations(request.value, dock);
         if (!valid) return SettingsActionResult::Failure(L"Unknown desktop style preset.");
         if (layout && values_.general.dockEnabled && !general.dockEnabled && !request.boolValue)

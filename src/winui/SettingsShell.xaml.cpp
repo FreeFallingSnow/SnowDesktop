@@ -456,8 +456,8 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         if (!desktopStylePage_)
         {
             desktopStylePage_ = std::make_unique<snowdesktop::winui::DesktopStylePagePresenter>(
-                localize, cardStyle(), [weak = get_weak()](std::string preset) {
-                    if (const auto shell = weak.get()) shell->ApplyDesktopStyle(std::move(preset), false);
+                localize, cardStyle(), [weak = get_weak()](std::string preset, DockPosition position, bool attached) {
+                    if (const auto shell = weak.get()) shell->ApplyDesktopStyle(std::move(preset), false, position, attached);
                 });
             desktopStylePage_->SetActions(dockPageActions_);
         }
@@ -2148,7 +2148,8 @@ void SettingsShell::RenderBreadcrumb()
     PageBreadcrumb().ItemsSource(items);
 }
 
-void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations)
+void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations,
+    DockPosition companionPosition, bool companionAttached)
 {
     if (closed_ || !sessionActive_ || activeDialog_ ||
         navigation_.Route().page != SettingsPage::DesktopStyle ||
@@ -2156,7 +2157,8 @@ void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations)
         return;
     const auto generation = navigation_.Generation();
     const bool needsConfirmation = !animations && preset == "native" && desktopStyleDockEnabled_;
-    const auto invoke = [weak = get_weak(), generation, preset, animations, needsConfirmation](bool accepted) {
+    const auto invoke = [weak = get_weak(), generation, preset, animations, needsConfirmation,
+        companionPosition, companionAttached](bool accepted) {
         const auto shell = weak.get();
         if (!accepted || !shell || shell->closed_ || !shell->sessionActive_ ||
             shell->navigation_.Generation() != generation ||
@@ -2169,6 +2171,8 @@ void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations)
             : snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
         request.value = winrt::to_hstring(preset).c_str();
         request.boolValue = needsConfirmation;
+        request.desktopStyleDockPosition = companionPosition;
+        request.desktopStyleDockAttached = companionAttached;
         const auto invokeHost = shell->dockPageActions_.invokeHost;
         const auto result = invokeHost(generation, std::move(request));
         if (!result.Succeeded() || animations || shell->closed_ || !shell->sessionActive_ ||

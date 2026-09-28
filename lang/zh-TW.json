@@ -2064,7 +2064,7 @@
   "settings.desktopStyle.native.changes": "關閉 Dock 和狀態列；取消工作列一律隱藏與自動隱藏；啟用工作列外觀，保留現有材質與色彩。",
   "settings.desktopStyle.taskbar-dock.title": "Dock 搭配工作列",
   "settings.desktopStyle.taskbar-dock.description": "保留 Windows 工作列，使用 Dock 快速啟動應用程式。",
-  "settings.desktopStyle.taskbar-dock.changes": "啟用 Dock 與邊緣滑動，關閉僅在懸停時顯示，不預留 Dock 工作區；開啟工作列自動隱藏，取消一律隱藏；關閉狀態列。保留 Dock 位置、樣式、大小和動畫。同側時，沿邊緣滑動喚出 Dock，在邊緣停留喚出工作列。",
+  "settings.desktopStyle.taskbar-dock.changes": "Dock 常駐顯示，位置與樣式依上方選擇，預設底部島式；不預留 Dock 工作區。工作列自動隱藏，關閉一律隱藏與狀態列。同側時，沿邊緣滑動喚出 Dock，停留喚出工作列。保留大小與動畫。",
   "settings.desktopStyle.island.title": "底部島式 Dock + 頂部狀態列",
   "settings.desktopStyle.island.description": "類似 macOS：底部啟動應用程式，頂部查看狀態。",
   "settings.desktopStyle.island.changes": "Dock 改為底部島式，狀態列放在頂部。Dock 常駐，不預留 Dock 工作區；工作列一律隱藏並開啟自動隱藏以釋放占位。動畫維持不變。",

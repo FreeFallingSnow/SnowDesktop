@@ -63,6 +63,7 @@ public:
     RECT Bounds() const { return approved_; }
     UINT Edge() const { return edge_; }
     bool Registered() const { return registered_; }
+    RECT RestoreWorkArea(RECT work) const;
     static void SetThickness(RECT& rect, UINT edge, int thickness)
     {
         switch (edge)
@@ -169,6 +170,11 @@ inline RECT RestoreAppBarWorkArea(RECT work, RECT reserved, UINT edge)
     case ABE_RIGHT: if (spansHeight && work.right == reserved.left) work.right = reserved.right; break;
     }
     return work;
+}
+
+inline RECT StatusBarAppBar::RestoreWorkArea(RECT work) const
+{
+    return registered_ && positioned_ ? RestoreAppBarWorkArea(work, approved_, edge_) : work;
 }
 
 // Record the actual edge delta, not the Shell rectangle's entire thickness:

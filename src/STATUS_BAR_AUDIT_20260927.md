@@ -1,4 +1,13 @@
-# 状态栏与桌面风格需求复核报告（更新于 2026-09-28，候选 77–94）
+# 状态栏与桌面风格需求复核报告（更新于 2026-09-28，候选 77–95）
+
+## 95 预设方向、预览内容与融合栏占位循环
+
+- 用户截图确认 94 的开始按钮为空框，演示性能指标过密；失败反馈单独记录在 `f27734c8`。开始示意改用实际 Dock 的四窗格形状，预览本地副本关闭 CPU／内存／GPU／流量，不改变实际状态栏设置。
+- “Dock 搭配任务栏”在预设卡片内增加位置、形式选择，初始底部岛式；选择只更新预览，应用时经宿主内部设置 IPC 随两个配置域一次提交。其他预设、关闭 Dock 的确认及推荐动画比较保持原行为；10 种语言更新说明。未改变公共组件 API。
+- 原日志 2026-09-28 13:15:18–13:16:25 显示底部融合栏高度先为 89，随后在 86／87 px 之间反复切换。代码路径为 rcWork → visualWorkArea → 图标尺寸 → mergedDockHeight → AppBar → rcWork。现将自身融合栏注册区域仅从视觉尺寸基准中还原，真实工作区仍保留占位；其他栏、未注册或已移除的区域不扩张。生产页面尺寸计算提取为共用函数，用于同一通知循环回归。
+- 实际验证：首次标准构建发现本次新增的 C4456 变量重名警告，已在构建期间更名；随后 `scripts/build.bat` 增量重编译并退出 0，零编译／链接警告。`scripts/test.bat name "^(dock_and_window_rules|settings_controller|settings_host_actions_semantics|winui_dock_page_presenter|winui_settings_window_host|localization_contract)$"` 为 6/6，CTest 9.51 秒，退出 0，零警告。没有运行全量。
+- 负向对照：在隔离头文件副本中恢复不还原自身占位的行为，编译成功、程序退出 1，并命中尺寸稳定和重复 AppBar 更新断言。Shell 调用被替换，实际尺寸与图标计算参与回归；此证据不代表真实 Explorer 场景已验收。
+- 证据：`.codex-probes/statusbar-implementation/95-original-placement.log`、`95-negative.log`、`95-build.log`、`95-build2.log`、`95-tests.log` 及对应输入哈希。新构建的界面观感、底部融合栏持续运行和预设切换仍待用户原场景复核；未关闭先前未验收的通知、设置退出或第三方托盘问题。
 
 ## 94 桌面风格预览内容与贴边修订
 

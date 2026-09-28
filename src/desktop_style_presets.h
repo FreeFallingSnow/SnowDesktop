@@ -7,10 +7,14 @@ namespace snowdesktop
 {
 // Host-private presets edit only the fields advertised by the settings page.
 // Layout and animation are deliberately separate actions.
-inline bool ApplyDesktopStylePreset(std::wstring_view key, GeneralSettings& general, DockSettings& dock)
+inline bool ApplyDesktopStylePreset(std::wstring_view key, GeneralSettings& general, DockSettings& dock,
+    DockPosition companionPosition = DockPosition::Bottom, bool companionAttached = false)
 {
     if (key != L"native" && key != L"taskbar-dock" && key != L"island" && key != L"merged" && key != L"side")
         return false;
+    if (key == L"taskbar-dock" && companionPosition != DockPosition::Bottom &&
+        companionPosition != DockPosition::Top && companionPosition != DockPosition::Left &&
+        companionPosition != DockPosition::Right) return false;
     dock.reserveScreenSpace = key == L"side";
     if (key == L"native")
     {
@@ -29,6 +33,8 @@ inline bool ApplyDesktopStylePreset(std::wstring_view key, GeneralSettings& gene
         dock.suppressSystemTaskbar = false;
         dock.showOnlyWhenSummoned = false;
         dock.floatingEdgeSwipeEnabled = true;
+        dock.position = companionPosition;
+        dock.edgeAttached = companionAttached;
         return true;
     }
     general.statusBar.enabled = true;

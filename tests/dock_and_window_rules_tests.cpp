@@ -1312,6 +1312,40 @@ int main(int argc, char** argv)
     {
         // Exercise the production Shell boundary with approved geometry,
         // including a taskbar occupying part of a non-primary monitor.
+        // Reported failure: changing rcWork resized icons and alternated the
+        // merged strip between 86/87 px. Only Shell is replaced here; production
+        // pitch, icon sizing, reservation and restoration run on every notice.
+        for (const int rows : {8, 10, 12, 16})
+        {
+            int placements = 0;
+            snowdesktop::StatusBarAppBar merged([&](DWORD message, APPBARDATA& data) -> UINT_PTR {
+                if (message == ABM_QUERYPOS) data.rc.top = std::max(48L, data.rc.top);
+                placements += message == ABM_SETPOS;
+                return TRUE;
+            });
+            const RECT base{-2560, 48, 0, 1600}; // Preserve another bar's top reservation.
+            RECT work = base;
+            const auto thickness = [rows](RECT area) {
+                const auto pitch = snowdesktop::ResolvePageVisualSizing(
+                    area.right - area.left, area.bottom - area.top, 18, rows);
+                return snowdesktop::ResolvePageItemVisualMetrics(pitch.pitchWidth, pitch.pitchHeight, 2.f).iconSize + 24;
+            };
+            const int expected = thickness(base);
+            const HWND endpoint = reinterpret_cast<HWND>(static_cast<UINT_PTR>(3));
+            for (int notice = 0; notice < 24; ++notice)
+            {
+                const RECT sizing = merged.RestoreWorkArea(work);
+                Check(EqualRect(&sizing, &base), "merged sizing must recover its own strip without consuming another bar");
+                merged.Place(endpoint, WM_APP + 1, ABE_BOTTOM, thickness(sizing), {-2560, 0, 0, 1600});
+                work = snowdesktop::ConstrainStatusBarWorkArea(base, merged.Bounds(), ABE_BOTTOM);
+                Check(work.bottom == 1600 - expected && work.top == 48,
+                    "actual desktop work remains reserved while merged icon sizing stays constant");
+            }
+            Check(placements == 1, "work-area callbacks must settle after one merged reservation, not oscillate");
+            merged.Remove();
+            const RECT afterRemove = merged.RestoreWorkArea(work);
+            Check(EqualRect(&afterRemove, &work), "removed reservations cannot expand later sizing areas");
+        }
         std::vector<DWORD> messages;
         {
             int registrations = 0, placements = 0;

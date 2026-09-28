@@ -2064,7 +2064,7 @@
   "settings.desktopStyle.native.changes": "关闭 Dock 和状态栏；取消任务栏始终隐藏与自动隐藏；启用任务栏外观，保留已有材质和颜色。",
   "settings.desktopStyle.taskbar-dock.title": "Dock 搭配任务栏",
   "settings.desktopStyle.taskbar-dock.description": "保留 Windows 任务栏，用 Dock 快速启动应用。",
-  "settings.desktopStyle.taskbar-dock.changes": "启用 Dock 和边缘扫动，关闭仅在悬浮时显示，不预留 Dock 工作区；开启任务栏自动隐藏，取消始终隐藏；关闭状态栏。保留 Dock 位置、形态、大小和动画。同侧时，沿边缘扫动唤起 Dock，在边缘停留唤起任务栏。",
+  "settings.desktopStyle.taskbar-dock.changes": "Dock 常驻显示，位置和形式按上方选择，默认底部岛式；不预留 Dock 工作区。任务栏自动隐藏，关闭始终隐藏和状态栏。同侧时，沿边缘扫动唤起 Dock，停留唤起任务栏。保留大小和动画。",
   "settings.desktopStyle.island.title": "底部岛式 Dock + 顶部状态栏",
   "settings.desktopStyle.island.description": "类似 macOS：底部启动应用，顶部查看状态。",
   "settings.desktopStyle.island.changes": "Dock 改为底部岛式，状态栏放在顶部。Dock 常驻，不预留 Dock 工作区；任务栏始终隐藏并开启自动隐藏以释放占位。动画保持不变。",

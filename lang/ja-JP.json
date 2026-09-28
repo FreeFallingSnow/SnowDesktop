@@ -2064,7 +2064,7 @@
   "settings.desktopStyle.native.changes": "Dock とステータスバーをオフにします。タスクバーの常時非表示と自動非表示を解除し、現在の素材と色を保持して外観設定を有効にします。",
   "settings.desktopStyle.taskbar-dock.title": "Dock とタスクバー",
   "settings.desktopStyle.taskbar-dock.description": "Windows タスクバーを残し、Dock からすばやくアプリを起動します。",
-  "settings.desktopStyle.taskbar-dock.changes": "Dock と画面端のスワイプを有効にします。ホバー時のみの表示を解除し、Dock 用の作業領域は確保しません。タスクバーを自動非表示にし、常時非表示を解除してステータスバーをオフにします。Dock の位置、形状、サイズ、アニメーションは保持します。同じ端では、端に沿ってスワイプすると Dock、端で静止するとタスクバーが表示されます。",
+  "settings.desktopStyle.taskbar-dock.changes": "上で選んだ位置と形状で Dock を常時表示します。初期設定は画面下部のアイランド型です。Dock 用の作業領域は確保しません。タスクバーは自動非表示にし、常時非表示とステータスバーはオフにします。同じ端ではスワイプで Dock、静止でタスクバーを表示します。サイズとアニメーションは保持します。",
   "settings.desktopStyle.island.title": "下部の島型 Dock + 上部のステータスバー",
   "settings.desktopStyle.island.description": "macOS のように、下部からアプリを起動し、上部で状態を確認します。",
   "settings.desktopStyle.island.changes": "Dock を下部の島型に、ステータスバーを上部に配置します。Dock は常時表示し、Dock 用の作業領域は確保しません。タスクバーを常時非表示にし、自動非表示も有効にして占有領域を解放します。アニメーションは保持します。",
