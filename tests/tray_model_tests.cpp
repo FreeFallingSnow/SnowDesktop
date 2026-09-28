@@ -452,6 +452,38 @@ int RunTrayModelTests()
         topLevelMenu.extendedStyle |= WS_EX_APPWINDOW;
         check(!placement.Observe(topLevelMenu, 102), "an application window is excluded even with active context evidence");
 
+        // Host-side events from the failed candidate: SHOW arrives inactive,
+        // then LOCATIONCHANGE 32 ms later has both foreground/active evidence.
+        // An external observer sampled these states too late to expose the gap.
+        const auto armDeferred = [&] {
+            placement.Arm(50648, {2327, 26}, {0, 40, 2560, 1440}, 100,
+                {}, {2310, 0, 2350, 40}, true);
+        };
+        topLevelMenu.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_APPWINDOW);
+        topLevelMenu.bounds = {2298, 1356, 2561, 1471};
+        topLevelMenu.activeWindow = topLevelMenu.foregroundWindow = 0;
+        armDeferred();
+        check(!placement.Observe(topLevelMenu, 102) && !placement.Bindings()[0].window,
+            "a visible but not yet active tool menu is remembered without movement or retention");
+        topLevelMenu.event = EVENT_OBJECT_LOCATIONCHANGE; topLevelMenu.eventTime = 133;
+        topLevelMenu.activeWindow = topLevelMenu.foregroundWindow = topLevelMenu.window;
+        const auto deferredPosition = placement.Observe(topLevelMenu, 134);
+        check(deferredPosition && deferredPosition->x == 2297 && deferredPosition->y == 40,
+            "a previously shown tool menu is anchored after its later activation and geometry event");
+        check(placement.Bindings()[0].window == topLevelMenu.window,
+            "retention starts only after the deferred tool menu is confirmed");
+        armDeferred();
+        check(!placement.Observe(topLevelMenu, 134), "late activation without a SHOW nomination cannot move an existing tool window");
+        topLevelMenu.event = EVENT_OBJECT_SHOW; topLevelMenu.eventTime = 101;
+        topLevelMenu.activeWindow = topLevelMenu.foregroundWindow = 0;
+        placement.Observe(topLevelMenu, 102);
+        topLevelMenu.event = EVENT_OBJECT_HIDE; topLevelMenu.eventTime = 110;
+        placement.Observe(topLevelMenu, 111);
+        topLevelMenu.event = EVENT_OBJECT_LOCATIONCHANGE; topLevelMenu.eventTime = 133;
+        topLevelMenu.activeWindow = topLevelMenu.foregroundWindow = topLevelMenu.window;
+        check(!placement.Observe(topLevelMenu, 134) && !placement.Bindings()[0].window,
+            "hiding an unconfirmed menu discards its pending nomination before late activation");
+
         // The other captured tray menu uses WS_THICKFRAME for a border while
         // remaining an active frameless tool popup. Its top was -94 on a top
         // status bar. Keep its dimensions and open below the originating icon.

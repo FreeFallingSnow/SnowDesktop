@@ -49,14 +49,15 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
         [&](const auto& item) { return item.popup.window == popup.window; });
     if (popup.event == EVENT_OBJECT_HIDE)
     { if (existing != windows_.end()) *existing = {}; return {}; }
-    // Some custom context menus omit WS_POPUP or use WS_THICKFRAME for their
-    // non-client border. Require the actual active/foreground tool window on
-    // the callback UI thread before admitting either alternative shape.
-    const bool activeContextMenu = contextGesture_ && popup.notificationThread &&
-        popup.thread == popup.notificationThread && (popup.extendedStyle & WS_EX_TOOLWINDOW) &&
+    // A context tool window can SHOW before becoming active. Remember that
+    // bounded nomination, but require active/foreground evidence below before
+    // binding or moving alternative menu shapes (no WS_POPUP / WS_THICKFRAME).
+    const bool contextToolWindow = contextGesture_ && popup.notificationThread &&
+        popup.thread == popup.notificationThread && (popup.extendedStyle & WS_EX_TOOLWINDOW);
+    const bool activeContextMenu = contextToolWindow &&
         popup.foregroundWindow == popup.window && popup.activeWindow == popup.window;
-    if (!popup.visible || popup.notificationWindow || (!(popup.style & WS_POPUP) && !activeContextMenu) ||
-        (popup.style & WS_CHILD) || ((popup.style & WS_THICKFRAME) && !activeContextMenu) ||
+    if (!popup.visible || popup.notificationWindow || (!(popup.style & WS_POPUP) && !contextToolWindow) ||
+        (popup.style & WS_CHILD) || ((popup.style & WS_THICKFRAME) && !contextToolWindow) ||
         (popup.style & WS_CAPTION) == WS_CAPTION ||
         (popup.style & (WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) ||
         (popup.extendedStyle & (WS_EX_APPWINDOW | WS_EX_TRANSPARENT)) ||
@@ -73,6 +74,7 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
     if (existing->popup.owner != popup.owner || existing->popup.thread != popup.thread ||
         existing->popup.style != popup.style || existing->popup.extendedStyle != popup.extendedStyle)
     { *existing = {}; return {}; }
+    if ((!(popup.style & WS_POPUP) || (popup.style & WS_THICKFRAME)) && !activeContextMenu) return {};
     const auto width = static_cast<std::int64_t>(popup.bounds.right) - popup.bounds.left;
     const auto height = static_cast<std::int64_t>(popup.bounds.bottom) - popup.bounds.top;
     const auto workWidth = static_cast<std::int64_t>(workArea_.right) - workArea_.left;
