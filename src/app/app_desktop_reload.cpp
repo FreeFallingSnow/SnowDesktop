@@ -792,9 +792,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     // Revalidate against the new snapshot without losing the last confirmed
     // section/pinned identity while asynchronous Shell queries are pending.
     if (!incremental) InvalidateDockShellMetadata();
-    // A persisted Dock pin is user layout. A missing-path observation can be
-    // stale by the time it reaches the UI or reflect a disconnected drive.
-    // Only the virtual Recycle Bin follows desktop enumeration here.
+    // Enumeration alone is not deletion evidence. PruneDockShellMetadata queues
+    // a separate local-file confirmation, fenced by this refresh revision.
+    // The virtual Recycle Bin follows desktop enumeration directly.
     std::erase_if(dockEntries_, [this, snapshot](const DockEntry& entry) {
         if (snapshot && snapshot->desktopIncremental) return false;
         if (entry.type != DockEntryType::DesktopItem)

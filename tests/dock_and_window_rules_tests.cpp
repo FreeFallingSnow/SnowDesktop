@@ -4,6 +4,8 @@
 #include "dock_rename_layout.h"
 #include "rename_edit_layout.h"
 #include "dock_drop_rules.h"
+#include "dock_pin_cleanup.h"
+#include <fstream>
 #include "dock_folder_rules.h"
 #include "dock_refresh_cache.h"
 #include "item_location.h"
@@ -1581,6 +1583,32 @@ int main(int argc, char** argv)
         "page settings must reject duplicate, missing, or unknown page ids");
     namespace dockDrop =
         snowdesktop::dock_drop_rules;
+    {
+        namespace cleanup = snowdesktop::dock_pin_cleanup;
+        Check(cleanup::ConfirmedMissing(DRIVE_FIXED, ERROR_FILE_NOT_FOUND, true) &&
+            cleanup::ConfirmedMissing(DRIVE_FIXED, ERROR_PATH_NOT_FOUND, true),
+            "confirmed missing local files can release their orphan Dock slots");
+        Check(!cleanup::ConfirmedMissing(DRIVE_FIXED, ERROR_ACCESS_DENIED, true) &&
+            !cleanup::ConfirmedMissing(DRIVE_FIXED, ERROR_FILE_NOT_FOUND, false) &&
+            !cleanup::ConfirmedMissing(DRIVE_REMOTE, ERROR_FILE_NOT_FOUND, true) &&
+            !cleanup::ConfirmedMissing(DRIVE_REMOVABLE, ERROR_PATH_NOT_FOUND, true),
+            "denied or unavailable sources and offline drives cannot delete Dock mappings");
+        const auto directory = std::filesystem::temp_directory_path() /
+            (L"SnowDesktop-DockCleanup-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
+        Check(std::filesystem::create_directory(directory), "isolated cleanup fixture directory is created");
+        const auto path = directory / L"source.lnk";
+        { std::ofstream file(path); file << "source"; }
+        Check(!cleanup::IsMissingLocalFile(path.wstring()), "existing source is retained without inspecting its link target");
+        std::filesystem::remove(path);
+        Check(cleanup::IsMissingLocalFile(path.wstring()), "deleted local source is confirmed while its parent remains readable");
+        { std::ofstream file(path); file << "restored"; }
+        Check(!cleanup::IsMissingLocalFile(path.wstring()) &&
+            !cleanup::IsMissingLocalFile((directory / L"unavailable" / L"source.lnk").wstring()) &&
+            !cleanup::IsMissingLocalFile(L"::{645FF040-5081-101B-9F08-00AA002F954E}"),
+            "restored files, unavailable parents and virtual Shell objects retain their pins");
+        std::filesystem::remove(path);
+        std::filesystem::remove(directory);
+    }
     const std::vector<std::filesystem::path> desktopRoots{LR"(C:\Users\User\Desktop)", LR"(C:\Users\Public\Desktop)"};
     Check(dockDrop::CanReferenceDesktopPaths(
         {LR"(c:\users\user\desktop\App.lnk)", LR"(C:\Users\Public\Desktop\Folder)"}, desktopRoots),
