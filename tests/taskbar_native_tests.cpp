@@ -215,10 +215,16 @@ int RunNativeTaskbarTests()
         native::MenuAccess access;
         check(access.Begin(window) == S_OK && !cloaked(),
             "the production native-menu client receives the hook's visibility acknowledgement");
+        // The hook can tick after revealing the taskbar but before UIA creates
+        // its popup. The revealed owner is not itself evidence of a menu.
+        SendMessageW(window, apply, 0, 0);
     }
     MSG canceled{};
     while (PeekMessageW(&canceled, window, cancelAccess, cancelAccess, PM_REMOVE)) DispatchMessageW(&canceled);
     check(cloaked(), "a failed native provider automatically releases its request without waiting for timeout");
+    // Reset the fixture after an assertion failure so later scenarios remain
+    // independent of a leaked request. Never send this to the real taskbar.
+    SendMessageW(window, WM_EXITMENULOOP, TRUE, 0);
     WNDCLASSW trayRegistration{};
     trayRegistration.hInstance = instance;
     trayRegistration.lpszClassName = L"SnowDesktop.IsolatedTrayChild";
@@ -290,6 +296,7 @@ int RunNativeTaskbarTests()
             ShowWindow(customPopup, SW_HIDE);
             native::MenuAccess access;
             check(access.Begin(window) == S_OK, "prepare UIA-style menu without synthetic mouse or WM_CONTEXTMENU");
+            SendMessageW(window, apply, 0, 0);
             ShowWindow(customPopup, SW_SHOWNOACTIVATE);
             access.HandOff();
             SendMessageW(window, apply, 0, 0);
