@@ -1,4 +1,5 @@
 #include "status_bar_input_method.h"
+#include "modern_menu.h"
 #include <wrl/client.h>
 #include <chrono>
 #include <condition_variable>
@@ -10,7 +11,8 @@ namespace snowdesktop::status_bar_input_method
 namespace
 {
 // Windows' private InputSwitch ABI, restricted to its common Win10/Win11
-// prefix. Later slots/structures changed in Win11 and MUST NOT be called here.
+// prefix through ClickImeModeItem. Later slots/structures changed in Win11 and
+// MUST NOT be called here; opaque profile data is declared but never queried.
 // ABI reference: https://github.com/valinet/ExplorerPatcher/blob/master/ExplorerPatcher/InputSwitch.h
 // No hotkey registration, callbacks, patches or forced global profile changes.
 struct __declspec(uuid("b9bc2a50-43c3-41aa-a082-5db14e184bae")) InputSwitch : IUnknown
@@ -18,6 +20,10 @@ struct __declspec(uuid("b9bc2a50-43c3-41aa-a082-5db14e184bae")) InputSwitch : IU
     virtual HRESULT STDMETHODCALLTYPE Init(int clientType) = 0;
     virtual HRESULT STDMETHODCALLTYPE SetCallback(IUnknown*) = 0;
     virtual HRESULT STDMETHODCALLTYPE ShowInputSwitch(const RECT*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetProfileCount(UINT*, BOOL*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetCurrentProfile(void*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE RegisterHotkeys() = 0;
+    virtual HRESULT STDMETHODCALLTYPE ClickImeModeItem(int clickType, POINT, const RECT*) = 0;
 };
 constexpr CLSID kInputSwitch{0xb9bc2a50, 0x43c3, 0x41aa, {0xa0, 0x86, 0x5d, 0xb1, 0x4e, 0x18, 0x4b, 0xae}};
 // IMM's scalar query commands, omitted from current public imm.h. Keep them
@@ -41,13 +47,17 @@ Snapshot Target()
     result.thread = GetWindowThreadProcessId(result.foreground, nullptr);
     if (!result.thread) return {};
     GUITHREADINFO info{sizeof(info)};
-    if (GetGUIThreadInfo(result.thread, &info) && info.hwndFocus)
+    if (GetGUIThreadInfo(result.thread, &info))
     {
+        result.menuActive = (info.flags & GUI_INMENUMODE) != 0;
         // XAML islands and attached GUI queues may focus a child on a different
         // thread. Read that input thread, not just the top-level frame's HKL.
-        result.focus = info.hwndFocus;
-        result.thread = GetWindowThreadProcessId(result.focus, nullptr);
-        if (!result.thread) return {};
+        if (info.hwndFocus)
+        {
+            result.focus = info.hwndFocus;
+            result.thread = GetWindowThreadProcessId(result.focus, nullptr);
+            if (!result.thread) return {};
+        }
     }
     result.layout = GetKeyboardLayout(result.thread);
     if (!result.layout) return {};
@@ -56,7 +66,7 @@ Snapshot Target()
 Snapshot Read()
 {
     Snapshot result = Target();
-    if (!result.layout) return {};
+    if (!result.layout || result.menuActive) return {};
     const LANGID language = LOWORD(reinterpret_cast<ULONG_PTR>(result.layout));
     wchar_t locale[LOCALE_NAME_MAX_LENGTH]{}, name[256]{}, abbreviation[16]{};
     if (LCIDToLocaleName(MAKELCID(language, SORT_DEFAULT), locale, LOCALE_NAME_MAX_LENGTH, 0))
@@ -98,6 +108,7 @@ struct Service::Impl
     mutable std::mutex mutex;
     std::condition_variable_any wake;
     Snapshot snapshot;
+    detail::DisplayCache display;
     // The app's Run() can release its OLE reference before StatusBar destruction.
     // Retain our own STA reference until after the picker has been released.
     std::optional<Apartment> apartment;
@@ -120,10 +131,10 @@ Snapshot Service::Current() const
 {
     const auto current = Target();
     std::lock_guard lock(impl_->mutex);
-    return detail::Matches(impl_->snapshot, current.foreground, current.thread, current.layout, current.focus) ?
-        impl_->snapshot : Snapshot{};
+    return impl_->display.Get(impl_->snapshot, current, GetTickCount64(),
+        current.menuActive || modern_menu::ActiveRootWindow() != nullptr);
 }
-HRESULT Service::Show(RECT anchor)
+HRESULT Service::Show(RECT anchor, bool context)
 {
     if (IsRectEmpty(&anchor)) return E_INVALIDARG;
     if (!impl_->apartment) impl_->apartment.emplace();
@@ -138,7 +149,15 @@ HRESULT Service::Show(RECT anchor)
     }
     // The bar is no-activate. Windows therefore receives the original typing
     // target, including its per-window input preference, and owns dismissal.
-    const auto hr = impl_->picker->ShowInputSwitch(&anchor);
+    const POINT point{anchor.left + (anchor.right - anchor.left) / 2,
+        anchor.top + (anchor.bottom - anchor.top) / 2};
+    // The mode indicator differs from the language-list button: left toggles
+    // conversion mode, right opens the active IME's own menu on both OS versions.
+    auto hr = impl_->picker->ClickImeModeItem(context ? 1 : 0, point, &anchor);
+    // A plain keyboard layout may have no IME mode item. Keep its language
+    // picker available without synthesizing a key or changing input mode.
+    if (hr == S_FALSE || hr == E_NOTIMPL)
+        hr = impl_->picker->ShowInputSwitch(&anchor);
     if (FAILED(hr)) impl_->picker.Reset(); // Allow recovery after Shell restart.
     return hr;
 }

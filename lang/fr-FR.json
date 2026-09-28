@@ -1,6 +1,6 @@
 {
   "statusBar.inputMethod": "Méthode de saisie",
-  "statusBar.inputMethod.switch": "Cliquer pour changer de méthode de saisie",
+  "statusBar.inputMethod.switch": "Clic gauche pour changer de mode de saisie ; clic droit pour ouvrir le menu de la méthode de saisie",
   "app.settings.popup_hover_open": "Ouvrir les fenêtres contextuelles au survol",
   "app.settings.popup_hover_delay": "Délai de survol",
   "app.settings.popup_hover_open_hint": "Survolez un dossier ou une collection du Dock, ou le bouton de développement d’une collection du bureau, pour ouvrir sa fenêtre contextuelle après le délai défini.",

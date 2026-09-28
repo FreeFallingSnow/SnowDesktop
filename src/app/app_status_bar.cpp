@@ -123,7 +123,8 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     const auto generation = ++*statusBarActivationGeneration_;
     statusBarActivationMonitor_ = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     const double shortcutStarted = action == Action::Notifications || action == Action::SystemControlCenter ||
-        action == Action::TaskView || action == Action::SystemCalendar
+        action == Action::TaskView || action == Action::SystemCalendar ||
+        action == Action::InputMethod || action == Action::InputMethodMenu
         ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
     const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
@@ -292,7 +293,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     const bool externalSurface = action == Action::SystemMenu || action == Action::Menu ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
-        action == Action::TaskView || action == Action::SystemCalendar || action == Action::InputMethod;
+        action == Action::TaskView || action == Action::SystemCalendar ||
+        action == Action::InputMethod || action == Action::InputMethodMenu;
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {
         TraceStatusBarShellActivation(action, generation, L"wait-system-panel", hold->shortcutStartedMilliseconds);
@@ -301,14 +303,19 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     }
     const auto chord = snowdesktop::ResolveStatusBarShellChord(action,
         snowdesktop::StatusBarSupportsSystemQuickSettings(), IsClassicSystemTaskbar());
-    if (action == Action::InputMethod)
+    if (action == Action::InputMethod || action == Action::InputMethodMenu)
     {
-        const HRESULT result = statusBar_->ShowInputMethod(anchor);
+        const HRESULT result = statusBar_->ShowInputMethod(anchor, action == Action::InputMethodMenu);
+        wchar_t message[192]{};
+        swprintf_s(message, L"StatusBar input method %ls hr=0x%08lX anchor=%ld,%ld,%ld,%ld",
+            action == Action::InputMethodMenu ? L"context" : L"toggle", static_cast<unsigned long>(result),
+            anchor.left, anchor.top, anchor.right, anchor.bottom);
+        WriteDiagnosticLogEntry(message);
+        hold->shortcutFinished = true;
+        TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds,
+            SUCCEEDED(result) ? L"requested" : L"failed");
         if (FAILED(result))
         {
-            wchar_t message[128]{};
-            swprintf_s(message, L"StatusBar input method picker unavailable hr=0x%08lX", static_cast<unsigned long>(result));
-            WriteDiagnosticLogEntry(message);
             ShellExecuteW(owner, L"open", L"ms-settings:regionlanguage", nullptr, nullptr, SW_SHOWNORMAL);
         }
         statusBarActivationMonitor_ = nullptr;

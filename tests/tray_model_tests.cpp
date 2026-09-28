@@ -38,6 +38,20 @@ int RunTrayModelTests()
             !input::detail::Matches(old, old.foreground, old.thread, reinterpret_cast<HKL>(0x0409)) &&
             !input::detail::Matches({}, nullptr, 0, nullptr),
             "foreground or layout changes invalidate pending samples instead of showing another app's mode");
+        input::detail::DisplayCache display;
+        old.label = L"A";
+        check(display.Get(old, old, 0, false).label == L"A", "first valid input mode is presented immediately");
+        auto other = old; other.foreground = reinterpret_cast<HWND>(2); other.label = L"B";
+        check(display.Get(old, other, 200, false).label == L"A" &&
+            display.Get({}, {}, 599, false).label == L"A",
+            "a short foreground or sampling gap retains the displayed mode without accepting a stale sample");
+        check(display.Get({}, {}, 600, false).label.empty(), "a sustained unavailable target expires its presentation cache");
+        display.Get(old, old, 800, false);
+        check(display.Get(other, other, 10000, true).label == L"A" &&
+            display.Get({}, {}, 10100, false).label == L"A",
+            "menu focus preserves the original mode and provides a grace period after dismissal");
+        check(display.Get(other, other, 10200, false).label == L"B",
+            "a valid new typing target replaces the retained mode without delay");
     }
     {
         // Status-only notification sampling must distinguish unavailable data,

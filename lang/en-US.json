@@ -1,6 +1,6 @@
 {
   "statusBar.inputMethod": "Input method",
-  "statusBar.inputMethod.switch": "Click to switch input methods",
+  "statusBar.inputMethod.switch": "Left-click to switch input mode; right-click for the input method menu",
   "app.settings.popup_hover_open": "Open popups on hover",
   "app.settings.popup_hover_delay": "Hover delay",
   "app.settings.popup_hover_open_hint": "Hover over a Dock folder or collection, or a collection's expand button, to open its popup after the configured delay.",

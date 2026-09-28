@@ -1,6 +1,6 @@
 {
   "statusBar.inputMethod": "Eingabemethode",
-  "statusBar.inputMethod.switch": "Klicken, um die Eingabemethode zu wechseln",
+  "statusBar.inputMethod.switch": "Linksklick wechselt den Eingabemodus; Rechtsklick öffnet das Menü der Eingabemethode",
   "app.settings.popup_hover_open": "Popups bei Mauszeigerkontakt öffnen",
   "app.settings.popup_hover_delay": "Verzögerung beim Überfahren",
   "app.settings.popup_hover_open_hint": "Den Mauszeiger über einem Ordner oder einer Sammlung im Dock oder der Schaltfläche zum Erweitern einer Desktop-Sammlung halten, um das Popup nach der eingestellten Wartezeit zu öffnen.",

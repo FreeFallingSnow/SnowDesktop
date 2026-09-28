@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <cstdint>
 
 namespace snowdesktop::status_bar_input_method
 {
@@ -13,6 +14,7 @@ struct Snapshot
     HWND focus = nullptr;
     DWORD thread = 0;
     HKL layout = nullptr;
+    bool menuActive = false;
     std::wstring label, description;
     friend bool operator==(const Snapshot&, const Snapshot&) = default;
 };
@@ -28,7 +30,7 @@ inline std::wstring Label(LANGID language, std::wstring abbreviation,
     if (open && conversion)
     {
         const bool native = *open && (*conversion & IME_CMODE_NATIVE);
-        if (primary == LANG_CHINESE) return native ? L"中" : L"英";
+        if (primary == LANG_CHINESE) return native ? L"中" : L"英"; // l10n-allow: intrinsic Chinese IME mode symbols, independent of UI language
         if (primary == LANG_JAPANESE)
             return native ? (*conversion & IME_CMODE_KATAKANA ? L"カ" : L"あ") : L"A";
         if (primary == LANG_KOREAN) return native ? L"가" : L"A";
@@ -40,6 +42,25 @@ inline bool Matches(const Snapshot& value, HWND foreground, DWORD thread, HKL la
     return foreground && thread && layout && value.foreground == foreground &&
         value.focus == focus && value.thread == thread && value.layout == layout;
 }
+
+// Presentation-only grace period. It never changes the target of an IME action.
+// Menus are not new typing targets; brief sampling gaps must not flash a dash.
+class DisplayCache
+{
+public:
+    Snapshot Get(const Snapshot& sample, const Snapshot& target, std::uint64_t now, bool menu)
+    {
+        if (menu) { lastGood_ = now; return shown_; }
+        if (!sample.label.empty() && Matches(sample, target.foreground, target.thread, target.layout, target.focus))
+        { shown_ = sample; lastGood_ = now; return shown_; }
+        if (!shown_.label.empty() && now - lastGood_ < 600) return shown_;
+        shown_ = {};
+        return shown_;
+    }
+private:
+    Snapshot shown_;
+    std::uint64_t lastGood_ = 0;
+};
 }
 
 // Internal to the status bar. One bounded background sampler for every monitor;
@@ -53,7 +74,7 @@ public:
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
     Snapshot Current() const;
-    HRESULT Show(RECT anchor);
+    HRESULT Show(RECT anchor, bool context);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

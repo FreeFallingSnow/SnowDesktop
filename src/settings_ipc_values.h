@@ -53,7 +53,7 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.wifiControls, v.bluetoothControls, v.mediaControls, v.powerControls,
     v.pinnedTrayItems, v.trayOrder, v.menu, v.quickSearch, v.taskView,
     v.clockSystemPanel, v.controlCenterSystemPanel, v.leftOrder, v.rightOrder,
-    v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow);
+    v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,

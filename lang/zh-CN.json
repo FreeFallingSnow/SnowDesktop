@@ -1,6 +1,6 @@
 {
   "statusBar.inputMethod": "输入法",
-  "statusBar.inputMethod.switch": "点击切换输入法",
+  "statusBar.inputMethod.switch": "左键切换输入模式，右键打开输入法菜单",
   "app.settings.popup_hover_open": "悬停延时展开弹窗",
   "app.settings.popup_hover_delay": "悬停延时",
   "app.settings.popup_hover_open_hint": "鼠标在 Dock 文件夹、集合图标或桌面集合的展开入口停留指定时间后，自动展开弹窗。",

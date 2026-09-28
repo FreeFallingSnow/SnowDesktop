@@ -1,6 +1,6 @@
 {
   "statusBar.inputMethod": "輸入法",
-  "statusBar.inputMethod.switch": "點擊切換輸入法",
+  "statusBar.inputMethod.switch": "左鍵切換輸入模式，右鍵開啟輸入法選單",
   "app.settings.popup_hover_open": "懸停延遲展開彈出視窗",
   "app.settings.popup_hover_delay": "懸停延遲",
   "app.settings.popup_hover_open_hint": "滑鼠在 Dock 資料夾、集合圖示或桌面集合的展開入口停留指定時間後，自動展開彈出視窗。",

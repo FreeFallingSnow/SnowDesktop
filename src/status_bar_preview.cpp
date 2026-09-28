@@ -54,8 +54,8 @@ StatusBarSnapshot Fixture()
 {
     StatusBarSnapshot data;
     data.clock = L"2026/09/26   09:09";
-    data.inputMethod.label = L"中";
-    data.inputMethod.description = L"中文";
+    data.inputMethod.label = L"中"; // l10n-allow: fixed Chinese IME preview sample
+    data.inputMethod.description = L"中文"; // l10n-allow: fixed native language-name preview data
     data.cpu.emplace(); data.cpu->available = true; data.cpu->warmingUp = false; data.cpu->usagePercent = 9;
     data.memory.emplace(); data.memory->available = true; data.memory->totalBytes = 32ull << 30; data.memory->usedBytes = 12ull << 30;
     data.gpu.emplace(); data.gpu->available = true; data.gpu->warmingUp = false;
@@ -278,7 +278,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 Require(std::none_of(hiddenItems.begin(), hiddenItems.end(), [](const auto& item) {
                     return item.action == StatusBarAction::InputMethod;
                 }), "hidden input indicator must have no rendered or accessible click target");
-                auto switchedInput = data; switchedInput.inputMethod.label = L"英";
+                auto switchedInput = data; switchedInput.inputMethod.label = L"英"; // l10n-allow: fixed Chinese IME mode-transition sample
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, switchedInput)),
                     "IME mode changes must refresh the indicator without a layout change");
             }

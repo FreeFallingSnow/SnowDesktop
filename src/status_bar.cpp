@@ -1013,8 +1013,8 @@ struct StatusBar::Impl
                 POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 self->keyboardFocusVisible = false;
                 ScreenToClient(window, &point);
-                for (const auto& item : self->items)
-                    if (item.icon && PtInRect(&item.bounds, point)) return 0;
+                if (DispatchStatusBarPointerContextMenu(self->items, point,
+                    [&](std::size_t index) { self->ActivateItem(index, true); })) return 0;
                 ClientToScreen(window, &point);
                 self->CancelTrayMenu();
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
@@ -1254,10 +1254,10 @@ void StatusBar::ReleaseGraphicsResources()
     }
     self.composition.Reset(); self.text.Reset();
 }
-HRESULT StatusBar::ShowInputMethod(RECT anchor)
+HRESULT StatusBar::ShowInputMethod(RECT anchor, bool context)
 {
     return impl_->settings.enabled && impl_->settings.inputMethod && impl_->inputMethod ?
-        impl_->inputMethod->Show(anchor) : E_UNEXPECTED;
+        impl_->inputMethod->Show(anchor, context) : E_UNEXPECTED;
 }
 std::shared_ptr<tray::Service> StatusBar::Tray() const { return impl_->tray; }
 void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,

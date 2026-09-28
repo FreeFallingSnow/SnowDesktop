@@ -1,6 +1,6 @@
 {
   "statusBar.inputMethod": "Método de entrada",
-  "statusBar.inputMethod.switch": "Clique para trocar o método de entrada",
+  "statusBar.inputMethod.switch": "Clique com o botão esquerdo para alternar o modo de entrada; com o direito para abrir o menu do método de entrada",
   "app.settings.popup_hover_open": "Abrir pop-ups ao passar o mouse",
   "app.settings.popup_hover_delay": "Tempo de espera ao passar o mouse",
   "app.settings.popup_hover_open_hint": "Mantenha o ponteiro sobre uma pasta ou coleção do Dock, ou sobre o botão de expansão de uma coleção da área de trabalho, para abrir o pop-up após o tempo de espera configurado.",

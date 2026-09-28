@@ -1,6 +1,6 @@
 {
   "statusBar.inputMethod": "입력 방식",
-  "statusBar.inputMethod.switch": "클릭하여 입력 방식 전환",
+  "statusBar.inputMethod.switch": "왼쪽 클릭으로 입력 모드 전환, 오른쪽 클릭으로 입력기 메뉴 열기",
   "app.settings.popup_hover_open": "마우스를 올려 팝업 열기",
   "app.settings.popup_hover_delay": "마우스 올리기 대기 시간",
   "app.settings.popup_hover_open_hint": "Dock의 폴더나 컬렉션 또는 바탕 화면 컬렉션의 펼치기 버튼에 마우스를 올리면 설정한 대기 시간 후에 팝업이 열립니다.",

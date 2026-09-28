@@ -150,9 +150,26 @@ inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
     if (!index || *index >= items.size()) return {};
     const auto& item = items[*index];
     if (item.action == StatusBarAction::None || IsRectEmpty(&item.bounds)) return {};
-    return StatusBarInvocation{context ? StatusBarAction::Menu : item.action,
+    const auto action = context ? (item.action == StatusBarAction::InputMethod ?
+        StatusBarAction::InputMethodMenu : StatusBarAction::Menu) : item.action;
+    return StatusBarInvocation{action,
         item.icon.has_value(), item.icon ? item.icon->key : std::string{},
         context ? tray::Activation::ContextKeyboard : tray::Activation::Keyboard, item.bounds};
+}
+
+// Mouse context requests use hit geometry; keyboard requests use focus below.
+// Tray icons already receive their native right-button sequence. The IME is a
+// built-in control with its own context surface; other items keep the bar menu.
+template<class Invoke>
+bool DispatchStatusBarPointerContextMenu(const std::vector<StatusBarItem>& items,
+    POINT client, Invoke&& invoke)
+{
+    const auto hit = HitTestStatusBarItems(items, client);
+    if (!hit) return false;
+    if (items[*hit].icon) return true;
+    if (items[*hit].action != StatusBarAction::InputMethod) return false;
+    invoke(*hit);
+    return true;
 }
 
 // Shared native message routing. Leave unhandled keys to Windows: DefWindowProc

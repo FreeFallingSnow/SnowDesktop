@@ -7,6 +7,7 @@
 #include "floating_dock_rules.h"
 
 #include <windows.h>
+#include <windowsx.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -421,6 +422,15 @@ struct StatusBarKeyboardProbe
                 if (auto invocation = snowdesktop::ResolveStatusBarInvocation(self->items, self->input.focused, context))
                     self->invoked.push_back(std::move(*invocation));
             }, [&] { ++self->dismissals; })) return 0;
+        if (self && message == WM_CONTEXTMENU)
+        {
+            POINT point{GET_X_LPARAM(bits), GET_Y_LPARAM(bits)};
+            ScreenToClient(window, &point);
+            if (snowdesktop::DispatchStatusBarPointerContextMenu(self->items, point, [&](std::size_t index) {
+                if (auto invocation = snowdesktop::ResolveStatusBarInvocation(self->items, index, true))
+                    self->invoked.push_back(std::move(*invocation));
+            })) return 0;
+        }
         if (self && (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)) ++self->defaultKeys;
         return DefWindowProcW(window, message, key, bits);
     }
@@ -485,6 +495,23 @@ void CheckStatusBarKeyboardMessages()
     probe.input.focused = 1; probe.items[1].bounds = {};
     SendMessageW(window, WM_KEYDOWN, VK_SPACE, 1);
     Expect(probe.invoked.size() == 4, "missing and layout-hidden targets cannot invoke a replacement icon");
+    StatusBarItem ime{}; ime.key = "inputMethod"; ime.action = StatusBarAction::InputMethod;
+    ime.bounds = {32, 0, 64, 32};
+    probe.items.push_back(ime); probe.input.focused = 2;
+    // Real DefWindowProc turns a mouse right release into WM_CONTEXTMENU;
+    // only the foreign IME call is replaced by invocation recording.
+    SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
+    SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), MAKELPARAM(-1, -1));
+    Expect(probe.invoked.size() == 6 &&
+        probe.invoked[4].action == StatusBarAction::InputMethodMenu &&
+        probe.invoked[5].action == StatusBarAction::InputMethodMenu && probe.invoked[4].bounds.left == 32,
+        "mouse and keyboard IME context requests target its native menu rather than the bar menu");
+    SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
+    Expect(probe.invoked.size() == 7 && probe.invoked.back().action == StatusBarAction::InputMethod,
+        "normal IME activation remains distinct from the context menu request");
+    probe.items[2].bounds = {};
+    SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
+    Expect(probe.invoked.size() == 7, "a hidden IME control cannot respond to context clicks");
     Expect(SetKeyboardState(saved) != FALSE, "thread-local key state is restored");
     DestroyWindow(window);
     UnregisterClassW(definition.lpszClassName, definition.hInstance);
