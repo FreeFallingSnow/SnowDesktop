@@ -3,7 +3,7 @@
 #include "tray_menu_placement.h"
 #include "status_bar_notification.h"
 #include "status_bar_input_method.h"
-#include "status_bar_input_method_native.h"
+#include "status_bar_input_method_identity.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>

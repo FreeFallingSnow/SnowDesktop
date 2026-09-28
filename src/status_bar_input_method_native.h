@@ -1,11 +1,11 @@
 #pragma once
+#include "status_bar_input_method_identity.h"
 #include <windows.h>
 #include <ole2.h>
 #include <UIAutomation.h>
 #include <shlwapi.h>
 #include <wrl/client.h>
 #include <algorithm>
-#include <cwctype>
 #include <iterator>
 #include <stop_token>
 #include <string>
@@ -41,12 +41,6 @@ inline bool HasModernTaskbar()
     const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
     return taskbar && FindWindowExW(taskbar, nullptr,
         L"Windows.UI.Composition.DesktopWindowContentBridge", nullptr);
-}
-
-inline bool MatchesModeButton(std::wstring_view name, std::wstring_view prefix)
-{
-    return !prefix.empty() && name.starts_with(prefix) &&
-        (name.size() == prefix.size() || iswspace(name[prefix.size()]));
 }
 
 inline ComPtr<IUIAutomationCondition> Property(IUIAutomation* automation, PROPERTYID id, const wchar_t* text)
