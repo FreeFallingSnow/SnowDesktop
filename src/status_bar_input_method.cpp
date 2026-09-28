@@ -39,6 +39,14 @@ struct Apartment
     Apartment& operator=(const Apartment&) = delete;
 };
 
+struct NativeState
+{
+    // Released after the interface, even if the bar is destroyed from a nested
+    // native menu/COM message loop or Run() releases the app's OLE reference.
+    Apartment apartment;
+    Microsoft::WRL::ComPtr<InputSwitch> picker;
+};
+
 Snapshot Target()
 {
     Snapshot result;
@@ -109,10 +117,7 @@ struct Service::Impl
     std::condition_variable_any wake;
     Snapshot snapshot;
     detail::DisplayCache display;
-    // The app's Run() can release its OLE reference before StatusBar destruction.
-    // Retain our own STA reference until after the picker has been released.
-    std::optional<Apartment> apartment;
-    Microsoft::WRL::ComPtr<InputSwitch> picker;
+    std::shared_ptr<NativeState> native;
     // Declared last so shutdown joins before its state/mutex are destroyed.
     std::jthread worker{[this](std::stop_token stop) {
         while (!stop.stop_requested())
@@ -137,28 +142,33 @@ Snapshot Service::Current() const
 HRESULT Service::Show(RECT anchor, bool context)
 {
     if (IsRectEmpty(&anchor)) return E_INVALIDARG;
-    if (!impl_->apartment) impl_->apartment.emplace();
-    if (FAILED(impl_->apartment->result)) return impl_->apartment->result;
-    if (!impl_->picker)
+    if (!impl_->native) impl_->native = std::make_shared<NativeState>();
+    // Retain native state for the whole call. No Service/Impl access may follow
+    // a foreign COM call: a nested message can disable or rebuild the bar.
+    const auto native = impl_->native;
+    if (FAILED(native->apartment.result)) return native->apartment.result;
+    if (!native->picker)
     {
         auto hr = CoCreateInstance(kInputSwitch, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(impl_->picker.ReleaseAndGetAddressOf()));
+            IID_PPV_ARGS(native->picker.ReleaseAndGetAddressOf()));
         if (FAILED(hr)) return hr;
-        hr = impl_->picker->Init(0); // Desktop client, common to Windows 10/11.
-        if (FAILED(hr)) { impl_->picker.Reset(); return hr; }
+        hr = native->picker->Init(0); // Desktop client, common to Windows 10/11.
+        if (FAILED(hr)) { native->picker.Reset(); return hr; }
     }
+    const auto picker = native->picker;
     // The bar is no-activate. Windows therefore receives the original typing
     // target, including its per-window input preference, and owns dismissal.
     const POINT point{anchor.left + (anchor.right - anchor.left) / 2,
         anchor.top + (anchor.bottom - anchor.top) / 2};
     // The mode indicator differs from the language-list button: left toggles
     // conversion mode, right opens the active IME's own menu on both OS versions.
-    auto hr = impl_->picker->ClickImeModeItem(context ? 1 : 0, point, &anchor);
+    auto hr = picker->ClickImeModeItem(context ? 1 : 0, point, &anchor);
     // A plain keyboard layout may have no IME mode item. Keep its language
     // picker available without synthesizing a key or changing input mode.
     if (hr == S_FALSE || hr == E_NOTIMPL)
-        hr = impl_->picker->ShowInputSwitch(&anchor);
-    if (FAILED(hr)) impl_->picker.Reset(); // Allow recovery after Shell restart.
+        hr = picker->ShowInputSwitch(&anchor);
+    if (FAILED(hr) && native->picker.Get() == picker.Get())
+        native->picker.Reset(); // Allow recovery after Shell restart.
     return hr;
 }
 }
