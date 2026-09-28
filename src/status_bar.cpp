@@ -352,16 +352,19 @@ struct StatusBar::Impl
             return !closing && !fullscreen && !failed && IsWindowVisible(hwnd) &&
                 (!mergedDockHeight || mergedPresentation.inputEnabled);
         }
-        void ApplyDockPose(float opacity)
+        void ApplyDockPose(const StatusBarDockPresentation& frame)
         {
             if (!mergedDockHeight || !visual || !owner.composition) return;
             if (!mergedOpacity) owner.composition->CreateEffectGroup(&mergedOpacity);
             if (mergedOpacity)
             {
-                mergedOpacity->SetOpacity(opacity);
+                mergedOpacity->SetOpacity(frame.opacity);
                 visual->SetEffect(mergedOpacity.Get());
             }
-            backdrop.SetVisualOpacity(opacity);
+            visual->SetOffsetX(frame.offsetX);
+            visual->SetOffsetY(frame.offsetY);
+            backdrop.SetVisualOpacity(frame.opacity);
+            backdrop.SetVisualTranslation(frame.offsetX, frame.offsetY);
         }
         bool PrepareDockPresentation(const StatusBarDockPresentation& frame)
         {
@@ -374,7 +377,7 @@ struct StatusBar::Impl
                 return false;
             if (windowHidden)
             {
-                ApplyDockPose(frame.opacity);
+                ApplyDockPose(frame);
                 const auto result = owner.composition->Commit();
                 if (FAILED(result)) { PaintError(result); return false; }
             }
@@ -400,7 +403,7 @@ struct StatusBar::Impl
             }
             if (!IsWindowVisible(hwnd)) Show();
             else if (paintDirty) Paint();
-            ApplyDockPose(mergedPresentation.opacity);
+            ApplyDockPose(mergedPresentation);
             backdrop.SetPopupWindowPairZOrder(hwnd, frame.insertAfter, frame.topmost);
             backdrop.SetVisible(appearance.glassEnabled && !HighContrast());
             backdrop.CommitVisualChanges();
@@ -634,7 +637,7 @@ struct StatusBar::Impl
             if (SUCCEEDED(result))
             {
                 contentVisual->SetContent(surface.Get());
-                ApplyDockPose(mergedPresentation.opacity);
+                ApplyDockPose(mergedPresentation);
                 const auto commit = owner.composition->Commit();
                 if (FAILED(commit)) PaintError(commit);
                 else { paintDirty = false; lastPaintError = S_OK; SyncTooltip(); }
@@ -1131,6 +1134,7 @@ struct StatusBar::Impl
     TrayDragFeedback dragFeedback;
     std::function<void(bool)> dockChanged;
     std::function<StatusBarDockState(HMONITOR)> dockStateProvider;
+    std::function<bool(HMONITOR)> interactionSessionProvider;
     std::function<PersonalizationSettings(HMONITOR)> mergedAppearanceProvider;
     std::function<StatusBarSceneState(HMONITOR)> sceneProvider;
     std::function<void(HRESULT)> graphicsFailure;
@@ -1259,6 +1263,8 @@ void StatusBar::SetTrayExpanded(HMONITOR monitor, bool expanded)
 void StatusBar::SetDockChanged(std::function<void(bool)> changed) { impl_->dockChanged = std::move(changed); }
 void StatusBar::SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider)
 { impl_->dockStateProvider = std::move(provider); }
+void StatusBar::SetInteractionSessionProvider(std::function<bool(HMONITOR)> provider)
+{ impl_->interactionSessionProvider = std::move(provider); }
 void StatusBar::SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider)
 { impl_->mergedAppearanceProvider = std::move(provider); }
 void StatusBar::RefreshDockState(HMONITOR monitor)
@@ -1341,8 +1347,8 @@ bool StatusBar::IsInteractionAvailable(HMONITOR monitor) const
 }
 bool StatusBar::HasInteractionSession(HMONITOR monitor) const
 {
-    return !impl_->removingWindows && impl_->dockStateProvider &&
-        impl_->dockStateProvider(monitor).interacting;
+    return !impl_->removingWindows && impl_->interactionSessionProvider &&
+        impl_->interactionSessionProvider(monitor);
 }
 bool StatusBar::HasTrayMenuSession(HMONITOR monitor) const
 {
@@ -1605,6 +1611,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
             {
                 if (window->visual) { window->visual->SetOffsetX(0.f); window->visual->SetOffsetY(0.f); window->visual->SetEffect(nullptr); }
                 window->backdrop.SetVisualOpacity(1.f);
+                window->backdrop.SetVisualTranslation(0.f, 0.f);
                 const RECT frame{0, 0, static_cast<LONG>(window->width), static_cast<LONG>(window->height)};
                 window->backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(window.get()),
                     D2D1::Matrix4x4F(), frame);

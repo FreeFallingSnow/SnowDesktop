@@ -89,6 +89,7 @@ void DesktopApp::UnregisterFloatingDockHotkey()
     floatingDockEdgeSwipeHwnd_ = nullptr;
     floatingDockEdgeSwipeDetector_.Reset();
     floatingDockPointerButtonsDown_ = 0;
+    floatingDockExternalPointerDrag_.Reset();
 }
 
 void DesktopApp::ApplyFloatingDockHotkey()
@@ -109,10 +110,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
             dockSettings_.floatingShortcutMode,
             edgeSwipeEnabled);
 
-    // Passive drag reveal belongs only to summon-only mode. Clearing it here
-    // keeps a settings toggle from leaving a Host effectively floating after
-    // ordinary desktop visibility has been restored.
-    if (!dockSettings_.showOnlyWhenSummoned)
+    // A settings apply starts a fresh passive session in either display mode.
     {
         bool passiveStateChanged = false;
         for (const auto& host : persistentDockHosts_)
@@ -202,8 +200,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
 bool DesktopApp::UpdatePassiveDragRevealHosts(
     POINT cursorScreen)
 {
-    if (desktopPassthroughActive_ || !generalSettings_.dockEnabled ||
-        !dockSettings_.showOnlyWhenSummoned)
+    if (desktopPassthroughActive_ || !generalSettings_.dockEnabled)
     {
         return false;
     }
@@ -212,7 +209,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
     const bool internalDragActive =
         dragSession_.IsActive();
     const bool oleDragActive =
-        dragDropController_.IsTransportActive();
+        dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active();
     const bool dragRevealActive =
         internalDragActive || oleDragActive;
     bool passiveDragRevealedThisSample = false;
@@ -441,6 +438,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     {
         floatingDockEdgeSwipeDetector_.Reset();
         floatingDockPointerButtonsDown_ = 0;
+        floatingDockExternalPointerDrag_.Reset();
         return;
     }
     constexpr UINT leftButtonBit = 1u << 0;
@@ -500,6 +498,16 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         desktopPoint.x -= virtualLeft_;
         desktopPoint.y -= virtualTop_;
     }
+
+    GUITHREADINFO dragGui{sizeof(dragGui)};
+    const bool haveDragGui = GetGUIThreadInfo(0, &dragGui) != FALSE;
+    DWORD dragSourceProcess = 0;
+    GetWindowThreadProcessId(haveDragGui && dragGui.hwndCapture ? dragGui.hwndCapture : GetForegroundWindow(),
+        &dragSourceProcess);
+    floatingDockExternalPointerDrag_.Update(cursor, (buttonsDown & (leftButtonBit | rightButtonBit)) != 0,
+        dragSourceProcess != 0 && dragSourceProcess != GetCurrentProcessId(),
+        (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0 || (haveDragGui && (dragGui.flags & GUI_INMOVESIZE)),
+        GetSystemMetrics(SM_CXDRAG), GetSystemMetrics(SM_CYDRAG));
 
     // Passive drag reveal must run before the legacy button/drag early return
     // below. An ordinary pointer still needs the existing edge-swipe gesture,

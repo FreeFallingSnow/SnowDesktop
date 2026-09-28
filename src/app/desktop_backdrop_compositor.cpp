@@ -1704,6 +1704,20 @@ bool DesktopBackdropCompositor::SetVisualOpacity(
     }
 }
 
+void DesktopBackdropCompositor::SetVisualTranslation(float x, float y)
+{
+    if (!impl_ || !impl_->available || !impl_->root) return;
+    try
+    {
+        impl_->root.Offset(wfn::float3{x, y, 0.f});
+        impl_->SetAnimationPathRegionExpanded(std::abs(x) > 0.001f || std::abs(y) > 0.001f);
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
+}
+
 void DesktopBackdropCompositor::CommitVisualChanges()
 {
     if (impl_)

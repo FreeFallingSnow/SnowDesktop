@@ -1147,11 +1147,11 @@ void CheckStatusBarFullscreenDockSession()
         "both surfaces start hidden and reject input");
     timeline.Open(100); timeline.Advance(170);
     const auto opening = MergedDockPresentationFrame(timeline);
-    Check(opening.visible && !opening.inputEnabled && opening.opacity > 0 && opening.opacity < 1,
-        "one in-flight merged frame fades both surfaces while suppressing hit targets and titles");
+    Check(opening.visible && !opening.inputEnabled && opening.opacity == 1 && opening.hiddenFraction == 0.5f,
+        "edge reveal moves both surfaces at full opacity while suppressing hit targets and titles");
     timeline.Close(170);
-    Check(MergedDockPresentationFrame(timeline).opacity == opening.opacity,
-        "reversing the Dock timeline preserves opacity instead of restarting a second bar animation");
+    Check(MergedDockPresentationFrame(timeline).hiddenFraction == opening.hiddenFraction,
+        "reversing the Dock timeline preserves slide position instead of restarting a second bar animation");
     timeline.Advance(195); timeline.Open(195); timeline.Advance(400);
     Check(MergedDockPresentationFrame(timeline).inputEnabled && MergedDockPresentationFrame(timeline).opacity == 1,
         "only the settled endpoint restores Dock magnification and status-bar input");
@@ -1162,6 +1162,19 @@ void CheckStatusBarFullscreenDockSession()
     Check(MergedDockPresentationFrame(timeline).inputEnabled && MergedDockPresentationFrame(timeline).opacity == 1,
         "disabled animations reveal the merged surface immediately without waiting for a frame");
     const RECT monitorArea{1920, 0, 3840, 1080}, strip{1920, 1016, 3840, 1080};
+    auto sliding = opening;
+    PositionDockRevealFrame(sliding, DockPosition::Bottom, strip, monitorArea);
+    Check(sliding.offsetX == 0 && sliding.offsetY == 32,
+        "bottom merged content and backdrop slide by half the same strip height");
+    const RECT leftScreen{-1920, -1080, 0, 0};
+    PositionDockRevealFrame(sliding, DockPosition::Top, {-1600, -1070, -300, -1010}, leftScreen);
+    Check(sliding.offsetX == 0 && sliding.offsetY == -35,
+        "top island slide includes its edge gap on a negative-coordinate monitor");
+    PositionDockRevealFrame(sliding, DockPosition::Left, {-1910, -900, -1850, -100}, leftScreen);
+    Check(sliding.offsetX == -35 && sliding.offsetY == 0, "left island slides toward the left edge");
+    PositionDockRevealFrame(sliding, DockPosition::Right, {-70, -900, -10, -100}, leftScreen);
+    Check(sliding.offsetX == 35 && sliding.offsetY == 0, "right island slides toward the right edge");
+    Check(timeline.DurationMilliseconds(true) == 0, "disabled reveal has no delay");
     const auto available = ConstrainStatusBarWorkArea(monitorArea, strip, ABE_BOTTOM);
     Check(available.bottom == strip.top && available.left == monitorArea.left && available.right == monitorArea.right,
         "merged-to-island Dock geometry must exclude the still-registered AppBar on its own monitor");
@@ -4861,13 +4874,30 @@ int main(int argc, char** argv)
             180, 6, 108),
         "left/right Docks must recognize vertical along-edge travel");
 
-    Check(!floatingDock::IsDockEffectivelyPromoted(
+    Check(floatingDock::IsDockEffectivelyPromoted(
               false, true, false) &&
             floatingDock::IsDockEffectivelyPromoted(
               false, true, true) &&
             floatingDock::IsDockEffectivelyPromoted(
               true, false, false),
-        "passive drag reveal must borrow the floating band only in summon-only mode while manual promotion remains unconditional");
+        "passive drag reveal must raise both resident and summon-only Docks without manual promotion");
+    floatingDock::ExternalPointerDrag externalDrag;
+    Check(!externalDrag.Update({100, 100}, true, true, false, 4, 4) &&
+        !externalDrag.Update({102, 102}, true, true, false, 4, 4),
+        "an external click or small pointer jitter cannot reveal a Dock");
+    Check(externalDrag.Update({200, 400}, true, true, false, 4, 4) &&
+        externalDrag.Update({200, 500}, true, false, false, 4, 4),
+        "external movement is detected before OLE entry and remains active after crossing an own window");
+    Check(!externalDrag.Update({200, 500}, false, false, false, 4, 4) && !externalDrag.Active(),
+        "releasing the pointer clears external drag evidence");
+    externalDrag.Update({100, 100}, true, true, false, 4, 4);
+    Check(!externalDrag.Update({200, 400}, true, true, true, 4, 4) &&
+        !externalDrag.Update({200, 500}, true, true, false, 4, 4),
+        "escape or window move/resize cancels evidence for the rest of that press");
+    externalDrag.Reset();
+    externalDrag.Update({100, 100}, true, false, false, 4, 4);
+    Check(!externalDrag.Update({200, 400}, true, true, false, 4, 4),
+        "an own-window click cannot become an external drag just by crossing processes");
     Check(floatingDock::ShouldShowPersistentDockHost(
               true, false, false, true, false, false) &&
             !floatingDock::ShouldShowPersistentDockHost(
@@ -5095,7 +5125,7 @@ int main(int argc, char** argv)
               false, false, true, false,
               false, true, true) ==
                 PassiveDragAction::CancelLeave,
-        "disabling summon-only mode must cancel passive cleanup instead of hiding an ordinarily visible Dock");
+        "disabling passive reveal cancels its pending cleanup");
     Check(floatingDock::ResolvePassiveDragRevealUpdate(
               true, false, false, false,
               false, false, false) ==
@@ -6865,6 +6895,10 @@ int main(int argc, char** argv)
              "void DesktopApp::ResetMergedDockPresentation(",
              {"RefreshDockState(", "SyncStatusBar(", "UpdateFloatingDockWindowBounds(",
               "StartAnimation(", "ABM_", "MonitorFullscreenSource("}},
+            // The 2026-09-28 crash recursively evaluated Dock hit bounds through
+            // this visibility query. Keep session reads independent of geometry.
+            {"src/status_bar.cpp", "bool StatusBar::HasInteractionSession(",
+             "bool StatusBar::HasTrayMenuSession(", {"dockStateProvider(", "GetInteractiveBounds("}},
             {"src/app/app_popup_lifecycle.cpp", "void DesktopApp::FinalizeCloseCollectionPopup()",
              "void DesktopApp::ClearDockFolderPopupEntries()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow(",

@@ -73,11 +73,38 @@ inline FloatingDockInputPolicy ResolveFloatingDockInputPolicy(
 inline bool IsDockEffectivelyPromoted(
     bool manuallyPromoted,
     bool passiveDragRevealed,
-    bool summonOnlyEnabled)
+    bool /*summonOnlyEnabled*/)
 {
-    return manuallyPromoted ||
-        (summonOnlyEnabled && passiveDragRevealed);
+    return manuallyPromoted || passiveDragRevealed;
 }
+
+// Before an external drag enters a SnowDesktop drop target there is no OLE
+// payload/session here. Recognize only a held, moved pointer from another app;
+// actual drop acceptance remains exclusively in the normal OLE target path.
+class ExternalPointerDrag
+{
+public:
+    bool Update(POINT point, bool buttonHeld, bool externalSource,
+        bool canceledOrMovingWindow, int thresholdX, int thresholdY)
+    {
+        if (!buttonHeld) { Reset(); return false; }
+        if (!held_)
+        {
+            held_ = true;
+            origin_ = point;
+            eligible_ = externalSource;
+        }
+        if (canceledOrMovingWindow) eligible_ = active_ = false;
+        if (eligible_ && (std::abs(point.x - origin_.x) >= std::max(1, thresholdX) ||
+            std::abs(point.y - origin_.y) >= std::max(1, thresholdY))) active_ = true;
+        return active_;
+    }
+    bool Active() const { return active_; }
+    void Reset() { held_ = eligible_ = active_ = false; origin_ = {}; }
+private:
+    POINT origin_{};
+    bool held_ = false, eligible_ = false, active_ = false;
+};
 
 inline bool ShouldShowPersistentDockHost(
     bool active,
@@ -144,7 +171,7 @@ enum class PassiveDragRevealAction
 };
 
 inline PassiveDragRevealAction ResolvePassiveDragRevealUpdate(
-    bool summonOnlyEnabled,
+    bool passiveRevealEnabled,
     bool manuallyPromoted,
     bool passiveDragRevealed,
     bool revealRequested,
@@ -152,7 +179,7 @@ inline PassiveDragRevealAction ResolvePassiveDragRevealUpdate(
     bool leavePending,
     bool leaveDelayElapsed)
 {
-    if (!summonOnlyEnabled || manuallyPromoted)
+    if (!passiveRevealEnabled || manuallyPromoted)
         return leavePending
             ? PassiveDragRevealAction::CancelLeave
             : PassiveDragRevealAction::None;

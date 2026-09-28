@@ -110,6 +110,8 @@ public:
     bool SetPanelOpacity(const RECT& frame, float opacity);
     /** @brief 修改根视觉透明度；由 CommitVisualChanges 统一提交。 */
     bool SetVisualOpacity(float opacity);
+    // Translation stays inside the stable popup allocation; no AppBar movement.
+    void SetVisualTranslation(float x, float y);
     /** @brief 立即提交同线程所有 backdrop 目标的共享视觉事务，不等待 GPU 完成。 */
     void CommitVisualChanges();
     /**

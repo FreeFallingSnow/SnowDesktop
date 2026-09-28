@@ -511,14 +511,16 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         }
         namespace motion = snowdesktop::animation;
         namespace animation = snowdesktop::quick_navigation_animation_rules;
-        // Use one opacity timeline for the entire merged surface. Native HWND
-        // regions keep the normal magnification/bounce/title allocation.
+        // Reuse the short progress timeline, translating the complete strip at
+        // full opacity. Animation never changes AppBar/work-area geometry.
         const bool shouldShow = ShouldShowPersistentDockHost(host);
-        const bool immediateDrag = shouldShow && (dragSession_.IsActive() || dragDropController_.IsTransportActive());
+        const bool immediateDrag = shouldShow && (dragSession_.IsActive() ||
+            dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active());
+        const bool wasAnimating = host.mergedAnimation.IsAnimating();
         host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && !immediateDrag
-            ? animation::Effect::Fade : animation::Effect::None, motion::RuntimeDurationScale());
+            ? animation::Effect::Fade : animation::Effect::None, std::min(1.0, motion::RuntimeDurationScale()));
         const bool changed = shouldShow != host.mergedAnimation.IsInteractive();
-        if (changed)
+        if (changed || (wasAnimating && !host.mergedAnimation.IsAnimating()))
         {
             const auto now = static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
             if (shouldShow) host.mergedAnimation.Open(now);
@@ -608,6 +610,13 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
     auto frame = snowdesktop::MergedDockPresentationFrame(host.mergedAnimation);
     frame.topmost = host.mergedPresentation.topmost;
     frame.insertAfter = host.hwnd;
+    MONITORINFO monitorInfo{sizeof(monitorInfo)};
+    RECT motionBounds = host.dockRect;
+    OffsetRect(&motionBounds, virtualLeft_, virtualTop_);
+    if (host.presentationMerged && statusBar_)
+        if (const auto strip = statusBar_->MergedStripBounds(host.monitor)) motionBounds = *strip;
+    if (GetMonitorInfoW(host.monitor, &monitorInfo))
+        snowdesktop::PositionDockRevealFrame(frame, dockSettings_.position, motionBounds, monitorInfo.rcMonitor);
     if (host.presentationMerged && frame.visible &&
         (!statusBar_ || !statusBar_->PrepareMergedDockPresentation(host.monitor, frame)))
     {
@@ -619,6 +628,8 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
     host.mergedPresentation = frame;
     if (host.dcompVisual && dcompDevice_)
     {
+        host.dcompVisual->SetOffsetX(frame.offsetX);
+        host.dcompVisual->SetOffsetY(frame.offsetY);
         if (!host.mergedOpacity) dcompDevice_->CreateEffectGroup(&host.mergedOpacity);
         if (host.mergedOpacity)
         {
@@ -627,6 +638,7 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
         }
     }
     host.backdrop.SetVisualOpacity(frame.opacity);
+    host.backdrop.SetVisualTranslation(frame.offsetX, frame.offsetY);
     // The complete strip is prepared above and revealed before its central
     // icon surface, so a first/no-animation frame cannot show a partial Dock.
     if (host.presentationMerged && statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, frame);
@@ -658,9 +670,15 @@ void DesktopApp::ResetMergedDockPresentation(PersistentDockHost& host)
     host.mergedCloseAfterInteraction = false;
     if (host.presentationMerged && statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, {});
     host.presentationMerged = false;
-    if (host.dcompVisual) host.dcompVisual->SetEffect(nullptr);
+    if (host.dcompVisual)
+    {
+        host.dcompVisual->SetEffect(nullptr);
+        host.dcompVisual->SetOffsetX(0.f);
+        host.dcompVisual->SetOffsetY(0.f);
+    }
     host.mergedOpacity.Reset();
     host.backdrop.SetVisualOpacity(1.f);
+    host.backdrop.SetVisualTranslation(0.f, 0.f);
 }
 
 void DesktopApp::UpdatePersistentDockHostVisibility()
@@ -784,6 +802,22 @@ CalculateFloatingDockStableSourceRect(
                             dockSettings_.position),
                 visualEdgeWidth);
 
+    if (dockSettings_.showOnlyWhenSummoned || host.container->IsMergedWithStatusBar())
+    {
+        MONITORINFO monitor{sizeof(monitor)};
+        if (GetMonitorInfoW(host.monitor, &monitor))
+        {
+            // Include the island's gap to its edge in the stable allocation,
+            // so a sliding card is not clipped at its resting rectangle.
+            switch (dockSettings_.position)
+            {
+            case DockPosition::Left: sourceRect.left = std::min(sourceRect.left, monitor.rcMonitor.left - virtualLeft_); break;
+            case DockPosition::Right: sourceRect.right = std::max(sourceRect.right, monitor.rcMonitor.right - virtualLeft_); break;
+            case DockPosition::Top: sourceRect.top = std::min(sourceRect.top, monitor.rcMonitor.top - virtualTop_); break;
+            case DockPosition::Bottom: sourceRect.bottom = std::max(sourceRect.bottom, monitor.rcMonitor.bottom - virtualTop_); break;
+            }
+        }
+    }
     return sourceRect;
 }
 
@@ -969,6 +1003,11 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     HRGN windowRegion = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
         floatingDockRect_, host.animationVisualRect, floatingDockPopupRect_,
         floatingDockTooltipRect_, floatingDockSourceRect_, radius, dockBorderWidth);
+    if (host.mergedPresentationActive && host.mergedAnimation.IsAnimating())
+    {
+        if (windowRegion) DeleteObject(windowRegion);
+        windowRegion = CreateRectRgn(0, 0, width, height);
+    }
     RECT guideLocal = guideOcclusion;
     if (!IsRectEmpty(&guideLocal))
         OffsetRect(&guideLocal, -floatingDockSourceRect_.left, -floatingDockSourceRect_.top);

@@ -1232,7 +1232,13 @@ RECT DockContainer::GetHoveredTitleBounds(
     POINT pointer) const
 {
     if (IsMagnificationSuppressed() ||
-        (app_ && app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()))
+        (app_ && ((app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()) ||
+            !app_->popupAnimation_.IsHidden() || !app_->quickNavigationAnimation_.IsHidden() ||
+            app_->quickNavigationOpen_ || app_->HasActiveContextMenuSession())))
+        return RECT{};
+
+    const auto* host = app_->FindPersistentDockHost(this);
+    if (host && app_->statusBar_ && app_->statusBar_->HasInteractionSession(host->monitor))
         return RECT{};
 
     std::wstring title;

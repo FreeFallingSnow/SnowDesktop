@@ -403,6 +403,7 @@ void DesktopApp::StartCollectionPopupAnimation(
     {
         popupAnimation_.ShowImmediately();
         ResetCollectionPopupAnimationCache();
+        InvalidateDockRects();
         return;
     }
     // The snapshot visual belongs to the shared topmost popup host. Materialize
@@ -416,6 +417,7 @@ void DesktopApp::StartCollectionPopupAnimation(
     popupAnimation_.Open(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::
             MonotonicMilliseconds()));
+    InvalidateDockRects();
     if (!StartCollectionPopupCompositionAnimation())
     {
         UpdateCollectionPopupCompositionAnimation();
@@ -522,6 +524,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupPageId_.clear();
     popupCategoryId_.clear();
     popupRect_ = {};
+    InvalidateDockRects();
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_) &&
         !IsRectEmptyRect(dirty))

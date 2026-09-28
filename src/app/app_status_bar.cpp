@@ -493,10 +493,9 @@ void DesktopApp::SyncStatusBar()
                 InvalidateDockRects();
             }
         });
-        statusBar_->SetDockStateProvider([this](HMONITOR monitor) {
-            snowdesktop::StatusBarDockState state;
+        statusBar_->SetInteractionSessionProvider([this](HMONITOR monitor) {
             const HWND menu = snowdesktop::modern_menu::ActiveRootWindow();
-            state.interacting = statusBarActivationMonitor_ == monitor ||
+            return statusBarActivationMonitor_ == monitor ||
                 (statusBarMenuMonitor_ == monitor && statusBarMenuOwner_ && menu &&
                     GetWindow(menu, GW_OWNER) == statusBarMenuOwner_) ||
                 (statusBarQuickNavigationMonitor_ == monitor &&
@@ -504,6 +503,10 @@ void DesktopApp::SyncStatusBar()
                     (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden())) ||
                 (systemPanel_ && systemPanel_->IsOpenForMonitor(monitor)) ||
                 (statusBar_ && statusBar_->HasTrayMenuSession(monitor));
+        });
+        statusBar_->SetDockStateProvider([this](HMONITOR monitor) {
+            snowdesktop::StatusBarDockState state;
+            state.interacting = statusBar_->HasInteractionSession(monitor);
             for (const auto& host : persistentDockHosts_)
             {
                 if (!host || !host->active || host->monitor != monitor || !host->container ||

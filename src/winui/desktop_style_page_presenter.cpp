@@ -341,6 +341,8 @@ struct DesktopStylePagePresenter::Impl
         BuildPresetCards();
         presetCard.Children().Append(presets);
         companionOptions.Spacing(8);
+        companionPosition.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        companionForm.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         companionPositionRow.Initialize(companionPosition);
         companionFormRow.Initialize(companionForm);
         companionOptions.Children().Append(companionPositionRow.root);
@@ -545,8 +547,10 @@ struct DesktopStylePagePresenter::Impl
         if (width <= 0) return;
         // Keep all five previews in the page flow. The outer settings page owns
         // scrolling; narrowing the window changes columns, not preview access.
-        const int columns = std::clamp(static_cast<int>(width / 220), 1, 5);
-        const double cellWidth = std::min(252.0, std::floor(width / columns));
+        // Five compact cards on wide pages; use 3+2 below that breakpoint,
+        // instead of leaving the fifth preset alone under four wide cards.
+        const int columns = width >= 1000 ? 5 : width >= 660 ? 3 : width >= 440 ? 2 : 1;
+        const double cellWidth = std::floor(width / columns);
         const double cellHeight = std::ceil(std::max(1.0, cellWidth - 24) * kPreviewHeight / kPreviewWidth) + 108;
         // ItemsWrapGrid caches its first measured cell. Updating only item.Width
         // leaves old wrap boundaries after a window resize; update the panel too.

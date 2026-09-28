@@ -71,6 +71,8 @@ public:
     bool HasTemporaryReveal(HMONITOR monitor) const;
     void DismissTemporaryReveal(HMONITOR monitor);
     void SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider);
+    // Session queries must not evaluate Dock geometry (which queries visibility).
+    void SetInteractionSessionProvider(std::function<bool(HMONITOR)> provider);
     void SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider);
     void RefreshDockState(HMONITOR monitor);
     // Prepare the first complete strip frame without revealing either HWND.
