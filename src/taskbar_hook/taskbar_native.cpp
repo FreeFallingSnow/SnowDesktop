@@ -103,7 +103,7 @@ bool IsVisibleMenuPopup(HWND window)
     const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
     const LONG_PTR extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
     if (!(style & WS_POPUP) || (style & WS_CAPTION) == WS_CAPTION ||
-        !(extended & WS_EX_TOOLWINDOW) || (extended & WS_EX_TRANSPARENT)) return false;
+        (extended & WS_EX_TRANSPARENT)) return false;
     wchar_t name[128]{};
     GetClassNameW(window, name, static_cast<int>(std::size(name)));
     // Revealing the owner makes the taskbar a new, uncloaked WS_POPUP tool
@@ -111,26 +111,37 @@ bool IsVisibleMenuPopup(HWND window)
     // would let the exemption keep itself alive after that menu is dismissed.
     if (wcscmp(name, L"Shell_TrayWnd") == 0 ||
         wcscmp(name, L"Shell_SecondaryTrayWnd") == 0) return false;
+    // Win11's native IME menu is a XAML popup with NOACTIVATE and
+    // NOREDIRECTIONBITMAP, not TOOLWINDOW, and has no Win32 menu loop.
+    if (!(extended & WS_EX_TOOLWINDOW) && wcscmp(name, L"Xaml_WindowedPopupClass") != 0)
+        return false;
     if (_wcsicmp(name, L"tooltips_class32") == 0 ||
         wcsstr(name, L"ToolTip") || wcsstr(name, L"Tooltip")) return false;
     DWORD cloak = 0;
     return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && !cloak;
 }
 
-std::vector<HWND> VisibleMenuPopups()
+std::vector<HWND> VisibleMenuPopups(HWND taskbar)
 {
     std::vector<HWND> result;
-    EnumWindows([](HWND window, LPARAM value) -> BOOL {
-        if (IsVisibleMenuPopup(window))
-            reinterpret_cast<std::vector<HWND>*>(value)->push_back(window);
+    const auto collect = [](HWND window, LPARAM value) -> BOOL {
+        auto& popups = *reinterpret_cast<std::vector<HWND>*>(value);
+        if (IsVisibleMenuPopup(window) && std::find(popups.begin(), popups.end(), window) == popups.end())
+            popups.push_back(window);
         return TRUE;
-    }, reinterpret_cast<LPARAM>(&result));
+    };
+    // Shell XAML popups can be omitted by desktop-wide enumeration while
+    // visible. Enumerate the owner's UI thread as well, without scanning
+    // other processes' threads or relying on foreground/focus changes.
+    if (const DWORD thread = GetWindowThreadProcessId(taskbar, nullptr))
+        EnumThreadWindows(thread, collect, reinterpret_cast<LPARAM>(&result));
+    EnumWindows(collect, reinterpret_cast<LPARAM>(&result));
     return result;
 }
 
-void ArmContextMenu(const std::shared_ptr<WindowState>& state)
+void ArmContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
 {
-    auto existing = VisibleMenuPopups();
+    auto existing = VisibleMenuPopups(taskbar);
     std::lock_guard lock(state->mutex);
     state->previousPopups = std::move(existing);
     state->externalMenuToken = 0;
@@ -157,7 +168,7 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
     const ULONGLONG now = GetTickCount64();
     std::lock_guard lock(state->mutex);
     if (overflowVisible && !state->overflowWasVisible && now >= state->contextMenuUntil)
-        state->previousPopups = VisibleMenuPopups();
+        state->previousPopups = VisibleMenuPopups(taskbar);
     state->overflowWasVisible = overflowVisible;
     if (overflowVisible) state->contextMenuUntil = now + 1500;
     if (state->menuLoop || ownedMenu) return true;
@@ -187,7 +198,7 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
             DWORD foregroundProcess = 0, taskbarProcess = 0;
             GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
             GetWindowThreadProcessId(taskbar, &taskbarProcess);
-            for (const HWND popup : VisibleMenuPopups())
+            for (const HWND popup : VisibleMenuPopups(taskbar))
             {
                 if (std::find(state->previousPopups.begin(), state->previousPopups.end(), popup) !=
                     state->previousPopups.end()) continue;
@@ -255,7 +266,7 @@ LRESULT CALLBACK MenuMouseProc(int code, WPARAM message, LPARAM data) try
         for (const auto& [window, state] : targets)
             if (IsTrayOrigin(source, window))
             {
-                ArmContextMenu(state);
+                ArmContextMenu(window, state);
                 PostMessageW(window, RegisterWindowMessageW(kApplyMessageName), 0, 0);
             }
     }
@@ -603,7 +614,7 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
             WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT ||
             !ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
             snapshot.ownerProcessId != state->ownerId) return 0;
-        ArmContextMenu(state);
+        ArmContextMenu(window, state);
         { std::lock_guard lock(state->mutex);
           state->externalMenuToken = static_cast<DWORD>(lParam); }
         // UIA does not send a mouse/WM_CONTEXTMENU gesture. Uncloak its owner
@@ -636,7 +647,7 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     { Update(window, state, false); return 0; }
     if (message == WM_ENTERMENULOOP || message == WM_CONTEXTMENU)
     {
-        ArmContextMenu(state);
+        ArmContextMenu(window, state);
         { std::lock_guard lock(state->mutex);
           if (message == WM_ENTERMENULOOP) state->menuLoop = true; }
         // Release the owner before Explorer creates its menu; a later host
@@ -689,7 +700,7 @@ void ObserveMenuMessage(HWND source, UINT message) noexcept try
     for (const auto& [window, state] : targets)
         if (IsTrayOrigin(source, window))
         {
-            if (message != WM_EXITMENULOOP) ArmContextMenu(state);
+            if (message != WM_EXITMENULOOP) ArmContextMenu(window, state);
             { std::lock_guard lock(state->mutex);
               if (message != WM_CONTEXTMENU) state->menuLoop = message == WM_ENTERMENULOOP;
               state->contextMenuThread = 0;
