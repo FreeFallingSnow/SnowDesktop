@@ -284,12 +284,23 @@ int RunNativeTaskbarTests()
             "a tray context request hands off to another menu owner beyond the opening grace period");
         check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
             "closing a handed-off tray menu resumes suppression");
-        HWND customPopup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            L"STATIC", L"Isolated custom tray popup", WS_POPUP, -32000, -32000, 80, 80,
-            nullptr, nullptr, instance, nullptr);
-        check(customPopup != nullptr, "create a private non-Win32 menu popup");
-        if (customPopup)
+        // Read-only Win11 IME trace: Xaml_WindowedPopupClass on the taskbar
+        // thread, WS_POPUP, WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
+        // with no WS_EX_TOOLWINDOW or Win32 menu loop. Keep both popup kinds.
+        WNDCLASSW xamlPopupClass{};
+        xamlPopupClass.hInstance = instance;
+        xamlPopupClass.lpfnWndProc = DefWindowProcW;
+        xamlPopupClass.lpszClassName = L"Xaml_WindowedPopupClass";
+        check(RegisterClassW(&xamlPopupClass) != 0, "register the isolated XAML menu window class");
+        for (const bool xamlPopup : {false, true})
         {
+            HWND customPopup = CreateWindowExW(WS_EX_NOACTIVATE |
+                (xamlPopup ? WS_EX_NOREDIRECTIONBITMAP : WS_EX_TOOLWINDOW),
+                xamlPopup ? xamlPopupClass.lpszClassName : L"STATIC",
+                L"Isolated custom tray popup", WS_POPUP, -32000, -32000, 80, 80,
+                xamlPopup ? window : nullptr, nullptr, instance, nullptr);
+            check(customPopup != nullptr, "create a private non-Win32 menu popup");
+            if (!customPopup) continue;
             ShowWindow(customPopup, SW_SHOWNOACTIVATE);
             SendMessageW(window, apply, 0, 0);
             check(cloaked(), "an ordinary custom popup without a tray origin does not release suppression");
@@ -309,13 +320,16 @@ int RunNativeTaskbarTests()
                 MsgWaitForMultipleObjectsEx(0, nullptr, 30, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             }
             SendMessageW(window, apply, 0, 0);
-            check(!cloaked(), "a custom tray popup remains exempt beyond the opening grace period");
+            check(!cloaked(), xamlPopup
+                ? "an owned XAML menu without TOOLWINDOW remains exempt until dismissal"
+                : "a custom tray popup remains exempt beyond the opening grace period");
             ShowWindow(customPopup, SW_HIDE);
             SendMessageW(window, apply, 0, 0);
             check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
                 "hiding a custom tray popup ends its exemption");
             DestroyWindow(customPopup);
         }
+        UnregisterClassW(xamlPopupClass.lpszClassName, instance);
         DWORD value = 0;
         DwmSetWindowAttribute(unrelated, DWMWA_CLOAK, &reveal, sizeof(reveal));
         check(SUCCEEDED(DwmGetWindowAttribute(unrelated, DWMWA_CLOAKED, &value, sizeof(value))) &&
