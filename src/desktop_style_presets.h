@@ -49,4 +49,12 @@ inline bool ApplyDesktopStyleAnimations(std::wstring_view key, DockSettings& doc
     dock.launchEffect = key == L"island" ? 1 : 2;
     return true;
 }
+
+inline bool NeedsDesktopStyleAnimations(std::wstring_view key, const DockSettings& current)
+{
+    auto recommended = current;
+    return ApplyDesktopStyleAnimations(key, recommended) &&
+        (animation::NormalizeHoverEffect(current.hoverEffect) != recommended.hoverEffect ||
+            animation::NormalizeLaunchEffect(current.launchEffect) != recommended.launchEffect);
+}
 }

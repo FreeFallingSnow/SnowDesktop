@@ -22,6 +22,7 @@ public:
     void SetActions(DockPageActions actions);
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement Content() const;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
+    [[nodiscard]] bool NeedsRecommendedAnimations(std::string_view preset) const;
     void RefreshLocalizedText();
     /** A preset focus ID selects its preview without applying any settings. */
     void Activate(std::string_view focusId = {});

@@ -4,6 +4,7 @@
 #include "../desktop_style_presets.h"
 
 #include <array>
+#include <shellapi.h>
 #include <vector>
 
 namespace snowdesktop::winui
@@ -11,6 +12,8 @@ namespace snowdesktop::winui
 namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxa = winrt::Microsoft::UI::Xaml::Automation;
 namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
+namespace muxm = winrt::Microsoft::UI::Xaml::Media;
+namespace muxmi = winrt::Microsoft::UI::Xaml::Media::Imaging;
 using presenter_controls::SettingRow;
 
 namespace
@@ -18,12 +21,55 @@ namespace
 constexpr std::array<std::string_view, 5> kPresets{
     "native", "taskbar-dock", "island", "merged", "side"};
 
-muxc::Border PreviewSurface(bool accent = false)
+muxc::Border PreviewSurface()
 {
-    return mux::Markup::XamlReader::Load(accent
-        ? LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource AccentFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4" />)"
-        : LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4" />)")
+    return mux::Markup::XamlReader::Load(
+        LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource SolidBackgroundFillColorSecondaryBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" />)")
         .as<muxc::Border>();
+}
+
+bool IsHighContrastEnabled() noexcept
+{
+    HIGHCONTRASTW state{};
+    state.cbSize = sizeof(state);
+    return SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(state), &state, 0) &&
+        (state.dwFlags & HCF_HIGHCONTRASTON) != 0;
+}
+
+DockPosition NativeTaskbarPosition() noexcept
+{
+    APPBARDATA taskbar{};
+    taskbar.cbSize = sizeof(taskbar);
+    if (!SHAppBarMessage(ABM_GETTASKBARPOS, &taskbar)) return DockPosition::Bottom;
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    if (!GetMonitorInfoW(MonitorFromRect(&taskbar.rc, MONITOR_DEFAULTTOPRIMARY), &monitor))
+        return DockPosition::Bottom;
+    if (taskbar.rc.right - taskbar.rc.left > taskbar.rc.bottom - taskbar.rc.top)
+        return std::abs(taskbar.rc.top - monitor.rcMonitor.top) < std::abs(taskbar.rc.bottom - monitor.rcMonitor.bottom)
+            ? DockPosition::Top : DockPosition::Bottom;
+    return std::abs(taskbar.rc.left - monitor.rcMonitor.left) < std::abs(taskbar.rc.right - monitor.rcMonitor.right)
+        ? DockPosition::Left : DockPosition::Right;
+}
+
+muxc::FontIcon PreviewGlyph(std::wstring_view glyph, double size)
+{
+    muxc::FontIcon icon;
+    icon.Glyph(winrt::hstring(glyph));
+    icon.FontSize(size);
+    return icon;
+}
+
+mux::UIElement PreviewAppIcon(std::wstring_view asset, std::wstring_view fallback, bool highContrast)
+{
+    if (highContrast) return PreviewGlyph(fallback, 23);
+    muxmi::SvgImageSource source;
+    source.UriSource(winrt::Windows::Foundation::Uri(winrt::hstring(asset)));
+    muxc::Image image;
+    image.Source(source);
+    image.Width(26); image.Height(26);
+    image.Stretch(muxm::Stretch::Uniform);
+    return image;
 }
 
 void ConfigureText(const muxc::TextBlock& text, bool heading = false)
@@ -75,10 +121,17 @@ struct DesktopStylePagePresenter::Impl
     muxc::StackPanel root;
     muxc::ComboBox presets;
     SettingRow presetRow;
-    muxc::TextBlock presetDescription, presetChanges, adjustmentTitle, adjustmentHint;
+    muxc::TextBlock presetDescription, presetChanges, adjustmentTitle;
     muxc::Button apply;
+    muxc::Viewbox previewView;
+    muxc::Expander changes;
     muxc::Border preview;
-    muxc::Grid previewLayout;
+    muxc::Grid previewLayout, presetLayout;
+    muxc::StackPanel presetDetails;
+    muxc::Border previewWallpaper;
+    // This is a layout illustration, not a live desktop view. Query the
+    // Windows-owned edge once when the page is created, never per snapshot.
+    const DockPosition nativeTaskbarPosition = NativeTaskbarPosition();
     std::vector<std::unique_ptr<Section>> sections;
     std::vector<std::unique_ptr<Toggle>> toggles;
     std::vector<std::unique_ptr<Choice>> choices;
@@ -225,22 +278,62 @@ struct DesktopStylePagePresenter::Impl
         presetRow.Initialize(presets);
         presetCard.Children().Append(presetRow.root);
         ConfigureText(presetDescription, true);
-        presetCard.Children().Append(presetDescription);
+        presetDescription.FontSize(16);
+        presetDetails.Spacing(16);
+        presetDetails.VerticalAlignment(mux::VerticalAlignment::Center);
+        presetDetails.Children().Append(presetDescription);
         preview = PreviewSurface();
-        preview.CornerRadius({8, 8, 8, 8});
-        preview.Height(136);
-        preview.Padding({12, 12, 12, 12});
+        preview.Width(480); preview.Height(270);
         preview.IsHitTestVisible(false);
-        preview.Child(previewLayout);
-        presetCard.Children().Append(preview);
+        previewWallpaper = mux::Markup::XamlReader::Load(LR"(
+            <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" CornerRadius="7" Opacity="0.26">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="{ThemeResource SystemAccentColorLight2}" Offset="0" />
+                        <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="0.5" />
+                        <GradientStop Color="{ThemeResource SystemAccentColorDark2}" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>)").as<muxc::Border>();
+        muxc::Grid scene;
+        scene.Children().Append(previewWallpaper);
+        scene.Children().Append(previewLayout);
+        preview.Child(scene);
+        previewView.Child(preview);
+        previewView.Stretch(muxm::Stretch::Uniform);
+        previewView.MaxWidth(520);
+        previewView.VerticalAlignment(mux::VerticalAlignment::Top);
+        for (int index = 0; index != 2; ++index)
+        {
+            muxc::ColumnDefinition column;
+            presetLayout.ColumnDefinitions().Append(column);
+            muxc::RowDefinition row;
+            row.Height(mux::GridLengthHelper::Auto());
+            presetLayout.RowDefinitions().Append(row);
+        }
+        presetLayout.Children().Append(previewView);
+        presetLayout.Children().Append(presetDetails);
+        presetCard.Children().Append(presetLayout);
         ConfigureText(presetChanges);
         presetChanges.FontSize(13);
-        presetCard.Children().Append(presetChanges);
+        changes.Content(presetChanges);
+        changes.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        changes.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        presetDetails.Children().Append(changes);
         apply.HorizontalAlignment(mux::HorizontalAlignment::Right);
         apply.UseSystemFocusVisuals(true);
         if (const auto resource = mux::Application::Current().Resources().TryLookup(winrt::box_value(L"AccentButtonStyle")))
             if (const auto accent = resource.try_as<mux::Style>()) apply.Style(accent);
-        presetCard.Children().Append(apply);
+        presetDetails.Children().Append(apply);
+        const auto sizeToken = presetLayout.SizeChanged([this](const auto&, const mux::SizeChangedEventArgs& event) {
+            if (!closed) ArrangePreset(event.NewSize().Width);
+        });
+        revoke.push_back([control = presetLayout, sizeToken] { control.SizeChanged(sizeToken); });
+        const auto themeToken = root.ActualThemeChanged([this](const auto&, const auto&) {
+            if (!closed) UpdatePreset();
+        });
+        revoke.push_back([control = root, themeToken] { control.ActualThemeChanged(themeToken); });
+        ArrangePreset(0);
         auto token = presets.SelectionChanged([this](const auto&, const auto&) {
             if (!closed && !syncing) UpdatePreset();
         });
@@ -254,9 +347,7 @@ struct DesktopStylePagePresenter::Impl
         ConfigureText(adjustmentTitle, true);
         adjustmentTitle.FontSize(18);
         adjustmentTitle.Margin({0, 12, 0, 0});
-        ConfigureText(adjustmentHint);
         root.Children().Append(adjustmentTitle);
-        root.Children().Append(adjustmentHint);
 
         const auto dockCard = AddSection(style, "settings.dock.dock");
         AddToggle(dockCard, "app.dock.enable", "", "desktopStyle.dock.enable", DockEnabled,
@@ -339,12 +430,68 @@ struct DesktopStylePagePresenter::Impl
         Localize();
     }
 
-    void AddPreviewBar(DockPosition position, bool island, bool dockBar, bool merged = false)
+    void ArrangePreset(double width)
+    {
+        const bool wide = width >= 800;
+        presetLayout.ColumnDefinitions().GetAt(0).Width(mux::GridLengthHelper::FromValueAndType(
+            wide ? 1.25 : 1.0, mux::GridUnitType::Star));
+        presetLayout.ColumnDefinitions().GetAt(1).Width(mux::GridLengthHelper::FromValueAndType(
+            wide ? 1.0 : 0.0, mux::GridUnitType::Star));
+        muxc::Grid::SetRow(presetDetails, wide ? 0 : 1);
+        muxc::Grid::SetColumn(presetDetails, wide ? 1 : 0);
+        presetDetails.Margin(wide ? mux::Thickness{24, 0, 0, 0} : mux::Thickness{0, 16, 0, 0});
+        previewView.HorizontalAlignment(wide ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Center);
+        if (width > 0) previewView.Width(std::min(520.0, wide ? width / 2.25 * 1.25 : width));
+    }
+    muxc::StackPanel PreviewApps(bool vertical, bool highContrast)
+    {
+        muxc::StackPanel items;
+        items.Orientation(vertical ? muxc::Orientation::Vertical : muxc::Orientation::Horizontal);
+        items.Spacing(2);
+        items.HorizontalAlignment(mux::HorizontalAlignment::Center);
+        items.VerticalAlignment(mux::VerticalAlignment::Center);
+        constexpr std::array<std::wstring_view, 6> assets{
+            L"ms-appx:///Assets/Settings/Icons/dock.svg",
+            L"ms-appx:///Assets/Settings/Icons/categories.svg",
+            L"ms-appx:///Assets/Settings/Icons/calendar.svg",
+            L"ms-appx:///Assets/Settings/Icons/appearance.svg",
+            L"ms-appx:///Assets/Settings/Icons/widgets.svg",
+            L"ms-appx:///Assets/Settings/Icons/general.svg"};
+        constexpr std::array<std::wstring_view, 6> glyphs{L"\xE80F", L"\xE8B7", L"\xE787", L"\xE771", L"\xECA5", L"\xE713"};
+        for (std::size_t index = 0; index != assets.size(); ++index)
+        {
+            muxc::Grid cell;
+            cell.Width(34); cell.Height(34);
+            cell.Children().Append(PreviewAppIcon(assets[index], glyphs[index], highContrast));
+            items.Children().Append(cell);
+        }
+        return items;
+    }
+    muxc::StackPanel PreviewStatus(bool clock)
+    {
+        muxc::StackPanel status;
+        status.Orientation(muxc::Orientation::Horizontal);
+        status.Spacing(8);
+        status.VerticalAlignment(mux::VerticalAlignment::Center);
+        status.Children().Append(PreviewGlyph(L"\xE702", 11));
+        status.Children().Append(PreviewGlyph(L"\xE767", 11));
+        status.Children().Append(PreviewGlyph(L"\xE83F", 14));
+        if (clock)
+        {
+            muxc::TextBlock text;
+            text.Text(L"09:41");
+            text.FontSize(11);
+            text.VerticalAlignment(mux::VerticalAlignment::Center);
+            status.Children().Append(text);
+        }
+        return status;
+    }
+    void AddPreviewBar(DockPosition position, bool island, bool dockBar, bool highContrast,
+        bool merged = false, bool topBar = false)
     {
         const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
-        auto bar = PreviewSurface(dockBar);
-        const double thickness = dockBar ? 20.0 : 12.0;
-        const double length = island ? 104.0 : 156.0;
+        auto bar = PreviewSurface();
+        const double thickness = dockBar ? 48.0 : 24.0;
         bar.HorizontalAlignment(vertical
             ? (position == DockPosition::Left ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right)
             : mux::HorizontalAlignment::Stretch);
@@ -353,41 +500,55 @@ struct DesktopStylePagePresenter::Impl
         if (vertical)
         {
             bar.Width(thickness);
-            if (island) { bar.Height(76); bar.VerticalAlignment(mux::VerticalAlignment::Center); }
+            if (island) { bar.Height(226); bar.VerticalAlignment(mux::VerticalAlignment::Center); }
         }
         else
         {
             bar.Height(thickness);
-            if (island) { bar.Width(length); bar.HorizontalAlignment(mux::HorizontalAlignment::Center); }
+            if (island) { bar.Width(232); bar.HorizontalAlignment(mux::HorizontalAlignment::Center); }
         }
-        bar.Margin(island ? mux::Thickness{4, 4, 4, 4} : mux::Thickness{0, 0, 0, 0});
+        bar.Margin(island ? mux::Thickness{10, 10, 10, 10}
+            : mux::Thickness{1, vertical && topBar ? 25.0 : 1.0, 1, 1});
+        bar.CornerRadius(island ? mux::CornerRadius{12, 12, 12, 12} : mux::CornerRadius{4, 4, 4, 4});
+        muxc::Grid barContent;
         if (dockBar)
         {
-            muxc::StackPanel items;
-            items.Orientation(vertical ? muxc::Orientation::Vertical : muxc::Orientation::Horizontal);
-            items.Spacing(5);
-            items.HorizontalAlignment(mux::HorizontalAlignment::Center);
-            items.VerticalAlignment(mux::VerticalAlignment::Center);
-            for (int index = 0; index != 5; ++index)
-            {
-                auto item = PreviewSurface();
-                item.Width(8); item.Height(8);
-                item.CornerRadius({2, 2, 2, 2});
-                items.Children().Append(item);
-            }
-            muxc::Grid barContent;
-            barContent.Children().Append(items);
+            barContent.Children().Append(PreviewApps(vertical, highContrast));
             if (merged)
             {
-                auto status = PreviewSurface();
-                status.Width(22); status.Height(4);
+                auto search = PreviewGlyph(L"\xE721", 16);
+                search.HorizontalAlignment(mux::HorizontalAlignment::Left);
+                search.Margin({14, 0, 0, 0});
+                barContent.Children().Append(search);
+                auto status = PreviewStatus(true);
                 status.HorizontalAlignment(mux::HorizontalAlignment::Right);
-                status.VerticalAlignment(mux::VerticalAlignment::Center);
                 status.Margin({0, 0, 8, 0});
                 barContent.Children().Append(status);
             }
-            bar.Child(barContent);
         }
+        else
+        {
+            muxc::StackPanel tools;
+            tools.Orientation(muxc::Orientation::Horizontal);
+            tools.Spacing(12);
+            tools.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            tools.VerticalAlignment(mux::VerticalAlignment::Center);
+            tools.Margin({10, 0, 0, 0});
+            tools.Children().Append(PreviewGlyph(L"\xE7C4", 12));
+            tools.Children().Append(PreviewGlyph(L"\xE721", 12));
+            barContent.Children().Append(tools);
+            muxc::TextBlock clock;
+            clock.Text(L"09:41");
+            clock.FontSize(11);
+            clock.HorizontalAlignment(mux::HorizontalAlignment::Center);
+            clock.VerticalAlignment(mux::VerticalAlignment::Center);
+            barContent.Children().Append(clock);
+            auto status = PreviewStatus(false);
+            status.HorizontalAlignment(mux::HorizontalAlignment::Right);
+            status.Margin({0, 0, 10, 0});
+            barContent.Children().Append(status);
+        }
+        bar.Child(barContent);
         previewLayout.Children().Append(bar);
     }
     void UpdatePreset()
@@ -401,23 +562,34 @@ struct DesktopStylePagePresenter::Impl
         muxa::AutomationProperties::SetName(apply, L(prefix + ".title") + L": " + L("settings.desktopStyle.applyLayout"));
         muxa::AutomationProperties::SetName(preview, L(prefix + ".title"));
         previewLayout.Children().Clear();
+        const bool highContrast = IsHighContrastEnabled();
+        previewWallpaper.Visibility(highContrast ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         auto previewGeneral = general;
         auto previewDock = dock;
         ApplyDesktopStylePreset(std::wstring(key.begin(), key.end()), previewGeneral, previewDock);
         const bool merged = previewGeneral.dockEnabled && previewGeneral.statusBar.enabled && previewDock.edgeAttached &&
             previewDock.position == previewGeneral.statusBar.position;
         if (previewGeneral.statusBar.enabled && !merged)
-            AddPreviewBar(previewGeneral.statusBar.position, false, false);
+            AddPreviewBar(previewGeneral.statusBar.position, false, false, highContrast);
         if (previewGeneral.dockEnabled)
-            AddPreviewBar(previewDock.position, !previewDock.edgeAttached, true, merged);
+            AddPreviewBar(previewDock.position, !previewDock.edgeAttached, true, highContrast, merged,
+                previewGeneral.statusBar.enabled && previewGeneral.statusBar.position == DockPosition::Top);
         if (!previewDock.suppressSystemTaskbar)
         {
             // The native taskbar is illustrative: this preset preserves its
             // Windows-owned position and its saved Dock edge/layout.
             auto taskbar = PreviewSurface();
-            taskbar.Height(previewDock.systemTaskbarAutoHide ? 3.0 : 12.0);
-            taskbar.VerticalAlignment(mux::VerticalAlignment::Bottom);
-            taskbar.Opacity(.6);
+            const bool vertical = nativeTaskbarPosition == DockPosition::Left || nativeTaskbarPosition == DockPosition::Right;
+            const double thickness = previewDock.systemTaskbarAutoHide ? 3.0 : 34.0;
+            if (vertical) taskbar.Width(thickness); else taskbar.Height(thickness);
+            taskbar.CornerRadius({2, 2, 2, 2});
+            taskbar.Margin({1, 1, 1, 1});
+            taskbar.HorizontalAlignment(vertical
+                ? (nativeTaskbarPosition == DockPosition::Left ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right)
+                : mux::HorizontalAlignment::Stretch);
+            taskbar.VerticalAlignment(vertical ? mux::VerticalAlignment::Stretch
+                : (nativeTaskbarPosition == DockPosition::Top ? mux::VerticalAlignment::Top : mux::VerticalAlignment::Bottom));
+            if (!previewDock.systemTaskbarAutoHide) taskbar.Child(PreviewApps(vertical, highContrast));
             previewLayout.Children().Append(taskbar);
         }
     }
@@ -468,12 +640,12 @@ struct DesktopStylePagePresenter::Impl
             presets.Items().Append(winrt::box_value(L(titleKey)));
         }
         presets.SelectedIndex(selected >= 0 ? selected : 0);
-        presetRow.SetText(L("settings.desktopStyle.presets"), L("settings.desktopStyle.presets.description"));
+        presetRow.SetText(L("settings.desktopStyle.presets"), {});
         muxa::AutomationProperties::SetName(presets, presetRow.label.Text());
         muxa::AutomationProperties::SetHelpText(presets, presetRow.help.Text());
         apply.Content(winrt::box_value(L("settings.desktopStyle.applyLayout")));
+        changes.Header(winrt::box_value(L("settings.desktopStyle.changes")));
         adjustmentTitle.Text(L("settings.desktopStyle.adjustments"));
-        adjustmentHint.Text(L("settings.desktopStyle.adjustments.description"));
         for (const auto& section : sections) section->title.Text(L(section->key));
         for (const auto& toggle : toggles)
         {
@@ -515,6 +687,11 @@ DesktopStylePagePresenter::DesktopStylePagePresenter(LocalizeCallback localize,
     : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, std::move(applyPreset))) {}
 DesktopStylePagePresenter::~DesktopStylePagePresenter() { Close(); }
 void DesktopStylePagePresenter::SetActions(DockPageActions actions) { impl_->actions = std::move(actions); }
+bool DesktopStylePagePresenter::NeedsRecommendedAnimations(std::string_view preset) const
+{
+    return !impl_->closed && impl_->hasSnapshot &&
+        NeedsDesktopStyleAnimations(std::wstring(preset.begin(), preset.end()), impl_->dock);
+}
 mux::UIElement DesktopStylePagePresenter::Content() const { return impl_->root; }
 void DesktopStylePagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 {

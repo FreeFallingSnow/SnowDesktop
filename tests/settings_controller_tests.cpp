@@ -522,12 +522,25 @@ void TestDesktopStylePresetScope()
             wanted.launchEffect = island ? 1 : 2;
             Check(ApplyDesktopStyleAnimations(key, dock) && dock == wanted,
                 "recommended animation changes only hover and launch, retaining layout, scale and window effects");
+            Check(NeedsDesktopStyleAnimations(key, originalDock) && !NeedsDesktopStyleAnimations(key, dock),
+                "matching hover and launch effects do not repeat the animation recommendation dialog");
+            auto changedHover = dock, changedLaunch = dock;
+            changedHover.hoverEffect = 0;
+            changedLaunch.launchEffect = 0;
+            Check(NeedsDesktopStyleAnimations(key, changedHover) && NeedsDesktopStyleAnimations(key, changedLaunch),
+                "changing either recommended effect makes the animation choice meaningful again");
+            dock.hoverScale = 1.25f;
+            dock.windowEffect = 3;
+            Check(!NeedsDesktopStyleAnimations(key, dock),
+                "unrelated magnification scale and window effects do not cause an animation prompt");
         }
         for (const auto* key : {L"native", L"taskbar-dock", L"unknown"})
         {
             auto dock = originalDock;
             Check(!ApplyDesktopStyleAnimations(key, dock) && dock == originalDock,
                 "styles without an animation recommendation reject it without changing preferences");
+            Check(!NeedsDesktopStyleAnimations(key, dock),
+                "a style without recommended effects never requests animation confirmation");
         }
         auto general = originalGeneral;
         auto dock = originalDock;

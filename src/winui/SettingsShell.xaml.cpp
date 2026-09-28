@@ -1969,7 +1969,9 @@ void SettingsShell::RenderPageHeading()
     const auto page = navigation_.Route().page;
     const auto title = PageTitleText(page);
     PageTitle().Text(title);
-    PageSubtitle().Text(PageDescriptionText(page));
+    const auto description = PageDescriptionText(page);
+    PageSubtitle().Text(description);
+    PageSubtitle().Visibility(description.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
     muxa::AutomationProperties::SetName(PageTitle(), title);
     RenderBreadcrumb();
 }
@@ -2172,7 +2174,7 @@ void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations)
         if (!result.Succeeded() || animations || shell->closed_ || !shell->sessionActive_ ||
             shell->navigation_.Generation() != generation ||
             shell->navigation_.Route().page != SettingsPage::DesktopStyle ||
-            (preset != "island" && preset != "merged" && preset != "side"))
+            !shell->desktopStylePage_ || !shell->desktopStylePage_->NeedsRecommendedAnimations(preset))
             return;
         SettingsShellDialogRequest recommendation;
         recommendation.generation = generation;
@@ -3016,7 +3018,7 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
     switch (page)
     {
     case SettingsPage::ContextMenu: return Localize("settings.contextMenu.description");
-    case SettingsPage::DesktopStyle: return Localize("settings.desktopStyle.description");
+    case SettingsPage::DesktopStyle: return {};
     case SettingsPage::Calendar: return Localize("settings.calendar.pageDescription");
     case SettingsPage::AnimationPerformance: return Localize("settings.page.animation.description");
     case SettingsPage::Home: return Localize("settings.page.home.description");
