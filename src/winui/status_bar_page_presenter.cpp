@@ -216,6 +216,7 @@ struct StatusBarPagePresenter::Impl
         ToggleRow(leftItems, "statusBar.menu", "statusBar.menu", &StatusBarSettings::menu);
         ToggleRow(leftItems, "statusBar.quickSearch", "statusBar.quickSearch", &StatusBarSettings::quickSearch);
         ToggleRow(leftItems, "statusBar.taskView", "statusBar.taskView", &StatusBarSettings::taskView);
+        ToggleRow(infoItems, "statusBar.inputMethod", "statusBar.inputMethod", &StatusBarSettings::inputMethod);
         ToggleRow(infoItems, "statusBar.cpu", "statusBar.cpu", &StatusBarSettings::cpu);
         ToggleRow(infoItems, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory);
         ToggleRow(infoItems, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu);

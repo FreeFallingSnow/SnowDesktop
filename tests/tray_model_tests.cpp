@@ -2,6 +2,7 @@
 #include "tray_order.h"
 #include "tray_menu_placement.h"
 #include "status_bar_notification.h"
+#include "status_bar_input_method.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -13,6 +14,31 @@ int RunTrayModelTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
+    {
+        namespace input = snowdesktop::status_bar_input_method;
+        // Foreground language and IME conversion are distinct. Query failures
+        // must not turn a Chinese keyboard into a false Chinese-mode indicator.
+        check(input::detail::Label(0x0804, L"ZH", true, IME_CMODE_NATIVE) == L"中" &&
+            input::detail::Label(0x0804, L"ZH", false, IME_CMODE_NATIVE) == L"英" &&
+            input::detail::Label(0x0804, L"ZH", true, 0) == L"英",
+            "Chinese input label follows both open state and conversion mode");
+        check(input::detail::Label(0x0804, L"ZH", {}, {}) == L"ZH" &&
+            input::detail::Label(0x0804, L"ZH", true, {}) == L"ZH" &&
+            input::detail::Label(0x0411, L"JA", true, IME_CMODE_NATIVE) == L"あ" &&
+            input::detail::Label(0x0412, L"KO", false, 0) == L"A" &&
+            input::detail::Label(0x0409, L"EN", {}, {}) == L"EN" &&
+            input::detail::Label(0, L"", {}, {}) == L"—",
+            "missing IME data falls back to language and unavailable data stays unknown");
+        input::Snapshot old;
+        old.foreground = reinterpret_cast<HWND>(1); old.thread = 10; old.layout = reinterpret_cast<HKL>(0x0804);
+        check(input::detail::Matches(old, old.foreground, old.thread, old.layout) &&
+            !input::detail::Matches(old, reinterpret_cast<HWND>(2), old.thread, old.layout) &&
+            !input::detail::Matches(old, old.foreground, 11, old.layout) &&
+            !input::detail::Matches(old, old.foreground, old.thread, old.layout, reinterpret_cast<HWND>(3)) &&
+            !input::detail::Matches(old, old.foreground, old.thread, reinterpret_cast<HKL>(0x0409)) &&
+            !input::detail::Matches({}, nullptr, 0, nullptr),
+            "foreground or layout changes invalidate pending samples instead of showing another app's mode");
+    }
     {
         // Status-only notification sampling must distinguish unavailable data,
         // an actual zero, and Windows 11 totals from Windows 10 unread badges.

@@ -49,6 +49,13 @@ int main()
             "legacy status bar settings without scene rules must retain the default appearance in every scene");
         Check(firstEnable.taskView && !firstEnable.clockSystemPanel && !firstEnable.controlCenterSystemPanel,
             "task view starts visible while existing clock and controls retain the SnowDesktop panels");
+        Check(firstEnable.inputMethod, "existing profiles gain the input indicator by default");
+        {
+            firstEnable.inputMethod = false;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(firstEnable), stored) && DecodeStatusBarSettings(stored, restored) &&
+                !restored.inputMethod, "hiding the input indicator persists across settings reloads");
+        }
         JsonValue legacyJson; StatusBarSettings legacy;
         ParseJson("{\"theme\":{\"mode\":4,\"customized\":true,\"appearance\":{\"backgroundR\":0.125,\"opacity\":0.42}},"
             "\"pinnedTrayItems\":[\"guid:legacy\"]}", legacyJson);

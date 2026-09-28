@@ -4,6 +4,7 @@
 #include "widget_system_data_provider.h"
 #include "status_bar_battery.h"
 #include "status_bar_notification.h"
+#include "status_bar_input_method.h"
 #include <d2d1_1.h>
 #include <optional>
 #include <array>
@@ -42,6 +43,7 @@ struct StatusBarSnapshot
     std::optional<widget_runtime::WidgetPowerDataSnapshot> power;
     std::vector<tray::Icon> tray;
     bool trayExpanded = false;
+    status_bar_input_method::Snapshot inputMethod;
 };
 struct StatusBarPalette
 {

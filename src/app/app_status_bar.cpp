@@ -292,7 +292,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     const bool externalSurface = action == Action::SystemMenu || action == Action::Menu ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
-        action == Action::TaskView || action == Action::SystemCalendar;
+        action == Action::TaskView || action == Action::SystemCalendar || action == Action::InputMethod;
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {
         TraceStatusBarShellActivation(action, generation, L"wait-system-panel", hold->shortcutStartedMilliseconds);
@@ -301,7 +301,19 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     }
     const auto chord = snowdesktop::ResolveStatusBarShellChord(action,
         snowdesktop::StatusBarSupportsSystemQuickSettings(), IsClassicSystemTaskbar());
-    if (chord.key)
+    if (action == Action::InputMethod)
+    {
+        const HRESULT result = statusBar_->ShowInputMethod(anchor);
+        if (FAILED(result))
+        {
+            wchar_t message[128]{};
+            swprintf_s(message, L"StatusBar input method picker unavailable hr=0x%08lX", static_cast<unsigned long>(result));
+            WriteDiagnosticLogEntry(message);
+            ShellExecuteW(owner, L"open", L"ms-settings:regionlanguage", nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        statusBarActivationMonitor_ = nullptr;
+    }
+    else if (chord.key)
     {
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();

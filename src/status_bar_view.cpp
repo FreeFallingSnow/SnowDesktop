@@ -145,6 +145,14 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         // back to its bar, independently for every monitor.
         items.back().flipGlyph = (s.position == DockPosition::Bottom) != snapshot.trayExpanded;
     }
+    if (s.inputMethod)
+    {
+        const auto& input = snapshot.inputMethod;
+        add("inputMethod", input.label.empty() ? L"—" : input.label, StatusBarAction::InputMethod);
+        items.back().tip = std::wstring(_LW("statusBar.inputMethod"));
+        if (!input.description.empty()) items.back().tip += L"  " + input.description;
+        items.back().tip += L"\n" + std::wstring(_LW("statusBar.inputMethod.switch"));
+    }
     const auto audio = snapshot.audio;
     const auto power = snapshot.power;
     const auto [networkGlyph, networkTip] = NetworkVisual(snapshot);

@@ -54,6 +54,8 @@ StatusBarSnapshot Fixture()
 {
     StatusBarSnapshot data;
     data.clock = L"2026/09/26   09:09";
+    data.inputMethod.label = L"中";
+    data.inputMethod.description = L"中文";
     data.cpu.emplace(); data.cpu->available = true; data.cpu->warmingUp = false; data.cpu->usagePercent = 9;
     data.memory.emplace(); data.memory->available = true; data.memory->totalBytes = 32ull << 30; data.memory->usedBytes = 12ull << 30;
     data.gpu.emplace(); data.gpu->available = true; data.gpu->warmingUp = false;
@@ -264,6 +266,22 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             Require(height + 2 * request.padding <= request.canvasHeight, "status bar preview canvas is too short");
             const int left = (request.canvasWidth - width) / 2, top = (request.canvasHeight - height) / 2;
             auto items = BuildStatusBarItems(settings, data);
+            {
+                const auto overflow = std::find_if(items.begin(), items.end(), [](const auto& item) {
+                    return item.key == "tray" && !item.icon;
+                });
+                Require(overflow != items.end() && std::distance(overflow, items.end()) >= 3 &&
+                    (overflow + 1)->key == "inputMethod" && (overflow + 2)->key == "controlCenter",
+                    "input indicator must sit between tray expansion and control center");
+                auto hiddenInput = settings; hiddenInput.inputMethod = false;
+                const auto hiddenItems = BuildStatusBarItems(hiddenInput, data);
+                Require(std::none_of(hiddenItems.begin(), hiddenItems.end(), [](const auto& item) {
+                    return item.action == StatusBarAction::InputMethod;
+                }), "hidden input indicator must have no rendered or accessible click target");
+                auto switchedInput = data; switchedInput.inputMethod.label = L"英";
+                Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, switchedInput)),
+                    "IME mode changes must refresh the indicator without a layout change");
+            }
             auto identical = data; if (identical.cpu) ++identical.cpu->revision;
             Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "unchanged samples would repaint status bar content");
             if (preset == "normal")

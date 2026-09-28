@@ -39,7 +39,7 @@ namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
     kActivate = WM_APP + 45;
-constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3;
+constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4;
 std::map<HWND, bool> liveBars; // All access, including out-of-context hooks, on the UI thread.
 void CALLBACK WindowEvent(HWINEVENTHOOK, DWORD event, HWND target, LONG object, LONG, DWORD, DWORD time)
 {
@@ -172,6 +172,7 @@ struct StatusBar::Impl
         bool backgroundDirty = true;
         PersonalizationSettings appearance;
         HRESULT lastPaintError = S_OK;
+        status_bar_input_method::Snapshot lastInputMethod;
         std::string hoveredTray;
         NativeTooltip tooltip;
         std::optional<std::size_t> tooltipControlPart;
@@ -529,6 +530,7 @@ struct StatusBar::Impl
             snapshot.power = owner.data->Power();
             if (owner.tray) snapshot.tray = owner.tray->Current().icons;
             snapshot.trayExpanded = trayExpanded;
+            if (owner.inputMethod) snapshot.inputMethod = owner.inputMethod->Current();
             items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
@@ -887,6 +889,15 @@ struct StatusBar::Impl
                     else self->Paint();
                     self->PollTrayMenu();
                 }
+                else if (wp == kInputMethodTimer && self->owner.inputMethod)
+                {
+                    const auto input = self->owner.inputMethod->Current();
+                    if (input != self->lastInputMethod)
+                    {
+                        self->lastInputMethod = input;
+                        self->Paint();
+                    }
+                }
                 else if (wp == kTrayMenuTimer) self->PollTrayMenu();
                 else if (wp == kPlacementTimer) self->Place();
                 return 0;
@@ -1124,6 +1135,7 @@ struct StatusBar::Impl
     };
     std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data;
     std::shared_ptr<tray::Service> tray;
+    std::unique_ptr<status_bar_input_method::Service> inputMethod;
     Activate activate;
     Hidden hidden;
     Error error;
@@ -1208,6 +1220,7 @@ struct StatusBar::Impl
         windows.clear();
         removingWindows=false;
         tray.reset();
+        inputMethod.reset();
         volumeWheel.Reset();
         if (data) { data->RemoveConsumer("statusBar"); data->Controls()->RemoveConsumer("statusBarVolume"); }
     }
@@ -1240,6 +1253,11 @@ void StatusBar::ReleaseGraphicsResources()
         window->appearanceDirty = window->backgroundDirty = window->paintDirty = true;
     }
     self.composition.Reset(); self.text.Reset();
+}
+HRESULT StatusBar::ShowInputMethod(RECT anchor)
+{
+    return impl_->settings.enabled && impl_->settings.inputMethod && impl_->inputMethod ?
+        impl_->inputMethod->Show(anchor) : E_UNEXPECTED;
 }
 std::shared_ptr<tray::Service> StatusBar::Tray() const { return impl_->tray; }
 void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
@@ -1543,6 +1561,9 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
     self.composition = composition; self.text = text;
     if (!self.settings.enabled || monitors.empty()) { self.Close(); return; }
     if (!self.tray) self.tray = std::make_shared<tray::Service>();
+    if (self.settings.inputMethod && !self.inputMethod)
+        self.inputMethod = std::make_unique<status_bar_input_method::Service>();
+    else if (!self.settings.inputMethod) self.inputMethod.reset();
     self.Demand("system.cpu", self.settings.cpu);
     self.Demand("system.memory", self.settings.memory);
     self.Demand("system.gpu", self.settings.gpu);
@@ -1587,6 +1608,8 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
             GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &window->explorerPid);
             SetTimer(window->hwnd, kClockTimer, 1000, nullptr);
         }
+        if (self.settings.inputMethod) SetTimer(window->hwnd, kInputMethodTimer, 200, nullptr);
+        else KillTimer(window->hwnd, kInputMethodTimer);
         if(window->monitor!=monitor.monitor)
         {window->Hide();window->fullscreenState={};window->dockFullscreenProcess=0;
          window->surface.Reset();window->backgroundSurface.Reset();window->appearanceDirty=window->backgroundDirty=window->paintDirty=true;}
