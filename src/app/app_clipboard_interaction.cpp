@@ -264,7 +264,7 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
             : (FOF_ALLOWUNDO |
                FOF_NOCONFIRMATION |
                FOF_NOERRORUI)) });
-    (void)QueueShellFileOperation(
+    return QueueShellFileOperation(
         std::move(steps),
         [this](bool succeeded) {
             if (!succeeded)
@@ -272,7 +272,6 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
             RequestShellRefresh();
 
         });
-    return true;
 }
 
 /**

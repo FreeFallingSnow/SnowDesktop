@@ -839,6 +839,14 @@ struct GeneralPagePresenter::Impl
         else if (status.registered)
         {
             statusKey = "settings.general.advancedFeatures.registered";
+            if (status.failure == GeneralAdvancedFeatureFailure::StorageError)
+            {
+                showNotice = true;
+                severity = muxc::InfoBarSeverity::Warning;
+                noticeKey = status.state == GeneralAdvancedFeatureState::Registered
+                    ? "settings.general.advancedFeatures.sessionOnly"
+                    : "settings.general.advancedFeatures.storageFailed";
+            }
         }
         else
         {
@@ -882,7 +890,7 @@ struct GeneralPagePresenter::Impl
         }
 
         std::wstring statusText = L(statusKey);
-        if (status.registered)
+        if (status.registered && status.failure != GeneralAdvancedFeatureFailure::StorageError)
         {
             const std::wstring expiryDate =
                 FormatEntitlementExpiryDate(status.validUntil);

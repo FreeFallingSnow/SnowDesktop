@@ -1,4 +1,5 @@
 #include "shell_file_operation_worker.h"
+#include "operation_feedback.h"
 #include "shell_file_operation_progress.h"
 #include "clipboard_file_operation.h"
 
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <new>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -798,6 +800,14 @@ bool ShellFileOperationWorker::Execute(
     const ShellFileOperationRequest& request)
 {
     bool attempted = false;
+    std::optional<operation_feedback::Failure> failure;
+    const auto record = [&](const std::wstring& path, DWORD code) {
+        const bool cancelled = code == ERROR_CANCELLED || code == static_cast<DWORD>(E_ABORT) ||
+            code == static_cast<DWORD>(COPYENGINE_E_USER_CANCELLED) ||
+            code == static_cast<DWORD>(HRESULT_FROM_WIN32(ERROR_CANCELLED));
+        if (!failure && !cancelled)
+            failure = operation_feedback::Failure{"app.operation.fileFailed", path, code};
+    };
     bool allSucceeded = true;
     if (request.result) request.result->outputs.clear();
     for (const auto& step : request.steps)
@@ -808,7 +818,14 @@ bool ShellFileOperationWorker::Execute(
 
         if (request.result && (step.function == FO_COPY || step.function == FO_MOVE))
         {
-            if (!ExecuteTrackedDropStep(step, request.result)) allSucceeded = false;
+            HRESULT status = S_OK;
+            bool shellHandledErrors = false;
+            if (!ExecuteTrackedDropStep(step, request.result, status, shellHandledErrors))
+            {
+                allSucceeded = false;
+                if (!shellHandledErrors)
+                    record(step.sources.front() + L"\n" + step.destination, static_cast<DWORD>(status));
+            }
             continue;
         }
 
@@ -825,7 +842,15 @@ bool ShellFileOperationWorker::Execute(
 
         const int result = SHFileOperationW(&operation);
         if (result != 0 || operation.fAnyOperationsAborted)
+        {
             allSucceeded = false;
+            // SHFileOperation has its own legacy error values. Keep their raw
+            // number instead of incorrectly translating them as Win32 codes.
+            if (result != 0 && result != 0x75 && result != ERROR_CANCELLED &&
+                (step.flags & FOF_NOERRORUI))
+                record(step.sources.front() + L"\n" + step.destination +
+                    L"\nSHFileOperation: " + std::to_wstring(result), 0);
+        }
     }
     for (const auto& copy : request.exactFileCopies)
     {
@@ -836,7 +861,10 @@ bool ShellFileOperationWorker::Execute(
         // let Shell collision renaming make the completion path inaccurate.
         if (!CopyFileW(
                 copy.source.c_str(), copy.destination.c_str(), TRUE))
+        {
+            record(copy.source + L"\n" + copy.destination, GetLastError());
             allSucceeded = false;
+        }
         else if (request.result)
             request.result->outputs.push_back({copy.source, copy.destination, false});
     }
@@ -847,29 +875,34 @@ bool ShellFileOperationWorker::Execute(
         attempted = true;
 
         ComPtr<IShellLinkW> shellLink;
-        if (FAILED(CoCreateInstance(
+        HRESULT status = CoCreateInstance(
                 CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                IID_PPV_ARGS(&shellLink))) || !shellLink)
+                IID_PPV_ARGS(&shellLink));
+        if (FAILED(status) || !shellLink)
         {
+            record(shortcut.destination, static_cast<DWORD>(status));
             allSucceeded = false;
             continue;
         }
-        if (FAILED(shellLink->SetPath(shortcut.source.c_str())))
+        if (FAILED(status = shellLink->SetPath(shortcut.source.c_str())))
         {
+            record(shortcut.destination, static_cast<DWORD>(status));
             allSucceeded = false;
             continue;
         }
         if (!shortcut.workingDirectory.empty() &&
-            FAILED(shellLink->SetWorkingDirectory(
+            FAILED(status = shellLink->SetWorkingDirectory(
                 shortcut.workingDirectory.c_str())))
         {
+            record(shortcut.destination, static_cast<DWORD>(status));
             allSucceeded = false;
             continue;
         }
 
         ComPtr<IPersistFile> persistFile;
-        if (FAILED(shellLink.As(&persistFile)) || !persistFile)
+        if (FAILED(status = shellLink.As(&persistFile)) || !persistFile)
         {
+            record(shortcut.destination, static_cast<DWORD>(status));
             allSucceeded = false;
             continue;
         }
@@ -882,6 +915,7 @@ bool ShellFileOperationWorker::Execute(
                 CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (destination == INVALID_HANDLE_VALUE)
             {
+                record(shortcut.destination, GetLastError());
                 allSucceeded = false;
                 continue;
             }
@@ -889,9 +923,10 @@ bool ShellFileOperationWorker::Execute(
             destinationClaimed = true;
         }
 
-        if (FAILED(persistFile->Save(
+        if (FAILED(status = persistFile->Save(
                 shortcut.destination.c_str(), TRUE)))
         {
+            record(shortcut.destination, static_cast<DWORD>(status));
             if (destinationClaimed)
                 DeleteFileW(shortcut.destination.c_str());
             allSucceeded = false;
@@ -899,6 +934,7 @@ bool ShellFileOperationWorker::Execute(
         else if (request.result)
             request.result->outputs.push_back({shortcut.source, shortcut.destination, true});
     }
+    if (failure) operation_feedback::Report(std::move(*failure));
     return attempted && allSucceeded;
 }
 
@@ -986,7 +1022,10 @@ bool ShellFileOperationWorker::Execute(
         request.targetParsingName.c_str(), nullptr,
         IID_PPV_ARGS(&targetItem));
     if (FAILED(result) || !targetItem)
+    {
+        operation_feedback::Report({"app.operation.fileFailed", request.targetParsingName, static_cast<DWORD>(result)});
         return finish(result, DROPEFFECT_NONE);
+    }
 
     ComPtr<IDropTarget> dropTarget;
     result = targetItem->BindToHandler(

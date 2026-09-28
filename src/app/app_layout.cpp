@@ -72,8 +72,8 @@ void DesktopApp::LoadLayoutSlots()
     {
         const std::wstring message = L"Layout load rejected: " +
             Utf8ToWide(loadResult.error);
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Error);
+        WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+        snowdesktop::operation_feedback::Report({"app.operation.layoutLoadFailed", message});
         return;
     }
     if (loadResult.status ==
@@ -81,8 +81,7 @@ void DesktopApp::LoadLayoutSlots()
     {
         const std::wstring message = L"Layout recovered from last-good backup: " +
             Utf8ToWide(loadResult.error);
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Warning);
+        snowdesktop::operation_feedback::Report({"app.operation.layoutRecovered", message, 0, true});
     }
 
     InvalidateDockShellMetadata();
@@ -820,7 +819,7 @@ void DesktopApp::LoadLayoutSlots()
  *
  * 写入内容包括：首选监视器、页面列表、桌面项（排除组件所属项）以及所有组件的完整定义。
  */
-bool DesktopApp::SaveLayoutSlots()
+bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
 {
     // A backup may already be on disk while Shell still shows the old model.
     // Exit and unrelated settings commits must not overwrite that document.
@@ -830,6 +829,16 @@ bool DesktopApp::SaveLayoutSlots()
     if (!desktopItemsReady_ || gridPages_.empty())
         return false;
 
+    layoutSavePending_ = true;
+    const auto failed = [this, notifyFailure](const std::wstring& detail) {
+        WriteDiagnosticLogEntry(detail.c_str(), DiagnosticLogLevel::Error);
+        if (notifyFailure && !layoutSaveFailureNotified_)
+        {
+            layoutSaveFailureNotified_ = true;
+            snowdesktop::operation_feedback::Report({"app.operation.layoutUnsaved", detail});
+        }
+        return false;
+    };
     // Container membership is committed before this persistence boundary.
     // Rendering a temporary drag target or sending files to an application never
     // changes membership and therefore never reaches this conversion.
@@ -851,8 +860,7 @@ bool DesktopApp::SaveLayoutSlots()
         const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 2);
         if (!result.ok)
         {
-            WriteDiagnosticLogEntry((L"Large icon upgrade backup failed: " + Utf8ToWide(result.error)).c_str(), DiagnosticLogLevel::Error);
-            return false;
+            return failed(L"Large icon upgrade backup: " + Utf8ToWide(result.error));
         }
         if (std::any_of(items_.begin(), items_.end(), [](const auto& item) {
             return item.largeIcon && item.largeIcon->backgroundStyle <= -4;
@@ -861,8 +869,7 @@ bool DesktopApp::SaveLayoutSlots()
             const auto presetBackup = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 3);
             if (!presetBackup.ok)
             {
-                WriteDiagnosticLogEntry((L"Large icon preset upgrade backup failed: " + Utf8ToWide(presetBackup.error)).c_str(), DiagnosticLogLevel::Error);
-                return false;
+                return failed(L"Large icon preset upgrade backup: " + Utf8ToWide(presetBackup.error));
             }
         }
     }
@@ -1163,15 +1170,14 @@ bool DesktopApp::SaveLayoutSlots()
     {
         const std::wstring message = L"Layout save failed: " +
             Utf8ToWide(saveError);
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Error);
-        return false;
+        return failed(message);
     }
     if (!snowdesktop::debug_profile::AcknowledgeDesktopChange(saveError))
     {
-        WriteDiagnosticLogEntry(Utf8ToWide(saveError).c_str(), DiagnosticLogLevel::Error);
-        return false;
+        return failed(Utf8ToWide(saveError));
     }
+    layoutSavePending_ = false;
+    layoutSaveFailureNotified_ = false;
     return true;
 }
 

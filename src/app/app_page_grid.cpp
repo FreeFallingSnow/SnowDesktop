@@ -252,7 +252,9 @@ DesktopApp::ApplyPageOrderFromSettings(
     }
     if (savedPageIds_ == pageIds)
     {
-        result.status = snowdesktop::PageLayoutOperationStatus::Succeeded;
+        result.status = (!layoutSavePending_ || SaveLayoutSlots(false))
+            ? snowdesktop::PageLayoutOperationStatus::Succeeded
+            : snowdesktop::PageLayoutOperationStatus::Failed;
         result.snapshot = current;
         return result;
     }
@@ -280,14 +282,15 @@ DesktopApp::ApplyPageOrderFromSettings(
 
     CompactPageIds();
     ApplyPageMapping();
-    SaveLayoutSlots();
+    const bool saved = SaveLayoutSlots(false);
     LayoutItems();
     RefreshIconBitmapResolution();
     InvalidateDragStaticScene();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
 
-    result.status = snowdesktop::PageLayoutOperationStatus::Succeeded;
+    result.status = saved ? snowdesktop::PageLayoutOperationStatus::Succeeded
+        : snowdesktop::PageLayoutOperationStatus::Failed;
     result.snapshot = CapturePageLayoutSnapshot();
     return result;
 }
@@ -314,7 +317,9 @@ DesktopApp::ApplyPageGridFromSettings(
     }
     if (impact.previousColumns == columns && impact.previousRows == rows)
     {
-        result.status = snowdesktop::PageLayoutOperationStatus::Succeeded;
+        result.status = (!layoutSavePending_ || SaveLayoutSlots(false))
+            ? snowdesktop::PageLayoutOperationStatus::Succeeded
+            : snowdesktop::PageLayoutOperationStatus::Failed;
         result.snapshot = current;
         return result;
     }
@@ -333,14 +338,15 @@ DesktopApp::ApplyPageGridFromSettings(
     ApplyDockWorkAreaReservation();
     RelayoutDisplacedItems();
     ApplyPageMapping();
-    SaveLayoutSlots();
+    const bool saved = SaveLayoutSlots(false);
     LayoutItems();
     RefreshIconBitmapResolution();
     InvalidateDragStaticScene();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
 
-    result.status = snowdesktop::PageLayoutOperationStatus::Succeeded;
+    result.status = saved ? snowdesktop::PageLayoutOperationStatus::Succeeded
+        : snowdesktop::PageLayoutOperationStatus::Failed;
     result.snapshot = CapturePageLayoutSnapshot();
     return result;
 }
@@ -357,9 +363,9 @@ snowdesktop::PageLayoutOperationResult DesktopApp::AddPageFromSettings(
         return result;
     }
 
-    AddNewPage();
+    AddNewPage(false);
     result.snapshot = CapturePageLayoutSnapshot();
-    result.status = result.snapshot.revision == current.revision
+    result.status = layoutSavePending_ || result.snapshot.revision == current.revision
         ? snowdesktop::PageLayoutOperationStatus::Failed
         : snowdesktop::PageLayoutOperationStatus::Succeeded;
     return result;
@@ -1181,7 +1187,7 @@ void DesktopApp::JumpToPageOffset(int targetOffset)
     RestoreDesktopWindowLayer();
 }
 
-void DesktopApp::AddNewPage()
+void DesktopApp::AddNewPage(bool notifyFailure)
 {
     if (gridPages_.empty()) return;
     const size_t N = gridPages_.size();
@@ -1196,7 +1202,7 @@ void DesktopApp::AddNewPage()
         const bool isDisplayed = (i < N) || (i == lastDisplayedIdx);
         if (isDisplayed && !PageHasContent(savedPageIds_[i]))
         {
-            PlaceGuideWidgetOnPage(savedPageIds_[i]);   // PlaceGuideWidgetOnPage 内部已 SaveLayoutSlots
+            PlaceGuideWidgetOnPage(savedPageIds_[i], notifyFailure);   // PlaceGuideWidgetOnPage 内部已 SaveLayoutSlots
             ApplyPageMapping();
             LayoutItems();
             ShowPageNotify(GetPageDisplayName(static_cast<int>(i)));
@@ -1215,7 +1221,7 @@ void DesktopApp::AddNewPage()
     savedPageRows_[newPageId] = lastPage.rows;
     RememberSavedPageId(newPageId);
 
-    PlaceGuideWidgetOnPage(newPageId);   // Guide 占位 → 非空 → 不被清理
+    PlaceGuideWidgetOnPage(newPageId, notifyFailure);   // Guide 占位 → 非空 → 不被清理
 
     pageOffset_ = MaxPageOffset();       // 跳到新页
     ApplyPageMapping();
@@ -1229,7 +1235,7 @@ void DesktopApp::AddNewPage()
     if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-void DesktopApp::PlaceGuideWidgetOnPage(const std::wstring& pageId)
+void DesktopApp::PlaceGuideWidgetOnPage(const std::wstring& pageId, bool notifyFailure)
 {
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
 
@@ -1287,7 +1293,7 @@ placed:
     widgets_.push_back(std::move(w));
     ConfigureWidgetGridLimits(widgets_.back());
     RebuildContainersAndItems();
-    SaveLayoutSlots();
+    SaveLayoutSlots(notifyFailure);
 }
 
 /**

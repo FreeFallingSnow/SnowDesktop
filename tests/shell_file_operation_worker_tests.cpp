@@ -1,3 +1,4 @@
+#include "operation_feedback.h"
 #include "shell_file_operation_worker.h"
 #include "external_drop_resources.h"
 #include "item_location.h"
@@ -49,6 +50,32 @@ std::filesystem::path CreateTemporaryDirectory()
     Expect(length != 0 && length < MAX_PATH,
         "temporary fixture paths normalize 8.3 aliases before Shell comparisons");
     return std::filesystem::path(longPath);
+}
+
+std::string ReadContents(const std::filesystem::path& path);
+
+// A failed first file must be reported even when a later file succeeds.
+void TestFileFailureFeedback()
+{
+    const auto root = CreateTemporaryDirectory();
+    const auto missing = root / L"missing.txt";
+    const auto source = root / L"source.txt";
+    const auto copied = root / L"copied.txt";
+    std::ofstream(source) << "source preserved";
+    std::vector<snowdesktop::operation_feedback::Failure> failures;
+    snowdesktop::operation_feedback::SetReporter([&](const auto& failure) { failures.push_back(failure); });
+    snowdesktop::ShellFileOperationRequest request;
+    request.exactFileCopies.push_back({missing.wstring(), (root / L"missing-copy.txt").wstring()});
+    request.exactFileCopies.push_back({source.wstring(), copied.wstring()});
+    const bool succeeded = snowdesktop::ShellFileOperationWorker::Execute(request);
+    snowdesktop::operation_feedback::SetReporter({});
+    Expect(!succeeded && failures.size() == 1 && failures.front().error == ERROR_FILE_NOT_FOUND &&
+            failures.front().detail.find(missing.wstring()) != std::wstring::npos,
+        "a real file-copy failure reports its target and Win32 error once");
+    Expect(ReadContents(source) == "source preserved" && ReadContents(copied) == "source preserved",
+        "partial failure preserves the successful copy and original source");
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
 }
 
 // DND-04: real STA worker -> per-item outputs -> production content cleanup.
@@ -933,7 +960,7 @@ int wmain(int argc, wchar_t** argv)
             !equivalentError,
         "a colliding queued shortcut leaves the first target unchanged");
 
-    try { TestTrackedDropResults(); }
+    try { TestFileFailureFeedback(); TestTrackedDropResults(); }
     catch (const std::exception& error) { Expect(false, error.what()); }
 
     std::error_code cleanupError;

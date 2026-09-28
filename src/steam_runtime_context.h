@@ -28,6 +28,7 @@ struct RuntimeDeploymentContext
     std::filesystem::path launcher;
     std::string profileId;
     std::string error;
+    std::string warning;
 };
 
 /**

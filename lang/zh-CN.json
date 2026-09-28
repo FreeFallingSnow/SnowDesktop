@@ -2076,5 +2076,16 @@
   "settings.desktopStyle.side.title": "侧边 Dock + 顶部状态栏",
   "settings.desktopStyle.side.description": "类似 Linux：左侧启动应用，顶部查看状态。",
   "settings.desktopStyle.side.changes": "Dock 改为左侧靠边，状态栏放在顶部。 Dock 常驻并预留系统工作区；任务栏始终隐藏并开启自动隐藏以释放占位。动画保持不变。",
-  "settings.desktopStyle.side.animations": "推荐动画：单图标轻微放大与启动轻微缩放。"
+  "settings.desktopStyle.side.animations": "推荐动画：单图标轻微放大与启动轻微缩放。",
+  "app.operation.errorCode": "错误码：{0}",
+  "app.operation.openFailed": "无法打开此项目，请查看下方目标路径和错误详情。",
+  "app.operation.layoutUnsaved": "布局修改未能保存。本次运行中仍会显示这些修改，但退出后可能丢失。请查看下方详情，处理后重新保存。",
+  "app.operation.layoutLoadFailed": "无法加载已保存的布局，请查看下方详情。",
+  "app.operation.layoutRecovered": "当前布局文件无法加载，已从备份恢复。最近的部分修改可能未保留。",
+  "app.operation.startFailed": "SnowDesktop 无法启动，请查看下方详情。",
+  "app.operation.fileFailed": "文件操作未能完成，部分项目可能已处理。重试前请检查来源和目标位置。",
+  "app.launcher.pending": "SnowDesktop 尚未确认启动完成。进程仍在运行，未删除任何文件。请查看下方详情。",
+  "app.launcher.warning": "SnowDesktop 可以继续运行，但有更新或维护步骤未完成。请查看下方详情。",
+  "settings.general.advancedFeatures.sessionOnly": "Steam 已确认您拥有许可，本次运行可使用高级功能。离线记录未能保存，重启后可能需要重新连接 Steam。",
+  "app.launcher.securitySoftwareHint": "若正在使用杀毒软件或其他安全软件，可临时暂停其文件防护后重试，完成后请立即恢复防护。"
 }

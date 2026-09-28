@@ -343,6 +343,7 @@ set(SNOWDESKTOP_SOURCES
     src/shortcut_icon_resource.cpp
     src/shortcut_icon_resource.h
     src/utils.cpp
+    src/operation_feedback.cpp
     src/desktop_display_settings.h
     src/settings_controller.cpp
     src/settings_controller.h
@@ -802,13 +803,17 @@ snowdesktop_enable_native_window_compatibility(SnowDesktop)
 # Error messages must survive a missing or damaged distribution/lang tree.
 # Keep lang/*.json as the only translation source, embedded at configure time.
 file(GLOB SNOWDESKTOP_LAUNCHER_CATALOGS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/lang/*.json")
-set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
+set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; const wchar_t* pending; const wchar_t* warning; const wchar_t* startup; const wchar_t* securitySoftwareHint; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
 foreach(catalog IN LISTS SNOWDESKTOP_LAUNCHER_CATALOGS)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${catalog}")
     get_filename_component(language "${catalog}" NAME_WE)
     file(READ "${catalog}" catalog_json)
     string(JSON message GET "${catalog_json}" "app.launcher.failed")
-    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\"},\n")
+    string(JSON pending GET "${catalog_json}" "app.launcher.pending")
+    string(JSON warning GET "${catalog_json}" "app.launcher.warning")
+    string(JSON startup GET "${catalog_json}" "app.operation.startFailed")
+    string(JSON security_hint GET "${catalog_json}" "app.launcher.securitySoftwareHint")
+    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\", LR\"LAUNCHER(${pending})LAUNCHER\", LR\"LAUNCHER(${warning})LAUNCHER\", LR\"LAUNCHER(${startup})LAUNCHER\", LR\"LAUNCHER(${security_hint})LAUNCHER\"},\n")
 endforeach()
 string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "};\n")
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_messages.h"
@@ -882,6 +887,7 @@ endif()
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
     src
+    "${CMAKE_BINARY_DIR}/generated"
     src/core
     src/app
     src/winui

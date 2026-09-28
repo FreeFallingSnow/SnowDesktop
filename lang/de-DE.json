@@ -2076,5 +2076,16 @@
   "settings.desktopStyle.side.title": "Seitliches Dock + Statusleiste oben",
   "settings.desktopStyle.side.description": "Wie bei Linux: Apps links starten, Status oben sehen.",
   "settings.desktopStyle.side.changes": "Dock am linken Bildschirmrand und Statusleiste oben anordnen. Dock dauerhaft anzeigen und Arbeitsfläche reservieren. Taskleiste immer ausblenden und automatisches Ausblenden aktivieren, um ihre reservierte Fläche freizugeben. Animationen bleiben erhalten.",
-  "settings.desktopStyle.side.animations": "Empfohlen: ein Symbol leicht vergrößern und beim Start sanft skalieren."
+  "settings.desktopStyle.side.animations": "Empfohlen: ein Symbol leicht vergrößern und beim Start sanft skalieren.",
+  "app.operation.errorCode": "Fehlercode: {0}",
+  "app.operation.openFailed": "Das Element konnte nicht geöffnet werden. Ziel und Fehlerdetails finden Sie unten.",
+  "app.operation.layoutUnsaved": "Die Layoutänderungen konnten nicht gespeichert werden. Sie bleiben in dieser Sitzung sichtbar, können aber beim Beenden verloren gehen. Prüfen Sie die Details und speichern Sie erneut.",
+  "app.operation.layoutLoadFailed": "Das gespeicherte Layout konnte nicht geladen werden. Details finden Sie unten.",
+  "app.operation.layoutRecovered": "Das Layout wurde aus einer Sicherung wiederhergestellt, da die aktuelle Datei nicht geladen werden konnte. Neuere Änderungen fehlen möglicherweise.",
+  "app.operation.startFailed": "SnowDesktop konnte nicht gestartet werden. Details finden Sie unten.",
+  "app.operation.fileFailed": "Der Dateivorgang konnte nicht abgeschlossen werden. Einige Elemente wurden möglicherweise bereits verarbeitet. Prüfen Sie Quelle und Ziel vor einem erneuten Versuch.",
+  "app.launcher.pending": "SnowDesktop hat den Start noch nicht bestätigt. Der Prozess läuft weiter; es wurden keine Dateien entfernt. Details finden Sie unten.",
+  "app.launcher.warning": "SnowDesktop kann weiterlaufen, aber ein Aktualisierungs- oder Wartungsschritt konnte nicht abgeschlossen werden. Details finden Sie unten.",
+  "settings.general.advancedFeatures.sessionOnly": "Steam hat Ihren Besitz bestätigt. Erweiterte Funktionen sind daher in dieser Sitzung verfügbar. Der Offline-Nachweis konnte nicht gespeichert werden; nach einem Neustart ist möglicherweise erneut eine Verbindung zu Steam nötig.",
+  "app.launcher.securitySoftwareHint": "Wenn Sie Antiviren- oder andere Sicherheitssoftware verwenden, pausieren Sie vorübergehend deren Dateischutz und versuchen Sie es erneut. Aktivieren Sie den Schutz anschließend sofort wieder."
 }

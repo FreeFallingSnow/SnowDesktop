@@ -1327,7 +1327,7 @@ public:
         {
             const std::wstring path = GetDataDirectoryPath();
             if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
-                    app_.controlHwnd_, path, nullptr))
+                    app_.controlHwnd_, path, nullptr, SW_SHOWNORMAL, false))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.backup.error.openLocation"));
@@ -1386,7 +1386,7 @@ public:
                       L"SnowDesktop/blob/main/THIRD_PARTY_NOTICES.md";
             }
             if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
-                    app_.controlHwnd_, target.wstring(), nullptr))
+                    app_.controlHwnd_, target.wstring(), nullptr, SW_SHOWNORMAL, false))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.about.link.openFailed"));
@@ -1748,7 +1748,9 @@ void DesktopApp::TryShowPendingSettingsWindow()
         message += L": ";
         message += settingsWindow_->LastError();
     }
-    WriteDiagnosticLogEntry(message.c_str());
+    WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+    settingsWindowOpenRequest_.Cancel();
+    snowdesktop::operation_feedback::Report({"settings.process.startFailed", message});
 }
 
 /**

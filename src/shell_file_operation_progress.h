@@ -18,11 +18,13 @@ public:
     std::wstring source;
     std::shared_ptr<ShellFileOperationResult> result;
     bool completed = false;
+    HRESULT failure = S_OK;
 
     HRESULT Record(HRESULT status, IShellItem* original, IShellItem* created)
     {
         // Move success can be COPYENGINE_S_DONT_PROCESS_CHILDREN, not S_OK.
-        if (FAILED(status) || !original || !created || completed) return S_OK;
+        if (FAILED(status)) { if (SUCCEEDED(failure)) failure = status; return S_OK; }
+        if (!original || !created || completed) return S_OK;
         PWSTR originalPath = nullptr;
         const HRESULT originalStatus = original->GetDisplayName(SIGDN_FILESYSPATH, &originalPath);
         const bool requestedItem = SUCCEEDED(originalStatus) && originalPath &&
@@ -57,13 +59,17 @@ public:
 };
 
 inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
-    const std::shared_ptr<ShellFileOperationResult>& result)
+    const std::shared_ptr<ShellFileOperationResult>& result, HRESULT& failure,
+    bool& shellHandledErrors)
 {
+    shellHandledErrors = false;
     using namespace Microsoft::WRL;
     ComPtr<IFileOperation> operation;
-    if (FAILED(CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&operation))) ||
-        FAILED(operation->SetOperationFlags(step.flags))) return false;
+    failure = CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&operation));
+    if (FAILED(failure)) return false;
+    failure = operation->SetOperationFlags(step.flags);
+    if (FAILED(failure)) return false;
 
     auto folder = std::filesystem::path(step.destination);
     std::wstring name;
@@ -71,41 +77,51 @@ inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
     if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY))
     {
         // Exact copy names are used only for a single desktop duplicate.
-        if (step.sources.size() != 1) return false;
+        if (step.sources.size() != 1) { failure = HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND); return false; }
         name = folder.filename().wstring();
         folder = folder.parent_path();
     }
     ComPtr<IShellItem> destination;
-    if (FAILED(SHCreateItemFromParsingName(folder.c_str(), nullptr,
-            IID_PPV_ARGS(&destination)))) return false;
+    failure = SHCreateItemFromParsingName(folder.c_str(), nullptr, IID_PPV_ARGS(&destination));
+    if (FAILED(failure)) return false;
 
     bool scheduledAll = true;
     std::vector<ComPtr<DropFileProgress>> sinks;
     for (const auto& path : step.sources)
     {
         ComPtr<IShellItem> source;
-        if (FAILED(SHCreateItemFromParsingName(path.c_str(), nullptr,
-                IID_PPV_ARGS(&source))))
+        const HRESULT sourceStatus = SHCreateItemFromParsingName(path.c_str(), nullptr,
+                IID_PPV_ARGS(&source));
+        if (FAILED(sourceStatus))
         {
+            if (SUCCEEDED(failure)) failure = sourceStatus;
             scheduledAll = false;
             continue;
         }
         auto sink = Make<DropFileProgress>();
-        if (!sink) { scheduledAll = false; continue; }
+        if (!sink) { failure = E_OUTOFMEMORY; scheduledAll = false; continue; }
         sink->source = path;
         sink->result = result;
         const auto newName = name.empty() ? nullptr : name.c_str();
         const HRESULT queued = step.function == FO_MOVE
             ? operation->MoveItem(source.Get(), destination.Get(), newName, sink.Get())
             : operation->CopyItem(source.Get(), destination.Get(), newName, sink.Get());
-        if (FAILED(queued)) scheduledAll = false;
+        if (FAILED(queued)) { failure = queued; scheduledAll = false; }
         else sinks.push_back(std::move(sink));
     }
     if (sinks.empty()) return false;
+    shellHandledErrors = SUCCEEDED(failure) && !(step.flags & FOF_NOERRORUI);
     const HRESULT performed = operation->PerformOperations();
     BOOL aborted = TRUE;
     const HRESULT queried = operation->GetAnyOperationsAborted(&aborted);
-    return SUCCEEDED(performed) && SUCCEEDED(queried) && !aborted && scheduledAll &&
+    for (const auto& sink : sinks)
+        if (FAILED(sink->failure) && SUCCEEDED(failure)) failure = sink->failure;
+    if (SUCCEEDED(failure) && FAILED(performed)) failure = performed;
+    if (SUCCEEDED(failure) && FAILED(queried)) failure = queried;
+    if (SUCCEEDED(failure) && aborted) failure = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    const bool succeeded = SUCCEEDED(performed) && SUCCEEDED(queried) && !aborted && scheduledAll &&
         std::all_of(sinks.begin(), sinks.end(), [](const auto& sink) { return sink->completed; });
+    if (!succeeded && SUCCEEDED(failure)) failure = E_FAIL;
+    return succeeded;
 }
 }

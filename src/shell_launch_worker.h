@@ -81,7 +81,8 @@ public:
         HWND owner,
         const std::wstring& path,
         PCIDLIST_ABSOLUTE absolutePidl,
-        int showCommand = SW_SHOWNORMAL);
+        int showCommand = SW_SHOWNORMAL,
+        bool reportDispatchFailure = true);
 
     /** @brief Dispatch one explicit runas launch in an isolated helper. */
     static bool ExecuteRunAsAdministrator(

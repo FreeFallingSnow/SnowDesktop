@@ -25,6 +25,7 @@ public:
         postOpenAction_ = postOpenAction;
     }
 
+    void Cancel() { pending_ = false; retryCount_ = 0; postOpenAction_ = PostOpenAction::None; }
     bool Pending() const { return pending_; }
     unsigned RetryCount() const { return retryCount_; }
     const SettingsRoute& Route() const { return route_; }

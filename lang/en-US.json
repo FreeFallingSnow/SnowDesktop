@@ -2076,5 +2076,16 @@
   "settings.desktopStyle.side.title": "Side Dock + top status bar",
   "settings.desktopStyle.side.description": "Like Linux: launch apps on the left and see status at the top.",
   "settings.desktopStyle.side.changes": "Use an edge-attached Dock on the left and a status bar at the top. Keep Dock visible and reserve its screen space. Always hide the taskbar and enable auto-hide to release its reserved space. Keep animations unchanged.",
-  "settings.desktopStyle.side.animations": "Recommended: gentle single-icon enlargement and a subtle launch scale effect."
+  "settings.desktopStyle.side.animations": "Recommended: gentle single-icon enlargement and a subtle launch scale effect.",
+  "app.operation.errorCode": "Error code: {0}",
+  "app.operation.openFailed": "The item could not be opened. See the target and error details below.",
+  "app.operation.layoutUnsaved": "The layout changes could not be saved. They are still visible in this session but may be lost when you exit. Check the details below and try saving again.",
+  "app.operation.layoutLoadFailed": "The saved layout could not be loaded. See the details below.",
+  "app.operation.layoutRecovered": "The layout was restored from a backup because the current file could not be loaded. Some recent changes may be missing.",
+  "app.operation.startFailed": "SnowDesktop could not start. See the details below.",
+  "app.operation.fileFailed": "The file operation could not be completed. Some items may have been processed. Check the source and destination before retrying.",
+  "app.launcher.pending": "SnowDesktop has not confirmed startup yet. The process is still running; no files were removed. See the details below.",
+  "app.launcher.warning": "SnowDesktop can continue, but an update or maintenance step could not be completed. See the details below.",
+  "settings.general.advancedFeatures.sessionOnly": "Steam confirmed your ownership, so advanced features are available in this session. The offline record could not be saved; you may need to connect to Steam again after restarting.",
+  "app.launcher.securitySoftwareHint": "If you use antivirus or other security software, temporarily pause its file protection and try again. Re-enable protection as soon as you finish."
 }

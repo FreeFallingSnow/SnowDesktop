@@ -16,6 +16,7 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "../operation_feedback.h"
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
 #include "../single_instance.h"
@@ -1711,7 +1712,9 @@ private:
     /** @brief 从磁盘文件加载布局信息（槽位记录、页面配置等）。 */
     void LoadLayoutSlots();
     /** @brief 将当前布局信息保存到磁盘文件。 */
-    bool SaveLayoutSlots();
+    bool SaveLayoutSlots(bool notifyFailure = true);
+    bool layoutSavePending_ = false;
+    bool layoutSaveFailureNotified_ = false;
     bool CanEditLargeIcons() const;
     snowdesktop::LargeIconConfig MakeLargeIconDefaults(size_t itemIndex);
     bool SetLargeIconConfig(size_t itemIndex, std::optional<snowdesktop::LargeIconConfig> config);
@@ -2244,9 +2247,9 @@ private:
     /** @brief 跳转到指定的页面偏移量。 @param targetOffset 目标偏移 */
     void JumpToPageOffset(int targetOffset);
     /** @brief 新增空白分页，放置指南组件并自动跳转。 */
-    void AddNewPage();
+    void AddNewPage(bool notifyFailure = true);
     /** @brief 在指定页面上放置分页指南组件。 @param pageId 页面标识 */
-    void PlaceGuideWidgetOnPage(const std::wstring& pageId);
+    void PlaceGuideWidgetOnPage(const std::wstring& pageId, bool notifyFailure = true);
     /** @brief 生成唯一的 __page:N 格式页面 ID。 */
     std::wstring GeneratePageId() const;
     /** @brief 每次加载布局时将页面 ID 重新规整为 __page:1, __page:2... 顺序。 */

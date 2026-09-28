@@ -2076,5 +2076,16 @@
   "settings.desktopStyle.side.title": "Dock lateral + barra de estado arriba",
   "settings.desktopStyle.side.description": "Como en Linux: abre aplicaciones a la izquierda y consulta el estado arriba.",
   "settings.desktopStyle.side.changes": "Acoplar Dock al borde izquierdo y colocar la barra de estado arriba. Mantener Dock visible y reservar su espacio. Ocultar siempre la barra de tareas y activar su ocultación automática para liberar el espacio reservado. Conservar las animaciones.",
-  "settings.desktopStyle.side.animations": "Recomendado: ampliación suave de un ícono y un ligero cambio de tamaño al abrir."
+  "settings.desktopStyle.side.animations": "Recomendado: ampliación suave de un ícono y un ligero cambio de tamaño al abrir.",
+  "app.operation.errorCode": "Código de error: {0}",
+  "app.operation.openFailed": "No se pudo abrir el elemento. Consulta el destino y los detalles del error a continuación.",
+  "app.operation.layoutUnsaved": "No se pudieron guardar los cambios de distribución. Siguen visibles durante esta sesión, pero podrían perderse al salir. Consulta los detalles e intenta guardarlos de nuevo.",
+  "app.operation.layoutLoadFailed": "No se pudo cargar la distribución guardada. Consulta los detalles a continuación.",
+  "app.operation.layoutRecovered": "Se restauró la distribución desde un respaldo porque no se pudo cargar el archivo actual. Es posible que falten algunos cambios recientes.",
+  "app.operation.startFailed": "SnowDesktop no pudo iniciarse. Consulta los detalles a continuación.",
+  "app.operation.fileFailed": "No se pudo completar la operación de archivos. Es posible que algunos elementos ya se hayan procesado. Revisa el origen y el destino antes de volver a intentarlo.",
+  "app.launcher.pending": "SnowDesktop aún no confirmó el inicio. El proceso sigue en ejecución; no se eliminó ningún archivo. Consulta los detalles a continuación.",
+  "app.launcher.warning": "SnowDesktop puede continuar, pero no se completó un paso de actualización o mantenimiento. Consulta los detalles a continuación.",
+  "settings.general.advancedFeatures.sessionOnly": "Steam confirmó tu licencia, así que las funciones avanzadas están disponibles en esta sesión. No se pudo guardar el registro sin conexión; puede que debas volver a conectarte a Steam después de reiniciar.",
+  "app.launcher.securitySoftwareHint": "Si usas un antivirus u otro programa de seguridad, pausa temporalmente su protección de archivos y vuelve a intentarlo. Reactiva la protección en cuanto termines."
 }

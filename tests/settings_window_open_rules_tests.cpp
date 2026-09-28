@@ -187,6 +187,10 @@ int main(int argc, char** argv)
         "third failure schedules the final retry");
     Check(!state.RecordFailure(3) && state.Pending(),
         "retry exhaustion preserves the pending request");
+    state.Cancel();
+    Check(!state.Pending() && state.RetryCount() == 0,
+        "a reported terminal failure retires automatic retries until a new user request");
+
 
     snowdesktop::SettingsRoute widgetRoute;
     widgetRoute.page = snowdesktop::SettingsPage::WidgetSettings;
@@ -250,7 +254,7 @@ int main(int argc, char** argv)
         const std::size_t oleFailure = appRun.find(
             "if (FAILED(oleInitializeResult))", oleInitialize);
         const std::size_t oleFailureReturn = appRun.find(
-            "return __LINE__;", oleFailure);
+            "return static_cast<int>(oleInitializeResult);", oleFailure);
         const std::size_t oleGuard = appRun.find(
             "struct OleUninitializeOnExit final", oleFailureReturn);
         const std::size_t schedulerInitialize = appRun.find(

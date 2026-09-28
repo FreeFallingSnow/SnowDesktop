@@ -2076,5 +2076,16 @@
   "settings.desktopStyle.side.title": "측면 Dock + 상단 상태 표시줄",
   "settings.desktopStyle.side.description": "Linux처럼 왼쪽에서 앱을 실행하고 상단에서 상태를 확인합니다.",
   "settings.desktopStyle.side.changes": "Dock을 왼쪽 가장자리에 붙이고 상태 표시줄을 상단에 배치합니다. Dock을 항상 표시하고 작업 영역을 확보합니다. 작업 표시줄을 항상 숨기며 자동 숨기기도 켜서 차지하던 공간을 비웁니다. 애니메이션은 유지합니다.",
-  "settings.desktopStyle.side.animations": "권장: 단일 아이콘의 가벼운 확대와 실행 시 가벼운 크기 변화."
+  "settings.desktopStyle.side.animations": "권장: 단일 아이콘의 가벼운 확대와 실행 시 가벼운 크기 변화.",
+  "app.operation.errorCode": "오류 코드: {0}",
+  "app.operation.openFailed": "이 항목을 열 수 없습니다. 아래 대상 경로와 오류 세부 정보를 확인하세요.",
+  "app.operation.layoutUnsaved": "레이아웃 변경 사항을 저장하지 못했습니다. 현재 세션에서는 표시되지만 종료하면 사라질 수 있습니다. 아래 내용을 확인하고 다시 저장하세요.",
+  "app.operation.layoutLoadFailed": "저장된 레이아웃을 불러오지 못했습니다. 아래 세부 정보를 확인하세요.",
+  "app.operation.layoutRecovered": "현재 레이아웃 파일을 불러올 수 없어 백업에서 복원했습니다. 최근 변경 사항 일부가 누락되었을 수 있습니다.",
+  "app.operation.startFailed": "SnowDesktop을 시작하지 못했습니다. 아래 세부 정보를 확인하세요.",
+  "app.operation.fileFailed": "파일 작업을 완료하지 못했습니다. 일부 항목은 이미 처리되었을 수 있습니다. 다시 시도하기 전에 원본과 대상 위치를 확인하세요.",
+  "app.launcher.pending": "SnowDesktop의 시작 완료가 아직 확인되지 않았습니다. 프로세스는 실행 중이며 삭제된 파일은 없습니다. 아래 세부 정보를 확인하세요.",
+  "app.launcher.warning": "SnowDesktop은 계속 실행할 수 있지만 업데이트 또는 유지 관리 단계가 완료되지 않았습니다. 아래 세부 정보를 확인하세요.",
+  "settings.general.advancedFeatures.sessionOnly": "Steam에서 소유권을 확인했으므로 현재 세션에서는 고급 기능을 사용할 수 있습니다. 오프라인 기록을 저장하지 못했으므로 다시 시작한 후 Steam에 다시 연결해야 할 수 있습니다.",
+  "app.launcher.securitySoftwareHint": "백신 등 보안 소프트웨어를 사용 중이라면 파일 보호를 잠시 중지하고 다시 시도하세요. 작업을 마치면 즉시 보호를 다시 켜세요."
 }

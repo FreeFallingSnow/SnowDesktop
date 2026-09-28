@@ -2076,5 +2076,16 @@
   "settings.desktopStyle.side.title": "側面の Dock + 上部のステータスバー",
   "settings.desktopStyle.side.description": "Linux のように、左側からアプリを起動し、上部で状態を確認します。",
   "settings.desktopStyle.side.changes": "Dock を左側の画面端に、ステータスバーを上部に配置します。 Dock を常時表示し、作業領域を確保します。タスクバーを常時非表示にし、自動非表示も有効にして占有領域を解放します。アニメーションは保持します。",
-  "settings.desktopStyle.side.animations": "推奨：単一アイコンの軽い拡大と起動時の軽い伸縮。"
+  "settings.desktopStyle.side.animations": "推奨：単一アイコンの軽い拡大と起動時の軽い伸縮。",
+  "app.operation.errorCode": "エラーコード：{0}",
+  "app.operation.openFailed": "この項目を開けませんでした。以下の対象パスとエラーの詳細を確認してください。",
+  "app.operation.layoutUnsaved": "レイアウトの変更を保存できませんでした。このセッションでは表示されますが、終了すると失われる可能性があります。以下の詳細を確認し、もう一度保存してください。",
+  "app.operation.layoutLoadFailed": "保存済みのレイアウトを読み込めませんでした。以下の詳細を確認してください。",
+  "app.operation.layoutRecovered": "現在のレイアウトファイルを読み込めなかったため、バックアップから復元しました。最近の変更の一部が含まれていない可能性があります。",
+  "app.operation.startFailed": "SnowDesktop を起動できませんでした。以下の詳細を確認してください。",
+  "app.operation.fileFailed": "ファイル操作を完了できませんでした。一部の項目は処理済みの可能性があります。再試行する前に、操作元と操作先を確認してください。",
+  "app.launcher.pending": "SnowDesktop の起動完了をまだ確認できていません。プロセスは実行中で、ファイルは削除されていません。以下の詳細を確認してください。",
+  "app.launcher.warning": "SnowDesktop は引き続き実行できますが、更新または保守の処理を完了できませんでした。以下の詳細を確認してください。",
+  "settings.general.advancedFeatures.sessionOnly": "Steam で所有権を確認したため、このセッションでは高度な機能を使用できます。オフライン記録を保存できなかったため、再起動後に Steam への再接続が必要になる場合があります。",
+  "app.launcher.securitySoftwareHint": "ウイルス対策ソフトなどのセキュリティソフトを使用している場合は、ファイル保護を一時停止して再試行してください。完了後はすぐに保護を再開してください。"
 }

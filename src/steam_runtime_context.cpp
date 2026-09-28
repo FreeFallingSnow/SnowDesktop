@@ -256,11 +256,14 @@ RuntimeDeploymentContext ResolveRuntimeDeploymentContext(
         return Invalid("Steam data path escapes the install root");
     result.launcher = std::filesystem::weakly_canonical(
         result.installRoot / launcherRelativePath, error);
-    if (error || !IsPathInside(result.launcher, result.installRoot) ||
-        !std::filesystem::is_regular_file(result.launcher, error))
+    if (error || !IsPathInside(result.launcher, result.installRoot))
     {
-        return Invalid("Steam launcher is missing or outside the install root");
+        return Invalid("Steam launcher is outside the install root");
     }
+    // The sidecar still identifies the same stable data directory when the
+    // launcher is missing. Starting this host directly is a recovery path.
+    // Keep the configured launcher target: auto-start must not silently bypass
+    // its update protocol by registering the versioned runtime executable.
 
     if (result.kind == RuntimeDeploymentKind::SteamManaged)
     {
@@ -290,6 +293,12 @@ RuntimeDeploymentContext ResolveRuntimeDeploymentContext(
             return Invalid("Steam local development paths do not match the profile");
         }
     }
+    error.clear();
+    const auto launcherStatus = std::filesystem::status(result.launcher, error);
+    if (launcherStatus.type() == std::filesystem::file_type::not_found)
+        result.warning = "Steam launcher is missing; direct startup uses the existing stable data directory. Repair the Steam installation to restore launcher updates.";
+    else if (error || !std::filesystem::is_regular_file(launcherStatus))
+        return Invalid("Steam launcher is inaccessible or not a regular file");
     return result;
 }
 

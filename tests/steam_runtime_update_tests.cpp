@@ -1,3 +1,4 @@
+#include "steam_runtime_flush.h"
 #include "auto_start_rules.h"
 #include "data_path_policy.h"
 #include "steam_runtime_context.h"
@@ -291,6 +292,54 @@ void WriteManagedSidecar(const std::filesystem::path& runtime)
         "}\n");
 }
 
+// A real reader reproduces the reported Win32 32 failure of the old
+// GENERIC_WRITE/share=0 reopen. Only the retry delay is substituted.
+void TestRuntimePayloadFlush(const std::filesystem::path& root)
+{
+    using snowdesktop::steam_runtime::detail::FlushRuntimePayload;
+    const auto file = root / L"verified.bin";
+    WriteText(file, "verified runtime payload");
+    HANDLE reader = CreateFileW(file.c_str(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    Check(reader != INVALID_HANDLE_VALUE, "reader fixture opens a real payload");
+    HANDLE exclusive = CreateFileW(file.c_str(), GENERIC_WRITE, 0,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+    const DWORD exclusiveError = GetLastError();
+    Check(exclusive == INVALID_HANDLE_VALUE && exclusiveError == ERROR_SHARING_VIOLATION,
+        "legacy exclusive flush fails with the observed error 32");
+    if (exclusive != INVALID_HANDLE_VALUE) CloseHandle(exclusive);
+    unsigned waits = 0;
+    auto flushed = FlushRuntimePayload(file, [&](auto) { ++waits; });
+    Check(flushed.error == ERROR_SUCCESS && flushed.attempts == 1 && waits == 0,
+        "a compatible scanning reader does not delay a real payload flush");
+    if (reader != INVALID_HANDLE_VALUE) CloseHandle(reader);
+
+    reader = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+    Check(reader != INVALID_HANDLE_VALUE, "incompatible reader fixture opens");
+    waits = 0;
+    flushed = FlushRuntimePayload(file, [&](auto) {
+        ++waits;
+        if (waits == 2) { CloseHandle(reader); reader = INVALID_HANDLE_VALUE; }
+    });
+    Check(flushed.error == ERROR_SUCCESS && flushed.attempts == 3 && waits == 2,
+        "transient scanning locks are retried and succeed after release");
+    if (reader != INVALID_HANDLE_VALUE) CloseHandle(reader);
+
+    reader = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+    waits = 0;
+    flushed = FlushRuntimePayload(file, [&](auto) { ++waits; });
+    Check(flushed.error == ERROR_SHARING_VIOLATION && flushed.WarningOnly() &&
+            flushed.attempts == 6 && waits == 5,
+        "persistent lock becomes a bounded payload warning, not a launch rejection");
+    if (reader != INVALID_HANDLE_VALUE) CloseHandle(reader);
+    Check(ReadText(file) == "verified runtime payload", "flush handling never changes payload bytes");
+    flushed = FlushRuntimePayload(root / L"missing.bin", [&](auto) { ++waits; });
+    Check(flushed.error == ERROR_FILE_NOT_FOUND && !flushed.WarningOnly() && flushed.attempts == 1,
+        "a missing payload is still a real failure, with no pointless retry");
+}
+
 void TestContextResolution(const std::filesystem::path& root)
 {
     using namespace snowdesktop::deployment;
@@ -342,6 +391,16 @@ void TestContextResolution(const std::filesystem::path& root)
             context.launcher == std::filesystem::weakly_canonical(
                 install / kSteamLauncherFilename),
         "managed Steam runtime resolves stable launcher and unique data root");
+    std::filesystem::remove(install / kSteamLauncherFilename);
+    const auto direct = ResolveRuntimeDeploymentContext(executable, false);
+    Check(direct.kind == RuntimeDeploymentKind::SteamManaged &&
+            direct.dataRoot == context.dataRoot && direct.launcher == context.launcher &&
+            !direct.warning.empty(),
+        "missing launcher permits direct recovery without switching the data directory");
+    std::filesystem::create_directory(install / kSteamLauncherFilename);
+    Check(ResolveRuntimeDeploymentContext(executable, false).kind == RuntimeDeploymentKind::Invalid,
+        "a launcher path of the wrong type remains a deployment error");
+
 
     const auto devInstall = root / L"dev-install";
     const auto devRuntime = devInstall / L".snowdesktop" / L"dev" /
@@ -1859,6 +1918,7 @@ int wmain(int argc, wchar_t** argv)
             std::to_wstring(GetTickCount64()));
     try
     {
+        TestRuntimePayloadFlush(root / L"payload-flush");
         TestContextResolution(root / L"contexts");
         TestRuntimeDataPathPolicy(root / L"data-paths");
         TestRuntimeUpdate(root / L"update");

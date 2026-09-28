@@ -1,3 +1,4 @@
+#include "operation_feedback.h"
 #include "shell_launch_worker.h"
 #include "shell_launch_process.h"
 #include "shell_open_command.h"
@@ -919,6 +920,7 @@ bool ExecuteHelperFixture(const snowdesktop::shell_launch_process::Request& requ
     }
     if (arguments) LocalFree(arguments);
     if (!privateHandles) return false;
+    if (request.path == L"test:failure") { SetLastError(ERROR_ACCESS_DENIED); return false; }
     constexpr std::wstring_view blockPrefix = L"test:block:";
     constexpr std::wstring_view signalPrefix = L"test:signal:";
     const std::wstring_view path(request.path);
@@ -954,6 +956,75 @@ bool ExecuteHelperFixture(const snowdesktop::shell_launch_process::Request& requ
         CloseHandle(neverSignaled);
     }
     return signaled != FALSE;
+}
+
+void TestHelperFailureReachesCaller()
+{
+    struct State { std::mutex mutex; std::condition_variable changed;
+        std::vector<snowdesktop::operation_feedback::Failure> failures; };
+    const auto state = std::make_shared<State>();
+    snowdesktop::operation_feedback::SetReporter([state](const auto& failure) {
+        std::lock_guard lock(state->mutex);
+        state->failures.push_back(failure);
+        state->changed.notify_all();
+    });
+    snowdesktop::shell_launch_process::Request request;
+    request.path = L"test:failure";
+    Check(static_cast<bool>(snowdesktop::shell_launch_process::Start(request, 5000)),
+        "the failing helper is actually dispatched");
+    {
+        std::unique_lock lock(state->mutex);
+        Check(state->changed.wait_for(lock, std::chrono::seconds(10), [&] { return !state->failures.empty(); }),
+            "a child execution failure must reach the caller after successful dispatch");
+        Check(state->failures.size() == 1 && state->failures.front().error == ERROR_ACCESS_DENIED &&
+                state->failures.front().detail.find(request.path) != std::wstring::npos,
+            "completion preserves the actual child error and target");
+    }
+    for (const DWORD cancelled : {static_cast<DWORD>(ERROR_CANCELLED),
+            static_cast<DWORD>(HRESULT_FROM_WIN32(ERROR_CANCELLED)),
+            static_cast<DWORD>(E_ABORT), static_cast<DWORD>(COPYENGINE_E_USER_CANCELLED)})
+        snowdesktop::operation_feedback::Report({"app.operation.openFailed", L"cancelled", cancelled});
+    snowdesktop::operation_feedback::SetReporter({});
+    std::lock_guard lock(state->mutex);
+    Check(state->failures.size() == 1, "user cancellations never produce an error notification");
+}
+
+void TestHelperFromExtendedPathParent()
+{
+    const auto name = UniqueEventName(L"extended-parent-");
+    HANDLE signal = CreateEventW(nullptr, TRUE, FALSE, name.c_str());
+    snowdesktop::shell_launch_process::Request request;
+    request.path = L"test:signal:" + name;
+    const auto child = snowdesktop::shell_launch_process::Start(request, 5000);
+    Check(signal && child && WaitForSingleObject(signal, 6000) == WAIT_OBJECT_0,
+        "an extended-path parent must reach the real helper executor, not exit 5 in validation");
+    if (signal) CloseHandle(signal);
+}
+
+void TestExtendedPathLaunch()
+{
+    wchar_t executable[32768]{};
+    const DWORD length = GetModuleFileNameW(nullptr, executable, 32768);
+    Check(length && length < 32768, "resolve the regression executable");
+    if (!length || length >= 32768) return;
+    std::wstring path = executable;
+    if (!path.starts_with(L"\\\\?\\")) path = L"\\\\?\\" + path;
+    std::wstring command = L"\"" + path + L"\" --extended-launch-parent";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    Check(CreateProcessW(path.c_str(), command.data(), nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process) != FALSE,
+        "start the real parent using an extended executable path");
+    if (!process.hProcess) return;
+    const DWORD waited = WaitForSingleObject(process.hProcess, 12000);
+    DWORD result = ERROR_TIMEOUT;
+    if (waited == WAIT_OBJECT_0) GetExitCodeProcess(process.hProcess, &result);
+    else TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    Check(waited == WAIT_OBJECT_0 && result == ERROR_SUCCESS,
+        "extended executable paths must not break shortcut helper dispatch");
 }
 
 void TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped()
@@ -1020,6 +1091,11 @@ int wmain(int argc, wchar_t** argv)
 {
     if (const auto result = snowdesktop::shell_launch_process::TryRunCommand(ExecuteHelperFixture))
         return *result;
+    if (argc == 2 && wcscmp(argv[1], L"--extended-launch-parent") == 0)
+    {
+        TestHelperFromExtendedPathParent();
+        return failures ? 1 : 0;
+    }
     if (argc == 2 && wcscmp(argv[1], L"--default-open-contract") == 0)
     {
         TestDefaultOpenDoesNotPrepareUnrelatedMenus();
@@ -1079,6 +1155,8 @@ int wmain(int argc, wchar_t** argv)
     CheckElevationDispatch(L"explicit-administrator.exe",
         snowdesktop::shell_launch_process::Action::RunAs);
     TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
+    TestHelperFailureReachesCaller();
+    TestExtendedPathLaunch();
     TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped();
     TestIsolatedOpenLaunchesShortcut();
     TestDefaultOpenDoesNotPrepareUnrelatedMenus();

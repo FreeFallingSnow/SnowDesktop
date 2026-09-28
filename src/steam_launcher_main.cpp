@@ -14,6 +14,7 @@
 
 namespace
 {
+bool retryRequested = false;
 std::filesystem::path CurrentExecutableDirectory()
 {
     std::wstring path(32768, L'\0');
@@ -62,7 +63,15 @@ void AppendLauncherLog(const std::filesystem::path& installRoot,
     std::ofstream stream(installRoot / L".snowdesktop" /
         L"launcher.log", std::ios::binary | std::ios::app);
     if (!stream)
-        return;
+    {
+        wchar_t temporary[MAX_PATH + 1]{};
+        const DWORD length = GetTempPathW(MAX_PATH, temporary);
+        if (!length || length > MAX_PATH) { OutputDebugStringA(std::string(message).c_str()); return; }
+        stream.clear();
+        stream.open(std::filesystem::path(temporary) / L"SnowDesktop-launcher.log",
+            std::ios::binary | std::ios::app);
+        if (!stream) { OutputDebugStringA(std::string(message).c_str()); return; }
+    }
     SYSTEMTIME time{};
     GetSystemTime(&time);
     char prefix[64]{};
@@ -73,7 +82,7 @@ void AppendLauncherLog(const std::filesystem::path& installRoot,
 }
 
 void ShowLaunchFailure(const std::filesystem::path& installRoot,
-    std::string_view detail)
+    std::string_view detail, bool pending = false, bool warning = false)
 {
     wchar_t localeName[LOCALE_NAME_MAX_LENGTH]{};
     GetUserDefaultLocaleName(localeName, LOCALE_NAME_MAX_LENGTH);
@@ -90,7 +99,14 @@ void ShowLaunchFailure(const std::filesystem::path& installRoot,
     std::wstring message;
     for (const auto& entry : kLauncherMessages)
         if (language == entry.language)
-            message = entry.message;
+        {
+            message = pending ? entry.pending : warning ? entry.warning : entry.message;
+            // An observed sharing/lock violation is actionable. Do not blame
+            // antivirus software for unrelated path, schema or permission errors.
+            if (detail.find("Win32 error 32") != std::string_view::npos ||
+                detail.find("Win32 error 33") != std::string_view::npos)
+                message += L"\n\n" + std::wstring(entry.securitySoftwareHint);
+        }
     const int length = MultiByteToWideChar(CP_UTF8, 0, detail.data(),
         static_cast<int>(detail.size()), nullptr, 0);
     std::wstring wideDetail(static_cast<std::size_t>(length), L'\0');
@@ -101,8 +117,14 @@ void ShowLaunchFailure(const std::filesystem::path& installRoot,
     if (!installRoot.empty())
         message += L"\n\n" + (installRoot / L".snowdesktop" /
             L"launcher.log").wstring();
-    MessageBoxW(nullptr, message.c_str(), L"SnowDesktop",
-        MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+    const bool canRetry = !pending && !warning;
+    const int action = MessageBoxW(nullptr, message.c_str(), L"SnowDesktop",
+        (canRetry ? MB_RETRYCANCEL : MB_OK) |
+        ((pending || warning) ? MB_ICONWARNING : MB_ICONERROR) | MB_SETFOREGROUND);
+    // Windows localizes its standard Retry/Cancel buttons. Retry repeats the
+    // whole transaction after the user releases a lock, never duplicates a
+    // host that is still running or bypasses a failed copy/hash operation.
+    retryRequested = canRetry && action == IDRETRY;
 }
 
 bool LaunchRuntime(const std::filesystem::path& executable,
@@ -312,6 +334,8 @@ int RunLauncher(bool& maintenance)
                 else
                     AppendLauncherLog(installRoot, confirmationError);
             }
+            if (!maintenance && !applied.error.empty())
+                ShowLaunchFailure(installRoot, applied.error, false, true);
             return 0;
         }
         std::string detail = pending
@@ -331,7 +355,8 @@ int RunLauncher(bool& maintenance)
             }
             detail += "; " + recovered.error;
         }
-        if (!maintenance && !pending) ShowLaunchFailure(installRoot, detail);
+        if (!maintenance && launchError != ERROR_CANCELLED)
+            ShowLaunchFailure(installRoot, detail, pending);
         return static_cast<int>(launchError);
     }
     return ERROR_INSTALL_FAILURE;
@@ -343,16 +368,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // our exit monitoring starts. Report those failures through our log/UI.
     SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS);
     bool maintenance = false;
-    try
+    for (;;)
     {
-        return RunLauncher(maintenance);
-    }
-    catch (const std::exception& error)
-    {
-        const auto root = CurrentExecutableDirectory();
-        AppendLauncherLog(root, error.what());
-        if (!maintenance)
-            ShowLaunchFailure(root, error.what());
-        return ERROR_INSTALL_FAILURE;
+        retryRequested = false;
+        int result = ERROR_INSTALL_FAILURE;
+        try { result = RunLauncher(maintenance); }
+        catch (const std::exception& error)
+        {
+            const auto root = CurrentExecutableDirectory();
+            AppendLauncherLog(root, error.what());
+            if (!maintenance) ShowLaunchFailure(root, error.what());
+        }
+        if (!retryRequested) return result;
     }
 }

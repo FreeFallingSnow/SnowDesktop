@@ -63,11 +63,13 @@ bool SafeInvokeContextMenu(
 {
     __try
     {
-        return contextMenu &&
-            SUCCEEDED(contextMenu->InvokeCommand(invoke));
+        const HRESULT result = contextMenu ? contextMenu->InvokeCommand(invoke) : E_POINTER;
+        if (FAILED(result)) SetLastError(static_cast<DWORD>(result));
+        return SUCCEEDED(result);
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
+        SetLastError(ERROR_UNHANDLED_EXCEPTION);
         return false;
     }
 }
@@ -108,7 +110,12 @@ std::optional<bool> InvokeShellItemOpen(
 
     // A supported handler owns the attempt, including failure. Falling back
     // after a rejected invocation could load a full menu or execute twice.
-    return shell_open_command::Invoke(contextMenu.Get(), validOwner, showCommand);
+    const bool opened = shell_open_command::Invoke(contextMenu.Get(), validOwner, showCommand);
+    const DWORD error = GetLastError();
+    contextMenu.Reset();
+    parentFolder.Reset();
+    SetLastError(error);
+    return opened;
 }
 
 bool ExecuteShellOpen(
@@ -134,7 +141,9 @@ bool ExecuteShellOpen(
     const auto opened = InvokeShellItemOpen(owner, absolutePidl, showCommand);
     if (opened.has_value())
     {
+        const DWORD error = GetLastError();
         CoTaskMemFree(parsedPidl);
+        SetLastError(error);
         return *opened;
     }
 
@@ -142,7 +151,7 @@ bool ExecuteShellOpen(
     // registered Open handler. No fallback follows a supported failed command.
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
-    executeInfo.fMask = launchMask;
+    executeInfo.fMask = launchMask | SEE_MASK_FLAG_NO_UI;
     executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
     executeInfo.lpVerb = L"open";
     executeInfo.lpFile = path.empty() ? nullptr : path.c_str();
@@ -153,7 +162,9 @@ bool ExecuteShellOpen(
     }
     executeInfo.nShow = showCommand;
     const bool executed = ShellExecuteExW(&executeInfo) != FALSE;
+    const DWORD error = GetLastError();
     CoTaskMemFree(parsedPidl);
+    SetLastError(error);
     return executed;
 }
 
@@ -220,7 +231,7 @@ bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showC
     invoke.cbSize = sizeof(invoke);
     // This STA belongs to a short-lived helper. Finish Shell/DDE handoff
     // before it exits; the desktop does not wait for this call.
-    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE | CMIC_MASK_NOASYNC;
+    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE | CMIC_MASK_NOASYNC | CMIC_MASK_FLAG_NO_UI;
     invoke.hwnd = owner && IsWindow(owner) ? owner : nullptr;
     if (openOffset != static_cast<UINT_PTR>(-1))
     {
@@ -242,7 +253,9 @@ bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showC
     const bool opened = SafeInvokeContextMenu(
         contextMenu,
         reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+    const DWORD error = GetLastError();
     DestroyMenu(menu);
+    SetLastError(error);
     return opened;
 }
 
@@ -250,7 +263,7 @@ namespace
 {
 bool DispatchShellOpen(HWND owner, const std::wstring& path,
     PCIDLIST_ABSOLUTE absolutePidl, int showCommand,
-    shell_launch_process::Action action)
+    shell_launch_process::Action action, bool reportDispatchFailure = true)
 {
     try
     {
@@ -266,7 +279,7 @@ bool DispatchShellOpen(HWND owner, const std::wstring& path,
             const auto* data = reinterpret_cast<const unsigned char*>(absolutePidl);
             request.absolutePidl.assign(data, data + size);
         }
-        return static_cast<bool>(shell_launch_process::Start(request));
+        return static_cast<bool>(shell_launch_process::Start(request, 120000, reportDispatchFailure));
     }
     catch (...)
     {
@@ -402,10 +415,10 @@ bool ShellLaunchWorker::ExecuteInteractive(
     HWND owner,
     const std::wstring& path,
     PCIDLIST_ABSOLUTE absolutePidl,
-    int showCommand)
+    int showCommand, bool reportDispatchFailure)
 {
     return DispatchShellOpen(owner, path, absolutePidl, showCommand,
-        shell_launch_process::Action::OpenWithShortcutPolicy);
+        shell_launch_process::Action::OpenWithShortcutPolicy, reportDispatchFailure);
 }
 
 bool ShellLaunchWorker::ExecuteRunAsAdministrator(

@@ -36,7 +36,8 @@ struct StartedProcess
 
 // Returns after dispatch, without waiting for a Shell handler. Each request has
 // its own process and deadline. The job owns only the helper, not opened apps.
-StartedProcess Start(const Request& request, DWORD timeoutMs = 120000);
+StartedProcess Start(const Request& request, DWORD timeoutMs = 120000,
+    bool reportDispatchFailure = true);
 
 using Executor = bool (*)(const Request&);
 bool ExecuteRequest(const Request& request);

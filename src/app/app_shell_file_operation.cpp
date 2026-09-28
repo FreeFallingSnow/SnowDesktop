@@ -124,7 +124,10 @@ bool DesktopApp::QueueShellFileOperation(
         ShellFileOperationUiCompletion{
             false, std::move(completion) };
     if (!result)
+    {
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"Queue allocation", ERROR_NOT_ENOUGH_MEMORY});
         return false;
+    }
 
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),
@@ -140,6 +143,7 @@ bool DesktopApp::QueueShellFileOperation(
     if (!queued)
     {
         delete result;
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"File operation queue unavailable", ERROR_NOT_READY});
         return false;
     }
     ++shellFileOperationInFlight_;
@@ -167,7 +171,10 @@ bool DesktopApp::QueueShellDrop(
         ShellFileOperationUiCompletion{
             false, std::move(completion) };
     if (!result)
+    {
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"Queue allocation", ERROR_NOT_ENOUGH_MEMORY});
         return false;
+    }
 
     snowdesktop::ShellDropRequest request;
     request.sources = std::move(sourcePaths);
@@ -189,6 +196,7 @@ bool DesktopApp::QueueShellDrop(
     if (!queued)
     {
         delete result;
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"File operation queue unavailable", ERROR_NOT_READY});
         return false;
     }
     ++shellFileOperationInFlight_;
@@ -237,7 +245,10 @@ bool DesktopApp::QueueAsyncShellDrop(
         ShellFileOperationUiCompletion{
             false, std::move(completion) };
     if (!result)
+    {
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"Queue allocation", ERROR_NOT_ENOUGH_MEMORY});
         return false;
+    }
 
     ComPtr<IStream> dataStream;
     HRESULT marshalResult = CoMarshalInterThreadInterfaceInStream(
@@ -302,6 +313,7 @@ bool DesktopApp::QueueAsyncShellDrop(
         // Enqueue consumes the marshal packets and balances StartOperation on
         // every rejection path.
         delete result;
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"File operation queue unavailable", ERROR_NOT_READY});
         return false;
     }
     ++shellFileOperationInFlight_;

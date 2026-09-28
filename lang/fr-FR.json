@@ -2076,5 +2076,16 @@
   "settings.desktopStyle.side.title": "Dock latéral + barre d’état en haut",
   "settings.desktopStyle.side.description": "Comme sur Linux : lancez les applications à gauche, consultez leur état en haut.",
   "settings.desktopStyle.side.changes": "Attacher le Dock au bord gauche et placer la barre d’état en haut. Afficher le Dock en permanence et réserver son espace. Toujours masquer la barre des tâches et activer son masquage automatique pour libérer sa place. Conserver les animations.",
-  "settings.desktopStyle.side.animations": "Conseillé : léger agrandissement d’une icône et léger changement d’échelle au lancement."
+  "settings.desktopStyle.side.animations": "Conseillé : léger agrandissement d’une icône et léger changement d’échelle au lancement.",
+  "app.operation.errorCode": "Code d’erreur : {0}",
+  "app.operation.openFailed": "Impossible d’ouvrir cet élément. Consultez la cible et les détails de l’erreur ci-dessous.",
+  "app.operation.layoutUnsaved": "Les modifications de disposition n’ont pas pu être enregistrées. Elles restent visibles pendant cette session, mais risquent d’être perdues à la fermeture. Consultez les détails et réessayez de les enregistrer.",
+  "app.operation.layoutLoadFailed": "Impossible de charger la disposition enregistrée. Consultez les détails ci-dessous.",
+  "app.operation.layoutRecovered": "La disposition a été restaurée depuis une sauvegarde, car le fichier actuel n’a pas pu être chargé. Certaines modifications récentes peuvent manquer.",
+  "app.operation.startFailed": "SnowDesktop n’a pas pu démarrer. Consultez les détails ci-dessous.",
+  "app.operation.fileFailed": "L’opération sur les fichiers n’a pas pu être terminée. Certains éléments ont peut-être déjà été traités. Vérifiez la source et la destination avant de réessayer.",
+  "app.launcher.pending": "SnowDesktop n’a pas encore confirmé son démarrage. Le processus est toujours en cours ; aucun fichier n’a été supprimé. Consultez les détails ci-dessous.",
+  "app.launcher.warning": "SnowDesktop peut continuer, mais une étape de mise à jour ou de maintenance n’a pas pu être terminée. Consultez les détails ci-dessous.",
+  "settings.general.advancedFeatures.sessionOnly": "Steam a confirmé votre licence : les fonctions avancées sont disponibles pour cette session. L’enregistrement hors ligne a échoué ; vous devrez peut-être vous reconnecter à Steam après le redémarrage.",
+  "app.launcher.securitySoftwareHint": "Si vous utilisez un antivirus ou un autre logiciel de sécurité, suspendez temporairement sa protection des fichiers, puis réessayez. Réactivez la protection dès que vous avez terminé."
 }
