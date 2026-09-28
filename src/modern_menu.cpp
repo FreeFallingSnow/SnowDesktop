@@ -122,6 +122,7 @@ struct Popup
     int windowWidth = 0;
     int windowHeight = 0;
     POINT panelScreenOrigin{};
+    RECT workArea{};
     menu_icon::Metrics rowMetrics;
     std::vector<RECT> itemRects;
     std::vector<int> navigationOrder;
@@ -778,6 +779,10 @@ private:
         popup->items = &items;
         popup->depth = depth;
         popup->parentItem = parentItem;
+        // A submenu anchor is the parent's exclusive right edge. At a monitor
+        // seam that point belongs to the neighbouring display, not the menu.
+        // Keep layout, placement and subsequent refreshes on the same work area.
+        popup->workArea = parent ? parent->workArea : ResolveRootWorkArea();
         CalculateLayout(*popup);
         PlacePopup(*popup, anchor, parent);
 
@@ -1111,18 +1116,8 @@ private:
             MaxHorizontalScroll(popup));
         popup.contentHeight = contentTop - shadowSize_ - panelPadding_;
 
-        HMONITOR monitor = MonitorFromPoint(options_.anchor,
-            MONITOR_DEFAULTTONEAREST);
-        MONITORINFO monitorInfo{ sizeof(monitorInfo) };
-        if (!GetMonitorInfoW(monitor, &monitorInfo))
-        {
-            monitorInfo.rcWork = {
-                0, 0, GetSystemMetrics(SM_CXSCREEN),
-                GetSystemMetrics(SM_CYSCREEN),
-            };
-        }
         const int workHeight = static_cast<int>(
-            monitorInfo.rcWork.bottom - monitorInfo.rcWork.top);
+            popup.workArea.bottom - popup.workArea.top);
         int availablePanelHeight = workHeight - Scale(16, options_.dpi);
         if (popup.depth == 0)
         {
@@ -1131,13 +1126,13 @@ private:
             {
                 availablePanelHeight = std::min(availablePanelHeight,
                     static_cast<int>(options_.anchorRect.top -
-                        monitorInfo.rcWork.top));
+                        popup.workArea.top));
             }
             else if (options_.rootPlacement ==
                 RootPlacement::BelowAnchorRect)
             {
                 availablePanelHeight = std::min(availablePanelHeight,
-                    static_cast<int>(monitorInfo.rcWork.bottom -
+                    static_cast<int>(popup.workArea.bottom -
                         options_.anchorRect.bottom));
             }
         }
@@ -1152,10 +1147,10 @@ private:
         popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
     }
 
-    void PlacePopup(Popup& popup, POINT anchor, const Popup* parent)
+    RECT ResolveRootWorkArea() const
     {
-        POINT monitorPoint = anchor;
-        if (!parent && options_.rootPlacement != RootPlacement::Default)
+        POINT monitorPoint = options_.anchor;
+        if (options_.rootPlacement != RootPlacement::Default)
         {
             monitorPoint = {
                 (options_.anchorRect.left + options_.anchorRect.right) / 2,
@@ -1172,14 +1167,18 @@ private:
                 GetSystemMetrics(SM_CYSCREEN),
             };
         }
+        return monitorInfo.rcWork;
+    }
 
+    void PlacePopup(Popup& popup, POINT anchor, const Popup* parent)
+    {
         int left = anchor.x;
         int top = anchor.y;
         if (parent)
         {
             left = parent->panelScreenOrigin.x + parent->panelWidth -
                 Scale(kSubmenuOverlapDip, options_.dpi);
-            if (left + popup.panelWidth > monitorInfo.rcWork.right)
+            if (left + popup.panelWidth > popup.workArea.right)
             {
                 left = parent->panelScreenOrigin.x - popup.panelWidth +
                     Scale(kSubmenuOverlapDip, options_.dpi);
@@ -1203,21 +1202,21 @@ private:
                 break;
             case RootPlacement::Default:
             default:
-                if (left + popup.panelWidth > monitorInfo.rcWork.right)
+                if (left + popup.panelWidth > popup.workArea.right)
                     left -= popup.panelWidth;
                 break;
             }
         }
 
         left = std::clamp(left,
-            static_cast<int>(monitorInfo.rcWork.left),
-            std::max(static_cast<int>(monitorInfo.rcWork.left),
-                static_cast<int>(monitorInfo.rcWork.right) -
+            static_cast<int>(popup.workArea.left),
+            std::max(static_cast<int>(popup.workArea.left),
+                static_cast<int>(popup.workArea.right) -
                     popup.panelWidth));
         top = std::clamp(top,
-            static_cast<int>(monitorInfo.rcWork.top),
-            std::max(static_cast<int>(monitorInfo.rcWork.top),
-                static_cast<int>(monitorInfo.rcWork.bottom) -
+            static_cast<int>(popup.workArea.top),
+            std::max(static_cast<int>(popup.workArea.top),
+                static_cast<int>(popup.workArea.bottom) -
                     popup.panelHeight));
         popup.panelScreenOrigin = { left, top };
     }
@@ -2111,18 +2110,13 @@ private:
             // Async additions must not move existing actions under the cursor.
             // Grow downward from the visible origin; use the existing scrolling
             // viewport when the remaining work area cannot fit the new rows.
-            MONITORINFO monitor{sizeof(monitor)};
-            if (GetMonitorInfoW(MonitorFromPoint(popup.panelScreenOrigin, MONITOR_DEFAULTTONEAREST),
-                                &monitor))
-            {
-                const auto bottom = options_.rootPlacement == RootPlacement::AboveAnchorRect
-                                        ? std::min(monitor.rcWork.bottom, options_.anchorRect.top)
-                                        : monitor.rcWork.bottom;
-                popup.panelHeight =
-                    std::min(popup.panelHeight, static_cast<int>(bottom - popup.panelScreenOrigin.y));
-                SetScrollViewport(popup);
-                popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
-            }
+            const auto bottom = options_.rootPlacement == RootPlacement::AboveAnchorRect
+                                    ? std::min(popup.workArea.bottom, options_.anchorRect.top)
+                                    : popup.workArea.bottom;
+            popup.panelHeight =
+                std::min(popup.panelHeight, static_cast<int>(bottom - popup.panelScreenOrigin.y));
+            SetScrollViewport(popup);
+            popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
             popup.scrollOffset =
                 std::clamp(previousOffset, 0, MaxScroll(popup));
             SetScrollViewport(popup);
@@ -2427,7 +2421,12 @@ private:
         }
 
         const HWND floor = ResolveZOrderFloor();
-        if (!options_.topmost && !floor)
+        const HWND candidate = options_.zOrderCompanion
+            ? options_.zOrderCompanion() : nullptr;
+        const HWND companion = candidate && IsWindow(candidate) &&
+                IsWindowVisible(candidate) ? candidate : nullptr;
+        const bool keepTopmost = options_.topmost || floor;
+        if (!keepTopmost && !companion)
             return;
         bool needsRestore = floor &&
             !IsWindowAbove(popups_.front()->hwnd, floor);
@@ -2439,10 +2438,16 @@ private:
                 continue;
             needsRestore = needsRestore ||
                 (precedingWindow && !IsWindowAbove(popup->hwnd, precedingWindow)) ||
-                (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) &
-                    WS_EX_TOPMOST) == 0;
+                (keepTopmost &&
+                    (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) &
+                        WS_EX_TOPMOST) == 0);
             precedingWindow = popup->hwnd;
         }
+        needsRestore = needsRestore || (companion &&
+            (!IsWindowAbove(companion, precedingWindow) ||
+                (keepTopmost &&
+                    (GetWindowLongPtrW(companion, GWL_EXSTYLE) &
+                        WS_EX_TOPMOST) == 0)));
         if (!needsRestore)
             return;
 
@@ -2462,13 +2467,19 @@ private:
                 IsWindowVisible(popup->hwnd))
             {
                 if (!SetWindowPos(
-                    popup->hwnd, HWND_TOPMOST,
+                    popup->hwnd, keepTopmost ? HWND_TOPMOST : HWND_TOP,
                     0, 0, 0, 0, flags))
                 {
                     allRepositionsSucceeded = false;
                 }
             }
         }
+        // Menu restacks must end with the preview; a one-time raise when it
+        // opens is lost on the next host paint or submenu creation.
+        if (companion && !SetWindowPos(companion,
+                keepTopmost ? HWND_TOPMOST : HWND_TOP,
+                0, 0, 0, 0, flags))
+            allRepositionsSucceeded = false;
         TraceOwnedPopupZOrder(
             allRepositionsSucceeded
                 ? L"restore-result" : L"restore-failed",

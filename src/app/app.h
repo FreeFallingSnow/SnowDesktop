@@ -2083,7 +2083,8 @@ private:
         std::function<void(UINT, const std::wstring&,
             std::vector<snowdesktop::modern_menu::Item>&)>
             onTextChanged = {},
-        const snowdesktop::shell_extensions::Request* shellRequest = nullptr);
+        const snowdesktop::shell_extensions::Request* shellRequest = nullptr,
+        std::function<HWND()> zOrderCompanion = {});
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
     BOOL InvokeShellMenuCommand(IContextMenu* menu,

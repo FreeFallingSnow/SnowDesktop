@@ -572,7 +572,8 @@ UINT DesktopApp::ShowModernMenu(
         onHover,
     std::function<void(UINT, const std::wstring&,
         std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged,
-    const snowdesktop::shell_extensions::Request* shellRequest)
+    const snowdesktop::shell_extensions::Request* shellRequest,
+    std::function<HWND()> zOrderCompanion)
 {
     if (!rootMenu)
         return 0;
@@ -656,6 +657,7 @@ UINT DesktopApp::ShowModernMenu(
     options.onCommand = std::move(onCommand);
     options.onTextChanged = std::move(onTextChanged);
     options.onHover = std::move(onHover);
+    options.zOrderCompanion = std::move(zOrderCompanion);
     ConfigureModernMenuEventPump(options);
     RECT popupSourceBounds{};
     const bool floatingPopupHostVisible =

@@ -510,6 +510,165 @@ struct IsolatedMenuDesktop
     }
 };
 
+void CheckCascadeWorkArea(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    std::vector<MONITORINFO> monitors;
+    Expect(EnumDisplayMonitors(nullptr, nullptr,
+        [](HMONITOR monitor, HDC, LPRECT, LPARAM context) -> BOOL {
+            MONITORINFO info{sizeof(info)};
+            if (GetMonitorInfoW(monitor, &info))
+                reinterpret_cast<std::vector<MONITORINFO>*>(context)->push_back(info);
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&monitors)) != FALSE && !monitors.empty(),
+        "monitor work areas are available on the isolated test desktop");
+    unsigned adjacentSeams = 0;
+    for (const auto& monitor : monitors)
+    {
+        for (const UINT dpi : {96U, 144U, 192U})
+        {
+            const RECT work = monitor.rcWork;
+            Options options;
+            options.owner = owner;
+            options.dpi = dpi;
+            // Blur has no synthetic shadow margin: the observed HWND is the
+            // exact panel and its exclusive right edge is the next display.
+            options.appearance = Appearance::SystemLightBlur;
+            options.rootPlacement = RootPlacement::AboveAnchorRect;
+            options.anchor = {work.right - 1, (work.top + work.bottom) / 2};
+            options.anchorRect = {work.right - 32, options.anchor.y,
+                work.right, options.anchor.y + 20};
+            const std::vector<Item> rows{
+                {0, L"Parent", L"", true, false, false,
+                    {{9100, L"Child", L"", true, false, false,
+                        {{9101, L"Grandchild", L"", true}}}}},
+            };
+            int deepest = 0;
+            options.onHover = [&](const HoverInfo& hover) {
+                if (!hover.command) return;
+                deepest = std::max(deepest, hover.depth);
+                const RECT bounds = hover.popupScreenRect;
+                Expect(bounds.left >= work.left && bounds.right <= work.right &&
+                    bounds.top >= work.top && bounds.bottom <= work.bottom,
+                    "every cascade remains inside its root monitor work area");
+            };
+            gDriveMode = DriveMode::Script;
+            gInputPosted = false;
+            gWatchdogFired = false;
+            gMenuScript = [&](HWND root) {
+                RECT bounds{};
+                Expect(GetWindowRect(root, &bounds) && bounds.right == work.right,
+                    "the parent panel touches the monitor's exclusive right boundary");
+                const POINT edge{bounds.right, bounds.top};
+                if (MonitorFromPoint(edge, MONITOR_DEFAULTTONEAREST) !=
+                    MonitorFromWindow(root, MONITOR_DEFAULTTONEAREST))
+                    ++adjacentSeams;
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            };
+            SetTimer(owner, kDriveTimer, 10, nullptr);
+            SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+            const auto result = Show(rows, options);
+            KillTimer(owner, kWatchdogTimer);
+            Expect(!gWatchdogFired && result.command == 9101 && deepest == 2,
+                "a two-level cascade at the screen edge remains keyboard accessible");
+        }
+    }
+    std::cout << "cascade placement: " << monitors.size()
+              << " monitors, " << adjacentSeams << " adjacent seam cases\n";
+    gMenuScript = {};
+}
+
+void CheckPreviewCompanionOrder(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    for (const bool topmost : {false, true})
+    {
+        // Only preview contents are replaced. Native ownership, nonactivation,
+        // menu cascades and the real post-message/presentation recovery run.
+        HWND companion = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            kOwnerClass, L"Preview fixture", WS_POPUP,
+            20, 20, 40, 40, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(companion != nullptr, "preview companion fixture is created");
+        Options options;
+        options.owner = owner;
+        options.anchor = {80, 80};
+        options.topmost = topmost;
+        options.zOrderCompanion = [&] { return companion; };
+        const std::vector<Item> rows{
+            {0, L"Parent", L"", true, false, false,
+                {{9102, L"Child", L"", true}}},
+        };
+        constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE |
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+        HWND child = nullptr;
+        int phase = -1;
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMenuScript = [&](HWND root) {
+            SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            MenuWindows menus;
+            EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows,
+                reinterpret_cast<LPARAM>(&menus));
+            child = menus.child;
+            Expect(child != nullptr, "preview fixture opens beside a real cascade");
+            ShowWindow(companion, SW_SHOWNOACTIVATE);
+            SetWindowPos(companion, child, 0, 0, 0, 0, flags);
+            Expect(!IsWindowAbove(companion, child),
+                "the regression injects a preview covered by the menu");
+            phase = 0;
+        };
+        options.eventPump.flushPresentation = [&] {
+            const HWND root = ActiveRootWindow();
+            if (!root || phase < 0 || phase > 4) return;
+            if (phase == 0 || phase == 1 || phase == 3)
+            {
+                Expect(IsWindowAbove(companion, child) && IsWindowAbove(child, root),
+                    "preview recovers above the complete menu cascade before presentation");
+                Expect(GetForegroundWindow() == root && GetFocus() == root,
+                    "restoring the preview never steals menu activation or keyboard focus");
+                Expect(((GetWindowLongPtrW(companion, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) == topmost,
+                    "preview follows the menu's topmost band");
+            }
+            if (phase == 0)
+            {
+                // A presentation pass raises the menus after the preview was
+                // already shown; restoring only in Show() cannot handle this.
+                SetWindowPos(child, topmost ? HWND_TOPMOST : HWND_TOP,
+                    0, 0, 0, 0, flags);
+                Expect(!IsWindowAbove(companion, child),
+                    "presentation really covers the existing preview again");
+            }
+            else if (phase == 1)
+                ShowWindow(companion, SW_HIDE);
+            else if (phase == 2)
+            {
+                Expect(!IsWindowVisible(companion),
+                    "menu recovery never revives a hidden preview");
+                ShowWindow(companion, SW_SHOWNOACTIVATE);
+                SetWindowPos(companion, child, 0, 0, 0, 0, flags);
+            }
+            else if (phase == 3)
+                DestroyWindow(companion);
+            else
+                PostMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            ++phase;
+            PostMessageW(root, WM_NULL, 0, 0);
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show(rows, options);
+        KillTimer(owner, kWatchdogTimer);
+        Expect(!gWatchdogFired && result.command == 9102 && phase == 5,
+            "hidden, reopened and destroyed previews preserve menu interaction");
+    }
+    gMenuScript = {};
+}
+
 } // namespace
 
 void RunTrayFocusWindowTests();
@@ -597,6 +756,10 @@ int wmain()
     ShowWindow(owner, SW_SHOW);
     SetForegroundWindow(owner);
     SetFocus(owner);
+
+    CheckCascadeWorkArea(owner);
+    CheckPreviewCompanionOrder(owner);
+    gDriveMode = DriveMode::Cascade;
 
     using snowdesktop::modern_menu::Item;
     const std::vector<Item> items{

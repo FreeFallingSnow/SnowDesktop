@@ -140,6 +140,9 @@ struct Options
     /** Host-internal ordering floor, sampled throughout the menu session.
      * Keeps menus above independent surfaces without giving them ownership. */
     std::function<HWND()> zOrderFloor;
+    /** Host-internal companion (for example a component preview), kept above
+     * every visible cascade without changing focus or native ownership. */
+    std::function<HWND()> zOrderCompanion;
     POINT anchor{};
     UINT dpi = USER_DEFAULT_SCREEN_DPI;
     bool lightTheme = true;

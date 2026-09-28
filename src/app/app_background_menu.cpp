@@ -1286,6 +1286,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
 
     snowdesktop::modern_menu::Options options;
     options.owner = hwnd_;
+    options.zOrderCompanion = [&]() { return previewWindow.Handle(); };
     options.anchor = screenPoint;
     options.dpi = menuIconDpi_;
     options.lightTheme = menuLightTheme_;
@@ -1967,7 +1968,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
-        previewWidgetMenuItem, searchLuaWidgets, &shellRequest);
+        previewWidgetMenuItem, searchLuaWidgets, &shellRequest,
+        [&]() { return previewWindow.Handle(); });
     previewWindow.Close();
 
     if (sortMenu) DestroyMenu(sortMenu);
