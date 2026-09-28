@@ -507,7 +507,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             // already false and CloseQuickNavigation would otherwise do nothing.
             if (statusBarActivationMonitor_ && quickNavigationPostCloseAction_)
                 CancelStatusBarActivation(statusBarActivationMonitor_);
-            CloseQuickNavigation();
+            CloseQuickNavigation(false);
             return 0;
         }
         break;
@@ -589,7 +589,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         {
             if (app->statusBarActivationMonitor_ && app->quickNavigationPostCloseAction_)
                 app->CancelStatusBarActivation(app->statusBarActivationMonitor_);
-            app->CloseQuickNavigation();
+            app->CloseQuickNavigation(false);
             return 0;
         }
     }

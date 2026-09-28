@@ -1,6 +1,7 @@
 #pragma once
 #include "status_bar.h"
 #include "ui_animation_scheduler.h"
+#include <algorithm>
 #include <utility>
 
 namespace snowdesktop
@@ -46,6 +47,51 @@ inline StatusBarShellChord ResolveStatusBarShellChord(StatusBarAction action, bo
 }
 
 enum class StatusBarShortcutResult { Sent, Cancelled, TimedOut, Failed };
+
+// Sending Win+Tab finishes input injection, not the Shell's transition. Keep
+// that transition separate from the cancellable status-bar continuation so a
+// second click cannot cancel its protection and immediately toggle it again.
+// Dropped clicks are never replayed after the Shell finishes its animation.
+class TaskViewTransitionGuard
+{
+public:
+    bool Busy(double now) const noexcept
+    {
+        return pending_ && now < deadline_ &&
+            (!observed_ || now < settledAt_);
+    }
+    bool Begin(double now, bool currentlyVisible) noexcept
+    {
+        if (Busy(now)) return false;
+        pending_ = true;
+        observed_ = false;
+        expectedVisible_ = !currentlyVisible;
+        // Visibility callbacks may precede the native animation's endpoint.
+        settledAt_ = now + 350;
+        deadline_ = now + 1500;
+        return true;
+    }
+    void Observe(bool visible, double now) noexcept
+    {
+        if (!pending_ || now >= deadline_ || visible != expectedVisible_ || observed_) return;
+        observed_ = true;
+        settledAt_ = (std::max)(settledAt_, now + 180);
+    }
+    void Reset() noexcept { pending_ = false; }
+private:
+    double deadline_ = 0;
+    double settledAt_ = 0;
+    bool pending_ = false;
+    bool observed_ = false;
+    bool expectedVisible_ = false;
+};
+
+inline bool IsTaskViewTransitionSensitiveAction(StatusBarAction action) noexcept
+{
+    return action == StatusBarAction::TaskView || action == StatusBarAction::Notifications ||
+        action == StatusBarAction::SystemCalendar || action == StatusBarAction::SystemControlCenter;
+}
+
 struct StatusBarShortcutCallbacks
 {
     std::function<bool(int)> keyDown;

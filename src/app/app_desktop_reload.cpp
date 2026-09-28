@@ -514,6 +514,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         msg == systemTaskbarTaskViewStateMsg_)
     {
         const bool visible = wp != 0;
+        statusBarTaskViewTransition_.Observe(visible,
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
         if (systemTaskbarTaskViewActive_ != visible)
         {
             systemTaskbarTaskViewActive_ = visible;
@@ -525,6 +527,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
     {
         NotifySystemTaskbarCreated();
+        statusBarTaskViewTransition_.Reset();
         systemTaskbarBackdropRefreshTick_ = 0;
         systemTaskbarTaskViewActive_ = false;
         systemTaskbarWindows_.clear();

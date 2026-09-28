@@ -1,5 +1,6 @@
 #include "app.h"
 #include "quick_navigation_helpers.h"
+#include "quick_navigation_rules.h"
 
 void DesktopApp::StopQuickNavigationAnimationTimeline()
 {
@@ -1072,7 +1073,7 @@ void DesktopApp::OpenQuickNavigation(
 /**
  * @brief 关闭快捷导航面板
  */
-void DesktopApp::CloseQuickNavigation()
+void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
 {
     if (!quickNavigationOpen_) return;
     if (!quickNavigationPostCloseAction_)
@@ -1138,7 +1139,18 @@ void DesktopApp::CloseQuickNavigation()
     if (quickNavigationSearchEdit_ &&
         IsWindow(quickNavigationSearchEdit_))
         EnableWindow(quickNavigationSearchEdit_, FALSE);
-    if (customDesktopVisible_)
+    // Deactivation may run while Windows is still switching to Task View or
+    // Notifications. Never activate the desktop from that callback, or during
+    // a queued handoff to another surface. Explicit dismissal may restore it
+    // only while this search surface still owns the foreground.
+    const HWND foreground = GetForegroundWindow();
+    const bool searchHasForeground = foreground &&
+        (foreground == quickNavigationHwnd_ ||
+            foreground == quickNavigationSearchEdit_ ||
+            (quickNavigationHwnd_ && IsChild(quickNavigationHwnd_, foreground)));
+    if (snowdesktop::quick_navigation_rules::ShouldRestoreDesktopFocusOnClose(
+            restoreDesktopFocus, customDesktopVisible_,
+            static_cast<bool>(quickNavigationPostCloseAction_), searchHasForeground))
         FocusDesktopInputWindow();
 
     if (!quickNavigationHwnd_ ||

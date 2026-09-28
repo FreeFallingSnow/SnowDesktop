@@ -160,18 +160,19 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     auto& control = items.back();
     const auto battery = power && power->available ? ResolveStatusBarBatteryVisual(
         power->batteryPercent, power->charging, power->acPower, power->saver) : StatusBarBatteryVisual{};
+    const bool hasBattery = power && power->available && std::isfinite(power->batteryPercent) &&
+        power->batteryPercent >= 0 && power->batteryPercent <= 100;
     control.controlGlyphs = {networkGlyph,
         audio && audio->available && audio->muted ? kMuted : !audio || !audio->available || audio->volume <= 0 ? kSpeakerZero :
             audio->volume < .5 ? kSpeakerLow : kSpeaker,
-        battery.glyph};
+        hasBattery ? battery.glyph : L""};
     control.batteryTone = battery.tone;
     control.batteryPluggedIn = battery.pluggedIn;
     control.batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
     control.controlTips[0] = networkTip;
     control.controlTips[1] = std::wstring(_LW("statusBar.volume")) + L"  " +
         (audio && audio->available ? (audio->muted ? std::wstring(_LW("statusBar.muted")) : Percent(audio->volume * 100.)) : L"—");
-    control.controlTips[2] = std::wstring(_LW("statusBar.battery")) + L"  —";
-    if (power && power->available)
+    if (hasBattery)
         control.controlTips[2] = std::wstring(_LW(battery.label)) + L"  " + Percent(power->batteryPercent);
     return items;
 }
@@ -214,6 +215,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         const float padding = 12.f * scale;
         const auto extentOf = [&](const StatusBarItem& item) {
+            if (item.key == "controlCenter" && item.controlGlyphs[2].empty()) return 64.f * scale;
             if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
             if (item.icon || item.text.empty()) return 32.f * scale;
             auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, mergedDock) : item.text;
@@ -331,6 +333,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 {
                     for (std::size_t part = 0; part < item.controlGlyphs.size(); ++part)
                     {
+                        if (item.controlGlyphs[part].empty()) continue;
                         const float left = rect.left + (4 + 28.f * static_cast<float>(part)) * scale;
                         const auto color = brush->GetColor();
                         if (part == 2 && !hc)

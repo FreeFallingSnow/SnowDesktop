@@ -1998,6 +1998,8 @@
     "statusBar.organizeTray": "Infobereich anordnen",
     "controlCenter.overview": "Zur Übersicht",
     "controlCenter.loading": "Status wird geladen…",
+    "controlCenter.noHardware": "Kein Gerät erkannt",
+    "controlCenter.brightnessUnavailable": "Helligkeit für diesen Bildschirm nicht verfügbar",
     "controlCenter.unavailable": "Nicht verfügbar",
     "controlCenter.on": "Ein",
     "controlCenter.off": "Aus",

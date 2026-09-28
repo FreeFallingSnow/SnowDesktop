@@ -328,7 +328,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 Require(low.controlGlyphs[2] != control.controlGlyphs[2] && low.batteryTone == StatusBarBatteryTone::Low,
                     "low battery must change both the fill level and warning color");
                 changedBattery.power->batteryPercent = std::numeric_limits<double>::quiet_NaN();
-                Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2] == status_bar_glyphs::kUnknown,
+                Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2].empty(),
                     "unknown battery level must not be drawn as an empty or full battery");
                 changedBattery.power->batteryPercent = 100; changedBattery.power->acPower = true;
                 const auto charged = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
@@ -360,7 +360,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").batteryTone == StatusBarBatteryTone::Normal,
                     "a full battery without confirmed AC must not claim fully charged on AC");
                 changedBattery.power->available = false; changedBattery.power->charging = true;
-                Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2] == status_bar_glyphs::kUnknown,
+                Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2].empty(),
                     "unavailable sampling must not retain a stale full charging icon");
                 auto gpuSettings = settings; gpuSettings.gpu = true;
                 auto gpuData = data; gpuData.gpu->available = false;

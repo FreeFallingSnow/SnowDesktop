@@ -51,6 +51,7 @@ namespace snowdesktop::tray { struct Icon; }
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "../status_bar.h"
+#include "../status_bar_shell_shortcut.h"
 #include "../dock_appbar.h"
 #include "../system_panel.h"
 #include "desktop_passthrough_indicator.h"
@@ -1589,7 +1590,7 @@ private:
         QuickNavigationInvocationSource source =
             QuickNavigationInvocationSource::Pointer);
     /** @brief 关闭快速导航面板。 */
-    void CloseQuickNavigation();
+    void CloseQuickNavigation(bool restoreDesktopFocus = true);
     /** @brief 关闭动画完成后执行动作。 */
     void CloseQuickNavigationThen(
         std::function<void()> action);
@@ -3434,6 +3435,7 @@ private:
         systemDataProvider_;
     std::unique_ptr<snowdesktop::StatusBar> statusBar_;
     snowdesktop::UiScheduleToken statusBarActivationToken_ = 0;
+    snowdesktop::TaskViewTransitionGuard statusBarTaskViewTransition_;
     std::shared_ptr<std::uint64_t> statusBarActivationGeneration_ = std::make_shared<std::uint64_t>(0);
     HMONITOR statusBarActivationMonitor_ = nullptr;
     HMONITOR statusBarMenuMonitor_ = nullptr;

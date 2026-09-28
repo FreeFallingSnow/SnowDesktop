@@ -712,6 +712,19 @@ void TestDeactivateRules()
             false),
         "activation outside quick navigation must close it");
 
+    // Task View may send WA_INACTIVE before GetForegroundWindow stops naming
+    // the search window. The close reason must veto focus restoration itself.
+    Check(!rules::ShouldRestoreDesktopFocusOnClose(false, true, false, true),
+        "Shell deactivation must not reactivate the desktop even with stale foreground");
+    Check(!rules::ShouldRestoreDesktopFocusOnClose(true, true, true, true),
+        "switching from search to another panel must not focus the desktop between them");
+    Check(!rules::ShouldRestoreDesktopFocusOnClose(true, true, false, false),
+        "a foreground switch during close must preserve the external focus");
+    Check(rules::ShouldRestoreDesktopFocusOnClose(true, true, false, true),
+        "explicit search dismissal may return keyboard control to the visible desktop");
+    Check(!rules::ShouldRestoreDesktopFocusOnClose(true, false, false, true),
+        "closing search on the native desktop must not activate the software desktop");
+
     Check(!rules::ShouldOpenFromDockSearchPress(true),
         "the Dock search press that dismissed Quick Navigation must not reopen it");
     Check(rules::ShouldOpenFromDockSearchPress(false),

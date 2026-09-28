@@ -533,7 +533,7 @@ void SystemPanelModel::Radio(std::string_view key,D2D1_RECT_F rect,bool compact)
     const auto* enabled=radio?radio->Find("enabled"):nullptr;
     const bool available=radio&&j::Flag(*radio,"available")&&enabled&&enabled->IsBoolean(),on=available&&enabled->boolean;
     const auto status=_LW(available?(on?"controlCenter.on":"controlCenter.off"):
-        snapshot&&snapshot->available&&snapshot->error.empty()&&radios.empty()?"controlCenter.noDevices":"controlCenter.unavailable");
+        snapshot&&snapshot->available&&snapshot->error.empty()&&radios.empty()?"controlCenter.noHardware":"controlCenter.unavailable");
     std::wstring label=_LW(wifi?"statusBar.wifiControls":"statusBar.bluetoothControls");
     if(wifi&&radio)for(const auto& n:Items(*radio,"networks"))if(j::Flag(n,"connected")){label=Wide(j::String(n,"ssid"));break;}
     if(!wifi)for(const auto& d:Items(v,"devices"))if(j::Flag(d,"connected")){label=Wide(j::String(d,"name"));break;}
@@ -546,6 +546,14 @@ void SystemPanelModel::Radio(std::string_view key,D2D1_RECT_F rect,bool compact)
     {const auto group=(wifi?"wifi.radio:":"bluetooth.radio:")+radioId;BindAction(id,group,radioId,{},group);}
     Command(id,[this,wifi,radioId,on]{Start(wifi?"network.wifi.setRadio":"bluetooth.setRadio",{{wifi?"interfaceId":"radioId",radioId},{"enabled",on?"0":"1"}});});
 }
+void SystemPanelModel::UnavailableControl(std::string_view key,std::wstring label,std::wstring glyph,std::wstring reason,float& y)
+{
+    const auto prefix=std::string(key);
+    Add(prefix+".icon",ui::Role::Text,Rect(16,y,32,44),L"",std::move(glyph));
+    Add(prefix+".label",ui::Role::Text,Rect(56,y,scene_.width-72,22),std::move(label)).fontSize=12;
+    auto& detail=Add(prefix+".unavailable",ui::Role::Text,Rect(56,y+22,scene_.width-72,22),std::move(reason));
+    detail.fontSize=12;detail.secondary=true;y+=52;
+}
 void SystemPanelModel::Volume(std::string_view direction,float& y)
 {
     const auto prefix="audio."+std::string(direction);const auto state=source_.current?source_.current(prefix+".volume"):std::nullopt;
@@ -553,6 +561,11 @@ void SystemPanelModel::Volume(std::string_view direction,float& y)
     const bool valid=state&&state->available&&!endpoint.empty()&&InRange(Number(state->value,"volume")),muted=valid&&j::Flag(state->value,"muted");
     const float volume=valid?static_cast<float>(Number(state->value,"volume")):0;
     const auto label=std::wstring(_LW(direction=="input"?"controlCenter.input":"statusBar.volume"));
+    if(!valid)
+    {
+        UnavailableControl(prefix,label,direction=="input"?L"\uE720":L"\uE992",_LW("controlCenter.unavailable"),y);
+        return;
+    }
     const float sliderRight=scene_.width-(page_.empty()?58.f:16.f),valueRight=sliderRight-10;
     Add(prefix+".label",ui::Role::Text,Rect(16,y,valueRight-76,22),label).fontSize=12;
     auto& number=Add(prefix+".value",ui::Role::Text,Rect(valueRight-52,y,52,22),valid?Percent(volume*100):L"—");number.fontSize=12;number.trailing=true;y+=22;
@@ -575,7 +588,23 @@ void SystemPanelModel::Overview(float& y)
     for(std::size_t i=0;i<radios.size();++i)
     {
         const auto& key=radios[i];const float left=16+static_cast<float>(i)*(radioWidth+8);
-        Radio(key,Rect(left,y,radioWidth-32,56),false);scene_.nodes.back().joinRight=true;
+        Radio(key,Rect(left,y,radioWidth-32,56),false);
+        auto& radio=scene_.nodes.back();
+        if(!radio.enabled)
+        {
+            const auto snapshot=source_.current?source_.current(key=="wifi"?"network.wifi":"bluetooth.devices"):std::nullopt;
+            const auto value=snapshot&&snapshot->available?snapshot->value:j::Object();
+            const auto& devices=Items(value,key=="wifi"?"interfaces":"radios");
+            const bool denied=(snapshot&&snapshot->error=="accessDenied")||std::any_of(devices.begin(),devices.end(),[](const auto& device){return j::String(device,"error")=="accessDenied";});
+            if(!denied)
+            {
+                // Missing hardware is an informational card, not a faded switch
+                // with a chevron that suggests another working control.
+                radio.bounds.right=left+radioWidth;radio.role=ui::Role::Card;radio.enabled=true;
+                actions_.erase(radio.id);continue;
+            }
+        }
+        radio.joinRight=true;
         auto& more=Add(key+".more",ui::Role::Button,Rect(left+radioWidth-32,y,32,56),L"",L"\uE76C");
         more.accent=scene_.Find("radio:"+key)->selected;more.joinLeft=true;more.tooltip=_LW(key=="bluetooth"?"statusBar.bluetoothControls":"statusBar.wifiControls");
         Command(key+".more",[this,key]{Select(key);});
@@ -587,6 +616,11 @@ void SystemPanelModel::Overview(float& y)
     const auto value=Current("system.display.brightness");const auto& monitors=Items(value,"monitors");
     auto m=std::find_if(monitors.begin(),monitors.end(),[](const auto& v){return j::Flag(v,"available")&&!j::String(v,"id").empty()&&InRange(Number(v,"brightness"),100);});
     const bool valid=m!=monitors.end();const auto id=valid?j::String(*m,"id"):std::string{};
+    if(!valid)
+        UnavailableControl("brightness",_LW("statusBar.brightnessControls"),L"\uE706",
+            _LW("controlCenter.brightnessUnavailable"),y);
+    else
+    {
     const float level=valid?static_cast<float>(j::Numeric(*m,"brightness")):0;
     Add("brightness.label",ui::Role::Text,Rect(16,y,scene_.width-144,22),_LW("statusBar.brightnessControls")).fontSize=12;
     auto& number=Add("brightness.value",ui::Role::Text,Rect(scene_.width-120,y,52,22),valid?Percent(level):L"—");number.fontSize=12;number.trailing=true;y+=22;
@@ -597,11 +631,15 @@ void SystemPanelModel::Overview(float& y)
     actions_[sliderId]=[this,id](auto v){const auto current=Current("system.display.brightness");const auto& displays=Items(current,"monitors");if(v&&std::any_of(displays.begin(),displays.end(),[&](const auto& d){return j::String(d,"id")==id&&j::Flag(d,"available");}))Start("system.display.setBrightness",{{"monitorId",id},{"brightness",std::to_string(*v*100)}});};
     Add("brightness.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.brightnessControls");Command("brightness.more",[this]{Select("brightness");});y+=48;
     }
-    Add("divider",ui::Role::Separator,Rect(16,y,scene_.width-32,1));y+=8;
+    }
+    if(settings_.powerControls||source_.nativeControls)
+    {Add("divider",ui::Role::Separator,Rect(16,y,scene_.width-32,1));y+=8;}
     if(settings_.powerControls)
     {
     const auto power=Current("system.power.plans");const auto* battery=power.Find("batteryPercent");
     const bool valid=j::Flag(power,"batteryPresent")&&battery&&battery->IsNumber()&&InRange(battery->number,100);
+    if(valid)
+    {
     const auto visual=ResolveStatusBarBatteryVisual(valid?battery->number:-1,j::Flag(power,"charging"),j::Flag(power,"onAC"));
     const wchar_t glyph=valid?(battery->number==100?L'\uE83F':static_cast<wchar_t>(0xE850+std::clamp(static_cast<int>(battery->number/10),0,9))):L'\uE996';
     auto& batteryNode=Add("battery",ui::Role::Text,Rect(16,y,scene_.width-128,36),valid?Percent(battery->number):L"—",std::wstring(1,glyph));
@@ -610,7 +648,8 @@ void SystemPanelModel::Overview(float& y)
     batteryNode.pluggedIn=visual.pluggedIn;
     batteryNode.positiveGlyph=visual.tone==StatusBarBatteryTone::FullyCharged;
     batteryNode.tooltip=batteryNode.accessibilityLabel=std::wstring(_LW(visual.label))+L" · "+batteryNode.text;
-    Add("power.more",ui::Role::Icon,Rect(scene_.width-100,y,36,36),L"",L"\uE7E8").tooltip=_LW("statusBar.powerControls");Command("power.more",[this]{Select("power");});
+    }
+    Add("power.more",ui::Role::Icon,Rect(scene_.width-(source_.nativeControls?100.f:52.f),y,36,36),L"",L"\uE7E8").tooltip=_LW("statusBar.powerControls");Command("power.more",[this]{Select("power");});
     }
     if(source_.nativeControls)
     {
@@ -647,6 +686,11 @@ void SystemPanelModel::Brightness(float& y)
     for(const auto& m:monitors)
     {
         const auto id=j::String(m,"id");const bool valid=!id.empty()&&j::Flag(m,"available")&&InRange(Number(m,"brightness"),100);
+        if(!valid)
+        {
+            UnavailableControl("display:"+id,Wide(j::String(m,"name")),L"\uE7F4",_LW("controlCenter.brightnessUnavailable"),y);
+            continue;
+        }
         Add("display:"+id,ui::Role::Text,Rect(16,y,scene_.width-102,30),Wide(j::String(m,"name")),L"\uE7F4");
         Add("display.value:"+id,ui::Role::Text,Rect(scene_.width-78,y,52,30),valid?Percent(Number(m,"brightness")):L"—").trailing=true;y+=32;
         const auto sliderId="display.level:"+id;
@@ -708,7 +752,7 @@ void SystemPanelModel::WifiPage(float& y)
     }
     if(networks.empty()&&!denied)
     {
-        const char* label=!snapshot||!snapshot->available||!snapshot->error.empty()?"controlCenter.unavailable":adapters.empty()?"controlCenter.noDevices":
+        const char* label=!snapshot||!snapshot->available||!snapshot->error.empty()?"controlCenter.unavailable":adapters.empty()?"controlCenter.noHardware":
             !available||!j::String(current,"error").empty()?"controlCenter.unavailable":powered?"controlCenter.noDevices":"controlCenter.off";
         Add("wifi.empty",ui::Role::Text,Rect(16,y,scene_.width-32,48),_LW(label));y+=56;
     }

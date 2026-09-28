@@ -263,7 +263,8 @@ struct StatusBar::Impl
                 if (part == 0) anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(32 * scale)));
                 else if (part == 1)
                 {
-                    anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(60 * scale)));
+                    const float end = item.controlGlyphs[2].empty() ? 64.f : 60.f;
+                    anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(end * scale)));
                     anchor.left += static_cast<LONG>(std::lround(32 * scale));
                 }
                 else anchor.left += static_cast<LONG>(std::lround(60 * scale));
@@ -1062,7 +1063,7 @@ struct StatusBar::Impl
                     if (item.key == "controlCenter")
                     {
                         const auto part = StatusBarControlPart((point.x - item.bounds.left) /
-                            (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale)));
+                            (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale)), !item.controlGlyphs[2].empty());
                         self->tooltipControlPart = part;
                     }
                     if (item.icon) hoveredKey = item.icon->key;
@@ -1091,7 +1092,7 @@ struct StatusBar::Impl
                     if (item.key == "controlCenter" && PtInRect(&item.bounds, point))
                     {
                         const float x = (point.x - item.bounds.left) / (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale));
-                        if (StatusBarControlPart(x) != 1) return 0;
+                        if (StatusBarControlPart(x, !item.controlGlyphs[2].empty()) != 1) return 0;
                         const bool canceledMenu = self->CancelTrayMenu();
                         const auto sample = self->owner.data->AudioOutputVolume();
                         if (!sample || !sample->available)

@@ -349,6 +349,12 @@ constexpr bool ShouldCloseOnDeactivate(
     return !activatedWithinInteractionSurface;
 }
 
+constexpr bool ShouldRestoreDesktopFocusOnClose(bool explicitDismissal,
+    bool desktopVisible, bool pendingHandoff, bool searchHasForeground)
+{
+    return explicitDismissal && desktopVisible && !pendingHandoff && searchHasForeground;
+}
+
 constexpr bool ShouldOpenFromDockSearchPress(
     bool dismissedBySamePress)
 {

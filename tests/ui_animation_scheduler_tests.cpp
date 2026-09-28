@@ -121,6 +121,45 @@ void TestStatusBarContinuationDispatch()
     UnregisterClassW(name, cls.hInstance);
 }
 
+void TestTaskViewTransition()
+{
+    using namespace snowdesktop;
+    TaskViewTransitionGuard transition;
+    Check(!transition.Busy(0) && transition.Begin(0, false), "first Task View request starts immediately");
+    int accepted = 1;
+    for (int time = 1; time < 350; ++time)
+    {
+        if (time == 50) transition.Observe(true, time);
+        if (transition.Begin(time, true)) ++accepted;
+    }
+    Check(accepted == 1, "a burst during native opening produces one toggle and queues no replay");
+    Check(!transition.Busy(350) && transition.Begin(350, true),
+        "the next explicit click can close Task View once its acknowledged transition settles");
+    transition.Observe(true, 400);
+    Check(transition.Busy(750), "a stale shown event cannot acknowledge a pending close");
+    transition.Observe(false, 800);
+    transition.Observe(false, 950);
+    Check(transition.Busy(979) && !transition.Busy(980),
+        "a late acknowledgement gets settling time but duplicate events cannot extend it");
+    Check(transition.Begin(1000, false), "a completed transition permits another explicit request");
+    Check(transition.Busy(2499) && !transition.Busy(2500),
+        "missing Shell callbacks on either Windows version cannot permanently block buttons");
+    Check(transition.Begin(2500, false), "timeout permits recovery without replaying a queued toggle");
+    transition.Observe(true, 3990);
+    Check(!transition.Busy(4000), "even a very late visibility event cannot extend the hard deadline");
+    Check(transition.Begin(4000, true), "new transitions start after timeout");
+    transition.Reset();
+    Check(!transition.Busy(4001) && transition.Begin(4001, false),
+        "Explorer restart or completely failed injection releases transition protection");
+    Check(IsTaskViewTransitionSensitiveAction(StatusBarAction::TaskView) &&
+        IsTaskViewTransitionSensitiveAction(StatusBarAction::Notifications) &&
+        IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemCalendar) &&
+        IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemControlCenter) &&
+        !IsTaskViewTransitionSensitiveAction(StatusBarAction::Dismiss) &&
+        !IsTaskViewTransitionSensitiveAction(StatusBarAction::Settings),
+        "other native panels cannot interrupt Task View's transition, while dismissal and settings remain available");
+}
+
 void TestStatusBarShellShortcuts()
 {
     using namespace snowdesktop;
@@ -273,6 +312,7 @@ void TestStatusBarShellShortcuts()
 int main()
 {
     TestStatusBarContinuationDispatch();
+    TestTaskViewTransition();
     TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&

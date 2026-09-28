@@ -183,6 +183,7 @@ private:
     void Command(std::string, std::function<void()>);
     void Header(std::wstring);
     void Overview(float&);
+    void UnavailableControl(std::string_view, std::wstring, std::wstring, std::wstring, float&);
     void Audio(float&);
     void Brightness(float&);
     void WifiPage(float&);

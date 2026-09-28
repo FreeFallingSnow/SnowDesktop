@@ -1998,6 +1998,8 @@
     "statusBar.organizeTray": "Organizar bandeja",
     "controlCenter.overview": "Voltar à visão geral",
     "controlCenter.loading": "Carregando status…",
+    "controlCenter.noHardware": "Nenhum dispositivo",
+    "controlCenter.brightnessUnavailable": "Não é possível ajustar o brilho desta tela",
     "controlCenter.unavailable": "Indisponível",
     "controlCenter.on": "Ativado",
     "controlCenter.off": "Desativado",

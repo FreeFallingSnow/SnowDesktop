@@ -1998,6 +1998,8 @@
     "statusBar.organizeTray": "Organize tray",
     "controlCenter.overview": "Back to overview",
     "controlCenter.loading": "Loading status…",
+    "controlCenter.noHardware": "No device detected",
+    "controlCenter.brightnessUnavailable": "Brightness is unavailable for this display",
     "controlCenter.unavailable": "Unavailable",
     "controlCenter.on": "On",
     "controlCenter.off": "Off",

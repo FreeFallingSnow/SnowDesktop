@@ -867,7 +867,12 @@ void CheckControlUnavailableStates()
             return snapshot;
         };
         unsigned starts=0;source.start=[&](system_control::Request){++starts;return std::uint64_t{1};};
-        SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);model.Select("wifi");
+        SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
+        Require(bool(model.View().Find("wifi.more"))==(mode==3||mode==4),
+            "missing Wi-Fi kept an empty detail entry, or permission recovery lost its entry");
+        if(mode<3)Require(!Node(model.View(),"radio:wifi").Interactive()&&!model.Invoke("radio:wifi"),
+            "unavailable Wi-Fi card remained an actionable switch");
+        model.Select("wifi");
         const auto& radio=Node(model.View(),"radio:wifi");
         Require(starts==0&&!Node(model.View(),"wifi.scan").enabled&&radio.enabled==(mode==3),
             "unknown/missing/off Wi-Fi state scanned or advertised a false radio capability");
@@ -875,11 +880,37 @@ void CheckControlUnavailableStates()
             radio.tooltip.find(_LW("controlCenter.off"))==std::wstring::npos,"permission failure was rendered as a switched-off radio");
         else
         {
-            const auto expected=_LW(mode<2?"controlCenter.unavailable":mode==2?"controlCenter.noDevices":"controlCenter.off");
+            const auto expected=_LW(mode<2?"controlCenter.unavailable":mode==2?"controlCenter.noHardware":"controlCenter.off");
             Require(Node(model.View(),"wifi.empty").text==expected&&radio.tooltip.find(expected)!=std::wstring::npos,
                 "Wi-Fi detail conflated unknown sampling, missing hardware and a known off radio");
         }
     }
+    // A desktop PC without brightness/battery support must not advertise fake
+    // adjustment controls. Win10 has no native Quick Settings destination.
+    auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+    auto source=FixtureSource(state);const auto read=source.current;
+    source.nativeControls={};bool supported=false;
+    source.current=[&](std::string_view topic) {
+        auto snapshot=read(topic);if(!snapshot||supported)return snapshot;
+        if(topic=="system.power.plans")snapshot->value.object["batteryPresent"]=j::Boolean(false);
+        if(topic=="system.display.brightness")for(auto& monitor:snapshot->value.object["monitors"].array)
+            monitor.object["available"]=j::Boolean(false);
+        if(topic=="audio.output.volume")snapshot->available=false;
+        return snapshot;
+    };
+    SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
+    Require(!model.View().Find("battery")&&!model.View().Find("system.settings")&&
+        !model.View().Find("brightness.more")&&!model.View().Find("brightness.value")&&
+        model.View().Find("brightness.unavailable")&&model.View().Find("audio.output.unavailable")&&
+        std::none_of(model.View().nodes.begin(),model.View().nodes.end(),[](const auto& n){return n.role==ui::Role::Slider;}),
+        "unsupported desktop controls retained bogus battery, sliders or native-panel action");
+    const auto& power=Node(model.View(),"power.more");
+    Require(power.bounds.right==model.View().width-16,
+        "Win10 footer reserved an empty native-panel slot");
+    supported=true;model.Refresh();
+    Require(model.View().Find("battery")&&model.View().Find("brightness.more")&&
+        !model.View().Find("brightness.unavailable")&&!model.View().Find("audio.output.unavailable"),
+        "recovering hardware did not restore real controls");
 }
 
 void CheckControlPowerSections()
@@ -1789,9 +1820,8 @@ void CheckBatteryStates(ID2D1Device* device, IDWriteFactory* text,
     Require(!Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph&&Node(model.View(),"battery").pluggedIn&&limited!=full,"AC charge limit was mislabeled as full/charging");
     onAC=false;const auto unplugged=capture();
     Require(!Node(model.View(),"battery").pluggedIn&&unplugged!=limited,"unplugging at the same percentage left the power mark visible");
-    known=false;const auto unknown=capture();Require(Node(model.View(),"battery").text==L"—"&&Node(model.View(),"battery").value<0&&
-        !Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph&&green(unknown)==0,
-        "unknown battery rendered a confirmed level or state");
+    known=false;model.Refresh();Require(!model.View().Find("battery"),
+        "absent battery left a placeholder in the control center");
 }
 
 void CheckMediaPending(ID2D1Device* device,IDWriteFactory* text,

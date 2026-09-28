@@ -118,6 +118,13 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     using Action = snowdesktop::StatusBarAction;
     if (action == Action::SystemControlCenter && !snowdesktop::StatusBarSupportsSystemQuickSettings())
         action = Action::ControlCenter;
+    if (snowdesktop::IsTaskViewTransitionSensitiveAction(action) &&
+        statusBarTaskViewTransition_.Busy(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()))
+    {
+        TraceStatusBarShellActivation(action, *statusBarActivationGeneration_, L"ignored",
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), L"task-view-transition");
+        return;
+    }
     uiAnimationScheduler_.Cancel(statusBarActivationToken_);
     statusBarActivationToken_ = 0;
     const auto generation = ++*statusBarActivationGeneration_;
@@ -329,10 +336,15 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         // Windows place its own surface; never move or reparent its window.
         statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, chord, {
             [](int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; },
-            [action, generation, started = hold->shortcutStartedMilliseconds](UINT count, INPUT* input, int size) {
+            [this, action, generation, started = hold->shortcutStartedMilliseconds](UINT count, INPUT* input, int size) {
                 TraceStatusBarShellActivation(action, generation, L"send-input-begin", started);
                 const double before = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                const bool taskViewChord = action == Action::TaskView && count == 4 &&
+                    !(input[0].ki.dwFlags & KEYEVENTF_KEYUP);
+                if (taskViewChord && !statusBarTaskViewTransition_.Begin(before, systemTaskbarTaskViewActive_))
+                    return 0u;
                 const UINT sent = SendInput(count, input, size);
+                if (taskViewChord && sent == 0) statusBarTaskViewTransition_.Reset();
                 const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - before;
                 TraceStatusBarShellActivation(action, generation, L"send-input", started,
                     sent == count ? L"accepted" : L"incomplete", elapsed, count, sent);

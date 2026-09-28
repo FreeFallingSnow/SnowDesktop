@@ -1998,6 +1998,8 @@
     "statusBar.organizeTray": "트레이 정리",
     "controlCenter.overview": "개요로 돌아가기",
     "controlCenter.loading": "상태를 가져오는 중…",
+    "controlCenter.noHardware": "감지된 장치 없음",
+    "controlCenter.brightnessUnavailable": "현재 이 화면의 밝기를 조절할 수 없습니다",
     "controlCenter.unavailable": "사용할 수 없음",
     "controlCenter.on": "켜짐",
     "controlCenter.off": "꺼짐",
