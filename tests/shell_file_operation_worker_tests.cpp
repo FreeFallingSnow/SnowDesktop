@@ -71,18 +71,24 @@ void TestFileFailureFeedback()
     const bool succeeded = snowdesktop::ShellFileOperationWorker::Execute(request);
     auto skipped = Microsoft::WRL::Make<snowdesktop::DropFileProgress>();
     skipped->Record(COPYENGINE_S_USER_IGNORED, nullptr, nullptr);
-    Expect(skipped->failure == HRESULT_FROM_WIN32(ERROR_CANCELLED) && !skipped->completed,
-        "the Shell user's Skip result is cancellation, not an unexplained copy failure");
+    const bool skipIsCancellation = skipped->failure == HRESULT_FROM_WIN32(ERROR_CANCELLED) &&
+        !skipped->completed;
     snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"skipped",
         static_cast<DWORD>(skipped->failure)});
     snowdesktop::operation_feedback::SetReporter({});
-    Expect(!succeeded && failures.size() == 1 && failures.front().error == ERROR_FILE_NOT_FOUND &&
-            failures.front().detail.find(missing.wstring()) != std::wstring::npos,
-        "a real file-copy failure reports its target and Win32 error once");
-    Expect(ReadContents(source) == "source preserved" && ReadContents(copied) == "source preserved",
-        "partial failure preserves the successful copy and original source");
-    std::error_code ignored;
-    std::filesystem::remove_all(root, ignored);
+    const bool reported = !succeeded && failures.size() == 1 &&
+        failures.front().error == ERROR_FILE_NOT_FOUND &&
+        failures.front().detail.find(missing.wstring()) != std::wstring::npos;
+    const bool preserved = ReadContents(source) == "source preserved" &&
+        ReadContents(copied) == "source preserved";
+    std::error_code cleanupError;
+    std::filesystem::remove_all(root, cleanupError);
+    // Expect exits on failure: remove isolated files before evaluating either
+    // a positive run or the deliberate missing-notification negative control.
+    Expect(reported, "a real file-copy failure reports its target and Win32 error once");
+    Expect(skipIsCancellation, "the Shell user's Skip result is cancellation, not an unexplained copy failure");
+    Expect(preserved, "partial failure preserves the successful copy and original source");
+    Expect(!cleanupError, "local feedback fixtures are removed");
 }
 
 // DND-04: real STA worker -> per-item outputs -> production content cleanup.
