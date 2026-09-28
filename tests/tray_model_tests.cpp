@@ -3,6 +3,7 @@
 #include "tray_menu_placement.h"
 #include "status_bar_notification.h"
 #include "status_bar_input_method.h"
+#include "status_bar_input_method_native.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -16,6 +17,12 @@ int RunTrayModelTests()
     };
     {
         namespace input = snowdesktop::status_bar_input_method;
+        check(input::native_menu::MatchesModeButton(L"Input indicator English mode", L"Input indicator") &&
+            input::native_menu::MatchesModeButton(L"Input indicator", L"Input indicator") &&
+            !input::native_menu::MatchesModeButton(L"Input indicator settings", L"") &&
+            !input::native_menu::MatchesModeButton(L"Input indicators", L"Input indicator") &&
+            !input::native_menu::MatchesModeButton(L"Volume English mode", L"Input indicator"),
+            "native input lookup rejects other generic tray buttons and an unavailable OS resource");
         // Foreground language and IME conversion are distinct. Query failures
         // must not turn a Chinese keyboard into a false Chinese-mode indicator.
         check(input::detail::Label(0x0804, L"ZH", true, IME_CMODE_NATIVE) == L"中" &&

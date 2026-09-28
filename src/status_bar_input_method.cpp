@@ -1,10 +1,13 @@
 #include "status_bar_input_method.h"
 #include "modern_menu.h"
+#include "status_bar_input_method_native.h"
+#include "diagnostic_log.h"
 #include <wrl/client.h>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 namespace snowdesktop::status_bar_input_method
 {
@@ -118,16 +121,40 @@ struct Service::Impl
     Snapshot snapshot;
     detail::DisplayCache display;
     std::shared_ptr<NativeState> native;
+    std::wstring nativeModeName = native_menu::ModeButtonName();
+    struct ContextRequest { ULONGLONG deadline; Snapshot target; };
+    std::optional<ContextRequest> contextRequest;
     // Declared last so shutdown joins before its state/mutex are destroyed.
     std::jthread worker{[this](std::stop_token stop) {
+        const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         while (!stop.stop_requested())
         {
+            std::optional<ContextRequest> request;
+            {
+                std::lock_guard lock(mutex);
+                request = std::exchange(contextRequest, {});
+            }
+            if (request && !stop.stop_requested())
+            {
+                HRESULT hr = apartment;
+                if (SUCCEEDED(hr))
+                {
+                    try { hr = native_menu::ShowContextMenu(nativeModeName, request->deadline, stop,
+                        request->target.foreground, request->target.thread, request->target.layout); }
+                    catch (...) { hr = E_UNEXPECTED; }
+                }
+                wchar_t message[128]{};
+                swprintf_s(message, L"StatusBar input method native context provider hr=0x%08lX",
+                    static_cast<unsigned long>(hr));
+                WriteDiagnosticLogEntry(message);
+            }
             Snapshot next;
             try { next = Read(); } catch (...) { /* Unavailable, never stale. */ }
             std::unique_lock lock(mutex);
             snapshot = std::move(next);
-            wake.wait_for(lock, stop, std::chrono::milliseconds(200), [] { return false; });
+            wake.wait_for(lock, stop, std::chrono::milliseconds(200), [this] { return contextRequest.has_value(); });
         }
+        if (SUCCEEDED(apartment)) CoUninitialize();
     }};
 };
 Service::Service() : impl_(std::make_unique<Impl>()) {}
@@ -142,6 +169,16 @@ Snapshot Service::Current() const
 HRESULT Service::Show(RECT anchor, bool context)
 {
     if (IsRectEmpty(&anchor)) return E_INVALIDARG;
+    if (context && !impl_->nativeModeName.empty() && native_menu::HasModernTaskbar())
+    {
+        // New Windows shell IMEs require the native button's XAML anchor. The
+        // legacy coordinate call queues S_OK but does not open their menu.
+        // Keep Win10/classic-shell and mode-toggle behavior on the common ABI.
+        std::lock_guard lock(impl_->mutex);
+        impl_->contextRequest = Impl::ContextRequest{GetTickCount64() + 1500, Target()};
+        impl_->wake.notify_one();
+        return S_OK; // Queued, not a claim that the popup has been displayed.
+    }
     if (!impl_->native) impl_->native = std::make_shared<NativeState>();
     // Retain native state for the whole call. No Service/Impl access may follow
     // a foreign COM call: a nested message can disable or rebuild the bar.
