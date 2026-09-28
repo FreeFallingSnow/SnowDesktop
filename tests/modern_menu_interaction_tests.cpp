@@ -604,6 +604,8 @@ void CheckPreviewCompanionOrder(HWND owner)
         constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE |
             SWP_NOACTIVATE | SWP_NOOWNERZORDER;
         HWND child = nullptr;
+        HWND activeBeforePreview = nullptr;
+        HWND focusBeforePreview = nullptr;
         int phase = -1;
         gDriveMode = DriveMode::Script;
         gInputPosted = false;
@@ -616,6 +618,10 @@ void CheckPreviewCompanionOrder(HWND owner)
                 reinterpret_cast<LPARAM>(&menus));
             child = menus.child;
             Expect(child != nullptr, "preview fixture opens beside a real cascade");
+            // The isolated desktop is intentionally never made the user's
+            // input desktop, so it need not own the global foreground HWND.
+            activeBeforePreview = GetActiveWindow();
+            focusBeforePreview = GetFocus();
             ShowWindow(companion, SW_SHOWNOACTIVATE);
             SetWindowPos(companion, child, 0, 0, 0, 0, flags);
             Expect(!IsWindowAbove(companion, child),
@@ -629,7 +635,8 @@ void CheckPreviewCompanionOrder(HWND owner)
             {
                 Expect(IsWindowAbove(companion, child) && IsWindowAbove(child, root),
                     "preview recovers above the complete menu cascade before presentation");
-                Expect(GetForegroundWindow() == root && GetFocus() == root,
+                Expect(GetActiveWindow() == activeBeforePreview &&
+                    GetFocus() == focusBeforePreview && GetFocus() != companion,
                     "restoring the preview never steals menu activation or keyboard focus");
                 Expect(((GetWindowLongPtrW(companion, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) == topmost,
                     "preview follows the menu's topmost band");
@@ -760,6 +767,7 @@ int wmain()
     CheckCascadeWorkArea(owner);
     CheckPreviewCompanionOrder(owner);
     gDriveMode = DriveMode::Cascade;
+    gInputPosted = false;
 
     using snowdesktop::modern_menu::Item;
     const std::vector<Item> items{
