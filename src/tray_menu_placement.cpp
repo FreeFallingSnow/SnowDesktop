@@ -173,6 +173,7 @@ struct MenuPlacementGuard::Impl
     MenuPopupBindings popups{};
     HWND target = nullptr;
     DWORD targetThread = 0;
+    unsigned diagnosticSamples = 0;
     HWINEVENTHOOK hook = nullptr;
     ULONGLONG expires = 0;
     static thread_local Impl* active;
@@ -248,6 +249,19 @@ struct MenuPlacementGuard::Impl
         if (!GetWindowRect(window, &popup.bounds)) return;
         const auto position = active->session.Observe(popup, GetTickCount());
         active->popups = active->session.Bindings();
+        if (event != EVENT_OBJECT_HIDE && active->diagnosticSamples++ < 8)
+        {
+            wchar_t message[768]{};
+            swprintf_s(message, L"Tray menu observation pid=%lu hwnd=%p event=%lu age=%lu eventAge=%ld thread=%lu callbackThread=%lu style=0x%llX ex=0x%llX visible=%u related=%u strong=%u gui=%u active=%p foreground=%p rect=(%ld,%ld,%ld,%ld) correction=%u",
+                popup.process, window, event, GetTickCount() - active->request.started,
+                static_cast<LONG>(popup.eventTime - active->request.started), popup.thread, popup.notificationThread,
+                static_cast<unsigned long long>(popup.style), static_cast<unsigned long long>(popup.extendedStyle),
+                popup.visible ? 1u : 0u, popup.targetRelated ? 1u : 0u, popup.strongTargetRelated ? 1u : 0u,
+                haveGuiInfo ? 1u : 0u, reinterpret_cast<HWND>(popup.activeWindow),
+                reinterpret_cast<HWND>(popup.foregroundWindow), popup.bounds.left, popup.bounds.top,
+                popup.bounds.right, popup.bounds.bottom, position ? 1u : 0u);
+            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+        }
         if (!position) return;
         // Recheck process/style at the mutation boundary. Never activate,
         // resize, change z-order, or move an unrelated/reused main HWND.
@@ -279,6 +293,7 @@ struct MenuPlacementGuard::Impl
                 { std::lock_guard lock(mutex); next = request; serial = requested; }
                 Unhook();
                 target = next.target;
+                diagnosticSamples = 0;
                 DWORD process = 0; targetThread = GetWindowThreadProcessId(next.target, &process);
                 if (next.target && process && process == next.process &&
                     static_cast<DWORD>(GetTickCount() - next.started) < MenuPlacementSession::kLifetimeMs)
@@ -290,6 +305,11 @@ struct MenuPlacementGuard::Impl
                         hook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE, nullptr, Event,
                             process, 0, WINEVENT_OUTOFCONTEXT);
                         if (!hook) session.Cancel();
+                        wchar_t message[384]{};
+                        swprintf_s(message, L"Tray menu session pid=%lu target=%p thread=%lu started=%lu hook=%u context=%u rect=(%ld,%ld,%ld,%ld)",
+                            process, target, targetThread, next.started, hook ? 1u : 0u, next.contextGesture ? 1u : 0u,
+                            next.bounds.left, next.bounds.top, next.bounds.right, next.bounds.bottom);
+                        WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
                         const auto elapsed = static_cast<DWORD>(GetTickCount() - next.started);
                         expires = GetTickCount64() + (elapsed < MenuPlacementSession::kLifetimeMs ?
                             MenuPlacementSession::kLifetimeMs - elapsed : 0);
@@ -331,6 +351,13 @@ void MenuPlacementGuard::Cancel()
 {
     std::lock_guard lock(impl_->mutex);
     if (!impl_->worker.joinable()) return;
+    if (impl_->request.target)
+    {
+        wchar_t message[192]{};
+        swprintf_s(message, L"Tray menu session canceled pid=%lu age=%lu", impl_->request.process,
+            GetTickCount() - impl_->request.started);
+        WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+    }
     impl_->request = {}; impl_->popups = {}; ++impl_->requested; SetEvent(impl_->wake);
 }
 MenuPopupBindings MenuPlacementGuard::Popups(HWND target) const
