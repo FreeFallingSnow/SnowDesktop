@@ -104,7 +104,9 @@ void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
         snowdesktop::modern_menu::DismissActive();
     if ((!monitor || monitor == statusBarQuickNavigationMonitor_) &&
         quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar)
-        CloseQuickNavigation();
+        // Cancellation also runs from WA_INACTIVE. It must not turn into an
+        // explicit dismissal and reactivate the desktop before that returns.
+        CloseQuickNavigation(false);
     if (systemPanel_)
     {
         if (!immediate && (!monitor || systemPanel_->IsOpenForMonitor(monitor))) systemPanel_->Hide();
