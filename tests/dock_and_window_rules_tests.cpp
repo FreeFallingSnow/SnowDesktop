@@ -1260,6 +1260,17 @@ int main(int argc, char** argv)
     CheckStatusBarInteraction();
     CheckStatusBarFullscreenDockSession();
     {
+        snowdesktop::NativePointerHoverState pointer;
+        Check(pointer.Observe({40, 80}), "initial physical pointer enables panel hover");
+        pointer.Suppress();
+        Check(!pointer.Observe({40, 80}) && !pointer.Enabled(),
+            "stationary refresh and synthetic mouse moves cannot revive a keyboard-dismissed tooltip");
+        Check(pointer.Observe({41, 80}) && pointer.Enabled(),
+            "physical pointer movement restores hover after keyboard navigation");
+        pointer.Suppress();pointer.Resume();
+        Check(pointer.Observe({41, 80}), "a wheel or pointer press resumes hover without requiring movement");
+    }
+    {
         snowdesktop::StatusBarTooltipState tooltip;
         Check(tooltip.Enter("cpu", L"CPU 9%", {}, 100, 400), "entering a different item installs its tooltip");
         Check(!tooltip.Enter("cpu", L"CPU 10%", {}, 300, 400) && tooltip.text == L"CPU 10%" && tooltip.readyAt == 500,

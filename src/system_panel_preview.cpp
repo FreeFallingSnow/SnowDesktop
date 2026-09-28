@@ -331,6 +331,20 @@ void CheckLayout(const ui::Scene& scene)
     }
 }
 
+void CheckTooltipViewport()
+{
+    ui::Scene scene;scene.width=200;scene.height=120;
+    ui::Node row;row.bounds={-20,60,240,140};row.clip={12,75,180,108};
+    const auto clipped=scene.VisibleBounds(row);
+    Require(clipped.left==12&&clipped.top==75&&clipped.right==180&&clipped.bottom==108,
+        "a partially scrolled row anchors its tooltip outside the visible part of the row");
+    row.clip={};const auto edge=scene.VisibleBounds(row);
+    Require(edge.left==0&&edge.top==60&&edge.right==200&&edge.bottom==120,
+        "a tooltip anchor extends beyond the panel viewport");
+    row.bounds={12,140,180,176};
+    Require(!HasArea(scene.VisibleBounds(row)),"an offscreen row retained a tooltip anchor");
+}
+
 void CheckControls(SystemPanelModel& model, const std::shared_ptr<PreviewState>& state, std::string_view preset)
 {
     const bool media = !state->unavailable && !state->emptyMedia;
@@ -1985,6 +1999,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         const bool resources = request.component == "resource-panel", calendarPanel = request.component == "calendar-panel";
         Require(controls || trayPanel || resources || calendarPanel, "unsupported native system panel preview");
         Require(device && text && background, "system panel preview requires initialized native graphics");
+        CheckTooltipViewport();
         Require(request.appearance == "light" || request.appearance == "dark",
             "native panel offline previews support light and dark; live compositor blur is not captured");
         const float scale = static_cast<float>(request.dpi)/96.f;

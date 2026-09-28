@@ -53,6 +53,7 @@ struct Scene
     std::vector<Node> nodes;
     const Node* Find(std::string_view id) const;
     const Node* Hit(D2D1_POINT_2F point, bool interactiveOnly = true) const;
+    D2D1_RECT_F VisibleBounds(const Node&) const;
     bool SameContent(const Scene&) const;
 };
 struct InputResult

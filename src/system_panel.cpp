@@ -58,6 +58,7 @@ struct SystemPanel::Impl
     bool paintDirty=true;
     bool controlInputRefreshPending=false;
     bool pointerRefreshPending=false;
+    NativePointerHoverState pointerHover;
     bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
     bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;HWND retainedAbove=nullptr;
     std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;tray::MenuRetentionSession context;WPARAM closeGeneration=0;
@@ -72,6 +73,7 @@ struct SystemPanel::Impl
             struct Erase{std::wstring& value;bool secret;~Erase(){if(secret&&!value.empty())SecureZeroMemory(value.data(),value.size()*sizeof(wchar_t));}} erase{value,id.starts_with("control.password:")};
             if(life->alive&&model&&!closing&&!modal)
             {
+                StopPointerHover();
                 const bool controlInput=model->SetControlInput(id,value);
                 if(controlInput)
                 {
@@ -82,7 +84,7 @@ struct SystemPanel::Impl
             }
         },[this,life=lifetime](const auto& id,UINT key,bool shift,bool control){if(life->alive){if(id.starts_with("control."))ControlKey(id,key,shift);else CalendarKey(id,key,shift,control);}},
         [this,life=lifetime]{if(life->alive)QueuePointerRefresh();});
-        accessibility=std::make_unique<WidgetAccessibilityProviderHost>([this]{return Accessible();},[this](const auto&,const auto& id){if(!showing||closing||modal||slide.IsAnimating()||!model||!input.Focus(id))return false;if(model->Reveal(id)&&!Arrange())return false;if(!calendarInputs||!calendarInputs->Focus(id))SetFocus(window);Paint();if(accessibility)accessibility->RefreshEvents();return true;},[this](const auto& request){return AccessibleAction(request);});
+        accessibility=std::make_unique<WidgetAccessibilityProviderHost>([this]{return Accessible();},[this](const auto&,const auto& id){if(!showing||closing||modal||slide.IsAnimating()||!model||!input.Focus(id))return false;StopPointerHover();if(model->Reveal(id)&&!Arrange())return false;if(!calendarInputs||!calendarInputs->Focus(id))SetFocus(window);Paint();if(accessibility)accessibility->RefreshEvents();return true;},[this](const auto& request){return AccessibleAction(request);});
         accessibility->AttachWindow(window);
         return SUCCEEDED(composition->CreateTargetForHwnd(window,FALSE,&target))&&SUCCEEDED(composition->CreateVisual(&visual))&&SUCCEEDED(target->SetRoot(visual.Get()));
     }
@@ -112,8 +114,11 @@ struct SystemPanel::Impl
     }
     void Tip(const ui::Node* node)
     {
-        if(!node||!current||closing||modal){tooltip.Hide();return;}
-        POINT origin{};ClientToScreen(window,&origin);const auto& b=node->bounds;
+        if(!node||!current||!model||!showing||closing||modal||slide.IsAnimating()||context.process||!pointerHover.Enabled())
+        {tooltip.Hide();return;}
+        const auto b=model->View().VisibleBounds(*node);
+        if(b.right<=b.left||b.bottom<=b.top){tooltip.Hide();return;}
+        POINT origin{};ClientToScreen(window,&origin);
         RECT anchor{origin.x+static_cast<LONG>(b.left*scale),origin.y+static_cast<LONG>(b.top*scale),origin.x+static_cast<LONG>(b.right*scale),origin.y+static_cast<LONG>(b.bottom*scale)};
         tooltip.SetTarget(node->id,node->tooltip,anchor,current->settings.position==DockPosition::Bottom?NativeTooltipPlacement::Above:NativeTooltipPlacement::Below);
     }
@@ -121,17 +126,30 @@ struct SystemPanel::Impl
     {
         if(window&&!pointerRefreshPending&&PostMessageW(window,kPointerChanged,0,0))pointerRefreshPending=true;
     }
-    void RefreshPointer()
+    void ClearPointerHover()
+    {
+        tooltip.Hide();
+        if(!hovered.empty()){hovered.clear();paintDirty=true;}
+    }
+    void StopPointerHover()
+    {
+        POINT point{};if(GetCursorPos(&point))pointerHover.Observe(point);
+        pointerHover.Suppress();ClearPointerHover();
+    }
+    void RefreshPointer(bool repaint=true)
     {
         const ui::Node* node=nullptr;POINT point{};
-        if(showing&&!closing&&!modal&&!slide.IsAnimating()&&model&&input.Pressed().empty()&&!scrollbarDragging&&GetCursorPos(&point))
+        const bool located=GetCursorPos(&point)!=FALSE;
+        if(located)pointerHover.Observe(point);
+        if(showing&&!closing&&!modal&&!slide.IsAnimating()&&!context.process&&pointerHover.Enabled()&&model&&input.Pressed().empty()&&!scrollbarDragging&&located)
         {
             const auto pointerWindow=WindowFromPoint(point);
             if(pointerWindow==window||(calendarInputs&&calendarInputs->Contains(pointerWindow)))
                 if(ScreenToClient(window,&point)&&ContainsClientPoint(point))node=model->View().Hit({static_cast<float>(point.x)/scale,static_cast<float>(point.y)/scale},false);
         }
         Tip(node);const auto id=node?node->id:std::string{};
-        if(hovered!=id){hovered=id;if(showing)Paint();}
+        if(hovered!=id){hovered=id;paintDirty=true;}
+        if(repaint&&paintDirty&&showing)Paint();
     }
     ui::Palette Palette()const
     {
@@ -186,6 +204,7 @@ struct SystemPanel::Impl
     bool AccessibleAction(const LuaWidgetAccessibilityActionRequest& request)
     {
         if(!showing||closing||modal||slide.IsAnimating()||!model||request.widgetId!=L"system-panel")return false;
+        StopPointerHover();
         if(request.nodeKey=="panel.scroll"&&request.kind==LuaWidgetAccessibilityActionKind::SetScrollOffset)
         {if(!std::isfinite(request.numericValue))return false;model->Scroll(static_cast<float>(request.numericValue)-model->ScrollOffset());Arrange();Paint();if(accessibility)accessibility->RefreshEvents();return true;}
         const auto* node=model->View().Find(request.nodeKey);if(!node||!node->Interactive())return false;
@@ -212,7 +231,7 @@ struct SystemPanel::Impl
         auto source=LiveSystemPanelSource(r.data);source.calendar=calendar;source.tray=[service=r.tray]{return service?service->Current():tray::Snapshot{};};
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
-        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};scrollbarDragging=false;paintDirty=true;
+        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;paintDirty=true;
         model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}
         // HideNow clears these rectangles. Reopening the same layout need not
         // move or reshape the HWND, so Arrange alone may not publish them.
@@ -262,7 +281,9 @@ struct SystemPanel::Impl
         }
         else if(!Glass())backdrop.Reset();if(moved||shape)Pose();if(moved||shape||contentChanged)PublishGeometry();
         if(calendarInputs){const bool hadInputFocus=calendarInputs->Contains(GetFocus());calendarInputs->Sync(InputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));calendarInputs->Pose(SlideOffset(),showing&&!closing&&!modal&&!slide.IsAnimating());if(hadInputFocus&&!GetFocus()&&showing&&!closing&&!modal)SetFocus(window);}
-        if(!hovered.empty())Tip(scene.Find(hovered));
+        // Layout/scrolling can put a different node under a stationary mouse.
+        // Resolve it now, without painting recursively from inside Arrange.
+        RefreshPointer(false);
         if(accessibility&&(contentChanged||moved||shape))accessibility->RefreshEvents();
         return true;
     }
@@ -334,7 +355,7 @@ struct SystemPanel::Impl
         if(showing||closing||modal){pending=std::move(request);if(!closing)Animate(false);}else{pending.reset();++closeGeneration;Open(std::move(request));}
     }
     void ArmContext(const std::string& key)
-    {context.Reset();if(current&&current->tray)for(const auto& i:current->tray->Current().icons)if(i.key==key){context.Arm(reinterpret_cast<HWND>(i.identity.window),i.identity.process,window,current->owner);if(context.process)SetTimer(window,kTrayMenuTimer,50,nullptr);break;}}
+    {ClearPointerHover();context.Reset();if(current&&current->tray)for(const auto& i:current->tray->Current().icons)if(i.key==key){context.Arm(reinterpret_cast<HWND>(i.identity.window),i.identity.process,window,current->owner);if(context.process)SetTimer(window,kTrayMenuTimer,50,nullptr);break;}}
     void SyncTrayMenuLayer(bool force=false)
     {
         HWND above=nullptr;
@@ -359,7 +380,7 @@ struct SystemPanel::Impl
     void ControlKey(const std::string& id,UINT key,bool shift)
     {
         if(!showing||closing||modal||slide.IsAnimating()||!model)return;
-        input.Focus(id,true);tooltip.Hide();
+        StopPointerHover();input.Focus(id,true);
         if(key==VK_ESCAPE)model->ControlBack();
         else if(key==VK_TAB)model->HandleKey(input,key,shift);
         // Enter in an input moves to the safe cancel action. Authorizing a
@@ -378,7 +399,7 @@ struct SystemPanel::Impl
     {
         (void)control;
         if(!showing||closing||modal||slide.IsAnimating()||!model||!model->CalendarEditing())return;
-        const auto life=lifetime;auto active=model;input.Focus(id,true);tooltip.Hide();
+        StopPointerHover();const auto life=lifetime;auto active=model;input.Focus(id,true);
         if(key==VK_ESCAPE)active->CalendarBack();
         else if(key==VK_RETURN)active->Invoke(active->View().Find("calendar.edit.confirmDelete")?"calendar.edit.cancelDelete":"calendar.edit.save");
         else if(key==VK_TAB)active->HandleKey(input,key,shift);
@@ -405,7 +426,7 @@ struct SystemPanel::Impl
             options.eventPump.scheduledWorkHandle=scheduler->WaitHandle();
             options.eventPump.dispatchScheduledWork=[this,life]{if(life->alive&&scheduler)scheduler->DispatchDue();};
         }
-        tooltip.Hide();input.Cancel();modal=calendarMenu=true;
+        StopPointerHover();input.Cancel();modal=calendarMenu=true;
         modern_menu::Result result;
         try{result=modern_menu::Show(items,options);}
         catch(...){if(life->alive)modal=calendarMenu=false;throw;}
@@ -504,8 +525,9 @@ struct SystemPanel::Impl
             if(self->slide.IsAnimating()&&((m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_KEYDOWN))return 0;
             if(m==WM_LBUTTONDOWN||m==WM_RBUTTONDOWN)
             {
+                self->pointerHover.Resume();
                 const bool focusChanged=self->input.PointerInput();
-                self->context.Reset();KillTimer(w,kTrayMenuTimer);self->SyncTrayMenuLayer();self->tooltip.Hide();const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};
+                self->context.Reset();KillTimer(w,kTrayMenuTimer);self->SyncTrayMenuLayer();self->ClearPointerHover();const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};
                 const auto axis=self->model->ScrollbarGeometry();const auto viewport=self->model->ScrollViewport();
                 if(m==WM_LBUTTONDOWN&&axis.CanDrag()&&p.x>=self->model->View().width-12&&p.x<self->model->View().width&&p.y>=viewport.top&&p.y<viewport.bottom)
                 {
@@ -523,7 +545,7 @@ struct SystemPanel::Impl
                 const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);
                 if(self->scrollbarDragging){self->model->DragScrollbar(self->scrollbarOffsetStart,static_cast<int>(std::lround(p.y))-self->scrollbarPointerStart);self->Arrange();self->Paint();return 0;}
                 if(!self->input.Pressed().empty()){self->Result(self->input.Move(self->model->View(),p),screen);if(life->alive&&self->input.Dragging()){self->MoveDragFeedback(screen);self->Tip(nullptr);SetCursor(LoadCursorW(nullptr,IDC_SIZEALL));self->Paint();}return 0;}
-                const auto* node=self->model->View().Hit(p,false);self->Tip(node);const auto id=node?node->id:std::string{};if(id!=self->hovered){self->hovered=id;self->Paint();}TRACKMOUSEEVENT t{sizeof(t),TME_LEAVE,w,0};TrackMouseEvent(&t);return 0;
+                self->RefreshPointer();TRACKMOUSEEVENT t{sizeof(t),TME_LEAVE,w,0};TrackMouseEvent(&t);return 0;
             }
             if(m==WM_MOUSELEAVE){self->QueuePointerRefresh();return 0;}
             if(m==WM_LBUTTONUP||m==WM_RBUTTONUP)
@@ -551,10 +573,11 @@ struct SystemPanel::Impl
                 if(m==WM_CANCELMODE&&GetCapture()==w)ReleaseCapture();
                 if(life->alive&&wasPressed)self->Paint();return 0;
             }
-            if(m==WM_MOUSEWHEEL){if(self->scrollbarDragging||!self->input.Pressed().empty())return 0;self->input.PointerInput();POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);auto activeModel=self->model;activeModel->Wheel({point.x/self->scale,point.y/self->scale},static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/WHEEL_DELTA);if(life->alive){self->Arrange();self->Paint();}return 0;}
+            if(m==WM_MOUSEWHEEL){if(self->scrollbarDragging||!self->input.Pressed().empty())return 0;self->pointerHover.Resume();self->input.PointerInput();POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);auto activeModel=self->model;activeModel->Wheel({point.x/self->scale,point.y/self->scale},static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/WHEEL_DELTA);if(life->alive){self->Arrange();self->Paint();}return 0;}
             if(m==WM_SETFOCUS||m==WM_KILLFOCUS){self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}
             if(m==WM_KEYDOWN)
             {
+                self->StopPointerHover();
                 if(wp==VK_ESCAPE){if(self->model->ControlBack()){if(self->ApplyDismissRequest()||!self->Arrange())return 0;SetFocus(w);self->Paint();}else if(self->model->CalendarBack()){if(!self->Arrange())return 0;self->FocusCalendarPage(true);self->Paint();}else{self->pending.reset();self->Animate(false);}return 0;}
                 self->input.Cancel();self->scrollbarDragging=false;if(GetCapture()==w)ReleaseCapture();
                 const auto result=self->model->HandleKey(self->input,static_cast<unsigned>(wp),(GetKeyState(VK_SHIFT)&0x8000)!=0);if(!self->Arrange())return 0;POINT p{};

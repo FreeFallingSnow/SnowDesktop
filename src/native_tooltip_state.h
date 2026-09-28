@@ -9,6 +9,26 @@ namespace snowdesktop
 {
 enum class NativeTooltipPlacement { Below, Above };
 
+// Keyboard use cancels mouse hover until the physical pointer moves or a
+// pointer action explicitly resumes it. Synthetic move/refresh messages at
+// the same position must not undo that cancellation.
+class NativePointerHoverState
+{
+public:
+    bool Observe(POINT point)
+    {
+        if (known_ && (point.x != point_.x || point.y != point_.y)) enabled_ = true;
+        point_ = point; known_ = true;
+        return enabled_;
+    }
+    void Suppress() { enabled_ = false; }
+    void Resume() { enabled_ = true; }
+    bool Enabled() const { return enabled_; }
+private:
+    POINT point_{};
+    bool known_ = false, enabled_ = true;
+};
+
 // Identity owns the hover deadline; content does not. Shared by the native
 // host and the status-bar preview so fresh samples cannot freeze old text.
 struct NativeTooltipState

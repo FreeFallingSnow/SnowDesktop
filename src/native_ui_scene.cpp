@@ -34,6 +34,19 @@ const Node* Scene::Hit(D2D1_POINT_2F p, bool interactiveOnly) const
         if ((!interactiveOnly || it->Interactive()) && Contains(it->bounds, p) && (!HasClip(it->clip) || Contains(it->clip, p))) return &*it;
     return nullptr;
 }
+D2D1_RECT_F Scene::VisibleBounds(const Node& node) const
+{
+    auto visible = node.bounds;
+    const auto intersect = [&](D2D1_RECT_F clip) {
+        visible.left = (std::max)(visible.left, clip.left);
+        visible.top = (std::max)(visible.top, clip.top);
+        visible.right = (std::min)(visible.right, clip.right);
+        visible.bottom = (std::min)(visible.bottom, clip.bottom);
+    };
+    intersect({0, 0, width, height});
+    if (HasClip(node.clip)) intersect(node.clip);
+    return visible;
+}
 namespace
 {
 std::string Utf8(std::wstring_view text)
