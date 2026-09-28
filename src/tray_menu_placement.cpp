@@ -49,8 +49,16 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
         [&](const auto& item) { return item.popup.window == popup.window; });
     if (popup.event == EVENT_OBJECT_HIDE)
     { if (existing != windows_.end()) *existing = {}; return {}; }
-    if (!popup.visible || popup.notificationWindow || !(popup.style & WS_POPUP) ||
-        (popup.style & (WS_CHILD | WS_THICKFRAME)) || (popup.style & WS_CAPTION) == WS_CAPTION ||
+    // Some custom context menus omit WS_POPUP or use WS_THICKFRAME for their
+    // non-client border. Require the actual active/foreground tool window on
+    // the callback UI thread before admitting either alternative shape.
+    const bool activeContextMenu = contextGesture_ && popup.notificationThread &&
+        popup.thread == popup.notificationThread && (popup.extendedStyle & WS_EX_TOOLWINDOW) &&
+        popup.foregroundWindow == popup.window && popup.activeWindow == popup.window;
+    if (!popup.visible || popup.notificationWindow || (!(popup.style & WS_POPUP) && !activeContextMenu) ||
+        (popup.style & WS_CHILD) || ((popup.style & WS_THICKFRAME) && !activeContextMenu) ||
+        (popup.style & WS_CAPTION) == WS_CAPTION ||
+        (popup.style & (WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) ||
         (popup.extendedStyle & (WS_EX_APPWINDOW | WS_EX_TRANSPARENT)) ||
         (!popup.standardMenu && !popup.targetRelated && !popup.strongTargetRelated && !popup.parentMenu)) return {};
     if (popup.event == EVENT_OBJECT_SHOW && existing == windows_.end())
@@ -81,10 +89,7 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
     // This additional evidence applies only to an explicit context-menu
     // gesture. A left-clicked borderless application window must not inherit
     // it merely because it becomes foreground on the same UI thread. The
-    // caption/resizable/app-window/transparent exclusions above still apply.
-    const bool activeContextMenu = contextGesture_ && popup.notificationThread &&
-        popup.thread == popup.notificationThread && (popup.extendedStyle & WS_EX_TOOLWINDOW) &&
-        popup.foregroundWindow == popup.window && popup.activeWindow == popup.window;
+    // caption/system controls/app-window/transparent exclusions still apply.
     const bool strongRoot = popup.strongTargetRelated || activeContextMenu;
     if (!existing->observedMenu)
     {

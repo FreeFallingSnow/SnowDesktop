@@ -418,6 +418,73 @@ int RunTrayModelTests()
         activePopup.event = EVENT_OBJECT_LOCATIONCHANGE;
         check(!placement.Observe(activePopup, 102), "active context evidence still requires a new SHOW nomination");
 
+        // Captured 2026-09-28: a Qt context menu reports a frameless top-level
+        // tool window without WS_POPUP, although it is both active and foreground
+        // on the notification UI thread. Use its observed bounds/flags, not its
+        // application or window class name, to protect this recognition gap.
+        MenuPopupObservation topLevelMenu{};
+        topLevelMenu.window = 14943030; topLevelMenu.process = 50648;
+        topLevelMenu.thread = topLevelMenu.notificationThread = 50660;
+        topLevelMenu.event = EVENT_OBJECT_SHOW; topLevelMenu.eventTime = 101;
+        topLevelMenu.style = WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+        topLevelMenu.extendedStyle = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        topLevelMenu.visible = topLevelMenu.targetRelated = true;
+        topLevelMenu.foregroundWindow = topLevelMenu.activeWindow = topLevelMenu.window;
+        topLevelMenu.bounds = {1834, 1085, 2044, 1177};
+        const auto armTopLevel = [&](bool context) {
+            placement.Arm(50648, {1858, 14}, {0, 32, 2048, 1152}, 100,
+                {}, {1848, 0, 1880, 32}, context);
+        };
+        armTopLevel(true);
+        const auto topLevelPosition = placement.Observe(topLevelMenu, 102);
+        check(topLevelPosition && topLevelPosition->x == 1834 && topLevelPosition->y == 32,
+            "a freshly shown active frameless tool menu without WS_POPUP follows the top tray icon");
+        check(placement.Bindings()[0].window == topLevelMenu.window,
+            "a recognized top-level tool menu supplies the same retention binding as a popup menu");
+        armTopLevel(false);
+        check(!placement.Observe(topLevelMenu, 102), "left clicks cannot relocate a non-popup tool window");
+        armTopLevel(true); topLevelMenu.foregroundWindow = 8;
+        check(!placement.Observe(topLevelMenu, 102), "an inactive non-popup tool window is not a context menu");
+        armTopLevel(true); topLevelMenu.foregroundWindow = topLevelMenu.window;
+        topLevelMenu.style |= WS_CAPTION;
+        check(!placement.Observe(topLevelMenu, 102), "a titled tool window is never moved as a tray menu");
+        armTopLevel(true); topLevelMenu.style &= ~static_cast<LONG_PTR>(WS_CAPTION);
+        topLevelMenu.extendedStyle |= WS_EX_APPWINDOW;
+        check(!placement.Observe(topLevelMenu, 102), "an application window is excluded even with active context evidence");
+
+        // The other captured tray menu uses WS_THICKFRAME for a border while
+        // remaining an active frameless tool popup. Its top was -94 on a top
+        // status bar. Keep its dimensions and open below the originating icon.
+        MenuPopupObservation framedMenu{};
+        framedMenu.window = 5772302; framedMenu.process = 40980;
+        framedMenu.thread = framedMenu.notificationThread = 19772;
+        framedMenu.event = EVENT_OBJECT_SHOW; framedMenu.eventTime = 101;
+        framedMenu.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_THICKFRAME;
+        framedMenu.extendedStyle = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_WINDOWEDGE;
+        framedMenu.visible = framedMenu.targetRelated = true;
+        framedMenu.foregroundWindow = framedMenu.activeWindow = framedMenu.window;
+        framedMenu.bounds = {2263, -94, 2478, 166};
+        const auto armFramed = [&](bool context) {
+            placement.Arm(40980, {2263, 166}, {0, 40, 2560, 1440}, 100,
+                {}, {2230, 155, 2275, 200}, context);
+        };
+        armFramed(true);
+        const auto framedPosition = placement.Observe(framedMenu, 102);
+        check(framedPosition && framedPosition->x == 2263 && framedPosition->y == 200,
+            "an active frameless tool menu with WS_THICKFRAME opens fully below its top-edge icon");
+        check(placement.Bindings()[0].window == framedMenu.window,
+            "the corrected framed menu remains bound for tray retention");
+        armFramed(false);
+        check(!placement.Observe(framedMenu, 102), "a resizable popup from a left click is still excluded");
+        armFramed(true); framedMenu.activeWindow = 8;
+        check(!placement.Observe(framedMenu, 102), "proximity alone cannot move a resizable popup");
+        armFramed(true); framedMenu.activeWindow = framedMenu.window;
+        framedMenu.style |= WS_SYSMENU;
+        check(!placement.Observe(framedMenu, 102), "a tool window with application system controls is excluded");
+        armFramed(true); framedMenu.style &= ~static_cast<LONG_PTR>(WS_SYSMENU);
+        framedMenu.extendedStyle |= WS_EX_TRANSPARENT;
+        check(!placement.Observe(framedMenu, 102), "a transparent shadow cannot use active context evidence");
+
         // A menu rooted at the old taskbar may still be wholly inside rcWork.
         // Only concrete owner/menu-thread evidence permits moving it from far
         // away; this is not a general same-process popup mover.
