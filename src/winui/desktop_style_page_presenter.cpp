@@ -333,7 +333,8 @@ struct DesktopStylePagePresenter::Impl
         presets.SelectionMode(muxc::ListViewSelectionMode::Single);
         presets.IsTabStop(true);
         presets.Padding({0, 0, 0, 0});
-        presets.ItemsPanel(mux::Markup::XamlReader::Load(LR"(<ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="5" /></ItemsPanelTemplate>)").as<muxc::ItemsPanelTemplate>());
+        presets.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        presets.ItemsPanel(mux::Markup::XamlReader::Load(LR"(<ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid ColumnSpacing="8" RowSpacing="8" /></ItemsPanelTemplate>)").as<muxc::ItemsPanelTemplate>());
         muxc::ScrollViewer::SetHorizontalScrollBarVisibility(presets, muxc::ScrollBarVisibility::Disabled);
         muxc::ScrollViewer::SetVerticalScrollBarVisibility(presets, muxc::ScrollBarVisibility::Disabled);
         muxc::ScrollViewer::SetHorizontalScrollMode(presets, muxc::ScrollMode::Disabled);
@@ -532,9 +533,9 @@ struct DesktopStylePagePresenter::Impl
             content.Children().Append(view);
             content.Children().Append(card.title);
             content.Children().Append(card.description);
-            card.item.Width(220);
             card.item.Padding({8, 8, 8, 8});
-            card.item.Margin({0, 0, 8, 8});
+            card.item.Margin({0, 0, 0, 0});
+            card.item.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             card.item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
             card.item.VerticalContentAlignment(mux::VerticalAlignment::Top);
             card.item.Content(content);
@@ -550,18 +551,26 @@ struct DesktopStylePagePresenter::Impl
         // Five compact cards on wide pages; use 3+2 below that breakpoint,
         // instead of leaving the fifth preset alone under four wide cards.
         const int columns = width >= 1000 ? 5 : width >= 660 ? 3 : width >= 440 ? 2 : 1;
-        const double cellWidth = std::floor(width / columns);
-        const double cellHeight = std::ceil(std::max(1.0, cellWidth - 24) * kPreviewHeight / kPreviewWidth) + 108;
-        // ItemsWrapGrid caches its first measured cell. Updating only item.Width
-        // leaves old wrap boundaries after a window resize; update the panel too.
-        if (const auto panel = presets.ItemsPanelRoot().try_as<muxc::ItemsWrapGrid>())
+        const auto panel = presets.ItemsPanelRoot().try_as<muxc::Grid>();
+        if (!panel || panel.ColumnDefinitions().Size() == static_cast<unsigned>(columns)) return;
+        // Five non-virtualized choices keep GridView selection/keyboard behavior.
+        // Star columns consume the actual presenter width, including its insets,
+        // without a second wrapping decision or DPI-rounded item-width overflow.
+        panel.ColumnDefinitions().Clear();
+        panel.RowDefinitions().Clear();
+        for (int column = 0; column < columns; ++column)
+            panel.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+        const int rows = (static_cast<int>(presetCards.size()) + columns - 1) / columns;
+        for (int row = 0; row < rows; ++row)
         {
-            panel.ItemWidth(cellWidth); panel.ItemHeight(cellHeight);
+            muxc::RowDefinition definition;
+            definition.Height(mux::GridLengthHelper::Auto());
+            panel.RowDefinitions().Append(definition);
         }
-        for (auto& card : presetCards)
+        for (int index = 0; index < static_cast<int>(presetCards.size()); ++index)
         {
-            card.item.Width(std::max(1.0, cellWidth - 8));
-            card.item.Height(cellHeight - 8);
+            muxc::Grid::SetColumn(presetCards[index].item, index % columns);
+            muxc::Grid::SetRow(presetCards[index].item, index / columns);
         }
     }
     mux::UIElement PreviewCollection(bool highContrast)

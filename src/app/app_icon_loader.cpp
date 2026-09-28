@@ -248,18 +248,24 @@ void DesktopApp::StartIconLoader() {}
 
 void DesktopApp::DrainBackgroundShellWork()
 {
-    if (exitRequested_ || compositionPaintInProgress_ || reloading_ ||
-        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
-        HasActiveContextMenuSession() || mouseDown_ || renameEdit_ ||
+    if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
+        HasActiveContextMenuSession() || renameEdit_ ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty())
         return; // The maintenance timer retries after the interaction fence.
+    // Directory results can fill a newly opened drop destination while the
+    // pointer is still held. The delivery mailbox defers all source/model edits.
+    folderReadWork_.Drain();
+    RetryFolderReads();
+    if (dragSession_.HasContext() || dragDropController_.IsTransportActive() || mouseDown_)
+        return;
+    folderReadDelivery_.Drain(
+        [this](const auto& key) { return folderReadVersions_[key]; },
+        [this](auto& snapshot) { ApplyFolderRefresh(snapshot); });
     iconWork_.Drain();
     dockIconWork_.Drain();
     shellVisualWork_.Drain();
     shellModelWork_.Drain();
     appIndexWork_.Drain();
-    folderReadWork_.Drain();
-    RetryFolderReads();
     clipboardReadWork_.Drain();
 }
 
@@ -622,6 +628,7 @@ void DesktopApp::StopIconLoader()
     shellModelWork_.Stop();
     folderReadWork_.Stop();
     folderReadRetries_.Clear();
+    folderReadDelivery_.Clear();
     clipboardReadWork_.Stop();
     iconLoaderPendingKeys_.clear();
 }
@@ -645,14 +652,25 @@ void DesktopApp::CancelDockFolderPopupIconLoads()
 void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
 {
     const bool wasEnabled = customDesktopVisible_;
-    if (!enabled)
-        EndDesktopPassthrough(false);
-    customDesktopVisible_ = enabled;
+    dockDragDesktopRevealed_ = false; // An explicit setting supersedes a temporary reveal.
     generalSettings_.softwareDesktopEnabled = enabled;
     if (persist)
         SaveGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
     if (settingsController_)
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
+
+    if (!enabled && wasEnabled) SaveLayoutSlots();
+    SetSoftwareDesktopPresentation(enabled);
+    if (enabled && !wasEnabled && !explorerDesktopRecreatePending_ && hwnd_ && IsWindow(hwnd_))
+        ReloadItems();
+}
+
+// Presentation-only transitions must not reload containers held by a drag or
+// publish a temporary reveal to settings. The ordinary toggle owns those steps.
+void DesktopApp::SetSoftwareDesktopPresentation(bool enabled)
+{
+    if (!enabled) EndDesktopPassthrough(false);
+    customDesktopVisible_ = enabled;
 
     if (!hwnd_ || !IsWindow(hwnd_))
     {
@@ -664,11 +682,7 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
     {
         if (widgetEngine_)
             widgetEngine_->SetAllWidgetDesktopVisible(false);
-        if (wasEnabled)
-        {
-            SaveLayoutSlots();
-            HideDragHintWindow();
-        }
+        HideDragHintWindow();
         desktopBackdropCompositor_.SetVisible(false);
         ShowWindow(hwnd_, SW_HIDE);
         if (inputHwnd_ && IsWindow(inputHwnd_))
@@ -687,7 +701,7 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
     }
 
     HideExplorerIcons();
-    ShowWindow(hwnd_, SW_SHOW);
+    ShowWindow(hwnd_, SW_SHOWNA);
     if (!desktopBackdropCompositor_.IsAvailable())
     {
         if (desktopBackdropCompositor_.Initialize(hwnd_))
@@ -714,8 +728,36 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId,
             kDesktopHostWatchIntervalMs, nullptr);
     InvalidateRect(hwnd_, nullptr, TRUE);
-    if (!wasEnabled)
-        ReloadItems();
     UpdatePersistentDockHostVisibility();
     ApplyDesktopPassthroughHotkey();
+}
+
+void DesktopApp::RevealSoftwareDesktopForDockDrag(POINT clientPoint)
+{
+    if (customDesktopVisible_ || desktopPassthroughActive_ ||
+        explorerDesktopRecreatePending_ || !dragSession_.IsActive()) return;
+    auto* source = dragSession_.Source();
+    auto* widgetSource = dynamic_cast<WidgetContainer*>(source);
+    const bool fromDock = dynamic_cast<DockContainer*>(source) ||
+        (source && source == dockFolderPopupContainer_.get()) ||
+        (source && source == dockFolderPopupDragSourceContainer_.get()) ||
+        (widgetSource && collectionPopupDockHost_ && popupWidgetIndex_ < widgets_.size() &&
+            widgetSource->GetWidgetData() == &widgets_[popupWidgetIndex_]);
+    if (!fromDock || !hwnd_ || !IsWindow(hwnd_)) return;
+    POINT screenPoint = clientPoint;
+    if (!ClientToScreen(hwnd_, &screenPoint) ||
+        !IsBaseDesktopHoverSurfaceWindow(ResolveWindowBelowDragPreviewAt(screenPoint))) return;
+
+    dockDragPreviousIconsHidden_ = desktopIconsHidden_;
+    dockDragDesktopRevealed_ = true;
+    SetSoftwareDesktopPresentation(true);
+    InvalidateDragStaticScene();
+    PresentDesktopPointerUpdate();
+}
+
+void DesktopApp::RestoreDesktopAfterDockDrag()
+{
+    if (!std::exchange(dockDragDesktopRevealed_, false)) return;
+    SetSoftwareDesktopPresentation(false);
+    desktopIconsHidden_ = dockDragPreviousIconsHidden_;
 }

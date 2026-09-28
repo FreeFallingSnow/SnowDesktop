@@ -862,6 +862,7 @@ void DesktopApp::OnMouseMoveAt(
         if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
         dragSession_.UpdateActionFromMods(currentMods);
 
+        RevealSoftwareDesktopForDockDrag(current);
         SyncDragPreviewWindow();
         if (dragPreviewSynced)
             *dragPreviewSynced = true;

@@ -189,6 +189,17 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
     }
     else if (preview.pinMaterializedItemsToDock)
     {
+        // Native desktop files already have a Shell identity. Pin that identity
+        // without generating another .lnk or taking ownership of the original.
+        // This common commit boundary also handles asynchronous Explorer drops.
+        if (!owned && CanPinExistingDesktopPaths(paths))
+        {
+            if (!AddMaterializedItemsToDock(paths, preview.dockInsertIndex, true)) return false;
+            SaveLayoutSlots();
+            RequestShellRefresh();
+            if (completion) completion(true);
+            return true;
+        }
         auto* dock = GetDockContainer();
         if (!dock || !dock->HasCapacity(paths.size())) return false;
         const auto action = preview.action;

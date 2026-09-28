@@ -443,6 +443,7 @@ void DesktopApp::EndDragSession()
     cachedDropPreviewPoint_ = { -1, -1 };
     cachedDropPreviewTarget_ = nullptr;
     cachedDropPreviewSlot_ = nullptr;
+    RestoreDesktopAfterDockDrag();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
 }

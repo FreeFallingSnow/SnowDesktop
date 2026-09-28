@@ -526,7 +526,27 @@ bool DesktopApp::QueueFolderRead(const std::wstring& path)
     }, [this, key, path, version](auto snapshot) {
         folderReadsPending_.erase(key);
         if (folderReadVersions_[key] != version) { QueueFolderRead(path); return; }
-        if (snapshot) ApplyFolderRefresh(*snapshot);
+        const bool deferModel = dragSession_.HasContext() ||
+            dragDropController_.IsTransportActive() || mouseDown_;
+        folderReadDelivery_.Deliver(key, version, std::move(snapshot), deferModel,
+            [this](auto& ready) {
+                // Only first-loading destination content may change mid-drag.
+                // A populated/source popup and a drop already committing keep
+                // their item pointers until the normal model fence is released.
+                if (!dockFolderPopupOpen_ || !dockFolderPopupLoading_ ||
+                    dragSession_.Source() == dockFolderPopupContainer_.get() ||
+                    !(dragSession_.IsActive() || dragDropController_.IsExternalDragActive()) ||
+                    !((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON)) & 0x8000))
+                    return;
+                const auto folder = ready.folders.find(
+                    snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath));
+                if (folder == ready.folders.end()) return;
+                RefreshDockFolderPopup(&folder->second);
+                POINT point{};
+                if (GetCursorPos(&point) && ScreenToClient(hwnd_, &point))
+                    RefreshDwellDragTarget(point);
+            },
+            [this](auto& ready) { ApplyFolderRefresh(ready); });
     }, hwnd_, kBackgroundShellReadyMessage))
     {
         folderReadsPending_.erase(key);

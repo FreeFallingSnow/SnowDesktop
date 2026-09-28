@@ -685,7 +685,8 @@ void DesktopApp::RefreshDockFolderPopup(
         [this](const auto& path) { QueueFolderRead(path); },
         [this](const auto& folder) {
             EnumerateFolderMappingEntries(dockFolderPopupWidget_, true, &folder);
-            if (dockFolderPopupAvailable_ && ApplyPendingFolderPlacements(
+            if (dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
+                !dragDropController_.IsTransportActive() && ApplyPendingFolderPlacements(
                     dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
                 CommitDockFolderPopupStateToSource();
         }, targetPending);

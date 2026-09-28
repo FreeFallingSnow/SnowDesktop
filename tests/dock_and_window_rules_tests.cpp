@@ -1131,13 +1131,17 @@ void CheckStatusBarFullscreenDockSession()
     }
     Check(policy::ShouldShowMergedStatusBarDockHost(true, false, false, true, false, false,
             false, false, false) &&
-        !policy::ShouldShowMergedStatusBarDockHost(true, false, false, false, false, false,
+        policy::ShouldShowMergedStatusBarDockHost(true, false, false, false, false, false,
             false, false, false) &&
         !policy::ShouldShowMergedStatusBarDockHost(true, false, false, true, true, false,
             false, false, false) &&
         policy::ShouldShowMergedStatusBarDockHost(true, false, false, true, true, true,
             false, false, false),
-        "merging preserves ordinary desktop visibility, hidden icons and keep-when-hidden policy");
+        "resident merged Dock remains on native desktop while preserving software hidden-icons policy");
+    Check(policy::ShouldShowPersistentDockHost(true, false, false, false, true, false, false) &&
+        !policy::ShouldShowMergedStatusBarDockHost(true, false, false, false, false, false,
+            false, true, false),
+        "native desktop retains resident Dock without bypassing fullscreen hiding");
     Check(ReserveStatusBarSpace(true, false) && !ReserveStatusBarSpace(true, true) &&
         ReserveStatusBarSpace(false, true),
         "only summon-only merged mode releases the strip reservation; island/separate bars reserve normally");
@@ -1577,6 +1581,15 @@ int main(int argc, char** argv)
         "page settings must reject duplicate, missing, or unknown page ids");
     namespace dockDrop =
         snowdesktop::dock_drop_rules;
+    const std::vector<std::filesystem::path> desktopRoots{LR"(C:\Users\User\Desktop)", LR"(C:\Users\Public\Desktop)"};
+    Check(dockDrop::CanReferenceDesktopPaths(
+        {LR"(c:\users\user\desktop\App.lnk)", LR"(C:\Users\Public\Desktop\Folder)"}, desktopRoots),
+        "native desktop files and folders pin their existing identity instead of creating duplicate links");
+    Check(!dockDrop::CanReferenceDesktopPaths({}, desktopRoots) &&
+        !dockDrop::CanReferenceDesktopPaths({LR"(C:\Users\User\DesktopOther\App.lnk)"}, desktopRoots) &&
+        !dockDrop::CanReferenceDesktopPaths({LR"(C:\Users\User\Desktop\Nested\App.lnk)"}, desktopRoots) &&
+        !dockDrop::CanReferenceDesktopPaths({L"App.lnk"}, desktopRoots),
+        "empty, relative, nested and prefix-only paths cannot become unresolved desktop pins");
     namespace floatingDock =
         snowdesktop::floating_dock_rules;
     namespace floatingPopup =

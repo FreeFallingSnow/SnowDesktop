@@ -121,6 +121,7 @@ namespace snowdesktop::tray { struct Icon; }
 #include "shell_refresh_snapshot.h"
 #include "layout_reload.h"
 #include "folder_read_retries.h"
+#include "folder_read_delivery.h"
 #include "startup_shell_read.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
@@ -1314,7 +1315,8 @@ private:
     void RestoreDockEntriesToDesktop();
     bool AddMaterializedItemsToDock(
         const std::vector<std::wstring>& createdPaths,
-        size_t insertIndex);
+        size_t insertIndex, bool keepOnDesktop = false);
+    bool CanPinExistingDesktopPaths(const std::vector<std::wstring>& paths) const;
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false);
     /** @brief Open a path, redirecting run-as-user shortcuts to elevation. */
@@ -1504,6 +1506,9 @@ private:
     bool IsDesktopPassthroughPointerDown() const;
     /** @brief 应用软件桌面启用状态，并可选择持久化到通用设置。 */
     void SetSoftwareDesktopEnabled(bool enabled, bool persist);
+    void SetSoftwareDesktopPresentation(bool enabled);
+    void RevealSoftwareDesktopForDockDrag(POINT clientPoint);
+    void RestoreDesktopAfterDockDrag();
     /** @brief 根据全局继承或快捷搜索覆盖项解析并应用主题。 */
     void ApplyQuickNavigationAppearance();
     /** @brief 根据全局继承或独立覆盖项解析集合组件与 Dock 弹窗主题。 */
@@ -3945,6 +3950,8 @@ private:
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;
     bool customDesktopVisible_ = true;
+    bool dockDragDesktopRevealed_ = false;
+    bool dockDragPreviousIconsHidden_ = false;
     bool desktopPassthroughHotkeyRegistered_ = false;
     bool desktopPassthroughActive_ = false;
     snowdesktop::DesktopPassthroughIndicator desktopPassthroughIndicator_;
@@ -4520,6 +4527,7 @@ private:
     std::unordered_map<std::wstring, std::uint64_t> folderReadVersions_;
     std::unordered_set<std::wstring> folderReadsPending_;
     snowdesktop::shell_refresh::FolderReadRetries folderReadRetries_;
+    snowdesktop::shell_refresh::FolderReadDelivery folderReadDelivery_;
     bool QueueFolderRead(const std::wstring& path);
     void RetryFolderReads();
     void QueueIconTask(IconLoadTask task);

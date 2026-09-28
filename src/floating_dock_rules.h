@@ -117,13 +117,14 @@ inline bool ShouldShowPersistentDockHost(
 {
     return active && !desktopPassthroughActive &&
         (effectivelyPromoted ||
-            (!summonOnlyEnabled && customDesktopVisible &&
-                (!desktopIconsHidden ||
+            (!summonOnlyEnabled &&
+                (!customDesktopVisible || !desktopIconsHidden ||
                     keepWhenDesktopHidden)));
 }
 
 // Merging adds only a monitor-owned interaction hold and fullscreen observation
-// to the ordinary Dock policy. It must never bypass summon-only or desktop mode.
+// to the ordinary Dock policy. Native Explorer desktop remains a Dock surface;
+// wallpaper passthrough and summon-only still hide the idle bar.
 inline bool ShouldShowMergedStatusBarDockHost(
     bool active, bool effectivelyPromoted, bool summonOnlyEnabled,
     bool customDesktopVisible, bool desktopIconsHidden,
