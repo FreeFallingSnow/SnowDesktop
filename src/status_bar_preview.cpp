@@ -144,8 +144,9 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                 Require(item.bounds.right <= (dateVisible ? clock->bounds.left : notification.left),
                     "a tray or system item was placed after the merged date and notifications");
     }
-    Require(controls.right - controls.left == static_cast<LONG>(std::ceil(92.f * scale)),
-        "system control group must remain complete at narrow widths");
+    const bool hasBattery = !Item(items, "controlCenter").controlGlyphs[2].empty();
+    Require(controls.right - controls.left == static_cast<LONG>(std::ceil((hasBattery ? 92.f : 64.f) * scale)),
+        "available system controls must retain their hit targets without an absent-battery slot");
     std::vector<RECT> rectangles;
     ComPtr<IDWriteTextFormat> font;
     Require(text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
