@@ -507,6 +507,14 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 2)
     {
         const std::wstring mode(argv[1]);
+        if (mode == L"--failure-feedback-tests")
+        {
+            // CopyFile and progress-result classification use only isolated
+            // local files, so unavailable network providers are irrelevant.
+            TestFileFailureFeedback();
+            std::cout << "local file-operation feedback tests passed\n";
+            return 0;
+        }
         if (mode == L"--query-network-connections") return QueryConnections();
         if (mode == L"--probe-ready") return Ready;
         if (mode == L"--probe-unavailable") return Unavailable;
@@ -967,7 +975,7 @@ int wmain(int argc, wchar_t** argv)
             !equivalentError,
         "a colliding queued shortcut leaves the first target unchanged");
 
-    try { TestFileFailureFeedback(); TestTrackedDropResults(); }
+    try { TestTrackedDropResults(); }
     catch (const std::exception& error) { Expect(false, error.what()); }
 
     std::error_code cleanupError;

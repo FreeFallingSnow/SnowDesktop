@@ -2243,6 +2243,11 @@ if (BUILD_TESTING)
     set_tests_properties(shell_file_operation_worker_network_preflight PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 20 LABELS "rules;shell;test-infrastructure")
+    add_test(NAME shell_file_operation_feedback
+        COMMAND SnowDesktopShellFileOperationWorkerTests --failure-feedback-tests)
+    set_tests_properties(shell_file_operation_feedback PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
+        TIMEOUT 20 LABELS "core;shell;storage")
     # The automatic preflight regression shares the manual integration binary.
     # A cold fast build still needs it, although it never runs the integration.
     list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS SnowDesktopShellFileOperationWorkerTests)
