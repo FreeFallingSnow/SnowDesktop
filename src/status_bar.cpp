@@ -244,7 +244,7 @@ struct StatusBar::Impl
         }
         void SyncTooltip(bool immediate = false)
         {
-            if (!InputAvailable() || GetCapture() ||
+            if (!InputAvailable() || GetCapture() || trayMenu.tracker.Armed() ||
                 !interaction.hovered || *interaction.hovered >= items.size())
             { tooltip.Hide(); return; }
             const auto& item = items[*interaction.hovered];
@@ -710,6 +710,10 @@ struct StatusBar::Impl
         void ActivateTray(const std::string& key, tray::Activation action, POINT point, bool leftClick = false)
         {
             if (!owner.tray) return;
+            // The app callback may synchronously open a foreign menu loop.
+            // Cancel the current tooltip before dispatch, then keep it hidden
+            // throughout this gesture's discovery/retention session.
+            tooltip.Hide();
             bool changed = ArmTrayMenu(key);
             bool accepted = false;
             if (leftClick) accepted = owner.tray->Activate(key, tray::Activation::LeftDown, point, {hwnd, hwnd});
