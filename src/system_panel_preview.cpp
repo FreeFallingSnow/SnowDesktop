@@ -1396,7 +1396,11 @@ void CheckCalendarResponsive()
             "the final agenda event cannot be activated after scrolling");
         model.Refresh(300);Require(model.View().width<=width,"internal refresh forgot its monitor width budget");
     }
-    SystemPanelModel stacked(FixtureSource(state),{},StatusBarAction::Calendar,true);
+    auto stackedSource=FixtureSource(state);
+    stackedSource.calendar.mutations.save=[](const auto&) -> calendar::MutationResult {
+        throw std::runtime_error("stacked layout check must not persist the draft");
+    };
+    SystemPanelModel stacked(std::move(stackedSource),{},StatusBarAction::Calendar,true);
     stacked.Refresh(780,1920);CheckLayout(stacked.View());
     const auto calendarTop=Node(stacked.View(),"calendar.month").bounds.top;
     const auto lastDay=Node(stacked.View(),"date:2026-10-11").bounds.bottom;
