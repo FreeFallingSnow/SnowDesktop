@@ -1174,15 +1174,9 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
             if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey) &&
                 snowdesktop::shell_icon_request::Matches(result->requestKey, item))
             {
-                if (result->bitmap)
-                {
-                    if (item.iconBitmap) { EraseD2DIconCacheForBitmap(item.iconBitmap); DeleteObject(item.iconBitmap); }
-                    item.iconBitmap = result->bitmap;
-                    item.iconBitmapSize = result->bitmapSize;
-                    item.iconIsMediaThumbnail =
-                        result->iconIsMediaThumbnail;
-                    result->bitmap = nullptr;
-                }
+                snowdesktop::shell_icon_request::ApplyBitmap(item, result->phase,
+                    result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
+                    [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
                 matched = true;
                 if (result->sysIconIndex >= 0) item.sysIconIndex = result->sysIconIndex;
                 if (!result->typeName.empty()) item.typeName = result->typeName;
@@ -1222,15 +1216,9 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath) &&
                     snowdesktop::shell_icon_request::Matches(result->requestKey, entry))
                 {
-                    if (result->bitmap)
-                    {
-                        if (entry.iconBitmap) { EraseD2DIconCacheForBitmap(entry.iconBitmap); DeleteObject(entry.iconBitmap); }
-                        entry.iconBitmap = result->bitmap;
-                        entry.iconBitmapSize = result->bitmapSize;
-                        entry.iconIsMediaThumbnail =
-                            result->iconIsMediaThumbnail;
-                        result->bitmap = nullptr;
-                    }
+                    snowdesktop::shell_icon_request::ApplyBitmap(entry, result->phase,
+                        result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
+                        [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
                     matched = true;
                     if (result->sysIconIndex >= 0) entry.sysIconIndex = result->sysIconIndex;
                     if (!result->typeName.empty()) entry.typeName = result->typeName;

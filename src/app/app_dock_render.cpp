@@ -162,7 +162,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 DrawDemoIdentityIcon(
                     ctx, demoIdentity, bitmapTarget, alpha);
         }
-        else if (item.iconState == IconState::Loading)
+        else if (!item.iconBitmap)
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
                 item.iconBitmap,
@@ -173,7 +173,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         if (!useDemoIdentity &&
             ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
-            item.iconState != IconState::Loading)
+            (item.iconBitmap || item.iconState != IconState::Loading))
             DrawShortcutArrowOverlay(ctx, bitmapTarget, alpha);
     };
 

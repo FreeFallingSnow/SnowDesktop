@@ -1,17 +1,10 @@
-#include "../icon_bitmap_pixels.h"
+#include "../icon_hbitmap_pixels.h"
 #include "app.h"
 
 // HBITMAP analysis, icon beautification and Direct2D bitmap caching.
 
 namespace
 {
-    struct IconPixelBuffer
-    {
-        int width = 0;
-        int height = 0;
-        std::vector<std::uint32_t> pixels;
-    };
-
     struct IconVisibleBounds
     {
         bool hasVisiblePixels = false;
@@ -48,57 +41,6 @@ namespace
             (g * a + 127) / 255,
             (r * a + 127) / 255,
             a);
-    }
-
-    bool ReadHBitmapPixels(HBITMAP hbm, IconPixelBuffer& out)
-    {
-        BITMAP bm{};
-        if (!hbm || GetObjectW(hbm, sizeof(bm), &bm) == 0)
-            return false;
-
-        const int width = bm.bmWidth;
-        const int height = std::abs(bm.bmHeight);
-        if (width <= 0 || height <= 0)
-            return false;
-
-        out.width = width;
-        out.height = height;
-        out.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
-
-        if (bm.bmBits != nullptr && bm.bmBitsPixel == 32)
-        {
-            const auto* src = static_cast<const std::uint8_t*>(bm.bmBits);
-            const int stride = std::abs(bm.bmWidthBytes);
-            for (int y = 0; y < height; ++y)
-            {
-                std::memcpy(out.pixels.data() + static_cast<size_t>(y) * width,
-                    src + static_cast<size_t>(y) * stride,
-                    static_cast<size_t>(width) * sizeof(std::uint32_t));
-            }
-            snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(out.pixels);
-            return true;
-        }
-
-        HDC screenDc = GetDC(nullptr);
-        if (!screenDc)
-            return false;
-
-        BITMAPINFO bitmapInfo{};
-        bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
-        bitmapInfo.bmiHeader.biWidth = width;
-        bitmapInfo.bmiHeader.biHeight = -height;
-        bitmapInfo.bmiHeader.biPlanes = 1;
-        bitmapInfo.bmiHeader.biBitCount = 32;
-        bitmapInfo.bmiHeader.biCompression = BI_RGB;
-
-        const bool ok = GetDIBits(screenDc, hbm, 0, static_cast<UINT>(height),
-            out.pixels.data(), &bitmapInfo, DIB_RGB_COLORS) != 0;
-        ReleaseDC(nullptr, screenDc);
-        if (!ok)
-            return false;
-
-        snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(out.pixels);
-        return true;
     }
 
     IconVisibleBounds AnalyzeIconVisibleBounds(const std::vector<std::uint32_t>& pixels,
@@ -537,8 +479,8 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
     if (!hbm || !d2dContext_)
         return nullptr;
 
-    IconPixelBuffer buffer;
-    if (!ReadHBitmapPixels(hbm, buffer))
+    snowdesktop::icon_bitmap_pixels::Buffer buffer;
+    if (!snowdesktop::icon_bitmap_pixels::ReadHBitmap(hbm, buffer))
         return nullptr;
 
     if (beautify)

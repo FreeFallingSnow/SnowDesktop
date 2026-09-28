@@ -505,19 +505,18 @@ void TestInitialIconBitmaps()
     Check(source.bitmap && pixels, "create owned shortcut pixel fixture");
     if (!source.bitmap || !pixels) return;
     auto* color = static_cast<std::uint32_t*>(pixels);
-    // CopyImage may return a bottom-up DIB. Use a uniform fixture so the
-    // ownership/quality expectation is independent of raw scan-line order.
-    std::fill_n(color, 4, 0xff123456u);
+    const std::vector<std::uint32_t> expected{0xffff0000, 0xff00ff00, 0xff0000ff, 0xff123456};
+    std::copy(expected.begin(), expected.end(), color);
     ShortcutCache cache(2);
     cache.Put(L"shortcut-A/version-1/96", source.bitmap, source.size);
     std::fill_n(color, 4, 0xffabcdefu);
     cache.Put(L"shortcut-A/version-1/96", source.bitmap, source.size, false);
     auto first = cache.Get(L"shortcut-A/version-1/96");
-    BITMAP firstBitmap{};
+    snowdesktop::icon_bitmap_pixels::Buffer firstBitmap;
     Check(first && first->bitmap != source.bitmap && first->size.cx == 2 &&
-        GetObjectW(first->bitmap, sizeof(firstBitmap), &firstBitmap) && firstBitmap.bmBits &&
-        static_cast<std::uint32_t*>(firstBitmap.bmBits)[0] == 0xff123456,
-        "reopened shortcut owns independent refined pixels; late first-quality results cannot downgrade them");
+        snowdesktop::icon_bitmap_pixels::ReadHBitmap(first->bitmap, firstBitmap) &&
+        firstBitmap.pixels == expected,
+        "reopened shortcut owns independent upright refined pixels; late first-quality results cannot downgrade them");
     first.reset();
     DeleteObject(std::exchange(source.bitmap, nullptr));
     auto reopened = cache.Get(L"shortcut-A/version-1/96");

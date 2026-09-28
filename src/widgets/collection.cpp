@@ -353,7 +353,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         app_->DrawDemoCollectionIdentityIcon(
             context, *data_, demoIdentity, iconRect, 1.0f);
     }
-    else if (item.iconState == IconState::Loading)
+    else if (!item.iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, item.sysIconIndex, iconRect, 1.0f);
     }
@@ -376,7 +376,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
 
     if (!useDemoIdentity &&
         app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
-        item.iconState != IconState::Loading)
+        (item.iconBitmap || item.iconState != IconState::Loading))
     {
         app_->DrawShortcutArrowOverlay(context, iconRect, 1.0f);
     }

@@ -4,12 +4,14 @@
 #include "large_icon_render_rules.h"
 #include "large_icon_motion.h"
 #include "icon_bitmap_pixels.h"
+#include "icon_hbitmap_pixels.h"
 #include "icon_beautify.h"
 #include "large_icon_transform.h"
 #include "large_icon_settings_rules.h"
 #include "large_icon_visibility_rules.h"
 
 #include <iostream>
+#include <cstring>
 
 namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
@@ -28,6 +30,7 @@ void Check(bool condition, const char* message)
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
 }
+#include "icon_hbitmap_cases.h"
 } // namespace
 
 int main(int argc, char** argv)
@@ -36,6 +39,7 @@ int main(int argc, char** argv)
     if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
     if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
     failures += RunLargeIconAssetTests();
+    TestIconBitmapRowOrder();
     using namespace snowdesktop::large_icon_render_rules;
     snowdesktop::LargeIconConfig config;
     {

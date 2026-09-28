@@ -185,7 +185,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         else
             app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
     }
-    else if (item_->iconState == IconState::Loading)
+    // Loading describes pending work, not whether the last image is drawable.
+    else if (!item_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
     }
@@ -206,7 +207,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
 
     if (!useDemoIdentity &&
         app_->ShouldDrawShortcutArrow(item_->isShortcut, item_->isApplicationShortcut) &&
-        item_->iconState != IconState::Loading)
+        (item_->iconBitmap || item_->iconState != IconState::Loading))
         app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
     if (!dragged && drawText)
@@ -364,7 +365,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
 
-    if (entry_->iconState == IconState::Loading)
+    if (!entry_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
     }
@@ -384,7 +385,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
     }
 
     if (app_->ShouldDrawShortcutArrow(entry_->isShortcut, entry_->isApplicationShortcut) &&
-        entry_->iconState != IconState::Loading)
+        (entry_->iconBitmap || entry_->iconState != IconState::Loading))
         app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
 
     if (!dragged && drawText)

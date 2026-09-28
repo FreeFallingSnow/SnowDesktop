@@ -24,6 +24,7 @@
 #include "dock_refresh_cache.h"
 #include "app/dock_icon_work.h"
 #include "app/initial_icon_bitmap.h"
+#include "icon_hbitmap_pixels.h"
 #include "app/startup_shell_read.h"
 #include "background_work.h"
 #include "app/shell_icon_request.h"
@@ -3200,6 +3201,7 @@ int wmain(int argc, wchar_t** argv)
     TestDockLocalIconsBypassShell();
     TestInitialIconBitmaps();
     TestShellIconSourceStamp();
+    TestIconRefreshPresentation();
     TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();
     TestShellRefreshPreservesCurrentItemState();
