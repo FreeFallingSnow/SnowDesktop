@@ -1289,6 +1289,19 @@ bool StatusBar::PrepareMergedDockPresentation(HMONITOR monitor, const StatusBarD
     }
     return false;
 }
+HWND StatusBar::MergedPresentationBottomWindow(HMONITOR monitor) const
+{
+    if (impl_->removingWindows) return nullptr;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->monitor != monitor || !window->mergedDockHeight ||
+            !IsWindowVisible(window->hwnd)) continue;
+        const HWND next = GetWindow(window->hwnd, GW_HWNDNEXT);
+        return window->backdrop.IsBackdropWindow(next) ? next : window->hwnd;
+    }
+    return nullptr;
+}
 HWND StatusBar::InteractionWindow(HMONITOR monitor) const
 {
     if (impl_->removingWindows) return nullptr;

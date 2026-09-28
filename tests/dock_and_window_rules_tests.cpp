@@ -35,6 +35,7 @@
 #include "desktop_window_discovery_rules.h"
 #include "desktop_keyboard_rules.h"
 #include "floating_dock_rules.h"
+#include "system_panel_placement.h"
 #include "status_bar_appbar.h"
 #include "merged_dock_presentation.h"
 #include "status_bar_layout.h"
@@ -2673,8 +2674,8 @@ int main(int argc, char** argv)
             showRunningApps, showWindowPreviews);
     Check(showRunningApps,
         "the Dock running area must remain enabled after settings normalization");
-    Check(showWindowPreviews,
-        "Dock window previews must remain enabled after settings normalization");
+    Check(!showWindowPreviews,
+        "an explicit thumbnail opt-out survives Dock settings normalization");
     Check(snowdesktop::dock_settings_rules::
               ShouldReserveDesktopWorkArea(false, false) &&
             !snowdesktop::dock_settings_rules::
@@ -4724,6 +4725,39 @@ int main(int argc, char** argv)
     Check(!fullscreenSwipe.Update(POINT{-1400, 1079}, fullscreenMonitor,
             DockPosition::Bottom, 200, 4, 72),
         "exiting fullscreen cannot complete a stale edge gesture");
+
+    floatingDock::EdgeSwipeDetector hoverReveal;
+    const auto hoverAt = [&](POINT point, DWORD tick) {
+        return hoverReveal.Update(point, negativeBottomMonitor, DockPosition::Bottom,
+            tick, 4, 72, floatingDock::kEdgeSwipeMaximumDurationMs, true);
+    };
+    Check(!hoverAt({-1500,1079},100) && !hoverAt({-1500,1079},349) && hoverAt({-1500,1079},350),
+        "hover mode reveals after a dwell without requiring pointer travel");
+    Check(!hoverAt({-1400,1079},900), "remaining at the edge cannot repeatedly reopen hover Dock");
+    Check(!hoverAt({-1400,1000},910) && !hoverAt({-1400,1079},920) && hoverAt({-1400,1079},1170),
+        "leaving and reentering starts a fresh dwell");
+    hoverReveal.SuppressUntilEdgeLeave();
+    Check(!hoverAt({-1400,1079},2000), "menu or button activity suppresses hover reveal until edge leave");
+    hoverAt({-1400,1000},2100);
+    hoverReveal.Update({-1400,1079},negativeBottomMonitor,DockPosition::Bottom,2200,4,72);
+    Check(!hoverAt({-1400,1079},2500) && hoverAt({-1400,1079},2750),
+        "switching gesture mode cannot reuse elapsed time from the previous mode");
+    for (const LONG origin : {0L,-1920L}) for (const float scale : {1.f,1.5f})
+    {
+        const RECT work{origin,40,origin+1920,1040};
+        const SIZE size{static_cast<LONG>(384*scale),static_cast<LONG>(280*scale)};
+        const auto panel=snowdesktop::PlaceSystemPanel({origin+1400,1040,origin+1432,1080},size,
+            work,DockPosition::Bottom,scale,snowdesktop::SystemPanelAlignment::ScreenRight);
+        const auto adjacent=snowdesktop::PlaceSystemPanel({origin+1530,1040,origin+1562,1080},size,
+            work,DockPosition::Bottom,scale,snowdesktop::SystemPanelAlignment::ScreenRight);
+        Check(EqualRect(&panel,&adjacent) && panel.right==work.right-static_cast<LONG>(8*scale) &&
+            panel.bottom==1040-static_cast<LONG>(6*scale),
+            "control-center placement stays right aligned across triggers, DPI and negative monitor coordinates");
+        const auto topPanel=snowdesktop::PlaceSystemPanel({origin+1400,0,origin+1432,40},size,
+            work,DockPosition::Top,scale,snowdesktop::SystemPanelAlignment::ScreenRight);
+        Check(topPanel.top==40+static_cast<LONG>(6*scale) && topPanel.right==panel.right,
+            "top status bar keeps the same right inset and opens below the bar");
+    }
 
     floatingDock::EdgeSwipeDetector bottomSwipe;
     Check(!bottomSwipe.Update(

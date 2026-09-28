@@ -27,6 +27,7 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
+inline constexpr DWORD kEdgeHoverDelayMs = 250;
 inline constexpr int kPassiveDragRevealEdgeBandDip = 6;
 inline constexpr ULONGLONG kPassiveDragLeaveDelayMs = 360;
 
@@ -474,7 +475,8 @@ public:
         DockPosition position, DWORD tick,
         int edgeBand, int requiredTravel,
         DWORD maximumDurationMs =
-            kEdgeSwipeMaximumDurationMs)
+            kEdgeSwipeMaximumDurationMs,
+        bool hover = false)
     {
         if (!IsPointOnDockScreenEdge(
                 point, monitorRect, position, edgeBand))
@@ -487,15 +489,16 @@ public:
 
         const bool contextChanged =
             !tracking_ ||
-            position != position_ ||
+            position != position_ || hover != hover_ ||
             !EqualRect(&monitorRect_, &monitorRect);
         const DWORD elapsed = tick - startTick_;
         if (contextChanged ||
-            (tracking_ && elapsed > maximumDurationMs))
+            (!hover && tracking_ && elapsed > maximumDurationMs))
         {
             tracking_ = true;
             monitorRect_ = monitorRect;
             position_ = position;
+            hover_ = hover;
             startPoint_ = point;
             startTick_ = tick;
             return false;
@@ -507,7 +510,7 @@ public:
                 position == DockPosition::Bottom
             ? point.x - startPoint_.x
             : point.y - startPoint_.y;
-        if (std::abs(alongEdge) < requiredTravel)
+        if (hover ? elapsed < kEdgeHoverDelayMs : std::abs(alongEdge) < requiredTravel)
             return false;
 
         tracking_ = false;
@@ -541,6 +544,7 @@ public:
 
 private:
     bool tracking_ = false;
+    bool hover_ = false;
     bool awaitingEdgeLeave_ = false;
     RECT monitorRect_{};
     POINT startPoint_{};
@@ -562,14 +566,14 @@ inline RECT UnionNonEmptyRects(const RECT& first, const RECT& second)
 inline RECT ExpandHostForTitleLayer(
     RECT dockRect, DockPosition position)
 {
-    // The title chip is at most 260x30 with an 8px gap. Keep this
+    // The title chip is at most 300x36 with an 8px gap and a 4px vertical offset. Keep this
     // allocation stable while the pointer moves; only the exact title
     // chip is added to the HWND region, so the transparent reserve never
     // receives input.
-    constexpr int titleWidthAxisPadding = 134;
-    constexpr int titleHeightAxisPadding = 18;
-    constexpr int titleWidthAndGap = 272;
-    constexpr int titleHeightAndGap = 42;
+    constexpr int titleWidthAxisPadding = 154;
+    constexpr int titleHeightAxisPadding = 26;
+    constexpr int titleWidthAndGap = 312;
+    constexpr int titleHeightAndGap = 52;
     switch (position)
     {
     case DockPosition::Top:

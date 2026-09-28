@@ -374,6 +374,8 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch floatingShortcutToggle{nullptr};
     muxc::TextBlock floatingShortcutHint{nullptr};
     muxc::ToggleSwitch floatingEdgeSwipeToggle{nullptr};
+    muxc::ComboBox edgeRevealGesture{nullptr};
+    muxc::ToggleSwitch windowPreviews{nullptr};
     muxc::ToggleSwitch fullscreenSwipeToggle{nullptr};
     muxc::TextBlock floatingEdgeSwipeHint{nullptr};
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
@@ -411,6 +413,7 @@ struct DockPagePresenter::Impl
     SettingRow layoutRow;
     SettingRow monitorScopeRow;
     SettingRow floatingEdgeSwipeRow;
+    SettingRow edgeRevealGestureRow, windowPreviewsRow;
     SettingRow fullscreenSwipeRow;
     SettingRow showWindowsButtonRow;
     SettingRow suppressTaskbarRow;
@@ -465,6 +468,7 @@ struct DockPagePresenter::Impl
     winrt::event_token monitorScopeToken{};
     winrt::event_token floatingShortcutToken{};
     winrt::event_token floatingEdgeSwipeToken{};
+    winrt::event_token edgeRevealGestureToken{}, windowPreviewsToken{};
     winrt::event_token fullscreenSwipeToken{};
     winrt::event_token showWindowsButtonToken{};
     winrt::event_token suppressTaskbarToken{};
@@ -571,6 +575,8 @@ struct DockPagePresenter::Impl
 
         floatingShortcutToggle = muxc::ToggleSwitch{};
         floatingEdgeSwipeToggle = muxc::ToggleSwitch{};
+        edgeRevealGesture = NewCombo();
+        windowPreviews = muxc::ToggleSwitch{};
         fullscreenSwipeToggle = muxc::ToggleSwitch{};
         showWindowsButtonToggle = muxc::ToggleSwitch{};
         suppressTaskbarToggle = muxc::ToggleSwitch{};
@@ -596,6 +602,9 @@ struct DockPagePresenter::Impl
         floatingShortcutHint = NewHint();
         floatingEdgeSwipeHint = NewHint();
         floatingEdgeSwipeRow.Initialize(floatingEdgeSwipeToggle);
+        edgeRevealGestureRow.Initialize(edgeRevealGesture);
+        windowPreviewsRow.Initialize(windowPreviews);
+        windowPreviewsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenSwipeRow.Initialize(fullscreenSwipeToggle);
         fullscreenSwipeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
@@ -620,7 +629,8 @@ struct DockPagePresenter::Impl
         // Floating shortcut mode/hotkey is rendered once by General.
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
         edgeSwipeCard.content.Children().Append(fullscreenSwipeRow.root);
-        edgeSwipeCard.content.Children().InsertAt(1, showOnlyWhenSummonedRow.root);
+        edgeSwipeCard.content.Children().InsertAt(0, showOnlyWhenSummonedRow.root);
+        edgeSwipeCard.content.Children().InsertAt(2, edgeRevealGestureRow.root);
         reserveScreenSpaceRow.Initialize(reserveScreenSpaceToggle);
         reserveScreenSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         behaviorCard.content.Children().Append(reserveScreenSpaceRow.root);
@@ -630,6 +640,7 @@ struct DockPagePresenter::Impl
         suppressionStatus.IsClosable(false);
         suppressionStatus.IsOpen(false);
         behaviorCard.content.Children().Append(suppressionStatus);
+        behaviorCard.content.Children().Append(windowPreviewsRow.root);
         behaviorCard.content.Children().Append(showWindowsButtonRow.root);
         behaviorCard.content.Children().Append(showFrequentItemsRow.root);
         behaviorCard.content.Children().Append(frequentItemCount.root);
@@ -1137,6 +1148,16 @@ struct DockPagePresenter::Impl
                                 settings.showOnlyWhenSummoned);
                     });
             });
+        edgeRevealGestureToken = edgeRevealGesture.SelectionChanged([this](const auto&, const auto&) {
+            const int value = edgeRevealGesture.SelectedIndex();
+            if (value >= 0) EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                [value](DockSettings& settings) { settings.edgeRevealGesture = value; });
+        });
+        windowPreviewsToken = windowPreviews.Toggled([this](const auto&, const auto&) {
+            const bool value = windowPreviews.IsOn();
+            EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                [value](DockSettings& settings) { settings.showWindowPreviews = value; });
+        });
         fullscreenSwipeToken = fullscreenSwipeToggle.Toggled(
             [this](const auto&, const auto&) {
                 const bool value = fullscreenSwipeToggle.IsOn();
@@ -1731,6 +1752,8 @@ struct DockPagePresenter::Impl
         layoutCombo.SelectedIndex(settings.edgeAttached ? 1 : 0);
         monitorScopeCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.monitorScope), 0, 2));
+        edgeRevealGesture.SelectedIndex(settings.edgeRevealGesture);
+        windowPreviews.IsOn(settings.showWindowPreviews);
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
         fullscreenSwipeToggle.IsOn(settings.floatingEdgeSwipeBlockFullscreen);
         floatingEdgeSwipeToggle.IsOn(
@@ -1818,6 +1841,8 @@ struct DockPagePresenter::Impl
         showFrequentItemsRow.SetEnabled(dockEnabled);
         allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
         floatingEdgeSwipeRow.SetEnabled(dockEnabled && !showOnlyWhenSummonedToggle.IsOn());
+        edgeRevealGestureRow.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
+        windowPreviewsRow.SetEnabled(dockEnabled);
         frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         showOnlyWhenSummonedRow.SetEnabled(dockEnabled);
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
@@ -2384,6 +2409,14 @@ struct DockPagePresenter::Impl
             L("app.dock.floating_edge_swipe", L"Edge Swipe"),
             L("app.dock.floating_edge_swipe_hint",
                 L"Reveal the floating Dock from a screen edge."));
+        edgeRevealGestureRow.SetText(L("settings.dock.edgeRevealGesture", L"Reveal gesture"),
+            L("settings.dock.edgeRevealGesture.description", L"Dragging an item to the edge reveals the bar immediately."));
+        ReplaceComboItems(edgeRevealGesture, {
+            {"settings.dock.gestureSwipe", L"Swipe"}, {"settings.dock.gestureHover", L"Hover"}});
+        windowPreviewsRow.SetText(L("settings.dock.windowPreviews", L"Task thumbnails"),
+            L("settings.dock.windowPreviews.description", L"Show open windows when hovering over an app."));
+        muxa::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
+        muxa::AutomationProperties::SetName(windowPreviews, windowPreviewsRow.label.Text());
         fullscreenSwipeRow.SetText(
             L("settings.dock.blockFullscreenSwipe", L"Disable edge swipe in fullscreen apps"),
             L("settings.dock.blockFullscreenSwipe.description",
@@ -2638,6 +2671,8 @@ struct DockPagePresenter::Impl
             return thicknessScale.slider;
         if (id == "dock.floatingShortcutMode")
             return floatingShortcutToggle;
+        if (id == "dock.edgeRevealGesture") return edgeRevealGesture;
+        if (id == "dock.showWindowPreviews") return windowPreviews;
         if (id == "dock.floatingEdgeSwipeBlockFullscreen")
             return fullscreenSwipeToggle;
         if (id == "dock.floatingEdgeSwipe" ||
@@ -2792,6 +2827,8 @@ struct DockPagePresenter::Impl
             monitorScopeCombo.SelectionChanged(monitorScopeToken);
             floatingShortcutToggle.Toggled(floatingShortcutToken);
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);
+            edgeRevealGesture.SelectionChanged(edgeRevealGestureToken);
+            windowPreviews.Toggled(windowPreviewsToken);
             fullscreenSwipeToggle.Toggled(fullscreenSwipeToken);
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
             mergedHeight->Close();

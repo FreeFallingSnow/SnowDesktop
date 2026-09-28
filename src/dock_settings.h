@@ -67,9 +67,10 @@ struct DockSettings : DockLayoutSettings
     UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
+    int edgeRevealGesture = 0; // 0=swipe, 1=hover; preserve existing swipe preferences.
     bool floatingEdgeSwipeBlockFullscreen = true;
-    // Legacy persisted fields kept for layout compatibility. Running
-    // applications and hover previews are now unconditional Dock features.
+    // Running applications remain enabled; task thumbnails are optional.
+    // Keep the persisted names for compatibility with existing preferences.
     bool showRunningApps = true;
     bool showWindowPreviews = true;
     bool followComponentAppearance = true;
@@ -129,6 +130,7 @@ inline void NormalizeDockSettings(DockSettings& settings) noexcept
     settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(settings.hoverScale);
     settings.launchEffect = snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect);
     settings.windowEffect = snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect);
+    settings.edgeRevealGesture = settings.edgeRevealGesture == 1 ? 1 : 0;
     snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
         settings.showRunningApps,
         settings.showWindowPreviews);

@@ -420,6 +420,7 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             left = popupAnchorPoint_.x + metrics.anchorGap;
             top = popupAnchorPoint_.y + metrics.anchorGap;
         }
+        if (popupAnchoredToDock_) top += snowdesktop::collection_popup_layout::ScaleDimension(4, metrics.scale);
         left = std::clamp(
             left,
             static_cast<int>(work.left + metrics.edgeMargin),

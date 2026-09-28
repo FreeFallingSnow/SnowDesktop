@@ -125,6 +125,7 @@ RECT ResolveDockWindowPreviewPanelPlacement(
     default:
         break;
     }
+    top += ScaleForDpi(4, dpi);
     left = std::clamp(left, static_cast<int>(workArea.left),
         static_cast<int>(std::max<LONG>(
             workArea.left, workArea.right - panelWidth)));
@@ -503,11 +504,12 @@ DockWindowPreview::~DockWindowPreview()
 bool DockWindowPreview::Initialize(
     HINSTANCE instance,
     ActivateCallback activateCallback,
-    CloseCallback closeCallback)
+    CloseCallback closeCallback, std::function<void()> visibilityChanged)
 {
     instance_ = instance;
     activateCallback_ = std::move(activateCallback);
     closeCallback_ = std::move(closeCallback);
+    visibilityChanged_ = std::move(visibilityChanged);
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
@@ -660,6 +662,7 @@ void DockWindowPreview::Show(
                 SWP_SHOWWINDOW);
     }
     UpdateWindow(hwnd_);
+    if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
 }
 
 void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
@@ -786,6 +789,7 @@ void DockWindowPreview::Hide()
 {
     if (IsCleared())
         return;
+    const bool wasVisible = IsVisible();
     if (hwnd_)
     {
         KillTimer(hwnd_, kHideTimerId);
@@ -801,6 +805,7 @@ void DockWindowPreview::Hide()
     hoveredCloseIndex_ = -1;
     trackingMouse_ = false;
     hasTransitionOrigin_ = false;
+    if (wasVisible && visibilityChanged_) visibilityChanged_();
 }
 
 void DockWindowPreview::ScheduleHide()

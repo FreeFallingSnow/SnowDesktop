@@ -15,7 +15,7 @@ public:
         UiAnimationScheduler*,IDCompositionDesktopDevice*,IDWriteFactory*,Background);
     ~SystemPanel();
     void Show(StatusBarAction,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
-        std::shared_ptr<tray::Service>,std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
+        std::shared_ptr<tray::Service>,std::shared_ptr<widget_runtime::WidgetSystemDataProvider>, bool clockAtRight=false);
     // Standalone system-menu confirmation: cancel/success dismisses this panel.
     void ShowPowerConfirmation(std::string task,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
         std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);

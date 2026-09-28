@@ -336,8 +336,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         snowdesktop::popup_window_pair_z_order::MaintainContentBand(host.hwnd, true);
         if (statusBar_ && host.mergedPresentationActive)
             statusBar_->ApplyMergedDockPresentation(host.monitor, host.mergedPresentation);
-        ApplyDragPreviewLayerPolicy();
-        return;
+        // Continue through the shared search/window-animation ordering below.
     }
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;
@@ -360,14 +359,16 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     {
         // Borrow the presentation band without changing the Dock's summon,
         // input or focus state. Always move the content/backdrop as a pair.
-        host.backdrop.SetPopupWindowPairZOrder(
+        if (!merged) host.backdrop.SetPopupWindowPairZOrder(
             host.hwnd, HWND_TOPMOST, true);
         if (!wasTopmost)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-promoted-for-animation", host.hwnd);
         const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
-        const HWND pairEnd = host.backdrop.IsBackdropWindow(nextWindow)
+        HWND pairEnd = host.backdrop.IsBackdropWindow(nextWindow)
             ? nextWindow : host.hwnd;
+        if (merged && statusBar_)
+            if (const HWND stripBottom = statusBar_->MergedPresentationBottomWindow(host.monitor)) pairEnd = stripBottom;
         // An already-topmost pair deliberately does not raise itself above
         // menus on policy refresh. Lower the transition below its complete
         // pair instead of inserting it between the content and glass helper.
@@ -394,7 +395,11 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         ApplyDragPreviewLayerPolicy();
         return;
     }
-    const bool promoted = IsPersistentDockHostEffectivelyFloating(host);
+    if (merged) { ApplyDragPreviewLayerPolicy(); return; }
+    // Retain the floating band until the last closing frame, without feeding
+    // presentation visibility back into ShouldShowPersistentDockHost.
+    const bool promoted = IsPersistentDockHostEffectivelyFloating(host) ||
+        (host.mergedPresentationActive && host.mergedAnimation.IsClosing());
     const bool systemShowDesktopGuard =
         systemShowDesktopDockLayerGuardActive_ &&
         ShouldShowPersistentDockHost(host);

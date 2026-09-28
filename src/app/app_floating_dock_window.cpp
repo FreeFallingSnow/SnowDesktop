@@ -139,7 +139,7 @@ bool DesktopApp::IsDockContainerInteractionVisible(
         return false;
     const PersistentDockHost* host =
         FindPersistentDockHost(container);
-    if (host && host->active && container->IsMergedWithStatusBar())
+    if (host && host->active && host->mergedPresentationActive)
         return host->mergedPresentation.inputEnabled;
     // Before graphics initialization, or after a Host creation failure, the
     // Dock falls back to the desktop foreground surface. Only an active
@@ -488,7 +488,9 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         return;
     if (host.updatingMergedPresentation) return;
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
-    if (merged)
+    if (host.mergedPresentationActive && host.presentationMerged != merged)
+        ResetMergedDockPresentation(host);
+    if (merged || dockSettings_.showOnlyWhenSummoned)
     {
         host.updatingMergedPresentation = true;
         struct UpdateScope { bool& active; ~UpdateScope() { active = false; } } scope{host.updatingMergedPresentation};
@@ -504,15 +506,17 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         if (!host.mergedPresentationActive)
         {
             host.mergedAnimation.ResetHidden();
+            host.presentationMerged = merged;
             host.mergedPresentationActive = true;
         }
         namespace motion = snowdesktop::animation;
         namespace animation = snowdesktop::quick_navigation_animation_rules;
         // Use one opacity timeline for the entire merged surface. Native HWND
         // regions keep the normal magnification/bounce/title allocation.
-        host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && motion::RuntimePopupEffect() != 0
-            ? animation::Effect::Fade : animation::Effect::None, motion::RuntimeDurationScale());
         const bool shouldShow = ShouldShowPersistentDockHost(host);
+        const bool immediateDrag = shouldShow && (dragSession_.IsActive() || dragDropController_.IsTransportActive());
+        host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && !immediateDrag
+            ? animation::Effect::Fade : animation::Effect::None, motion::RuntimeDurationScale());
         const bool changed = shouldShow != host.mergedAnimation.IsInteractive();
         if (changed)
         {
@@ -604,7 +608,8 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
     auto frame = snowdesktop::MergedDockPresentationFrame(host.mergedAnimation);
     frame.topmost = host.mergedPresentation.topmost;
     frame.insertAfter = host.hwnd;
-    if (frame.visible && (!statusBar_ || !statusBar_->PrepareMergedDockPresentation(host.monitor, frame)))
+    if (host.presentationMerged && frame.visible &&
+        (!statusBar_ || !statusBar_->PrepareMergedDockPresentation(host.monitor, frame)))
     {
         // Never reveal just the central Dock while the full-width background
         // and status controls still lack a valid first composition frame.
@@ -624,7 +629,7 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
     host.backdrop.SetVisualOpacity(frame.opacity);
     // The complete strip is prepared above and revealed before its central
     // icon surface, so a first/no-animation frame cannot show a partial Dock.
-    if (statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, frame);
+    if (host.presentationMerged && statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, frame);
     if (frame.visible)
     {
         if (!IsWindowVisible(host.hwnd))
@@ -651,7 +656,8 @@ void DesktopApp::ResetMergedDockPresentation(PersistentDockHost& host)
     host.mergedPresentationActive = false;
     host.mergedInteractionHeld = false;
     host.mergedCloseAfterInteraction = false;
-    if (statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, {});
+    if (host.presentationMerged && statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, {});
+    host.presentationMerged = false;
     if (host.dcompVisual) host.dcompVisual->SetEffect(nullptr);
     host.mergedOpacity.Reset();
     host.backdrop.SetVisualOpacity(1.f);

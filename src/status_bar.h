@@ -78,6 +78,7 @@ public:
     void ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
     bool IsInteractionAvailable(HMONITOR monitor) const;
     HWND InteractionWindow(HMONITOR monitor) const;
+    HWND MergedPresentationBottomWindow(HMONITOR monitor) const;
     // The Dock routes its own blank background through the same dismiss path.
     bool DismissMergedBackground(HMONITOR monitor, POINT screen);
     bool HasInteractionSession(HMONITOR monitor) const;

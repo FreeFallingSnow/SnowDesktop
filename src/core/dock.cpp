@@ -1144,7 +1144,7 @@ RECT DockContainer::CalculateTitleTooltipBounds(
                 : DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
-            13.0f, L"zh-CN", &tooltipFormat);
+            16.0f, L"zh-CN", &tooltipFormat);
         measurementFormat = tooltipFormat.Get();
     }
     if (!measurementFormat)
@@ -1157,7 +1157,7 @@ RECT DockContainer::CalculateTitleTooltipBounds(
                 title.c_str(),
                 static_cast<UINT32>(title.size()),
                 measurementFormat,
-                240.0f, 28.0f, &layout)) &&
+                276.0f, 34.0f, &layout)) &&
         layout)
     {
         layout->GetMetrics(&metrics);
@@ -1165,9 +1165,9 @@ RECT DockContainer::CalculateTitleTooltipBounds(
 
     const int tooltipWidth = std::clamp(
         static_cast<int>(std::ceil(
-            metrics.widthIncludingTrailingWhitespace)) + 20,
-        48, 260);
-    constexpr int tooltipHeight = 30;
+            metrics.widthIncludingTrailingWhitespace)) + 24,
+        56, 300);
+    constexpr int tooltipHeight = 36;
     return PositionTitleTooltipBounds(
         hoveredBounds, tooltipWidth, tooltipHeight);
 }
@@ -1189,6 +1189,7 @@ RECT DockContainer::PositionTitleTooltipBounds(
             tooltipWidth,
             tooltipHeight,
             tooltipGap);
+    OffsetRect(&tooltip, 0, 4);
 
     POINT dockCenter{
         (hoveredBounds.left + hoveredBounds.right) / 2,
@@ -1230,7 +1231,8 @@ RECT DockContainer::PositionTitleTooltipBounds(
 RECT DockContainer::GetHoveredTitleBounds(
     POINT pointer) const
 {
-    if (IsMagnificationSuppressed())
+    if (IsMagnificationSuppressed() ||
+        (app_ && app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()))
         return RECT{};
 
     std::wstring title;
@@ -2527,7 +2529,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         ComPtr<IDWriteTextFormat> tooltipFormat;
         app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
             lt ? DWRITE_FONT_WEIGHT_LIGHT : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"zh-CN", &tooltipFormat);
+            DWRITE_FONT_STRETCH_NORMAL, 16.0f, L"zh-CN", &tooltipFormat);
         if (tooltipFormat)
         {
             tooltipFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);

@@ -1023,6 +1023,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "floatingEdgeSwipeEnabled",
         settings.floatingEdgeSwipeEnabled);
+    if (ReadDoubleField(text, "edgeRevealGesture", value))
+        settings.edgeRevealGesture = value == 1 ? 1 : 0;
     ReadBoolField(text, "floatingEdgeSwipeBlockFullscreen",
         settings.floatingEdgeSwipeBlockFullscreen);
     if (ReadDoubleField(text, "monitorScope", value))
@@ -1163,6 +1165,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"floatingEdgeSwipeEnabled\": "
          << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
          << ",\n";
+    file << "  \"edgeRevealGesture\": " << settings.edgeRevealGesture << ",\n";
     file << "  \"floatingEdgeSwipeBlockFullscreen\": "
          << (settings.floatingEdgeSwipeBlockFullscreen ? "true" : "false")
          << ",\n";
@@ -1173,7 +1176,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     // Preserve the legacy keys for downgrade compatibility while migrating
     // every saved configuration to the unconditional feature behavior.
     file << "  \"showRunningApps\": true,\n";
-    file << "  \"showWindowPreviews\": true,\n";
+    file << "  \"showWindowPreviews\": " << (settings.showWindowPreviews ? "true" : "false") << ",\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"keepWhenDesktopHidden\": "

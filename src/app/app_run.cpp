@@ -607,6 +607,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             },
             [this](HWND window) {
                 CloseDockWindowFromPreview(window);
+            }, [this] {
+                if (exitRequested_) return;
+                for (const auto& host : persistentDockHosts_)
+                    if (host && host->active) UpdateFloatingDockWindowBounds(*host, false, true);
+                InvalidateDockRects();
             }))
         dockWindowPreview_.reset();
     if (!CreateDesktopInputWindow(parent))

@@ -222,8 +222,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return desktopPoint();
     };
 
-    if (host.container && host.container->IsMergedWithStatusBar() &&
-        !host.mergedPresentation.inputEnabled &&
+    if (host.mergedPresentationActive && !host.mergedPresentation.inputEnabled &&
         ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_CONTEXTMENU ||
             msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR ||
             msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_SYSCHAR)) return 0;
@@ -238,8 +237,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return MA_NOACTIVATE;
     case WM_NCHITTEST:
     {
-        if (!host.active || (host.container && host.container->IsMergedWithStatusBar() &&
-            !host.mergedPresentation.inputEnabled))
+        if (!host.active || (host.mergedPresentationActive && !host.mergedPresentation.inputEnabled))
             return HTTRANSPARENT;
         POINT hitDesktopPoint{
             GET_X_LPARAM(lp),

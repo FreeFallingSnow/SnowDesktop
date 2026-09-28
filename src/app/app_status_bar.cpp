@@ -435,7 +435,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     {
         ensureSystemPanel();
         systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
-            statusBar_->Tray(), systemDataProvider_);
+            statusBar_->Tray(), systemDataProvider_, statusBar_->MergedStripBounds(monitor).has_value());
     }
 }
 

@@ -328,7 +328,7 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
 {
     if (!dockWindowPreview_)
         return;
-    if (!generalSettings_.dockEnabled || dragSession_.IsActive())
+    if (!generalSettings_.dockEnabled || !dockSettings_.showWindowPreviews || dragSession_.IsActive())
     {
         HideDockWindowPreview();
         return;
@@ -392,7 +392,7 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
 
     DockWindowPreviewTarget target;
     const bool hasTarget =
-        generalSettings_.dockEnabled &&
+        generalSettings_.dockEnabled && dockSettings_.showWindowPreviews &&
         !dragSession_.IsActive() &&
         ResolveDockWindowPreviewTarget(cursorClient, target);
     const std::wstring observedToken =

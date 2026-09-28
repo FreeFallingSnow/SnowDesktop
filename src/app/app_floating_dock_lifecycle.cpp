@@ -94,6 +94,9 @@ void DesktopApp::UnregisterFloatingDockHotkey()
 void DesktopApp::ApplyFloatingDockHotkey()
 {
     UnregisterFloatingDockHotkey();
+    if (!dockSettings_.showWindowPreviews) HideDockWindowPreview();
+    for (const auto& host : persistentDockHosts_)
+        if (host) host->edgeHoverRequested = false;
 
     const bool edgeSwipeEnabled =
         snowdesktop::dock_settings_rules::
@@ -275,10 +278,8 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 ShouldPassivelyRevealDockForDragAtEdge(
                     pointerInEdgeProjection,
                     internalDragActive,
-                    oleDragActive) ||
-            (merged && pointerInEdgeProjection &&
-                (!dockSettings_.floatingEdgeSwipeBlockFullscreen ||
-                    !statusBar_ || !statusBar_->IsFullscreen(host.monitor)));
+                    oleDragActive) || host.edgeHoverRequested;
+        host.edgeHoverRequested = false;
         const bool pointerInEdgeCorridor =
             snowdesktop::floating_dock_rules::
                 IsPointInDockEdgeCorridor(
@@ -311,7 +312,8 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
             snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
                 shellPopupTrackerOwnerHwnd_.load(std::memory_order_acquire), host.hwnd);
         const bool keepPassiveDragReveal =
-            associatedSurfaceActive ||
+            associatedSurfaceActive || pointerInEdgeCorridor ||
+            PtInRect(&dockScreenRect, cursorScreen) ||
             (merged && ((statusBar_ && statusBar_->HasInteractionSession(host.monitor)) ||
                 pointerInEdgeCorridor ||
                 snowdesktop::floating_dock_rules::IsPointInMergedDockInteraction(
@@ -728,15 +730,21 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             cursor, monitorInfo.rcMonitor,
             dockSettings_.position,
             GetTickCount(), edgeBand,
-            requiredTravel);
-    const PersistentDockHost* targetHost =
+            requiredTravel,
+            snowdesktop::floating_dock_rules::kEdgeSwipeMaximumDurationMs,
+            dockSettings_.edgeRevealGesture == 1);
+    PersistentDockHost* targetHost =
         FindPersistentDockHost(dock);
     if (triggered &&
         (!targetHost ||
             !IsPersistentDockHostPromoted(*targetHost)))
     {
-        WriteDiagnosticLogEntry(
-            L"Floating Dock edge swipe received");
-        ShowFloatingDock(monitor);
+        WriteDiagnosticLogEntry(L"Floating Dock edge gesture received");
+        if (dockSettings_.showOnlyWhenSummoned && dockSettings_.edgeRevealGesture == 1 && targetHost)
+        {
+            targetHost->edgeHoverRequested = true;
+            UpdatePassiveDragRevealHosts(cursor);
+        }
+        else ShowFloatingDock(monitor);
     }
 }

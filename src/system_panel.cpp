@@ -1,6 +1,7 @@
 #include "system_panel.h"
 #include "system_panel_model.h"
 #include "system_calendar_editor.h"
+#include "system_panel_placement.h"
 #include "modern_menu.h"
 #include "popup_round_geometry.h"
 #include "app/desktop_backdrop_compositor.h"
@@ -43,7 +44,7 @@ std::string PanelUtf8(std::wstring_view value)
 }
 struct SystemPanel::Impl
 {
-    struct Request{StatusBarAction action;HWND owner;RECT anchor;PersonalizationSettings appearance;StatusBarSettings settings;std::shared_ptr<tray::Service> tray;std::shared_ptr<wr::WidgetSystemDataProvider> data;std::string confirmPower;};
+    struct Request{StatusBarAction action;HWND owner;RECT anchor;PersonalizationSettings appearance;StatusBarSettings settings;std::shared_ptr<tray::Service> tray;std::shared_ptr<wr::WidgetSystemDataProvider> data;std::string confirmPower;bool clockAtRight=false;};
     SettingsChanged changed;SystemCalendarActions calendar;std::function<bool(std::string_view,POINT)> dropOutside;Background background;
     TrayDragFeedback dragFeedback;std::function<void(HWND,RECT)> nativeControls;
     std::function<void(HMONITOR,bool)> trayStateChanged;HMONITOR expandedTrayMonitor=nullptr;
@@ -232,7 +233,7 @@ struct SystemPanel::Impl
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
         tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;paintDirty=true;
-        model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}
+        model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action,r.clockAtRight);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}
         // HideNow clears these rectangles. Reopening the same layout need not
         // move or reshape the HWND, so Arrange alone may not publish them.
         PublishGeometry();
@@ -262,8 +263,12 @@ struct SystemPanel::Impl
         if(ApplyDismissRequest())return false;const auto& scene=model->View();
         const bool contentChanged=!previousScene.SameContent(scene);paintDirty|=contentChanged;input.Sync(scene);if(scrollbarDragging&&!model->ScrollbarGeometry().CanDrag())scrollbarDragging=false;if(input.Pressed().empty()&&!scrollbarDragging&&GetCapture()==window)ReleaseCapture();
         const int w=static_cast<int>(std::ceil(scene.width*scale)),h=static_cast<int>(std::ceil(scene.height*scale));
-        const auto& a=current->anchor;const int left=std::clamp<int>(current->action==StatusBarAction::Calendar?(a.left+a.right-w)/2:a.right-w,static_cast<int>(info.rcWork.left),static_cast<int>((std::max)(info.rcWork.left,info.rcWork.right-w)));
-        const int top=std::clamp<int>(current->settings.position==DockPosition::Bottom?a.top-h-static_cast<int>(6*scale):a.bottom+static_cast<int>(6*scale),static_cast<int>(info.rcWork.top),static_cast<int>((std::max)(info.rcWork.top,info.rcWork.bottom-h)));
+        const bool calendarPanel=current->action==StatusBarAction::Calendar;
+        const bool controls=current->action!=StatusBarAction::Tray&&!calendarPanel&&!IsSystemResourceAction(current->action)&&current->confirmPower.empty();
+        const auto alignment=controls||(calendarPanel&&current->clockAtRight)?SystemPanelAlignment::ScreenRight:
+            calendarPanel?SystemPanelAlignment::IconCenter:SystemPanelAlignment::IconRight;
+        const auto placement=PlaceSystemPanel(current->anchor,{w,h},info.rcWork,current->settings.position,scale,alignment);
+        const int left=placement.left,top=placement.top;
         std::vector<RECT> next;for(const auto& c:scene.cards)next.push_back({static_cast<LONG>(std::lround(c.left*scale)),static_cast<LONG>(std::lround(c.top*scale)),static_cast<LONG>(std::lround(c.right*scale)),static_cast<LONG>(std::lround(c.bottom*scale))});
         const bool shape=cards.size()!=next.size()||!std::equal(cards.begin(),cards.end(),next.begin(),[](const auto& x,const auto& y){return EqualRect(&x,&y);});cards=std::move(next);
         if(w!=width||h!=height){width=w;height=h;surface.Reset();paintDirty=true;}RECT previous{};GetWindowRect(window,&previous);const bool moved=previous.left!=left||previous.top!=top||previous.right!=left+w||previous.bottom!=top+h;
@@ -592,8 +597,8 @@ struct SystemPanel::Impl
 SystemPanel::SystemPanel(SettingsChanged c,SystemCalendarActions d,std::function<bool(std::string_view,POINT)> drop,UiAnimationScheduler* timer,IDCompositionDesktopDevice* graphics,IDWriteFactory* text,Background background)
     :impl_(std::make_unique<Impl>(std::move(c),std::move(d),std::move(drop),timer,graphics,text,std::move(background))){}
 SystemPanel::~SystemPanel()=default;
-void SystemPanel::Show(StatusBarAction a,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<tray::Service> tray,std::shared_ptr<wr::WidgetSystemDataProvider> data)
-{impl_->Queue({a,owner,anchor,appearance,settings,std::move(tray),std::move(data),{}});}
+void SystemPanel::Show(StatusBarAction a,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<tray::Service> tray,std::shared_ptr<wr::WidgetSystemDataProvider> data,bool clockAtRight)
+{impl_->Queue({a,owner,anchor,appearance,settings,std::move(tray),std::move(data),{},clockAtRight});}
 void SystemPanel::ShowPowerConfirmation(std::string task,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<wr::WidgetSystemDataProvider> data)
 {
     if(task!="system.power.sleep"&&task!="system.power.restart"&&task!="system.power.shutdown")return;

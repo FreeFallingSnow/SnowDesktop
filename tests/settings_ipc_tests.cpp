@@ -179,6 +179,8 @@ void TestCodec()
     settings.values.dock.appearancePreset = kAppearancePresetGlassLight;
     settings.values.dock.customAppearance.widgetBgR = .2f;
     settings.values.dock.floatingEdgeSwipeBlockFullscreen = false;
+    settings.values.dock.edgeRevealGesture = 1;
+    settings.values.dock.showWindowPreviews = false;
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
     settings.values.dock.launchEffect = 2;
@@ -202,6 +204,8 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
+        "hover reveal and disabled task thumbnails survive settings IPC");
     Check(!restored.values.dock.floatingEdgeSwipeBlockFullscreen,
         "an explicit fullscreen gesture opt-out survives IPC despite the enabled default");
     Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,

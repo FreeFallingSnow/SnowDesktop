@@ -768,6 +768,7 @@ private:
         // keyboard session, and its leave timer must never collapse a Host
         // that the user summoned explicitly.
         bool passivelyRevealed = false;
+        bool edgeHoverRequested = false;
         ULONGLONG passiveRevealTick = 0;
         ULONGLONG passiveLeaveStartTick = 0;
         bool revealPending = false;
@@ -775,7 +776,9 @@ private:
         snowdesktop::quick_navigation_animation_rules::State mergedAnimation;
         snowdesktop::UiScheduleToken mergedAnimationToken = 0;
         snowdesktop::StatusBarDockPresentation mergedPresentation;
+        // Shared visibility timeline for merged bars and summon-only Docks.
         bool mergedPresentationActive = false, updatingMergedPresentation = false;
+        bool presentationMerged = false;
         bool mergedInteractionHeld = false, mergedCloseAfterInteraction = false;
         ComPtr<IDCompositionEffectGroup> mergedOpacity;
         bool compositionRenderRecoveryPending = false;

@@ -332,7 +332,8 @@ struct DesktopStylePagePresenter::Impl
         presets.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presets.SelectionMode(muxc::ListViewSelectionMode::Single);
         presets.IsTabStop(true);
-        presets.ItemsPanel(mux::Markup::XamlReader::Load(LR"(<ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="3" /></ItemsPanelTemplate>)").as<muxc::ItemsPanelTemplate>());
+        presets.Padding({0, 0, 0, 0});
+        presets.ItemsPanel(mux::Markup::XamlReader::Load(LR"(<ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="5" /></ItemsPanelTemplate>)").as<muxc::ItemsPanelTemplate>());
         muxc::ScrollViewer::SetHorizontalScrollBarVisibility(presets, muxc::ScrollBarVisibility::Disabled);
         muxc::ScrollViewer::SetVerticalScrollBarVisibility(presets, muxc::ScrollBarVisibility::Disabled);
         muxc::ScrollViewer::SetHorizontalScrollMode(presets, muxc::ScrollMode::Disabled);
@@ -369,6 +370,10 @@ struct DesktopStylePagePresenter::Impl
             if (!closed) ArrangePresets(event.NewSize().Width);
         });
         revoke.push_back([control = presets, sizeToken] { control.SizeChanged(sizeToken); });
+        const auto loadedToken = presets.Loaded([this](const auto&, const auto&) {
+            if (!closed) ArrangePresets(presets.ActualWidth());
+        });
+        revoke.push_back([control = presets, loadedToken] { control.Loaded(loadedToken); });
         const auto themeToken = root.ActualThemeChanged([this](const auto&, const auto&) {
             if (!closed) RefreshPreviews();
         });
@@ -421,6 +426,14 @@ struct DesktopStylePagePresenter::Impl
                     value.floatingEdgeSwipeEnabled = enabled;
                 });
             }, [](const auto& settings, const auto& value) { return settings.dockEnabled && !value.showOnlyWhenSummoned; });
+        AddChoice(dockCard, "settings.dock.edgeRevealGesture", "settings.dock.edgeRevealGesture.description",
+            "desktopStyle.dock.edgeRevealGesture", {"settings.dock.gestureSwipe", "settings.dock.gestureHover"},
+            [](const auto&, const auto& value) { return value.edgeRevealGesture; },
+            [this](int index) { EmitDock([index](auto& value) { value.edgeRevealGesture = index; }); },
+            [](const auto& settings, const auto& value) { return settings.dockEnabled &&
+                dock_settings_rules::IsFloatingEdgeSwipeEnabled(value.showOnlyWhenSummoned, value.floatingEdgeSwipeEnabled); });
+        AddDockToggle(dockCard, "settings.dock.windowPreviews", "settings.dock.windowPreviews.description",
+            "desktopStyle.dock.showWindowPreviews", &DockSettings::showWindowPreviews, DockEnabled);
         AddDockToggle(dockCard, "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description",
             "desktopStyle.dock.reserveScreenSpace", &DockSettings::reserveScreenSpace,
             [](const auto& settings, const auto& value) {
@@ -508,16 +521,18 @@ struct DesktopStylePagePresenter::Impl
             view.Child(card.surface); view.Stretch(muxm::Stretch::Uniform);
             view.IsHitTestVisible(false);
             muxa::AutomationProperties::SetAccessibilityView(view, muxa::Peers::AccessibilityView::Raw);
-            ConfigureText(card.title, true); card.title.FontSize(14); card.title.MinHeight(40);
-            ConfigureText(card.description); card.description.FontSize(12); card.description.MinHeight(34);
+            ConfigureText(card.title, true); card.title.FontSize(14); card.title.Height(36); card.title.MaxLines(2);
+            card.title.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+            ConfigureText(card.description); card.description.FontSize(12); card.description.Height(32); card.description.MaxLines(2);
+            card.description.TextTrimming(mux::TextTrimming::CharacterEllipsis);
             muxc::StackPanel content;
-            content.Spacing(8);
+            content.Spacing(6);
             content.Children().Append(view);
             content.Children().Append(card.title);
             content.Children().Append(card.description);
-            card.item.Width(280);
+            card.item.Width(220);
             card.item.Padding({8, 8, 8, 8});
-            card.item.Margin({0, 0, 12, 12});
+            card.item.Margin({0, 0, 8, 8});
             card.item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
             card.item.VerticalContentAlignment(mux::VerticalAlignment::Top);
             card.item.Content(content);
@@ -530,9 +545,20 @@ struct DesktopStylePagePresenter::Impl
         if (width <= 0) return;
         // Keep all five previews in the page flow. The outer settings page owns
         // scrolling; narrowing the window changes columns, not preview access.
-        const int columns = width >= 720 ? 3 : (width >= 440 ? 2 : 1);
-        const double itemWidth = std::floor(width / columns) - 12;
-        for (auto& card : presetCards) card.item.Width(std::max(1.0, itemWidth));
+        const int columns = std::clamp(static_cast<int>(width / 220), 1, 5);
+        const double cellWidth = std::min(252.0, std::floor(width / columns));
+        const double cellHeight = std::ceil(std::max(1.0, cellWidth - 24) * kPreviewHeight / kPreviewWidth) + 108;
+        // ItemsWrapGrid caches its first measured cell. Updating only item.Width
+        // leaves old wrap boundaries after a window resize; update the panel too.
+        if (const auto panel = presets.ItemsPanelRoot().try_as<muxc::ItemsWrapGrid>())
+        {
+            panel.ItemWidth(cellWidth); panel.ItemHeight(cellHeight);
+        }
+        for (auto& card : presetCards)
+        {
+            card.item.Width(std::max(1.0, cellWidth - 8));
+            card.item.Height(cellHeight - 8);
+        }
     }
     mux::UIElement PreviewCollection(bool highContrast)
     {
@@ -722,7 +748,7 @@ struct DesktopStylePagePresenter::Impl
         // Edge bars are flush and square. Only the island has an inset/radius.
         bar.BorderThickness({0, 0, 0, 0});
         bar.CornerRadius(island ? mux::CornerRadius{14, 14, 14, 14} : mux::CornerRadius{0, 0, 0, 0});
-        const double thickness = dockBar ? kPreviewDockHeight : kPreviewStatusHeight;
+        const double thickness = merged ? settings.mergedBarHeight : (dockBar ? kPreviewDockHeight : kPreviewStatusHeight);
         bar.HorizontalAlignment(vertical
             ? (position == DockPosition::Left ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right)
             : mux::HorizontalAlignment::Stretch);
@@ -885,6 +911,7 @@ struct DesktopStylePagePresenter::Impl
             card.description.Text(L(prefix + ".description"));
             muxa::AutomationProperties::SetName(card.item, card.title.Text());
             muxa::AutomationProperties::SetHelpText(card.item, card.description.Text());
+            muxc::ToolTipService::SetToolTip(card.item, winrt::box_value(card.title.Text()));
         }
         muxa::AutomationProperties::SetName(presets, L("settings.desktopStyle.presets"));
         mergedHeight->RefreshLocalizedText();

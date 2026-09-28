@@ -70,8 +70,8 @@ SystemPanelSource LiveSystemPanelSource(std::shared_ptr<wr::WidgetSystemDataProv
     s.history=[data](auto topic,auto id){return data->ResourceHistory(topic,id);};
     s.now=[]{return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();};return s;
 }
-SystemPanelModel::SystemPanelModel(SystemPanelSource source,StatusBarSettings settings,StatusBarAction action)
-    :source_(std::move(source)),settings_(std::move(settings)),action_(action)
+SystemPanelModel::SystemPanelModel(SystemPanelSource source,StatusBarSettings settings,StatusBarAction action,bool calendarStacked)
+    :source_(std::move(source)),settings_(std::move(settings)),action_(action),calendarStacked_(calendarStacked)
 {
     date_=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
     if(!calendar::CalendarService::GetDateInfo(date_))date_=calendar::CalendarService::CurrentLocalNow().date;
@@ -466,7 +466,7 @@ ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool s
     // A slider owns its direction and range keys, including at either limit.
     // Otherwise a list can scroll without triggering a device control.
     const auto* focused=scene_.Find(input.Focused());
-    const bool fixedCalendar=action_==StatusBarAction::Calendar&&bodyLeft_>0&&focused&&focused->bounds.right<=bodyLeft_;
+    const bool fixedCalendar=action_==StatusBarAction::Calendar&&bodyLeft_>0&&focused&&(focused->bounds.right<=bodyLeft_||focused->bounds.bottom<=bodyStart_);
     if(result.kind==ui::InputResult::Kind::None&&!fixedCalendar)
     {
         const float page=(std::max)(42.f,scrollViewport_.bottom-scrollViewport_.top-32);
@@ -970,7 +970,7 @@ bool SystemPanelModel::Drop(std::string_view key,D2D1_POINT_2F p)
 void SystemPanelModel::Calendar()
 {
     calendarEvents_.clear();
-    scene_.width=(std::min)(720.f,availableWidth_);
+    scene_.width=(std::min)(calendarStacked_?384.f:720.f,availableWidth_);
     auto today=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
     if(!calendar::CalendarService::GetDateInfo(today))today=calendar::CalendarService::CurrentLocalNow().date;
     if(!calendar::CalendarService::GetDateInfo(date_))date_=today;
@@ -978,7 +978,7 @@ void SystemPanelModel::Calendar()
     const auto month=calendar::CalendarService::GetDateInfo(month_);
     if(!month)return;
     const bool two=scene_.width>=560;
-    if(CalendarEditing()&&!two)
+    if(CalendarEditing()&&!two&&!calendarStacked_)
     {
         bodyLeft_=0;bodyStart_=56;
         const float end=CalendarEditor(scene_.width);Finish(end,false);return;
@@ -1050,14 +1050,16 @@ void SystemPanelModel::Calendar()
         Command(n.id,[this,date=*date]{date_=date;month_=date.substr(0,7)+"-01";calendarNotice_.clear();});
     }
     const float monthEnd=gridTop+28+6*34,agendaLeft=two?monthLeft+monthWidth+16:16,agendaWidth=scene_.width-agendaLeft-16;
-    const bool fixedMonth=two&&available_>=monthEnd+4;
+    const float agendaTop=two?monthTop:monthEnd+16;
+    const bool fixedMonth=(two||calendarStacked_)&&available_>=monthEnd+(calendarStacked_?160.f:4.f);
+    const float panelHeight=monthEnd+(calendarStacked_?248.f:8.f);
     if(CalendarEditing())
     {
-        // Secondary calendar content owns only the right column. Keep the
+        // Secondary content owns the agenda column or lower area. Keep the
         // original month nodes and actions while the form/picker builds in its
         // own local coordinates; live EDIT descriptors use the final geometry.
         auto monthScene=std::move(scene_);scene_={};
-        const float end=CalendarEditor(agendaWidth+32),offsetX=agendaLeft-16,offsetY=monthTop-10;
+        const float end=CalendarEditor(agendaWidth+32),offsetX=agendaLeft-16,offsetY=agendaTop-10;
         auto editorNodes=std::move(scene_.nodes);scene_=std::move(monthScene);
         for(auto& node:editorNodes)
         {
@@ -1068,12 +1070,12 @@ void SystemPanelModel::Calendar()
             for(auto& path:node.paths)for(auto& point:path){point.x+=offsetX;point.y+=offsetY;}
             scene_.nodes.push_back(std::move(node));
         }
-        bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?monthTop:0;
-        if(fixedMonth)Finish(end+offsetY,false,monthEnd+8,monthEnd+8);
+        bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?agendaTop:0;
+        if(fixedMonth)Finish(end+offsetY,false,panelHeight,panelHeight);
         else Finish((std::max)(monthEnd,end+offsetY),false);
         return;
     }
-    float y=two?16.f:monthEnd+16;
+    float y=agendaTop;
     Add("calendar.selected",ui::Role::Text,Rect(agendaLeft,y,agendaWidth-80,32),Wide(date_)).bold=true;
     Add("calendar.add",ui::Role::Icon,Rect(scene_.width-84,y,32,32),L"",L"\uE710").tooltip=_LW("settings.calendar.add");
     Command("calendar.add",[this]{calendar::CalendarEvent event;event.date=date_;event.startMinutes=9*60;event.endMinutes=10*60;EditCalendar(std::move(event));});
@@ -1121,7 +1123,7 @@ void SystemPanelModel::Calendar()
     // Keep month navigation and the day grid stationary when the
     // full month fits. Short/narrow viewports retain one accessible scroll flow.
     bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?agendaStart:0;
-    if(fixedMonth)Finish(y,false,monthEnd+8,monthEnd+8);else Finish((std::max)(monthEnd,y),false);
+    if(fixedMonth)Finish(y,false,panelHeight,panelHeight);else Finish((std::max)(monthEnd,y),false);
     if(!hasEvents)
         for(auto& node:scene_.nodes)if(node.id=="calendar.empty")
         {

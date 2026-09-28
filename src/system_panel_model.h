@@ -71,7 +71,7 @@ bool IsSystemResourceAction(StatusBarAction);
 class SystemPanelModel
 {
 public:
-    SystemPanelModel(SystemPanelSource, StatusBarSettings, StatusBarAction);
+    SystemPanelModel(SystemPanelSource, StatusBarSettings, StatusBarAction, bool calendarStacked=false);
     ~SystemPanelModel();
     void Refresh(float availableHeight = 800, float availableWidth = 0);
     void Select(std::string page);
@@ -109,6 +109,7 @@ private:
     SystemPanelSource source_;
     StatusBarSettings settings_;
     StatusBarAction action_;
+    bool calendarStacked_=false;
     native_ui::Scene scene_;
     std::string page_, interface_, network_, bluetooth_, gpu_, media_, date_, month_;
     std::string calendarAnnotationKey_;
