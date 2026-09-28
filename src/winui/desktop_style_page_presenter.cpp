@@ -8,8 +8,10 @@
 #include "../status_bar_layout.h"
 
 #include <array>
+#include <cmath>
 #include <shellapi.h>
 #include <vector>
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 
 namespace snowdesktop::winui
 {
@@ -169,14 +171,18 @@ struct DesktopStylePagePresenter::Impl
     muxc::StackPanel companionOptions;
     muxc::ComboBox companionPosition, companionForm;
     SettingRow companionPositionRow, companionFormRow;
-    muxc::TextBlock presetDescription, presetChanges, adjustmentTitle;
+    muxc::TextBlock presetChanges, adjustmentTitle;
     muxc::Button apply;
-    muxc::Viewbox previewView;
     muxc::Expander changes;
-    muxc::Border preview;
-    muxc::Grid previewLayout, presetLayout;
     muxc::StackPanel presetDetails;
-    muxc::Border previewWallpaper;
+    struct PresetCard
+    {
+        muxc::GridViewItem item;
+        muxc::Border surface, wallpaper;
+        muxc::Grid layout;
+        muxc::TextBlock title, description;
+    };
+    std::array<PresetCard, kPresets.size()> presetCards;
     // This is a layout illustration, not a live desktop view. Query the
     // Windows-owned edge once when the page is created, never per snapshot.
     const DockPosition nativeTaskbarPosition = NativeTaskbarPosition();
@@ -326,7 +332,12 @@ struct DesktopStylePagePresenter::Impl
         presets.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presets.SelectionMode(muxc::ListViewSelectionMode::Single);
         presets.IsTabStop(true);
-        presets.ItemsPanel(mux::Markup::XamlReader::Load(LR"(<ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="5" /></ItemsPanelTemplate>)").as<muxc::ItemsPanelTemplate>());
+        presets.ItemsPanel(mux::Markup::XamlReader::Load(LR"(<ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="3" /></ItemsPanelTemplate>)").as<muxc::ItemsPanelTemplate>());
+        muxc::ScrollViewer::SetHorizontalScrollBarVisibility(presets, muxc::ScrollBarVisibility::Disabled);
+        muxc::ScrollViewer::SetVerticalScrollBarVisibility(presets, muxc::ScrollBarVisibility::Disabled);
+        muxc::ScrollViewer::SetHorizontalScrollMode(presets, muxc::ScrollMode::Disabled);
+        muxc::ScrollViewer::SetVerticalScrollMode(presets, muxc::ScrollMode::Disabled);
+        BuildPresetCards();
         presetCard.Children().Append(presets);
         companionOptions.Spacing(8);
         companionPositionRow.Initialize(companionPosition);
@@ -337,49 +348,12 @@ struct DesktopStylePagePresenter::Impl
         for (const auto& control : {companionPosition, companionForm})
         {
             const auto optionToken = control.SelectionChanged([this](const auto&, const auto&) {
-                if (!closed && !syncing) UpdatePreset();
+                if (!closed && !syncing) { UpdatePreset(); RefreshPreviews(); }
             });
             revoke.push_back([control, optionToken] { control.SelectionChanged(optionToken); });
         }
-        ConfigureText(presetDescription, true);
-        presetDescription.FontSize(16);
-        presetDetails.Spacing(16);
-        presetDetails.VerticalAlignment(mux::VerticalAlignment::Center);
-        presetDetails.Children().Append(presetDescription);
-        preview = PreviewSurface();
-        preview.Width(kPreviewWidth); preview.Height(kPreviewHeight);
-        preview.BorderThickness({0, 0, 0, 0});
-        preview.CornerRadius({0, 0, 0, 0});
-        preview.IsHitTestVisible(false);
-        previewWallpaper = mux::Markup::XamlReader::Load(LR"(
-            <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Opacity="0.26">
-                <Border.Background>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                        <GradientStop Color="{ThemeResource SystemAccentColorLight2}" Offset="0" />
-                        <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="0.5" />
-                        <GradientStop Color="{ThemeResource SystemAccentColorDark2}" Offset="1" />
-                    </LinearGradientBrush>
-                </Border.Background>
-            </Border>)").as<muxc::Border>();
-        muxc::Grid scene;
-        scene.Children().Append(previewWallpaper);
-        scene.Children().Append(previewLayout);
-        preview.Child(scene);
-        previewView.Child(preview);
-        previewView.Stretch(muxm::Stretch::Uniform);
-        previewView.MaxWidth(520);
-        previewView.VerticalAlignment(mux::VerticalAlignment::Top);
-        for (int index = 0; index != 2; ++index)
-        {
-            muxc::ColumnDefinition column;
-            presetLayout.ColumnDefinitions().Append(column);
-            muxc::RowDefinition row;
-            row.Height(mux::GridLengthHelper::Auto());
-            presetLayout.RowDefinitions().Append(row);
-        }
-        presetLayout.Children().Append(previewView);
-        presetLayout.Children().Append(presetDetails);
-        presetCard.Children().Append(presetLayout);
+        presetDetails.Spacing(12);
+        presetCard.Children().Append(presetDetails);
         ConfigureText(presetChanges);
         presetChanges.FontSize(13);
         changes.Content(presetChanges);
@@ -391,15 +365,15 @@ struct DesktopStylePagePresenter::Impl
         if (const auto resource = mux::Application::Current().Resources().TryLookup(winrt::box_value(L"AccentButtonStyle")))
             if (const auto accent = resource.try_as<mux::Style>()) apply.Style(accent);
         presetDetails.Children().Append(apply);
-        const auto sizeToken = presetLayout.SizeChanged([this](const auto&, const mux::SizeChangedEventArgs& event) {
-            if (!closed) ArrangePreset(event.NewSize().Width);
+        const auto sizeToken = presets.SizeChanged([this](const auto&, const mux::SizeChangedEventArgs& event) {
+            if (!closed) ArrangePresets(event.NewSize().Width);
         });
-        revoke.push_back([control = presetLayout, sizeToken] { control.SizeChanged(sizeToken); });
+        revoke.push_back([control = presets, sizeToken] { control.SizeChanged(sizeToken); });
         const auto themeToken = root.ActualThemeChanged([this](const auto&, const auto&) {
-            if (!closed) UpdatePreset();
+            if (!closed) RefreshPreviews();
         });
         revoke.push_back([control = root, themeToken] { control.ActualThemeChanged(themeToken); });
-        ArrangePreset(0);
+        ArrangePresets(0);
         auto token = presets.SelectionChanged([this](const auto&, const auto&) {
             if (!closed && !syncing) UpdatePreset();
         });
@@ -508,18 +482,57 @@ struct DesktopStylePagePresenter::Impl
         Localize();
     }
 
-    void ArrangePreset(double width)
+    void BuildPresetCards()
     {
-        const bool wide = width >= 800;
-        presetLayout.ColumnDefinitions().GetAt(0).Width(mux::GridLengthHelper::FromValueAndType(
-            wide ? 1.25 : 1.0, mux::GridUnitType::Star));
-        presetLayout.ColumnDefinitions().GetAt(1).Width(mux::GridLengthHelper::FromValueAndType(
-            wide ? 1.0 : 0.0, mux::GridUnitType::Star));
-        muxc::Grid::SetRow(presetDetails, wide ? 0 : 1);
-        muxc::Grid::SetColumn(presetDetails, wide ? 1 : 0);
-        presetDetails.Margin(wide ? mux::Thickness{24, 0, 0, 0} : mux::Thickness{0, 16, 0, 0});
-        previewView.HorizontalAlignment(wide ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Center);
-        if (width > 0) previewView.Width(std::min(520.0, wide ? width / 2.25 * 1.25 : width));
+        for (auto& card : presetCards)
+        {
+            card.surface = PreviewSurface();
+            card.surface.Width(kPreviewWidth); card.surface.Height(kPreviewHeight);
+            card.surface.BorderThickness({0, 0, 0, 0});
+            card.surface.CornerRadius({0, 0, 0, 0});
+            card.wallpaper = mux::Markup::XamlReader::Load(LR"(
+                <Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Opacity="0.26">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="{ThemeResource SystemAccentColorLight2}" Offset="0" />
+                            <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="0.5" />
+                            <GradientStop Color="{ThemeResource SystemAccentColorDark2}" Offset="1" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>)").as<muxc::Border>();
+            muxc::Grid scene;
+            scene.Children().Append(card.wallpaper);
+            scene.Children().Append(card.layout);
+            card.surface.Child(scene);
+            muxc::Viewbox view;
+            view.Child(card.surface); view.Stretch(muxm::Stretch::Uniform);
+            view.IsHitTestVisible(false);
+            muxa::AutomationProperties::SetAccessibilityView(view, muxa::Peers::AccessibilityView::Raw);
+            ConfigureText(card.title, true); card.title.FontSize(14); card.title.MinHeight(40);
+            ConfigureText(card.description); card.description.FontSize(12); card.description.MinHeight(34);
+            muxc::StackPanel content;
+            content.Spacing(8);
+            content.Children().Append(view);
+            content.Children().Append(card.title);
+            content.Children().Append(card.description);
+            card.item.Width(280);
+            card.item.Padding({8, 8, 8, 8});
+            card.item.Margin({0, 0, 12, 12});
+            card.item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            card.item.VerticalContentAlignment(mux::VerticalAlignment::Top);
+            card.item.Content(content);
+            presets.Items().Append(card.item);
+        }
+        presets.SelectedIndex(0);
+    }
+    void ArrangePresets(double width)
+    {
+        if (width <= 0) return;
+        // Keep all five previews in the page flow. The outer settings page owns
+        // scrolling; narrowing the window changes columns, not preview access.
+        const int columns = width >= 720 ? 3 : (width >= 440 ? 2 : 1);
+        const double itemWidth = std::floor(width / columns) - 12;
+        for (auto& card : presetCards) card.item.Width(std::max(1.0, itemWidth));
     }
     mux::UIElement PreviewCollection(bool highContrast)
     {
@@ -699,7 +712,7 @@ struct DesktopStylePagePresenter::Impl
         content.Children().Append(leading); content.Children().Append(middle); content.Children().Append(trailing);
         return content;
     }
-    void AddPreviewBar(const GeneralSettings& values, const DockSettings& settings,
+    void AddPreviewBar(const muxc::Grid& layout, const GeneralSettings& values, const DockSettings& settings,
         bool dockBar, bool highContrast, bool merged = false)
     {
         const auto position = dockBar ? settings.position : values.statusBar.position;
@@ -737,7 +750,7 @@ struct DesktopStylePagePresenter::Impl
                 FitPreviewContent(apps, mux::HorizontalAlignment::Center).as<mux::UIElement>());
         }
         else bar.Child(PreviewStatusBar(values.statusBar, false));
-        previewLayout.Children().Append(bar);
+        layout.Children().Append(bar);
     }
     muxc::Grid PreviewTaskbarContent(const DockSettings& settings, bool highContrast, bool vertical)
     {
@@ -780,13 +793,19 @@ struct DesktopStylePagePresenter::Impl
         const std::string key(kPresets[static_cast<std::size_t>(index)]);
         const std::string prefix = "settings.desktopStyle." + key;
         companionOptions.Visibility(key == "taskbar-dock" ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        presetDescription.Text(L(prefix + ".description"));
         presetChanges.Text(L(prefix + ".changes"));
         muxa::AutomationProperties::SetName(apply, L(prefix + ".title") + L": " + L("settings.desktopStyle.applyLayout"));
-        muxa::AutomationProperties::SetName(preview, L(prefix + ".title"));
-        previewLayout.Children().Clear();
+    }
+    void RefreshPreviews()
+    {
         const bool highContrast = IsHighContrastEnabled();
-        previewWallpaper.Visibility(highContrast ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        for (std::size_t i = 0; i < presetCards.size(); ++i)
+            RenderPreview(presetCards[i], kPresets[i], highContrast);
+    }
+    void RenderPreview(PresetCard& card, std::string_view key, bool highContrast)
+    {
+        card.layout.Children().Clear();
+        card.wallpaper.Visibility(highContrast ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         auto previewGeneral = general;
         auto previewDock = dock;
         ApplyDesktopStylePreset(std::wstring(key.begin(), key.end()), previewGeneral, previewDock,
@@ -794,9 +813,9 @@ struct DesktopStylePagePresenter::Impl
         const bool merged = previewGeneral.dockEnabled && previewGeneral.statusBar.enabled && previewDock.edgeAttached &&
             previewDock.position == previewGeneral.statusBar.position;
         if (previewGeneral.statusBar.enabled && !merged)
-            AddPreviewBar(previewGeneral, previewDock, false, highContrast);
+            AddPreviewBar(card.layout, previewGeneral, previewDock, false, highContrast);
         if (previewGeneral.dockEnabled)
-            AddPreviewBar(previewGeneral, previewDock, true, highContrast, merged);
+            AddPreviewBar(card.layout, previewGeneral, previewDock, true, highContrast, merged);
         if (!previewDock.suppressSystemTaskbar)
         {
             // The native taskbar is illustrative: this preset preserves its
@@ -813,7 +832,7 @@ struct DesktopStylePagePresenter::Impl
             taskbar.VerticalAlignment(vertical ? mux::VerticalAlignment::Stretch
                 : (nativeTaskbarPosition == DockPosition::Top ? mux::VerticalAlignment::Top : mux::VerticalAlignment::Bottom));
             if (!previewDock.systemTaskbarAutoHide) taskbar.Child(PreviewTaskbarContent(previewDock, highContrast, vertical));
-            previewLayout.Children().Append(taskbar);
+            card.layout.Children().Append(taskbar);
         }
     }
     bool SelectPresetForFocus(std::string_view focusId)
@@ -851,26 +870,22 @@ struct DesktopStylePagePresenter::Impl
         apply.IsEnabled(hasSnapshot);
         syncing = previous;
         UpdatePreset();
+        RefreshPreviews();
     }
     void Localize()
     {
         if (closed) return;
         const bool previous = syncing;
         syncing = true;
-        const int selected = presets.SelectedIndex();
-        presets.Items().Clear();
-        for (const auto key : kPresets)
+        for (std::size_t i = 0; i < presetCards.size(); ++i)
         {
-            const std::string titleKey = "settings.desktopStyle." + std::string(key) + ".title";
-            muxc::GridViewItem item;
-            muxc::TextBlock title; ConfigureText(title, true);
-            title.Text(L(titleKey)); title.TextWrapping(mux::TextWrapping::Wrap);
-            item.Width(156); item.MinHeight(76); item.Padding({12, 10, 12, 10});
-            item.Content(title);
-            muxa::AutomationProperties::SetName(item, L(titleKey));
-            presets.Items().Append(item);
+            auto& card = presetCards[i];
+            const auto prefix = "settings.desktopStyle." + std::string(kPresets[i]);
+            card.title.Text(L(prefix + ".title"));
+            card.description.Text(L(prefix + ".description"));
+            muxa::AutomationProperties::SetName(card.item, card.title.Text());
+            muxa::AutomationProperties::SetHelpText(card.item, card.description.Text());
         }
-        presets.SelectedIndex(selected >= 0 ? selected : 0);
         muxa::AutomationProperties::SetName(presets, L("settings.desktopStyle.presets"));
         mergedHeight->RefreshLocalizedText();
         const auto localizeDraft = [this](const muxc::ComboBox& control, SettingRow& row,

@@ -690,7 +690,11 @@ end
 local a = gpu("adapter-8", "Discrete fixture", 8000, 3200, 25)
 local b = gpu("adapter-9", "Second fixture", 8000, 1600, 60)
 local integrated = gpu("adapter-1", "Integrated fixture", 0, 0, 90)
-local function ready(adapters) return { available = true, value = { adapters = adapters } } end
+local sampleTime = 0
+local function ready(adapters)
+    sampleTime = sampleTime + 1
+    return { available = true, timestamp = sampleTime, value = { adapters = adapters } }
+end
 local function instance(saved, snapshot, legacy)
     local f = { values = saved or {}, snapshot = snapshot, details = not legacy, submenu = not legacy,
         writes = 0, subscriptions = 0, releases = 0, texts = {} }
@@ -701,6 +705,7 @@ local function instance(saved, snapshot, legacy)
     return f
 end
 local function start(f)
+    assert(f.component.showTitle == false, "System Monitor must not show a redundant component title")
     f.model = f.component.setup()
     assert(f.subscriptions == 1, "GPU and VRAM must share their source")
     return f
@@ -735,6 +740,10 @@ local reloaded = instance({}, ready({replacement, b}))
 local missing = instance({gpu_scope = "selected", gpu_adapter_id = "gone"}, ready({a, b}))
 local legacy = instance({}, ready({b, a}), true)
 local active = instance({}, {available = false, warmingUp = true})
+local newUnavailable = gpu("current-id", a.name, 8000, 0, 0)
+newUnavailable.usageAvailable, newUnavailable.dedicatedUsageAvailable, newUnavailable.sharedUsageAvailable = false, false, false
+local warming = instance({gpu_scope = "selected", gpu_adapter_id = "old-id", gpu_adapter_name = a.name}, ready({newUnavailable}))
+local failing = instance({gpu_scope = "selected", gpu_adapter_id = newUnavailable.id}, ready({newUnavailable, b}))
 return hostWidget.define({
     useCustomStyle = true, followPersonalizationDefault = false,
     bg = 0x20242C, alpha = 1, borderAlpha = 0,
@@ -746,8 +755,8 @@ return hostWidget.define({
         checkMenu(f, a.id, false)
         assert(f.writes == writes, "unchanged menus must not rewrite storage")
         f.snapshot = {available = false, error = "unavailable"}; checkMenu(f, nil, true)
-        f.snapshot = ready({b, integrated}); checkMenu(f, nil, true)
-        assert(f.values.gpu_adapter_id == a.id and f.writes == writes, "temporary loss must not pick another card")
+        f.snapshot = ready({b, integrated}); checkMenu(f, b.id, false)
+        assert(f.values.gpu_adapter_id == b.id and f.writes > writes, "a missing GPU must persist a concrete available fallback")
         f.snapshot = ready({a, b}); action(f, b.id); checkMenu(f, b.id, false)
         writes = f.writes; action(f, "missing")
         assert(f.writes == writes and f.values.gpu_adapter_id == b.id, "stale unknown menu actions must not change selection")
@@ -763,7 +772,19 @@ return hostWidget.define({
         reloaded.values = alias.values; start(reloaded); checkMenu(reloaded, replacement.id, false)
         reloaded.component.dispose()
         start(missing)
-        checkMenu(missing, nil, true); assert(missing.writes == 0); missing.component.dispose()
+        checkMenu(missing, a.id, false)
+        assert(missing.values.gpu_adapter_id == a.id and missing.writes > 0)
+        missing.component.dispose()
+        start(warming)
+        assert(checkMenu(warming, newUnavailable.id, false) == 1, "warming counters must not leave a stale duplicate menu row")
+        assert(warming.values.gpu_adapter_id == newUnavailable.id)
+        warming.component.dispose()
+        start(failing)
+        for _ = 1, 10 do checkMenu(failing, newUnavailable.id, false) end
+        failing.snapshot = ready({newUnavailable, b}); checkMenu(failing, newUnavailable.id, false)
+        failing.snapshot = ready({newUnavailable, b}); checkMenu(failing, b.id, false)
+        assert(failing.values.gpu_adapter_id == b.id, "three distinct unavailable samples must persist a usable fallback")
+        failing.component.dispose()
         start(legacy)
         assert(checkMenu(legacy, a.id, false) == 2 and legacy.values.gpu_adapter_id == a.id,
             "legacy hosts need a concrete default and a flat single-selection menu without aliases")
@@ -2537,8 +2558,8 @@ int wmain(int argc, wchar_t** argv) try
     }
     Check(monitorPreviews[0].pixels == monitorPreviews[1].pixels &&
             monitorPreviews[1].pixels == monitorPreviews[2].pixels &&
-            monitorPreviews[2].pixels != monitorPreviews[3].pixels,
-        "System Monitor defaults and migrates legacy all-GPU selection to a concrete device while preserving unavailable saved selection");
+            monitorPreviews[2].pixels == monitorPreviews[3].pixels,
+        "System Monitor defaults, legacy all-GPU selection and missing saved selection render a concrete available device");
     CheckModuleRequireErrors(snowwidget, host, temporary.path, monitorSource);
     CheckSystemMonitorMenu(snowwidget, host, temporary.path, monitorSource);
 

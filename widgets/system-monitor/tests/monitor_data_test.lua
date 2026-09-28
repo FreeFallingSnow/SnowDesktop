@@ -119,6 +119,18 @@ return {
         assert(choice.id == a.id)
         assert(#monitorData.gpuChoices({ adapters = { a, b } }) == 2)
     end,
+    ["a stale saved ID retires even while all current counters are unavailable"] = function()
+        local a = adapter("new-id", "Dedicated", 0, 800, 0)
+        local b = adapter("integrated", "Integrated", 0, 0, 0)
+        for _, device in ipairs({a, b}) do
+            device.usageAvailable, device.dedicatedUsageAvailable, device.sharedUsageAvailable = false, false, false
+        end
+        local choice = monitorData.rememberGpuChoice({}, { adapters = {a, b} }, "old-id", a.name, 1)
+        assert(choice.id == a.id)
+        assert(monitorData.summarizeGpu({ adapters = {a, b} }, choice.id, true).usagePercent == nil)
+        assert(monitorData.rememberGpuChoice({}, { adapters = {a, b} }, "old-id", "unknown", 1).id == a.id)
+        assert(monitorData.rememberGpuChoice({}, nil, "old-id", a.name, 1) == nil)
+    end,
     ["fallback waits for distinct invalid samples and constant idle is valid"] = function()
         local a = adapter("a", "Dedicated", 0, 800, 0)
         local b = adapter("b", "Integrated", 10, 0, 0)

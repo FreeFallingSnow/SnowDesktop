@@ -95,6 +95,17 @@ function M.rememberGpuChoice(state, value, savedId, savedName, timestamp)
             end
         end
         local fallback = matchingCount == 1 and matching or preferred
+        if not choice and not fallback then
+            -- The device list exists but its counters are still warming up.
+            -- Retire the missing saved ID rather than adding a phantom menu
+            -- entry beside the newly enumerated device. This is a selection
+            -- fallback only; equally named physical GPUs remain separate.
+            matching, matchingCount = nil, 0
+            for _, candidate in ipairs(choices) do
+                if candidate.name == name then matching, matchingCount = candidate, matchingCount + 1 end
+            end
+            fallback = matchingCount == 1 and matching or M.resolveGpuChoice(value)
+        end
         if fallback then choice, state.failedSamples = fallback, 0 end
     end
     if choice then state.choice = { id = choice.id, name = choice.name } end
