@@ -106,6 +106,11 @@ bool IsVisibleMenuPopup(HWND window)
         !(extended & WS_EX_TOOLWINDOW) || (extended & WS_EX_TRANSPARENT)) return false;
     wchar_t name[128]{};
     GetClassNameW(window, name, static_cast<int>(std::size(name)));
+    // Revealing the owner makes the taskbar a new, uncloaked WS_POPUP tool
+    // window before UIA creates the actual menu. Tracking it as the popup
+    // would let the exemption keep itself alive after that menu is dismissed.
+    if (wcscmp(name, L"Shell_TrayWnd") == 0 ||
+        wcscmp(name, L"Shell_SecondaryTrayWnd") == 0) return false;
     if (_wcsicmp(name, L"tooltips_class32") == 0 ||
         wcsstr(name, L"ToolTip") || wcsstr(name, L"Tooltip")) return false;
     DWORD cloak = 0;
