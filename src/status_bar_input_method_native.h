@@ -1,5 +1,6 @@
 #pragma once
 #include "status_bar_input_method_identity.h"
+#include "taskbar_hook/taskbar_menu_access.h"
 #include <windows.h>
 #include <ole2.h>
 #include <UIAutomation.h>
@@ -67,8 +68,8 @@ inline HRESULT FindModeButton(IUIAutomation* automation, HWND taskbar, std::wstr
     if (FAILED(hr)) return hr;
 
     // The hidden taskbar root omits its XAML descendants from UIA. Query its
-    // existing XAML bridge directly; never reveal the taskbar or scan desktop
-    // applications. Older shell versions expose the subtree at the root.
+    // existing XAML bridge directly without changing visibility during lookup
+    // or scanning desktop applications. Older shells expose it at the root.
     std::vector<HWND> roots{taskbar};
     EnumChildWindows(taskbar, [](HWND window, LPARAM data) -> BOOL {
         wchar_t typeName[96]{};
@@ -125,13 +126,25 @@ inline HRESULT ShowContextMenu(std::wstring_view name, ULONGLONG deadline, std::
         timeouts->put_TransactionTimeout(300);
     }
     ComPtr<IUIAutomationElement> button;
-    hr = FindModeButton(automation.Get(), FindWindowW(L"Shell_TrayWnd", nullptr), name, deadline, stop, button);
+    const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    hr = FindModeButton(automation.Get(), taskbar, name, deadline, stop, button);
     if (FAILED(hr)) return hr;
-    if (stop.stop_requested() || GetTickCount64() >= deadline || !foreground ||
-        GetForegroundWindow() != foreground || !inputThread || GetKeyboardLayout(inputThread) != layout)
+    if (stop.stop_requested() || GetTickCount64() >= deadline ||
+        GetForegroundWindow() != foreground || (inputThread && GetKeyboardLayout(inputThread) != layout))
         return HRESULT_FROM_WIN32(ERROR_CANCELLED);
     ComPtr<IUIAutomationElement3> context;
     hr = button.As(&context);
-    return FAILED(hr) ? hr : context->ShowContextMenu();
+    if (FAILED(hr)) return hr;
+    taskbar_hook::native::MenuAccess access;
+    hr = access.Begin(taskbar);
+    if (FAILED(hr)) return hr;
+    // No cached foreground is substituted when Explorer briefly has no active
+    // window. The native button selects its own current IME in that case.
+    if (stop.stop_requested() || GetTickCount64() >= deadline ||
+        GetForegroundWindow() != foreground || (inputThread && GetKeyboardLayout(inputThread) != layout))
+        return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    hr = context->ShowContextMenu();
+    if (SUCCEEDED(hr)) access.HandOff();
+    return hr;
 }
 }

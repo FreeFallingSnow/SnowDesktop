@@ -4,7 +4,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <cstdint>
 
 namespace snowdesktop::status_bar_input_method
 {
@@ -21,8 +20,8 @@ struct Snapshot
 
 namespace detail
 {
-// A language is not a conversion mode. If IMM cannot answer, show the language
-// abbreviation, never infer Chinese/native input merely from the locale.
+// A language is not a conversion mode. A failed IME query is not a successful
+// mode sample; retain the last successful presentation instead of showing ZH.
 inline std::wstring Label(LANGID language, std::wstring abbreviation,
     std::optional<bool> open, std::optional<DWORD> conversion)
 {
@@ -35,7 +34,8 @@ inline std::wstring Label(LANGID language, std::wstring abbreviation,
             return native ? (*conversion & IME_CMODE_KATAKANA ? L"カ" : L"あ") : L"A";
         if (primary == LANG_KOREAN) return native ? L"가" : L"A";
     }
-    return abbreviation.empty() ? L"—" : abbreviation;
+    if (primary == LANG_CHINESE || primary == LANG_JAPANESE || primary == LANG_KOREAN) return {};
+    return abbreviation;
 }
 inline bool Matches(const Snapshot& value, HWND foreground, DWORD thread, HKL layout, HWND focus = nullptr)
 {
@@ -43,23 +43,19 @@ inline bool Matches(const Snapshot& value, HWND foreground, DWORD thread, HKL la
         value.focus == focus && value.thread == thread && value.layout == layout;
 }
 
-// Presentation-only grace period. It never changes the target of an IME action.
-// Menus are not new typing targets; brief sampling gaps must not flash a dash.
+// Last successful presentation, with no expiry. It never chooses an action
+// target; commands still use current Windows focus. Menus are not typing targets.
 class DisplayCache
 {
 public:
-    Snapshot Get(const Snapshot& sample, const Snapshot& target, std::uint64_t now, bool menu)
+    Snapshot Get(const Snapshot& sample, const Snapshot& target, bool menu)
     {
-        if (menu) { lastGood_ = now; return shown_; }
-        if (!sample.label.empty() && Matches(sample, target.foreground, target.thread, target.layout, target.focus))
-        { shown_ = sample; lastGood_ = now; return shown_; }
-        if (!shown_.label.empty() && now - lastGood_ < 600) return shown_;
-        shown_ = {};
+        if (!menu && !sample.label.empty() &&
+            Matches(sample, target.foreground, target.thread, target.layout, target.focus)) shown_ = sample;
         return shown_;
     }
 private:
     Snapshot shown_;
-    std::uint64_t lastGood_ = 0;
 };
 }
 

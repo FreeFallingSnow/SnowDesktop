@@ -200,6 +200,25 @@ int RunNativeTaskbarTests()
         "a real taskbar-owned popup releases its owner and permits Explorer's reveal during the menu loop");
     check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
         "closing the taskbar popup resumes suppression and removes the scene exemption");
+    const UINT beginAccess = RegisterWindowMessageW(native::kBeginMenuAccess);
+    const UINT cancelAccess = RegisterWindowMessageW(native::kCancelMenuAccess);
+    check(!SendMessageW(window, beginAccess, shared.ownerProcessId + 1, 10) && cloaked(),
+        "a menu request with a different controller identity cannot release suppression");
+    check(SendMessageW(window, beginAccess, shared.ownerProcessId, 10) && !cloaked(),
+        "programmatic native menu access releases suppression before invoking its provider");
+    check(SendMessageW(window, beginAccess, shared.ownerProcessId, 11) &&
+        !SendMessageW(window, cancelAccess, shared.ownerProcessId, 10) && !cloaked(),
+        "a stale cancellation cannot revoke a newer native menu request");
+    check(SendMessageW(window, cancelAccess, shared.ownerProcessId, 11) && cloaked(),
+        "a cancelled provider request promptly restores suppression");
+    {
+        native::MenuAccess access;
+        check(access.Begin(window) == S_OK && !cloaked(),
+            "the production native-menu client receives the hook's visibility acknowledgement");
+    }
+    MSG canceled{};
+    while (PeekMessageW(&canceled, window, cancelAccess, cancelAccess, PM_REMOVE)) DispatchMessageW(&canceled);
+    check(cloaked(), "a failed native provider automatically releases its request without waiting for timeout");
     WNDCLASSW trayRegistration{};
     trayRegistration.hInstance = instance;
     trayRegistration.lpszClassName = L"SnowDesktop.IsolatedTrayChild";
@@ -269,8 +288,10 @@ int RunNativeTaskbarTests()
             SendMessageW(window, apply, 0, 0);
             check(cloaked(), "an ordinary custom popup without a tray origin does not release suppression");
             ShowWindow(customPopup, SW_HIDE);
-            SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+            native::MenuAccess access;
+            check(access.Begin(window) == S_OK, "prepare UIA-style menu without synthetic mouse or WM_CONTEXTMENU");
             ShowWindow(customPopup, SW_SHOWNOACTIVATE);
+            access.HandOff();
             SendMessageW(window, apply, 0, 0);
             const ULONGLONG menuDeadline = GetTickCount64() + 1650;
             while (GetTickCount64() < menuDeadline)

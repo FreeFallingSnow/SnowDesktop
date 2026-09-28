@@ -29,13 +29,13 @@ int RunTrayModelTests()
             input::detail::Label(0x0804, L"ZH", false, IME_CMODE_NATIVE) == L"英" &&
             input::detail::Label(0x0804, L"ZH", true, 0) == L"英",
             "Chinese input label follows both open state and conversion mode");
-        check(input::detail::Label(0x0804, L"ZH", {}, {}) == L"ZH" &&
-            input::detail::Label(0x0804, L"ZH", true, {}) == L"ZH" &&
+        check(input::detail::Label(0x0804, L"ZH", {}, {}).empty() &&
+            input::detail::Label(0x0804, L"ZH", true, {}).empty() &&
             input::detail::Label(0x0411, L"JA", true, IME_CMODE_NATIVE) == L"あ" &&
             input::detail::Label(0x0412, L"KO", false, 0) == L"A" &&
             input::detail::Label(0x0409, L"EN", {}, {}) == L"EN" &&
-            input::detail::Label(0, L"", {}, {}) == L"—",
-            "missing IME data falls back to language and unavailable data stays unknown");
+            input::detail::Label(0, L"", {}, {}).empty(),
+            "failed mode or language sampling produces no replacement label or dash");
         input::Snapshot old;
         old.foreground = reinterpret_cast<HWND>(1); old.thread = 10; old.layout = reinterpret_cast<HKL>(0x0804);
         check(input::detail::Matches(old, old.foreground, old.thread, old.layout) &&
@@ -46,18 +46,19 @@ int RunTrayModelTests()
             !input::detail::Matches({}, nullptr, 0, nullptr),
             "foreground or layout changes invalidate pending samples instead of showing another app's mode");
         input::detail::DisplayCache display;
+        check(display.Get({}, {}, false).label.empty(), "startup has no fabricated input mode");
         old.label = L"A";
-        check(display.Get(old, old, 0, false).label == L"A", "first valid input mode is presented immediately");
+        check(display.Get(old, old, false).label == L"A", "first valid input mode is presented immediately");
         auto other = old; other.foreground = reinterpret_cast<HWND>(2); other.label = L"B";
-        check(display.Get(old, other, 200, false).label == L"A" &&
-            display.Get({}, {}, 599, false).label == L"A",
-            "a short foreground or sampling gap retains the displayed mode without accepting a stale sample");
-        check(display.Get({}, {}, 600, false).label.empty(), "a sustained unavailable target expires its presentation cache");
-        display.Get(old, old, 800, false);
-        check(display.Get(other, other, 10000, true).label == L"A" &&
-            display.Get({}, {}, 10100, false).label == L"A",
-            "menu focus preserves the original mode and provides a grace period after dismissal");
-        check(display.Get(other, other, 10200, false).label == L"B",
+        check(display.Get(old, other, false).label == L"A" &&
+            display.Get({}, {}, false).label == L"A",
+            "foreground and sampling gaps retain the last successful mode without accepting a mismatched sample");
+        for (int i = 0; i < 10000; ++i) display.Get({}, {}, false);
+        check(display.Get({}, {}, false).label == L"A", "unavailable samples never expire the last successful mode");
+        check(display.Get(other, other, true).label == L"A" &&
+            display.Get({}, {}, false).label == L"A",
+            "menu focus and dismissal preserve the last successful mode");
+        check(display.Get(other, other, false).label == L"B",
             "a valid new typing target replaces the retained mode without delay");
     }
     {

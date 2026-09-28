@@ -49,6 +49,7 @@ struct WindowState
     HHOOK menuMessageHook = nullptr;
     bool menuLoop = false;
     ULONGLONG contextMenuUntil = 0;
+    DWORD externalMenuToken = 0;
     DWORD contextMenuThread = 0;
     HWND contextMenuPopup = nullptr;
     bool overflowWasVisible = false;
@@ -127,6 +128,7 @@ void ArmContextMenu(const std::shared_ptr<WindowState>& state)
     auto existing = VisibleMenuPopups();
     std::lock_guard lock(state->mutex);
     state->previousPopups = std::move(existing);
+    state->externalMenuToken = 0;
     state->contextMenuPopup = nullptr;
     state->contextMenuThread = 0;
     state->contextMenuUntil = GetTickCount64() + 1500;
@@ -588,6 +590,36 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     {
         Detach(window, state, true);
         return DefSubclassProc(window, message, wParam, lParam);
+    }
+    if (message == RegisterWindowMessageW(kBeginMenuAccess))
+    {
+        Snapshot snapshot;
+        if (wParam != state->ownerId || !lParam ||
+            WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT ||
+            !ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
+            snapshot.ownerProcessId != state->ownerId) return 0;
+        ArmContextMenu(state);
+        { std::lock_guard lock(state->mutex);
+          state->externalMenuToken = static_cast<DWORD>(lParam); }
+        // UIA does not send a mouse/WM_CONTEXTMENU gesture. Uncloak its owner
+        // synchronously before the XAML provider creates an owned popup.
+        if (!Update(window, state, false)) return 0;
+        DWORD cloak = 0;
+        return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) &&
+            !(cloak & DWM_CLOAKED_APP);
+    }
+    if (message == RegisterWindowMessageW(kCancelMenuAccess))
+    {
+        {
+            std::lock_guard lock(state->mutex);
+            if (wParam != state->ownerId || !lParam ||
+                state->externalMenuToken != static_cast<DWORD>(lParam)) return 0;
+            state->externalMenuToken = 0;
+            if (!state->contextMenuPopup && !state->contextMenuThread)
+                state->contextMenuUntil = 0;
+        }
+        Update(window, state, false);
+        return 1;
     }
     const UINT apply = RegisterWindowMessageW(kApplyMessageName);
     if (message == apply)

@@ -101,7 +101,7 @@ Snapshot Read()
             DWORD_PTR opened = 0, mode = 0;
             constexpr UINT flags = SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT;
             // A foreign IME may be hung or disallow messages (UIPI). Each query
-            // has a hard budget on this worker; failure clears old mode data.
+            // has a hard budget on this worker; failure cannot replace a good sample.
             if (ime && SendMessageTimeoutW(ime, WM_IME_CONTROL, kGetOpenStatus, 0, flags, 20, &opened) &&
                 SendMessageTimeoutW(ime, WM_IME_CONTROL, kGetConversionMode, 0, flags, 20, &mode))
             { open = opened != 0; conversion = static_cast<DWORD>(mode); }
@@ -163,7 +163,7 @@ Snapshot Service::Current() const
 {
     const auto current = Target();
     std::lock_guard lock(impl_->mutex);
-    return impl_->display.Get(impl_->snapshot, current, GetTickCount64(),
+    return impl_->display.Get(impl_->snapshot, current,
         current.menuActive || modern_menu::ActiveRootWindow() != nullptr);
 }
 HRESULT Service::Show(RECT anchor, bool context)
@@ -193,6 +193,12 @@ HRESULT Service::Show(RECT anchor, bool context)
         if (FAILED(hr)) { native->picker.Reset(); return hr; }
     }
     const auto picker = native->picker;
+    taskbar_hook::native::MenuAccess access;
+    if (context)
+    {
+        const HRESULT prepared = access.Begin(FindWindowW(L"Shell_TrayWnd", nullptr));
+        if (FAILED(prepared)) return prepared;
+    }
     // The bar is no-activate. Windows therefore receives the original typing
     // target, including its per-window input preference, and owns dismissal.
     const POINT point{anchor.left + (anchor.right - anchor.left) / 2,
@@ -206,6 +212,7 @@ HRESULT Service::Show(RECT anchor, bool context)
         hr = picker->ShowInputSwitch(&anchor);
     if (FAILED(hr) && native->picker.Get() == picker.Get())
         native->picker.Reset(); // Allow recovery after Shell restart.
+    if (SUCCEEDED(hr)) access.HandOff();
     return hr;
 }
 }
