@@ -1,4 +1,5 @@
 #include "shell_launch_worker.h"
+#include "operation_feedback.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_launch_process.h"
 #include "shell_launch_execution.h"
@@ -192,6 +193,7 @@ bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showC
     if (FAILED(queryResult))
     {
         DestroyMenu(menu);
+        SetLastError(static_cast<DWORD>(queryResult));
         return false;
     }
 
@@ -275,7 +277,12 @@ bool DispatchShellOpen(HWND owner, const std::wstring& path,
         if (absolutePidl)
         {
             const UINT size = ILGetSize(absolutePidl);
-            if (!size || size > 65536) return false;
+            if (!size || size > 65536)
+            {
+                if (reportDispatchFailure)
+                    operation_feedback::Report({"app.operation.openFailed", path, ERROR_INVALID_DATA});
+                return false;
+            }
             const auto* data = reinterpret_cast<const unsigned char*>(absolutePidl);
             request.absolutePidl.assign(data, data + size);
         }
@@ -283,6 +290,8 @@ bool DispatchShellOpen(HWND owner, const std::wstring& path,
     }
     catch (...)
     {
+        if (reportDispatchFailure)
+            operation_feedback::Report({"app.operation.openFailed", path, ERROR_UNHANDLED_EXCEPTION});
         return false;
     }
 }

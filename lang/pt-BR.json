@@ -2087,5 +2087,8 @@
   "app.launcher.pending": "O SnowDesktop ainda não confirmou a inicialização. O processo continua em execução; nenhum arquivo foi removido. Confira os detalhes abaixo.",
   "app.launcher.warning": "O SnowDesktop pode continuar, mas uma etapa de atualização ou manutenção não foi concluída. Confira os detalhes abaixo.",
   "settings.general.advancedFeatures.sessionOnly": "O Steam confirmou sua licença, então os recursos avançados estão disponíveis nesta sessão. Não foi possível salvar o registro offline; talvez seja necessário se conectar ao Steam novamente após reiniciar.",
-  "app.launcher.securitySoftwareHint": "Se você usa antivírus ou outro software de segurança, pause temporariamente a proteção de arquivos e tente novamente. Reative a proteção assim que terminar."
+  "app.launcher.securitySoftwareHint": "Se você usa antivírus ou outro software de segurança, pause temporariamente a proteção de arquivos e tente novamente. Reative a proteção assim que terminar.",
+  "app.operation.retry": "Tentar novamente",
+  "app.operation.saveAnyway": "Salvar mesmo assim",
+  "app.operation.upgradeBackupFailed": "Não foi possível criar o backup anterior à atualização do layout. Você pode tentar novamente ou salvar mesmo assim. Salvar ignora esse backup adicional, então talvez não seja possível restaurar o layout anterior ao voltar para uma versão mais antiga."
 }

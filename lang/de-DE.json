@@ -2087,5 +2087,8 @@
   "app.launcher.pending": "SnowDesktop hat den Start noch nicht bestätigt. Der Prozess läuft weiter; es wurden keine Dateien entfernt. Details finden Sie unten.",
   "app.launcher.warning": "SnowDesktop kann weiterlaufen, aber ein Aktualisierungs- oder Wartungsschritt konnte nicht abgeschlossen werden. Details finden Sie unten.",
   "settings.general.advancedFeatures.sessionOnly": "Steam hat Ihren Besitz bestätigt. Erweiterte Funktionen sind daher in dieser Sitzung verfügbar. Der Offline-Nachweis konnte nicht gespeichert werden; nach einem Neustart ist möglicherweise erneut eine Verbindung zu Steam nötig.",
-  "app.launcher.securitySoftwareHint": "Wenn Sie Antiviren- oder andere Sicherheitssoftware verwenden, pausieren Sie vorübergehend deren Dateischutz und versuchen Sie es erneut. Aktivieren Sie den Schutz anschließend sofort wieder."
+  "app.launcher.securitySoftwareHint": "Wenn Sie Antiviren- oder andere Sicherheitssoftware verwenden, pausieren Sie vorübergehend deren Dateischutz und versuchen Sie es erneut. Aktivieren Sie den Schutz anschließend sofort wieder.",
+  "app.operation.retry": "Erneut versuchen",
+  "app.operation.saveAnyway": "Trotzdem speichern",
+  "app.operation.upgradeBackupFailed": "Die Sicherung vor dem Layout-Upgrade konnte nicht erstellt werden. Sie können es erneut versuchen oder das aktuelle Layout trotzdem speichern. Dabei wird diese zusätzliche Sicherung übersprungen. Bei einer Rückkehr zu einer älteren Version lässt sich das frühere Layout möglicherweise nicht wiederherstellen."
 }

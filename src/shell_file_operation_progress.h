@@ -2,6 +2,7 @@
 
 #include "shell_file_operation_worker.h"
 #include <shobjidl.h>
+#include <sherrors.h>
 #include <wrl/implements.h>
 #include <filesystem>
 #include <algorithm>
@@ -23,6 +24,11 @@ public:
     HRESULT Record(HRESULT status, IShellItem* original, IShellItem* created)
     {
         // Move success can be COPYENGINE_S_DONT_PROCESS_CHILDREN, not S_OK.
+        if (status == COPYENGINE_S_USER_IGNORED)
+        {
+            if (SUCCEEDED(failure)) failure = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+            return S_OK;
+        }
         if (FAILED(status)) { if (SUCCEEDED(failure)) failure = status; return S_OK; }
         if (!original || !created || completed) return S_OK;
         PWSTR originalPath = nullptr;

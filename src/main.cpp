@@ -573,13 +573,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     {
         DesktopApp app;
         result = app.Run(instance, showCommand);
-        if (result != 0 && result != ERROR_CANCELLED)
-            ShowStartupFailure({"app.operation.startFailed",
-                GetDataFilePath(L"SnowDesktop.log"), static_cast<DWORD>(result)});
         restart = app.TakeRestart();
         WriteDiagnosticLogEntry(L"Application run returned; releasing host resources");
     }
     WriteDiagnosticLogEntry(L"Application host resources released");
+    if (result != 0 && result != ERROR_CANCELLED)
+        ShowStartupFailure({"app.operation.startFailed",
+            GetDataFilePath(L"SnowDesktop.log"), static_cast<DWORD>(result)});
+
 
     /* 正常退出时清除崩溃计数器，避免残留记录影响后续启动 */
     if (result == 0)

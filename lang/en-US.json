@@ -2087,5 +2087,8 @@
   "app.launcher.pending": "SnowDesktop has not confirmed startup yet. The process is still running; no files were removed. See the details below.",
   "app.launcher.warning": "SnowDesktop can continue, but an update or maintenance step could not be completed. See the details below.",
   "settings.general.advancedFeatures.sessionOnly": "Steam confirmed your ownership, so advanced features are available in this session. The offline record could not be saved; you may need to connect to Steam again after restarting.",
-  "app.launcher.securitySoftwareHint": "If you use antivirus or other security software, temporarily pause its file protection and try again. Re-enable protection as soon as you finish."
+  "app.launcher.securitySoftwareHint": "If you use antivirus or other security software, temporarily pause its file protection and try again. Re-enable protection as soon as you finish.",
+  "app.operation.retry": "Retry",
+  "app.operation.saveAnyway": "Save anyway",
+  "app.operation.upgradeBackupFailed": "The layout upgrade backup could not be created. You can retry or save the current layout anyway. Saving anyway skips this additional backup, so restoring the pre-upgrade layout when returning to an older version may not be possible."
 }

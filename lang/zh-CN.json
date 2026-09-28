@@ -2087,5 +2087,8 @@
   "app.launcher.pending": "SnowDesktop 尚未确认启动完成。进程仍在运行，未删除任何文件。请查看下方详情。",
   "app.launcher.warning": "SnowDesktop 可以继续运行，但有更新或维护步骤未完成。请查看下方详情。",
   "settings.general.advancedFeatures.sessionOnly": "Steam 已确认您拥有许可，本次运行可使用高级功能。离线记录未能保存，重启后可能需要重新连接 Steam。",
-  "app.launcher.securitySoftwareHint": "若正在使用杀毒软件或其他安全软件，可临时暂停其文件防护后重试，完成后请立即恢复防护。"
+  "app.launcher.securitySoftwareHint": "若正在使用杀毒软件或其他安全软件，可临时暂停其文件防护后重试，完成后请立即恢复防护。",
+  "app.operation.retry": "重试",
+  "app.operation.saveAnyway": "仍然保存",
+  "app.operation.upgradeBackupFailed": "无法创建布局升级备份。您可以重试，或仍然保存当前布局。仍然保存会跳过这次额外备份，返回旧版本时可能无法恢复升级前的布局。"
 }

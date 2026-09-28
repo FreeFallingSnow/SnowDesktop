@@ -1,4 +1,5 @@
 #include "operation_feedback.h"
+#include "shell_file_operation_progress.h"
 #include "shell_file_operation_worker.h"
 #include "external_drop_resources.h"
 #include "item_location.h"
@@ -68,6 +69,12 @@ void TestFileFailureFeedback()
     request.exactFileCopies.push_back({missing.wstring(), (root / L"missing-copy.txt").wstring()});
     request.exactFileCopies.push_back({source.wstring(), copied.wstring()});
     const bool succeeded = snowdesktop::ShellFileOperationWorker::Execute(request);
+    auto skipped = Microsoft::WRL::Make<snowdesktop::DropFileProgress>();
+    skipped->Record(COPYENGINE_S_USER_IGNORED, nullptr, nullptr);
+    Expect(skipped->failure == HRESULT_FROM_WIN32(ERROR_CANCELLED) && !skipped->completed,
+        "the Shell user's Skip result is cancellation, not an unexplained copy failure");
+    snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"skipped",
+        static_cast<DWORD>(skipped->failure)});
     snowdesktop::operation_feedback::SetReporter({});
     Expect(!succeeded && failures.size() == 1 && failures.front().error == ERROR_FILE_NOT_FOUND &&
             failures.front().detail.find(missing.wstring()) != std::wstring::npos,

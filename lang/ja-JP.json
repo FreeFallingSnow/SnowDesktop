@@ -2087,5 +2087,8 @@
   "app.launcher.pending": "SnowDesktop の起動完了をまだ確認できていません。プロセスは実行中で、ファイルは削除されていません。以下の詳細を確認してください。",
   "app.launcher.warning": "SnowDesktop は引き続き実行できますが、更新または保守の処理を完了できませんでした。以下の詳細を確認してください。",
   "settings.general.advancedFeatures.sessionOnly": "Steam で所有権を確認したため、このセッションでは高度な機能を使用できます。オフライン記録を保存できなかったため、再起動後に Steam への再接続が必要になる場合があります。",
-  "app.launcher.securitySoftwareHint": "ウイルス対策ソフトなどのセキュリティソフトを使用している場合は、ファイル保護を一時停止して再試行してください。完了後はすぐに保護を再開してください。"
+  "app.launcher.securitySoftwareHint": "ウイルス対策ソフトなどのセキュリティソフトを使用している場合は、ファイル保護を一時停止して再試行してください。完了後はすぐに保護を再開してください。",
+  "app.operation.retry": "再試行",
+  "app.operation.saveAnyway": "保存を続行",
+  "app.operation.upgradeBackupFailed": "レイアウトのアップグレード前のバックアップを作成できませんでした。再試行するか、そのまま保存できます。そのまま保存すると、この追加バックアップは作成されず、旧バージョンに戻した際にアップグレード前のレイアウトを復元できない可能性があります。"
 }

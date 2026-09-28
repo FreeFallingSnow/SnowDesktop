@@ -436,8 +436,13 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             }
         }
 
-        if (DeleteSelectedFolderEntries(shift))
+        if (!GetSelectedFolderEntryPaths().empty())
+        {
+            // Failure to queue a mapped-folder deletion must never fall through
+            // and delete a different desktop selection instead.
+            DeleteSelectedFolderEntries(shift);
             break;
+        }
 
         cutPaths_.clear();
         std::vector<std::wstring> paths;

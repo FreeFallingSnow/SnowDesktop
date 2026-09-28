@@ -1,4 +1,6 @@
 #include "operation_feedback.h"
+#include "operation_recovery_dialog.h"
+#include <commctrl.h>
 #include "diagnostic_log.h"
 #include "l10n.h"
 #include "launcher_messages.h"
@@ -50,6 +52,38 @@ void Show(const Failure& failure)
         ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Error);
     MessageBoxW(nullptr, message.c_str(), L"SnowDesktop", MB_OK |
         (failure.warning ? MB_ICONWARNING : MB_ICONERROR) | MB_SETFOREGROUND);
+}
+
+RecoveryChoice ChooseRecovery(HWND owner, const Failure& failure, const wchar_t* continueLabel)
+{
+    // A modal loop can dispatch another save request. Keep a single decision
+    // dialog; the outer save will serialize the latest model after the choice.
+    static thread_local bool choosing = false;
+    if (choosing) return RecoveryChoice::Cancel;
+    choosing = true;
+    struct Reset { bool& value; ~Reset() { value = false; } } reset{choosing};
+    const auto message = Describe(failure);
+    WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Warning);
+    const TASKDIALOG_BUTTON buttons[] = {
+        { IDRETRY, _LW("app.operation.retry") },
+        { IDCONTINUE, continueLabel },
+        { IDCANCEL, _LW("settings.dialog.cancel") }
+    };
+    TASKDIALOGCONFIG dialog{sizeof(dialog)};
+    dialog.hwndParent = owner && IsWindow(owner) ? owner : nullptr;
+    dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION;
+    dialog.pszWindowTitle = L"SnowDesktop";
+    dialog.pszMainIcon = TD_WARNING_ICON;
+    dialog.pszContent = message.c_str();
+    dialog.cButtons = static_cast<UINT>(std::size(buttons));
+    dialog.pButtons = buttons;
+    dialog.nDefaultButton = IDRETRY;
+    int selected = IDCANCEL;
+    if (FAILED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)))
+        selected = MessageBoxW(dialog.hwndParent, message.c_str(), L"SnowDesktop",
+            MB_CANCELTRYCONTINUE | MB_ICONWARNING | MB_SETFOREGROUND);
+    if (selected == IDRETRY || selected == IDTRYAGAIN) return RecoveryChoice::Retry;
+    return selected == IDCONTINUE ? RecoveryChoice::Continue : RecoveryChoice::Cancel;
 }
 
 struct Session::State
@@ -133,7 +167,6 @@ Session::~Session()
 {
     SetReporter({});
     { std::lock_guard lock(state_->mutex); state_->closed = true; }
-    state_->Drain();
     if (state_->window) DestroyWindow(state_->window);
 }
 }

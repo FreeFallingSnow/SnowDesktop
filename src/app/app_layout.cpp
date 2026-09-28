@@ -1,5 +1,7 @@
 #include "app.h"
 #include "../large_icon_backup.h"
+#include "../operation_recovery_dialog.h"
+#include <set>
 #include "../collection_titleless_rules.h"
 #include "../font_cu_rules.h"
 #include "../widgets/collection_group_rules.h"
@@ -857,20 +859,40 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         const std::filesystem::path data = GetDataDirectoryPath();
         auto state = std::filesystem::path(GetDataStateRootPath());
         if (state.empty()) state = data.parent_path();
-        const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 2);
-        if (!result.ok)
-        {
-            return failed(L"Large icon upgrade backup: " + Utf8ToWide(result.error));
-        }
+        // The user may skip this additional upgrade backup. The actual layout
+        // save below still validates and atomically persists the document.
+        // Remember that choice only for this data directory and session.
+        static std::set<std::filesystem::path> skippedBackups;
+        const auto ensureBackup = [&](int generation) {
+            const auto identity = data;
+            if (skippedBackups.contains(identity)) return true;
+            for (;;)
+            {
+                const auto backup = snowdesktop::EnsureLargeIconUpgradeBackup(
+                    state, data, SNOWDESKTOP_VERSION, generation);
+                if (backup.ok) return true;
+                using snowdesktop::operation_feedback::RecoveryChoice;
+                const auto choice = snowdesktop::operation_feedback::ChooseRecovery(
+                    hwnd_,
+                    {"app.operation.upgradeBackupFailed", Utf8ToWide(backup.error), 0, true},
+                    _LW("app.operation.saveAnyway"));
+                if (choice == RecoveryChoice::Retry) continue;
+                if (choice == RecoveryChoice::Continue)
+                {
+                    skippedBackups.insert(identity);
+                    WriteDiagnosticLogEntry(L"User chose to save without the additional layout upgrade backup",
+                        DiagnosticLogLevel::Warning);
+                    return true;
+                }
+                return false;
+            }
+        };
+        if (!ensureBackup(2)) return false;
         if (std::any_of(items_.begin(), items_.end(), [](const auto& item) {
             return item.largeIcon && item.largeIcon->backgroundStyle <= -4;
         }))
         {
-            const auto presetBackup = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 3);
-            if (!presetBackup.ok)
-            {
-                return failed(L"Large icon preset upgrade backup: " + Utf8ToWide(presetBackup.error));
-            }
+            if (!ensureBackup(3)) return false;
         }
     }
     demoCollectionIdentityCache_.clear();

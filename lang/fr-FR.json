@@ -2087,5 +2087,8 @@
   "app.launcher.pending": "SnowDesktop n’a pas encore confirmé son démarrage. Le processus est toujours en cours ; aucun fichier n’a été supprimé. Consultez les détails ci-dessous.",
   "app.launcher.warning": "SnowDesktop peut continuer, mais une étape de mise à jour ou de maintenance n’a pas pu être terminée. Consultez les détails ci-dessous.",
   "settings.general.advancedFeatures.sessionOnly": "Steam a confirmé votre licence : les fonctions avancées sont disponibles pour cette session. L’enregistrement hors ligne a échoué ; vous devrez peut-être vous reconnecter à Steam après le redémarrage.",
-  "app.launcher.securitySoftwareHint": "Si vous utilisez un antivirus ou un autre logiciel de sécurité, suspendez temporairement sa protection des fichiers, puis réessayez. Réactivez la protection dès que vous avez terminé."
+  "app.launcher.securitySoftwareHint": "Si vous utilisez un antivirus ou un autre logiciel de sécurité, suspendez temporairement sa protection des fichiers, puis réessayez. Réactivez la protection dès que vous avez terminé.",
+  "app.operation.retry": "Réessayer",
+  "app.operation.saveAnyway": "Enregistrer quand même",
+  "app.operation.upgradeBackupFailed": "La sauvegarde précédant la mise à niveau de la disposition n’a pas pu être créée. Vous pouvez réessayer ou enregistrer quand même. Cette sauvegarde supplémentaire sera alors ignorée et la restauration de l’ancienne disposition lors du retour à une version antérieure pourrait être impossible."
 }

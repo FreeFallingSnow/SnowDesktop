@@ -2087,5 +2087,8 @@
   "app.launcher.pending": "SnowDesktop aún no confirmó el inicio. El proceso sigue en ejecución; no se eliminó ningún archivo. Consulta los detalles a continuación.",
   "app.launcher.warning": "SnowDesktop puede continuar, pero no se completó un paso de actualización o mantenimiento. Consulta los detalles a continuación.",
   "settings.general.advancedFeatures.sessionOnly": "Steam confirmó tu licencia, así que las funciones avanzadas están disponibles en esta sesión. No se pudo guardar el registro sin conexión; puede que debas volver a conectarte a Steam después de reiniciar.",
-  "app.launcher.securitySoftwareHint": "Si usas un antivirus u otro programa de seguridad, pausa temporalmente su protección de archivos y vuelve a intentarlo. Reactiva la protección en cuanto termines."
+  "app.launcher.securitySoftwareHint": "Si usas un antivirus u otro programa de seguridad, pausa temporalmente su protección de archivos y vuelve a intentarlo. Reactiva la protección en cuanto termines.",
+  "app.operation.retry": "Reintentar",
+  "app.operation.saveAnyway": "Guardar de todos modos",
+  "app.operation.upgradeBackupFailed": "No se pudo crear el respaldo previo a la actualización de la distribución. Puedes reintentarlo o guardar de todos modos. Si guardas, se omitirá este respaldo adicional y puede que no sea posible restaurar la distribución anterior al volver a una versión más antigua."
 }

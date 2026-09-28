@@ -2087,5 +2087,8 @@
   "app.launcher.pending": "SnowDesktop 尚未確認啟動完成。處理程序仍在執行，未刪除任何檔案。請查看下方詳情。",
   "app.launcher.warning": "SnowDesktop 可以繼續執行，但有更新或維護步驟未完成。請查看下方詳情。",
   "settings.general.advancedFeatures.sessionOnly": "Steam 已確認您擁有授權，本次執行可使用進階功能。離線記錄未能儲存，重新啟動後可能需要再次連線至 Steam。",
-  "app.launcher.securitySoftwareHint": "若正在使用防毒軟體或其他安全軟體，可暫時停用其檔案防護後重試，完成後請立即恢復防護。"
+  "app.launcher.securitySoftwareHint": "若正在使用防毒軟體或其他安全軟體，可暫時停用其檔案防護後重試，完成後請立即恢復防護。",
+  "app.operation.retry": "重試",
+  "app.operation.saveAnyway": "仍然儲存",
+  "app.operation.upgradeBackupFailed": "無法建立配置升級備份。您可以重試，或仍然儲存目前的配置。仍然儲存會略過這次額外備份，返回舊版本時可能無法還原升級前的配置。"
 }
