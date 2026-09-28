@@ -1451,6 +1451,7 @@ int wmain()
     textInputItems[1].command = 82;
     textInputItems[1].label = L"Initial result";
     std::wstring observedSearch;
+    std::vector<std::wstring> observedEdits;
     int textChangeCount = 0;
     options.onCommand = {};
     options.onTextChanged = [&](UINT command, const std::wstring& text,
@@ -1458,6 +1459,7 @@ int wmain()
         Expect(command == 81,
             "text callback receives the search row command");
         observedSearch = text;
+        observedEdits.push_back(text);
         ++textChangeCount;
         currentItems[1].label = L"Filtered result";
     };
@@ -1471,6 +1473,13 @@ int wmain()
         snowdesktop::modern_menu::Show(textInputItems, options);
     KillTimer(owner, kWatchdogTimer);
     Expect(!gWatchdogFired, "text-input popup did not time out");
+    if (textChangeCount != 7 || observedSearch != L"a")
+    {
+        std::wcerr << L"Search edit sequence:";
+        for (const auto& edit : observedEdits) std::wcerr << L" [" << edit << L"]";
+        std::wcerr << L"; Ctrl=" << GetKeyState(VK_CONTROL)
+                   << L" Shift=" << GetKeyState(VK_SHIFT) << L'\n';
+    }
     Expect(textChangeCount == 7 && observedSearch == L"a",
         "caret insertion, delete, spaces, and backspace update search in place");
     Expect(textInputResult.command == 82,
