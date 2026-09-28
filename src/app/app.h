@@ -1304,6 +1304,7 @@ private:
     void PaintFloatingPopupWindow(HWND hwnd);
     POINT FloatingPopupClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
+    int GetDockPageItemIconSize(const GridPage& page) const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);

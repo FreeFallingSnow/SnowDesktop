@@ -94,6 +94,8 @@ JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
         {"reserveScreenSpace", BooleanValue(settings.reserveScreenSpace)},
         {"frequentItemCount", NumberValue(settings.frequentItemCount)},
         {"thicknessScale", NumberValue(settings.thicknessScale)},
+        {"lastMonitorUseHomeSize", BooleanValue(settings.lastMonitorUseHomeSize)},
+        {"mergedBarHeight", NumberValue(settings.mergedBarHeight)},
     };
     return encoded;
 }
@@ -591,6 +593,8 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
         !ReadBoolean(*value, "keepWhenDesktopHidden", "dockLayout.keepWhenDesktopHidden", decoded.keepWhenDesktopHidden, error) ||
         !ReadBoolean(*value, "allowDesktopContentOverlap", "dockLayout.allowDesktopContentOverlap", decoded.allowDesktopContentOverlap, error) ||
         !ReadBoolean(*value, "showOnlyWhenSummoned", "dockLayout.showOnlyWhenSummoned", decoded.showOnlyWhenSummoned, error) ||
+        !ReadBoolean(*value, "lastMonitorUseHomeSize", "dockLayout.lastMonitorUseHomeSize", decoded.lastMonitorUseHomeSize, error) ||
+        !ReadInteger(*value, "mergedBarHeight", "dockLayout.mergedBarHeight", decoded.mergedBarHeight, error) ||
         !ReadBoolean(*value, "reserveScreenSpace", "dockLayout.reserveScreenSpace", decoded.reserveScreenSpace, error))
         return false;
     if (position < 0 || position > 3)
@@ -600,6 +604,8 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
     if (decoded.frequentItemCount < 1 || decoded.frequentItemCount > 8)
         return Fail(error, "dockLayout.frequentItemCount", "must be between 1 and 8");
     decoded.thicknessScale = thickness.value_or(decoded.thicknessScale);
+    if (decoded.mergedBarHeight < 32 || decoded.mergedBarHeight > 96)
+        return Fail(error, "dockLayout.mergedBarHeight", "must be between 32 and 96");
     if (decoded.thicknessScale < kDockMinimumScale || decoded.thicknessScale > kDockMaximumScale)
         return Fail(error, "dockLayout.thicknessScale", "is outside the supported range");
     decoded.position = static_cast<DockPosition>(position);

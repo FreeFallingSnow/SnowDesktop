@@ -4,6 +4,7 @@
 #include "settings_presenter_controls.h"
 #include "appearance_sections.h"
 #include "panel_gradient_editor.h"
+#include "merged_bar_height_editor.h"
 
 #include "../dock_settings.h"
 
@@ -345,6 +346,12 @@ struct DockPagePresenter::Impl
     mux::Media::Animation::Storyboard cardHighlightAnimation{nullptr};
     LocalizeCallback localize;
     DockPageActions actions;
+    std::unique_ptr<MergedBarHeightEditor> mergedHeight;
+    BarSettingsAvailability barAvailability;
+    muxc::ToggleSwitch homeSize;
+    presenter_controls::SettingRow homeSizeRow;
+    muxc::ComboBox taskbarMode;
+    winrt::event_token homeSizeToken{}, taskbarModeToken{};
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel dockEnableRoot{nullptr};
@@ -552,6 +559,15 @@ struct DockPagePresenter::Impl
         layoutCard.content.Children().Append(monitorScopeRow.root);
         layoutCard.content.Children().Append(layoutRow.root);
         layoutCard.content.Children().Append(thicknessScale.root);
+        mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
+        layoutCard.content.Children().Append(mergedHeight->Content());
+        homeSizeRow.Initialize(homeSize);
+        homeSizeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(homeSizeRow.root);
+        homeSizeToken = homeSize.Toggled([this](const auto&, const auto&) {
+            const bool enabled = homeSize.IsOn();
+            EmitDock(SettingsUpdateMode::PreviewAndCommit, [enabled](DockSettings& value) { value.lastMonitorUseHomeSize = enabled; });
+        });
 
         floatingShortcutToggle = muxc::ToggleSwitch{};
         floatingEdgeSwipeToggle = muxc::ToggleSwitch{};
@@ -609,7 +625,7 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         behaviorCard.content.Children().Append(reserveScreenSpaceRow.root);
         behaviorCard.content.Children().Append(allowDesktopContentOverlapRow.root);
-        behaviorCard.content.Children().Append(suppressTaskbarRow.root);
+
         suppressionStatus = muxc::InfoBar{};
         suppressionStatus.IsClosable(false);
         suppressionStatus.IsOpen(false);
@@ -635,7 +651,13 @@ struct DockPagePresenter::Impl
         // remains outside the 1:1 legacy surface.
 
         InitializeCard(taskbarCard, cardStyle, taskbarRoot);
-        taskbarSuppressRow.Initialize(taskbarSuppressToggle);
+        taskbarSuppressRow.Initialize(taskbarMode);
+        taskbarModeToken = taskbarMode.SelectionChanged([this](const auto&, const auto&) {
+            if (updatingControls) return;
+            const int mode = taskbarMode.SelectedIndex();
+            if (mode < 0 || (mode == 2 && !dockEnabledToggle.IsOn())) return;
+            EmitDock(SettingsUpdateMode::PreviewAndCommit, [mode](DockSettings& value) { SetTaskbarDisplayMode(value, mode); });
+        });
         taskbarSuppressRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         taskbarCard.content.Children().Append(taskbarSuppressRow.root);
         taskbarSettingsLink = muxc::HyperlinkButton{};
@@ -1176,7 +1198,7 @@ struct DockPagePresenter::Impl
                         allowDesktopContentOverlapToggle.IsOn();
                     EmitDock(SettingsUpdateMode::PreviewAndCommit,
                         [value](DockSettings& settings) {
-                            settings.allowDesktopContentOverlap = value;
+                            settings.allowDesktopContentOverlap = !value;
                             snowdesktop::dock_settings_rules::
                                 DisableSummonOnlyWhenPrerequisiteDisabled(
                                     settings.allowDesktopContentOverlap,
@@ -1718,13 +1740,15 @@ struct DockPagePresenter::Impl
                     settings.floatingEdgeSwipeEnabled));
         suppressTaskbarToggle.IsOn(settings.suppressSystemTaskbar);
         taskbarSuppressToggle.IsOn(settings.suppressSystemTaskbar);
+        taskbarMode.SelectedIndex(TaskbarDisplayMode(settings));
+        homeSize.IsOn(settings.lastMonitorUseHomeSize);
         reserveScreenSpaceToggle.IsOn(settings.reserveScreenSpace);
         showWindowsButtonToggle.IsOn(ShowDockWindowsButton(settings));
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
         allowDesktopContentOverlapToggle.IsOn(
             snowdesktop::dock_settings_rules::
-                IsDesktopContentOverlapEnabled(
+                ShouldReserveDesktopWorkArea(
                     settings.showOnlyWhenSummoned,
                     settings.allowDesktopContentOverlap));
         showOnlyWhenSummonedToggle.IsOn(settings.showOnlyWhenSummoned);
@@ -1732,13 +1756,13 @@ struct DockPagePresenter::Impl
             ? std::clamp(settings.classicTaskbarSystemTheme, -1, 1) + 1
             : (IsWindowsSystemLightThemeEnabled() ? 0 : 1);
         SelectChoice(windowsSystemThemeChoices, windowsSystemThemeValue);
-        const int taskbarMode = MainTaskbarThemeMode(settings);
-        taskbarThemeCombo.SelectedIndex(taskbarMode);
+        const int selectedTheme = MainTaskbarThemeMode(settings);
+        taskbarThemeCombo.SelectedIndex(selectedTheme);
         taskbarContentThemeValue = std::clamp(
             settings.systemTaskbarContentTheme, -1, 1);
         taskbarAppearanceContentThemeValue = std::clamp(
             settings.systemTaskbarAppearance.contentTheme, 0, 1);
-        const bool custom = taskbarMode ==
+        const bool custom = selectedTheme ==
             static_cast<int>(SystemTaskbarThemeMode::Custom);
         ReplaceMainContentThemeItems(custom,
             custom && taskbarContentThemeValue < 0
@@ -1784,12 +1808,17 @@ struct DockPagePresenter::Impl
         layoutRow.SetEnabled(dockEnabled);
         thicknessScale.row.SetEnabled(dockEnabled);
         suppressTaskbarRow.SetEnabled(dockEnabled);
-        taskbarSuppressRow.SetEnabled(dockEnabled);
+        taskbarSuppressRow.SetEnabled(true);
+        if (taskbarMode.Items().Size() == 3)
+            taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(dockEnabled || taskbarSuppressToggle.IsOn());
+        homeSizeRow.SetEnabled(dockEnabled && barAvailability.dockOnLastMonitor && !barAvailability.allDockMerged);
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
         showWindowsButtonRow.SetEnabled(dockEnabled && !suppressTaskbarToggle.IsOn());
         showFrequentItemsRow.SetEnabled(dockEnabled);
-        allowDesktopContentOverlapRow.SetEnabled(dockEnabled);
+        allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
+        floatingEdgeSwipeRow.SetEnabled(dockEnabled && !showOnlyWhenSummonedToggle.IsOn());
+        frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         showOnlyWhenSummonedRow.SetEnabled(dockEnabled);
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
         layoutCard.root.IsHitTestVisible(dockEnabled);
@@ -1804,10 +1833,10 @@ struct DockPagePresenter::Impl
         frequentItemCount.row.SetEnabled(
             dockEnabled && showFrequentItemsToggle.IsOn());
 
-        const int taskbarMode = taskbarThemeCombo.SelectedIndex();
-        const bool taskbarStyled = taskbarMode !=
+        const int selectedTheme = taskbarThemeCombo.SelectedIndex();
+        const bool taskbarStyled = selectedTheme !=
             static_cast<int>(SystemTaskbarThemeMode::Native);
-        const bool taskbarCustom = taskbarMode ==
+        const bool taskbarCustom = selectedTheme ==
             static_cast<int>(SystemTaskbarThemeMode::Custom);
         taskbarContentThemeRow.root.Visibility(taskbarStyled || IsClassicSystemTaskbar()
                 ? mux::Visibility::Visible
@@ -2376,7 +2405,17 @@ struct DockPagePresenter::Impl
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
             L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels. Keep the Windows button in Dock."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
-        taskbarSuppressRow.SetText(suppressTaskbarRow.label.Text().c_str(), L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays."));
+        taskbarSuppressRow.SetText(L("settings.bars.taskbarMode", L"Taskbar visibility"));
+        const int displayMode = taskbarMode.SelectedIndex();
+        taskbarMode.Items().Clear();
+        for (const auto key : {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar"})
+        {
+            muxc::ComboBoxItem item; item.Content(winrt::box_value(L(key, L"")));
+            taskbarMode.Items().Append(item);
+        }
+        taskbarMode.SelectedIndex(displayMode);
+        homeSizeRow.SetText(L("settings.bars.homeSize", L"Keep the last display Dock at its first-page size"), L("settings.bars.homeSize.description", L""));
+        mergedHeight->RefreshLocalizedText();
         muxa::AutomationProperties::SetName(taskbarSuppressToggle, suppressTaskbarRow.label.Text());
         reserveScreenSpaceRow.SetText(L("settings.dock.reserveScreenSpace", L"Reserve screen space"),
             L("settings.dock.reserveScreenSpace.description", L"Keep maximized apps clear of the independent Dock. A merged bar reserves space automatically; summon-only mode reserves none. Desktop content spacing is a separate setting below."));
@@ -2546,10 +2585,10 @@ struct DockPagePresenter::Impl
         const auto& bar = snapshot.values.general.statusBar;
         // Disable only when every Dock copy is merged. With an all-monitor
         // Dock and a single-monitor bar, this still controls the other copies.
-        spaceReservedByStatusBar = bar.enabled && dock.edgeAttached &&
-            dock.position == bar.position &&
-            (dock.monitorScope == bar.monitorScope ||
-                bar.monitorScope == DockMonitorScope::All);
+        barAvailability = ResolveBarSettingsAvailability(snapshot.values.general.dockEnabled, dock, bar, GetSystemMetrics(SM_CMONITORS));
+        spaceReservedByStatusBar = barAvailability.allDockMerged;
+        mergedHeight->Update(snapshot);
+        thicknessScale.row.SetText(L(barAvailability.anyMerged ? "settings.bars.iconSize" : "app.settings.dock_thickness", L"Dock size"));
         if (newGeneration)
         {
             confirmationGate->confirmationPending = false;
@@ -2592,6 +2631,9 @@ struct DockPagePresenter::Impl
             return layoutCombo;
         if (id == "dock.monitor" || id == "dock.monitorScope")
             return monitorScopeCombo;
+        if (id == "dock.mergedBarHeight") return mergedHeight->FocusTarget();
+        if (id == "dock.lastMonitorUseHomeSize") return homeSize;
+        if (id == "taskbar.displayMode" || id == "taskbar.suppressSystemTaskbar" || id == "taskbar.autoHide") return taskbarMode;
         if (id == "dock.thickness" || id == "dock.thicknessScale")
             return thicknessScale.slider;
         if (id == "dock.floatingShortcutMode")
@@ -2752,6 +2794,9 @@ struct DockPagePresenter::Impl
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);
             fullscreenSwipeToggle.Toggled(fullscreenSwipeToken);
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
+            mergedHeight->Close();
+            homeSize.Toggled(homeSizeToken);
+            taskbarMode.SelectionChanged(taskbarModeToken);
             suppressTaskbarToggle.Toggled(suppressTaskbarToken);
             taskbarSuppressToggle.Toggled(taskbarSuppressToken);
             reserveScreenSpaceToggle.Toggled(reserveScreenSpaceToken);
@@ -2806,7 +2851,10 @@ DockPagePresenter::~DockPagePresenter()
 void DockPagePresenter::SetActions(DockPageActions actions)
 {
     if (impl_ && !impl_->closed)
+    {
+        impl_->mergedHeight->SetActions(actions);
         impl_->actions = std::move(actions);
+    }
 }
 
 mux::UIElement DockPagePresenter::Content() const noexcept
@@ -2865,6 +2913,7 @@ void DockPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed)
         return;
+    impl_->mergedHeight->Flush();
     impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->taskbarInputReady = false;

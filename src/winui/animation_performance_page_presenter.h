@@ -20,6 +20,7 @@ public:
     ~AnimationPerformancePagePresenter();
     void SetActions(DockPageActions actions);
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement Content() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockContent() const noexcept;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
     void RegisterFocusTargets(const FocusRegistrar& registrar) const;

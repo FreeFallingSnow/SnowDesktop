@@ -203,6 +203,13 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
          route.page == SettingsPage::AppearanceWidgets) &&
         (route.focusId == "desktop.spacing" || route.focusId == "desktop.iconSpacing"))
         route.page = SettingsPage::AppearanceWidgets;
+    if ((route.page == SettingsPage::AppearanceTheme && route.focusId == "personalization.dockAppearance") ||
+        (route.page == SettingsPage::AnimationPerformance &&
+         (route.focusId == "animation.hover" || route.focusId == "animation.hoverScale" ||
+          route.focusId == "animation.launch" || route.focusId == "animation.window")))
+        route.page = SettingsPage::Dock;
+    if (route.page == SettingsPage::Dock && route.focusId == "dock.suppressSystemTaskbar")
+    { route.page = SettingsPage::Taskbar; route.focusId = "taskbar.displayMode"; }
     return route;
 }
 

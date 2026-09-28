@@ -101,15 +101,37 @@ return {
         assert(monitorData.resolveGpuChoice(value, "adapter-old") == nil)
         assert(#monitorData.gpuChoices(value) == 2)
     end,
-    ["an automatic choice remains selected through disappearance until settings change"] = function()
+    ["a missing selection falls back to an available adapter and stays there"] = function()
         local a = adapter("adapter-a", "Dedicated", 10, 800, 100)
         local b = adapter("adapter-b", "Integrated", 20, 0, 0)
         local state = {}
         assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }).id == a.id)
-        assert(monitorData.rememberGpuChoice(state, { adapters = { b } }).id == a.id)
-        assert(monitorData.rememberGpuChoice(state, nil).id == a.id)
+        assert(monitorData.rememberGpuChoice(state, { adapters = { b } }).id == b.id)
+        assert(monitorData.rememberGpuChoice(state, nil).id == b.id)
+        assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }).id == b.id)
         assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }, b.id).id == b.id)
-        assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }, "unknown") == nil)
+        assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }, "unknown").id == a.id)
+    end,
+    ["old session ID recovers without creating a phantom duplicate"] = function()
+        local a = adapter("new-id", "Dedicated", 0, 800, 0)
+        local b = adapter("integrated", "Integrated", 10, 0, 0)
+        local choice = monitorData.rememberGpuChoice({}, { adapters = { a, b } }, "old-id", "Dedicated", 1)
+        assert(choice.id == a.id)
+        assert(#monitorData.gpuChoices({ adapters = { a, b } }) == 2)
+    end,
+    ["fallback waits for distinct invalid samples and constant idle is valid"] = function()
+        local a = adapter("a", "Dedicated", 0, 800, 0)
+        local b = adapter("b", "Integrated", 10, 0, 0)
+        local state, value = {}, { adapters = { a, b } }
+        for timestamp = 1, 10 do
+            assert(monitorData.rememberGpuChoice(state, value, a.id, a.name, timestamp).id == a.id)
+        end
+        a.usageAvailable, a.dedicatedUsageAvailable, a.sharedUsageAvailable = false, false, false
+        for _ = 1, 20 do
+            assert(monitorData.rememberGpuChoice(state, value, a.id, a.name, 11).id == a.id)
+        end
+        assert(monitorData.rememberGpuChoice(state, value, a.id, a.name, 12).id == a.id)
+        assert(monitorData.rememberGpuChoice(state, value, a.id, a.name, 13).id == b.id)
     end,
     ["proven alias migration stays canonical after the host discards alias history"] = function()
         local a = adapter("adapter-new", "Dedicated", 10, 800, 100)

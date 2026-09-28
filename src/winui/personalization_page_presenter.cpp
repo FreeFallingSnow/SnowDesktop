@@ -141,7 +141,8 @@ struct PersonalizationPagePresenter::Impl
     LocalizeCallback localize;
     PersonalizationPageActions actions;
     mux::Style cardStyle{nullptr};
-    muxc::StackPanel themeRoot{nullptr};
+    muxc::StackPanel themeRoot{nullptr}, dockThemeRoot{nullptr};
+    muxc::ContentControl dockAppearanceHost;
     muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
 
@@ -426,7 +427,12 @@ struct PersonalizationPagePresenter::Impl
                     [value](auto& settings) { settings.collectionPopupAppearance.appearance = value; settings.collectionPopupAppearance.customized = true; });
             });
         popupThemeCard.content.Children().Append(popupAppearanceEditor->Content());
-        InitializeCard(dockThemeCard, cardStyle, themeRoot);
+        dockThemeRoot = muxc::StackPanel{};
+        muxc::StackPanel dockBody;
+        InitializeCard(dockThemeCard, cardStyle, dockBody);
+        dockAppearanceHost.Content(dockBody);
+        dockAppearanceHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        dockThemeRoot.Children().Append(dockAppearanceHost);
         dockAppearanceCombo = muxc::ComboBox{};
         dockAppearanceCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         dockAppearanceCombo.MaxWidth(520.0);
@@ -1234,6 +1240,7 @@ struct PersonalizationPagePresenter::Impl
                 control->dirty = false;
             }
         }
+        dockAppearanceHost.IsEnabled(snapshot.values.general.dockEnabled);
         currentGlobalAppearance = snapshot.values.personalization;
         if (personalizationChanged)
         {
@@ -1456,6 +1463,8 @@ void PersonalizationPagePresenter::SetLayoutSpacingContent(
 
 mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept
 { return impl_ ? impl_->menuRoot : nullptr; }
+
+mux::UIElement PersonalizationPagePresenter::DockAppearanceContent() const noexcept { return impl_ ? impl_->dockThemeRoot : nullptr; }
 
 mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
 {

@@ -98,7 +98,7 @@ struct AnimationPerformancePagePresenter::Impl
         root = muxc::StackPanel{};
         root.Spacing(8);
         generalCard.Initialize(style, root);
-        dockCard.Initialize(style, root);
+        dockCard.Initialize(style, dockRoot);
         performanceCard.Initialize(style, root);
         AddChoice(mode, generalCard, "mode", "animation.mode", 0,
             {L10N_KEY("settings.animation.option.followSystem"),
@@ -123,10 +123,10 @@ struct AnimationPerformancePagePresenter::Impl
         dockLink.HorizontalAlignment(mux::HorizontalAlignment::Right);
         dockLink.VerticalAlignment(mux::VerticalAlignment::Center);
         muxc::Grid::SetColumn(dockLink, 1);
-        dockCard.header.Children().Append(dockLink);
+        root.Children().Append(dockLink);
         const auto linkToken = dockLink.Click([this](const auto&, const auto&) {
             if (active && !closed && this->navigate)
-                this->navigate(SettingsRoute::ForPage(SettingsPage::Dock, "dock.enable"));
+                this->navigate(SettingsRoute::ForPage(SettingsPage::Dock, "animation.hover"));
         });
         revoke.push_back([control = dockLink, linkToken]() { control.Click(linkToken); });
         AddChoice(hover, dockCard, "hover", "animation.hover", 2,
@@ -194,6 +194,7 @@ struct AnimationPerformancePagePresenter::Impl
     LocalizeCallback localize;
     NavigateCallback navigate;
     DockPageActions actions;
+    muxc::StackPanel dockRoot;
     muxc::StackPanel root{nullptr};
     Card generalCard, dockCard, performanceCard;
     Choice mode, popup, speed, hover, launch, window, frameLimit;
@@ -424,6 +425,7 @@ AnimationPerformancePagePresenter::AnimationPerformancePagePresenter(
     : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, std::move(navigate))) {}
 AnimationPerformancePagePresenter::~AnimationPerformancePagePresenter() { Close(); }
 void AnimationPerformancePagePresenter::SetActions(DockPageActions actions) { impl_->actions = std::move(actions); }
+mux::UIElement AnimationPerformancePagePresenter::DockContent() const noexcept { return impl_ ? impl_->dockRoot : nullptr; }
 mux::UIElement AnimationPerformancePagePresenter::Content() const noexcept { return impl_->root; }
 void AnimationPerformancePagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot) { impl_->ApplySnapshot(snapshot); }
 void AnimationPerformancePagePresenter::RefreshLocalizedText() { impl_->RefreshLocalizedText(); }

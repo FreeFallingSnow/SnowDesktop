@@ -273,18 +273,14 @@ local function selectedGpu(value)
     -- Migrate legacy "all" lazily without writing storage during rendering.
     local savedId = storage.get("gpu_scope") ~= "all" and
         storage.get("gpu_adapter_id") or nil
-    local choice = monitorData.rememberGpuChoice(gpuSelection, value, savedId)
+    local snapshot = subscriptions.gpu and subscriptions.gpu:value()
+    local choice = monitorData.rememberGpuChoice(gpuSelection, value, savedId,
+        storage.get("gpu_adapter_name"), snapshot and snapshot.timestamp)
     return choice and choice.id or savedId, choice and choice.name or
         storage.get("gpu_adapter_name")
 end
 
 local function persistGpuSelection()
-    local remembered = gpuSelection.choice
-    if remembered and storage.get("gpu_adapter_id") == remembered.id and
-            storage.get("gpu_adapter_name") == remembered.name and
-            storage.get("gpu_scope") == "selected" then
-        return
-    end
     local value = subscriptionValue(subscriptions.gpu)
     local id = selectedGpu(value)
     local choice = monitorData.resolveGpuChoice(value, id)
@@ -750,7 +746,7 @@ return widget.define({
     name = l10n.tr("lua_widget.system_monitor.name"),
     useCustomStyle = true,
     followPersonalizationDefault = true,
-    showTitle = true,
+    showTitle = false,
     bottomBarHover = true,
     bg = style.bg,
     border = style.border,

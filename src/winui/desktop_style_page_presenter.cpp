@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "desktop_style_page_presenter.h"
+#include "merged_bar_height_editor.h"
 #include "settings_presenter_controls.h"
 #include "../desktop_style_presets.h"
 #include "../dock_collection_icon_rules.h"
@@ -163,8 +164,8 @@ struct DesktopStylePagePresenter::Impl
     ApplyPresetCallback applyPreset;
     DockPageActions actions;
     muxc::StackPanel root;
-    muxc::ComboBox presets;
-    SettingRow presetRow;
+    muxc::GridView presets;
+    std::unique_ptr<MergedBarHeightEditor> mergedHeight;
     muxc::StackPanel companionOptions;
     muxc::ComboBox companionPosition, companionForm;
     SettingRow companionPositionRow, companionFormRow;
@@ -187,6 +188,7 @@ struct DesktopStylePagePresenter::Impl
     GeneralSettings general;
     DockSettings dock;
     SettingsRoute lastRoute;
+    int monitorCount = 0;
     std::uint64_t generation = 0, generalRevision = 0, dockRevision = 0, systemTaskbarRevision = 0;
     bool syncing = false, closed = false, active = false, hasSnapshot = false, hasRoute = false;
 
@@ -322,8 +324,10 @@ struct DesktopStylePagePresenter::Impl
         root.Spacing(12);
         const auto presetCard = Card(style);
         presets.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        presetRow.Initialize(presets);
-        presetCard.Children().Append(presetRow.root);
+        presets.SelectionMode(muxc::ListViewSelectionMode::Single);
+        presets.IsTabStop(true);
+        presets.ItemsPanel(mux::Markup::XamlReader::Load(LR"(<ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="5" /></ItemsPanelTemplate>)").as<muxc::ItemsPanelTemplate>());
+        presetCard.Children().Append(presets);
         companionOptions.Spacing(8);
         companionPositionRow.Initialize(companionPosition);
         companionFormRow.Initialize(companionForm);
@@ -441,33 +445,43 @@ struct DesktopStylePagePresenter::Impl
             }, [this](bool enabled) {
                 EmitDock([enabled](auto& value) {
                     value.floatingEdgeSwipeEnabled = enabled;
-                    dock_settings_rules::DisableSummonOnlyWhenPrerequisiteDisabled(enabled, value.showOnlyWhenSummoned);
                 });
-            }, DockEnabled);
+            }, [](const auto& settings, const auto& value) { return settings.dockEnabled && !value.showOnlyWhenSummoned; });
         AddDockToggle(dockCard, "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description",
             "desktopStyle.dock.reserveScreenSpace", &DockSettings::reserveScreenSpace,
             [](const auto& settings, const auto& value) {
-                const auto& bar = settings.statusBar;
-                const bool everyDockMerged = bar.enabled && value.edgeAttached && value.position == bar.position &&
-                    (value.monitorScope == bar.monitorScope || bar.monitorScope == DockMonitorScope::All);
-                return settings.dockEnabled && !value.showOnlyWhenSummoned && !everyDockMerged;
+                const auto state = ResolveBarSettingsAvailability(settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS));
+                return settings.dockEnabled && !value.showOnlyWhenSummoned && !state.allDockMerged;
             });
         AddToggle(dockCard, "settings.dock.allowDesktopContentOverlap", "settings.dock.allowDesktopContentOverlap.description",
             "desktopStyle.dock.allowDesktopContentOverlap",
             [](const auto&, const auto& value) {
-                return dock_settings_rules::IsDesktopContentOverlapEnabled(value.showOnlyWhenSummoned, value.allowDesktopContentOverlap);
+                return dock_settings_rules::ShouldReserveDesktopWorkArea(value.showOnlyWhenSummoned, value.allowDesktopContentOverlap);
             }, [this](bool enabled) {
                 EmitDock([enabled](auto& value) {
-                    value.allowDesktopContentOverlap = enabled;
-                    dock_settings_rules::DisableSummonOnlyWhenPrerequisiteDisabled(enabled, value.showOnlyWhenSummoned);
+                    value.allowDesktopContentOverlap = !enabled;
                 });
-            }, DockEnabled);
+            }, [](const auto& settings, const auto& value) {
+                return settings.dockEnabled && !value.showOnlyWhenSummoned && !ResolveBarSettingsAvailability(
+                    settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS)).allDockMerged;
+            });
 
+        mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
+        dockCard.Children().Append(mergedHeight->Content());
+        AddDockToggle(dockCard, "settings.bars.homeSize", "settings.bars.homeSize.description",
+            "desktopStyle.dock.lastMonitorUseHomeSize", &DockSettings::lastMonitorUseHomeSize,
+            [](const auto& settings, const auto& value) {
+                const auto state = ResolveBarSettingsAvailability(settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS));
+                return state.dockOnLastMonitor && !state.allDockMerged;
+            });
         const auto taskbarCard = AddSection(style, "settings.nav.taskbar");
-        AddDockToggle(taskbarCard, "settings.dock.suppressTaskbar", "settings.dock.suppressTaskbar.description",
-            "desktopStyle.taskbar.suppress", &DockSettings::suppressSystemTaskbar, DockEnabled);
-        AddDockToggle(taskbarCard, "settings.taskbar.autoHide", "settings.taskbar.autoHide.description",
-            "desktopStyle.taskbar.autoHide", &DockSettings::systemTaskbarAutoHide);
+        AddChoice(taskbarCard, "settings.bars.taskbarMode", "", "desktopStyle.taskbar.displayMode",
+            {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar"},
+            [](const auto&, const auto& value) { return TaskbarDisplayMode(value); },
+            [this](int index) {
+                if (index == 2 && !general.dockEnabled) { Sync(); return; }
+                EmitDock([index](auto& value) { SetTaskbarDisplayMode(value, index); });
+            });
         AddDockToggle(taskbarCard, "settings.desktopStyle.taskbarAppearance", "settings.desktopStyle.taskbarAppearance.description",
             "desktopStyle.taskbar.appearance", &DockSettings::systemTaskbarBackdropEnabled);
 
@@ -830,6 +844,8 @@ struct DesktopStylePagePresenter::Impl
         for (const auto& choice : choices)
         {
             choice->control.SelectedIndex(choice->read(general, dock));
+            if (choice->focus == "desktopStyle.taskbar.displayMode" && choice->control.Items().Size() == 3)
+                choice->control.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(general.dockEnabled || dock.suppressSystemTaskbar);
             choice->row.SetEnabled(hasSnapshot && (!choice->enabled || choice->enabled(general, dock)));
         }
         apply.IsEnabled(hasSnapshot);
@@ -846,12 +862,17 @@ struct DesktopStylePagePresenter::Impl
         for (const auto key : kPresets)
         {
             const std::string titleKey = "settings.desktopStyle." + std::string(key) + ".title";
-            presets.Items().Append(winrt::box_value(L(titleKey)));
+            muxc::GridViewItem item;
+            muxc::TextBlock title; ConfigureText(title, true);
+            title.Text(L(titleKey)); title.TextWrapping(mux::TextWrapping::Wrap);
+            item.Width(156); item.MinHeight(76); item.Padding({12, 10, 12, 10});
+            item.Content(title);
+            muxa::AutomationProperties::SetName(item, L(titleKey));
+            presets.Items().Append(item);
         }
         presets.SelectedIndex(selected >= 0 ? selected : 0);
-        presetRow.SetText(L("settings.desktopStyle.presets"), {});
-        muxa::AutomationProperties::SetName(presets, presetRow.label.Text());
-        muxa::AutomationProperties::SetHelpText(presets, presetRow.help.Text());
+        muxa::AutomationProperties::SetName(presets, L("settings.desktopStyle.presets"));
+        mergedHeight->RefreshLocalizedText();
         const auto localizeDraft = [this](const muxc::ComboBox& control, SettingRow& row,
             std::string_view label, std::initializer_list<std::string_view> options) {
             const int selectedIndex = control.SelectedIndex();
@@ -880,7 +901,9 @@ struct DesktopStylePagePresenter::Impl
             muxa::AutomationProperties::SetName(choice->control, choice->row.label.Text());
             muxa::AutomationProperties::SetHelpText(choice->control, choice->row.help.Text());
             choice->control.Items().Clear();
-            for (const auto& option : choice->options) choice->control.Items().Append(winrt::box_value(L(option)));
+            for (const auto& option : choice->options) {
+                muxc::ComboBoxItem item; item.Content(winrt::box_value(L(option))); choice->control.Items().Append(item);
+            }
         }
         syncing = previous;
         Sync();
@@ -888,6 +911,7 @@ struct DesktopStylePagePresenter::Impl
     void Close() noexcept
     {
         if (closed) return;
+        mergedHeight->Flush(); mergedHeight->Close();
         closed = true;
         active = false;
         gate->alive = false;
@@ -907,7 +931,7 @@ DesktopStylePagePresenter::DesktopStylePagePresenter(LocalizeCallback localize,
     const mux::Style& cardStyle, ApplyPresetCallback applyPreset)
     : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, std::move(applyPreset))) {}
 DesktopStylePagePresenter::~DesktopStylePagePresenter() { Close(); }
-void DesktopStylePagePresenter::SetActions(DockPageActions actions) { impl_->actions = std::move(actions); }
+void DesktopStylePagePresenter::SetActions(DockPageActions actions) { impl_->mergedHeight->SetActions(actions); impl_->actions = std::move(actions); }
 bool DesktopStylePagePresenter::NeedsRecommendedAnimations(std::string_view preset) const
 {
     return !impl_->closed && impl_->hasSnapshot &&
@@ -918,6 +942,7 @@ void DesktopStylePagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 {
     if (impl_->closed) return;
     const bool newSession = !impl_->hasSnapshot || impl_->generation != snapshot.generation;
+    const int monitorCount = GetSystemMetrics(SM_CMONITORS);
     // Route transitions can publish without changing either settings domain.
     // Only a real transition selects the requested preview; normal snapshot
     // echoes must preserve any preset the user subsequently chose by hand.
@@ -927,11 +952,14 @@ void DesktopStylePagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     impl_->hasRoute = true;
     const bool presetNavigation = routeChanged && snapshot.route.page == SettingsPage::DesktopStyle;
     if (!newSession && impl_->generalRevision == snapshot.domainRevisions.general &&
-        impl_->dockRevision == snapshot.domainRevisions.dock && impl_->systemTaskbarRevision == snapshot.domainRevisions.systemTaskbar)
+        impl_->dockRevision == snapshot.domainRevisions.dock && impl_->systemTaskbarRevision == snapshot.domainRevisions.systemTaskbar &&
+        impl_->monitorCount == monitorCount)
     {
         if (presetNavigation) impl_->SelectPresetForFocus(snapshot.route.focusId);
         return;
     }
+    impl_->mergedHeight->Update(snapshot);
+    impl_->monitorCount = monitorCount;
     impl_->generation = snapshot.generation;
     impl_->gate->generation = snapshot.generation;
     if (newSession)
@@ -974,6 +1002,7 @@ void DesktopStylePagePresenter::Activate(std::string_view focusId)
 }
 void DesktopStylePagePresenter::Deactivate()
 {
+    impl_->mergedHeight->Flush();
     impl_->active = false;
     impl_->gate->active = false;
     impl_->gate->pending = false;
@@ -984,6 +1013,7 @@ void DesktopStylePagePresenter::RegisterFocusTargets(const std::function<void(st
 {
     if (!target || impl_->closed) return;
     target("desktopStyle", impl_->presets);
+    target("desktopStyle.dock.mergedBarHeight", impl_->mergedHeight->FocusTarget());
     for (const auto preset : kPresets) target("desktopStyle." + std::string(preset), impl_->presets);
     for (const auto& toggle : impl_->toggles) target(toggle->focus, toggle->control);
     for (const auto& choice : impl_->choices) target(choice->focus, choice->control);

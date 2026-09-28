@@ -180,7 +180,7 @@
                 <NavigationViewItem x:Name="DesktopStyleItem" Tag="desktop-style" />
                 <NavigationViewItem x:Name="DockItem" Tag="dock" />
                 <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
-                <NavigationViewItem x:Name="StatusBarItem" Tag="status-bar" />
+                <NavigationViewItem x:Name="StatusBarItem" Tag="status-bar" Visibility="Collapsed" />
                 <NavigationViewItemHeader x:Name="DesktopShellHeader" />
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
                 <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />

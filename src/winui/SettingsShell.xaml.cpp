@@ -465,6 +465,8 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::Dock:
         ensureGeneral();
         ensureDock();
+        ensurePersonalization();
+        ensureAnimation();
         break;
     case SettingsPage::Taskbar:
         ensureDock();
@@ -472,7 +474,10 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::StatusBar:
         if (!statusBarPage_)
         {
-            statusBarPage_ = std::make_unique<snowdesktop::winui::StatusBarPagePresenter>(localize, cardStyle());
+            statusBarPage_ = std::make_unique<snowdesktop::winui::StatusBarPagePresenter>(localize, cardStyle(),
+                [weak = get_weak()](SettingsRoute route) {
+                    if (const auto shell = weak.get(); shell && !shell->closed_) shell->RequestRoute(std::move(route));
+                });
             statusBarPage_->SetActions(dockPageActions_);
         }
         break;
@@ -739,7 +744,7 @@ void SettingsShell::RefreshLocalizedText()
     PagesItem().Content(winrt::box_value(Localize("settings.nav.pages")));
     CategoriesItem().Content(
         winrt::box_value(Localize("settings.nav.categories")));
-    DockItem().Content(winrt::box_value(Localize("settings.nav.dock")));
+    DockItem().Content(winrt::box_value(Localize("settings.bars.title")));
     StatusBarItem().Content(winrt::box_value(Localize("settings.nav.statusBar")));
     TaskbarItem().Content(winrt::box_value(Localize("settings.nav.taskbar")));
     WidgetsItem().Content(winrt::box_value(Localize("app.settings.widgets")));
@@ -2236,7 +2241,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization ||
             page == SettingsPage::AppearanceTheme ||
-            page == SettingsPage::AppearanceWidgets || page == SettingsPage::ContextMenu;
+            page == SettingsPage::AppearanceWidgets || page == SettingsPage::ContextMenu || page == SettingsPage::Dock;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
         return page == SettingsPage::AppearanceWidgets ||
@@ -2269,8 +2274,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     if (leavingDock && dockPage_)
         dockPage_->Deactivate();
     if (renderedPageRoute_ && animationPage_ &&
-        renderedPageRoute_->page == SettingsPage::AnimationPerformance &&
-        pageRoute.page != SettingsPage::AnimationPerformance)
+        (renderedPageRoute_->page == SettingsPage::AnimationPerformance || renderedPageRoute_->page == SettingsPage::Dock) &&
+        pageRoute.page != SettingsPage::AnimationPerformance && pageRoute.page != SettingsPage::Dock)
         animationPage_->Deactivate();
     if (calendarPage_ && pageRoute.page != SettingsPage::Calendar) calendarPage_->Deactivate();
     if (statusBarPage_ && pageRoute.page != SettingsPage::StatusBar) statusBarPage_->Deactivate();
@@ -2309,8 +2314,30 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     if (leavingBackup && backupDataPage_)
         backupDataPage_->Deactivate();
 
+    if (renderedPageRoute_)
+    {
+        if (renderedPageRoute_->page == SettingsPage::Dock) dockPageOffset_ = PageScrollViewer().VerticalOffset();
+        if (renderedPageRoute_->page == SettingsPage::StatusBar) statusPageOffset_ = PageScrollViewer().VerticalOffset();
+    }
     PageCards().Children().Clear();
     focusTargets_.clear();
+    if (pageRoute.page == SettingsPage::Dock || pageRoute.page == SettingsPage::StatusBar)
+    {
+        muxc::SelectorBar tabs;
+        muxc::SelectorBarItem dockTab, statusTab;
+        dockTab.Text(Localize("settings.nav.dock")); statusTab.Text(Localize("settings.nav.statusBar"));
+        tabs.Items().Append(dockTab); tabs.Items().Append(statusTab);
+        tabs.SelectedItem(pageRoute.page == SettingsPage::Dock ? dockTab : statusTab);
+        tabs.SelectionChanged([weak = get_weak()](const auto& control, const auto&) {
+            if (const auto shell = weak.get(); shell && !shell->closed_)
+            {
+                const auto bar = control.template as<muxc::SelectorBar>();
+                const auto next = bar.SelectedItem() == bar.Items().GetAt(0) ? SettingsPage::Dock : SettingsPage::StatusBar;
+                if (shell->navigation_.Route().page != next) shell->RequestRoute(SettingsRoute::ForPage(next));
+            }
+        });
+        PageCards().Children().Append(tabs);
+    }
 
     const auto addPlaceholder = [this](
                                     std::string focusId,
@@ -2387,6 +2414,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             PageCards().Children().Append(animationPage_->Content());
             animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
+                if (id == "animation.hover" || id == "animation.hoverScale" || id == "animation.launch" || id == "animation.window") return;
                 RegisterFocusTarget(std::move(id), element);
             });
             animationPage_->Activate();
@@ -2414,7 +2442,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
-                "personalization.dockAppearance",
                 "personalization.backgroundColor",
                 "personalization.borderColor",
                 "personalization.widgetAlpha",
@@ -2568,14 +2595,15 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 generalPage_->DockShortcutContent());
             PageCards().Children().Append(dockPage_->DockContent());
-            muxc::HyperlinkButton animationLink{};
-            animationLink.Content(winrt::box_value(Localize("settings.nav.animation")));
-            animationLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
-            animationLink.Click([weak = get_weak()](const auto&, const auto&) {
-                if (const auto shell = weak.get())
-                    shell->RequestRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, "animation.hover"));
+            PageCards().Children().Append(personalizationPage_->DockAppearanceContent());
+            RegisterFocusTarget("personalization.dockAppearance", personalizationPage_->FocusTarget("personalization.dockAppearance"));
+            personalizationPage_->Activate();
+            PageCards().Children().Append(animationPage_->DockContent());
+            animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
+                if (id == "animation.hover" || id == "animation.hoverScale" || id == "animation.launch" || id == "animation.window")
+                    RegisterFocusTarget(std::move(id), element);
             });
-            PageCards().Children().Append(animationLink);
+            animationPage_->Activate();
             generalPage_->RegisterFocusTargets(
                 [this](std::string focusId,
                        const mux::FrameworkElement& element) {
@@ -2583,10 +2611,10 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 });
             registerDockFocus({
                 "dock.enable", "dock.position", "dock.layout",
-                "dock.monitor", "dock.thickness",
+                "dock.monitor", "dock.thickness", "dock.mergedBarHeight", "dock.lastMonitorUseHomeSize",
                 "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
                 "dock.floatingEdgeSwipeBlockFullscreen",
-                "dock.suppressSystemTaskbar", "dock.showWindowsButton", "dock.showFrequentItems",
+                "dock.showWindowsButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
                 "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace",
                 "dock.showOnlyWhenSummoned"});
@@ -2600,7 +2628,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             dockPage_->ActivateTaskbar();
             PageCards().Children().Append(dockPage_->TaskbarContent());
             registerDockFocus({
-                "taskbar.suppressSystemTaskbar", "taskbar.systemSettings", "taskbar.autoHide", "taskbar.alignment",
+                "taskbar.displayMode", "taskbar.suppressSystemTaskbar", "taskbar.systemSettings", "taskbar.autoHide", "taskbar.alignment",
                 "taskbar.systemTheme", "taskbar.theme",
                 "taskbar.contentTheme", "taskbar.backgroundColor",
                 "taskbar.borderColor", "taskbar.backgroundOpacity",
@@ -2619,7 +2647,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             statusBarPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
                 RegisterFocusTarget(std::move(id), element);
             });
-            statusBarPage_->Activate();
+            statusBarPage_->Activate(pageRoute.focusId);
         }
         break;
     case SettingsPage::DockAndTaskbar:
@@ -2832,6 +2860,8 @@ void SettingsShell::FocusPendingTarget()
             return;
         }
     }
+    if (focusId.empty() && (navigation_.Route().page == SettingsPage::Dock || navigation_.Route().page == SettingsPage::StatusBar))
+        PageScrollViewer().ChangeView(nullptr, navigation_.Route().page == SettingsPage::Dock ? dockPageOffset_ : statusPageOffset_, nullptr, true);
     if (!focusId.empty())
     {
         const auto it = focusTargets_.find(focusId);
@@ -3001,9 +3031,9 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::Calendar: return Localize("settings.calendar.page");
     case SettingsPage::AnimationPerformance: return Localize("settings.nav.animation");
     case SettingsPage::DesktopStyle: return Localize("settings.desktopStyle.title");
-    case SettingsPage::Dock: return Localize("settings.nav.dock");
+    case SettingsPage::Dock: return Localize("settings.bars.title");
     case SettingsPage::Taskbar: return Localize("settings.nav.taskbar");
-    case SettingsPage::StatusBar: return Localize("settings.nav.statusBar");
+    case SettingsPage::StatusBar: return Localize("settings.bars.title");
     case SettingsPage::DockAndTaskbar:
         return Localize("settings.nav.dock");
     case SettingsPage::Widgets: return Localize("app.settings.widgets");
@@ -3092,7 +3122,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::DockAndTaskbar: return DockItem();
     case SettingsPage::DesktopStyle: return DesktopStyleItem();
     case SettingsPage::Taskbar: return TaskbarItem();
-    case SettingsPage::StatusBar: return StatusBarItem();
+    case SettingsPage::StatusBar: return DockItem();
     case SettingsPage::Widgets:
     case SettingsPage::WidgetSettings: return WidgetsItem();
     case SettingsPage::BackupAndData: return BackupItem();

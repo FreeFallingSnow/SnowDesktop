@@ -4,6 +4,7 @@
 #include "../status_bar_shell_shortcut.h"
 #include "panel_appearance_editor.h"
 #include "../status_bar_appearance.h"
+#include "merged_bar_height_editor.h"
 
 namespace snowdesktop::winui
 {
@@ -14,6 +15,15 @@ struct StatusBarPagePresenter::Impl
 {
     DockPagePresenter::LocalizeCallback localize;
     DockPageActions actions;
+    std::function<void(SettingsRoute)> navigate;
+    std::unique_ptr<MergedBarHeightEditor> mergedHeight;
+    BarSettingsAvailability availability;
+    int monitorCount = 0;
+    muxc::TextBlock mergedNotice;
+    muxc::HyperlinkButton dockAppearanceLink;
+    muxc::Expander independentAppearance;
+    muxc::ContentControl independentHost;
+    muxc::StackPanel independentBody;
     muxc::StackPanel root, basic, leftItems, infoItems;
     muxc::Expander leftSection, infoSection;
     muxc::ComboBox edge, monitors, clockPanel, controlPanel;
@@ -52,7 +62,7 @@ struct StatusBarPagePresenter::Impl
     std::vector<std::unique_ptr<Toggle>> toggles;
     std::vector<std::function<void()>> revoke;
     StatusBarSettings value;
-    std::uint64_t generation = 0, generalRevision = 0, personalizationRevision = 0;
+    std::uint64_t generation = 0, generalRevision = 0, personalizationRevision = 0, dockRevision = 0;
     bool syncing = false, closed = false, active = false, scaleDirty = false, hasSnapshot = false;
     presenter_controls::CoalescedPreviewTimer<double> scalePreview;
     std::wstring L(std::string_view key) const { return localize ? localize(key) : std::wstring{}; }
@@ -163,7 +173,9 @@ struct StatusBarPagePresenter::Impl
         syncing = true; scale.Value(percent); scaleNumber.Value(percent); syncing = false;
         scaleReset.IsEnabled(percent != 100); scaleDirty = true; scalePreview.Queue(percent);
     }
-    Impl(DockPagePresenter::LocalizeCallback callback, const mux::Style& style) : localize(std::move(callback))
+    Impl(DockPagePresenter::LocalizeCallback callback, const mux::Style& style,
+        std::function<void(SettingsRoute)> navigateCallback)
+        : localize(std::move(callback)), navigate(std::move(navigateCallback))
     {
         root.Spacing(8);
         basic = Card(style);
@@ -191,6 +203,8 @@ struct StatusBarPagePresenter::Impl
         muxc::Grid::SetColumn(scaleReset, 3); editor.Children().Append(scaleReset);
         scaleRow.Initialize(editor);
         for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) basic.Children().Append(row);
+        mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
+        basic.Children().Append(mergedHeight->Content());
         for (auto section : {leftSection, infoSection})
         {
             section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -226,10 +240,25 @@ struct StatusBarPagePresenter::Impl
                 Emit([selected](auto& settings) { settings.controlCenterSystemPanel = selected == 1; });
         });
         revoke.push_back([control = controlPanel, controlSelection] { control.SelectionChanged(controlSelection); });
-        auto appearance = Card(style);
+        independentAppearance.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        independentAppearance.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        independentBody.Spacing(12);
+        mergedNotice.TextWrapping(mux::TextWrapping::Wrap);
+        root.Children().Append(mergedNotice);
+        dockAppearanceLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        root.Children().Append(dockAppearanceLink);
+        const auto appearanceLinkToken = dockAppearanceLink.Click([this](const auto&, const auto&) {
+            if (active && navigate) navigate(SettingsRoute::ForPage(SettingsPage::Dock, "personalization.dockAppearance"));
+        });
+        revoke.push_back([control = dockAppearanceLink, appearanceLinkToken] { control.Click(appearanceLinkToken); });
+        independentHost.Content(independentBody);
+        independentHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        independentAppearance.Content(independentHost);
+        root.Children().Append(independentAppearance);
+        auto appearance = independentBody;
         Title(defaultThemeTitle); appearance.Children().Append(defaultThemeTitle);
         InitializeTheme(defaultTheme, appearance);
-        auto scenarios = Card(style);
+        auto scenarios = independentBody;
         Title(rulesTitle); scenarios.Children().Append(rulesTitle);
         rulesHint.TextWrapping(mux::TextWrapping::Wrap); rulesHint.Opacity(.72);
         scenarios.Children().Append(rulesHint);
@@ -300,6 +329,18 @@ struct StatusBarPagePresenter::Impl
             rule->theme.root.Visibility(current.enabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             SyncTheme(rule->theme, current.theme, force);
         }
+        edgeRow.SetEnabled(value.enabled); monitorsRow.SetEnabled(value.enabled);
+        scaleRow.SetEnabled(value.enabled && !availability.allStatusMerged);
+        clockPanelRow.SetEnabled(value.enabled); controlPanelRow.SetEnabled(value.enabled);
+        for (auto& toggle : toggles)
+            toggle->row.SetEnabled(toggle->member == &StatusBarSettings::enabled ||
+                (value.enabled && !(toggle->member == &StatusBarSettings::quickSearch && availability.allStatusMerged)));
+        independentHost.IsEnabled(value.enabled && !availability.allStatusMerged);
+        independentHost.Opacity(value.enabled && !availability.allStatusMerged ? 1.0 : .62);
+        mergedNotice.Visibility(availability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        dockAppearanceLink.Visibility(availability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        mergedNotice.Text(L(availability.allStatusMerged ? "settings.bars.inheritedAppearance" : "settings.bars.partialAppearance"));
+
         syncing = false;
     }
     void LocalizeTheme(ThemeControl& control)
@@ -335,6 +376,9 @@ struct StatusBarPagePresenter::Impl
         mux::Automation::AutomationProperties::SetName(scaleNumber, L("statusBar.scale"));
         edgeRow.SetText(L("statusBar.position")); monitorsRow.SetText(L("settings.dock.monitor"));
         scaleRow.SetText(L("statusBar.scale"));
+        independentAppearance.Header(winrt::box_value(L("settings.bars.independentAppearance")));
+        dockAppearanceLink.Content(winrt::box_value(L("settings.bars.openDockAppearance")));
+        mergedHeight->RefreshLocalizedText();
         defaultThemeTitle.Text(L("statusBar.defaultAppearance"));
         rulesTitle.Text(L("settings.taskbar.scenarioOverrides"));
         rulesHint.Text(L("statusBar.scenarioOverrides.description"));
@@ -357,6 +401,7 @@ struct StatusBarPagePresenter::Impl
     void Close()
     {
         if (closed) return;
+        mergedHeight->Flush(); mergedHeight->Close();
         Flush(); closed = true;
         scalePreview.Close();
         defaultTheme.editor->Close();
@@ -365,21 +410,29 @@ struct StatusBarPagePresenter::Impl
         actions = {};
     }
 };
-StatusBarPagePresenter::StatusBarPagePresenter(DockPagePresenter::LocalizeCallback localize, const mux::Style& style)
-    : impl_(std::make_unique<Impl>(std::move(localize), style)) {}
+StatusBarPagePresenter::StatusBarPagePresenter(DockPagePresenter::LocalizeCallback localize, const mux::Style& style,
+    std::function<void(SettingsRoute)> navigate)
+    : impl_(std::make_unique<Impl>(std::move(localize), style, std::move(navigate))) {}
 StatusBarPagePresenter::~StatusBarPagePresenter() { Close(); }
-void StatusBarPagePresenter::SetActions(DockPageActions actions) { impl_->actions = std::move(actions); }
+void StatusBarPagePresenter::SetActions(DockPageActions actions) { impl_->mergedHeight->SetActions(actions); impl_->actions = std::move(actions); }
 mux::UIElement StatusBarPagePresenter::Content() const { return impl_->root; }
 void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 {
     if (impl_->closed) return;
     const bool replaceSession = !impl_->hasSnapshot || impl_->generation != snapshot.generation;
+    const int monitorCount = GetSystemMetrics(SM_CMONITORS);
     if (!replaceSession && impl_->generalRevision == snapshot.domainRevisions.general &&
-        impl_->personalizationRevision == snapshot.domainRevisions.personalization) return;
+        impl_->personalizationRevision == snapshot.domainRevisions.personalization && impl_->dockRevision == snapshot.domainRevisions.dock &&
+        impl_->monitorCount == monitorCount) return;
     if (replaceSession)
     { impl_->scalePreview.Cancel(); impl_->scaleDirty = false; }
     impl_->generation = snapshot.generation;
     impl_->value = snapshot.values.general.statusBar;
+    impl_->availability = ResolveBarSettingsAvailability(snapshot.values.general.dockEnabled, snapshot.values.dock,
+        snapshot.values.general.statusBar, monitorCount);
+    impl_->monitorCount = monitorCount;
+    impl_->mergedHeight->Update(snapshot);
+    impl_->dockRevision = snapshot.domainRevisions.dock;
     impl_->globalAppearance = snapshot.values.personalization;
     impl_->Sync(replaceSession);
     impl_->generalRevision = snapshot.domainRevisions.general;
@@ -387,13 +440,19 @@ void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     impl_->hasSnapshot = true;
 }
 void StatusBarPagePresenter::RefreshLocalizedText() { impl_->Localize(); }
-void StatusBarPagePresenter::Activate() { impl_->active = true; }
-void StatusBarPagePresenter::Deactivate() { impl_->Flush(); impl_->active = false; }
+void StatusBarPagePresenter::Activate(std::string_view focusId)
+{
+    impl_->active = true;
+    if (focusId == "statusBar.theme" || focusId == "statusBar.fullscreen" || focusId == "statusBar.maximizedWindow")
+        impl_->independentAppearance.IsExpanded(true);
+}
+void StatusBarPagePresenter::Deactivate() { impl_->mergedHeight->Flush(); impl_->Flush(); impl_->active = false; }
 void StatusBarPagePresenter::Close() { impl_->Close(); }
 void StatusBarPagePresenter::RegisterFocusTargets(const std::function<void(std::string, const mux::FrameworkElement&)>& target) const
 {
     target("statusBar.position", impl_->edgeRow.root); target("statusBar.monitor", impl_->monitorsRow.root);
     target("statusBar.scale", impl_->scaleRow.root);
+    target("statusBar.mergedBarHeight", impl_->mergedHeight->FocusTarget());
     target("statusBar.clockPanel", impl_->clockPanelRow.root);
     if (impl_->systemQuickSettings) target("statusBar.controlCenterPanel", impl_->controlPanelRow.root);
     target("statusBar.theme", impl_->defaultTheme.row.root);

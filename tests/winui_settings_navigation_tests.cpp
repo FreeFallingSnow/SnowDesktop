@@ -20,6 +20,13 @@ void Check(bool condition, const char* message)
 
 void TestHistoryAndFocusRoutes()
 {
+    for (const auto focus : {"animation.hover", "animation.hoverScale", "animation.launch", "animation.window"})
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::Dock,
+            "old Dock animation links reach the Dock tab after settings reorganization");
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.dockAppearance")).page == SettingsPage::Dock,
+        "old Dock theme links reach the Dock tab");
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::Dock, "dock.suppressSystemTaskbar")).page == SettingsPage::Taskbar,
+        "old taskbar hiding links reach the taskbar visibility control");
     SettingsShellNavigationState state;
     Check(state.Route().page == SettingsPage::General && !state.CanGoBack(),
         "navigation starts at the legacy General page without back history");

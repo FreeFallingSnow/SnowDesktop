@@ -1050,6 +1050,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "allowDesktopContentOverlap",
         settings.allowDesktopContentOverlap);
     ReadBoolField(text, "reserveScreenSpace", settings.reserveScreenSpace);
+    ReadBoolField(text, "lastMonitorUseHomeSize", settings.lastMonitorUseHomeSize);
+    if (ReadDoubleField(text, "mergedBarHeight", value) && std::isfinite(value))
+        settings.mergedBarHeight = static_cast<int>(std::clamp(value, 32., 96.));
     bool loadedLegacyAutoHide = false;
     if (!ReadBoolField(text, "showOnlyWhenSummoned",
             settings.showOnlyWhenSummoned))
@@ -1185,6 +1188,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
+    file << "  \"lastMonitorUseHomeSize\": " << (settings.lastMonitorUseHomeSize ? "true" : "false") << ",\n";
+    file << "  \"mergedBarHeight\": " << settings.mergedBarHeight << ",\n";
     file << "  \"hoverEffect\": " << snowdesktop::animation::NormalizeHoverEffect(settings.hoverEffect) << ",\n";
     file << "  \"hoverScale\": " << snowdesktop::animation::NormalizeHoverScale(settings.hoverScale) << ",\n";
     file << "  \"launchEffect\": " << snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect) << ",\n";

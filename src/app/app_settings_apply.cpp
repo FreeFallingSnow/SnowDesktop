@@ -957,6 +957,11 @@ public:
             // retain their commit side effects and old-value comparisons.
             const auto& general = snapshot.values.general;
             app_.generalSettings_.animationMode = general.animationMode;
+            if (app_.generalSettings_.statusBar != general.statusBar)
+            {
+                app_.generalSettings_.statusBar = general.statusBar;
+                app_.SyncStatusBar();
+            }
             app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
             app_.generalSettings_.animationSpeed = general.animationSpeed;
             app_.generalSettings_.animationFrameLimit = general.animationFrameLimit;

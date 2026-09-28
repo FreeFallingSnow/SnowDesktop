@@ -49,6 +49,8 @@ void TestCodec()
         "preset position and form survive the settings-process action transport together");
     DockSettings dockSpace;
     dockSpace.reserveScreenSpace = true;
+    dockSpace.lastMonitorUseHomeSize = false;
+    dockSpace.mergedBarHeight = 64;
     Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
         "system Dock space reservation must cross the settings-process boundary");
     const auto styleRoute = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::DesktopStyle);

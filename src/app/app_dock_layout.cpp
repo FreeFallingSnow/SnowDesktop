@@ -84,6 +84,25 @@ int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
     return GetPageItemVisualMetrics(page).iconSize;
 }
 
+int DesktopApp::GetDockPageItemIconSize(const GridPage& page) const
+{
+    if (!dockSettings_.lastMonitorUseHomeSize) return GetGridPageItemIconSize(page);
+    const auto order = BuildMonitorRenderOrder();
+    if (order.empty() || order.back() >= gridPages_.size() ||
+        gridPages_[order.back()].monitorId != page.monitorId || savedPageIds_.size() < order.size())
+        return GetGridPageItemIconSize(page);
+    GridPage home = page;
+    home.id = savedPageIds_[order.size() - 1];
+    if (const auto found = savedPageColumns_.find(home.id); found != savedPageColumns_.end()) home.columns = found->second;
+    if (const auto found = savedPageRows_.find(home.id); found != savedPageRows_.end()) home.rows = found->second;
+    const RECT area = IsRectEmpty(&home.visualWorkArea) ? home.workArea : home.visualWorkArea;
+    const auto sizing = snowdesktop::ResolvePageVisualSizing(
+        static_cast<int>(area.right - area.left), static_cast<int>(area.bottom - area.top), home.columns, home.rows);
+    home.itemPitchWidth = sizing.pitchWidth;
+    home.itemPitchHeight = sizing.pitchHeight;
+    return GetGridPageItemIconSize(home);
+}
+
 void DesktopApp::ApplyDockWorkAreaReservation()
 {
     if (dockWorkAreaReservationApplied_)
@@ -228,7 +247,7 @@ void DesktopApp::ApplyDockWorkAreaReservation()
                 candidate, vertical);
             const float dockScale = ClampDockScale(dockSettings_.thicknessScale);
             const int scaledIconSize = std::max(1, static_cast<int>(std::round(
-                GetGridPageItemIconSize(candidate) * dockScale)));
+                GetDockPageItemIconSize(candidate) * dockScale)));
             const int scaledSpacing = std::max(1, static_cast<int>(std::round(
                 kDockSpacing * dockScale)));
             const int edgeDistance = componentMargin;

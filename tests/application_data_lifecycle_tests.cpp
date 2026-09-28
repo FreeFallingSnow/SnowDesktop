@@ -311,6 +311,8 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             saved.keepWhenDesktopHidden = true;
             saved.allowDesktopContentOverlap = true;
             saved.reserveScreenSpace = position % 2 == 0;
+            saved.lastMonitorUseHomeSize = attached;
+            saved.mergedBarHeight = 48 + position * 8;
             saved.showOnlyWhenSummoned = true;
             saved.frequentItemCount = 7;
             saved.thicknessScale = 0.73f;
@@ -349,7 +351,8 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             legacy.dockEnabled == true && !legacy.dockLayout,
         "old layout backups preserve their switch without inventing Dock geometry");
     Expect(layout::ParseDocument(R"({"dockLayout":{"edgeAttached":true}})", legacy) &&
-            legacy.dockLayout && !legacy.dockLayout->reserveScreenSpace,
+            legacy.dockLayout && !legacy.dockLayout->reserveScreenSpace &&
+            legacy.dockLayout->lastMonitorUseHomeSize && legacy.dockLayout->mergedBarHeight == 48,
         "legacy Dock layouts do not opt into screen reservation when the field is absent");
     for (const char* malformed : {
              R"({"dockLayout":false})",
@@ -358,6 +361,10 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
              R"({"dockLayout":{"monitorScope":-1}})",
              R"({"dockLayout":{"edgeAttached":1}})",
              R"({"dockLayout":{"reserveScreenSpace":1}})",
+             R"({"dockLayout":{"lastMonitorUseHomeSize":1}})",
+             R"({"dockLayout":{"mergedBarHeight":31}})",
+             R"({"dockLayout":{"mergedBarHeight":97}})",
+             R"({"dockLayout":{"mergedBarHeight":48.5}})",
              R"({"dockLayout":{"frequentItemCount":0}})",
              R"({"dockLayout":{"thicknessScale":0.1}})"})
     {

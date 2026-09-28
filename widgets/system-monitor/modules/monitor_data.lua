@@ -17,6 +17,10 @@ function M.gpuChoices(value)
             choices[#choices + 1] = {
                 id = adapter.id, name = name, aliasIds = adapter.aliasIds,
                 dedicatedMemoryBytes = adapter.dedicatedMemoryBytes,
+                available = (adapter.usageAvailable == nil and
+                    adapter.dedicatedUsageAvailable == nil and adapter.sharedUsageAvailable == nil) or
+                    adapter.usageAvailable == true or adapter.dedicatedUsageAvailable == true or
+                    adapter.sharedUsageAvailable == true,
             }
         end
     end
@@ -29,7 +33,7 @@ function M.gpuChoices(value)
 end
 
 -- Only the host can prove that different LUIDs represent the same device.
--- A saved missing device stays missing; never remap it by a display name.
+-- This resolver does not infer identity from a display name; recovery is separate.
 function M.resolveGpuChoice(value, selectedId)
     local choices = M.gpuChoices(value)
     if selectedId and selectedId ~= "" then
@@ -57,14 +61,42 @@ function M.resolveGpuChoice(value, selectedId)
     return preferred
 end
 
--- Rendering may remember a proven choice, but persistence belongs to a
--- lifecycle/menu callback. Keep the chosen device through temporary loss.
-function M.rememberGpuChoice(state, value, savedId)
+-- Identity resolution stays strict. Recovery is a separate, explicit fallback
+-- policy, not evidence that two equally named GPUs are the same hardware.
+function M.rememberGpuChoice(state, value, savedId, savedName, timestamp)
     local sourceId = savedId or ""
     if state.sourceId ~= sourceId then
         state.sourceId, state.choice = sourceId, nil
+        state.failedSamples, state.lastTimestamp = 0, nil
     end
     local choice = M.resolveGpuChoice(value, state.choice and state.choice.id or savedId)
+    local choices = M.gpuChoices(value)
+    if #choices == 0 then return state.choice end
+    if choice and choice.available then
+        state.failedSamples = 0
+    elseif choice then
+        -- Count samples, never frames or menu openings. A warming counter or
+        -- one missing reading must not make the selected device oscillate.
+        if timestamp ~= nil and timestamp ~= state.lastTimestamp then
+            state.failedSamples = (state.failedSamples or 0) + 1
+        end
+    end
+    state.lastTimestamp = timestamp
+    if not choice or (not choice.available and (sourceId == "" or (state.failedSamples or 0) >= 3)) then
+        local preferred, matching, matchingCount = nil, nil, 0
+        local name = state.choice and state.choice.name or savedName
+        for _, candidate in ipairs(choices) do
+            if candidate.available then
+                if candidate.name == name then matching, matchingCount = candidate, matchingCount + 1 end
+                if not preferred or (nonnegative(candidate.dedicatedMemoryBytes) and candidate.dedicatedMemoryBytes or 0) >
+                        (nonnegative(preferred.dedicatedMemoryBytes) and preferred.dedicatedMemoryBytes or 0) then
+                    preferred = candidate
+                end
+            end
+        end
+        local fallback = matchingCount == 1 and matching or preferred
+        if fallback then choice, state.failedSamples = fallback, 0 end
+    end
     if choice then state.choice = { id = choice.id, name = choice.name } end
     return state.choice
 end

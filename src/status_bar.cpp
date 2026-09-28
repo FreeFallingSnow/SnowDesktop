@@ -258,7 +258,7 @@ struct StatusBar::Impl
             {
                 const auto part = *tooltipControlPart;
                 key += "/" + std::to_string(part); body = item.controlTips[part];
-                const float scale = dpi / 96.f * owner.settings.scale;
+                const float scale = dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale);
                 if (part == 0) anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(32 * scale)));
                 else if (part == 1)
                 {
@@ -439,8 +439,8 @@ struct StatusBar::Impl
             if(dpi!=previousDpi){surface.Reset();backgroundSurface.Reset();appearanceDirty=backgroundDirty=paintDirty=true;}
             const UINT edge = Edge(owner.settings.position);
             const bool vertical = edge == ABE_LEFT || edge == ABE_RIGHT;
-            const int thickness = std::max(mergedDockHeight, static_cast<int>(std::lround(
-                (vertical ? 48.f : 32.f) * owner.settings.scale * dpi / 96.f)));
+            const int thickness = mergedDockHeight > 0 ? mergedDockHeight : static_cast<int>(std::lround(
+                (vertical ? 48.f : 32.f) * owner.settings.scale * dpi / 96.f));
             bool placed = false;
             if (reserveSpace)
             {
@@ -585,7 +585,7 @@ struct StatusBar::Impl
                 background->SetDpi(96, 96);
                 background->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(origin.x), static_cast<float>(origin.y)));
                 background->Clear(hc ? SystemColor(COLOR_WINDOW) : D2D1::ColorF(0, 0.f));
-                if (!hc && owner.drawBackground) owner.drawBackground(background.Get(), client, a, dpi / 96.f * owner.settings.scale);
+                if (!hc && owner.drawBackground) owner.drawBackground(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale));
                 background.Reset();
                 const auto drawn = backgroundSurface->EndDraw();
                 if (FAILED(drawn)) { PaintError(drawn); return; }
@@ -605,7 +605,7 @@ struct StatusBar::Impl
             const StatusBarPalette palette{hc, SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
                 SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
-                dpi / 96.f * owner.settings.scale, a, palette, interaction.hovered,
+                dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, interaction.hovered,
                 keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
                 interaction.focused.value_or(0), mergedDockHeight > 0);
             if (dropIndicator)
@@ -903,8 +903,20 @@ struct StatusBar::Impl
                     self->appbar.Notify(ABM_WINDOWPOSCHANGED);
                 break;
             case WM_WINDOWPOSCHANGING:
-                if (lp) ConstrainHiddenStatusBarPosition(self->fullscreen,
-                    *reinterpret_cast<WINDOWPOS*>(lp));
+                if (lp)
+                {
+                    auto& position = *reinterpret_cast<WINDOWPOS*>(lp);
+                    ConstrainHiddenStatusBarPosition(self->fullscreen, position);
+                    // Shell can raise a registered AppBar when another window
+                    // gains focus without activating the bar itself. Its opaque
+                    // surface must remain behind the merged Dock icon HWND.
+                    // Correct this request in place: do not send another Shell
+                    // notification or recursively reposition the native pair.
+                    if (self->mergedDockHeight && self->mergedPresentation.visible &&
+                        IsWindow(self->mergedPresentation.insertAfter) &&
+                        !(position.flags & (SWP_NOZORDER | SWP_HIDEWINDOW)))
+                        position.hwndInsertAfter = self->mergedPresentation.insertAfter;
+                }
                 break;
             case WM_NCHITTEST:
             {
@@ -912,7 +924,15 @@ struct StatusBar::Impl
                 ScreenToClient(window, &point);
                 return self->OwnsPointer(point) ? HTCLIENT : HTTRANSPARENT;
             }
-            case WM_ACTIVATE: self->appbar.Notify(ABM_ACTIVATE); self->paintDirty = true; self->Paint(); break;
+            case WM_ACTIVATE:
+                self->appbar.Notify(ABM_ACTIVATE);
+                // Activation can raise the AppBar above the independent icon
+                // HWND. Restore the pair immediately, not on the next hover.
+                if (self->mergedDockHeight && self->mergedPresentation.visible &&
+                    self->mergedPresentation.insertAfter && IsWindowVisible(window))
+                    self->backdrop.SetPopupWindowPairZOrder(window,
+                        self->mergedPresentation.insertAfter, true);
+                self->paintDirty = true; self->Paint(); break;
             case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
             case WM_ERASEBKGND: return 1;
             case WM_PAINT:
@@ -1007,7 +1027,7 @@ struct StatusBar::Impl
                                 {
                                     self->trayPreview = true;
                                     self->owner.dragFeedback.begin(window,*item.icon,screen,
-                                        static_cast<UINT>(std::lround(24*self->dpi/96.f*self->owner.settings.scale)));
+                                        static_cast<UINT>(std::lround(24*self->dpi/96.f*(self->mergedDockHeight ? 1.f : self->owner.settings.scale))));
                                     break;
                                 }
                         }
@@ -1028,7 +1048,7 @@ struct StatusBar::Impl
                     if (item.key == "controlCenter")
                     {
                         const auto part = StatusBarControlPart((point.x - item.bounds.left) /
-                            (self->dpi / 96.f * self->owner.settings.scale));
+                            (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale)));
                         self->tooltipControlPart = part;
                     }
                     if (item.icon) hoveredKey = item.icon->key;
@@ -1056,7 +1076,7 @@ struct StatusBar::Impl
                 for (const auto& item : self->items)
                     if (item.key == "controlCenter" && PtInRect(&item.bounds, point))
                     {
-                        const float x = (point.x - item.bounds.left) / (self->dpi / 96.f * self->owner.settings.scale);
+                        const float x = (point.x - item.bounds.left) / (self->dpi / 96.f * (self->mergedDockHeight ? 1.f : self->owner.settings.scale));
                         if (StatusBarControlPart(x) != 1) return 0;
                         const bool canceledMenu = self->CancelTrayMenu();
                         const auto sample = self->owner.data->AudioOutputVolume();
@@ -1554,6 +1574,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         window->monitor = monitor.monitor;
         window->tooltip.Configure(window->hwnd, composition, text, self.tooltipAppearance, self.drawTooltipBackground);
         const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight || window->reserveSpace != monitor.reserveSpace;
+        const bool mergedModeChanged = (window->mergedDockHeight > 0) != (monitor.mergedDockHeight > 0);
         if (mergedChanged || changed)
         {
             window->EndDragFeedback(); window->ClearHover(); window->interaction.CancelPointer();
@@ -1562,7 +1583,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         }
         window->mergedDockHeight = monitor.mergedDockHeight;
         window->reserveSpace = monitor.reserveSpace;
-        if (mergedChanged)
+        if (mergedModeChanged)
         {
             window->fullscreenState.DismissReveal();
             window->mergedPresentation = {};

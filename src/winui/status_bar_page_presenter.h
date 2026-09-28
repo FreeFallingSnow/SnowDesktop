@@ -7,13 +7,14 @@ class StatusBarPagePresenter
 {
 public:
     StatusBarPagePresenter(DockPagePresenter::LocalizeCallback localize,
-        const winrt::Microsoft::UI::Xaml::Style& cardStyle);
+        const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        std::function<void(SettingsRoute)> navigate = {});
     ~StatusBarPagePresenter();
     void SetActions(DockPageActions actions);
     winrt::Microsoft::UI::Xaml::UIElement Content() const;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
-    void Activate();
+    void Activate(std::string_view focusId = {});
     void Deactivate();
     void Close();
     void RegisterFocusTargets(const std::function<void(std::string,

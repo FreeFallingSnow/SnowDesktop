@@ -8,6 +8,7 @@
 #include "../dock_settings_rules.h"
 #include "../taskbar_monitor.h"
 #include "../taskbar_hook/taskbar_native.h"
+#include <shellscalingapi.h>
 
 namespace
 {
@@ -583,9 +584,9 @@ void DesktopApp::SyncStatusBar()
                 dockSettings_.position == generalSettings_.statusBar.position &&
                 std::find(dockOrder.begin(), dockOrder.end(), index) != dockOrder.end())
             {
-                const float scale = ClampDockScale(dockSettings_.thicknessScale);
-                mergedHeight = std::max(1, static_cast<int>(std::round(GetGridPageItemIconSize(page) * scale))) +
-                    2 * std::max(1, static_cast<int>(std::round(kDockSpacing * scale)));
+                UINT dpiX = 96, dpiY = 96;
+                if (FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) dpiX = 96;
+                mergedHeight = MulDiv(std::clamp(dockSettings_.mergedBarHeight, 32, 96), static_cast<int>(dpiX), 96);
             }
             monitors.push_back({page.monitorId, monitor, mergedHeight,
             snowdesktop::ReserveStatusBarSpace(mergedHeight != 0, dockSettings_.showOnlyWhenSummoned)});

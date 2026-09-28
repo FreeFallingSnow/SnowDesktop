@@ -40,6 +40,9 @@ struct DockLayoutSettings
     bool keepWhenDesktopHidden = false;
     bool allowDesktopContentOverlap = false;
     bool reserveScreenSpace = false;
+    bool lastMonitorUseHomeSize = true;
+    // Independent of page density, Dock icon scale and standalone status scale.
+    int mergedBarHeight = 48;
     bool showOnlyWhenSummoned = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;

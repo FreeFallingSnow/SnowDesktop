@@ -25,6 +25,7 @@
 #include "page_navigation_rules.h"
 #include "page_layout_settings.h"
 #include "dock_settings_rules.h"
+#include "bar_settings_rules.h"
 #include "dock_settings.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
@@ -1257,6 +1258,40 @@ void CheckStatusBarFullscreenDockSession()
 int main(int argc, char** argv)
 {
     if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
+    // These are real settings predicates shared by all three entry points.
+    // First/last scopes coincide on one display but only partially overlap on two.
+    {
+        DockSettings dock;
+        snowdesktop::StatusBarSettings bar;
+        dock.edgeAttached = true; dock.position = DockPosition::Bottom;
+        dock.monitorScope = DockMonitorScope::Last;
+        bar.enabled = true; bar.position = DockPosition::Bottom;
+        bar.monitorScope = DockMonitorScope::First;
+        auto state = snowdesktop::ResolveBarSettingsAvailability(true, dock, bar, 1);
+        Check(state.allDockMerged && state.allStatusMerged, "first and last coincide on a single display");
+        state = snowdesktop::ResolveBarSettingsAvailability(true, dock, bar, 2);
+        Check(!state.anyMerged && state.dockOnLastMonitor, "disjoint display scopes must retain independent controls");
+        dock.monitorScope = DockMonitorScope::All;
+        state = snowdesktop::ResolveBarSettingsAvailability(true, dock, bar, 2);
+        Check(state.anyMerged && !state.allDockMerged && state.allStatusMerged,
+            "partial merge keeps standalone Dock controls available");
+        bar.monitorScope = DockMonitorScope::All; dock.monitorScope = DockMonitorScope::Last;
+        state = snowdesktop::ResolveBarSettingsAvailability(true, dock, bar, 2);
+        Check(state.allDockMerged && !state.allStatusMerged,
+            "standalone status bars must retain their own scale and appearance");
+        dock.edgeAttached = false;
+        Check(!snowdesktop::ResolveBarSettingsAvailability(true, dock, bar, 2).anyMerged,
+            "island Dock does not disable status bar controls");
+        dock.edgeAttached = true;
+        Check(!snowdesktop::ResolveBarSettingsAvailability(false, dock, bar, 2).anyMerged,
+            "disabled Dock cannot keep independent settings disabled");
+        snowdesktop::SetTaskbarDisplayMode(dock, 2);
+        Check(dock.suppressSystemTaskbar && dock.systemTaskbarAutoHide,
+            "always hidden taskbar also releases Windows work area");
+        snowdesktop::SetTaskbarDisplayMode(dock, 0);
+        Check(!dock.suppressSystemTaskbar && !dock.systemTaskbarAutoHide,
+            "always visible mode clears both forms of hiding");
+    }
     CheckStatusBarInteraction();
     CheckStatusBarFullscreenDockSession();
     {

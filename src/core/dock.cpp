@@ -478,12 +478,17 @@ bool DockContainer::HasOnlyFolderDragSource() const
 int DockContainer::ItemIconSize() const
 {
     if (!app_) return kIconSize;
+    if (IsMergedWithStatusBar())
+    {
+        const int available = std::max(1, static_cast<int>(area_.bottom - area_.top) - 2 * ScaledSpacing());
+        return std::max(1, static_cast<int>(std::round(available * ClampDockScale(app_->dockSettings_.thicknessScale))));
+    }
     const POINT center{
         (area_.left + area_.right) / 2,
         (area_.top + area_.bottom) / 2
     };
     const GridPage* page = app_->GridPageFromPoint(center);
-    const int baseIconSize = page ? app_->GetGridPageItemIconSize(*page) : kIconSize;
+    const int baseIconSize = page ? app_->GetDockPageItemIconSize(*page) : kIconSize;
     return std::max(1, static_cast<int>(std::round(
         baseIconSize * ClampDockScale(app_->dockSettings_.thicknessScale))));
 }
