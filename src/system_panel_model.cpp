@@ -1217,7 +1217,7 @@ void SystemPanelModel::Calendar()
         else if(fixedMonth)
         {
             const bool compact=calendarPicker_.has_value()||calendarConfirmDelete_;
-            Finish(end+offsetY,false,compact?panelHeight:520.f,compact?panelHeight:760.f);
+            Finish(end+offsetY,false,compact?panelHeight:520.f,compact?panelHeight:560.f);
         }
         else Finish((std::max)(monthEnd,end+offsetY),false);
         return;

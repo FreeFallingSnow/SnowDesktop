@@ -1186,9 +1186,14 @@ void CheckCalendarManagement()
     Require(model.Invoke("calendar.add")&&model.CalendarEditing()&&model.View().width==720&&
         model.CalendarInputFields().size()==2&&Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&
         Node(model.View(),"calendar.month").bounds.left==monthBounds.left&&Node(model.View(),"calendar.month").bounds.top==monthBounds.top&&
-        model.View().height>=520.f&&model.View().height>calendarHeight&&
+        model.View().height>=520.f&&model.View().height<=560.f&&model.View().height>calendarHeight&&
         field("calendar.edit.title").bounds.left>=model.ScrollViewport().left,
         "calendar add did not expand its form while retaining the fixed month column");
+    Require(model.Invoke("calendar.edit.mode.monthly")&&model.View().height<=560.f&&
+        model.MaximumScroll()>0&&model.Reveal("calendar.edit.save")&&
+        Node(model.View(),"calendar.edit.save").bounds.bottom<=model.ScrollViewport().bottom&&
+        model.Invoke("calendar.edit.mode.single"),
+        "monthly editor escaped its height cap or made save unreachable");
     Require(model.SetCalendarInput("calendar.edit.title",L"Unsaved draft")&&model.Invoke("calendar.next")&&
         field("calendar.edit.title").text==L"Unsaved draft"&&Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&model.Invoke("calendar.previous"),
         "browsing the retained month discarded or changed the unsaved event draft");
@@ -1242,7 +1247,7 @@ void CheckCalendarManagement()
     const auto contextResult=context.Release(model.View(),point,true);
     Require(contextResult.kind==ui::InputResult::Kind::Context&&contextResult.id==originalNode&&
         model.CalendarEventCommand(contextResult.id,false),"right-click context lost its stable calendar event identity");
-    Require(model.View().height>=520.f,"calendar edit did not expand its form");
+    Require(model.View().height>=520.f&&model.View().height<=560.f,"calendar edit did not respect its expanded height range");
     Require(model.SetCalendarInput("calendar.edit.title",L"Changed here")&&model.Invoke("calendar.edit.date")&&
         model.Invoke("picker.day:2026-09-28")&&model.Invoke("picker.confirm")&&
         model.SetCalendarInput("calendar.edit.notes",L"Keep this draft"),"calendar edit did not accept its existing event draft");
@@ -1865,7 +1870,8 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 "time visual fixture did not expose both columns together");
         }
         const auto& scene=model.View();CheckLayout(scene);
-        if(creating&&!narrow)Require(scene.height>=520.f,"wide calendar editor did not grow beyond the month grid");
+        if(creating&&!narrow)Require(scene.height>=520.f&&scene.height<=560.f,
+            "wide calendar editor did not respect its bounded height range");
         if(creating)
         {
             const auto& date=Node(scene,"calendar.edit.date");
