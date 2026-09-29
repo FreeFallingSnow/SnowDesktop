@@ -19462,7 +19462,8 @@ static void DrawWidgetSelectOverlays(D2DState* state,
                 popup.y, 3.0f, popup.height, 0xFFFFFF, 1.5f, 0.12f);
             DrawHostRect(state, popup.x + popup.width - 5.0f,
                 popup.y + scrollbar.thumbStart, 3.0f,
-                scrollbar.thumbEnd - scrollbar.thumbStart,
+                static_cast<float>(scrollbar.thumbEnd -
+                    scrollbar.thumbStart),
                 0xFFFFFF, 1.5f, 0.65f);
         }
         state->ctx->PopAxisAlignedClip();
