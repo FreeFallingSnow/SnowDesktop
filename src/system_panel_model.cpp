@@ -1660,7 +1660,17 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         {
             const auto mode=modes[index],id="calendar.edit.mode."+mode,key="settings.calendar.mode."+mode;
             option(id,_LW(key.c_str()),16+index*(buttonWidth+gap),footer,buttonWidth,calendarMode_==mode);
-            Command(id,[this,mode]{calendarMode_=mode;calendarRule_.kind=mode;calendarDiscardConfirmed_=false;calendarEditor_->error.clear();});
+            Command(id,[this,mode]{
+                const auto previous=calendarMode_;
+                const auto start=calendar::CalendarService::GetDateInfo(calendarRule_.startDate);
+                if(mode=="dates"&&calendarRule_.dates.empty()&&start)
+                    calendarRule_.dates.push_back(calendarRule_.startDate);
+                if(mode=="weekly"&&calendarRule_.weekdays.empty()&&start)
+                    calendarRule_.weekdays.push_back(start->weekday);
+                if(mode=="monthly"&&previous!="monthly"&&calendarRule_.monthDay==0&&start)
+                    calendarRule_.monthDay=start->day;
+                calendarMode_=mode;calendarRule_.kind=mode;
+                calendarDiscardConfirmed_=false;calendarEditor_->error.clear();});
         }
         footer+=48;
     }
