@@ -1321,6 +1321,71 @@ void CheckCalendarManagement()
     Require(first.Invoke("picker.previous",{})==ui::DateTimePicker::Result::None&&
         last.Invoke("picker.next",{})==ui::DateTimePicker::Result::None,"shared calendar selection escaped the service date range");
 }
+void CheckCalendarSeriesManagement()
+{
+    const auto path=std::filesystem::temp_directory_path()/
+        (L"SnowDesktopCalendarPanelSeries-"+std::to_wstring(GetCurrentProcessId()))/
+        L"SnowDesktop.calendar.json";
+    std::error_code error;std::filesystem::remove_all(path.parent_path(),error);
+    calendar::CalendarService service(path);
+    Require(service.Load(),"series panel fixture could not load its calendar store");
+    auto source=FixtureSource(std::make_shared<PreviewState>());
+    source.calendar.events=[&](const std::string& date){return service.Events(date,date);};
+    source.calendar.mutations.save=[&](const calendar::CalendarEvent& event){
+        return event.id.empty()?service.Create(event):service.Update(event.id,event.revision,event);};
+    source.calendar.mutations.current=[&](const calendar::CalendarEvent& event){return service.EventById(event.id);};
+    source.calendar.mutations.remove=[&](const std::string& id){return service.Remove(id);};
+    source.calendar.mutations.seriesById=[&](const std::string& id){return service.SeriesById(id);};
+    source.calendar.mutations.saveSeries=[&](calendar::CalendarSeries item){
+        const auto id=item.id;
+        const int revision=item.revision;
+        return id.empty()?service.CreateSeries(std::move(item)):
+            service.UpdateSeries(id,revision,std::move(item));};
+    source.calendar.mutations.removeSeries=[&](const std::string& id,int revision){
+        return service.RemoveSeries(id,revision);};
+    SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);
+    model.Refresh(300,420);
+    Require(model.Invoke("calendar.add")&&model.SetCalendarInput("calendar.edit.title",L"Series")&&
+        model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.dates.add")&&
+        model.Invoke("picker.day:2026-09-28")&&model.Invoke("picker.confirm")&&
+        model.View().Find("calendar.edit.dates.remove:2026-09-26")&&
+        model.View().Find("calendar.edit.dates.remove:2026-09-28"),
+        "multiple-date panel editor did not retain its checked dates");
+    CheckLayout(model.View());
+    Require(model.Reveal("calendar.edit.save")&&model.Invoke("calendar.edit.save")&&
+        !model.CalendarEditing()&&service.Series().size()==1&&
+        service.Series().front().rule.dates.size()==2,
+        "multiple-date panel editor did not create one series");
+    const auto id=service.Series().front().id;
+    auto moved=service.EventById(id+"/2026-09-28");
+    Require(moved.has_value(),"series fixture did not create its second occurrence");
+    moved->date="2026-09-29";
+    Require(service.Update(moved->id,moved->revision,*moved).ok,
+        "series fixture could not move one occurrence");
+    model.Refresh(300,420);
+    const auto node="event:2026-09-26:"+id+"/2026-09-26";
+    Require(model.CalendarEventCommand(node,false,true)&&
+        model.View().Find("calendar.edit.scope.series")&&
+        model.Invoke("calendar.edit.mode.weekly")&&
+        model.Invoke("calendar.edit.endType")&&
+        model.Reveal("calendar.edit.save"),
+        "series panel did not expose its whole-series rule controls");
+    CheckLayout(model.View());
+    Require(model.Invoke("calendar.edit.save")&&model.CalendarEditing()&&
+        Node(model.View(),"calendar.edit.error").text==_LW("settings.calendar.confirmExceptions"),
+        "changing a series rule did not ask before discarding an unrelated override");
+    Require(model.Invoke("calendar.edit.save")&&!model.CalendarEditing()&&
+        service.Series().front().rule.kind=="weekly"&&
+        service.Series().front().exceptions.empty()&&
+        !service.EventById(id+"/2026-09-28"),
+        "confirmed series rule change did not discard only obsolete overrides");
+    model.Refresh(300,420);
+    Require(model.CalendarEventCommand(node,true,true)&&
+        model.View().Find("calendar.edit.confirmDelete")&&
+        model.Invoke("calendar.edit.confirmDelete")&&service.Series().empty(),
+        "whole-series context removal did not delete the definition");
+    std::filesystem::remove_all(path.parent_path(),error);
+}
 void CheckFeedbackLayouts()
 {
     auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
@@ -1740,9 +1805,11 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
     event.title=_L("settings.calendar.events");event.date="2026-09-26";event.startMinutes=630;event.endMinutes=690;
     event.reminderMinutes=15;event.notes=_L("settings.calendar.pageDescription");
     const float scale=static_cast<float>(request.dpi)/96.f;
-    for(int page=0;page<7;++page)
+    for(int page=0;page<9;++page)
     {
-        const bool creating=page==0,confirmation=page==2,overflow=page==3,narrow=page==4,datePicker=page==5,timePicker=page==6,picker=datePicker||timePicker;
+        const bool seriesDates=page==7,seriesMonthly=page==8;
+        const bool creating=page==0||seriesDates||seriesMonthly,confirmation=page==2,overflow=page==3,
+            narrow=page==4||seriesMonthly,datePicker=page==5,timePicker=page==6,picker=datePicker||timePicker;
         auto source=FixtureSource(std::make_shared<PreviewState>());
         source.calendar.events=[event](const std::string& date){return date==event.date?std::vector{event}:std::vector<calendar::CalendarEvent>{};};
         source.calendar.mutations.current=[event](const auto&){return std::optional(event);};
@@ -1753,6 +1820,19 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
             (std::min)(narrow?320.f:720.f,static_cast<float>(request.canvasWidth-2*request.padding)/scale));
         Require(creating?model.Invoke("calendar.add"):model.CalendarEventCommand("event:2026-09-26:offline-calendar-page",confirmation),
             "calendar visual fixture did not enter the real secondary page");
+        if(seriesDates)
+        {
+            Require(model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.dates.add")&&
+                model.Invoke("picker.day:2026-09-28")&&model.Invoke("picker.confirm")&&
+                model.Reveal("calendar.edit.dates.add"),
+                "calendar multiple-date preview could not show the selected dates");
+        }
+        if(seriesMonthly)
+        {
+            Require(model.Invoke("calendar.edit.mode.monthly")&&model.Invoke("calendar.edit.monthDay.last")&&
+                model.Reveal("calendar.edit.monthDay.last"),
+                "calendar monthly preview could not show its last-day rule");
+        }
         if(overflow)
         {
             std::wstring notes;
@@ -1812,7 +1892,9 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 if(pixels[static_cast<std::size_t>(y)*request.canvasWidth+x]!=withoutNotes[static_cast<std::size_t>(y)*request.canvasWidth+x]){visibleText=true;break;}
             Require(visibleText,"calendar notes text did not appear in the actual native EDIT overlay");
         }
-        const std::string name=creating?"new-event":confirmation?"delete-confirmation":overflow?"editor-notes-overflow":narrow?"editor-narrow":datePicker?"date-picker":timePicker?"time-picker":"editor";
+        const std::string name=seriesDates?"multiple-dates":seriesMonthly?"monthly-narrow":creating?"new-event":
+            confirmation?"delete-confirmation":overflow?"editor-notes-overflow":narrow?"editor-narrow":
+            datePicker?"date-picker":timePicker?"time-picker":"editor";
         const auto path=request.outputDirectory/(request.component+"-"+name+".png");
         if(!preview_png::Save(path,request.canvasWidth,request.canvasHeight,pixels,result.error))throw std::runtime_error(result.error);
         result.outputs.push_back({request.component,name,path,false,false,false,false,false,false,
@@ -2269,7 +2351,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             }
             if (trayPanel && preset == "grid") { CheckTrayInput(model.View());CheckTrayDropTargets(trayFixture); }
             if (calendarPanel && preset == "agenda") CheckCalendarResponsive();
-            if (calendarPanel && preset == "agenda") {CheckTimePickerInput();CheckCalendarManagement();CheckCalendarPageVisuals(device,text,request,result,appearance,background,stage);}
+            if (calendarPanel && preset == "agenda") {CheckTimePickerInput();CheckCalendarManagement();CheckCalendarSeriesManagement();CheckCalendarPageVisuals(device,text,request,result,appearance,background,stage);}
             if (resources && preset == "gpu")
                 Require(model.Invoke("gpu.select") && model.Invoke("gpu:gpu-preview-1") &&
                     Node(model.View(),"resource.card:0").text == L"61%", "GPU selection did not switch reading and history");
