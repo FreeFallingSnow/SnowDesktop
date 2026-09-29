@@ -4859,6 +4859,17 @@ void TestDatePickerController()
         q:handle({kind="action",id="single:year",numberValid=true,controlValue=2027.0})
         local yearNode=q:view({rowHeight=32}).children[2].children[2]
         assert(math.type(yearNode.value)=="integer" and tostring(yearNode.value)=="2027")
+        local multi=makePicker({key="multi",mode="multiple",todayDate="2026-09-11",
+            value={"2026-09-12","2026-09-10"},allowClear=false},labels)
+        assert(multi:value()[1]=="2026-09-10" and multi:value()[2]=="2026-09-12")
+        multi:handle({kind="action",id="multi:day:2026-09-12"})
+        multi:handle({kind="action",id="multi:day:2026-09-09"})
+        assert(multi:value()[2]=="2026-09-12")
+        local changed=multi:handle({kind="action",id="multi:confirm"})
+        assert(changed.changed and changed.value[1]=="2026-09-09" and changed.value[2]=="2026-09-10")
+        assert(not multi:setValue({"2026-09-10","2026-09-10"}))
+        assert(multi:value()[1]=="2026-09-09")
+        assert(multi:view({rowHeight=32}).children[1].key=="multi:nav")
         return q:view({rowHeight=32})
     )LUA";
     if(luaL_dostring(state,source)!=LUA_OK) {

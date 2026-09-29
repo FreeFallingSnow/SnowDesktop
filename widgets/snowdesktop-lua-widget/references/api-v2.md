@@ -2452,6 +2452,22 @@ update 另需宿主事件 `id` 和正整数 `expectedRevision`，remove 只接�
 进入日历服务前完成边界检查。新增和更新不要求手势；删除必须从直接指针动作或菜单
 命令的可信调用栈启动：
 
+系列任务为 `calendar.series.create`、`calendar.series.update`、
+`calendar.series.remove`，要求 `calendar.write` 和
+`task.calendar.series` capability。create/update 使用上述事件字段，另需平铺的
+`kind`（`dates`、`weekly`、`monthly`）、`dates`（ISO 数组）、`startDate`、
+`endDate`（空字符串表示永不结束）、`interval`（1–99）、`weekdays`（1=周日，
+1–7 数组）和 `monthDay`（0 表示月末，或 1–31）；`date` 为开始日期。
+dates 模式接收 1–366 个去重日期；weekly/monthly 以开始日期所在周/月为间隔起点，
+起止日期均包含当日，短月份没有指定日期时跳过。update/remove 另需系列 `id`
+和正整数 `expectedRevision`，remove 需要可信手势。`calendar.seriesById(id)`
+需要 `calendar.read` 和 `calendar.series` capability，返回系列规则、修订号及
+以原定日期为身份的单次改动；找不到时返回 nil。`calendar.events` 中系列实例增加
+`seriesId`、`occurrenceDate`、`occurrenceOverride`。现有 `calendar.update/remove`
+继续作用于一个实例。修改整个系列会保留仍匹配新规则的单次改动，移除不再匹配的改动。
+调用方应在规则变化导致改动丢失前向用户确认。API 仍为 v2；旧宿主缺少上述 capability
+时，组件应保持原有单日编辑界面。官方组件应在支持这些 capability 的宿主发布后发布。
+
 ```lua
 local updateId, err = task.start("calendar.update", {
     id = item.id,
@@ -3067,8 +3083,10 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 在 setup 或打开面板的 event 中创建 `ui.datePicker(options)`，不要在 view 中重建。
 `key` 为 1–80 字节的实例内唯一标识；`todayDate` 为当前本地 ISO 日期。
-`mode` 为 `single`（默认）或 `range`；value 分别为 ISO 字符串或
-`{startDate,endDate}`。`minDate/maxDate` 为包含端点的日期边界，
+`mode` 为 `single`（默认）、`range` 或 `multiple`；value 分别为 ISO 字符串、
+`{startDate,endDate}` 或按升序排列的 ISO 日期数组。multiple 最多选择 366 天，
+点选日期切换选中状态，确认后返回排序数组；需要额外检测 `ui.datePicker.multiple`
+capability。`minDate/maxDate` 为包含端点的日期边界，
 `disabledDates` 最多 366 项；范围不能跨越禁用日期。`firstDayOfWeek` 为 1（周日）至 7。
 只支持公历日粒度，不隐式创建日程或改变宿主日程选中日期。
 

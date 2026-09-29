@@ -1640,6 +1640,9 @@ function animation.cancelFrame(id) end
 ---@field endMinutes integer
 ---@field notes string
 ---@field reminderMinutes integer Negative when disabled.
+---@field seriesId? string Present for a series occurrence.
+---@field occurrenceDate? string Stable original date even when moved.
+---@field occurrenceOverride? boolean Whether this occurrence has a single-instance edit.
 
 ---@class SnowCalendarEventsDataValue
 ---@field events SnowCalendarEventDataValue[] At most 512 entries.
@@ -2001,6 +2004,39 @@ function data.subscribe(topic, options) end
 ---@class SnowCalendarRemoveArguments
 ---@field id string Host-issued event ID.
 
+---@class SnowCalendarSeriesRule
+---@field kind 'dates'|'weekly'|'monthly'
+---@field dates string[] Sorted unique ISO dates, 1-366 for dates; empty otherwise.
+---@field startDate string Inclusive interval anchor.
+---@field endDate string Inclusive end date, or empty for no end.
+---@field interval integer 1-99 weeks or months; 1 for dates.
+---@field weekdays integer[] 1=Sunday through 7=Saturday; empty unless weekly.
+---@field monthDay integer 1-31, or 0 for last day; zero unless monthly.
+
+---@class SnowCalendarSeriesArguments: SnowCalendarEventArguments
+---@field kind 'dates'|'weekly'|'monthly'
+---@field dates string[]
+---@field startDate string
+---@field endDate string
+---@field interval integer
+---@field weekdays integer[]
+---@field monthDay integer
+
+---@class SnowCalendarSeriesUpdateArguments: SnowCalendarSeriesArguments
+---@field id string Host-issued series ID.
+---@field expectedRevision integer Current series revision.
+
+---@class SnowCalendarSeriesRemoveArguments
+---@field id string Host-issued series ID.
+---@field expectedRevision integer Current series revision.
+
+---@class SnowCalendarSeriesValue
+---@field id string
+---@field revision integer
+---@field event SnowCalendarEventDataValue
+---@field rule SnowCalendarSeriesRule
+---@field exceptions {occurrenceDate:string,canceled:boolean,event?:SnowCalendarEventDataValue}[]
+
 ---@class SnowCalendarMutationTaskValue
 ---@field id string Host-issued event ID; preserved for update/remove.
 ---@field revision integer New revision for create/update; zero for remove.
@@ -2089,6 +2125,9 @@ task = {}
 ---@overload fun(name: 'calendar.create', arguments: SnowCalendarEventArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.update', arguments: SnowCalendarUpdateArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
+---@overload fun(name: 'calendar.series.create', arguments: SnowCalendarSeriesArguments): taskId: integer?, error: string?
+---@overload fun(name: 'calendar.series.update', arguments: SnowCalendarSeriesUpdateArguments): taskId: integer?, error: string?
+---@overload fun(name: 'calendar.series.remove', arguments: SnowCalendarSeriesRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
 ---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
@@ -2203,6 +2242,11 @@ function calendar.addDays(date, offset) end
 ---@param date string ISO YYYY-MM-DD.
 ---@return boolean selected
 function calendar.selectDate(date) end
+
+---Read one series definition and its occurrence exceptions. Requires calendar.read and calendar.series.
+---@param id string
+---@return SnowCalendarSeriesValue?
+function calendar.seriesById(id) end
 
 ---@class snow.l10n
 l10n = {}
@@ -2679,9 +2723,9 @@ widgetId = ''
 
 ---@class SnowDatePickerOptions
 ---@field key string Stable instance-local key, 1-80 bytes; create outside view callbacks.
----@field mode? 'single'|'range' Defaults to single.
+---@field mode? 'single'|'range'|'multiple' Defaults to single; multiple requires ui.datePicker.multiple.
 ---@field todayDate string Current local ISO YYYY-MM-DD date.
----@field value? string|SnowDateRange Initial value; invalid date text remains an uncommitted draft.
+---@field value? string|SnowDateRange|string[] Initial value; multiple accepts up to 366 unique ISO dates.
 ---@field minDate? string Inclusive ISO date; defaults to 0001-01-01.
 ---@field maxDate? string Inclusive ISO date; defaults to 9999-12-31.
 ---@field disabledDates? string[] At most 366 unavailable ISO dates. Ranges may not cross them.
@@ -2695,14 +2739,14 @@ widgetId = ''
 ---@class SnowDatePickerResult
 ---@field handled boolean
 ---@field changed boolean True only for a valid committed selection.
----@field value? string|SnowDateRange Detached committed value when changed=true.
+---@field value? string|SnowDateRange|string[] Detached committed value when changed=true.
 ---@class SnowDatePicker
 ---@field view fun(self: SnowDatePicker, options?: {rowHeight?: number}): SnowViewNode
 ---@field handle fun(self: SnowDatePicker, event: SnowWidgetEvent): SnowDatePickerResult? Forward action events; nil means unrelated.
----@field value fun(self: SnowDatePicker): string|SnowDateRange Last committed value.
----@field draftValue fun(self: SnowDatePicker): string|SnowDateRange Current input including invalid drafts.
+---@field value fun(self: SnowDatePicker): string|SnowDateRange|string[] Last committed value.
+---@field draftValue fun(self: SnowDatePicker): string|SnowDateRange|string[] Current input including invalid drafts.
 ---@field validation fun(self: SnowDatePicker): string? Localized draft error; nil when valid.
----@field setValue fun(self: SnowDatePicker, value: string|SnowDateRange): boolean, string? Invalid values are rejected without changing state.
+---@field setValue fun(self: SnowDatePicker, value: string|SnowDateRange|string[]): boolean, string? Invalid values are rejected without changing state.
 ---@param options SnowDatePickerOptions
 ---@return SnowDatePicker
 function ui.datePicker(options) end

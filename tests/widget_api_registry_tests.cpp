@@ -1369,8 +1369,12 @@ void TestPublicApiContract()
             snowdesktop::widget_api::SupportsFeature("ui.timePicker") &&
             qualifiedNames.contains("ui.datePicker") &&
             snowdesktop::widget_api::SupportsFeature("ui.datePicker") &&
+            snowdesktop::widget_api::SupportsFeature("ui.datePicker.multiple") &&
+            qualifiedNames.contains("calendar.seriesById") &&
+            snowdesktop::widget_api::SupportsFeature("calendar.series") &&
+            snowdesktop::widget_api::SupportsFeature("task.calendar.series") &&
             snowdesktop::widget_api::SupportsFeature("data.calendar.events.byId"),
-        "date picker and stable event subscriptions must be discoverable");
+        "date picker and calendar series APIs must be discoverable");
 
     std::size_t serializedFunctionCount = 0;
     bool foundPermissionGate = false;

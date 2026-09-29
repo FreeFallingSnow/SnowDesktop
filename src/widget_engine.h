@@ -1297,6 +1297,17 @@ public:
         RuntimeCalendarEvents(
             const std::string& fromDate,
             const std::string& toDate) const;
+    std::optional<snowdesktop::calendar::CalendarSeries>
+        RuntimeCalendarSeriesById(const std::string& id) const;
+    std::vector<snowdesktop::calendar::CalendarSeries>
+        RuntimeCalendarSeries() const;
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesCreate(
+        snowdesktop::calendar::CalendarSeries series);
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesUpdate(
+        const std::string& id, int expectedRevision,
+        snowdesktop::calendar::CalendarSeries series);
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesRemove(
+        const std::string& id, int expectedRevision);
     snowdesktop::calendar::MutationResult
         RuntimeCalendarCreate(
             snowdesktop::calendar::CalendarEvent event);

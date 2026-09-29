@@ -4662,7 +4662,7 @@ static void PushDesktopDataItemValue(
 static void PushCalendarDataEventValue(lua_State* state,
     const snowdesktop::calendar::CalendarEvent& event)
 {
-    lua_createtable(state, 0, 9);
+    lua_createtable(state, 0, 12);
     lua_pushlstring(state, event.id.data(), event.id.size());
     lua_setfield(state, -2, "id");
     lua_pushinteger(state, event.revision);
@@ -4681,6 +4681,15 @@ static void PushCalendarDataEventValue(lua_State* state,
     lua_setfield(state, -2, "notes");
     lua_pushinteger(state, event.reminderMinutes);
     lua_setfield(state, -2, "reminderMinutes");
+    if (!event.seriesId.empty())
+    {
+        lua_pushlstring(state, event.seriesId.data(), event.seriesId.size());
+        lua_setfield(state, -2, "seriesId");
+        lua_pushlstring(state, event.occurrenceDate.data(), event.occurrenceDate.size());
+        lua_setfield(state, -2, "occurrenceDate");
+        lua_pushboolean(state, event.occurrenceOverride);
+        lua_setfield(state, -2, "occurrenceOverride");
+    }
 }
 
 static void PushDataSnapshotEnvelope(lua_State* state,
@@ -7174,14 +7183,21 @@ static int lua_TaskStart(lua_State* state)
     }
     else if (taskName == "calendar.create" ||
         taskName == "calendar.update" ||
-        taskName == "calendar.remove")
+        taskName == "calendar.remove" ||
+        taskName == "calendar.series.create" ||
+        taskName == "calendar.series.update" ||
+        taskName == "calendar.series.remove")
     {
         if (!hasArguments)
             return luaL_error(state,
                 "task.start: %s requires an arguments table",
                 taskName.c_str());
-        const bool update = taskName == "calendar.update";
-        const bool remove = taskName == "calendar.remove";
+        const bool seriesTask = taskName.starts_with("calendar.series.");
+        const bool update = taskName == "calendar.update" ||
+            taskName == "calendar.series.update";
+        const bool remove = taskName == "calendar.remove" ||
+            taskName == "calendar.series.remove";
+        const bool create = !update && !remove;
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
         {
@@ -7196,14 +7212,21 @@ static int lua_TaskStart(lua_State* state)
             const std::string_view key(
                 keyValue ? keyValue : "", keyLength);
             const bool known = key == "id" ||
+                (seriesTask && remove && key == "expectedRevision") ||
+                (seriesTask && (key == "kind" || key == "dates" ||
+                    key == "startDate" || key == "endDate" ||
+                    key == "interval" || key == "weekdays" ||
+                    key == "monthDay")) ||
                 (!remove && (key == "title" || key == "date" ||
                     key == "allDay" || key == "startMinutes" ||
                     key == "endMinutes" || key == "notes" ||
                     key == "reminderMinutes" ||
                     key == "expectedRevision"));
             const bool allowed = known &&
-                (update || key != "expectedRevision") &&
-                ((update || remove) || key != "id");
+                (update || (seriesTask && remove) || key != "expectedRevision") &&
+                (!create || key != "id") &&
+                (!remove || key == "id" ||
+                    (seriesTask && key == "expectedRevision"));
             if (!allowed)
             {
                 lua_pop(state, 2);
@@ -7249,6 +7272,72 @@ static int lua_TaskStart(lua_State* state)
                     "task.start: %s id must contain 1 to 128 bytes of valid UTF-8",
                     taskName.c_str());
             arguments.emplace("id", std::move(id));
+        }
+        if (seriesTask)
+        {
+            std::string kind;
+            std::string startDate;
+            std::string endDate;
+            if (!remove)
+            {
+                if (!readText("kind", 16, false, kind) ||
+                    (kind != "dates" && kind != "weekly" && kind != "monthly") ||
+                    !readText("startDate", 10, false, startDate) ||
+                    !snowdesktop::calendar::CalendarService::GetDateInfo(startDate) ||
+                    !readText("endDate", 10, true, endDate) ||
+                    (!endDate.empty() &&
+                        !snowdesktop::calendar::CalendarService::GetDateInfo(endDate)))
+                    return luaL_error(state, "task.start: calendar series rule is invalid");
+                arguments.emplace("kind", kind);
+                arguments.emplace("startDate", startDate);
+                arguments.emplace("endDate", endDate);
+                lua_Integer interval = 0;
+                lua_Integer monthDay = 0;
+                if (!readInteger("interval", interval) || interval < 1 || interval > 99 ||
+                    !readInteger("monthDay", monthDay) || monthDay < 0 || monthDay > 31)
+                    return luaL_error(state, "task.start: calendar series interval or monthDay is invalid");
+                arguments.emplace("interval", std::to_string(interval));
+                arguments.emplace("monthDay", std::to_string(monthDay));
+                const auto readArray = [&](const char* field, bool dates,
+                    std::size_t maximum) -> bool {
+                    lua_getfield(state, 2, field);
+                    if (!lua_istable(state, -1)) { lua_pop(state, 1); return false; }
+                    const std::size_t count = lua_rawlen(state, -1);
+                    if (count > maximum) { lua_pop(state, 1); return false; }
+                    std::string encoded;
+                    for (std::size_t index = 1; index <= count; ++index)
+                    {
+                        lua_rawgeti(state, -1, static_cast<lua_Integer>(index));
+                        if (dates)
+                        {
+                            size_t length = 0;
+                            const char* raw = lua_tolstring(state, -1, &length);
+                            const std::string value(raw ? raw : "", length);
+                            if (lua_type(state, -1) != LUA_TSTRING ||
+                                !snowdesktop::calendar::CalendarService::GetDateInfo(value))
+                            { lua_pop(state, 2); return false; }
+                            if (!encoded.empty()) encoded.push_back(',');
+                            encoded += value;
+                        }
+                        else
+                        {
+                            if (!lua_isinteger(state, -1) ||
+                                lua_tointeger(state, -1) < 1 ||
+                                lua_tointeger(state, -1) > 7)
+                            { lua_pop(state, 2); return false; }
+                            if (!encoded.empty()) encoded.push_back(',');
+                            encoded += std::to_string(lua_tointeger(state, -1));
+                        }
+                        lua_pop(state, 1);
+                    }
+                    lua_pop(state, 1);
+                    arguments.emplace(field, std::move(encoded));
+                    return true;
+                };
+                if (!readArray("dates", true, 366) ||
+                    !readArray("weekdays", false, 7))
+                    return luaL_error(state, "task.start: calendar series dates or weekdays is invalid");
+            }
         }
         if (!remove)
         {
@@ -7320,6 +7409,16 @@ static int lua_TaskStart(lua_State* state)
                 arguments.emplace("expectedRevision",
                     std::to_string(expectedRevision));
             }
+        }
+        else if (seriesTask)
+        {
+            lua_Integer expectedRevision = 0;
+            if (!readInteger("expectedRevision", expectedRevision) ||
+                expectedRevision <= 0 ||
+                expectedRevision > std::numeric_limits<int>::max())
+                return luaL_error(state,
+                    "task.start: calendar series expectedRevision must be a positive integer");
+            arguments.emplace("expectedRevision", std::to_string(expectedRevision));
         }
     }
     else if (hasArguments)
@@ -9572,7 +9671,7 @@ static void PushCalendarEvent(
     lua_State* L,
     const snowdesktop::calendar::CalendarEvent& event)
 {
-    lua_createtable(L, 0, 10);
+    lua_createtable(L, 0, 13);
     lua_pushlstring(
         L, event.id.data(), event.id.size());
     lua_setfield(L, -2, "id");
@@ -9595,6 +9694,71 @@ static void PushCalendarEvent(
     lua_setfield(L, -2, "notes");
     lua_pushinteger(L, event.reminderMinutes);
     lua_setfield(L, -2, "reminderMinutes");
+    if (!event.seriesId.empty())
+    {
+        lua_pushlstring(L, event.seriesId.data(), event.seriesId.size());
+        lua_setfield(L, -2, "seriesId");
+        lua_pushlstring(L, event.occurrenceDate.data(), event.occurrenceDate.size());
+        lua_setfield(L, -2, "occurrenceDate");
+        lua_pushboolean(L, event.occurrenceOverride);
+        lua_setfield(L, -2, "occurrenceOverride");
+    }
+}
+
+static void PushCalendarSeries(lua_State* L,
+    const snowdesktop::calendar::CalendarSeries& series)
+{
+    lua_createtable(L, 0, 5);
+    lua_pushlstring(L, series.id.data(), series.id.size());
+    lua_setfield(L, -2, "id");
+    lua_pushinteger(L, series.revision);
+    lua_setfield(L, -2, "revision");
+    PushCalendarEvent(L, series.event);
+    lua_setfield(L, -2, "event");
+    lua_createtable(L, 0, 7);
+    const auto& rule = series.rule;
+    lua_pushlstring(L, rule.kind.data(), rule.kind.size());
+    lua_setfield(L, -2, "kind");
+    lua_pushlstring(L, rule.startDate.data(), rule.startDate.size());
+    lua_setfield(L, -2, "startDate");
+    lua_pushlstring(L, rule.endDate.data(), rule.endDate.size());
+    lua_setfield(L, -2, "endDate");
+    lua_pushinteger(L, rule.interval);
+    lua_setfield(L, -2, "interval");
+    lua_pushinteger(L, rule.monthDay);
+    lua_setfield(L, -2, "monthDay");
+    lua_createtable(L, static_cast<int>(rule.dates.size()), 0);
+    for (std::size_t i = 0; i < rule.dates.size(); ++i)
+    {
+        lua_pushlstring(L, rule.dates[i].data(), rule.dates[i].size());
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    lua_setfield(L, -2, "dates");
+    lua_createtable(L, static_cast<int>(rule.weekdays.size()), 0);
+    for (std::size_t i = 0; i < rule.weekdays.size(); ++i)
+    {
+        lua_pushinteger(L, rule.weekdays[i]);
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    lua_setfield(L, -2, "weekdays");
+    lua_setfield(L, -2, "rule");
+    lua_createtable(L, static_cast<int>(series.exceptions.size()), 0);
+    int index = 1;
+    for (const auto& [date, exception] : series.exceptions)
+    {
+        lua_createtable(L, 0, 3);
+        lua_pushlstring(L, date.data(), date.size());
+        lua_setfield(L, -2, "occurrenceDate");
+        lua_pushboolean(L, exception.canceled);
+        lua_setfield(L, -2, "canceled");
+        if (!exception.canceled)
+        {
+            PushCalendarEvent(L, exception.event);
+            lua_setfield(L, -2, "event");
+        }
+        lua_rawseti(L, -2, index++);
+    }
+    lua_setfield(L, -2, "exceptions");
 }
 
 static snowdesktop::calendar::CalendarEvent
@@ -9845,6 +10009,20 @@ static int lua_CalendarEvents(lua_State* L)
         PushCalendarEvent(L, event);
         lua_rawseti(L, -2, index++);
     }
+    return 1;
+}
+
+static int lua_CalendarSeriesById(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.read"))
+        return 0;
+    const char* id = luaL_checkstring(L, 1);
+    auto* state = GetD2D(L);
+    const auto series = state && state->engine
+        ? state->engine->RuntimeCalendarSeriesById(id)
+        : std::nullopt;
+    if (!series) lua_pushnil(L);
+    else PushCalendarSeries(L, *series);
     return 1;
 }
 
@@ -13148,20 +13326,39 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 
         if (action.name == "calendar.create" ||
             action.name == "calendar.update" ||
-            action.name == "calendar.remove")
+            action.name == "calendar.remove" ||
+            action.name == "calendar.series.create" ||
+            action.name == "calendar.series.update" ||
+            action.name == "calendar.series.remove")
         {
             snowdesktop::calendar::MutationResult result;
+            const bool seriesTask = action.name.starts_with("calendar.series.");
+            const auto parseInteger = [](const std::string& text,
+                int& value) {
+                const char* begin = text.data();
+                const char* finish = begin + text.size();
+                const auto parsed = std::from_chars(begin, finish, value);
+                return parsed.ec == std::errc{} && parsed.ptr == finish;
+            };
             if (action.preview)
             {
                 result.error = "previewReadOnly";
             }
-            else if (action.name == "calendar.remove")
+            else if (action.name == "calendar.remove" ||
+                action.name == "calendar.series.remove")
             {
                 const auto id = action.arguments.find("id");
-                result = id != action.arguments.end()
-                    ? RuntimeCalendarRemove(id->second)
-                    : snowdesktop::calendar::MutationResult{
-                        false, {}, 0, "invalidArguments" };
+                if (id == action.arguments.end()) result.error = "invalidArguments";
+                else if (seriesTask)
+                {
+                    const auto revision = action.arguments.find("expectedRevision");
+                    int expectedRevision = 0;
+                    result = revision != action.arguments.end() &&
+                        parseInteger(revision->second, expectedRevision)
+                        ? RuntimeCalendarSeriesRemove(id->second, expectedRevision)
+                        : snowdesktop::calendar::MutationResult{false, id->second, 0, "invalidArguments"};
+                }
+                else result = RuntimeCalendarRemove(id->second);
             }
             else
             {
@@ -13173,15 +13370,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 const auto end = action.arguments.find("endMinutes");
                 const auto reminder =
                     action.arguments.find("reminderMinutes");
-                const auto parseInteger = [](const std::string& text,
-                    int& value) {
-                    const char* begin = text.data();
-                    const char* finish = begin + text.size();
-                    const auto parsed = std::from_chars(
-                        begin, finish, value);
-                    return parsed.ec == std::errc{} &&
-                        parsed.ptr == finish;
-                };
                 snowdesktop::calendar::CalendarEvent event;
                 bool valid = title != action.arguments.end() &&
                     date != action.arguments.end() &&
@@ -13205,6 +13393,66 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 if (!valid)
                 {
                     result.error = "invalidArguments";
+                }
+                else if (seriesTask)
+                {
+                    snowdesktop::calendar::CalendarSeries series;
+                    series.event = std::move(event);
+                    const auto get = [&](const char* key) -> const std::string* {
+                        const auto found = action.arguments.find(key);
+                        return found == action.arguments.end() ? nullptr : &found->second;
+                    };
+                    const auto* kind = get("kind");
+                    const auto* startDate = get("startDate");
+                    const auto* endDate = get("endDate");
+                    const auto* interval = get("interval");
+                    const auto* monthDay = get("monthDay");
+                    const auto* dates = get("dates");
+                    const auto* weekdays = get("weekdays");
+                    valid = kind && startDate && endDate && interval &&
+                        monthDay && dates && weekdays &&
+                        parseInteger(*interval, series.rule.interval) &&
+                        parseInteger(*monthDay, series.rule.monthDay);
+                    if (valid)
+                    {
+                        series.rule.kind = *kind;
+                        series.rule.startDate = *startDate;
+                        series.rule.endDate = *endDate;
+                        const auto decode = [&](const std::string& encoded,
+                            bool dateValues) {
+                            std::size_t offset = 0;
+                            while (offset < encoded.size())
+                            {
+                                const auto separator = encoded.find(',', offset);
+                                const auto value = encoded.substr(offset,
+                                    separator == std::string::npos ? std::string::npos : separator - offset);
+                                if (dateValues) series.rule.dates.push_back(value);
+                                else
+                                {
+                                    int weekday = 0;
+                                    if (!parseInteger(value, weekday)) return false;
+                                    series.rule.weekdays.push_back(weekday);
+                                }
+                                if (separator == std::string::npos) break;
+                                offset = separator + 1;
+                            }
+                            return true;
+                        };
+                        valid = decode(*dates, true) && decode(*weekdays, false);
+                    }
+                    if (!valid) result.error = "invalidArguments";
+                    else if (action.name == "calendar.series.create")
+                        result = RuntimeCalendarSeriesCreate(std::move(series));
+                    else
+                    {
+                        const auto* id = get("id");
+                        const auto* revision = get("expectedRevision");
+                        int expectedRevision = 0;
+                        result = id && revision &&
+                            parseInteger(*revision, expectedRevision)
+                            ? RuntimeCalendarSeriesUpdate(*id, expectedRevision, std::move(series))
+                            : snowdesktop::calendar::MutationResult{false, {}, 0, "invalidArguments"};
+                    }
                 }
                 else if (action.name == "calendar.create")
                 {
@@ -14520,7 +14768,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const bool calendarTask =
             completion.name == "calendar.create" ||
             completion.name == "calendar.update" ||
-            completion.name == "calendar.remove";
+            completion.name == "calendar.remove" ||
+            completion.name == "calendar.series.create" ||
+            completion.name == "calendar.series.update" ||
+            completion.name == "calendar.series.remove";
         if (calendarTask &&
             calendarCompletion == calendarMutationCompletions_.end())
         {
@@ -26178,6 +26429,47 @@ WidgetEngine::RuntimeCalendarEvents(
         ? calendarService_->Events(fromDate, toDate)
         : std::vector<
             snowdesktop::calendar::CalendarEvent>{};
+}
+
+std::optional<snowdesktop::calendar::CalendarSeries>
+WidgetEngine::RuntimeCalendarSeriesById(const std::string& id) const
+{
+    return calendarService_ ? calendarService_->SeriesById(id) : std::nullopt;
+}
+
+std::vector<snowdesktop::calendar::CalendarSeries>
+WidgetEngine::RuntimeCalendarSeries() const
+{
+    return calendarService_ ? calendarService_->Series() :
+        std::vector<snowdesktop::calendar::CalendarSeries>{};
+}
+
+snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesCreate(
+    snowdesktop::calendar::CalendarSeries series)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad())
+        return { false, {}, 0, "previewReadOnly" };
+    return calendarService_ ? calendarService_->CreateSeries(std::move(series)) :
+        snowdesktop::calendar::MutationResult{ false, {}, 0, "unavailable" };
+}
+
+snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesUpdate(
+    const std::string& id, int expectedRevision,
+    snowdesktop::calendar::CalendarSeries series)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad())
+        return { false, id, 0, "previewReadOnly" };
+    return calendarService_ ? calendarService_->UpdateSeries(id, expectedRevision, std::move(series)) :
+        snowdesktop::calendar::MutationResult{ false, id, 0, "unavailable" };
+}
+
+snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesRemove(
+    const std::string& id, int expectedRevision)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad())
+        return { false, id, 0, "previewReadOnly" };
+    return calendarService_ ? calendarService_->RemoveSeries(id, expectedRevision) :
+        snowdesktop::calendar::MutationResult{ false, id, 0, "unavailable" };
 }
 
 snowdesktop::calendar::MutationResult
