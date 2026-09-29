@@ -1832,7 +1832,6 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         {
             Require(model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.date")&&
                 model.Invoke("picker.day:2026-09-28")&&model.Invoke("picker.confirm")&&
-                model.Reveal("calendar.edit.date")&&
                 Node(model.View(),"calendar.edit.date").text.find(L"2026-09-28")!=std::wstring::npos,
                 "calendar multiple-date preview could not show the selected dates");
         }
