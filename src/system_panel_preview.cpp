@@ -274,6 +274,7 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
     };
     source.calendar.secondaryRevision = [state] {return state->agenda?std::string("secondary-on"):std::string("secondary-off");};
     source.calendar.secondaryAnnotations = [state](const std::string& from,const std::string& to) {
+        ++state->calendarBatches;
         if(!state->agenda)return std::vector<calendar::DayAnnotation>{};
         calendar::DisplayPreferences preferences;preferences.enabled=true;
         return calendar::Annotate(from,to,preferences,Locale::Instance().GetEffectiveLanguage());

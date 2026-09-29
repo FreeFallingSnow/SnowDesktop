@@ -1071,9 +1071,9 @@ void SystemPanelModel::Calendar()
                 calendarAnnotations_[*date]=source_.calendar.secondaryDate(*date);
         calendarAnnotationKey_=annotationKey;
     }
-    if(!calendarAnnotations_.contains(date_)&&source_.calendar.secondaryDate)
+    if((date_<first||date_>last)&&!calendarAnnotations_.contains(date_)&&source_.calendar.secondaryDate)
         calendarAnnotations_[date_]=source_.calendar.secondaryDate(date_);
-    if(!calendarDetails_.contains(date_)&&source_.calendar.secondaryAnnotations)
+    if((date_<first||date_>last)&&!calendarDetails_.contains(date_)&&source_.calendar.secondaryAnnotations)
         for(auto& annotation:source_.calendar.secondaryAnnotations(date_,date_))
             if(annotation.calendarAvailable&&!annotation.fullDate.empty())
                 calendarDetails_.emplace(annotation.date,std::move(annotation));
