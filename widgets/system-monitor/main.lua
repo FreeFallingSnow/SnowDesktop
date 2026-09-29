@@ -3,6 +3,7 @@ local subscriptions = {}
 local gpuSubscriptionDetails
 local gpuSelection = {}
 local cardLayout = module.require("modules/card_layout.lua")
+local cardPreferences = module.require("modules/card_preferences.lua")
 local monitorData = module.require("modules/monitor_data.lua")
 local monitorSources = module.require("modules/monitor_sources.lua")
 
@@ -53,6 +54,15 @@ for _, field in ipairs(settings.fields) do
     }
 end
 settings.fields = sizeFields
+table.insert(settings.fields, 1, {
+    key = "main_font_scale", label = l10n.tr("lua_widget.system_monitor.main_font_scale"),
+    type = "int", default = 100, min = 70, max = 150,
+})
+
+local mainScale = 1
+local function mainFont(size)
+    return layout.fontCu(size) * mainScale
+end
 
 local function getPalette()
     local theme = widget.theme()
@@ -208,10 +218,11 @@ local function summarizeStorage(value)
     return result
 end
 
-local function fitFontSize(text, fontSize, minimum, maxWidth, bold)
+local function fitFontSize(text, fontSize, minimum, maxWidth, bold, maxHeight)
     local fitted = fontSize
     local metrics = draw.measureText(text, fitted, 0, bold == true)
-    while fitted > minimum and metrics.width > maxWidth do
+    while fitted > minimum and (metrics.width > maxWidth or
+            (maxHeight and metrics.height > maxHeight)) do
         fitted = fitted - 1
         metrics = draw.measureText(text, fitted, 0, bold == true)
     end
@@ -236,7 +247,7 @@ local function drawMarqueeText(key, x, y, text, fontSize, color,
 end
 
 local function centeredText(x, y, width, height, text, size, color, bold)
-    local font, metrics = fitFontSize(text, size, layout.fontCu(9), width, bold)
+    local font, metrics = fitFontSize(text, size, layout.fontCu(9), width, bold, height)
     draw.text(x + math.max(0, (width - metrics.width) / 2),
         y + math.max(0, (height - metrics.height) / 2), text, font,
         color, width, bold, true, height)
@@ -259,7 +270,7 @@ local function gauge(x, y, width, height, info, palette)
                 h - pad * 2, color, layout.cu(2), 0.9)
         end
         centeredText(x, top + h + layout.cu(5), width, side * 0.32,
-            info.value, math.min(layout.fontCu(32), side * 0.30), palette.cardText, true)
+            info.value, math.min(mainFont(32), side * 0.30 * mainScale), palette.cardText, true)
     elseif widget.hasFeature("draw.advanced") then
         local radius = side * 0.43
         local thickness = math.max(layout.cu(3), side * 0.065)
@@ -268,11 +279,11 @@ local function gauge(x, y, width, height, info, palette)
             draw.arc(cx, cy, radius, 135, 270 * info.progress, thickness, color, 1)
         end
         centeredText(cx - side * 0.34, cy - side * 0.18, side * 0.68, side * 0.36,
-            info.value, math.min(layout.fontCu(32), side * 0.30), palette.cardText, true)
+            info.value, math.min(mainFont(32), side * 0.30 * mainScale), palette.cardText, true)
     else
         -- The existing immediate API still gives older hosts a useful layout.
         centeredText(x, y, width, height * 0.75, info.value,
-            layout.fontCu(24), palette.cardText, true)
+            mainFont(24), palette.cardText, true)
         draw.rect(x, y + height * 0.82, width, layout.cu(5), palette.trackBg, layout.cu(2))
         if info.progress ~= nil and info.progress > 0 then
             draw.rect(x, y + height * 0.82, width * info.progress,
@@ -346,10 +357,10 @@ local function drawExpanded(x, y, width, height, info, palette, columns, rows)
                 centeredText(left, groupTop, cellWidth, headingHeight, heading,
                     layout.fontCu(12), line.color, false)
                 centeredText(left, groupTop + headingHeight, cellWidth, groupHeight - headingHeight,
-                    line.amount, layout.fontCu(large and 32 or (rows > 1 and 24 or 22)), line.color, true)
+                    line.amount, mainFont(large and 32 or (rows > 1 and 24 or 22)), line.color, true)
             else
                 centeredText(left, top, cellWidth, cellHeight, line.text,
-                    layout.fontCu(large and 26 or 20), palette.cardText, true)
+                    mainFont(large and 26 or 20), palette.cardText, true)
             end
         end
         wrappedText(x, y + bodyHeight + gap, width, footer, info.sub, palette, info.id)
@@ -367,7 +378,7 @@ local function drawExpanded(x, y, width, height, info, palette, columns, rows)
     if rows == 1 then
         local gaugeWidth = width * 0.43
         centeredText(x, y, gaugeWidth, height * 0.72, info.value,
-            layout.fontCu(24), palette.cardText, true)
+            mainFont(24), palette.cardText, true)
         draw.rect(x, y + height * 0.82, gaugeWidth, layout.cu(4), palette.trackBg, layout.cu(2))
         if info.progress ~= nil and info.progress > 0 then
             draw.rect(x, y + height * 0.82, gaugeWidth * info.progress, layout.cu(4),
@@ -394,7 +405,7 @@ local function drawExpanded(x, y, width, height, info, palette, columns, rows)
         local groupTop = y + math.max(0, (height - groupHeight) / 2)
         if info.capacity or columns == 1 then
             centeredText(x, groupTop, width, gaugeHeight * 0.74, info.value,
-                layout.fontCu(large and 32 or 24), palette.cardText, true)
+                mainFont(large and 32 or 24), palette.cardText, true)
             draw.rect(x, groupTop + gaugeHeight * 0.85, width, layout.cu(6), palette.trackBg, layout.cu(3))
             if info.progress ~= nil and info.progress > 0 then
                 draw.rect(x, groupTop + gaugeHeight * 0.85, width * info.progress,
@@ -447,23 +458,31 @@ local function drawCard(x, y, width, height, info, palette, columns, rows)
 
     if info.lines then
         local sideBySide = width > height * 1.5
-        local lineGap = layout.cu(4)
+        local lineGap = layout.cu(2)
         local slotHeight = sideBySide and bodyHeight or
             (bodyHeight - lineGap * (#info.lines - 1)) / #info.lines
         local slotWidth = sideBySide and
             (contentWidth - lineGap * (#info.lines - 1)) / #info.lines or contentWidth
+        local fitted, groupHeight = {}, lineGap * (#info.lines - 1)
         for index, line in ipairs(info.lines) do
             local font, metrics = fitFontSize(line.text,
-                math.min(layout.fontCu(24), slotHeight * 0.70),
-                layout.fontCu(9), slotWidth, false)
+                math.min(mainFont(24), slotHeight * 0.70 * mainScale),
+                layout.fontCu(9), slotWidth, false, slotHeight)
+            fitted[index] = { font = font, metrics = metrics }
+            groupHeight = groupHeight + metrics.height
+        end
+        local nextY = bodyTop + math.max(0, (bodyHeight - groupHeight) / 2)
+        for index, line in ipairs(info.lines) do
+            local font, metrics = fitted[index].font, fitted[index].metrics
             local lineX = x + inset + (sideBySide and (index - 1) * (slotWidth + lineGap) or 0)
-            local lineY = bodyTop + (sideBySide and 0 or (index - 1) * (slotHeight + lineGap))
-            draw.text(lineX, lineY + math.max(0, (slotHeight - metrics.height) / 2),
+            local lineY = sideBySide and (bodyTop + math.max(0, (bodyHeight - metrics.height) / 2)) or nextY
+            draw.text(lineX, lineY,
                 line.text, font, line.color or palette.cardText,
-                slotWidth, false, true, slotHeight)
+                slotWidth, false, true, metrics.height)
+            nextY = nextY + metrics.height + lineGap
         end
     else
-        local valueFont = math.min(layout.fontCu(20), bodyHeight * 0.48)
+        local valueFont = math.min(mainFont(20), bodyHeight * 0.48 * mainScale)
         if info.wrapValue then
             -- Keep localized duration units intact instead of wrapping a
             -- final CJK character onto a line of its own.
@@ -472,12 +491,12 @@ local function drawCard(x, y, width, height, info, palette, columns, rows)
             for index = 1, count do
                 centeredText(x + inset, bodyTop + (index - 1) * lineHeight,
                     contentWidth, lineHeight, info.timeParts[index].text,
-                    layout.fontCu(15), palette.cardText, true)
+                    mainFont(15), palette.cardText, true)
             end
         else
             local metrics = nil
             valueFont, metrics = fitFontSize(info.value, valueFont,
-                layout.fontCu(10), contentWidth, true)
+                layout.fontCu(10), contentWidth, true, bodyHeight)
             draw.text(x + math.max(inset, (width - metrics.width) / 2),
                 bodyTop + math.max(0, (bodyHeight - metrics.height) / 2),
                 info.value, valueFont, palette.cardText, contentWidth, true,
@@ -618,19 +637,13 @@ local function buildCards()
 
     if showCard("gpu") then
         local percent = gpu and gpu.usagePercent and clamp(gpu.usagePercent) or nil
-        local details = { gpuIdentity }
-        if gpu then
-            details[#details + 1] = l10n.tr(gpuDetails and
-                "lua_widget.system_monitor.gpu_busiest" or
-                "lua_widget.system_monitor.gpu_details_unavailable")
-        end
         cards[#cards + 1] = {
             id = "gpu",
             title = "GPU",
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
             color = usageColor(percent or 0, palette),
-            sub = detailsWithStatus(l10n.formatList(details),
+            sub = detailsWithStatus(gpuIdentity,
                 gpuState or (gpu and gpuDetails and not percent and "unavailable")),
         }
     end
@@ -639,16 +652,8 @@ local function buildCards()
         local total = gpu and gpu.dedicatedMemoryBytes or 0
         local used = gpu and gpu.dedicatedUsedBytes or nil
         local percent = total > 0 and used and clamp(used / total * 100) or nil
-        local details = {}
-        if gpu then
-            if total > 0 then
-                details[#details + 1] = (used and formatBytes(used) or "—") ..
-                    " / " .. formatBytes(total)
-            end
-            details[#details + 1] = l10n.tr(gpuDetails and
-                "lua_widget.system_monitor.gpu_vram_total" or
-                "lua_widget.system_monitor.gpu_details_unavailable")
-        end
+        local details = total > 0 and ((used and formatBytes(used) or "—") ..
+            " / " .. formatBytes(total)) or nil
         cards[#cards + 1] = {
             id = "vram",
             title = l10n.tr("lua_widget.system_monitor.vram"),
@@ -658,10 +663,9 @@ local function buildCards()
             capacity = total > 0 and {
                 used = used and formatBytes(used) or "—", total = formatBytes(total),
             } or nil,
-            expandedSub = detailsWithStatus(l10n.tr("lua_widget.system_monitor.gpu_vram_total"),
-                gpuState or (gpu and gpuDetails and not percent and "unavailable")),
+            expandedSub = statusText(gpuState or (gpu and gpuDetails and not percent and "unavailable")),
             expandedStatus = statusText(gpuState or (gpu and gpuDetails and not percent and "unavailable")),
-            sub = detailsWithStatus(l10n.formatList(details),
+            sub = detailsWithStatus(details,
                 gpuState or (gpu and gpuDetails and not percent and "unavailable")),
         }
     end
@@ -787,14 +791,18 @@ local function buildCards()
 end
 
 local function render(_context, model)
+    mainScale = cardPreferences.fontScale(storage.get("main_font_scale"))
     local width = layout.contentWidth()
     local height = layout.contentHeight()
     local viewportHeight = math.max(1, height)
     local cards, palette = buildCards()
+    local savedOrder = storage.get("card_order")
+    cards = cardPreferences.arrange(cards, savedOrder)
     local columns = math.max(1, layout.columns())
     local visibleRows = math.max(1, layout.rows())
     local cells, rows, signature = cardLayout.pack(cards, columns,
-        function(id) return storage.get("size_" .. id) end)
+        function(id) return storage.get("size_" .. id) end,
+        cardPreferences.customOrder(savedOrder))
     -- A tall card crossing the viewport edge needs a continuous grid;
     -- otherwise preserve the existing clean break before an overflow row.
     local continuous = cardLayout.crossesViewport(cells, visibleRows)
@@ -888,6 +896,15 @@ local function event(_context, _model, value)
     if value.kind ~= "action" then return end
     if value.id == "system.refresh" then
         widget.invalidate()
+    elseif value.id == "system.order.reset" then
+        storage.remove("card_order")
+        widget.invalidate()
+    elseif value.id and value.id:sub(1, 13) == "system.order." then
+        local id, action = value.id:match("^system%.order%.([a-z_]+)%.([a-z]+)$")
+        if id and cardTitles[id] and showCard(id) then
+            local order = cardPreferences.move(storage.get("card_order"), id, action, showCard)
+            if order then storage.set("card_order", order); widget.invalidate() end
+        end
     elseif value.id and value.id:sub(1, 12) == "system.size." then
         local id, size = value.id:match("^system%.size%.([a-z_]+)%.([12]x[12])$")
         if id and cardTitles[id] and showCard(id) then
@@ -935,7 +952,25 @@ local function menu(_context, _model, request)
             for _, item in ipairs(sizes) do items[#items + 1] = item end
         end
         items[#items + 1] = { type = "separator" }
+        local saved = storage.get("card_order")
+        local moves = {
+            { "first", l10n.tr("lua_widget.system_monitor.order_first") },
+            { "previous", l10n.tr("lua_widget.system_monitor.order_previous") },
+            { "next", l10n.tr("lua_widget.system_monitor.order_next") },
+            { "last", l10n.tr("lua_widget.system_monitor.order_last") },
+        }
+        for _, move in ipairs(moves) do
+            items[#items + 1] = {
+                id = "system.order." .. cardId .. "." .. move[1], label = move[2],
+                enabled = cardPreferences.move(saved, cardId, move[1], showCard) ~= nil,
+            }
+        end
+        items[#items + 1] = { type = "separator" }
     end
+    items[#items + 1] = { id = "system.order.reset",
+        label = l10n.tr("lua_widget.system_monitor.order_reset"),
+        enabled = cardPreferences.customOrder(storage.get("card_order")) }
+    items[#items + 1] = { type = "separator" }
     if showCard("gpu") or showCard("vram") then
         local gpuValue, gpuState = subscriptionValue(subscriptions.gpu)
         local selectedId, selectedName = selectedGpu(gpuValue)

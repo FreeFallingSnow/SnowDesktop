@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "System Monitor",
   "nameKey": "lua_widget.system_monitor.name",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Displays performance, storage, network, power, and uptime status.",
   "descriptionKey": "lua_widget.system_monitor.description",
   "preview": "preview.png",
@@ -26,9 +26,6 @@
       "lua_widget.system_monitor.gpu_selected": "指定 GPU",
       "lua_widget.system_monitor.gpu_choose": "选择 GPU",
       "lua_widget.system_monitor.gpu_choose_hint": "右键选择 GPU",
-      "lua_widget.system_monitor.gpu_busiest": "最忙引擎",
-      "lua_widget.system_monitor.gpu_vram_total": "专用显存",
-      "lua_widget.system_monitor.gpu_details_unavailable": "当前宿主不支持 GPU 通道状态",
       "lua_widget.system_monitor.show_network": "显示网络",
       "lua_widget.system_monitor.show_battery": "显示电池",
       "lua_widget.system_monitor.show_storage": "显示存储",
@@ -61,7 +58,13 @@
       "lua_widget.common.reset_style": "恢复默认样式",
       "lua_widget.system_monitor.used": "已用",
       "lua_widget.system_monitor.total": "总计",
-      "lua_widget.system_monitor.days": "{0} 天"
+      "lua_widget.system_monitor.days": "{0} 天",
+      "lua_widget.system_monitor.main_font_scale": "主字号缩放（%）",
+      "lua_widget.system_monitor.order_first": "移到最前",
+      "lua_widget.system_monitor.order_previous": "前移",
+      "lua_widget.system_monitor.order_next": "后移",
+      "lua_widget.system_monitor.order_last": "移到最后",
+      "lua_widget.system_monitor.order_reset": "恢复默认顺序"
     },
     "en-US": {
       "lua_widget.system_monitor.name": "System Monitor",
@@ -74,9 +77,6 @@
       "lua_widget.system_monitor.gpu_selected": "Selected GPU",
       "lua_widget.system_monitor.gpu_choose": "Choose GPU",
       "lua_widget.system_monitor.gpu_choose_hint": "Right-click to choose a GPU",
-      "lua_widget.system_monitor.gpu_busiest": "Busiest engine",
-      "lua_widget.system_monitor.gpu_vram_total": "Dedicated VRAM",
-      "lua_widget.system_monitor.gpu_details_unavailable": "GPU channel status is unsupported by this host",
       "lua_widget.system_monitor.show_network": "Show Network",
       "lua_widget.system_monitor.show_battery": "Show Battery",
       "lua_widget.system_monitor.show_storage": "Show Storage",
@@ -109,7 +109,13 @@
       "lua_widget.common.reset_style": "Restore Default Style",
       "lua_widget.system_monitor.used": "Used",
       "lua_widget.system_monitor.total": "Total",
-      "lua_widget.system_monitor.days": "{0} d"
+      "lua_widget.system_monitor.days": "{0} d",
+      "lua_widget.system_monitor.main_font_scale": "Main text scale (%)",
+      "lua_widget.system_monitor.order_first": "Move to first",
+      "lua_widget.system_monitor.order_previous": "Move earlier",
+      "lua_widget.system_monitor.order_next": "Move later",
+      "lua_widget.system_monitor.order_last": "Move to last",
+      "lua_widget.system_monitor.order_reset": "Restore default order"
     },
     "zh-TW": {
       "lua_widget.system_monitor.name": "系統監視器",
@@ -122,9 +128,6 @@
       "lua_widget.system_monitor.gpu_selected": "指定 GPU",
       "lua_widget.system_monitor.gpu_choose": "選擇 GPU",
       "lua_widget.system_monitor.gpu_choose_hint": "按右鍵選擇 GPU",
-      "lua_widget.system_monitor.gpu_busiest": "最忙碌的引擎",
-      "lua_widget.system_monitor.gpu_vram_total": "專用顯示記憶體",
-      "lua_widget.system_monitor.gpu_details_unavailable": "目前主程式不支援 GPU 通道狀態",
       "lua_widget.system_monitor.show_network": "顯示網路",
       "lua_widget.system_monitor.show_battery": "顯示電池",
       "lua_widget.system_monitor.show_storage": "顯示儲存空間",
@@ -157,7 +160,13 @@
       "lua_widget.common.reset_style": "還原預設樣式",
       "lua_widget.system_monitor.used": "已用",
       "lua_widget.system_monitor.total": "總計",
-      "lua_widget.system_monitor.days": "{0} 天"
+      "lua_widget.system_monitor.days": "{0} 天",
+      "lua_widget.system_monitor.main_font_scale": "主字級縮放（%）",
+      "lua_widget.system_monitor.order_first": "移到最前",
+      "lua_widget.system_monitor.order_previous": "前移",
+      "lua_widget.system_monitor.order_next": "後移",
+      "lua_widget.system_monitor.order_last": "移到最後",
+      "lua_widget.system_monitor.order_reset": "還原預設順序"
     },
     "ja-JP": {
       "lua_widget.system_monitor.name": "システムモニター",
@@ -170,9 +179,6 @@
       "lua_widget.system_monitor.gpu_selected": "指定した GPU",
       "lua_widget.system_monitor.gpu_choose": "GPU を選択",
       "lua_widget.system_monitor.gpu_choose_hint": "右クリックして GPU を選択",
-      "lua_widget.system_monitor.gpu_busiest": "最も使用率が高いエンジン",
-      "lua_widget.system_monitor.gpu_vram_total": "専用 VRAM",
-      "lua_widget.system_monitor.gpu_details_unavailable": "このホストは GPU チャネルの状態に対応していません",
       "lua_widget.system_monitor.show_network": "ネットワークを表示",
       "lua_widget.system_monitor.show_battery": "バッテリーを表示",
       "lua_widget.system_monitor.show_storage": "ストレージを表示",
@@ -205,7 +211,13 @@
       "lua_widget.common.reset_style": "デフォルトのスタイルを復元",
       "lua_widget.system_monitor.used": "使用中",
       "lua_widget.system_monitor.total": "合計",
-      "lua_widget.system_monitor.days": "{0}日"
+      "lua_widget.system_monitor.days": "{0}日",
+      "lua_widget.system_monitor.main_font_scale": "メイン文字の拡大率（%）",
+      "lua_widget.system_monitor.order_first": "先頭に移動",
+      "lua_widget.system_monitor.order_previous": "前へ移動",
+      "lua_widget.system_monitor.order_next": "後ろへ移動",
+      "lua_widget.system_monitor.order_last": "末尾に移動",
+      "lua_widget.system_monitor.order_reset": "既定の順序に戻す"
     },
     "ko-KR": {
       "lua_widget.system_monitor.name": "시스템 모니터",
@@ -218,9 +230,6 @@
       "lua_widget.system_monitor.gpu_selected": "선택한 GPU",
       "lua_widget.system_monitor.gpu_choose": "GPU 선택",
       "lua_widget.system_monitor.gpu_choose_hint": "마우스 오른쪽 버튼으로 GPU 선택",
-      "lua_widget.system_monitor.gpu_busiest": "가장 사용량이 많은 엔진",
-      "lua_widget.system_monitor.gpu_vram_total": "전용 VRAM",
-      "lua_widget.system_monitor.gpu_details_unavailable": "이 호스트는 GPU 채널 상태를 지원하지 않습니다",
       "lua_widget.system_monitor.show_network": "네트워크 표시",
       "lua_widget.system_monitor.show_battery": "배터리 표시",
       "lua_widget.system_monitor.show_storage": "저장소 표시",
@@ -253,7 +262,13 @@
       "lua_widget.common.reset_style": "기본 스타일 복원",
       "lua_widget.system_monitor.used": "사용 중",
       "lua_widget.system_monitor.total": "전체",
-      "lua_widget.system_monitor.days": "{0}일"
+      "lua_widget.system_monitor.days": "{0}일",
+      "lua_widget.system_monitor.main_font_scale": "주요 글자 크기 배율 (%)",
+      "lua_widget.system_monitor.order_first": "맨 앞으로 이동",
+      "lua_widget.system_monitor.order_previous": "앞으로 이동",
+      "lua_widget.system_monitor.order_next": "뒤로 이동",
+      "lua_widget.system_monitor.order_last": "맨 뒤로 이동",
+      "lua_widget.system_monitor.order_reset": "기본 순서 복원"
     },
     "de-DE": {
       "lua_widget.system_monitor.name": "Systemmonitor",
@@ -266,9 +281,6 @@
       "lua_widget.system_monitor.gpu_selected": "Ausgewählte GPU",
       "lua_widget.system_monitor.gpu_choose": "GPU auswählen",
       "lua_widget.system_monitor.gpu_choose_hint": "GPU per Rechtsklick auswählen",
-      "lua_widget.system_monitor.gpu_busiest": "Engine mit höchster Auslastung",
-      "lua_widget.system_monitor.gpu_vram_total": "Dedizierter VRAM",
-      "lua_widget.system_monitor.gpu_details_unavailable": "Dieser Host unterstützt keinen GPU-Kanalstatus",
       "lua_widget.system_monitor.show_network": "Netzwerk anzeigen",
       "lua_widget.system_monitor.show_battery": "Batterie anzeigen",
       "lua_widget.system_monitor.show_storage": "Datenspeicher anzeigen",
@@ -301,7 +313,13 @@
       "lua_widget.common.reset_style": "Standardstil wiederherstellen",
       "lua_widget.system_monitor.used": "Belegt",
       "lua_widget.system_monitor.total": "Gesamt",
-      "lua_widget.system_monitor.days": "{0} T"
+      "lua_widget.system_monitor.days": "{0} T",
+      "lua_widget.system_monitor.main_font_scale": "Haupttextgröße (%)",
+      "lua_widget.system_monitor.order_first": "An den Anfang",
+      "lua_widget.system_monitor.order_previous": "Nach vorne",
+      "lua_widget.system_monitor.order_next": "Nach hinten",
+      "lua_widget.system_monitor.order_last": "Ans Ende",
+      "lua_widget.system_monitor.order_reset": "Standardreihenfolge wiederherstellen"
     },
     "fr-FR": {
       "lua_widget.system_monitor.name": "Moniteur système",
@@ -314,9 +332,6 @@
       "lua_widget.system_monitor.gpu_selected": "GPU sélectionné",
       "lua_widget.system_monitor.gpu_choose": "Choisir un GPU",
       "lua_widget.system_monitor.gpu_choose_hint": "Clic droit pour choisir un GPU",
-      "lua_widget.system_monitor.gpu_busiest": "Moteur le plus sollicité",
-      "lua_widget.system_monitor.gpu_vram_total": "VRAM dédiée",
-      "lua_widget.system_monitor.gpu_details_unavailable": "Cet hôte ne prend pas en charge l’état des canaux GPU",
       "lua_widget.system_monitor.show_network": "Afficher le réseau",
       "lua_widget.system_monitor.show_battery": "Afficher la batterie",
       "lua_widget.system_monitor.show_storage": "Afficher le stockage",
@@ -349,7 +364,13 @@
       "lua_widget.common.reset_style": "Restaurer le style par défaut",
       "lua_widget.system_monitor.used": "Utilisé",
       "lua_widget.system_monitor.total": "Total",
-      "lua_widget.system_monitor.days": "{0} j"
+      "lua_widget.system_monitor.days": "{0} j",
+      "lua_widget.system_monitor.main_font_scale": "Échelle du texte principal (%)",
+      "lua_widget.system_monitor.order_first": "Placer en premier",
+      "lua_widget.system_monitor.order_previous": "Déplacer avant",
+      "lua_widget.system_monitor.order_next": "Déplacer après",
+      "lua_widget.system_monitor.order_last": "Placer en dernier",
+      "lua_widget.system_monitor.order_reset": "Rétablir l’ordre par défaut"
     },
     "es-ES": {
       "lua_widget.system_monitor.name": "Monitor del sistema",
@@ -362,9 +383,6 @@
       "lua_widget.system_monitor.gpu_selected": "GPU seleccionada",
       "lua_widget.system_monitor.gpu_choose": "Elegir GPU",
       "lua_widget.system_monitor.gpu_choose_hint": "Clic derecho para elegir GPU",
-      "lua_widget.system_monitor.gpu_busiest": "Motor con mayor uso",
-      "lua_widget.system_monitor.gpu_vram_total": "VRAM dedicada",
-      "lua_widget.system_monitor.gpu_details_unavailable": "Este anfitrión no admite el estado de los canales GPU",
       "lua_widget.system_monitor.show_network": "Mostrar red",
       "lua_widget.system_monitor.show_battery": "Mostrar batería",
       "lua_widget.system_monitor.show_storage": "Mostrar almacenamiento",
@@ -397,7 +415,13 @@
       "lua_widget.common.reset_style": "Restaurar el estilo predeterminado",
       "lua_widget.system_monitor.used": "Usado",
       "lua_widget.system_monitor.total": "Total",
-      "lua_widget.system_monitor.days": "{0} d"
+      "lua_widget.system_monitor.days": "{0} d",
+      "lua_widget.system_monitor.main_font_scale": "Escala del texto principal (%)",
+      "lua_widget.system_monitor.order_first": "Mover al principio",
+      "lua_widget.system_monitor.order_previous": "Mover antes",
+      "lua_widget.system_monitor.order_next": "Mover después",
+      "lua_widget.system_monitor.order_last": "Mover al final",
+      "lua_widget.system_monitor.order_reset": "Restaurar el orden predeterminado"
     },
     "es-419": {
       "lua_widget.system_monitor.name": "Monitor del sistema",
@@ -410,9 +434,6 @@
       "lua_widget.system_monitor.gpu_selected": "GPU seleccionada",
       "lua_widget.system_monitor.gpu_choose": "Elegir GPU",
       "lua_widget.system_monitor.gpu_choose_hint": "Clic derecho para elegir GPU",
-      "lua_widget.system_monitor.gpu_busiest": "Motor con mayor uso",
-      "lua_widget.system_monitor.gpu_vram_total": "VRAM dedicada",
-      "lua_widget.system_monitor.gpu_details_unavailable": "Este anfitrión no admite el estado de los canales GPU",
       "lua_widget.system_monitor.show_network": "Mostrar red",
       "lua_widget.system_monitor.show_battery": "Mostrar batería",
       "lua_widget.system_monitor.show_storage": "Mostrar almacenamiento",
@@ -445,7 +466,13 @@
       "lua_widget.common.reset_style": "Restaurar el estilo predeterminado",
       "lua_widget.system_monitor.used": "Usado",
       "lua_widget.system_monitor.total": "Total",
-      "lua_widget.system_monitor.days": "{0} d"
+      "lua_widget.system_monitor.days": "{0} d",
+      "lua_widget.system_monitor.main_font_scale": "Escala del texto principal (%)",
+      "lua_widget.system_monitor.order_first": "Mover al principio",
+      "lua_widget.system_monitor.order_previous": "Mover antes",
+      "lua_widget.system_monitor.order_next": "Mover después",
+      "lua_widget.system_monitor.order_last": "Mover al final",
+      "lua_widget.system_monitor.order_reset": "Restaurar el orden predeterminado"
     },
     "pt-BR": {
       "lua_widget.system_monitor.name": "Monitor do sistema",
@@ -458,9 +485,6 @@
       "lua_widget.system_monitor.gpu_selected": "GPU selecionada",
       "lua_widget.system_monitor.gpu_choose": "Escolher GPU",
       "lua_widget.system_monitor.gpu_choose_hint": "Clique direito para escolher GPU",
-      "lua_widget.system_monitor.gpu_busiest": "Motor com maior utilização",
-      "lua_widget.system_monitor.gpu_vram_total": "VRAM dedicada",
-      "lua_widget.system_monitor.gpu_details_unavailable": "Este host não oferece suporte ao estado dos canais da GPU",
       "lua_widget.system_monitor.show_network": "Mostrar rede",
       "lua_widget.system_monitor.show_battery": "Mostrar bateria",
       "lua_widget.system_monitor.show_storage": "Mostrar armazenamento",
@@ -493,7 +517,13 @@
       "lua_widget.common.reset_style": "Restaurar estilo padrão",
       "lua_widget.system_monitor.used": "Usado",
       "lua_widget.system_monitor.total": "Total",
-      "lua_widget.system_monitor.days": "{0} d"
+      "lua_widget.system_monitor.days": "{0} d",
+      "lua_widget.system_monitor.main_font_scale": "Escala do texto principal (%)",
+      "lua_widget.system_monitor.order_first": "Mover para o início",
+      "lua_widget.system_monitor.order_previous": "Mover para antes",
+      "lua_widget.system_monitor.order_next": "Mover para depois",
+      "lua_widget.system_monitor.order_last": "Mover para o fim",
+      "lua_widget.system_monitor.order_reset": "Restaurar ordem padrão"
     }
   },
   "defaultSize": {

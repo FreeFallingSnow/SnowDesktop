@@ -11,10 +11,12 @@ end
 
 -- Stable first-fit packing fills holes beside tall/wide cards without
 -- changing the user's saved size when the containing widget gets narrower.
-function cardLayout.pack(cards, columns, sizeFor)
+-- A custom order starts each search after the previous placement so filling
+-- an earlier hole cannot put a later card ahead of the user's chosen order.
+function cardLayout.pack(cards, columns, sizeFor, ordered)
     columns = math.max(1, math.floor(columns or 1))
     local occupied, placements, signature = {}, {}, {}
-    local rows = 0
+    local rows, cursor = 0, 0
     local function fits(row, column, width, height)
         for y = row, row + height - 1 do
             for x = column, column + width - 1 do
@@ -27,7 +29,9 @@ function cardLayout.pack(cards, columns, sizeFor)
         local size = cardLayout.size(sizeFor(card.id))
         local width = math.min(columns, tonumber(size:sub(1, 1)))
         local height = tonumber(size:sub(3, 3))
-        local row, column = 0, 0
+        local row = ordered and math.floor(cursor / columns) or 0
+        local column = ordered and cursor % columns or 0
+        if column + width > columns then row, column = row + 1, 0 end
         while not fits(row, column, width, height) do
             column = column + 1
             if column + width > columns then row, column = row + 1, 0 end
@@ -40,6 +44,7 @@ function cardLayout.pack(cards, columns, sizeFor)
             column = column, row = row, columns = width, rows = height,
         }
         rows = math.max(rows, row + height)
+        cursor = row * columns + column + 1
         signature[#signature + 1] = card.id .. "=" .. size
     end
     return placements, rows, table.concat(signature, ";")
