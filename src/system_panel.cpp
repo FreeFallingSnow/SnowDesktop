@@ -460,6 +460,8 @@ struct SystemPanel::Impl
         if(!life->alive)return;
         modal=calendarMenu=false;
         if(!current||!model)return;
+        if(!command&&GetForegroundWindow()!=window&&GetForegroundWindow()!=current->owner)
+        {pending.reset();afterClose={};if(showing&&!closing)Animate(false);return;}
         if(showing&&!closing&&model==active&&command>=1&&command<=choices.size())
         {
             active->SelectCalendarChoice(id,command-1);
