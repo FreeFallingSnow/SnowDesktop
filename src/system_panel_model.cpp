@@ -41,6 +41,14 @@ const char* Topic(StatusBarAction a)
 D2D1_RECT_F Rect(float x,float y,float w,float h) { return {x,y,x+w,y+h}; }
 std::string Date(int year,int month,int day)
 { char s[16]{};sprintf_s(s,"%04d-%02d-%02d",year,month,day);return s; }
+std::wstring CalendarButtonLabel(std::string_view calendarId,std::string_view language)
+{
+    if(calendarId=="chinese")return _LW("statusBar.calendarChineseShort");
+    if(calendarId=="roc")return _LW("statusBar.calendarRocShort");
+    for(const auto& option:calendar::CalendarOptions(language))
+        if(option.id==calendarId)return option.label;
+    return _LW("settings.calendar.type");
+}
 }
 bool IsSystemResourceAction(StatusBarAction a)
 { return a==StatusBarAction::Cpu||a==StatusBarAction::Memory||a==StatusBarAction::Gpu||a==StatusBarAction::Traffic; }
@@ -1078,13 +1086,16 @@ void SystemPanelModel::Calendar()
             if(annotation.calendarAvailable&&!annotation.fullDate.empty())
                 calendarDetails_.emplace(annotation.date,std::move(annotation));
     if(!calendarDetails_.contains(month_))calendarDisplaySecondary_=false;
+    const bool hasToggle=calendarDetails_.contains(month_);
     const auto monthText=calendarDisplaySecondary_&&!calendarDetails_.at(month_).monthHeading.empty()?Wide(calendarDetails_.at(month_).monthHeading):
         std::to_wstring(month->year)+L" / "+std::to_wstring(month->month);
-    auto& monthLabel=Add("calendar.month",ui::Role::Text,Rect(monthLeft,monthTop,toolbar>36?monthWidth:monthWidth-186,32),monthText);monthLabel.bold=true;monthLabel.fontSize=16;monthLabel.tooltip=monthText;
-    if(calendarDetails_.contains(month_))
+    auto& monthLabel=Add("calendar.month",ui::Role::Text,Rect(monthLeft,monthTop,toolbar>36?monthWidth:monthWidth-(hasToggle?224.f:150.f),32),monthText);monthLabel.bold=true;monthLabel.fontSize=16;monthLabel.tooltip=monthText;
+    if(hasToggle)
     {
-        auto& toggle=Add("calendar.toggleCalendar",ui::Role::Icon,Rect(monthLeft+monthWidth-180,buttonsTop,32,32),L"",L"\uE8AB");
-        toggle.selected=calendarDisplaySecondary_;
+        const auto target=calendarDisplaySecondary_?_LW("statusBar.calendarGregorianShort"):
+            CalendarButtonLabel(source_.calendar.secondaryCalendarId?source_.calendar.secondaryCalendarId():std::string{},language);
+        auto& toggle=Add("calendar.toggleCalendar",ui::Role::Button,Rect(monthLeft+monthWidth-220,buttonsTop,72,32),target);
+        toggle.centered=true;toggle.fontSize=12;
         toggle.tooltip=_LW(calendarDisplaySecondary_?"statusBar.calendarShowGregorian":"statusBar.calendarShowSecondary");
         toggle.accessibilityLabel=toggle.tooltip;
         Command(toggle.id,[this]{calendarDisplaySecondary_=!calendarDisplaySecondary_;});

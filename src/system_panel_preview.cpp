@@ -279,6 +279,7 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
         calendar::DisplayPreferences preferences;preferences.enabled=true;
         return calendar::Annotate(from,to,preferences,Locale::Instance().GetEffectiveLanguage());
     };
+    source.calendar.secondaryCalendarId = [] {return std::string("chinese");};
     source.calendar.events = [state](const std::string& date) {
         ++state->reads; state->requestedDate = date;state->requestedDates.insert(date);
         std::vector<calendar::CalendarEvent> events;
@@ -1479,8 +1480,12 @@ void CheckCalendarResponsive()
     Require(Node(model.View(),"date:2026-09-26").tooltip.find(fullSecondary)!=std::wstring::npos,
         "date hover omitted the full secondary calendar date");
     const auto gregorianMonth=Node(model.View(),"calendar.month").text;
+    Require(Node(model.View(),"calendar.toggleCalendar").role==ui::Role::Button&&
+        Node(model.View(),"calendar.toggleCalendar").text==_LW("statusBar.calendarChineseShort"),
+        "secondary calendar switch did not use a labeled button");
     Require(model.Invoke("calendar.toggleCalendar")&&
         Node(model.View(),"calendar.month").text!=gregorianMonth&&
+        Node(model.View(),"calendar.toggleCalendar").text==_LW("statusBar.calendarGregorianShort")&&
         Node(model.View(),"date:2026-09-26").text!=L"26"&&
         Node(model.View(),"calendar.selected").text==fullSecondary&&
         Node(model.View(),"calendar.selectedSecondary").text==L"2026-09-26",
