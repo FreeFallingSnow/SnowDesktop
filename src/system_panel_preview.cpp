@@ -1234,8 +1234,11 @@ void CheckCalendarManagement()
     Require(model.Invoke("calendar.edit.allDay")&&!Node(model.View(),"calendar.edit.start").enabled&&
         !model.Invoke("calendar.edit.start")&&!model.SetCalendarInput("calendar.edit.start",L"broken"),"all-day disabled times retained editable input");
     Require(model.Invoke("calendar.edit.allDay")&&Node(model.View(),"calendar.edit.start").text==L"09:00","all-day toggle discarded the time draft");
-    Require(model.Invoke("calendar.edit.reminder")&&model.Invoke("calendar.edit.reminder:15")&&
-        Node(model.View(),"calendar.edit.reminder").text==_LW("settings.calendar.reminder.15"),"same-page reminder selection lost its value");
+    Require(model.CalendarChoices("calendar.edit.reminder").size()==7&&
+        model.SelectCalendarChoice("calendar.edit.reminder",3)&&
+        model.CalendarChoices("calendar.edit.reminder")[3].selected&&
+        Node(model.View(),"calendar.edit.reminder").text==_LW("settings.calendar.reminder.15"),
+        "same-page reminder dropdown lost its value");
     Require(model.Invoke("calendar.edit.save")&&!model.CalendarEditing()&&events.size()==1&&events.front().reminderMinutes==15&&
         model.View().Find("event:2026-09-26:direct-event"),"calendar save did not refresh the existing agenda");
 
