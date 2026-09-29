@@ -10,12 +10,14 @@
   "license": "GPL-3.0-only",
   "name": "System Monitor",
   "nameKey": "lua_widget.system_monitor.name",
-  "version": "2.3.3",
+  "version": "2.4.0",
   "description": "Displays performance, storage, network, power, and uptime status.",
   "descriptionKey": "lua_widget.system_monitor.description",
+  "preview": "preview.png",
   "locales": {
     "zh-CN": {
       "lua_widget.system_monitor.name": "系统状态",
+      "lua_widget.system_monitor.card_size": "{0} 卡片大小（宽×高）",
       "lua_widget.system_monitor.description": "显示性能、存储、网络、电源和运行时长状态。",
       "lua_widget.system_monitor.show_cpu": "显示 CPU",
       "lua_widget.system_monitor.show_memory": "显示内存",
@@ -56,10 +58,14 @@
       "lua_widget.system_monitor.low_battery": "电量低",
       "lua_widget.system_monitor.no_visible_cards": "无可见卡片",
       "lua_widget.system_monitor.refresh": "刷新数据",
-      "lua_widget.common.reset_style": "恢复默认样式"
+      "lua_widget.common.reset_style": "恢复默认样式",
+      "lua_widget.system_monitor.used": "已用",
+      "lua_widget.system_monitor.total": "总计",
+      "lua_widget.system_monitor.days": "{0} 天"
     },
     "en-US": {
       "lua_widget.system_monitor.name": "System Monitor",
+      "lua_widget.system_monitor.card_size": "{0} card size (width × height)",
       "lua_widget.system_monitor.description": "Displays performance, storage, network, power, and uptime status.",
       "lua_widget.system_monitor.show_cpu": "Show CPU",
       "lua_widget.system_monitor.show_memory": "Show Memory",
@@ -100,10 +106,14 @@
       "lua_widget.system_monitor.low_battery": "Low Battery",
       "lua_widget.system_monitor.no_visible_cards": "No Visible Cards",
       "lua_widget.system_monitor.refresh": "Refresh Data",
-      "lua_widget.common.reset_style": "Restore Default Style"
+      "lua_widget.common.reset_style": "Restore Default Style",
+      "lua_widget.system_monitor.used": "Used",
+      "lua_widget.system_monitor.total": "Total",
+      "lua_widget.system_monitor.days": "{0} d"
     },
     "zh-TW": {
       "lua_widget.system_monitor.name": "系統監視器",
+      "lua_widget.system_monitor.card_size": "{0} 卡片大小（寬×高）",
       "lua_widget.system_monitor.description": "顯示效能、儲存空間、網路、電源和運作時間狀態。",
       "lua_widget.system_monitor.show_cpu": "顯示 CPU",
       "lua_widget.system_monitor.show_memory": "顯示記憶體",
@@ -144,10 +154,14 @@
       "lua_widget.system_monitor.low_battery": "電量低",
       "lua_widget.system_monitor.no_visible_cards": "無可見卡片",
       "lua_widget.system_monitor.refresh": "重新整理資料",
-      "lua_widget.common.reset_style": "還原預設樣式"
+      "lua_widget.common.reset_style": "還原預設樣式",
+      "lua_widget.system_monitor.used": "已用",
+      "lua_widget.system_monitor.total": "總計",
+      "lua_widget.system_monitor.days": "{0} 天"
     },
     "ja-JP": {
       "lua_widget.system_monitor.name": "システムモニター",
+      "lua_widget.system_monitor.card_size": "{0} カードのサイズ（幅×高さ）",
       "lua_widget.system_monitor.description": "パフォーマンス、ストレージ、ネットワーク、電源、稼働時間を表示します。",
       "lua_widget.system_monitor.show_cpu": "CPU を表示",
       "lua_widget.system_monitor.show_memory": "メモリの表示",
@@ -188,10 +202,14 @@
       "lua_widget.system_monitor.low_battery": "バッテリー残量低下",
       "lua_widget.system_monitor.no_visible_cards": "可視カードがありません",
       "lua_widget.system_monitor.refresh": "データを更新",
-      "lua_widget.common.reset_style": "デフォルトのスタイルを復元"
+      "lua_widget.common.reset_style": "デフォルトのスタイルを復元",
+      "lua_widget.system_monitor.used": "使用中",
+      "lua_widget.system_monitor.total": "合計",
+      "lua_widget.system_monitor.days": "{0}日"
     },
     "ko-KR": {
       "lua_widget.system_monitor.name": "시스템 모니터",
+      "lua_widget.system_monitor.card_size": "{0} 카드 크기 (너비 × 높이)",
       "lua_widget.system_monitor.description": "성능, 저장소, 네트워크, 전원 및 가동 시간을 표시합니다.",
       "lua_widget.system_monitor.show_cpu": "CPU 표시",
       "lua_widget.system_monitor.show_memory": "메모리 표시",
@@ -232,10 +250,14 @@
       "lua_widget.system_monitor.low_battery": "배터리 부족",
       "lua_widget.system_monitor.no_visible_cards": "보이는 카드 없음",
       "lua_widget.system_monitor.refresh": "데이터 새로 고침",
-      "lua_widget.common.reset_style": "기본 스타일 복원"
+      "lua_widget.common.reset_style": "기본 스타일 복원",
+      "lua_widget.system_monitor.used": "사용 중",
+      "lua_widget.system_monitor.total": "전체",
+      "lua_widget.system_monitor.days": "{0}일"
     },
     "de-DE": {
       "lua_widget.system_monitor.name": "Systemmonitor",
+      "lua_widget.system_monitor.card_size": "Kartengröße für {0} (Breite × Höhe)",
       "lua_widget.system_monitor.description": "Zeigt Leistung, Speicher, Netzwerk, Stromversorgung und Betriebszeit an.",
       "lua_widget.system_monitor.show_cpu": "CPU anzeigen",
       "lua_widget.system_monitor.show_memory": "Speicher anzeigen",
@@ -276,10 +298,14 @@
       "lua_widget.system_monitor.low_battery": "Batterie schwach",
       "lua_widget.system_monitor.no_visible_cards": "Keine sichtbaren Karten",
       "lua_widget.system_monitor.refresh": "Daten aktualisieren",
-      "lua_widget.common.reset_style": "Standardstil wiederherstellen"
+      "lua_widget.common.reset_style": "Standardstil wiederherstellen",
+      "lua_widget.system_monitor.used": "Belegt",
+      "lua_widget.system_monitor.total": "Gesamt",
+      "lua_widget.system_monitor.days": "{0} T"
     },
     "fr-FR": {
       "lua_widget.system_monitor.name": "Moniteur système",
+      "lua_widget.system_monitor.card_size": "Taille de la carte {0} (largeur × hauteur)",
       "lua_widget.system_monitor.description": "Affiche les performances, le stockage, le réseau, l'alimentation et la durée de fonctionnement.",
       "lua_widget.system_monitor.show_cpu": "Afficher le processeur",
       "lua_widget.system_monitor.show_memory": "Afficher la mémoire",
@@ -320,10 +346,14 @@
       "lua_widget.system_monitor.low_battery": "Batterie faible",
       "lua_widget.system_monitor.no_visible_cards": "Aucune carte visible",
       "lua_widget.system_monitor.refresh": "Actualiser les données",
-      "lua_widget.common.reset_style": "Restaurer le style par défaut"
+      "lua_widget.common.reset_style": "Restaurer le style par défaut",
+      "lua_widget.system_monitor.used": "Utilisé",
+      "lua_widget.system_monitor.total": "Total",
+      "lua_widget.system_monitor.days": "{0} j"
     },
     "es-ES": {
       "lua_widget.system_monitor.name": "Monitor del sistema",
+      "lua_widget.system_monitor.card_size": "Tamaño de la tarjeta {0} (ancho × alto)",
       "lua_widget.system_monitor.description": "Muestra el rendimiento, el almacenamiento, la red, la alimentación y el tiempo de actividad.",
       "lua_widget.system_monitor.show_cpu": "Mostrar CPU",
       "lua_widget.system_monitor.show_memory": "Mostrar memoria",
@@ -364,10 +394,14 @@
       "lua_widget.system_monitor.low_battery": "Batería baja",
       "lua_widget.system_monitor.no_visible_cards": "Sin tarjetas visibles",
       "lua_widget.system_monitor.refresh": "Actualizar datos",
-      "lua_widget.common.reset_style": "Restaurar el estilo predeterminado"
+      "lua_widget.common.reset_style": "Restaurar el estilo predeterminado",
+      "lua_widget.system_monitor.used": "Usado",
+      "lua_widget.system_monitor.total": "Total",
+      "lua_widget.system_monitor.days": "{0} d"
     },
     "es-419": {
       "lua_widget.system_monitor.name": "Monitor del sistema",
+      "lua_widget.system_monitor.card_size": "Tamaño de la tarjeta {0} (ancho × alto)",
       "lua_widget.system_monitor.description": "Muestra el rendimiento, el almacenamiento, la red, la energía y el tiempo de actividad.",
       "lua_widget.system_monitor.show_cpu": "Mostrar CPU",
       "lua_widget.system_monitor.show_memory": "Mostrar memoria",
@@ -408,10 +442,14 @@
       "lua_widget.system_monitor.low_battery": "Batería baja",
       "lua_widget.system_monitor.no_visible_cards": "Sin tarjetas visibles",
       "lua_widget.system_monitor.refresh": "Actualizar datos",
-      "lua_widget.common.reset_style": "Restaurar el estilo predeterminado"
+      "lua_widget.common.reset_style": "Restaurar el estilo predeterminado",
+      "lua_widget.system_monitor.used": "Usado",
+      "lua_widget.system_monitor.total": "Total",
+      "lua_widget.system_monitor.days": "{0} d"
     },
     "pt-BR": {
       "lua_widget.system_monitor.name": "Monitor do sistema",
+      "lua_widget.system_monitor.card_size": "Tamanho do cartão {0} (largura × altura)",
       "lua_widget.system_monitor.description": "Exibe desempenho, armazenamento, rede, energia e tempo de atividade.",
       "lua_widget.system_monitor.show_cpu": "Mostrar CPU",
       "lua_widget.system_monitor.show_memory": "Mostrar memória",
@@ -452,7 +490,10 @@
       "lua_widget.system_monitor.low_battery": "Bateria fraca",
       "lua_widget.system_monitor.no_visible_cards": "Nenhum cartão visível",
       "lua_widget.system_monitor.refresh": "Atualizar dados",
-      "lua_widget.common.reset_style": "Restaurar estilo padrão"
+      "lua_widget.common.reset_style": "Restaurar estilo padrão",
+      "lua_widget.system_monitor.used": "Usado",
+      "lua_widget.system_monitor.total": "Total",
+      "lua_widget.system_monitor.days": "{0} d"
     }
   },
   "defaultSize": {
@@ -492,6 +533,7 @@
     "settings.changeEvent"
   ],
   "optionalFeatures": [
+    "draw.advanced",
     "data.system.network.status",
     "data.system.network.traffic",
     "data.system.power",
