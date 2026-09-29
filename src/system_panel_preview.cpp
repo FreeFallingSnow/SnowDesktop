@@ -1874,6 +1874,16 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 "calendar date modes must stay next to the date field and before the remaining fields");
             if(narrow)Require(lastMode.bounds.bottom<Node(scene,"calendar.edit.notes.label").bounds.top,
                 "narrow calendar date modes must appear before notes");
+            if(seriesMonthly)
+            {
+                const auto& interval=Node(scene,"calendar.edit.interval.label");
+                const auto& monthDay=Node(scene,"calendar.edit.monthDay.last");
+                const auto& endType=Node(scene,"calendar.edit.endType");
+                Require(interval.bounds.top>=lastMode.bounds.bottom&&monthDay.bounds.top>=interval.bounds.bottom&&
+                    endType.bounds.top>=monthDay.bounds.bottom&&endType.bounds.bottom<=allDay.bounds.top&&
+                    endType.bounds.bottom<Node(scene,"calendar.edit.notes.label").bounds.top,
+                    "monthly rule controls must stay with the date selection before notes");
+            }
         }
         for(const auto* id:{"calendar.edit.save","calendar.edit.cancel","calendar.edit.delete","calendar.edit.confirmDelete","calendar.edit.cancelDelete"})
             if(const auto* action=scene.Find(id))

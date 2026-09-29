@@ -1653,6 +1653,57 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         }
         allDayY=modeY+((modes.size()+columns-1)/columns)*48;
     }
+    if(calendarMode_=="weekly"||calendarMode_=="monthly")
+    {
+        float ruleBottom=allDayY;
+        const auto intervalLabel=std::wstring(_LW("settings.calendar.interval"))+L" · "+std::to_wstring(calendarRule_.interval);
+        Add("calendar.edit.interval.label",ui::Role::Text,Rect(right,ruleBottom,rightWidth,24),intervalLabel).secondary=true;ruleBottom+=28;
+        option("calendar.edit.interval.minus",L"−",right,ruleBottom,44);
+        option("calendar.edit.interval.plus",L"+",right+rightWidth-44,ruleBottom,44);
+        Command("calendar.edit.interval.minus",[this]{calendarRule_.interval=(std::max)(1,calendarRule_.interval-1);calendarDiscardConfirmed_=false;});
+        Command("calendar.edit.interval.plus",[this]{calendarRule_.interval=(std::min)(99,calendarRule_.interval+1);calendarDiscardConfirmed_=false;});
+        ruleBottom+=44;
+        if(calendarMode_=="weekly")
+        {
+            const float gap=4,dayWidth=(rightWidth-gap*6)/7;
+            for(int day=1;day<=7;++day)
+            {
+                const auto id="calendar.edit.weekday."+std::to_string(day),key="settings.calendar.weekday."+std::to_string(day);
+                const auto selected=std::find(calendarRule_.weekdays.begin(),calendarRule_.weekdays.end(),day)!=calendarRule_.weekdays.end();
+                option(id,_LW(key.c_str()),right+(day-1)*(dayWidth+gap),ruleBottom,dayWidth,selected);
+                Command(id,[this,day]{auto& days=calendarRule_.weekdays;
+                    const auto found=std::find(days.begin(),days.end(),day);
+                    if(found!=days.end())days.erase(found);else{days.push_back(day);std::sort(days.begin(),days.end());}
+                    calendarDiscardConfirmed_=false;});
+            }
+            ruleBottom+=48;
+        }
+        else
+        {
+            const auto label=calendarRule_.monthDay==0?std::wstring(_LW("settings.calendar.lastDay")):
+                std::wstring(_LW("settings.calendar.monthDay"))+L" · "+std::to_wstring(calendarRule_.monthDay);
+            Add("calendar.edit.monthDay.label",ui::Role::Text,Rect(right,ruleBottom,rightWidth,24),label).secondary=true;ruleBottom+=28;
+            option("calendar.edit.monthDay.minus",L"−",right,ruleBottom,44);
+            option("calendar.edit.monthDay.last",_LW("settings.calendar.lastDay"),right+52,ruleBottom,rightWidth-104,calendarRule_.monthDay==0);
+            option("calendar.edit.monthDay.plus",L"+",right+rightWidth-44,ruleBottom,44);
+            Command("calendar.edit.monthDay.minus",[this]{calendarRule_.monthDay=(std::max)(0,calendarRule_.monthDay-1);calendarDiscardConfirmed_=false;});
+            Command("calendar.edit.monthDay.plus",[this]{calendarRule_.monthDay=(std::min)(31,calendarRule_.monthDay+1);calendarDiscardConfirmed_=false;});
+            Command("calendar.edit.monthDay.last",[this]{calendarRule_.monthDay=0;calendarDiscardConfirmed_=false;});
+            ruleBottom+=48;
+        }
+        const bool forever=calendarRule_.endDate.empty();
+        option("calendar.edit.endType",_LW(forever?"settings.calendar.neverEnds":"settings.calendar.endsOn"),right,ruleBottom,rightWidth);
+        Command("calendar.edit.endType",[this]{if(calendarRule_.endDate.empty())
+                calendarRule_.endDate=calendar::CalendarService::AddDays(calendarRule_.startDate,30).value_or(date_);
+            else calendarRule_.endDate.clear();calendarDiscardConfirmed_=false;});
+        ruleBottom+=44;
+        if(!forever)
+        {
+            option("calendar.edit.endDate",Wide(calendarRule_.endDate),right,ruleBottom,rightWidth);
+            Command("calendar.edit.endDate",[this]{OpenCalendarPicker("calendar.edit.endDate");});ruleBottom+=44;
+        }
+        allDayY=ruleBottom+12;
+    }
     auto& allDay=Add("calendar.edit.allDay",ui::Role::Toggle,Rect(right,allDayY,rightWidth,36),_LW("settings.calendar.allDay"));
     allDay.switchStyle=true;allDay.selected=editor->draft.allDay;allDay.enabled=!calendarConfirmDelete_;
     Command(allDay.id,[this]{calendarEditor_->draft.allDay=!calendarEditor_->draft.allDay;});
@@ -1688,55 +1739,6 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         Command("calendar.edit.scope.once",[this]{SwitchCalendarScope(false);});
         Command("calendar.edit.scope.series",[this]{SwitchCalendarScope(true);});
         footer+=48;
-    }
-    if(calendarMode_=="weekly"||calendarMode_=="monthly")
-    {
-        const auto intervalLabel=std::wstring(_LW("settings.calendar.interval"))+L" · "+std::to_wstring(calendarRule_.interval);
-        Add("calendar.edit.interval.label",ui::Role::Text,Rect(16,footer,width,24),intervalLabel).secondary=true;footer+=28;
-        option("calendar.edit.interval.minus",L"−",16,footer,44);
-        option("calendar.edit.interval.plus",L"+",scene_.width-60,footer,44);
-        Command("calendar.edit.interval.minus",[this]{calendarRule_.interval=(std::max)(1,calendarRule_.interval-1);calendarDiscardConfirmed_=false;});
-        Command("calendar.edit.interval.plus",[this]{calendarRule_.interval=(std::min)(99,calendarRule_.interval+1);calendarDiscardConfirmed_=false;});
-        footer+=44;
-        if(calendarMode_=="weekly")
-        {
-            const float gap=4,dayWidth=(width-gap*6)/7;
-            for(int day=1;day<=7;++day)
-            {
-                const auto id="calendar.edit.weekday."+std::to_string(day),key="settings.calendar.weekday."+std::to_string(day);
-                const auto selected=std::find(calendarRule_.weekdays.begin(),calendarRule_.weekdays.end(),day)!=calendarRule_.weekdays.end();
-                option(id,_LW(key.c_str()),16+(day-1)*(dayWidth+gap),footer,dayWidth,selected);
-                Command(id,[this,day]{auto& days=calendarRule_.weekdays;
-                    const auto found=std::find(days.begin(),days.end(),day);
-                    if(found!=days.end())days.erase(found);else{days.push_back(day);std::sort(days.begin(),days.end());}
-                    calendarDiscardConfirmed_=false;});
-            }
-            footer+=48;
-        }
-        else
-        {
-            const auto label=calendarRule_.monthDay==0?std::wstring(_LW("settings.calendar.lastDay")):
-                std::wstring(_LW("settings.calendar.monthDay"))+L" · "+std::to_wstring(calendarRule_.monthDay);
-            Add("calendar.edit.monthDay.label",ui::Role::Text,Rect(16,footer,width,24),label).secondary=true;footer+=28;
-            option("calendar.edit.monthDay.minus",L"−",16,footer,44);
-            option("calendar.edit.monthDay.last",_LW("settings.calendar.lastDay"),68,footer,width-104,calendarRule_.monthDay==0);
-            option("calendar.edit.monthDay.plus",L"+",scene_.width-60,footer,44);
-            Command("calendar.edit.monthDay.minus",[this]{calendarRule_.monthDay=(std::max)(0,calendarRule_.monthDay-1);calendarDiscardConfirmed_=false;});
-            Command("calendar.edit.monthDay.plus",[this]{calendarRule_.monthDay=(std::min)(31,calendarRule_.monthDay+1);calendarDiscardConfirmed_=false;});
-            Command("calendar.edit.monthDay.last",[this]{calendarRule_.monthDay=0;calendarDiscardConfirmed_=false;});
-            footer+=48;
-        }
-        const bool forever=calendarRule_.endDate.empty();
-        option("calendar.edit.endType",_LW(forever?"settings.calendar.neverEnds":"settings.calendar.endsOn"),16,footer,width);
-        Command("calendar.edit.endType",[this]{if(calendarRule_.endDate.empty())
-                calendarRule_.endDate=calendar::CalendarService::AddDays(calendarRule_.startDate,30).value_or(date_);
-            else calendarRule_.endDate.clear();calendarDiscardConfirmed_=false;});
-        footer+=44;
-        if(!forever)
-        {
-            option("calendar.edit.endDate",Wide(calendarRule_.endDate),16,footer,width);
-            Command("calendar.edit.endDate",[this]{OpenCalendarPicker("calendar.edit.endDate");});footer+=44;
-        }
     }
     if(!editor->error.empty())
     {
