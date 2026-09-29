@@ -36,10 +36,12 @@ inline StatusBarAction ResolveStatusBarClick(StatusBarAction action, bool contro
     return action;
 }
 
-struct StatusBarShellChord { WORD key = 0; bool alt = false; };
+struct StatusBarShellChord { WORD key = 0; bool alt = false; UINT pointerQuietMilliseconds = 0; };
 inline StatusBarShellChord ResolveStatusBarShellChord(StatusBarAction action, bool windows11, bool classicTaskbar)
 {
-    if (action == StatusBarAction::TaskView) return {VK_TAB};
+    // Finish the mouse gesture before opening a surface that can cover the
+    // button. Otherwise the second press can land in Shell's opening view.
+    if (action == StatusBarAction::TaskView) return {VK_TAB, false, GetDoubleClickTime()};
     if (action == StatusBarAction::SystemCalendar) return windows11 ? StatusBarShellChord{'N'} : StatusBarShellChord{'D', true};
     if (action == StatusBarAction::SystemControlCenter) return windows11 ? StatusBarShellChord{'A'} : StatusBarShellChord{};
     if (action == StatusBarAction::Notifications) return {static_cast<WORD>(classicTaskbar ? 'A' : 'N')};
@@ -57,15 +59,18 @@ class TaskViewTransitionGuard
 public:
     bool Busy(double now) const noexcept
     {
-        return pending_ && now < deadline_ &&
-            (!observed_ || now < settledAt_);
+        return now < settledAt_ || (awaitingShown_ && now < deadline_);
+    }
+    bool CanBegin(double now, bool currentlyVisible) const noexcept
+    {
+        // On Windows 10 the bar remains clickable in Task View. Its button is
+        // open-only: a visible view is never toggled, even after the timeout.
+        return !currentlyVisible && !visible_ && !Busy(now);
     }
     bool Begin(double now, bool currentlyVisible) noexcept
     {
-        if (Busy(now)) return false;
-        pending_ = true;
-        observed_ = false;
-        expectedVisible_ = !currentlyVisible;
+        if (!CanBegin(now, currentlyVisible)) return false;
+        awaitingShown_ = true;
         // Visibility callbacks may precede the native animation's endpoint.
         settledAt_ = now + 350;
         deadline_ = now + 1500;
@@ -73,17 +78,20 @@ public:
     }
     void Observe(bool visible, double now) noexcept
     {
-        if (!pending_ || now >= deadline_ || visible != expectedVisible_ || observed_) return;
-        observed_ = true;
-        settledAt_ = (std::max)(settledAt_, now + 180);
+        if (visible == visible_) return;
+        visible_ = visible;
+        awaitingShown_ = false;
+        // Opening externally and dismissing with Escape/a selection also need
+        // settling time; duplicate or initial hidden events cannot release or
+        // indefinitely extend an in-flight opening request.
+        settledAt_ = (std::max)(settledAt_, now + 350);
     }
-    void Reset() noexcept { pending_ = false; }
+    void Reset() noexcept { *this = {}; }
 private:
     double deadline_ = 0;
     double settledAt_ = 0;
-    bool pending_ = false;
-    bool observed_ = false;
-    bool expectedVisible_ = false;
+    bool awaitingShown_ = false;
+    bool visible_ = false;
 };
 
 inline bool IsTaskViewTransitionSensitiveAction(StatusBarAction action) noexcept
@@ -98,6 +106,7 @@ struct StatusBarShortcutCallbacks
     std::function<UINT(UINT, INPUT*, int)> send;
     std::function<bool(UiScheduleToken)> current;
     std::function<void(UiScheduleToken, StatusBarShortcutResult)> finished;
+    std::function<double()> nowMilliseconds = UiAnimationScheduler::MonotonicMilliseconds;
 };
 
 // Do not synthesize release/restore pairs for physically held modifiers. Wait
@@ -107,17 +116,26 @@ struct StatusBarShortcutCallbacks
 inline UiScheduleToken ScheduleStatusBarShellShortcut(UiAnimationScheduler& scheduler,
     StatusBarShellChord chord, StatusBarShortcutCallbacks callbacks, UINT timeoutMilliseconds = 5000)
 {
-    const double deadline = UiAnimationScheduler::MonotonicMilliseconds() + timeoutMilliseconds;
+    const double notBefore = callbacks.nowMilliseconds() + chord.pointerQuietMilliseconds;
+    const double deadline = notBefore + timeoutMilliseconds;
     return scheduler.ScheduleInterval(16,
-        [&scheduler, chord, deadline, callbacks = std::move(callbacks)](UiScheduleToken token) {
+        [&scheduler, chord, deadline, notBefore = notBefore, callbacks = std::move(callbacks)](UiScheduleToken token) mutable {
             const auto finish = [&](StatusBarShortcutResult result) {
                 scheduler.Cancel(token);
                 callbacks.finished(token, result);
             };
             if (!callbacks.current(token)) { finish(StatusBarShortcutResult::Cancelled); return; }
             if (!chord.key) { finish(StatusBarShortcutResult::Failed); return; }
-            if (UiAnimationScheduler::MonotonicMilliseconds() >= deadline)
+            const double now = callbacks.nowMilliseconds();
+            if (now >= deadline)
             { finish(StatusBarShortcutResult::TimedOut); return; }
+            if (chord.pointerQuietMilliseconds)
+            {
+                for (const int button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2})
+                    if (callbacks.keyDown(button))
+                    { notBefore = now + chord.pointerQuietMilliseconds; return; }
+                if (now < notBefore) return;
+            }
             for (const int modifier : {VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN})
                 if (callbacks.keyDown(modifier)) return;
             if (callbacks.keyDown(chord.key)) return;

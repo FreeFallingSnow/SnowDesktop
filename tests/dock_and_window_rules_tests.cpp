@@ -1040,6 +1040,22 @@ void CheckStatusBarInteraction()
     state.CancelPointer();
     Check(!state.Release(before, {70, 16}, false).accepted && !state.Release(before, {70, 16}, true).accepted &&
         !state.IsDoubleClickTarget(before, {70, 16}), "hide, leave and capture cancellation discard pending gestures");
+
+    const std::vector<StatusBarItem> taskView{
+        item("taskView", StatusBarAction::TaskView, {0, 0, 32, 32}, false)};
+    state.Press(taskView, {12, 16}, false);
+    Check(state.Release(taskView, {12, 16}, false).item == 0,
+        "first Task View click requests opening");
+    const bool doubleClick = state.IsDoubleClickTarget(taskView, {12, 16});
+    state.Press(taskView, {12, 16}, false, doubleClick);
+    Check(!state.Release(taskView, {12, 16}, false).accepted,
+        "WM_LBUTTONDBLCLK and its release cannot request a second Task View transition");
+    state.Press(taskView, {12, 16}, false);
+    Check(state.Release(taskView, {12, 16}, false).item == 0,
+        "a later independent Task View click remains available after dismissal");
+    state.Press(before, {70, 16}, false, true);
+    Check(state.Release(before, {70, 16}, false).item == 1,
+        "Task View suppression preserves tray double-click release delivery");
 }
 
 struct StatusBarVisibilityTestState

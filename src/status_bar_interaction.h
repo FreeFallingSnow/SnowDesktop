@@ -84,9 +84,17 @@ struct StatusBarInteraction
         }
         focused.reset();
     }
-    StatusBarAction Press(const std::vector<StatusBarItem>& items, POINT point, bool right)
+    StatusBarAction Press(const std::vector<StatusBarItem>& items, POINT point, bool right, bool doubleClick = false)
     {
         const auto hit = HitTestStatusBarItems(items, point);
+        // A Task View double-click is one opening request. Do not re-arm its
+        // second release while Shell may be taking over the foreground.
+        if (!right && doubleClick && hit && !items[*hit].icon &&
+            items[*hit].action == StatusBarAction::TaskView)
+        {
+            left_ = {};
+            return StatusBarAction::None;
+        }
         // A no-activate bar cannot rely on popup deactivation. Dismiss at
         // button-down, even if capture/leave cancels the eventual release.
         // Do not arm a click that could reopen a surface after dismissal.

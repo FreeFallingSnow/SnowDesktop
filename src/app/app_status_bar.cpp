@@ -120,11 +120,12 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     using Action = snowdesktop::StatusBarAction;
     if (action == Action::SystemControlCenter && !snowdesktop::StatusBarSupportsSystemQuickSettings())
         action = Action::ControlCenter;
-    if (snowdesktop::IsTaskViewTransitionSensitiveAction(action) &&
-        statusBarTaskViewTransition_.Busy(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()))
+    const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    if ((action == Action::TaskView && !statusBarTaskViewTransition_.CanBegin(now, systemTaskbarTaskViewActive_)) ||
+        (snowdesktop::IsTaskViewTransitionSensitiveAction(action) && statusBarTaskViewTransition_.Busy(now)))
     {
         TraceStatusBarShellActivation(action, *statusBarActivationGeneration_, L"ignored",
-            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), L"task-view-transition");
+            now, L"task-view-visible-or-transition");
         return;
     }
     uiAnimationScheduler_.Cancel(statusBarActivationToken_);
@@ -352,8 +353,10 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     sent == count ? L"accepted" : L"incomplete", elapsed, count, sent);
                 return sent;
             },
-            [this, current, foreground](auto token) {
-                return current() && token == statusBarActivationToken_ && GetForegroundWindow() == foreground;
+            [this, current, foreground, action](auto token) {
+                return current() && token == statusBarActivationToken_ && GetForegroundWindow() == foreground &&
+                    (action != Action::TaskView || statusBarTaskViewTransition_.CanBegin(
+                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), systemTaskbarTaskViewActive_));
             },
             [this, lifetime, generation, action, hold](auto token, snowdesktop::StatusBarShortcutResult result) {
                 const wchar_t* outcome = result == snowdesktop::StatusBarShortcutResult::Sent ? L"sent" :

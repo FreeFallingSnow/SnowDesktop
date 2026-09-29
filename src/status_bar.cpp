@@ -963,7 +963,7 @@ struct StatusBar::Impl
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
                 self->ClearHover();
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
-                if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN) == StatusBarAction::Dismiss)
+                if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN, doubleClick) == StatusBarAction::Dismiss)
                 {
                     self->DismissSurfaces();
                     return 0;

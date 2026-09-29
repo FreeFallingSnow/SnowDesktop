@@ -133,24 +133,29 @@ void TestTaskViewTransition()
         if (transition.Begin(time, true)) ++accepted;
     }
     Check(accepted == 1, "a burst during native opening produces one toggle and queues no replay");
-    Check(!transition.Busy(350) && transition.Begin(350, true),
-        "the next explicit click can close Task View once its acknowledged transition settles");
-    transition.Observe(true, 400);
-    Check(transition.Busy(750), "a stale shown event cannot acknowledge a pending close");
-    transition.Observe(false, 800);
-    transition.Observe(false, 950);
-    Check(transition.Busy(979) && !transition.Busy(980),
-        "a late acknowledgement gets settling time but duplicate events cannot extend it");
-    Check(transition.Begin(1000, false), "a completed transition permits another explicit request");
-    Check(transition.Busy(2499) && !transition.Busy(2500),
+    Check(!transition.Busy(400) && !transition.Begin(400, true) && !transition.Begin(5000, true),
+        "Windows 10's visible bar cannot toggle an open Task View after animation or timeout");
+    Check(!transition.Begin(5000, false), "an observed shown state also prevents a stale caller from reopening");
+    transition.Observe(false, 6000);
+    transition.Observe(false, 6200);
+    Check(transition.Busy(6349) && !transition.Busy(6350),
+        "external dismissal settles before reopening; duplicate hidden events do not extend it");
+    Check(transition.Begin(6350, false), "a closed, settled view permits a new explicit request");
+    transition.Observe(false, 6400);
+    Check(transition.Busy(7849) && !transition.Busy(7850),
         "missing Shell callbacks on either Windows version cannot permanently block buttons");
-    Check(transition.Begin(2500, false), "timeout permits recovery without replaying a queued toggle");
-    transition.Observe(true, 3990);
-    Check(!transition.Busy(4000), "even a very late visibility event cannot extend the hard deadline");
-    Check(transition.Begin(4000, true), "new transitions start after timeout");
+    Check(transition.Begin(7850, false), "timeout permits recovery without replaying a queued toggle");
+    transition.Observe(true, 9400);
+    Check(!transition.Begin(10000, false), "a shown event arriving after timeout still blocks repeated opening");
     transition.Reset();
-    Check(!transition.Busy(4001) && transition.Begin(4001, false),
+    Check(!transition.Busy(10001) && transition.Begin(10001, false),
         "Explorer restart or completely failed injection releases transition protection");
+    transition.Reset();
+    Check(!transition.Begin(11000, true), "Task View opened outside the bar cannot be toggled by its button");
+    transition.Observe(true, 11000);
+    transition.Observe(true, 11200);
+    Check(!transition.Busy(11350) && !transition.CanBegin(11350, true),
+        "duplicate shown events allow other native panels after settling but keep Task View open-only");
     Check(IsTaskViewTransitionSensitiveAction(StatusBarAction::TaskView) &&
         IsTaskViewTransitionSensitiveAction(StatusBarAction::Notifications) &&
         IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemCalendar) &&
@@ -158,6 +163,55 @@ void TestTaskViewTransition()
         !IsTaskViewTransitionSensitiveAction(StatusBarAction::Dismiss) &&
         !IsTaskViewTransitionSensitiveAction(StatusBarAction::Settings),
         "other native panels cannot interrupt Task View's transition, while dismissal and settings remain available");
+}
+
+void TestTaskViewMouseHandoff()
+{
+    using namespace snowdesktop;
+    using Result = StatusBarShortcutResult;
+    Check(ResolveStatusBarShellChord(StatusBarAction::TaskView, true, false).pointerQuietMilliseconds == GetDoubleClickTime() &&
+        ResolveStatusBarShellChord(StatusBarAction::TaskView, false, true).pointerQuietMilliseconds == GetDoubleClickTime(),
+        "both Windows versions finish the configured double-click interval before opening Task View");
+    UiAnimationScheduler scheduler;
+    Check(scheduler.Initialize(), "Task View handoff scheduler initializes");
+    // Run the production scheduler/input construction with only time, physical
+    // input and SendInput replaced; never synthesize desktop input in tests.
+    double now = 0;
+    int held = 0;
+    int sends = 0;
+    bool current = true;
+    std::vector<Result> outcomes;
+    const auto queue = [&](UINT quiet = 500) {
+        return ScheduleStatusBarShellShortcut(scheduler, {VK_TAB, false, quiet}, {
+            [&](int code) { return code == held; },
+            [&](UINT count, INPUT*, int) { ++sends; return count; },
+            [&](auto) { return current; },
+            [&](auto, Result result) { outcomes.push_back(result); },
+            [&] { return now; }});
+    };
+    queue();
+    now = 499; WaitAndDispatch(scheduler);
+    Check(sends == 0 && outcomes.empty(), "first release does not expose Shell to the second click");
+    held = VK_LBUTTON; WaitAndDispatch(scheduler);
+    now = 1000; WaitAndDispatch(scheduler);
+    Check(sends == 0, "held second press cannot open Task View under the pointer");
+    held = 0; now = 1499; WaitAndDispatch(scheduler);
+    Check(sends == 0, "releasing the second press still leaves its quiet interval");
+    now = 1500; WaitAndDispatch(scheduler);
+    Check(sends == 1 && outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
+        "completed double-click opens exactly once, with no deferred replay");
+
+    outcomes.clear(); queue(); current = false; WaitAndDispatch(scheduler);
+    Check(sends == 1 && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
+        "foreground change, hidden bar or externally opened Task View cancels the delayed request");
+    current = true; outcomes.clear(); queue();
+    held = VK_RBUTTON; now = 7000; WaitAndDispatch(scheduler);
+    Check(sends == 1 && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
+        "held mouse cannot leave an unbounded deferred opening request");
+    held = 0; outcomes.clear();
+    queue(5000); now = 12000; WaitAndDispatch(scheduler);
+    Check(sends == 2 && outcomes == std::vector<Result>{Result::Sent},
+        "maximum Windows double-click interval has its own budget before the input timeout");
 }
 
 void TestStatusBarShellShortcuts()
@@ -313,6 +367,7 @@ int main()
 {
     TestStatusBarContinuationDispatch();
     TestTaskViewTransition();
+    TestTaskViewMouseHandoff();
     TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&
