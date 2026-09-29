@@ -569,6 +569,24 @@ void Write(const std::filesystem::path& path, std::string_view text)
     Check(static_cast<bool>(output), "preview fixture is written");
 }
 
+void CopyManifestAndPreview(const std::filesystem::path& source,
+    const std::filesystem::path& destination)
+{
+    std::filesystem::copy_file(source / L"widget.json", destination / L"widget.json");
+    std::ifstream input(source / L"widget.json", std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    JsonValue manifest;
+    Check(ParseJson(text, manifest), "fixture manifest can be parsed");
+    // Package validation runs before Lua. Keep the manifest's preview asset so
+    // module/menu regressions reach their intended engine entry point.
+    if (const auto* preview = manifest.Find("preview"); preview && preview->IsString() && !preview->string.empty())
+    {
+        const std::filesystem::path relative{std::u8string(preview->string.begin(), preview->string.end())};
+        std::filesystem::create_directories((destination / relative).parent_path());
+        std::filesystem::copy_file(source / relative, destination / relative);
+    }
+}
+
 void CheckModuleRequireErrors(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& root,
     const std::filesystem::path& manifestSource)
@@ -576,7 +594,7 @@ void CheckModuleRequireErrors(const std::filesystem::path& snowwidget,
     const auto source = root / L"module-errors";
     Check(std::filesystem::create_directories(source / L"modules"),
         "module error fixture is created");
-    std::filesystem::copy_file(manifestSource / L"widget.json", source / L"widget.json");
+    CopyManifestAndPreview(manifestSource, source);
     Write(source / L"modules" / L"good.lua", "return { value = 42 }");
     Write(source / L"modules" / L"runtime.lua", "error('intentional module failure')");
     Write(source / L"modules" / L"syntax.lua", "return {");
@@ -631,7 +649,7 @@ void CheckSystemMonitorMenu(const std::filesystem::path& snowwidget,
 {
     const auto source = root / L"system-monitor-menu";
     Check(std::filesystem::create_directory(source), "monitor menu fixture is created");
-    std::filesystem::copy_file(monitorSource / L"widget.json", source / L"widget.json");
+    CopyManifestAndPreview(monitorSource, source);
     std::filesystem::copy(monitorSource / L"modules", source / L"modules",
         std::filesystem::copy_options::recursive);
     std::ifstream input(monitorSource / L"main.lua", std::ios::binary);
