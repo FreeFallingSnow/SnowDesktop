@@ -740,10 +740,15 @@ local function panel(context, model)
             and l10n.tr("lua_widget.agenda.invalid_time") or nil
         local function field(key,value,label,err,multi)
             children[#children+1]=view.text({key=key..".label",text=label,height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
-            local options={key=key,value=value,style={foreground="textPrimary"},height=multi and row*3 or row,fontSize=row*0.46,
+            local options={key=key,value=value,style={foreground="textPrimary"},height=row,fontSize=row*0.46,
                 maxBytes=key==DRAFT_TITLE and 512 or (multi and 8192 or 10),enabled=not busy,
                 validationState=err and "error" or "none",validationMessage=err or "",
                 action={id="agenda.field",value=key},accessibility={label=label}}
+            if multi then
+                local available=math.max(1,(context.layoutSize and context.layoutSize.width or row*10)-row*1.3-40)
+                local measured=draw.measureText(value,options.fontSize,available,false)
+                options.height=math.max(row*2,measured.height+row*1.5)
+            end
             children[#children+1]=multi and view.textArea(options) or view.textInput(options)
             if err then children[#children+1]=view.text({key=key..".error",text=err,height=row,fontSize=row*0.42,style={foreground="textSecondary"}}) end
         end
@@ -772,11 +777,16 @@ local function panel(context, model)
             end
         end
         if model.mode=="dates" and model.rule then
-            children[#children+1]=view.text({key="agenda.dates.summary",
-                text=l10n.tr("lua_widget.agenda.selected_dates")..": "..tostring(#model.rule.dates).." · "..
-                    table.concat(model.rule.dates,", "),height=row*2,fontSize=row*0.42,textWrap="wrap",
-                style={foreground="textSecondary"}})
-            children[#children+1]=button("openDatePicker",l10n.tr("lua_widget.agenda.choose_dates"),not busy)
+            local dates=model.rule.dates
+            local summary=#dates==0 and l10n.tr("lua_widget.agenda.choose_dates") or dates[1]
+            if #dates>1 then summary=summary.." · "..dates[2] end
+            if #dates>2 then summary=summary.." +"..tostring(#dates-2) end
+            children[#children+1]=view.text({key="agenda.date.label",text=l10n.tr("lua_widget.agenda.date"),
+                height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
+            children[#children+1]=view.button({key="agenda.openDatePicker",label=summary,width="fill",height=row,
+                fontSize=row*0.46,textAlign="left",style={foreground="textPrimary",cornerRadius=row*0.12},
+                enabled=not busy,action={id="agenda.panel",value="openDatePicker"},
+                accessibility={label=l10n.tr("lua_widget.agenda.date")..": "..summary}})
         else
             field(DRAFT_DATE,date,model.mode=="single" and l10n.tr("lua_widget.agenda.date") or
                 l10n.tr("lua_widget.agenda.start_date"),dateError)

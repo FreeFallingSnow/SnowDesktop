@@ -116,7 +116,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         weekdayRow.Spacing(8);
         weekdayRow.MaxWidth(700);
         start.MinuteIncrement(1); end.MinuteIncrement(1);
-        notes.AcceptsReturn(true); notes.TextWrapping(mux::TextWrapping::Wrap); notes.MaxHeight(180);
+        notes.AcceptsReturn(true); notes.TextWrapping(mux::TextWrapping::Wrap); notes.MinHeight(72);
         editor.Children().Append(title); editor.Children().Append(mode); editor.Children().Append(scope);
         editor.Children().Append(ruleSummary);
         editor.Children().Append(date); editor.Children().Append(multipleDates);
