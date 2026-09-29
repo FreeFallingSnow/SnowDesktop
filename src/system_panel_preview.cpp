@@ -1863,6 +1863,18 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 "time visual fixture did not expose both columns together");
         }
         const auto& scene=model.View();CheckLayout(scene);
+        if(creating)
+        {
+            const auto& date=Node(scene,"calendar.edit.date");
+            const auto& modeLabel=Node(scene,"calendar.edit.mode.label");
+            const auto& lastMode=Node(scene,"calendar.edit.mode.monthly");
+            const auto& allDay=Node(scene,"calendar.edit.allDay");
+            Require(modeLabel.bounds.top>=date.bounds.bottom&&lastMode.bounds.bottom<=allDay.bounds.top&&
+                modeLabel.bounds.left==date.bounds.left&&lastMode.bounds.right<=date.bounds.right,
+                "calendar date modes must stay next to the date field and before the remaining fields");
+            if(narrow)Require(lastMode.bounds.bottom<Node(scene,"calendar.edit.notes.label").bounds.top,
+                "narrow calendar date modes must appear before notes");
+        }
         for(const auto* id:{"calendar.edit.save","calendar.edit.cancel","calendar.edit.delete","calendar.edit.confirmDelete","calendar.edit.cancelDelete"})
             if(const auto* action=scene.Find(id))
             {

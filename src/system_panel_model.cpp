@@ -1616,9 +1616,43 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         node.enabled=enabled&&!calendarConfirmDelete_;
         if(picker){node.tooltip=node.accessibilityLabel=std::wstring(label)+L" · "+node.text;Command(id,[this,id]{OpenCalendarPicker(id);});}
     };
+    const auto option=[&](const std::string& id,const std::wstring& label,float x,float y,float w,bool selected=false){
+        auto& node=Add(id,ui::Role::Button,Rect(x,y,w,36),label);node.centered=true;node.selected=node.accent=selected;
+        node.enabled=!calendarConfirmDelete_;node.accessibilityLabel=node.tooltip=label;
+    };
     field("title",16,64,leftWidth,36);
-    field("date",right,wide?64.f:136.f,rightWidth,36);
-    const float allDayY=wide?136.f:208.f;
+    const float dateY=wide?64.f:136.f;
+    field("date",right,dateY,rightWidth,36);
+    float allDayY=dateY+72;
+    if(editor->original.id.empty()||calendarScopeSeries_)
+    {
+        auto& caption=Add("calendar.edit.mode.label",ui::Role::Text,Rect(right,allDayY,rightWidth,20),_LW("settings.calendar.dateMode"));
+        caption.fontSize=13;caption.secondary=true;
+        const float modeY=allDayY+24;
+        const std::vector<std::string> modes=calendarScopeSeries_?
+            std::vector<std::string>{"dates","weekly","monthly"}:
+            std::vector<std::string>{"single","dates","weekly","monthly"};
+        const std::size_t columns=2;
+        const float gap=6,buttonWidth=(rightWidth-gap)/columns;
+        for(std::size_t index=0;index<modes.size();++index)
+        {
+            const auto mode=modes[index],id="calendar.edit.mode."+mode,key="settings.calendar.mode."+mode;
+            option(id,_LW(key.c_str()),right+(index%columns)*(buttonWidth+gap),
+                modeY+(index/columns)*48,buttonWidth,calendarMode_==mode);
+            Command(id,[this,mode]{
+                const auto previous=calendarMode_;
+                const auto start=calendar::CalendarService::GetDateInfo(calendarRule_.startDate);
+                if(mode=="dates"&&calendarRule_.dates.empty()&&start)
+                    calendarRule_.dates.push_back(calendarRule_.startDate);
+                if(mode=="weekly"&&calendarRule_.weekdays.empty()&&start)
+                    calendarRule_.weekdays.push_back(start->weekday);
+                if(mode=="monthly"&&previous!="monthly"&&calendarRule_.monthDay==0&&start)
+                    calendarRule_.monthDay=start->day;
+                calendarMode_=mode;calendarRule_.kind=mode;
+                calendarDiscardConfirmed_=false;calendarEditor_->error.clear();});
+        }
+        allDayY=modeY+((modes.size()+columns-1)/columns)*48;
+    }
     auto& allDay=Add("calendar.edit.allDay",ui::Role::Toggle,Rect(right,allDayY,rightWidth,36),_LW("settings.calendar.allDay"));
     allDay.switchStyle=true;allDay.selected=editor->draft.allDay;allDay.enabled=!calendarConfirmDelete_;
     Command(allDay.id,[this]{calendarEditor_->draft.allDay=!calendarEditor_->draft.allDay;});
@@ -1644,10 +1678,6 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
     const float notesHeight=MeasureSystemCalendarNotesHeight(calendarText_.at("calendar.edit.notes"),leftWidth);
     field("notes",16,notesY,leftWidth,notesHeight);
     float footer=(std::max)(rightEnd,notesY+24+notesHeight)+16;
-    const auto option=[&](const std::string& id,const std::wstring& label,float x,float y,float w,bool selected=false){
-        auto& node=Add(id,ui::Role::Button,Rect(x,y,w,36),label);node.centered=true;node.selected=node.accent=selected;
-        node.enabled=!calendarConfirmDelete_;node.accessibilityLabel=node.tooltip=label;
-    };
     if(calendarSeriesOriginal_)
     {
         auto& caption=Add("calendar.edit.scope.label",ui::Role::Text,Rect(16,footer,width,20),_LW("settings.calendar.scope"));
@@ -1658,34 +1688,6 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         Command("calendar.edit.scope.once",[this]{SwitchCalendarScope(false);});
         Command("calendar.edit.scope.series",[this]{SwitchCalendarScope(true);});
         footer+=48;
-    }
-    if(editor->original.id.empty()||calendarScopeSeries_)
-    {
-        auto& caption=Add("calendar.edit.mode.label",ui::Role::Text,Rect(16,footer,width,20),_LW("settings.calendar.dateMode"));
-        caption.fontSize=13;caption.secondary=true;footer+=24;
-        const std::vector<std::string> modes=calendarScopeSeries_?
-            std::vector<std::string>{"dates","weekly","monthly"}:
-            std::vector<std::string>{"single","dates","weekly","monthly"};
-        const std::size_t columns=scene_.width<560?2:modes.size();
-        const float gap=6,buttonWidth=(width-gap*(columns-1))/columns;
-        for(std::size_t index=0;index<modes.size();++index)
-        {
-            const auto mode=modes[index],id="calendar.edit.mode."+mode,key="settings.calendar.mode."+mode;
-            option(id,_LW(key.c_str()),16+(index%columns)*(buttonWidth+gap),
-                footer+(index/columns)*48,buttonWidth,calendarMode_==mode);
-            Command(id,[this,mode]{
-                const auto previous=calendarMode_;
-                const auto start=calendar::CalendarService::GetDateInfo(calendarRule_.startDate);
-                if(mode=="dates"&&calendarRule_.dates.empty()&&start)
-                    calendarRule_.dates.push_back(calendarRule_.startDate);
-                if(mode=="weekly"&&calendarRule_.weekdays.empty()&&start)
-                    calendarRule_.weekdays.push_back(start->weekday);
-                if(mode=="monthly"&&previous!="monthly"&&calendarRule_.monthDay==0&&start)
-                    calendarRule_.monthDay=start->day;
-                calendarMode_=mode;calendarRule_.kind=mode;
-                calendarDiscardConfirmed_=false;calendarEditor_->error.clear();});
-        }
-        footer+=((modes.size()+columns-1)/columns)*48;
     }
     if(calendarMode_=="weekly"||calendarMode_=="monthly")
     {
