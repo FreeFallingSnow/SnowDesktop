@@ -318,11 +318,15 @@ bool CalendarService::Load()
     if (error || size > kMaximumFileBytes)
     {
         QuarantineCorruptFile();
+        (void)LoadSeries();
         return false;
     }
     std::ifstream file(path_, std::ios::binary);
     if (!file)
+    {
+        (void)LoadSeries();
         return false;
+    }
     std::ostringstream input;
     input << file.rdbuf();
     file.close();
@@ -903,6 +907,8 @@ MutationResult CalendarService::UpdateSeries(const std::string& id,
     CalendarSeries previous = *found;
     series.id = id;
     series.revision = found->revision + 1;
+    series.exceptions.clear();
+    series.notifiedTriggers.clear();
     for (const auto& [date, exception] : found->exceptions)
         if (Matches(series.rule, date)) series.exceptions.emplace(date, exception);
     const bool scheduleChanged = series.rule.kind != found->rule.kind ||

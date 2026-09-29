@@ -151,6 +151,51 @@ void CheckSeries(const std::filesystem::path& root)
     Expect(last.ok && service.EventById(last.id + "/2026-02-28") &&
         service.EventById(last.id + "/2026-04-30"),
         "monthly last day follows each month length");
+    auto third = service.EventById(created.id + "/2026-10-03");
+    if (third)
+    {
+        third->notes = "changed once";
+        Expect(service.Update(third->id, third->revision, *third).ok,
+            "second occurrence can have its own edit");
+    }
+    auto changedDates = *service.SeriesById(created.id);
+    changedDates.rule.dates = {"2026-10-01", "2026-10-04"};
+    changedDates.exceptions.emplace("2026-10-04",
+        snowdesktop::calendar::CalendarSeriesException{true, {}});
+    const auto revisedDates = service.UpdateSeries(created.id,
+        changedDates.revision, changedDates);
+    const auto afterRuleChange = service.SeriesById(created.id);
+    Expect(revisedDates.ok && afterRuleChange &&
+        afterRuleChange->exceptions.size() == 1 &&
+        afterRuleChange->exceptions.contains("2026-10-01") &&
+        !afterRuleChange->exceptions.contains("2026-10-03") &&
+        !afterRuleChange->exceptions.contains("2026-10-04"),
+        "rule updates retain only prior exceptions still matching the new rule");
+    CalendarSeries yearBoundary;
+    yearBoundary.event.title = "Cross year";
+    yearBoundary.event.startMinutes = 600; yearBoundary.event.endMinutes = 660;
+    yearBoundary.rule.kind = "weekly";
+    yearBoundary.rule.startDate = "2026-12-28";
+    yearBoundary.rule.endDate = "2027-01-11";
+    yearBoundary.rule.interval = 2;
+    yearBoundary.rule.weekdays = {2};
+    const auto acrossYear = service.CreateSeries(yearBoundary);
+    Expect(acrossYear.ok && service.EventById(acrossYear.id + "/2026-12-28") &&
+        !service.EventById(acrossYear.id + "/2027-01-04") &&
+        service.EventById(acrossYear.id + "/2027-01-11"),
+        "weekly intervals remain anchored across a year boundary");
+    CalendarSeries leap;
+    leap.event.title = "Leap day";
+    leap.event.startMinutes = 600; leap.event.endMinutes = 660;
+    leap.rule.kind = "monthly";
+    leap.rule.startDate = "2024-02-29";
+    leap.rule.endDate = "2025-02-28";
+    leap.rule.interval = 12;
+    leap.rule.monthDay = 0;
+    const auto leapResult = service.CreateSeries(leap);
+    Expect(leapResult.ok && service.EventById(leapResult.id + "/2024-02-29") &&
+        service.EventById(leapResult.id + "/2025-02-28"),
+        "last-day recurrence includes leap day and the next non-leap February");
     auto latest = *service.SeriesById(week.id);
     latest.event.title = "Updated series";
     Expect(!service.UpdateSeries(week.id, 0, latest).ok &&
@@ -177,6 +222,25 @@ void CheckSeries(const std::filesystem::path& root)
     reminderNow.minutes = 9 * 60 + 50;
     restarted.CheckReminders(reminderNow, true);
     Expect(delivered == 1, "series reminder is delivered only once across restart");
+
+    const auto isolatedPath = root / L"series-isolation" / L"SnowDesktop.calendar.json";
+    CalendarService isolated(isolatedPath, [&] { return now; });
+    Expect(isolated.Load(), "isolated series store starts empty");
+    CalendarSeries validSeries;
+    validSeries.event.title = "Independent series";
+    validSeries.event.startMinutes = 600; validSeries.event.endMinutes = 660;
+    validSeries.rule.kind = "dates"; validSeries.rule.dates = {"2026-10-08"};
+    const auto independent = isolated.CreateSeries(validSeries);
+    Write(isolatedPath, "{broken");
+    CalendarService damagedLegacy(isolatedPath, [&] { return now; });
+    Expect(!damagedLegacy.Load() && damagedLegacy.SeriesById(independent.id),
+        "corrupt legacy data is quarantined while the independent series still loads");
+    const auto sidecar = isolatedPath.parent_path() / L"SnowDesktop.calendar-series.json";
+    Write(sidecar, "{broken");
+    CalendarService damagedSeries(isolatedPath, [&] { return now; });
+    Expect(!damagedSeries.Load() && !std::filesystem::exists(sidecar) &&
+        damagedSeries.Series().empty(),
+        "corrupt series data is quarantined independently");
 }
 }
 

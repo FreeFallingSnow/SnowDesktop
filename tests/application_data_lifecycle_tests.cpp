@@ -440,6 +440,7 @@ void TestLayoutReset(const std::filesystem::path& root)
     const std::vector<std::filesystem::path> retained = {
         L"SnowDesktop.general.json", L"SnowDesktop.dock.json",
         L"SnowDesktop.calendar.json", L"SnowDesktop.widget-notifications.json",
+        L"SnowDesktop.calendar-series.json",
         L"SnowDesktop.widget-file-handles.json", L"widgets/packages.json",
         L"widgets/installed/demo/main.lua", L"large-icons/user.png",
         L"DropContent/user.txt"};
@@ -2416,6 +2417,8 @@ int main()
         "{ \"source\": \"complete-backup-modified\" }\n";
     const std::string originalCalendar =
         "{ \"schemaVersion\": 1, \"events\": [] }\n";
+    const std::string originalCalendarSeries =
+        "{ \"schemaVersion\": 1, \"series\": [] }\n";
     const std::string originalNotificationSchedules =
         "{ \"schemaVersion\": 1, \"entries\": [] }\n";
     Write(fullBackupData / L"SnowDesktop.layout.json",
@@ -2424,6 +2427,8 @@ int main()
         "{ \"language\": \"zh-CN\" }\n");
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         originalCalendar);
+    Write(fullBackupData / L"SnowDesktop.calendar-series.json",
+        originalCalendarSeries);
     Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
         originalNotificationSchedules);
     Write(fullBackupData / L"widgets" / L"installed" /
@@ -2548,6 +2553,8 @@ int main()
         Read(createdFullBackup.backup.data /
             L"SnowDesktop.calendar.json") == originalCalendar &&
         Read(createdFullBackup.backup.data /
+            L"SnowDesktop.calendar-series.json") == originalCalendarSeries &&
+        Read(createdFullBackup.backup.data /
             L"SnowDesktop.widget-notifications.json") ==
                 originalNotificationSchedules,
         "complete backup preserves layout, settings, calendar, widget notifications, packages, and storage");
@@ -2656,6 +2663,8 @@ int main()
         modifiedLayout);
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         "{ \"schemaVersion\": 1, \"events\": [1] }\n");
+    Write(fullBackupData / L"SnowDesktop.calendar-series.json",
+        "{ \"schemaVersion\": 1, \"series\": [1] }\n");
     Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
         "{ \"schemaVersion\": 1, \"entries\": [1] }\n");
     std::stop_source committedRestoreStop;
@@ -2680,6 +2689,8 @@ int main()
             originalLayout &&
         Read(fullBackupData / L"SnowDesktop.calendar.json") ==
             originalCalendar &&
+        Read(fullBackupData / L"SnowDesktop.calendar-series.json") ==
+            originalCalendarSeries &&
         Read(fullBackupData / L"SnowDesktop.widget-notifications.json") ==
             originalNotificationSchedules,
         "complete backup atomically restores layout, calendar, and widget notification schedules on the next startup");

@@ -146,6 +146,12 @@ void TestApplicationTaskGesturePolicy()
                 { "calendar.remove", "calendar.write", true, 1 },
                 error) &&
             broker.RegisterTask(
+                { "calendar.series.create", "calendar.write", false, 1 },
+                error) &&
+            broker.RegisterTask(
+                { "calendar.series.remove", "calendar.write", true, 1 },
+                error) &&
+            broker.RegisterTask(
                 { "shell.openUri", "shell.launch", true, 1 }, error) &&
             broker.RegisterTask(
                 { "desktop.search", "desktop.read", false, 2 }, error) &&
@@ -169,6 +175,30 @@ void TestApplicationTaskGesturePolicy()
         "application search completion must release its task slot");
     broker.DrainActions();
     broker.DrainCompletions();
+
+    options.trustedGesture = false;
+    options.arguments = {{"kind", "weekly"}};
+    const auto seriesCreate = broker.Start("widget", "calendar.series.create", options);
+    Check(static_cast<bool>(seriesCreate),
+        "authorized series creation does not require a gesture");
+    Check(broker.Complete(seriesCreate.id, true),
+        "series creation releases its task slot");
+    broker.DrainActions(); broker.DrainCompletions();
+    options.permissionGranted = false;
+    Check(!broker.Start("widget", "calendar.series.create", options),
+        "series creation rejects missing calendar.write permission");
+    options.permissionGranted = true;
+    options.arguments = {{"id", "series-id"}, {"expectedRevision", "1"}};
+    Check(!broker.Start("widget", "calendar.series.remove", options),
+        "series deletion rejects background calls");
+    options.trustedGesture = true;
+    const auto seriesRemove = broker.Start("widget", "calendar.series.remove", options);
+    Check(static_cast<bool>(seriesRemove),
+        "series deletion accepts a trusted authorized gesture");
+    Check(broker.Complete(seriesRemove.id, true),
+        "series deletion releases its task slot");
+    broker.DrainActions(); broker.DrainCompletions();
+    options.trustedGesture = false;
 
     options.arguments = { { "ref", "app:opaque" } };
     Check(!broker.Start("widget", "app.launch", options),
