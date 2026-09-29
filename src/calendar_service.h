@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -37,6 +38,38 @@ struct CalendarEvent
     std::string notes;
     int reminderMinutes = -1;
     std::string notifiedTrigger;
+    // Empty for legacy one-off events. An occurrence ID remains tied to its
+    // original date even when an exception moves it to another date.
+    std::string seriesId;
+    std::string occurrenceDate;
+    bool occurrenceOverride = false;
+};
+
+struct CalendarSeriesRule
+{
+    std::string kind; // dates, weekly, monthly
+    std::vector<std::string> dates;
+    std::string startDate;
+    std::string endDate; // empty means no end
+    int interval = 1;
+    std::vector<int> weekdays; // 1 = Sunday
+    int monthDay = 0; // 0 = last day of month
+};
+
+struct CalendarSeriesException
+{
+    bool canceled = false;
+    CalendarEvent event;
+};
+
+struct CalendarSeries
+{
+    std::string id;
+    int revision = 0;
+    CalendarEvent event;
+    CalendarSeriesRule rule;
+    std::map<std::string, CalendarSeriesException> exceptions;
+    std::map<std::string, std::string> notifiedTriggers;
 };
 
 struct MutationResult
@@ -77,12 +110,17 @@ public:
         const std::string& fromDate,
         const std::string& toDate) const;
     std::optional<CalendarEvent> EventById(const std::string& id) const;
+    std::optional<CalendarSeries> SeriesById(const std::string& id) const;
+    const std::vector<CalendarSeries>& Series() const { return series_; }
     MutationResult Create(CalendarEvent event);
+    MutationResult CreateSeries(CalendarSeries series);
+    MutationResult UpdateSeries(const std::string& id, int expectedRevision, CalendarSeries series);
+    MutationResult RemoveSeries(const std::string& id, int expectedRevision);
     MutationResult Update(
         const std::string& id,
         int expectedRevision,
         CalendarEvent event);
-    MutationResult Remove(const std::string& id);
+    MutationResult Remove(const std::string& id, int expectedRevision = 0);
 
     void SetChangedCallback(ChangedCallback callback)
     {
@@ -100,6 +138,12 @@ public:
 
 private:
     bool Save() const;
+    bool LoadSeries();
+    bool SaveSeries() const;
+    bool ValidateSeries(CalendarSeries& series, std::string& error) const;
+    static bool Matches(const CalendarSeriesRule& rule, const std::string& date);
+    static std::string OccurrenceId(const std::string& seriesId, const std::string& date);
+    std::optional<CalendarEvent> Occurrence(const CalendarSeries& series, const std::string& date) const;
     bool LoadText(const std::string& text);
     bool ValidateAndNormalize(
         CalendarEvent& event,
@@ -111,6 +155,7 @@ private:
     Clock clock_;
     std::string selectedDate_;
     std::vector<CalendarEvent> events_;
+    std::vector<CalendarSeries> series_;
     ChangedCallback changedCallback_;
     NotificationCallback notificationCallback_;
     bool startupCheckPending_ = true;
