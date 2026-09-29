@@ -890,7 +890,7 @@ std::optional<ViewRect> ResolveViewClipForKey(
 ViewRect ApplyViewTransform(const ViewRect& rect,
     const ViewResolvedTransform& transform) noexcept;
 void ApplyViewTransform(const ViewNode& root,
-    InteractionRegion& region) noexcept;
+    InteractionRegion& region, bool preserveClip = false) noexcept;
 std::vector<const ViewNode*> ViewChildrenInPaintOrder(const ViewNode& node);
 ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;

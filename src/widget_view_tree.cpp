@@ -4855,10 +4855,19 @@ ViewRect ApplyViewTransform(const ViewRect& rect,
 }
 
 void ApplyViewTransform(const ViewNode& root,
-    InteractionRegion& region) noexcept
+    InteractionRegion& region, bool preserveClip) noexcept
 {
     const auto transform = ResolveViewTransformForKey(root, region.key);
-    if (const auto clip = ResolveViewClipForKey(root, region.key, false))
+    if (preserveClip && region.clip)
+    {
+        const ViewRect clip = ApplyViewTransform(
+            { region.clip->x, region.clip->y,
+                region.clip->width, region.clip->height }, transform);
+        region.clip = InteractionClipRect{
+            clip.x, clip.y, clip.width, clip.height };
+    }
+    else if (const auto clip = ResolveViewClipForKey(
+            root, region.key, false))
     {
         region.clip = InteractionClipRect{
             clip->x, clip->y, clip->width, clip->height };
@@ -5718,6 +5727,7 @@ bool CollectViewInteractionRegions(const ViewNode& root,
     regions.clear();
     if (!CollectRegions(root, regions, std::nullopt,
             root.frame.height, error)) return false;
+    const std::size_t optionStart = regions.size();
     if (!CollectSelectOptions(root, regions, std::nullopt,
             root.frame.height, error)) return false;
     if (regions.size() > WidgetInteractionRegions::kMaximumRegions)
@@ -5726,8 +5736,8 @@ bool CollectViewInteractionRegions(const ViewNode& root,
         regions.clear();
         return false;
     }
-    for (auto& region : regions)
-        ApplyViewTransform(root, region);
+    for (std::size_t index = 0; index < regions.size(); ++index)
+        ApplyViewTransform(root, regions[index], index >= optionStart);
     std::erase_if(regions, [](const auto& region) {
         return !InteractionRegionOverlapsClip(region);
     });
