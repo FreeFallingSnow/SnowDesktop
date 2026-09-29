@@ -800,10 +800,8 @@ local function panel(context, model)
                     fontSize=row*0.46,maxBytes=10,enabled=not busy,action={id="agenda.rule",value=id},
                     accessibility={label=label}})
             end
-            ruleField("interval",model.rule.interval,l10n.tr("lua_widget.agenda.interval"))
-            children[#children+1]=button("endType",l10n.tr(model.rule.endDate=="" and
-                "lua_widget.agenda.never_ends" or "lua_widget.agenda.ends_on"),not busy)
-            if model.rule.endDate~="" then ruleField("endDate",model.rule.endDate,l10n.tr("lua_widget.agenda.end_date")) end
+            ruleField("interval",model.rule.interval,l10n.tr(model.mode=="weekly" and
+                "lua_widget.agenda.interval_weeks" or "lua_widget.agenda.interval_months"))
             if model.mode=="weekly" then
                 local days={}
                 for index=1,7 do
@@ -818,12 +816,19 @@ local function panel(context, model)
                 end
                 children[#children+1]=view.grid({key="agenda.weekdays",columns=4,height=row*2,gap=row*0.12,children=days})
             else
-                children[#children+1]=button("lastDay",l10n.tr("lua_widget.agenda.last_day")..": "..
-                    (model.rule.monthDay==0 and "✓" or "—"),not busy)
+                children[#children+1]=view.checkbox({key="agenda.lastDay",
+                    label=l10n.tr("lua_widget.agenda.last_day"),checked=model.rule.monthDay==0,
+                    height=row,fontSize=row*0.46,enabled=not busy,
+                    action={id="agenda.panel",value="lastDay"}})
                 if model.rule.monthDay~=0 then
                     ruleField("monthDay",model.rule.monthDay,l10n.tr("lua_widget.agenda.month_day"))
                 end
             end
+            children[#children+1]=view.checkbox({key="agenda.endType",
+                label=l10n.tr("lua_widget.agenda.never_ends"),checked=model.rule.endDate=="",
+                height=row,fontSize=row*0.46,enabled=not busy,
+                action={id="agenda.panel",value="endType"}})
+            if model.rule.endDate~="" then ruleField("endDate",model.rule.endDate,l10n.tr("lua_widget.agenda.end_date")) end
         end
         children[#children+1]=view.checkbox({key="agenda.allDay",label=l10n.tr("lua_widget.agenda.all_day"),checked=allDay,
             height=row,fontSize=row*0.46,style={foreground="textPrimary"},enabled=not busy,action={id="agenda.panel",value="toggleAllDay"}})

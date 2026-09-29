@@ -1383,6 +1383,9 @@ void CheckCalendarSeriesManagement()
         model.View().Find("calendar.edit.scope.series")&&
         model.Invoke("calendar.edit.mode.weekly")&&
         model.Invoke("calendar.edit.endType")&&
+        Node(model.View(),"calendar.edit.endType").selected&&
+        !Node(model.View(),"calendar.edit.endNever").selected&&
+        model.View().Find("calendar.edit.endDate")&&
         model.Reveal("calendar.edit.save"),
         "series panel did not expose its whole-series rule controls");
     CheckLayout(model.View());
@@ -1844,8 +1847,21 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         }
         if(seriesMonthly)
         {
-            Require(model.Invoke("calendar.edit.mode.monthly")&&model.Invoke("calendar.edit.monthDay.last"),
+            Require(model.Invoke("calendar.edit.mode.monthly"),
                 "calendar monthly preview could not show its last-day rule");
+            const auto& before=model.View();
+            const auto& minus=Node(before,"calendar.edit.interval.minus");
+            const auto& value=Node(before,"calendar.edit.interval.value");
+            const auto& plus=Node(before,"calendar.edit.interval.plus");
+            Require(minus.bounds.right<value.bounds.left&&value.bounds.right<plus.bounds.left&&
+                plus.bounds.left-minus.bounds.right<=88.f&&value.text==L"1"&&
+                Node(before,"calendar.edit.monthDay.specific").selected&&
+                Node(before,"calendar.edit.endNever").selected,
+                "monthly interval and choices did not expose a compact value and selected options");
+            Require(model.Invoke("calendar.edit.monthDay.last")&&
+                Node(model.View(),"calendar.edit.monthDay.last").selected&&
+                !model.View().Find("calendar.edit.monthDay.value"),
+                "choosing the last day left a conflicting numbered-day control");
             model.Reveal("calendar.edit.monthDay.last");
             const auto& last=Node(model.View(),"calendar.edit.monthDay.last");
             Require(last.bounds.top>=last.clip.top&&last.bounds.bottom<=last.clip.bottom,

@@ -33,6 +33,7 @@ public:
     void SetTrayDragFeedback(TrayDragFeedback);
     void SetTrayStateChanged(std::function<void(HMONITOR,bool)>);
     void SetNativeControlsHandler(std::function<void(HWND,RECT)>);
+    void SetCalendarMenuHandler(std::function<UINT(POINT,HWND,bool)>);
 private:
     struct Impl;std::unique_ptr<Impl> impl_;
 };

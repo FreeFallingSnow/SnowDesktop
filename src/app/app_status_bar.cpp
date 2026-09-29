@@ -273,6 +273,24 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                         false, 0, &appearance, false, 0, scale);
                     brushCache_.clear(); brushCacheContext_ = nullptr;
                 });
+        systemPanel_->SetCalendarMenuHandler([this](POINT screen, HWND owner, bool series) -> UINT {
+            if (exitRequested_) return 0;
+            HMENU menu = CreatePopupMenu();
+            if (!menu) return 0;
+            AppendMenuW(menu, MF_STRING, 1, _LW(series ? "settings.calendar.editOccurrence" : "settings.calendar.edit"));
+            if (series) AppendMenuW(menu, MF_STRING, 3, _LW("settings.calendar.editSeries"));
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(menu, MF_STRING, 2, _LW(series ? "settings.calendar.deleteOccurrence" : "app.settings.delete"));
+            if (series) AppendMenuW(menu, MF_STRING, 4, _LW("settings.calendar.deleteSeries"));
+            PrepareMenuIconsForPoint(screen);
+            UINT command = 0;
+            try { command = ShowModernMenu(menu, screen, owner, false, false, nullptr,
+                {}, {}, {}, nullptr, {}, true); }
+            catch (...) { DestroyMenu(menu); ClearMenuIcons(); throw; }
+            DestroyMenu(menu);
+            ClearMenuIcons();
+            return command;
+        });
         systemPanel_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
         systemPanel_->SetTrayStateChanged([this](HMONITOR monitor,bool expanded) {
             if(statusBar_)statusBar_->SetTrayExpanded(monitor,expanded);

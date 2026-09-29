@@ -573,7 +573,8 @@ UINT DesktopApp::ShowModernMenu(
     std::function<void(UINT, const std::wstring&,
         std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged,
     const snowdesktop::shell_extensions::Request* shellRequest,
-    std::function<HWND()> zOrderCompanion)
+    std::function<HWND()> zOrderCompanion,
+    bool forceTopmost)
 {
     if (!rootMenu)
         return 0;
@@ -713,6 +714,11 @@ UINT DesktopApp::ShowModernMenu(
         // host, while Options::owner still receives focus after dismissal.
         options.topmost = true;
         options.zOrderOwner = zOrderOwner;
+    }
+    if (forceTopmost)
+    {
+        options.topmost = true;
+        options.zOrderOwner = owner;
     }
     if (placeAwayFromTaskbar)
     {

@@ -48,6 +48,7 @@ struct SystemPanel::Impl
     SettingsChanged changed;SystemCalendarActions calendar;std::function<bool(std::string_view,POINT)> dropOutside;Background background;
     TrayDragFeedback dragFeedback;std::function<void(HWND,RECT)> nativeControls;
     std::function<void(HMONITOR,bool)> trayStateChanged;HMONITOR expandedTrayMonitor=nullptr;
+    std::function<UINT(POINT,HWND,bool)> calendarMenuHandler;
     UiAnimationScheduler* scheduler=nullptr;UiScheduleToken animationToken=0;quick_navigation_animation_rules::State slide;
     ComPtr<IDCompositionDesktopDevice> composition;ComPtr<IDWriteFactory> text;ComPtr<IDCompositionTarget> target;ComPtr<IDCompositionVisual2> visual;ComPtr<IDCompositionSurface> surface;
     DesktopBackdropCompositor backdrop;HWND window=nullptr;NativeTooltip tooltip;HMONITOR monitor=nullptr;std::optional<Request> current,pending;
@@ -418,36 +419,20 @@ struct SystemPanel::Impl
     }
     void CalendarContext(const std::string& id,POINT anchor)
     {
-        if(!model||!current||!id.starts_with("event:")||model->CalendarEditing()||!model->View().Find(id))return;
+        if(!model||!current||!calendarMenuHandler||!id.starts_with("event:")||model->CalendarEditing()||!model->View().Find(id))return;
         const auto life=lifetime;auto active=model;
         const bool series=model->CalendarEventIsSeries(id);
-        std::vector<modern_menu::Item> items(series?4:2);
-        items[0].command=1;items[0].label=_LW(series?"settings.calendar.scope.once":"settings.calendar.edit");items[0].builtinIcon=menu_icon::BuiltinIcon::None;
-        items[1].command=2;items[1].label=_LW(series?"settings.calendar.deleteOccurrence":"app.settings.delete");
-        if(series)
-        {
-            items[2].command=3;items[2].label=_LW("settings.calendar.scope.series");
-            items[3].command=4;items[3].label=_LW("settings.calendar.deleteSeries");
-        }
-        modern_menu::Options options;options.owner=window;options.zOrderOwner=window;options.anchor=anchor;
-        options.dpi=static_cast<UINT>(std::lround(scale*96));options.lightTheme=current->appearance.contentTheme!=0;options.topmost=true;
-        options.appearance=Glass()?(options.lightTheme?modern_menu::Appearance::SystemLightBlur:modern_menu::Appearance::SystemDarkBlur):
-            options.lightTheme?modern_menu::Appearance::OpaqueLight:modern_menu::Appearance::OpaqueDark;
-        if(scheduler)
-        {
-            options.eventPump.scheduledWorkHandle=scheduler->WaitHandle();
-            options.eventPump.dispatchScheduledWork=[this,life]{if(life->alive&&scheduler)scheduler->DispatchDue();};
-        }
         StopPointerHover();input.Cancel();modal=calendarMenu=true;
-        modern_menu::Result result;
-        try{result=modern_menu::Show(items,options);}
+        UINT command=0;
+        try{command=calendarMenuHandler(anchor,window,series);}
         catch(...){if(life->alive)modal=calendarMenu=false;throw;}
         if(!life->alive)return;
         modal=calendarMenu=false;
-        if(result.reason==modern_menu::ExitReason::ExternalActivation)
+        if(!current||!model)return;
+        if(!command&&GetForegroundWindow()!=window&&GetForegroundWindow()!=current->owner)
         {pending.reset();afterClose={};if(showing&&!closing)Animate(false);return;}
-        if(showing&&!closing&&model==active&&result.command&&result.reason==modern_menu::ExitReason::Command)
-        {active->CalendarEventCommand(id,result.command==2||result.command==4,result.command>=3);Arrange();FocusCalendarPage(false);Paint();}
+        if(showing&&!closing&&model==active&&command>=1&&command<=4)
+        {active->CalendarEventCommand(id,command==2||command==4,command>=3);Arrange();FocusCalendarPage(false);Paint();}
         if(!showing&&!destroying&&(pending||afterClose))PostMessageW(window,kOpenPending,++closeGeneration,0);
     }
     void FocusCalendarPage(bool keyboard)
@@ -659,4 +644,5 @@ bool SystemPanel::PreviewTrayDrop(std::string_view key,POINT p)
 void SystemPanel::SetTrayDragFeedback(TrayDragFeedback feedback){impl_->dragFeedback=std::move(feedback);}
 void SystemPanel::SetTrayStateChanged(std::function<void(HMONITOR,bool)> callback){impl_->trayStateChanged=std::move(callback);}
 void SystemPanel::SetNativeControlsHandler(std::function<void(HWND,RECT)> callback){impl_->nativeControls=std::move(callback);}
+void SystemPanel::SetCalendarMenuHandler(std::function<UINT(POINT,HWND,bool)> callback){impl_->calendarMenuHandler=std::move(callback);}
 }

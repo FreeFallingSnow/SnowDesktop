@@ -333,6 +333,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (updating) return;
         if (editingSeriesMode && mode.SelectedIndex() == 0) mode.SelectedIndex(1);
         const int selected = editingSeriesMode || editing.id.empty() ? mode.SelectedIndex() : 0;
+        if (selected >= 2) interval.Header(winrt::box_value(L(selected == 2 ?
+            "settings.calendar.intervalWeeks" : "settings.calendar.intervalMonths")));
         const bool rule = editingSeriesMode || editing.id.empty();
         mode.Visibility(rule ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         scope.Visibility(editingSeries.id.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
