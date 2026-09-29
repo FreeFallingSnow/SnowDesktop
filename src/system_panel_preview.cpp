@@ -1485,11 +1485,19 @@ void CheckCalendarResponsive()
         "secondary calendar switch did not use a labeled button");
     Require(model.Invoke("calendar.toggleCalendar")&&
         Node(model.View(),"calendar.month").text!=gregorianMonth&&
+        Node(model.View(),"calendar.month").text.find(L"丙午年")!=std::wstring::npos&&
         Node(model.View(),"calendar.toggleCalendar").text==_LW("statusBar.calendarGregorianShort")&&
         Node(model.View(),"date:2026-09-26").text!=L"26"&&
+        !model.View().Find("date:2026-08-31")&&
+        Node(model.View(),"date:2026-09-11").text==L"1"&&
+        !Node(model.View(),"date:2026-09-11").secondary&&
+        Node(model.View(),"date:2026-09-10").secondary&&
         Node(model.View(),"calendar.selected").text==fullSecondary&&
         Node(model.View(),"calendar.selectedSecondary").text==L"2026-09-26",
-        "calendar switch did not convert the heading, day cells and selected date together");
+        "calendar switch did not rebuild the month boundary, heading and selected date together");
+    Require(model.Invoke("calendar.next")&&!model.View().Find("date:2026-09-29")&&
+        model.Invoke("calendar.previous")&&Node(model.View(),"date:2026-09-11").text==L"1",
+        "secondary month navigation still advanced Gregorian months");
     Require(model.Invoke("calendar.toggleCalendar")&&Node(model.View(),"calendar.month").text==gregorianMonth&&
         Node(model.View(),"date:2026-09-26").text==L"26",
         "calendar switch did not restore Gregorian display");

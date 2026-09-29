@@ -91,7 +91,7 @@ void SystemPanelModel::Close()
 {
     if(closed_)return;
     CancelControlInput();
-    closed_=true;dismissRequested_=false;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();ClearError();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarDetails_.clear();calendarDisplaySecondary_=false;calendarAnnotationKey_.clear();lastStarted_=0;
+    closed_=true;dismissRequested_=false;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();ClearError();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarDetails_.clear();calendarDisplaySecondary_=false;calendarAnnotationKey_.clear();calendarDetailsRevision_.clear();lastStarted_=0;
     // A close callback may pump messages. Detach all effects before calling it,
     // and keep its callable alive even if the callback re-enters Close().
     auto close=std::move(source_.close);source_={};if(close)close();
@@ -1029,7 +1029,31 @@ void SystemPanelModel::Calendar()
     if(!calendar::CalendarService::GetDateInfo(today))today=calendar::CalendarService::CurrentLocalNow().date;
     if(!calendar::CalendarService::GetDateInfo(date_))date_=today;
     if(!calendar::CalendarService::GetDateInfo(month_))month_=date_.substr(0,7)+"-01";
-    const auto month=calendar::CalendarService::GetDateInfo(month_);
+    const auto language=Locale::Instance().GetEffectiveLanguage();const auto locale=Wide(language);
+    const auto revision=language+":"+(source_.calendar.secondaryRevision?source_.calendar.secondaryRevision():std::string{});
+    if(revision!=calendarDetailsRevision_)
+    {
+        calendarDetails_.clear();calendarAnnotations_.clear();calendarAnnotationKey_.clear();
+        calendarDetailsRevision_=revision;
+    }
+    std::string monthStart=month_;
+    if(calendarDisplaySecondary_)
+    {
+        if(!calendarDetails_.contains(month_)&&source_.calendar.secondaryAnnotations)
+            for(auto& annotation:source_.calendar.secondaryAnnotations(month_,month_))
+                if(annotation.calendarAvailable)calendarDetails_.emplace(annotation.date,std::move(annotation));
+        if(closed_)return;
+        const auto anchor=calendarDetails_.find(month_);
+        const auto start=anchor!=calendarDetails_.end()&&anchor->second.day>=1&&anchor->second.day<=31?
+            calendar::CalendarService::AddDays(month_,1-anchor->second.day):std::nullopt;
+        if(start)monthStart=*start;
+        else
+        {
+            calendarDisplaySecondary_=false;
+            month_=date_.substr(0,7)+"-01";monthStart=month_;
+        }
+    }
+    const auto month=calendar::CalendarService::GetDateInfo(monthStart);
     if(!month)return;
     const bool two=scene_.width>=560;
     if(CalendarEditing()&&!two&&!calendarStacked_)
@@ -1040,10 +1064,9 @@ void SystemPanelModel::Calendar()
     const float monthLeft=16,monthTop=16;
     const float monthWidth=two?(scene_.width-48)/2:scene_.width-32,toolbar=monthWidth<280?72.f:36.f;
     const float buttonsTop=monthTop+(toolbar>36?36.f:0.f),gridTop=monthTop+toolbar+12;
-    const int offset=(month->weekday+5)%7;
-    const auto first=calendar::CalendarService::AddDays(month_,-offset).value_or(month_);
-    const auto last=calendar::CalendarService::AddDays(month_,41-offset).value_or("9999-12-31");
-    const auto dates=ui::DateTimePicker::MonthDates(month_);
+    const auto dates=ui::DateTimePicker::MonthDates(monthStart);
+    const auto first=**std::find_if(dates.begin(),dates.end(),[](const auto& date){return date.has_value();});
+    const auto last=**std::find_if(dates.rbegin(),dates.rend(),[](const auto& date){return date.has_value();});
     std::set<std::string> requestedDates;
     for(const auto& date:dates)if(date)requestedDates.insert(*date);
     for(int i=0;i<3;++i)if(const auto date=calendar::CalendarService::AddDays(date_,i))requestedDates.insert(*date);
@@ -1058,8 +1081,7 @@ void SystemPanelModel::Calendar()
     }
     else if(source_.calendar.events)
         for(const auto& date:requestedDates)eventsByDate[date]=source_.calendar.events(date);
-    const auto language=Locale::Instance().GetEffectiveLanguage();const auto locale=Wide(language);
-    const auto annotationKey=first+":"+last+":"+language+":"+(source_.calendar.secondaryRevision?source_.calendar.secondaryRevision():std::string{});
+    const auto annotationKey=first+":"+last+":"+revision;
     if(annotationKey!=calendarAnnotationKey_)
     {
         calendarAnnotations_.clear();
@@ -1075,8 +1097,7 @@ void SystemPanelModel::Calendar()
         }
         else if(source_.calendar.secondaryDates)calendarAnnotations_=source_.calendar.secondaryDates(first,last);
         else if(source_.calendar.secondaryDate)
-            for(int i=0;i<42;++i)if(const auto date=calendar::CalendarService::AddDays(month_,i-offset))
-                calendarAnnotations_[*date]=source_.calendar.secondaryDate(*date);
+            for(const auto& date:dates)if(date)calendarAnnotations_[*date]=source_.calendar.secondaryDate(*date);
         calendarAnnotationKey_=annotationKey;
     }
     if((date_<first||date_>last)&&!calendarAnnotations_.contains(date_)&&source_.calendar.secondaryDate)
@@ -1085,9 +1106,19 @@ void SystemPanelModel::Calendar()
         for(auto& annotation:source_.calendar.secondaryAnnotations(date_,date_))
             if(annotation.calendarAvailable&&!annotation.fullDate.empty())
                 calendarDetails_.emplace(annotation.date,std::move(annotation));
-    if(!calendarDetails_.contains(month_))calendarDisplaySecondary_=false;
-    const bool hasToggle=calendarDetails_.contains(month_);
-    const auto monthText=calendarDisplaySecondary_&&!calendarDetails_.at(month_).monthHeading.empty()?Wide(calendarDetails_.at(month_).monthHeading):
+    if(calendarDisplaySecondary_&&!calendarDetails_.contains(monthStart))
+    {
+        calendarDisplaySecondary_=false;month_=date_.substr(0,7)+"-01";
+        Calendar();return;
+    }
+    std::optional<std::string> nextSecondaryMonth;
+    if(calendarDisplaySecondary_)
+        for(const auto& date:dates)
+            if(date&&*date>monthStart)
+                if(const auto day=calendarDetails_.find(*date);day!=calendarDetails_.end()&&day->second.day==1)
+                {nextSecondaryMonth=*date;break;}
+    const bool hasToggle=calendarDetails_.contains(monthStart);
+    const auto monthText=calendarDisplaySecondary_&&!calendarDetails_.at(monthStart).monthHeading.empty()?Wide(calendarDetails_.at(monthStart).monthHeading):
         std::to_wstring(month->year)+L" / "+std::to_wstring(month->month);
     auto& monthLabel=Add("calendar.month",ui::Role::Text,Rect(monthLeft,monthTop,toolbar>36?monthWidth:monthWidth-(hasToggle?224.f:150.f),32),monthText);monthLabel.bold=true;monthLabel.fontSize=16;monthLabel.tooltip=monthText;
     if(hasToggle)
@@ -1098,17 +1129,36 @@ void SystemPanelModel::Calendar()
         toggle.centered=true;toggle.fontSize=12;
         toggle.tooltip=_LW(calendarDisplaySecondary_?"statusBar.calendarShowGregorian":"statusBar.calendarShowSecondary");
         toggle.accessibilityLabel=toggle.tooltip;
-        Command(toggle.id,[this]{calendarDisplaySecondary_=!calendarDisplaySecondary_;});
+        Command(toggle.id,[this]{
+            calendarDisplaySecondary_=!calendarDisplaySecondary_;
+            month_=calendarDisplaySecondary_?date_:date_.substr(0,7)+"-01";
+            scroll_=0;
+        });
     }
     auto& todayButton=Add("calendar.today",ui::Role::Button,Rect(monthLeft+monthWidth-144,buttonsTop,68,32),_LW("app.widget.date_picker.today"));todayButton.centered=true;todayButton.fontSize=12;
-    Command("calendar.today",[this,today]{date_=today;month_=date_.substr(0,7)+"-01";if(!CalendarEditing())scroll_=0;calendarNotice_.clear();});
+    Command("calendar.today",[this,today]{date_=today;month_=calendarDisplaySecondary_?today:date_.substr(0,7)+"-01";if(!CalendarEditing())scroll_=0;calendarNotice_.clear();});
     for(int i=0;i<2;++i)
     {
         const auto id=i?"calendar.next":"calendar.previous";
         auto& n=Add(id,ui::Role::Icon,Rect(monthLeft+monthWidth-70+i*36.f,buttonsTop,32,32),L"",i?L"\uE76C":L"\uE76B");
         n.tooltip=_LW(i?"app.widget.date_picker.next":"app.widget.date_picker.previous");
-        n.enabled=i?month->year<9999||month->month<12:month->year>1||month->month>1;
-        Command(id,[this,i]{const auto d=calendar::CalendarService::GetDateInfo(month_);if(!d)return;int m=d->month+(i?1:-1),year=d->year;if(m<1){m=12;--year;}if(m>12){m=1;++year;}if(year>=1&&year<=9999){month_=Date(year,m,1);if(!CalendarEditing())scroll_=0;calendarNotice_.clear();}});
+        n.enabled=calendarDisplaySecondary_?
+            (i?nextSecondaryMonth.has_value():calendar::CalendarService::AddDays(monthStart,-1).has_value()):
+            (i?month->year<9999||month->month<12:month->year>1||month->month>1);
+        Command(id,[this,i,monthStart,nextSecondaryMonth]{
+            if(calendarDisplaySecondary_)
+            {
+                if(i){if(nextSecondaryMonth)month_=*nextSecondaryMonth;}
+                else if(const auto anchor=calendar::CalendarService::AddDays(monthStart,-1))month_=*anchor;
+            }
+            else if(const auto d=calendar::CalendarService::GetDateInfo(month_))
+            {
+                int m=d->month+(i?1:-1),year=d->year;
+                if(m<1){m=12;--year;}if(m>12){m=1;++year;}
+                if(year>=1&&year<=9999)month_=Date(year,m,1);
+            }
+            if(!CalendarEditing())scroll_=0;calendarNotice_.clear();
+        });
     }
     const float cell=monthWidth/7;
     for(int i=0;i<7;++i)
@@ -1123,14 +1173,22 @@ void SystemPanelModel::Calendar()
         const auto d=calendar::CalendarService::GetDateInfo(*date);if(!d)continue;
         const auto displayed=calendarDisplaySecondary_&&calendarDetails_.contains(*date)?calendarDetails_.at(*date).day:d->day;
         auto& n=Add("date:"+*date,ui::Role::ListItem,Rect(monthLeft+(i%7)*cell,gridTop+28+(i/7)*34.f,cell-4,30),std::to_wstring(displayed));
-        n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.secondary=d->month!=month->month;n.fontSize=13;
+        n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.fontSize=13;
+        if(calendarDisplaySecondary_)
+        {
+            const auto current=calendarDetails_.find(monthStart),day=calendarDetails_.find(*date);
+            n.secondary=day==calendarDetails_.end()||current==calendarDetails_.end()||
+                day->second.year!=current->second.year||day->second.era!=current->second.era||
+                day->second.month!=current->second.month||day->second.leapMonth!=current->second.leapMonth;
+        }
+        else n.secondary=d->month!=month->month;
         n.marked=eventsByDate.contains(*date)&&!eventsByDate.at(*date).empty();
         SYSTEMTIME time{};time.wYear=static_cast<WORD>(d->year);time.wMonth=static_cast<WORD>(d->month);time.wDay=static_cast<WORD>(d->day);wchar_t weekday[96]{};
         GetDateFormatEx(locale.c_str(),0,&time,L"dddd",weekday,96,nullptr);
         n.tooltip=Wide(*date);if(weekday[0])n.tooltip+=L" · "+std::wstring(weekday);
         if(const auto secondary=calendarAnnotations_.find(*date);secondary!=calendarAnnotations_.end()&&!secondary->second.empty())n.tooltip+=L"\n"+Wide(secondary->second);
         n.accessibilityLabel=n.tooltip;
-        Command(n.id,[this,date=*date]{date_=date;month_=date.substr(0,7)+"-01";calendarNotice_.clear();});
+        Command(n.id,[this,date=*date]{date_=date;month_=calendarDisplaySecondary_?date:date.substr(0,7)+"-01";calendarNotice_.clear();});
     }
     const float monthEnd=gridTop+28+6*34,agendaLeft=two?monthLeft+monthWidth+16:16,agendaWidth=scene_.width-agendaLeft-16;
     const float agendaTop=two?monthTop:monthEnd+16;

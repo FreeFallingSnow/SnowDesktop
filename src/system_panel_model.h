@@ -117,6 +117,7 @@ private:
     native_ui::Scene scene_;
     std::string page_, interface_, network_, bluetooth_, gpu_, media_, date_, month_;
     std::string calendarAnnotationKey_;
+    std::string calendarDetailsRevision_;
     std::map<std::string,std::string> calendarAnnotations_;
     std::map<std::string,calendar::DayAnnotation> calendarDetails_;
     std::map<std::string,calendar::CalendarEvent> calendarEvents_;

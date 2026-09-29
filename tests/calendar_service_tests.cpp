@@ -163,6 +163,11 @@ int wmain(int argc, wchar_t* argv[])
     Expect(Annotate("2026-10-01", "2026-10-01", display, "zh-CN")[0].fullDate.find(" 星期四") != std::string::npos,
         "full lunar date separates the weekday with a space");
     Expect(Annotate("2024-02-10", "2024-02-10", display, "zh-CN")[0].secondary == "正月", "lunar new year caption is month only");
+    const auto cyclical=Annotate("2026-09-29","2026-09-29",display,"zh-CN");
+    Expect(cyclical.size()==1&&cyclical[0].monthHeading.starts_with("丙午年")&&
+        cyclical[0].fullDate.starts_with("丙午年")&&
+        cyclical[0].fullDate.find("2026")==std::string::npos,
+        "Chinese lunar dates use the sexagenary year without a Gregorian year prefix");
     display.holidaysEnabled = true; display.region = "CN";
     const auto formerHoliday = Annotate("2024-10-01", "2024-10-01", display, "zh-CN");
     Expect(formerHoliday.size() == 1 && formerHoliday[0].calendarAvailable && formerHoliday[0].holidays.empty() && !formerHoliday[0].holidaysAvailable,
