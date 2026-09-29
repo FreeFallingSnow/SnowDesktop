@@ -109,9 +109,11 @@ public:
     std::vector<CalendarEvent> Events(
         const std::string& fromDate,
         const std::string& toDate) const;
+    std::vector<CalendarEvent> SingleEvents() const;
     std::optional<CalendarEvent> EventById(const std::string& id) const;
     std::optional<CalendarSeries> SeriesById(const std::string& id) const;
     const std::vector<CalendarSeries>& Series() const { return series_; }
+    static bool MatchesRule(const CalendarSeriesRule& rule, const std::string& date);
     MutationResult Create(CalendarEvent event);
     MutationResult CreateSeries(CalendarSeries series);
     MutationResult UpdateSeries(const std::string& id, int expectedRevision, CalendarSeries series);

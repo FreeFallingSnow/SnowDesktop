@@ -1297,6 +1297,10 @@ public:
         RuntimeCalendarEvents(
             const std::string& fromDate,
             const std::string& toDate) const;
+    std::vector<snowdesktop::calendar::CalendarEvent>
+        RuntimeCalendarSingleEvents() const;
+    std::optional<snowdesktop::calendar::CalendarEvent>
+        RuntimeCalendarEventById(const std::string& id) const;
     std::optional<snowdesktop::calendar::CalendarSeries>
         RuntimeCalendarSeriesById(const std::string& id) const;
     std::vector<snowdesktop::calendar::CalendarSeries>
@@ -1317,7 +1321,7 @@ public:
             int expectedRevision,
             snowdesktop::calendar::CalendarEvent event);
     snowdesktop::calendar::MutationResult
-        RuntimeCalendarRemove(const std::string& id);
+        RuntimeCalendarRemove(const std::string& id, int expectedRevision = 0);
 
     /**
      * @brief 通过宿主打开指定路径

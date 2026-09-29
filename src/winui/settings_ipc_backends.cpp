@@ -323,21 +323,37 @@ struct BackendServer::Impl
         channel.Bind<std::optional<std::vector<calendar::CalendarEvent>>, Token>("calendar.events", [this](Token generation) -> std::optional<std::vector<calendar::CalendarEvent>> {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
-            return engine->RuntimeCalendarEvents("0001-01-01", "9999-12-31");
+            return engine->RuntimeCalendarSingleEvents();
         });
         channel.Bind<calendar::MutationResult, Token, calendar::CalendarEvent, bool>("calendar.mutate", [this](Token generation, calendar::CalendarEvent event, bool remove) -> calendar::MutationResult {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
             if (remove)
             {
-                const auto events = engine->RuntimeCalendarEvents("0001-01-01", "9999-12-31");
-                const auto found = std::find_if(events.begin(), events.end(), [&](const auto& item) { return item.id == event.id; });
-                if (found == events.end()) return {false, event.id, 0, "not_found"};
+                const auto found = engine->RuntimeCalendarEventById(event.id);
+                if (!found) return {false, event.id, 0, "not_found"};
                 if (found->revision != event.revision) return {false, event.id, found->revision, "conflict"};
-                return engine->RuntimeCalendarRemove(event.id);
+                return engine->RuntimeCalendarRemove(event.id, event.revision);
             }
             if (event.id.empty()) return engine->RuntimeCalendarCreate(std::move(event));
             return engine->RuntimeCalendarUpdate(event.id, event.revision, event);
+        });
+        channel.Bind<std::optional<std::vector<calendar::CalendarSeries>>, Token>("calendar.series", [this](Token generation) -> std::optional<std::vector<calendar::CalendarSeries>> {
+            const auto current = controller.Snapshot();
+            if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
+            return engine->RuntimeCalendarSeries();
+        });
+        channel.Bind<std::optional<calendar::CalendarEvent>, Token, std::string>("calendar.occurrence", [this](Token generation, std::string id) -> std::optional<calendar::CalendarEvent> {
+            const auto current = controller.Snapshot();
+            if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
+            return engine->RuntimeCalendarEventById(id);
+        });
+        channel.Bind<calendar::MutationResult, Token, calendar::CalendarSeries, bool>("calendar.series.mutate", [this](Token generation, calendar::CalendarSeries series, bool remove) -> calendar::MutationResult {
+            const auto current = controller.Snapshot();
+            if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
+            if (remove) return engine->RuntimeCalendarSeriesRemove(series.id, series.revision);
+            if (series.id.empty()) return engine->RuntimeCalendarSeriesCreate(std::move(series));
+            return engine->RuntimeCalendarSeriesUpdate(series.id, series.revision, std::move(series));
         });
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
@@ -479,6 +495,9 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     };
     options.calendarPage.events = [&channel](Token generation) { return channel.Call<std::optional<std::vector<calendar::CalendarEvent>>>("calendar.events", generation); };
     options.calendarPage.mutate = [&channel](Token generation, calendar::CalendarEvent event, bool remove) { return channel.Call<calendar::MutationResult>("calendar.mutate", generation, event, remove); };
+    options.calendarPage.series = [&channel](Token generation) { return channel.Call<std::optional<std::vector<calendar::CalendarSeries>>>("calendar.series", generation); };
+    options.calendarPage.occurrence = [&channel](Token generation, std::string id) { return channel.Call<std::optional<calendar::CalendarEvent>>("calendar.occurrence", generation, id); };
+    options.calendarPage.mutateSeries = [&channel](Token generation, calendar::CalendarSeries series, bool remove) { return channel.Call<calendar::MutationResult>("calendar.series.mutate", generation, series, remove); };
     options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);

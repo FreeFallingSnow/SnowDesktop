@@ -600,6 +600,19 @@ std::vector<CalendarEvent> CalendarService::Events(
     return result;
 }
 
+std::vector<CalendarEvent> CalendarService::SingleEvents() const
+{
+    auto result = events_;
+    std::sort(result.begin(), result.end(), EventLess);
+    return result;
+}
+
+bool CalendarService::MatchesRule(const CalendarSeriesRule& rule,
+    const std::string& date)
+{
+    return Matches(rule, date);
+}
+
 bool CalendarService::SetSelectedDate(
     const std::string& date)
 {

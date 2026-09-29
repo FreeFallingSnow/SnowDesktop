@@ -26431,6 +26431,19 @@ WidgetEngine::RuntimeCalendarEvents(
             snowdesktop::calendar::CalendarEvent>{};
 }
 
+std::vector<snowdesktop::calendar::CalendarEvent>
+WidgetEngine::RuntimeCalendarSingleEvents() const
+{
+    return calendarService_ ? calendarService_->SingleEvents() :
+        std::vector<snowdesktop::calendar::CalendarEvent>{};
+}
+
+std::optional<snowdesktop::calendar::CalendarEvent>
+WidgetEngine::RuntimeCalendarEventById(const std::string& id) const
+{
+    return calendarService_ ? calendarService_->EventById(id) : std::nullopt;
+}
+
 std::optional<snowdesktop::calendar::CalendarSeries>
 WidgetEngine::RuntimeCalendarSeriesById(const std::string& id) const
 {
@@ -26505,13 +26518,13 @@ WidgetEngine::RuntimeCalendarUpdate(
 
 snowdesktop::calendar::MutationResult
 WidgetEngine::RuntimeCalendarRemove(
-    const std::string& id)
+    const std::string& id, int expectedRevision)
 {
     if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, id, 0,
             _L("app.widget_preview.api.read_only") };
     return calendarService_
-        ? calendarService_->Remove(id)
+        ? calendarService_->Remove(id, expectedRevision)
         : snowdesktop::calendar::MutationResult{
             false, id, 0, "unavailable"
         };
