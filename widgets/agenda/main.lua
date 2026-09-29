@@ -796,7 +796,8 @@ local function panel(context, model)
             children[#children+1]=view.text({key="agenda.date.label",text=dateLabel,
                 height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
             children[#children+1]=view.button({key="agenda.openDatePicker",label=summary,width="fill",height=row,
-                fontSize=row*0.46,textAlign="start",style={foreground="textPrimary",cornerRadius=row*0.12},
+                fontSize=row*0.46,textAlign="start",padding={horizontal=row*0.32},
+                style={foreground="textPrimary",cornerRadius=row*0.12},
                 enabled=not busy,action={id="agenda.panel",value="openDatePicker"},
                 accessibility={label=dateLabel..": "..(#dates>0 and table.concat(dates,", ") or summary)}})
         else
@@ -857,7 +858,7 @@ local function panel(context, model)
                 children[#children+1]=view.text({key=key..".label",text=label,height=row,
                     fontSize=row*0.43,style={foreground="textSecondary"}})
                 children[#children+1]=view.button({key=key..".picker",label=value~="" and value or l10n.tr("lua_widget.agenda.choose_time"),
-                    width="fill",height=row,fontSize=row*0.46,textAlign="start",
+                    width="fill",height=row,fontSize=row*0.46,textAlign="start",padding={horizontal=row*0.32},
                     style={foreground="textPrimary",cornerRadius=row*0.12},enabled=not busy,
                     action={id="agenda.panel",value="openTimePicker"},
                     accessibility={label=label..": "..value..". "..l10n.tr("lua_widget.agenda.choose_time")}})

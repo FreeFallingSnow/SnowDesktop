@@ -718,8 +718,10 @@ view.searchBox({
 `events.click` 和 `accessibility.label`。展开状态同样由组件通过 `expanded` 控制：触发区 click
 报告 `previousExpanded/expanded`，展开后每个 `<select-key>/<option-key>` 选项 change 报告
 `previousSelection/selection`。宿主在组件内表面顶层绘制选项并优先命中，不调用阻塞式系统
-菜单；组件收到 click/change 后应更新 model 并 invalidate。当前弹层仍受组件及父滚动视口
-裁剪，跨组件表面的通用 popover 属于后续宿主 surface API。
+菜单；组件收到 click/change 后应更新 model 并 invalidate。选项层在当前组件表面内选择
+空间较大的一侧展开，最多显示五项；更多选项可在选项层内滚动，点击优先于下层输入框。
+选项层不受父滚动视口裁剪，但仍限制在组件表面内。跨组件表面的通用 popover 属于后续
+宿主 surface API。
 
 `textInput/textArea/searchBox/numberInput` 可设置 `readOnly=true`。只读输入仍可获得焦点、
 移动光标、选择并复制文字，也可触发 focus/blur/submit；宿主会拒绝键入、IME 提交、粘贴、

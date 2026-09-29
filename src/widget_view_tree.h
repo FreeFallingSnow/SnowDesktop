@@ -689,6 +689,7 @@ struct ViewScrollViewport
     float offset = 0.0f;
     float maximum = 0.0f;
     bool initialized = false;
+    bool selectPopup = false;
 };
 
 struct ViewInputControl
@@ -895,6 +896,8 @@ ViewRect ViewRadioOptionFrame(
     const ViewNode& node, std::size_t optionIndex) noexcept;
 ViewRect ViewSelectOptionFrame(const ViewNode& node,
     std::size_t optionIndex, float viewportHeight) noexcept;
+ViewRect ViewSelectPopupFrame(const ViewNode& node,
+    float viewportHeight) noexcept;
 ViewRect ViewMonthCalendarWeekdayFrame(
     const ViewNode& node, std::size_t weekdayIndex) noexcept;
 ViewRect ViewMonthCalendarCellFrame(

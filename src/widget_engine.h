@@ -543,6 +543,8 @@ struct LuaWidget
         int contentWidth = 0;
         int viewportWidth = 0;
         bool horizontal = false;
+        bool selectPopup = false;
+        int initialScrollOffset = 0;
         std::size_t maximumUtf8Bytes = 0;
     };
 

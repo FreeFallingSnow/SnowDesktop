@@ -3879,6 +3879,7 @@ bool CollectSelectOptions(const ViewNode& node,
         return true;
     if (node.type == ViewNodeType::Select && node.expanded)
     {
+        const ViewRect popup = ViewSelectPopupFrame(node, viewportHeight);
         for (std::size_t index = 0; index < node.options.size(); ++index)
         {
             const auto& option = node.options[index];
@@ -3897,10 +3898,8 @@ bool CollectSelectOptions(const ViewNode& node,
             region.shape.y = frame.y;
             region.shape.width = frame.width;
             region.shape.height = frame.height;
-            if (inheritedClip)
-                region.clip = InteractionClipRect{ inheritedClip->x,
-                    inheritedClip->y, inheritedClip->width,
-                    inheritedClip->height };
+            region.clip = InteractionClipRect{ popup.x, popup.y,
+                popup.width, popup.height };
             region.cursor = "hand";
             region.tooltipTitle = node.tooltipTitle;
             region.tooltip = node.tooltip;
@@ -4115,7 +4114,8 @@ bool ApplyScrollState(ViewNode& node,
     const ViewScrollOffsetResolver& resolver,
     std::vector<ViewScrollViewport>& viewports,
     const std::optional<ViewRect>& inheritedClip,
-    std::size_t& scrollContainers, std::string& error)
+    float surfaceHeight, std::size_t& scrollContainers,
+    std::string& error)
 {
     if (!node.visible || node.visibility == ViewVisibility::Hidden)
         return true;
@@ -4123,6 +4123,41 @@ bool ApplyScrollState(ViewNode& node,
     if (!IsScrollContainer(node.type) && node.clipFrame)
     {
         childClip = IntersectRects(inheritedClip, *node.clipFrame);
+    }
+    if (node.type == ViewNodeType::Select && node.expanded)
+    {
+        const ViewRect popup = ViewSelectPopupFrame(node, surfaceHeight);
+        const float optionHeight = std::max(28.0f,
+            std::min(48.0f, node.fontSize * 1.8f));
+        const float contentExtent = optionHeight *
+            static_cast<float>(node.options.size());
+        const float maximum = std::max(0.0f,
+            contentExtent - popup.height);
+        const std::optional<float> resolved = resolver
+            ? resolver(node.key, maximum) : std::optional<float>{};
+        float requested = resolved.value_or(0.0f);
+        if (!resolved)
+        {
+            const auto selected = std::find_if(node.options.begin(),
+                node.options.end(), [&node](const auto& option) {
+                    return option.value == node.selectedValue;
+                });
+            if (selected != node.options.end())
+                requested = optionHeight * static_cast<float>(
+                    std::distance(node.options.begin(), selected) + 1) -
+                    popup.height;
+        }
+        if (!std::isfinite(requested))
+        {
+            error = "view select scroll resolver returned a non-finite offset";
+            return false;
+        }
+        node.scrollOffset = std::clamp(requested, 0.0f, maximum);
+        node.scrollViewportExtent = popup.height;
+        node.scrollContentExtent = contentExtent;
+        viewports.push_back({ node.key, popup,
+            ViewOrientation::Vertical, popup.height, contentExtent,
+            node.scrollOffset, maximum, !resolved.has_value(), true });
     }
     if (IsScrollContainer(node.type))
     {
@@ -4311,7 +4346,7 @@ bool ApplyScrollState(ViewNode& node,
     }
     for (auto& child : node.children)
         if (!ApplyScrollState(child, resolver, viewports, childClip,
-                scrollContainers, error)) return false;
+                surfaceHeight, scrollContainers, error)) return false;
     return true;
 }
 
@@ -5384,6 +5419,27 @@ ViewRect ViewRadioOptionFrame(
             (height + node.gap), content.width, height };
 }
 
+ViewRect ViewSelectPopupFrame(const ViewNode& node,
+    float viewportHeight) noexcept
+{
+    if (node.options.empty() || node.frame.width <= 0.0f)
+        return {};
+    const float optionHeight = std::max(28.0f,
+        std::min(48.0f, node.fontSize * 1.8f));
+    const float desiredHeight = optionHeight *
+        static_cast<float>(std::min<std::size_t>(node.options.size(), 5));
+    const float above = std::max(0.0f, node.frame.y - 4.0f);
+    const float below = std::max(0.0f, viewportHeight -
+        node.frame.y - node.frame.height - 4.0f);
+    const bool openAbove = below < desiredHeight && above > below;
+    const float popupHeight = std::min(desiredHeight,
+        openAbove ? above : below);
+    const float popupTop = openAbove
+        ? node.frame.y - popupHeight
+        : node.frame.y + node.frame.height;
+    return { node.frame.x, popupTop, node.frame.width, popupHeight };
+}
+
 ViewRect ViewSelectOptionFrame(const ViewNode& node,
     std::size_t optionIndex, float viewportHeight) noexcept
 {
@@ -5391,18 +5447,10 @@ ViewRect ViewSelectOptionFrame(const ViewNode& node,
         return {};
     const float optionHeight = std::max(28.0f,
         std::min(48.0f, node.fontSize * 1.8f));
-    const float popupHeight = optionHeight *
-        static_cast<float>(node.options.size());
-    const float below = viewportHeight -
-        (node.frame.y + node.frame.height);
-    const bool openAbove = below < popupHeight &&
-        node.frame.y >= popupHeight;
-    const float popupTop = openAbove
-        ? node.frame.y - popupHeight
-        : node.frame.y + node.frame.height;
-    return { node.frame.x,
-        popupTop + optionHeight * static_cast<float>(optionIndex),
-        node.frame.width, optionHeight };
+    const ViewRect popup = ViewSelectPopupFrame(node, viewportHeight);
+    return { popup.x, popup.y +
+        optionHeight * static_cast<float>(optionIndex) - node.scrollOffset,
+        popup.width, optionHeight };
 }
 
 ViewRect ViewMonthCalendarWeekdayFrame(
@@ -5750,7 +5798,7 @@ bool ApplyViewScrollOffsets(ViewNode& root,
     viewports.clear();
     std::size_t scrollContainers = 0;
     if (!ApplyScrollState(root, resolver, viewports, std::nullopt,
-            scrollContainers, error) ||
+            root.frame.height, scrollContainers, error) ||
         !ValidateTransforms(root, {}, error) ||
         !ValidateTransforms(root, {}, error,
             ViewPresencePhase::Enter) ||
@@ -5762,6 +5810,12 @@ bool ApplyViewScrollOffsets(ViewNode& root,
     }
     for (auto& viewport : viewports)
     {
+        if (viewport.selectPopup)
+        {
+            viewport.frame = ApplyViewTransform(viewport.frame,
+                ResolveViewTransformForKey(root, viewport.key));
+            continue;
+        }
         if (const auto clip = ResolveViewClipForKey(
                 root, viewport.key, true))
             viewport.frame = *clip;

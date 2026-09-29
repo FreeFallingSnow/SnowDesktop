@@ -2830,6 +2830,68 @@ void TestDeclarativeInputControls()
     lua_close(state);
 }
 
+void TestSelectPopupViewportAndHitOrder()
+{
+    ViewNode root;
+    root.type = ViewNodeType::Box;
+    root.key = "surface";
+    root.frame = { 0.0f, 0.0f, 180.0f, 220.0f };
+    root.clipFrame = ViewRect{ 0.0f, 0.0f, 180.0f, 160.0f };
+    ViewNode select;
+    select.type = ViewNodeType::Select;
+    select.key = "reminder";
+    select.frame = { 0.0f, 70.0f, 180.0f, 30.0f };
+    select.fontSize = 20.0f;
+    select.expanded = true;
+    select.selectedValue = "6";
+    select.events.emplace("click", InteractionAction{ "select.open" });
+    select.events.emplace("change", InteractionAction{ "select.change" });
+    for (int index = 0; index < 7; ++index)
+        select.options.push_back({ std::to_string(index),
+            std::to_string(index), std::to_string(index) });
+    ViewNode input;
+    input.type = ViewNodeType::TextInput;
+    input.key = "underlying-input";
+    input.frame = { 0.0f, 140.0f, 180.0f, 35.0f };
+    root.children.push_back(std::move(select));
+    root.children.push_back(std::move(input));
+
+    std::string error;
+    std::vector<ViewScrollViewport> viewports;
+    Check(ApplyViewScrollOffsets(root, {}, viewports, error) &&
+            viewports.size() == 1 && viewports[0].selectPopup &&
+            Near(viewports[0].contentExtent, 252.0f) &&
+            Near(viewports[0].viewportExtent, 116.0f) &&
+            Near(viewports[0].offset, 136.0f),
+        "expanded select initializes a bounded popup with the selected option visible");
+    const ViewRect popup = ViewSelectPopupFrame(root.children[0],
+        root.frame.height);
+    Check(Near(popup.y, 100.0f) && Near(popup.height, 116.0f),
+        "select popup fits the available surface space");
+    std::vector<InteractionRegion> regions;
+    Check(CollectViewInteractionRegions(root, regions, error),
+        "scrolling select options collect pointer regions");
+    WidgetInteractionRegions interaction;
+    interaction.BeginFrame();
+    for (auto& region : regions)
+        Check(interaction.Submit(std::move(region), error),
+            "select popup region submits");
+    interaction.CommitFrame();
+    Check(interaction.TargetAt(40.0f, 155.0f) == "reminder/5" &&
+            interaction.TargetAt(40.0f, 195.0f) == "reminder/6",
+        "popup options win over an underlying input and remain hittable beyond the parent clip");
+
+    Check(ApplyViewScrollOffsets(root,
+            [](std::string_view key, float) -> std::optional<float> {
+                return key == "reminder" ? std::optional<float>(0.0f)
+                    : std::nullopt;
+            }, viewports, error) &&
+            Near(root.children[0].scrollOffset, 0.0f) &&
+            Near(ViewSelectOptionFrame(root.children[0], 2,
+                root.frame.height).y, 172.0f),
+        "popup scroll offset changes which options are visible");
+}
+
 void TestStyledTextAndMonthCalendar()
 {
     lua_State* state = luaL_newstate();
@@ -5072,6 +5134,7 @@ int main()
     TestVariableVirtualizedCollections();
     TestCollectionContentStates();
     TestDeclarativeInputControls();
+    TestSelectPopupViewportAndHitOrder();
     TestStyledTextAndMonthCalendar();
     TestLogicalSlotSceneContract();
     TestBoundedSizeConstraints();

@@ -19384,6 +19384,16 @@ static void DrawWidgetSelectOverlays(D2DState* state,
     WidgetViewTransformScope transformScope(state, node);
     if (node.type == ViewNodeType::Select && node.expanded)
     {
+        const auto popup = snowdesktop::widget_runtime::
+            ViewSelectPopupFrame(node, viewportHeight);
+        if (popup.width <= 0.0f || popup.height <= 0.0f) return;
+        const D2D1_RECT_F popupRect = D2D1::RectF(
+            state->widgetRect.left + popup.x,
+            state->widgetRect.top + popup.y,
+            state->widgetRect.left + popup.x + popup.width,
+            state->widgetRect.top + popup.y + popup.height);
+        state->ctx->PushAxisAlignedClip(popupRect,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         IDWriteTextFormat* format = GetCachedTextFormat(state,
             node.fontSize, state->itemFontWeight, false,
             DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
@@ -19435,23 +19445,31 @@ static void DrawWidgetSelectOverlays(D2DState* state,
                 }
             }
         }
-    }
-    bool clipped = false;
-    if (node.clipFrame)
-    {
-        const auto& clip = *node.clipFrame;
-        state->ctx->PushAxisAlignedClip(D2D1::RectF(
-            state->widgetRect.left + clip.x,
-            state->widgetRect.top + clip.y,
-            state->widgetRect.left + clip.x + clip.width,
-            state->widgetRect.top + clip.y + clip.height),
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        clipped = true;
+        if (node.scrollContentExtent > node.scrollViewportExtent)
+        {
+            const int viewportExtent = std::max(1,
+                static_cast<int>(std::lround(popup.height)));
+            const auto scrollbar = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(0, viewportExtent,
+                    std::max(viewportExtent,
+                        static_cast<int>(std::lround(
+                            node.scrollContentExtent))),
+                    viewportExtent,
+                    static_cast<int>(std::lround(node.scrollOffset)),
+                    CalculateWidgetCellScale(
+                        state->gridCellW, state->gridCellH));
+            DrawHostRect(state, popup.x + popup.width - 5.0f,
+                popup.y, 3.0f, popup.height, 0xFFFFFF, 1.5f, 0.12f);
+            DrawHostRect(state, popup.x + popup.width - 5.0f,
+                popup.y + scrollbar.thumbStart, 3.0f,
+                scrollbar.thumbEnd - scrollbar.thumbStart,
+                0xFFFFFF, 1.5f, 0.65f);
+        }
+        state->ctx->PopAxisAlignedClip();
     }
     for (const auto* child : snowdesktop::widget_runtime::
             ViewChildrenInPaintOrder(node))
         DrawWidgetSelectOverlays(state, *child, regions, viewportHeight);
-    if (clipped) state->ctx->PopAxisAlignedClip();
 }
 
 static std::vector<LuaWidget::HostControl> BuildViewHostControls(
@@ -19469,6 +19487,9 @@ static std::vector<LuaWidget::HostControl> BuildViewHostControls(
         LuaWidget::HostControl control;
         control.type = LuaWidget::HostControl::Type::Scroll;
         control.id = viewport.key;
+        control.selectPopup = viewport.selectPopup;
+        control.initialScrollOffset =
+            static_cast<int>(std::lround(viewport.offset));
         control.rect = {
             static_cast<LONG>(std::lround(viewport.frame.x)),
             static_cast<LONG>(std::lround(viewport.frame.y)),
@@ -26871,7 +26892,8 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
             ? std::max(0, control.contentWidth - control.viewportWidth)
             : std::max(0, control.contentHeight - control.viewportHeight);
         int& offset = ScrollOffsetsForSurface(
-            widgets_[index], surface)[control.id];
+            widgets_[index], surface).try_emplace(
+                control.id, control.initialScrollOffset).first->second;
         offset = std::clamp(offset, 0, maximum);
     }
     if (control.type == LuaWidget::HostControl::Type::Input &&
@@ -28911,6 +28933,11 @@ bool WidgetEngine::IsHostInputAt(
     if (index < 0)
         return false;
     const POINT point{ x, y };
+    for (const auto& control : widgets_[index].hostControls)
+        if (control.selectPopup && control.enabled &&
+            HostControlBelongsToSurface(control, surface) &&
+            HostControlContainsPoint(control, point))
+            return false;
     for (auto it = widgets_[index].hostControls.rbegin();
         it != widgets_[index].hostControls.rend(); ++it)
     {
@@ -30142,6 +30169,46 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
         NormalizeWidgetSurface(surface);
     WidgetSurfaceScope surfaceScope(d2dState_, normalizedSurface.c_str());
     POINT point{ x, y };
+    for (auto it = widget.hostControls.rbegin();
+        it != widget.hostControls.rend(); ++it)
+    {
+        if (!it->selectPopup || !it->enabled ||
+            !HostControlBelongsToSurface(*it, normalizedSurface) ||
+            !HostControlContainsPoint(*it, point)) continue;
+        if (!wheel)
+        {
+            const float scale = CalculateWidgetCellScale(
+                widget.layoutMetrics.gridCellWidth,
+                widget.layoutMetrics.gridCellHeight);
+            const int offset = RuntimeGetScrollOffset(
+                widgetId, it->id, normalizedSurface);
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(it->rect.top,
+                    it->rect.bottom, it->contentHeight,
+                    it->viewportHeight, offset, scale);
+            if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    geometry, y, x, it->rect.right, scale))
+            {
+                hostScrollbarDrag_ = { true, widgetId, it->id,
+                    normalizedSurface, false, y, offset };
+                RuntimeInvalidateHost(widgetId);
+                return true;
+            }
+            return false;
+        }
+        const int maximum = std::max(0,
+            it->contentHeight - it->viewportHeight);
+        int& offset = ScrollOffsetsForSurface(
+            widget, normalizedSurface)[it->id];
+        const auto result = snowdesktop::widget_scroll_rules::
+            ApplyWheelDelta(offset, maximum, delta);
+        if (result.moved)
+        {
+            offset = result.offset;
+            RuntimeInvalidateHost(widgetId);
+        }
+        return true;
+    }
     for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
     {
         if (!HostControlBelongsToSurface(*it, normalizedSurface) ||
