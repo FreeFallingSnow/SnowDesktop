@@ -1475,7 +1475,7 @@ void CheckCalendarResponsive()
     Require(empty.centered&&empty.bounds.left==Node(model.View(),"calendar.selected").bounds.left&&
         empty.bounds.right==model.View().width-16&&empty.bounds.top==viewport.top&&empty.bounds.bottom==viewport.bottom,
         "empty agenda is not centered in the visible content area to the right of the month");
-    state->agenda=true;model.Refresh(400,900);const auto batches=state->calendarBatches;
+    state->agenda=true;model.Refresh(400,900);
     const auto fullSecondary=Node(model.View(),"calendar.selectedSecondary").text;
     Require(Node(model.View(),"date:2026-09-26").tooltip.find(fullSecondary)!=std::wstring::npos,
         "date hover omitted the full secondary calendar date");
@@ -1501,6 +1501,7 @@ void CheckCalendarResponsive()
     Require(model.Invoke("calendar.toggleCalendar")&&Node(model.View(),"calendar.month").text==gregorianMonth&&
         Node(model.View(),"date:2026-09-26").text==L"26",
         "calendar switch did not restore Gregorian display");
+    const auto batches=state->calendarBatches;
     model.Refresh(400);Require(model.Invoke("date:2026-09-27")&&state->calendarBatches==batches,
         "unchanged month or selection rebuilt the same secondary calendar annotations");
     state->agenda=false;model.Refresh(400);
