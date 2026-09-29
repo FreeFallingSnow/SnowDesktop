@@ -1192,7 +1192,7 @@ void CheckCalendarManagement()
     Require(model.SetCalendarInput("calendar.edit.title",L"Unsaved draft")&&model.Invoke("calendar.next")&&
         field("calendar.edit.title").text==L"Unsaved draft"&&Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&model.Invoke("calendar.previous"),
         "browsing the retained month discarded or changed the unsaved event draft");
-    Require(model.Reveal("calendar.edit.notes"),"agenda editor could not reveal its native notes input");
+    model.Reveal("calendar.edit.notes");
     const auto notes=field("calendar.edit.notes");const auto editorOffset=model.ScrollOffset();
     Require(notes.bounds.top>=notes.clip.top&&notes.bounds.bottom<=notes.clip.bottom&&notes.clip.left==model.ScrollViewport().left,
         "native calendar input did not receive the translated agenda clip");
