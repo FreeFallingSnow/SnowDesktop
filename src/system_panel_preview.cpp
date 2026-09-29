@@ -1845,7 +1845,8 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         source.calendar.mutations.save=[](const auto&)->calendar::MutationResult{throw std::runtime_error("calendar visual preview attempted persistence");};
         source.calendar.mutations.remove=[](const auto&)->calendar::MutationResult{throw std::runtime_error("calendar visual preview attempted deletion");};
         SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);
-        model.Refresh(static_cast<float>(request.canvasHeight-2*request.padding)/scale,
+        const float viewportHeight=static_cast<float>(request.canvasHeight-2*request.padding)/scale;
+        model.Refresh(viewportHeight,
             (std::min)(narrow?320.f:720.f,static_cast<float>(request.canvasWidth-2*request.padding)/scale));
         Require(creating?model.Invoke("calendar.add"):model.CalendarEventCommand("event:2026-09-26:offline-calendar-page",confirmation),
             "calendar visual fixture did not enter the real secondary page");
@@ -1897,7 +1898,8 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 "time visual fixture did not expose both columns together");
         }
         const auto& scene=model.View();CheckLayout(scene);
-        if(creating&&scene.width>=560.f)Require(scene.height>=520.f&&scene.height<=560.f,
+        if(creating&&scene.width>=560.f)Require(scene.height>=(std::min)(520.f,viewportHeight)&&
+            scene.height<=(std::min)(560.f,viewportHeight),
             "wide calendar editor did not respect its bounded height range");
         if(creating)
         {
