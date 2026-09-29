@@ -267,7 +267,7 @@ local function clearDraft(model)
     model.pendingPanelTask = nil
     model.datePicker = nil
     model.timePicker = nil
-    model.reminderPicker = nil
+    model.selectOpen = nil
     model.rule = nil
     model.seriesDefinition = nil
     model.occurrenceItem = nil
@@ -713,17 +713,16 @@ local function panel(context, model)
             enabled=enabled~=false,action={id="agenda.panel",value=id},accessibility={label=label}})
     end
     local children={}
-    if model.reminderPicker then
-        children={view.text({key="agenda.reminder.heading",text=l10n.tr("lua_widget.agenda.reminder"),
-            height=row,fontSize=row*0.46,style={foreground="textPrimary"}})}
-        local selected=tonumber(storage.get(DRAFT_REMINDER)) or 15
-        for _,minutes in ipairs(reminderValues) do
-            local option=button("reminder:"..tostring(minutes),reminderLabel(minutes),not busy)
-            if minutes==selected then option.style={foreground=0xFFFFFF,background=0x175CD3,cornerRadius=row*0.12} end
-            children[#children+1]=option
-        end
-        children[#children+1]=button("picker.back",l10n.tr("lua_widget.agenda.cancel"),not busy)
-    elseif model.timePicker then
+    local function selectField(id,label,selected,options)
+        children[#children+1]=view.text({key="agenda.select.label."..id,text=label,
+            height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
+        children[#children+1]=view.select({key="agenda.select."..id,selectedValue=tostring(selected),
+            options=options,width="fill",height=row,fontSize=row*0.46,
+            style={foreground="textPrimary"},enabled=not busy,expanded=model.selectOpen==id,
+            events={click={id="agenda.select.open",value=id},change={id="agenda.select.change",value=id}},
+            accessibility={label=label}})
+    end
+    if model.timePicker then
         children={model.timePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
     elseif model.datePicker then
         children={model.datePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
@@ -755,25 +754,20 @@ local function panel(context, model)
         field(DRAFT_TITLE,title,l10n.tr("lua_widget.agenda.title"),titleError)
         if supportsSeries() and (storage.get(EDITOR_MODE)=="new" or model.seriesDefinition) then
             if model.seriesDefinition then
-                children[#children+1]=button("scope",l10n.tr("lua_widget.agenda.scope")..": "..
-                    l10n.tr(model.scope=="series" and "lua_widget.agenda.scope_series" or
-                        "lua_widget.agenda.scope_occurrence"),not busy)
+                selectField("scope",l10n.tr("lua_widget.agenda.scope"),model.scope,{
+                    {key="occurrence",value="occurrence",label=l10n.tr("lua_widget.agenda.scope_occurrence")},
+                    {key="series",value="series",label=l10n.tr("lua_widget.agenda.scope_series")}})
             end
             if model.scope~="occurrence" then
-                children[#children+1]=view.text({key="agenda.mode.label",text=l10n.tr("lua_widget.agenda.date_mode"),
-                    height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
                 local modes=model.seriesDefinition and {"dates","weekly","monthly"} or
                     {"single","dates","weekly","monthly"}
                 local choices={}
                 local modeKeys={single="lua_widget.agenda.mode_single",dates="lua_widget.agenda.mode_dates",
                     weekly="lua_widget.agenda.mode_weekly",monthly="lua_widget.agenda.mode_monthly"}
                 for _,mode in ipairs(modes) do
-                    local choice=button("mode:"..mode,l10n.tr(modeKeys[mode]),not busy)
-                    if model.mode==mode then choice.style={foreground=0xFFFFFF,background=0x175CD3,cornerRadius=row*0.12} end
-                    choices[#choices+1]=choice
+                    choices[#choices+1]={key=mode,value=mode,label=l10n.tr(modeKeys[mode])}
                 end
-                children[#children+1]=view.grid({key="agenda.modes",columns=2,height=row*2+row*0.1,
-                    gap=row*0.1,children=choices})
+                selectField("mode",l10n.tr("lua_widget.agenda.date_mode"),model.mode,choices)
             end
         end
         if model.mode=="dates" and model.rule then
@@ -794,11 +788,19 @@ local function panel(context, model)
         end
         if model.rule and (model.mode=="weekly" or model.mode=="monthly") then
             local function ruleField(id,value,label)
-                children[#children+1]=view.text({key="agenda.rule.label."..id,text=label,height=row,
-                    fontSize=row*0.43,style={foreground="textSecondary"}})
-                children[#children+1]=view.textInput({key="agenda.rule."..id,value=tostring(value),height=row,
-                    fontSize=row*0.46,maxBytes=10,enabled=not busy,action={id="agenda.rule",value=id},
-                    accessibility={label=label}})
+                if id~="monthDay" then
+                    children[#children+1]=view.text({key="agenda.rule.label."..id,text=label,height=row,
+                        fontSize=row*0.43,style={foreground="textSecondary"}})
+                end
+                if id=="interval" or id=="monthDay" then
+                    children[#children+1]=view.numberInput({key="agenda.rule.number."..id,value=tonumber(value) or 1,
+                        min=1,max=id=="interval" and 99 or 31,step=1,height=row,fontSize=row*0.46,
+                        enabled=not busy,action={id="agenda.rule",value=id},accessibility={label=label}})
+                else
+                    children[#children+1]=view.textInput({key="agenda.rule."..id,value=tostring(value),height=row,
+                        fontSize=row*0.46,maxBytes=10,enabled=not busy,action={id="agenda.rule",value=id},
+                        accessibility={label=label}})
+                end
             end
             ruleField("interval",model.rule.interval,l10n.tr(model.mode=="weekly" and
                 "lua_widget.agenda.interval_weeks" or "lua_widget.agenda.interval_months"))
@@ -816,18 +818,18 @@ local function panel(context, model)
                 end
                 children[#children+1]=view.grid({key="agenda.weekdays",columns=4,height=row*2,gap=row*0.12,children=days})
             else
-                children[#children+1]=view.checkbox({key="agenda.lastDay",
-                    label=l10n.tr("lua_widget.agenda.last_day"),checked=model.rule.monthDay==0,
-                    height=row,fontSize=row*0.46,enabled=not busy,
-                    action={id="agenda.panel",value="lastDay"}})
+                selectField("monthDay",l10n.tr("lua_widget.agenda.month_day"),
+                    model.rule.monthDay==0 and "last" or "specific",{
+                    {key="specific",value="specific",label=l10n.tr("lua_widget.agenda.month_day")},
+                    {key="last",value="last",label=l10n.tr("lua_widget.agenda.last_day")}})
                 if model.rule.monthDay~=0 then
                     ruleField("monthDay",model.rule.monthDay,l10n.tr("lua_widget.agenda.month_day"))
                 end
             end
-            children[#children+1]=view.checkbox({key="agenda.endType",
-                label=l10n.tr("lua_widget.agenda.never_ends"),checked=model.rule.endDate=="",
-                height=row,fontSize=row*0.46,enabled=not busy,
-                action={id="agenda.panel",value="endType"}})
+            selectField("endType",l10n.tr("lua_widget.agenda.end_date"),
+                model.rule.endDate=="" and "never" or "date",{
+                {key="never",value="never",label=l10n.tr("lua_widget.agenda.never_ends")},
+                {key="date",value="date",label=l10n.tr("lua_widget.agenda.end_date")}})
             if model.rule.endDate~="" then ruleField("endDate",model.rule.endDate,l10n.tr("lua_widget.agenda.end_date")) end
         end
         children[#children+1]=view.checkbox({key="agenda.allDay",label=l10n.tr("lua_widget.agenda.all_day"),checked=allDay,
@@ -837,8 +839,13 @@ local function panel(context, model)
             field(DRAFT_START,start,l10n.tr("lua_widget.agenda.start"),not startMinutes and timeError or nil)
             field(DRAFT_END,finish,l10n.tr("lua_widget.agenda.end"),timeError)
         end
-        children[#children+1]=button("openReminderPicker",l10n.tr("lua_widget.agenda.reminder")..": "..
-            reminderLabel(storage.get(DRAFT_REMINDER)),not busy)
+        local reminders={}
+        for _,minutes in ipairs(reminderValues) do
+            local key=tostring(minutes)
+            reminders[#reminders+1]={key=key,value=key,label=reminderLabel(minutes)}
+        end
+        selectField("reminder",l10n.tr("lua_widget.agenda.reminder"),
+            storage.get(DRAFT_REMINDER) or "15",reminders)
         field(DRAFT_NOTES,storage.get(DRAFT_NOTES) or "",l10n.tr("lua_widget.agenda.notes"),nil,true)
         local err=editorErrorText(model.editorError)
         if err then children[#children+1]=view.text({key="agenda.save.error",text=err,height=row*2,fontSize=row*0.43,textWrap="wrap"}) end
@@ -850,7 +857,7 @@ local function panel(context, model)
             button("cancel",l10n.tr("lua_widget.agenda.cancel"),not busy),
             button("save",l10n.tr("lua_widget.agenda.save"),not busy and not titleError and not dateError and not timeError and widget.hasPermission("calendar.write"))}})
     end
-    local page=model.reminderPicker and "reminder" or model.timePicker and "time"
+    local page=model.timePicker and "time"
         or model.datePicker and "date" or "editor"
     return view.scroll({key="agenda.panel.scroll."..page,width="fill",height="fill",children={
         view.column({key="agenda.form",width="fill",height="auto",padding=row*0.65,gap=row*0.25,children=children})}})
@@ -931,21 +938,9 @@ local function handlePanelAction(model, id)
             value={startTime=storage.get(DRAFT_START) or "",endTime=storage.get(DRAFT_END) or ""}})
         widget.invalidate()
     elseif id == "picker.back" then
-        model.reminderPicker=nil
         model.timePicker=nil
         model.datePicker=nil
         widget.invalidate()
-    elseif id == "openReminderPicker" and not model.pendingPanelTask then
-        model.reminderPicker=true
-        widget.invalidate()
-    elseif model.reminderPicker and not model.pendingPanelTask and id:sub(1,9)=="reminder:" then
-        local selected=tonumber(id:sub(10))
-        for _,minutes in ipairs(reminderValues) do
-            if selected==minutes then
-                storage.set(DRAFT_REMINDER,tostring(minutes));model.reminderPicker=nil
-                widget.invalidate();break
-            end
-        end
     end
 end
 
@@ -974,11 +969,38 @@ local function event(_context, model, value)
             return
         end
     end
+    if value.kind=="action" and value.surface=="panel" and value.id=="agenda.select.open" then
+        model.selectOpen=value.expanded==true and tostring(value.value) or nil
+        widget.invalidate();return
+    end
+    if value.kind=="action" and value.surface=="panel" and value.id=="agenda.select.change" then
+        local field=type(value.value)=="string" and value.value or ""
+        local selection=type(value.selection)=="string" and value.selection or ""
+        model.selectOpen=nil
+        if field=="mode" and (selection=="single" or selection=="dates" or
+            selection=="weekly" or selection=="monthly") then
+            handlePanelAction(model,"mode:"..selection)
+        elseif field=="scope" and (selection=="series" or selection=="occurrence") then
+            if model.scope~=selection then handlePanelAction(model,"scope") end
+        elseif field=="monthDay" and model.rule and (selection=="specific" or selection=="last") then
+            if (model.rule.monthDay==0)~=(selection=="last") then handlePanelAction(model,"lastDay") end
+        elseif field=="endType" and model.rule and (selection=="never" or selection=="date") then
+            if (model.rule.endDate=="")~=(selection=="never") then handlePanelAction(model,"endType") end
+        elseif field=="reminder" then
+            for _,minutes in ipairs(reminderValues) do
+                if selection==tostring(minutes) then storage.set(DRAFT_REMINDER,selection);break end
+            end
+        end
+        widget.invalidate();return
+    end
     if value.kind=="action" and value.id=="agenda.rule" and value.surface=="panel" then
-        if model.rule and type(value.text)=="string" and #value.text<=10 then
-            if value.value=="endDate" then model.rule.endDate=value.text
-            elseif value.value=="interval" then model.rule.interval=value.text
-            elseif value.value=="monthDay" then model.rule.monthDay=value.text end
+        if model.rule then
+            if value.value=="endDate" and type(value.text)=="string" and #value.text<=10 then
+                model.rule.endDate=value.text
+            elseif (value.value=="interval" or value.value=="monthDay") and
+                value.numberValid and type(value.controlValue)=="number" then
+                model.rule[value.value]=value.controlValue
+            end
             model.confirmSeriesChange=false;widget.invalidate()
         end
         return

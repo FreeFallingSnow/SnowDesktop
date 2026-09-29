@@ -1189,10 +1189,10 @@ void CheckCalendarManagement()
         model.View().height>=520.f&&model.View().height<=560.f&&model.View().height>calendarHeight&&
         field("calendar.edit.title").bounds.left>=model.ScrollViewport().left,
         "calendar add did not expand its form while retaining the fixed month column");
-    Require(model.Invoke("calendar.edit.mode.monthly")&&model.View().height<=560.f&&
+    Require(model.SelectCalendarChoice("calendar.edit.mode",3)&&model.View().height<=560.f&&
         model.MaximumScroll()>0&&model.Reveal("calendar.edit.save")&&
         Node(model.View(),"calendar.edit.save").bounds.bottom<=model.ScrollViewport().bottom&&
-        model.Invoke("calendar.edit.mode.single"),
+        model.SelectCalendarChoice("calendar.edit.mode",0),
         "monthly editor escaped its height cap or made save unreachable");
     Require(model.SetCalendarInput("calendar.edit.title",L"Unsaved draft")&&model.Invoke("calendar.next")&&
         field("calendar.edit.title").text==L"Unsaved draft"&&Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&model.Invoke("calendar.previous"),
@@ -1354,7 +1354,7 @@ void CheckCalendarSeriesManagement()
     SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);
     model.Refresh(300,420);
     Require(model.Invoke("calendar.add")&&model.SetCalendarInput("calendar.edit.title",L"Series")&&
-        model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.date")&&
+        model.SelectCalendarChoice("calendar.edit.mode",1)&&model.Invoke("calendar.edit.date")&&
         Node(model.View(),"picker.day:2026-09-26").selected&&
         model.Invoke("picker.day:2026-09-28")&&
         Node(model.View(),"picker.day:2026-09-28").selected&&model.Invoke("picker.confirm")&&
@@ -1380,11 +1380,10 @@ void CheckCalendarSeriesManagement()
     model.Refresh(300,420);
     const auto node="event:2026-09-26:"+id+"/2026-09-26";
     Require(model.CalendarEventCommand(node,false,true)&&
-        model.View().Find("calendar.edit.scope.series")&&
-        model.Invoke("calendar.edit.mode.weekly")&&
-        model.Invoke("calendar.edit.endType")&&
-        Node(model.View(),"calendar.edit.endType").selected&&
-        !Node(model.View(),"calendar.edit.endNever").selected&&
+        model.View().Find("calendar.edit.scope")&&
+        model.SelectCalendarChoice("calendar.edit.mode",1)&&
+        model.SelectCalendarChoice("calendar.edit.endType",1)&&
+        model.CalendarChoices("calendar.edit.endType")[1].selected&&
         model.View().Find("calendar.edit.endDate")&&
         model.Reveal("calendar.edit.save"),
         "series panel did not expose its whole-series rule controls");
@@ -1840,14 +1839,14 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
             "calendar visual fixture did not enter the real secondary page");
         if(seriesDates)
         {
-            Require(model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.date")&&
+            Require(model.SelectCalendarChoice("calendar.edit.mode",1)&&model.Invoke("calendar.edit.date")&&
                 model.Invoke("picker.day:2026-09-28")&&model.Invoke("picker.confirm")&&
                 Node(model.View(),"calendar.edit.date").text.find(L"2026-09-28")!=std::wstring::npos,
                 "calendar multiple-date preview could not show the selected dates");
         }
         if(seriesMonthly)
         {
-            Require(model.Invoke("calendar.edit.mode.monthly"),
+            Require(model.SelectCalendarChoice("calendar.edit.mode",3),
                 "calendar monthly preview could not show its last-day rule");
             const auto& before=model.View();
             const auto& minus=Node(before,"calendar.edit.interval.minus");
@@ -1855,15 +1854,15 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
             const auto& plus=Node(before,"calendar.edit.interval.plus");
             Require(minus.bounds.right<value.bounds.left&&value.bounds.right<plus.bounds.left&&
                 plus.bounds.left-minus.bounds.right<=88.f&&value.text==L"1"&&
-                Node(before,"calendar.edit.monthDay.specific").selected&&
-                Node(before,"calendar.edit.endNever").selected,
+                model.CalendarChoices("calendar.edit.monthDay")[26].selected&&
+                model.CalendarChoices("calendar.edit.endType")[0].selected,
                 "monthly interval and choices did not expose a compact value and selected options");
-            Require(model.Invoke("calendar.edit.monthDay.last")&&
-                Node(model.View(),"calendar.edit.monthDay.last").selected&&
-                !model.View().Find("calendar.edit.monthDay.value"),
-                "choosing the last day left a conflicting numbered-day control");
-            model.Reveal("calendar.edit.monthDay.last");
-            const auto& last=Node(model.View(),"calendar.edit.monthDay.last");
+            Require(model.SelectCalendarChoice("calendar.edit.monthDay",0)&&
+                model.CalendarChoices("calendar.edit.monthDay")[0].selected&&
+                Node(model.View(),"calendar.edit.monthDay").text==_LW("settings.calendar.lastDay"),
+                "choosing the last day did not update the dropdown value");
+            model.Reveal("calendar.edit.monthDay");
+            const auto& last=Node(model.View(),"calendar.edit.monthDay");
             Require(last.bounds.top>=last.clip.top&&last.bounds.bottom<=last.clip.bottom,
                 "narrow monthly last-day choice cannot be revealed");
         }
@@ -1892,7 +1891,7 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         {
             const auto& date=Node(scene,"calendar.edit.date");
             const auto& modeLabel=Node(scene,"calendar.edit.mode.label");
-            const auto& lastMode=Node(scene,"calendar.edit.mode.monthly");
+            const auto& lastMode=Node(scene,"calendar.edit.mode");
             const auto& allDay=Node(scene,"calendar.edit.allDay");
             Require(modeLabel.bounds.top>=date.bounds.bottom&&lastMode.bounds.bottom<=allDay.bounds.top&&
                 modeLabel.bounds.left==date.bounds.left&&lastMode.bounds.right<=date.bounds.right,
@@ -1902,7 +1901,7 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
             if(seriesMonthly)
             {
                 const auto& interval=Node(scene,"calendar.edit.interval.label");
-                const auto& monthDay=Node(scene,"calendar.edit.monthDay.last");
+                const auto& monthDay=Node(scene,"calendar.edit.monthDay");
                 const auto& endType=Node(scene,"calendar.edit.endType");
                 Require(interval.bounds.top>=lastMode.bounds.bottom&&monthDay.bounds.top>=interval.bounds.bottom&&
                     endType.bounds.top>=monthDay.bounds.bottom&&endType.bounds.bottom<=allDay.bounds.top&&
@@ -1922,8 +1921,7 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                     "calendar primary and destructive action labels must not be truncated");
             }
         if(narrow)
-            for(const auto* id:{"calendar.edit.mode.single","calendar.edit.mode.dates",
-                "calendar.edit.mode.weekly","calendar.edit.mode.monthly"})
+            for(const auto* id:{"calendar.edit.mode","calendar.edit.monthDay","calendar.edit.endType"})
                 if(const auto* action=scene.Find(id))
                 {
                     ComPtr<IDWriteTextFormat> format;ComPtr<IDWriteTextLayout> layout;

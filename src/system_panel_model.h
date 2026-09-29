@@ -96,6 +96,9 @@ public:
     const StatusBarSettings& Settings() const { return settings_; }
     const std::string& Page() const { return page_; }
     bool CalendarEditing() const;
+    struct CalendarChoiceOption { std::wstring label; bool selected = false; };
+    std::vector<CalendarChoiceOption> CalendarChoices(std::string_view field) const;
+    bool SelectCalendarChoice(std::string_view field, std::size_t index);
     std::string CalendarFocusTarget() const;
     std::vector<SystemCalendarInputField> CalendarInputFields() const;
     bool SetCalendarInput(std::string_view id, std::wstring text);
@@ -131,7 +134,7 @@ private:
     std::map<std::string,std::wstring> calendarText_;
     enum class CalendarDeleteOrigin { Editor, ContextMenu };
     CalendarDeleteOrigin calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
-    bool calendarConfirmDelete_=false, calendarReminderOpen_=false;
+    bool calendarConfirmDelete_=false;
     float calendarReturnScroll_=0;
     std::optional<native_ui::DateTimePicker> calendarPicker_;
     std::vector<std::string> calendarPickerDates_;

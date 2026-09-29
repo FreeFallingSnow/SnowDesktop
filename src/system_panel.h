@@ -34,6 +34,7 @@ public:
     void SetTrayStateChanged(std::function<void(HMONITOR,bool)>);
     void SetNativeControlsHandler(std::function<void(HWND,RECT)>);
     void SetCalendarMenuHandler(std::function<UINT(POINT,HWND,bool)>);
+    void SetCalendarChoiceMenuHandler(std::function<UINT(POINT,HWND,const std::vector<std::wstring>&,std::size_t)>);
 private:
     struct Impl;std::unique_ptr<Impl> impl_;
 };

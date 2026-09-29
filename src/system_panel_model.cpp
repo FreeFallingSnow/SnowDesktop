@@ -1349,7 +1349,7 @@ void SystemPanelModel::EditCalendar(calendar::CalendarEvent event)
 {
     if(closed_||!source_.calendar.mutations.save)return;
     calendarReturnScroll_=scroll_;scroll_=0;++navigation_;page_="calendar-edit";calendarNotice_.clear();
-    calendarConfirmDelete_=calendarReminderOpen_=false;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
+    calendarConfirmDelete_=false;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
     calendarPicker_.reset();calendarPickerDates_.clear();calendarPickerField_.clear();calendarFocus_="calendar.edit.title";
     calendarEditor_=std::make_shared<SystemCalendarEditorState>();
     calendarEditor_->original=event;calendarEditor_->draft=std::move(event);
@@ -1393,6 +1393,72 @@ void SystemPanelModel::SwitchCalendarScope(bool wholeSeries)
 }
 bool SystemPanelModel::CalendarEditing() const
 {return !closed_&&action_==StatusBarAction::Calendar&&page_=="calendar-edit"&&calendarEditor_;}
+std::vector<SystemPanelModel::CalendarChoiceOption> SystemPanelModel::CalendarChoices(std::string_view field) const
+{
+    std::vector<CalendarChoiceOption> choices;
+    if(!CalendarEditing()||calendarConfirmDelete_||calendarPicker_)return choices;
+    const auto add=[&](std::wstring label,bool selected){choices.push_back({std::move(label),selected});};
+    if(field=="calendar.edit.mode"&&(calendarEditor_->original.id.empty()||calendarScopeSeries_))
+    {
+        for(const auto* mode:{"single","dates","weekly","monthly"})
+        {
+            if(calendarScopeSeries_&&std::string_view(mode)=="single")continue;
+            const auto key="settings.calendar.mode."+std::string(mode);
+            add(_LW(key.c_str()),calendarMode_==mode);
+        }
+    }
+    else if(field=="calendar.edit.monthDay"&&calendarMode_=="monthly")
+    {
+        add(_LW("settings.calendar.lastDay"),calendarRule_.monthDay==0);
+        for(int day=1;day<=31;++day)add(std::to_wstring(day),calendarRule_.monthDay==day);
+    }
+    else if(field=="calendar.edit.endType"&&(calendarMode_=="weekly"||calendarMode_=="monthly"))
+    {
+        add(_LW("settings.calendar.neverEnds"),calendarRule_.endDate.empty());
+        add(_LW("settings.calendar.endsOn"),!calendarRule_.endDate.empty());
+    }
+    else if(field=="calendar.edit.reminder")
+        for(const auto minutes:SystemCalendarReminderMinutes)
+        {
+            const auto key="settings.calendar.reminder."+std::to_string(minutes);
+            add(_LW(key.c_str()),calendarEditor_->draft.reminderMinutes==minutes);
+        }
+    else if(field=="calendar.edit.scope"&&calendarSeriesOriginal_)
+    {
+        add(_LW("settings.calendar.scope.once"),!calendarScopeSeries_);
+        add(_LW("settings.calendar.scope.series"),calendarScopeSeries_);
+    }
+    return choices;
+}
+bool SystemPanelModel::SelectCalendarChoice(std::string_view field,std::size_t index)
+{
+    const auto choices=CalendarChoices(field);
+    if(index>=choices.size())return false;
+    if(field=="calendar.edit.mode")
+    {
+        const std::string modes[]={"single","dates","weekly","monthly"};
+        const auto& mode=modes[index+(calendarScopeSeries_?1:0)];
+        const auto start=calendar::CalendarService::GetDateInfo(calendarRule_.startDate);
+        if(mode=="dates"&&calendarRule_.dates.empty()&&start)
+            calendarRule_.dates.push_back(calendarRule_.startDate);
+        if(mode=="weekly"&&calendarRule_.weekdays.empty()&&start)
+            calendarRule_.weekdays.push_back(start->weekday);
+        if(mode=="monthly"&&calendarMode_!="monthly"&&calendarRule_.monthDay==0&&start)
+            calendarRule_.monthDay=start->day;
+        calendarMode_=mode;calendarRule_.kind=mode;calendarEditor_->error.clear();
+    }
+    else if(field=="calendar.edit.monthDay")calendarRule_.monthDay=static_cast<int>(index);
+    else if(field=="calendar.edit.endType")
+    {
+        if(index==0)calendarRule_.endDate.clear();
+        else if(calendarRule_.endDate.empty())calendarRule_.endDate=
+            calendar::CalendarService::AddDays(calendarRule_.startDate,30).value_or(date_);
+    }
+    else if(field=="calendar.edit.reminder")calendarEditor_->draft.reminderMinutes=SystemCalendarReminderMinutes[index];
+    else if(field=="calendar.edit.scope")SwitchCalendarScope(index==1);
+    calendarDiscardConfirmed_=false;
+    Refresh(available_);return true;
+}
 std::string SystemPanelModel::CalendarFocusTarget() const
 {
     if(closed_||action_!=StatusBarAction::Calendar)return {};
@@ -1436,7 +1502,7 @@ void SystemPanelModel::LeaveCalendarEditor(bool followSavedDate)
     ++navigation_;page_.clear();calendarEditor_.reset();calendarText_.clear();
     calendarSeriesOriginal_.reset();calendarRule_={};calendarMode_="single";
     calendarScopeSeries_=calendarDiscardConfirmed_=false;
-    calendarConfirmDelete_=calendarReminderOpen_=false;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
+    calendarConfirmDelete_=false;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
     calendarPicker_.reset();calendarPickerDates_.clear();calendarPickerField_.clear();
 }
 bool SystemPanelModel::CalendarBack()
@@ -1448,7 +1514,6 @@ bool SystemPanelModel::CalendarBack()
         if(calendarDeleteOrigin_==CalendarDeleteOrigin::ContextMenu)LeaveCalendarEditor(false);
         else{calendarConfirmDelete_=false;calendarEditor_->error.clear();}
     }
-    else if(calendarReminderOpen_)calendarReminderOpen_=false;
     else LeaveCalendarEditor(false);
     Refresh(available_);return true;
 }
@@ -1625,38 +1690,23 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         node.enabled=!calendarConfirmDelete_;node.accessibilityLabel=node.tooltip=label;
         return node;
     };
+    const auto choiceField=[&](const std::string& id,const std::wstring& label,const std::wstring& value,
+        float x,float y,float w){
+        auto& caption=Add(id+".label",ui::Role::Text,Rect(x,y,w,20),label);
+        caption.fontSize=13;caption.secondary=true;
+        auto& node=Add(id,ui::Role::Button,Rect(x,y+24,w,36),value);
+        node.enabled=!calendarConfirmDelete_;node.accessibilityLabel=node.tooltip=label+L" · "+value;
+        Add(id+".chevron",ui::Role::Text,Rect(x+w-30,y+24,24,36),L"",L"\uE70D").secondary=true;
+    };
     field("title",16,64,leftWidth,36);
     const float dateY=wide?64.f:136.f;
     field("date",right,dateY,rightWidth,36);
     float allDayY=dateY+72;
     if(editor->original.id.empty()||calendarScopeSeries_)
     {
-        auto& caption=Add("calendar.edit.mode.label",ui::Role::Text,Rect(right,allDayY,rightWidth,20),_LW("settings.calendar.dateMode"));
-        caption.fontSize=13;caption.secondary=true;
-        const float modeY=allDayY+24;
-        const std::vector<std::string> modes=calendarScopeSeries_?
-            std::vector<std::string>{"dates","weekly","monthly"}:
-            std::vector<std::string>{"single","dates","weekly","monthly"};
-        const std::size_t columns=2;
-        const float gap=6,buttonWidth=(rightWidth-gap)/columns;
-        for(std::size_t index=0;index<modes.size();++index)
-        {
-            const auto mode=modes[index],id="calendar.edit.mode."+mode,key="settings.calendar.mode."+mode;
-            option(id,_LW(key.c_str()),right+(index%columns)*(buttonWidth+gap),
-                modeY+(index/columns)*48,buttonWidth,calendarMode_==mode);
-            Command(id,[this,mode]{
-                const auto previous=calendarMode_;
-                const auto start=calendar::CalendarService::GetDateInfo(calendarRule_.startDate);
-                if(mode=="dates"&&calendarRule_.dates.empty()&&start)
-                    calendarRule_.dates.push_back(calendarRule_.startDate);
-                if(mode=="weekly"&&calendarRule_.weekdays.empty()&&start)
-                    calendarRule_.weekdays.push_back(start->weekday);
-                if(mode=="monthly"&&previous!="monthly"&&calendarRule_.monthDay==0&&start)
-                    calendarRule_.monthDay=start->day;
-                calendarMode_=mode;calendarRule_.kind=mode;
-                calendarDiscardConfirmed_=false;calendarEditor_->error.clear();});
-        }
-        allDayY=modeY+((modes.size()+columns-1)/columns)*48;
+        const auto modeKey="settings.calendar.mode."+calendarMode_;
+        choiceField("calendar.edit.mode",_LW("settings.calendar.dateMode"),_LW(modeKey.c_str()),right,allDayY,rightWidth);
+        allDayY+=72;
     }
     if(calendarMode_=="weekly"||calendarMode_=="monthly")
     {
@@ -1695,45 +1745,15 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         }
         else
         {
-            const float choiceWidth=(rightWidth-8)/2;
-            option("calendar.edit.monthDay.specific",_LW("settings.calendar.monthDay"),right,ruleBottom,choiceWidth,calendarRule_.monthDay!=0);
-            option("calendar.edit.monthDay.last",_LW("settings.calendar.lastDay"),right+choiceWidth+8,ruleBottom,choiceWidth,calendarRule_.monthDay==0);
-            Command("calendar.edit.monthDay.specific",[this]{
-                if(calendarRule_.monthDay==0)
-                {
-                    const auto start=calendar::CalendarService::GetDateInfo(calendarRule_.startDate);
-                    calendarRule_.monthDay=start?start->day:1;
-                }
-                calendarDiscardConfirmed_=false;});
-            Command("calendar.edit.monthDay.last",[this]{calendarRule_.monthDay=0;calendarDiscardConfirmed_=false;});
-            ruleBottom+=44;
-            if(calendarRule_.monthDay!=0)
-            {
-                const auto dayLabel=std::wstring(_LW("settings.calendar.monthDay"));
-                auto& minus=option("calendar.edit.monthDay.minus",L"−",stepX,ruleBottom,44);
-                minus.enabled=minus.enabled&&calendarRule_.monthDay>1;
-                minus.accessibilityLabel=minus.tooltip=dayLabel+L" −";
-                auto& value=Add("calendar.edit.monthDay.value",ui::Role::Text,Rect(stepX+52,ruleBottom,72,36),
-                    std::to_wstring(calendarRule_.monthDay));
-                value.centered=value.bold=true;value.fontSize=16;
-                value.accessibilityLabel=dayLabel+L" "+value.text;
-                auto& plus=option("calendar.edit.monthDay.plus",L"+",stepX+132,ruleBottom,44);
-                plus.enabled=plus.enabled&&calendarRule_.monthDay<31;
-                plus.accessibilityLabel=plus.tooltip=dayLabel+L" +";
-                Command("calendar.edit.monthDay.minus",[this]{calendarRule_.monthDay=(std::max)(1,calendarRule_.monthDay-1);calendarDiscardConfirmed_=false;});
-                Command("calendar.edit.monthDay.plus",[this]{calendarRule_.monthDay=(std::min)(31,calendarRule_.monthDay+1);calendarDiscardConfirmed_=false;});
-                ruleBottom+=44;
-            }
+            choiceField("calendar.edit.monthDay",_LW("settings.calendar.monthDay"),
+                calendarRule_.monthDay==0?std::wstring(_LW("settings.calendar.lastDay")):
+                    std::to_wstring(calendarRule_.monthDay),right,ruleBottom,rightWidth);
+            ruleBottom+=72;
         }
         const bool forever=calendarRule_.endDate.empty();
-        const float endWidth=(rightWidth-8)/2;
-        option("calendar.edit.endNever",_LW("settings.calendar.neverEnds"),right,ruleBottom,endWidth,forever);
-        option("calendar.edit.endType",_LW("settings.calendar.endsOn"),right+endWidth+8,ruleBottom,endWidth,!forever);
-        Command("calendar.edit.endNever",[this]{calendarRule_.endDate.clear();calendarDiscardConfirmed_=false;});
-        Command("calendar.edit.endType",[this]{if(calendarRule_.endDate.empty())
-                calendarRule_.endDate=calendar::CalendarService::AddDays(calendarRule_.startDate,30).value_or(date_);
-            calendarDiscardConfirmed_=false;});
-        ruleBottom+=44;
+        choiceField("calendar.edit.endType",_LW("settings.calendar.endDate"),
+            _LW(forever?"settings.calendar.neverEnds":"settings.calendar.endsOn"),right,ruleBottom,rightWidth);
+        ruleBottom+=72;
         if(!forever)
         {
             option("calendar.edit.endDate",Wide(calendarRule_.endDate),right,ruleBottom,rightWidth);
@@ -1748,34 +1768,20 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
     field("start",right,timeY,timeWidth,36,!editor->draft.allDay);
     field("end",right+timeWidth+12,timeY,timeWidth,36,!editor->draft.allDay);
     const float reminderY=timeY+72;
-    auto& reminderLabel=Add("calendar.edit.reminder.label",ui::Role::Text,Rect(right,reminderY,rightWidth,20),_LW("settings.calendar.reminder"));reminderLabel.fontSize=13;reminderLabel.secondary=true;
     const auto reminderKey="settings.calendar.reminder."+std::to_string(editor->draft.reminderMinutes);
-    auto& reminder=Add("calendar.edit.reminder",ui::Role::Button,Rect(right,reminderY+24,rightWidth,36),_LW(reminderKey.c_str()));
-    reminder.enabled=!calendarConfirmDelete_;reminder.tooltip=std::wstring(_LW("settings.calendar.reminder"))+L" · "+reminder.text;
-    reminder.accessibilityLabel=reminder.tooltip;
-    Command(reminder.id,[this]{calendarReminderOpen_=!calendarReminderOpen_;});
-    float rightEnd=reminderY+72;
-    if(calendarReminderOpen_&&!calendarConfirmDelete_)
-        for(const auto minutes:SystemCalendarReminderMinutes)
-        {
-            const auto id="calendar.edit.reminder:"+std::to_string(minutes),key="settings.calendar.reminder."+std::to_string(minutes);
-            auto& choice=Add(id,ui::Role::ListItem,Rect(right,rightEnd,rightWidth,32),_LW(key.c_str()));choice.selected=minutes==editor->draft.reminderMinutes;choice.fontSize=13;
-            Command(id,[this,minutes]{calendarEditor_->draft.reminderMinutes=minutes;calendarReminderOpen_=false;});rightEnd+=36;
-        }
+    choiceField("calendar.edit.reminder",_LW("settings.calendar.reminder"),
+        _LW(reminderKey.c_str()),right,reminderY,rightWidth);
+    const float rightEnd=reminderY+72;
     const float notesY=wide?136.f:rightEnd;
     const float notesHeight=MeasureSystemCalendarNotesHeight(calendarText_.at("calendar.edit.notes"),leftWidth);
     field("notes",16,notesY,leftWidth,notesHeight);
     float footer=(std::max)(rightEnd,notesY+24+notesHeight)+16;
     if(calendarSeriesOriginal_)
     {
-        auto& caption=Add("calendar.edit.scope.label",ui::Role::Text,Rect(16,footer,width,20),_LW("settings.calendar.scope"));
-        caption.fontSize=13;caption.secondary=true;footer+=24;
-        const float half=(width-8)/2;
-        option("calendar.edit.scope.once",_LW("settings.calendar.scope.once"),16,footer,half,!calendarScopeSeries_);
-        option("calendar.edit.scope.series",_LW("settings.calendar.scope.series"),24+half,footer,half,calendarScopeSeries_);
-        Command("calendar.edit.scope.once",[this]{SwitchCalendarScope(false);});
-        Command("calendar.edit.scope.series",[this]{SwitchCalendarScope(true);});
-        footer+=48;
+        choiceField("calendar.edit.scope",_LW("settings.calendar.scope"),
+            _LW(calendarScopeSeries_?"settings.calendar.scope.series":"settings.calendar.scope.once"),
+            16,footer,width);
+        footer+=72;
     }
     if(!editor->error.empty())
     {
@@ -1802,7 +1808,7 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         if(existing)
         {
             Add("calendar.edit.delete",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("app.settings.delete")).centered=true;
-            Command("calendar.edit.delete",[this]{calendarConfirmDelete_=true;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;calendarReminderOpen_=false;calendarEditor_->error.clear();});x+=buttonWidth+12;
+            Command("calendar.edit.delete",[this]{calendarConfirmDelete_=true;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;calendarEditor_->error.clear();});x+=buttonWidth+12;
         }
         Add("calendar.edit.cancel",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("settings.dialog.cancel")).centered=true;
         Command("calendar.edit.cancel",[this]{LeaveCalendarEditor(false);});x+=buttonWidth+12;
@@ -1836,7 +1842,7 @@ void SystemPanelModel::OpenCalendarPicker(std::string field)
         std::sort(calendarPickerDates_.begin(),calendarPickerDates_.end());
         calendarPickerDates_.erase(std::unique(calendarPickerDates_.begin(),calendarPickerDates_.end()),calendarPickerDates_.end());
     }
-    calendarPickerField_=std::move(field);calendarEditorScroll_=scroll_;calendarReminderOpen_=false;scroll_=0;
+    calendarPickerField_=std::move(field);calendarEditorScroll_=scroll_;scroll_=0;
 }
 float SystemPanelModel::CalendarPicker(float width)
 {

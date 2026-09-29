@@ -291,6 +291,23 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             ClearMenuIcons();
             return command;
         });
+        systemPanel_->SetCalendarChoiceMenuHandler([this](POINT screen, HWND owner,
+            const std::vector<std::wstring>& labels, std::size_t selected) -> UINT {
+            if (exitRequested_ || labels.empty()) return 0;
+            HMENU menu = CreatePopupMenu();
+            if (!menu) return 0;
+            for (std::size_t index = 0; index < labels.size(); ++index)
+                AppendMenuW(menu, MF_STRING | (index == selected ? MF_CHECKED : 0),
+                    static_cast<UINT_PTR>(index + 1), labels[index].c_str());
+            PrepareMenuIconsForPoint(screen);
+            UINT command = 0;
+            try { command = ShowModernMenu(menu, screen, owner, false, false, nullptr,
+                {}, {}, {}, nullptr, {}, true); }
+            catch (...) { DestroyMenu(menu); ClearMenuIcons(); throw; }
+            DestroyMenu(menu);
+            ClearMenuIcons();
+            return command;
+        });
         systemPanel_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
         systemPanel_->SetTrayStateChanged([this](HMONITOR monitor,bool expanded) {
             if(statusBar_)statusBar_->SetTrayExpanded(monitor,expanded);

@@ -29,7 +29,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::CalendarView multipleDates;
     muxc::ComboBox mode, scope, monthDay;
     muxc::TextBox interval;
-    muxc::ToggleSwitch neverEnds;
+    muxc::ComboBox endType;
     muxc::TextBlock ruleSummary;
     muxc::Button editOccurrence;
     std::vector<muxc::CheckBox> weekdays;
@@ -121,7 +121,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         editor.Children().Append(ruleSummary);
         editor.Children().Append(date); editor.Children().Append(multipleDates);
         editor.Children().Append(interval); editor.Children().Append(weekdayRow);
-        editor.Children().Append(monthDay); editor.Children().Append(neverEnds);
+        editor.Children().Append(monthDay); editor.Children().Append(endType);
         editor.Children().Append(until); editor.Children().Append(occurrenceDate);
         editor.Children().Append(editOccurrence); editor.Children().Append(allDay);
         editor.Children().Append(start); editor.Children().Append(end); editor.Children().Append(reminder);
@@ -150,8 +150,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             else if (scope.SelectedIndex() == 0) LoadOccurrence();
         });
         revoke.push_back([c = scope, scopeToken] { c.SelectionChanged(scopeToken); });
-        auto endToken = neverEnds.Toggled([this](const auto&, const auto&) { UpdateModeVisibility(); });
-        revoke.push_back([c = neverEnds, endToken] { c.Toggled(endToken); });
+        auto endToken = endType.SelectionChanged([this](const auto&, const auto&) { UpdateModeVisibility(); });
+        revoke.push_back([c = endType, endToken] { c.SelectionChanged(endToken); });
         Click(editOccurrence, [this] { LoadOccurrence(); });
         auto selection = list.SelectionChanged([this](const auto&, const auto&) {
             if (updating || closed || !active) return;
@@ -205,7 +205,12 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         until.Header(winrt::box_value(L("settings.calendar.endDate")));
         occurrenceDate.Header(winrt::box_value(L("settings.calendar.occurrenceDate")));
         interval.Header(winrt::box_value(L("settings.calendar.interval")));
-        neverEnds.Header(winrt::box_value(L("settings.calendar.neverEnds")));
+        endType.Header(winrt::box_value(L("settings.calendar.endDate")));
+        const int selectedEndType = endType.SelectedIndex();
+        endType.Items().Clear();
+        endType.Items().Append(winrt::box_value(L("settings.calendar.neverEnds")));
+        endType.Items().Append(winrt::box_value(L("settings.calendar.endsOn")));
+        endType.SelectedIndex(selectedEndType >= 0 ? selectedEndType : 0);
         mode.Header(winrt::box_value(L("settings.calendar.dateMode")));
         scope.Header(winrt::box_value(L("settings.calendar.scope")));
         monthDay.Header(winrt::box_value(L("settings.calendar.monthDay")));
@@ -343,8 +348,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         interval.Visibility(selected >= 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         weekdayRow.Visibility(selected == 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         monthDay.Visibility(selected == 3 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        neverEnds.Visibility(selected >= 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        until.Visibility(selected >= 2 && !neverEnds.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        endType.Visibility(selected >= 2 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        until.Visibility(selected >= 2 && endType.SelectedIndex() == 1 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         occurrenceDate.Visibility(editingSeries.id.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         editOccurrence.Visibility(editingSeries.id.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         if (selected == 1)
@@ -402,7 +407,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (std::size_t index = 0; index < weekdays.size(); ++index)
             weekdays[index].IsChecked(info && info->weekday == static_cast<int>(index + 1));
         monthDay.SelectedIndex(info ? info->day : 1);
-        neverEnds.IsOn(true);
+        endType.SelectedIndex(0);
         until.Date(nullptr);
         if (selectedDate < date.MinDate()) date.MinDate(selectedDate);
         if (selectedDate > date.MaxDate()) date.MaxDate(selectedDate);
@@ -448,7 +453,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             const bool checked = std::find(item.rule.weekdays.begin(), item.rule.weekdays.end(), weekday) != item.rule.weekdays.end();
             weekdays[index].IsChecked(checked);
         }
-        neverEnds.IsOn(item.rule.endDate.empty());
+        endType.SelectedIndex(item.rule.endDate.empty() ? 0 : 1);
         if (!item.rule.endDate.empty())
             until.Date(winrt::box_value(PickerDate(item.rule.endDate))
                 .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
@@ -495,7 +500,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             else
             {
                 rule.startDate = SelectedDate();
-                rule.endDate = neverEnds.IsOn() ? std::string{} :
+                rule.endDate = endType.SelectedIndex() == 0 ? std::string{} :
                     until.Date() ? DateString(until.Date().Value()) : std::string{};
                 const auto intervalText = winrt::to_string(interval.Text());
                 const auto parsed = std::from_chars(intervalText.data(),
@@ -517,7 +522,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             const bool invalid = !calendar::CalendarService::GetDateInfo(rule.startDate) ||
                 (selectedMode == 1 && (rule.dates.empty() || rule.dates.size() > 366)) ||
                 (selectedMode >= 2 && (rule.interval < 1 || rule.interval > 99 ||
-                    (!neverEnds.IsOn() && (!calendar::CalendarService::GetDateInfo(rule.endDate) ||
+                    (endType.SelectedIndex() != 0 && (!calendar::CalendarService::GetDateInfo(rule.endDate) ||
                         rule.endDate < rule.startDate)))) ||
                 (selectedMode == 2 && rule.weekdays.empty()) ||
                 (selectedMode == 3 && (rule.monthDay < 0 || rule.monthDay > 31));
