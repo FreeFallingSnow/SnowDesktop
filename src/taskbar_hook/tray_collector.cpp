@@ -150,9 +150,13 @@ void BootstrapClassic(Collector& collector)
             TBBUTTON button{};
             if (!SendMessageTimeoutW(child, TB_GETBUTTON, i, reinterpret_cast<LPARAM>(&button),
                     SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &result) || !result || !button.dwData) continue;
-            struct ClassicItem { HWND window; UINT id, callback, reserved[2]; HICON icon; } item{};
+            // Explorer's classic record stores the negotiated version after
+            // its internal state word. Confirmed on Win10 with an owned icon
+            // switching 0 -> 3 -> 4 -> 0; this is not ADD's timeout union.
+            struct ClassicItem { HWND window; UINT id, callback, state, version; HICON icon; } item{};
             if (!CopyBytes(reinterpret_cast<void*>(button.dwData), &item, sizeof(item)) ||
-                !IsWindow(item.window) || item.callback < WM_USER || item.callback > 0xffff) continue;
+                !IsWindow(item.window) || item.callback < WM_USER || item.callback > 0xffff ||
+                item.version > NOTIFYICON_VERSION_4) continue;
             Event event;
             event.epoch = static_cast<std::uint64_t>(Read(self.shared->epoch));
             event.operation = kBootstrapIcon;
@@ -160,8 +164,9 @@ void BootstrapClassic(Collector& collector)
             event.identity.window = reinterpret_cast<std::uint64_t>(item.window); event.identity.id = item.id;
             GetWindowThreadProcessId(item.window, &event.identity.process);
             event.callback = item.callback;
-            // The private reserved words and toolbar hidden flag are not the
-            // registration version or NIS_HIDDEN. Only wire events supply those.
+            event.version = item.version;
+            // Internal state contains additional Explorer flags. Do not copy
+            // it or the toolbar's overflow visibility into NIS_HIDDEN.
             if (auto copy = CopyIcon(item.icon)) { Pixels(copy, event); DestroyIcon(copy); }
             if (!event.width || !event.height || !event.identity.process) continue;
             if (!Publish(*self.shared, event)) break;

@@ -292,12 +292,39 @@ int RunTrayModelTests()
         check(!Apply(registrations, partial) && registrations.size() == 1,
             "a stale explicit owner cannot delete another incarnation of a GUID");
         Event supplement = registration; supplement.operation = kBootstrapIcon; supplement.identity.guid = {};
+        supplement.version = 4;
         check(!Apply(registrations, supplement) && registrations.size() == 1 && registrations.front().version == 3,
             "classic supplementation cannot duplicate or downgrade an authoritative GUID icon");
         registrations.clear();
+        for (const DWORD protocol : {0u, 3u, 4u})
+        {
+            supplement.version = protocol;
+            check(Apply(registrations, supplement), "cold classic icon enters without re-registration");
+            const auto context = Callbacks(registrations.front(), Activation::ContextKeyboard, {-40, 60});
+            if (protocol == 4)
+                check(context.size() == 1 && HIWORD(context.front().lp) == 7 &&
+                    LOWORD(context.front().lp) == WM_CONTEXTMENU && GET_X_LPARAM(context.front().wp) == -40 &&
+                    GET_Y_LPARAM(context.front().wp) == 60,
+                    "cold v4 system icon receives its ID and screen anchor instead of legacy parameters");
+            else if (protocol == 3)
+                check(context.size() == 1 && context.front().wp == 7 && context.front().lp == WM_CONTEXTMENU,
+                    "cold v3 icon keeps legacy packing with semantic context notification");
+            else
+                check(context.size() == 2 && context.front().wp == 7 && context.front().lp == WM_RBUTTONDOWN &&
+                    context.back().lp == WM_RBUTTONUP, "cold legacy icon retains the legacy context gesture");
+            auto stale = supplement; stale.version = protocol == 4 ? 0u : 4u;
+            check(!Apply(registrations, stale) && registrations.front().version == protocol,
+                "a late duplicate bootstrap cannot replace the previously collected version");
+            registrations.clear();
+        }
+        supplement.version = 5;
+        check(!Apply(registrations, supplement) && registrations.empty(),
+            "an unsupported classic record cannot manufacture a legacy actionable icon");
+        supplement.version = 4;
         check(Apply(registrations, supplement) && Apply(registrations, registration) && registrations.size() == 1 &&
+            registrations.front().version == 4 &&
             registrations.front().key == Key(registration.identity),
-            "the wire GUID upgrades a provisional classic identity without leaving a duplicate");
+            "the wire GUID upgrades a provisional classic identity without losing its version or leaving a duplicate");
         registrations.front().application = L"old process"; registrations.front().version = 4;
         Event replacement = registration; replacement.identity.window = 400; replacement.identity.process = 100;
         replacement.flags = NIF_TIP;

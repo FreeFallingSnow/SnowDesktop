@@ -61,8 +61,14 @@ newer icon version. WeChat's actual menu remains a desktop acceptance item.
 
 Complete MODIFY events may recover an icon missed during startup. GUID-only
 updates retain its existing owner and callback identity; classic primary and
-overflow toolbars can supply bootstrap pixels without guessing reserved fields
-as version or visibility flags. Reconnection retains live-owner icons while
+overflow toolbars supply bootstrap pixels and Explorer's negotiated callback
+version. On Windows 10 build 19044, a separate owned icon switching versions
+0/3/4/0 confirmed the native version field after the internal state word;
+SecurityHealthSystray and SystemTray_Main also retained version 4 there while
+not re-registering after TaskbarCreated. Unknown versions are rejected, and
+internal state/toolbar overflow visibility are not copied as NIS_HIDDEN.
+This private layout still requires runtime compatibility checks on other
+Windows builds. Reconnection retains live-owner icons while
 requesting re-registration, and reports degraded collection when completeness
 cannot be established. Applications that neither re-register nor emit complete
 updates remain a compatibility limitation.
@@ -83,6 +89,11 @@ v4/legacy callbacks, removal, teardown and reconnect. It only invokes its own
 fixture icon. The test broadcasts `TaskbarCreated` and keeps a temporary Hook
 copy pinned until Explorer exits; it never restarts Explorer itself. No Explorer
 session or an active desktop host is reported as an environment skip, not a pass.
+On a Windows 10 classic taskbar, the same test executable additionally accepts
+`--tray-classic <hook-dll>`: three owned GUID icons intentionally ignore
+`TaskbarCreated`, so their version 0/3/4 mouse and keyboard callbacks must come
+from the production classic bootstrap path. This opt-in diagnostic requires
+closing SnowDesktop and does not invoke any third-party or system-icon menu.
 
 `src/system_control_bluetooth.cpp` adapts the KS reconnect/disconnect approach
 and Bluetooth battery property identification from

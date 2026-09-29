@@ -16,12 +16,17 @@ namespace snowdesktop::deployment { std::wstring GetTaskbarHookPath() { return h
 void WriteDiagnosticLogEntry(const wchar_t* text, DiagnosticLogLevel) { std::wcout << text << std::endl; }
 constexpr UINT kCallback = WM_APP + 100, kCommand = WM_APP + 101;
 constexpr UINT kColdIconId = 78;
+constexpr UINT kClassicIconId = 80, kClassicCallback = kCallback + 10;
+constexpr DWORD kClassicVersions[]{0, NOTIFYICON_VERSION, NOTIFYICON_VERSION_4};
 constexpr GUID kIconGuid{0xe1e77079,0x1b5b,0x40f7,{0xaa,0x72,0x82,0xb4,0x19,0x6c,0x62,0x05}};
 struct State
 {
     DWORD owner = 0;
     volatile LONG ready = 0, errors = 0, count = 0;
     volatile LONG coldAddFailures = 0, coldVersionRequests = 0;
+    bool classic = false;
+    volatile LONG classicCount[3]{};
+    Callback classicCallbacks[3][8]{};
     HWND window = nullptr;
     Callback callbacks[64]{};
 };
@@ -29,6 +34,8 @@ static State* state = nullptr;
 static UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 static NOTIFYICONDATAW iconData{};
 static NOTIFYICONDATAW coldIconData{};
+static NOTIFYICONDATAW classicIconData[3]{};
+static bool classicPresent[3]{};
 static bool present = false;
 static bool coldPresent = false;
 void Check(bool value, const char* what)
@@ -66,6 +73,17 @@ LRESULT CALLBACK ClientProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
     {
         const auto count = Read(state->count);
         if (count < 64) { state->callbacks[count] = {wp, lp}; MemoryBarrier(); InterlockedIncrement(&state->count); }
+        return 0;
+    }
+    if (message >= kClassicCallback && message < kClassicCallback + 3)
+    {
+        const auto index = message - kClassicCallback;
+        const auto count = Read(state->classicCount[index]);
+        if (count < 8)
+        {
+            state->classicCallbacks[index][count] = {wp, lp};
+            MemoryBarrier(); InterlockedIncrement(&state->classicCount[index]);
+        }
         return 0;
     }
     if (message == kCommand)
@@ -107,10 +125,30 @@ int Client(const wchar_t* mapping)
     coldIconData.uID = kColdIconId; coldIconData.uCallbackMessage = kCallback + 2;
     coldIconData.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     wcscpy_s(coldIconData.szTip, L"SnowDesktop isolated cold registration fixture");
-    Add(); AddCold(); SetTimer(state->window, 1, 1000, nullptr); InterlockedExchange(&state->ready, 1);
+    Add(); AddCold();
+    if (state->classic)
+        for (unsigned i = 0; i < std::size(classicIconData); ++i)
+        {
+            // Like Win10 system icons, these exist before collector attachment
+            // and deliberately ignore TaskbarCreated. Only native bootstrap
+            // can recover their protocol; ADD's timeout field is left zero.
+            auto& data = classicIconData[i];
+            data.cbSize = sizeof(data); data.hWnd = state->window; data.uID = kClassicIconId + i;
+            data.uFlags = NIF_GUID | NIF_ICON | NIF_MESSAGE | NIF_TIP;
+            data.guidItem = kIconGuid; data.guidItem.Data1 += i + 1;
+            data.uCallbackMessage = kClassicCallback + i; data.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+            wcscpy_s(data.szTip, L"SnowDesktop isolated classic bootstrap fixture");
+            classicPresent[i] = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+            if (!classicPresent[i]) InterlockedIncrement(&state->errors);
+            data.uVersion = kClassicVersions[i];
+            if (!Shell_NotifyIconW(NIM_SETVERSION, &data)) InterlockedIncrement(&state->errors);
+        }
+    SetTimer(state->window, 1, 1000, nullptr); InterlockedExchange(&state->ready, 1);
     MSG message{}; while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
     if (present) Notify(NIM_DELETE);
     if (coldPresent && !Shell_NotifyIconW(NIM_DELETE, &coldIconData)) InterlockedIncrement(&state->errors);
+    for (unsigned i = 0; i < std::size(classicIconData); ++i)
+        if (classicPresent[i] && !Shell_NotifyIconW(NIM_DELETE, &classicIconData[i])) InterlockedIncrement(&state->errors);
     DestroyWindow(state->window); UnmapViewOfFile(state); CloseHandle(shared); return 0;
 }
 template<class Predicate> bool Await(Predicate predicate, unsigned milliseconds = 6000)
@@ -130,13 +168,13 @@ struct Fixture
         if (value) UnmapViewOfFile(value);
         if (mapping) CloseHandle(mapping);
     }
-    void Start()
+    void Start(bool classic = false)
     {
         const auto name = L"Local\\SnowDesktop.TrayFixture." + std::to_wstring(GetCurrentProcessId());
         mapping = CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(State),name.c_str());
         Check(mapping != nullptr, "fixture mapping");
         value = static_cast<State*>(MapViewOfFile(mapping,FILE_MAP_ALL_ACCESS,0,0,sizeof(State)));
-        Check(value != nullptr, "fixture memory"); new(value) State; value->owner = GetCurrentProcessId();
+        Check(value != nullptr, "fixture memory"); new(value) State; value->owner = GetCurrentProcessId(); value->classic = classic;
         wchar_t exe[32768]{}; GetModuleFileNameW(nullptr,exe,32768);
         auto command = L"\"" + std::wstring(exe) + L"\" --tray-fixture-client \"" + name + L"\"";
         STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESHOWWINDOW; startup.wShowWindow=SW_HIDE;
@@ -155,7 +193,8 @@ int TryRunTrayLiveTests()
     std::vector<const wchar_t*> argv;
     for (const auto& argument : arguments) argv.push_back(argument.c_str());
     if (argc==3 && wcscmp(argv[1],L"--tray-fixture-client")==0) return Client(argv[2]);
-    if (argc != 3 || wcscmp(argv[1], L"--tray-live") != 0) return -1;
+    const bool classic = argc == 3 && wcscmp(argv[1], L"--tray-classic") == 0;
+    if (!classic && (argc != 3 || wcscmp(argv[1], L"--tray-live") != 0)) return -1;
     if (!GetShellWindow()) { std::cerr << "SKIP: an interactive Explorer session is required\n"; return 77; }
     HANDLE processes = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry); bool occupied = false;
@@ -181,7 +220,45 @@ int TryRunTrayLiveTests()
     std::wcout << L"Isolated Hook (released when Explorer exits): " << hookPath << std::endl;
     try
     {
-        Fixture fixture; fixture.Start();
+        Fixture fixture; fixture.Start(classic);
+        if (classic)
+        {
+            Check(Read(fixture.value->errors) == 0, "classic fixtures register before the collector exists");
+            Service service;
+            for (unsigned i = 0; i < std::size(kClassicVersions); ++i)
+            {
+                std::optional<Icon> collected;
+                Check(Await([&] {
+                    for (const auto& icon : service.Current().icons)
+                        if (icon.identity.window == reinterpret_cast<std::uint64_t>(fixture.value->window) &&
+                            icon.identity.process == fixture.process.dwProcessId && icon.identity.id == kClassicIconId + i)
+                            collected = icon;
+                    return collected && collected->version == kClassicVersions[i] && !collected->pixels.empty();
+                }), "classic bootstrap preserves the declared protocol without any re-registration");
+                Check(!HasGuid(collected->identity.guid), "the fixture was collected from the native toolbar only");
+                service.SetGeometry(collected->key, {-160, 40, -128, 72});
+                for (auto action : {Activation::RightDown, Activation::RightUp, Activation::ContextKeyboard})
+                    Check(service.Activate(collected->key, action, {-144, 56}), "cold icon context action accepted");
+                Check(Await([&] { return Read(fixture.value->classicCount[i]) >= 4; }), "cold icon receives all context callbacks");
+                Check(Read(fixture.value->classicCount[i]) == 4, "cold icon receives no duplicate context callbacks");
+                const UINT legacy[]{WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP};
+                const UINT modern[]{WM_RBUTTONDOWN, WM_RBUTTONUP, WM_CONTEXTMENU, WM_CONTEXTMENU};
+                for (unsigned j = 0; j < 4; ++j)
+                {
+                    const auto callback = fixture.value->classicCallbacks[i][j];
+                    if (kClassicVersions[i] == NOTIFYICON_VERSION_4)
+                        Check(LOWORD(callback.lp) == modern[j] && HIWORD(callback.lp) == kClassicIconId + i &&
+                            GET_X_LPARAM(callback.wp) == -144 && GET_Y_LPARAM(callback.wp) == 56,
+                            "cold v4 callback retains event, identity and signed screen anchor");
+                    else
+                        Check(callback.wp == kClassicIconId + i && callback.lp ==
+                            (kClassicVersions[i] ? modern[j] : legacy[j]),
+                            "cold legacy or v3 callback keeps the original protocol and full icon ID");
+                }
+            }
+            Check(Read(fixture.value->errors) == 0, "Shell accepted classic fixture notifications");
+            return 0;
+        }
         Check(Read(fixture.value->coldVersionRequests) == 1 && Read(fixture.value->coldAddFailures) == 0,
             "cold legacy-key fixture registered version 4 before the collector existed");
         fixture.Command(7);

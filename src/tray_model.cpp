@@ -32,7 +32,7 @@ bool Apply(std::vector<Icon>& icons, const Event& event)
         icons.erase(found); return true;
     }
     if (!bootstrap && event.operation != NIM_ADD && event.operation != NIM_MODIFY && event.operation != NIM_SETVERSION) return false;
-    if (event.operation == NIM_SETVERSION && event.version > NOTIFYICON_VERSION_4) return false;
+    if ((bootstrap || event.operation == NIM_SETVERSION) && event.version > NOTIFYICON_VERSION_4) return false;
     const bool image = (event.flags & NIF_ICON) && event.width && event.height &&
         event.width <= kIconSize && event.height <= kIconSize;
     const bool owner = event.identity.window && event.identity.process;
@@ -71,6 +71,11 @@ bool Apply(std::vector<Icon>& icons, const Event& event)
     {
         found->version = event.version; return true;
     }
+    // Bootstrap captures Explorer's already negotiated callback protocol.
+    // System icons may never answer our synthetic TaskbarCreated broadcast.
+    // The early duplicate check keeps later supplements from replacing live
+    // registration/version events, including a GUID identity upgrade.
+    if (bootstrap) found->version = event.version;
     // A duplicate ADD is observed even when Explorer rejects it because the
     // icon already exists. It must not silently downgrade a v4 registration.
     if (event.flags & NIF_MESSAGE) found->callback = event.callback;
