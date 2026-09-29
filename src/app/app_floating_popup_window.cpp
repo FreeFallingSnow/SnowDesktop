@@ -764,12 +764,40 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
     {
         preserveAboveWindow = nullptr;
     }
+    HWND insertAfter = shouldBeTopmost
+        ? HWND_TOPMOST : HWND_NOTOPMOST;
+    if (popupAnchoredToDock_ && collectionPopupDockHost_ &&
+        collectionPopupDockHost_->active &&
+        collectionPopupDockHost_->hwnd &&
+        IsWindowVisible(collectionPopupDockHost_->hwnd) &&
+        snowdesktop::popup_window_pair_z_order::IsTopmost(
+            collectionPopupDockHost_->hwnd) == shouldBeTopmost)
+    {
+        const auto& dockHost = *collectionPopupDockHost_;
+        const HWND next = GetWindow(dockHost.hwnd, GW_HWNDNEXT);
+        insertAfter = dockHost.backdrop.IsBackdropWindow(next)
+            ? next : dockHost.hwnd;
+        if (dockHost.container &&
+            dockHost.container->IsMergedWithStatusBar() && statusBar_)
+            if (const HWND stripBottom =
+                    statusBar_->MergedPresentationBottomWindow(
+                        dockHost.monitor))
+                insertAfter = stripBottom;
+    }
     if (!collectionPopupBackdropCompositor_.IsAvailable())
-        snowdesktop::popup_window_pair_z_order::MaintainContentBand(
-            floatingPopupHwnd_, shouldBeTopmost, preserveAboveWindow);
+    {
+        if (insertAfter == HWND_TOPMOST ||
+            insertAfter == HWND_NOTOPMOST)
+            snowdesktop::popup_window_pair_z_order::MaintainContentBand(
+                floatingPopupHwnd_, shouldBeTopmost, preserveAboveWindow);
+        else
+            snowdesktop::popup_window_pair_z_order::Apply(
+                floatingPopupHwnd_, nullptr, insertAfter,
+                shouldBeTopmost, POINT{}, SIZE{}, preserveAboveWindow);
+    }
     else
         collectionPopupBackdropCompositor_.SetPopupWindowPairZOrder(
-            floatingPopupHwnd_, shouldBeTopmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+            floatingPopupHwnd_, insertAfter,
             shouldBeTopmost, preserveAboveWindow);
     ApplyDragPreviewLayerPolicy();
     TraceMenuHostZOrderTransition(
@@ -1096,6 +1124,11 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     else if (boundsChanged && !immediatePresent)
     {
         InvalidateFloatingPopupWindow(false);
+    }
+    if (popupAnchoredToDock_ && collectionPopupDockHost_)
+    {
+        ApplyFloatingDockLayerPolicy();
+        ApplyFloatingPopupLayerPolicy();
     }
     ApplyDragPreviewLayerPolicy();
 }

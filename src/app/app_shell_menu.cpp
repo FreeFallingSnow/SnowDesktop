@@ -398,7 +398,12 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     if (merged) { ApplyDragPreviewLayerPolicy(); return; }
     // Retain the floating band until the last closing frame, without feeding
     // presentation visibility back into ShouldShowPersistentDockHost.
+    const bool hostsCollectionPopup =
+        popupAnchoredToDock_ && collectionPopupDockHost_ == &host &&
+        (popupAnimation_.IsInteractive() || !popupAnimation_.IsHidden()) &&
+        ShouldShowFloatingPopupWindow();
     const bool promoted = IsPersistentDockHostEffectivelyFloating(host) ||
+        hostsCollectionPopup ||
         (host.mergedPresentationActive && host.mergedAnimation.IsClosing());
     const bool systemShowDesktopGuard =
         systemShowDesktopDockLayerGuardActive_ &&

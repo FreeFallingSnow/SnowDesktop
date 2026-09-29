@@ -299,7 +299,16 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
         const bool mirrored = anchorX - layout::FanRootX(metrics, width, false) < available.left;
         const int left = std::clamp(anchorX - layout::FanRootX(metrics, width, mirrored),
             static_cast<int>(available.left), static_cast<int>(available.right) - width);
-        const int top = CollectionPopupFanRootAbove() ? available.top : available.bottom - height;
+        int top = CollectionPopupFanRootAbove() ? available.top : available.bottom - height;
+        if (popupAnchoredToDock_)
+        {
+            const RECT work = page ? page->workArea : layoutWorkArea_;
+            const int maxTop = static_cast<int>(std::max<LONG>(
+                work.top + metrics.edgeMargin,
+                work.bottom - metrics.edgeMargin - height));
+            top += std::min(layout::ScaleDimension(6, metrics.scale),
+                std::max(0, maxTop - top));
+        }
         return MakeRect(left, top, left + width, top + height);
     }
 
@@ -420,7 +429,7 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             left = popupAnchorPoint_.x + metrics.anchorGap;
             top = popupAnchorPoint_.y + metrics.anchorGap;
         }
-        if (popupAnchoredToDock_) top += snowdesktop::collection_popup_layout::ScaleDimension(4, metrics.scale);
+        if (popupAnchoredToDock_) top += snowdesktop::collection_popup_layout::ScaleDimension(10, metrics.scale);
         left = std::clamp(
             left,
             static_cast<int>(work.left + metrics.edgeMargin),

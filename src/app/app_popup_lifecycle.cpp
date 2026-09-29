@@ -560,6 +560,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
         InvalidateRect(hwnd_, &dirty, FALSE);
     }
     UpdateFloatingPopupWindowBounds(true);
+    ApplyFloatingDockLayerPolicy();
     if (pendingOpen && hwnd_ && IsWindow(hwnd_))
     {
         const size_t widgetIndex =

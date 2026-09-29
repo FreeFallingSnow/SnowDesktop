@@ -1233,7 +1233,6 @@ RECT DockContainer::GetHoveredTitleBounds(
 {
     if (IsMagnificationSuppressed() ||
         (app_ && ((app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()) ||
-            (app_->popupAnimation_.IsInteractive() || !app_->popupAnimation_.IsHidden()) ||
             !app_->quickNavigationAnimation_.IsHidden() ||
             app_->quickNavigationOpen_ || app_->HasActiveContextMenuSession())))
         return RECT{};
@@ -1246,6 +1245,40 @@ RECT DockContainer::GetHoveredTitleBounds(
     RECT baseBounds{};
     if (DockEntryItem* entry = EntryAtPoint(pointer))
     {
+        const bool popupVisible = app_->popupAnimation_.IsInteractive() ||
+            !app_->popupAnimation_.IsHidden();
+        bool sameDock = app_->collectionPopupDockHost_ == host;
+        if (popupVisible && app_->popupAnchoredToDock_ &&
+            sameDock && !host)
+        {
+            const RECT dockBounds = GetInteractiveBounds();
+            sameDock = PtInRect(
+                &dockBounds, app_->popupAnchorPoint_) != FALSE;
+        }
+        if (popupVisible && app_->popupAnchoredToDock_ && sameDock)
+        {
+            bool isPopupSource = false;
+            if (app_->dockFolderPopupOpen_)
+            {
+                const size_t index = entry->GetEntryIndex();
+                if (index < app_->dockEntries_.size())
+                {
+                    const DockEntry& source = app_->dockEntries_[index];
+                    const std::wstring sourceId =
+                        std::to_wstring(static_cast<int>(source.type)) +
+                        L":" + ToUpperInvariant(source.reference);
+                    isPopupSource = sourceId == app_->dockFolderPopupSourceId_;
+                }
+            }
+            else if (app_->popupWidgetIndex_ < app_->widgets_.size() &&
+                IsLogicalDockEntryType(entry->GetEntryType()))
+            {
+                isPopupSource = entry->GetReference() ==
+                    app_->widgets_[app_->popupWidgetIndex_].id;
+            }
+            if (isPopupSource)
+                return RECT{};
+        }
         title = entry->GetTitle();
         baseBounds = entry->GetBounds();
     }
