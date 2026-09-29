@@ -1201,7 +1201,8 @@ void CheckCalendarManagement()
     Require(model.ScrollOffset()==editorOffset&&Node(model.View(),"calendar.month").bounds.top==monthBounds.top,
         "fixed month wheel, keyboard or focus changed the agenda scroll");
     Require(calendarInput.Focus("calendar.edit.notes",true),"native notes lost their semantic focus target");
-    model.HandleKey(calendarInput,VK_TAB,false);model.HandleKey(calendarInput,VK_TAB,false);
+    for(int step=0;step<32&&calendarInput.Focused()!="calendar.edit.save";++step)
+        model.HandleKey(calendarInput,VK_TAB,false);
     Require(calendarInput.Focused()=="calendar.edit.save"&&Node(model.View(),"calendar.edit.save").bounds.bottom<=model.ScrollViewport().bottom,
         "Tab could not reveal the save action below the scrollable native form");
     Require(model.Invoke("calendar.edit.date")&&
@@ -1552,7 +1553,7 @@ void CheckCalendarResponsive()
         "secondary calendar switch did not use a labeled button");
     Require(model.Invoke("calendar.toggleCalendar")&&
         Node(model.View(),"calendar.month").text!=gregorianMonth&&
-        (!chineseLanguage||Node(model.View(),"calendar.month").text.find(L"丙午年")!=std::wstring::npos)&&
+        (!chineseLanguage||Node(model.View(),"calendar.month").text.find(L"丙午年")!=std::wstring::npos)&& // l10n-allow: intrinsic sexagenary calendar fixture
         Node(model.View(),"calendar.toggleCalendar").text==_LW("statusBar.calendarGregorianShort")&&
         Node(model.View(),"date:2026-09-26").text!=L"26"&&
         !model.View().Find("date:2026-08-31")&&

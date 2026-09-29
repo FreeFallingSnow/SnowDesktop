@@ -138,7 +138,7 @@ std::vector<DayAnnotation> Annotate(const std::string& from, const std::string& 
                 const bool traditional = language == "zh-TW" || language == "zh-HK";
                 if (item.day >= 1 && item.day <= 30 && item.month >= 1 && item.month <= 12)
                 {
-                    const auto monthName = std::string(item.leapMonth ? (traditional ? "閏" : "闰") : "") +
+                    const auto monthName = std::string(item.leapMonth ? (traditional ? "閏" : "闰") : "") + // l10n-allow: intrinsic Chinese lunar leap-month notation
                         (traditional && item.month == 12 ? "臘月" : months[item.month]); // l10n-allow: intrinsic Chinese lunar notation
                     item.secondary = item.day == 1
                         ? monthName
