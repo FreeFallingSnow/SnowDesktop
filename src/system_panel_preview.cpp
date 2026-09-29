@@ -1480,12 +1480,14 @@ void CheckCalendarResponsive()
     Require(Node(model.View(),"date:2026-09-26").tooltip.find(fullSecondary)!=std::wstring::npos,
         "date hover omitted the full secondary calendar date");
     const auto gregorianMonth=Node(model.View(),"calendar.month").text;
+    const auto effectiveLanguage=Locale::Instance().GetEffectiveLanguage();
+    const bool chineseLanguage=effectiveLanguage=="zh-CN"||effectiveLanguage=="zh-TW";
     Require(Node(model.View(),"calendar.toggleCalendar").role==ui::Role::Button&&
         Node(model.View(),"calendar.toggleCalendar").text==_LW("statusBar.calendarChineseShort"),
         "secondary calendar switch did not use a labeled button");
     Require(model.Invoke("calendar.toggleCalendar")&&
         Node(model.View(),"calendar.month").text!=gregorianMonth&&
-        Node(model.View(),"calendar.month").text.find(L"丙午年")!=std::wstring::npos&&
+        (!chineseLanguage||Node(model.View(),"calendar.month").text.find(L"丙午年")!=std::wstring::npos)&&
         Node(model.View(),"calendar.toggleCalendar").text==_LW("statusBar.calendarGregorianShort")&&
         Node(model.View(),"date:2026-09-26").text!=L"26"&&
         !model.View().Find("date:2026-08-31")&&
