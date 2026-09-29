@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <memory>
 
 #pragma comment(lib, "icu.lib")
@@ -46,6 +47,16 @@ std::string Format(UDateFormat* format, UDate date, bool separateWeekday = false
         return Utf8(text, weekday.beginIndex) + " " +
             Utf8(text + weekday.beginIndex, count - weekday.beginIndex);
     return U_SUCCESS(status) ? Utf8(text, count) : std::string{};
+}
+std::string LocalizeRocEra(std::string value, std::string_view language)
+{
+    const auto era = Locale::Instance().TrWForLanguage(
+        L10N_KEY("settings.calendar.rocEra"), std::string(language));
+    if (era.empty() || era == L"settings.calendar.rocEra") return value;
+    const auto* source = "Taiwan";
+    const auto at = value.find(source);
+    if (at != std::string::npos) value.replace(at, std::strlen(source), Utf8(reinterpret_cast<const UChar*>(era.data()), static_cast<int>(era.size())));
+    return value;
 }
 }
 
@@ -93,6 +104,9 @@ std::vector<DayAnnotation> Annotate(const std::string& from, const std::string& 
     FormatPtr shortFormat(usable ? udat_open(UDAT_PATTERN, UDAT_PATTERN, locale.c_str(), u"UTC", -1,
         yearOnly ? u"Gy" : u"MMMd", -1, &status) : nullptr, udat_close);
     status = U_ZERO_ERROR;
+    FormatPtr monthFormat(usable ? udat_open(UDAT_PATTERN, UDAT_PATTERN, locale.c_str(), u"UTC", -1,
+        u"Gy MMM", -1, &status) : nullptr, udat_close);
+    status = U_ZERO_ERROR;
     FormatPtr fullFormat(usable ? udat_open(UDAT_NONE, UDAT_FULL, locale.c_str(), u"UTC", -1,
         nullptr, 0, &status) : nullptr, udat_close);
     std::vector<DayAnnotation> result;
@@ -114,6 +128,7 @@ std::vector<DayAnnotation> Annotate(const std::string& from, const std::string& 
             item.era = ucal_get(calendar.get(), UCAL_ERA, &status);
             item.leapMonth = ucal_get(calendar.get(), UCAL_IS_LEAP_MONTH, &status) != 0;
             item.secondary = Format(shortFormat.get(), instant);
+            item.monthHeading = Format(monthFormat.get(), instant);
             if (p.calendar == "chinese")
             {
                 static constexpr const char* lunarDays[] = {"", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"}; // l10n-allow: intrinsic Chinese lunar notation
@@ -126,6 +141,12 @@ std::vector<DayAnnotation> Annotate(const std::string& from, const std::string& 
                         : lunarDays[item.day];
             }
             item.fullDate = Format(fullFormat.get(), instant, true);
+            if (p.calendar == "roc")
+            {
+                item.secondary = LocalizeRocEra(std::move(item.secondary), language);
+                item.monthHeading = LocalizeRocEra(std::move(item.monthHeading), language);
+                item.fullDate = LocalizeRocEra(std::move(item.fullDate), language);
+            }
             item.calendarAvailable = U_SUCCESS(status) && !item.secondary.empty();
         }
         result.push_back(std::move(item));

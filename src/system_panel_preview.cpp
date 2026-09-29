@@ -273,6 +273,11 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
         return result;
     };
     source.calendar.secondaryRevision = [state] {return state->agenda?std::string("secondary-on"):std::string("secondary-off");};
+    source.calendar.secondaryAnnotations = [state](const std::string& from,const std::string& to) {
+        if(!state->agenda)return std::vector<calendar::DayAnnotation>{};
+        calendar::DisplayPreferences preferences;preferences.enabled=true;
+        return calendar::Annotate(from,to,preferences,Locale::Instance().GetEffectiveLanguage());
+    };
     source.calendar.events = [state](const std::string& date) {
         ++state->reads; state->requestedDate = date;state->requestedDates.insert(date);
         std::vector<calendar::CalendarEvent> events;
@@ -1434,22 +1439,25 @@ void CheckCalendarResponsive()
     SystemPanelModel stacked(std::move(stackedSource),{},StatusBarAction::Calendar,true);
     stacked.Refresh(780,1920);CheckLayout(stacked.View());
     const auto calendarTop=Node(stacked.View(),"calendar.month").bounds.top;
-    const auto lastDay=Node(stacked.View(),"date:2026-10-11").bounds.bottom;
-    Require(stacked.View().width==384 && Node(stacked.View(),"calendar.selected").bounds.top>lastDay,
-        "right-side clock did not stack its agenda under a compact month");
+    Require(stacked.View().width==384 && stacked.View().cards.size()==2&&
+        Node(stacked.View(),"calendar.selected").bounds.top<calendarTop&&
+        stacked.View().cards[0].bottom+8==stacked.View().cards[1].top&&
+        stacked.View().cards[0].bottom>=320,
+        "right-side clock did not place a taller agenda card above the month");
     stacked.Scroll(stacked.MaximumScroll());
-    Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop && stacked.ScrollViewport().top>lastDay,
-        "scrolling the lower agenda moved the month");
+    Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop &&
+        stacked.ScrollViewport().bottom<stacked.View().cards[1].top,
+        "scrolling the upper agenda moved the month or crossed into its card");
     Require(stacked.Invoke("calendar.add") && stacked.SetCalendarInput("calendar.edit.title",L"Stacked draft"),
         "stacked agenda could not open its editor");
     stacked.Reveal("calendar.edit.save");CheckLayout(stacked.View());
     Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop &&
-        VisibleCenter(stacked.View(),"calendar.edit.save").y>lastDay,
-        "stacked editor escaped its lower viewport or made save unreachable");
+        VisibleCenter(stacked.View(),"calendar.edit.save").y<stacked.View().cards[0].bottom,
+        "stacked editor escaped its upper viewport or made save unreachable");
     Require(stacked.Invoke("calendar.edit.start"),"stacked editor could not open its time picker");
     stacked.Reveal("picker.confirm");
     Require(Node(stacked.View(),"calendar.month").bounds.top==calendarTop &&
-        VisibleCenter(stacked.View(),"picker.confirm").y>lastDay,
+        VisibleCenter(stacked.View(),"picker.confirm").y<stacked.View().cards[0].bottom,
         "stacked time picker moved the month or clipped its confirm action");
     Require(stacked.CalendarBack(),"stacked picker back failed");
     const auto draft=stacked.CalendarInputFields();
@@ -1469,6 +1477,16 @@ void CheckCalendarResponsive()
     const auto fullSecondary=Node(model.View(),"calendar.selectedSecondary").text;
     Require(Node(model.View(),"date:2026-09-26").tooltip.find(fullSecondary)!=std::wstring::npos,
         "date hover omitted the full secondary calendar date");
+    const auto gregorianMonth=Node(model.View(),"calendar.month").text;
+    Require(model.Invoke("calendar.toggleCalendar")&&
+        Node(model.View(),"calendar.month").text!=gregorianMonth&&
+        Node(model.View(),"date:2026-09-26").text!=L"26"&&
+        Node(model.View(),"calendar.selected").text==fullSecondary&&
+        Node(model.View(),"calendar.selectedSecondary").text==L"2026-09-26",
+        "calendar switch did not convert the heading, day cells and selected date together");
+    Require(model.Invoke("calendar.toggleCalendar")&&Node(model.View(),"calendar.month").text==gregorianMonth&&
+        Node(model.View(),"date:2026-09-26").text==L"26",
+        "calendar switch did not restore Gregorian display");
     model.Refresh(400);Require(model.Invoke("date:2026-09-27")&&state->calendarBatches==batches,
         "unchanged month or selection rebuilt the same secondary calendar annotations");
     state->agenda=false;model.Refresh(400);

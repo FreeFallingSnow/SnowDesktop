@@ -245,6 +245,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 }, [this](const std::string& from,const std::string& to) {
                     return widgetEngine_?widgetEngine_->RuntimeCalendarEvents(from,to):
                         std::vector<snowdesktop::calendar::CalendarEvent>{};
+                }, [this](const std::string& from,const std::string& to) {
+                    return widgetEngine_?widgetEngine_->RuntimeCalendarAnnotations(from,to):
+                        std::vector<snowdesktop::calendar::DayAnnotation>{};
                 }}, [this](std::string_view key, POINT screen) {
                     return statusBar_ && statusBar_->DropTrayIcon(key, screen);
                 }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),

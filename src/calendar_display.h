@@ -23,6 +23,7 @@ struct DayAnnotation
     std::string date;
     std::string secondary;
     std::string fullDate;
+    std::string monthHeading;
     int year = 0, month = 0, day = 0, era = 0;
     bool leapMonth = false;
     bool calendarAvailable = false;

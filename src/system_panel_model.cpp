@@ -83,7 +83,7 @@ void SystemPanelModel::Close()
 {
     if(closed_)return;
     CancelControlInput();
-    closed_=true;dismissRequested_=false;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();ClearError();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarAnnotationKey_.clear();lastStarted_=0;
+    closed_=true;dismissRequested_=false;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();actionBindings_.clear();pendingActions_.clear();ClearError();invokingControl_.clear();mediaState_.reset();subscriptions_.clear();calendarAnnotations_.clear();calendarDetails_.clear();calendarDisplaySecondary_=false;calendarAnnotationKey_.clear();lastStarted_=0;
     // A close callback may pump messages. Detach all effects before calling it,
     // and keep its callable alive even if the callback re-enters Close().
     auto close=std::move(source_.close);source_={};if(close)close();
@@ -466,7 +466,9 @@ ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool s
     // A slider owns its direction and range keys, including at either limit.
     // Otherwise a list can scroll without triggering a device control.
     const auto* focused=scene_.Find(input.Focused());
-    const bool fixedCalendar=action_==StatusBarAction::Calendar&&bodyLeft_>0&&focused&&(focused->bounds.right<=bodyLeft_||focused->bounds.bottom<=bodyStart_);
+    const bool fixedCalendar=action_==StatusBarAction::Calendar&&focused&&
+        ((bodyLeft_>0&&(focused->bounds.right<=bodyLeft_||focused->bounds.bottom<=bodyStart_))||
+            (calendarStacked_&&scene_.cards.size()>1&&focused->bounds.top>=scene_.cards.back().top));
     if(result.kind==ui::InputResult::Kind::None&&!fixedCalendar)
     {
         const float page=(std::max)(42.f,scrollViewport_.bottom-scrollViewport_.top-32);
@@ -489,8 +491,11 @@ void SystemPanelModel::Wheel(D2D1_POINT_2F point,float notches)
         const auto next=std::clamp(node->value+notches*.02f,0.f,1.f);
         if(next!=node->value)Invoke(node->id,next);
     }
-    else if(action_!=StatusBarAction::Calendar||bodyLeft_<=0||
-        (point.x>=scrollViewport_.left&&point.x<scrollViewport_.right&&point.y>=scrollViewport_.top&&point.y<scrollViewport_.bottom))Scroll(-notches*42.f);
+    else if(action_!=StatusBarAction::Calendar||
+        (calendarStacked_&&scene_.cards.size()>1?
+            point.y>=scrollViewport_.top&&point.y<scrollViewport_.bottom:
+            bodyLeft_<=0||(point.x>=scrollViewport_.left&&point.x<scrollViewport_.right&&
+                point.y>=scrollViewport_.top&&point.y<scrollViewport_.bottom)))Scroll(-notches*42.f);
 }
 widget_scroll_rules::ScrollbarAxisGeometry SystemPanelModel::ScrollbarGeometry() const
 {
@@ -1050,7 +1055,17 @@ void SystemPanelModel::Calendar()
     if(annotationKey!=calendarAnnotationKey_)
     {
         calendarAnnotations_.clear();
-        if(source_.calendar.secondaryDates)calendarAnnotations_=source_.calendar.secondaryDates(first,last);
+        calendarDetails_.clear();
+        if(source_.calendar.secondaryAnnotations)
+        {
+            for(auto& annotation:source_.calendar.secondaryAnnotations(first,last))
+                if(annotation.calendarAvailable&&!annotation.fullDate.empty())
+                {
+                    calendarAnnotations_[annotation.date]=annotation.fullDate;
+                    calendarDetails_.emplace(annotation.date,std::move(annotation));
+                }
+        }
+        else if(source_.calendar.secondaryDates)calendarAnnotations_=source_.calendar.secondaryDates(first,last);
         else if(source_.calendar.secondaryDate)
             for(int i=0;i<42;++i)if(const auto date=calendar::CalendarService::AddDays(month_,i-offset))
                 calendarAnnotations_[*date]=source_.calendar.secondaryDate(*date);
@@ -1058,7 +1073,22 @@ void SystemPanelModel::Calendar()
     }
     if(!calendarAnnotations_.contains(date_)&&source_.calendar.secondaryDate)
         calendarAnnotations_[date_]=source_.calendar.secondaryDate(date_);
-    auto& monthLabel=Add("calendar.month",ui::Role::Text,Rect(monthLeft,monthTop,toolbar>36?monthWidth:monthWidth-150,32),std::to_wstring(month->year)+L" / "+std::to_wstring(month->month));monthLabel.bold=true;monthLabel.fontSize=16;
+    if(!calendarDetails_.contains(date_)&&source_.calendar.secondaryAnnotations)
+        for(auto& annotation:source_.calendar.secondaryAnnotations(date_,date_))
+            if(annotation.calendarAvailable&&!annotation.fullDate.empty())
+                calendarDetails_.emplace(annotation.date,std::move(annotation));
+    if(!calendarDetails_.contains(month_))calendarDisplaySecondary_=false;
+    const auto monthText=calendarDisplaySecondary_&&!calendarDetails_.at(month_).monthHeading.empty()?Wide(calendarDetails_.at(month_).monthHeading):
+        std::to_wstring(month->year)+L" / "+std::to_wstring(month->month);
+    auto& monthLabel=Add("calendar.month",ui::Role::Text,Rect(monthLeft,monthTop,toolbar>36?monthWidth:monthWidth-186,32),monthText);monthLabel.bold=true;monthLabel.fontSize=16;monthLabel.tooltip=monthText;
+    if(calendarDetails_.contains(month_))
+    {
+        auto& toggle=Add("calendar.toggleCalendar",ui::Role::Icon,Rect(monthLeft+monthWidth-180,buttonsTop,32,32),L"",L"\uE8AB");
+        toggle.selected=calendarDisplaySecondary_;
+        toggle.tooltip=_LW(calendarDisplaySecondary_?"statusBar.calendarShowGregorian":"statusBar.calendarShowSecondary");
+        toggle.accessibilityLabel=toggle.tooltip;
+        Command(toggle.id,[this]{calendarDisplaySecondary_=!calendarDisplaySecondary_;});
+    }
     auto& todayButton=Add("calendar.today",ui::Role::Button,Rect(monthLeft+monthWidth-144,buttonsTop,68,32),_LW("app.widget.date_picker.today"));todayButton.centered=true;todayButton.fontSize=12;
     Command("calendar.today",[this,today]{date_=today;month_=date_.substr(0,7)+"-01";if(!CalendarEditing())scroll_=0;calendarNotice_.clear();});
     for(int i=0;i<2;++i)
@@ -1080,7 +1110,8 @@ void SystemPanelModel::Calendar()
     {
         const auto& date=dates[i];if(!date)continue;
         const auto d=calendar::CalendarService::GetDateInfo(*date);if(!d)continue;
-        auto& n=Add("date:"+*date,ui::Role::ListItem,Rect(monthLeft+(i%7)*cell,gridTop+28+(i/7)*34.f,cell-4,30),std::to_wstring(d->day));
+        const auto displayed=calendarDisplaySecondary_&&calendarDetails_.contains(*date)?calendarDetails_.at(*date).day:d->day;
+        auto& n=Add("date:"+*date,ui::Role::ListItem,Rect(monthLeft+(i%7)*cell,gridTop+28+(i/7)*34.f,cell-4,30),std::to_wstring(displayed));
         n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.secondary=d->month!=month->month;n.fontSize=13;
         n.marked=eventsByDate.contains(*date)&&!eventsByDate.at(*date).empty();
         SYSTEMTIME time{};time.wYear=static_cast<WORD>(d->year);time.wMonth=static_cast<WORD>(d->month);time.wDay=static_cast<WORD>(d->day);wchar_t weekday[96]{};
@@ -1092,8 +1123,8 @@ void SystemPanelModel::Calendar()
     }
     const float monthEnd=gridTop+28+6*34,agendaLeft=two?monthLeft+monthWidth+16:16,agendaWidth=scene_.width-agendaLeft-16;
     const float agendaTop=two?monthTop:monthEnd+16;
-    const bool fixedMonth=(two||calendarStacked_)&&available_>=monthEnd+(calendarStacked_?160.f:4.f);
-    const float panelHeight=monthEnd+(calendarStacked_?248.f:8.f);
+    const bool fixedMonth=two&&available_>=monthEnd+4.f;
+    const float panelHeight=monthEnd+8.f;
     if(CalendarEditing())
     {
         // Secondary content owns the agenda column or lower area. Keep the
@@ -1112,17 +1143,26 @@ void SystemPanelModel::Calendar()
             scene_.nodes.push_back(std::move(node));
         }
         bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?agendaTop:0;
-        if(fixedMonth)Finish(end+offsetY,false,panelHeight,panelHeight);
+        if(calendarStacked_)FinishStackedCalendar(monthEnd,agendaTop,agendaTop,end+offsetY,false);
+        else if(fixedMonth)Finish(end+offsetY,false,panelHeight,panelHeight);
         else Finish((std::max)(monthEnd,end+offsetY),false);
         return;
     }
     float y=agendaTop;
-    Add("calendar.selected",ui::Role::Text,Rect(agendaLeft,y,agendaWidth-80,32),Wide(date_)).bold=true;
+    const auto selectedText=calendarDisplaySecondary_&&calendarDetails_.contains(date_)?
+        Wide(calendarDetails_.at(date_).fullDate):Wide(date_);
+    auto& selected=Add("calendar.selected",ui::Role::Text,Rect(agendaLeft,y,agendaWidth-80,calendarDisplaySecondary_?48.f:32.f),selectedText);
+    selected.bold=true;selected.wrap=calendarDisplaySecondary_;selected.tooltip=selectedText;
     Add("calendar.add",ui::Role::Icon,Rect(scene_.width-84,y,32,32),L"",L"\uE710").tooltip=_LW("settings.calendar.add");
     Command("calendar.add",[this]{calendar::CalendarEvent event;event.date=date_;event.startMinutes=9*60;event.endMinutes=10*60;EditCalendar(std::move(event));});
     Add("calendar.manage",ui::Role::Icon,Rect(scene_.width-48,y,32,32),L"",L"\uE713").tooltip=_LW("statusBar.manageCalendar");
-    Command("calendar.manage",[this]{const auto manage=source_.calendar.manage;if(manage)manage();});y+=40;
-    if(const auto selected=calendarAnnotations_.find(date_);selected!=calendarAnnotations_.end())
+    Command("calendar.manage",[this]{const auto manage=source_.calendar.manage;if(manage)manage();});y+=calendarDisplaySecondary_?56.f:40.f;
+    if(calendarDisplaySecondary_)
+    {
+        auto& n=Add("calendar.selectedSecondary",ui::Role::Text,Rect(agendaLeft,y-16,agendaWidth,36),Wide(date_));
+        n.fontSize=12;n.secondary=true;y+=40;
+    }
+    else if(const auto selected=calendarAnnotations_.find(date_);selected!=calendarAnnotations_.end())
     {
         const auto text=Wide(selected->second);
         if(!text.empty()){auto& n=Add("calendar.selectedSecondary",ui::Role::Text,Rect(agendaLeft,y-16,agendaWidth,36),text);n.fontSize=12;n.secondary=n.wrap=true;y+=40;}
@@ -1164,7 +1204,10 @@ void SystemPanelModel::Calendar()
     // Keep month navigation and the day grid stationary when the
     // full month fits. Short/narrow viewports retain one accessible scroll flow.
     bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?agendaStart:0;
-    if(fixedMonth)Finish(y,false,panelHeight,panelHeight);else Finish((std::max)(monthEnd,y),false);
+    if(calendarStacked_)FinishStackedCalendar(monthEnd,agendaTop,agendaStart,y,!hasEvents);
+    else if(fixedMonth)Finish(y,false,panelHeight,panelHeight);
+    else Finish((std::max)(monthEnd,y),false);
+    if(calendarStacked_)return;
     if(!hasEvents)
         for(auto& node:scene_.nodes)if(node.id=="calendar.empty")
         {
@@ -1175,6 +1218,58 @@ void SystemPanelModel::Calendar()
             node.bounds.top=top;node.bounds.bottom=(std::max)(top+48,scene_.cards.front().bottom-8);
             break;
         }
+}
+void SystemPanelModel::FinishStackedCalendar(float monthEnd,float agendaTop,float agendaStart,float agendaEnd,bool empty)
+{
+    const float monthHeight=monthEnd+8.f,gap=8.f;
+    const float room=available_-monthHeight-gap;
+    const bool separate=room>=240.f;
+    const float agendaHeight=separate?(std::min)(400.f,room):
+        (std::max)(220.f,agendaEnd-agendaTop+24.f);
+    const float monthShift=agendaHeight+gap,agendaShift=16.f-agendaTop;
+    const float scrollTop=agendaStart+agendaShift;
+    const auto shift=[](ui::Node& node,float amount) {
+        node.bounds.top+=amount;node.bounds.bottom+=amount;
+        for(auto& path:node.paths)for(auto& point:path)point.y+=amount;
+    };
+    if(separate)
+    {
+        maxScroll_=(std::max)(0.f,agendaEnd+agendaShift+8.f-agendaHeight);
+        scroll_=std::clamp(scroll_,0.f,maxScroll_);
+        scrollViewport_=Rect(0,scrollTop,scene_.width,agendaHeight-scrollTop-8.f);
+        bodyLeft_=0;bodyStart_=scrollTop;
+    }
+    else
+    {
+        bodyLeft_=bodyStart_=0;
+    }
+    for(auto& node:scene_.nodes)
+    {
+        const bool monthNode=node.bounds.top<agendaTop;
+        const bool scrollNode=!monthNode&&node.bounds.top>=agendaStart;
+        shift(node,monthNode?monthShift:agendaShift);
+        if(separate&&scrollNode){node.clip=scrollViewport_;shift(node,-scroll_);}
+    }
+    if(empty)
+        for(auto& node:scene_.nodes)if(node.id=="calendar.empty")
+        {
+            node.bounds.top=separate?scrollTop:agendaStart+agendaShift;
+            node.bounds.bottom=agendaHeight-8.f;
+            break;
+        }
+    if(!separate)
+    {
+        Finish(monthEnd+monthShift,false);
+        return;
+    }
+    scene_.cards.push_back(Rect(0,0,scene_.width,agendaHeight));
+    scene_.cards.push_back(Rect(0,monthShift,scene_.width,monthHeight));
+    scene_.height=monthShift+monthHeight;
+    if(maxScroll_>0)
+    {
+        const auto axis=ScrollbarGeometry();
+        Add("scrollbar",ui::Role::Scrollbar,Rect(scene_.width-4,static_cast<float>(axis.thumbStart),2,static_cast<float>(axis.ThumbExtent())));
+    }
 }
 void SystemPanelModel::EditCalendar(calendar::CalendarEvent event)
 {

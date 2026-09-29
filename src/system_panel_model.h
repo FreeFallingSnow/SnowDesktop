@@ -3,6 +3,7 @@
 #include "status_bar.h"
 #include "tray_service.h"
 #include "calendar_service.h"
+#include "calendar_display.h"
 #include "system_calendar_editor_state.h"
 #include "native_date_time_picker.h"
 #include "system_controls.h"
@@ -27,6 +28,7 @@ struct SystemCalendarActions
     SystemCalendarEditorActions mutations;
     // Read the shared in-memory event snapshot once for both month markers and agenda.
     std::function<std::vector<calendar::CalendarEvent>(const std::string&,const std::string&)> eventsInRange;
+    std::function<std::vector<calendar::DayAnnotation>(const std::string&,const std::string&)> secondaryAnnotations;
 };
 // Native EDIT children share the calendar panel's layout, draft and lifetime.
 // Bounds and clip are in panel-local DIPs, after scrolling.
@@ -110,10 +112,12 @@ private:
     StatusBarSettings settings_;
     StatusBarAction action_;
     bool calendarStacked_=false;
+    bool calendarDisplaySecondary_=false;
     native_ui::Scene scene_;
     std::string page_, interface_, network_, bluetooth_, gpu_, media_, date_, month_;
     std::string calendarAnnotationKey_;
     std::map<std::string,std::string> calendarAnnotations_;
+    std::map<std::string,calendar::DayAnnotation> calendarDetails_;
     std::map<std::string,calendar::CalendarEvent> calendarEvents_;
     std::string calendarNotice_;
     std::shared_ptr<SystemCalendarEditorState> calendarEditor_;
@@ -191,6 +195,7 @@ private:
     void Power(float&);
     void Media(float&);
     void Calendar();
+    void FinishStackedCalendar(float monthEnd,float agendaTop,float agendaStart,float agendaEnd,bool empty);
     void EditCalendar(calendar::CalendarEvent);
     float CalendarEditor(float width);
     void OpenCalendarPicker(std::string field);

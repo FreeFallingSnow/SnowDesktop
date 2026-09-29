@@ -100,6 +100,15 @@ int wmain(int argc, wchar_t* argv[])
     locale.SetLanguage("en-US");
     Expect(rocLabel("zh-CN") == L"民国纪年（公历）",
         "ROC calendar name describes its era and Gregorian dates in simplified Chinese");
+    snowdesktop::calendar::DisplayPreferences rocDisplay;
+    rocDisplay.enabled=true;rocDisplay.calendar="roc";
+    const auto rocChinese=snowdesktop::calendar::Annotate("2026-09-29","2026-09-29",rocDisplay,"zh-CN");
+    Expect(rocChinese.size()==1&&rocChinese[0].calendarAvailable&&
+        rocChinese[0].fullDate.find("民国115")!=std::string::npos&&
+        rocChinese[0].monthHeading.find("民国115")!=std::string::npos&&
+        rocChinese[0].secondary.find("Taiwan")==std::string::npos&&
+        rocChinese[0].fullDate.find("Taiwan")==std::string::npos,
+        "ROC date text uses the translated era rather than ICU's Taiwan label");
     for (const auto& language : locale.GetAvailableLanguages())
     {
         locale.SetLanguage(language.code.c_str());
