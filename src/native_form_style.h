@@ -417,7 +417,6 @@ inline bool AttachEdit(HWND window,const Palette& palette,UINT dpi,float radiusD
     const auto brush=CreateSolidBrush(palette.field);if(!brush)return EditStyleFailed(failure,"CreateSolidBrush",GetLastError());
     if(state->brush)DeleteObject(state->brush);state->brush=brush;state->palette=palette;state->dpi=dpi?dpi:96;state->radius=radiusDip;
     auto style=GetWindowLongPtrW(window,GWL_STYLE)&~static_cast<LONG_PTR>(WS_BORDER);
-    if(state->multiline)style|=WS_VSCROLL;
     SetWindowLongPtrW(window,GWL_STYLE,style);
     SetWindowLongPtrW(window,GWL_EXSTYLE,GetWindowLongPtrW(window,GWL_EXSTYLE)&~static_cast<LONG_PTR>(WS_EX_CLIENTEDGE|WS_EX_STATICEDGE));
     detail::Measure(*state);SendMessageW(window,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,0);
