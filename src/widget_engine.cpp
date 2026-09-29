@@ -27248,6 +27248,11 @@ bool WidgetEngine::IsFocusedHostInputAt(
     if (index < 0)
         return false;
     const POINT point{ x, y };
+    for (const auto& control : widgets_[index].hostControls)
+        if (control.selectPopup && control.enabled &&
+            HostControlBelongsToSurface(control, surface) &&
+            HostControlContainsPoint(control, point))
+            return false;
     for (auto it = widgets_[index].hostControls.rbegin();
         it != widgets_[index].hostControls.rend(); ++it)
     {
