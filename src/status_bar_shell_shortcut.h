@@ -2,6 +2,7 @@
 #include "status_bar.h"
 #include "ui_animation_scheduler.h"
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 namespace snowdesktop
@@ -116,10 +117,12 @@ struct StatusBarShortcutCallbacks
 inline UiScheduleToken ScheduleStatusBarShellShortcut(UiAnimationScheduler& scheduler,
     StatusBarShellChord chord, StatusBarShortcutCallbacks callbacks, UINT timeoutMilliseconds = 5000)
 {
-    const double notBefore = callbacks.nowMilliseconds() + chord.pointerQuietMilliseconds;
-    const double deadline = notBefore + timeoutMilliseconds;
+    // DispatchDue copies callbacks so cancellation/reentrancy cannot invalidate
+    // the active call. Keep the mutable gesture deadline in request-owned state.
+    const auto notBefore = std::make_shared<double>(callbacks.nowMilliseconds() + chord.pointerQuietMilliseconds);
+    const double deadline = *notBefore + timeoutMilliseconds;
     return scheduler.ScheduleInterval(16,
-        [&scheduler, chord, deadline, notBefore = notBefore, callbacks = std::move(callbacks)](UiScheduleToken token) mutable {
+        [&scheduler, chord, deadline, notBefore, callbacks = std::move(callbacks)](UiScheduleToken token) {
             const auto finish = [&](StatusBarShortcutResult result) {
                 scheduler.Cancel(token);
                 callbacks.finished(token, result);
@@ -133,8 +136,8 @@ inline UiScheduleToken ScheduleStatusBarShellShortcut(UiAnimationScheduler& sche
             {
                 for (const int button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2})
                     if (callbacks.keyDown(button))
-                    { notBefore = now + chord.pointerQuietMilliseconds; return; }
-                if (now < notBefore) return;
+                    { *notBefore = now + chord.pointerQuietMilliseconds; return; }
+                if (now < *notBefore) return;
             }
             for (const int modifier : {VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN})
                 if (callbacks.keyDown(modifier)) return;
