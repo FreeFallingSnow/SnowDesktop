@@ -1830,9 +1830,12 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         }
         if(seriesMonthly)
         {
-            Require(model.Invoke("calendar.edit.mode.monthly")&&model.Invoke("calendar.edit.monthDay.last")&&
-                model.Reveal("calendar.edit.monthDay.last"),
+            Require(model.Invoke("calendar.edit.mode.monthly")&&model.Invoke("calendar.edit.monthDay.last"),
                 "calendar monthly preview could not show its last-day rule");
+            model.Reveal("calendar.edit.monthDay.last");
+            const auto& last=Node(model.View(),"calendar.edit.monthDay.last");
+            Require(last.bounds.top>=last.clip.top&&last.bounds.bottom<=last.clip.bottom,
+                "narrow monthly last-day choice cannot be revealed");
         }
         if(overflow)
         {
