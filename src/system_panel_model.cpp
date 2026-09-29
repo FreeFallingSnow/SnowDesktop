@@ -1151,8 +1151,8 @@ void SystemPanelModel::Calendar()
     float y=agendaTop;
     const auto selectedText=calendarDisplaySecondary_&&calendarDetails_.contains(date_)?
         Wide(calendarDetails_.at(date_).fullDate):Wide(date_);
-    auto& selected=Add("calendar.selected",ui::Role::Text,Rect(agendaLeft,y,agendaWidth-80,calendarDisplaySecondary_?48.f:32.f),selectedText);
-    selected.bold=true;selected.wrap=calendarDisplaySecondary_;selected.tooltip=selectedText;
+    auto& selectedHeading=Add("calendar.selected",ui::Role::Text,Rect(agendaLeft,y,agendaWidth-80,calendarDisplaySecondary_?48.f:32.f),selectedText);
+    selectedHeading.bold=true;selectedHeading.wrap=calendarDisplaySecondary_;selectedHeading.tooltip=selectedText;
     Add("calendar.add",ui::Role::Icon,Rect(scene_.width-84,y,32,32),L"",L"\uE710").tooltip=_LW("settings.calendar.add");
     Command("calendar.add",[this]{calendar::CalendarEvent event;event.date=date_;event.startMinutes=9*60;event.endMinutes=10*60;EditCalendar(std::move(event));});
     Add("calendar.manage",ui::Role::Icon,Rect(scene_.width-48,y,32,32),L"",L"\uE713").tooltip=_LW("statusBar.manageCalendar");
