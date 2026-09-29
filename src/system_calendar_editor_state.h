@@ -12,6 +12,9 @@ struct SystemCalendarEditorActions
     std::function<calendar::MutationResult(const calendar::CalendarEvent&)> save;
     std::function<std::optional<calendar::CalendarEvent>(const calendar::CalendarEvent&)> current;
     std::function<calendar::MutationResult(const std::string&)> remove;
+    std::function<std::optional<calendar::CalendarSeries>(const std::string&)> seriesById;
+    std::function<calendar::MutationResult(calendar::CalendarSeries)> saveSeries;
+    std::function<calendar::MutationResult(const std::string&, int)> removeSeries;
 };
 inline constexpr std::array<int,7> SystemCalendarReminderMinutes{-1,0,5,15,30,60,1440};
 inline std::optional<int> ParseCalendarEditorTime(std::wstring_view value)

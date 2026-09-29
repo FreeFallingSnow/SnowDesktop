@@ -241,7 +241,20 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                             if(current.id==original.id)return current;
                         return {};
                     },
-                    [this](const std::string& id){if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,{},0,"canceled"};return widgetEngine_->RuntimeCalendarRemove(id);}
+                    [this](const std::string& id){if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,{},0,"canceled"};return widgetEngine_->RuntimeCalendarRemove(id);},
+                    [this](const std::string& id)->std::optional<snowdesktop::calendar::CalendarSeries>{
+                        return exitRequested_||!widgetEngine_?std::nullopt:widgetEngine_->RuntimeCalendarSeriesById(id);
+                    },
+                    [this](snowdesktop::calendar::CalendarSeries series){
+                        if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,{},0,"canceled"};
+                        const auto id=series.id;const auto revision=series.revision;
+                        return series.id.empty()?widgetEngine_->RuntimeCalendarSeriesCreate(std::move(series)):
+                            widgetEngine_->RuntimeCalendarSeriesUpdate(id,revision,std::move(series));
+                    },
+                    [this](const std::string& id,int revision){
+                        if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,id,0,"canceled"};
+                        return widgetEngine_->RuntimeCalendarSeriesRemove(id,revision);
+                    }
                 }, [this](const std::string& from,const std::string& to) {
                     return widgetEngine_?widgetEngine_->RuntimeCalendarEvents(from,to):
                         std::vector<snowdesktop::calendar::CalendarEvent>{};

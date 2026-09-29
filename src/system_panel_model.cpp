@@ -1349,6 +1349,19 @@ void SystemPanelModel::EditCalendar(calendar::CalendarEvent event)
     calendarEditor_=std::make_shared<SystemCalendarEditorState>();
     calendarEditor_->original=event;calendarEditor_->draft=std::move(event);
     calendarEditor_->actions=source_.calendar.mutations;
+    calendarSeriesOriginal_.reset();calendarScopeSeries_=calendarDiscardConfirmed_=false;
+    calendarMode_="single";
+    if(!calendarEditor_->original.seriesId.empty()&&source_.calendar.mutations.seriesById)
+        calendarSeriesOriginal_=source_.calendar.mutations.seriesById(calendarEditor_->original.seriesId);
+    if(calendarSeriesOriginal_)calendarRule_=calendarSeriesOriginal_->rule;
+    else
+    {
+        const auto& date=calendarEditor_->draft.date;
+        const auto info=calendar::CalendarService::GetDateInfo(date);
+        calendarRule_={};calendarRule_.kind="dates";calendarRule_.dates={date};
+        calendarRule_.startDate=date;calendarRule_.interval=1;
+        calendarRule_.weekdays={info?info->weekday:1};calendarRule_.monthDay=info?info->day:1;
+    }
     calendarEditor_->valid=[this,weak=std::weak_ptr(calendarEditor_)]{
         return !closed_&&page_=="calendar-edit"&&weak.lock()==calendarEditor_;
     };
@@ -1357,6 +1370,21 @@ void SystemPanelModel::EditCalendar(calendar::CalendarEvent event)
     calendarText_={{"calendar.edit.title",Wide(draft.title)},{"calendar.edit.date",Wide(draft.date)},
         {"calendar.edit.start",time(draft.startMinutes)},{"calendar.edit.end",time(draft.endMinutes)},
         {"calendar.edit.notes",Wide(draft.notes)}};
+}
+void SystemPanelModel::SwitchCalendarScope(bool wholeSeries)
+{
+    if(!CalendarEditing()||!calendarSeriesOriginal_)return;
+    calendarScopeSeries_=wholeSeries;calendarDiscardConfirmed_=false;
+    calendarMode_=wholeSeries?calendarRule_.kind:"single";
+    calendarEditor_->draft=wholeSeries?calendarSeriesOriginal_->event:calendarEditor_->original;
+    const auto& draft=calendarEditor_->draft;
+    const auto time=[](int minutes){wchar_t value[16]{};swprintf_s(value,L"%02d:%02d",minutes/60,minutes%60);return std::wstring(value);};
+    calendarText_["calendar.edit.title"]=Wide(draft.title);
+    calendarText_["calendar.edit.date"]=Wide(draft.date);
+    calendarText_["calendar.edit.start"]=time(draft.startMinutes);
+    calendarText_["calendar.edit.end"]=time(draft.endMinutes);
+    calendarText_["calendar.edit.notes"]=Wide(draft.notes);
+    calendarEditor_->error.clear();
 }
 bool SystemPanelModel::CalendarEditing() const
 {return !closed_&&action_==StatusBarAction::Calendar&&page_=="calendar-edit"&&calendarEditor_;}
@@ -1401,6 +1429,8 @@ void SystemPanelModel::LeaveCalendarEditor(bool followSavedDate)
     const auto& returning=followSavedDate?calendarEditor_->draft:calendarEditor_->original;
     calendarFocus_=returning.id.empty()?"calendar.add":"event:"+returning.date+":"+returning.id;
     ++navigation_;page_.clear();calendarEditor_.reset();calendarText_.clear();
+    calendarSeriesOriginal_.reset();calendarRule_={};calendarMode_="single";
+    calendarScopeSeries_=calendarDiscardConfirmed_=false;
     calendarConfirmDelete_=calendarReminderOpen_=false;calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
     calendarPicker_.reset();calendarPickerField_.clear();
 }
@@ -1417,7 +1447,12 @@ bool SystemPanelModel::CalendarBack()
     else LeaveCalendarEditor(false);
     Refresh(available_);return true;
 }
-bool SystemPanelModel::CalendarEventCommand(std::string_view nodeId,bool remove)
+bool SystemPanelModel::CalendarEventIsSeries(std::string_view nodeId) const
+{
+    const auto found=calendarEvents_.find(std::string(nodeId));
+    return found!=calendarEvents_.end()&&!found->second.seriesId.empty();
+}
+bool SystemPanelModel::CalendarEventCommand(std::string_view nodeId,bool remove,bool wholeSeries)
 {
     if(closed_||action_!=StatusBarAction::Calendar||CalendarEditing())return false;
     const auto found=calendarEvents_.find(std::string(nodeId));
@@ -1437,6 +1472,11 @@ bool SystemPanelModel::CalendarEventCommand(std::string_view nodeId,bool remove)
     if(!present||present->id!=event.id||present->revision!=event.revision||present->date!=event.date)
     {calendarNotice_="settings.calendar.conflict";Refresh(available_);return false;}
     EditCalendar(event);if(!CalendarEditing())return false;
+    if(wholeSeries)
+    {
+        if(!calendarSeriesOriginal_){LeaveCalendarEditor(false);return false;}
+        SwitchCalendarScope(true);
+    }
     calendarConfirmDelete_=remove;calendarDeleteOrigin_=remove?CalendarDeleteOrigin::ContextMenu:CalendarDeleteOrigin::Editor;
     Refresh(available_);return true;
 }
@@ -1462,14 +1502,65 @@ void SystemPanelModel::SaveCalendar()
     {editor->error="invalid_time";return;}
     candidate.title=*title;candidate.date=*date;candidate.notes=*notes;
     candidate.startMinutes=candidate.allDay?0:*start;candidate.endMinutes=candidate.allDay?1439:*end;
-    const bool saved=editor->Save(std::move(candidate));
+    bool saved=false;
+    if(calendarMode_=="single")saved=editor->Save(std::move(candidate));
+    else
+    {
+        auto series=calendarSeriesOriginal_.value_or(calendar::CalendarSeries{});
+        series.rule=calendarRule_;series.rule.kind=calendarMode_;
+        if(calendarMode_=="dates")
+        {
+            auto& dates=series.rule.dates;
+            std::sort(dates.begin(),dates.end());dates.erase(std::unique(dates.begin(),dates.end()),dates.end());
+            if(dates.empty()||dates.size()>366){editor->error="invalid_date";return;}
+            series.rule.startDate=dates.front();series.rule.endDate=dates.back();
+            series.rule.interval=1;series.rule.weekdays.clear();series.rule.monthDay=0;
+        }
+        else
+        {
+            series.rule.startDate=*date;series.rule.dates.clear();
+            if(!series.rule.endDate.empty()&&
+                (!calendar::CalendarService::GetDateInfo(series.rule.endDate)||series.rule.endDate<*date))
+            {editor->error="invalid_date";return;}
+            if(calendarMode_=="weekly")
+            {series.rule.monthDay=0;if(series.rule.weekdays.empty()){editor->error="invalid_rule";return;}}
+            else series.rule.weekdays.clear();
+        }
+        candidate.date=series.rule.startDate;
+        series.event=candidate;
+        if(calendarSeriesOriginal_)
+        {
+            bool discards=false;
+            for(const auto& [originalDate,exception]:calendarSeriesOriginal_->exceptions)
+                if(!calendar::CalendarService::MatchesRule(series.rule,originalDate))
+                {discards=true;break;}
+            if(discards&&!calendarDiscardConfirmed_)
+            {calendarDiscardConfirmed_=true;editor->error="discard_exceptions";return;}
+        }
+        if(!source_.calendar.mutations.saveSeries){editor->error="unavailable";return;}
+        editor->error.clear();const auto result=source_.calendar.mutations.saveSeries(std::move(series));
+        if(result.ok){editor->draft=candidate;editor->draft.id=result.id;editor->draft.revision=result.revision;saved=true;}
+        else editor->error=result.error;
+    }
     if(closed_||calendarEditor_!=editor)return;
     if(saved)LeaveCalendarEditor(true);
 }
 void SystemPanelModel::RemoveCalendar()
 {
     if(!CalendarEditing()||!calendarConfirmDelete_)return;
-    const auto editor=calendarEditor_;const bool removed=editor->Remove();
+    const auto editor=calendarEditor_;
+    bool removed=false;
+    if(calendarScopeSeries_&&calendarSeriesOriginal_)
+    {
+        if(!source_.calendar.mutations.removeSeries)editor->error="unavailable";
+        else
+        {
+            const auto result=source_.calendar.mutations.removeSeries(
+                calendarSeriesOriginal_->id,calendarSeriesOriginal_->revision);
+            removed=result.ok;if(!removed)editor->error=result.error;
+        }
+    }
+    else removed=editor->Remove();
     if(closed_||calendarEditor_!=editor)return;
     if(removed)LeaveCalendarEditor(false);
 }
@@ -1483,8 +1574,10 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         const float width=scene_.width-32;
         auto& heading=Add("calendar.delete.heading",ui::Role::Text,Rect(16,10,width,36),_LW("app.settings.delete"));heading.bold=true;heading.fontSize=17;
         auto& title=Add("calendar.delete.target",ui::Role::Text,Rect(16,64,width,48),Wide(editor->original.title));title.wrap=true;title.bold=true;
-        Add("calendar.delete.date",ui::Role::Text,Rect(16,116,width,28),Wide(editor->original.date)).secondary=true;
-        auto& question=Add("calendar.edit.confirmation",ui::Role::Text,Rect(16,152,width,52),_LW("settings.calendar.confirmDelete"));question.wrap=true;
+        Add("calendar.delete.date",ui::Role::Text,Rect(16,116,width,28),Wide(calendarScopeSeries_&&calendarSeriesOriginal_?
+            calendarSeriesOriginal_->rule.startDate:editor->original.date)).secondary=true;
+        auto& question=Add("calendar.edit.confirmation",ui::Role::Text,Rect(16,152,width,52),_LW(calendarScopeSeries_?
+            "settings.calendar.deleteSeries":"settings.calendar.confirmDelete"));question.wrap=true;
         float y=212;
         if(!editor->error.empty())
         {
@@ -1504,7 +1597,8 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
     const bool wide=scene_.width>=560;const float width=scene_.width-32;
     const float leftWidth=wide?(width-16)*.56f:width,right=wide?32+leftWidth:16,rightWidth=wide?width-leftWidth-16:width;
     const auto field=[&](const char* suffix,float x,float y,float w,float h,bool enabled=true){
-        const std::string id="calendar.edit."+std::string(suffix),key="settings.calendar."+std::string(suffix);
+        const std::string id="calendar.edit."+std::string(suffix),key=std::string_view(suffix)=="date"&&calendarMode_!="single"?
+            "settings.calendar.startDate":"settings.calendar."+std::string(suffix);
         const auto label=_LW(key.c_str());
         auto& caption=Add(id+".label",ui::Role::Text,Rect(x,y,w,20),label);caption.fontSize=13;caption.secondary=true;
         const bool picker=std::string_view(suffix)=="date"||std::string_view(suffix)=="start"||std::string_view(suffix)=="end";
@@ -1539,16 +1633,118 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
     const float notesY=wide?136.f:rightEnd;
     field("notes",16,notesY,leftWidth,wide?164.f:100.f);
     float footer=(std::max)(rightEnd,notesY+24+(wide?164.f:100.f))+16;
+    const auto option=[&](const std::string& id,const std::wstring& label,float x,float y,float w,bool selected=false){
+        auto& node=Add(id,ui::Role::Button,Rect(x,y,w,36),label);node.centered=true;node.selected=selected;
+        node.enabled=!calendarConfirmDelete_;node.accessibilityLabel=node.tooltip=label;
+    };
+    if(calendarSeriesOriginal_)
+    {
+        auto& caption=Add("calendar.edit.scope.label",ui::Role::Text,Rect(16,footer,width,20),_LW("settings.calendar.scope"));
+        caption.fontSize=13;caption.secondary=true;footer+=24;
+        const float half=(width-8)/2;
+        option("calendar.edit.scope.once",_LW("settings.calendar.scope.once"),16,footer,half,!calendarScopeSeries_);
+        option("calendar.edit.scope.series",_LW("settings.calendar.scope.series"),24+half,footer,half,calendarScopeSeries_);
+        Command("calendar.edit.scope.once",[this]{SwitchCalendarScope(false);});
+        Command("calendar.edit.scope.series",[this]{SwitchCalendarScope(true);});
+        footer+=48;
+    }
+    if(editor->original.id.empty()||calendarScopeSeries_)
+    {
+        auto& caption=Add("calendar.edit.mode.label",ui::Role::Text,Rect(16,footer,width,20),_LW("settings.calendar.dateMode"));
+        caption.fontSize=13;caption.secondary=true;footer+=24;
+        const std::vector<std::string> modes=calendarScopeSeries_?
+            std::vector<std::string>{"dates","weekly","monthly"}:
+            std::vector<std::string>{"single","dates","weekly","monthly"};
+        const float gap=6,buttonWidth=(width-gap*(modes.size()-1))/modes.size();
+        for(std::size_t index=0;index<modes.size();++index)
+        {
+            const auto mode=modes[index],id="calendar.edit.mode."+mode,key="settings.calendar.mode."+mode;
+            option(id,_LW(key.c_str()),16+index*(buttonWidth+gap),footer,buttonWidth,calendarMode_==mode);
+            Command(id,[this,mode]{calendarMode_=mode;calendarRule_.kind=mode;calendarDiscardConfirmed_=false;calendarEditor_->error.clear();});
+        }
+        footer+=48;
+    }
+    if(calendarMode_=="dates")
+    {
+        const auto count=calendarRule_.dates.size();
+        const auto summary=std::wstring(_LW("settings.calendar.selectedDates"))+L" · "+std::to_wstring(count);
+        Add("calendar.edit.dates.summary",ui::Role::Text,Rect(16,footer,width,24),summary).secondary=true;footer+=28;
+        option("calendar.edit.dates.add",_LW("settings.calendar.chooseDates"),16,footer,width);
+        Command("calendar.edit.dates.add",[this]{OpenCalendarPicker("calendar.edit.date");});footer+=44;
+        const float gap=6,chipWidth=(width-gap)/2;
+        for(std::size_t index=0;index<count;++index)
+        {
+            const auto day=calendarRule_.dates[index];
+            const auto id="calendar.edit.dates.remove:"+day;
+            const float x=16+(index%2)*(chipWidth+gap),y=footer+(index/2)*40.f;
+            option(id,Wide(day)+L"  ×",x,y,chipWidth);
+            Command(id,[this,day]{auto& dates=calendarRule_.dates;
+                dates.erase(std::remove(dates.begin(),dates.end(),day),dates.end());
+                if(!dates.empty())calendarText_["calendar.edit.date"]=Wide(*std::min_element(dates.begin(),dates.end()));
+                calendarDiscardConfirmed_=false;});
+        }
+        footer+=static_cast<float>((count+1)/2)*40.f+4;
+    }
+    else if(calendarMode_=="weekly"||calendarMode_=="monthly")
+    {
+        const auto intervalLabel=std::wstring(_LW("settings.calendar.interval"))+L" · "+std::to_wstring(calendarRule_.interval);
+        Add("calendar.edit.interval.label",ui::Role::Text,Rect(16,footer,width,24),intervalLabel).secondary=true;footer+=28;
+        option("calendar.edit.interval.minus",L"−",16,footer,44);
+        option("calendar.edit.interval.plus",L"+",scene_.width-60,footer,44);
+        Command("calendar.edit.interval.minus",[this]{calendarRule_.interval=(std::max)(1,calendarRule_.interval-1);calendarDiscardConfirmed_=false;});
+        Command("calendar.edit.interval.plus",[this]{calendarRule_.interval=(std::min)(99,calendarRule_.interval+1);calendarDiscardConfirmed_=false;});
+        footer+=44;
+        if(calendarMode_=="weekly")
+        {
+            const float gap=4,dayWidth=(width-gap*6)/7;
+            for(int day=1;day<=7;++day)
+            {
+                const auto id="calendar.edit.weekday."+std::to_string(day),key="settings.calendar.weekday."+std::to_string(day);
+                const auto selected=std::find(calendarRule_.weekdays.begin(),calendarRule_.weekdays.end(),day)!=calendarRule_.weekdays.end();
+                option(id,_LW(key.c_str()),16+(day-1)*(dayWidth+gap),footer,dayWidth,selected);
+                Command(id,[this,day]{auto& days=calendarRule_.weekdays;
+                    const auto found=std::find(days.begin(),days.end(),day);
+                    if(found!=days.end())days.erase(found);else{days.push_back(day);std::sort(days.begin(),days.end());}
+                    calendarDiscardConfirmed_=false;});
+            }
+            footer+=48;
+        }
+        else
+        {
+            const auto label=calendarRule_.monthDay==0?std::wstring(_LW("settings.calendar.lastDay")):
+                std::wstring(_LW("settings.calendar.monthDay"))+L" · "+std::to_wstring(calendarRule_.monthDay);
+            Add("calendar.edit.monthDay.label",ui::Role::Text,Rect(16,footer,width,24),label).secondary=true;footer+=28;
+            option("calendar.edit.monthDay.minus",L"−",16,footer,44);
+            option("calendar.edit.monthDay.last",_LW("settings.calendar.lastDay"),68,footer,width-104,calendarRule_.monthDay==0);
+            option("calendar.edit.monthDay.plus",L"+",scene_.width-60,footer,44);
+            Command("calendar.edit.monthDay.minus",[this]{calendarRule_.monthDay=(std::max)(0,calendarRule_.monthDay-1);calendarDiscardConfirmed_=false;});
+            Command("calendar.edit.monthDay.plus",[this]{calendarRule_.monthDay=(std::min)(31,calendarRule_.monthDay+1);calendarDiscardConfirmed_=false;});
+            Command("calendar.edit.monthDay.last",[this]{calendarRule_.monthDay=0;calendarDiscardConfirmed_=false;});
+            footer+=48;
+        }
+        const bool forever=calendarRule_.endDate.empty();
+        option("calendar.edit.endType",_LW(forever?"settings.calendar.neverEnds":"settings.calendar.endsOn"),16,footer,width);
+        Command("calendar.edit.endType",[this]{if(calendarRule_.endDate.empty())
+                calendarRule_.endDate=calendar::CalendarService::AddDays(calendarRule_.startDate,30).value_or(date_);
+            else calendarRule_.endDate.clear();calendarDiscardConfirmed_=false;});
+        footer+=44;
+        if(!forever)
+        {
+            option("calendar.edit.endDate",Wide(calendarRule_.endDate),16,footer,width);
+            Command("calendar.edit.endDate",[this]{OpenCalendarPicker("calendar.edit.endDate");});footer+=44;
+        }
+    }
     if(!editor->error.empty())
     {
         const auto& error=editor->error;
-        const char* key=error=="conflict"||error=="not_found"?"settings.calendar.conflict":
+        const char* key=error=="discard_exceptions"?"settings.calendar.confirmExceptions":
+            error=="conflict"||error=="not_found"?"settings.calendar.conflict":
             error=="title_required"||error=="text_too_long"||error=="invalid_date"||error=="invalid_time"||error=="invalid_reminder"?"settings.calendar.invalid":"settings.calendar.failed";
         auto& message=Add("calendar.edit.error",ui::Role::Text,Rect(16,footer,width,48),_LW(key));message.wrap=true;message.fontSize=13;footer+=56;
     }
     if(calendarConfirmDelete_)
     {
-        auto& question=Add("calendar.edit.confirmation",ui::Role::Text,Rect(16,footer,width,36),_LW("settings.calendar.confirmDelete"));question.wrap=true;footer+=44;
+        auto& question=Add("calendar.edit.confirmation",ui::Role::Text,Rect(16,footer,width,36),_LW(calendarScopeSeries_?"settings.calendar.deleteSeries":"settings.calendar.confirmDelete"));question.wrap=true;footer+=44;
         const float buttonWidth=(width-12)/2;
         Add("calendar.edit.cancelDelete",ui::Role::Button,Rect(16,footer,buttonWidth,36),_LW("settings.dialog.cancel")).centered=true;
         Command("calendar.edit.cancelDelete",[this]{CalendarBack();});
@@ -1576,9 +1772,10 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
 void SystemPanelModel::OpenCalendarPicker(std::string field)
 {
     if(!CalendarEditing()||calendarConfirmDelete_||calendarPicker_)return;
-    if(field=="calendar.edit.date")
+    if(field=="calendar.edit.date"||field=="calendar.edit.endDate")
     {
-        const auto& text=calendarText_.at(field);std::string date;date.reserve(text.size());
+        const auto text=field=="calendar.edit.endDate"?Wide(calendarRule_.endDate):calendarText_.at(field);
+        std::string date;date.reserve(text.size());
         // The form holds an ISO date. Reject unexpected non-ASCII input rather
         // than silently truncating UTF-16 when handing it to the date control.
         for(const auto value:text){if(value>L'\x7f')return;date.push_back(static_cast<char>(value));}
@@ -1606,8 +1803,25 @@ void SystemPanelModel::CalendarPickerCommand(std::string_view id)
     const auto result=calendarPicker_->Invoke(id,today);
     if(result==ui::DateTimePicker::Result::Confirmed)
     {
-        calendarText_[calendarPickerField_]=calendarPicker_->Type()==ui::DateTimePicker::Kind::Date?
-            Wide(calendarPicker_->Date()):ui::DateTimePicker::TimeText(calendarPicker_->Minutes());
+        if(calendarPickerField_=="calendar.edit.endDate")
+        {calendarRule_.endDate=calendarPicker_->Date();calendarDiscardConfirmed_=false;}
+        else if(calendarPickerField_=="calendar.edit.date"&&calendarMode_=="dates")
+        {
+            const auto selected=calendarPicker_->Date();auto& dates=calendarRule_.dates;
+            const auto found=std::find(dates.begin(),dates.end(),selected);
+            if(found!=dates.end())dates.erase(found);
+            else if(dates.size()<366){dates.push_back(selected);std::sort(dates.begin(),dates.end());}
+            if(!dates.empty())calendarText_["calendar.edit.date"]=Wide(dates.front());
+            calendarDiscardConfirmed_=false;
+        }
+        else
+        {
+            calendarText_[calendarPickerField_]=calendarPicker_->Type()==ui::DateTimePicker::Kind::Date?
+                Wide(calendarPicker_->Date()):ui::DateTimePicker::TimeText(calendarPicker_->Minutes());
+            if(calendarPickerField_=="calendar.edit.date"&&calendarMode_!="single")
+                calendarRule_.startDate=calendarPicker_->Date();
+            calendarDiscardConfirmed_=false;
+        }
         calendarEditor_->error.clear();
     }
     if(result==ui::DateTimePicker::Result::Confirmed||result==ui::DateTimePicker::Result::Cancelled)

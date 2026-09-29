@@ -419,9 +419,15 @@ struct SystemPanel::Impl
     {
         if(!model||!current||!id.starts_with("event:")||model->CalendarEditing()||!model->View().Find(id))return;
         const auto life=lifetime;auto active=model;
-        std::vector<modern_menu::Item> items(2);
-        items[0].command=1;items[0].label=_LW("settings.calendar.edit");items[0].builtinIcon=menu_icon::BuiltinIcon::None;
-        items[1].command=2;items[1].label=_LW("app.settings.delete");
+        const bool series=model->CalendarEventIsSeries(id);
+        std::vector<modern_menu::Item> items(series?4:2);
+        items[0].command=1;items[0].label=_LW(series?"settings.calendar.scope.once":"settings.calendar.edit");items[0].builtinIcon=menu_icon::BuiltinIcon::None;
+        items[1].command=2;items[1].label=_LW(series?"settings.calendar.deleteOccurrence":"app.settings.delete");
+        if(series)
+        {
+            items[2].command=3;items[2].label=_LW("settings.calendar.scope.series");
+            items[3].command=4;items[3].label=_LW("settings.calendar.deleteSeries");
+        }
         modern_menu::Options options;options.owner=window;options.zOrderOwner=window;options.anchor=anchor;
         options.dpi=static_cast<UINT>(std::lround(scale*96));options.lightTheme=current->appearance.contentTheme!=0;options.topmost=true;
         options.appearance=Glass()?(options.lightTheme?modern_menu::Appearance::SystemLightBlur:modern_menu::Appearance::SystemDarkBlur):
@@ -440,7 +446,7 @@ struct SystemPanel::Impl
         if(result.reason==modern_menu::ExitReason::ExternalActivation)
         {pending.reset();afterClose={};if(showing&&!closing)Animate(false);return;}
         if(showing&&!closing&&model==active&&result.command&&result.reason==modern_menu::ExitReason::Command)
-        {active->CalendarEventCommand(id,result.command==2);Arrange();FocusCalendarPage(false);Paint();}
+        {active->CalendarEventCommand(id,result.command==2||result.command==4,result.command>=3);Arrange();FocusCalendarPage(false);Paint();}
         if(!showing&&!destroying&&(pending||afterClose))PostMessageW(window,kOpenPending,++closeGeneration,0);
     }
     void FocusCalendarPage(bool keyboard)

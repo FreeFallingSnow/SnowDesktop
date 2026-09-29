@@ -100,7 +100,8 @@ public:
     std::vector<SystemCalendarInputField> CalendarInputFields() const;
     bool SetCalendarInput(std::string_view id, std::wstring text);
     bool CalendarBack();
-    bool CalendarEventCommand(std::string_view nodeId, bool remove);
+    bool CalendarEventCommand(std::string_view nodeId, bool remove, bool wholeSeries=false);
+    bool CalendarEventIsSeries(std::string_view nodeId) const;
     std::vector<SystemCalendarInputField> ControlInputFields() const;
     bool SetControlInput(std::string_view id, std::wstring& text);
     std::string ControlFocusTarget() const;
@@ -123,6 +124,10 @@ private:
     std::map<std::string,calendar::CalendarEvent> calendarEvents_;
     std::string calendarNotice_;
     std::shared_ptr<SystemCalendarEditorState> calendarEditor_;
+    std::optional<calendar::CalendarSeries> calendarSeriesOriginal_;
+    calendar::CalendarSeriesRule calendarRule_;
+    std::string calendarMode_="single";
+    bool calendarScopeSeries_=false, calendarDiscardConfirmed_=false;
     std::map<std::string,std::wstring> calendarText_;
     enum class CalendarDeleteOrigin { Editor, ContextMenu };
     CalendarDeleteOrigin calendarDeleteOrigin_=CalendarDeleteOrigin::Editor;
@@ -199,6 +204,7 @@ private:
     void Calendar();
     void FinishStackedCalendar(float monthEnd,float agendaTop,float agendaStart,float agendaEnd,bool empty);
     void EditCalendar(calendar::CalendarEvent);
+    void SwitchCalendarScope(bool wholeSeries);
     float CalendarEditor(float width);
     void OpenCalendarPicker(std::string field);
     float CalendarPicker(float width);
