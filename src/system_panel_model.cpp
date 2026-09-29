@@ -1214,7 +1214,11 @@ void SystemPanelModel::Calendar()
         }
         bodyLeft_=fixedMonth?agendaLeft:0;bodyStart_=fixedMonth?agendaTop:0;
         if(calendarStacked_)FinishStackedCalendar(monthEnd,agendaTop,agendaTop,end+offsetY,false);
-        else if(fixedMonth)Finish(end+offsetY,false,panelHeight,panelHeight);
+        else if(fixedMonth)
+        {
+            const bool compact=calendarPicker_.has_value()||calendarConfirmDelete_;
+            Finish(end+offsetY,false,compact?panelHeight:520.f,compact?panelHeight:760.f);
+        }
         else Finish((std::max)(monthEnd,end+offsetY),false);
         return;
     }
