@@ -103,13 +103,17 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     if (s.cpu)
     {
         const auto value = snapshot.cpu;
-        add("cpu", L"CPU " + (value && value->available && !value->warmingUp ? Percent(value->usagePercent) : L"—"), StatusBarAction::Cpu, L"", true);
+        const auto usage = value && value->available && !value->warmingUp ? Percent(value->usagePercent) : L"—";
+        add("cpu", L"CPU " + usage, StatusBarAction::Cpu, L"", true);
+        items.back().tip = std::wstring(_LW("statusBar.cpu")) + L"  " + usage;
     }
     if (s.memory)
     {
         const auto value = snapshot.memory;
-        add("memory", _LW("statusBar.memory") + std::wstring(L" ") + (value && value->available && value->totalBytes ?
-            Percent(100. * value->usedBytes / value->totalBytes) : L"—"), StatusBarAction::Memory, L"", true);
+        const auto usage = value && value->available && value->totalBytes ?
+            Percent(100. * value->usedBytes / value->totalBytes) : L"—";
+        add("memory", _LW("statusBar.memory") + std::wstring(L" ") + usage, StatusBarAction::Memory, L"", true);
+        items.back().tip = std::wstring(_LW("statusBar.memory")) + L"  " + usage;
     }
     if (s.gpu)
     {
@@ -118,7 +122,9 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         if (value && !value->warmingUp) for (const auto& adapter : value->adapters)
             if (adapter.usageAvailable && std::isfinite(adapter.usagePercent) && adapter.usagePercent >= 0 && adapter.usagePercent <= 100)
                 maximum = maximum ? std::max(*maximum, adapter.usagePercent) : adapter.usagePercent;
-        add("gpu", L"GPU " + (maximum ? Percent(*maximum) : L"—"), StatusBarAction::Gpu, L"", true);
+        const auto usage = maximum ? Percent(*maximum) : L"—";
+        add("gpu", L"GPU " + usage, StatusBarAction::Gpu, L"", true);
+        items.back().tip = std::wstring(_LW("statusBar.gpu")) + L"  " + usage;
     }
     if (s.traffic)
     {
