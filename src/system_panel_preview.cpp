@@ -1898,6 +1898,9 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 "time visual fixture did not expose both columns together");
         }
         const auto& scene=model.View();CheckLayout(scene);
+        if(picker&&viewportHeight>=370.f)Require(!scene.Find("scrollbar")&&
+            Node(scene,"picker.confirm").bounds.bottom<=scene.height,
+            "calendar picker actions did not fit a short preview viewport");
         if(creating&&scene.width>=560.f)Require(scene.height>=(std::min)(520.f,viewportHeight)&&
             scene.height<=(std::min)(560.f,viewportHeight),
             "wide calendar editor did not respect its bounded height range");

@@ -72,20 +72,20 @@ public:
             Node n;n.id=std::move(id);n.role=role;n.bounds=n.clip=bounds;n.text=std::move(text);
             scene.nodes.push_back(std::move(n));return scene.nodes.back();
         };
-        auto& back=add("picker.back",Role::Icon,rect(16,10,36,36));back.glyph=L"\uE76B";back.tooltip=_LW("settings.shell.back");
-        auto& heading=add("picker.heading",Role::Text,rect(56,10,width-72,36),std::move(title));heading.fontSize=17;heading.bold=true;
+        auto& back=add("picker.back",Role::Icon,rect(16,8,32,32));back.glyph=L"\uE76B";back.tooltip=_LW("settings.shell.back");
+        auto& heading=add("picker.heading",Role::Text,rect(52,8,width-68,32),std::move(title));heading.fontSize=17;heading.bold=true;
         const float content=(std::min)(408.f,width-32),left=(width-content)/2;
         float bottom=0;
         if(kind_==Kind::Date)
         {
             const auto month=calendar::CalendarService::GetDateInfo(month_);
-            const bool compact=content<280;const float controls=compact?104.f:64.f,grid=controls+44;
-            auto& label=add("picker.month",Role::Text,rect(left,64,compact?content:content-150,32),
+            const bool narrow=content<280;const float controls=narrow?72.f:44.f,grid=controls+38.f;
+            auto& label=add("picker.month",Role::Text,rect(left,44,narrow?content:content-150,28),
                 std::to_wstring(month->year)+L" / "+std::to_wstring(month->month));label.bold=true;label.fontSize=16;
-            auto& now=add("picker.today",Role::Button,rect(left+content-144,controls,68,32),_LW("app.widget.date_picker.today"));now.centered=true;now.fontSize=12;now.enabled=calendar::CalendarService::GetDateInfo(today).has_value();
+            auto& now=add("picker.today",Role::Button,rect(left+content-144,controls,68,30),_LW("app.widget.date_picker.today"));now.centered=true;now.fontSize=12;now.enabled=calendar::CalendarService::GetDateInfo(today).has_value();
             for(int i=0;i<2;++i)
             {
-                auto& arrow=add(i?"picker.next":"picker.previous",Role::Icon,rect(left+content-70+i*36.f,controls,32,32));
+                auto& arrow=add(i?"picker.next":"picker.previous",Role::Icon,rect(left+content-70+i*36.f,controls,32,30));
                 arrow.glyph=i?L"\uE76C":L"\uE76B";arrow.tooltip=_LW(i?"app.widget.date_picker.next":"app.widget.date_picker.previous");
                 arrow.enabled=i?month->year<9999||month->month<12:month->year>1||month->month>1;
             }
@@ -93,44 +93,45 @@ public:
             for(int i=0;i<7;++i)
             {
                 const auto key="app.widget.date_picker.weekday"+std::to_string((i+1)%7+1);
-                auto& day=add("picker.weekday:"+std::to_string(i),Role::Text,rect(left+i*cell,grid,cell-4,24),_LW(key.c_str()));
+                auto& day=add("picker.weekday:"+std::to_string(i),Role::Text,rect(left+i*cell,grid,cell-4,20),_LW(key.c_str()));
                 day.centered=day.secondary=true;day.fontSize=12;
             }
             const auto dates=MonthDates(month_);
             for(int i=0;i<42;++i)if(dates[i])
             {
                 const auto info=calendar::CalendarService::GetDateInfo(*dates[i]);
-                auto& day=add("picker.day:"+*dates[i],Role::ListItem,rect(left+(i%7)*cell,grid+28+(i/7)*36.f,cell-4,32),std::to_wstring(info->day));
+                const float stride=narrow?28.f:30.f;
+                auto& day=add("picker.day:"+*dates[i],Role::ListItem,rect(left+(i%7)*cell,grid+24+(i/7)*stride,cell-4,stride-2),std::to_wstring(info->day));
                 day.centered=true;day.selected=day.accent=*dates[i]==date_;day.outlined=*dates[i]==today;day.secondary=info->month!=month->month;day.fontSize=13;
                 day.accessibilityLabel=day.tooltip=std::wstring(dates[i]->begin(),dates[i]->end());
             }
-            bottom=grid+28+6*36+12;
+            bottom=grid+24+6*(narrow?28.f:30.f)+6;
         }
         else
         {
-            auto& value=add("picker.time",Role::Text,rect(left,64,content,44),TimeText(minutes_));value.centered=value.bold=true;value.fontSize=24;
+            auto& value=add("picker.time",Role::Text,rect(left,50,content,40),TimeText(minutes_));value.centered=value.bold=true;value.fontSize=24;
             const float column=(content-12)/2;
             for(int part=0;part<2;++part)
             {
                 const bool minute=part!=0;const float x=left+part*(column+12);const std::string prefix=minute?"picker.minute:":"picker.hour:";
                 const auto label=_LW(minute?"app.widget.time_picker.minute":"app.widget.time_picker.hour");
-                auto& columnLabel=add(prefix+"label",Role::Text,rect(x,120,column,28),label);columnLabel.centered=columnLabel.secondary=true;
-                add(prefix+"column",Role::Card,rect(x,156,column,196));
+                auto& columnLabel=add(prefix+"label",Role::Text,rect(x,104,column,26),label);columnLabel.centered=columnLabel.secondary=true;
+                add(prefix+"column",Role::Card,rect(x,134,column,166));
                 const int selected=PartValue(minute);
                 for(int offset=-2;offset<=2;++offset)
                 {
                     const int choice=selected+offset;if(choice<0||choice>(minute?59:23))continue;
                     const auto text=choice<10?L"0"+std::to_wstring(choice):std::to_wstring(choice);
-                    auto& valueNode=add(prefix+(offset==0?std::string("current"):std::to_string(choice)),Role::ListItem,rect(x+4,160+(offset+2)*38.f,column-8,36),text);
+                    auto& valueNode=add(prefix+(offset==0?std::string("current"):std::to_string(choice)),Role::ListItem,rect(x+4,136+(offset+2)*32.f,column-8,30),text);
                     valueNode.centered=true;valueNode.selected=valueNode.accent=offset==0;valueNode.secondary=offset!=0;
                     valueNode.fontSize=offset==0?22.f:17.f;valueNode.accessibilityLabel=std::wstring(label)+L" "+text;
                 }
             }
-            bottom=364;
+            bottom=308;
         }
         add("picker.cancel",Role::Button,rect(left,bottom,(content-12)/2,36),_LW("settings.dialog.cancel")).centered=true;
         auto& confirm=add("picker.confirm",Role::Button,rect(left+(content+12)/2,bottom,(content-12)/2,36),_LW("app.widget.date_picker.confirm"));confirm.centered=confirm.accent=true;
-        scene.height=bottom+44;return scene;
+        scene.height=bottom+40;return scene;
     }
     Result Invoke(std::string_view id,const std::string& today)
     {
