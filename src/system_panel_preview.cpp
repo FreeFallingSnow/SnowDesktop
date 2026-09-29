@@ -1099,9 +1099,16 @@ void CheckTimePickerInput()
         input.Sync(model.View());
     };
     Require(model.Invoke("calendar.add")&&model.SetCalendarInput("calendar.edit.title",L"Time draft"),"time picker draft setup failed");
+    click("calendar.edit.date");
+    Require(!model.View().Find("scrollbar")&&
+        Node(model.View(),"picker.confirm").bounds.bottom<=model.View().height,
+        "calendar date picker did not fit its actions in the panel");
+    click("picker.cancel");
     click("calendar.edit.start");
     const auto hour=Node(model.View(),"picker.hour:current").bounds,minute=Node(model.View(),"picker.minute:current").bounds;
     Require(hour.right<minute.left&&hour.top==minute.top&&model.View().height<440&&
+        !model.View().Find("scrollbar")&&
+        Node(model.View(),"picker.confirm").bounds.bottom<=model.View().height&&
         !model.View().Find("picker.hours")&&!model.View().Find("picker.minutes")&&model.CalendarInputFields().empty(),
         "shared time picker is not a compact simultaneous two-column control");
     click("picker.hour:11");

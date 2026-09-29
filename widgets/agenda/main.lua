@@ -772,15 +772,33 @@ local function panel(context, model)
         end
         if model.mode=="dates" and model.rule then
             local dates=model.rule.dates
-            local summary=#dates==0 and l10n.tr("lua_widget.agenda.choose_dates") or dates[1]
-            if #dates>1 then summary=summary.." · "..dates[2] end
-            if #dates>2 then summary=summary.." +"..tostring(#dates-2) end
-            children[#children+1]=view.text({key="agenda.date.label",text=l10n.tr("lua_widget.agenda.date"),
+            local summary=l10n.tr("lua_widget.agenda.choose_dates")
+            if #dates>0 then
+                local tokens={}
+                local includeYear=dates[1]:sub(1,4)~=dates[#dates]:sub(1,4)
+                local available=math.max(60,(context.layoutSize and context.layoutSize.width or row*10)-row*1.3-32)
+                for index,dateValue in ipairs(dates) do
+                    local compact=formatDate(dateValue,false)
+                    if includeYear then compact=dateValue:sub(1,4).."/"..compact end
+                    local candidate={table.unpack(tokens)}
+                    candidate[#candidate+1]=compact
+                    local remaining=#dates-index
+                    local preview=table.concat(candidate," · ")
+                    if remaining>0 then preview=preview.."  +"..tostring(remaining) end
+                    if #tokens>0 and draw.measureText(preview,row*0.46,0,false).width>available then break end
+                    tokens=candidate
+                    summary=preview
+                    if index>=6 then break end
+                end
+            end
+            local dateLabel=l10n.tr("lua_widget.agenda.date")
+            if #dates>0 then dateLabel=dateLabel.." · "..l10n.tr("lua_widget.agenda.selected_date_count",tostring(#dates)) end
+            children[#children+1]=view.text({key="agenda.date.label",text=dateLabel,
                 height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
             children[#children+1]=view.button({key="agenda.openDatePicker",label=summary,width="fill",height=row,
                 fontSize=row*0.46,textAlign="start",style={foreground="textPrimary",cornerRadius=row*0.12},
                 enabled=not busy,action={id="agenda.panel",value="openDatePicker"},
-                accessibility={label=l10n.tr("lua_widget.agenda.date")..": "..summary}})
+                accessibility={label=dateLabel..": "..(#dates>0 and table.concat(dates,", ") or summary)}})
         else
             field(DRAFT_DATE,date,model.mode=="single" and l10n.tr("lua_widget.agenda.date") or
                 l10n.tr("lua_widget.agenda.start_date"),dateError)
@@ -835,9 +853,19 @@ local function panel(context, model)
         children[#children+1]=view.checkbox({key="agenda.allDay",label=l10n.tr("lua_widget.agenda.all_day"),checked=allDay,
             height=row,fontSize=row*0.46,style={foreground="textPrimary"},enabled=not busy,action={id="agenda.panel",value="toggleAllDay"}})
         if not allDay then
-            children[#children+1]=button("openTimePicker",l10n.tr("lua_widget.agenda.choose_time"),not busy)
-            field(DRAFT_START,start,l10n.tr("lua_widget.agenda.start"),not startMinutes and timeError or nil)
-            field(DRAFT_END,finish,l10n.tr("lua_widget.agenda.end"),timeError)
+            local function timeField(key,value,label)
+                children[#children+1]=view.text({key=key..".label",text=label,height=row,
+                    fontSize=row*0.43,style={foreground="textSecondary"}})
+                children[#children+1]=view.button({key=key..".picker",label=value~="" and value or l10n.tr("lua_widget.agenda.choose_time"),
+                    width="fill",height=row,fontSize=row*0.46,textAlign="start",
+                    style={foreground="textPrimary",cornerRadius=row*0.12},enabled=not busy,
+                    action={id="agenda.panel",value="openTimePicker"},
+                    accessibility={label=label..": "..value..". "..l10n.tr("lua_widget.agenda.choose_time")}})
+            end
+            timeField(DRAFT_START,start,l10n.tr("lua_widget.agenda.start"))
+            timeField(DRAFT_END,finish,l10n.tr("lua_widget.agenda.end"))
+            if timeError then children[#children+1]=view.text({key="agenda.time.error",text=l10n.tr("lua_widget.agenda.invalid_time"),
+                height=row,fontSize=row*0.42,style={foreground="textSecondary"}}) end
         end
         local reminders={}
         for _,minutes in ipairs(reminderValues) do
