@@ -241,6 +241,37 @@ void CheckSeries(const std::filesystem::path& root)
     Expect(!damagedSeries.Load() && !std::filesystem::exists(sidecar) &&
         damagedSeries.Series().empty(),
         "corrupt series data is quarantined independently");
+
+    const auto limitPath = root / L"series-limit" / L"SnowDesktop.calendar.json";
+    std::string limitJson =
+        "{\"schemaVersion\":1,\"series\":[{\"id\":\"limited\",\"revision\":1,"
+        "\"event\":{\"title\":\"Limit\",\"date\":\"2026-01-01\",\"allDay\":true,"
+        "\"startMinutes\":0,\"endMinutes\":1439,\"notes\":\"\",\"reminderMinutes\":-1},"
+        "\"rule\":{\"kind\":\"weekly\",\"startDate\":\"2026-01-01\",\"endDate\":\"\","
+        "\"interval\":1,\"monthDay\":0,\"dates\":[],\"weekdays\":[1,2,3,4,5,6,7]},"
+        "\"exceptions\":[";
+    for (int index = 0; index < 2000; ++index)
+    {
+        if (index) limitJson += ',';
+        limitJson += "{\"date\":\"" + *CalendarService::AddDays("2026-01-01", index) +
+            "\",\"canceled\":" + (index == 0 ? "false,\"event\":{\"title\":\"Existing\","
+            "\"date\":\"2026-01-01\",\"allDay\":true,\"startMinutes\":0,"
+            "\"endMinutes\":1439,\"notes\":\"\",\"reminderMinutes\":-1}" : "true") + "}";
+    }
+    limitJson += "],\"notified\":[]}]}";
+    Write(limitPath.parent_path() / L"SnowDesktop.calendar-series.json", limitJson);
+    CalendarService limited(limitPath, [&] { return now; });
+    Expect(limited.Load(), "maximum persisted exception count loads");
+    auto existing = limited.EventById("limited/2026-01-01");
+    Expect(existing && limited.Update(existing->id, existing->revision, *existing).ok,
+        "updating an existing exception is allowed at the limit");
+    const auto overflowDate = *CalendarService::AddDays("2026-01-01", 2000);
+    const auto overflow = limited.EventById("limited/" + overflowDate);
+    Expect(overflow && !limited.Update(overflow->id, overflow->revision, *overflow).ok &&
+        limited.Remove(overflow->id).error == "event_limit",
+        "new overrides are rejected before exceeding the reload limit");
+    CalendarService limitedReload(limitPath, [&] { return now; });
+    Expect(limitedReload.Load(), "rejected override leaves a reloadable series file");
 }
 }
 

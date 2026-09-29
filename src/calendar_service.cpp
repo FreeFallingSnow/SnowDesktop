@@ -28,6 +28,17 @@ constexpr std::size_t kMaximumFileBytes =
 constexpr std::size_t kMaximumTitleBytes = 512;
 constexpr std::size_t kMaximumNotesBytes = 8192;
 
+bool ExceptionLimitReached(const std::vector<CalendarSeries>& series)
+{
+    std::size_t count = 0;
+    for (const auto& item : series)
+    {
+        count += item.exceptions.size();
+        if (count >= kMaximumExceptions) return true;
+    }
+    return false;
+}
+
 std::filesystem::path SeriesPath(const std::filesystem::path& legacy)
 {
     return legacy.parent_path() /
@@ -677,6 +688,8 @@ MutationResult CalendarService::Update(
             std::string error;
             if (!ValidateAndNormalize(event, error))
                 return {false, id, series.revision, error};
+            if (!series.exceptions.contains(origin) && ExceptionLimitReached(series_))
+                return {false, id, series.revision, "event_limit"};
             auto previous = series;
             event.id = id;
             event.seriesId = series.id;
@@ -743,6 +756,8 @@ MutationResult CalendarService::Remove(
             if (!Occurrence(series, origin)) return {false, id, 0, "not_found"};
             if (expectedRevision && expectedRevision != series.revision)
                 return {false, id, series.revision, "conflict"};
+            if (!series.exceptions.contains(origin) && ExceptionLimitReached(series_))
+                return {false, id, series.revision, "event_limit"};
             auto previous = series;
             ++series.revision;
             series.exceptions[origin] = {true, {}};

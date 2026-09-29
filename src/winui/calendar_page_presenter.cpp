@@ -393,6 +393,15 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         scope.SelectedIndex(0);
         title.Text(winrt::to_hstring(event.title));
         const auto selectedDate = PickerDate(event.date);
+        multipleDates.SelectedDates().Clear();
+        multipleDates.SelectedDates().Append(selectedDate);
+        interval.Text(L"1");
+        const auto info = calendar::CalendarService::GetDateInfo(event.date);
+        for (std::size_t index = 0; index < weekdays.size(); ++index)
+            weekdays[index].IsChecked(info && info->weekday == static_cast<int>(index + 1));
+        monthDay.SelectedIndex(info ? info->day : 1);
+        neverEnds.IsOn(true);
+        until.Date(nullptr);
         if (selectedDate < date.MinDate()) date.MinDate(selectedDate);
         if (selectedDate > date.MaxDate()) date.MaxDate(selectedDate);
         date.Date(winrt::box_value(selectedDate).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
