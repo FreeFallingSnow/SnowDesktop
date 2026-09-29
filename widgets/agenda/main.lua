@@ -778,7 +778,7 @@ local function panel(context, model)
             children[#children+1]=view.text({key="agenda.date.label",text=l10n.tr("lua_widget.agenda.date"),
                 height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
             children[#children+1]=view.button({key="agenda.openDatePicker",label=summary,width="fill",height=row,
-                fontSize=row*0.46,textAlign="left",style={foreground="textPrimary",cornerRadius=row*0.12},
+                fontSize=row*0.46,textAlign="start",style={foreground="textPrimary",cornerRadius=row*0.12},
                 enabled=not busy,action={id="agenda.panel",value="openDatePicker"},
                 accessibility={label=l10n.tr("lua_widget.agenda.date")..": "..summary}})
         else
