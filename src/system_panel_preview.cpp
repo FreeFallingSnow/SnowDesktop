@@ -1886,7 +1886,7 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 "time visual fixture did not expose both columns together");
         }
         const auto& scene=model.View();CheckLayout(scene);
-        if(creating&&!narrow)Require(scene.height>=520.f&&scene.height<=560.f,
+        if(creating&&scene.width>=560.f)Require(scene.height>=520.f&&scene.height<=560.f,
             "wide calendar editor did not respect its bounded height range");
         if(creating)
         {
