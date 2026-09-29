@@ -1347,11 +1347,18 @@ void CheckCalendarSeriesManagement()
     SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);
     model.Refresh(300,420);
     Require(model.Invoke("calendar.add")&&model.SetCalendarInput("calendar.edit.title",L"Series")&&
-        model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.dates.add")&&
-        model.Invoke("picker.day:2026-09-28")&&model.Invoke("picker.confirm")&&
-        model.View().Find("calendar.edit.dates.remove:2026-09-26")&&
-        model.View().Find("calendar.edit.dates.remove:2026-09-28"),
-        "multiple-date panel editor did not retain its checked dates");
+        model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.date")&&
+        Node(model.View(),"picker.day:2026-09-26").selected&&
+        model.Invoke("picker.day:2026-09-28")&&
+        Node(model.View(),"picker.day:2026-09-28").selected&&model.Invoke("picker.confirm")&&
+        Node(model.View(),"calendar.edit.date").text.find(L"2026-09-26")!=std::wstring::npos&&
+        Node(model.View(),"calendar.edit.date").text.find(L"2026-09-28")!=std::wstring::npos&&
+        !model.View().Find("calendar.edit.dates.add"),
+        "multiple-date panel editor did not show its checked dates in the date field");
+    Require(model.Invoke("calendar.edit.date")&&model.Invoke("picker.day:2026-09-26")&&
+        !Node(model.View(),"picker.day:2026-09-26").selected&&model.Invoke("picker.cancel")&&
+        Node(model.View(),"calendar.edit.date").text.find(L"2026-09-26")!=std::wstring::npos,
+        "cancelling multiple-date selection changed the saved draft");
     CheckLayout(model.View());
     Require(model.Reveal("calendar.edit.save")&&model.Invoke("calendar.edit.save")&&
         !model.CalendarEditing()&&service.Series().size()==1&&
@@ -1823,9 +1830,10 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
             "calendar visual fixture did not enter the real secondary page");
         if(seriesDates)
         {
-            Require(model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.dates.add")&&
+            Require(model.Invoke("calendar.edit.mode.dates")&&model.Invoke("calendar.edit.date")&&
                 model.Invoke("picker.day:2026-09-28")&&model.Invoke("picker.confirm")&&
-                model.Reveal("calendar.edit.dates.add"),
+                model.Reveal("calendar.edit.date")&&
+                Node(model.View(),"calendar.edit.date").text.find(L"2026-09-28")!=std::wstring::npos,
                 "calendar multiple-date preview could not show the selected dates");
         }
         if(seriesMonthly)
@@ -1839,9 +1847,14 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         }
         if(overflow)
         {
+            const auto previous=Node(model.View(),"calendar.edit.notes").bounds;
             std::wstring notes;
             for(int line=0;line<24;++line)notes+=std::to_wstring(line+1)+L". "+_LW("settings.calendar.pageDescription")+L"\r\n";
             Require(model.SetCalendarInput("calendar.edit.notes",std::move(notes)),"long calendar notes did not reach the page draft");
+            model.Refresh(300.f,model.View().width);
+            const auto expanded=Node(model.View(),"calendar.edit.notes").bounds;
+            Require(expanded.bottom-expanded.top>previous.bottom-previous.top&&
+                model.View().Find("scrollbar"),"long calendar notes did not grow into the panel scroll area");
         }
         if(!creating)model.Reveal("calendar.edit.notes");
         if(picker)
@@ -1892,7 +1905,7 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
             if(confirmation)Require(!field.enabled,"calendar delete visual fixture retained writable inputs");
         }
         // Composite the production EDIT children, including IME-compatible
-        // text and actual notes scrolling, over the production scene itself.
+        // text and notes that grow into the panel scroll area.
         const auto scenePixels=pixels;
         OverlaySystemCalendarInputs(fields,appearance,static_cast<UINT>(request.dpi),request.canvasWidth,request.canvasHeight,pixels);
         Require(picker||confirmation||pixels!=scenePixels,"calendar page preview omitted its real embedded input controls");

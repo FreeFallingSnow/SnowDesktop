@@ -121,6 +121,8 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         }
         const auto owner=entry->owner.lock();
         if(!owner||!owner->alive)return DefSubclassProc(window,message,wp,lp);
+        if(message==WM_MOUSEWHEEL&&entry->field.multiline)
+            return SendMessageW(owner->parent,message,wp,lp);
         const bool ctrl=(GetKeyState(VK_CONTROL)&0x8000)!=0,shift=(GetKeyState(VK_SHIFT)&0x8000)!=0;
         // Keep copying forbidden without EDIT's extra password balloon. This
         // applies only to the in-panel protected field, not external dialogs.
@@ -220,7 +222,7 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         auto entry=std::make_shared<Entry>();entry->owner=shared_from_this();entry->field=field;
         if(field.password)entry->field.text.clear();else entry->modelText=field.text;
         const DWORD style=WS_CHILD|WS_TABSTOP|ES_LEFT|ES_NOHIDESEL|(field.password?ES_PASSWORD:0)|
-            (field.multiline?(ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL):ES_AUTOHSCROLL);
+            (field.multiline?(ES_MULTILINE|ES_WANTRETURN):ES_AUTOHSCROLL);
         auto holder=std::make_unique<std::shared_ptr<Entry>>(entry);
         if(nextControl>=0x7fff)nextControl=0x6000;
         entry->window=CreateWindowExW(0,L"EDIT",L"",style,0,0,1,1,parent,
@@ -399,6 +401,20 @@ void SystemCalendarInputs::Print(HDC dc) const
         SendMessageW(entry->window,WM_PRINT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT|PRF_NONCLIENT|PRF_ERASEBKGND);RestoreDC(dc,saved);
     }
 }
+float MeasureSystemCalendarNotesHeight(std::wstring_view text,float width)
+{
+    const auto dc=GetDC(nullptr);
+    if(!dc)return 72.f;
+    const auto font=native_form::CreateFormFont(96);
+    const auto previous=SelectObject(dc,font?font:GetStockObject(DEFAULT_GUI_FONT));
+    RECT bounds{0,0,(std::max)(1,static_cast<int>(std::lround(width))-24),0};
+    const auto length=static_cast<int>((std::min)(text.size(),static_cast<std::size_t>(8192)));
+    DrawTextW(dc,text.data(),length,&bounds,DT_CALCRECT|DT_EDITCONTROL|DT_WORDBREAK|DT_NOPREFIX);
+    TEXTMETRICW metrics{};GetTextMetricsW(dc,&metrics);
+    SelectObject(dc,previous);if(font)DeleteObject(font);ReleaseDC(nullptr,dc);
+    return static_cast<float>((std::max)(72,static_cast<int>(bounds.bottom)+
+        (std::max)(static_cast<int>(metrics.tmHeight),16)*2+16));
+}
 
 namespace
 {
@@ -409,7 +425,7 @@ struct PreviewApartment
 };
 struct PreviewParent
 {
-    HWND window=nullptr;SystemCalendarInputs* inputs=nullptr;int colorRequests=0;
+    HWND window=nullptr;SystemCalendarInputs* inputs=nullptr;int colorRequests=0,wheelRequests=0;
     PreviewParent(int width,int height,DWORD extendedStyle=WS_EX_NOREDIRECTIONBITMAP)
     {
         WNDCLASSW cls{};cls.hInstance=GetModuleHandleW(nullptr);cls.lpfnWndProc=Procedure;cls.lpszClassName=L"SnowDesktopCalendarInputsPreview";
@@ -424,6 +440,7 @@ struct PreviewParent
         if(m==WM_NCCREATE){self=static_cast<PreviewParent*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);SetWindowLongPtrW(w,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(self));}
         if(self&&self->inputs)
         {
+            if(m==WM_MOUSEWHEEL){++self->wheelRequests;return 0;}
             if(m==WM_COMMAND&&self->inputs->HandleCommand(wp,lp))return 0;
             if(m==WM_CTLCOLOREDIT||m==WM_CTLCOLORSTATIC)
                 if(const auto brush=self->inputs->ControlColor(reinterpret_cast<HWND>(lp),reinterpret_cast<HDC>(wp)))
@@ -792,10 +809,17 @@ void CheckSystemCalendarInputs()
     SendMessageW(title,WM_IME_STARTCOMPOSITION,0,0);const auto composing=InputText(title);fields[0].text=L"External update";inputs.Sync(fields,appearance,96);
     SendMessageW(title,WM_KEYDOWN,VK_RETURN,0);Require(InputText(title)==composing&&keys==0,"calendar refresh or Enter interrupted composition");
     SendMessageW(title,WM_IME_ENDCOMPOSITION,0,0);Require(InputText(title)==fields[0].text,"calendar deferred external value was lost");
-    Require(!native_form::GetEditScrollInfo(notes).canScroll,"short calendar notes exposed a scrollbar");
-    fields[1].text.clear();for(int i=0;i<30;++i)fields[1].text+=L"A wrapped calendar note line.\r\n";inputs.Sync(fields,appearance,96);
-    const auto before=native_form::GetEditScrollInfo(notes);SendMessageW(notes,WM_VSCROLL,SB_LINEDOWN,0);const auto after=native_form::GetEditScrollInfo(notes);
-    Require(before.canScroll&&after.firstLine>before.firstLine&&InputText(notes)==fields[1].text,"calendar notes scroll lost text or remained inert");
+    Require(!native_form::GetEditScrollInfo(notes).canScroll&&
+        !(GetWindowLongPtrW(notes,GWL_STYLE)&(WS_VSCROLL|ES_AUTOVSCROLL)),
+        "calendar notes retained their inner scrolling style");
+    fields[1].text.clear();for(int i=0;i<30;++i)fields[1].text+=L"A wrapped calendar note line.\r\n";
+    fields[1].bounds.bottom=fields[1].bounds.top+MeasureSystemCalendarNotesHeight(fields[1].text,328);
+    inputs.Sync(fields,appearance,96);
+    const auto before=native_form::GetEditScrollInfo(notes);
+    SendMessageW(notes,WM_MOUSEWHEEL,MAKEWPARAM(0,WHEEL_DELTA),MAKELPARAM(20,100));
+    const auto after=native_form::GetEditScrollInfo(notes);
+    Require(!before.canScroll&&after.firstLine==before.firstLine&&parent.wheelRequests==1&&
+        InputText(notes)==fields[1].text,"calendar notes blocked the panel wheel or clipped their content");
     fields[1].clip={16,90,344,140};inputs.Sync(fields,appearance,96);const auto region=CreateRectRgn(0,0,0,0);GetWindowRgn(notes,region);RECT clip{};GetRgnBox(region,&clip);DeleteObject(region);
     Require(clip.top==20&&clip.bottom==70,"calendar input escaped the model clip");
     inputs.Pose(12,false);Require(!IsWindowEnabled(title)&&!IsWindowEnabled(notes),"calendar animation left native input interactive");

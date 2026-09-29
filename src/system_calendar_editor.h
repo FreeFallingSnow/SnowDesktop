@@ -47,4 +47,5 @@ void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>&,
     const PersonalizationSettings&,UINT dpi,int width,int height,std::vector<std::uint32_t>& pixels);
 void CheckSystemCalendarInputs();
 void CheckSystemControlPasswordInput();
+float MeasureSystemCalendarNotesHeight(std::wstring_view text,float width);
 }

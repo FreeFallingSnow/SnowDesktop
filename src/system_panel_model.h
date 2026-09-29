@@ -134,6 +134,7 @@ private:
     bool calendarConfirmDelete_=false, calendarReminderOpen_=false;
     float calendarReturnScroll_=0;
     std::optional<native_ui::DateTimePicker> calendarPicker_;
+    std::vector<std::string> calendarPickerDates_;
     std::string calendarPickerField_, calendarFocus_;
     float calendarEditorScroll_=0;
     std::map<std::string,std::function<void(std::optional<float>)>> actions_;

@@ -27,7 +27,7 @@ namespace wr=widget_runtime;
 namespace
 {
 constexpr UINT kOpenPending=WM_APP+211;
-constexpr UINT kControlInputChanged=WM_APP+212;
+constexpr UINT kFormInputChanged=WM_APP+212;
 constexpr UINT kPointerChanged=WM_APP+213;
 constexpr UINT_PTR kTrayMenuTimer=2;
 bool HighContrast(){HIGHCONTRASTW h{sizeof(h)};SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(h),&h,0);return(h.dwFlags&HCF_HIGHCONTRASTON)!=0;}
@@ -76,11 +76,12 @@ struct SystemPanel::Impl
             {
                 StopPointerHover();
                 const bool controlInput=model->SetControlInput(id,value);
-                if(controlInput)
+                const bool calendarNotes=id=="calendar.edit.notes";
+                if(controlInput||calendarNotes)
                 {
-                    if(!controlInputRefreshPending&&PostMessageW(window,kControlInputChanged,0,0))controlInputRefreshPending=true;
+                    if(!controlInputRefreshPending&&PostMessageW(window,kFormInputChanged,0,0))controlInputRefreshPending=true;
                 }
-                else model->SetCalendarInput(id,std::move(value));
+                if(!controlInput)model->SetCalendarInput(id,std::move(value));
                 paintDirty=true;if(accessibility&&!controlInput)accessibility->RefreshEvents();
             }
         },[this,life=lifetime](const auto& id,UINT key,bool shift,bool control){if(life->alive){if(id.starts_with("control."))ControlKey(id,key,shift);else CalendarKey(id,key,shift,control);}},
@@ -493,7 +494,7 @@ struct SystemPanel::Impl
         try
         {
             if(m==kPointerChanged){self->pointerRefreshPending=false;self->RefreshPointer();return 0;}
-            if(m==kControlInputChanged)
+            if(m==kFormInputChanged)
             {
                 self->controlInputRefreshPending=false;
                 if(self->showing&&!self->closing&&!self->modal&&self->model){self->Arrange();self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}
