@@ -616,10 +616,7 @@ void SystemPanelModel::Overview(float& y)
     const auto value=Current("system.display.brightness");const auto& monitors=Items(value,"monitors");
     auto m=std::find_if(monitors.begin(),monitors.end(),[](const auto& v){return j::Flag(v,"available")&&!j::String(v,"id").empty()&&InRange(Number(v,"brightness"),100);});
     const bool valid=m!=monitors.end();const auto id=valid?j::String(*m,"id"):std::string{};
-    if(!valid)
-        UnavailableControl("brightness",_LW("statusBar.brightnessControls"),L"\uE706",
-            _LW("controlCenter.brightnessUnavailable"),y);
-    else
+    if(valid)
     {
     const float level=valid?static_cast<float>(j::Numeric(*m,"brightness")):0;
     Add("brightness.label",ui::Role::Text,Rect(16,y,scene_.width-144,22),_LW("statusBar.brightnessControls")).fontSize=12;

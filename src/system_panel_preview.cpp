@@ -900,10 +900,10 @@ void CheckControlUnavailableStates()
     };
     SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
     Require(!model.View().Find("battery")&&!model.View().Find("system.settings")&&
-        !model.View().Find("brightness.more")&&!model.View().Find("brightness.value")&&
-        model.View().Find("brightness.unavailable")&&model.View().Find("audio.output.unavailable")&&
+        std::none_of(model.View().nodes.begin(),model.View().nodes.end(),[](const auto& n){return n.id.starts_with("brightness.");})&&
+        model.View().Find("audio.output.unavailable")&&
         std::none_of(model.View().nodes.begin(),model.View().nodes.end(),[](const auto& n){return n.role==ui::Role::Slider;}),
-        "unsupported desktop controls retained bogus battery, sliders or native-panel action");
+        "unsupported desktop controls retained a brightness row, bogus battery, sliders or native-panel action");
     const auto& power=Node(model.View(),"power.more");
     Require(power.bounds.right==model.View().width-16,
         "Win10 footer reserved an empty native-panel slot");
