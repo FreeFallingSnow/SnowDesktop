@@ -1862,6 +1862,20 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 Require(metrics.widthIncludingTrailingWhitespace<=action->bounds.right-action->bounds.left-24,
                     "calendar primary and destructive action labels must not be truncated");
             }
+        if(narrow)
+            for(const auto* id:{"calendar.edit.mode.single","calendar.edit.mode.dates",
+                "calendar.edit.mode.weekly","calendar.edit.mode.monthly"})
+                if(const auto* action=scene.Find(id))
+                {
+                    ComPtr<IDWriteTextFormat> format;ComPtr<IDWriteTextLayout> layout;
+                    Require(text->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,action->fontSize,L"",&format));
+                    Require(text->CreateTextLayout(action->text.data(),static_cast<UINT32>(action->text.size()),
+                        format.Get(),4096,256,&layout));
+                    DWRITE_TEXT_METRICS metrics{};Require(layout->GetMetrics(&metrics));
+                    Require(metrics.widthIncludingTrailingWhitespace<=action->bounds.right-action->bounds.left-16,
+                        "narrow calendar mode label is truncated");
+                }
         Require(model.CalendarEditing()&&scene.cards.size()==1&&(scene.width>=560?scene.Find("calendar.month")!=nullptr:scene.Find("calendar.month")==nullptr)&&
             (picker?scene.Find("picker.confirm")!=nullptr:confirmation?scene.Find("calendar.edit.confirmDelete")!=nullptr:
                 Node(scene,"calendar.edit.reminder").text==_LW(creating?"settings.calendar.reminder.-1":"settings.calendar.reminder.15")),

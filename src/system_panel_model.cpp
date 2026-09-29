@@ -1634,7 +1634,7 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
     field("notes",16,notesY,leftWidth,wide?164.f:100.f);
     float footer=(std::max)(rightEnd,notesY+24+(wide?164.f:100.f))+16;
     const auto option=[&](const std::string& id,const std::wstring& label,float x,float y,float w,bool selected=false){
-        auto& node=Add(id,ui::Role::Button,Rect(x,y,w,36),label);node.centered=true;node.selected=selected;
+        auto& node=Add(id,ui::Role::Button,Rect(x,y,w,36),label);node.centered=true;node.selected=node.accent=selected;
         node.enabled=!calendarConfirmDelete_;node.accessibilityLabel=node.tooltip=label;
     };
     if(calendarSeriesOriginal_)
@@ -1655,11 +1655,13 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
         const std::vector<std::string> modes=calendarScopeSeries_?
             std::vector<std::string>{"dates","weekly","monthly"}:
             std::vector<std::string>{"single","dates","weekly","monthly"};
-        const float gap=6,buttonWidth=(width-gap*(modes.size()-1))/modes.size();
+        const std::size_t columns=scene_.width<560?2:modes.size();
+        const float gap=6,buttonWidth=(width-gap*(columns-1))/columns;
         for(std::size_t index=0;index<modes.size();++index)
         {
             const auto mode=modes[index],id="calendar.edit.mode."+mode,key="settings.calendar.mode."+mode;
-            option(id,_LW(key.c_str()),16+index*(buttonWidth+gap),footer,buttonWidth,calendarMode_==mode);
+            option(id,_LW(key.c_str()),16+(index%columns)*(buttonWidth+gap),
+                footer+(index/columns)*48,buttonWidth,calendarMode_==mode);
             Command(id,[this,mode]{
                 const auto previous=calendarMode_;
                 const auto start=calendar::CalendarService::GetDateInfo(calendarRule_.startDate);
@@ -1672,7 +1674,7 @@ float SystemPanelModel::CalendarEditor(float viewportWidth)
                 calendarMode_=mode;calendarRule_.kind=mode;
                 calendarDiscardConfirmed_=false;calendarEditor_->error.clear();});
         }
-        footer+=48;
+        footer+=((modes.size()+columns-1)/columns)*48;
     }
     if(calendarMode_=="dates")
     {

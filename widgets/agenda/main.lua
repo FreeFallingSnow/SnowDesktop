@@ -767,7 +767,8 @@ local function panel(context, model)
                     if model.mode==mode then choice.style={foreground=0xFFFFFF,background=0x175CD3,cornerRadius=row*0.12} end
                     choices[#choices+1]=choice
                 end
-                children[#children+1]=view.row({key="agenda.modes",height=row,gap=row*0.1,children=choices})
+                children[#children+1]=view.grid({key="agenda.modes",columns=2,height=row*2+row*0.1,
+                    gap=row*0.1,children=choices})
             end
         end
         if model.mode=="dates" and model.rule then
