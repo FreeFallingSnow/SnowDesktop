@@ -1220,9 +1220,11 @@ void CheckCalendarManagement()
         "Tab could not reveal the save action below the scrollable native form");
     Require(model.Invoke("calendar.edit.date")&&
         model.CalendarInputFields().empty()&&model.CalendarEditing()&&model.View().Find("picker.day:2026-09-26")&&
-        model.View().Find("calendar.month")&&model.View().height==calendarHeight&&
+        model.View().Find("calendar.month")&&model.View().height>=calendarHeight&&
+        model.View().height<=520.f&&!model.View().Find("scrollbar")&&
+        Node(model.View(),"picker.confirm").bounds.bottom<=model.View().height&&
         Node(model.View(),"picker.month").bounds.left>=model.ScrollViewport().left&&!model.Invoke("calendar.edit.save"),
-        "date selection replaced the month, grew the panel or exposed an unrelated save action");
+        "date selection displaced the month, clipped its actions or exposed an unrelated save action");
     Require(model.Invoke("picker.day:2026-09-28")&&model.CalendarBack()&&
         Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&field("calendar.edit.title").text==L"Unsaved draft"&&
         model.CalendarFocusTarget()=="calendar.edit.date","canceling a date choice lost text or changed the form value");
