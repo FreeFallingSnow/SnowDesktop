@@ -752,6 +752,11 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.edgeHighlightWidth = edge.width;
         settings.edgeHighlightStrength = edge.opacity;
         settings.edgeLight = edge.light;
+        // Icons retain only the inner half of the shared rim. A wider, softer
+        // preset produces the reference's light band at normal icon sizes.
+        settings.edgeHighlightWidth = 1.8f;
+        settings.edgeHighlightStrength = .38f;
+        settings.edgeLight.innerGlow = 1.6f;
         settings.outlineEnabled = true;
         settings.outlineWidth = 0.75f;
         settings.outlineOpacity = 0.05f;

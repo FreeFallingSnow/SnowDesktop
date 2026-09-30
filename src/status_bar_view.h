@@ -66,6 +66,5 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext*, IDWriteFactory*, std::vector<S
     bool mergedDock = false);
 PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings&);
 // The desktop-facing halo occupies space within the existing AppBar allocation.
-RECT StatusBarMaterialBounds(RECT, const PersonalizationSettings&, DockPosition);
 void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition);
 }

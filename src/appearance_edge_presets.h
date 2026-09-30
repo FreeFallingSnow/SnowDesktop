@@ -25,7 +25,7 @@ inline MaterialEdgeProfile MaterialEdges(MaterialEdgePreset preset)
     switch (preset)
     {
     case MaterialEdgePreset::GlassDark:
-        p.width = 1.25f; p.opacity = .34f;
+        p.width = 1.25f; p.opacity = .28f;
         e.ambient = .58f; e.primary = .30f; e.opposite = .26f;
         e.innerGlow = 1.f; e.outerGlow = .4f; e.glowStrength = .14f; e.glowFalloff = 2.8f;
         e.shadowStrength = .14f; e.shadowFalloff = 3.95f;

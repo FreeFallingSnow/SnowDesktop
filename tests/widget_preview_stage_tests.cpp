@@ -33,7 +33,7 @@ void CheckRimCoverage()
         SUCCEEDED(gpu.As(&dxgi)) && SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) &&
         SUCCEEDED(factory->CreateDevice(dxgi.Get(), &device)) &&
         SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)), "rim oracle creates an offscreen WARP context");
-    std::size_t oldLoss = 0;
+    std::size_t oldLoss = 0, tightSurfaceLoss = 0;
     for (float scale : {1.f, 1.25f, 1.5f, 2.f, 3.f})
     {
         const UINT w = static_cast<UINT>(200 * scale), h = static_cast<UINT>(160 * scale);
@@ -60,12 +60,13 @@ void CheckRimCoverage()
         for(UINT y=0;y<h;++y)for(UINT x=0;x<w;++x)
             if(map.bits[static_cast<std::size_t>(y)*map.pitch+x*4+3])
             { if(!PtInRegion(fence,static_cast<int>(x),static_cast<int>(y)))++lost;
-              if(!PtInRegion(old,static_cast<int>(x),static_cast<int>(y)))++oldLoss; }
+               if(!PtInRegion(old,static_cast<int>(x),static_cast<int>(y)))++oldLoss;
+               if(!PtInRect(&frame,POINT{static_cast<LONG>(x),static_cast<LONG>(y)}))++tightSurfaceLoss; }
         readable->Unmap(); DeleteObject(fence); DeleteObject(old);
         Check(lost==0,"popup fence retains every actual rim pixel, including fractional rounded corners");
-        // Reusing a cached rounded mask or the opposite edge would draw an
-        // unwanted contour. The single edge must keep its outside halo too.
-        for(auto edge : {wp::HighlightEdge::Top, wp::HighlightEdge::Bottom})
+        // A status strip renders its complete reflection inside the filled
+        // allocation. No exterior halo or opposite contour may require a gap.
+        for(auto edge : {wp::HighlightEdge::Top, wp::HighlightEdge::Bottom, wp::HighlightEdge::Left, wp::HighlightEdge::Right})
         {
             const auto style=snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
             context->BeginDraw();context->Clear(D2D1::ColorF(0,0.f));
@@ -73,15 +74,19 @@ void CheckRimCoverage()
             Check(SUCCEEDED(context->EndDraw()) && SUCCEEDED(readable->CopyFromBitmap(nullptr,target.Get(),nullptr)) &&
                 SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ,&map)),"single-edge pixels read back");
             const auto alpha=[&](LONG x,LONG y){return map.bits[static_cast<std::size_t>(y)*map.pitch+static_cast<std::size_t>(x)*4+3];};
-            const LONG mid=(frame.left+frame.right)/2;
-            Check(alpha(mid,edge==wp::HighlightEdge::Top?frame.top-1:frame.bottom)>0,"desktop-facing halo is retained outside the material");
-            Check(alpha(mid,edge==wp::HighlightEdge::Top?frame.bottom-1:frame.top)==0 &&
-                alpha(frame.left,(frame.top+frame.bottom)/2)==0,"single edge adds no opposite or side contour");
+            const LONG midX=(frame.left+frame.right)/2,midY=(frame.top+frame.bottom)/2;
+            const LONG x=edge==wp::HighlightEdge::Left?frame.left:edge==wp::HighlightEdge::Right?frame.right-1:midX;
+            const LONG y=edge==wp::HighlightEdge::Top?frame.top:edge==wp::HighlightEdge::Bottom?frame.bottom-1:midY;
+            Check(alpha(x,y)>0,"status reflection reaches the original material boundary");
+            Check(alpha(midX,frame.top-1)==0 && alpha(midX,frame.bottom)==0 &&
+                alpha(frame.left-1,midY)==0 && alpha(frame.right,midY)==0,"status reflection needs no outside drawing space");
+            Check(alpha(midX,midY)==0,"single edge adds no contour through the strip body");
             readable->Unmap();
         }
         context->SetTarget(nullptr);
     }
     Check(oldLoss>0,"rim oracle reproduces clipping caused by the previous one-pixel content fence");
+    Check(tightSurfaceLoss>0,"a render target bounded to the card crops straight-edge pixels even with an expanded GDI fence");
 }
 }
 

@@ -383,9 +383,16 @@ int main()
 
     const auto glass = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
     const auto transparentEdge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
-    Check(glass.edgeHighlightWidth == transparentEdge.width && glass.edgeHighlightStrength == transparentEdge.opacity &&
-        glass.edgeLight == transparentEdge.light && glass.outlineWidth == .75f && glass.outlineOpacity == .05f,
-        "icon glass uses the transparent component's complete edge profile");
+    auto iconLight = transparentEdge.light; iconLight.innerGlow = 1.6f;
+    Check(glass.edgeHighlightWidth == 1.8f && glass.edgeHighlightStrength == .38f &&
+        glass.edgeLight == iconLight && glass.outlineWidth == .75f && glass.outlineOpacity == .05f,
+        "icon glass retains shared directional settings with a wider restrained inner band");
+    auto narrowGlass = glass; narrowGlass.edgeHighlightWidth = transparentEdge.width;
+    narrowGlass.edgeHighlightStrength = transparentEdge.opacity; narrowGlass.edgeLight = transparentEdge.light;
+    const auto widePixels = beautify::RenderEdgeReflection(52,52,glass);
+    const auto narrowPixels = beautify::RenderEdgeReflection(52,52,narrowGlass);
+    Check((widePixels[52+26]>>24) > (narrowPixels[52+26]>>24) && (widePixels[26]>>24) < 128,
+        "normal-size icon reflection reaches the second row without an opaque bright outline");
     Check(glass.glassEnabled && glass.edgeHighlightEnabled && glass.mode == 0 &&
         glass.backgroundOpacity < .1f, "glass preset keeps smart detection and a faint fill");
     auto changedGlass = glass;

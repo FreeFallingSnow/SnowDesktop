@@ -93,6 +93,9 @@ struct SystemPanel::Impl
         accessibility->AttachWindow(window);
         return SUCCEEDED(composition->CreateTargetForHwnd(window,FALSE,&target))&&SUCCEEDED(composition->CreateVisual(&visual))&&SUCCEEDED(target->SetRoot(visual.Get()));
     }
+    static constexpr int kSurfacePadding = flat_glass_rim::kPanelOverdraw;
+    D2D1_POINT_2F ModelPoint(LONG x,LONG y) const
+    {return {static_cast<float>(x-kSurfacePadding)/scale,static_cast<float>(y-kSurfacePadding)/scale};}
     bool Glass()const{return current&&current->appearance.glassEnabled&&!HighContrast();}
     float SlideOffset()const
     {return current?(current->settings.position==DockPosition::Bottom?1.f:-1.f)*(1-quick_navigation_animation_rules::EaseInOutSmooth(slide.GetVisual().progress))*height:0;}
@@ -123,7 +126,7 @@ struct SystemPanel::Impl
         {tooltip.Hide();return;}
         const auto b=model->View().VisibleBounds(*node);
         if(b.right<=b.left||b.bottom<=b.top){tooltip.Hide();return;}
-        POINT origin{};ClientToScreen(window,&origin);
+        POINT origin{};ClientToScreen(window,&origin);origin.x+=kSurfacePadding;origin.y+=kSurfacePadding;
         RECT anchor{origin.x+static_cast<LONG>(b.left*scale),origin.y+static_cast<LONG>(b.top*scale),origin.x+static_cast<LONG>(b.right*scale),origin.y+static_cast<LONG>(b.bottom*scale)};
         tooltip.SetTarget(node->id,node->tooltip,anchor,current->settings.position==DockPosition::Bottom?NativeTooltipPlacement::Above:NativeTooltipPlacement::Below);
     }
@@ -150,7 +153,7 @@ struct SystemPanel::Impl
         {
             const auto pointerWindow=WindowFromPoint(point);
             if(pointerWindow==window||(calendarInputs&&calendarInputs->Contains(pointerWindow)))
-                if(ScreenToClient(window,&point)&&ContainsClientPoint(point))node=model->View().Hit({static_cast<float>(point.x)/scale,static_cast<float>(point.y)/scale},false);
+                if(ScreenToClient(window,&point)&&ContainsClientPoint(point))node=model->View().Hit(ModelPoint(point.x,point.y),false);
         }
         Tip(node);const auto id=node?node->id:std::string{};
         if(hovered!=id){hovered=id;paintDirty=true;}
@@ -164,7 +167,11 @@ struct SystemPanel::Impl
     {
         if(!model)return {};
         auto fields=model->CalendarInputFields();auto controls=model->ControlInputFields();
-        for(auto& field:controls)fields.push_back(std::move(field));return fields;
+        for(auto& field:controls)fields.push_back(std::move(field));
+        const float padding=static_cast<float>(kSurfacePadding)/scale;
+        for(auto& field:fields)for(auto* rect:{&field.bounds,&field.clip})
+        {rect->left+=padding;rect->right+=padding;rect->top+=padding;rect->bottom+=padding;}
+        return fields;
     }
     std::vector<LuaWidgetAccessibilitySnapshot> Accessible() const
     {
@@ -188,8 +195,8 @@ struct SystemPanel::Impl
         const auto fields=InputFields();
         for(auto& node:snapshot.nodes)
         {
-            node.key=input.Identity(node.key);node.bounds.x*=scale;node.bounds.y*=scale;node.bounds.width*=scale;node.bounds.height*=scale;
-            if(node.clip){node.clip->x*=scale;node.clip->y*=scale;node.clip->width*=scale;node.clip->height*=scale;}
+            node.key=input.Identity(node.key);node.bounds.x=node.bounds.x*scale+kSurfacePadding;node.bounds.y=node.bounds.y*scale+kSurfacePadding;node.bounds.width*=scale;node.bounds.height*=scale;
+            if(node.clip){node.clip->x=node.clip->x*scale+kSurfacePadding;node.clip->y=node.clip->y*scale+kSurfacePadding;node.clip->width*=scale;node.clip->height*=scale;}
             if(const auto field=std::find_if(fields.begin(),fields.end(),[&](const auto& item){return item.id==node.key;});field!=fields.end())
             {
                 node.role="textbox";node.controlType="Edit";node.name=PanelUtf8(field->label);node.valueText=PanelUtf8(field->text);
@@ -202,7 +209,7 @@ struct SystemPanel::Impl
         if(model->MaximumScroll()>0)
         {
             const auto clip=model->ScrollViewport();wr::ViewAccessibilityNode scroll;scroll.semanticId=scroll.key="panel.scroll";scroll.role="group";scroll.controlType="pane";scroll.name=snapshot.name;scroll.patterns=wr::ViewAccessibilityPattern::Scroll;
-            scroll.bounds={clip.left*scale,clip.top*scale,(clip.right-clip.left)*scale,(clip.bottom-clip.top)*scale};scroll.scrollOffset=model->ScrollOffset();scroll.scrollViewportExtent=clip.bottom-clip.top;scroll.scrollContentExtent=scroll.scrollViewportExtent+model->MaximumScroll();snapshot.nodes.push_back(std::move(scroll));
+            scroll.bounds={clip.left*scale+kSurfacePadding,clip.top*scale+kSurfacePadding,(clip.right-clip.left)*scale,(clip.bottom-clip.top)*scale};scroll.scrollOffset=model->ScrollOffset();scroll.scrollViewportExtent=clip.bottom-clip.top;scroll.scrollContentExtent=scroll.scrollViewportExtent+model->MaximumScroll();snapshot.nodes.push_back(std::move(scroll));
         }
         return {std::move(snapshot)};
     }
@@ -227,7 +234,7 @@ struct SystemPanel::Impl
         case LuaWidgetAccessibilityActionKind::Select:result.kind=ui::InputResult::Kind::Invoke;break;
         default:return false;
         }
-        POINT point{static_cast<LONG>((node->bounds.left+node->bounds.right)*scale/2),static_cast<LONG>((node->bounds.top+node->bounds.bottom)*scale/2)};ClientToScreen(window,&point);Result(std::move(result),point,true);return true;
+        POINT point{static_cast<LONG>((node->bounds.left+node->bounds.right)*scale/2)+kSurfacePadding,static_cast<LONG>((node->bounds.top+node->bounds.bottom)*scale/2)+kSurfacePadding};ClientToScreen(window,&point);Result(std::move(result),point,true);return true;
     }
     void Open(Request request)
     {
@@ -266,7 +273,10 @@ struct SystemPanel::Impl
         // Do not publish the model's return page before the close animation.
         if(ApplyDismissRequest())return false;const auto& scene=model->View();
         const bool contentChanged=!previousScene.SameContent(scene);paintDirty|=contentChanged;input.Sync(scene);if(scrollbarDragging&&!model->ScrollbarGeometry().CanDrag())scrollbarDragging=false;if(input.Pressed().empty()&&!scrollbarDragging&&GetCapture()==window)ReleaseCapture();
-        const int w=static_cast<int>(std::ceil(scene.width*scale)),h=static_cast<int>(std::ceil(scene.height*scale));
+        // The surface and HWND must both include the rim's exterior pixels.
+        // Merely enlarging the GDI region still clips straight edges at the
+        // render target while retaining the outside half around the corners.
+        const int w=static_cast<int>(std::ceil(scene.width*scale))+kSurfacePadding*2,h=static_cast<int>(std::ceil(scene.height*scale))+kSurfacePadding*2;
         const bool calendarPanel=current->action==StatusBarAction::Calendar;
         const bool controls=current->action!=StatusBarAction::Tray&&!calendarPanel&&!IsSystemResourceAction(current->action)&&current->confirmPower.empty();
         const auto alignment=controls||(calendarPanel&&current->clockAtRight)?SystemPanelAlignment::ScreenRight:
@@ -274,6 +284,7 @@ struct SystemPanel::Impl
         const auto placement=PlaceSystemPanel(current->anchor,{w,h},info.rcWork,current->settings.position,scale,alignment);
         const int left=placement.left,top=placement.top;
         std::vector<RECT> next;for(const auto& c:scene.cards)next.push_back({static_cast<LONG>(std::lround(c.left*scale)),static_cast<LONG>(std::lround(c.top*scale)),static_cast<LONG>(std::lround(c.right*scale)),static_cast<LONG>(std::lround(c.bottom*scale))});
+        for(auto& card:next)OffsetRect(&card,kSurfacePadding,kSurfacePadding);
         const bool shape=cards.size()!=next.size()||!std::equal(cards.begin(),cards.end(),next.begin(),[](const auto& x,const auto& y){return EqualRect(&x,&y);});cards=std::move(next);
         if(w!=width||h!=height){width=w;height=h;surface.Reset();paintDirty=true;}RECT previous{};GetWindowRect(window,&previous);const bool moved=previous.left!=left||previous.top!=top||previous.right!=left+w||previous.bottom!=top+h;
         if(moved)SetWindowPos(window,nullptr,left,top,w,h,SWP_NOACTIVATE|SWP_NOZORDER);
@@ -298,7 +309,7 @@ struct SystemPanel::Impl
     }
     void PublishGeometry()
     {
-        if(!current||!current->tray||!model)return;POINT origin{};ClientToScreen(window,&origin);
+        if(!current||!current->tray||!model)return;POINT origin{};ClientToScreen(window,&origin);origin.x+=kSurfacePadding;origin.y+=kSurfacePadding;
         for(const auto& n:model->View().nodes)if(n.id.starts_with("tray:")){const auto& r=n.bounds;RECT box{origin.x+static_cast<LONG>(r.left*scale),origin.y+static_cast<LONG>(r.top*scale),origin.x+static_cast<LONG>(r.right*scale),origin.y+static_cast<LONG>(r.bottom*scale)};current->tray->SetGeometry(n.id.substr(5),box);}
     }
     void Paint()
@@ -312,7 +323,7 @@ struct SystemPanel::Impl
             if(HighContrast()){ComPtr<ID2D1SolidColorBrush> b;dc->CreateSolidColorBrush(SystemColor(COLOR_WINDOW),&b);dc->FillRoundedRectangle(popup_round_geometry::Resolve(card,current->appearance.cornerRadius*scale),b.Get());}
             else if(background)background(dc.Get(),card,current->appearance,scale);
         }
-        dc->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),static_cast<float>(offset.y)));dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        dc->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x+kSurfacePadding),static_cast<float>(offset.y+kSurfacePadding)));dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         const auto result=ui::Draw(dc.Get(),text.Get(),model->View(),Palette(),hovered,GetFocus()==window?input.VisibleFocus():std::string_view{},input.Pressed());
         if(dropIndicator)
         {
@@ -337,7 +348,7 @@ struct SystemPanel::Impl
     void Animate(bool opening)
     {
         if(!opening)ReportTrayState(nullptr);
-        if(!opening&&model){model->CancelControlInput();if(calendarInputs)calendarInputs->Sync(model->CalendarInputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));}
+        if(!opening&&model){model->CancelControlInput();if(calendarInputs)calendarInputs->Sync(InputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));}
         if(!opening){KillTimer(window,kTrayMenuTimer);EndDragFeedback();dropIndicator.reset();if(GetCapture()==window)ReleaseCapture();}
         if(!opening&&modal){if(model)model->Close();CancelPrompt();}
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;
@@ -444,7 +455,7 @@ struct SystemPanel::Impl
         const auto choices=model->CalendarChoices(id);
         if(!node||!node->enabled||choices.empty())return;
         const auto bounds=model->View().VisibleBounds(*node);
-        POINT anchor{static_cast<LONG>(bounds.left*scale),static_cast<LONG>(bounds.bottom*scale)};
+        POINT anchor{static_cast<LONG>(bounds.left*scale)+kSurfacePadding,static_cast<LONG>(bounds.bottom*scale)+kSurfacePadding};
         ClientToScreen(window,&anchor);
         std::vector<std::wstring> labels;labels.reserve(choices.size());
         std::size_t selected=0;
@@ -490,7 +501,7 @@ struct SystemPanel::Impl
         if(result.kind==ui::InputResult::Kind::None||!model||!current||modal||closing)return;
         if(result.id.starts_with("tray:")&&current->tray)
         {
-            const auto key=result.id.substr(5);if(result.kind==ui::InputResult::Kind::Drag){POINT local=screen;ScreenToClient(window,&local);const auto life=lifetime;auto activeModel=model;const bool dropped=activeModel->Drop(key,{local.x/scale,local.y/scale});if(!life->alive)return;if(!dropped&&model==activeModel&&dropOutside){const auto drop=dropOutside;drop(key,screen);}if(life->alive){Arrange();Paint();}return;}
+            const auto key=result.id.substr(5);if(result.kind==ui::InputResult::Kind::Drag){POINT local=screen;ScreenToClient(window,&local);const auto life=lifetime;auto activeModel=model;const bool dropped=activeModel->Drop(key,ModelPoint(local.x,local.y));if(!life->alive)return;if(!dropped&&model==activeModel&&dropOutside){const auto drop=dropOutside;drop(key,screen);}if(life->alive){Arrange();Paint();}return;}
             const auto life=lifetime;auto service=current->tray;const auto source=window,bar=current->owner;
             PublishGeometry();
             ArmContext(key);
@@ -568,7 +579,7 @@ struct SystemPanel::Impl
             {
                 self->pointerHover.Resume();
                 const bool focusChanged=self->input.PointerInput();
-                self->context.Reset();KillTimer(w,kTrayMenuTimer);self->SyncTrayMenuLayer();self->ClearPointerHover();const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};
+                self->context.Reset();KillTimer(w,kTrayMenuTimer);self->SyncTrayMenuLayer();self->ClearPointerHover();const auto p=self->ModelPoint(GET_X_LPARAM(lp),GET_Y_LPARAM(lp));
                 const auto axis=self->model->ScrollbarGeometry();const auto viewport=self->model->ScrollViewport();
                 if(m==WM_LBUTTONDOWN&&axis.CanDrag()&&p.x>=self->model->View().width-12&&p.x<self->model->View().width&&p.y>=viewport.top&&p.y<viewport.bottom)
                 {
@@ -583,7 +594,7 @@ struct SystemPanel::Impl
             }
             if(m==WM_MOUSEMOVE)
             {
-                const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);
+                const auto p=self->ModelPoint(GET_X_LPARAM(lp),GET_Y_LPARAM(lp));POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);
                 if(self->scrollbarDragging){self->model->DragScrollbar(self->scrollbarOffsetStart,static_cast<int>(std::lround(p.y))-self->scrollbarPointerStart);self->Arrange();self->Paint();return 0;}
                 if(!self->input.Pressed().empty()){self->Result(self->input.Move(self->model->View(),p),screen);if(life->alive&&self->input.Dragging()){self->MoveDragFeedback(screen);self->Tip(nullptr);SetCursor(LoadCursorW(nullptr,IDC_SIZEALL));self->Paint();}return 0;}
                 self->RefreshPointer();TRACKMOUSEEVENT t{sizeof(t),TME_LEAVE,w,0};TrackMouseEvent(&t);return 0;
@@ -591,13 +602,13 @@ struct SystemPanel::Impl
             if(m==WM_MOUSELEAVE){self->QueuePointerRefresh();return 0;}
             if(m==WM_LBUTTONUP||m==WM_RBUTTONUP)
             {
-                if(self->scrollbarDragging){if(m==WM_LBUTTONUP){self->model->DragScrollbar(self->scrollbarOffsetStart,static_cast<int>(std::lround(GET_Y_LPARAM(lp)/self->scale))-self->scrollbarPointerStart);self->scrollbarDragging=false;ReleaseCapture();self->Arrange();self->Paint();}return 0;}
-                const auto result=self->input.Release(self->model->View(),{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale},m==WM_RBUTTONUP);self->EndDragFeedback();ReleaseCapture();POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);self->Result(result,screen);if(life->alive)self->Paint();return 0;
+                if(self->scrollbarDragging){if(m==WM_LBUTTONUP){self->model->DragScrollbar(self->scrollbarOffsetStart,static_cast<int>(std::lround(self->ModelPoint(GET_X_LPARAM(lp),GET_Y_LPARAM(lp)).y))-self->scrollbarPointerStart);self->scrollbarDragging=false;ReleaseCapture();self->Arrange();self->Paint();}return 0;}
+                const auto result=self->input.Release(self->model->View(),self->ModelPoint(GET_X_LPARAM(lp),GET_Y_LPARAM(lp)),m==WM_RBUTTONUP);self->EndDragFeedback();ReleaseCapture();POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);self->Result(result,screen);if(life->alive)self->Paint();return 0;
             }
             if(m==WM_LBUTTONDBLCLK)
             {
                 if(self->input.PointerInput())self->Paint();
-                const auto* node=self->model->View().Hit({GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale});
+                const auto* node=self->model->View().Hit(self->ModelPoint(GET_X_LPARAM(lp),GET_Y_LPARAM(lp)));
                 if(node&&node->id.starts_with("tray:")&&self->current->tray)
                 {
                     POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);
@@ -614,7 +625,7 @@ struct SystemPanel::Impl
                 if(m==WM_CANCELMODE&&GetCapture()==w)ReleaseCapture();
                 if(life->alive&&wasPressed)self->Paint();return 0;
             }
-            if(m==WM_MOUSEWHEEL){if(self->scrollbarDragging||!self->input.Pressed().empty())return 0;self->pointerHover.Resume();self->input.PointerInput();POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);auto activeModel=self->model;activeModel->Wheel({point.x/self->scale,point.y/self->scale},static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/WHEEL_DELTA);if(life->alive){self->Arrange();self->Paint();}return 0;}
+            if(m==WM_MOUSEWHEEL){if(self->scrollbarDragging||!self->input.Pressed().empty())return 0;self->pointerHover.Resume();self->input.PointerInput();POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);auto activeModel=self->model;activeModel->Wheel(self->ModelPoint(point.x,point.y),static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/WHEEL_DELTA);if(life->alive){self->Arrange();self->Paint();}return 0;}
             if(m==WM_SETFOCUS||m==WM_KILLFOCUS){self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}
             if(m==WM_KEYDOWN)
             {
@@ -622,7 +633,7 @@ struct SystemPanel::Impl
                 if(wp==VK_ESCAPE){if(self->model->ControlBack()){if(self->ApplyDismissRequest()||!self->Arrange())return 0;SetFocus(w);self->Paint();}else if(self->model->CalendarBack()){if(!self->Arrange())return 0;self->FocusCalendarPage(true);self->Paint();}else{self->pending.reset();self->Animate(false);}return 0;}
                 self->input.Cancel();self->scrollbarDragging=false;if(GetCapture()==w)ReleaseCapture();
                 const auto result=self->model->HandleKey(self->input,static_cast<unsigned>(wp),(GetKeyState(VK_SHIFT)&0x8000)!=0);if(!self->Arrange())return 0;POINT p{};
-                if(const auto* n=self->model->View().Find(result.id)){p={static_cast<LONG>(n->bounds.left*self->scale),static_cast<LONG>(n->bounds.bottom*self->scale)};ClientToScreen(w,&p);}
+                if(const auto* n=self->model->View().Find(result.id)){p={static_cast<LONG>(n->bounds.left*self->scale)+kSurfacePadding,static_cast<LONG>(n->bounds.bottom*self->scale)+kSurfacePadding};ClientToScreen(w,&p);}
                 self->Result(result,p,true);if(life->alive){if(wp==VK_TAB&&self->calendarInputs)self->calendarInputs->Focus(self->input.Focused(),true);self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}return 0;
             }
         }
@@ -674,12 +685,12 @@ void SystemPanel::HideForMonitor(HMONITOR m)
     if(impl_->monitor==m){impl_->pending.reset();impl_->afterClose={};impl_->HideNow();}
 }
 bool SystemPanel::PreTranslateMessage(MSG*){return false;}
-bool SystemPanel::DropTrayIcon(std::string_view key,POINT p){if(!impl_->showing||impl_->closing||impl_->modal||impl_->slide.IsAnimating()||!impl_->model)return false;ScreenToClient(impl_->window,&p);const bool ok=impl_->model->Drop(key,{p.x/impl_->scale,p.y/impl_->scale});if(ok){impl_->Arrange();impl_->Paint();}return ok;}
+bool SystemPanel::DropTrayIcon(std::string_view key,POINT p){if(!impl_->showing||impl_->closing||impl_->modal||impl_->slide.IsAnimating()||!impl_->model)return false;ScreenToClient(impl_->window,&p);const bool ok=impl_->model->Drop(key,impl_->ModelPoint(p.x,p.y));if(ok){impl_->Arrange();impl_->Paint();}return ok;}
 bool SystemPanel::PreviewTrayDrop(std::string_view key,POINT p)
 {
     std::optional<D2D1_RECT_F> next;
     if(!key.empty()&&impl_->showing&&!impl_->closing&&!impl_->modal&&!impl_->slide.IsAnimating()&&impl_->model)
-    {ScreenToClient(impl_->window,&p);next=impl_->model->TrayDropIndicator(key,{p.x/impl_->scale,p.y/impl_->scale});}
+    {ScreenToClient(impl_->window,&p);next=impl_->model->TrayDropIndicator(key,impl_->ModelPoint(p.x,p.y));}
     const auto& old=impl_->dropIndicator;
     if(next.has_value()!=old.has_value()||(next&&(next->left!=old->left||next->top!=old->top||next->right!=old->right||next->bottom!=old->bottom)))
     {impl_->dropIndicator=next;impl_->paintDirty=true;if(impl_->showing&&!impl_->destroying)impl_->Paint();}

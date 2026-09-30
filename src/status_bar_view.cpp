@@ -3,7 +3,6 @@
 #include "status_bar_battery.h"
 #include "status_bar_layout.h"
 #include "status_bar_presentation.h"
-#include "flat_glass_rim.h"
 #include "widget_preview_stage.h"
 #include "tray_presentation.h"
 #include "l10n.h"
@@ -408,23 +407,12 @@ PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings& a
     fill.widgetEdgeHighlightEnabled = false;
     return fill;
 }
-RECT StatusBarMaterialBounds(RECT frame, const PersonalizationSettings& appearance, DockPosition position)
-{
-    if (!appearance.widgetEdgeHighlightEnabled || appearance.widgetEdgeHighlightStrength <= .0005f) return frame;
-    constexpr LONG padding = static_cast<LONG>(flat_glass_rim::kPanelOverdraw);
-    if (position == DockPosition::Bottom) frame.top = (std::min)(frame.top + padding, frame.bottom - 1);
-    else if (position == DockPosition::Left) frame.right = (std::max)(frame.left + 1, frame.right - padding);
-    else if (position == DockPosition::Right) frame.left = (std::min)(frame.left + padding, frame.right - 1);
-    else frame.bottom = (std::max)(frame.top + 1, frame.bottom - padding);
-    return frame;
-}
 void DrawStatusBarEdge(ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance,
     float scale, DockPosition position)
 {
     if (!context || IsRectEmpty(&frame)) return;
     const auto clip = D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
         static_cast<float>(frame.right), static_cast<float>(frame.bottom));
-    frame = StatusBarMaterialBounds(frame, appearance, position);
     if (appearance.widgetEdgeHighlightEnabled && appearance.widgetEdgeHighlightStrength > .0005f)
     {
         using widget_preview::HighlightEdge;

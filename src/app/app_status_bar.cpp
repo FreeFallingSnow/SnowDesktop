@@ -555,8 +555,7 @@ void DesktopApp::SyncStatusBar()
             },
             [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
                 auto fillAppearance = snowdesktop::StatusBarFillAppearance(appearance);
-                const RECT materialFrame = snowdesktop::StatusBarMaterialBounds(frame, appearance, generalSettings_.statusBar.position);
-                DrawWidgetPanelBackground(context, materialFrame, 0,
+                DrawWidgetPanelBackground(context, frame, 0,
                     D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fillAppearance, false, 0, scale);
                  snowdesktop::DrawStatusBarEdge(context, frame, appearance, scale, generalSettings_.statusBar.position);
