@@ -25,10 +25,23 @@ struct BitmapDeleter
 };
 
 HBITMAP ResolveItemImage(const ItemView& item, const Palette& palette,
-    const Metrics& metrics, bool quickAction = false)
+    const Metrics& metrics, bool quickAction = false,
+    MenuQuickIcon quickIcon = MenuQuickIcon::FontGlyph)
 {
     if (item.image) return item.image;
-    if (!palette.colorIcons || item.builtinIcon == BuiltinIcon::None)
+    BuiltinIcon builtinIcon = item.builtinIcon;
+    if (builtinIcon == BuiltinIcon::None)
+    {
+        // Component, folder-popup and text-input menus declare the same
+        // operations as the desktop menu without explicitly binding artwork.
+        switch (quickAction ? quickIcon : item.semanticIcon)
+        {
+        case MenuQuickIcon::Paste: builtinIcon = BuiltinIcon::Paste; break;
+        case MenuQuickIcon::NewItem: builtinIcon = BuiltinIcon::NewItem; break;
+        default: break;
+        }
+    }
+    if (!palette.colorIcons || builtinIcon == BuiltinIcon::None)
         return nullptr;
     int size = quickAction ? metrics.quickActionFontHeight : metrics.iconFontHeight;
     if (metrics.maximumImageSize > 0)
@@ -38,10 +51,10 @@ HBITMAP ResolveItemImage(const ItemView& item, const Palette& palette,
     // Only the current draw borrows the bitmap; no menu model owns cache entries.
     // Bound GDI use when a session encounters many monitor scales.
     thread_local std::map<Key, Bitmap> cache;
-    const Key key{ item.builtinIcon, palette.lightTheme, size };
+    const Key key{ builtinIcon, palette.lightTheme, size };
     auto found = cache.find(key);
     if (found != cache.end()) return found->second.get();
-    Bitmap bitmap(CreateBuiltinIconBitmap(item.builtinIcon, palette.lightTheme, size));
+    Bitmap bitmap(CreateBuiltinIconBitmap(builtinIcon, palette.lightTheme, size));
     if (!bitmap) return nullptr;
     if (cache.size() >= 256) cache.clear();
     return cache.emplace(key, std::move(bitmap)).first->second.get();
@@ -1076,7 +1089,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 
-    const HBITMAP image = ResolveItemImage(item, palette, metrics, true);
+    const HBITMAP image = ResolveItemImage(item, palette, metrics, true, quickIcon);
     FillSolidRect(dc, bounds, palette.background);
     const bool disabled =
         (itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <vector>
 
 namespace
 {
@@ -461,6 +462,59 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
     }
 }
 
+// The desktop explicitly binds these resources; component/folder/input menus
+// only declare the operation. Both paths must paint the same filled artwork.
+void CheckSemanticArtwork(HDC dc, HFONT font, HFONT iconFont,
+    std::uint32_t* pixels, int width, int height)
+{
+    using namespace snowdesktop;
+    using namespace snowdesktop::menu_icon;
+    struct Action { MenuQuickIcon semantic; BuiltinIcon artwork; const wchar_t* glyph; };
+    const Action actions[] = {
+        { MenuQuickIcon::Paste, BuiltinIcon::Paste, L"\uF2D5" },
+        { MenuQuickIcon::NewItem, BuiltinIcon::NewItem, L"\uF10C" },
+    };
+    const size_t count = static_cast<size_t>(width) * height;
+    for (const bool light : { true, false })
+    for (const bool compact : { false, true })
+    for (const UINT dpi : { 96u, 120u, 144u, 192u })
+    {
+        auto palette = ResolvePalette(light);
+        palette.colorIcons = true;
+        const auto metrics = ResolveMetrics(dpi, compact);
+        for (const auto& action : actions)
+        for (const UINT state : { 0u, static_cast<UINT>(ODS_DISABLED | ODS_GRAYED) })
+        for (const bool quick : { true, false })
+        {
+            ItemView automatic{ L"", action.glyph };
+            if (!quick) automatic.semanticIcon = action.semantic;
+            auto explicitItem = automatic;
+            explicitItem.builtinIcon = action.artwork;
+            const RECT bounds{ 0, 0,
+                quick ? metrics.quickActionMaximumWidth : width,
+                quick ? metrics.quickActionHeight : metrics.rowHeight };
+            const auto draw = [&](const ItemView& item) {
+                std::fill_n(pixels, count, 0u);
+                const bool painted = quick
+                    ? DrawQuickAction(dc, font, iconFont, action.semantic,
+                        item, bounds, state, palette, metrics)
+                    : DrawItem(dc, font, iconFont, item, bounds, state, palette, metrics);
+                Expect(painted, "semantic menu artwork draw succeeds");
+                GdiFlush();
+            };
+            draw(explicitItem);
+            const std::vector<std::uint32_t> reference(pixels, pixels + count);
+            draw(automatic);
+            if (state == 0)
+                Expect(CountColorInRect(pixels, width, height, bounds,
+                        light ? RGB(255, 255, 255) : RGB(59, 59, 59)) > 0,
+                    "unbound paste/new actions paint the approved independent surfaces");
+            Expect(std::equal(reference.begin(), reference.end(), pixels),
+                "unbound semantic actions match desktop artwork in quick strips and ordinary rows");
+        }
+    }
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv)
@@ -574,6 +628,7 @@ int wmain(int argc, wchar_t** argv)
 
     CheckIconlessRows(dc, pixels, kWidth, kHeight);
     CheckBuiltinArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
+    CheckSemanticArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
 
     const snowdesktop::menu_icon::ItemView normal{
         L"Open", L"O", false, false, false,
@@ -840,6 +895,7 @@ int wmain(int argc, wchar_t** argv)
         "hiding the caret removes interior accent pixels while retaining the border");
 
     const std::array accentedQuickIcons{
+        snowdesktop::MenuQuickIcon::Paste,
         snowdesktop::MenuQuickIcon::NewItem,
         snowdesktop::MenuQuickIcon::Cut,
         snowdesktop::MenuQuickIcon::Copy,
@@ -872,7 +928,7 @@ int wmain(int argc, wchar_t** argv)
         newIconBounds) > 0,
         "dark add-circle keeps a visible blue plus");
     Expect(CountColorInRect(pixels, kWidth, kHeight,
-        newIconBounds, dark.text) > 0,
+        newIconBounds, RGB(228, 230, 234)) > 0,
         "dark add-circle keeps a neutral Fluent ring");
 
     const snowdesktop::menu_icon::ItemView moreOptionsItem{
@@ -989,7 +1045,6 @@ int wmain(int argc, wchar_t** argv)
     }
 
     const std::array neutralQuickIcons{
-        snowdesktop::MenuQuickIcon::Paste,
         snowdesktop::MenuQuickIcon::Refresh,
         snowdesktop::MenuQuickIcon::Delete,
         snowdesktop::MenuQuickIcon::Edit,

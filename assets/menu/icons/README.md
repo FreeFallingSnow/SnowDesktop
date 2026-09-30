@@ -49,6 +49,11 @@ icon size (18 DIP, or 16 DIP in compact menus). Runtime uses no filesystem
 assets or preview-directory paths. The renderer caches a bounded number of
 bitmaps, retains the Fluent glyph on load failure or in high contrast, and
 preserves checked and disabled states. Package-provided images take precedence.
+Paste and New Item semantic actions also resolve to this shared artwork when
+their menu model does not explicitly bind a BuiltinIcon, covering component,
+folder-popup and text-input menus as well as ordinary rows in compact menus.
+An explicit built-in resource retains priority over semantic selection; high
+contrast and missing resources retain the Fluent glyph fallback.
 
 To regenerate PNGs, install Sharp 0.35.4 in a maintenance environment and run
 `node scripts/render_menu_icons.cjs [path-to-sharp-module]` from the repository.
