@@ -68,6 +68,8 @@ SD_IPC_FIELDS(CategorySettings,
     v.tabFontSize, v.rules);
 SD_IPC_FIELDS(IconBeautifySettings,
     v.enabled, v.preset, v.mode, v.backgroundOpacity,
+    v.glassEnabled, v.glassBlurRadius, v.edgeHighlightEnabled,
+    v.edgeHighlightWidth, v.edgeHighlightStrength,
     v.gradientEnabled, v.gradientDirection, v.backgroundStartR, v.backgroundStartG,
     v.backgroundStartB, v.backgroundEndR, v.backgroundEndG, v.backgroundEndB,
     v.shape, v.contentScale, v.textureHighlightStrength, v.textureHighlightSize,

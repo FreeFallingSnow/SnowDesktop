@@ -2271,6 +2271,7 @@ if (BUILD_TESTING)
             src/tray_service.cpp
             src/tray_menu_placement.cpp
             src/app/desktop_backdrop_compositor.cpp
+            src/icon_beautify.cpp
             src/l10n.cpp
             src/dock_window_preview.cpp
             src/dock_window_transition.cpp

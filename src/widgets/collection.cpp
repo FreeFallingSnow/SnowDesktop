@@ -364,9 +364,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
             app_->ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail));
         if (bmp)
         {
-            D2D1_RECT_F dst = D2D1::RectF(static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-                static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+            app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
+                reinterpret_cast<std::uintptr_t>(&item), false);
         }
         else
         {

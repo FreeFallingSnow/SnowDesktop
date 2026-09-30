@@ -122,9 +122,10 @@ bool SameColor(
         left.G == right.G && left.B == right.B;
 }
 
-constexpr std::array<IconBeautifyPreset, 3> kBeautifyPresets = {
+constexpr std::array<IconBeautifyPreset, 4> kBeautifyPresets = {
     IconBeautifyPreset::None,
     IconBeautifyPreset::DefaultBeautify,
+    IconBeautifyPreset::FrostedGlass,
     IconBeautifyPreset::Custom,
 };
 
@@ -564,6 +565,10 @@ struct DesktopPagePresenter::Impl
     SettingRow beautifyModeRow;
     std::unique_ptr<ColorEditor> backgroundStart;
     std::unique_ptr<NumericEditor> backgroundOpacity;
+    muxc::ToggleSwitch glassEnabled{nullptr}, edgeReflection{nullptr};
+    SettingRow glassEnabledRow, edgeReflectionRow;
+    winrt::event_token glassEnabledToken{}, edgeReflectionToken{};
+    std::unique_ptr<NumericEditor> glassBlurRadius, reflectionWidth, reflectionStrength;
     muxc::ToggleSwitch gradientEnabled{nullptr};
     SettingRow gradientEnabledRow;
     std::unique_ptr<ColorEditor> backgroundEnd;
@@ -820,6 +825,22 @@ struct DesktopPagePresenter::Impl
         AppendAdvancedCombo(gradientDirectionRow, gradientDirection);
         AppendAdvancedCombo(shapeRow, shape);
 
+        glassEnabled = muxc::ToggleSwitch{};
+        glassEnabledRow.Initialize(glassEnabled);
+        edgeReflection = muxc::ToggleSwitch{};
+        edgeReflectionRow.Initialize(edgeReflection);
+        glassBlurRadius = MakeBeautifyNumber(4.0, 48.0, 1.0, 0,
+            [](auto& settings, double v) { settings.glassBlurRadius = static_cast<float>(v); });
+        reflectionWidth = MakeBeautifyNumber(0.5, 4.0, 0.1, 1,
+            [](auto& settings, double v) { settings.edgeHighlightWidth = static_cast<float>(v); });
+        reflectionStrength = MakeBeautifyNumber(0.0, 100.0, 1.0, 0,
+            [](auto& settings, double v) { settings.edgeHighlightStrength = static_cast<float>(v / 100.0); });
+        glassBlurRadius->SetUnit(L"px"); reflectionWidth->SetUnit(L"px"); reflectionStrength->SetUnit(L"%");
+        beautifyAdvanced.Children().Append(glassEnabledRow.root);
+        beautifyAdvanced.Children().Append(glassBlurRadius->root);
+        beautifyAdvanced.Children().Append(edgeReflectionRow.root);
+        beautifyAdvanced.Children().Append(reflectionWidth->root);
+        beautifyAdvanced.Children().Append(reflectionStrength->root);
         contentScale = MakeBeautifyNumber(50.0, 90.0, 1.0, 0,
             [](IconBeautifySettings& settings, double value) {
                 settings.contentScale = static_cast<float>(value / 100.0);
@@ -1086,6 +1107,14 @@ struct DesktopPagePresenter::Impl
                         settings.mode = selection;
                     });
             });
+        glassEnabledToken = glassEnabled.Toggled([this](auto const&, auto const&) {
+            const bool v = glassEnabled.IsOn();
+            UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.glassEnabled = v; });
+        });
+        edgeReflectionToken = edgeReflection.Toggled([this](auto const&, auto const&) {
+            const bool v = edgeReflection.IsOn();
+            UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.edgeHighlightEnabled = v; });
+        });
         gradientEnabledToken = gradientEnabled.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = gradientEnabled.IsOn();
@@ -1396,6 +1425,10 @@ struct DesktopPagePresenter::Impl
             value.backgroundStartG,
             value.backgroundStartB));
         backgroundOpacity->SetValue(value.backgroundOpacity * 100.0);
+        glassEnabled.IsOn(value.glassEnabled); edgeReflection.IsOn(value.edgeHighlightEnabled);
+        glassBlurRadius->SetValue(value.glassBlurRadius);
+        reflectionWidth->SetValue(value.edgeHighlightWidth);
+        reflectionStrength->SetValue(value.edgeHighlightStrength * 100.0);
         gradientEnabled.IsOn(value.gradientEnabled);
         backgroundEnd->SetColor(MakeColor(
             value.backgroundEndR,
@@ -1428,7 +1461,7 @@ struct DesktopPagePresenter::Impl
         for (const NumericEditor* editor : {
                  iconSpacing.get(), iconSize.get(), itemFontSize.get(),
                  listFontSize.get(), itemFontWeight.get(),
-                 backgroundOpacity.get(), contentScale.get(),
+                 backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
                  highlightStrength.get(), highlightSize.get(),
                  highlightAngle.get(), shadeStrength.get(),
                  edgeHighlight.get(), filterStrength.get(),
@@ -1461,7 +1494,7 @@ struct DesktopPagePresenter::Impl
         return {
             iconSpacing.get(), iconSize.get(), itemFontSize.get(),
             listFontSize.get(), itemFontWeight.get(),
-            backgroundOpacity.get(), contentScale.get(),
+            backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
             highlightStrength.get(), highlightSize.get(),
             highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(),
             filterStrength.get(), shadowStrength.get(), outlineWidth.get(),
@@ -1629,6 +1662,7 @@ struct DesktopPagePresenter::Impl
         SetComboItems(beautifyPreset, {
             L("app.settings.beautify_preset_none", L"None"),
             L("app.settings.beautify_preset_default", L"Default"),
+            L("app.settings.beautify_preset_glass", L"Frosted glass"),
             L("app.settings.custom", L"Custom"),
         }, std::max(0, beautifyPreset.SelectedIndex()));
         beautifyModeRow.SetText(
@@ -1673,6 +1707,13 @@ struct DesktopPagePresenter::Impl
             L("app.settings.beautify_shape_circle", L"Circle"),
             L("app.settings.beautify_shape_pebble", L"Pebble"),
         }, std::max(0, shape.SelectedIndex()));
+        glassEnabledRow.SetText(L("app.settings.glass_enabled", L"Frosted glass background"));
+        edgeReflectionRow.SetText(L("app.settings.edge_highlight", L"Edge highlight"));
+        muxa::AutomationProperties::SetName(glassEnabled, glassEnabledRow.label.Text());
+        muxa::AutomationProperties::SetName(edgeReflection, edgeReflectionRow.label.Text());
+        glassBlurRadius->SetLabel(L("app.settings.blur_radius", L"Blur radius"));
+        reflectionWidth->SetLabel(L("app.settings.edge_highlight_width", L"Edge highlight width"));
+        reflectionStrength->SetLabel(L("app.settings.edge_highlight_strength", L"Edge highlight strength"));
         contentScale->SetLabel(L(
             "app.settings.beautify_content_scale", L"Content scale"));
         highlightStrength->SetLabel(L(
@@ -1765,6 +1806,11 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.iconBeautify.mode") return beautifyMode;
         if (id == "desktop.iconBeautify.backgroundColor")
             return backgroundStart->editor.button;
+        if (id == "desktop.iconBeautify.glass") return glassEnabled;
+        if (id == "desktop.iconBeautify.blurRadius") return glassBlurRadius->slider;
+        if (id == "desktop.iconBeautify.edgeReflection") return edgeReflection;
+        if (id == "desktop.iconBeautify.reflectionWidth") return reflectionWidth->slider;
+        if (id == "desktop.iconBeautify.reflectionStrength") return reflectionStrength->slider;
         if (id == "desktop.iconBeautify.backgroundOpacity")
             return backgroundOpacity->slider;
         if (id == "desktop.iconBeautify.gradient")
@@ -1815,6 +1861,7 @@ struct DesktopPagePresenter::Impl
         itemFontWeight->Close();
         backgroundStart->Close();
         backgroundOpacity->Close();
+        glassBlurRadius->Close(); reflectionWidth->Close(); reflectionStrength->Close();
         backgroundEnd->Close();
         contentScale->Close();
         highlightStrength->Close();
@@ -1860,6 +1907,7 @@ struct DesktopPagePresenter::Impl
             beautifyPreset.SelectionChanged(beautifyPresetToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
             gradientEnabled.Toggled(gradientEnabledToken);
+            glassEnabled.Toggled(glassEnabledToken); edgeReflection.Toggled(edgeReflectionToken);
             gradientDirection.SelectionChanged(gradientDirectionToken);
             shape.SelectionChanged(shapeToken);
             filterEnabled.Toggled(filterEnabledToken);

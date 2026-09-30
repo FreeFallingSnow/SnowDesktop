@@ -416,6 +416,8 @@
   "app.settings.dark": "Foncé",
   "app.settings.light": "Clair",
   "app.settings.dark_glass": "Verre foncé",
+  "app.settings.transparent_glass": "Verre dépoli transparent",
+  "app.settings.beautify_preset_glass": "Verre dépoli",
   "app.settings.light_glass": "Verre clair",
   "app.settings.dark_acrylic": "Acrylique foncé",
   "app.settings.light_acrylic": "Acrylique clair",

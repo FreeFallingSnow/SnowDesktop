@@ -134,6 +134,24 @@ PersonalizationSettings PersonalizationSettings::GlassLightPreset()
     return s;
 }
 
+PersonalizationSettings PersonalizationSettings::GlassTransparentPreset()
+{
+    PersonalizationSettings s;
+    s.backgroundPreset = kAppearancePresetGlassTransparent;
+    s.widgetBgR = s.widgetBgG = s.widgetBgB = 1.0f;
+    s.widgetAlpha = 0.06f;
+    s.widgetBorderAlpha = 0.12f;
+    s.widgetBorderWidth = 0.75f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = 1.25f;
+    s.widgetEdgeHighlightStrength = 0.45f;
+    s.gradientEndA = 0.0f;
+    s.glassEnabled = true;
+    s.glassBlurRadius = 24.0f;
+    s.contentTheme = 0;
+    return s;
+}
+
 PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
 {
     PersonalizationSettings s = DarkPreset();
@@ -186,6 +204,7 @@ int NormalizeAppearancePresetId(int presetId)
     case 10:
     case 11:
     case 12:
+    case 13:
         return presetId;
     case 3:
     case 4:
@@ -207,6 +226,7 @@ PersonalizationSettings MakeAppearancePreset(int presetId)
     case 1: return PersonalizationSettings::LightPreset();
     case 6: return PersonalizationSettings::GlassDarkPreset();
     case 7: return PersonalizationSettings::GlassLightPreset();
+    case 13: return PersonalizationSettings::GlassTransparentPreset();
     case 10: return PersonalizationSettings::AcrylicDarkPreset();
     case 11: return PersonalizationSettings::AcrylicLightPreset();
     case 9:
@@ -223,7 +243,8 @@ PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId)
 {
     PersonalizationSettings s;
     int normalizedId = NormalizeAppearancePresetId(presetId);
-    if (normalizedId == kAppearancePresetGlassDark)
+    if (normalizedId == kAppearancePresetGlassDark ||
+        normalizedId == kAppearancePresetGlassTransparent)
         normalizedId = kAppearancePresetAcrylicDark;
     else if (normalizedId == kAppearancePresetGlassLight)
         normalizedId = kAppearancePresetAcrylicLight;

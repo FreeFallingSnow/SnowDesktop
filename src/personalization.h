@@ -23,6 +23,7 @@ constexpr int kAppearancePresetAcrylicLight = 11;
 // Reserved for the system taskbar UI; intentionally omitted from global
 // component preset lists.
 constexpr int kAppearancePresetTaskbarTransparent = 12;
+constexpr int kAppearancePresetGlassTransparent = 13;
 
 // Compact four-theme selection shared by independent overlay surfaces.
 constexpr int kFourThemeDark = 0;
@@ -64,6 +65,7 @@ constexpr int FourThemeSelectionFromAppearancePreset(int presetId)
     {
     case kAppearancePresetLight:
         return kFourThemeLight;
+    case kAppearancePresetGlassTransparent:
     case kAppearancePresetGlassDark:
     case kAppearancePresetAcrylicDark:
         return kFourThemeAcrylicDark;
@@ -233,6 +235,7 @@ struct PersonalizationSettings
     static PersonalizationSettings LightPreset();
     static PersonalizationSettings GlassDarkPreset();
     static PersonalizationSettings GlassLightPreset();
+    static PersonalizationSettings GlassTransparentPreset();
     static PersonalizationSettings AcrylicDarkPreset();
     static PersonalizationSettings AcrylicLightPreset();
 };

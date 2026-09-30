@@ -416,6 +416,8 @@
   "app.settings.dark": "Oscuro",
   "app.settings.light": "Claro",
   "app.settings.dark_glass": "Vidrio oscuro",
+  "app.settings.transparent_glass": "Vidrio esmerilado transparente",
+  "app.settings.beautify_preset_glass": "Vidrio esmerilado",
   "app.settings.light_glass": "Cristal claro",
   "app.settings.dark_acrylic": "Acrílico oscuro",
   "app.settings.light_acrylic": "Acrílico claro",

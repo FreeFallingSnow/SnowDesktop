@@ -43,7 +43,7 @@ void PrintUsage()
            " [--columns N] [--rows N] [--dpi N]"
            " [--canvas-size N] [--padding N]"
            " [--locale CODE]"
-           " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
+           " [--appearance dark|light|glass-dark|glass-light|glass-transparent|acrylic-dark|acrylic-light]"
            " [--theme dark|light]"
            " [--data-state ready|empty|loading|error|stale|permission-denied]"
            " [--background image-file]"
@@ -51,7 +51,7 @@ void PrintUsage()
            " [--storage key=value] [--host SnowDesktop.exe]\n"
         << "  snowwidget preview-native <collection|collection-group|file-group|file-categories|folder-mapping|calendar-panel|control-panel|tray-panel|resource-panel|status-bar|all> <output-directory>"
            " [--dpi N] [--locale CODE]"
-           " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
+           " [--appearance dark|light|glass-dark|glass-light|glass-transparent|acrylic-dark|acrylic-light]"
            " [--background image-file]"
            " [--transparent] [--content-only]"
            " [--canvas-width N] [--canvas-height N] [--padding N]"
@@ -584,10 +584,11 @@ int wmain(int argc, wchar_t** argv)
                 if (appearance != L"dark" && appearance != L"light" &&
                     appearance != L"glass-dark" &&
                     appearance != L"glass-light" &&
+                    appearance != L"glass-transparent" &&
                     appearance != L"acrylic-dark" &&
                     appearance != L"acrylic-light")
                 {
-                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, acrylic-dark, or acrylic-light\"}\n";
+                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, glass-transparent, acrylic-dark, or acrylic-light\"}\n";
                     return 2;
                 }
             }
@@ -937,10 +938,11 @@ int wmain(int argc, wchar_t** argv)
                 if (appearance != L"dark" && appearance != L"light" &&
                     appearance != L"glass-dark" &&
                     appearance != L"glass-light" &&
+                    appearance != L"glass-transparent" &&
                     appearance != L"acrylic-dark" &&
                     appearance != L"acrylic-light")
                 {
-                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, acrylic-dark, or acrylic-light\"}\n";
+                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, glass-transparent, acrylic-dark, or acrylic-light\"}\n";
                     return 2;
                 }
                 theme = appearance.ends_with(L"light")

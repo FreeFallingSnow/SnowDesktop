@@ -132,6 +132,12 @@ struct Document
     std::optional<int> shortcutArrowMode;
     std::optional<bool> iconBeautifyEnabled;
     std::optional<int> iconBeautifyPreset;
+    std::optional<bool> iconBeautifyGlassEnabled;
+    std::optional<float> iconBeautifyGlassBlurRadius;
+    std::optional<bool> iconBeautifyEdgeHighlightEnabled;
+    std::optional<float> iconBeautifyEdgeHighlightWidth;
+    std::optional<float> iconBeautifyEdgeHighlightStrength;
+
     std::optional<int> iconBeautifyMode;
     std::optional<float> iconBeautifyBgOpacity;
     std::optional<bool> iconBeautifyGradientEnabled;

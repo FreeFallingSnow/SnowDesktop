@@ -307,6 +307,9 @@ std::optional<PreviewAppearance> ParseAppearance(std::string_view name)
     if (name == "glass-light")
         return PreviewAppearance{
             PersonalizationSettings::GlassLightPreset(), "light", true };
+    if (name == "glass-transparent")
+        return PreviewAppearance{
+            PersonalizationSettings::GlassTransparentPreset(), "dark", false };
     if (name == "acrylic-dark")
         return PreviewAppearance{
             PersonalizationSettings::AcrylicDarkPreset(), "dark", false };

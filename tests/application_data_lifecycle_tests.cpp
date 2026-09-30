@@ -414,6 +414,22 @@ void TestInitializationExperiment(const std::filesystem::path& root)
 
 void TestLayoutReset(const std::filesystem::path& root)
 {
+    {
+        using namespace snowdesktop::layout_storage;
+        const auto path = root / L"glass-icon-roundtrip.json";
+        Expect(SaveDocument(path, R"({"iconBeautifyPreset":6,"iconBeautifyGlassEnabled":true,"iconBeautifyGlassBlurRadius":28,"iconBeautifyEdgeHighlightEnabled":true,"iconBeautifyEdgeHighlightWidth":1.7,"iconBeautifyEdgeHighlightStrength":0.65})"),
+            "save glass icon customization in isolated layout data");
+        Document loaded;
+        Expect(LoadDocument(path, loaded).status == LoadStatus::LoadedPrimary &&
+            loaded.iconBeautifyPreset == 6 && loaded.iconBeautifyGlassEnabled == true &&
+            loaded.iconBeautifyGlassBlurRadius == 28.0f && loaded.iconBeautifyEdgeHighlightEnabled == true &&
+            loaded.iconBeautifyEdgeHighlightWidth == 1.7f && loaded.iconBeautifyEdgeHighlightStrength == .65f,
+            "glass icon settings survive the real layout file loading boundary");
+        Expect(SaveDocument(path, "{}") && LoadDocument(path, loaded).status == LoadStatus::LoadedPrimary &&
+            !loaded.iconBeautifyGlassEnabled && !loaded.iconBeautifyEdgeHighlightEnabled,
+            "legacy layouts leave new glass and reflection flags unset");
+    }
+
     namespace layout = snowdesktop::layout_storage;
     const auto data = root / L"layout-reset" / L"data";
     const auto primary = data / L"SnowDesktop.layout.json";

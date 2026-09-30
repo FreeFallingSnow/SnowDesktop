@@ -210,6 +210,12 @@ void TestCodec()
     settings.values.dock.systemTaskbarShellUi.enabled = true;
     settings.values.dock.systemTaskbarShellUi.appearance.widgetEdgeHighlightWidth = 3.5f;
     settings.values.desktop.iconBeautify.filterTintR = 0.123f;
+    settings.values.desktop.iconBeautify.preset = snowdesktop::IconBeautifyPreset::FrostedGlass;
+    settings.values.desktop.iconBeautify.glassEnabled = true;
+    settings.values.desktop.iconBeautify.glassBlurRadius = 28.0f;
+    settings.values.desktop.iconBeautify.edgeHighlightEnabled = true;
+    settings.values.desktop.iconBeautify.edgeHighlightWidth = 1.7f;
+    settings.values.desktop.iconBeautify.edgeHighlightStrength = .65f;
     settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
     settings.values.personalization.panelGradient.enabled = true;
     settings.values.personalization.showGroupTabCounts = true;
@@ -221,6 +227,8 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(snowdesktop::icon_beautify::Equal(restored.values.desktop.iconBeautify, settings.values.desktop.iconBeautify),
+        "glass, blur and directional reflection survive the settings process boundary");
     Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
         "hover reveal and disabled task thumbnails survive settings IPC");
     Check(!restored.values.dock.floatingEdgeSwipeBlockFullscreen,

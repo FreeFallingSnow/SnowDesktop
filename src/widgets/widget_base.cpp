@@ -2145,8 +2145,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             iconBitmap,
             app_->ShouldBeautifyIconBitmap(iconIsMediaThumbnail)))
     {
-        context->DrawBitmap(bmp, app_->ToD2DRect(iconRect), 1.0f,
-            D2D1_INTERPOLATION_MODE_LINEAR);
+        app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
+            reinterpret_cast<std::uintptr_t>(iconBitmap), false);
     }
     else
     {

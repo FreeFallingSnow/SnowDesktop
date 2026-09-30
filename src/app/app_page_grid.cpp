@@ -1188,8 +1188,11 @@ void DesktopApp::SetIconBeautifySettings(
     }
 
     iconBeautifySettings_ = settings;
+    desktopBackdropFullCollectionPending_ = true;
 
     d2dIconCache_.clear();
+    iconGlassBackdrop_.clear();
+    iconReflectionCache_.clear();
     ResetDemoIconLoader();
     placeholderIconCache_.clear();
     dockFolderBitmapCache_.Retain([](const auto&) { return false; });

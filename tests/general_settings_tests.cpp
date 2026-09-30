@@ -355,9 +355,20 @@ int main()
         auto light = PersonalizationSettings::LightPreset();
         Check(!IsCustomSurfaceTheme(theme, light) && ResolveSurfaceTheme(theme, light, 0, false).contentTheme == 1,
             "switching global back to a preset resumes inheritance without deleting custom values");
+        const auto transparentGlass = MakeAppearancePreset(kAppearancePresetGlassTransparent);
+        Check(transparentGlass.glassEnabled && !transparentGlass.acrylicEnabled &&
+            transparentGlass.widgetAlpha < .1f && transparentGlass.contentTheme == 0 &&
+            transparentGlass.widgetEdgeHighlightEnabled,
+            "transparent glass retains light text, blur and edge highlights with faint fill");
+        Check(NormalizeAppearancePresetId(transparentGlass.backgroundPreset) == kAppearancePresetGlassTransparent,
+            "transparent glass retains its independent persisted preset identity");
+        SurfaceTheme following;
+        Check(ResolveSurfaceTheme(following, transparentGlass, 0, true).backgroundPreset == kAppearancePresetAcrylicDark &&
+            ResolveSurfaceTheme(following, transparentGlass, 0, false).backgroundPreset == kAppearancePresetAcrylicDark,
+            "popup and quick navigation follow transparent global glass with dark acrylic");
         DockSettings dock;
         dock.followComponentAppearance = false;
-        for (int preset : {0, 1, 6, 7, 10, 11})
+        for (int preset : {0, 1, 6, 7, 10, 11, kAppearancePresetGlassTransparent})
         {
             dock.appearancePreset = preset;
             auto expected = MakeAppearancePreset(preset); expected.cornerRadius = global.cornerRadius;

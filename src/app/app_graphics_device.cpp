@@ -214,6 +214,8 @@ void DesktopApp::ResetCompositionRenderCaches()
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
     d2dIconCache_.clear();
+    iconGlassBackdrop_.clear();
+    iconReflectionCache_.clear();
     ResetDemoIconLoader();
     placeholderIconCache_.clear();
     dockFolderBitmapCache_.Retain([](const auto&) { return false; });

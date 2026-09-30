@@ -416,6 +416,8 @@
     "app.settings.dark": "深色",
     "app.settings.light": "浅色",
     "app.settings.dark_glass": "深色毛玻璃",
+    "app.settings.transparent_glass": "透明毛玻璃",
+    "app.settings.beautify_preset_glass": "毛玻璃",
     "app.settings.light_glass": "浅色毛玻璃",
     "app.settings.dark_acrylic": "深色亚克力",
     "app.settings.light_acrylic": "浅色亚克力",

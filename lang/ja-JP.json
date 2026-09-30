@@ -416,6 +416,8 @@
   "app.settings.dark": "ダーク",
   "app.settings.light": "ライト",
   "app.settings.dark_glass": "ダークガラス",
+  "app.settings.transparent_glass": "透明すりガラス",
+  "app.settings.beautify_preset_glass": "すりガラス",
   "app.settings.light_glass": "ライトグラス",
   "app.settings.dark_acrylic": "ダークアクリル",
   "app.settings.light_acrylic": "ライトアクリル",

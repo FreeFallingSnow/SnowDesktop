@@ -6,6 +6,7 @@
 
 #include <windows.h>
 #include <d2d1_1.h>
+#include "../icon_beautify.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -99,6 +100,12 @@ public:
     bool AddPanel(
         const RECT& frame, float cornerRadius, float blurRadius,
         std::uintptr_t ownerKey = 0);
+    // Host-private icon regions share the same native blur backend.
+    bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
+        float blurRadius, std::uintptr_t ownerKey);
+    bool HasPanelContaining(const RECT& frame) const;
+    bool RemoveIconPanel(const RECT& frame, std::uintptr_t ownerKey);
+
     /** @brief Apply a local card matrix and its projected window region in this frame's transaction. */
     bool SetPanelTransform(std::uintptr_t ownerKey,
         const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame);

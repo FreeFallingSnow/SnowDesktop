@@ -27,14 +27,14 @@ if defined RELOAD_SHELL (
     goto configure
 )
 
-tasklist /fi "IMAGENAME eq SnowDesktop.exe" /nh 2>nul | find /i "SnowDesktop.exe" >nul
-if not errorlevel 1 (
-    echo Build preflight stopped: SnowDesktop.exe is running.
+powershell -NoProfile -Command "$target=[IO.Path]::GetFullPath('.build\Release\SnowDesktop.exe'); try { $blocked=@(Get-Process -Name SnowDesktop -ErrorAction SilentlyContinue | Where-Object { if (-not $_.Path) { throw 'Process path unavailable' }; $_.Path -eq $target }).Count -ne 0 } catch { exit 2 }; if ($blocked) { exit 1 }"
+if errorlevel 1 (
+    echo Build preflight stopped: this build's SnowDesktop.exe is running or its path cannot be checked.
     echo Exit SnowDesktop normally before building.
     exit /b 3
 )
-powershell -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build\Release\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build\Release\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
-if not errorlevel 1 (
+powershell -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build\Release\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build\Release\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop | ForEach-Object { $_.Modules } | Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
+if errorlevel 1 (
     echo Build preflight stopped: Explorer still has the Release build's SnowDesktopTaskbarHook.dll loaded.
     echo Run scripts\build.bat --reload-shell only when an Explorer restart is acceptable.
     exit /b 3

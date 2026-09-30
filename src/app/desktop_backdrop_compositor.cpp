@@ -333,6 +333,8 @@ struct DesktopBackdropCompositor::Impl
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
         wuc::CompositionGeometricClip clip{nullptr};
         bool seen = false;
+        int iconShape = -1;
+        SIZE iconSize{};
     };
 
     HWND contentWindow = nullptr;
@@ -1561,6 +1563,81 @@ bool DesktopBackdropCompositor::AddPanel(
             existing->visual.Opacity(1.0f);
         existing->seen = true;
         impl_->PruneUnusedBlurFactories();
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::HasPanelContaining(const RECT& frame) const
+{
+    return std::any_of(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
+        return panel.iconShape < 0 && panel.seen &&
+            frame.left >= panel.frame.left && frame.top >= panel.frame.top &&
+            frame.right <= panel.frame.right && frame.bottom <= panel.frame.bottom;
+    });
+}
+
+bool DesktopBackdropCompositor::RemoveIconPanel(const RECT& frame, std::uintptr_t ownerKey)
+{
+    const auto found = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
+        return panel.iconShape >= 0 &&
+            snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                panel.ownerKey, panel.frame, ownerKey, frame);
+    });
+    if (found == impl_->panels.end()) return false;
+    try
+    {
+        impl_->root.Children().Remove(found->visual);
+        found->visual.Brush(nullptr);
+        impl_->panels.erase(found);
+        impl_->blurFactoriesDirty = true;
+        // The enclosing EndFrame submits geometry and retirement together.
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.remove_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
+    snowdesktop::IconBeautifyShape shape, float blurRadius, std::uintptr_t ownerKey)
+{
+    if (!AddPanel(frame, 0.0f, blurRadius, ownerKey)) return false;
+    try
+    {
+        auto panel = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& value) {
+            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                value.ownerKey, value.frame, ownerKey, frame);
+        });
+        if (panel == impl_->panels.end()) return false;
+        const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
+        if (panel->iconShape != static_cast<int>(shape) ||
+            panel->iconSize.cx != size.cx || panel->iconSize.cy != size.cy)
+        {
+            if (!impl_->genieGeometryFactory)
+                winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                    impl_->genieGeometryFactory.put()));
+            winrt::com_ptr<ID2D1PathGeometry> path;
+            winrt::check_hresult(impl_->genieGeometryFactory->CreatePathGeometry(path.put()));
+            winrt::com_ptr<ID2D1GeometrySink> sink;
+            winrt::check_hresult(path->Open(sink.put()));
+            const auto& outline = snowdesktop::icon_beautify::ShapeOutline(shape);
+            auto point = [&](const auto& p) { return D2D1::Point2F(p.x * static_cast<float>(size.cx), p.y * static_cast<float>(size.cy)); };
+            sink->BeginFigure(point(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
+            for (size_t i = 1; i < outline.size(); ++i) sink->AddLine(point(outline[i]));
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            winrt::check_hresult(sink->Close());
+            auto geometry = impl_->compositor.CreatePathGeometry();
+            geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(path))));
+            panel->clip.Geometry(geometry);
+            panel->iconShape = static_cast<int>(shape); panel->iconSize = size;
+        }
         return true;
     }
     catch (const winrt::hresult_error& error)

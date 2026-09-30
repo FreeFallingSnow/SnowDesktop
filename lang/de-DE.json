@@ -416,6 +416,8 @@
   "app.settings.dark": "Dunkel",
   "app.settings.light": "Hell",
   "app.settings.dark_glass": "Dunkles Glas",
+  "app.settings.transparent_glass": "Transparentes Milchglas",
+  "app.settings.beautify_preset_glass": "Milchglas",
   "app.settings.light_glass": "Helles Glas",
   "app.settings.dark_acrylic": "Dunkles Acryl",
   "app.settings.light_acrylic": "Helles Acryl",

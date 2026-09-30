@@ -416,6 +416,8 @@
     "app.settings.dark": "Dark",
     "app.settings.light": "Light",
     "app.settings.dark_glass": "Dark Glass",
+    "app.settings.transparent_glass": "Transparent glass",
+    "app.settings.beautify_preset_glass": "Frosted glass",
     "app.settings.light_glass": "Light Glass",
     "app.settings.dark_acrylic": "Dark Acrylic",
     "app.settings.light_acrylic": "Light Acrylic",

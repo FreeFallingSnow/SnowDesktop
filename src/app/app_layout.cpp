@@ -185,6 +185,16 @@ void DesktopApp::LoadLayoutSlots()
         iconBeautifySettings_.preset = static_cast<snowdesktop::IconBeautifyPreset>(
             *document.iconBeautifyPreset);
 
+    if (document.iconBeautifyGlassEnabled)
+        iconBeautifySettings_.glassEnabled = *document.iconBeautifyGlassEnabled;
+    if (document.iconBeautifyGlassBlurRadius)
+        iconBeautifySettings_.glassBlurRadius = *document.iconBeautifyGlassBlurRadius;
+    if (document.iconBeautifyEdgeHighlightEnabled)
+        iconBeautifySettings_.edgeHighlightEnabled = *document.iconBeautifyEdgeHighlightEnabled;
+    if (document.iconBeautifyEdgeHighlightWidth)
+        iconBeautifySettings_.edgeHighlightWidth = *document.iconBeautifyEdgeHighlightWidth;
+    if (document.iconBeautifyEdgeHighlightStrength)
+        iconBeautifySettings_.edgeHighlightStrength = *document.iconBeautifyEdgeHighlightStrength;
     if (document.iconBeautifyMode)
         iconBeautifySettings_.mode = *document.iconBeautifyMode;
 
@@ -269,10 +279,9 @@ void DesktopApp::LoadLayoutSlots()
     iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
         iconBeautifySettings_);
     if (document.iconBeautifyPreset &&
-        iconBeautifySettings_.preset ==
-            snowdesktop::IconBeautifyPreset::DefaultBeautify)
-        iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(
-            snowdesktop::IconBeautifyPreset::DefaultBeautify);
+        (iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::DefaultBeautify ||
+         iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlass))
+        iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(iconBeautifySettings_.preset);
     else if (!document.iconBeautifyPreset)
         iconBeautifySettings_.preset = snowdesktop::icon_beautify::IdentifyPreset(
             iconBeautifySettings_);
@@ -964,6 +973,11 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
+         << ",\n  \"iconBeautifyGlassEnabled\": " << (iconBeautifySettings_.glassEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyGlassBlurRadius\": " << iconBeautifySettings_.glassBlurRadius
+         << ",\n  \"iconBeautifyEdgeHighlightEnabled\": " << (iconBeautifySettings_.edgeHighlightEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyEdgeHighlightWidth\": " << iconBeautifySettings_.edgeHighlightWidth
+         << ",\n  \"iconBeautifyEdgeHighlightStrength\": " << iconBeautifySettings_.edgeHighlightStrength
          << ",\n  \"iconBeautifyMode\": " << iconBeautifySettings_.mode
          << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifySettings_.backgroundOpacity
          << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifySettings_.gradientEnabled ? "true" : "false")

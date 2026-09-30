@@ -123,6 +123,7 @@ void DesktopApp::StartDemoIconLoader()
                     ? snowdesktop::icon_beautify::DetectEdgeFill(
                         result->pixels, result->width, result->height)
                     : std::nullopt;
+                result->needsGlassBackdrop = task.beautify.glassEnabled && !edge;
                 result->pixels = snowdesktop::icon_beautify::Render(
                     result->pixels, result->width, result->height,
                     task.beautify, edge);
@@ -182,7 +183,10 @@ void DesktopApp::ResetDemoIconLoader()
         demoIconLoaderFailed_.fill(false);
     }
     for (auto& bitmap : demoIdentityIconBitmaps_)
+    {
+        iconGlassBackdrop_.erase(bitmap.Get());
         bitmap.Reset();
+    }
 }
 
 void DesktopApp::QueueDemoIdentityBitmap(std::size_t visualIndex)
@@ -235,6 +239,8 @@ void DesktopApp::OnDemoIconDecoded(LPARAM lParam)
             static_cast<UINT32>(result->width * sizeof(std::uint32_t)),
             &properties, &bitmap)))
         return;
+    iconGlassBackdrop_.erase(demoIdentityIconBitmaps_[result->visualIndex].Get());
+    iconGlassBackdrop_[bitmap.Get()] = result->needsGlassBackdrop;
     demoIdentityIconBitmaps_[result->visualIndex] = std::move(bitmap);
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))

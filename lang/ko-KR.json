@@ -416,6 +416,8 @@
   "app.settings.dark": "다크",
   "app.settings.light": "라이트",
   "app.settings.dark_glass": "다크 글라스",
+  "app.settings.transparent_glass": "투명 반투명 유리",
+  "app.settings.beautify_preset_glass": "반투명 유리",
   "app.settings.light_glass": "라이트 글라스",
   "app.settings.dark_acrylic": "다크 아크릴",
   "app.settings.light_acrylic": "라이트 아크릴",

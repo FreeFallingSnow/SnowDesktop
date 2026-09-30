@@ -1673,23 +1673,23 @@ struct WidgetSettingsPresenter::Impl
         updatingControls = true;
         appearanceThemeChoices.clear();
         appearanceTheme.Items().Clear();
-        constexpr std::array<const char*, 6> ids = {
+        constexpr std::array<const char*, 7> ids = {
             "__global_dark", "__global_light",
-            "__global_glass_dark", "__global_glass_light",
+            "__global_glass_dark", "__global_glass_light", "__global_glass_transparent",
             "__global_acrylic_dark", "__global_acrylic_light",
         };
-        constexpr std::array<int, 6> presetIds = {
+        constexpr std::array<int, 7> presetIds = {
             kAppearancePresetDark, kAppearancePresetLight,
-            kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+            kAppearancePresetGlassDark, kAppearancePresetGlassLight, kAppearancePresetGlassTransparent,
             kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight,
         };
-        constexpr std::array<const char*, 6> labelKeys = {
+        constexpr std::array<const char*, 7> labelKeys = {
             "app.settings.dark", "app.settings.light",
-            "app.settings.dark_glass", "app.settings.light_glass",
+            "app.settings.dark_glass", "app.settings.light_glass", "app.settings.transparent_glass",
             "app.settings.dark_acrylic", "app.settings.light_acrylic",
         };
-        constexpr std::array<const wchar_t*, 6> labelFallbacks = {
-            L"Dark", L"Light", L"Dark glass", L"Light glass",
+        constexpr std::array<const wchar_t*, 7> labelFallbacks = {
+            L"Dark", L"Light", L"Dark glass", L"Light glass", L"Transparent glass",
             L"Dark acrylic", L"Light acrylic",
         };
         for (std::size_t index = 0; index < ids.size(); ++index)

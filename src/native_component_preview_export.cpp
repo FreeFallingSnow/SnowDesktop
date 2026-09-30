@@ -131,6 +131,8 @@ bool ResolveAppearance(std::string_view name,
         settings = PersonalizationSettings::GlassLightPreset();
         lightStage = true;
     }
+    else if (name == "glass-transparent")
+        settings = PersonalizationSettings::GlassTransparentPreset();
     else if (name == "acrylic-dark")
         settings = PersonalizationSettings::AcrylicDarkPreset();
     else if (name == "acrylic-light")

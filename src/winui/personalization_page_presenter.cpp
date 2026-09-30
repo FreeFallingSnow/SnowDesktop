@@ -32,11 +32,12 @@ using presenter_controls::SettingRow;
 namespace
 {
 
-constexpr std::array<int, 7> kPresetIds = {
+constexpr std::array<int, 8> kPresetIds = {
     kAppearancePresetDark,
     kAppearancePresetLight,
     kAppearancePresetGlassDark,
     kAppearancePresetGlassLight,
+    kAppearancePresetGlassTransparent,
     kAppearancePresetAcrylicDark,
     kAppearancePresetAcrylicLight,
     kAppearancePresetCustom,
@@ -1075,6 +1076,7 @@ struct PersonalizationPagePresenter::Impl
         ReplaceComboItems(dockAppearanceCombo, {{"app.settings.taskbar_follow_global", L"Follow global theme"},
             {"app.settings.dark", L"Dark"}, {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
+            {"app.settings.transparent_glass", L"Transparent glass"},
             {"app.settings.dark_acrylic", L"Dark acrylic"}, {"app.settings.light_acrylic", L"Light acrylic"},
             {"app.settings.custom", L"Custom"}});
         quickAppearanceEditor->RefreshLocalizedText(); popupAppearanceEditor->RefreshLocalizedText(); dockAppearanceEditor->RefreshLocalizedText();
@@ -1091,6 +1093,7 @@ struct PersonalizationPagePresenter::Impl
             {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark Glass"},
             {"app.settings.light_glass", L"Light Glass"},
+            {"app.settings.transparent_glass", L"Transparent glass"},
             {"app.settings.dark_acrylic", L"Dark Acrylic"},
             {"app.settings.light_acrylic", L"Light Acrylic"},
             {"app.settings.custom", L"Custom"},

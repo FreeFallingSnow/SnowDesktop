@@ -36,7 +36,7 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 通过离屏 D2D/WIC 输出 PNG。它使用隔离的 manifest `previewData.storage` 覆盖层，不写实例持久化
 存储；`--storage key=value` 可重复覆盖预览值，`--columns/--rows` 必须落在清单尺寸范围内，
 `--dpi` 支持 96–480，`--locale` 选择宿主已安装语言。`--appearance` 可为
-`dark/light/glass-dark/glass-light/acrylic-dark/acrylic-light`；旧参数 `--theme dark/light`
+`dark/light/glass-dark/glass-light/glass-transparent/acrylic-dark/acrylic-light`；旧参数 `--theme dark/light`
 继续作为普通深/浅外观的简写，但不能和 `--appearance` 同时使用。生成最终打包预览时应通过
 `--background <图片文件>` 显式选择背景；该图片只参与合成，不会被 `pack` 自动加入组件包。
 需要正方形创意工坊图片时，可继续用组件真实的 `--columns/--rows` 渲染透明组件层，并加上
@@ -373,7 +373,7 @@ hoverStyle = { background = "surfaceVariant" }
 `contentTheme`/`context.theme.mode` 决定前景。预览时应分别覆盖材质与前景主题，至少检查
 `--appearance acrylic-light --storage followPersonalization=0 --storage __contentTheme=0/1`
 以及对应的深色材质组合，不能只检查 dark/light 外观默认配对。
-内置预设的默认值不是按名称后缀推导：`dark/glass-dark/glass-light/acrylic-dark` 默认
+内置预设的默认值不是按名称后缀推导：`dark/glass-dark/glass-light/glass-transparent/acrylic-dark` 默认
 `contentTheme=0`（浅色/白色前景），`light/acrylic-light` 默认 `contentTheme=1`
 （深色/黑色前景）。其中 `glass-light` 默认仍是浅色文字；组件和工具不得把所有 `*-light`
 直接解释为深色文字。
@@ -3230,3 +3230,7 @@ annotations retain `holidays={}` and `holidaysAvailable=false`. These legacy
 fields cannot enable holiday display and must not be treated as data coverage.
 Old stored holiday choices are ignored. The built-in month-calendar consumes
 only secondary dates. Disabling annotations never changes events.
+
+`glass-transparent` uses light/white content (`contentTheme=0`), neutral low-opacity tint,
+blur and edge reflections. Use the tool bundled with a supporting host; older
+tools reject this appearance. Lua API and schema versions remain unchanged.

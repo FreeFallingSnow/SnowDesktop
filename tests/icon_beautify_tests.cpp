@@ -95,7 +95,8 @@ int main()
         static_cast<int>(IconBeautifyFinish::Sticker) == 3 &&
         static_cast<int>(IconBeautifyPreset::None) == 0 &&
         static_cast<int>(IconBeautifyPreset::DefaultBeautify) == 1 &&
-        static_cast<int>(IconBeautifyPreset::Custom) == 5,
+        static_cast<int>(IconBeautifyPreset::Custom) == 5 &&
+        static_cast<int>(IconBeautifyPreset::FrostedGlass) == 6,
         "persisted beautification enums have stable values");
 
     beautify::ContinuousPreviewState continuousState;
@@ -113,10 +114,11 @@ int main()
             beautify::InteractionAction::Commit,
         "continuous controls throttle previews and commit only on release");
 
-    constexpr std::array<IconBeautifyPreset, 3> builtInPresets{
+    constexpr std::array<IconBeautifyPreset, 4> builtInPresets{
         IconBeautifyPreset::None,
         IconBeautifyPreset::DefaultBeautify,
         IconBeautifyPreset::Custom,
+        IconBeautifyPreset::FrostedGlass,
     };
     for (IconBeautifyPreset preset : builtInPresets)
     {
@@ -361,6 +363,45 @@ int main()
         beautify::EdgeColor{240, 240, 240});
     Check(smartCompact == smartLarge,
         "smart recognition clips the original icon without content scaling");
+
+    const auto glass = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
+    Check(glass.glassEnabled && glass.edgeHighlightEnabled && glass.mode == 0 &&
+        glass.backgroundOpacity < .1f, "glass preset keeps smart detection and a faint fill");
+    auto changedGlass = glass;
+    changedGlass.glassBlurRadius = 28.0f;
+    Check(!beautify::Equal(glass, changedGlass) &&
+        beautify::IdentifyPreset(changedGlass) == IconBeautifyPreset::Custom,
+        "editing blur creates a custom preset rather than losing the change");
+    for (IconBeautifyShape shape : shapes)
+    {
+        auto style = glass; style.shape = shape;
+        const auto reflection = beautify::RenderEdgeReflection(104, 104, style);
+        const auto noReflection = [&] { style.edgeHighlightEnabled = false;
+            return beautify::RenderEdgeReflection(104, 104, style); }();
+        std::uint64_t primary = 0, opposite = 0;
+        bool masked = true;
+        for (int y = 0; y < 104; ++y) for (int x = 0; x < 104; ++x)
+        {
+            const auto alpha = reflection[static_cast<size_t>(y) * 104 + x] >> 24;
+            if (x + y < 104) primary += alpha; else opposite += alpha;
+            if (beautify::ShapeMaskAlpha(shape, x, y, 104, 104) == 0 && alpha) masked = false;
+        }
+        Check(primary > opposite * 2 && opposite > 0,
+            "reflection favors the top/left and retains weaker opposite transmission");
+        Check(masked && reflection[52 * 104 + 52] == 0,
+            "reflection follows each contour and leaves the center and exterior clear");
+        Check(HashPixels(reflection) != HashPixels(noReflection),
+            "disabling reflection removes its pixels for every shape");
+    }
+    const auto glassIcon = beautify::Render(TestIcon(104), 104, 104, glass);
+    Check((glassIcon[52 * 104 + 12] >> 24) < 30,
+        "transparent icons keep a low-opacity glass interior");
+    const std::vector<std::uint32_t> nativePlate(104 * 104, Premultiplied(18, 110, 62, 255));
+    const auto preservedPlate = beautify::Render(nativePlate, 104, 104, glass,
+        beautify::DetectEdgeFill(nativePlate, 104, 104));
+    Check(preservedPlate[52 * 104 + 52] == nativePlate[52 * 104 + 52] &&
+        preservedPlate[52 * 104 + 1] != nativePlate[52 * 104 + 1],
+        "smart glass preserves the opaque native plate color while adding its edge reflection");
 
     if (failures != 0)
     {

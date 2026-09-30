@@ -168,7 +168,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 item.iconBitmap,
                 !recycleBin &&
                     ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
-            DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha);
+            DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha,
+                reinterpret_cast<std::uintptr_t>(&item));
         else
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         if (!useDemoIdentity &&

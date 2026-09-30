@@ -376,6 +376,7 @@ struct DemoIconDecodeResult {
     int width = 0;
     int height = 0;
     std::vector<std::uint32_t> pixels;
+    bool needsGlassBackdrop = false;
 };
 
 struct DemoIconLoadTask {
@@ -2809,6 +2810,7 @@ private:
     bool StartCollectionPopupCompositionAnimation();
     bool StartLuaWidgetPanelCompositionAnimation();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
+    void RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t ownerKey);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
@@ -2833,7 +2835,8 @@ private:
         ID2D1RenderTarget* target, HBITMAP hbm, bool beautify);
     ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify);
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
-        RECT destination, float opacity = 1.0f);
+        RECT destination, float opacity = 1.0f,
+        std::uintptr_t ownerKey = 0, bool fitWithoutUpscaling = true);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
     bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
@@ -3872,6 +3875,7 @@ private:
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
     bool renderingFloatingPopup_ = false;
+    std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap1>> iconReflectionCache_;
     bool handlingFloatingPopupInput_ = false;
     /** @brief 浮动 Dock 被动 hover 最近一次同步提交时刻（8ms 限频用）。 */
     ULONGLONG floatingDockLastPointerPresentTick_ = 0;
@@ -4499,6 +4503,7 @@ private:
 
     /** @brief D2D 位图缓存 */
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
+    std::unordered_map<ID2D1Bitmap*, bool> iconGlassBackdrop_;
     /** @brief 从开发资源目录加载的演示应用图标（按稳定视觉身份索引）。 */
     std::array<ComPtr<ID2D1Bitmap1>,
         snowdesktop::demo_mode_rules::kDemoIconAssetCount>

@@ -537,6 +537,32 @@ int RunDesktopBackdropCompositorTests()
     check(contains(40, 40) && contains(120, 120),
         "closing the guide restores the complete Dock glass region");
 
+    glass.BeginFrame(true);
+    check(glass.AddIconPanel({20, 20, 84, 84}, snowdesktop::IconBeautifyShape::Circle, 16, 101),
+        "standalone icon backdrop accepts a shared icon contour");
+    glass.EndFrame();
+    for (int i = 0; i < 12; ++i)
+    {
+        glass.BeginFrame(false);
+        check(glass.AddIconPanel({20 + i, 20, 84 + i, 84}, snowdesktop::IconBeautifyShape::ContinuousRounded, 16, 101),
+            "moving icons retain their visual while updating shape and bounds");
+        glass.EndFrame();
+    }
+    check(glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1 &&
+        !glass.HasPanelContaining({40, 40, 60, 60}),
+        "moving icon panels do not accumulate or masquerade as containing widget panels");
+    glass.BeginFrame(false);
+    check(glass.AddPanel({0, 0, 240, 180}, 18, 24, 200) &&
+        glass.HasPanelContaining({40, 40, 60, 60}) &&
+        glass.RemoveIconPanel({40, 40, 104, 104}, 101),
+        "entering a glass widget retires the independent icon panel by stable owner");
+    glass.EndFrame();
+    check(glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1,
+        "inherited glass retires the extra blur factory after the transaction");
+    glass.BeginFrame(true); glass.EndFrame();
+    check(glass.PanelCount() == 0 && glass.BlurFactoryCount() == 0,
+        "hiding icons and panels retires their native blur resources");
+
     glass.Reset();
     check(otherGlass.SetVisualOpacity(0.5f),
         "closing one popup preserves another popup's shared controller");

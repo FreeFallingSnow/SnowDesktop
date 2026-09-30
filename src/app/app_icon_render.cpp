@@ -447,6 +447,29 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     if (strokeWidth > 0.0f && border.a > 0.0f &&
         SUCCEEDED(ctx->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
         ctx->DrawGeometry(geometry.Get(), borderBrush.Get(), strokeWidth);
+    if (iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
+        RegisterIconBackdrop(rect, fill.a > 0.0f ? 1.0f : 0.0f, 0);
+    if (!iconBeautifySettings_.enabled || !iconBeautifySettings_.edgeHighlightEnabled) return;
+    const int pixelWidth = rect.right - rect.left, pixelHeight = rect.bottom - rect.top;
+    const auto key = (static_cast<std::uint64_t>(pixelWidth) << 32) |
+        static_cast<std::uint32_t>(pixelHeight);
+    auto found = iconReflectionCache_.find(key);
+    if (found == iconReflectionCache_.end())
+    {
+        const auto pixels = snowdesktop::icon_beautify::RenderEdgeReflection(
+            pixelWidth, pixelHeight, iconBeautifySettings_);
+        ComPtr<ID2D1Bitmap1> bitmap;
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (!d2dContext_ || FAILED(d2dContext_->CreateBitmap(
+                D2D1::SizeU(static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight)),
+                pixels.data(), static_cast<UINT32>(pixelWidth * sizeof(std::uint32_t)),
+                &properties, &bitmap))) return;
+        if (iconReflectionCache_.size() >= 64) iconReflectionCache_.clear();
+        found = iconReflectionCache_.emplace(key, std::move(bitmap)).first;
+    }
+    ctx->DrawBitmap(found->second.Get(), ToD2DRect(rect), 1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 void DesktopApp::DrawPrivacyFaIcon(

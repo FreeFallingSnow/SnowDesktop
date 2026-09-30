@@ -197,7 +197,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             app_->ShouldBeautifyIconBitmap(item_->iconIsMediaThumbnail));
         if (bmp)
         {
-            app_->DrawIconBitmap(context, bmp, iconRect, alpha);
+            app_->DrawIconBitmap(context, bmp, iconRect, alpha,
+                reinterpret_cast<std::uintptr_t>(item_));
         }
         else
         {
@@ -376,7 +377,8 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
             app_->ShouldBeautifyIconBitmap(entry_->iconIsMediaThumbnail));
         if (bmp)
         {
-            app_->DrawIconBitmap(context, bmp, iconRect, opacity);
+            app_->DrawIconBitmap(context, bmp, iconRect, opacity,
+                reinterpret_cast<std::uintptr_t>(entry_));
         }
         else
         {

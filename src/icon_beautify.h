@@ -35,6 +35,7 @@ enum class IconBeautifyPreset : int
     None = 0,
     DefaultBeautify = 1,
     Custom = 5,
+    FrostedGlass = 6,
 };
 
 namespace icon_beautify
@@ -61,6 +62,11 @@ struct IconBeautifySettings
     IconBeautifyPreset preset = IconBeautifyPreset::None;
     int mode = 0;
     float backgroundOpacity = 0.65f;
+    bool glassEnabled = false;
+    float glassBlurRadius = 16.0f;
+    bool edgeHighlightEnabled = false;
+    float edgeHighlightWidth = 1.0f;
+    float edgeHighlightStrength = 0.40f;
     bool gradientEnabled = false;
     int gradientDirection = 0;
     float backgroundStartR = 232.0f / 255.0f;
@@ -126,6 +132,10 @@ std::vector<std::uint32_t> Render(
     int height,
     const IconBeautifySettings& settings,
     std::optional<EdgeColor> detectedEdgeFill = std::nullopt);
+
+/** Directional reflection without a fill or glyph, for vector control plates. */
+std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
+    const IconBeautifySettings& settings);
 
 /** Shared host plate detector: follows visible contours through transparent margins. */
 std::optional<EdgeColor> DetectPlateFill(

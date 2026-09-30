@@ -469,6 +469,11 @@ std::uintptr_t DesktopApp::GetD2DIconCacheKey(HBITMAP hbm, bool beautified) cons
 void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
 {
     if (!hbm) return;
+    for (const bool beautified : {false, true})
+    {
+        const auto it = d2dIconCache_.find(GetD2DIconCacheKey(hbm, beautified));
+        if (it != d2dIconCache_.end()) iconGlassBackdrop_.erase(it->second.Get());
+    }
     d2dIconCache_.erase(GetD2DIconCacheKey(hbm, false));
     d2dIconCache_.erase(GetD2DIconCacheKey(hbm, true));
 }
@@ -483,6 +488,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
     if (!snowdesktop::icon_bitmap_pixels::ReadHBitmap(hbm, buffer))
         return nullptr;
 
+    bool needsGlassBackdrop = false;
     if (beautify)
     {
         std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
@@ -496,6 +502,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
                     detected.r, detected.g, detected.b };
             }
         }
+        needsGlassBackdrop = iconBeautifySettings_.glassEnabled && !edgeFill;
         buffer.pixels = snowdesktop::icon_beautify::Render(
             buffer.pixels, buffer.width, buffer.height,
             iconBeautifySettings_, edgeFill);
@@ -516,6 +523,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
         return nullptr;
     }
 
+    iconGlassBackdrop_[bitmap.Get()] = needsGlassBackdrop;
     return bitmap;
 }
 
@@ -559,16 +567,22 @@ ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(
 }
 
 void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
-    ID2D1Bitmap* bitmap, RECT destination, float opacity)
+    ID2D1Bitmap* bitmap, RECT destination, float opacity,
+    std::uintptr_t ownerKey, bool fitWithoutUpscaling)
 {
     if (!target || !bitmap || IsRectEmptyRect(destination))
         return;
 
     const D2D1_SIZE_U source = bitmap->GetPixelSize();
-    const auto fitted = snowdesktop::icon_render_rules::FitWithoutUpscaling(
+    auto fitted = snowdesktop::icon_render_rules::FitWithoutUpscaling(
         static_cast<int>(source.width), static_cast<int>(source.height),
         destination.right - destination.left,
         destination.bottom - destination.top);
+    if (!fitWithoutUpscaling)
+    {
+        fitted.width = destination.right - destination.left;
+        fitted.height = destination.bottom - destination.top;
+    }
     if (fitted.width <= 0 || fitted.height <= 0)
         return;
 
@@ -581,15 +595,46 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         static_cast<float>(left + fitted.width),
         static_cast<float>(top + fitted.height));
 
+    const auto glass = iconGlassBackdrop_.find(bitmap);
+    if (glass != iconGlassBackdrop_.end() && glass->second && iconBeautifySettings_.glassEnabled)
+    {
+        RegisterIconBackdrop({left, top, left + fitted.width, top + fitted.height}, opacity, ownerKey);
+    }
+
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (SUCCEEDED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) &&
         deviceContext)
     {
         deviceContext->DrawBitmap(bitmap, &dst, opacity,
-            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+            fitWithoutUpscaling ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC : D2D1_INTERPOLATION_MODE_LINEAR,
             nullptr, nullptr);
         return;
     }
     target->DrawBitmap(bitmap, dst, opacity,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+}
+
+void DesktopApp::RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t ownerKey)
+{
+    // Popup/quick-navigation backdrops are collected by their own animation
+    // transaction. Icons inherit that panel rather than adding a second blur.
+    if (renderingFloatingPopup_ || quickNavCompositionPaintInProgress_) return;
+    DesktopBackdropCompositor* compositor = &desktopBackdropCompositor_;
+    if (renderingPersistentDockHost_)
+    {
+        compositor = &renderingPersistentDockHost_->backdrop;
+        frame = snowdesktop::floating_dock_rules::DesktopRectToWindowRect(
+            frame, renderingPersistentDockHost_->sourceRect);
+    }
+    const auto key = ownerKey ? ownerKey | 1u : 0;
+    const bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
+        desktopWidgetBackdropRequestedDuringDraw_;
+    if (parentSuppliesGlass || compositor->HasPanelContaining(frame) || opacity <= 0.0f)
+    {
+        compositor->RemoveIconPanel(frame, key);
+        return;
+    }
+    if (compositor->AddIconPanel(frame, iconBeautifySettings_.shape,
+            iconBeautifySettings_.glassBlurRadius, key))
+        (void)compositor->SetPanelOpacity(frame, opacity);
 }

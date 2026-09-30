@@ -671,6 +671,16 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.shortcutArrowMode, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",
             decoded.iconBeautifyEnabled, error) ||
+        !ReadOptionalBoolean(root, "iconBeautifyGlassEnabled", "iconBeautifyGlassEnabled",
+            decoded.iconBeautifyGlassEnabled, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyGlassBlurRadius", "iconBeautifyGlassBlurRadius",
+            decoded.iconBeautifyGlassBlurRadius, error) ||
+        !ReadOptionalBoolean(root, "iconBeautifyEdgeHighlightEnabled", "iconBeautifyEdgeHighlightEnabled",
+            decoded.iconBeautifyEdgeHighlightEnabled, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyEdgeHighlightWidth", "iconBeautifyEdgeHighlightWidth",
+            decoded.iconBeautifyEdgeHighlightWidth, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyEdgeHighlightStrength", "iconBeautifyEdgeHighlightStrength",
+            decoded.iconBeautifyEdgeHighlightStrength, error) ||
         !ReadOptionalInteger(root, "iconBeautifyPreset", "iconBeautifyPreset",
             decoded.iconBeautifyPreset, error) ||
         !ReadOptionalInteger(root, "iconBeautifyMode", "iconBeautifyMode",

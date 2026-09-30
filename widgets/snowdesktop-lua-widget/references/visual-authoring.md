@@ -65,6 +65,7 @@ pairing:
 | `light` | `1` | dark/black |
 | `glass-dark` | `0` | light/white |
 | `glass-light` | `0` | light/white |
+| `glass-transparent` | `0` | light/white |
 | `acrylic-dark` | `0` | light/white |
 | `acrylic-light` | `1` | dark/black |
 
@@ -120,7 +121,7 @@ and writes a real API v2/D2D PNG. It does not emulate the view tree. The output
 is opaque and contains the chosen background, resolved host material and widget
 content.
 
-Use `--appearance` with `dark`, `light`, `glass-dark`, `glass-light`,
+Use `--appearance` with `dark`, `light`, `glass-dark`, `glass-light`, `glass-transparent`,
 `acrylic-dark` or `acrylic-light`. The legacy `--theme dark|light` shorthand
 cannot be combined with `--appearance`. Use `--background <image-file>` for the
 final catalog composition. The source background is not included in the package
@@ -185,3 +186,7 @@ set the manifest `preview` field to that relative file, validate, and then pack.
 For a square Workshop image, keep the component's real `--columns` and `--rows`
 and add `--canvas-size 512 --padding 48`; the host preserves the widget aspect
 ratio and center-crops the supplied background.
+
+`glass-transparent` uses light/white content (`contentTheme=0`), neutral low-opacity tint,
+blur and edge reflections. Use the tool bundled with a supporting host; older
+tools reject this appearance. Lua API and schema versions remain unchanged.

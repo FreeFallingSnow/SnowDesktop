@@ -2467,16 +2467,16 @@ int wmain(int argc, wchar_t** argv) try
                 topGain * topLeftCornerChangedPixels * 7,
         "broad area light keeps the rounded corner from overpowering the connected straight edge");
 
-    constexpr std::array<std::wstring_view, 6> appearances{
+    constexpr std::array<std::wstring_view, 7> appearances{
         L"dark", L"light", L"glass-dark", L"glass-light",
-        L"acrylic-dark", L"acrylic-light" };
-    constexpr std::array<std::string_view, 6> appearanceNames{
+        L"acrylic-dark", L"acrylic-light", L"glass-transparent" };
+    constexpr std::array<std::string_view, 7> appearanceNames{
         "dark", "light", "glass-dark", "glass-light",
-        "acrylic-dark", "acrylic-light" };
-    constexpr std::array<std::string_view, 6> appearanceThemes{
-        "dark", "light", "dark", "light", "dark", "light" };
-    constexpr std::array<int, 6> appearanceContentThemes{
-        0, 1, 0, 0, 0, 1 };
+        "acrylic-dark", "acrylic-light", "glass-transparent" };
+    constexpr std::array<std::string_view, 7> appearanceThemes{
+        "dark", "light", "dark", "light", "dark", "light", "dark" };
+    constexpr std::array<int, 7> appearanceContentThemes{
+        0, 1, 0, 0, 0, 1, 0 };
     std::vector<RgbaBitmap> materialPreviews;
     for (std::size_t index = 0; index < appearances.size(); ++index)
     {

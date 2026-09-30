@@ -122,6 +122,7 @@ inline void NormalizeDockSettings(DockSettings& settings) noexcept
     {
     case kAppearancePresetDark: case kAppearancePresetLight:
     case kAppearancePresetGlassDark: case kAppearancePresetGlassLight:
+    case kAppearancePresetGlassTransparent:
     case kAppearancePresetAcrylicDark: case kAppearancePresetAcrylicLight:
     case kAppearancePresetCustom: break;
     default: settings.appearancePreset = kAppearancePresetCustom; break;
