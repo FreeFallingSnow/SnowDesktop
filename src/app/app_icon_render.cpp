@@ -543,8 +543,7 @@ void DesktopApp::DrawPrivacyFaIcon(
 
     if (cached)
     {
-        ctx->DrawBitmap(cached.Get(), ToD2DRect(rect), 1.0f,
-            D2D1_INTERPOLATION_MODE_LINEAR);
+        DrawIconBitmap(ctx, cached.Get(), rect, 1.0f, 0, false);
         return;
     }
 

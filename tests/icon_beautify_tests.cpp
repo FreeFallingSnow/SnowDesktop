@@ -1,5 +1,6 @@
 #include "icon_beautify.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -379,14 +380,28 @@ int main()
         const auto noReflection = [&] { style.edgeHighlightEnabled = false;
             return beautify::RenderEdgeReflection(104, 104, style); }();
         std::uint64_t primary = 0, opposite = 0;
+        unsigned topPeak = 0, leftPeak = 0, bottomPeak = 0, rightPeak = 0;
         bool masked = true;
         for (int y = 0; y < 104; ++y) for (int x = 0; x < 104; ++x)
         {
             const auto alpha = reflection[static_cast<size_t>(y) * 104 + x] >> 24;
             if (x + y < 104) primary += alpha; else opposite += alpha;
+            // Compare facing edge bands independently of the contour's area.
+            // Pebble has unequal edge lengths on either side of the diagonal.
+            if (x >= 49 && x <= 54)
+            {
+                if (y < 52) topPeak = std::max(topPeak, alpha);
+                else bottomPeak = std::max(bottomPeak, alpha);
+            }
+            if (y >= 49 && y <= 54)
+            {
+                if (x < 52) leftPeak = std::max(leftPeak, alpha);
+                else rightPeak = std::max(rightPeak, alpha);
+            }
             if (beautify::ShapeMaskAlpha(shape, x, y, 104, 104) == 0 && alpha) masked = false;
         }
-        Check(primary > opposite * 2 && opposite > 0,
+        Check(primary > opposite && topPeak > bottomPeak * 2 &&
+            leftPeak > rightPeak * 2 && bottomPeak > 0 && rightPeak > 0,
             "reflection favors the top/left and retains weaker opposite transmission");
         Check(masked && reflection[52 * 104 + 52] == 0,
             "reflection follows each contour and leaves the center and exterior clear");

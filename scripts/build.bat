@@ -18,11 +18,11 @@ if defined RELOAD_SHELL (
     tasklist /fi "IMAGENAME eq explorer.exe" /nh 2>nul | find /i "explorer.exe" >nul
     if not errorlevel 1 (
         taskkill /f /im explorer.exe >nul 2>&1
-        timeout /t 2 /nobreak >nul
+        powershell -NoProfile -Command "Start-Sleep -Seconds 2"
         rem Launch Explorer detached: Start-Process creates the process without
         rem inheriting this script's console/pipe handles, so captured build
         rem output pipelines reach EOF instead of hanging forever.
-        powershell -NoProfile -Command "Start-Process explorer.exe"
+        powershell -NoProfile -Command "Start-Process explorer.exe -WindowStyle Hidden"
     )
     goto configure
 )
