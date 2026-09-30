@@ -15,14 +15,14 @@ bool DesktopApp::DrawDockControlBackground(
     const bool lightSurface = !forceWhiteStyle &&
         luminance > 0.58f && appearance.widgetAlpha > 0.10f;
     const bool active = state > 0;
-    const D2D1_COLOR_F fill = forceWhiteStyle
+    D2D1_COLOR_F fill = forceWhiteStyle
         ? D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.18f : 0.11f)
         : (active
             ? D2D1::ColorF(0.39f, 0.66f, 1.0f, lightSurface ? 0.20f : 0.25f)
             : (lightSurface
                 ? D2D1::ColorF(0.08f, 0.11f, 0.16f, 0.075f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.11f)));
-    const D2D1_COLOR_F border = forceWhiteStyle
+    D2D1_COLOR_F border = forceWhiteStyle
         ? D2D1::ColorF(1.0f, 1.0f, 1.0f, active ? 0.36f : 0.20f)
         : (active
             ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.88f)
@@ -32,8 +32,22 @@ bool DesktopApp::DrawDockControlBackground(
     const int width = std::max(1, static_cast<int>(rect.right - rect.left));
     const int height = std::max(1, static_cast<int>(rect.bottom - rect.top));
     const float scale = static_cast<float>(std::min(width, height)) / 52.0f;
+    float strokeWidth = (active ? 1.6f : 1.0f) * std::max(0.75f, scale);
+    if (!active && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
+    {
+        // Controls share the icon material; their former fixed 11% fill and
+        // 20% outline made search/folder tiles heavier than neighboring icons.
+        fill = D2D1::ColorF(iconBeautifySettings_.backgroundStartR,
+            iconBeautifySettings_.backgroundStartG,
+            iconBeautifySettings_.backgroundStartB,
+            iconBeautifySettings_.backgroundOpacity);
+        border = D2D1::ColorF(iconBeautifySettings_.outlineR,
+            iconBeautifySettings_.outlineG, iconBeautifySettings_.outlineB,
+            iconBeautifySettings_.outlineEnabled ? iconBeautifySettings_.outlineOpacity : 0.0f);
+        strokeWidth = iconBeautifySettings_.outlineWidth * scale;
+    }
     DrawBeautifiedIconPlate(ctx, rect, fill, border,
-        (active ? 1.6f : 1.0f) * std::max(0.75f, scale), ownerKey);
+        strokeWidth, ownerKey);
     return lightSurface;
 }
 

@@ -139,15 +139,15 @@ PersonalizationSettings PersonalizationSettings::GlassTransparentPreset()
     PersonalizationSettings s;
     s.backgroundPreset = kAppearancePresetGlassTransparent;
     s.widgetBgR = s.widgetBgG = s.widgetBgB = 1.0f;
-    s.widgetAlpha = 0.06f;
-    s.widgetBorderAlpha = 0.12f;
+    s.widgetAlpha = 0.02f;
+    s.widgetBorderAlpha = 0.08f;
     s.widgetBorderWidth = 0.75f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = 1.25f;
-    s.widgetEdgeHighlightStrength = 0.45f;
+    s.widgetEdgeHighlightWidth = 1.0f;
+    s.widgetEdgeHighlightStrength = 0.90f;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
-    s.glassBlurRadius = 24.0f;
+    s.glassBlurRadius = 10.0f;
     s.contentTheme = 0;
     return s;
 }
@@ -467,11 +467,14 @@ bool LoadPersonalization(
             kDefaultEdgeHighlightStrength;
     if (!edgeHighlightEnabledLoaded && s.glassEnabled)
         s.widgetBorderAlpha = 0.0f;
-    // Presets are immutable choices in the UI. Refresh persisted acrylic
+    // Presets are immutable choices in the UI. Refresh persisted glass/acrylic
     // values so palette refinements and the old placeholder migration are
     // applied without requiring users to reselect the theme.
+    const bool transparentGlassPreset =
+        s.backgroundPreset == kAppearancePresetGlassTransparent;
     if (s.backgroundPreset == kAppearancePresetAcrylicDark ||
-        s.backgroundPreset == kAppearancePresetAcrylicLight)
+        s.backgroundPreset == kAppearancePresetAcrylicLight ||
+        transparentGlassPreset)
     {
         const float explicitBorderWidth = s.widgetBorderWidth;
         const bool explicitEdgeHighlightEnabled =
@@ -510,9 +513,14 @@ bool LoadPersonalization(
             s.widgetBorderWidth = explicitBorderWidth;
         if (edgeHighlightEnabledLoaded)
             s.widgetEdgeHighlightEnabled = explicitEdgeHighlightEnabled;
-        if (edgeHighlightWidthLoaded)
+        // The first transparent preset shipped with a weaker lip than the
+        // ordinary glass preset. Refresh those default values while retaining
+        // independently edited widths, strengths and the disabled state.
+        if (edgeHighlightWidthLoaded && (!transparentGlassPreset ||
+                std::abs(explicitEdgeHighlightWidth - 1.25f) > 0.0005f))
             s.widgetEdgeHighlightWidth = explicitEdgeHighlightWidth;
-        if (edgeHighlightStrengthLoaded)
+        if (edgeHighlightStrengthLoaded && (!transparentGlassPreset ||
+                std::abs(explicitEdgeHighlightStrength - 0.45f) > 0.0005f))
             s.widgetEdgeHighlightStrength = explicitEdgeHighlightStrength;
     }
     return true;

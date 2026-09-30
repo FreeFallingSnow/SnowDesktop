@@ -592,6 +592,7 @@ struct EdgeHighlightMaskKey
     UINT32 height = 0;
     std::uint32_t radiusSixteenths = 0;
     std::uint32_t depthSixteenths = 0;
+    bool flatGlass = false;
 
     bool operator==(const EdgeHighlightMaskKey&) const = default;
 };
@@ -661,7 +662,8 @@ std::uint32_t QuantizeSixteenths(float value)
 }
 
 std::vector<std::uint8_t> GenerateEdgeHighlightMask(
-    UINT32 width, UINT32 height, float cornerRadius, float bevelDepth)
+    UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
+    bool flatGlass)
 {
     std::vector<std::uint8_t> pixels(
         static_cast<std::size_t>(width) * height, 0u);
@@ -678,7 +680,7 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
         std::min(static_cast<float>(width), static_cast<float>(height)) *
             0.5f - 0.01f);
     const float haloDepth = std::min(availableDepth,
-        std::max(coreDepth * 2.5f, coreDepth + 3.0f));
+        flatGlass ? coreDepth * 1.25f : std::max(coreDepth * 2.5f, coreDepth + 3.0f));
     constexpr std::array<float, 2> sampleOffsets{ 0.25f, 0.75f };
 
     for (UINT32 y = 0; y < height; ++y)
@@ -716,23 +718,21 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     const float transmitted =
                         kEdgeHighlightTransmittedStrength * std::pow(
                             std::max(-alignment, 0.0f), 0.80f);
-                    // A glass lip is brightest at the rim and then loses
-                    // energy continuously into the material. Keep a narrow
-                    // crest for the lit bevel and a broader, lower shoulder
-                    // for the inward bloom; this avoids a second contour
-                    // where two independently peaked bands would meet.
+                    // A thin sheet keeps almost all reflected light at its
+                    // rim. The ordinary material retains its broader shoulder
+                    // so existing glass/acrylic presets keep their bevel.
                     const float specularCrest =
-                        1.0f - SmoothStep(0.02f, 0.55f, corePosition);
+                        1.0f - SmoothStep(0.02f, flatGlass ? 1.0f : 0.55f, corePosition);
                     const float softShoulder =
                         1.0f - SmoothStep(0.05f, 1.0f, haloPosition);
                     const float primaryBand =
-                        0.68f * specularCrest + 0.32f * softShoulder;
-                    // The opposite bevel receives only broad transmitted
-                    // light. Omitting its sharp crest keeps the bottom-right
-                    // response readable without turning the treatment into a
-                    // uniform luminous outline.
+                        flatGlass ? 0.96f * specularCrest + 0.04f * softShoulder
+                                  : 0.68f * specularCrest + 0.32f * softShoulder;
+                    // The opposite edge stays faint. The thin sheet also
+                    // confines transmitted light to the rim, avoiding an
+                    // inward bloom that would suggest a rounded cross-section.
                     const float transmittedBand =
-                        0.55f * softShoulder;
+                        flatGlass ? 0.22f * specularCrest : 0.55f * softShoulder;
                     accumulated += coverage *
                         (primary * primaryBand +
                             transmitted * transmittedBand);
@@ -795,7 +795,8 @@ void CacheEdgeHighlightMask(const EdgeHighlightMaskKey& key,
 }
 
 ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
-    UINT32 width, UINT32 height, float cornerRadius, float bevelDepth)
+    UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
+    bool flatGlass)
 {
     if (!context || width == 0 || height == 0 ||
         !context->IsDxgiFormatSupported(DXGI_FORMAT_A8_UNORM))
@@ -813,6 +814,7 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
         .height = height,
         .radiusSixteenths = QuantizeSixteenths(cornerRadius),
         .depthSixteenths = QuantizeSixteenths(bevelDepth),
+        .flatGlass = flatGlass,
     };
     if (auto cached = FindCachedEdgeHighlightMask(key))
         return cached;
@@ -822,7 +824,7 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     const float quantizedDepth =
         static_cast<float>(key.depthSixteenths) / 16.0f;
     const std::vector<std::uint8_t> pixels = GenerateEdgeHighlightMask(
-        width, height, quantizedRadius, quantizedDepth);
+        width, height, quantizedRadius, quantizedDepth, flatGlass);
     float dpiX = 96.0f;
     float dpiY = 96.0f;
     context->GetDpi(&dpiX, &dpiY);
@@ -869,7 +871,7 @@ D2D1_COLOR_F ResolveEdgeHighlightReflection(
 
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength)
+    float effectStrength, bool flatGlass)
 {
     const float strength = std::clamp(effectStrength, 0.0f, 1.0f);
     if (!context || strength <= 0.0005f ||
@@ -897,7 +899,7 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
         return false;
     const ComPtr<ID2D1Bitmap1> mask = GetEdgeHighlightMask(context,
         static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight),
-        cornerRadius, strokeWidth);
+        cornerRadius, strokeWidth, flatGlass);
     if (!mask)
     {
         // A8 opacity masks are optional on some Direct2D devices. Preserve a
@@ -921,7 +923,7 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     }
 
     // The mask contains only the normal-facing primary reflection and a
-    // weaker, softer transmitted reflection on the opposite bevel. There is
+    // weaker transmitted reflection on the opposite edge. There is
     // deliberately no full-perimeter base stroke.
     const D2D1_PRIMITIVE_BLEND previousBlend = context->GetPrimitiveBlend();
     const D2D1_ANTIALIAS_MODE previousAntialias =

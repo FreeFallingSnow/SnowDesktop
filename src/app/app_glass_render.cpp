@@ -5,10 +5,10 @@
 
 bool DesktopApp::DrawEdgeHighlight(ID2D1DeviceContext* ctx, RECT frame,
     float radius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength)
+    float effectStrength, bool flatGlass)
 {
     return snowdesktop::widget_preview::DrawEdgeHighlight(
-        ctx, frame, radius, color, strokeWidth, effectStrength);
+        ctx, frame, radius, color, strokeWidth, effectStrength, flatGlass);
 }
 
 /** @brief 返回设置界面显示的原生毛玻璃合成状态。 */

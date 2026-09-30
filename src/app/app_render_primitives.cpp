@@ -172,7 +172,8 @@ bool DesktopApp::DrawWidgetPanelEdgeHighlight(
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
         std::max(0.0f, effectScale);
     return DrawEdgeHighlight(ctx, frame, std::max(0.0f, radius), fill,
-        edgeWidth, p.widgetEdgeHighlightStrength);
+        edgeWidth, p.widgetEdgeHighlightStrength,
+        p.backgroundPreset == kAppearancePresetGlassTransparent);
 }
 
 void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,

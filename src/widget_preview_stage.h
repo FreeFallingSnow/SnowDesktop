@@ -104,6 +104,6 @@ D2D1_COLOR_F ResolveEdgeHighlightReflection(
 /** Add a normal-driven bevel reflection from straight material RGB/opacity. */
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength);
+    float effectStrength, bool flatGlass = false);
 
 } // namespace snowdesktop::widget_preview

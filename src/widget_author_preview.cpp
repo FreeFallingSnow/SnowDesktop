@@ -405,6 +405,9 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 edgeHighlightStrength;
             resolved.material.glassEnabled = glass;
             resolved.material.acrylicEnabled = glass && acrylic;
+            if (engine.RuntimeGetStorageValue(kPreviewWidgetId, "__preset") ==
+                std::to_string(kAppearancePresetGlassTransparent))
+                resolved.material.backgroundPreset = kAppearancePresetGlassTransparent;
         }
         const std::string storedTheme = engine.RuntimeGetStorageValue(
             kPreviewWidgetId, "__contentTheme");
@@ -494,7 +497,8 @@ void DrawHostEdgeHighlight(ID2D1DeviceContext* context,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
     (void)snowdesktop::widget_preview::DrawEdgeHighlight(
         context, bounds, radius, color(theme.bg, theme.alpha), edgeWidth,
-        resolved.material.widgetEdgeHighlightStrength);
+        resolved.material.widgetEdgeHighlightStrength,
+        resolved.material.backgroundPreset == kAppearancePresetGlassTransparent);
 }
 
 std::string FirstValidationError(

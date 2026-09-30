@@ -2560,7 +2560,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
             (void)app_->DrawEdgeHighlight(
                 context, panelBounds, p.cornerRadius, fill, edgeWidth,
-                p.widgetEdgeHighlightStrength);
+                p.widgetEdgeHighlightStrength,
+                p.backgroundPreset == kAppearancePresetGlassTransparent);
         }
     }
 

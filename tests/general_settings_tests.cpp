@@ -591,7 +591,8 @@ int main()
         "appearance and Lua widget row height round trip independently");
     // Group counts must survive the acrylic preset refresh on load and must
     // remain independent from category counts, including an explicit off.
-    for (const int preset : {kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight})
+    for (const int preset : {kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight,
+            kAppearancePresetGlassTransparent})
     {
         for (const bool enabled : {true, false})
         {
@@ -609,8 +610,40 @@ int main()
                     loadedAppearance.popupHoverOpen == enabled &&
                     loadedAppearance.popupHoverDelayMs == 1400.0f &&
                     loadedAppearance.showCategoryTabCounts == !enabled,
-                "group count preference survives acrylic preset refresh independently from category counts");
+                "group count preference survives material preset refresh independently from category counts");
         }
+    }
+    // A saved selection must receive the refined material on restart without
+    // losing independent layout choices or explicitly edited edge settings.
+    for (const bool editedEdge : {false, true})
+    {
+        auto previousGlass = PersonalizationSettings::GlassTransparentPreset();
+        previousGlass.widgetAlpha = 0.06f;
+        previousGlass.glassBlurRadius = 24.0f;
+        previousGlass.widgetEdgeHighlightWidth = editedEdge ? 3.0f : 1.25f;
+        previousGlass.widgetEdgeHighlightStrength = editedEdge ? 0.60f : 0.45f;
+        previousGlass.widgetEdgeHighlightEnabled = !editedEdge;
+        previousGlass.cornerRadius = 32.0f;
+        previousGlass.barHeight = 37.0f;
+        previousGlass.luaWidgetContentRowHeight = 34.0f;
+        previousGlass.contextMenuStyle = 6;
+        const auto currentGlass = PersonalizationSettings::GlassTransparentPreset();
+        Check(SavePersonalization(personalizationPath.c_str(), previousGlass) &&
+                LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                loadedAppearance.widgetAlpha == currentGlass.widgetAlpha &&
+                loadedAppearance.glassBlurRadius == currentGlass.glassBlurRadius &&
+                loadedAppearance.contentTheme == 0 &&
+                loadedAppearance.backgroundPreset == kAppearancePresetGlassTransparent &&
+                loadedAppearance.widgetEdgeHighlightWidth == (editedEdge
+                    ? previousGlass.widgetEdgeHighlightWidth : currentGlass.widgetEdgeHighlightWidth) &&
+                loadedAppearance.widgetEdgeHighlightStrength == (editedEdge
+                    ? previousGlass.widgetEdgeHighlightStrength : currentGlass.widgetEdgeHighlightStrength) &&
+                loadedAppearance.widgetEdgeHighlightEnabled == !editedEdge &&
+                loadedAppearance.cornerRadius == previousGlass.cornerRadius &&
+                loadedAppearance.barHeight == previousGlass.barHeight &&
+                loadedAppearance.luaWidgetContentRowHeight == previousGlass.luaWidgetContentRowHeight &&
+                loadedAppearance.contextMenuStyle == 6,
+            "persisted transparent glass refreshes its material and former defaults while preserving edited edges and layout");
     }
     // Persist through a non-custom theme as well: applying a preset must not
     // discard the independent context-menu selection.

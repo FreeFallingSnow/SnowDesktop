@@ -543,7 +543,8 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
     const float wf = static_cast<float>(width), hf = static_cast<float>(height);
     const float shortSide = std::min(wf, hf);
     const float depth = settings.edgeHighlightWidth * shortSide / 52.0f;
-    const float halo = std::max(depth * 2.5f, depth + shortSide * 3.0f / 52.0f);
+    const float halo = settings.glassEnabled ? depth * 1.25f
+        : std::max(depth * 2.5f, depth + shortSide * 3.0f / 52.0f);
     const auto& inner = CachedMask(settings.shape, width, height, halo);
     float area = 0.0f;
     for (size_t i = 0; i < outline.size(); ++i)
@@ -580,9 +581,13 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         const float distance = std::sqrt(nearest);
         const float alignment = -(nx + ny) * 0.70710678f;
         const float shoulder = 1.0f - smooth(0.05f, 1.0f, distance / halo);
-        const float crest = 1.0f - smooth(0.02f, 0.55f, distance / depth);
-        const float light = std::pow(std::max(alignment, 0.0f), 0.65f) * (0.68f * crest + 0.32f * shoulder) +
-            0.40f * std::pow(std::max(-alignment, 0.0f), 0.80f) * 0.55f * shoulder;
+        const float crest = 1.0f - smooth(0.02f,
+            settings.glassEnabled ? 1.0f : 0.55f, distance / depth);
+        const float primaryBand = settings.glassEnabled
+            ? 0.96f * crest + 0.04f * shoulder : 0.68f * crest + 0.32f * shoulder;
+        const float transmittedBand = settings.glassEnabled ? 0.22f * crest : 0.55f * shoulder;
+        const float light = std::pow(std::max(alignment, 0.0f), 0.65f) * primaryBand +
+            0.40f * std::pow(std::max(-alignment, 0.0f), 0.80f) * transmittedBand;
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
         output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
     }
@@ -745,12 +750,15 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.shape = IconBeautifyShape::ContinuousRounded;
         settings.backgroundStartR = settings.backgroundStartG = settings.backgroundStartB = 1.0f;
         settings.backgroundEndR = settings.backgroundEndG = settings.backgroundEndB = 1.0f;
-        settings.backgroundOpacity = 0.06f;
+        settings.backgroundOpacity = 0.02f;
         settings.glassEnabled = true;
+        settings.glassBlurRadius = 10.0f;
         settings.edgeHighlightEnabled = true;
+        settings.edgeHighlightWidth = 0.75f;
+        settings.edgeHighlightStrength = 0.25f;
         settings.outlineEnabled = true;
         settings.outlineWidth = 0.5f;
-        settings.outlineOpacity = 0.12f;
+        settings.outlineOpacity = 0.04f;
         settings.outlineR = settings.outlineG = settings.outlineB = 1.0f;
         settings.shadowStrength = 0.15f;
         return settings;
