@@ -7,20 +7,19 @@ namespace snowdesktop::flat_glass_rim
 {
 inline constexpr int kPanelOverdraw = 3;
 
-// Two broad incident reflections taper along the contour as well as around
-// its corners. A constant normal alone gives every straight edge one width.
-inline float Lighting(float normalX, float normalY, float x, float y)
+// A rotated angular distribution places the weak sectors on the upper-right
+// and lower-left edges. Normalized coordinates keep those sectors at the same
+// relative contour positions on wide Docks and square icon plates.
+inline float Lighting(float x, float y)
 {
     x = std::clamp(x, 0.0f, 1.0f);
     y = std::clamp(y, 0.0f, 1.0f);
-    const float alignment = -(normalX + normalY) * 0.70710678f;
-    const float primaryPosition = 1.0f - (x + y) * 0.5f;
-    const float oppositePosition = (x + y) * 0.5f;
-    return std::clamp(0.06f +
-        0.84f * std::pow(std::max(alignment, 0.0f), 0.65f) *
-            std::pow(primaryPosition, 0.75f) +
-        0.90f * std::pow(std::max(-alignment, 0.0f), 0.80f) *
-            std::pow(oppositePosition, 1.10f), 0.0f, 1.0f);
+    constexpr float kReflectionRotation = 3.14159265358979323846f / 3.0f;
+    const float angle = std::atan2(y - 0.5f, x - 0.5f);
+    const float alignment = std::cos(angle - kReflectionRotation);
+    return std::clamp(0.12f +
+        0.86f * std::pow(std::max(alignment, 0.0f), 0.85f) +
+        0.66f * std::pow(std::max(-alignment, 0.0f), 0.90f), 0.0f, 1.0f);
 }
 
 inline float WidthScale(float lighting)

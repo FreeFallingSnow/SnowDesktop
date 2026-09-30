@@ -711,7 +711,6 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     if (flatGlass)
                     {
                         const float lighting = flat_glass_rim::Lighting(
-                            sample.normalX, sample.normalY,
                             (static_cast<float>(x) + sampleX - static_cast<float>(padding)) /
                                 static_cast<float>(width),
                             (static_cast<float>(y) + sampleY - static_cast<float>(padding)) /

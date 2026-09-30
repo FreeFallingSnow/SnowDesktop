@@ -400,9 +400,25 @@ int main()
             }
             if (beautify::ShapeMaskAlpha(shape, x, y, 104, 104) == 0 && alpha) masked = false;
         }
-        Check(primary > opposite && topPeak > bottomPeak &&
-            leftPeak > rightPeak && bottomPeak > 0 && rightPeak > 0,
-            "reflection favors the top/left while every facing edge retains a visible rim");
+        Check(opposite > primary && bottomPeak > topPeak &&
+            rightPeak > leftPeak && topPeak > 0 && leftPeak > 0,
+            "rotated reflection favors the lower/right lobe while retaining the opposite reflection");
+        if (shape == IconBeautifyShape::Circle)
+        {
+            const auto peakNear = [&](int centerX, int centerY) {
+                unsigned peak = 0;
+                for (int y = centerY - 2; y <= centerY + 2; ++y)
+                    for (int x = centerX - 2; x <= centerX + 2; ++x)
+                        peak = std::max(peak,
+                            reflection[static_cast<size_t>(y) * 104 + x] >> 24);
+                return peak;
+            };
+            // The user's reference has weak sectors shifted onto the right
+            // upper and left lower edges, rather than the exact diagonal.
+            Check(peakNear(97, 26) < peakNear(88, 15) &&
+                    peakNear(7, 78) < peakNear(16, 89),
+                "reflection minima rotate away from the diagonal corners");
+        }
         Check(masked && reflection[52 * 104 + 52] == 0,
             "reflection follows each contour and leaves the center and exterior clear");
         Check(HashPixels(reflection) != HashPixels(noReflection),

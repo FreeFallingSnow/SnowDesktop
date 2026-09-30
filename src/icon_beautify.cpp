@@ -582,7 +582,7 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         const float distance = std::sqrt(nearest);
         const float alignment = -(nx + ny) * 0.70710678f;
         const float lighting = settings.glassEnabled
-            ? flat_glass_rim::Lighting(nx, ny,
+            ? flat_glass_rim::Lighting(
                 (static_cast<float>(x) + 0.5f) / wf,
                 (static_cast<float>(y) + 0.5f) / hf)
             : 0.0f;
@@ -764,15 +764,15 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.shape = IconBeautifyShape::ContinuousRounded;
         settings.backgroundStartR = settings.backgroundStartG = settings.backgroundStartB = 1.0f;
         settings.backgroundEndR = settings.backgroundEndG = settings.backgroundEndB = 1.0f;
-        settings.backgroundOpacity = 0.02f;
+        settings.backgroundOpacity = 0.04f;
         settings.glassEnabled = true;
         settings.glassBlurRadius = 10.0f;
         settings.edgeHighlightEnabled = true;
         settings.edgeHighlightWidth = 0.75f;
-        settings.edgeHighlightStrength = 0.25f;
+        settings.edgeHighlightStrength = 0.40f;
         settings.outlineEnabled = true;
         settings.outlineWidth = 0.5f;
-        settings.outlineOpacity = 0.04f;
+        settings.outlineOpacity = 0.06f;
         settings.outlineR = settings.outlineG = settings.outlineB = 1.0f;
         settings.shadowStrength = 0.15f;
         return settings;
