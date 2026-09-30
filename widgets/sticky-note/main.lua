@@ -179,13 +179,13 @@ local function render()
     local width = layout.contentWidth()
     local height = layout.contentHeight()
     local metrics = componentMetrics()
-    local padding = metrics.spacingMd
+    local padding = metrics.spacingMd + metrics.spacingXs
     local shape = {
         type = "rect",
-        x = padding,
-        y = padding,
-        width = math.max(metrics.strokeWidth, width - padding * 2),
-        height = math.max(metrics.strokeWidth, height - padding * 2),
+        x = 0,
+        y = 0,
+        width = math.max(metrics.strokeWidth, width),
+        height = math.max(metrics.strokeWidth, height),
     }
     local color = textColor()
     control.textArea({
@@ -205,7 +205,7 @@ local function render()
         borderAlpha = 0.0,
         focusedBorderAlpha = 0.0,
         radius = metrics.controlRadius,
-        padding = metrics.spacingXs,
+        padding = padding,
         borderThickness = metrics.strokeWidth,
         selectAll = false,
         liveUpdate = true,
