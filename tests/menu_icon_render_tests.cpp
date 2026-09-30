@@ -324,7 +324,7 @@ void CheckIconlessRows(HDC dc, std::uint32_t* pixels, int width, int height)
 }
 
 // Real embedded resources and production WIC/GDI entry points: catches missing
-// packaging, wrong theme/down-arrow coloring, filled holes, and skipped draw paths.
+// packaging, wrong theme/down-arrow coloring, incorrect surfaces, and skipped draw paths.
 void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
     std::uint32_t* pixels, int width, int height)
 {
@@ -333,14 +333,19 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
     const Sample holes[] = {
         { BuiltinIcon::Display, 8.75, 17.75 },
         { BuiltinIcon::Display, 15.25, 6.25 },
-        { BuiltinIcon::Paste, 15.5, 15 },
         { BuiltinIcon::Pin, 13.5, 9 },
         { BuiltinIcon::Settings, 12, 12 },
+    };
+    const Sample surfaces[] = {
+        { BuiltinIcon::Paste, 15.5, 15 },
+        { BuiltinIcon::Paste, 11, 4.25 },
+        { BuiltinIcon::NewItem, 8, 8 },
     };
     const Sample blue[] = {
         { BuiltinIcon::Display, 15.25, 3.5 },
         { BuiltinIcon::Display, 8.75, 15 },
         { BuiltinIcon::Paste, 20.25, 15 },
+        { BuiltinIcon::NewItem, 12, 12 },
         { BuiltinIcon::Settings, 12, 9 },
         { BuiltinIcon::Sort, 17.25, 10 },
         { BuiltinIcon::Sort, 14.25, 16.25 },
@@ -349,6 +354,7 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
     const Sample neutral[] = {
         { BuiltinIcon::Display, 3, 6.25 },
         { BuiltinIcon::Paste, 3.75, 10 },
+        { BuiltinIcon::NewItem, 2.75, 12 },
         { BuiltinIcon::Pin, 5, 19 },
         { BuiltinIcon::Pin, 17.5, 5.25 },
         { BuiltinIcon::AddPage, 12, 12 },
@@ -373,7 +379,7 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
             };
             for (const auto& point : holes) if (point.icon == icon)
                 Expect((sample(point) >> 24) == 0,
-                    "approved display/paste/pin/settings interiors stay transparent");
+                    "approved display/pin/settings interiors stay transparent");
             const auto matches = [&](std::uint32_t pixel, COLORREF color) {
                 const auto expected = PixelColor(color);
                 if ((pixel >> 24) < 240) return false;
@@ -382,11 +388,17 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
                         static_cast<int>((expected >> shift) & 255)) > 2) return false;
                 return true;
             };
+            for (const auto& point : surfaces) if (point.icon == icon)
+                Expect(matches(sample(point), light ? RGB(255, 255, 255) : RGB(59, 59, 59)),
+                    "paste and new-item interiors have independent theme surfaces");
             for (const auto& point : blue) if (point.icon == icon)
                 Expect(matches(sample(point), light ? RGB(0, 120, 212) : RGB(96, 205, 255)),
                     "requested contours and complete down arrow use the theme blue");
             for (const auto& point : neutral) if (point.icon == icon)
-                Expect(matches(sample(point), light ? RGB(48, 52, 59) : RGB(228, 230, 234)),
+                Expect(matches(sample(point), light
+                        ? ((icon == BuiltinIcon::Paste || icon == BuiltinIcon::NewItem)
+                            ? RGB(89, 89, 89) : RGB(48, 52, 59))
+                        : RGB(228, 230, 234)),
                     "up arrow, clipboard back, entire pin, add-page plus and rails stay neutral");
             DeleteObject(image);
         }
