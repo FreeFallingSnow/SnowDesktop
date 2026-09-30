@@ -263,7 +263,14 @@ void DesktopApp::DrainBackgroundShellWork()
     folderReadWork_.Drain();
     RetryFolderReads();
     if (dragSession_.HasContext() || dragDropController_.IsTransportActive() || mouseDown_)
+    {
+        // First pixels/refinement update only the current popup's presentation;
+        // source containers and all ordinary model deliveries remain fenced.
+        if (dockFolderPopupOpen_ && popupAnimation_.IsInteractive())
+            iconWork_.Drain(std::to_wstring(iconLoadSerial_) + L"\nF\n" +
+                kDockFolderPopupWidgetId + L"\n");
         return;
+    }
     folderReadDelivery_.Drain(
         [this](const auto& key) { return folderReadVersions_[key]; },
         [this](auto& snapshot) { ApplyFolderRefresh(snapshot); });

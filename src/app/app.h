@@ -3085,6 +3085,8 @@ private:
     /** Start closing while retaining a passive hover request for revalidation. */
     void BeginCollectionPopupClose(bool clearSelection);
     void FinalizeCloseCollectionPopup();
+    /** @brief Esc 优先处理前景弹窗，保留仍按住的拖拽及其来源。 */
+    bool TryDismissPopupForEscape();
     void StartCollectionPopupAnimation(
         bool reverseClosingAnimation = false);
     void InvalidateCollectionPopupAnimation(

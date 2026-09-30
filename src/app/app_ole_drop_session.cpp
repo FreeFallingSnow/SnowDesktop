@@ -2273,6 +2273,8 @@ HRESULT DesktopApp::HandleOleDrop(
 HRESULT DesktopApp::HandleOleQueryContinueDrag(
     BOOL escapePressed, DWORD keyState)
 {
+    if (escapePressed && TryDismissPopupForEscape())
+        escapePressed = FALSE;
     POINT desktopPoint{};
     const bool pointerOnDesktopSurface =
         dragDropController_.IsSelfDragActive() &&

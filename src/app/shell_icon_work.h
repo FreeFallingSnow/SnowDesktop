@@ -58,13 +58,17 @@ public:
             std::move(provider), std::move(apply), window, message);
     }
 
-    void Drain()
+    void Drain(const std::wstring& prefix = {})
     {
-        first_.Drain(); fallback_.Drain(); detail_.Drain(); shortcut_.Drain();
+        const auto budget = std::chrono::milliseconds(4);
+        first_.Drain(budget, prefix); fallback_.Drain(budget, prefix);
+        detail_.Drain(budget, prefix); shortcut_.Drain(budget, prefix);
         for (unsigned count = 0; count < 32 && !pendingShortcuts_.empty(); ++count)
         {
-            if (!pendingShortcuts_.front().submit()) break;
-            pendingShortcuts_.pop_front();
+            const auto pending = std::find_if(pendingShortcuts_.begin(), pendingShortcuts_.end(),
+                [&](const auto& entry) { return entry.key.starts_with(prefix); });
+            if (pending == pendingShortcuts_.end() || !pending->submit()) break;
+            pendingShortcuts_.erase(pending);
         }
     }
     void Cancel(const std::wstring& prefix = {})

@@ -140,6 +140,12 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
     CancelRenameClick();
+    if (key == VK_ESCAPE && (dragSession_.HasContext() ||
+            widgetAction_ != WidgetAction::None || largeIconGesture_))
+    {
+        // Holding Esc after dismissing a popup must not cancel the same drag.
+        if (repeated || TryDismissPopupForEscape()) return true;
+    }
     if (largeIconGesture_)
     {
         if (key == VK_ESCAPE) { CancelLargeIconGesture(); return true; }
@@ -791,6 +797,38 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             RestoreInteractionInputFocus();
     }
     return handled;
+}
+
+bool DesktopApp::TryDismissPopupForEscape()
+{
+    using snowdesktop::desktop_keyboard_rules::PopupEscapeAction;
+    const auto action = snowdesktop::desktop_keyboard_rules::ResolvePopupEscapeAction(
+        quickNavigationOpen_, !luaWidgetPanelRequest_.widgetId.empty(),
+        luaWidgetPanelRequest_.dismissOnEscape, GetOpenPopupWidget() != nullptr);
+    switch (action)
+    {
+    case PopupEscapeAction::CloseQuickNavigation:
+        CloseQuickNavigation();
+        return true;
+    case PopupEscapeAction::CloseLuaPanel:
+        CloseLuaWidgetPanel(luaWidgetPanelRequest_.widgetId, "escape");
+        return true;
+    case PopupEscapeAction::KeepLuaPanel:
+        return true;
+    case PopupEscapeAction::CloseCollectionPopup:
+        pendingCollectionPopupOpen_.reset();
+        CancelCollectionPopupDwell();
+        CancelCollectionGroupTabDwell();
+        CloseCollectionPopup(false);
+        cachedDropPreview_ = {};
+        cachedDropPreviewPoint_ = { -1, -1 };
+        cachedDropPreviewTarget_ = nullptr;
+        cachedDropPreviewSlot_ = nullptr;
+        return true;
+    case PopupEscapeAction::None:
+    default:
+        return false;
+    }
 }
 
 /**

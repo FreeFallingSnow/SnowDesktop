@@ -3197,6 +3197,8 @@ int wmain(int argc, wchar_t** argv)
     TestShortcutClassificationCapacityRecovery();
     TestLocalIconsBypassBlockedShellFallback();
     TestBackgroundShellWorkIsolation();
+    TestFilteredBackgroundDeliveryDoesNotWakeDeferredModels();
+    TestPopupIconsDeliverWhileSourceResultsRemainDeferred();
     TestDeferredFolderReadAfterCapacityRecovers();
     TestDockLocalIconsBypassShell();
     TestInitialIconBitmaps();

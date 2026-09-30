@@ -45,6 +45,39 @@ void TestDockLocalIconsBypassShell()
     Check(stale == 0, "closing the Dock scheduler suppresses both local and Shell deliveries");
 }
 
+// The host drains only popup icons while a gesture owns ordinary models.
+// Real mailbox delivery must retain excluded results without wakeup spinning.
+void TestFilteredBackgroundDeliveryDoesNotWakeDeferredModels()
+{
+    struct Window
+    {
+        HWND value = CreateWindowExW(0, L"STATIC", L"FilteredDeliveryTest", 0,
+            0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        ~Window() { if (value) DestroyWindow(value); }
+    } window;
+    Check(window.value != nullptr, "filtered delivery owns a private wakeup window");
+    if (!window.value) return;
+    constexpr UINT wake = WM_APP + 198;
+    snowdesktop::BackgroundWork work(1);
+    int applied = 0;
+    work.Submit(L"desktop:source", [] { return 7; },
+        [&](int value) { applied = value; }, window.value, wake);
+    MSG message{};
+    bool ready = false;
+    const auto deadline = GetTickCount64() + 2000;
+    while (!ready && GetTickCount64() < deadline)
+    {
+        ready = PeekMessageW(&message, window.value, wake, wake, PM_REMOVE) != FALSE;
+        if (!ready) MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_POSTMESSAGE, MWMO_INPUTAVAILABLE);
+    }
+    Check(ready, "the ordinary source result is already in the real delivery mailbox");
+    work.Drain(std::chrono::milliseconds(4), L"popup:");
+    Check(applied == 0 && !PeekMessageW(&message, window.value, wake, wake, PM_REMOVE),
+        "popup-only draining neither applies a held source result nor reposts its blocked wakeup");
+    work.Drain();
+    Check(applied == 7, "the same deferred source result applies once after the gesture fence clears");
+}
+
 void TestBackgroundShellWorkIsolation()
 {
     struct Gate

@@ -476,6 +476,69 @@ void TestLocalIconsBypassBlockedShellFallback()
 // The slow samples include executables without embedded resources. Window pixels
 // must be available independently of Shell refinement. Shortcut reopen tests use
 // real GDI ownership; only resource/window providers are replaced with values.
+// Only providers are substituted. Exercise the production icon lanes and GDI
+// ownership: a held drag needs popup pixels without delivering source edits.
+void TestPopupIconsDeliverWhileSourceResultsRemainDeferred()
+{
+    using snowdesktop::shell_icon_request::Work;
+    using snowdesktop::shell_icon_request::ApplyBitmap;
+    using snowdesktop::shell_icon_request::ApplyPresentation;
+    using snowdesktop::shell_icon_request::Phase;
+    Work work(1, 1, 1, 1, 2);
+    FolderEntry popupEntry;
+    auto classification = std::make_shared<ShortcutClassificationGate>();
+    int sourceImages = 0, sourceDetails = 0, staleClassifications = 0;
+    bool firstPixels = false, refinedPixels = false, reopened = false;
+    const auto bitmap = [] {
+        auto image = std::make_shared<snowdesktop::BackgroundBitmap>();
+        image->bitmap = CreateBitmap(2, 2, 1, 32, nullptr);
+        image->size = {2, 2};
+        return image;
+    };
+    work.Submit(false, L"desktop:source", [] { return 1; },
+        [&](int) { ++sourceImages; }, nullptr, 0);
+    work.Submit(true, L"folder:source", [] { return 1; },
+        [&](int) { ++sourceDetails; }, nullptr, 0);
+    work.SubmitFirstWithFallback(L"popup:member", [] {
+        return std::shared_ptr<snowdesktop::BackgroundBitmap>{};
+    }, bitmap, [](const auto& image) { return image && image->bitmap; },
+        [classification] { return classification->Run(); },
+        [&](auto image) {
+            if (!image) return false;
+            ApplyBitmap(popupEntry, Phase::Phase1, image->bitmap, image->size, false, [](HBITMAP) {});
+            ApplyPresentation(popupEntry, Phase::Phase1, false, false);
+            firstPixels = popupEntry.iconBitmap && popupEntry.iconState == IconState::IconReady;
+            work.Submit(true, L"popup:refinement", bitmap, [&](auto refined) {
+                ApplyBitmap(popupEntry, Phase::Phase2, refined->bitmap, refined->size, true, [](HBITMAP) {});
+                ApplyPresentation(popupEntry, Phase::Phase2, false, false);
+                refinedPixels = popupEntry.iconBitmap && popupEntry.iconIsMediaThumbnail &&
+                    popupEntry.iconState == IconState::FullQuality;
+            }, nullptr, 0);
+            return firstPixels;
+        }, [&](bool) { ++staleClassifications; }, nullptr, 0);
+    const auto drainUntil = [&](const auto& done, const std::wstring& prefix) {
+        const auto deadline = GetTickCount64() + 2000;
+        while (!done() && GetTickCount64() < deadline) { work.Drain(prefix); SwitchToThread(); }
+        return done();
+    };
+    Check(drainUntil([&] { return firstPixels && refinedPixels &&
+            WaitForSingleObject(classification->entered, 0) == WAIT_OBJECT_0; }, L"popup:") &&
+            sourceImages == 0 && sourceDetails == 0,
+        "popup fallback pixels and refinement pass held source results in every lane");
+    work.Cancel(L"popup:");
+    SetEvent(classification->release);
+    Check(WaitForSingleObject(classification->returned, 2000) == WAIT_OBJECT_0,
+        "closed popup classifier returns through the real cancellation fence");
+    work.Submit(false, L"popup:member", [] { return 2; },
+        [&](int value) { reopened = value == 2; }, nullptr, 0);
+    Check(drainUntil([&] { return reopened; }, L"popup:") && staleClassifications == 0 &&
+            sourceImages == 0 && sourceDetails == 0,
+        "reopening delivers the replacement while cancelled classification and source edits remain excluded");
+    Check(drainUntil([&] { return sourceImages == 1 && sourceDetails == 1; }, {}) &&
+            staleClassifications == 0,
+        "ending the drag delivers both retained source results once without reviving a closed popup");
+}
+
 void TestInitialIconBitmaps()
 {
     using namespace snowdesktop::initial_icon_bitmap;
