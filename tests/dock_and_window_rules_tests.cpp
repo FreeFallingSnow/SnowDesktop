@@ -286,7 +286,7 @@ void CheckTaskbarActivationRevealDispatch()
     expect(alternate, 0, 8, false, "direct taskbar mouse activation must pass");
     alternate = hidden;
     alternate.protectedTaskbar = false;
-    expect(alternate, 0, 8, false, "disabled Dock, unmatched monitor, or unavailable adapter must pass");
+    expect(alternate, 0, 8, false, "disabled Dock or unavailable adapter must pass");
     alternate = hidden;
     alternate.geometryValid = false;
     expect(alternate, 0, 8, false, "failed geometry or pointer queries must fail open");
@@ -311,6 +311,57 @@ void CheckTaskbarActivationRevealDispatch()
     expect(alternate, 0, 8, true, "secondary passive activation must not depend on pointer monitor");
     alternate.cursor = {-500, 1079};
     expect(alternate, 0, 8, false, "negative-coordinate monitor edges must retain intentional reveal");
+
+    // Production target policy feeds the Explorer Unhide dispatch. A Dock
+    // placed on either monitor must protect both taskbars; the native Unhide
+    // call is the only substitute. This catches the old hasDock activation gate.
+    for (const bool dockOnPrimary : {false, true})
+    {
+        for (const bool secondary : {false, true})
+        {
+            const bool hasDock = secondary ? !dockOnPrimary : dockOnPrimary;
+            SystemTaskbarTargetAppearance target{.appearance = PersonalizationSettings{}};
+            ConfigureSystemTaskbarTargetProtection(target, true,
+                ShouldProtectAutoHideTaskbar(settings, true, true), hasDock);
+            Check(target.suppressTaskbar == hasDock,
+                "permanent taskbar hiding must remain limited to Dock screens");
+            alternate = hidden;
+            alternate.secondary = secondary;
+            alternate.callerRva = secondary ? 0x22550 : 0x92af3;
+            alternate.monitor = secondary ? RECT{-1920, 0, 0, 1080} : hidden.monitor;
+            alternate.taskbar = secondary ? RECT{-1920, 1078, 0, 1138} : hidden.taskbar;
+            alternate.protectedTaskbar = target.protectAutoHideActivation;
+            expect(alternate, 0, 8, true,
+                "minimization activation must stay suppressed on screens with or without a Dock");
+
+            alternate.explicitFocus = true;
+            expect(alternate, 0, 8, false,
+                "explicit keyboard taskbar focus must remain available on every screen");
+            alternate.explicitFocus = false;
+            alternate.cursor = {alternate.monitor.left + 100, alternate.monitor.bottom - 1};
+            expect(alternate, 0, 8, false,
+                "intentional edge reveal must remain available on every screen");
+            alternate.cursor = hidden.cursor;
+
+            target.shellPanelVisible = true;
+            ConfigureSystemTaskbarTargetProtection(target, true, true, hasDock);
+            alternate.protectedTaskbar = target.protectAutoHideActivation;
+            expect(alternate, 0, 8, false,
+                "an open shell panel must release activation protection on its screen");
+
+            target.shellPanelVisible = false;
+            ConfigureSystemTaskbarTargetProtection(target, false, true, hasDock);
+            Check(!target.suppressTaskbar, "activation protection must not enable permanent hiding");
+            alternate.protectedTaskbar = target.protectAutoHideActivation;
+            expect(alternate, 0, 8, true,
+                "closing a shell panel must restore protection even without permanent hiding");
+
+            ConfigureSystemTaskbarTargetProtection(target, false, false, hasDock);
+            alternate.protectedTaskbar = target.protectAutoHideActivation;
+            expect(alternate, 0, 8, false,
+                "turning off protection must restore native activation on every screen");
+        }
+    }
 
     Check(!ShouldProtectAutoHideTaskbar(settings, false, true) &&
         !ShouldProtectAutoHideTaskbar(settings, true, false),

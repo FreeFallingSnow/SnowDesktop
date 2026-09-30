@@ -57,6 +57,17 @@ struct SystemTaskbarTargetAppearance
     bool suppressTaskbar = false;
 };
 
+inline void ConfigureSystemTaskbarTargetProtection(
+    SystemTaskbarTargetAppearance& target,
+    bool suppressionRequested, bool protectActivation, bool hasDock) noexcept
+{
+    // Permanent hiding follows Dock placement. Passive activation from a
+    // minimized application can reach any taskbar, including screens without
+    // a Dock; intentional shell-panel access still releases that protection.
+    target.suppressTaskbar = suppressionRequested && hasDock;
+    target.protectAutoHideActivation = protectActivation && !target.shellPanelVisible;
+}
+
 struct DockSettings : DockLayoutSettings
 {
     bool operator==(const DockSettings&) const = default;

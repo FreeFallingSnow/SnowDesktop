@@ -535,7 +535,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const PersonalizationSettings defaultAppearance =
         ResolveSystemTaskbarAppearance(dockSettings_);
     std::vector<HMONITOR> dockMonitors;
-    if ((protectActivation || suppressionRequested) && hwnd_)
+    if (suppressionRequested && hwnd_)
     {
         for (const auto& container : containers_)
         {
@@ -580,8 +580,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         target.taskbar = taskbar;
         // Panel access remains available even with all appearance rules off.
         target.shellPanelVisible = shellPanelVisible;
-        target.suppressTaskbar = suppressionRequested && hasDock;
-        target.protectAutoHideActivation = protectActivation && !shellPanelVisible && hasDock;
+        ConfigureSystemTaskbarTargetProtection(
+            target, suppressionRequested, protectActivation, hasDock);
         if (selectedRule)
         {
             target.enabled =
