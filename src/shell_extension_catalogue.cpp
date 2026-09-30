@@ -69,11 +69,11 @@ bool Has(HKEY root, const std::wstring &path, const wchar_t *name)
     DWORD bytes = 0;
     return RegGetValueW(root, path.c_str(), name, RRF_RT_ANY, nullptr, nullptr, &bytes) == ERROR_SUCCESS;
 }
-bool Blocked(const std::wstring &clsid)
+bool Blocked(const std::wstring &clsid, HKEY user = HKEY_CURRENT_USER, HKEY machine = HKEY_LOCAL_MACHINE)
 {
     if (clsid.empty()) return false;
     bool enforceApproved = false, approved = false;
-    for (auto hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+    for (auto hive : {user, machine})
     {
         if (Has(hive, L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked", clsid.c_str())) return true;
         DWORD enforce = 0, bytes = sizeof(enforce);
@@ -460,6 +460,10 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
     timing.Record("complete", static_cast<unsigned>(scanner.result.rows.size()));
     return std::move(scanner.result);
+}
+bool HandlerEnabled(const std::wstring &clsid, HKEY user, HKEY machine)
+{
+    return !Blocked(clsid, user, machine);
 }
 bool Applies(const Registration &row, const Request &request)
 {

@@ -5,6 +5,7 @@
 #include "shell_extension_management.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_presentation.h"
+#include "shell_extension_nvidia_compat.h"
 #include "menu_label.h"
 #include "shell_new_item_capture.h"
 #include "shell_popup_menu_tracker.h"
@@ -22,6 +23,7 @@
 #include <stdexcept>
 #include <thread>
 #include <wrl/client.h>
+#include <wrl/implements.h>
 
 namespace
 {
@@ -641,6 +643,117 @@ void TestRegistryCatalogue()
     Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.name == L"Provider Shell.dll" &&
         find("reg:*\\shell\\library").application.name == L"Provider Shell.dll", "CLSID and rundll32 registrations identify the providing DLL rather than its generic host");
 
+}
+
+void TestNvidiaCompatibility()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    // System registration and class-factory failures are the external boundary.
+    // The real eligibility, native default-command selection, policy reader,
+    // catalogue association and visibility paths remain under test.
+    ext::Request desktop; desktop.context = ext::Context::Desktop; desktop.background = true;
+    Expect(ext::NvidiaCompatibilityRequired(desktop, true, true, CLASS_E_CLASSNOTAVAILABLE),
+        "a registered enabled NVIDIA extension rejected by the process gate gets compatibility");
+    for (const HRESULT status : {S_OK, E_ACCESSDENIED, REGDB_E_CLASSNOTREG, E_FAIL})
+        Expect(!ext::NvidiaCompatibilityRequired(desktop, true, true, status),
+            "a working, denied, missing or unrelated failed provider never gets a duplicate or policy bypass");
+    Expect(!ext::NvidiaCompatibilityRequired(desktop, false, true, CLASS_E_CLASSNOTAVAILABLE) &&
+        !ext::NvidiaCompatibilityRequired(desktop, true, false, CLASS_E_CLASSNOTAVAILABLE),
+        "removed and system-blocked NVIDIA registrations stay absent");
+    for (auto context : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground})
+    {
+        auto request = desktop; request.context = context;
+        Expect(!ext::NvidiaCompatibilityRequired(request, true, true, CLASS_E_CLASSNOTAVAILABLE),
+            "NVIDIA compatibility does not add application launchers to object or folder menus");
+    }
+    auto probe = desktop; probe.sourceClsid = ext::NvidiaControlPanelClsid;
+    Expect(!ext::NvidiaCompatibilityRequired(probe, true, true, CLASS_E_CLASSNOTAVAILABLE),
+        "metadata attribution probes never contribute executable compatibility entries");
+
+    TemporaryDirectory temp;
+    struct Registry
+    {
+        std::wstring path; HKEY key = nullptr;
+        ~Registry() { if (key) RegCloseKey(key); RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry{L"Software\\SnowDesktopNvidiaTests\\" + temp.path.filename().wstring()};
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, registry.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &registry.key, nullptr) == ERROR_SUCCESS, "private NVIDIA registration fixture");
+    auto put = [&](const wchar_t *path, const wchar_t *name, const wchar_t *value) {
+        HKEY key = nullptr;
+        Expect(RegCreateKeyExW(registry.key, path, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &key, nullptr) == ERROR_SUCCESS,
+            "create private NVIDIA metadata");
+        const auto status = RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value),
+            static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
+        RegCloseKey(key); Expect(status == ERROR_SUCCESS, "write private NVIDIA metadata");
+    };
+    constexpr auto handler = L"Directory\\Background\\shellex\\ContextMenuHandlers\\AliasName";
+    Expect(!ext::NvidiaControlPanelRegistered(registry.key), "no registration is not an available menu");
+    put(handler, nullptr, L"{F2E8B4A1-9C7D-4F6E-B3A5-8D2C1F4E9B7A}");
+    Expect(!ext::NvidiaControlPanelRegistered(registry.key), "the separate NVIDIA App cannot authorize a Control Panel entry");
+    put(handler, nullptr, ext::NvidiaControlPanelClsid);
+    Expect(ext::NvidiaControlPanelRegistered(registry.key), "registration identity is the CLSID, not its installer-chosen key name");
+    Expect(ext::HandlerEnabled(ext::NvidiaControlPanelClsid, registry.key, registry.key), "unblocked handler is enabled");
+    put(L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked", ext::NvidiaControlPanelClsid, L"");
+    Expect(!ext::HandlerEnabled(ext::NvidiaControlPanelClsid, registry.key, registry.key), "Blocked policy also denies compatibility");
+    RegDeleteTreeW(registry.key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked");
+    HKEY policy = nullptr;
+    Expect(RegCreateKeyExW(registry.key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", 0,
+        nullptr, 0, KEY_ALL_ACCESS, nullptr, &policy, nullptr) == ERROR_SUCCESS, "private approval policy");
+    const DWORD enforce = 1;
+    const auto policyStatus = RegSetValueExW(policy, L"EnforceShellExtensionSecurity", 0, REG_DWORD,
+        reinterpret_cast<const BYTE *>(&enforce), sizeof(enforce));
+    RegCloseKey(policy);
+    Expect(policyStatus == ERROR_SUCCESS && !ext::HandlerEnabled(ext::NvidiaControlPanelClsid, registry.key, registry.key),
+        "enforced approval cannot be bypassed by compatibility");
+    put(L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved", ext::NvidiaControlPanelClsid, L"NVIDIA");
+    Expect(ext::HandlerEnabled(ext::NvidiaControlPanelClsid, registry.key, registry.key), "approved registered handler is eligible");
+
+    auto catalogue = ext::ReadCatalogue(registry.key, false);
+    ext::Reply reply; reply.ok = true;
+    ext::Entry item; item.key = "{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
+    item.provider = "verb:" + item.key; item.label = L"Installed Control Panel"; item.token = 27;
+    reply.entries = {item}; ext::Associate(catalogue, desktop, reply);
+    Expect(reply.entries.front().registration == ext::NvidiaControlPanelRegistration,
+        "compatibility uses the original handler identity in settings");
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, true);
+    Expect(ext::VisibleSnapshot(prefs, reply, ext::ContextBit(ext::Context::Desktop)).size() == 1,
+        "the existing registration switch shows the compatibility item");
+    ext::SetOverride(prefs, ext::NvidiaControlPanelRegistration, ext::Context::Desktop, ext::Visibility::Hide);
+    Expect(ext::VisibleSnapshot(prefs, reply, ext::ContextBit(ext::Context::Desktop)).empty(),
+        "desktop visibility overrides still hide the compatibility item");
+
+    class ApplicationMenu final : public Microsoft::WRL::RuntimeClass<
+        Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IContextMenu>
+    {
+    public:
+        std::wstring verb = L"open";
+        IFACEMETHODIMP QueryContextMenu(HMENU, UINT, UINT, UINT, UINT) override { return E_NOTIMPL; }
+        IFACEMETHODIMP InvokeCommand(LPCMINVOKECOMMANDINFO) override { return E_NOTIMPL; }
+        IFACEMETHODIMP GetCommandString(UINT_PTR offset, UINT flags, UINT *, LPSTR output, UINT size) override
+        {
+            if (offset != 27 || flags != GCS_VERBW || !output || size <= verb.size()) return E_INVALIDARG;
+            wcscpy_s(reinterpret_cast<wchar_t *>(output), size, verb.c_str()); return S_OK;
+        }
+    };
+    auto application = Microsoft::WRL::Make<ApplicationMenu>();
+    struct Menu { HMENU value = CreatePopupMenu(); ~Menu() { DestroyMenu(value); } } menu;
+    AppendMenuW(menu.value, MF_STRING, 1, L"Uninstall");
+    AppendMenuW(menu.value, MF_STRING, 28, L"Open");
+    SetMenuDefaultItem(menu.value, 28, FALSE);
+    Expect(ext::DefaultApplicationOpen(application.Get(), menu.value) == 27,
+        "the safe application open command keeps its nonzero Shell offset, not the first command");
+    SetMenuDefaultItem(menu.value, 1, FALSE);
+    Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "uninstall is never an application launcher");
+    SetMenuDefaultItem(menu.value, 28, FALSE);
+    application->verb = L"runas";
+    Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "elevation is never substituted for ordinary launch");
+    application->verb = L"open";
+    EnableMenuItem(menu.value, 28, MF_BYCOMMAND | MF_GRAYED);
+    Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "a default action disabled after query cannot run");
+    EnableMenuItem(menu.value, 28, MF_BYCOMMAND | MF_ENABLED);
+    SetMenuDefaultItem(menu.value, UINT(-1), FALSE);
+    Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "missing default action is not guessed");
 }
 
 void TestSourceAttribution()
@@ -1847,6 +1960,56 @@ void TestFileTypeDiscovery()
     }
 }
 
+// Opt-in hardware evidence: uses the real production helper without displaying
+// or operating the SnowDesktop desktop. Not part of portable automatic tests.
+void ProbeNvidiaCompatibility(bool invoke)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Request request; request.context = ext::Context::Desktop; request.background = true;
+    request.paths = {snowdesktop::DesktopShellInvocationDirectory()};
+    ext::Session session(request);
+    std::optional<ext::Reply> reply;
+    PumpUntil([&] { reply = session.Poll(); return reply.has_value(); }, "real NVIDIA desktop menu query completes");
+    Expect(reply->ok, "real NVIDIA desktop menu query succeeds");
+    const auto catalogue = ext::ReadCatalogue();
+    auto linked = catalogue; ext::Associate(linked, request, *reply);
+    const auto found = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+        return entry.registration == ext::NvidiaControlPanelRegistration;
+    });
+    Expect(found != reply->entries.end() && found->enabled && found->token,
+        "the previously missing installed NVIDIA Control Panel is now an executable desktop menu item");
+    Expect(std::count_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+        return entry.registration == ext::NvidiaControlPanelRegistration;
+    }) == 1, "exactly one Control Panel entry is returned");
+    Expect(!found->label.empty() && !found->pixels.empty(), "installed application supplies a title and icon");
+    const auto settings = ext::ManagementRows(linked, ext::Category::Background);
+    Expect(std::any_of(settings.begin(), settings.end(), [](const auto &row) {
+        return std::any_of(row.members.begin(), row.members.end(), [](const auto &member) {
+            return member.id == ext::NvidiaControlPanelRegistration;
+        });
+    }), "the actual compatibility entry is manageable under its NVIDIA registration");
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, true);
+    auto visible = ext::VisibleSnapshot(prefs, *reply, ext::ContextBit(ext::Context::Desktop));
+    Expect(std::any_of(visible.begin(), visible.end(), [](const auto &entry) {
+        return entry.registration == ext::NvidiaControlPanelRegistration;
+    }), "the actual entry is visible when enabled");
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, false);
+    visible = ext::VisibleSnapshot(prefs, *reply, ext::ContextBit(ext::Context::Desktop));
+    Expect(std::none_of(visible.begin(), visible.end(), [](const auto &entry) {
+        return entry.registration == ext::NvidiaControlPanelRegistration;
+    }), "the actual entry is hidden when disabled");
+    std::cout << "NVIDIA compatibility: token=" << found->token << " icon=" << found->width << 'x' << found->height
+              << " registration=" << found->registration << " helper=" << session.ProcessId() << std::endl;
+    if (invoke)
+    {
+        session.Invoke(found->token, {});
+        const HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, session.ProcessId());
+        if (process) { WaitForSingleObject(process, 10000); CloseHandle(process); }
+        std::cout << "NVIDIA application open command dispatched; verify the launched application separately.\n";
+    }
+}
+
 void BenchmarkManagement()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -1989,6 +2152,9 @@ void BenchmarkMenus()
 
 int wmain(int argc, wchar_t **argv)
 {
+    const bool nvidiaProbe = argc == 2 && (std::wstring_view(argv[1]) == L"--probe-nvidia-menu" ||
+        std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
+    if (nvidiaProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
@@ -2059,7 +2225,8 @@ int wmain(int argc, wchar_t **argv)
     {
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
-        if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
+        if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
@@ -2067,6 +2234,7 @@ int wmain(int argc, wchar_t **argv)
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
             TestRegistryCatalogue();
+            TestNvidiaCompatibility();
         }
         else
         {
@@ -2075,6 +2243,7 @@ int wmain(int argc, wchar_t **argv)
             TestDeferredPopups();
             TestCatalogueCache();
             TestRegistryCatalogue();
+            TestNvidiaCompatibility();
             TestManagementUpdates();
             TestManagementFilters();
             TestSourceAttribution();

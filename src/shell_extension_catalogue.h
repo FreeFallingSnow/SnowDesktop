@@ -40,6 +40,9 @@ struct Catalogue
 constexpr unsigned ContextBit(Context context) { return 1u << static_cast<unsigned>(context); }
 // Read-only, intended for the metadata worker. No Shell extension is activated.
 Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+// Internal menu compatibility path uses the same Blocked/Approved policy as
+// discovery. Alternate roots are for isolated registry policy tests only.
+bool HandlerEnabled(const std::wstring &clsid, HKEY user = HKEY_CURRENT_USER, HKEY machine = HKEY_LOCAL_MACHINE);
 void Associate(Catalogue &catalogue, const Request &request, Reply &reply);
 void MigrateAssociations(Preferences &preferences, const Catalogue &catalogue);
 bool Applies(const Registration &row, const Request &request);
