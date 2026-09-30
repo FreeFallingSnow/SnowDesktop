@@ -146,7 +146,17 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     {
         strokeWidth = std::max(kMinimumWidgetBorderWidth, strokeWidth);
         if (auto* strokeBrush = getBrush(stroke))
-            ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
+        {
+            auto outline = rr;
+            if (!selected && p.backgroundPreset == kAppearancePresetGlassTransparent)
+            {
+                const float inset = strokeWidth * 0.5f;
+                outline.rect = D2D1::RectF(rr.rect.left + inset, rr.rect.top + inset,
+                    rr.rect.right - inset, rr.rect.bottom - inset);
+                outline.radiusX = outline.radiusY = std::max(0.0f, radius - inset);
+            }
+            ctx->DrawRoundedRectangle(outline, strokeBrush, strokeWidth, nullptr);
+        }
     }
     if (!selected)
         (void)DrawWidgetPanelEdgeHighlight(

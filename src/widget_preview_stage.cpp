@@ -1,4 +1,5 @@
 #include "widget_preview_stage.h"
+#include "flat_glass_rim.h"
 
 #include <d2d1effects.h>
 #include <wincodec.h>
@@ -708,6 +709,12 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     const float haloPosition = edgeDistance / haloDepth;
                     const float alignment = sample.normalX * lightX +
                         sample.normalY * lightY;
+                    if (flatGlass)
+                    {
+                        accumulated += coverage * flat_glass_rim::Intensity(
+                            edgeDistance, coreDepth, alignment);
+                        continue;
+                    }
                     // Treat the source as a broad area light. A tight
                     // specular power makes the rounded corner facing the
                     // source dominate the straight top and left edges;
@@ -722,17 +729,16 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     // rim. The ordinary material retains its broader shoulder
                     // so existing glass/acrylic presets keep their bevel.
                     const float specularCrest =
-                        1.0f - SmoothStep(0.02f, flatGlass ? 1.0f : 0.55f, corePosition);
+                        1.0f - SmoothStep(0.02f, 0.55f, corePosition);
                     const float softShoulder =
                         1.0f - SmoothStep(0.05f, 1.0f, haloPosition);
                     const float primaryBand =
-                        flatGlass ? 0.96f * specularCrest + 0.04f * softShoulder
-                                  : 0.68f * specularCrest + 0.32f * softShoulder;
+                        0.68f * specularCrest + 0.32f * softShoulder;
                     // The opposite edge stays faint. The thin sheet also
                     // confines transmitted light to the rim, avoiding an
                     // inward bloom that would suggest a rounded cross-section.
                     const float transmittedBand =
-                        flatGlass ? 0.22f * specularCrest : 0.55f * softShoulder;
+                        0.55f * softShoulder;
                     accumulated += coverage *
                         (primary * primaryBand +
                             transmitted * transmittedBand);
@@ -928,7 +934,10 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     const D2D1_PRIMITIVE_BLEND previousBlend = context->GetPrimitiveBlend();
     const D2D1_ANTIALIAS_MODE previousAntialias =
         context->GetAntialiasMode();
-    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
+    // Thin glass reflects incident light over the wallpaper. Additive light
+    // clips bright colors and made panels glow more than their icon plates.
+    context->SetPrimitiveBlend(flatGlass
+        ? D2D1_PRIMITIVE_BLEND_SOURCE_OVER : D2D1_PRIMITIVE_BLEND_ADD);
     context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
     context->FillOpacityMask(
         mask.Get(), reflectionBrush.Get(), &outerRect, nullptr);

@@ -1,4 +1,5 @@
 #include "icon_beautify.h"
+#include "flat_glass_rim.h"
 
 #include <algorithm>
 #include <array>
@@ -581,13 +582,13 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         const float distance = std::sqrt(nearest);
         const float alignment = -(nx + ny) * 0.70710678f;
         const float shoulder = 1.0f - smooth(0.05f, 1.0f, distance / halo);
-        const float crest = 1.0f - smooth(0.02f,
-            settings.glassEnabled ? 1.0f : 0.55f, distance / depth);
-        const float primaryBand = settings.glassEnabled
-            ? 0.96f * crest + 0.04f * shoulder : 0.68f * crest + 0.32f * shoulder;
-        const float transmittedBand = settings.glassEnabled ? 0.22f * crest : 0.55f * shoulder;
-        const float light = std::pow(std::max(alignment, 0.0f), 0.65f) * primaryBand +
-            0.40f * std::pow(std::max(-alignment, 0.0f), 0.80f) * transmittedBand;
+        const float crest = 1.0f - smooth(0.02f, 0.55f, distance / depth);
+        const float light = settings.glassEnabled
+            ? flat_glass_rim::Intensity(distance, depth, alignment)
+            : std::pow(std::max(alignment, 0.0f), 0.65f) *
+                (0.68f * crest + 0.32f * shoulder) +
+                0.40f * std::pow(std::max(-alignment, 0.0f), 0.80f) *
+                (0.55f * shoulder);
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
         output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
     }

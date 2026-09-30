@@ -2056,12 +2056,17 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 context->DrawLine(start, end, borderBrush.Get(), borderWidth);
             }
             else
+            {
+                const float inset = p.backgroundPreset == kAppearancePresetGlassTransparent
+                    ? borderWidth * 0.5f : 0.0f;
+                const float borderRadius = std::max(0.0f, panelRadius - inset);
                 context->DrawRoundedRectangle(D2D1::RoundedRect(
-                    D2D1::RectF(static_cast<float>(bounds.left),
-                        static_cast<float>(bounds.top),
-                        static_cast<float>(bounds.right),
-                        static_cast<float>(bounds.bottom)),
-                    panelRadius, panelRadius), borderBrush.Get(), borderWidth);
+                    D2D1::RectF(static_cast<float>(bounds.left) + inset,
+                        static_cast<float>(bounds.top) + inset,
+                        static_cast<float>(bounds.right) - inset,
+                        static_cast<float>(bounds.bottom) - inset),
+                    borderRadius, borderRadius), borderBrush.Get(), borderWidth);
+            }
         }
     }
 }

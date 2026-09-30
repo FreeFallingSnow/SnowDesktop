@@ -458,20 +458,19 @@ void DrawHostBackground(ID2D1DeviceContext* context,
         const float strokeWidth = std::clamp(
             resolved.material.widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
-        const LONG borderInset = static_cast<LONG>(std::ceil(
-            strokeWidth * 0.5f));
-        RECT borderBounds = bounds;
-        InflateRect(&borderBounds, -borderInset, -borderInset);
-        if (!IsRectEmpty(&borderBounds))
+        const float borderInset = resolved.material.backgroundPreset ==
+                kAppearancePresetGlassTransparent
+            ? strokeWidth * 0.5f : std::ceil(strokeWidth * 0.5f);
+        const auto borderBounds = D2D1::RectF(
+            rounded.rect.left + borderInset, rounded.rect.top + borderInset,
+            rounded.rect.right - borderInset, rounded.rect.bottom - borderInset);
+        if (borderBounds.right > borderBounds.left &&
+            borderBounds.bottom > borderBounds.top)
         {
             const float borderRadius = std::max(
-                0.0f, radius - static_cast<float>(borderInset));
+                0.0f, radius - borderInset);
             context->DrawRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(
-                    static_cast<float>(borderBounds.left),
-                    static_cast<float>(borderBounds.top),
-                    static_cast<float>(borderBounds.right),
-                    static_cast<float>(borderBounds.bottom)),
+                D2D1::RoundedRect(borderBounds,
                     borderRadius, borderRadius), border.Get(), strokeWidth);
         }
     }

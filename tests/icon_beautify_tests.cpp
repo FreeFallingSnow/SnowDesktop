@@ -414,8 +414,15 @@ int main()
     const std::vector<std::uint32_t> nativePlate(104 * 104, Premultiplied(18, 110, 62, 255));
     const auto preservedPlate = beautify::Render(nativePlate, 104, 104, glass,
         beautify::DetectEdgeFill(nativePlate, 104, 104));
+    auto unlitGlass = glass;
+    unlitGlass.edgeHighlightEnabled = false;
+    const auto unlitPlate = beautify::Render(nativePlate, 104, 104, unlitGlass,
+        beautify::DetectEdgeFill(nativePlate, 104, 104));
+    // A narrow rim need not reach a fixed inset pixel. Compare the actual
+    // reflected plate with its unlit counterpart while protecting native color.
     Check(preservedPlate[52 * 104 + 52] == nativePlate[52 * 104 + 52] &&
-        preservedPlate[52 * 104 + 1] != nativePlate[52 * 104 + 1],
+        unlitPlate[52 * 104 + 52] == nativePlate[52 * 104 + 52] &&
+        preservedPlate != unlitPlate,
         "smart glass preserves the opaque native plate color while adding its edge reflection");
 
     if (failures != 0)
