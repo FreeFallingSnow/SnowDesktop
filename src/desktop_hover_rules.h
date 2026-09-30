@@ -39,6 +39,22 @@ constexpr bool ShouldRetainHoverAcrossMouseLeave(
         pointerOnPairedBackdropWindow;
 }
 
+template<typename RearmTracking>
+bool RetainPairedSurfaceMouseLeave(
+    bool pointerOnContentWindow,
+    bool pointerOnPairedBackdropWindow,
+    RearmTracking rearmTracking)
+{
+    if (!ShouldRetainHoverAcrossMouseLeave(
+            pointerOnContentWindow, pointerOnPairedBackdropWindow))
+        return false;
+    // Only the content HWND owns this leave subscription. Retain a backdrop
+    // handoff without replaying input, changing regions or scheduling a paint.
+    if (pointerOnContentWindow)
+        rearmTracking();
+    return true;
+}
+
 constexpr bool ShouldResamplePassiveMouseMove(
     bool mouseDown,
     bool dragActive,

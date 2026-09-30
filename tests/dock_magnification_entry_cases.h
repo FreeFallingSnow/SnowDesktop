@@ -1,3 +1,5 @@
+#include "desktop_hover_rules.h"
+
 // Exercise the production timeline and geometry with a controlled clock.
 // This protects against full-size first frames and pointer samples restarting
 // the entry. Desktop presentation and perceived timing still require runtime QA.
@@ -60,6 +62,34 @@ void CheckDockMagnificationEntry()
         "slow Dock entry also finishes at its configured deadline");
     Check(entry.FocusScale(magnification::ResolveFocusScale(2, 2.0f, false)) == 1.0f,
         "disabling global motion removes magnification even after entry completes");
+
+    // A minimize/region restack can hand a stationary pointer from the Dock
+    // content HWND to its paired backdrop. Exercise the actual leave routing
+    // and timelines; only native hit sampling and TrackMouseEvent are replaced.
+    magnification::HoverEntryAnimation retainedEntry;
+    int rearmed = 0;
+    const auto routeLeave = [&](bool onContent, bool onBackdrop) {
+        const bool retained = snowdesktop::desktop_hover_rules::RetainPairedSurfaceMouseLeave(
+            onContent, onBackdrop, [&] { ++rearmed; });
+        if (!retained)
+            retainedEntry.SetHovered(false, 1080.0, 1.0);
+        return retained;
+    };
+    retainedEntry.SetHovered(true, 1000.0, 1.0);
+    retainedEntry.Advance(1080.0);
+    Check(routeLeave(false, true) && rearmed == 0 &&
+            std::abs(retainedEntry.FocusScale(2.0f) - 1.5f) < 0.001f && retainedEntry.IsAnimating(),
+        "a Dock backdrop handoff preserves a partial wave without rearming content tracking");
+    Check(routeLeave(true, false) && rearmed == 1 &&
+            std::abs(retainedEntry.FocusScale(2.0f) - 1.5f) < 0.001f,
+        "a stale leave over Dock content restores tracking without restarting growth");
+    retainedEntry.Advance(1160.0);
+    Check(routeLeave(false, true) && rearmed == 1 &&
+            retainedEntry.FocusScale(2.0f) == 2.0f && !retainedEntry.IsAnimating(),
+        "minimize handoff must not snap a settled Dock wave back to normal size");
+    Check(!routeLeave(false, false) && rearmed == 1 &&
+            retainedEntry.FocusScale(2.0f) == 1.0f && !retainedEntry.IsAnimating(),
+        "leaving the complete Dock pair still clears growth without rearming tracking");
 
     magnification::SingleFocusAnimation single;
     RECT next = base;
