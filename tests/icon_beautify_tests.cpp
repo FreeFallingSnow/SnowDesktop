@@ -395,6 +395,7 @@ int main()
     const auto lightPlate = beautify::Render(emptyIcon, 52, 52, lightGlass);
     const auto transparentPlate = beautify::Render(emptyIcon, 52, 52, glass);
     const auto center = 26 * 52 + 26;
+    std::cerr << "Glass centers (dark/light/transparent): " << std::hex << darkPlate[center] << '/' << lightPlate[center] << '/' << transparentPlate[center] << std::dec << '\n';
     Check(darkGlass.glassEnabled && lightGlass.glassEnabled && darkGlass.mode == 0 && lightGlass.mode == 0 &&
         (darkPlate[center] >> 24) > (lightPlate[center] >> 24) &&
         (lightPlate[center] >> 24) > (transparentPlate[center] >> 24) &&
@@ -449,6 +450,8 @@ int main()
         // Asymmetric contours can have equal left/right midpoint peaks after
         // rasterization (Pebble: 52/52); use the lobe area and facing vertical
         // bands for direction, then check the angular troughs below.
+        if (!(opposite > primary && bottomPeak > topPeak && topPeak > 0 && leftPeak > 0 && rightPeak > 0))
+            std::cerr << "Shape " << static_cast<int>(shape) << " lobe areas " << primary << '/' << opposite << " edge peaks " << topPeak << '/' << bottomPeak << '/' << leftPeak << '/' << rightPeak << '\n';
         Check(opposite > primary && bottomPeak > topPeak &&
             topPeak > 0 && leftPeak > 0 && rightPeak > 0,
             "rotated reflection favors the lower lobe while retaining visible opposite edges");
