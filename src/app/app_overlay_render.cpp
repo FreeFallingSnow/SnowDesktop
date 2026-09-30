@@ -401,6 +401,19 @@ void DesktopApp::PreparePageNotifyTextCache()
         ResetPageNotifyTextCache();
         return;
     }
+    const auto order = BuildMonitorRenderOrder();
+    float maximumWidth = 2000.0f;
+    if (!order.empty())
+    {
+        const auto& work = gridPages_[order.back()].workArea;
+        maximumWidth = std::max(1.0f, static_cast<float>(work.right - work.left) - 104.0f);
+    }
+    pageNotifyTextMetrics_.width = std::min(pageNotifyTextMetrics_.width, maximumWidth);
+    DWRITE_TRIMMING trimming{};
+    trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+    ComPtr<IDWriteInlineObject> ellipsis;
+    if (SUCCEEDED(dwrite->CreateEllipsisTrimmingSign(pageNotifyTextFormat_.Get(), &ellipsis)))
+        pageNotifyTextFormat_->SetTrimming(&trimming, ellipsis.Get());
     if (FAILED(dwrite->CreateTextLayout(
             pageNotifyText_.c_str(),
             static_cast<UINT32>(pageNotifyText_.size()),

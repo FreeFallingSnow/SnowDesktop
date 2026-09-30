@@ -38,6 +38,23 @@ HANDLE CurrentProcessHandle()
 
 void TestCodec()
 {
+    snowdesktop::PageLayoutSnapshot pages;
+    pages.revision = 123;
+    pages.monitorCount = 1;
+    pages.editable = true;
+    snowdesktop::PageLayoutEntry page;
+    page.id = L"__page:2";
+    page.name = L"工作 \U0001F30F & Play";
+    page.guideCount = 1;
+    page.widgetCount = 2;
+    pages.pages.push_back(page);
+    Check(Unpack<snowdesktop::PageLayoutSnapshot>(Pack(pages)) == pages,
+        "settings IPC must preserve custom page names, guide counts and mutation availability");
+    const snowdesktop::PageRemovalImpact removal{true, 2, 3, 1};
+    const auto decodedRemoval = Unpack<snowdesktop::PageRemovalImpact>(Pack(removal));
+    Check(decodedRemoval.valid && decodedRemoval.itemCount == 2 && decodedRemoval.widgetCount == 3 &&
+        decodedRemoval.addedPageCount == 1 && decodedRemoval.RequiresConfirmation(),
+        "the deletion confirmation must receive the host's real content and capacity impact");
     snowdesktop::SettingsHostActions::Request companion;
     companion.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
     companion.value = L"taskbar-dock";

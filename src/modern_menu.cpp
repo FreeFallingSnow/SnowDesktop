@@ -1869,6 +1869,21 @@ private:
         if (!textInputComposition_.empty())
             return true;
 
+        if (options_.textInputSubmitCommand != 0)
+        {
+            if (key == VK_ESCAPE) { Cancel(); return true; }
+            if (key == VK_RETURN)
+            {
+                for (std::size_t i = 0; i < popup->items->size(); ++i)
+                    if ((*popup->items)[i].command == options_.textInputSubmitCommand)
+                    {
+                        ActivateItem(*popup, static_cast<int>(i), true);
+                        break;
+                    }
+                return true;
+            }
+        }
+
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         textInputCursor_ = std::min(textInputCursor_, input->inputText.size());

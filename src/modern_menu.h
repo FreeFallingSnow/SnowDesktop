@@ -162,6 +162,8 @@ struct Options
     std::function<std::optional<std::vector<Item>>(const std::vector<Item>&, bool canApply)> pollItems;
     /** Optional application event pump used by the nested modal loop. */
     EventPump eventPump;
+    /** Nonzero for an editor: Enter submits this command, Escape cancels. */
+    UINT textInputSubmitCommand = 0;
 };
 
 enum class ExitReason

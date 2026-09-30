@@ -123,6 +123,7 @@ void DesktopApp::LoadLayoutSlots()
     widgets_.clear();
     dockEntries_.clear();
     savedPageIds_.clear();
+    savedPageNames_.clear();
     savedPageColumns_.clear();
     savedPageRows_.clear();
 
@@ -281,6 +282,11 @@ void DesktopApp::LoadLayoutSlots()
         const std::wstring pageId = Utf8ToWide(page.id);
         if (pageId == kDockPageId) continue;
         RememberSavedPageId(pageId);
+        if (page.name)
+        {
+            const auto name = snowdesktop::page_management::NormalizeName(Utf8ToWide(*page.name));
+            if (name && !name->empty()) savedPageNames_[pageId] = *name;
+        }
         if (page.columns && *page.columns > 0)
             savedPageColumns_[pageId] = *page.columns;
         if (page.rows && *page.rows > 0)
@@ -801,7 +807,7 @@ void DesktopApp::LoadLayoutSlots()
                         pair.second.hasGrid && pair.second.cell.pageId == candidate;
                 });
         }
-        if (hasDesktopContent) continue;
+        if (hasDesktopContent || savedPageNames_.contains(candidate)) continue;
         std::erase(savedPageIds_, candidate);
         savedPageColumns_.erase(candidate);
         savedPageRows_.erase(candidate);
@@ -1002,7 +1008,10 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
             if (colIt != savedPageColumns_.end()) columns = colIt->second;
             if (rowIt != savedPageRows_.end()) rows = rowIt->second;
         }
-        file << "\", \"columns\": " << std::max(1, columns) <<
+        file << "\"";
+        if (const auto name = savedPageNames_.find(pagesToWrite[i]); name != savedPageNames_.end())
+            file << ", \"name\": \"" << JsonEscapeUtf8(name->second) << "\"";
+        file << ", \"columns\": " << std::max(1, columns) <<
             ", \"rows\": " << std::max(1, rows) << " }";
         file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
     }

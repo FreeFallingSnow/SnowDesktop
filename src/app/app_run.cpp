@@ -847,6 +847,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.pageLayoutPage.capture = [this]() {
         return CapturePageLayoutSnapshot();
     };
+    settingsHostOptions.pageLayoutPage.analyzeRemoval = [this](const std::wstring& id) {
+        return AnalyzePageRemoval(id);
+    };
+    settingsHostOptions.pageLayoutPage.renamePage = [this](std::uint64_t revision,
+        const std::wstring& id, const std::wstring& name) {
+        return RenamePage(revision, id, name);
+    };
+    settingsHostOptions.pageLayoutPage.removePage = [this](std::uint64_t revision, const std::wstring& id) {
+        return RemovePage(revision, id);
+    };
     settingsHostOptions.pageLayoutPage.analyzeGrid = [this](
         const std::wstring& pageId, int columns, int rows) {
         return AnalyzePageGridChange(pageId, columns, rows);

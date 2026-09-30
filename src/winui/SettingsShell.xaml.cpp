@@ -2507,7 +2507,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 generalPage_->PageNavigationContent());
             for (const std::string_view focusId : {
                      "pages.order", "pages.add", "pages.grid",
-                     "pages.columns", "pages.rows"})
+                     "pages.columns", "pages.rows", "pages.name", "pages.delete"})
             {
                 RegisterFocusTarget(std::string(focusId),
                     pageLayoutPage_->FocusTarget(focusId));

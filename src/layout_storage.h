@@ -16,6 +16,7 @@ inline constexpr int kCurrentSchemaVersion = 1;
 struct PageRecord
 {
     std::string id;
+    std::optional<std::string> name;
     std::optional<int> columns;
     std::optional<int> rows;
 };

@@ -574,7 +574,8 @@ UINT DesktopApp::ShowModernMenu(
         std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged,
     const snowdesktop::shell_extensions::Request* shellRequest,
     std::function<HWND()> zOrderCompanion,
-    bool forceTopmost)
+    bool forceTopmost,
+    UINT textInputSubmitCommand)
 {
     if (!rootMenu)
         return 0;
@@ -657,6 +658,7 @@ UINT DesktopApp::ShowModernMenu(
         snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
     options.onCommand = std::move(onCommand);
     options.onTextChanged = std::move(onTextChanged);
+    options.textInputSubmitCommand = textInputSubmitCommand;
     options.onHover = std::move(onHover);
     options.zOrderCompanion = std::move(zOrderCompanion);
     ConfigureModernMenuEventPump(options);

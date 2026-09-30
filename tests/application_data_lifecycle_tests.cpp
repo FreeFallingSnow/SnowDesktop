@@ -3,6 +3,7 @@
 #include "full_data_backup.h"
 #include "large_icon_backup.h"
 #include "layout_storage.h"
+#include "page_management_rules.h"
 #include "json_value.h"
 #include "widget_package.h"
 #include "widget_removal.h"
@@ -1028,6 +1029,28 @@ int main()
             typedLayout.dockEntries.size() == 1 &&
             !typedLayout.componentSpacing.has_value(),
         "legacy schema and reordered fields decode into one typed document");
+    Expect(!typedLayout.pages[0].name, "legacy layouts leave custom page names unset");
+    {
+        using namespace snowdesktop::layout_storage;
+        const auto namedPath = root / L"layout-storage" / L"named-pages.json";
+        const std::string named = R"({"pages":[{"id":"__page:1","name":"工作 🌏 & Play","columns":4,"rows":3},{"id":"__page:2","columns":4,"rows":3}]})";
+        Document savedNames;
+        Expect(SaveDocument(namedPath, named, &layoutError) &&
+                LoadDocument(namedPath, savedNames).status == LoadStatus::LoadedPrimary && savedNames.pages.size() == 2 &&
+                savedNames.pages[0].name == "工作 🌏 & Play" && !savedNames.pages[1].name,
+            "custom page names survive the real validated layout store while unnamed pages stay optional");
+        Expect(!ParseDocument(R"({"pages":[{"id":"a","name":4}]})", savedNames, &layoutError),
+            "a malformed page name must not be accepted as valid layout data");
+        std::vector<std::string> runtimePages{"__page:1", "__page:2"};
+        const auto before = runtimePages;
+        const bool committed = snowdesktop::page_management::Commit(
+            [&] { runtimePages.pop_back(); },
+            [&] { return SaveDocument(namedPath, R"({"pages":[{"id":4}]})", &layoutError); },
+            [&] { runtimePages = before; });
+        Expect(!committed && runtimePages == before && LoadDocument(namedPath, savedNames).status == LoadStatus::LoadedPrimary &&
+                savedNames.pages.size() == 2 && savedNames.pages[0].name == "工作 🌏 & Play",
+            "failed page persistence rolls back candidate runtime state and preserves the previous disk layout");
+    }
     // Opt-in group ownership must survive restart; older/manual groups retain
     // their previous behavior. The production parser and validated disk store
     // are exercised, using only this test's isolated temporary layout directory.

@@ -2,6 +2,7 @@
 #include "../page_navigation_rules.h"
 #include "../widgets/collection_group_rules.h"
 #include "../widgets/guide_widget_rules.h"
+#include <commctrl.h>
 
 // Desktop page topology, grid settings and page-to-monitor mapping.
 
@@ -33,13 +34,16 @@ std::uint64_t PageLayoutRevision(
     std::uint64_t hash = kPageLayoutHashOffset;
     MixPageLayoutHash(hash, snapshot.monitorCount);
     MixPageLayoutHash(hash, snapshot.pages.size());
+    MixPageLayoutHash(hash, snapshot.editable ? 1u : 0u);
     for (const auto& page : snapshot.pages)
     {
         MixPageLayoutHash(hash, page.id);
+        MixPageLayoutHash(hash, page.name);
         MixPageLayoutHash(hash, static_cast<std::uint64_t>(page.columns));
         MixPageLayoutHash(hash, static_cast<std::uint64_t>(page.rows));
         MixPageLayoutHash(hash, page.itemCount);
         MixPageLayoutHash(hash, page.widgetCount);
+        MixPageLayoutHash(hash, page.guideCount);
         MixPageLayoutHash(hash, static_cast<std::uint64_t>(page.role));
         MixPageLayoutHash(hash, page.monitorOrdinal);
         MixPageLayoutHash(hash, page.visible ? 1u : 0u);
@@ -90,6 +94,10 @@ snowdesktop::PageLayoutSnapshot DesktopApp::CapturePageLayoutSnapshot() const
     snowdesktop::PageLayoutSnapshot snapshot;
     const std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
     snapshot.monitorCount = monitorOrder.size();
+    snapshot.editable = desktopItemsReady_ && !gridPages_.empty() &&
+        !layoutReload_.Pending() && !pageMutationActive_ &&
+        !dragSession_.IsActive() && !draggingWidget_ && !resizingWidget_ &&
+        widgetAction_ == WidgetAction::None;
     snapshot.pages.reserve(savedPageIds_.size());
 
     std::wstring activeLastPageId;
@@ -102,6 +110,8 @@ snowdesktop::PageLayoutSnapshot DesktopApp::CapturePageLayoutSnapshot() const
     {
         snowdesktop::PageLayoutEntry entry;
         entry.id = savedPageIds_[index];
+        if (const auto name = savedPageNames_.find(entry.id); name != savedPageNames_.end())
+            entry.name = name->second;
 
         if (const GridPage* visible = FindGridPage(gridPages_, entry.id))
         {
@@ -151,12 +161,304 @@ snowdesktop::PageLayoutSnapshot DesktopApp::CapturePageLayoutSnapshot() const
                 !IsDockExclusiveWidgetId(widget.id))
             {
                 ++entry.widgetCount;
+                if (widget.type == DesktopWidgetType::Guide) ++entry.guideCount;
             }
         }
         snapshot.pages.push_back(std::move(entry));
     }
     snapshot.revision = PageLayoutRevision(snapshot);
+    MixPageLayoutHash(snapshot.revision, pageMutationRevision_);
+    // Counts alone cannot distinguish a replaced item or a move during a
+    // confirmation. Include identity, ownership and occupied cells as well.
+    const auto mixCell = [&](const auto& object) {
+        MixPageLayoutHash(snapshot.revision, object.gridCell.pageId);
+        MixPageLayoutHash(snapshot.revision, static_cast<std::uint64_t>(object.gridCell.column));
+        MixPageLayoutHash(snapshot.revision, static_cast<std::uint64_t>(object.gridCell.row));
+        MixPageLayoutHash(snapshot.revision, static_cast<std::uint64_t>(object.gridSpan.columns));
+        MixPageLayoutHash(snapshot.revision, static_cast<std::uint64_t>(object.gridSpan.rows));
+    };
+    for (const auto& item : items_)
+    {
+        MixPageLayoutHash(snapshot.revision, item.layoutKey);
+        mixCell(item);
+    }
+    for (const auto& widget : widgets_)
+    {
+        MixPageLayoutHash(snapshot.revision, widget.id);
+        mixCell(widget);
+        for (const auto& key : widget.itemKeys) MixPageLayoutHash(snapshot.revision, key);
+        for (const auto& id : widget.childWidgetIds) MixPageLayoutHash(snapshot.revision, id);
+    }
+    for (const auto index : monitorOrder)
+        MixPageLayoutHash(snapshot.revision, gridPages_[index].monitorId);
     return snapshot;
+}
+
+snowdesktop::page_management::RemovalPlan DesktopApp::PlanPageRemoval(
+    const std::wstring& pageId) const
+{
+    std::vector<snowdesktop::page_management::Placement> content;
+    for (std::size_t i = 0; i < items_.size(); ++i)
+    {
+        const auto& item = items_[i];
+        if (item.name.empty() || IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId)
+            continue;
+        content.push_back({i, false, false, item.gridCell.pageId,
+            item.gridCell.column, item.gridCell.row, item.gridSpan.columns, item.gridSpan.rows});
+    }
+    for (std::size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const auto& widget = widgets_[i];
+        if (IsGroupedWidget(widget) || IsDockExclusiveWidgetId(widget.id)) continue;
+        content.push_back({i, true, widget.type == DesktopWidgetType::Guide, widget.gridCell.pageId,
+            widget.gridCell.column, widget.gridCell.row, widget.gridSpan.columns, widget.gridSpan.rows});
+    }
+    return snowdesktop::page_management::PlanRemoval(CapturePageLayoutSnapshot(), pageId, content);
+}
+
+snowdesktop::PageRemovalImpact DesktopApp::AnalyzePageRemoval(const std::wstring& pageId) const
+{
+    return PlanPageRemoval(pageId).impact;
+}
+
+bool DesktopApp::CommitPageMutation(const std::function<void()>& change,
+    const std::vector<std::size_t>& removedGuideIndices)
+{
+    // Save first so recovery/upgrade prompts run before candidate state exists.
+    const auto expectedRevision = CapturePageLayoutSnapshot().revision;
+    if (!SaveLayoutSlots(false)) return false;
+    if (CapturePageLayoutSnapshot().revision != expectedRevision) return false;
+    const auto oldIds = savedPageIds_;
+    const auto oldNames = savedPageNames_;
+    const auto oldColumns = savedPageColumns_;
+    const auto oldRows = savedPageRows_;
+    // Preserve resource-owning objects in place; only layout state changes.
+    std::vector<LayoutRecord> oldItems;
+    oldItems.reserve(items_.size());
+    for (const auto& item : items_)
+        oldItems.push_back({item.gridCell, item.gridSpan, item.largeIcon, true, item.slot});
+    std::vector<GridCell> oldWidgetCells;
+    oldWidgetCells.reserve(widgets_.size());
+    for (const auto& widget : widgets_) oldWidgetCells.push_back(widget.gridCell);
+    std::vector<std::pair<std::size_t, DesktopWidget>> removedGuides;
+    removedGuides.reserve(removedGuideIndices.size());
+    const auto oldRecords = layoutRecords_;
+    const auto oldGrid = gridPages_;
+    const auto oldLastPage = lastMonitorPageId_;
+    const int oldOffset = pageOffset_;
+    const auto oldRevision = pageMutationRevision_;
+    pageMutationActive_ = true;
+    const bool saved = snowdesktop::page_management::Commit([&] {
+        change();
+        for (auto it = removedGuideIndices.rbegin(); it != removedGuideIndices.rend(); ++it)
+        {
+            removedGuides.emplace_back(*it, std::move(widgets_[*it]));
+            widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(*it));
+        }
+        // Do not publish a page notification for uncommitted candidate state.
+        lastMonitorPageId_.clear();
+        PruneEmptyOverflowPages();
+        PadPagesToMonitorCount();
+        CompactPageIds();
+        MapPagesToMonitors();
+        ApplySavedGridDimensions();
+    }, [&] { return SaveLayoutSlots(false); }, [&] {
+        savedPageIds_ = oldIds;
+        savedPageNames_ = oldNames;
+        savedPageColumns_ = oldColumns;
+        savedPageRows_ = oldRows;
+        for (std::size_t i = 0; i < items_.size(); ++i)
+        {
+            items_[i].gridCell = std::move(oldItems[i].cell);
+            items_[i].gridSpan = oldItems[i].span;
+            items_[i].largeIcon = std::move(oldItems[i].largeIcon);
+            items_[i].slot = oldItems[i].legacySlot;
+        }
+        for (auto it = removedGuides.rbegin(); it != removedGuides.rend(); ++it)
+            widgets_.insert(widgets_.begin() + static_cast<std::ptrdiff_t>(it->first),
+                std::move(it->second));
+        for (std::size_t i = 0; i < widgets_.size(); ++i)
+            widgets_[i].gridCell = std::move(oldWidgetCells[i]);
+        layoutRecords_ = oldRecords;
+        gridPages_ = oldGrid;
+        lastMonitorPageId_ = oldLastPage;
+        pageOffset_ = oldOffset;
+        pageMutationRevision_ = oldRevision;
+        layoutSavePending_ = false;
+    });
+    if (saved)
+    {
+        ++pageMutationRevision_;
+    }
+    pageMutationActive_ = false;
+    ApplyDockWorkAreaReservation();
+    RebuildContainersAndItems();
+    LayoutItems();
+    RefreshIconBitmapResolution();
+    InvalidateDragStaticScene();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+    if (saved && (pageNotifyActive_ || oldLastPage != lastMonitorPageId_))
+    {
+        const auto order = BuildMonitorRenderOrder();
+        if (!order.empty())
+        {
+            const auto current = std::ranges::find(savedPageIds_, gridPages_[order.back()].id);
+            if (current != savedPageIds_.end())
+                ShowPageNotify(GetPageDisplayName(static_cast<int>(current - savedPageIds_.begin())));
+        }
+    }
+    return saved;
+}
+
+snowdesktop::PageLayoutOperationResult DesktopApp::RenamePage(
+    std::uint64_t expectedRevision, const std::wstring& pageId, const std::wstring& name)
+{
+    using snowdesktop::PageLayoutOperationStatus;
+    auto current = CapturePageLayoutSnapshot();
+    if (current.revision != expectedRevision)
+        return {PageLayoutOperationStatus::Stale, {}, std::move(current)};
+    const auto normalized = snowdesktop::page_management::NormalizeName(name);
+    if (!normalized)
+        return {PageLayoutOperationStatus::Invalid, _LW("settings.pages.nameInvalid"), std::move(current)};
+    if (!current.editable || std::ranges::find(savedPageIds_, pageId) == savedPageIds_.end())
+        return {PageLayoutOperationStatus::Invalid, _LW("settings.pages.busy"), std::move(current)};
+    const bool saved = CommitPageMutation([&] {
+        if (normalized->empty()) savedPageNames_.erase(pageId);
+        else savedPageNames_[pageId] = *normalized;
+    });
+    return {saved ? PageLayoutOperationStatus::Succeeded : PageLayoutOperationStatus::Failed,
+        {}, CapturePageLayoutSnapshot()};
+}
+
+snowdesktop::PageLayoutOperationResult DesktopApp::RemovePage(
+    std::uint64_t expectedRevision, const std::wstring& pageId)
+{
+    using snowdesktop::PageLayoutOperationStatus;
+    auto current = CapturePageLayoutSnapshot();
+    if (current.revision != expectedRevision)
+        return {PageLayoutOperationStatus::Stale, {}, std::move(current)};
+    const auto plan = PlanPageRemoval(pageId);
+    if (!plan.impact.valid)
+        return {PageLayoutOperationStatus::Invalid, _LW("settings.pages.deleteUnavailable"), std::move(current)};
+    const bool saved = CommitPageMutation([&] {
+        for (const auto& move : plan.moved)
+        {
+            const GridCell cell{move.pageId, move.column, move.row};
+            if (move.widget) widgets_[move.index].gridCell = cell;
+            else
+            {
+                items_[move.index].gridCell = cell;
+                const auto target = std::ranges::find(plan.pages, move.pageId, &snowdesktop::PageLayoutEntry::id);
+                items_[move.index].slot = move.column * target->rows + move.row;
+            }
+        }
+        // Hidden members retain their ownership and data, but their return
+        // positions must not refer to a deleted/reused page identity.
+        for (auto& item : items_)
+            if (item.gridCell.pageId == pageId)
+                item.gridCell = {plan.destinationId, 0, 0};
+        for (auto& widget : widgets_)
+            if (widget.gridCell.pageId == pageId && widget.type != DesktopWidgetType::Guide)
+                widget.gridCell = {plan.destinationId, 0, 0};
+        savedPageIds_.clear();
+        for (const auto& page : plan.pages)
+        {
+            savedPageIds_.push_back(page.id);
+            savedPageColumns_[page.id] = page.columns;
+            savedPageRows_[page.id] = page.rows;
+        }
+        savedPageColumns_.erase(pageId);
+        savedPageRows_.erase(pageId);
+        savedPageNames_.erase(pageId);
+        const auto destination = std::ranges::find(savedPageIds_, plan.destinationId);
+        pageOffset_ = std::max(0, static_cast<int>(destination - savedPageIds_.begin()) -
+            static_cast<int>(gridPages_.size()) + 1);
+    }, plan.removedGuides);
+    return {saved ? PageLayoutOperationStatus::Succeeded : PageLayoutOperationStatus::Failed,
+        {}, CapturePageLayoutSnapshot()};
+}
+
+void DesktopApp::ShowPageRenameMenu(const std::wstring& pageId, POINT point)
+{
+    const auto snapshot = CapturePageLayoutSnapshot();
+    const auto page = std::ranges::find(snapshot.pages, pageId, &snowdesktop::PageLayoutEntry::id);
+    if (!snapshot.editable || page == snapshot.pages.end()) return;
+    std::wstring draft = page->name;
+    constexpr UINT inputCommand = 1, saveCommand = 2, cancelCommand = 3;
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    const auto label = snowdesktop::page_management::MenuLabel(
+        GetPageDisplayName(static_cast<int>(page - snapshot.pages.begin())));
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, label.c_str());
+    AppendMenuW(menu, MF_STRING, inputCommand, _LW("settings.pages.nameHint"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, saveCommand, _LW("settings.pages.saveName"));
+    AppendMenuW(menu, MF_STRING, cancelCommand, _LW("app.settings.cancel"));
+    SetMenuItemTextInput(menu, inputCommand, draft);
+    const auto command = ShowModernMenu(menu, point, hwnd_, false, false,
+        nullptr, {}, {}, [&](UINT id, const std::wstring& text, auto&) {
+            if (id == inputCommand) draft = text;
+        }, nullptr, {}, false, saveCommand);
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    if (command != saveCommand && command != inputCommand) return;
+    const auto result = RenamePage(snapshot.revision, pageId, draft);
+    if (!result.Succeeded())
+        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+            result.status == snowdesktop::PageLayoutOperationStatus::Stale
+                ? _LW("settings.pages.status.stale")
+                : (result.message.empty() ? _LW("settings.pages.status.failed") : result.message.c_str()),
+            _LW("app.menu.rename_page"), MB_OK | MB_ICONWARNING);
+}
+
+void DesktopApp::ConfirmPageRemoval(const std::wstring& pageId, POINT point)
+{
+    const auto snapshot = CapturePageLayoutSnapshot();
+    const auto page = std::ranges::find(snapshot.pages, pageId, &snowdesktop::PageLayoutEntry::id);
+    const auto impact = AnalyzePageRemoval(pageId);
+    if (page == snapshot.pages.end() || !impact.valid) return;
+    if (impact.RequiresConfirmation())
+    {
+        const auto message = _LFW("settings.pages.deleteConfirm.message",
+            GetPageDisplayName(static_cast<int>(page - snapshot.pages.begin())),
+            std::to_wstring(impact.itemCount), std::to_wstring(impact.widgetCount));
+        const TASKDIALOG_BUTTON buttons[] = {
+            {IDYES, _LW("settings.pages.delete")}, {IDCANCEL, _LW("app.settings.cancel")}};
+        TASKDIALOGCONFIG dialog{};
+        dialog.cbSize = sizeof(dialog);
+        dialog.hwndParent = controlHwnd_ ? controlHwnd_ : hwnd_;
+        dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+        dialog.pszWindowTitle = L"SnowDesktop";
+        dialog.pszMainInstruction = _LW("settings.pages.deleteConfirm.title");
+        dialog.pszContent = message.c_str();
+        dialog.pszMainIcon = TD_WARNING_ICON;
+        dialog.pButtons = buttons;
+        dialog.cButtons = static_cast<UINT>(std::size(buttons));
+        dialog.nDefaultButton = IDCANCEL;
+        dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(&point);
+        dialog.pfCallback = +[](HWND window, UINT notification, WPARAM, LPARAM, LONG_PTR data) -> HRESULT {
+            if (notification != TDN_CREATED) return S_OK;
+            const auto anchor = *reinterpret_cast<const POINT*>(data);
+            MONITORINFO monitor{sizeof(monitor)};
+            RECT bounds{};
+            if (GetWindowRect(window, &bounds) && GetMonitorInfoW(
+                    MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &monitor))
+                SetWindowPos(window, nullptr,
+                    monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - (bounds.right - bounds.left)) / 2,
+                    monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - (bounds.bottom - bounds.top)) / 2,
+                    0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            return S_OK;
+        };
+        int selected = IDCANCEL;
+        if (FAILED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) || selected != IDYES) return;
+    }
+    const auto result = RemovePage(snapshot.revision, pageId);
+    if (!result.Succeeded())
+        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+            result.status == snowdesktop::PageLayoutOperationStatus::Stale
+                ? _LW("settings.pages.status.stale")
+                : (result.message.empty() ? _LW("settings.pages.status.failed") : result.message.c_str()),
+            _LW("settings.pages.delete"), MB_OK | MB_ICONWARNING);
 }
 
 snowdesktop::PageGridChangeImpact DesktopApp::AnalyzePageGridChange(
@@ -265,6 +567,7 @@ DesktopApp::ApplyPageOrderFromSettings(
         activeLastPageId = gridPages_[monitorOrder.back()].id;
 
     savedPageIds_ = pageIds;
+    ++pageMutationRevision_;
     if (!activeLastPageId.empty())
     {
         const auto active = std::ranges::find(savedPageIds_, activeLastPageId);
@@ -1142,7 +1445,7 @@ int DesktopApp::NextNonEmptyOffset(int fromOffset, int direction) const
         fromOffset, direction,
         savedPageIds_.size(), gridPages_.size(),
         [this](std::size_t pageIndex) {
-            return PageHasContent(savedPageIds_[pageIndex]);
+            return PageIsNavigable(savedPageIds_[pageIndex]);
         });
 }
 
@@ -1155,13 +1458,24 @@ int DesktopApp::MaxPageOffset() const
     return snowdesktop::page_navigation_rules::MaximumOffset(
         savedPageIds_.size(), gridPages_.size(),
         [this](std::size_t pageIndex) {
-            return PageHasContent(savedPageIds_[pageIndex]);
+            return PageIsNavigable(savedPageIds_[pageIndex]);
         });
 }
 
 std::wstring DesktopApp::GetPageDisplayName(int index) const
 {
-    return _LFW("app.grid.page_label", std::to_wstring(index + 1));
+    const auto label = _LFW("app.grid.page_label", std::to_wstring(index + 1));
+    if (index < 0 || static_cast<std::size_t>(index) >= savedPageIds_.size()) return label;
+    const auto found = savedPageNames_.find(savedPageIds_[static_cast<std::size_t>(index)]);
+    return snowdesktop::page_management::DisplayName(label,
+        found == savedPageNames_.end() ? std::wstring_view{} : found->second);
+}
+
+bool DesktopApp::PageIsNavigable(const std::wstring& pageId) const
+{
+    const auto name = savedPageNames_.find(pageId);
+    return snowdesktop::page_management::RetainsPage(
+        name == savedPageNames_.end() ? std::wstring_view{} : name->second, PageHasContent(pageId));
 }
 
 void DesktopApp::NavigatePageOffset(int delta)
@@ -1200,7 +1514,7 @@ void DesktopApp::AddNewPage(bool notifyFailure)
     for (size_t i = 0; i < savedPageIds_.size(); ++i)
     {
         const bool isDisplayed = (i < N) || (i == lastDisplayedIdx);
-        if (isDisplayed && !PageHasContent(savedPageIds_[i]))
+        if (isDisplayed && !PageIsNavigable(savedPageIds_[i]))
         {
             PlaceGuideWidgetOnPage(savedPageIds_[i], notifyFailure);   // PlaceGuideWidgetOnPage 内部已 SaveLayoutSlots
             ApplyPageMapping();
@@ -1316,6 +1630,7 @@ void DesktopApp::NormalizePageIds()
     std::erase(savedPageIds_, std::wstring(kDockPageId));
     savedPageColumns_.erase(kDockPageId);
     savedPageRows_.erase(kDockPageId);
+    savedPageNames_.erase(kDockPageId);
     if (savedPageIds_.empty()) return;
     if (savedPageIds_.size() > 9999) return;   // 防御：编号爆炸
 
@@ -1359,6 +1674,8 @@ void DesktopApp::NormalizePageIds()
         newRows.try_emplace(idMap.contains(k) ? idMap[k] : k, v);
     savedPageColumns_ = std::move(newCols);
     savedPageRows_ = std::move(newRows);
+    snowdesktop::page_management::RemapNames(savedPageNames_, idMap);
+    ++pageMutationRevision_;
 }
 
 /**
@@ -1379,8 +1696,11 @@ void DesktopApp::PruneEmptyOverflowPages()
     pageOffset_ = snowdesktop::page_navigation_rules::PruneEmptyPages(
         savedPageIds_, savedPageColumns_, savedPageRows_, gridPages_.size(),
         desktopItemsReady_, [this](const std::wstring& pageId) {
-            return PageHasContent(pageId);
+            return PageIsNavigable(pageId);
         }, pageOffset_);
+    std::erase_if(savedPageNames_, [this](const auto& entry) {
+        return std::ranges::find(savedPageIds_, entry.first) == savedPageIds_.end();
+    });
 }
 
 /**

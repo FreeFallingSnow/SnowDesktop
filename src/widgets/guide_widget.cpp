@@ -144,7 +144,9 @@ void GuideWidget::DrawContent(ID2D1DeviceContext* context, RECT body)
         };
         app_->DrawD2DText(
             context,
-            _LFW("guide.new_page_title", std::to_wstring(pageIndex + 1)),
+            app_->savedPageNames_.contains(data_->gridCell.pageId)
+                ? app_->GetPageDisplayName(static_cast<int>(pageIndex))
+                : _LFW("guide.new_page_title", std::to_wstring(pageIndex + 1)),
             title,
             GetCuTextFormatWeight(25.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, false),
             primaryText);
@@ -175,8 +177,8 @@ void GuideWidget::DrawContent(ID2D1DeviceContext* context, RECT body)
     };
     app_->DrawD2DText(
         context,
-        _LFW("guide.page_status",
-            std::to_wstring(pageIndex + 1),
+        _LFW("guide.named_page_status",
+            app_->GetPageDisplayName(static_cast<int>(pageIndex)),
             std::to_wstring(pageCount),
             std::to_wstring(monitorCount)),
         status,

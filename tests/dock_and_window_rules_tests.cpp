@@ -26,6 +26,7 @@
 #include "dock_app_identity_rules.h"
 #include "page_navigation_rules.h"
 #include "page_layout_settings.h"
+#include "page_management_rules.h"
 #include "dock_settings_rules.h"
 #include "bar_settings_rules.h"
 #include "dock_settings.h"
@@ -1585,6 +1586,83 @@ int main(int argc, char** argv)
         "a failed cross-thread foreground focus check requires one queue attachment retry");
 
     CheckPopupWindowPairZOrderTransitions();
+    {
+        namespace pages = snowdesktop::page_management;
+        Check(pages::NormalizeName(L" \u3000工作\t") == L"工作" &&
+                pages::NormalizeName(L"   ") == L"",
+            "page names trim Unicode whitespace and support restoring the default label");
+        Check(!pages::NormalizeName(L"work\nplay") && !pages::NormalizeName(std::wstring(65, L'x')),
+            "page names reject multiline input and excessive length before saving");
+        std::wstring emoji;
+        for (int i = 0; i < 64; ++i) emoji += L"\U0001F30F";
+        Check(pages::NormalizeName(emoji).has_value() && !pages::NormalizeName(emoji + L"x") &&
+                !pages::NormalizeName(std::wstring(1, static_cast<wchar_t>(0xd800))),
+            "the name limit counts complete emoji without admitting broken UTF-16");
+        Check(pages::DisplayName(L"第2页", L"工作") == L"第2页 · 工作" &&
+                pages::DisplayName(L"Page 2", L"") == L"Page 2" &&
+                pages::MenuLabel(L"Page 2 · R&D") == L"Page 2 · R&&D",
+            "page identity includes ordinal and literal custom text, including menu ampersands");
+        std::unordered_map<std::wstring, std::wstring> names{{L"__page:1", L"工作"}, {L"__page:2", L"游戏"}};
+        pages::RemapNames(names, {{L"__page:1", L"__page:2"}, {L"__page:2", L"__page:1"}});
+        Check(names[L"__page:1"] == L"游戏" && names[L"__page:2"] == L"工作",
+            "simultaneous page ID remapping must not exchange or overwrite names during reorder");
+        std::vector<std::wstring> ids{L"__page:1", L"__page:2", L"__page:3"};
+        std::unordered_map<std::wstring, int> columns, rows;
+        const auto retained = [&](const std::wstring& id) {
+            const auto name = names.find(id);
+            return pages::RetainsPage(name == names.end() ? std::wstring_view{} : name->second, false);
+        };
+        snowdesktop::page_navigation_rules::PruneEmptyPages(ids, columns, rows, 1, true, retained);
+        Check(ids == std::vector<std::wstring>{L"__page:1", L"__page:2"} &&
+                snowdesktop::page_navigation_rules::NextNonEmptyOffset(0, 1, ids.size(), 1,
+                    [&](std::size_t i) { return retained(ids[i]); }) == 1,
+            "named empty pages survive cleanup and remain reachable by navigation");
+        names.clear();
+        snowdesktop::page_navigation_rules::PruneEmptyPages(ids, columns, rows, 1, true, retained);
+        Check(ids.size() == 1, "clearing custom names restores automatic empty-page cleanup");
+
+        snowdesktop::PageLayoutSnapshot snapshot;
+        snapshot.editable = true;
+        snapshot.monitorCount = 1;
+        snowdesktop::PageLayoutEntry first, second, third;
+        first.id = L"__page:1"; first.name = L"Work"; first.columns = 2; first.rows = 2;
+        second.id = L"__page:2"; second.name = L"Play"; second.columns = 2; second.rows = 2;
+        third.id = L"__page:3"; third.columns = 2; third.rows = 2;
+        snapshot.pages = {first, second, third};
+        std::vector<pages::Placement> content{
+            {0, false, false, first.id, 0, 0, 1, 1},
+            {1, false, false, second.id, 0, 0, 1, 1},
+            {0, true, true, second.id, 1, 0, 1, 1}};
+        auto plan = pages::PlanRemoval(snapshot, second.id, content);
+        Check(plan.impact.valid && plan.impact.RequiresConfirmation() && plan.impact.itemCount == 1 &&
+                plan.impact.widgetCount == 0 && plan.removedGuides == std::vector<std::size_t>{0} &&
+                plan.moved.size() == 1 && plan.moved[0].pageId == first.id &&
+                plan.moved[0].column == 0 && plan.moved[0].row == 1 && plan.pages[0].name == L"Work",
+            "page deletion reserves existing cells, ignores guide content for confirmation and prefers the preceding page");
+        content = {{0, true, true, second.id, 0, 0, 2, 2}};
+        plan = pages::PlanRemoval(snapshot, second.id, content);
+        Check(plan.impact.valid && !plan.impact.RequiresConfirmation() && plan.moved.empty(),
+            "a guide-only page deletes directly without creating another page");
+        content = {{0, true, false, first.id, 0, 0, 2, 2}};
+        plan = pages::PlanRemoval(snapshot, first.id, content);
+        Check(plan.destinationId == second.id && plan.moved[0].pageId == second.id && plan.impact.widgetCount == 1,
+            "deleting the first page preserves its widget on the following page");
+        content = {{0, true, false, first.id, 0, 0, 2, 2},
+            {1, true, false, second.id, 0, 0, 3, 2},
+            {2, true, false, third.id, 0, 0, 2, 2}};
+        plan = pages::PlanRemoval(snapshot, second.id, content);
+        Check(plan.impact.valid && plan.impact.addedPageCount == 1 && plan.moved.size() == 1 &&
+                plan.moved[0].index == 1 && plan.moved[0].columns == 3 &&
+                plan.pages.back().columns == 3 && plan.pages.back().rows == 2 &&
+                plan.pages.back().id != second.id && plan.pages.back().name.empty(),
+            "full target pages require a fresh sufficiently large page without resizing or replacing widget instances");
+        snapshot.monitorCount = snapshot.pages.size();
+        Check(!pages::PlanRemoval(snapshot, second.id, content).impact.valid,
+            "explicit deletion must retain at least one page per physical display");
+        snapshot.monitorCount = 1; snapshot.editable = false;
+        Check(!pages::PlanRemoval(snapshot, second.id, content).impact.valid,
+            "busy or incomplete desktop state must never produce a deletion plan");
+    }
     const std::vector<std::wstring> savedPageOrder{
         L"page-1", L"page-2", L"page-3"};
     Check(snowdesktop::IsValidPageOrder(savedPageOrder,

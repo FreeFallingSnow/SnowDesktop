@@ -358,6 +358,15 @@ struct BackendServer::Impl
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
         });
+        channel.Bind<PageRemovalImpact, std::wstring>("pages.removal.analyze", [this](auto id) {
+            return options.pageLayoutPage.analyzeRemoval ? options.pageLayoutPage.analyzeRemoval(id) : PageRemovalImpact{};
+        });
+        channel.Bind<PageLayoutOperationResult, Token, std::wstring, std::wstring>("pages.rename", [this](Token revision, auto id, auto name) {
+            return options.pageLayoutPage.renamePage ? options.pageLayoutPage.renamePage(revision, id, name) : PageLayoutOperationResult{};
+        });
+        channel.Bind<PageLayoutOperationResult, Token, std::wstring>("pages.remove", [this](Token revision, auto id) {
+            return options.pageLayoutPage.removePage ? options.pageLayoutPage.removePage(revision, id) : PageLayoutOperationResult{};
+        });
         channel.Bind<LargeIconSettingsSnapshot, LargeIconSettingsRequest>("largeIcon.edit", [this](auto request) {
             return options.largeIconSettings ? options.largeIconSettings(std::move(request)) : LargeIconSettingsSnapshot{};
         });
@@ -499,6 +508,9 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.calendarPage.occurrence = [&channel](Token generation, std::string id) { return channel.Call<std::optional<calendar::CalendarEvent>>("calendar.occurrence", generation, id); };
     options.calendarPage.mutateSeries = [&channel](Token generation, calendar::CalendarSeries series, bool remove) { return channel.Call<calendar::MutationResult>("calendar.series.mutate", generation, series, remove); };
     options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
+    options.pageLayoutPage.analyzeRemoval = [&channel](const std::wstring& id) { return channel.Call<PageRemovalImpact>("pages.removal.analyze", id); };
+    options.pageLayoutPage.renamePage = [&channel](Token revision, const std::wstring& id, const std::wstring& name) { return channel.Call<PageLayoutOperationResult>("pages.rename", revision, id, name); };
+    options.pageLayoutPage.removePage = [&channel](Token revision, const std::wstring& id) { return channel.Call<PageLayoutOperationResult>("pages.remove", revision, id); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
     };

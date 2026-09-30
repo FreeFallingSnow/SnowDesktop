@@ -134,6 +134,7 @@ namespace snowdesktop::tray { struct Icon; }
 #include "../deployment_context.h"
 #include "../steam_entitlement.h"
 #include "../page_layout_settings.h"
+#include "../page_management_rules.h"
 
 #include <windowsx.h>
 #include <dbt.h>
@@ -2086,7 +2087,8 @@ private:
             onTextChanged = {},
         const snowdesktop::shell_extensions::Request* shellRequest = nullptr,
         std::function<HWND()> zOrderCompanion = {},
-        bool forceTopmost = false);
+        bool forceTopmost = false,
+        UINT textInputSubmitCommand = 0);
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
     BOOL InvokeShellMenuCommand(IContextMenu* menu,
@@ -2151,6 +2153,17 @@ private:
     void SetGridDimensions(int columns, int rows);
     /** @brief 捕获设置页使用的有序页面与网格快照。 */
     snowdesktop::PageLayoutSnapshot CapturePageLayoutSnapshot() const;
+    snowdesktop::page_management::RemovalPlan PlanPageRemoval(const std::wstring& pageId) const;
+    snowdesktop::PageRemovalImpact AnalyzePageRemoval(const std::wstring& pageId) const;
+    snowdesktop::PageLayoutOperationResult RenamePage(std::uint64_t expectedRevision,
+        const std::wstring& pageId, const std::wstring& name);
+    snowdesktop::PageLayoutOperationResult RemovePage(std::uint64_t expectedRevision,
+        const std::wstring& pageId);
+    bool CommitPageMutation(const std::function<void()>& change,
+        const std::vector<std::size_t>& removedGuideIndices = {});
+    void ShowPageRenameMenu(const std::wstring& pageId, POINT point);
+    void ConfirmPageRemoval(const std::wstring& pageId, POINT point);
+    bool PageIsNavigable(const std::wstring& pageId) const;
     /** @brief 分析按页面 ID 调整网格时会被重新安置的内容。 */
     snowdesktop::PageGridChangeImpact AnalyzePageGridChange(
         const std::wstring& pageId, int columns, int rows) const;
@@ -3672,6 +3685,9 @@ private:
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
     std::unordered_map<std::wstring, int> savedPageRows_;
+    std::unordered_map<std::wstring, std::wstring> savedPageNames_;
+    std::uint64_t pageMutationRevision_ = 0;
+    bool pageMutationActive_ = false;
     std::vector<std::wstring> savedPageIds_;
     bool desktopItemsReady_ = false;
     bool initializeGridFromWindows_ = false;

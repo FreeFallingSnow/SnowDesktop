@@ -1685,8 +1685,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
             for (int i = 0; static_cast<size_t>(i) < savedPageIds_.size(); ++i)
             {
-                if (!PageHasContent(savedPageIds_[i]) && !pagesOnMonitors.contains(i)) continue;
-                std::wstring label = GetPageDisplayName(i);
+                if (!PageIsNavigable(savedPageIds_[i]) && !pagesOnMonitors.contains(i)) continue;
+                std::wstring label = snowdesktop::page_management::MenuLabel(GetPageDisplayName(i));
                 UINT flags = MF_STRING;
                 if (pagesOnMonitors.contains(i))
                     flags |= MF_GRAYED;
@@ -1702,6 +1702,12 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
 
     AppendMenuW(menu, MF_STRING, kContextPageAdd, _LW("app.menu.add_page"));
+    const auto pageSnapshot = CapturePageLayoutSnapshot();
+    AppendMenuW(menu, MF_STRING | (pageSnapshot.editable ? 0 : MF_GRAYED),
+        kContextPageRename, _LW("app.menu.rename_page"));
+    AppendMenuW(menu, MF_STRING | (pageSnapshot.editable &&
+        savedPageIds_.size() > std::max<std::size_t>(1, gridPages_.size()) ? 0 : MF_GRAYED),
+        kContextPageDelete, _LW("app.menu.delete_page"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextSettingsCommand, _LW("app.menu.settings"));
 
@@ -2073,6 +2079,14 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextPagePrev: NavigatePageOffset(-1); break;
         case kContextPageNext: NavigatePageOffset(1); break;
         case kContextPageAdd: AddNewPage(); break;
+        case kContextPageRename:
+            if (CapturePageLayoutSnapshot().revision == pageSnapshot.revision)
+                ShowPageRenameMenu(clickedPageId, screenPoint);
+            break;
+        case kContextPageDelete:
+            if (CapturePageLayoutSnapshot().revision == pageSnapshot.revision)
+                ConfirmPageRemoval(clickedPageId, screenPoint);
+            break;
         default: break;
         }
     }

@@ -104,11 +104,13 @@ SD_IPC_FIELDS(SettingsHostActions::Request,
     v.hotkeyTarget, v.modifiers, v.virtualKey,
     v.desktopStyleDockPosition, v.desktopStyleDockAttached);
 SD_IPC_FIELDS(PageLayoutEntry,
-    v.id, v.columns, v.rows, v.itemCount,
-    v.widgetCount, v.role, v.monitorOrdinal, v.visible,
+    v.id, v.name, v.columns, v.rows, v.itemCount,
+    v.widgetCount, v.guideCount, v.role, v.monitorOrdinal, v.visible,
     v.activeOnLastMonitor);
 SD_IPC_FIELDS(PageLayoutSnapshot,
-    v.revision, v.monitorCount, v.pages);
+    v.revision, v.monitorCount, v.pages, v.editable);
+SD_IPC_FIELDS(PageRemovalImpact,
+    v.valid, v.itemCount, v.widgetCount, v.addedPageCount);
 SD_IPC_FIELDS(PageGridChangeImpact,
     v.valid, v.pageId, v.previousColumns, v.previousRows,
     v.columns, v.rows, v.displacedItemCount, v.displacedWidgetCount,

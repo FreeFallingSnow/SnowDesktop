@@ -308,6 +308,8 @@ bool DecodePages(const JsonValue& root, Document& document,
         PageRecord record;
         if (!ReadRequiredString(object, "id", path + ".id",
                 record.id, error) ||
+            !ReadOptionalString(object, "name", path + ".name",
+                record.name, error) ||
             !ReadOptionalInteger(object, "columns", path + ".columns",
                 record.columns, error) ||
             !ReadOptionalInteger(object, "rows", path + ".rows",
