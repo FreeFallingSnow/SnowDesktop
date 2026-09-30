@@ -1304,6 +1304,37 @@ void TestRemoteSaveFailureKeepsSessionOpen()
             return !badRevision.first.Succeeded() && !badGeneration.first.Succeeded() &&
                 !badTaskbarRevision.first.Succeeded() && unchanged && proxy->CloseSession().Succeeded();
         });
+        ui.Bind<bool>("test.readOnly", [&] {
+            if (!proxy || !proxy->Open(SettingsRoute::ForPage(SettingsPage::General)).Succeeded())
+                return false;
+            int publications = 0;
+            int depth = 0;
+            int maximumDepth = 0;
+            proxy->SetSnapshotChangedCallback([&](auto) {
+                ++publications;
+                maximumDepth = (std::max)(maximumDepth, ++depth);
+                // Entering General probes shortcuts. A duplicate reply must
+                // not publish and re-enter that same probe/render callback.
+                if (depth < 3)
+                {
+                    SettingsHostActions::Request probe;
+                    probe.action = SettingsHostActions::Action::ProbeHotkeyAvailability;
+                    (void)proxy->InvokeHostAction(probe);
+                }
+                --depth;
+            });
+            const auto revision = proxy->Snapshot()->revision;
+            SettingsHostActions::Request probe;
+            probe.action = SettingsHostActions::Action::ProbeHotkeyAvailability;
+            (void)proxy->InvokeHostAction(probe);
+            const bool readOnly = publications == 0 && maximumDepth == 0 &&
+                proxy->Snapshot()->revision == revision;
+            (void)proxy->Open(SettingsRoute::ForPage(SettingsPage::Dock));
+            const bool changed = publications == 1 && maximumDepth == 1 &&
+                proxy->Snapshot()->route.page == SettingsPage::Dock;
+            proxy->SetSnapshotChangedCallback({});
+            return readOnly && changed && proxy->CloseSession().Succeeded();
+        });
         ui.Bind<void>("test.quit", [] { PostQuitMessage(0); });
         started.set_value(GetCurrentThreadId());
         MSG message{};
@@ -1320,6 +1351,8 @@ void TestRemoteSaveFailureKeepsSessionOpen()
             "remote retry closes only after authoritative host persistence succeeds");
         Check(host.Call<bool>("test.stale"),
             "remote stale domain, generation and system taskbar edits cannot overwrite authoritative state");
+        Check(host.Call<bool>("test.readOnly"),
+            "read-only General probes do not republish or recursively render an unchanged IPC snapshot; route changes still publish once");
         host.Notify("test.quit");
     }
     catch (const std::exception& error)
