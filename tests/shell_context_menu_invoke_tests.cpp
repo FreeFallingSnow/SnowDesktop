@@ -741,7 +741,7 @@ void TestNvidiaCompatibility()
     AppendMenuW(menu.value, MF_STRING, 1, L"Uninstall");
     AppendMenuW(menu.value, MF_STRING, 28, L"Open");
     SetMenuDefaultItem(menu.value, 28, FALSE);
-    Expect(ext::DefaultApplicationOpen(application.Get(), menu.value) == 27,
+    Expect(ext::DefaultApplicationOpen(application.Get(), menu.value) == 27u,
         "the safe application open command keeps its nonzero Shell offset, not the first command");
     SetMenuDefaultItem(menu.value, 1, FALSE);
     Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "uninstall is never an application launcher");
@@ -1969,7 +1969,8 @@ void ProbeNvidiaCompatibility(bool invoke)
     request.paths = {snowdesktop::DesktopShellInvocationDirectory()};
     ext::Session session(request);
     std::optional<ext::Reply> reply;
-    PumpUntil([&] { reply = session.Poll(); return reply.has_value(); }, "real NVIDIA desktop menu query completes");
+    PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); },
+        "real NVIDIA desktop menu query completes");
     Expect(reply->ok, "real NVIDIA desktop menu query succeeds");
     const auto catalogue = ext::ReadCatalogue();
     auto linked = catalogue; ext::Associate(linked, request, *reply);
