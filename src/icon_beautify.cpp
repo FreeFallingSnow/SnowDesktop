@@ -544,7 +544,7 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
     const float wf = static_cast<float>(width), hf = static_cast<float>(height);
     const float shortSide = std::min(wf, hf);
     const float depth = settings.edgeHighlightWidth * shortSide / 52.0f;
-    const float halo = settings.glassEnabled ? depth * 1.25f
+    const float halo = settings.glassEnabled ? depth * 5.0f
         : std::max(depth * 2.5f, depth + shortSide * 3.0f / 52.0f);
     const auto& inner = CachedMask(settings.shape, width, height, halo);
     float area = 0.0f;
@@ -591,6 +591,14 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
                 (0.55f * shoulder);
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
         output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
+        if (settings.glassEnabled)
+        {
+            const int shadowAlpha = static_cast<int>(std::lround(
+                flat_glass_rim::Occlusion(distance, depth) *
+                settings.edgeHighlightStrength * 0.36f * mask[index]));
+            output[index] = SourceOver(
+                PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
+        }
     }
 }
 

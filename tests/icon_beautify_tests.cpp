@@ -400,9 +400,9 @@ int main()
             }
             if (beautify::ShapeMaskAlpha(shape, x, y, 104, 104) == 0 && alpha) masked = false;
         }
-        Check(primary > opposite && topPeak > bottomPeak * 2 &&
-            leftPeak > rightPeak * 2 && bottomPeak > 0 && rightPeak > 0,
-            "reflection favors the top/left and retains weaker opposite transmission");
+        Check(primary > opposite && topPeak > bottomPeak &&
+            leftPeak > rightPeak && bottomPeak > 0 && rightPeak > 0,
+            "reflection favors the top/left while every facing edge retains a visible rim");
         Check(masked && reflection[52 * 104 + 52] == 0,
             "reflection follows each contour and leaves the center and exterior clear");
         Check(HashPixels(reflection) != HashPixels(noReflection),

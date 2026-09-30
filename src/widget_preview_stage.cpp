@@ -1,5 +1,6 @@
 #include "widget_preview_stage.h"
 #include "flat_glass_rim.h"
+#include "widget_composition_layer_rules.h"
 
 #include <d2d1effects.h>
 #include <wincodec.h>
@@ -578,6 +579,8 @@ constexpr std::size_t kMaximumEdgeHighlightMaskCacheEntries = 32;
 constexpr float kEdgeHighlightLightAngleDegrees = 315.0f;
 constexpr float kEdgeHighlightTransmittedStrength = 0.40f;
 constexpr float kPi = 3.14159265358979323846f;
+static_assert(flat_glass_rim::kPanelOverdraw <=
+    widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw);
 
 struct RoundedRectDistance
 {
@@ -594,6 +597,7 @@ struct EdgeHighlightMaskKey
     std::uint32_t radiusSixteenths = 0;
     std::uint32_t depthSixteenths = 0;
     bool flatGlass = false;
+    bool occlusion = false;
 
     bool operator==(const EdgeHighlightMaskKey&) const = default;
 };
@@ -664,10 +668,13 @@ std::uint32_t QuantizeSixteenths(float value)
 
 std::vector<std::uint8_t> GenerateEdgeHighlightMask(
     UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
-    bool flatGlass)
+    bool flatGlass, bool occlusion)
 {
+    const UINT32 padding = flatGlass ? flat_glass_rim::kPanelOverdraw : 0;
+    const UINT32 bitmapWidth = width + padding * 2;
+    const UINT32 bitmapHeight = height + padding * 2;
     std::vector<std::uint8_t> pixels(
-        static_cast<std::size_t>(width) * height, 0u);
+        static_cast<std::size_t>(bitmapWidth) * bitmapHeight, 0u);
     if (width == 0 || height == 0 || bevelDepth <= 0.0f)
         return pixels;
 
@@ -684,9 +691,9 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
         flatGlass ? coreDepth * 1.25f : std::max(coreDepth * 2.5f, coreDepth + 3.0f));
     constexpr std::array<float, 2> sampleOffsets{ 0.25f, 0.75f };
 
-    for (UINT32 y = 0; y < height; ++y)
+    for (UINT32 y = 0; y < bitmapHeight; ++y)
     {
-        for (UINT32 x = 0; x < width; ++x)
+        for (UINT32 x = 0; x < bitmapWidth; ++x)
         {
             float accumulated = 0.0f;
             for (const float sampleY : sampleOffsets)
@@ -695,12 +702,23 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                 {
                     const RoundedRectDistance sample =
                         EvaluateRoundedRectDistance(
-                            static_cast<float>(x) + sampleX,
-                            static_cast<float>(y) + sampleY,
+                            static_cast<float>(x) + sampleX - static_cast<float>(padding),
+                            static_cast<float>(y) + sampleY - static_cast<float>(padding),
                             static_cast<float>(width),
                             static_cast<float>(height), cornerRadius);
                     const float coverage = 1.0f - SmoothStep(
                         -0.55f, 0.45f, sample.distance);
+                    if (flatGlass)
+                    {
+                        const float alignment = sample.normalX * lightX +
+                            sample.normalY * lightY;
+                        accumulated += occlusion
+                            ? coverage * flat_glass_rim::Occlusion(
+                                -sample.distance, coreDepth)
+                            : flat_glass_rim::Intensity(
+                                -sample.distance, coreDepth, alignment);
+                        continue;
+                    }
                     const float edgeDistance = std::max(-sample.distance, 0.0f);
                     if (coverage <= 0.0f || edgeDistance >= haloDepth)
                         continue;
@@ -709,12 +727,6 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     const float haloPosition = edgeDistance / haloDepth;
                     const float alignment = sample.normalX * lightX +
                         sample.normalY * lightY;
-                    if (flatGlass)
-                    {
-                        accumulated += coverage * flat_glass_rim::Intensity(
-                            edgeDistance, coreDepth, alignment);
-                        continue;
-                    }
                     // Treat the source as a broad area light. A tight
                     // specular power makes the rounded corner facing the
                     // source dominate the straight top and left edges;
@@ -725,18 +737,14 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                     const float transmitted =
                         kEdgeHighlightTransmittedStrength * std::pow(
                             std::max(-alignment, 0.0f), 0.80f);
-                    // A thin sheet keeps almost all reflected light at its
-                    // rim. The ordinary material retains its broader shoulder
-                    // so existing glass/acrylic presets keep their bevel.
+                    // Ordinary glass/acrylic retains its broad shoulder.
                     const float specularCrest =
                         1.0f - SmoothStep(0.02f, 0.55f, corePosition);
                     const float softShoulder =
                         1.0f - SmoothStep(0.05f, 1.0f, haloPosition);
                     const float primaryBand =
                         0.68f * specularCrest + 0.32f * softShoulder;
-                    // The opposite edge stays faint. The thin sheet also
-                    // confines transmitted light to the rim, avoiding an
-                    // inward bloom that would suggest a rounded cross-section.
+                    // Ordinary glass keeps the weaker opposite reflection.
                     const float transmittedBand =
                         0.55f * softShoulder;
                     accumulated += coverage *
@@ -746,7 +754,7 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
             }
             const float intensity = std::clamp(
                 accumulated / 4.0f, 0.0f, 1.0f);
-            pixels[static_cast<std::size_t>(y) * width + x] =
+            pixels[static_cast<std::size_t>(y) * bitmapWidth + x] =
                 static_cast<std::uint8_t>(std::lround(intensity * 255.0f));
         }
     }
@@ -802,7 +810,7 @@ void CacheEdgeHighlightMask(const EdgeHighlightMaskKey& key,
 
 ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
-    bool flatGlass)
+    bool flatGlass, bool occlusion = false)
 {
     if (!context || width == 0 || height == 0 ||
         !context->IsDxgiFormatSupported(DXGI_FORMAT_A8_UNORM))
@@ -821,6 +829,7 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
         .radiusSixteenths = QuantizeSixteenths(cornerRadius),
         .depthSixteenths = QuantizeSixteenths(bevelDepth),
         .flatGlass = flatGlass,
+        .occlusion = occlusion,
     };
     if (auto cached = FindCachedEdgeHighlightMask(key))
         return cached;
@@ -830,7 +839,10 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     const float quantizedDepth =
         static_cast<float>(key.depthSixteenths) / 16.0f;
     const std::vector<std::uint8_t> pixels = GenerateEdgeHighlightMask(
-        width, height, quantizedRadius, quantizedDepth, flatGlass);
+        width, height, quantizedRadius, quantizedDepth, flatGlass, occlusion);
+    const UINT32 padding = flatGlass ? flat_glass_rim::kPanelOverdraw : 0;
+    const UINT32 bitmapWidth = width + padding * 2;
+    const UINT32 bitmapHeight = height + padding * 2;
     float dpiX = 96.0f;
     float dpiY = 96.0f;
     context->GetDpi(&dpiX, &dpiY);
@@ -840,8 +852,8 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
         D2D1::PixelFormat(
             DXGI_FORMAT_A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
         dpiX, dpiY);
-    if (FAILED(context->CreateBitmap(D2D1::SizeU(width, height),
-            pixels.data(), width, properties, &bitmap)) || !bitmap)
+    if (FAILED(context->CreateBitmap(D2D1::SizeU(bitmapWidth, bitmapHeight),
+            pixels.data(), bitmapWidth, properties, &bitmap)) || !bitmap)
     {
         return nullptr;
     }
@@ -897,8 +909,9 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     // Preserve the panel hue so the light feels embedded in the material.
     // The previous near-white tint made a transparent border color look like
     // an unrelated outline even when the border itself was disabled.
-    const D2D1_COLOR_F reflected =
+    D2D1_COLOR_F reflected =
         ResolveEdgeHighlightReflection(color, strength);
+    if (flatGlass) reflected.a = 0.10f + 0.60f * strength;
     ComPtr<ID2D1SolidColorBrush> reflectionBrush;
     if (FAILED(context->CreateSolidColorBrush(
             reflected, &reflectionBrush)) || !reflectionBrush)
@@ -906,6 +919,14 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     const ComPtr<ID2D1Bitmap1> mask = GetEdgeHighlightMask(context,
         static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight),
         cornerRadius, strokeWidth, flatGlass);
+    const ComPtr<ID2D1Bitmap1> shadowMask = flatGlass
+        ? GetEdgeHighlightMask(context, static_cast<UINT32>(pixelWidth),
+            static_cast<UINT32>(pixelHeight), cornerRadius, strokeWidth, true, true)
+        : nullptr;
+    ComPtr<ID2D1SolidColorBrush> shadowBrush;
+    if (shadowMask)
+        (void)context->CreateSolidColorBrush(
+            D2D1::ColorF(0.015f, 0.025f, 0.035f, 0.24f * strength), &shadowBrush);
     if (!mask)
     {
         // A8 opacity masks are optional on some Direct2D devices. Preserve a
@@ -928,9 +949,8 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
         return true;
     }
 
-    // The mask contains only the normal-facing primary reflection and a
-    // weaker transmitted reflection on the opposite edge. There is
-    // deliberately no full-perimeter base stroke.
+    // The transparent sheet keeps a legible rim and halo on every edge. Its
+    // neighboring dark seam separates that light from the flat glass body.
     const D2D1_PRIMITIVE_BLEND previousBlend = context->GetPrimitiveBlend();
     const D2D1_ANTIALIAS_MODE previousAntialias =
         context->GetAntialiasMode();
@@ -939,8 +959,18 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     context->SetPrimitiveBlend(flatGlass
         ? D2D1_PRIMITIVE_BLEND_SOURCE_OVER : D2D1_PRIMITIVE_BLEND_ADD);
     context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+    auto reflectionBounds = outerRect;
+    if (flatGlass)
+    {
+        const float padding = static_cast<float>(flat_glass_rim::kPanelOverdraw);
+        reflectionBounds = D2D1::RectF(outerRect.left - padding,
+            outerRect.top - padding, outerRect.right + padding, outerRect.bottom + padding);
+    }
     context->FillOpacityMask(
-        mask.Get(), reflectionBrush.Get(), &outerRect, nullptr);
+        mask.Get(), reflectionBrush.Get(), &reflectionBounds, nullptr);
+    if (shadowMask && shadowBrush)
+        context->FillOpacityMask(shadowMask.Get(), shadowBrush.Get(),
+            &reflectionBounds, nullptr);
     context->SetAntialiasMode(previousAntialias);
     context->SetPrimitiveBlend(previousBlend);
     return true;

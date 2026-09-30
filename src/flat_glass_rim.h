@@ -5,8 +5,10 @@
 
 namespace snowdesktop::flat_glass_rim
 {
-// Icons and panels share a thin sheet profile. Size changes its contour, while
-// the reflected light remains confined to the rim instead of a broad bevel.
+inline constexpr int kPanelOverdraw = 3;
+
+// A clear sheet has a visible reflected rim, a soft halo and an adjacent dark
+// seam. Keeping the seam distinct avoids shading the entire edge like a lens.
 inline float Intensity(float distance, float depth, float alignment)
 {
     if (depth <= 0.0f) return 0.0f;
@@ -15,12 +17,24 @@ inline float Intensity(float distance, float depth, float alignment)
             (value - lower) / (upper - lower), 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t);
     };
-    const float crest = 1.0f - smooth(0.02f, 1.0f, distance / depth);
-    const float shoulder = 1.0f - smooth(0.05f, 1.0f,
-        distance / (depth * 1.25f));
-    return std::pow(std::max(alignment, 0.0f), 0.65f) *
-            (0.96f * crest + 0.04f * shoulder) +
-        0.40f * std::pow(std::max(-alignment, 0.0f), 0.80f) *
-            (0.22f * crest);
+    const float rimPosition = (distance - depth * 0.35f) / (depth * 0.72f);
+    const float haloPosition = distance / (depth * 1.65f);
+    const float rim = std::exp(-0.5f * rimPosition * rimPosition);
+    const float halo = std::exp(-0.5f * haloPosition * haloPosition);
+    const float outsideFade = 1.0f - smooth(
+        1.5f, static_cast<float>(kPanelOverdraw), std::max(-distance, 0.0f));
+    const float lighting = 0.70f +
+        0.25f * std::pow(std::max(alignment, 0.0f), 0.65f) +
+        0.05f * std::pow(std::max(-alignment, 0.0f), 0.80f);
+    return std::clamp((0.78f * rim + 0.34f * halo) * lighting *
+        outsideFade, 0.0f, 1.0f);
+}
+
+inline float Occlusion(float distance, float depth)
+{
+    if (depth <= 0.0f || distance <= 0.0f) return 0.0f;
+    const float seam = (distance - (depth * 1.65f + 0.5f)) /
+        std::max(0.40f, depth * 0.28f);
+    return std::exp(-0.5f * seam * seam);
 }
 }
