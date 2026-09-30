@@ -421,6 +421,18 @@ int main()
             Check(peakNear(97, 26) < peakNear(88, 15) &&
                     peakNear(7, 78) < peakNear(16, 89),
                 "reflection minima rotate away from the diagonal corners");
+            const std::array<unsigned, 4> diagonalPeaks{
+                peakNear(16, 15), peakNear(88, 15),
+                peakNear(16, 89), peakNear(88, 89)};
+            const unsigned brightest = *std::max_element(
+                diagonalPeaks.begin(), diagonalPeaks.end());
+            const unsigned faintest = *std::min_element(
+                diagonalPeaks.begin(), diagonalPeaks.end());
+            Check(brightest > 0 && faintest * 4 >= brightest * 3,
+                "all four diagonal rim arcs retain comparable reflection strength");
+            Check(peakNear(97, 26) * 2 >= brightest &&
+                    peakNear(7, 78) * 2 >= brightest,
+                "weak sectors remain visible without excessive reflection contrast");
         }
         Check(masked && reflection[52 * 104 + 52] == 0,
             "reflection follows each contour and leaves the center and exterior clear");
