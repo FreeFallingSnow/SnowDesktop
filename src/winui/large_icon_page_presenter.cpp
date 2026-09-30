@@ -2,6 +2,7 @@
 #include "large_icon_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
+#include "edge_light_editor.h"
 #include "../large_icon_settings_rules.h"
 #include "../large_icon_preset_rules.h"
 #include "../large_icon_title_measure.h"
@@ -29,6 +30,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     x::DispatcherTimer timer;
     presenter_controls::CoalescedPreviewTimer<LargeIconConfig> previews;
     std::shared_ptr<PanelGradientEditor> gradient;
+    std::shared_ptr<EdgeLightEditor> edge;
     std::vector<std::function<void()>> synchronize, visibility;
     std::array<c::Image, 2> coverImages;
     std::array<c::TextBlock, 2> coverLabels;
@@ -70,6 +72,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (auto& fn : synchronize) fn();
         for (auto& fn : visibility) fn();
         if (gradient) gradient->SetValue(draft.gradient);
+        if (edge) edge->SetValue(draft.edgeLight);
         for (int i = 0; i < 2; ++i)
         {
             const auto& path = i == 0 ? snapshot.landscapePath : snapshot.portraitPath;
@@ -382,6 +385,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void Build()
     {
+        if (edge) edge->Close();
         syncing = true; synchronize.clear(); visibility.clear(); root.Children().Clear(); editors.Children().Clear();
         root.Spacing(16); editors.Spacing(20);
         root.HorizontalAlignment(x::HorizontalAlignment::Stretch); editors.HorizontalAlignment(x::HorizontalAlignment::Stretch);
@@ -443,6 +447,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Toggle(edges, "largeIcon.edgeHighlight", &LargeIconConfig::edgeHighlight, Field::Custom, 0);
         Slider(edges, "largeIcon.edgeStrength", &LargeIconConfig::edgeStrength, 0, 100, 1, 100, L"%", Field::Edge, 1);
         Slider(edges, "largeIcon.edgeWidth", &LargeIconConfig::edgeWidth, .5, 4, .5, 1, L"", Field::Edge, 1);
+        edge = EdgeLightEditor::Create(localize, [weak](auto const& light, bool commit) {
+            if (auto self = weak.lock(); self && !self->syncing) { self->draft.edgeLight = light; if (commit) self->Send("commit"); else self->Preview(); }
+        });
+        edges.Children().Append(edge->Content()); Track(edge->Content(), Field::Edge);
         auto text = Section(bg, "appearance.text", Field::Custom);
         Choice(text, "app.settings.text_color", &LargeIconConfig::componentTheme,
             {{0,"app.settings.light"},{1,"app.settings.dark"}}, Field::Custom);
@@ -506,8 +514,8 @@ void LargeIconPagePresenter::Activate(std::wstring key)
 void LargeIconPagePresenter::Deactivate()
 {
     impl_->timer.Stop();
-    if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); if (impl_->dirty) impl_->Send("commit"); impl_->Send("cancel"); }
+    if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); if (impl_->edge) impl_->edge->Flush(); if (impl_->dirty) impl_->Send("commit"); impl_->Send("cancel"); }
     impl_->active = false;
 }
-void LargeIconPagePresenter::RefreshLocalizedText() { if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); impl_->Build(); } }
+void LargeIconPagePresenter::RefreshLocalizedText() { if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); if (impl_->edge) impl_->edge->Flush(); impl_->Build(); } }
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "personalization.h"
+#include "edge_light_codec.h"
 
 namespace snowdesktop
 {
@@ -91,6 +92,7 @@ inline bool DecodePanelAppearance(const JsonValue& input, PersonalizationSetting
     }
     if (const auto* gradient = input.Find("gradient"))
         valid = DecodePanelGradient(*gradient, value.panelGradient) && valid;
+    if (const auto* light = input.Find("edgeLight")) valid = DecodeEdgeLight(*light, value.edgeLight) && valid;
     if (valid) output = value;
     return valid;
 }
@@ -107,7 +109,9 @@ inline std::string EncodePanelAppearance(const PersonalizationSettings& value)
     });
     VisitPanelAppearanceFlags([&](auto key, auto field) { output << '"' << key << "\":" << (value.*field ? "true" : "false") << ','; });
     const auto gradient = EncodePanelGradient(value.panelGradient);
-    if (!valid || gradient.empty()) return {};
+    const auto light = EncodeEdgeLight(value.edgeLight);
+    if (!valid || gradient.empty() || light.empty()) return {};
+    output << "\"edgeLight\":" << light << ',';
     output << "\"contentTheme\":" << value.contentTheme << ",\"gradient\":" << gradient << '}';
     return output.str();
 }

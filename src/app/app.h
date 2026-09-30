@@ -995,7 +995,7 @@ private:
     /** @brief 依据材质直通 RGB/透明度绘制独立边缘高光（左上主反射与右下弱透射）。 @return 成功绘制返回 true */
     bool DrawEdgeHighlight(ID2D1DeviceContext* ctx, RECT frame,
         float radius, D2D1_COLOR_F color, float strokeWidth,
-        float effectStrength, bool flatGlass = false);
+        float effectStrength, const snowdesktop::EdgeLightSettings& edgeLight = {});
     /** @brief 获取原生毛玻璃后端状态文本。 */
     std::wstring GetGlassBackendStatusText() const;
     /** @brief 触发换页通知（记录文本与时间戳，安排淡出截止时间）。 @param text 通知文本 */

@@ -544,25 +544,14 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
     const float wf = static_cast<float>(width), hf = static_cast<float>(height);
     const float shortSide = std::min(wf, hf);
     const float depth = settings.edgeHighlightWidth * shortSide / 52.0f;
-    const float halo = settings.glassEnabled ? depth * 5.0f
-        : std::max(depth * 2.5f, depth + shortSide * 3.0f / 52.0f);
+    const flat_glass_rim::Evaluator material(settings.edgeLight);
+    const float halo = std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true));
     const auto& inner = CachedMask(settings.shape, width, height, halo);
-    float area = 0.0f;
-    for (size_t i = 0; i < outline.size(); ++i)
-    {
-        const auto& a = outline[i]; const auto& b = outline[(i + 1) % outline.size()];
-        area += a.x * b.y - b.x * a.y;
-    }
-    const float winding = area >= 0.0f ? 1.0f : -1.0f;
-    auto smooth = [](float a, float b, float v) {
-        const float t = std::clamp((v - a) / (b - a), 0.0f, 1.0f);
-        return t * t * (3.0f - 2.0f * t);
-    };
     for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
     {
         const size_t index = static_cast<size_t>(y) * width + x;
         if (mask[index] == 0 || inner[index] == 255) continue;
-        float nearest = halo * halo, nx = 0.0f, ny = 0.0f;
+        float nearest = halo * halo;
         for (size_t i = 0; i < outline.size(); ++i)
         {
             const auto& a = outline[i]; const auto& b = outline[(i + 1) % outline.size()];
@@ -575,32 +564,20 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
             const float distance2 = ex * ex + ey * ey;
             if (distance2 < nearest)
             {
-                nearest = distance2; const float length = std::sqrt(length2);
-                nx = winding * dy / length; ny = -winding * dx / length;
+                nearest = distance2;
             }
         }
         const float distance = std::sqrt(nearest);
-        const float alignment = -(nx + ny) * 0.70710678f;
-        const float lighting = settings.glassEnabled
-            ? flat_glass_rim::Lighting(
-                (static_cast<float>(x) + 0.5f) / wf,
-                (static_cast<float>(y) + 0.5f) / hf)
-            : 0.0f;
-        const float shoulder = 1.0f - smooth(0.05f, 1.0f, distance / halo);
-        const float crest = 1.0f - smooth(0.02f, 0.55f, distance / depth);
-        const float light = settings.glassEnabled
-            ? flat_glass_rim::Intensity(distance, depth, lighting)
-            : std::pow(std::max(alignment, 0.0f), 0.65f) *
-                (0.68f * crest + 0.32f * shoulder) +
-                0.40f * std::pow(std::max(-alignment, 0.0f), 0.80f) *
-                (0.55f * shoulder);
+        const float lighting = material.Lighting((static_cast<float>(x) + .5f) / wf,
+            (static_cast<float>(y) + .5f) / hf);
+        const float light = material.Intensity(distance, depth, lighting);
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
         output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
-        if (settings.glassEnabled)
+        if (material.settings.shadowStrength > 0.f)
         {
             const int shadowAlpha = static_cast<int>(std::lround(
-                flat_glass_rim::Occlusion(distance, depth, lighting) *
-                settings.edgeHighlightStrength * 0.18f * mask[index]));
+                material.Occlusion(distance, depth, lighting) *
+                settings.edgeHighlightStrength * material.settings.shadowStrength * mask[index]));
             output[index] = SourceOver(
                 PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
         }
@@ -648,6 +625,7 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
         std::clamp(settings.edgeHighlightWidth, 0.5f, 4.0f) : 1.0f;
     settings.edgeHighlightStrength = std::isfinite(settings.edgeHighlightStrength) ?
         std::clamp(settings.edgeHighlightStrength, 0.0f, 1.0f) : 0.40f;
+    settings.edgeLight = NormalizeEdgeLight(settings.edgeLight);
     settings.mode = std::clamp(settings.mode, 0, 1);
     settings.backgroundOpacity = std::clamp(settings.backgroundOpacity, 0.0f, 1.0f);
     settings.gradientDirection = std::clamp(settings.gradientDirection, 0, 3);
@@ -704,7 +682,7 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
         a.glassEnabled == b.glassEnabled && eq(a.glassBlurRadius, b.glassBlurRadius) &&
         a.edgeHighlightEnabled == b.edgeHighlightEnabled &&
         eq(a.edgeHighlightWidth, b.edgeHighlightWidth) &&
-        eq(a.edgeHighlightStrength, b.edgeHighlightStrength) &&
+        eq(a.edgeHighlightStrength, b.edgeHighlightStrength) && a.edgeLight == b.edgeLight &&
         a.gradientEnabled == b.gradientEnabled &&
         a.gradientDirection == b.gradientDirection &&
         eq(a.backgroundStartR, b.backgroundStartR) &&
@@ -769,7 +747,7 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.glassBlurRadius = 10.0f;
         settings.edgeHighlightEnabled = true;
         settings.edgeHighlightWidth = 0.75f;
-        settings.edgeHighlightStrength = 0.40f;
+        settings.edgeHighlightStrength = 0.50f;
         settings.outlineEnabled = true;
         settings.outlineWidth = 0.5f;
         settings.outlineOpacity = 0.06f;

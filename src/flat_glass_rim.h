@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include "edge_light_settings.h"
 
 namespace snowdesktop::flat_glass_rim
 {
@@ -36,37 +37,46 @@ inline float SmoothStep(float lower, float upper, float value)
 // feather and ambient light below are SnowDesktop tuning, not Honor values.
 // Broad constant sectors keep the corners lit; the transition is localized
 // around the two weak sectors instead of tapering along the entire contour.
-inline float Lighting(float x, float y)
+class Evaluator
 {
-    constexpr float kPi = 3.14159265358979323846f;
-    constexpr float kReflectionRotation = kPi / 3.0f;
-    constexpr float kHalfOpening = 75.0f * kPi / 180.0f;
-    constexpr float kFeather = 15.0f * kPi / 180.0f;
+public:
+    explicit Evaluator(EdgeLightSettings value = {}) : settings(NormalizeEdgeLight(value))
+    {
+        constexpr float radians = 3.14159265358979323846f / 180.f;
+        directionX = std::cos(settings.direction * radians);
+        directionY = std::sin(settings.direction * radians);
+        opening = settings.spread * .5f * radians;
+        feather = settings.feather * radians;
+    }
+    EdgeLightSettings settings;
+    float directionX, directionY, opening, feather;
+    float Lighting(float x, float y) const
+    {
     x = std::clamp(x, 0.0f, 1.0f) - 0.5f;
     y = std::clamp(y, 0.0f, 1.0f) - 0.5f;
     const float length = std::hypot(x, y);
-    if (length <= 0.00001f) return 0.52f;
+    if (length <= 0.00001f) return settings.ambient;
     const float alignment = std::clamp(
-        (x * std::cos(kReflectionRotation) + y * std::sin(kReflectionRotation)) /
+        (x * directionX + y * directionY) /
             length, -1.0f, 1.0f);
     const float facingAngle = std::acos(alignment);
     const float opposingAngle = std::acos(-alignment);
     const float facing = 1.0f - SmoothStep(
-        kHalfOpening, kHalfOpening + kFeather, facingAngle);
+        opening, opening + feather, facingAngle);
     const float opposing = 1.0f - SmoothStep(
-        kHalfOpening, kHalfOpening + kFeather, opposingAngle);
-    return 0.52f + 0.38f * facing + 0.30f * opposing;
-}
+        opening, opening + feather, opposingAngle);
+    return std::clamp(settings.ambient + settings.primary * facing + settings.opposite * opposing, 0.f, 1.f);
+    }
 
 // Adapted from SDFEdgeLightEffect::EdgeLightFakeBloom. Minimum thickness,
 // nonlinear width mapping and independent inner/outer bloom are retained.
 // Dimensions and bloom strength are tuned for SnowDesktop's small plates.
-inline float BorderWidth(float depth, float lighting)
+float BorderWidth(float depth, float lighting) const
 {
-    return depth * (0.65f + 0.45f * SmoothStep(0.0f, 1.0f, lighting));
+    return depth * (settings.minimumWidth + settings.widthVariation * SmoothStep(0.0f, 1.0f, lighting));
 }
 
-inline float Intensity(float distance, float depth, float lighting)
+float Intensity(float distance, float depth, float lighting) const
 {
     if (depth <= 0.0f) return 0.0f;
     const float thickness = BorderWidth(depth, lighting);
@@ -74,23 +84,36 @@ inline float Intensity(float distance, float depth, float lighting)
         ? thickness : std::min(thickness, static_cast<float>(kPanelOverdraw));
     const float core = 1.0f - SmoothStep(0.0f, coreWidth, std::abs(distance));
     const float bloomWidth = distance >= 0.0f
-        ? depth * 2.0f
-        : std::min(depth * 1.2f, static_cast<float>(kPanelOverdraw));
-    const float normalizedDistance = std::abs(distance) / bloomWidth;
-    const float falloff = std::max((1.0f - normalizedDistance) /
-        ((1.0f + normalizedDistance) * (1.0f + normalizedDistance)), 0.0f);
-    const float bloomGate = SmoothStep(0.1f, 1.0f, lighting);
-    return std::clamp(lighting * (core + 0.30f * bloomGate * falloff), 0.0f, 1.0f);
+        ? depth * settings.innerGlow
+        : std::min(depth * settings.outerGlow, static_cast<float>(kPanelOverdraw));
+    const float normalizedDistance = bloomWidth > 0.f ? std::abs(distance) / bloomWidth : 1.f;
+    const float falloff = normalizedDistance < 1.f ? (1.f - normalizedDistance) /
+        std::pow(1.f + normalizedDistance, settings.glowFalloff) : 0.f;
+    const float bloomGate = SmoothStep(settings.glowThreshold, 1.0f, lighting);
+    return std::clamp(lighting * (core + settings.glowStrength * bloomGate * falloff), 0.0f, 1.0f);
 }
 
 // A restrained inner seam belongs to the glass body independently of the
 // directional reflection. Use the frosted shader's exponential decay rather
 // than a second Gaussian crest which makes the cross-section look rounded.
-inline float Occlusion(float distance, float depth, float lighting)
+float Occlusion(float distance, float depth, float lighting) const
 {
     if (depth <= 0.0f || distance <= 0.0f) return 0.0f;
     const float thickness = BorderWidth(depth, lighting);
     const float entry = SmoothStep(thickness * 0.6f, thickness, distance);
-    return entry * std::exp(-4.62f * std::max(distance - thickness, 0.0f) / depth);
+    return entry * std::exp(-settings.shadowFalloff * std::max(distance - thickness, 0.0f) / depth);
 }
+// Outside this band every possible mask sample rounds to zero in A8. Keeping
+// the support finite also bounds icon and animated-panel work by perimeter.
+float InnerSupport(float depth, bool occlusion) const
+{
+    const float core = depth * (settings.minimumWidth + settings.widthVariation);
+    return occlusion ? core + depth * std::log(510.f) / settings.shadowFalloff
+        : std::max(core, depth * settings.innerGlow);
+}
+};
+inline float Lighting(float x, float y) { return Evaluator{}.Lighting(x, y); }
+inline float BorderWidth(float depth, float lighting) { return Evaluator{}.BorderWidth(depth, lighting); }
+inline float Intensity(float distance, float depth, float lighting) { return Evaluator{}.Intensity(distance, depth, lighting); }
+inline float Occlusion(float distance, float depth, float lighting) { return Evaluator{}.Occlusion(distance, depth, lighting); }
 }

@@ -197,6 +197,7 @@ public:
         if (appearance.edgeHighlightWidth)
             descriptor.hostAppearance.edgeHighlightWidth =
                 *appearance.edgeHighlightWidth;
+        if (appearance.edgeLight) descriptor.hostAppearance.edgeLight = *appearance.edgeLight;
         if (appearance.edgeHighlightStrength)
             descriptor.hostAppearance.edgeHighlightStrength =
                 *appearance.edgeHighlightStrength;
@@ -1451,6 +1452,9 @@ int main()
     explicitMaterialPatch.edgeHighlightEnabled = true;
     explicitMaterialPatch.edgeHighlightWidth = 3.0f;
     explicitMaterialPatch.edgeHighlightStrength = 0.4f;
+    explicitMaterialPatch.edgeLight = snowdesktop::EdgeLightSettings{};
+    explicitMaterialPatch.edgeLight->direction = 132.f;
+    explicitMaterialPatch.edgeLight->outerGlow = .5f;
     const auto explicitMaterialResult =
         appearanceService.UpdateHostAppearance(
             appearanceGuard, explicitMaterialPatch);
@@ -1465,7 +1469,7 @@ int main()
             appearanceSnapshot->hostAppearance.edgeHighlightEnabled &&
             appearanceSnapshot->hostAppearance.edgeHighlightWidth == 3.0f &&
             appearanceSnapshot->hostAppearance.edgeHighlightStrength ==
-                0.4f,
+                0.4f && appearanceSnapshot->hostAppearance.edgeLight == *explicitMaterialPatch.edgeLight,
         "explicit border and edge-highlight values take priority in a material update");
     appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
         *appearanceSnapshot);

@@ -1,5 +1,6 @@
 #pragma once
 #include "appearance_sections.h"
+#include "edge_light_editor.h"
 #include "panel_gradient_editor.h"
 #include "../personalization.h"
 
@@ -47,6 +48,7 @@ public:
         if (syncing_ || closed_) return;
         for (auto& editor : colors_) editor->Dismiss();
         if (gradient_) gradient_->Flush();
+        if (edge_) edge_->Flush();
         if (!dirty_) return;
         preview_.Cancel(); dirty_ = false;
         if (change_) change_(value_, true);
@@ -55,6 +57,7 @@ public:
     {
         closed_ = true; preview_.Close();
         if (gradient_) gradient_->Close();
+        if (edge_) edge_->Close();
         for (auto& editor : colors_) editor->Close();
         change_ = {}; localize_ = {};
     }
@@ -65,6 +68,7 @@ private:
     PersonalizationSettings value_;
     Localize localize_; Change change_;
     std::shared_ptr<PanelGradientEditor> gradient_;
+    std::shared_ptr<EdgeLightEditor> edge_;
     std::vector<std::unique_ptr<presenter_controls::ColorFlyoutEditor>> colors_;
     std::vector<std::function<void()>> sync_;
     presenter_controls::CoalescedPreviewTimer<PersonalizationSettings> preview_;
@@ -74,6 +78,7 @@ private:
     {
         syncing_ = true;
         gradient_->SetValue(value_.panelGradient);
+        if (edge_) edge_->SetValue(value_.edgeLight);
         for (auto const& sync : sync_) sync();
         syncing_ = false;
     }
@@ -159,6 +164,7 @@ private:
         syncing_ = true;
         for (auto& editor : colors_) editor->Close(); colors_.clear();
         if (gradient_) gradient_->Close();
+        if (edge_) edge_->Close();
         root_.Children().Clear(); sync_.clear(); root_.Spacing(8);
         sections_ = {}; sections_.Initialize(root_); sections_.RefreshLocalizedText(localize_);
         std::weak_ptr<PanelAppearanceEditor> weak = shared_from_this();
@@ -197,6 +203,11 @@ private:
         const auto edge = [](auto const& value) { return value.widgetEdgeHighlightEnabled; };
         Number(sections_.border, "largeIcon.edgeWidth", &PersonalizationSettings::widgetEdgeHighlightWidth, .5, 4, .5, 1, L"px", edge);
         Number(sections_.border, "largeIcon.edgeStrength", &PersonalizationSettings::widgetEdgeHighlightStrength, 0, 100, 1, 100, L"%", edge);
+        edge_ = EdgeLightEditor::Create(localize_, [weak](auto const& light, bool commit) {
+            if (auto self = weak.lock()) self->Apply([&](auto& value) { value.edgeLight = light; }, commit);
+        });
+        sections_.border.Children().Append(edge_->Content());
+        sync_.push_back([this] { edge_->Content().Visibility(value_.widgetEdgeHighlightEnabled ? x::Visibility::Visible : x::Visibility::Collapsed); });
         Sync();
     }
 };

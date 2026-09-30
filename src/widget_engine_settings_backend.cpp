@@ -1,4 +1,5 @@
 #include "widget_engine_settings_backend.h"
+#include "edge_light_codec.h"
 
 #include "name_pinyin.h"
 #include "utils.h"
@@ -57,7 +58,7 @@ bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
         key == "noiseAlpha" || key == "glassEnabled" ||
         key == "glassBlurRadius" || key == "acrylicEnabled" ||
         key == "followPersonalization" || key == "__preset" ||
-        key == "__contentTheme" || key == "__panelGradient";
+        key == "__contentTheme" || key == "__panelGradient" || key == "__edgeLight";
 }
 
 bool IsHostAppearancePresetKey(std::string_view key) noexcept
@@ -534,7 +535,7 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
         borderR, borderG, borderB, borderOpacity,
         borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
         edgeHighlightStrength,
-        gradientEndOpacity, glassEnabled, acrylicEnabled, &appearance.panelGradient);
+        gradientEndOpacity, glassEnabled, acrylicEnabled, &appearance.panelGradient, &appearance.edgeLight);
     const auto colorToInteger = [](float red, float green, float blue) {
         const auto channel = [](float value) {
             if (!std::isfinite(value)) value = 0.0f;
@@ -958,6 +959,10 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
             TypedStorageMetadataKey(key), metadataChanged, error);
     };
     std::string appearanceError;
+    if (appearance.edgeLight &&
+        (!ValidateEdgeLight(*appearance.edgeLight) ||
+         !setAppearance("__edgeLight", EncodeEdgeLight(*appearance.edgeLight), appearanceError)))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue, "invalidEdgeLight", std::move(appearanceError));
     if (appearance.panelGradient &&
         !setAppearance("__panelGradient", EncodePanelGradient(*appearance.panelGradient), appearanceError))
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,

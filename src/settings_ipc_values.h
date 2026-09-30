@@ -16,12 +16,13 @@ namespace snowdesktop::settings_ipc
         template<class Value> static auto Tie(Value& v) { return std::tie(__VA_ARGS__); } \
     }
 
+SD_IPC_FIELDS(EdgeLightSettings, v.direction, v.spread, v.feather, v.ambient, v.primary, v.opposite, v.minimumWidth, v.widthVariation, v.innerGlow, v.outerGlow, v.glowStrength, v.glowFalloff, v.glowThreshold, v.shadowStrength, v.shadowFalloff);
 SD_IPC_FIELDS(PanelGradientStop, v.position, v.color, v.opacity);
 SD_IPC_FIELDS(PanelGradient, v.enabled, v.angle, v.start, v.end, v.stops);
 SD_IPC_FIELDS(PersonalizationSettings,
     v.widgetBgR, v.widgetBgG, v.widgetBgB, v.widgetBorderR,
     v.widgetBorderG, v.widgetBorderB, v.widgetAlpha, v.widgetBorderAlpha,
-    v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength,
+    v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength, v.edgeLight,
     v.gradientEndA, v.barHeight, v.scrollableTitleBarOnTop, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
     v.showCategoryTabCounts, v.showGroupTabCounts, v.popupHoverOpen, v.popupHoverDelayMs, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
@@ -69,7 +70,7 @@ SD_IPC_FIELDS(CategorySettings,
 SD_IPC_FIELDS(IconBeautifySettings,
     v.enabled, v.preset, v.mode, v.backgroundOpacity,
     v.glassEnabled, v.glassBlurRadius, v.edgeHighlightEnabled,
-    v.edgeHighlightWidth, v.edgeHighlightStrength,
+    v.edgeHighlightWidth, v.edgeHighlightStrength, v.edgeLight,
     v.gradientEnabled, v.gradientDirection, v.backgroundStartR, v.backgroundStartG,
     v.backgroundStartB, v.backgroundEndR, v.backgroundEndG, v.backgroundEndB,
     v.shape, v.contentScale, v.textureHighlightStrength, v.textureHighlightSize,
@@ -154,12 +155,12 @@ SD_IPC_FIELDS(widget_runtime::WidgetSettingPresetSchema,
 SD_IPC_FIELDS(widget_runtime::WidgetHostAppearanceState,
     v.followPersonalization, v.presetId, v.backgroundColor, v.borderColor,
     v.backgroundOpacity, v.borderOpacity, v.borderWidth, v.edgeHighlightEnabled,
-    v.edgeHighlightWidth, v.edgeHighlightStrength, v.gradientEndOpacity, v.glassEnabled,
+    v.edgeHighlightWidth, v.edgeHighlightStrength, v.edgeLight, v.gradientEndOpacity, v.glassEnabled,
     v.acrylicEnabled, v.contentTheme, v.panelGradient);
 SD_IPC_FIELDS(widget_runtime::WidgetHostAppearancePatch,
     v.followPersonalization, v.presetId, v.backgroundColor, v.borderColor,
     v.backgroundOpacity, v.borderOpacity, v.borderWidth, v.edgeHighlightEnabled,
-    v.edgeHighlightWidth, v.edgeHighlightStrength, v.gradientEndOpacity, v.glassEnabled,
+    v.edgeHighlightWidth, v.edgeHighlightStrength, v.edgeLight, v.gradientEndOpacity, v.glassEnabled,
     v.acrylicEnabled, v.contentTheme, v.clearContentTheme, v.panelGradient);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingOpaqueState,
     v.configured, v.available, v.canChoose, v.canClear,

@@ -2057,8 +2057,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             }
             else
             {
-                const float inset = p.backgroundPreset == kAppearancePresetGlassTransparent
-                    ? borderWidth * 0.5f : 0.0f;
+                const float inset = borderWidth * 0.5f;
                 const float borderRadius = std::max(0.0f, panelRadius - inset);
                 context->DrawRoundedRectangle(D2D1::RoundedRect(
                     D2D1::RectF(static_cast<float>(bounds.left) + inset,
@@ -2566,7 +2565,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             (void)app_->DrawEdgeHighlight(
                 context, panelBounds, p.cornerRadius, fill, edgeWidth,
                 p.widgetEdgeHighlightStrength,
-                p.backgroundPreset == kAppearancePresetGlassTransparent);
+                p.edgeLight);
         }
     }
 

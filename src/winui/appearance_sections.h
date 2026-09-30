@@ -12,6 +12,8 @@ struct AppearanceSections
     Panel colors{nullptr}, material{nullptr}, border{nullptr}, bottomBar{nullptr}, text{nullptr};
     Heading colorsTitle{nullptr}, materialTitle{nullptr}, borderTitle{nullptr}, bottomBarTitle{nullptr}, textTitle{nullptr};
     bool highlights = true;
+    std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander> disclosures;
+    void ExpandAll() const { for (auto const& disclosure : disclosures) disclosure.IsExpanded(true); }
 
     void PlaceOpacity(const winrt::Microsoft::UI::Xaml::UIElement& row, bool gradient) const
     {
@@ -25,28 +27,34 @@ struct AppearanceSections
         else target.Children().Append(row);
     }
 
-    static Panel Section(const Panel& parent, Heading& title)
+    static Panel Section(const Panel& parent, Heading& title,
+        std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander>* disclosures = nullptr)
     {
         namespace x = winrt::Microsoft::UI::Xaml;
         title = Heading{};
         title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         title.TextWrapping(x::TextWrapping::Wrap);
-        title.Margin({0, 12, 0, 4});
-        parent.Children().Append(title);
-        Panel body; body.Spacing(4);
-        parent.Children().Append(body);
+        title.Margin({0, 0, 0, 0});
+        Panel body; body.Spacing(8); body.Margin({0, 4, 0, 4});
+        x::Controls::Expander disclosure;
+        disclosure.Header(title); disclosure.Content(body);
+        disclosure.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        disclosure.IsExpanded(false);
+        parent.Children().Append(disclosure);
+        if (disclosures) disclosures->push_back(disclosure);
         return body;
     }
 
     void Initialize(const Panel& parent, bool withHighlights = true, bool withBottomBar = false, bool withText = true)
     {
         highlights = withHighlights;
-        colors = Section(parent, colorsTitle);
-        colorsTitle.Margin({0, 4, 0, 4});
-        material = Section(parent, materialTitle);
-        border = Section(parent, borderTitle);
-        if (withBottomBar) bottomBar = Section(parent, bottomBarTitle);
-        if (withText) text = Section(parent, textTitle);
+        disclosures.clear();
+        colors = Section(parent, colorsTitle, &disclosures);
+        material = Section(parent, materialTitle, &disclosures);
+        border = Section(parent, borderTitle, &disclosures);
+        if (withBottomBar) bottomBar = Section(parent, bottomBarTitle, &disclosures);
+        if (withText) text = Section(parent, textTitle, &disclosures);
+        disclosures.front().IsExpanded(true);
     }
 
     template<class Localize> void RefreshLocalizedText(Localize localize)

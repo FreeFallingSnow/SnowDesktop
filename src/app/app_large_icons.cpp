@@ -194,6 +194,7 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
     config.border = style.widgetBorderAlpha > 0;
     config.edgeHighlight = style.widgetEdgeHighlightEnabled;
     config.edgeWidth = style.widgetEdgeHighlightWidth; config.edgeStrength = style.widgetEdgeHighlightStrength;
+    config.edgeLight = style.edgeLight;
     config.gradient = style.panelGradient;
     config.borderWidth = style.widgetBorderWidth;
     config.borderOpacity = style.widgetBorderAlpha;
@@ -475,6 +476,7 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         appearance.widgetEdgeHighlightEnabled = config.edgeHighlight;
         appearance.widgetEdgeHighlightWidth = static_cast<float>(config.edgeWidth);
         appearance.widgetEdgeHighlightStrength = static_cast<float>(config.edgeStrength);
+        appearance.edgeLight = config.edgeLight;
         appearance.panelGradient = config.gradient;
         for (auto& stop : appearance.panelGradient.stops) stop.opacity *= config.gradientOpacity;
     }

@@ -4,6 +4,7 @@
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
 #include "appearance_sections.h"
+#include "edge_light_editor.h"
 #include "panel_appearance_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -163,6 +164,8 @@ struct PersonalizationPagePresenter::Impl
     SettingsCard layoutCard;
     AppearanceSections appearanceSections;
     std::shared_ptr<PanelGradientEditor> panelGradientEditor;
+    std::shared_ptr<EdgeLightEditor> edgeLightEditor;
+    std::vector<std::pair<SettingRow*, muxc::Button>> appearanceResets;
     bool panelGradientEnabled = false;
 
     muxc::ComboBox presetCombo{nullptr};
@@ -271,8 +274,13 @@ struct PersonalizationPagePresenter::Impl
     {
         if (!CanEmit())
             return;
-        actions.update(generation, mode,
-            PersonalizationPageActions::Edit(std::move(edit)));
+        actions.update(generation, mode, [edit = std::move(edit)](auto& settings) {
+            const auto previous = settings; edit(settings);
+            bool changed = previous.edgeLight != settings.edgeLight || previous.panelGradient != settings.panelGradient || previous.contentTheme != settings.contentTheme || previous.gradientEndA != settings.gradientEndA;
+            VisitPanelAppearanceFields([&](auto, auto field, double, double) { changed = changed || (field != &PersonalizationSettings::cornerRadius && previous.*field != settings.*field); });
+            VisitPanelAppearanceFlags([&](auto, auto field) { changed = changed || previous.*field != settings.*field; });
+            if (settings.backgroundPreset == previous.backgroundPreset && changed) settings.backgroundPreset = kAppearancePresetCustom;
+        });
     }
 
     template <typename Edit>
@@ -356,6 +364,10 @@ struct PersonalizationPagePresenter::Impl
         appearanceSections.border.Children().Append(edgeHighlightRow.root);
         appearanceSections.border.Children().Append(edgeHighlightWidth.row.root);
         appearanceSections.border.Children().Append(edgeHighlightStrength.row.root);
+        edgeLightEditor = EdgeLightEditor::Create([this](auto key) { return L(key, L""); }, [this](auto const& light, bool commit) {
+            Emit(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview, [light](auto& settings) { settings.edgeLight = light; settings.backgroundPreset = kAppearancePresetCustom; });
+        });
+        appearanceSections.border.Children().Append(edgeLightEditor->Content());
 
         panelGradientEditor = PanelGradientEditor::Create(
             [this](std::string_view key) { return L(key, L""); },
@@ -391,6 +403,22 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
 
+        const auto reset = [this](SettingRow& row, auto action) {
+            appearanceResets.emplace_back(&row, presenter_controls::AddRestoreDefaultAction(row,
+                L("app.settings.restore_default", L"Restore default"), [this, action] {
+                    Emit(SettingsUpdateMode::PreviewAndCommit, action);
+                }));
+        };
+        for (auto* color : colorControls)
+            reset(color->editor.row, [color](auto& value) {
+                const PersonalizationSettings defaults;
+                value.*color->red = defaults.*color->red; value.*color->green = defaults.*color->green; value.*color->blue = defaults.*color->blue;
+            });
+        reset(glassRow, [](auto& value) { value.glassEnabled = PersonalizationSettings{}.glassEnabled; });
+        reset(acrylicRow, [](auto& value) { value.acrylicEnabled = PersonalizationSettings{}.acrylicEnabled; });
+        reset(edgeHighlightRow, [](auto& value) { value.widgetEdgeHighlightEnabled = PersonalizationSettings{}.widgetEdgeHighlightEnabled; });
+        reset(contentThemeRow, [](auto& value) { value.contentTheme = PersonalizationSettings{}.contentTheme; });
+        reset(gradientToggleRow, [](auto& value) { value.gradientEndA = PersonalizationSettings{}.gradientEndA; });
         InitializeCard(contextMenuCard, cardStyle, menuRoot);
         contextMenuCombo = muxc::ComboBox{};
         contextMenuCombo.HorizontalAlignment(
@@ -417,7 +445,7 @@ struct PersonalizationPagePresenter::Impl
         quickAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.quickNavigationAppearance.appearance = value; settings.quickNavigationAppearance.customized = true; });
+                    [value](auto& settings) { settings.quickNavigationAppearance.appearance = value; settings.quickNavigationAppearance.customized = true; settings.quickNavigationAppearance.mode = 4; });
             });
         themeTargetsCard.content.Children().Append(quickAppearanceEditor->Content());
         InitializeCard(popupThemeCard, cardStyle, themeRoot);
@@ -425,7 +453,7 @@ struct PersonalizationPagePresenter::Impl
         popupAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.collectionPopupAppearance.appearance = value; settings.collectionPopupAppearance.customized = true; });
+                    [value](auto& settings) { settings.collectionPopupAppearance.appearance = value; settings.collectionPopupAppearance.customized = true; settings.collectionPopupAppearance.mode = 4; });
             });
         popupThemeCard.content.Children().Append(popupAppearanceEditor->Content());
         dockThemeRoot = muxc::StackPanel{};
@@ -442,7 +470,7 @@ struct PersonalizationPagePresenter::Impl
         dockAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
                 EmitDockAppearance(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.customAppearance = value; });
+                    [value](auto& settings) { settings.customAppearance = value; settings.appearancePreset = kAppearancePresetCustom; });
             });
         dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
         InitializeCard(statusBarLinkCard, cardStyle, themeRoot);
@@ -569,13 +597,14 @@ struct PersonalizationPagePresenter::Impl
         control.unit.Visibility(mux::Visibility::Collapsed);
         control.member = member;
         control.scale = scale;
+        if (!std::isfinite(defaultValue)) defaultValue = PersonalizationSettings{}.*member / scale;
         control.defaultValue = defaultValue;
         control.editors.Children().Append(control.slider);
         muxc::Grid::SetColumn(control.number, 1);
         control.editors.Children().Append(control.number);
         muxc::Grid::SetColumn(control.unit, 2);
         control.editors.Children().Append(control.unit);
-        if (std::isfinite(defaultValue))
+        if (std::isfinite(control.defaultValue))
         {
             muxc::ColumnDefinition resetColumn{};
             resetColumn.Width(mux::GridLengthHelper::Auto());
@@ -608,6 +637,7 @@ struct PersonalizationPagePresenter::Impl
                 UpdateDependentStates();
                 if (!CanEmit())
                     return;
+                edgeLightEditor->Cancel();
                 const int index = presetCombo.SelectedIndex();
                 if (index < 0 ||
                     static_cast<std::size_t>(index) >= kPresetIds.size())
@@ -918,6 +948,7 @@ struct PersonalizationPagePresenter::Impl
         glassToggle.IsOn(settings.glassEnabled);
         acrylicToggle.IsOn(settings.acrylicEnabled);
         edgeHighlightToggle.IsOn(settings.widgetEdgeHighlightEnabled);
+        edgeLightEditor->SetValue(settings.edgeLight);
         showGroupTabCounts.IsOn(settings.showGroupTabCounts);
         popupHoverOpen.IsOn(settings.popupHoverOpen);
         topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
@@ -936,8 +967,8 @@ struct PersonalizationPagePresenter::Impl
         };
         quickNavigationThemeCombo.SelectedIndex(index(settings.quickNavigationAppearance, settings.quickNavTheme));
         collectionPopupThemeCombo.SelectedIndex(index(settings.collectionPopupAppearance, settings.collectionPopupTheme));
-        quickAppearanceEditor->Content().Visibility(IsCustomSurfaceTheme(settings.quickNavigationAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        popupAppearanceEditor->Content().Visibility(IsCustomSurfaceTheme(settings.collectionPopupAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        quickAppearanceEditor->Content().Visibility((settings.quickNavigationAppearance.mode >= 0 || IsCustomSurfaceTheme(settings.quickNavigationAppearance, currentGlobalAppearance)) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        popupAppearanceEditor->Content().Visibility((settings.collectionPopupAppearance.mode >= 0 || IsCustomSurfaceTheme(settings.collectionPopupAppearance, currentGlobalAppearance)) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     }
 
     void SelectSurfaceTheme(bool quick, int index)
@@ -965,8 +996,7 @@ struct PersonalizationPagePresenter::Impl
     {
         if (closed)
             return;
-        const bool custom = presetCombo.SelectedIndex() ==
-            static_cast<int>(kPresetIds.size() - 1);
+        const bool custom = true;
         themeTargetsCard.root.Visibility(mux::Visibility::Visible);
         widgetAppearanceCard.root.Visibility(custom
                 ? mux::Visibility::Visible
@@ -994,6 +1024,7 @@ struct PersonalizationPagePresenter::Impl
         const auto visible = [](bool value) { return value ? mux::Visibility::Visible : mux::Visibility::Collapsed; };
         edgeHighlightWidth.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
         edgeHighlightStrength.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
+        edgeLightEditor->Content().Visibility(visible(edgeHighlightToggle.IsOn()));
         gradientEndAlpha.row.root.Visibility(visible(gradientToggle.IsOn()));
         blurRadius.row.root.Visibility(visible(glassToggle.IsOn()));
         acrylicRow.root.Visibility(visible(glassToggle.IsOn()));
@@ -1054,6 +1085,7 @@ struct PersonalizationPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        edgeLightEditor->RefreshLocalizedText();
         appearanceSections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
         if (panelGradientEditor) panelGradientEditor->RefreshLocalizedText();
         if (closed)
@@ -1119,6 +1151,7 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(collectionPopupThemeCombo,
             collectionPopupThemeRow.label.Text());
 
+        presetRow.help.Text(L("appearance.presetHelp", L"")); presetRow.help.Visibility(mux::Visibility::Visible);
         SetColorText(backgroundColor,
             "app.settings.component_bg", L"Widget Background");
         SetColorText(borderColor,
@@ -1150,8 +1183,8 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.SetText(
             L("app.settings.text_color", L"Text Color"));
         ReplaceComboItems(contentThemeCombo, {
-            {"app.settings.light", L"Light"},
-            {"app.settings.dark", L"Dark"},
+            {"appearance.lightText", L"Light text"},
+            {"appearance.darkText", L"Dark text"},
         });
 
         contextMenuRow.SetText(
@@ -1198,6 +1231,12 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.popup_hover_delay", L"Hover delay");
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
+        const auto explain = [](auto& row, const std::wstring& text) { row.help.Text(text); row.help.Visibility(mux::Visibility::Visible); };
+        explain(widgetAlpha.row, L("appearance.opacityHelp", L""));
+        explain(glassRow, L("appearance.glassHelp", L""));
+        explain(edgeHighlightRow, L("appearance.borderHelp", L""));
+        explain(edgeHighlightWidth.row, L("appearance.rimWidthHelp", L""));
+        for (auto const& [row, button] : appearanceResets) presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default", L"Restore default") + L" · " + std::wstring(row->label.Text()));
         muxa::AutomationProperties::SetName(
             edgeHighlightToggle, edgeHighlightRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1236,6 +1275,7 @@ struct PersonalizationPagePresenter::Impl
         updatingControls = true;
         if (newGeneration)
         {
+            edgeLightEditor->Cancel();
             for (ContinuousControl* control : continuousControls)
             {
                 if (control->idleCommitTimer)
@@ -1264,8 +1304,8 @@ struct PersonalizationPagePresenter::Impl
             const auto found = std::find(kPresetIds.begin(), kPresetIds.end(), dock.appearancePreset);
             dockAppearanceCombo.SelectedIndex(dock.followComponentAppearance ? 0 :
                 found == kPresetIds.end() ? static_cast<int>(kPresetIds.size()) : static_cast<int>(found - kPresetIds.begin()) + 1);
-            dockAppearanceEditor->SetValue(snapshot.values.dock.customAppearance, newGeneration);
-            dockAppearanceEditor->Content().Visibility(!dock.followComponentAppearance && dock.appearancePreset == kAppearancePresetCustom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            dockAppearanceEditor->SetValue(ResolveDockAppearance(dock, currentGlobalAppearance), newGeneration);
+            dockAppearanceEditor->Content().Visibility(!dock.followComponentAppearance ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             dockRevision = snapshot.domainRevisions.dock;
         }
         hasSnapshot = true;
@@ -1274,6 +1314,7 @@ struct PersonalizationPagePresenter::Impl
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
+        try { appearanceSections.ExpandAll(); } catch (...) {}
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;
@@ -1386,6 +1427,7 @@ struct PersonalizationPagePresenter::Impl
         {
             quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush(); dockAppearanceEditor->Flush();
             if (panelGradientEditor) panelGradientEditor->Flush();
+            if (edgeLightEditor) edgeLightEditor->Flush();
             for (ContinuousControl* control : continuousControls)
                 Commit(*control);
         }
@@ -1429,7 +1471,8 @@ struct PersonalizationPagePresenter::Impl
             UnhookContinuousControl(*control);
         for (ColorControl* control : colorControls)
             UnhookColorControl(*control);
-        if (panelGradientEditor) panelGradientEditor->Close();
+            if (panelGradientEditor) panelGradientEditor->Close();
+            if (edgeLightEditor) edgeLightEditor->Close();
         actions = {};
         localize = {};
     }

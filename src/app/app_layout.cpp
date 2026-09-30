@@ -276,9 +276,10 @@ void DesktopApp::LoadLayoutSlots()
         iconBeautifySettings_.outlineB = *document.iconBeautifyOutlineB;
     if (document.iconBeautifyShadowStrength)
         iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
+    if (document.iconBeautifyEdgeLight) iconBeautifySettings_.edgeLight = *document.iconBeautifyEdgeLight;
     iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
         iconBeautifySettings_);
-    if (document.iconBeautifyPreset &&
+    if (!document.iconBeautifyEdgeLight && document.iconBeautifyPreset &&
         (iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::DefaultBeautify ||
          iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlass))
         iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(iconBeautifySettings_.preset);
@@ -978,6 +979,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"iconBeautifyEdgeHighlightEnabled\": " << (iconBeautifySettings_.edgeHighlightEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyEdgeHighlightWidth\": " << iconBeautifySettings_.edgeHighlightWidth
          << ",\n  \"iconBeautifyEdgeHighlightStrength\": " << iconBeautifySettings_.edgeHighlightStrength
+         << ",\n  \"iconBeautifyEdgeLight\": " << snowdesktop::EncodeEdgeLight(iconBeautifySettings_.edgeLight)
          << ",\n  \"iconBeautifyMode\": " << iconBeautifySettings_.mode
          << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifySettings_.backgroundOpacity
          << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifySettings_.gradientEnabled ? "true" : "false")

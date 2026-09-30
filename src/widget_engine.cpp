@@ -14,6 +14,7 @@
  */
 
 #include "widget_engine.h"
+#include "edge_light_codec.h"
 #include "native_control_geometry.h"
 #include "native_tooltip_content.h"
 #include "widget_menu_catalogue.h"
@@ -3090,7 +3091,7 @@ static bool IsHostAppearanceSettingKey(const std::string& key)
         key == "gradientEndA" ||
         IsRemovedPanelEffectSettingKey(key) || key == "glassEnabled" ||
         key == "glassBlurRadius" || key == "acrylicEnabled" ||
-        key == "followPersonalization";
+        key == "followPersonalization" || key == "__edgeLight";
 }
 
 static std::string FindDeclaredDefaultValue(const LuaWidget& widget, const std::string& key)
@@ -22514,9 +22515,11 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& edgeHighlightWidth, float& edgeHighlightStrength,
     float& gradientEndA,
     bool& glassEnabled, bool& acrylicEnabled,
-    snowdesktop::PanelGradient* panelGradient) const
+    snowdesktop::PanelGradient* panelGradient,
+    snowdesktop::EdgeLightSettings* edgeLight) const
 {
     if (panelGradient) *panelGradient = {};
+    if (edgeLight) *edgeLight = {};
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
     const auto& w = widgets_[idx];
@@ -22616,6 +22619,12 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             (void)snowdesktop::DecodePanelGradient(value, *panelGradient);
     }
 
+    if (edgeLight)
+    {
+        JsonValue value;
+        if (ParseJson(RuntimeGetStorageValue(widgetId, "__edgeLight"), value))
+            (void)snowdesktop::DecodeEdgeLight(value, *edgeLight);
+    }
     const std::string storedLegacyBorderStyle =
         RuntimeGetStorageValue(widgetId, "borderStyle");
     const std::string storedBorderWidth =

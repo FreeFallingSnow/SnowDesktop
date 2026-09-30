@@ -576,17 +576,12 @@ void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
 namespace
 {
 constexpr std::size_t kMaximumEdgeHighlightMaskCacheEntries = 32;
-constexpr float kEdgeHighlightLightAngleDegrees = 315.0f;
-constexpr float kEdgeHighlightTransmittedStrength = 0.40f;
-constexpr float kPi = 3.14159265358979323846f;
 static_assert(flat_glass_rim::kPanelOverdraw <=
     widget_composition_layer_rules::kWidgetSurfaceBorderOverdraw);
 
 struct RoundedRectDistance
 {
     float distance = 0.0f;
-    float normalX = 0.0f;
-    float normalY = 0.0f;
 };
 
 struct EdgeHighlightMaskKey
@@ -596,7 +591,7 @@ struct EdgeHighlightMaskKey
     UINT32 height = 0;
     std::uint32_t radiusSixteenths = 0;
     std::uint32_t depthSixteenths = 0;
-    bool flatGlass = false;
+    EdgeLightSettings edgeLight;
     bool occlusion = false;
 
     bool operator==(const EdgeHighlightMaskKey&) const = default;
@@ -621,43 +616,16 @@ float SmoothStep(float lower, float upper, float value)
     return t * t * (3.0f - 2.0f * t);
 }
 
-float SignForNormal(float value)
-{
-    return value < 0.0f ? -1.0f : 1.0f;
-}
-
 RoundedRectDistance EvaluateRoundedRectDistance(float x, float y,
     float width, float height, float cornerRadius)
 {
-    const float halfWidth = width * 0.5f;
-    const float halfHeight = height * 0.5f;
-    const float radius = std::clamp(
-        cornerRadius, 0.0f, std::min(halfWidth, halfHeight));
-    const float localX = x - halfWidth;
-    const float localY = y - halfHeight;
-    const float qx = std::abs(localX) - halfWidth + radius;
-    const float qy = std::abs(localY) - halfHeight + radius;
-    const float outsideX = std::max(qx, 0.0f);
-    const float outsideY = std::max(qy, 0.0f);
-    const float outsideLength = std::hypot(outsideX, outsideY);
-
-    RoundedRectDistance result;
-    result.distance = std::min(std::max(qx, qy), 0.0f) +
-        outsideLength - radius;
-    if (outsideLength > 0.0001f)
-    {
-        result.normalX = SignForNormal(localX) * outsideX / outsideLength;
-        result.normalY = SignForNormal(localY) * outsideY / outsideLength;
-    }
-    else if (qx > qy)
-    {
-        result.normalX = SignForNormal(localX);
-    }
-    else
-    {
-        result.normalY = SignForNormal(localY);
-    }
-    return result;
+    const float halfWidth = width * .5f, halfHeight = height * .5f;
+    const float radius = std::clamp(cornerRadius, 0.f, std::min(halfWidth, halfHeight));
+    const float qx = std::abs(x - halfWidth) - halfWidth + radius;
+    const float qy = std::abs(y - halfHeight) - halfHeight + radius;
+    const float ox = std::max(qx, 0.f), oy = std::max(qy, 0.f);
+    const float outside = ox > 0.f && oy > 0.f ? std::sqrt(ox * ox + oy * oy) : std::max(ox, oy);
+    return {std::min(std::max(qx, qy), 0.f) + outside - radius};
 }
 
 std::uint32_t QuantizeSixteenths(float value)
@@ -668,97 +636,39 @@ std::uint32_t QuantizeSixteenths(float value)
 
 std::vector<std::uint8_t> GenerateEdgeHighlightMask(
     UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
-    bool flatGlass, bool occlusion)
+    const EdgeLightSettings& edgeLight, bool occlusion)
 {
-    const UINT32 padding = flatGlass ? flat_glass_rim::kPanelOverdraw : 0;
-    const UINT32 bitmapWidth = width + padding * 2;
-    const UINT32 bitmapHeight = height + padding * 2;
-    std::vector<std::uint8_t> pixels(
-        static_cast<std::size_t>(bitmapWidth) * bitmapHeight, 0u);
-    if (width == 0 || height == 0 || bevelDepth <= 0.0f)
-        return pixels;
-
-    // Compass-style angles keep 0 degrees at the top and turn clockwise.
-    const float angleRadians =
-        (kEdgeHighlightLightAngleDegrees - 90.0f) * kPi / 180.0f;
-    const float lightX = std::cos(angleRadians);
-    const float lightY = std::sin(angleRadians);
-    const float coreDepth = bevelDepth;
-    const float availableDepth = std::max(0.0f,
-        std::min(static_cast<float>(width), static_cast<float>(height)) *
-            0.5f - 0.01f);
-    const float haloDepth = std::min(availableDepth,
-        flatGlass ? coreDepth * 1.25f : std::max(coreDepth * 2.5f, coreDepth + 3.0f));
-    constexpr std::array<float, 2> sampleOffsets{ 0.25f, 0.75f };
-
+    constexpr UINT32 padding = flat_glass_rim::kPanelOverdraw;
+    const UINT32 bitmapWidth = width + padding * 2, bitmapHeight = height + padding * 2;
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(bitmapWidth) * bitmapHeight, 0u);
+    if (width == 0 || height == 0 || bevelDepth <= 0.f) return pixels;
+    const flat_glass_rim::Evaluator material(edgeLight);
+    const float innerSupport = material.InnerSupport(bevelDepth, occlusion);
+    constexpr std::array<float, 2> offsets{.25f, .75f};
+    const float wf = static_cast<float>(width), hf = static_cast<float>(height);
     for (UINT32 y = 0; y < bitmapHeight; ++y)
     {
         for (UINT32 x = 0; x < bitmapWidth; ++x)
         {
-            float accumulated = 0.0f;
-            for (const float sampleY : sampleOffsets)
+            const float px = static_cast<float>(x) - static_cast<float>(padding);
+            const float py = static_cast<float>(y) - static_cast<float>(padding);
+            // The rounded-rectangle SDF is 1-Lipschitz. All four subpixel
+            // samples stay within .36px of the center. Skip the entire body
+            // before fan masks, powers and exponential shadow calculations.
+            const float centerDistance = EvaluateRoundedRectDistance(px + .5f, py + .5f, wf, hf, cornerRadius).distance;
+            if (centerDistance < -innerSupport - .36f || centerDistance > static_cast<float>(padding) + .36f) continue;
+            float accumulated = 0.f;
+            for (float sy : offsets) for (float sx : offsets)
             {
-                for (const float sampleX : sampleOffsets)
-                {
-                    const RoundedRectDistance sample =
-                        EvaluateRoundedRectDistance(
-                            static_cast<float>(x) + sampleX - static_cast<float>(padding),
-                            static_cast<float>(y) + sampleY - static_cast<float>(padding),
-                            static_cast<float>(width),
-                            static_cast<float>(height), cornerRadius);
-                    const float coverage = 1.0f - SmoothStep(
-                        -0.55f, 0.45f, sample.distance);
-                    if (flatGlass)
-                    {
-                        const float lighting = flat_glass_rim::Lighting(
-                            (static_cast<float>(x) + sampleX - static_cast<float>(padding)) /
-                                static_cast<float>(width),
-                            (static_cast<float>(y) + sampleY - static_cast<float>(padding)) /
-                                static_cast<float>(height));
-                        accumulated += occlusion
-                            ? coverage * flat_glass_rim::Occlusion(
-                                -sample.distance, coreDepth, lighting)
-                            : flat_glass_rim::Intensity(
-                                -sample.distance, coreDepth, lighting);
-                        continue;
-                    }
-                    const float edgeDistance = std::max(-sample.distance, 0.0f);
-                    if (coverage <= 0.0f || edgeDistance >= haloDepth)
-                        continue;
-
-                    const float corePosition = edgeDistance / coreDepth;
-                    const float haloPosition = edgeDistance / haloDepth;
-                    const float alignment = sample.normalX * lightX +
-                        sample.normalY * lightY;
-                    // Treat the source as a broad area light. A tight
-                    // specular power makes the rounded corner facing the
-                    // source dominate the straight top and left edges;
-                    // sub-linear powers keep those connected edges readable
-                    // without introducing an omnidirectional base stroke.
-                    const float primary = std::pow(
-                        std::max(alignment, 0.0f), 0.65f);
-                    const float transmitted =
-                        kEdgeHighlightTransmittedStrength * std::pow(
-                            std::max(-alignment, 0.0f), 0.80f);
-                    // Ordinary glass/acrylic retains its broad shoulder.
-                    const float specularCrest =
-                        1.0f - SmoothStep(0.02f, 0.55f, corePosition);
-                    const float softShoulder =
-                        1.0f - SmoothStep(0.05f, 1.0f, haloPosition);
-                    const float primaryBand =
-                        0.68f * specularCrest + 0.32f * softShoulder;
-                    // Ordinary glass keeps the weaker opposite reflection.
-                    const float transmittedBand =
-                        0.55f * softShoulder;
-                    accumulated += coverage *
-                        (primary * primaryBand +
-                            transmitted * transmittedBand);
-                }
+                const float distance = EvaluateRoundedRectDistance(px + sx, py + sy, wf, hf, cornerRadius).distance;
+                if (distance < -innerSupport || distance > static_cast<float>(padding)) continue;
+                const float lighting = material.Lighting((px + sx) / wf, (py + sy) / hf);
+                accumulated += occlusion
+                    ? (1.f - SmoothStep(-.55f, .45f, distance)) * material.Occlusion(-distance, bevelDepth, lighting)
+                    : material.Intensity(-distance, bevelDepth, lighting);
             }
-            const float intensity = std::clamp(
-                accumulated / 4.0f, 0.0f, 1.0f);
             pixels[static_cast<std::size_t>(y) * bitmapWidth + x] =
-                static_cast<std::uint8_t>(std::lround(intensity * 255.0f));
+                static_cast<std::uint8_t>(std::lround(std::clamp(accumulated * .25f, 0.f, 1.f) * 255.f));
         }
     }
     return pixels;
@@ -813,7 +723,7 @@ void CacheEdgeHighlightMask(const EdgeHighlightMaskKey& key,
 
 ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
-    bool flatGlass, bool occlusion = false)
+    const EdgeLightSettings& edgeLight, bool occlusion = false)
 {
     if (!context || width == 0 || height == 0 ||
         !context->IsDxgiFormatSupported(DXGI_FORMAT_A8_UNORM))
@@ -831,7 +741,7 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
         .height = height,
         .radiusSixteenths = QuantizeSixteenths(cornerRadius),
         .depthSixteenths = QuantizeSixteenths(bevelDepth),
-        .flatGlass = flatGlass,
+        .edgeLight = NormalizeEdgeLight(edgeLight),
         .occlusion = occlusion,
     };
     if (auto cached = FindCachedEdgeHighlightMask(key))
@@ -842,8 +752,8 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     const float quantizedDepth =
         static_cast<float>(key.depthSixteenths) / 16.0f;
     const std::vector<std::uint8_t> pixels = GenerateEdgeHighlightMask(
-        width, height, quantizedRadius, quantizedDepth, flatGlass, occlusion);
-    const UINT32 padding = flatGlass ? flat_glass_rim::kPanelOverdraw : 0;
+        width, height, quantizedRadius, quantizedDepth, key.edgeLight, occlusion);
+    constexpr UINT32 padding = flat_glass_rim::kPanelOverdraw;
     const UINT32 bitmapWidth = width + padding * 2;
     const UINT32 bitmapHeight = height + padding * 2;
     float dpiX = 96.0f;
@@ -892,7 +802,7 @@ D2D1_COLOR_F ResolveEdgeHighlightReflection(
 
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength, bool flatGlass)
+    float effectStrength, const EdgeLightSettings& edgeLight)
 {
     const float strength = std::clamp(effectStrength, 0.0f, 1.0f);
     if (!context || strength <= 0.0005f ||
@@ -914,22 +824,23 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     // an unrelated outline even when the border itself was disabled.
     D2D1_COLOR_F reflected =
         ResolveEdgeHighlightReflection(color, strength);
-    if (flatGlass) reflected.a = 0.10f + 0.60f * strength;
+    reflected.a = strength;
+    const auto material = NormalizeEdgeLight(edgeLight);
     ComPtr<ID2D1SolidColorBrush> reflectionBrush;
     if (FAILED(context->CreateSolidColorBrush(
             reflected, &reflectionBrush)) || !reflectionBrush)
         return false;
     const ComPtr<ID2D1Bitmap1> mask = GetEdgeHighlightMask(context,
         static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight),
-        cornerRadius, strokeWidth, flatGlass);
-    const ComPtr<ID2D1Bitmap1> shadowMask = flatGlass
+        cornerRadius, strokeWidth, material);
+    const ComPtr<ID2D1Bitmap1> shadowMask = material.shadowStrength > 0.f
         ? GetEdgeHighlightMask(context, static_cast<UINT32>(pixelWidth),
-            static_cast<UINT32>(pixelHeight), cornerRadius, strokeWidth, true, true)
+            static_cast<UINT32>(pixelHeight), cornerRadius, strokeWidth, material, true)
         : nullptr;
     ComPtr<ID2D1SolidColorBrush> shadowBrush;
     if (shadowMask)
         (void)context->CreateSolidColorBrush(
-            D2D1::ColorF(0.015f, 0.025f, 0.035f, 0.12f * strength), &shadowBrush);
+            D2D1::ColorF(0.015f, 0.025f, 0.035f, material.shadowStrength * strength), &shadowBrush);
     if (!mask)
     {
         // A8 opacity masks are optional on some Direct2D devices. Preserve a
@@ -959,11 +870,9 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
         context->GetAntialiasMode();
     // Thin glass reflects incident light over the wallpaper. Additive light
     // clips bright colors and made panels glow more than their icon plates.
-    context->SetPrimitiveBlend(flatGlass
-        ? D2D1_PRIMITIVE_BLEND_SOURCE_OVER : D2D1_PRIMITIVE_BLEND_ADD);
+    context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
     context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
     auto reflectionBounds = outerRect;
-    if (flatGlass)
     {
         const float padding = static_cast<float>(flat_glass_rim::kPanelOverdraw);
         reflectionBounds = D2D1::RectF(outerRect.left - padding,

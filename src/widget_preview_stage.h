@@ -1,4 +1,5 @@
 #pragma once
+#include "edge_light_settings.h"
 
 #include <d2d1_1.h>
 #include <windows.h>
@@ -97,13 +98,13 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
 void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, bool lightTheme, POINT pixelOrigin = {});
 
-/** Resolve the additive reflection color from straight material RGB/opacity. */
+/** Resolve the reflection hue from straight material RGB/opacity. */
 D2D1_COLOR_F ResolveEdgeHighlightReflection(
     D2D1_COLOR_F material, float effectStrength);
 
-/** Add a normal-driven bevel reflection from straight material RGB/opacity. */
+/** Draw the shared parameter-driven rim and inner seam over the backdrop. */
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength, bool flatGlass = false);
+    float effectStrength, const EdgeLightSettings& edgeLight = {});
 
 } // namespace snowdesktop::widget_preview

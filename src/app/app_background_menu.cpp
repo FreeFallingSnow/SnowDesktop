@@ -573,7 +573,7 @@ DesktopApp::RenderWidgetMenuPreview(
                     borderR, borderG, borderB, borderAlpha,
                     borderWidth, edgeHighlightEnabled,
                     edgeHighlightWidth, edgeHighlightStrength,
-                    gradientEndA, glass, acrylic, &stageAppearance.panelGradient))
+                    gradientEndA, glass, acrylic, &stageAppearance.panelGradient, &stageAppearance.edgeLight))
             {
                 stageAppearance.widgetBorderWidth = borderWidth;
                 stageAppearance.widgetEdgeHighlightEnabled =
@@ -715,6 +715,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.widgetEdgeHighlightEnabled) + L":" +
         std::to_wstring(appearance.widgetEdgeHighlightWidth) + L":" +
         std::to_wstring(appearance.widgetEdgeHighlightStrength) + L":" +
+        Utf8ToWide(snowdesktop::EncodeEdgeLight(appearance.edgeLight)) + L":" +
         std::to_wstring(appearance.gradientEndA) + L":" +
         std::to_wstring(appearance.cornerRadius) + L":" +
         std::to_wstring(appearance.barHeight) + L":" +

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <vector>
+#include "edge_light_settings.h"
 
 namespace snowdesktop
 {
@@ -67,6 +68,7 @@ struct IconBeautifySettings
     bool edgeHighlightEnabled = false;
     float edgeHighlightWidth = 1.0f;
     float edgeHighlightStrength = 0.40f;
+    EdgeLightSettings edgeLight;
     bool gradientEnabled = false;
     int gradientDirection = 0;
     float backgroundStartR = 232.0f / 255.0f;

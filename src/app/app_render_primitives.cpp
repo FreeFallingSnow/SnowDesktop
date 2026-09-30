@@ -148,7 +148,7 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         if (auto* strokeBrush = getBrush(stroke))
         {
             auto outline = rr;
-            if (!selected && p.backgroundPreset == kAppearancePresetGlassTransparent)
+            if (!selected)
             {
                 const float inset = strokeWidth * 0.5f;
                 outline.rect = D2D1::RectF(rr.rect.left + inset, rr.rect.top + inset,
@@ -183,7 +183,7 @@ bool DesktopApp::DrawWidgetPanelEdgeHighlight(
         std::max(0.0f, effectScale);
     return DrawEdgeHighlight(ctx, frame, std::max(0.0f, radius), fill,
         edgeWidth, p.widgetEdgeHighlightStrength,
-        p.backgroundPreset == kAppearancePresetGlassTransparent);
+        p.edgeLight);
 }
 
 void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,

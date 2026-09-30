@@ -355,6 +355,20 @@ int main()
         auto light = PersonalizationSettings::LightPreset();
         Check(!IsCustomSurfaceTheme(theme, light) && ResolveSurfaceTheme(theme, light, 0, false).contentTheme == 1,
             "switching global back to a preset resumes inheritance without deleting custom values");
+        {
+            EdgeLightSettings limits;
+            VisitEdgeLightFields([&](auto, auto field, float, float maximum) { limits.*field = maximum; });
+            JsonValue json; EdgeLightSettings decoded;
+            Check(ParseJson(EncodeEdgeLight(limits), json) && DecodeEdgeLight(json, decoded) && decoded == limits,
+                "all edge-light upper bounds survive JSON round trips");
+            VisitEdgeLightFields([&](auto, auto field, float minimum, float) { limits.*field = minimum; });
+            Check(ParseJson(EncodeEdgeLight(limits), json) && DecodeEdgeLight(json, decoded) && decoded == limits,
+                "all edge-light lower bounds survive JSON round trips");
+            Check(ParseJson("{\"direction\":-1}", json) && !DecodeEdgeLight(json, decoded),
+                "invalid edge-light parameters are rejected atomically");
+            Check(ParseJson("{}", json) && DecodeEdgeLight(json, decoded) && decoded == EdgeLightSettings{},
+                "older appearance objects inherit the shared material defaults");
+        }
         const auto transparentGlass = MakeAppearancePreset(kAppearancePresetGlassTransparent);
         Check(transparentGlass.glassEnabled && !transparentGlass.acrylicEnabled &&
             transparentGlass.widgetAlpha < .1f && transparentGlass.contentTheme == 0 &&
@@ -564,6 +578,9 @@ int main()
     savedAppearance.popupHoverOpen = true;
     savedAppearance.popupHoverDelayMs = 1200.0f;
     savedAppearance.showCategoryTabCounts = false;
+    savedAppearance.edgeLight.direction = 127.f;
+    savedAppearance.edgeLight.outerGlow = .4f;
+    savedAppearance.edgeLight.glowThreshold = .99f;
     savedAppearance.panelGradient.enabled = true;
     savedAppearance.panelGradient.angle = 45;
     savedAppearance.panelGradient.start = .1;
@@ -575,6 +592,7 @@ int main()
     PersonalizationSettings loadedAppearance;
     Check(LoadPersonalization(
             personalizationPath.c_str(), loadedAppearance) &&
+            loadedAppearance.edgeLight == savedAppearance.edgeLight &&
             loadedAppearance.widgetBorderWidth == 3.5f &&
             loadedAppearance.widgetEdgeHighlightEnabled &&
             loadedAppearance.widgetEdgeHighlightWidth == 2.5f &&
@@ -613,8 +631,8 @@ int main()
                 "group count preference survives material preset refresh independently from category counts");
         }
     }
-    // A saved selection must receive the refined material on restart without
-    // losing independent layout choices or explicitly edited edge settings.
+    // Once the shared material object is saved, a preset ID is only a label;
+    // restarting must preserve the user's actual fill, blur and reflection.
     for (const bool editedEdge : {false, true})
     {
         auto previousGlass = PersonalizationSettings::GlassTransparentPreset();
@@ -627,23 +645,21 @@ int main()
         previousGlass.barHeight = 37.0f;
         previousGlass.luaWidgetContentRowHeight = 34.0f;
         previousGlass.contextMenuStyle = 6;
-        const auto currentGlass = PersonalizationSettings::GlassTransparentPreset();
+
         Check(SavePersonalization(personalizationPath.c_str(), previousGlass) &&
                 LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
-                loadedAppearance.widgetAlpha == currentGlass.widgetAlpha &&
-                loadedAppearance.glassBlurRadius == currentGlass.glassBlurRadius &&
+                loadedAppearance.widgetAlpha == previousGlass.widgetAlpha &&
+                loadedAppearance.glassBlurRadius == previousGlass.glassBlurRadius &&
                 loadedAppearance.contentTheme == 0 &&
                 loadedAppearance.backgroundPreset == kAppearancePresetGlassTransparent &&
-                loadedAppearance.widgetEdgeHighlightWidth == (editedEdge
-                    ? previousGlass.widgetEdgeHighlightWidth : currentGlass.widgetEdgeHighlightWidth) &&
-                loadedAppearance.widgetEdgeHighlightStrength == (editedEdge
-                    ? previousGlass.widgetEdgeHighlightStrength : currentGlass.widgetEdgeHighlightStrength) &&
+                loadedAppearance.widgetEdgeHighlightWidth == previousGlass.widgetEdgeHighlightWidth &&
+                loadedAppearance.widgetEdgeHighlightStrength == previousGlass.widgetEdgeHighlightStrength &&
                 loadedAppearance.widgetEdgeHighlightEnabled == !editedEdge &&
                 loadedAppearance.cornerRadius == previousGlass.cornerRadius &&
                 loadedAppearance.barHeight == previousGlass.barHeight &&
                 loadedAppearance.luaWidgetContentRowHeight == previousGlass.luaWidgetContentRowHeight &&
                 loadedAppearance.contextMenuStyle == 6,
-            "persisted transparent glass refreshes its material and former defaults while preserving edited edges and layout");
+            "saved material parameters survive restart without preset-ID overrides");
     }
     // Persist through a non-custom theme as well: applying a preset must not
     // discard the independent context-menu selection.

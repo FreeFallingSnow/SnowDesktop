@@ -12,6 +12,7 @@
 #include <cmath>
 #include <string>
 #include "panel_gradient.h"
+#include "edge_light_settings.h"
 
 constexpr int kAppearancePresetDark = 0;
 constexpr int kAppearancePresetLight = 1;
@@ -146,6 +147,7 @@ struct PersonalizationSettings
 
     /** @brief Edge-highlight intensity, stored in [0.0, 1.0]. */
     float widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    snowdesktop::EdgeLightSettings edgeLight;
 
     /**
      * @brief 渐变底部末端 Alpha

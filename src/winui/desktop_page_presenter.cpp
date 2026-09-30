@@ -1,6 +1,8 @@
 #include "pch.h"
 
 #include "desktop_page_presenter.h"
+#include "edge_light_editor.h"
+#include "appearance_sections.h"
 #include "settings_presenter_controls.h"
 
 #include "../constants.h"
@@ -565,6 +567,9 @@ struct DesktopPagePresenter::Impl
     SettingRow beautifyModeRow;
     std::unique_ptr<ColorEditor> backgroundStart;
     std::unique_ptr<NumericEditor> backgroundOpacity;
+    std::shared_ptr<EdgeLightEditor> edgeLightEditor;
+    AppearanceSections beautifySections;
+    muxc::TextBlock geometryTitle, finishTitle;
     muxc::ToggleSwitch glassEnabled{nullptr}, edgeReflection{nullptr};
     SettingRow glassEnabledRow, edgeReflectionRow;
     winrt::event_token glassEnabledToken{}, edgeReflectionToken{};
@@ -845,6 +850,10 @@ struct DesktopPagePresenter::Impl
         beautifyAdvanced.Children().Append(edgeReflectionRow.root);
         beautifyAdvanced.Children().Append(reflectionWidth->root);
         beautifyAdvanced.Children().Append(reflectionStrength->root);
+        edgeLightEditor = EdgeLightEditor::Create([this](auto key) { return L(key, L""); }, [this](auto const& light, bool commit) {
+            UpdateBeautify(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview, [light](auto& settings) { settings.edgeLight = light; });
+        });
+        beautifyAdvanced.Children().Append(edgeLightEditor->Content());
         contentScale = MakeBeautifyNumber(50.0, 90.0, 1.0, 0,
             [](IconBeautifySettings& settings, double value) {
                 settings.contentScale = static_cast<float>(value / 100.0);
@@ -946,6 +955,22 @@ struct DesktopPagePresenter::Impl
         outlineDetails.Children().Append(outlineOpacity->root);
         outlineDetails.Children().Append(outlineColor->root);
         beautifyAdvanced.Children().Append(outlineDetails);
+
+        beautifyAdvanced.Children().Clear();
+        std::vector<muxc::Expander> geometryDisclosures;
+        auto geometry = AppearanceSections::Section(beautifyAdvanced, geometryTitle, &geometryDisclosures);
+        geometry.Children().Append(shapeRow.root); geometry.Children().Append(contentScale->root);
+        beautifySections.Initialize(beautifyAdvanced, true, false, false);
+        beautifySections.disclosures.insert(beautifySections.disclosures.begin(), geometryDisclosures.begin(), geometryDisclosures.end());
+        for (auto const& control : {backgroundStart->root, backgroundOpacity->root, gradientEnabledRow.root, backgroundEnd->root, gradientDirectionRow.root})
+            beautifySections.colors.Children().Append(control);
+        beautifySections.material.Children().Append(glassEnabledRow.root); beautifySections.material.Children().Append(glassBlurRadius->root);
+        beautifySections.border.Children().Append(outlineEnabledRow.root); beautifySections.border.Children().Append(outlineDetails);
+        beautifySections.border.Children().Append(edgeReflectionRow.root); beautifySections.border.Children().Append(reflectionWidth->root);
+        beautifySections.border.Children().Append(reflectionStrength->root); beautifySections.border.Children().Append(edgeLightEditor->Content());
+        auto finish = AppearanceSections::Section(beautifyAdvanced, finishTitle, &beautifySections.disclosures);
+        for (auto const* editor : {highlightStrength.get(), highlightSize.get(), highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(), shadowStrength.get()}) finish.Children().Append(editor->root);
+        finish.Children().Append(filterEnabledRow.root); finish.Children().Append(filterDetails);
 
         InitializeCard(categoryRulesCard, cardStyle, categoryRoot);
         const auto makeSubsectionHeading = [] {
@@ -1085,6 +1110,7 @@ struct DesktopPagePresenter::Impl
                     static_cast<std::size_t>(selection) >=
                         kBeautifyPresets.size())
                     return;
+                if (!updatingControls && active && hasSnapshot) edgeLightEditor->Cancel();
                 const IconBeautifyPreset preset =
                     kBeautifyPresets[static_cast<std::size_t>(selection)];
                 UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
@@ -1116,6 +1142,7 @@ struct DesktopPagePresenter::Impl
             UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.glassEnabled = v; });
         });
         edgeReflectionToken = edgeReflection.Toggled([this](auto const&, auto const&) {
+            UpdateConditionalStates();
             const bool v = edgeReflection.IsOn();
             UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.edgeHighlightEnabled = v; });
         });
@@ -1397,10 +1424,15 @@ struct DesktopPagePresenter::Impl
 
     void UpdateConditionalStates()
     {
-        const bool custom = beautifyPreset.SelectedIndex() ==
-            IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom);
+        const bool custom = beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::None);
         beautifyAdvanced.Visibility(
             custom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        edgeLightEditor->Content().Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        glassBlurRadius->root.Visibility(glassEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        reflectionWidth->root.Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        reflectionStrength->root.Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        backgroundEnd->root.Visibility(gradientEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        gradientDirectionRow.root.Visibility(gradientEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         backgroundEnd->SetEnabled(gradientEnabled.IsOn());
         gradientDirection.IsEnabled(gradientEnabled.IsOn());
         filterDetails.Visibility(filterEnabled.IsOn()
@@ -1431,6 +1463,7 @@ struct DesktopPagePresenter::Impl
         backgroundOpacity->SetValue(value.backgroundOpacity * 100.0);
         glassEnabled.IsOn(value.glassEnabled); edgeReflection.IsOn(value.edgeHighlightEnabled);
         glassBlurRadius->SetValue(value.glassBlurRadius);
+        edgeLightEditor->SetValue(value.edgeLight);
         reflectionWidth->SetValue(value.edgeHighlightWidth);
         reflectionStrength->SetValue(value.edgeHighlightStrength * 100.0);
         gradientEnabled.IsOn(value.gradientEnabled);
@@ -1516,6 +1549,7 @@ struct DesktopPagePresenter::Impl
 
     void CommitContinuousEdits()
     {
+        if (edgeLightEditor) edgeLightEditor->Flush();
         for (NumericEditor* editor : ContinuousNumbers())
             editor->CommitPending();
         for (ColorEditor* editor : ContinuousColors())
@@ -1524,6 +1558,7 @@ struct DesktopPagePresenter::Impl
 
     void CancelContinuousEdits() noexcept
     {
+        if (edgeLightEditor) edgeLightEditor->Cancel();
         for (NumericEditor* editor : ContinuousNumbers())
             editor->CancelPending();
         for (ColorEditor* editor : ContinuousColors())
@@ -1711,6 +1746,9 @@ struct DesktopPagePresenter::Impl
             L("app.settings.beautify_shape_circle", L"Circle"),
             L("app.settings.beautify_shape_pebble", L"Pebble"),
         }, std::max(0, shape.SelectedIndex()));
+        geometryTitle.Text(L("appearance.iconGeometry")); finishTitle.Text(L("appearance.iconFinish"));
+        beautifySections.RefreshLocalizedText([this](auto key) { return L(key); });
+        edgeLightEditor->RefreshLocalizedText();
         glassEnabledRow.SetText(L("app.settings.glass_enabled", L"Frosted glass background"));
         edgeReflectionRow.SetText(L("app.settings.edge_highlight", L"Edge highlight"));
         muxa::AutomationProperties::SetName(glassEnabled, glassEnabledRow.label.Text());
@@ -1796,6 +1834,7 @@ struct DesktopPagePresenter::Impl
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
+        try { beautifySections.ExpandAll(); } catch (...) {}
         if (id == "desktop.spacing" || id == "desktop.iconSpacing")
             return iconSpacing->slider;
         if (id == "desktop.iconSize") return iconSize->slider;
@@ -1858,6 +1897,7 @@ struct DesktopPagePresenter::Impl
 
     void CloseEditors() noexcept
     {
+        if (edgeLightEditor) edgeLightEditor->Close();
         iconSpacing->Close();
         iconSize->Close();
         itemFontSize->Close();

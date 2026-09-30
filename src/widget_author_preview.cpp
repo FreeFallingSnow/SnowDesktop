@@ -385,7 +385,7 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 borderR, borderG, borderB, resolved.theme.borderAlpha,
                 borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
                 edgeHighlightStrength,
-                gradient, glass, acrylic, &resolved.material.panelGradient))
+                gradient, glass, acrylic, &resolved.material.panelGradient, &resolved.material.edgeLight))
         {
             resolved.theme.bg =
                 (static_cast<int>(std::lround(bgR * 255.0f)) << 16) |
@@ -405,9 +405,7 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 edgeHighlightStrength;
             resolved.material.glassEnabled = glass;
             resolved.material.acrylicEnabled = glass && acrylic;
-            if (engine.RuntimeGetStorageValue(kPreviewWidgetId, "__preset") ==
-                std::to_string(kAppearancePresetGlassTransparent))
-                resolved.material.backgroundPreset = kAppearancePresetGlassTransparent;
+
         }
         const std::string storedTheme = engine.RuntimeGetStorageValue(
             kPreviewWidgetId, "__contentTheme");
@@ -458,9 +456,7 @@ void DrawHostBackground(ID2D1DeviceContext* context,
         const float strokeWidth = std::clamp(
             resolved.material.widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
-        const float borderInset = resolved.material.backgroundPreset ==
-                kAppearancePresetGlassTransparent
-            ? strokeWidth * 0.5f : std::ceil(strokeWidth * 0.5f);
+        const float borderInset = strokeWidth * 0.5f;
         const auto borderBounds = D2D1::RectF(
             rounded.rect.left + borderInset, rounded.rect.top + borderInset,
             rounded.rect.right - borderInset, rounded.rect.bottom - borderInset);
@@ -497,7 +493,7 @@ void DrawHostEdgeHighlight(ID2D1DeviceContext* context,
     (void)snowdesktop::widget_preview::DrawEdgeHighlight(
         context, bounds, radius, color(theme.bg, theme.alpha), edgeWidth,
         resolved.material.widgetEdgeHighlightStrength,
-        resolved.material.backgroundPreset == kAppearancePresetGlassTransparent);
+        resolved.material.edgeLight);
 }
 
 std::string FirstValidationError(

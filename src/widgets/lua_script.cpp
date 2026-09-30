@@ -254,7 +254,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 luaBorderWidth, luaEdgeHighlightEnabled,
                 luaEdgeHighlightWidth, luaEdgeHighlightStrength,
                 luaGradientEndA,
-                luaGlassEnabled, luaAcrylicEnabled, &effectSettings.panelGradient))
+                luaGlassEnabled, luaAcrylicEnabled, &effectSettings.panelGradient, &effectSettings.edgeLight))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
@@ -269,12 +269,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 effectSettings.glassEnabled = luaGlassEnabled;
                 effectSettings.acrylicEnabled =
                     luaGlassEnabled && luaAcrylicEnabled;
-                // Keep the selected material profile after reading its stored
-                // colors; the transparent preset uses a thin rim rather than
-                // the ordinary glass preset's broad bevel.
-                if (engine->RuntimeGetStorageValue(data_->id, "__preset") ==
-                    std::to_string(kAppearancePresetGlassTransparent))
-                    effectSettings.backgroundPreset = kAppearancePresetGlassTransparent;
+
             }
         }
 

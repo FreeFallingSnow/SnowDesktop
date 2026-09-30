@@ -777,6 +777,13 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         return false;
     }
 
+    if (const auto* light = root.Find("iconBeautifyEdgeLight"))
+    {
+        EdgeLightSettings value;
+        if (!DecodeEdgeLight(*light, value)) return Fail(error, "iconBeautifyEdgeLight", "has invalid edge-light parameters");
+        decoded.iconBeautifyEdgeLight = value;
+    }
+
     // Schema 0 used the same structural fields but had no explicit version.
     // Decoding it into the current in-memory model is its v0 -> v1 migration.
     decoded.schemaVersion = kCurrentSchemaVersion;

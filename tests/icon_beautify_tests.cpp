@@ -127,6 +127,21 @@ int main()
         Check(beautify::IdentifyPreset(presetSettings) == preset,
             "built-in icon beautify presets round-trip through identification");
     }
+    {
+        auto plate = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
+        const auto baseline = beautify::RenderEdgeReflection(104, 104, plate);
+        auto plain = plate; plain.glassEnabled = false; plain.preset = IconBeautifyPreset::Custom;
+        Check(beautify::RenderEdgeReflection(104, 104, plain) == baseline,
+            "edge pixels depend on material parameters rather than glass or preset identity");
+        snowdesktop::VisitEdgeLightFields([&](auto, auto field, float minimum, float maximum) {
+            auto changed = plate;
+            changed.edgeLight.*field = plate.edgeLight.*field < (minimum + maximum) * .5f ? maximum : minimum;
+            Check(beautify::RenderEdgeReflection(104, 104, changed) != baseline,
+                "each shared material parameter changes actual icon-edge pixels");
+            Check(beautify::IdentifyPreset(changed) == IconBeautifyPreset::Custom,
+                "editing a reflection parameter turns a preset into custom values");
+        });
+    }
     auto customPreset = beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
     customPreset.contentScale = 0.71f;
     Check(beautify::IdentifyPreset(customPreset) == IconBeautifyPreset::Custom,

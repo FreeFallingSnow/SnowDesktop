@@ -7,6 +7,7 @@
  */
 
 #include "personalization.h"
+#include "edge_light_codec.h"
 #include "data_paths.h"
 
 #include <windows.h>
@@ -144,7 +145,7 @@ PersonalizationSettings PersonalizationSettings::GlassTransparentPreset()
     s.widgetBorderWidth = 0.75f;
     s.widgetEdgeHighlightEnabled = true;
     s.widgetEdgeHighlightWidth = 1.0f;
-    s.widgetEdgeHighlightStrength = 0.90f;
+    s.widgetEdgeHighlightStrength = 0.70f;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
     s.glassBlurRadius = 10.0f;
@@ -390,6 +391,10 @@ bool LoadPersonalization(
     s.panelGradient = {};
     JsonValue document;
     const bool documentParsed = ParseJson(text, document);
+    s.edgeLight = {};
+    if (documentParsed)
+        if (const auto* light = document.Find("edgeLight"))
+            if (!snowdesktop::DecodeEdgeLight(*light, s.edgeLight)) return false;
     if (documentParsed)
         if (const auto* gradient = document.Find("panelGradient"))
             if (!snowdesktop::DecodePanelGradient(*gradient, s.panelGradient)) return false;
@@ -467,14 +472,14 @@ bool LoadPersonalization(
             kDefaultEdgeHighlightStrength;
     if (!edgeHighlightEnabledLoaded && s.glassEnabled)
         s.widgetBorderAlpha = 0.0f;
-    // Presets are immutable choices in the UI. Refresh persisted glass/acrylic
-    // values so palette refinements and the old placeholder migration are
-    // applied without requiring users to reselect the theme.
+    // One-time compatibility migration for layouts written before shared
+    // material parameters. New profiles retain their saved appearance values,
+    // even when their last selected preset ID is still present.
     const bool transparentGlassPreset =
         s.backgroundPreset == kAppearancePresetGlassTransparent;
-    if (s.backgroundPreset == kAppearancePresetAcrylicDark ||
+    if (documentParsed && !document.Find("edgeLight") && (s.backgroundPreset == kAppearancePresetAcrylicDark ||
         s.backgroundPreset == kAppearancePresetAcrylicLight ||
-        transparentGlassPreset)
+        transparentGlassPreset))
     {
         const float explicitBorderWidth = s.widgetBorderWidth;
         const bool explicitEdgeHighlightEnabled =
@@ -557,6 +562,7 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
                     kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth)
                 : 1.0f)
          << ",\n";
+    file << "  \"edgeLight\": " << snowdesktop::EncodeEdgeLight(snowdesktop::NormalizeEdgeLight(s.edgeLight)) << ",\n";
     file << "  \"widgetEdgeHighlightEnabled\": "
          << (s.widgetEdgeHighlightEnabled ? "true" : "false") << ",\n";
     file << "  \"widgetEdgeHighlightWidth\": "

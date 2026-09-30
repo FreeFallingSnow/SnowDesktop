@@ -2,6 +2,7 @@
 
 #include "json_value.h"
 #include "panel_gradient.h"
+#include "edge_light_codec.h"
 
 #include <algorithm>
 #include <cmath>
@@ -76,6 +77,7 @@ struct LargeIconConfig
     double blurRadius = 24;
     bool edgeHighlight = false;
     double edgeWidth = 1, edgeStrength = .3;
+    EdgeLightSettings edgeLight;
     PanelGradient gradient;
     double gradientOpacity = 1; // Independent multiplier; preserves individual stop opacity.
     int effect = 0; // none, 3D, dynamic title, gentle zoom, edge glow, one-shot shine
@@ -111,7 +113,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
     LI_FIELD(defaultBackground); LI_FIELD(defaultSolidColor); LI_FIELD(defaultSolidOpacity); LI_FIELD(defaultGradient);
     LI_FIELD(themeOpacity); LI_FIELD(themeAngle); LI_FIELD(foregroundContent); LI_FIELD(foregroundImage);
     LI_FIELD(iconX); LI_FIELD(iconY); LI_FIELD(material); LI_FIELD(componentTheme); LI_FIELD(blurRadius);
-    LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(gradient); LI_FIELD(gradientOpacity);
+    LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(edgeLight); LI_FIELD(gradient); LI_FIELD(gradientOpacity);
     LI_FIELD(effect); LI_FIELD(titleDirection); LI_FIELD(autoTitleDirection); LI_FIELD(titleWeight);
     LI_FIELD(zoomAmount); LI_FIELD(glowStrength); LI_FIELD(shineStrength); LI_FIELD(shineDurationMs);
 #undef LI_FIELD
@@ -134,7 +136,7 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
     };
     const bool style = c.backgroundStyle == -5 || c.backgroundStyle == -4 || c.backgroundStyle == -3 || c.backgroundStyle == -2 || c.backgroundStyle == -1 ||
         c.backgroundStyle == 0 || c.backgroundStyle == 1 || c.backgroundStyle == 6 || c.backgroundStyle == 7 ||
-        c.backgroundStyle == 9 || c.backgroundStyle == 10 || c.backgroundStyle == 11;
+        c.backgroundStyle == 9 || c.backgroundStyle == 10 || c.backgroundStyle == 11 || c.backgroundStyle == 13;
     return (c.version == 1 || c.version == 2) && c.columns >= 1 && c.columns <= 1024 &&
         c.rows >= 1 && c.rows <= 1024 && range(c.contentScale, .1, 1) && range(c.fillScale, .25, 3) &&
         range(c.radius, 0, 512) && (c.radiusPercent == -1 || range(c.radiusPercent, 0, 100)) && c.content >= 0 && c.content <= 2 &&
@@ -155,7 +157,7 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
         c.foregroundContent >= 0 && c.foregroundContent <= 1 && IsManagedLargeIconImage(c.foregroundImage) &&
         range(c.iconX, 0, 1) && range(c.iconY, 0, 1) && c.material >= 0 && c.material <= 2 &&
         c.componentTheme >= 0 && c.componentTheme <= 1 && range(c.blurRadius, 4, 48) &&
-        range(c.edgeWidth, .5, 4) && range(c.edgeStrength, 0, 1) && ValidatePanelGradient(c.gradient) && range(c.gradientOpacity, 0, 1) &&
+        ValidateEdgeLight(c.edgeLight) && range(c.edgeWidth, .5, 4) && range(c.edgeStrength, 0, 1) && ValidatePanelGradient(c.gradient) && range(c.gradientOpacity, 0, 1) &&
         c.effect >= 0 && c.effect <= 5 && range(c.zoomAmount, 0, .10) &&
         range(c.glowStrength, 0, 1) && range(c.shineStrength, 0, 1) &&
         c.shineDurationMs >= 150 && c.shineDurationMs <= 1500 && c.titleDirection >= 0 && c.titleDirection <= 1 &&
@@ -184,6 +186,10 @@ inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& resul
         if constexpr (std::is_same_v<T, PanelGradient>)
         {
             if (!DecodePanelGradient(*v, field)) valid = false;
+        }
+        else if constexpr (std::is_same_v<T, EdgeLightSettings>)
+        {
+            if (!DecodeEdgeLight(*v, field)) valid = false;
         }
         else if constexpr (std::is_same_v<T, std::string>)
         {
@@ -244,6 +250,7 @@ inline std::string EncodeLargeIconConfig(const LargeIconConfig& c)
         out << '"' << name << "\":";
         using T = std::remove_cvref_t<decltype(field)>;
         if constexpr (std::is_same_v<T, PanelGradient>) out << EncodePanelGradient(field);
+        else if constexpr (std::is_same_v<T, EdgeLightSettings>) out << EncodeEdgeLight(field);
         else if constexpr (std::is_same_v<T, std::string>) out << '"' << field << '"';
         else if constexpr (std::is_same_v<T, bool>) out << (field ? "true" : "false");
         else out << field;

@@ -1226,6 +1226,7 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
         // Component themes default both background materials off when a
         // preset omits them, exactly as the legacy editor did before applying
         // its values. Border defaults are resolved independently below.
+        appearance.edgeLight = EdgeLightSettings{};
         appearance.glassEnabled = false;
         appearance.acrylicEnabled = false;
         // Existing authored presets describe solid materials, not the new
@@ -1295,6 +1296,8 @@ WidgetSettingMutationResult WidgetSettingsService::UpdateHostAppearance(
     WidgetSettingMutationResult checked =
         GuardSession(state_, guard, session);
     if (!checked.Succeeded()) return checked;
+    if (patch.edgeLight && !ValidateEdgeLight(*patch.edgeLight))
+        return { WidgetSettingMutationStatus::InvalidValue, session.snapshot.generation, session.snapshot.revision, "invalidEdgeLight", {} };
     if (patch.panelGradient && !ValidatePanelGradient(*patch.panelGradient))
         return { WidgetSettingMutationStatus::InvalidValue,
             session.snapshot.generation, session.snapshot.revision, "invalidPanelGradient", {} };
@@ -1321,6 +1324,8 @@ WidgetSettingMutationResult WidgetSettingsService::PreviewHostAppearance(
     WidgetSettingMutationResult checked =
         GuardSession(state_, guard, session);
     if (!checked.Succeeded()) return checked;
+    if (patch.edgeLight && !ValidateEdgeLight(*patch.edgeLight))
+        return { WidgetSettingMutationStatus::InvalidValue, session.snapshot.generation, session.snapshot.revision, "invalidEdgeLight", {} };
     if (patch.panelGradient && !ValidatePanelGradient(*patch.panelGradient))
         return { WidgetSettingMutationStatus::InvalidValue,
             session.snapshot.generation, session.snapshot.revision, "invalidPanelGradient", {} };

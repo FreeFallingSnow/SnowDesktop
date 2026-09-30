@@ -301,6 +301,24 @@ struct SettingRow
     }
 };
 
+/** Add the same compact reset action to an already initialized setting row. */
+inline muxc::Button AddRestoreDefaultAction(SettingRow& row,
+    const std::wstring& text, std::function<void()> restore)
+{
+    const auto control = row.controlHost.Content();
+    row.controlHost.Content(nullptr);
+    muxc::Grid pair; pair.ColumnSpacing(8);
+    muxc::ColumnDefinition value; value.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+    muxc::ColumnDefinition tail; tail.Width(mux::GridLengthHelper::Auto());
+    pair.ColumnDefinitions().Append(value); pair.ColumnDefinitions().Append(tail);
+    muxc::ContentControl editor; editor.Content(control); editor.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+    pair.Children().Append(editor);
+    muxc::Button button; ConfigureRestoreDefaultButton(button, text);
+    muxc::Grid::SetColumn(button, 1); pair.Children().Append(button);
+    button.Click([restore = std::move(restore)](auto const&, auto const&) { restore(); });
+    row.controlHost.Content(pair); return button;
+}
+
 /** Compact color swatch whose full ColorPicker exists only inside a flyout. */
 struct ColorFlyoutEditor
 {
