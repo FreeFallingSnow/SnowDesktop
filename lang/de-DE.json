@@ -2186,7 +2186,7 @@
   "edgeLight.minimumWidth": "Mindestdicke",
   "edgeLight.minimumWidth.description": "Anteil der Reflexionsbreite, der in gedämpften Bereichen und Rundungen erhalten bleibt.",
   "edgeLight.widthVariation": "Dickenvariation",
-  "edgeLight.widthVariation.description": "Zusätzliche Dicke in hellen Bereichen; 0 % ergibt eine gleichmäßige Dicke.",
+  "edgeLight.widthVariation.description": "Zusätzliche Dicke in hellen Bereichen; 0 ergibt eine gleichmäßige Dicke.",
   "edgeLight.innerGlow": "Innerer Lichtschein",
   "edgeLight.innerGlow.description": "Vielfaches der Reflexionsbreite nach innen; 0 deaktiviert den Lichtschein.",
   "edgeLight.outerGlow": "Äußerer Lichtschein",

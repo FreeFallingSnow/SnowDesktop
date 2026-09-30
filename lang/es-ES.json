@@ -2186,7 +2186,7 @@
   "edgeLight.minimumWidth": "Grosor mínimo",
   "edgeLight.minimumWidth.description": "Proporción del ancho del reflejo que conservan las zonas atenuadas y las esquinas.",
   "edgeLight.widthVariation": "Variación del grosor",
-  "edgeLight.widthVariation.description": "Grosor adicional en las zonas claras; 0 % produce un borde uniforme.",
+  "edgeLight.widthVariation.description": "Grosor adicional en las zonas claras; 0 produce un borde uniforme.",
   "edgeLight.innerGlow": "Extensión del halo interior",
   "edgeLight.innerGlow.description": "Múltiplo del ancho del reflejo hacia el interior; 0 lo desactiva.",
   "edgeLight.outerGlow": "Extensión del halo exterior",

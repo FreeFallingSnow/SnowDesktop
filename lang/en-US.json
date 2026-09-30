@@ -2186,7 +2186,7 @@
   "edgeLight.minimumWidth": "Minimum thickness",
   "edgeLight.minimumWidth.description": "Relative to rim width; subdued sectors and corners retain this thickness.",
   "edgeLight.widthVariation": "Thickness variation",
-  "edgeLight.widthVariation.description": "Extra thickness in bright sectors; 0% makes the rim uniformly thick.",
+  "edgeLight.widthVariation.description": "Extra thickness in bright sectors; 0 makes the rim uniformly thick.",
   "edgeLight.innerGlow": "Inner glow extent",
   "edgeLight.innerGlow.description": "Multiple of rim width extending into the panel; 0 disables it.",
   "edgeLight.outerGlow": "Outer glow extent",

@@ -2186,7 +2186,7 @@
   "edgeLight.minimumWidth": "最低厚度",
   "edgeLight.minimumWidth.description": "相對於反光寬度；減淡區域和圓角仍保留這部分厚度。",
   "edgeLight.widthVariation": "厚度變化幅度",
-  "edgeLight.widthVariation.description": "亮處額外增加的厚度，0% 為等寬邊緣。",
+  "edgeLight.widthVariation.description": "亮處額外增加的厚度，0 為等寬邊緣。",
   "edgeLight.innerGlow": "內側光暈範圍",
   "edgeLight.innerGlow.description": "反光寬度的倍數；向面板內部延伸，0 為關閉。",
   "edgeLight.outerGlow": "外側光暈範圍",

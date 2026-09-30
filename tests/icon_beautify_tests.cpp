@@ -407,10 +407,9 @@ int main()
         darkGlass.edgeHighlightStrength < lightGlass.edgeHighlightStrength,
         "dark and light glass presets produce distinct translucent fills with a restrained dark rim");
     const auto transparentEdge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
-    auto iconLight = transparentEdge.light; iconLight.innerGlow = 1.6f;
-    Check(glass.edgeHighlightWidth == 1.8f && glass.edgeHighlightStrength == .38f &&
-        glass.edgeLight == iconLight && glass.outlineWidth == .75f && glass.outlineOpacity == .05f,
-        "icon glass retains shared directional settings with a wider restrained inner band");
+    Check(glass.edgeHighlightWidth == 1.8f && glass.edgeHighlightStrength == .28f &&
+        glass.outlineWidth == .75f && glass.outlineOpacity == .05f,
+        "icon glass uses a wider band with restrained opacity and outline");
     auto narrowGlass = glass; narrowGlass.edgeHighlightWidth = transparentEdge.width;
     narrowGlass.edgeHighlightStrength = transparentEdge.opacity; narrowGlass.edgeLight = transparentEdge.light;
     const auto widePixels = beautify::RenderEdgeReflection(52,52,glass);
@@ -488,6 +487,9 @@ int main()
             Check(peakNear(97, 26) * 2 >= brightest &&
                     peakNear(7, 78) * 2 >= brightest,
                 "weak sectors remain visible without excessive reflection contrast");
+            Check(peakNear(97, 26) * 3 <= brightest * 2 &&
+                    peakNear(7, 78) * 3 <= brightest * 2,
+                "weak sectors dim by at least a third instead of reading as a uniform narrow line");
         }
         Check(masked && reflection[52 * 104 + 52] == 0,
             "reflection follows each contour and leaves the center and exterior clear");

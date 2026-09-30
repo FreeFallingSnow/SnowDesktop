@@ -2186,7 +2186,7 @@
   "edgeLight.minimumWidth": "Espessura mínima",
   "edgeLight.minimumWidth.description": "Proporção da largura do reflexo preservada nas áreas atenuadas e nos cantos.",
   "edgeLight.widthVariation": "Variação da espessura",
-  "edgeLight.widthVariation.description": "Espessura adicional nas áreas claras; 0% torna a borda uniforme.",
+  "edgeLight.widthVariation.description": "Espessura adicional nas áreas claras; 0 torna a borda uniforme.",
   "edgeLight.innerGlow": "Extensão do halo interno",
   "edgeLight.innerGlow.description": "Múltiplo da largura do reflexo para dentro; 0 desativa o halo.",
   "edgeLight.outerGlow": "Extensão do halo externo",

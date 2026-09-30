@@ -761,8 +761,17 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         // Presets tune the shared inward rim for normal icon sizes. Its center
         // stays inside the plate so both glow controls contribute visible pixels.
         settings.edgeHighlightWidth = 1.8f;
-        settings.edgeHighlightStrength = preset == IconBeautifyPreset::FrostedGlass ? .38f : edge.opacity;
+        settings.edgeHighlightStrength = preset == IconBeautifyPreset::FrostedGlassDark ? .24f :
+            preset == IconBeautifyPreset::FrostedGlassLight ? .30f : .28f;
         settings.edgeLight.innerGlow = 1.6f;
+        // A broader smooth transition dims the upper-right/lower-left arcs
+        // while retaining the four corners. All values remain editable.
+        settings.edgeLight.spread = 120.f;
+        settings.edgeLight.feather = 40.f;
+        settings.edgeLight.ambient = .38f;
+        settings.edgeLight.primary = .40f;
+        settings.edgeLight.opposite = .36f;
+        settings.edgeLight.glowStrength = .12f;
         if (preset != IconBeautifyPreset::FrostedGlass)
         {
             const bool dark = preset == IconBeautifyPreset::FrostedGlassDark;

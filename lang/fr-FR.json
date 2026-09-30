@@ -2186,7 +2186,7 @@
   "edgeLight.minimumWidth": "Épaisseur minimale",
   "edgeLight.minimumWidth.description": "Part de la largeur du reflet conservée dans les zones atténuées et les angles.",
   "edgeLight.widthVariation": "Variation d’épaisseur",
-  "edgeLight.widthVariation.description": "Épaisseur ajoutée dans les zones claires ; 0 % donne un bord uniforme.",
+  "edgeLight.widthVariation.description": "Épaisseur ajoutée dans les zones claires ; 0 donne un bord uniforme.",
   "edgeLight.innerGlow": "Étendue du halo intérieur",
   "edgeLight.innerGlow.description": "Multiple de la largeur du reflet vers l’intérieur ; 0 le désactive.",
   "edgeLight.outerGlow": "Étendue du halo extérieur",

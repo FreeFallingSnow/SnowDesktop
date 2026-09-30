@@ -2186,7 +2186,7 @@
   "edgeLight.minimumWidth": "最小の厚さ",
   "edgeLight.minimumWidth.description": "反射幅に対する割合です。弱い部分と角にもこの厚さを残します。",
   "edgeLight.widthVariation": "厚さの変化量",
-  "edgeLight.widthVariation.description": "明るい部分に追加する厚さです。0% では縁の厚さが一定になります。",
+  "edgeLight.widthVariation.description": "明るい部分に追加する厚さです。0 では縁の厚さが一定になります。",
   "edgeLight.innerGlow": "内側の光の広がり",
   "edgeLight.innerGlow.description": "反射幅の何倍まで内側に光を広げるかを指定します。0 で無効になります。",
   "edgeLight.outerGlow": "外側の光の広がり",

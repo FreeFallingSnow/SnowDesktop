@@ -2186,7 +2186,7 @@
   "edgeLight.minimumWidth": "최소 두께",
   "edgeLight.minimumWidth.description": "반사 폭에 대한 비율입니다. 약한 영역과 모서리에도 이 두께를 유지합니다.",
   "edgeLight.widthVariation": "두께 변화량",
-  "edgeLight.widthVariation.description": "밝은 영역에 추가되는 두께입니다. 0%이면 두께가 일정합니다.",
+  "edgeLight.widthVariation.description": "밝은 영역에 추가되는 두께입니다. 0이면 두께가 일정합니다.",
   "edgeLight.innerGlow": "안쪽 광륜 범위",
   "edgeLight.innerGlow.description": "반사 폭의 배수로 안쪽 확장 범위를 정합니다. 0이면 꺼집니다.",
   "edgeLight.outerGlow": "바깥쪽 광륜 범위",
