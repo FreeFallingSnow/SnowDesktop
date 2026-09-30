@@ -581,10 +581,15 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         }
         const float distance = std::sqrt(nearest);
         const float alignment = -(nx + ny) * 0.70710678f;
+        const float lighting = settings.glassEnabled
+            ? flat_glass_rim::Lighting(nx, ny,
+                (static_cast<float>(x) + 0.5f) / wf,
+                (static_cast<float>(y) + 0.5f) / hf)
+            : 0.0f;
         const float shoulder = 1.0f - smooth(0.05f, 1.0f, distance / halo);
         const float crest = 1.0f - smooth(0.02f, 0.55f, distance / depth);
         const float light = settings.glassEnabled
-            ? flat_glass_rim::Intensity(distance, depth, alignment)
+            ? flat_glass_rim::Intensity(distance, depth, lighting)
             : std::pow(std::max(alignment, 0.0f), 0.65f) *
                 (0.68f * crest + 0.32f * shoulder) +
                 0.40f * std::pow(std::max(-alignment, 0.0f), 0.80f) *
@@ -594,8 +599,8 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         if (settings.glassEnabled)
         {
             const int shadowAlpha = static_cast<int>(std::lround(
-                flat_glass_rim::Occlusion(distance, depth) *
-                settings.edgeHighlightStrength * 0.36f * mask[index]));
+                flat_glass_rim::Occlusion(distance, depth, lighting) *
+                settings.edgeHighlightStrength * 0.18f * mask[index]));
             output[index] = SourceOver(
                 PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
         }

@@ -710,13 +710,17 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
                         -0.55f, 0.45f, sample.distance);
                     if (flatGlass)
                     {
-                        const float alignment = sample.normalX * lightX +
-                            sample.normalY * lightY;
+                        const float lighting = flat_glass_rim::Lighting(
+                            sample.normalX, sample.normalY,
+                            (static_cast<float>(x) + sampleX - static_cast<float>(padding)) /
+                                static_cast<float>(width),
+                            (static_cast<float>(y) + sampleY - static_cast<float>(padding)) /
+                                static_cast<float>(height));
                         accumulated += occlusion
                             ? coverage * flat_glass_rim::Occlusion(
-                                -sample.distance, coreDepth)
+                                -sample.distance, coreDepth, lighting)
                             : flat_glass_rim::Intensity(
-                                -sample.distance, coreDepth, alignment);
+                                -sample.distance, coreDepth, lighting);
                         continue;
                     }
                     const float edgeDistance = std::max(-sample.distance, 0.0f);
@@ -926,7 +930,7 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     ComPtr<ID2D1SolidColorBrush> shadowBrush;
     if (shadowMask)
         (void)context->CreateSolidColorBrush(
-            D2D1::ColorF(0.015f, 0.025f, 0.035f, 0.24f * strength), &shadowBrush);
+            D2D1::ColorF(0.015f, 0.025f, 0.035f, 0.12f * strength), &shadowBrush);
     if (!mask)
     {
         // A8 opacity masks are optional on some Direct2D devices. Preserve a
