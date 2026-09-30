@@ -281,7 +281,9 @@ void DesktopApp::LoadLayoutSlots()
         iconBeautifySettings_);
     if (!document.iconBeautifyEdgeLight && document.iconBeautifyPreset &&
         (iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::DefaultBeautify ||
-         iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlass))
+         iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlass ||
+         iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlassDark ||
+         iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlassLight))
         iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(iconBeautifySettings_.preset);
     else if (!document.iconBeautifyPreset)
         iconBeautifySettings_.preset = snowdesktop::icon_beautify::IdentifyPreset(

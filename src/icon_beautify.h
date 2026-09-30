@@ -37,6 +37,8 @@ enum class IconBeautifyPreset : int
     DefaultBeautify = 1,
     Custom = 5,
     FrostedGlass = 6,
+    FrostedGlassDark = 7,
+    FrostedGlassLight = 8,
 };
 
 namespace icon_beautify

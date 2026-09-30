@@ -546,7 +546,8 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
     const float shortSide = std::min(wf, hf);
     const float depth = settings.edgeHighlightWidth * shortSide / 52.0f;
     const flat_glass_rim::Evaluator material(settings.edgeLight);
-    const float halo = std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true));
+    const float rimInset = depth * .5f;
+    const float halo = rimInset + std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true));
     const auto& inner = CachedMask(settings.shape, width, height, halo);
     for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
     {
@@ -568,7 +569,7 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
                 nearest = distance2;
             }
         }
-        const float distance = std::sqrt(nearest);
+        const float distance = std::sqrt(nearest) - rimInset;
         const float lighting = material.Lighting((static_cast<float>(x) + .5f) / wf,
             (static_cast<float>(y) + .5f) / hf);
         const float light = material.Intensity(distance, depth, lighting);
@@ -618,7 +619,9 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
     if (preset != static_cast<int>(IconBeautifyPreset::None) &&
         preset != static_cast<int>(IconBeautifyPreset::DefaultBeautify) &&
         preset != static_cast<int>(IconBeautifyPreset::Custom) &&
-        preset != static_cast<int>(IconBeautifyPreset::FrostedGlass))
+        preset != static_cast<int>(IconBeautifyPreset::FrostedGlass) &&
+        preset != static_cast<int>(IconBeautifyPreset::FrostedGlassDark) &&
+        preset != static_cast<int>(IconBeautifyPreset::FrostedGlassLight))
         settings.preset = IconBeautifyPreset::Custom;
     settings.glassBlurRadius = std::isfinite(settings.glassBlurRadius) ?
         std::clamp(settings.glassBlurRadius, 4.0f, 48.0f) : 16.0f;
@@ -738,6 +741,8 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.outlineEnabled = false;
         return settings;
     case IconBeautifyPreset::FrostedGlass:
+    case IconBeautifyPreset::FrostedGlassDark:
+    case IconBeautifyPreset::FrostedGlassLight:
     {
         settings.preset = preset;
         settings.enabled = true;
@@ -748,15 +753,25 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.glassEnabled = true;
         settings.glassBlurRadius = 10.0f;
         settings.edgeHighlightEnabled = true;
-        const auto edge = MaterialEdges(MaterialEdgePreset::GlassTransparent);
+        const auto edge = MaterialEdges(preset == IconBeautifyPreset::FrostedGlassDark ? MaterialEdgePreset::GlassDark :
+            preset == IconBeautifyPreset::FrostedGlassLight ? MaterialEdgePreset::GlassLight : MaterialEdgePreset::GlassTransparent);
         settings.edgeHighlightWidth = edge.width;
         settings.edgeHighlightStrength = edge.opacity;
         settings.edgeLight = edge.light;
-        // Icons retain only the inner half of the shared rim. A wider, softer
-        // preset produces the reference's light band at normal icon sizes.
+        // Presets tune the shared inward rim for normal icon sizes. Its center
+        // stays inside the plate so both glow controls contribute visible pixels.
         settings.edgeHighlightWidth = 1.8f;
-        settings.edgeHighlightStrength = .38f;
+        settings.edgeHighlightStrength = preset == IconBeautifyPreset::FrostedGlass ? .38f : edge.opacity;
         settings.edgeLight.innerGlow = 1.6f;
+        if (preset != IconBeautifyPreset::FrostedGlass)
+        {
+            const bool dark = preset == IconBeautifyPreset::FrostedGlassDark;
+            settings.backgroundStartR = settings.backgroundEndR = (dark ? 13.f : 235.f) / 255.f;
+            settings.backgroundStartG = settings.backgroundEndG = (dark ? 18.f : 245.f) / 255.f;
+            settings.backgroundStartB = settings.backgroundEndB = (dark ? 26.f : 255.f) / 255.f;
+            settings.backgroundOpacity = dark ? .28f : .15f;
+            settings.glassBlurRadius = dark ? 24.f : 22.f;
+        }
         settings.outlineEnabled = true;
         settings.outlineWidth = 0.75f;
         settings.outlineOpacity = 0.05f;
@@ -809,9 +824,11 @@ IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings)
         return IconBeautifyPreset::None;
     if (normalized.preset == IconBeautifyPreset::Custom)
         return IconBeautifyPreset::Custom;
-    constexpr std::array<IconBeautifyPreset, 2> presets{
+    constexpr std::array<IconBeautifyPreset, 4> presets{
         IconBeautifyPreset::DefaultBeautify,
         IconBeautifyPreset::FrostedGlass,
+        IconBeautifyPreset::FrostedGlassDark,
+        IconBeautifyPreset::FrostedGlassLight,
     };
     for (IconBeautifyPreset preset : presets)
     {

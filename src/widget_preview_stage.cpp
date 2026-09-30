@@ -648,12 +648,13 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
     constexpr std::array<float, 2> offsets{.25f, .75f};
     const float wf = static_cast<float>(width), hf = static_cast<float>(height);
     const auto distanceAt = [&](float x, float y) {
-        // A screen-edge strip has no exterior drawing space. Put the complete
-        // reflection band inside the filled strip, without moving its body.
-        if (edge == HighlightEdge::Top) return bevelDepth - y;
-        if (edge == HighlightEdge::Bottom) return y - hf + bevelDepth;
-        if (edge == HighlightEdge::Left) return bevelDepth - x;
-        if (edge == HighlightEdge::Right) return x - wf + bevelDepth;
+        // Keep the reflection peak on the actual allocation boundary. Clip
+        // its exterior half below; shifting the peak inward changes the visual
+        // content center despite leaving the layout and AppBar height intact.
+        if (edge == HighlightEdge::Top) return -y;
+        if (edge == HighlightEdge::Bottom) return y - hf;
+        if (edge == HighlightEdge::Left) return -x;
+        if (edge == HighlightEdge::Right) return x - wf;
         return EvaluateRoundedRectDistance(x, y, wf, hf, cornerRadius).distance;
     };
     for (UINT32 y = 0; y < bitmapHeight; ++y)

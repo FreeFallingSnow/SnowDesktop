@@ -98,7 +98,9 @@ int main()
         static_cast<int>(IconBeautifyPreset::None) == 0 &&
         static_cast<int>(IconBeautifyPreset::DefaultBeautify) == 1 &&
         static_cast<int>(IconBeautifyPreset::Custom) == 5 &&
-        static_cast<int>(IconBeautifyPreset::FrostedGlass) == 6,
+        static_cast<int>(IconBeautifyPreset::FrostedGlass) == 6 &&
+        static_cast<int>(IconBeautifyPreset::FrostedGlassDark) == 7 &&
+        static_cast<int>(IconBeautifyPreset::FrostedGlassLight) == 8,
         "persisted beautification enums have stable values");
 
     beautify::ContinuousPreviewState continuousState;
@@ -116,11 +118,13 @@ int main()
             beautify::InteractionAction::Commit,
         "continuous controls throttle previews and commit only on release");
 
-    constexpr std::array<IconBeautifyPreset, 4> builtInPresets{
+    constexpr std::array<IconBeautifyPreset, 6> builtInPresets{
         IconBeautifyPreset::None,
         IconBeautifyPreset::DefaultBeautify,
         IconBeautifyPreset::Custom,
         IconBeautifyPreset::FrostedGlass,
+        IconBeautifyPreset::FrostedGlassDark,
+        IconBeautifyPreset::FrostedGlassLight,
     };
     for (IconBeautifyPreset preset : builtInPresets)
     {
@@ -134,10 +138,12 @@ int main()
         auto plain = plate; plain.glassEnabled = false; plain.preset = IconBeautifyPreset::Custom;
         Check(beautify::RenderEdgeReflection(104, 104, plain) == baseline,
             "edge pixels depend on material parameters rather than glass or preset identity");
-        snowdesktop::VisitEdgeLightFields([&](auto, auto field, float minimum, float maximum) {
+        snowdesktop::VisitEdgeLightFields([&](auto name, auto field, float minimum, float maximum) {
             auto changed = plate;
             changed.edgeLight.*field = plate.edgeLight.*field < (minimum + maximum) * .5f ? maximum : minimum;
-            Check(beautify::RenderEdgeReflection(104, 104, changed) != baseline,
+            const bool changedPixels = beautify::RenderEdgeReflection(104, 104, changed) != baseline;
+            if (!changedPixels) std::cerr << "Unresponsive edge parameter: " << name << '\n';
+            Check(changedPixels,
                 "each shared material parameter changes actual icon-edge pixels");
             Check(beautify::IdentifyPreset(changed) == IconBeautifyPreset::Custom,
                 "editing a reflection parameter turns a preset into custom values");
@@ -382,6 +388,19 @@ int main()
         "smart recognition clips the original icon without content scaling");
 
     const auto glass = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
+    const auto darkGlass = beautify::MakePreset(IconBeautifyPreset::FrostedGlassDark);
+    const auto lightGlass = beautify::MakePreset(IconBeautifyPreset::FrostedGlassLight);
+    const std::vector<std::uint32_t> emptyIcon(52 * 52);
+    const auto darkPlate = beautify::Render(emptyIcon, 52, 52, darkGlass);
+    const auto lightPlate = beautify::Render(emptyIcon, 52, 52, lightGlass);
+    const auto transparentPlate = beautify::Render(emptyIcon, 52, 52, glass);
+    const auto center = 26 * 52 + 26;
+    Check(darkGlass.glassEnabled && lightGlass.glassEnabled && darkGlass.mode == 0 && lightGlass.mode == 0 &&
+        (darkPlate[center] >> 24) > (lightPlate[center] >> 24) &&
+        (lightPlate[center] >> 24) > (transparentPlate[center] >> 24) &&
+        (lightPlate[center] & 255) > (darkPlate[center] & 255) &&
+        darkGlass.edgeHighlightStrength < lightGlass.edgeHighlightStrength,
+        "dark and light glass presets produce distinct translucent fills with a restrained dark rim");
     const auto transparentEdge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
     auto iconLight = transparentEdge.light; iconLight.innerGlow = 1.6f;
     Check(glass.edgeHighlightWidth == 1.8f && glass.edgeHighlightStrength == .38f &&
@@ -455,6 +474,8 @@ int main()
                 diagonalPeaks.begin(), diagonalPeaks.end());
             const unsigned faintest = *std::min_element(
                 diagonalPeaks.begin(), diagonalPeaks.end());
+            if (brightest == 0 || faintest * 4 < brightest * 3)
+                std::cerr << "Diagonal peaks: " << diagonalPeaks[0] << ',' << diagonalPeaks[1] << ',' << diagonalPeaks[2] << ',' << diagonalPeaks[3] << '\n';
             Check(brightest > 0 && faintest * 4 >= brightest * 3,
                 "all four diagonal rim arcs retain comparable reflection strength");
             Check(peakNear(97, 26) * 2 >= brightest &&

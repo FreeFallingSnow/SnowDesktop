@@ -232,6 +232,16 @@ void TestCodec()
         restored.values.desktop.iconBeautify.edgeHighlightEnabled && restored.values.desktop.iconBeautify.edgeHighlightWidth == 1.7f &&
         restored.values.desktop.iconBeautify.edgeHighlightStrength == .65f,
         "glass, blur and directional reflection survive the settings process boundary");
+    for (const auto preset : {snowdesktop::IconBeautifyPreset::FrostedGlassDark, snowdesktop::IconBeautifyPreset::FrostedGlassLight})
+    {
+        auto variant = settings;
+        variant.values.desktop.iconBeautify.preset = preset;
+        const auto received = Unpack<snowdesktop::SettingsSnapshot>(Pack(variant));
+        Check(received.values.desktop.iconBeautify.preset == preset &&
+            received.values.desktop.iconBeautify.edgeHighlightWidth == 1.7f &&
+            received.values.desktop.iconBeautify.glassBlurRadius == 28.f,
+            "new glass preset IDs and editable values survive settings IPC unchanged");
+    }
     Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
         "hover reveal and disabled task thumbnails survive settings IPC");
     Check(!restored.values.dock.floatingEdgeSwipeBlockFullscreen,

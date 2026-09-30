@@ -33,6 +33,8 @@ public:
     {
         if (dirty_ && !force && value != value_) return;
         if (force || value != value_) { preview_.Cancel(); dirty_ = false; }
+        if (value.backgroundPreset == kAppearancePresetCustom && value_.backgroundPreset != kAppearancePresetCustom)
+            sections_.CollapseAll();
         value_ = value;
         if (force)
         {

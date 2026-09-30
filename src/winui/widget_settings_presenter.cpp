@@ -1911,13 +1911,17 @@ struct WidgetSettingsPresenter::Impl
         if (selectedTheme < 0 && snapshot.customStyle)
             selectedTheme = customThemeIndex;
         appearanceTheme.SelectedIndex(selectedTheme);
-        restoreBackgroundRow.root.Visibility(snapshot.customStyle && !snapshot.hostAppearance.followPersonalization ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        const bool showCustomAppearance = snapshot.customStyle &&
+            !snapshot.hostAppearance.followPersonalization &&
+            customChoice != appearanceThemeChoices.end() &&
+            selectedTheme == customThemeIndex;
+        if (showCustomAppearance && customAppearanceHost.Visibility() != mux::Visibility::Visible)
+            appearanceSections.CollapseAll();
+        restoreBackgroundRow.root.Visibility(showCustomAppearance ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         appearanceTheme.IsEnabled(snapshot.customStyle &&
             !snapshot.hostAppearance.followPersonalization);
         customAppearanceHost.Visibility(
-            snapshot.customStyle &&
-                !snapshot.hostAppearance.followPersonalization &&
-                selectedTheme >= 0
+            showCustomAppearance
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
 

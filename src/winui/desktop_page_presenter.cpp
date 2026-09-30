@@ -124,10 +124,12 @@ bool SameColor(
         left.G == right.G && left.B == right.B;
 }
 
-constexpr std::array<IconBeautifyPreset, 4> kBeautifyPresets = {
+constexpr std::array<IconBeautifyPreset, 6> kBeautifyPresets = {
     IconBeautifyPreset::None,
     IconBeautifyPreset::DefaultBeautify,
     IconBeautifyPreset::FrostedGlass,
+    IconBeautifyPreset::FrostedGlassDark,
+    IconBeautifyPreset::FrostedGlassLight,
     IconBeautifyPreset::Custom,
 };
 
@@ -1113,6 +1115,8 @@ struct DesktopPagePresenter::Impl
                 if (!updatingControls && active && hasSnapshot) edgeLightEditor->Cancel();
                 const IconBeautifyPreset preset =
                     kBeautifyPresets[static_cast<std::size_t>(selection)];
+                if (!updatingControls && active && hasSnapshot && preset == IconBeautifyPreset::Custom)
+                    beautifySections.CollapseAll();
                 UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
                     [preset](DesktopDisplaySettings& desktop) {
                         if (preset == IconBeautifyPreset::Custom)
@@ -1704,7 +1708,9 @@ struct DesktopPagePresenter::Impl
         SetComboItems(beautifyPreset, {
             L("app.settings.beautify_preset_none", L"None"),
             L("app.settings.beautify_preset_default", L"Default"),
-            L("app.settings.beautify_preset_glass", L"Frosted glass"),
+            L("app.settings.transparent_glass", L"Transparent glass"),
+            L("app.settings.dark_glass", L"Dark glass"),
+            L("app.settings.light_glass", L"Light glass"),
             L("app.settings.custom", L"Custom"),
         }, std::max(0, beautifyPreset.SelectedIndex()));
         beautifyModeRow.SetText(
