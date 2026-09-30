@@ -23,6 +23,14 @@ template<class Value> class BoundedFileQuery final
 {
 public:
     using Clock = std::chrono::steady_clock;
+    static BoundedFileQuery& ForProcess()
+    {
+        // Detached read-only jobs can reach another query after callers close.
+        // Keep their process registry alive through CRT static destruction;
+        // Windows reclaims it together with any stalled redirector threads.
+        static auto* registry = new BoundedFileQuery;
+        return *registry;
+    }
     struct Job
     {
         std::mutex mutex;

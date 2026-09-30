@@ -224,7 +224,8 @@ SteamWorkshopSource::SteamWorkshopSource()
 
 SteamWorkshopSource::SteamWorkshopSource(
     std::filesystem::path bridgeExecutable)
-    : bridgeExecutable_(std::move(bridgeExecutable))
+    : bridgeExecutable_(std::move(bridgeExecutable)),
+      validationPaths_(PackagePaths::ForCurrentDeployment())
 {
 }
 
@@ -411,7 +412,7 @@ ProviderStatus SteamWorkshopSource::Status()
                 ? std::chrono::seconds(300) : std::chrono::seconds(5)))
             return cachedStatus_;
     }
-    static BoundedFileQuery<ProviderStatus> queries;
+    auto& queries = BoundedFileQuery<ProviderStatus>::ForProcess();
     const auto job = queries.Request(bridgeExecutable_.lexically_normal().native(),
         [bridge = bridgeExecutable_] () -> ProviderStatus {
             std::error_code filesystemError;
@@ -447,7 +448,7 @@ std::optional<SteamWorkshopSource::ResolvedItem>
 SteamWorkshopSource::ResolveInstalledFolder(
     const std::string& publishedFileId, const std::string& ownerSteamId,
     const std::filesystem::path& folder, std::string& error,
-    PackageManifest* detectedManifest) const
+    PackageManifest* detectedManifest, const PackagePaths& validationPaths)
 {
     std::error_code filesystemError;
     const auto absoluteFolder = std::filesystem::absolute(
@@ -491,8 +492,7 @@ SteamWorkshopSource::ResolveInstalledFolder(
         return std::nullopt;
     }
 
-    WidgetPackageManager validationManager(
-        PackagePaths::ForCurrentDeployment());
+    WidgetPackageManager validationManager(validationPaths);
     PackageManifest manifest;
     const ValidationReport validation =
         validationManager.ValidateArchive(artifact, &manifest);
@@ -505,7 +505,7 @@ SteamWorkshopSource::ResolveInstalledFolder(
     }
     PackageDetails details;
     details.manifest = std::move(manifest);
-    details.source = { ProviderId(),
+    details.source = { "steam-workshop",
         BoundExternalItemId(publishedFileId, ownerSteamId) };
     details.versions.push_back(details.manifest.version);
     return ResolvedItem{ std::move(details), artifact };
@@ -605,7 +605,7 @@ SteamWorkshopSource::ResolveCurrent(const std::string& externalItemId,
             return std::nullopt;
         }
         auto resolved = ResolveInstalledFolder(
-            publishedFileId, ownerSteamId, *wideFolder, error);
+            publishedFileId, ownerSteamId, *wideFolder, error, nullptr, validationPaths_);
         if (resolved)
         {
             resolvedCache_ = *resolved;
@@ -641,7 +641,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
     // Validating package.snowwidget also traverses library files. Keep the
     // entire read-only batch independently owned and share it across searches,
     // regardless of their keywords. A stalled archive cannot hold cancellation.
-    static BoundedFileQuery<SteamWorkshopSubscriptionSnapshot> packageQueries;
+    auto& packageQueries = BoundedFileQuery<SteamWorkshopSubscriptionSnapshot>::ForProcess();
     std::wstring validationKey = bridgeExecutable_.lexically_normal().native();
     for (const auto& item : cache.readyItems)
     {
@@ -649,16 +649,15 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
             item.contentDirectory.lexically_normal().native();
     }
     const auto job = packageQueries.Request(std::move(validationKey),
-        [bridge = bridgeExecutable_, items = cache.readyItems] {
-            SteamWorkshopSource source(bridge);
+        [paths = validationPaths_, items = cache.readyItems] {
             SteamWorkshopSubscriptionSnapshot validated;
             for (const auto& item : items)
             {
                 std::string itemError;
                 PackageManifest detectedManifest;
-                auto resolved = source.ResolveInstalledFolder(
+                auto resolved = ResolveInstalledFolder(
                     item.publishedFileId, {}, item.contentDirectory, itemError,
-                    &detectedManifest);
+                    &detectedManifest, paths);
                 if (!resolved)
                 {
                     const std::string packageId = detectedManifest.id.empty()
@@ -766,7 +765,7 @@ SteamWorkshopSource::QuerySubscriptionsOnline(
         PackageManifest detectedManifest;
         auto resolved = ResolveInstalledFolder(
             publishedFileId, ownerSteamId, *wideFolder, itemError,
-            &detectedManifest);
+            &detectedManifest, validationPaths_);
         if (!resolved)
         {
             const std::string packageId = detectedManifest.id.empty()

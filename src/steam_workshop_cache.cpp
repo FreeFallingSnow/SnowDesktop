@@ -554,7 +554,7 @@ std::vector<std::filesystem::path> DiscoverSteamLibraryRoots(
         error = "Steam installation path is unavailable";
         return {};
     }
-    static BoundedFileQuery<LibraryDiscovery> queries;
+    auto& queries = BoundedFileQuery<LibraryDiscovery>::ForProcess();
     const auto job = queries.Request(PathKey(steamPath) + L":" + std::to_wstring(appId),
         [steamPath, appId] {
             LibraryDiscovery result;
@@ -576,7 +576,7 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
     const std::vector<std::filesystem::path>& libraryRoots,
     std::uint32_t appId)
 {
-    static BoundedFileQuery<SteamWorkshopLocalCache> queries;
+    auto& queries = BoundedFileQuery<SteamWorkshopLocalCache>::ForProcess();
     std::vector<BoundedFileQuery<SteamWorkshopLocalCache>::Ticket> jobs;
     jobs.reserve(libraryRoots.size());
     // Start every root before waiting so a stalled first root cannot prevent

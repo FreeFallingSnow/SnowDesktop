@@ -55,12 +55,13 @@ private:
     std::optional<ResolvedItem> ResolveCurrent(
         const std::string& externalItemId, bool verifyOwner,
         std::string& error) const;
-    std::optional<ResolvedItem> ResolveInstalledFolder(
+    static std::optional<ResolvedItem> ResolveInstalledFolder(
         const std::string& publishedFileId, const std::string& ownerSteamId,
         const std::filesystem::path& folder, std::string& error,
-        PackageManifest* detectedManifest = nullptr) const;
+        PackageManifest* detectedManifest, const PackagePaths& validationPaths);
 
     std::filesystem::path bridgeExecutable_;
+    PackagePaths validationPaths_;
     std::mutex statusMutex_;
     ProviderStatus cachedStatus_;
     std::chrono::steady_clock::time_point statusCheckedAt_{};
