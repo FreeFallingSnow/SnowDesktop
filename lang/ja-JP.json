@@ -2216,5 +2216,10 @@
   "appearance.opacityHelp": "値が小さいほど壁紙がよく見えます。ぼかしはマテリアルのグループで調整します。",
   "appearance.borderHelp": "枠線は均一な輪郭です。反射では明暗、厚さの変化、光の広がりを独立して調整します。",
   "appearance.glassHelp": "パネルの背後の壁紙をぼかします。色の重なりを強くすると透明感が下がります。",
-  "appearance.rimWidthHelp": "反射の基準幅です。高度な設定の最小の厚さと変化量によって実際の厚さが決まります。"
+  "appearance.rimWidthHelp": "反射の基準幅です。高度な設定の最小の厚さと変化量によって実際の厚さが決まります。",
+  "settings.nav.group.widgetsAndCategories": "ウィジェットと分類",
+  "settings.nav.group.other": "その他",
+  "settings.widgetBehavior.title": "ウィジェットの動作",
+  "settings.widgetBehavior.description": "ウィジェットの開き方、収納ウィジェットのタイトルバーの位置、グループタブのファイル数表示を設定します。",
+  "settings.animation.openDock.description": "Dock のホバー時の拡大、起動アニメーション、ウィンドウアニメーションを調整します。"
 }

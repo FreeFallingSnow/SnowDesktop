@@ -285,27 +285,41 @@ void TestRoutes()
     const auto groupCounts = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.showGroupTabCounts"));
-    Check(groupCounts.page == SettingsPage::AppearanceWidgets &&
+    Check(groupCounts.page == SettingsPage::WidgetBehavior &&
             groupCounts.focusId == "personalization.showGroupTabCounts",
-        "group count links reach Widgets & layout without redirecting to desktop categories");
+        "group count links reach Widget behavior without redirecting to desktop categories");
     const auto popupHover = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.popupHoverOpen"));
-    Check(popupHover.page == SettingsPage::AppearanceWidgets &&
+    Check(popupHover.page == SettingsPage::WidgetBehavior &&
             popupHover.focusId == "personalization.popupHoverOpen",
-        "hover popup search and deep links reach widget layout settings");
+        "hover popup search and deep links reach Widget behavior");
     const auto popupHoverDelay = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.popupHoverDelayMs"));
-    Check(popupHoverDelay.page == SettingsPage::AppearanceWidgets &&
+    Check(popupHoverDelay.page == SettingsPage::WidgetBehavior &&
             popupHoverDelay.focusId == "personalization.popupHoverDelayMs",
-        "hover delay search reaches the same widget layout section as its switch");
+        "hover delay search reaches the same Widget behavior section as its switch");
     const auto titleBarPosition = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.scrollableTitleBarOnTop"));
-    Check(titleBarPosition.page == SettingsPage::AppearanceWidgets &&
+    Check(titleBarPosition.page == SettingsPage::WidgetBehavior &&
             titleBarPosition.focusId == "personalization.scrollableTitleBarOnTop",
-        "title bar position search and deep links reach the global widget layout settings");
+        "title bar position search and deep links reach Widget behavior");
+
+    // Old settings-search publications can still carry AppearanceWidgets.
+    // The production controller must relocate them while preserving the locator.
+    for (const auto* focus : {"personalization.showGroupTabCounts",
+             "personalization.popupHoverOpen", "personalization.popupHoverDelayMs",
+             "personalization.scrollableTitleBarOnTop"})
+    {
+        const auto migrated = CanonicalizeSettingsRoute(
+            SettingsRoute::ForPage(SettingsPage::AppearanceWidgets, focus));
+        Check(migrated.page == SettingsPage::WidgetBehavior && migrated.focusId == focus,
+            "old appearance search results locate the migrated behavior control");
+        Check(CanonicalizeSettingsRoute(migrated) == migrated,
+            "behavior navigation stays stable across repeated controller publications");
+    }
 
     const SettingsRoute desktopIcons = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(

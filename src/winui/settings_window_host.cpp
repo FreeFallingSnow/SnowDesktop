@@ -411,17 +411,17 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceWidgets, "personalization.barHeight",
         "app.settings.bar_height",
         "settings.personalization.widgets.description"},
-    {SettingsPage::AppearanceWidgets, "personalization.scrollableTitleBarOnTop",
+    {SettingsPage::WidgetBehavior, "personalization.scrollableTitleBarOnTop",
         "app.settings.scrollable_title_bar_position",
         "app.settings.scrollable_title_bar_position_hint"},
     {SettingsPage::AppearanceWidgets, "desktop.categoryLayout",
         "app.settings.tab_height",
         "settings.personalization.widgets.description"},
-    {SettingsPage::AppearanceWidgets, "personalization.showGroupTabCounts",
+    {SettingsPage::WidgetBehavior, "personalization.showGroupTabCounts",
         "app.settings.group_show_count", "app.settings.group_show_count_hint"},
-    {SettingsPage::AppearanceWidgets, "personalization.popupHoverOpen",
+    {SettingsPage::WidgetBehavior, "personalization.popupHoverOpen",
         "app.settings.popup_hover_open", "app.settings.popup_hover_open_hint"},
-    {SettingsPage::AppearanceWidgets, "personalization.popupHoverDelayMs",
+    {SettingsPage::WidgetBehavior, "personalization.popupHoverDelayMs",
         "app.settings.popup_hover_delay", "app.settings.popup_hover_open_hint"},
     {SettingsPage::DesktopCategories,
         "desktop.categoryCounts",
@@ -1295,6 +1295,8 @@ struct SettingsWindowHost::Impl
                     return L("settings.personalization.theme");
                 case SettingsPage::AppearanceWidgets:
                     return L("settings.personalization.widgets");
+                case SettingsPage::WidgetBehavior:
+                    return L("settings.widgetBehavior.title");
                 case SettingsPage::AppearanceDesktopIcons:
                     return L("app.settings.desktop_icons");
                 case SettingsPage::AppearanceIconBeautification:

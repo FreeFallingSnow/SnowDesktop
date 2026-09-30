@@ -132,6 +132,10 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.nav.pages", L"Pages & grid"},
     LocalizedFallback{"settings.nav.group.desktopShell", L"Desktop & shell"},
     LocalizedFallback{"settings.nav.group.data", L"Data"},
+    LocalizedFallback{"settings.nav.group.other", L"Other"},
+    LocalizedFallback{"settings.nav.group.widgetsAndCategories", L"Widgets & categories"},
+    LocalizedFallback{"settings.widgetBehavior.title", L"Widget behavior"},
+    LocalizedFallback{"settings.widgetBehavior.description", L"Choose how widgets open, where collection title bars appear, and whether group tabs show file counts."},
     LocalizedFallback{"settings.nav.categories", L"Categories & rules"},
     LocalizedFallback{"settings.nav.dock", L"Dock"},
     LocalizedFallback{"settings.nav.taskbar", L"Windows taskbar"},
@@ -359,7 +363,9 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     const auto ensureAnimation = [&]() {
         if (animationPage_) return;
         animationPage_ = std::make_unique<snowdesktop::winui::AnimationPerformancePagePresenter>(
-            localize, cardStyle(), [this](const SettingsRoute& route) { RequestRoute(route); });
+            localize, cardStyle(), Resources().Lookup(winrt::box_value(
+                L"SettingsShellCardButtonStyle")).as<mux::Style>(),
+            [this](const SettingsRoute& route) { RequestRoute(route); });
         animationPage_->SetActions(dockPageActions_);
     };
     const auto ensureHomeAbout = [&]() {
@@ -440,6 +446,7 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
+    case SettingsPage::WidgetBehavior:
         ensurePersonalization();
         break;
     case SettingsPage::AppearanceWidgets:
@@ -738,7 +745,11 @@ void SettingsShell::RefreshLocalizedText()
     DesktopShellHeader().Content(
         winrt::box_value(Localize("settings.nav.group.desktopShell")));
     DataHeader().Content(
-        winrt::box_value(Localize("settings.nav.group.data")));
+        winrt::box_value(Localize("settings.nav.group.other")));
+    WidgetsAndCategoriesHeader().Content(
+        winrt::box_value(Localize("settings.nav.group.widgetsAndCategories")));
+    WidgetBehaviorItem().Content(
+        winrt::box_value(Localize("settings.widgetBehavior.title")));
     DesktopBarsHeader().Content(winrt::box_value(Localize("settings.nav.group.desktopBars")));
     DesktopItem().Content(winrt::box_value(Localize("settings.nav.desktop")));
     PagesItem().Content(winrt::box_value(Localize("settings.nav.pages")));
@@ -1798,6 +1809,7 @@ void SettingsShell::HookEvents()
                      SettingsPage::AppearanceIconBeautification,
                      SettingsPage::Desktop, SettingsPage::DesktopPages,
                      SettingsPage::DesktopCategories,
+                     SettingsPage::WidgetBehavior,
                      SettingsPage::DesktopStyle, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
                      SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ContextMenu,
                      SettingsPage::BackupAndData, SettingsPage::About,
@@ -2063,6 +2075,8 @@ void SettingsShell::ApplyNavigationIcons()
         IconDescriptor{CalendarItem(), L"ms-appx:///Assets/Settings/Icons/calendar.svg", L"\xE787"},
         IconDescriptor{WidgetsItem(),
             L"ms-appx:///Assets/Settings/Icons/widgets.svg", L"\xECA5"},
+        IconDescriptor{WidgetBehaviorItem(),
+            L"ms-appx:///Assets/Settings/Icons/widget-behavior.svg", L"\xE7C9"},
         IconDescriptor{BackupItem(),
             L"ms-appx:///Assets/Settings/Icons/backup.svg", L"\xE74E"},
         IconDescriptor{AboutItem(),
@@ -2241,7 +2255,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization ||
             page == SettingsPage::AppearanceTheme ||
-            page == SettingsPage::AppearanceWidgets || page == SettingsPage::ContextMenu || page == SettingsPage::Dock;
+            page == SettingsPage::AppearanceWidgets || page == SettingsPage::WidgetBehavior ||
+            page == SettingsPage::ContextMenu || page == SettingsPage::Dock;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
         return page == SettingsPage::AppearanceWidgets ||
@@ -2475,14 +2490,23 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.cornerRadius",
                 "personalization.barHeight",
-                "personalization.scrollableTitleBarOnTop",
-                "personalization.popupHoverOpen",
-                "personalization.popupHoverDelayMs",
                 "personalization.luaWidgetRowHeight",
-                "personalization.showGroupTabCounts",
                 "desktop.categoryLayout",
                 "desktop.tabHeight",
                 "personalization.tabHeight"});
+            personalizationPage_->Activate();
+        }
+        break;
+    case SettingsPage::WidgetBehavior:
+        if (personalizationPage_)
+        {
+            PageCards().Children().Append(
+                personalizationPage_->WidgetBehaviorContent());
+            registerPersonalizationFocus({
+                "personalization.scrollableTitleBarOnTop",
+                "personalization.showGroupTabCounts",
+                "personalization.popupHoverOpen",
+                "personalization.popupHoverDelayMs"});
             personalizationPage_->Activate();
         }
         break;
@@ -3022,6 +3046,8 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
         return Localize("settings.personalization.theme");
     case SettingsPage::AppearanceWidgets:
         return Localize("settings.personalization.widgets");
+    case SettingsPage::WidgetBehavior:
+        return Localize("settings.widgetBehavior.title");
     case SettingsPage::AppearanceDesktopIcons:
         return Localize("app.settings.desktop_icons");
     case SettingsPage::AppearanceIconBeautification:
@@ -3069,6 +3095,8 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
         return Localize("settings.personalization.theme.description");
     case SettingsPage::AppearanceWidgets:
         return Localize("settings.personalization.widgets.description");
+    case SettingsPage::WidgetBehavior:
+        return Localize("settings.widgetBehavior.description");
     case SettingsPage::AppearanceDesktopIcons:
         return Localize("settings.desktop.layout.description");
     case SettingsPage::AppearanceIconBeautification:
@@ -3115,6 +3143,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme: return AppearanceThemeItem();
     case SettingsPage::AppearanceWidgets: return AppearanceWidgetsItem();
+    case SettingsPage::WidgetBehavior: return WidgetBehaviorItem();
     case SettingsPage::AppearanceDesktopIcons:
         return AppearanceDesktopIconsItem();
     case SettingsPage::AppearanceIconBeautification:

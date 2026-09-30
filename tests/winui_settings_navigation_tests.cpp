@@ -56,6 +56,22 @@ void TestHistoryAndFocusRoutes()
         "Appearance leaves are available as first-class navigation targets");
 }
 
+void TestRelocatedWidgetBehaviorNavigation()
+{
+    SettingsShellNavigationState state;
+    const auto appearance = SettingsRoute::ForPage(SettingsPage::AppearanceWidgets);
+    const auto oldLink = SettingsRoute::ForPage(SettingsPage::AppearanceWidgets,
+        "personalization.popupHoverDelayMs");
+    Check(state.Navigate(appearance) && state.Navigate(oldLink) &&
+            state.Route().page == SettingsPage::WidgetBehavior &&
+            state.Route().focusId == "personalization.popupHoverDelayMs",
+        "the shell accepts a relocated setting from an old appearance search result");
+    Check(state.GoBack() == appearance && state.GoForward()->page == SettingsPage::WidgetBehavior,
+        "Back and Forward retain the independent behavior page and its focus target");
+    Check(SettingsPageKey(SettingsPage::WidgetBehavior) == "widget-behavior",
+        "the new behavior destination has its own stable settings key");
+}
+
 void TestConditionalPages()
 {
     SettingsShellNavigationState state;
@@ -219,6 +235,7 @@ int main()
 {
     TestHistoryAndFocusRoutes();
     TestConditionalPages();
+    TestRelocatedWidgetBehaviorNavigation();
     TestControllerGenerationGate();
     TestControllerCommittedBackNavigation();
     TestInvalidRoutes();

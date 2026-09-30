@@ -2216,5 +2216,10 @@
   "appearance.opacityHelp": "Los valores más bajos dejan ver más del fondo de pantalla. Ajusta el desenfoque en el grupo de material.",
   "appearance.borderHelp": "El borde es un contorno uniforme. El reflejo controla por separado la luz, la variación del grosor y el halo.",
   "appearance.glassHelp": "Desenfoca el fondo de pantalla detrás del panel; una capa de color más intensa reduce la transparencia.",
-  "appearance.rimWidthHelp": "Ancho base del reflejo; el grosor mínimo y la variación de las opciones avanzadas determinan su grosor final."
+  "appearance.rimWidthHelp": "Ancho base del reflejo; el grosor mínimo y la variación de las opciones avanzadas determinan su grosor final.",
+  "settings.nav.group.widgetsAndCategories": "Widgets y categorías",
+  "settings.nav.group.other": "Otros",
+  "settings.widgetBehavior.title": "Comportamiento de widgets",
+  "settings.widgetBehavior.description": "Configura cómo se abren los widgets, dónde aparece la barra de título de las colecciones y si las pestañas de grupo muestran el número de archivos.",
+  "settings.animation.openDock.description": "Ajusta la ampliación al pasar el cursor por el Dock y las animaciones de inicio y de ventanas."
 }

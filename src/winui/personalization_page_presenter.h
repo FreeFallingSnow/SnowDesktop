@@ -72,6 +72,8 @@ public:
     /** Shared widget dimension and layout controls. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         WidgetLayoutContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        WidgetBehaviorContent() const noexcept;
     void SetLayoutSpacingContent(
         const winrt::Microsoft::UI::Xaml::UIElement& content);
     void ApplySnapshot(const SettingsSnapshot& snapshot);

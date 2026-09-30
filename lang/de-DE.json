@@ -2216,5 +2216,10 @@
   "appearance.opacityHelp": "Niedrigere Werte zeigen mehr vom Hintergrundbild. Die Unschärfe stellen Sie in der Materialgruppe ein.",
   "appearance.borderHelp": "Der Rahmen ist eine gleichmäßige Kontur. Die Reflexion steuert Helligkeitsverteilung, Dickenvariation und Lichtschein unabhängig.",
   "appearance.glassHelp": "Zeichnet das Hintergrundbild hinter dem Panel weich; eine stärkere Farbüberlagerung verringert die Transparenz.",
-  "appearance.rimWidthHelp": "Grundbreite der Reflexion; Mindestdicke und Dickenvariation in den erweiterten Optionen bestimmen die tatsächliche Dicke."
+  "appearance.rimWidthHelp": "Grundbreite der Reflexion; Mindestdicke und Dickenvariation in den erweiterten Optionen bestimmen die tatsächliche Dicke.",
+  "settings.nav.group.widgetsAndCategories": "Widgets & Kategorien",
+  "settings.nav.group.other": "Sonstiges",
+  "settings.widgetBehavior.title": "Widget-Verhalten",
+  "settings.widgetBehavior.description": "Legen Sie fest, wie Widgets geöffnet werden, wo die Titelleiste von Sammlungen erscheint und ob Gruppenregisterkarten die Anzahl der Dateien anzeigen.",
+  "settings.animation.openDock.description": "Passen Sie die Vergrößerung beim Zeigen auf das Dock sowie Start- und Fensteranimationen an."
 }

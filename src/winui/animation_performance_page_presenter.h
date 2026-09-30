@@ -16,6 +16,7 @@ public:
 
     AnimationPerformancePagePresenter(LocalizeCallback localize,
         const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        const winrt::Microsoft::UI::Xaml::Style& navigationCardStyle,
         NavigateCallback navigate);
     ~AnimationPerformancePagePresenter();
     void SetActions(DockPageActions actions);

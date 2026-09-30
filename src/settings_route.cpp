@@ -30,8 +30,12 @@ bool IsCustomThemeFocus(std::string_view focusId) noexcept
 bool IsWidgetLayoutFocus(std::string_view focusId) noexcept
 {
     return focusId == "personalization.cornerRadius" ||
-        focusId == "personalization.barHeight" ||
-        focusId == "personalization.scrollableTitleBarOnTop" ||
+        focusId == "personalization.barHeight";
+}
+
+bool IsWidgetBehaviorFocus(std::string_view focusId) noexcept
+{
+    return focusId == "personalization.scrollableTitleBarOnTop" ||
         focusId == "personalization.popupHoverOpen" ||
         focusId == "personalization.popupHoverDelayMs" ||
         focusId == "personalization.showGroupTabCounts";
@@ -71,6 +75,11 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    // Preserve old search and host links after relocating behavior controls.
+    if ((route.page == SettingsPage::Personalization ||
+         route.page == SettingsPage::AppearanceWidgets) &&
+        IsWidgetBehaviorFocus(route.focusId))
+        route.page = SettingsPage::WidgetBehavior;
     if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
         route.focusId == "personalization.statusBarTheme")
     {
@@ -242,6 +251,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::ContextMenu:
     case SettingsPage::StatusBar:
     case SettingsPage::DesktopStyle:
+    case SettingsPage::WidgetBehavior:
         break;
     default:
         return false;
@@ -286,6 +296,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::ContextMenu: return "context-menu";
     case SettingsPage::StatusBar: return "status-bar";
     case SettingsPage::DesktopStyle: return "desktop-style";
+    case SettingsPage::WidgetBehavior: return "widget-behavior";
     }
     return "home";
 }

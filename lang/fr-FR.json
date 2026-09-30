@@ -2216,5 +2216,10 @@
   "appearance.opacityHelp": "Les valeurs faibles révèlent davantage le fond d’écran. Réglez le flou dans le groupe des matériaux.",
   "appearance.borderHelp": "Le bord est un contour uniforme. Le reflet contrôle indépendamment la lumière, la variation d’épaisseur et le halo.",
   "appearance.glassHelp": "Floute le fond d’écran derrière le panneau ; une superposition de couleur plus forte réduit la transparence.",
-  "appearance.rimWidthHelp": "Largeur de base du reflet ; l’épaisseur minimale et la variation des options avancées déterminent son épaisseur finale."
+  "appearance.rimWidthHelp": "Largeur de base du reflet ; l’épaisseur minimale et la variation des options avancées déterminent son épaisseur finale.",
+  "settings.nav.group.widgetsAndCategories": "Widgets et catégories",
+  "settings.nav.group.other": "Autres",
+  "settings.widgetBehavior.title": "Comportement des widgets",
+  "settings.widgetBehavior.description": "Choisissez comment les widgets s’ouvrent, où apparaît la barre de titre des collections et si les onglets de groupe affichent le nombre de fichiers.",
+  "settings.animation.openDock.description": "Réglez l’agrandissement au survol du Dock ainsi que les animations de lancement et de fenêtres."
 }

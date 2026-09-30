@@ -184,10 +184,12 @@
                 <NavigationViewItemHeader x:Name="DesktopShellHeader" />
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
                 <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
-                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
+                <NavigationViewItemHeader x:Name="WidgetsAndCategoriesHeader" />
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
-                <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
+                <NavigationViewItem x:Name="WidgetBehaviorItem" Tag="widget-behavior" />
+                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
                 <NavigationViewItemHeader x:Name="DataHeader" />
+                <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>

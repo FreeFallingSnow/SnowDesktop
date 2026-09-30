@@ -2216,5 +2216,10 @@
   "appearance.opacityHelp": "Lower values reveal more wallpaper. Adjust its blur in the material group.",
   "appearance.borderHelp": "The border is a uniform outline. Reflection independently controls changing light, thickness and glow.",
   "appearance.glassHelp": "Blurs the wallpaper behind the panel; a stronger color overlay makes it less transparent.",
-  "appearance.rimWidthHelp": "Base reflection width; advanced minimum thickness and variation determine its final profile."
+  "appearance.rimWidthHelp": "Base reflection width; advanced minimum thickness and variation determine its final profile.",
+  "settings.nav.group.widgetsAndCategories": "Widgets & categories",
+  "settings.nav.group.other": "Other",
+  "settings.widgetBehavior.title": "Widget behavior",
+  "settings.widgetBehavior.description": "Choose how widgets open, where collection title bars appear, and whether group tabs show file counts.",
+  "settings.animation.openDock.description": "Adjust Dock hover magnification, launch animations, and window animations."
 }

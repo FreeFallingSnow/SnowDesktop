@@ -147,6 +147,7 @@ struct PersonalizationPagePresenter::Impl
     muxc::ContentControl dockAppearanceHost;
     muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
+    muxc::StackPanel widgetBehaviorRoot;
 
     SettingsCard themeCard;
     SettingsCard themeTargetsCard;
@@ -162,6 +163,7 @@ struct PersonalizationPagePresenter::Impl
     SettingsCard widgetAppearanceCard;
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
+    SettingsCard behaviorCard;
     AppearanceSections appearanceSections;
     std::shared_ptr<PanelGradientEditor> panelGradientEditor;
     std::shared_ptr<EdgeLightEditor> edgeLightEditor;
@@ -487,6 +489,7 @@ struct PersonalizationPagePresenter::Impl
         taskbarLinkCard.content.Children().Append(taskbarThemeRow.root);
 
         InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
+        InitializeCard(behaviorCard, cardStyle, widgetBehaviorRoot);
         InitializeContinuousControl(cornerRadius,
             &PersonalizationSettings::cornerRadius,
             4.0, 28.0, 1.0, 1.0, 12.0);
@@ -505,7 +508,7 @@ struct PersonalizationPagePresenter::Impl
         topTitleBarToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         topTitleBarRow.Initialize(topTitleBarToggle);
         topTitleBarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        layoutCard.content.Children().Append(topTitleBarRow.root);
+        behaviorCard.content.Children().Append(topTitleBarRow.root);
         layoutCard.content.Children().Append(categorizedTabHeight.row.root);
         InitializeContinuousControl(luaWidgetContentRowHeight,
             &PersonalizationSettings::luaWidgetContentRowHeight,
@@ -517,18 +520,18 @@ struct PersonalizationPagePresenter::Impl
         showGroupTabCounts.HorizontalAlignment(mux::HorizontalAlignment::Right);
         showGroupTabCountsRow.Initialize(showGroupTabCounts);
         showGroupTabCountsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        layoutCard.content.Children().Append(showGroupTabCountsRow.root);
+        behaviorCard.content.Children().Append(showGroupTabCountsRow.root);
         popupHoverOpen = muxc::ToggleSwitch{};
         popupHoverOpen.HorizontalAlignment(mux::HorizontalAlignment::Right);
         popupHoverOpenRow.Initialize(popupHoverOpen);
         popupHoverOpenRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        layoutCard.content.Children().Append(popupHoverOpenRow.root);
+        behaviorCard.content.Children().Append(popupHoverOpenRow.root);
         InitializeContinuousControl(popupHoverDelayMs,
             &PersonalizationSettings::popupHoverDelayMs,
             kMinimumPopupHoverDelayMs, kMaximumPopupHoverDelayMs,
             100.0, 1.0, kDefaultPopupHoverDelayMs);
         SetUnit(popupHoverDelayMs, L"ms");
-        layoutCard.content.Children().Append(popupHoverDelayMs.row.root);
+        behaviorCard.content.Children().Append(popupHoverDelayMs.row.root);
     }
 
     void InitializeColorControl(
@@ -1120,6 +1123,8 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.context_menu_appearance", L"Context Menu");
         SetCardText(layoutCard,
             "app.settings.widget_layout", L"Widget Layout");
+        SetCardText(behaviorCard,
+            "settings.widgetBehavior.title", L"Widget behavior");
 
         presetRow.SetText(L("app.settings.theme", L"Theme"));
         ReplaceComboItems(presetCombo, {
@@ -1527,6 +1532,11 @@ mux::UIElement PersonalizationPagePresenter::WidgetLayoutContent()
     const noexcept
 {
     return impl_ ? impl_->widgetLayoutRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::WidgetBehaviorContent() const noexcept
+{
+    return impl_ ? impl_->widgetBehaviorRoot : nullptr;
 }
 
 void PersonalizationPagePresenter::ApplySnapshot(

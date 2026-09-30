@@ -2216,5 +2216,10 @@
   "appearance.opacityHelp": "数值越低，越能看清背后的壁纸；模糊程度在毛玻璃分组调整。",
   "appearance.borderHelp": "边框是均匀的轮廓线；反光独立控制边缘的亮暗、厚度变化与光晕。",
   "appearance.glassHelp": "模糊背后的壁纸；底色叠加过强时会显得不通透。",
-  "appearance.rimWidthHelp": "反光带的基准厚度；实际厚度由高级选项中的最低厚度和变化幅度共同决定。"
+  "appearance.rimWidthHelp": "反光带的基准厚度；实际厚度由高级选项中的最低厚度和变化幅度共同决定。",
+  "settings.nav.group.widgetsAndCategories": "组件与分类",
+  "settings.nav.group.other": "其他",
+  "settings.widgetBehavior.title": "组件行为",
+  "settings.widgetBehavior.description": "设置组件的打开方式、收纳组件标题栏位置，以及组标签是否显示文件数量。",
+  "settings.animation.openDock.description": "调整 Dock 的悬停缩放、启动动画和窗口动画。"
 }

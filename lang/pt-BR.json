@@ -2216,5 +2216,10 @@
   "appearance.opacityHelp": "Valores menores revelam mais do papel de parede. Ajuste o desfoque no grupo de material.",
   "appearance.borderHelp": "A borda é um contorno uniforme. O reflexo controla a luz, a variação da espessura e o halo de forma independente.",
   "appearance.glassHelp": "Desfoca o papel de parede atrás do painel; uma camada de cor mais intensa reduz a transparência.",
-  "appearance.rimWidthHelp": "Largura base do reflexo; a espessura mínima e a variação das opções avançadas determinam a espessura final."
+  "appearance.rimWidthHelp": "Largura base do reflexo; a espessura mínima e a variação das opções avançadas determinam a espessura final.",
+  "settings.nav.group.widgetsAndCategories": "Widgets e categorias",
+  "settings.nav.group.other": "Outros",
+  "settings.widgetBehavior.title": "Comportamento dos widgets",
+  "settings.widgetBehavior.description": "Escolha como os widgets são abertos, onde a barra de título das coleções aparece e se as abas de grupo mostram a quantidade de arquivos.",
+  "settings.animation.openDock.description": "Ajuste a ampliação ao passar o cursor sobre o Dock e as animações de inicialização e de janelas."
 }

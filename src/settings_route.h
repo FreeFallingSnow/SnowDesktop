@@ -40,6 +40,7 @@ enum class SettingsPage : std::uint8_t
     ContextMenu,
     StatusBar,
     DesktopStyle,
+    WidgetBehavior,
 };
 
 /**

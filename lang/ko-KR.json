@@ -2216,5 +2216,10 @@
   "appearance.opacityHelp": "값이 낮을수록 배경화면이 더 잘 보입니다. 흐림 정도는 재질 그룹에서 조절합니다.",
   "appearance.borderHelp": "테두리는 일정한 윤곽선입니다. 반사는 밝기, 두께 변화 및 광륜을 독립적으로 조절합니다.",
   "appearance.glassHelp": "패널 뒤의 배경화면을 흐리게 합니다. 색상 겹침이 강할수록 투명감이 줄어듭니다.",
-  "appearance.rimWidthHelp": "반사의 기준 폭입니다. 고급 옵션의 최소 두께와 변화량이 실제 두께를 결정합니다."
+  "appearance.rimWidthHelp": "반사의 기준 폭입니다. 고급 옵션의 최소 두께와 변화량이 실제 두께를 결정합니다.",
+  "settings.nav.group.widgetsAndCategories": "위젯 및 분류",
+  "settings.nav.group.other": "기타",
+  "settings.widgetBehavior.title": "위젯 동작",
+  "settings.widgetBehavior.description": "위젯을 여는 방식, 수납 위젯의 제목 표시줄 위치, 그룹 탭의 파일 수 표시 여부를 설정합니다.",
+  "settings.animation.openDock.description": "Dock에 마우스를 올렸을 때의 확대와 실행 및 창 애니메이션을 조정합니다."
 }
