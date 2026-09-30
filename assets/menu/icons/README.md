@@ -19,7 +19,7 @@ attribution. No deprecated Color variants or Filled font are distributed.
 | pin-native-* | Pin Regular | Neutral head and needle; hollow interior |
 | add-page-native-* | Add Regular | Neutral plus |
 | settings-native-* | Settings Regular | Inner ring blue; hollow center and neutral outer gear |
-| paste-native-* | Clipboard Paste Regular | Blue paper outline; paper and clip surfaces white in light menus, graphite in dark menus; neutral clipboard outline |
+| paste-native-* | Clipboard Filled + Regular, Clipboard Paste Regular | Blue paper outline; rear board, paper and clip surfaces white in light menus, graphite in dark menus; neutral clipboard outline |
 | new-item-native-* | Add Circle Regular | Blue plus; white circle surface in light menus, graphite in dark menus; neutral circle outline |
 | refresh-native-* | Arrow Clockwise Regular | Neutral |
 | collection | App Folder Filled + Regular | Yellow/orange |
@@ -35,7 +35,10 @@ variants. Full original Regular paths remain intact. Additional painted paths
 are complete original closed subpaths; selection masks only recolor the approved
 contours. Paste and New Item also paint their complete original Regular inner
 contours as independent surfaces (`#FFFFFF` light, `#3B3B3B` dark), with a softer
-`#595959` light outline. Their surface is independent of the menu background;
+`#595959` light outline. Paste also places the complete Clipboard Filled and
+Regular paths behind these layers, translated -1 on x to align with the original
+Clipboard Paste rear board; the foreground paper covers the overlapping board
+outline. Their surface is independent of the menu background;
 disabled items retain the renderer's reduced opacity. Secondary icons layer the
 original Filled and Regular geometry.
 Each SVG contains provenance metadata; `sources.json` records asset hashes.

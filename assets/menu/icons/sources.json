@@ -77,15 +77,15 @@
     },
     {
       "file": "paste-native-light",
-      "metadata": "Microsoft Fluent System Icons Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete original closed inner subpaths provide white paper and clip interior surfaces with neutral clipboard outline and blue paper border. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "0753d0c75470dc9c7e7f32e2c1c6ef9ac65e6e2352d07ee0df58e6ae36a8968d",
-      "pngSha256": "3a35e0ce66248015acb2c92f9070a73cffd319a6dbfc5262b9509192ff15f30e"
+      "metadata": "Microsoft Fluent System Icons Clipboard 24 Filled + Regular and Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete Clipboard paths translated -1 on x align the rear board behind the original paste paper and clip surfaces. White board, paper and clip surfaces; neutral outlines and blue paper border. Original path geometry preserved verbatim. Context-menu artwork.",
+      "svgSha256": "2559e66a06438027e72844d4c84fcc23ddfee3801a6d92aa02ae035964b9a1a0",
+      "pngSha256": "323d6586e26482ed01a99fe412f35cf33b42cc7c77cae317d741969b8f413f52"
     },
     {
       "file": "paste-native-dark",
-      "metadata": "Microsoft Fluent System Icons Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete original closed inner subpaths provide graphite paper and clip interior surfaces with neutral clipboard outline and blue paper border. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "6f66656c63eb88e9b50985495d2a9aae01264a776f50220b0486e2ce62180dcb",
-      "pngSha256": "512a288bec1951357b5aba1b3bb64f79e3c5692ba2370e559b9fbc3cf36f2c44"
+      "metadata": "Microsoft Fluent System Icons Clipboard 24 Filled + Regular and Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete Clipboard paths translated -1 on x align the rear board behind the original paste paper and clip surfaces. Graphite board, paper and clip surfaces; neutral outlines and blue paper border. Original path geometry preserved verbatim. Context-menu artwork.",
+      "svgSha256": "d589124f8bb709f3f9a78023f5af005354e4f4136344e03e9491513d9c3d2a63",
+      "pngSha256": "8a196424379be0736514b65434ce861917a03ed510aa47f69d51b8eddeea3e29"
     },
     {
       "file": "new-item-native-light",

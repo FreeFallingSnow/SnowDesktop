@@ -337,6 +337,7 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
         { BuiltinIcon::Settings, 12, 12 },
     };
     const Sample surfaces[] = {
+        { BuiltinIcon::Paste, 7, 12 },
         { BuiltinIcon::Paste, 15.5, 15 },
         { BuiltinIcon::Paste, 11, 4.25 },
         { BuiltinIcon::NewItem, 8, 8 },
