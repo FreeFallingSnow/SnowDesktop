@@ -1,4 +1,10 @@
 #include "widget_preview_stage.h"
+#include "appearance_edge_presets.h"
+#include "popup_round_geometry.h"
+#include <d2d1_1helper.h>
+#include <d3d11.h>
+#include <dxgi.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <cmath>
@@ -14,10 +20,74 @@ void Check(bool condition, const char* message)
     std::cerr << "FAILED: " << message << '\n';
     std::exit(1);
 }
+
+void CheckRimCoverage()
+{
+    using Microsoft::WRL::ComPtr;
+    namespace wp = snowdesktop::widget_preview;
+    namespace rounded = snowdesktop::popup_round_geometry;
+    ComPtr<ID3D11Device> gpu; ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory; ComPtr<ID2D1Device> device; ComPtr<ID2D1DeviceContext> context;
+    Check(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &gpu, nullptr, nullptr)) &&
+        SUCCEEDED(gpu.As(&dxgi)) && SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) &&
+        SUCCEEDED(factory->CreateDevice(dxgi.Get(), &device)) &&
+        SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)), "rim oracle creates an offscreen WARP context");
+    std::size_t oldLoss = 0;
+    for (float scale : {1.f, 1.25f, 1.5f, 2.f, 3.f})
+    {
+        const UINT w = static_cast<UINT>(200 * scale), h = static_cast<UINT>(160 * scale);
+        const RECT frame{static_cast<LONG>(12 * scale), static_cast<LONG>(16 * scale),
+            static_cast<LONG>(164 * scale), static_cast<LONG>(120 * scale)};
+        const float radius = 12.25f * scale;
+        ComPtr<ID2D1Bitmap1> target, readable;
+        Check(SUCCEEDED(context->CreateBitmap(D2D1::SizeU(w, h), nullptr, 0,
+            D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)), &target)) &&
+            SUCCEEDED(context->CreateBitmap(D2D1::SizeU(w, h), nullptr, 0,
+            D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)), &readable)), "rim oracle creates readable bitmaps");
+        context->SetTarget(target.Get()); context->SetDpi(96,96);
+        context->BeginDraw(); context->Clear(D2D1::ColorF(0,0.f));
+        context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
+        Check(wp::DrawEdgeHighlight(context.Get(),frame,radius,D2D1::ColorF(1.f,1.f,1.f,.02f),4.f,.9f), "rim draws with its full reserved halo");
+        Check(context->GetPrimitiveBlend()==D2D1_PRIMITIVE_BLEND_ADD &&
+            context->GetAntialiasMode()==D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,"rim restores caller blend and antialias state");
+        Check(SUCCEEDED(context->EndDraw()) && SUCCEEDED(readable->CopyFromBitmap(nullptr,target.Get(),nullptr)),"rim pixels read back");
+        D2D1_MAPPED_RECT map{}; Check(SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ,&map)),"rim pixels map");
+        HRGN fence = rounded::CreateWindowFence(frame,radius,0,3), old = rounded::CreateWindowFence(frame,radius);
+        Check(fence && old,"rim oracle creates both content fences");
+        std::size_t lost=0;
+        for(UINT y=0;y<h;++y)for(UINT x=0;x<w;++x)
+            if(map.bits[static_cast<std::size_t>(y)*map.pitch+x*4+3])
+            { if(!PtInRegion(fence,static_cast<int>(x),static_cast<int>(y)))++lost;
+              if(!PtInRegion(old,static_cast<int>(x),static_cast<int>(y)))++oldLoss; }
+        readable->Unmap(); DeleteObject(fence); DeleteObject(old);
+        Check(lost==0,"popup fence retains every actual rim pixel, including fractional rounded corners");
+        // Reusing a cached rounded mask or the opposite edge would draw an
+        // unwanted contour. The single edge must keep its outside halo too.
+        for(auto edge : {wp::HighlightEdge::Top, wp::HighlightEdge::Bottom})
+        {
+            const auto style=snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
+            context->BeginDraw();context->Clear(D2D1::ColorF(0,0.f));
+            Check(wp::DrawEdgeHighlight(context.Get(),frame,0,D2D1::ColorF(1.f,1.f,1.f,.02f),style.width*scale,style.opacity,style.light,edge),"status edge uses the shared material");
+            Check(SUCCEEDED(context->EndDraw()) && SUCCEEDED(readable->CopyFromBitmap(nullptr,target.Get(),nullptr)) &&
+                SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ,&map)),"single-edge pixels read back");
+            const auto alpha=[&](LONG x,LONG y){return map.bits[static_cast<std::size_t>(y)*map.pitch+static_cast<std::size_t>(x)*4+3];};
+            const LONG mid=(frame.left+frame.right)/2;
+            Check(alpha(mid,edge==wp::HighlightEdge::Top?frame.top-1:frame.bottom)>0,"desktop-facing halo is retained outside the material");
+            Check(alpha(mid,edge==wp::HighlightEdge::Top?frame.bottom-1:frame.top)==0 &&
+                alpha(frame.left,(frame.top+frame.bottom)/2)==0,"single edge adds no opposite or side contour");
+            readable->Unmap();
+        }
+        context->SetTarget(nullptr);
+    }
+    Check(oldLoss>0,"rim oracle reproduces clipping caused by the previous one-pixel content fence");
+}
 }
 
 int main()
 {
+    CheckRimCoverage();
     using namespace snowdesktop::widget_preview;
     const Wallpaper dark = GenerateWallpaper(96, 72, false);
     const Wallpaper repeated = GenerateWallpaper(96, 72, false);

@@ -840,7 +840,7 @@ struct DesktopPagePresenter::Impl
         edgeReflectionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         glassBlurRadius = MakeBeautifyNumber(4.0, 48.0, 1.0, 0,
             [](auto& settings, double v) { settings.glassBlurRadius = static_cast<float>(v); });
-        reflectionWidth = MakeBeautifyNumber(0.5, 4.0, 0.1, 1,
+        reflectionWidth = MakeBeautifyNumber(0.5, 4.0, 0.05, 2,
             [](auto& settings, double v) { settings.edgeHighlightWidth = static_cast<float>(v); });
         reflectionStrength = MakeBeautifyNumber(0.0, 100.0, 1.0, 0,
             [](auto& settings, double v) { settings.edgeHighlightStrength = static_cast<float>(v / 100.0); });
@@ -1424,7 +1424,7 @@ struct DesktopPagePresenter::Impl
 
     void UpdateConditionalStates()
     {
-        const bool custom = beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::None);
+        const bool custom = beautifyPreset.SelectedIndex() == IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom);
         beautifyAdvanced.Visibility(
             custom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         edgeLightEditor->Content().Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
@@ -1454,6 +1454,9 @@ struct DesktopPagePresenter::Impl
             std::clamp(settings.shortcutArrowMode, 0, 2));
 
         const IconBeautifySettings& value = settings.iconBeautify;
+        if (value.preset == IconBeautifyPreset::Custom &&
+            beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom))
+            beautifySections.CollapseAll();
         beautifyPreset.SelectedIndex(IndexOf(kBeautifyPresets, value.preset));
         beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 1));
         backgroundStart->SetColor(MakeColor(
@@ -1834,7 +1837,12 @@ struct DesktopPagePresenter::Impl
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
-        try { beautifySections.ExpandAll(); } catch (...) {}
+        const auto appearanceTarget = [this](mux::FrameworkElement target) {
+            if (beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom))
+                return mux::FrameworkElement{beautifyPreset};
+            beautifySections.Reveal(target);
+            return target;
+        };
         if (id == "desktop.spacing" || id == "desktop.iconSpacing")
             return iconSpacing->slider;
         if (id == "desktop.iconSize") return iconSize->slider;
@@ -1848,47 +1856,47 @@ struct DesktopPagePresenter::Impl
             return beautifyPreset;
         if (id == "desktop.iconBeautify.mode") return beautifyMode;
         if (id == "desktop.iconBeautify.backgroundColor")
-            return backgroundStart->editor.button;
-        if (id == "desktop.iconBeautify.glass") return glassEnabled;
-        if (id == "desktop.iconBeautify.blurRadius") return glassBlurRadius->slider;
-        if (id == "desktop.iconBeautify.edgeReflection") return edgeReflection;
-        if (id == "desktop.iconBeautify.reflectionWidth") return reflectionWidth->slider;
-        if (id == "desktop.iconBeautify.reflectionStrength") return reflectionStrength->slider;
+            return appearanceTarget(backgroundStart->editor.button);
+        if (id == "desktop.iconBeautify.glass") return appearanceTarget(glassEnabled);
+        if (id == "desktop.iconBeautify.blurRadius") return appearanceTarget(glassBlurRadius->slider);
+        if (id == "desktop.iconBeautify.edgeReflection") return appearanceTarget(edgeReflection);
+        if (id == "desktop.iconBeautify.reflectionWidth") return appearanceTarget(reflectionWidth->slider);
+        if (id == "desktop.iconBeautify.reflectionStrength") return appearanceTarget(reflectionStrength->slider);
         if (id == "desktop.iconBeautify.backgroundOpacity")
-            return backgroundOpacity->slider;
+            return appearanceTarget(backgroundOpacity->slider);
         if (id == "desktop.iconBeautify.gradient")
-            return gradientEnabled;
+            return appearanceTarget(gradientEnabled);
         if (id == "desktop.iconBeautify.gradientEndColor")
-            return backgroundEnd->editor.button;
+            return appearanceTarget(backgroundEnd->editor.button);
         if (id == "desktop.iconBeautify.gradientDirection")
-            return gradientDirection;
-        if (id == "desktop.iconBeautify.shape") return shape;
+            return appearanceTarget(gradientDirection);
+        if (id == "desktop.iconBeautify.shape") return appearanceTarget(shape);
         if (id == "desktop.iconBeautify.contentScale")
-            return contentScale->slider;
+            return appearanceTarget(contentScale->slider);
         if (id == "desktop.iconBeautify.highlightStrength")
-            return highlightStrength->slider;
+            return appearanceTarget(highlightStrength->slider);
         if (id == "desktop.iconBeautify.highlightSize")
-            return highlightSize->slider;
+            return appearanceTarget(highlightSize->slider);
         if (id == "desktop.iconBeautify.highlightAngle")
-            return highlightAngle->slider;
+            return appearanceTarget(highlightAngle->slider);
         if (id == "desktop.iconBeautify.shadeStrength")
-            return shadeStrength->slider;
+            return appearanceTarget(shadeStrength->slider);
         if (id == "desktop.iconBeautify.edgeHighlight")
-            return edgeHighlight->slider;
-        if (id == "desktop.iconBeautify.filter") return filterEnabled;
+            return appearanceTarget(edgeHighlight->slider);
+        if (id == "desktop.iconBeautify.filter") return appearanceTarget(filterEnabled);
         if (id == "desktop.iconBeautify.filterColor")
-            return filterTint->editor.button;
+            return appearanceTarget(filterTint->editor.button);
         if (id == "desktop.iconBeautify.filterStrength")
-            return filterStrength->slider;
+            return appearanceTarget(filterStrength->slider);
         if (id == "desktop.iconBeautify.shadowStrength")
-            return shadowStrength->slider;
-        if (id == "desktop.iconBeautify.outline") return outlineEnabled;
+            return appearanceTarget(shadowStrength->slider);
+        if (id == "desktop.iconBeautify.outline") return appearanceTarget(outlineEnabled);
         if (id == "desktop.iconBeautify.outlineWidth")
-            return outlineWidth->slider;
+            return appearanceTarget(outlineWidth->slider);
         if (id == "desktop.iconBeautify.outlineOpacity")
-            return outlineOpacity->slider;
+            return appearanceTarget(outlineOpacity->slider);
         if (id == "desktop.iconBeautify.outlineColor")
-            return outlineColor->editor.button;
+            return appearanceTarget(outlineColor->editor.button);
         if (id == "desktop.categories" || id == "desktop.categoryRules")
             return applyCategory;
         if (id == "desktop.category.add") return newCategoryLabel;

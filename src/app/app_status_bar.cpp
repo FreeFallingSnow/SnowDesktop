@@ -270,7 +270,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     DrawWidgetPanelBackground(context, frame, appearance.cornerRadius * scale,
                         D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                         D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
-                        false, 0, &appearance, false, 0, scale);
+                        false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
                     brushCache_.clear(); brushCacheContext_ = nullptr;
                 });
         systemPanel_->SetCalendarMenuHandler([this](POINT screen, HWND owner, bool series) -> UINT {
@@ -555,7 +555,8 @@ void DesktopApp::SyncStatusBar()
             },
             [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
                 auto fillAppearance = snowdesktop::StatusBarFillAppearance(appearance);
-                DrawWidgetPanelBackground(context, frame, 0,
+                const RECT materialFrame = snowdesktop::StatusBarMaterialBounds(frame, appearance, generalSettings_.statusBar.position);
+                DrawWidgetPanelBackground(context, materialFrame, 0,
                     D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fillAppearance, false, 0, scale);
                  snowdesktop::DrawStatusBarEdge(context, frame, appearance, scale, generalSettings_.statusBar.position);
@@ -690,7 +691,7 @@ void DesktopApp::SyncStatusBar()
             DrawWidgetPanelBackground(context, frame, appearance.cornerRadius * scale,
                 D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                 D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
-                false, 0, &appearance, false, 0, scale);
+                false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
             brushCache_.clear(); brushCacheContext_ = nullptr;
         });
 }

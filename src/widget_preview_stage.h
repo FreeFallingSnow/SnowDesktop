@@ -103,8 +103,10 @@ D2D1_COLOR_F ResolveEdgeHighlightReflection(
     D2D1_COLOR_F material, float effectStrength);
 
 /** Draw the shared parameter-driven rim and inner seam over the backdrop. */
+enum class HighlightEdge { All, Top, Bottom, Left, Right };
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength, const EdgeLightSettings& edgeLight = {});
+    float effectStrength, const EdgeLightSettings& edgeLight = {},
+    HighlightEdge edge = HighlightEdge::All);
 
 } // namespace snowdesktop::widget_preview

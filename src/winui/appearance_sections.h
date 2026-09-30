@@ -13,7 +13,35 @@ struct AppearanceSections
     Heading colorsTitle{nullptr}, materialTitle{nullptr}, borderTitle{nullptr}, bottomBarTitle{nullptr}, textTitle{nullptr};
     bool highlights = true;
     std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander> disclosures;
-    void ExpandAll() const { for (auto const& disclosure : disclosures) disclosure.IsExpanded(true); }
+    void CollapseAll() const { for (auto const& disclosure : disclosures) disclosure.IsExpanded(false); }
+
+    // Search navigation reveals only the path to its target. Inspect logical
+    // content because collapsed Expanders have no realized visual descendants.
+    static bool RevealWithin(const winrt::Microsoft::UI::Xaml::UIElement& element,
+        const winrt::Microsoft::UI::Xaml::FrameworkElement& target)
+    {
+        namespace c = winrt::Microsoft::UI::Xaml::Controls;
+        if (!element || !target) return false;
+        if (element == target) return true;
+        if (auto disclosure = element.try_as<c::Expander>())
+        {
+            if (RevealWithin(disclosure.Content().try_as<winrt::Microsoft::UI::Xaml::UIElement>(), target))
+            { disclosure.IsExpanded(true); return true; }
+        }
+        else if (auto panel = element.try_as<c::Panel>())
+        {
+            for (auto const& child : panel.Children()) if (RevealWithin(child, target)) return true;
+        }
+        else if (auto border = element.try_as<c::Border>()) return RevealWithin(border.Child(), target);
+        else if (auto host = element.try_as<c::ContentControl>())
+            return RevealWithin(host.Content().try_as<winrt::Microsoft::UI::Xaml::UIElement>(), target);
+        return false;
+    }
+    void Reveal(const winrt::Microsoft::UI::Xaml::FrameworkElement& target) const noexcept
+    {
+        try { for (auto const& disclosure : disclosures) if (RevealWithin(disclosure, target)) break; }
+        catch (...) {}
+    }
 
     void PlaceOpacity(const winrt::Microsoft::UI::Xaml::UIElement& row, bool gradient) const
     {
@@ -36,9 +64,11 @@ struct AppearanceSections
         title.TextWrapping(x::TextWrapping::Wrap);
         title.Margin({0, 0, 0, 0});
         Panel body; body.Spacing(8); body.Margin({0, 4, 0, 4});
+        body.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         x::Controls::Expander disclosure;
         disclosure.Header(title); disclosure.Content(body);
         disclosure.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        disclosure.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         disclosure.IsExpanded(false);
         parent.Children().Append(disclosure);
         if (disclosures) disclosures->push_back(disclosure);
@@ -54,7 +84,6 @@ struct AppearanceSections
         border = Section(parent, borderTitle, &disclosures);
         if (withBottomBar) bottomBar = Section(parent, bottomBarTitle, &disclosures);
         if (withText) text = Section(parent, textTitle, &disclosures);
-        disclosures.front().IsExpanded(true);
     }
 
     template<class Localize> void RefreshLocalizedText(Localize localize)

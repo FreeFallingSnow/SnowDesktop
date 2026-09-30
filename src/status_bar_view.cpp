@@ -3,6 +3,8 @@
 #include "status_bar_battery.h"
 #include "status_bar_layout.h"
 #include "status_bar_presentation.h"
+#include "flat_glass_rim.h"
+#include "widget_preview_stage.h"
 #include "tray_presentation.h"
 #include "l10n.h"
 #include "utils.h"
@@ -406,14 +408,47 @@ PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings& a
     fill.widgetEdgeHighlightEnabled = false;
     return fill;
 }
+RECT StatusBarMaterialBounds(RECT frame, const PersonalizationSettings& appearance, DockPosition position)
+{
+    if (!appearance.widgetEdgeHighlightEnabled || appearance.widgetEdgeHighlightStrength <= .0005f) return frame;
+    constexpr LONG padding = static_cast<LONG>(flat_glass_rim::kPanelOverdraw);
+    if (position == DockPosition::Bottom) frame.top = (std::min)(frame.top + padding, frame.bottom - 1);
+    else if (position == DockPosition::Left) frame.right = (std::max)(frame.left + 1, frame.right - padding);
+    else if (position == DockPosition::Right) frame.left = (std::min)(frame.left + padding, frame.right - 1);
+    else frame.bottom = (std::max)(frame.top + 1, frame.bottom - padding);
+    return frame;
+}
 void DrawStatusBarEdge(ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance,
     float scale, DockPosition position)
 {
-    if (!context || appearance.widgetBorderWidth <= 0 || appearance.widgetBorderAlpha <= 0) return;
+    if (!context || IsRectEmpty(&frame)) return;
+    const auto clip = D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+        static_cast<float>(frame.right), static_cast<float>(frame.bottom));
+    frame = StatusBarMaterialBounds(frame, appearance, position);
+    if (appearance.widgetEdgeHighlightEnabled && appearance.widgetEdgeHighlightStrength > .0005f)
+    {
+        using widget_preview::HighlightEdge;
+        const auto edge = position == DockPosition::Bottom ? HighlightEdge::Top :
+            position == DockPosition::Left ? HighlightEdge::Right :
+            position == DockPosition::Right ? HighlightEdge::Left : HighlightEdge::Bottom;
+        context->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        (void)widget_preview::DrawEdgeHighlight(context, frame, 0,
+            D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
+            appearance.widgetEdgeHighlightWidth * scale, appearance.widgetEdgeHighlightStrength, appearance.edgeLight, edge);
+        context->PopAxisAlignedClip();
+    }
+    if (appearance.widgetBorderWidth <= 0 || appearance.widgetBorderAlpha <= 0) return;
     ComPtr<ID2D1SolidColorBrush> border;
     context->CreateSolidColorBrush(D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG,
         appearance.widgetBorderB, appearance.widgetBorderAlpha), &border);
     const float width = appearance.widgetBorderWidth * scale;
+    if (position == DockPosition::Left || position == DockPosition::Right)
+    {
+        const float x = position == DockPosition::Right ? frame.left + width / 2 : frame.right - width / 2;
+        if (border) context->DrawLine(D2D1::Point2F(x, static_cast<float>(frame.top)),
+            D2D1::Point2F(x, static_cast<float>(frame.bottom)), border.Get(), width);
+        return;
+    }
     const float y = position == DockPosition::Bottom ? frame.top + width / 2 : frame.bottom - width / 2;
     if (border) context->DrawLine(D2D1::Point2F(static_cast<float>(frame.left), y),
         D2D1::Point2F(static_cast<float>(frame.right), y), border.Get(), width);

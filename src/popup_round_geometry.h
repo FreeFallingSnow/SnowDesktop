@@ -21,28 +21,29 @@ inline D2D1_ROUNDED_RECT Resolve(const RECT& frame, float radius, float offsetY 
     return {bounds, radius, radius};
 }
 
-inline RECT WindowFence(const RECT& frame, float offsetY = 0)
+inline RECT WindowFence(const RECT& frame, float offsetY = 0, float overdraw = 1)
 {
     if (!std::isfinite(offsetY)) offsetY = 0;
+    overdraw = std::isfinite(overdraw) ? std::clamp(overdraw, 1.f, 3.f) : 1.f;
     const auto coordinate = [](double value) {
         return static_cast<LONG>(std::clamp(value,
             static_cast<double>((std::numeric_limits<LONG>::min)()),
             static_cast<double>((std::numeric_limits<LONG>::max)())));
     };
-    // One physical pixel retains AA coverage and the centered panel outline.
+    // Backdrops need AA coverage only; content may also carry a 3px rim halo.
     // The actual rounded shape belongs to the D2D/Composition alpha clip.
-    return {coordinate(static_cast<double>(frame.left) - 1),
-        coordinate(std::floor(static_cast<double>(frame.top) + offsetY) - 1),
-        coordinate(static_cast<double>(frame.right) + 1),
-        coordinate(std::ceil(static_cast<double>(frame.bottom) + offsetY) + 1)};
+    return {coordinate(std::floor(static_cast<double>(frame.left) - overdraw)),
+        coordinate(std::floor(static_cast<double>(frame.top) + offsetY - overdraw)),
+        coordinate(std::ceil(static_cast<double>(frame.right) + overdraw)),
+        coordinate(std::ceil(static_cast<double>(frame.bottom) + offsetY + overdraw))};
 }
 
 // Caller owns the returned region. Retain a physical pixel around the alpha
 // contour, while removing the transparent corner from the HWND itself (an
 // HTTRANSPARENT reply alone does not forward input across UI threads).
-inline HRGN CreateWindowFence(const RECT& frame, float radius, float offsetY = 0)
+inline HRGN CreateWindowFence(const RECT& frame, float radius, float offsetY = 0, float overdraw = 1)
 {
-    const auto fence = WindowFence(frame, offsetY);
+    const auto fence = WindowFence(frame, offsetY, overdraw);
     const auto shape = Resolve(frame, radius, offsetY);
     // A second rounded GDI raster mask cannot reproduce D2D's fractional AA
     // coverage, even when its integer radius is reduced. Only cut triangles

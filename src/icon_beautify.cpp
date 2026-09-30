@@ -1,5 +1,6 @@
 #include "icon_beautify.h"
 #include "flat_glass_rim.h"
+#include "appearance_edge_presets.h"
 
 #include <algorithm>
 #include <array>
@@ -737,6 +738,7 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.outlineEnabled = false;
         return settings;
     case IconBeautifyPreset::FrostedGlass:
+    {
         settings.preset = preset;
         settings.enabled = true;
         settings.shape = IconBeautifyShape::ContinuousRounded;
@@ -746,14 +748,17 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.glassEnabled = true;
         settings.glassBlurRadius = 10.0f;
         settings.edgeHighlightEnabled = true;
-        settings.edgeHighlightWidth = 0.75f;
-        settings.edgeHighlightStrength = 0.50f;
+        const auto edge = MaterialEdges(MaterialEdgePreset::GlassTransparent);
+        settings.edgeHighlightWidth = edge.width;
+        settings.edgeHighlightStrength = edge.opacity;
+        settings.edgeLight = edge.light;
         settings.outlineEnabled = true;
-        settings.outlineWidth = 0.5f;
-        settings.outlineOpacity = 0.06f;
+        settings.outlineWidth = 0.75f;
+        settings.outlineOpacity = 0.05f;
         settings.outlineR = settings.outlineG = settings.outlineB = 1.0f;
         settings.shadowStrength = 0.15f;
         return settings;
+    }
     case IconBeautifyPreset::Custom:
     default:
         settings.preset = IconBeautifyPreset::Custom;

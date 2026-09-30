@@ -195,13 +195,13 @@ private:
         Row(sections_.text, "app.settings.text_color", theme, [](auto& value) { value.contentTheme = 0; });
         Color(sections_.border, "app.settings.border_color", &PersonalizationSettings::widgetBorderR, &PersonalizationSettings::widgetBorderG, &PersonalizationSettings::widgetBorderB);
         Number(sections_.border, "largeIcon.borderOpacity", &PersonalizationSettings::widgetBorderAlpha, 0, 100, 1, 100, L"%");
-        Number(sections_.border, "largeIcon.borderWidth", &PersonalizationSettings::widgetBorderWidth, .5, 4, .5, 1, L"px");
+        Number(sections_.border, "largeIcon.borderWidth", &PersonalizationSettings::widgetBorderWidth, .5, 4, .05, 1, L"px");
         c::ToggleSwitch highlight; highlight.HorizontalAlignment(x::HorizontalAlignment::Right);
         highlight.Toggled([weak, highlight](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply([&](auto& value) { value.widgetEdgeHighlightEnabled = highlight.IsOn(); }, true); });
         sync_.push_back([this, highlight] { highlight.IsOn(value_.widgetEdgeHighlightEnabled); });
         Row(sections_.border, "largeIcon.edgeHighlight", highlight, [](auto& value) { value.widgetEdgeHighlightEnabled = PersonalizationSettings{}.widgetEdgeHighlightEnabled; });
         const auto edge = [](auto const& value) { return value.widgetEdgeHighlightEnabled; };
-        Number(sections_.border, "largeIcon.edgeWidth", &PersonalizationSettings::widgetEdgeHighlightWidth, .5, 4, .5, 1, L"px", edge);
+        Number(sections_.border, "largeIcon.edgeWidth", &PersonalizationSettings::widgetEdgeHighlightWidth, .5, 4, .05, 1, L"px", edge);
         Number(sections_.border, "largeIcon.edgeStrength", &PersonalizationSettings::widgetEdgeHighlightStrength, 0, 100, 1, 100, L"%", edge);
         edge_ = EdgeLightEditor::Create(localize_, [weak](auto const& light, bool commit) {
             if (auto self = weak.lock()) self->Apply([&](auto& value) { value.edgeLight = light; }, commit);

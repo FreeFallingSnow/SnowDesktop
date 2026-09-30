@@ -7,6 +7,7 @@
  */
 
 #include "personalization.h"
+#include "appearance_edge_presets.h"
 #include "edge_light_codec.h"
 #include "data_paths.h"
 
@@ -103,7 +104,7 @@ PersonalizationSettings PersonalizationSettings::LightPreset()
 PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
 {
     PersonalizationSettings s = DarkPreset();
-    s.widgetBgR = 0.05f; s.widgetBgG = 0.07f; s.widgetBgB = 0.10f;
+    s.widgetBgR = 13.f / 255.f; s.widgetBgG = 18.f / 255.f; s.widgetBgB = 26.f / 255.f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.28f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetGlassDark;
@@ -111,8 +112,10 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
     s.glassEnabled = true;
     s.widgetBorderWidth = 1.0f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassDark);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.glassBlurRadius = 24.0f;
     return s;
 }
@@ -120,7 +123,7 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
 PersonalizationSettings PersonalizationSettings::GlassLightPreset()
 {
     PersonalizationSettings s = LightPreset();
-    s.widgetBgR = 0.92f; s.widgetBgG = 0.96f; s.widgetBgB = 1.0f;
+    s.widgetBgR = 235.f / 255.f; s.widgetBgG = 245.f / 255.f; s.widgetBgB = 1.f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.15f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetGlassLight;
@@ -128,8 +131,10 @@ PersonalizationSettings PersonalizationSettings::GlassLightPreset()
     s.glassEnabled = true;
     s.widgetBorderWidth = 1.0f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassLight);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.glassBlurRadius = 22.0f;
     s.contentTheme = 0;
     return s;
@@ -141,11 +146,13 @@ PersonalizationSettings PersonalizationSettings::GlassTransparentPreset()
     s.backgroundPreset = kAppearancePresetGlassTransparent;
     s.widgetBgR = s.widgetBgG = s.widgetBgB = 1.0f;
     s.widgetAlpha = 0.02f;
-    s.widgetBorderAlpha = 0.08f;
+    s.widgetBorderAlpha = 0.05f;
     s.widgetBorderWidth = 0.75f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = 1.0f;
-    s.widgetEdgeHighlightStrength = 0.70f;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
     s.glassBlurRadius = 10.0f;
@@ -157,7 +164,7 @@ PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
 {
     PersonalizationSettings s = DarkPreset();
     // Match the neutral #202020 tint used by Windows dark shell panels.
-    s.widgetBgR = 0.125f; s.widgetBgG = 0.125f; s.widgetBgB = 0.125f;
+    s.widgetBgR = s.widgetBgG = s.widgetBgB = 32.f / 255.f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetAcrylicDark;
@@ -166,8 +173,10 @@ PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
     s.acrylicEnabled = true;
     s.widgetBorderWidth = 1.0f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::AcrylicDark);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 0;
     return s;
@@ -177,7 +186,7 @@ PersonalizationSettings PersonalizationSettings::AcrylicLightPreset()
 {
     PersonalizationSettings s = LightPreset();
     // Match the neutral #F3F3F3 tint used by Windows light shell panels.
-    s.widgetBgR = 0.953f; s.widgetBgG = 0.953f; s.widgetBgB = 0.953f;
+    s.widgetBgR = s.widgetBgG = s.widgetBgB = 243.f / 255.f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetAcrylicLight;
@@ -186,8 +195,10 @@ PersonalizationSettings PersonalizationSettings::AcrylicLightPreset()
     s.acrylicEnabled = true;
     s.widgetBorderWidth = 1.0f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::AcrylicLight);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 1;
     return s;

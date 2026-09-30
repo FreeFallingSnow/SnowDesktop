@@ -329,11 +329,11 @@ struct PersonalizationPagePresenter::Impl
         InitializeContinuousControl(borderWidth,
             &PersonalizationSettings::widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
-            0.5, 1.0);
+            0.05, 1.0);
         InitializeContinuousControl(edgeHighlightWidth,
             &PersonalizationSettings::widgetEdgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
-            0.5, 1.0);
+            0.05, 1.0);
         InitializeContinuousControl(edgeHighlightStrength,
             &PersonalizationSettings::widgetEdgeHighlightStrength,
             0.0, 100.0, 1.0, 0.01);
@@ -933,6 +933,8 @@ struct PersonalizationPagePresenter::Impl
     {
         const int normalized = NormalizeAppearancePresetId(
             settings.backgroundPreset);
+        if (currentBackgroundPreset != normalized && normalized == kAppearancePresetCustom)
+            appearanceSections.CollapseAll();
         currentBackgroundPreset = normalized;
         auto preset = std::find(kPresetIds.begin(), kPresetIds.end(), normalized);
         presetCombo.SelectedIndex(preset == kPresetIds.end()
@@ -967,8 +969,8 @@ struct PersonalizationPagePresenter::Impl
         };
         quickNavigationThemeCombo.SelectedIndex(index(settings.quickNavigationAppearance, settings.quickNavTheme));
         collectionPopupThemeCombo.SelectedIndex(index(settings.collectionPopupAppearance, settings.collectionPopupTheme));
-        quickAppearanceEditor->Content().Visibility((settings.quickNavigationAppearance.mode >= 0 || IsCustomSurfaceTheme(settings.quickNavigationAppearance, currentGlobalAppearance)) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        popupAppearanceEditor->Content().Visibility((settings.collectionPopupAppearance.mode >= 0 || IsCustomSurfaceTheme(settings.collectionPopupAppearance, currentGlobalAppearance)) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        quickAppearanceEditor->Content().Visibility(IsCustomSurfaceTheme(settings.quickNavigationAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        popupAppearanceEditor->Content().Visibility(IsCustomSurfaceTheme(settings.collectionPopupAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     }
 
     void SelectSurfaceTheme(bool quick, int index)
@@ -996,7 +998,7 @@ struct PersonalizationPagePresenter::Impl
     {
         if (closed)
             return;
-        const bool custom = true;
+        const bool custom = currentBackgroundPreset == kAppearancePresetCustom;
         themeTargetsCard.root.Visibility(mux::Visibility::Visible);
         widgetAppearanceCard.root.Visibility(custom
                 ? mux::Visibility::Visible
@@ -1305,7 +1307,7 @@ struct PersonalizationPagePresenter::Impl
             dockAppearanceCombo.SelectedIndex(dock.followComponentAppearance ? 0 :
                 found == kPresetIds.end() ? static_cast<int>(kPresetIds.size()) : static_cast<int>(found - kPresetIds.begin()) + 1);
             dockAppearanceEditor->SetValue(ResolveDockAppearance(dock, currentGlobalAppearance), newGeneration);
-            dockAppearanceEditor->Content().Visibility(!dock.followComponentAppearance ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            dockAppearanceEditor->Content().Visibility(!dock.followComponentAppearance && dock.appearancePreset == kAppearancePresetCustom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             dockRevision = snapshot.domainRevisions.dock;
         }
         hasSnapshot = true;
@@ -1314,7 +1316,11 @@ struct PersonalizationPagePresenter::Impl
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
-        try { appearanceSections.ExpandAll(); } catch (...) {}
+        const auto appearanceTarget = [this](mux::FrameworkElement target) {
+            if (currentBackgroundPreset != kAppearancePresetCustom) return mux::FrameworkElement{presetCombo};
+            appearanceSections.Reveal(target);
+            return target;
+        };
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;
@@ -1322,9 +1328,9 @@ struct PersonalizationPagePresenter::Impl
         if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
         if (id == "personalization.backgroundColor")
-            return backgroundColor.editor.button;
+            return appearanceTarget(backgroundColor.editor.button);
         if (id == "personalization.borderColor")
-            return borderColor.editor.button;
+            return appearanceTarget(borderColor.editor.button);
         if (id == "personalization.quickNavigationTheme" ||
             id == "personalization.quickNavTheme")
             return quickNavigationThemeCombo;
@@ -1332,30 +1338,30 @@ struct PersonalizationPagePresenter::Impl
             return collectionPopupThemeCombo;
         if (id == "personalization.widgetAlpha" ||
             id == "personalization.backgroundOpacity")
-            return widgetAlpha.slider;
+            return appearanceTarget(widgetAlpha.slider);
         if (id == "personalization.borderAlpha" ||
             id == "personalization.borderOpacity")
-            return borderAlpha.slider;
+            return appearanceTarget(borderAlpha.slider);
         if (id == "personalization.borderWidth")
-            return borderWidth.slider;
+            return appearanceTarget(borderWidth.slider);
         if (id == "personalization.edgeHighlight")
-            return edgeHighlightToggle;
+            return appearanceTarget(edgeHighlightToggle);
         if (id == "personalization.edgeHighlightWidth")
-            return edgeHighlightWidth.slider;
+            return appearanceTarget(edgeHighlightWidth.slider);
         if (id == "personalization.edgeHighlightStrength")
-            return edgeHighlightStrength.slider;
+            return appearanceTarget(edgeHighlightStrength.slider);
         if (id == "personalization.gradientEndAlpha")
-            return gradientEndAlpha.slider;
+            return appearanceTarget(gradientEndAlpha.slider);
         if (id == "personalization.enableGradient")
-            return gradientToggle;
+            return appearanceTarget(gradientToggle);
         if (id == "personalization.glass")
-            return glassToggle;
+            return appearanceTarget(glassToggle);
         if (id == "personalization.blurRadius")
-            return blurRadius.slider;
+            return appearanceTarget(blurRadius.slider);
         if (id == "personalization.acrylic")
-            return acrylicToggle;
+            return appearanceTarget(acrylicToggle);
         if (id == "personalization.contentTheme")
-            return contentThemeCombo;
+            return appearanceTarget(contentThemeCombo);
         if (id == "personalization.contextMenu")
             return contextMenuCombo;
         if (id == "personalization.cornerRadius")

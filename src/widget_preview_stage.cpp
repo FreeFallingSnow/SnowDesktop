@@ -593,6 +593,7 @@ struct EdgeHighlightMaskKey
     std::uint32_t depthSixteenths = 0;
     EdgeLightSettings edgeLight;
     bool occlusion = false;
+    HighlightEdge edge = HighlightEdge::All;
 
     bool operator==(const EdgeHighlightMaskKey&) const = default;
 };
@@ -636,7 +637,7 @@ std::uint32_t QuantizeSixteenths(float value)
 
 std::vector<std::uint8_t> GenerateEdgeHighlightMask(
     UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
-    const EdgeLightSettings& edgeLight, bool occlusion)
+    const EdgeLightSettings& edgeLight, bool occlusion, HighlightEdge edge)
 {
     constexpr UINT32 padding = flat_glass_rim::kPanelOverdraw;
     const UINT32 bitmapWidth = width + padding * 2, bitmapHeight = height + padding * 2;
@@ -646,6 +647,13 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
     const float innerSupport = material.InnerSupport(bevelDepth, occlusion);
     constexpr std::array<float, 2> offsets{.25f, .75f};
     const float wf = static_cast<float>(width), hf = static_cast<float>(height);
+    const auto distanceAt = [&](float x, float y) {
+        if (edge == HighlightEdge::Top) return -y;
+        if (edge == HighlightEdge::Bottom) return y - hf;
+        if (edge == HighlightEdge::Left) return -x;
+        if (edge == HighlightEdge::Right) return x - wf;
+        return EvaluateRoundedRectDistance(x, y, wf, hf, cornerRadius).distance;
+    };
     for (UINT32 y = 0; y < bitmapHeight; ++y)
     {
         for (UINT32 x = 0; x < bitmapWidth; ++x)
@@ -655,12 +663,12 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
             // The rounded-rectangle SDF is 1-Lipschitz. All four subpixel
             // samples stay within .36px of the center. Skip the entire body
             // before fan masks, powers and exponential shadow calculations.
-            const float centerDistance = EvaluateRoundedRectDistance(px + .5f, py + .5f, wf, hf, cornerRadius).distance;
+            const float centerDistance = distanceAt(px + .5f, py + .5f);
             if (centerDistance < -innerSupport - .36f || centerDistance > static_cast<float>(padding) + .36f) continue;
             float accumulated = 0.f;
             for (float sy : offsets) for (float sx : offsets)
             {
-                const float distance = EvaluateRoundedRectDistance(px + sx, py + sy, wf, hf, cornerRadius).distance;
+                const float distance = distanceAt(px + sx, py + sy);
                 if (distance < -innerSupport || distance > static_cast<float>(padding)) continue;
                 const float lighting = material.Lighting((px + sx) / wf, (py + sy) / hf);
                 accumulated += occlusion
@@ -723,7 +731,8 @@ void CacheEdgeHighlightMask(const EdgeHighlightMaskKey& key,
 
 ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
-    const EdgeLightSettings& edgeLight, bool occlusion = false)
+    const EdgeLightSettings& edgeLight, bool occlusion = false,
+    HighlightEdge edge = HighlightEdge::All)
 {
     if (!context || width == 0 || height == 0 ||
         !context->IsDxgiFormatSupported(DXGI_FORMAT_A8_UNORM))
@@ -743,6 +752,7 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
         .depthSixteenths = QuantizeSixteenths(bevelDepth),
         .edgeLight = NormalizeEdgeLight(edgeLight),
         .occlusion = occlusion,
+        .edge = edge,
     };
     if (auto cached = FindCachedEdgeHighlightMask(key))
         return cached;
@@ -752,7 +762,7 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     const float quantizedDepth =
         static_cast<float>(key.depthSixteenths) / 16.0f;
     const std::vector<std::uint8_t> pixels = GenerateEdgeHighlightMask(
-        width, height, quantizedRadius, quantizedDepth, key.edgeLight, occlusion);
+        width, height, quantizedRadius, quantizedDepth, key.edgeLight, occlusion, edge);
     constexpr UINT32 padding = flat_glass_rim::kPanelOverdraw;
     const UINT32 bitmapWidth = width + padding * 2;
     const UINT32 bitmapHeight = height + padding * 2;
@@ -802,7 +812,7 @@ D2D1_COLOR_F ResolveEdgeHighlightReflection(
 
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength, const EdgeLightSettings& edgeLight)
+    float effectStrength, const EdgeLightSettings& edgeLight, HighlightEdge edge)
 {
     const float strength = std::clamp(effectStrength, 0.0f, 1.0f);
     if (!context || strength <= 0.0005f ||
@@ -832,10 +842,10 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
         return false;
     const ComPtr<ID2D1Bitmap1> mask = GetEdgeHighlightMask(context,
         static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight),
-        cornerRadius, strokeWidth, material);
+        cornerRadius, strokeWidth, material, false, edge);
     const ComPtr<ID2D1Bitmap1> shadowMask = material.shadowStrength > 0.f
         ? GetEdgeHighlightMask(context, static_cast<UINT32>(pixelWidth),
-            static_cast<UINT32>(pixelHeight), cornerRadius, strokeWidth, material, true)
+            static_cast<UINT32>(pixelHeight), cornerRadius, strokeWidth, material, true, edge)
         : nullptr;
     ComPtr<ID2D1SolidColorBrush> shadowBrush;
     if (shadowMask)
@@ -856,6 +866,18 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
             return false;
         const float fallbackRadius = std::max(0.0f,
             cornerRadius - inset);
+        if (edge != HighlightEdge::All)
+        {
+            if (edge == HighlightEdge::Left || edge == HighlightEdge::Right)
+            {
+                const float x = edge == HighlightEdge::Left ? fallbackRect.left : fallbackRect.right;
+                context->DrawLine(D2D1::Point2F(x, outerRect.top), D2D1::Point2F(x, outerRect.bottom), reflectionBrush.Get(), strokeWidth);
+                return true;
+            }
+            const float y = edge == HighlightEdge::Top ? fallbackRect.top : fallbackRect.bottom;
+            context->DrawLine(D2D1::Point2F(outerRect.left, y), D2D1::Point2F(outerRect.right, y), reflectionBrush.Get(), strokeWidth);
+            return true;
+        }
         context->DrawRoundedRectangle(
             D2D1::RoundedRect(fallbackRect,
                 fallbackRadius, fallbackRadius),

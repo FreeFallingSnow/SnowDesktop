@@ -313,7 +313,7 @@ DesktopApp::ExportNativeComponentPreviews(
                 DrawWidgetPanelBackground(context, frame, style.cornerRadius * scale,
                     D2D1::ColorF(style.widgetBgR, style.widgetBgG, style.widgetBgB, style.widgetAlpha),
                     D2D1::ColorF(style.widgetBorderR, style.widgetBorderG, style.widgetBorderB, style.widgetBorderAlpha),
-                    false, 0, &style, false, 0, scale);
+                    false, style.widgetBorderWidth * scale, &style, false, 0, scale);
                 brushCache_.clear(); brushCacheContext_ = nullptr;
             });
 
@@ -321,7 +321,7 @@ DesktopApp::ExportNativeComponentPreviews(
         return ExportStatusBarPreview(request, d2dDevice_.Get(), dwriteFactory_.Get(), appearance,
             [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& style, float scale, DockPosition position) {
                 auto fill = StatusBarFillAppearance(style);
-                DrawWidgetPanelBackground(context, frame, 0,
+                DrawWidgetPanelBackground(context, StatusBarMaterialBounds(frame, style, position), 0,
                     D2D1::ColorF(fill.widgetBgR, fill.widgetBgG, fill.widgetBgB, fill.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fill, false, 0, scale);
                 DrawStatusBarEdge(context, frame, style, scale, position);

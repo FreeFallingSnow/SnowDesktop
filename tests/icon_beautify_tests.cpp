@@ -1,4 +1,5 @@
 #include "icon_beautify.h"
+#include "appearance_edge_presets.h"
 
 #include <algorithm>
 #include <array>
@@ -381,6 +382,10 @@ int main()
         "smart recognition clips the original icon without content scaling");
 
     const auto glass = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
+    const auto transparentEdge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
+    Check(glass.edgeHighlightWidth == transparentEdge.width && glass.edgeHighlightStrength == transparentEdge.opacity &&
+        glass.edgeLight == transparentEdge.light && glass.outlineWidth == .75f && glass.outlineOpacity == .05f,
+        "icon glass uses the transparent component's complete edge profile");
     Check(glass.glassEnabled && glass.edgeHighlightEnabled && glass.mode == 0 &&
         glass.backgroundOpacity < .1f, "glass preset keeps smart detection and a faint fill");
     auto changedGlass = glass;

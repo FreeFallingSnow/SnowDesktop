@@ -1,6 +1,8 @@
 #include "app.h"
 #include "../drag_input_rules.h"
 #include "popup_window_pair_z_order.h"
+#include "../popup_round_geometry.h"
+#include "../flat_glass_rim.h"
 
 #include <array>
 #include <bit>
@@ -1046,27 +1048,15 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
     if (!wasVisible || boundsChanged || regionChanged)
     {
         HRGN windowRegion = CreateRectRgn(0, 0, 0, 0);
-        auto appendRegion = [&](RECT desktopRect, int radius) {
+        auto appendRegion = [&](RECT desktopRect, float radius) {
             if (!windowRegion || IsRectEmpty(&desktopRect))
                 return;
-            desktopRect = InflateCopy(desktopRect, 3);
             OffsetRect(
                 &desktopRect,
                 -floatingPopupWindowBounds_.left,
                 -floatingPopupWindowBounds_.top);
-            HRGN added = radius > 0
-                ? CreateRoundRectRgn(
-                    desktopRect.left,
-                    desktopRect.top,
-                    desktopRect.right + 1,
-                    desktopRect.bottom + 1,
-                    radius * 2,
-                    radius * 2)
-                : CreateRectRgn(
-                    desktopRect.left,
-                    desktopRect.top,
-                    desktopRect.right + 1,
-                    desktopRect.bottom + 1);
+            HRGN added = snowdesktop::popup_round_geometry::CreateWindowFence(
+                desktopRect, radius, 0, static_cast<float>(snowdesktop::flat_glass_rim::kPanelOverdraw));
             if (added)
             {
                 CombineRgn(
@@ -1075,10 +1065,12 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
                 DeleteObject(added);
             }
         };
-        appendRegion(floatingPopupCollectionRegion_, 18);
+        const auto* popup = GetOpenPopupWidget();
+        appendRegion(floatingPopupCollectionRegion_, popup ?
+            18.f * GetCollectionPopupLayoutMetrics(*popup).scale : 18.f);
         appendRegion(
             floatingPopupLuaPanelRegion_,
-            floatingPopupModalRegion_ ? 0 : 18);
+            floatingPopupModalRegion_ ? 0.f : 18.f);
         if (windowRegion &&
             !SetWindowRgn(
                 floatingPopupHwnd_, windowRegion, FALSE))

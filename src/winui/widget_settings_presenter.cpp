@@ -753,7 +753,7 @@ struct WidgetSettingsPresenter::Impl
         appearanceSections.border.Children().Append(borderOpacity.row.root);
         InitializeAppearanceScalar(borderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
-            0.5, 1.0, L"px");
+            0.05, 1.0, L"px");
         appearanceSections.border.Children().Append(borderWidth.row.root);
 
         edgeHighlightEnabled = muxc::ToggleSwitch{};
@@ -766,7 +766,7 @@ struct WidgetSettingsPresenter::Impl
 
         InitializeAppearanceScalar(edgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
-            0.5, 1.0, L"px");
+            0.05, 1.0, L"px");
         appearanceSections.border.Children().Append(edgeHighlightWidth.row.root);
         InitializeAppearanceScalar(edgeHighlightStrength,
             0.0, 100.0, 1.0, 0.01, L"%");

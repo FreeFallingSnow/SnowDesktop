@@ -2360,7 +2360,7 @@ if (BUILD_TESTING)
             tests/widget_preview_stage_tests.cpp
             src/widget_preview_stage.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 dxguid ole32 windowscodecs
+        LINK_LIBRARIES d2d1 d3d11 dxgi dxguid gdi32 ole32 windowscodecs
         LABELS contract render ui preview)
 
     snowdesktop_add_test(

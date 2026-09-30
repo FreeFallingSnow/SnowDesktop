@@ -487,7 +487,7 @@ struct StatusBar::Impl
                 if (!backdrop.IsAvailable()) backdrop.InitializePopup(hwnd, !fullscreen, false);
                 backdrop.Reattach(hwnd);
                 backdrop.BeginFrame(true);
-                backdrop.AddPanel({0, 0, rect.right - rect.left, rect.bottom - rect.top},
+                backdrop.AddPanel(StatusBarMaterialBounds({0, 0, rect.right - rect.left, rect.bottom - rect.top}, appearance, owner.settings.position),
                     0, appearance.glassBlurRadius * dpi / 96.f,
                     reinterpret_cast<std::uintptr_t>(this));
                 backdrop.EndFrame();

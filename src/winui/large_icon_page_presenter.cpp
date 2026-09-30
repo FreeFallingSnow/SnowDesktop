@@ -443,10 +443,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Toggle(edges, "largeIcon.border", &LargeIconConfig::border, Field::Custom, 0);
         ColorPicker(edges, "largeIcon.borderColor", &LargeIconConfig::borderColor, Field::Border, 1);
         Slider(edges, "largeIcon.borderOpacity", &LargeIconConfig::borderOpacity, 0, 100, 1, 100, L"%", Field::Border, 1);
-        Slider(edges, "largeIcon.borderWidth", &LargeIconConfig::borderWidth, .5, 4, .5, 1, L"", Field::Border, 1);
+        Slider(edges, "largeIcon.borderWidth", &LargeIconConfig::borderWidth, .5, 4, .05, 1, L"", Field::Border, 1);
         Toggle(edges, "largeIcon.edgeHighlight", &LargeIconConfig::edgeHighlight, Field::Custom, 0);
         Slider(edges, "largeIcon.edgeStrength", &LargeIconConfig::edgeStrength, 0, 100, 1, 100, L"%", Field::Edge, 1);
-        Slider(edges, "largeIcon.edgeWidth", &LargeIconConfig::edgeWidth, .5, 4, .5, 1, L"", Field::Edge, 1);
+        Slider(edges, "largeIcon.edgeWidth", &LargeIconConfig::edgeWidth, .5, 4, .05, 1, L"", Field::Edge, 1);
         edge = EdgeLightEditor::Create(localize, [weak](auto const& light, bool commit) {
             if (auto self = weak.lock(); self && !self->syncing) { self->draft.edgeLight = light; if (commit) self->Send("commit"); else self->Preview(); }
         });

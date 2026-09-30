@@ -98,6 +98,7 @@ private:
         syncing_ = true; root_.Children().Clear(); sync_.clear(); root_.Spacing(4);
         Number(root_, "direction", &EdgeLightSettings::direction, 0, 360, 1, 1, L"°");
         c::Expander advanced; advanced.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+        advanced.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
         advanced.Header(winrt::box_value(L("edgeLight.advanced"))); advanced.IsExpanded(false);
         Panel details; details.Spacing(4); advanced.Content(details); root_.Children().Append(advanced);
         const auto group = [&](const char* key) { c::TextBlock title; title.Text(L(key)); title.Margin({0,12,0,4}); title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); details.Children().Append(title); };
@@ -118,7 +119,7 @@ private:
         Number(details,"glowThreshold",&EdgeLightSettings::glowThreshold,0,99,1,100,L"%");
         group("edgeLight.shadow");
         Number(details,"shadowStrength",&EdgeLightSettings::shadowStrength,0,100,1,100,L"%");
-        Number(details,"shadowFalloff",&EdgeLightSettings::shadowFalloff,1,12,.1,1,L"");
+        Number(details,"shadowFalloff",&EdgeLightSettings::shadowFalloff,1,12,.05,1,L"");
         Sync();
     }
 };

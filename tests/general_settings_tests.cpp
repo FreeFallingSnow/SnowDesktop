@@ -518,15 +518,15 @@ int main()
             acrylicDarkPreset.widgetEdgeHighlightEnabled &&
             acrylicLightPreset.widgetEdgeHighlightEnabled &&
             glassDarkPreset.widgetEdgeHighlightWidth ==
-                kDefaultEdgeHighlightWidth &&
+                1.25f &&
             acrylicLightPreset.widgetEdgeHighlightWidth ==
-                kDefaultEdgeHighlightWidth &&
+                1.2f &&
             glassDarkPreset.widgetBorderAlpha == 0.0f &&
             acrylicLightPreset.widgetBorderAlpha == 0.0f &&
             glassLightPreset.widgetEdgeHighlightStrength ==
-                kDefaultEdgeHighlightStrength &&
+                .38f &&
             acrylicDarkPreset.widgetEdgeHighlightStrength ==
-                kDefaultEdgeHighlightStrength,
+                .30f,
         "glass and acrylic presets disable the border and load the recommended edge highlight");
 
     const auto quickNavigationAcrylic =
@@ -543,9 +543,9 @@ int main()
             collectionPopupAcrylic.widgetBorderAlpha == 0.0f &&
             collectionPopupAcrylic.widgetEdgeHighlightEnabled &&
             collectionPopupAcrylic.widgetEdgeHighlightWidth ==
-                kDefaultEdgeHighlightWidth &&
+                acrylicDarkPreset.widgetEdgeHighlightWidth &&
             collectionPopupAcrylic.widgetEdgeHighlightStrength ==
-                kDefaultEdgeHighlightStrength &&
+                acrylicDarkPreset.widgetEdgeHighlightStrength &&
             collectionPopupDark.widgetBorderAlpha > 0.0f &&
             !collectionPopupDark.widgetEdgeHighlightEnabled,
         "collection acrylic keeps the popup palette but replaces the Quick Navigation outline with an independent edge highlight");

@@ -4,6 +4,7 @@
 #include "system_panel_placement.h"
 #include "modern_menu.h"
 #include "popup_round_geometry.h"
+#include "flat_glass_rim.h"
 #include "app/desktop_backdrop_compositor.h"
 #include "quick_navigation_animation_rules.h"
 #include "animation_settings.h"
@@ -328,7 +329,7 @@ struct SystemPanel::Impl
     {
         if(!visual||!current||!window)return;const float y=SlideOffset();
         visual->SetOffsetY(y);HRGN region=CreateRectRgn(0,0,0,0);const int dyTop=static_cast<int>(std::floor(y)),dyBottom=static_cast<int>(std::ceil(y));
-        for(std::size_t i=0;i<cards.size();++i){const auto& c=cards[i];HRGN part=popup_round_geometry::CreateWindowFence(c,current->appearance.cornerRadius*scale,y);CombineRgn(region,region,part,RGN_OR);DeleteObject(part);if(Glass()){RECT projected=c;projected.top+=dyTop;projected.bottom+=dyBottom;backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(this)+i,D2D1::Matrix4x4F::Translation(0,y,0),projected);}}
+        for(std::size_t i=0;i<cards.size();++i){const auto& c=cards[i];HRGN part=popup_round_geometry::CreateWindowFence(c,current->appearance.cornerRadius*scale,y,static_cast<float>(flat_glass_rim::kPanelOverdraw));CombineRgn(region,region,part,RGN_OR);DeleteObject(part);if(Glass()){RECT projected=c;projected.top+=dyTop;projected.bottom+=dyBottom;backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(this)+i,D2D1::Matrix4x4F::Translation(0,y,0),projected);}}
         const auto clip=CreateRectRgn(0,0,width,height);CombineRgn(region,region,clip,RGN_AND);DeleteObject(clip);if(!SetWindowRgn(window,region,FALSE))DeleteObject(region);
         if(calendarInputs)calendarInputs->Pose(y,showing&&!closing&&!modal&&!slide.IsAnimating());
         composition->Commit();if(Glass())backdrop.CommitVisualChanges();
