@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -60,6 +61,7 @@ private:
         PackageManifest* detectedManifest = nullptr) const;
 
     std::filesystem::path bridgeExecutable_;
+    std::mutex statusMutex_;
     ProviderStatus cachedStatus_;
     std::chrono::steady_clock::time_point statusCheckedAt_{};
     mutable std::optional<ResolvedItem> resolvedCache_;

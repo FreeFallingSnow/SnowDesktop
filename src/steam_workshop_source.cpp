@@ -1,4 +1,5 @@
 #include "steam_workshop_source.h"
+#include "bounded_file_query.h"
 
 #include "data_paths.h"
 #include "json_value.h"
@@ -401,37 +402,45 @@ bool SteamWorkshopSource::RunBridge(
 ProviderStatus SteamWorkshopSource::Status()
 {
     const auto now = std::chrono::steady_clock::now();
-    if (statusCheckedAt_.time_since_epoch().count() != 0 &&
-        now - statusCheckedAt_ < (cachedStatus_.available
-            ? std::chrono::seconds(300) : std::chrono::seconds(5)))
-        return cachedStatus_;
-    std::error_code filesystemError;
-    if (!std::filesystem::is_regular_file(
-            bridgeExecutable_, filesystemError) || filesystemError ||
-        HasReparsePoint(bridgeExecutable_))
     {
-        cachedStatus_ = { false, "SnowDesktopSteamBridge.exe is missing" };
-        statusCheckedAt_ = now;
-        return cachedStatus_;
+        // A just-closed search may still finish while a reopened page queries
+        // the same retained provider. Never hold this lock across filesystem I/O.
+        std::lock_guard lock(statusMutex_);
+        if (statusCheckedAt_.time_since_epoch().count() != 0 &&
+            now - statusCheckedAt_ < (cachedStatus_.available
+                ? std::chrono::seconds(300) : std::chrono::seconds(5)))
+            return cachedStatus_;
     }
+    static BoundedFileQuery<ProviderStatus> queries;
+    const auto job = queries.Request(bridgeExecutable_.lexically_normal().native(),
+        [bridge = bridgeExecutable_] () -> ProviderStatus {
+            std::error_code filesystemError;
+            if (!std::filesystem::is_regular_file(bridge, filesystemError) ||
+                filesystemError || HasReparsePoint(bridge))
+                return {false, "SnowDesktopSteamBridge.exe is missing"};
 
-    std::string discoveryError;
-    const auto libraries = DiscoverSteamLibraryRoots(
-        snowdesktop::kSnowDesktopSteamAppId, discoveryError);
-    const auto cache = ReadSteamWorkshopLocalCache(
-        libraries, snowdesktop::kSnowDesktopSteamAppId);
-    if (cache.authoritative && discoveryError.empty())
-        cachedStatus_ = { true,
-            "Steam Workshop subscriptions are available" };
-    else
+            std::string discoveryError;
+            const auto libraries = DiscoverSteamLibraryRoots(
+                snowdesktop::kSnowDesktopSteamAppId, discoveryError);
+            const auto cache = ReadSteamWorkshopLocalCache(
+                libraries, snowdesktop::kSnowDesktopSteamAppId);
+            if (cache.authoritative && discoveryError.empty())
+                return {true, "Steam Workshop subscriptions are available"};
+            if (discoveryError.empty()) discoveryError = cache.error;
+            if (discoveryError.empty())
+                discoveryError = "Steam Workshop cache is unavailable";
+            return {false, std::move(discoveryError)};
+        });
+    const auto status = queries.Wait(job,
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(1500));
+    const ProviderStatus result = status.value_or(
+        ProviderStatus{false, "Steam Workshop availability query timed out"});
     {
-        if (discoveryError.empty()) discoveryError = cache.error;
-        if (discoveryError.empty())
-            discoveryError = "Steam Workshop cache is unavailable";
-        cachedStatus_ = { false, std::move(discoveryError) };
+        std::lock_guard lock(statusMutex_);
+        cachedStatus_ = result;
+        statusCheckedAt_ = std::chrono::steady_clock::now();
     }
-    statusCheckedAt_ = now;
-    return cachedStatus_;
+    return result;
 }
 
 std::optional<SteamWorkshopSource::ResolvedItem>
@@ -629,31 +638,61 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
         return snapshot;
     }
 
-    std::size_t matched = 0;
+    // Validating package.snowwidget also traverses library files. Keep the
+    // entire read-only batch independently owned and share it across searches,
+    // regardless of their keywords. A stalled archive cannot hold cancellation.
+    static BoundedFileQuery<SteamWorkshopSubscriptionSnapshot> packageQueries;
+    std::wstring validationKey = bridgeExecutable_.lexically_normal().native();
     for (const auto& item : cache.readyItems)
     {
-        std::string itemError;
-        PackageManifest detectedManifest;
-        auto resolved = ResolveInstalledFolder(
-            item.publishedFileId, {}, item.contentDirectory, itemError,
-            &detectedManifest);
-        if (!resolved)
-        {
-            const std::string packageId = detectedManifest.id.empty()
-                ? "steam-workshop:" + item.publishedFileId
-                : detectedManifest.id;
-            snapshot.discoveryFailures.push_back({ packageId,
-                item.publishedFileId, std::move(detectedManifest),
-                std::move(itemError) });
-            continue;
-        }
-        snapshot.localArtifacts[item.publishedFileId] = resolved->artifact;
-        resolved->details.manifest = LocalizePackageManifest(
-            std::move(resolved->details.manifest), query.locale);
-        if (!QueryMatches(resolved->details.manifest, query)) continue;
+        validationKey += L"\n" + Utf8ToWide(item.publishedFileId).value() + L":" +
+            item.contentDirectory.lexically_normal().native();
+    }
+    const auto job = packageQueries.Request(std::move(validationKey),
+        [bridge = bridgeExecutable_, items = cache.readyItems] {
+            SteamWorkshopSource source(bridge);
+            SteamWorkshopSubscriptionSnapshot validated;
+            for (const auto& item : items)
+            {
+                std::string itemError;
+                PackageManifest detectedManifest;
+                auto resolved = source.ResolveInstalledFolder(
+                    item.publishedFileId, {}, item.contentDirectory, itemError,
+                    &detectedManifest);
+                if (!resolved)
+                {
+                    const std::string packageId = detectedManifest.id.empty()
+                        ? "steam-workshop:" + item.publishedFileId
+                        : detectedManifest.id;
+                    validated.discoveryFailures.push_back({packageId,
+                        item.publishedFileId, std::move(detectedManifest),
+                        std::move(itemError)});
+                    continue;
+                }
+                validated.localArtifacts[item.publishedFileId] = resolved->artifact;
+                validated.installable.push_back(std::move(resolved->details));
+            }
+            return validated;
+        });
+    auto validated = packageQueries.Wait(job,
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(500));
+    if (!validated)
+    {
+        snapshot.authoritative = false;
+        error = "Steam Workshop package validation query timed out";
+        snapshot.error = error;
+        return snapshot;
+    }
+    snapshot.localArtifacts = std::move(validated->localArtifacts);
+    snapshot.discoveryFailures = std::move(validated->discoveryFailures);
+    std::size_t matched = 0;
+    for (auto& details : validated->installable)
+    {
+        details.manifest = LocalizePackageManifest(std::move(details.manifest), query.locale);
+        if (!QueryMatches(details.manifest, query)) continue;
         if (matched++ < query.offset) continue;
         if (snapshot.installable.size() < query.limit)
-            snapshot.installable.push_back(std::move(resolved->details));
+            snapshot.installable.push_back(std::move(details));
     }
     error.clear();
     return snapshot;

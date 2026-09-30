@@ -28,6 +28,7 @@ public:
         std::mutex mutex;
         std::condition_variable changed;
         std::optional<Value> value;
+        Clock::time_point completedAt{};
         bool done = false;
         bool delivered = false;
     };
@@ -39,13 +40,16 @@ public:
         if (const auto found = jobs_.find(key); found != jobs_.end())
         {
             std::lock_guard jobLock(found->second->mutex);
-            if (!found->second->done || !found->second->delivered) return found->second;
+            if (!found->second->done || (!found->second->delivered &&
+                Clock::now() - found->second->completedAt < std::chrono::seconds(5)))
+                return found->second;
         }
         // A permanently stalled drive gets only one worker, including across
         // page reopen. Changing library metadata cannot grow workers forever.
         std::erase_if(jobs_, [](const auto& entry) {
             std::lock_guard jobLock(entry.second->mutex);
-            return entry.second->done && entry.second->delivered;
+            return entry.second->done && (entry.second->delivered ||
+                Clock::now() - entry.second->completedAt >= std::chrono::seconds(5));
         });
         if (jobs_.size() >= 64) return {};
         auto job = std::make_shared<Job>();
@@ -58,6 +62,7 @@ public:
                 {
                     std::lock_guard jobLock(job->mutex);
                     job->value = std::move(value);
+                    job->completedAt = Clock::now();
                     job->done = true;
                 }
                 job->changed.notify_all();
@@ -66,6 +71,7 @@ public:
         catch (...)
         {
             std::lock_guard jobLock(job->mutex);
+            job->completedAt = Clock::now();
             job->done = true;
             job->changed.notify_all();
         }
