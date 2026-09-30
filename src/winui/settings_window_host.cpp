@@ -3,6 +3,7 @@
 #include "settings_window_host.h"
 #include "../pending_window_message.h"
 #include "../performance_trace.h"
+#include "../diagnostic_log.h"
 #include "../shell_launch_worker.h"
 #include "../status_bar_shell_shortcut.h"
 
@@ -856,6 +857,7 @@ struct SettingsWindowHost::Impl
     bool backupDataPageActive = false;
     bool initialized = false;
     bool shuttingDown = false;
+    bool applyingSnapshot = false;
     bool interactionSuspended = true;
     bool darkTheme = false;
     bool viewReleaseQueued = false;
@@ -905,6 +907,8 @@ struct SettingsWindowHost::Impl
     void SetError(std::wstring message)
     {
         lastError = std::move(message);
+        WriteDiagnosticLogEntry((L"SettingsUI pid=" + std::to_wstring(GetCurrentProcessId()) +
+            L" error: " + lastError).c_str(), DiagnosticLogLevel::Error);
     }
 
     void QueueSystemBackdropUpdate() noexcept
@@ -1421,22 +1425,46 @@ struct SettingsWindowHost::Impl
             return;
         if (!Visible() && !snapshot->sessionActive)
             return;
-        if (!shell->ApplySnapshot(*snapshot))
-            return;
-        // Ordinary controller revisions must not touch the Island's window-
-        // level backdrop. In particular, continuous Slider/ColorPicker
-        // previews publish here while WinUI owns pointer capture or a Flyout.
-        // Backdrop refresh remains tied to attach and system theme/contrast
-        // messages, where a window-level material transition is intentional.
-        SynchronizePageBackends(*snapshot);
-        if (options.homeAboutStatus)
+        if (applyingSnapshot)
         {
-            HomeAboutStatusPatch patch = options.homeAboutStatus(
-                snapshot->generation, snapshot->revision);
-            // Preserve the host's status sequence; it also orders direct
-            // publications while the controller snapshot is unchanged.
-            (void)shell->ApplyHomeAboutStatusPatch(patch);
-
+            // Synchronous IPC queries may deliver a newer snapshot while a
+            // presenter is being constructed/activated. Render it on the next
+            // owner turn rather than rebuilding controls on their own stack.
+            QueueSnapshot(std::move(snapshot));
+            return;
+        }
+        applyingSnapshot = true;
+        struct ApplyGuard
+        {
+            bool& applying;
+            ~ApplyGuard() { applying = false; }
+        } applyGuard{applyingSnapshot};
+        try
+        {
+            if (!shell->ApplySnapshot(*snapshot))
+                return;
+            // Ordinary controller revisions must not touch the Island's window-
+            // level backdrop. In particular, continuous Slider/ColorPicker
+            // previews publish here while WinUI owns pointer capture or a Flyout.
+            // Backdrop refresh remains tied to attach and system theme/contrast
+            // messages, where a window-level material transition is intentional.
+            SynchronizePageBackends(*snapshot);
+            if (options.homeAboutStatus)
+            {
+                HomeAboutStatusPatch patch = options.homeAboutStatus(
+                    snapshot->generation, snapshot->revision);
+                // Preserve the host's status sequence; it also orders direct
+                // publications while the controller snapshot is unchanged.
+                (void)shell->ApplyHomeAboutStatusPatch(patch);
+            }
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            SetError(L"Apply settings snapshot: " + std::wstring(error.message().c_str()));
+        }
+        catch (...)
+        {
+            SetError(L"Apply settings snapshot failed");
         }
     }
 
@@ -1900,8 +1928,9 @@ struct SettingsWindowHost::Impl
         backupDataPageActive = false;
         if (widgetsPageBackend)
         {
-            widgetsPageBackend->Close();
-            widgetsPageBackend.reset();
+            auto backend = std::move(widgetsPageBackend);
+            backend->SetSnapshotChangedCallback({});
+            backend->Close();
         }
         if (backupDataPageBackend)
         {
@@ -2705,6 +2734,9 @@ struct SettingsWindowHost::Impl
         performance::Scope performanceScope("settings.navigate", SettingsPageKey(route.page));
         if (!controller || !route.IsValid() || shuttingDown)
             return false;
+        WriteDiagnosticLogEntry((L"SettingsUI navigate pid=" +
+            std::to_wstring(GetCurrentProcessId()) + L" page=" +
+            std::to_wstring(static_cast<int>(route.page))).c_str());
         if ((route.page == SettingsPage::DeveloperTools &&
                 (!options.developerToolsVisible ||
                     !options.developerToolsVisible())) ||
@@ -3469,6 +3501,8 @@ struct SettingsWindowHost::Impl
         performance::Scope performanceScope("settings", "hide");
         if (!controller || !window || shuttingDown)
             return false;
+        WriteDiagnosticLogEntry((L"SettingsUI close begin pid=" +
+            std::to_wstring(GetCurrentProcessId())).c_str());
         if (!FlushPendingChanges())
             return false;
         ++viewEpoch;

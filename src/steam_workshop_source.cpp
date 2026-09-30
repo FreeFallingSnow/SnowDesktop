@@ -402,7 +402,8 @@ ProviderStatus SteamWorkshopSource::Status()
 {
     const auto now = std::chrono::steady_clock::now();
     if (statusCheckedAt_.time_since_epoch().count() != 0 &&
-        now - statusCheckedAt_ < std::chrono::minutes(5))
+        now - statusCheckedAt_ < (cachedStatus_.available
+            ? std::chrono::seconds(300) : std::chrono::seconds(5)))
         return cachedStatus_;
     std::error_code filesystemError;
     if (!std::filesystem::is_regular_file(
@@ -419,7 +420,7 @@ ProviderStatus SteamWorkshopSource::Status()
         snowdesktop::kSnowDesktopSteamAppId, discoveryError);
     const auto cache = ReadSteamWorkshopLocalCache(
         libraries, snowdesktop::kSnowDesktopSteamAppId);
-    if (cache.authoritative)
+    if (cache.authoritative && discoveryError.empty())
         cachedStatus_ = { true,
             "Steam Workshop subscriptions are available" };
     else
@@ -617,10 +618,10 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
         snowdesktop::kSnowDesktopSteamAppId, discoveryError);
     const auto cache = ReadSteamWorkshopLocalCache(
         libraries, snowdesktop::kSnowDesktopSteamAppId);
-    snapshot.authoritative = cache.authoritative;
+    snapshot.authoritative = cache.authoritative && discoveryError.empty();
     snapshot.subscribedPublishedFileIds =
         cache.subscribedPublishedFileIds;
-    if (!cache.authoritative)
+    if (!snapshot.authoritative)
     {
         error = discoveryError.empty() ? cache.error : discoveryError;
         if (error.empty()) error = "Steam Workshop cache is unavailable";

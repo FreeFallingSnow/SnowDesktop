@@ -31604,6 +31604,21 @@ WidgetEngine::ListWidgetPackageSources()
     return result;
 }
 
+std::vector<std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>>
+WidgetEngine::SnapshotWidgetPackageSourceProviders()
+{
+    std::vector<std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>> result;
+    for (const auto& [id, source] : GetWidgetPackageSources())
+    {
+        (void)id;
+        result.push_back(source);
+    }
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        return left->ProviderId() < right->ProviderId();
+    });
+    return result;
+}
+
 std::vector<snowdesktop::widget::PackageDetails>
 WidgetEngine::QueryWidgetPackageSource(const std::string& providerId,
     const snowdesktop::widget::PackageQuery& query, std::string& error)

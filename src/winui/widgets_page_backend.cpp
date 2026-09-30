@@ -2,6 +2,7 @@
 
 #include "widgets_page_backend.h"
 #include "widgets_page_backend_state.h"
+#include "source_search_worker.h"
 
 #include "../utils.h"
 #include "../widget_engine.h"
@@ -223,6 +224,7 @@ struct SourceSearchWork
     std::wstring query;
     std::string locale;
     std::vector<InstalledPackage> installed;
+    std::vector<std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>> providers;
     std::shared_ptr<std::atomic_bool> cancellation;
     std::function<void(SourceSearchResult)> completion;
 };
@@ -305,9 +307,8 @@ SourceSearchResult QuerySources(SourceSearchWork& work)
             result.cancelled = true;
             return result;
         }
-        const auto sources = WidgetEngine::ListWidgetPackageSources();
-        result.sources.reserve(sources.size());
-        for (const PackageSourceInfo& source : sources)
+        result.sources.reserve(work.providers.size());
+        for (const auto& provider : work.providers)
         {
             if (cancelled())
             {
@@ -315,6 +316,12 @@ SourceSearchResult QuerySources(SourceSearchWork& work)
                 break;
             }
             SourceQueryRecord record;
+            PackageSourceInfo source{provider->ProviderId(), provider->Capabilities(), {}};
+            // Built-in results already belong to this immutable work snapshot;
+            // no worker may reach back into the host-owned package manager.
+            source.status = IsBuiltinSource(source.providerId)
+                ? snowdesktop::widget::ProviderStatus{true, "Built-in components"}
+                : provider->Status();
             record.source = source;
             if (source.capabilities.query && source.status.available)
             {
@@ -344,8 +351,7 @@ SourceSearchResult QuerySources(SourceSearchWork& work)
                     query.locale = work.locale.empty()
                         ? "en-US" : work.locale;
                     query.limit = kMaximumSourceResults;
-                    record.results = WidgetEngine::QueryWidgetPackageSource(
-                        source.providerId, query, record.error);
+                    record.results = provider->Query(query, record.error);
                 }
             }
             if (cancelled())
@@ -367,141 +373,8 @@ SourceSearchResult QuerySources(SourceSearchWork& work)
     return result;
 }
 
-class SourceSearchWorker final
-{
-public:
-    SourceSearchWorker() = default;
-    ~SourceSearchWorker() { Shutdown(); }
-
-    SourceSearchWorker(const SourceSearchWorker&) = delete;
-    SourceSearchWorker& operator=(const SourceSearchWorker&) = delete;
-
-    bool Submit(SourceSearchWork work)
-    {
-        std::optional<SourceSearchWork> displaced;
-        {
-            std::lock_guard lock(mutex_);
-            if (stopping_) return false;
-            displaced = std::exchange(pending_, std::nullopt);
-            pending_ = std::move(work);
-            if (!worker_.joinable())
-            {
-                worker_ = std::jthread(
-                    [this](std::stop_token stopToken) {
-                        WorkerMain(stopToken);
-                    });
-            }
-        }
-        if (displaced && displaced->completion)
-        {
-            SourceSearchResult cancelled;
-            cancelled.cancelled = true;
-            displaced->completion(std::move(cancelled));
-        }
-        condition_.notify_one();
-        return true;
-    }
-
-    bool RequestCancel(std::uint64_t taskId)
-    {
-        std::optional<SourceSearchWork> cancelled;
-        {
-            std::lock_guard lock(mutex_);
-            if (pending_ && pending_->taskId == taskId)
-                cancelled = std::exchange(pending_, std::nullopt);
-            else if (activeTaskId_ == taskId && activeCancellation_)
-                activeCancellation_->store(true);
-            else
-                return false;
-        }
-        if (cancelled && cancelled->completion)
-        {
-            SourceSearchResult result;
-            result.cancelled = true;
-            cancelled->completion(std::move(result));
-        }
-        return true;
-    }
-
-    void Shutdown() noexcept
-    {
-        std::optional<SourceSearchWork> cancelled;
-        {
-            std::lock_guard lock(mutex_);
-            if (stopping_) return;
-            stopping_ = true;
-            cancelled = std::exchange(pending_, std::nullopt);
-        }
-        if (cancelled && cancelled->completion)
-        {
-            try
-            {
-                SourceSearchResult result;
-                result.cancelled = true;
-                cancelled->completion(std::move(result));
-            }
-            catch (...)
-            {
-            }
-        }
-        worker_.request_stop();
-        condition_.notify_all();
-        if (worker_.joinable()) worker_.join();
-    }
-
-private:
-    void WorkerMain(std::stop_token stopToken)
-    {
-        while (!stopToken.stop_requested())
-        {
-            std::optional<SourceSearchWork> work;
-            {
-                std::unique_lock lock(mutex_);
-                condition_.wait(lock, [&] {
-                    return stopping_ || pending_.has_value() ||
-                        stopToken.stop_requested();
-                });
-                if (stopping_ || stopToken.stop_requested()) return;
-                work = std::exchange(pending_, std::nullopt);
-                if (work)
-                {
-                    activeTaskId_ = work->taskId;
-                    activeCancellation_ = work->cancellation;
-                }
-            }
-            if (!work) continue;
-            SourceSearchResult result = QuerySources(*work);
-            {
-                std::lock_guard lock(mutex_);
-                if (work->cancellation && work->cancellation->load())
-                    result.cancelled = true;
-                if (activeTaskId_ == work->taskId)
-                {
-                    activeTaskId_ = 0;
-                    activeCancellation_.reset();
-                }
-            }
-            if (work->completion)
-            {
-                try
-                {
-                    work->completion(std::move(result));
-                }
-                catch (...)
-                {
-                }
-            }
-        }
-    }
-
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    std::optional<SourceSearchWork> pending_;
-    std::uint64_t activeTaskId_ = 0;
-    std::shared_ptr<std::atomic_bool> activeCancellation_;
-    std::jthread worker_;
-    bool stopping_ = false;
-};
+using SourceSearchWorker = widgets_page_backend_detail::SourceSearchWorker<
+    SourceSearchWork, SourceSearchResult>;
 
 struct PackageGroup
 {
@@ -1006,7 +879,7 @@ struct WidgetsPageBackend::Impl final
     WidgetEngine& engine;
     WidgetsPageBackendOptions options;
     DWORD ownerThreadId = 0;
-    SourceSearchWorker sourceWorker;
+    SourceSearchWorker sourceWorker{QuerySources};
 
     std::shared_ptr<WidgetsPageSnapshot> state;
     std::vector<InstalledPackage> packages;
@@ -1892,23 +1765,24 @@ struct WidgetsPageBackend::Impl final
         work.query = std::move(query);
         work.locale = Locale();
         work.installed = packages;
+        work.providers = WidgetEngine::SnapshotWidgetPackageSourceProviders();
         work.cancellation = std::make_shared<std::atomic_bool>(false);
         const std::weak_ptr<Impl> weak = weak_from_this();
-        work.completion = [weak,
+        work.completion = [weak, dispatch = options.dispatchToOwner,
             workGeneration = work.generation,
             workActivation = work.activation,
             workTaskId = work.taskId,
             workSearchRevision = work.searchRevision,
             workQuery = work.query](SourceSearchResult result) mutable {
-            const auto self = weak.lock();
-            if (!self) return;
             SourceSearchWork identity;
             identity.generation = workGeneration;
             identity.activation = workActivation;
             identity.taskId = workTaskId;
             identity.searchRevision = workSearchRevision;
             identity.query = std::move(workQuery);
-            self->MarshalToOwner(
+            // The worker retains no backend/engine object while dispatching.
+            // Close may release the page before this read-only query returns.
+            (void)dispatch(
                 [weak, identity = std::move(identity),
                     result = std::move(result)]() mutable {
                     if (const auto owner = weak.lock())

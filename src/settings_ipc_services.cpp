@@ -103,6 +103,11 @@ private:
     void Accept(SnapshotPtr snapshot)
     {
         if (!snapshot || (snapshot_ && snapshot->revision < snapshot_->revision)) return;
+        // Every action reply includes a snapshot, including read-only shortcut
+        // probes and flushes. Republishing the same revision re-enters page
+        // activation/query callbacks while they are still on the IPC stack.
+        if (snapshot_ && snapshot->generation == snapshot_->generation &&
+            snapshot->revision == snapshot_->revision) return;
         snapshot_ = std::move(snapshot);
         if (snapshot_->externalReplacementPending) failed_.reset();
         if (changed_) changed_(snapshot_);

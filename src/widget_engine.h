@@ -1159,6 +1159,9 @@ public:
         const std::filesystem::path& catalogPath, std::string& error);
     static std::vector<snowdesktop::widget::PackageSourceInfo>
         ListWidgetPackageSources();
+    /** Internal host snapshot: retain providers through an asynchronous page close. */
+    static std::vector<std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>>
+        SnapshotWidgetPackageSourceProviders();
     static std::vector<snowdesktop::widget::PackageDetails>
         QueryWidgetPackageSource(const std::string& providerId,
             const snowdesktop::widget::PackageQuery& query,

@@ -1066,6 +1066,16 @@ void TestSteamLibraryDiscovery()
     writeLibraries(false, false, true);
     checkSubscriptions("legacy library paths remain discoverable without apps maps");
 
+    // An inaccessible root must not be mistaken for an empty library and
+    // authorize removal of packages subscribed through that unavailable root.
+    const auto invalidLibrary = temporaryRoot / L"not-a-directory";
+    std::ofstream(invalidLibrary) << "file";
+    const auto partial = ReadSteamWorkshopLocalCache(
+        {secondaryRoot, invalidLibrary}, 5080330u);
+    Check(!partial.authoritative && !partial.error.empty() &&
+        partial.subscribedPublishedFileIds == itemIds,
+        "partial library failures preserve discovered identities but never authorize subscription removal");
+
     std::filesystem::remove(libraryFile);
     std::string error;
     auto libraries = DiscoverSteamLibraryRoots(5080330u, error);

@@ -380,7 +380,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         return *result;
 
     if (snowdesktop::settings_ipc::IsSettingsProcessCommand())
+    {
+        // The settings child bypasses the desktop's later initialization. It
+        // still needs crash evidence, without starting a second desktop host.
+        SetUnhandledExceptionFilter(CrashHandler);
+        InstallCrashHandler();
         return snowdesktop::settings_ipc::RunSettingsProcess(instance);
+    }
 
     if (snowdesktop::deployment::TryHandlePackagedAutoStartQueryCommand())
         return 0;
