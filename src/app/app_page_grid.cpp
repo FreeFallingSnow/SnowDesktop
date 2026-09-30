@@ -378,42 +378,6 @@ snowdesktop::PageLayoutOperationResult DesktopApp::RemovePage(
         {}, CapturePageLayoutSnapshot()};
 }
 
-void DesktopApp::ShowPageRenameMenu(const std::wstring& pageId, POINT point)
-{
-    const auto snapshot = CapturePageLayoutSnapshot();
-    const auto page = std::ranges::find(snapshot.pages, pageId, &snowdesktop::PageLayoutEntry::id);
-    if (!snapshot.editable || page == snapshot.pages.end()) return;
-    std::wstring draft = page->name;
-    constexpr UINT inputCommand = 1, saveCommand = 2, cancelCommand = 3;
-    HMENU menu = CreatePopupMenu();
-    if (!menu) return;
-    const auto label = snowdesktop::page_management::MenuLabel(
-        GetPageDisplayName(static_cast<int>(page - snapshot.pages.begin())));
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, label.c_str());
-    AppendMenuW(menu, MF_STRING, inputCommand, _LW("settings.pages.nameHint"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, saveCommand, _LW("settings.pages.saveName"));
-    AppendMenuW(menu, MF_STRING, cancelCommand, _LW("app.settings.cancel"));
-    SetMenuItemIcon(menu, 0, L"\uF044");
-    SetMenuItemTextInput(menu, inputCommand, draft);
-    SetMenuItemInlineAction(menu, saveCommand, 1);
-    SetMenuItemInlineAction(menu, cancelCommand, 1);
-    const auto command = ShowModernMenu(menu, point, hwnd_, false, false,
-        nullptr, {}, {}, [&](UINT id, const std::wstring& text, auto&) {
-            if (id == inputCommand) draft = text;
-        }, nullptr, {}, false, saveCommand);
-    DestroyMenu(menu);
-    ClearMenuIcons();
-    if (command != saveCommand && command != inputCommand) return;
-    const auto result = RenamePage(snapshot.revision, pageId, draft);
-    if (!result.Succeeded())
-        MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
-            result.status == snowdesktop::PageLayoutOperationStatus::Stale
-                ? _LW("settings.pages.status.stale")
-                : (result.message.empty() ? _LW("settings.pages.status.failed") : result.message.c_str()),
-            _LW("app.menu.rename_page"), MB_OK | MB_ICONWARNING);
-}
-
 void DesktopApp::ConfirmPageRemoval(const std::wstring& pageId, POINT point)
 {
     const auto snapshot = CapturePageLayoutSnapshot();

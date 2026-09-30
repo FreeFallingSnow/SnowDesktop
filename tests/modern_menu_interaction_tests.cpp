@@ -1701,6 +1701,112 @@ int wmain()
             "compact-menu input reaches the real popup without timing out");
         return selected;
     };
+    // The page-name editor is a real third-level cascade. Its submit/cancel
+    // keys must not leak into the component-search submenu in the same tree.
+    {
+        Item input{9501, L"Page name"};
+        input.textInput = true;
+        input.inputText = L"主页";
+        Item save{9502, L"Save name"};
+        save.inlineAction = true; save.inlineGroup = 1;
+        Item cancel{9503, L"Cancel"};
+        cancel.inlineAction = true; cancel.inlineGroup = 1;
+        Item rename{0, L"Rename", L"", true, false, false,
+            {{0, L"Page 1", L"", false}, input, save, cancel}};
+        Item pages{0, L"Pages", L"", true, false, false, {rename}};
+        Item search{9601, L"Search"}; search.textInput = true;
+        Item widgets{0, L"Widgets", L"", true, false, false,
+            {search, {9602, L"Search result"}}};
+        const std::vector<Item> editorItems{pages, widgets};
+        const auto menuWindows = [] {
+            std::vector<HWND> windows;
+            EnumThreadWindows(GetCurrentThreadId(), [](HWND hwnd, LPARAM data) -> BOOL {
+                wchar_t name[96]{};
+                GetClassNameW(hwnd, name, static_cast<int>(std::size(name)));
+                if (wcscmp(name, L"SnowDesktop.ModernMenuPopup") == 0)
+                    reinterpret_cast<std::vector<HWND>*>(data)->push_back(hwnd);
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&windows));
+            return windows;
+        };
+        const auto openEditor = [&](HWND root) {
+            SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            Expect(menuWindows().size() == 3 &&
+                snowdesktop::modern_menu::ActiveRootWindow() == root,
+                "rename opens at depth three without replacing the root menu");
+        };
+        snowdesktop::modern_menu::Options editorOptions;
+        editorOptions.owner = owner;
+        editorOptions.anchor = {80, 80};
+        editorOptions.appearance = snowdesktop::modern_menu::Appearance::OpaqueLight;
+        editorOptions.textInputSubmitCommand = 9502;
+        editorOptions.textInputCancelCommand = 9503;
+        std::wstring draft, searchText;
+        RECT cancelRect{};
+        editorOptions.onTextChanged = [&](UINT command, const auto& text, auto&) {
+            if (command == 9501) draft = text;
+            if (command == 9601) searchText = text;
+        };
+        editorOptions.onHover = [&](const auto& hover) {
+            if (hover.command == 9503) cancelRect = hover.itemScreenRect;
+        };
+        const auto saved = runScript(editorItems, editorOptions, [&](HWND root) {
+            openEditor(root);
+            SendMessageW(root, WM_CHAR, L'名', 0);
+            Expect(menuWindows().size() == 3, "typing preserves all three menu levels");
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+        });
+        Expect(saved.command == 9502 && draft == L"主页名",
+            "Enter submits the edited name from the third-level menu");
+        for (const int cancelMode : {0, 1, 2})
+        {
+            const auto cancelled = runScript(editorItems, editorOptions, [&](HWND root) {
+                openEditor(root);
+                SendMessageW(root, WM_CHAR, L'改', 0);
+                if (cancelMode == 0) SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+                else
+                {
+                    // Typing clears result selection; the first Down selects Save.
+                    SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                    SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                    if (cancelMode == 1) SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+                    else
+                    {
+                        const POINT point{(cancelRect.left + cancelRect.right) / 2,
+                            (cancelRect.top + cancelRect.bottom) / 2};
+                        HWND target = nullptr;
+                        for (const HWND window : menuWindows())
+                        {
+                            RECT rect{}; GetWindowRect(window, &rect);
+                            if (PtInRect(&rect, point)) { target = window; break; }
+                        }
+                        Expect(target != nullptr, "Cancel button has a live cascade hit target");
+                        POINT client = point; ScreenToClient(target, &client);
+                        SendMessageW(target, WM_LBUTTONUP, 0, MAKELPARAM(client.x, client.y));
+                    }
+                }
+                Expect(menuWindows().size() == 2 && IsWindow(root) && draft == L"主页",
+                    "Escape, keyboard Cancel and mouse Cancel discard the draft and keep parent menus open");
+                SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            });
+            Expect(cancelled.command == 0, "cancelling never returns the save command");
+        }
+        const auto searched = runScript(editorItems, editorOptions, [&](HWND root) {
+            SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            SendMessageW(root, WM_CHAR, L'x', 0);
+            SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            Expect(searchText.empty() && menuWindows().size() == 2,
+                "search Escape still clears its query instead of cancelling the page editor");
+            SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+        });
+        Expect(searched.command == 9602, "search Enter still invokes the selected search result");
+    }
+
     // Real cascade widths must follow their own contents, including disabled
     // icons/checks. A decorated descendant must not force its parent's gutter.
     {

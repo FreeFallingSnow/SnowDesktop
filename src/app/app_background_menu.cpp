@@ -1702,12 +1702,33 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
 
     const auto pageSnapshot = CapturePageLayoutSnapshot();
+    const auto renamedPage = std::ranges::find(pageSnapshot.pages, clickedPageId,
+        &snowdesktop::PageLayoutEntry::id);
+    std::wstring pageNameDraft = renamedPage != pageSnapshot.pages.end()
+        ? renamedPage->name : std::wstring{};
     HMENU pageMenu = CreatePopupMenu();
     if (pageMenu)
     {
         AppendMenuW(pageMenu, MF_STRING, kContextPageAdd, _LW("app.menu.add_page"));
-        AppendMenuW(pageMenu, MF_STRING | (pageSnapshot.editable ? 0 : MF_GRAYED),
-            kContextPageRename, _LW("app.menu.rename_page"));
+        HMENU renameMenu = CreatePopupMenu();
+        if (renameMenu)
+        {
+            const auto title = snowdesktop::page_management::MenuLabel(
+                GetPageDisplayName(static_cast<int>(renamedPage - pageSnapshot.pages.begin())));
+            AppendMenuW(renameMenu, MF_STRING | MF_GRAYED, 0, title.c_str());
+            AppendMenuW(renameMenu, MF_STRING, kContextPageNameInput, _LW("settings.pages.nameHint"));
+            AppendMenuW(renameMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(renameMenu, MF_STRING, kContextPageRename, _LW("settings.pages.saveName"));
+            AppendMenuW(renameMenu, MF_STRING, kContextPageRenameCancel, _LW("app.settings.cancel"));
+            SetMenuItemTextInput(renameMenu, kContextPageNameInput, pageNameDraft);
+            SetMenuItemInlineAction(renameMenu, kContextPageRename, 1);
+            SetMenuItemInlineAction(renameMenu, kContextPageRenameCancel, 1);
+            AppendMenuW(pageMenu, MF_POPUP | (pageSnapshot.editable &&
+                renamedPage != pageSnapshot.pages.end() ? 0 : MF_GRAYED),
+                reinterpret_cast<UINT_PTR>(renameMenu), _LW("app.menu.rename_page"));
+            SetMenuItemIcon(pageMenu, reinterpret_cast<UINT_PTR>(renameMenu),
+                L"\uF3DD", MenuIconFont::FluentRegular);
+        }
         AppendMenuW(pageMenu, MF_STRING | (pageSnapshot.editable &&
             savedPageIds_.size() > std::max<std::size_t>(1, gridPages_.size()) ? 0 : MF_GRAYED),
             kContextPageDelete, _LW("app.menu.delete_page"));
@@ -1716,7 +1737,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             snowdesktop::menu_fluent_glyphs::kFileGroup, MenuIconFont::FluentRegular);
         SetMenuItemIcon(pageMenu, kContextPageAdd, L"\uF067",
             MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
-        SetMenuItemIcon(pageMenu, kContextPageRename, L"\uF044");
         SetMenuItemIcon(pageMenu, kContextPageDelete, L"\uF2ED");
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -1900,6 +1920,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     };
     auto searchLuaWidgets = [&](UINT command, const std::wstring& text,
                                 auto& rootItems) {
+        if (command == kContextPageNameInput)
+        {
+            pageNameDraft = text;
+            return;
+        }
         if (command != kContextAddLuaWidgetSearch)
             return;
         luaSearch = text;
@@ -1984,7 +2009,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
         previewWidgetMenuItem, searchLuaWidgets, &shellRequest,
-        [&]() { return previewWindow.Handle(); });
+        [&]() { return previewWindow.Handle(); }, false,
+        kContextPageRename, kContextPageRenameCancel);
     previewWindow.Close();
 
     if (sortMenu) DestroyMenu(sortMenu);
@@ -2089,9 +2115,16 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextPageNext: NavigatePageOffset(1); break;
         case kContextPageAdd: AddNewPage(); break;
         case kContextPageRename:
-            if (CapturePageLayoutSnapshot().revision == pageSnapshot.revision)
-                ShowPageRenameMenu(clickedPageId, screenPoint);
+        {
+            const auto result = RenamePage(pageSnapshot.revision, clickedPageId, pageNameDraft);
+            if (!result.Succeeded())
+                MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+                    result.status == snowdesktop::PageLayoutOperationStatus::Stale
+                        ? _LW("settings.pages.status.stale")
+                        : (result.message.empty() ? _LW("settings.pages.status.failed") : result.message.c_str()),
+                    _LW("app.menu.rename_page"), MB_OK | MB_ICONWARNING);
             break;
+        }
         case kContextPageDelete:
             if (CapturePageLayoutSnapshot().revision == pageSnapshot.revision)
                 ConfirmPageRemoval(clickedPageId, screenPoint);

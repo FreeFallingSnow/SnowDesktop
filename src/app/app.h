@@ -2088,7 +2088,8 @@ private:
         const snowdesktop::shell_extensions::Request* shellRequest = nullptr,
         std::function<HWND()> zOrderCompanion = {},
         bool forceTopmost = false,
-        UINT textInputSubmitCommand = 0);
+        UINT textInputSubmitCommand = 0,
+        UINT textInputCancelCommand = 0);
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
     BOOL InvokeShellMenuCommand(IContextMenu* menu,
@@ -2161,7 +2162,6 @@ private:
         const std::wstring& pageId);
     bool CommitPageMutation(const std::function<void()>& change,
         const std::vector<std::size_t>& removedGuideIndices = {});
-    void ShowPageRenameMenu(const std::wstring& pageId, POINT point);
     void ConfirmPageRemoval(const std::wstring& pageId, POINT point);
     bool PageIsNavigable(const std::wstring& pageId) const;
     /** @brief 分析按页面 ID 调整网格时会被重新安置的内容。 */

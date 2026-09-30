@@ -1248,6 +1248,18 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     return true;
 }
 
+RECT TextInputTextBounds(const RECT& bounds, const Metrics& metrics, bool hasIcon)
+{
+    RECT text = bounds;
+    text.left += hasIcon
+        ? metrics.outerInset + metrics.leftPadding / 2 + metrics.iconColumnWidth + metrics.textGap
+        : metrics.leftPadding;
+    text.right -= metrics.outerInset + metrics.rightPadding;
+    text.top += metrics.selectionInsetY;
+    text.bottom -= metrics.selectionInsetY;
+    return text;
+}
+
 bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const TextInputView& input,
     const RECT& bounds, const Palette& palette, const Metrics& metrics)
@@ -1315,9 +1327,8 @@ bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
     const bool showingPlaceholder = display.empty() && !input.focused;
     const std::wstring visibleText = showingPlaceholder
         ? std::wstring(item.label ? item.label : L"") : display;
-    RECT textBounds = field;
-    textBounds.left = glyphBounds.right + metrics.textGap;
-    textBounds.right -= metrics.rightPadding;
+    const RECT textBounds = TextInputTextBounds(bounds, metrics,
+        (item.glyph && *item.glyph) || item.image || item.builtinIcon != BuiltinIcon::None);
     const COLORREF oldColor = SetTextColor(dc,
         showingPlaceholder ? palette.disabledText : palette.text);
     oldFont = SelectObject(dc,

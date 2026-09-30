@@ -129,6 +129,7 @@ struct Popup
     RECT quickSeparatorRect{};
     int quickActionRight = 0;
     int quickActionCellWidth = 0;
+    std::wstring initialInputText;
 };
 
 class MenuController
@@ -668,7 +669,7 @@ public:
             }
             else if (item.inlineAction)
             {
-                const auto style = options_.textInputSubmitCommand == 0
+                const auto style = !IsTextInputEditor(popup)
                     ? menu_icon::InlineActionStyle::Plain
                     : (item.command == options_.textInputSubmitCommand
                         ? menu_icon::InlineActionStyle::Primary
@@ -818,6 +819,7 @@ private:
         {
             if (items[i].textInput && items[i].enabled)
             {
+                rawPopup->initialInputText = items[i].inputText;
                 FocusTextInput(*rawPopup, static_cast<int>(i),
                     items[i].inputText.size(), false);
                 break;
@@ -834,8 +836,19 @@ private:
             !item.inlineAction;
     }
 
+    bool IsTextInputEditor(const Popup& popup) const
+    {
+        return options_.textInputSubmitCommand != 0 &&
+            std::ranges::any_of(*popup.items, [&](const Item& item) {
+                return item.command == options_.textInputSubmitCommand;
+            }) && std::ranges::any_of(*popup.items, [](const Item& item) {
+                return item.textInput;
+            });
+    }
+
     void CalculateLayout(Popup &popup, bool preserveWidth = false)
     {
+        const int editorInset = IsTextInputEditor(popup) ? panelPadding_ : 0;
         popup.rowMetrics = metrics_;
         // Each cascade owns its gutter; icons in descendants or separators
         // do not reserve space here. Search and inline controls keep their metrics.
@@ -1072,9 +1085,9 @@ private:
                 }
                 const int flexibleWidth = flexibleCount > 0
                     ? std::max(narrowWidth,
-                        (width - fixedWidth) / flexibleCount)
+                        (width - fixedWidth - editorInset * 2) / flexibleCount)
                     : std::max(1, width / count);
-                int left = shadowSize_;
+                int left = shadowSize_ + editorInset;
                 for (size_t i = position; i <= runEnd; ++i)
                 {
                     const int actionIndex = regularIndices[i];
@@ -1089,7 +1102,7 @@ private:
                                                            : compactWidth)
                                                     : flexibleWidth);
                     const int actionWidth = i == runEnd
-                        ? shadowSize_ + width - left
+                        ? shadowSize_ + width - editorInset - left
                         : (flexible ? flexibleWidth : requestedWidth);
                     popup.itemRects[actionIndex] = {
                         left, contentTop, left + actionWidth,
@@ -1104,7 +1117,7 @@ private:
             }
             const int height = item.separator
                 ? metrics_.separatorHeight : metrics_.rowHeight;
-            const int horizontalPadding = item.textInput
+            const int horizontalPadding = item.textInput || editorInset > 0
                 ? panelPadding_ : 0;
             popup.itemRects[index] = {
                 shadowSize_ + horizontalPadding, contentTop,
@@ -1381,6 +1394,11 @@ private:
         }
 
         const UINT command = item.command;
+        if (IsTextInputEditor(popup) && command == options_.textInputCancelCommand)
+        {
+            CancelTextInputEditor(popup);
+            return;
+        }
         RECT rect = popup.itemRects[index];
         if (item.horizontalScrollAction)
             OffsetRect(&rect, -popup.horizontalScrollOffset, 0);
@@ -1493,7 +1511,11 @@ private:
             }
             break;
         case VK_ESCAPE:
-            if (popup->depth > 0)
+            if (IsTextInputEditor(*popup))
+            {
+                CancelTextInputEditor(*popup);
+            }
+            else if (popup->depth > 0)
             {
                 const int closingDepth = popup->depth;
                 CloseFromDepth(closingDepth);
@@ -1702,14 +1724,10 @@ private:
         Item& item = (*popup.items)[index];
         RECT row = popup.itemRects[index];
         OffsetRect(&row, 0, -popup.scrollOffset);
-        RECT field = row;
-        field.left += metrics_.outerInset;
-        field.right -= metrics_.outerInset;
-        RECT glyphBounds = field;
-        glyphBounds.left += metrics_.leftPadding / 2;
-        glyphBounds.right = glyphBounds.left + metrics_.iconColumnWidth;
-        const int textLeft = glyphBounds.right + metrics_.textGap;
-        const int textRight = field.right - metrics_.rightPadding;
+        const RECT textBounds = menu_icon::TextInputTextBounds(row, metrics_,
+            !item.glyph.empty() || item.image || item.builtinIcon != menu_icon::BuiltinIcon::None);
+        const int textLeft = textBounds.left;
+        const int textRight = textBounds.right;
 
         HDC dc = GetDC(nullptr);
         size_t position = item.inputText.size();
@@ -1863,6 +1881,28 @@ private:
         return result;
     }
 
+    void CancelTextInputEditor(Popup& popup)
+    {
+        // Discard this editor session's draft before returning to its parent.
+        for (auto& item : *popup.items)
+        {
+            if (!item.textInput) continue;
+            item.inputText = popup.initialInputText;
+            if (options_.onTextChanged)
+                options_.onTextChanged(item.command, item.inputText, rootItems_);
+            break;
+        }
+        if (popup.depth == 0)
+        {
+            Cancel();
+            return;
+        }
+        const int depth = popup.depth;
+        CloseFromDepth(depth);
+        activeDepth_ = depth - 1;
+        if (Popup* parent = ActivePopup()) Render(*parent);
+    }
+
     bool HandleTextInputKey(WPARAM key)
     {
         Popup* popup = ActivePopup();
@@ -1874,11 +1914,17 @@ private:
         if (!textInputComposition_.empty())
             return true;
 
-        if (options_.textInputSubmitCommand != 0)
+        if (IsTextInputEditor(*popup))
         {
-            if (key == VK_ESCAPE) { Cancel(); return true; }
+            if (key == VK_ESCAPE) { CancelTextInputEditor(*popup); return true; }
             if (key == VK_RETURN)
             {
+                const int selected = CurrentItem(*popup);
+                if (selected >= 0 && (*popup->items)[selected].inlineAction)
+                {
+                    ActivateItem(*popup, selected, true);
+                    return true;
+                }
                 for (std::size_t i = 0; i < popup->items->size(); ++i)
                     if ((*popup->items)[i].command == options_.textInputSubmitCommand)
                     {
@@ -2069,12 +2115,10 @@ private:
 
         RECT row = popup->itemRects[index];
         OffsetRect(&row, 0, -popup->scrollOffset);
-        RECT field = row;
-        field.left += metrics_.outerInset;
-        field.right -= metrics_.outerInset;
-        const int textLeft = field.left + metrics_.leftPadding / 2 +
-            metrics_.iconColumnWidth + metrics_.textGap;
-        const int textRight = field.right - metrics_.rightPadding;
+        const RECT textBounds = menu_icon::TextInputTextBounds(row, metrics_,
+            !input->glyph.empty() || input->image || input->builtinIcon != menu_icon::BuiltinIcon::None);
+        const int textLeft = textBounds.left;
+        const int textRight = textBounds.right;
         HDC dc = GetDC(nullptr);
         int advance = 0;
         int horizontalOffset = 0;
@@ -2098,7 +2142,7 @@ private:
             popup->panelScreenOrigin.x - shadowSize_ +
                 std::clamp(textLeft + advance - horizontalOffset,
                     textLeft, std::max(textLeft, textRight - 1)),
-            popup->panelScreenOrigin.y - shadowSize_ + field.bottom,
+            popup->panelScreenOrigin.y - shadowSize_ + textBounds.bottom,
         };
         ScreenToClient(focusWindow, &caret);
         HIMC context = ImmGetContext(focusWindow);

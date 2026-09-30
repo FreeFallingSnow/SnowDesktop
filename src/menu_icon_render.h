@@ -116,6 +116,9 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const Palette& palette, const Metrics& metrics,
     InlineActionStyle style = InlineActionStyle::Plain);
 
+/** Shared text origin for painting, pointer caret placement and IME anchors. */
+RECT TextInputTextBounds(const RECT& bounds, const Metrics& metrics, bool hasIcon);
+
 /** @brief 绘制菜单内的单行文本搜索框。 */
 bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const TextInputView& input,
