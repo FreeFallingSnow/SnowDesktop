@@ -1701,13 +1701,24 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
 
-    AppendMenuW(menu, MF_STRING, kContextPageAdd, _LW("app.menu.add_page"));
     const auto pageSnapshot = CapturePageLayoutSnapshot();
-    AppendMenuW(menu, MF_STRING | (pageSnapshot.editable ? 0 : MF_GRAYED),
-        kContextPageRename, _LW("app.menu.rename_page"));
-    AppendMenuW(menu, MF_STRING | (pageSnapshot.editable &&
-        savedPageIds_.size() > std::max<std::size_t>(1, gridPages_.size()) ? 0 : MF_GRAYED),
-        kContextPageDelete, _LW("app.menu.delete_page"));
+    HMENU pageMenu = CreatePopupMenu();
+    if (pageMenu)
+    {
+        AppendMenuW(pageMenu, MF_STRING, kContextPageAdd, _LW("app.menu.add_page"));
+        AppendMenuW(pageMenu, MF_STRING | (pageSnapshot.editable ? 0 : MF_GRAYED),
+            kContextPageRename, _LW("app.menu.rename_page"));
+        AppendMenuW(pageMenu, MF_STRING | (pageSnapshot.editable &&
+            savedPageIds_.size() > std::max<std::size_t>(1, gridPages_.size()) ? 0 : MF_GRAYED),
+            kContextPageDelete, _LW("app.menu.delete_page"));
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(pageMenu), _LW("app.menu.pages"));
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pageMenu),
+            snowdesktop::menu_fluent_glyphs::kFileGroup, MenuIconFont::FluentRegular);
+        SetMenuItemIcon(pageMenu, kContextPageAdd, L"\uF067",
+            MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
+        SetMenuItemIcon(pageMenu, kContextPageRename, L"\uF044");
+        SetMenuItemIcon(pageMenu, kContextPageDelete, L"\uF2ED");
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextSettingsCommand, _LW("app.menu.settings"));
 
@@ -1805,8 +1816,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(menu, kContextPagePrev, L"");
     if (pageOffset_ < maxOff)
         SetMenuItemIcon(menu, kContextPageNext, L"");
-    SetMenuItemIcon(menu, kContextPageAdd, L"",
-        MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
 

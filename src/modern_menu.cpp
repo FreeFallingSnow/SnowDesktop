@@ -668,8 +668,13 @@ public:
             }
             else if (item.inlineAction)
             {
+                const auto style = options_.textInputSubmitCommand == 0
+                    ? menu_icon::InlineActionStyle::Plain
+                    : (item.command == options_.textInputSubmitCommand
+                        ? menu_icon::InlineActionStyle::Primary
+                        : menu_icon::InlineActionStyle::Secondary);
                 menu_icon::DrawInlineAction(memoryDc, textFont_, iconFont,
-                    view, row, state, palette_, metrics_);
+                    view, row, state, palette_, metrics_, style);
             }
             else
             {

@@ -394,7 +394,10 @@ void DesktopApp::ShowPageRenameMenu(const std::wstring& pageId, POINT point)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, saveCommand, _LW("settings.pages.saveName"));
     AppendMenuW(menu, MF_STRING, cancelCommand, _LW("app.settings.cancel"));
+    SetMenuItemIcon(menu, 0, L"\uF044");
     SetMenuItemTextInput(menu, inputCommand, draft);
+    SetMenuItemInlineAction(menu, saveCommand, 1);
+    SetMenuItemInlineAction(menu, cancelCommand, 1);
     const auto command = ShowModernMenu(menu, point, hwnd_, false, false,
         nullptr, {}, {}, [&](UINT id, const std::wstring& text, auto&) {
             if (id == inputCommand) draft = text;

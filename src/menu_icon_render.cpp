@@ -1143,7 +1143,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
 
 bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
-    const Palette& palette, const Metrics& metrics)
+    const Palette& palette, const Metrics& metrics, InlineActionStyle style)
 {
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
@@ -1153,20 +1153,35 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const bool disabled =
         (itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;
     const bool selected = (itemState & ODS_SELECTED) != 0 || item.checked;
-    if (selected && !disabled)
+    const bool primary = style == InlineActionStyle::Primary && !disabled;
+    if (style != InlineActionStyle::Plain || (selected && !disabled))
     {
         RECT selection = bounds;
         selection.left += metrics.outerInset;
         selection.right -= metrics.outerInset;
         selection.top += metrics.selectionInsetY;
         selection.bottom -= metrics.selectionInsetY;
-        FillRoundedRect(dc, selection, metrics.selectionRadius,
-            palette.hoverBackground);
+        const COLORREF fill = primary ? palette.accent
+            : (selected && !disabled ? palette.hoverBackground : palette.background);
+        if (style != InlineActionStyle::Plain)
+        {
+            const COLORREF border = primary ? (selected ? palette.text : palette.accent)
+                : (selected && !disabled ? palette.disabledText : palette.separator);
+            FillRoundedRect(dc, selection, metrics.selectionRadius, border);
+            const int stroke = std::max(1, metrics.outerInset / 4);
+            InflateRect(&selection, -stroke, -stroke);
+            FillRoundedRect(dc, selection, std::max(1, metrics.selectionRadius - stroke), fill);
+        }
+        else
+        {
+            FillRoundedRect(dc, selection, metrics.selectionRadius, fill);
+        }
     }
 
     const COLORREF foreground = disabled
         ? palette.disabledText
-        : (item.checked ? palette.accent : palette.text);
+        : (primary ? (palette.lightTheme ? RGB(255, 255, 255) : RGB(26, 26, 26))
+                   : (item.checked ? palette.accent : palette.text));
     const int oldMode = SetBkMode(dc, TRANSPARENT);
     const COLORREF oldColor = SetTextColor(dc, foreground);
     const bool hasGlyph = (item.glyph && *item.glyph) || image;
