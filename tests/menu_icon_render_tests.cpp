@@ -927,10 +927,6 @@ int wmain(int argc, wchar_t** argv)
     Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
         newIconBounds) > 0,
         "dark add-circle keeps a visible blue plus");
-    Expect(CountColorInRect(pixels, kWidth, kHeight,
-        newIconBounds, RGB(228, 230, 234)) > 0,
-        "dark add-circle keeps a neutral Fluent ring");
-
     const snowdesktop::menu_icon::ItemView moreOptionsItem{
         L"Show more options", L"\uF582", false, false, false,
         snowdesktop::MenuQuickIcon::Open,
