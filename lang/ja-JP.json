@@ -473,7 +473,7 @@
     "app.settings.beautify_texture_highlight_size": "ハイライト範囲",
     "app.settings.beautify_texture_highlight_angle": "ハイライト角度",
     "app.settings.beautify_texture_shade": "暗部強度",
-    "app.settings.beautify_texture_edge": "エッジハイライト",
+    "app.settings.beautify_texture_edge": "テクスチャの縁の明るさ",
     "app.settings.beautify_filter": "統一カラーフィルター",
     "app.settings.beautify_filter_color": "統一カラー",
     "app.settings.beautify_filter_strength": "統一強度",

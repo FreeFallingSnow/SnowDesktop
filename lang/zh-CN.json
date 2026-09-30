@@ -473,7 +473,7 @@
     "app.settings.beautify_texture_highlight_size": "高光范围",
     "app.settings.beautify_texture_highlight_angle": "高光角度",
     "app.settings.beautify_texture_shade": "暗部强度",
-    "app.settings.beautify_texture_edge": "边缘高光",
+    "app.settings.beautify_texture_edge": "纹理边缘提亮",
     "app.settings.beautify_filter": "统一颜色滤镜",
     "app.settings.beautify_filter_color": "统一颜色",
     "app.settings.beautify_filter_strength": "统一强度",

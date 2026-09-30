@@ -826,9 +826,13 @@ struct DesktopPagePresenter::Impl
         AppendAdvancedCombo(shapeRow, shape);
 
         glassEnabled = muxc::ToggleSwitch{};
+        glassEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
         glassEnabledRow.Initialize(glassEnabled);
+        glassEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         edgeReflection = muxc::ToggleSwitch{};
+        edgeReflection.HorizontalAlignment(mux::HorizontalAlignment::Right);
         edgeReflectionRow.Initialize(edgeReflection);
+        edgeReflectionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         glassBlurRadius = MakeBeautifyNumber(4.0, 48.0, 1.0, 0,
             [](auto& settings, double v) { settings.glassBlurRadius = static_cast<float>(v); });
         reflectionWidth = MakeBeautifyNumber(0.5, 4.0, 0.1, 1,

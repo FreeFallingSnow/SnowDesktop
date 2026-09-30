@@ -2812,10 +2812,10 @@ private:
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
     void RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t ownerKey);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
-        D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth);
+        D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
     bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
-        bool forceWhiteStyle = false);
+        bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0);
     void DrawDockSelectionIndicator(
         ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,

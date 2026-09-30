@@ -473,7 +473,7 @@
     "app.settings.beautify_texture_highlight_size": "하이라이트 범위",
     "app.settings.beautify_texture_highlight_angle": "하이라이트 각도",
     "app.settings.beautify_texture_shade": "어두운 영역 강도",
-    "app.settings.beautify_texture_edge": "가장자리 하이라이트",
+    "app.settings.beautify_texture_edge": "텍스처 가장자리 밝게 하기",
     "app.settings.beautify_filter": "통일 색상 필터",
     "app.settings.beautify_filter_color": "통일 색상",
     "app.settings.beautify_filter_strength": "통일 강도",

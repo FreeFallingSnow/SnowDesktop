@@ -404,7 +404,7 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
 }
 
 void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
-    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth)
+    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
     ComPtr<ID2D1Factory> factory;
@@ -448,7 +448,7 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         SUCCEEDED(ctx->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
         ctx->DrawGeometry(geometry.Get(), borderBrush.Get(), strokeWidth);
     if (iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
-        RegisterIconBackdrop(rect, fill.a > 0.0f ? 1.0f : 0.0f, 0);
+        RegisterIconBackdrop(rect, fill.a > 0.0f ? 1.0f : 0.0f, ownerKey);
     if (!iconBeautifySettings_.enabled || !iconBeautifySettings_.edgeHighlightEnabled) return;
     const int pixelWidth = rect.right - rect.left, pixelHeight = rect.bottom - rect.top;
     const auto key = (static_cast<std::uint64_t>(pixelWidth) << 32) |

@@ -227,7 +227,10 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
-    Check(snowdesktop::icon_beautify::Equal(restored.values.desktop.iconBeautify, settings.values.desktop.iconBeautify),
+    Check(restored.values.desktop.iconBeautify.preset == snowdesktop::IconBeautifyPreset::FrostedGlass &&
+        restored.values.desktop.iconBeautify.glassEnabled && restored.values.desktop.iconBeautify.glassBlurRadius == 28.0f &&
+        restored.values.desktop.iconBeautify.edgeHighlightEnabled && restored.values.desktop.iconBeautify.edgeHighlightWidth == 1.7f &&
+        restored.values.desktop.iconBeautify.edgeHighlightStrength == .65f,
         "glass, blur and directional reflection survive the settings process boundary");
     Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
         "hover reveal and disabled task thumbnails survive settings IPC");

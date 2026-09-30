@@ -473,7 +473,7 @@
     "app.settings.beautify_texture_highlight_size": "Highlight range",
     "app.settings.beautify_texture_highlight_angle": "Highlight angle",
     "app.settings.beautify_texture_shade": "Shade strength",
-    "app.settings.beautify_texture_edge": "Edge highlight",
+    "app.settings.beautify_texture_edge": "Texture edge brightening",
     "app.settings.beautify_filter": "Unified color filter",
     "app.settings.beautify_filter_color": "Unified color",
     "app.settings.beautify_filter_strength": "Unification strength",

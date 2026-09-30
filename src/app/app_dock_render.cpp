@@ -5,7 +5,7 @@
 // Dock controls, entries and running-application rendering.
 
 bool DesktopApp::DrawDockControlBackground(
-    ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle)
+    ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle, std::uintptr_t ownerKey)
 {
     if (!ctx || IsRectEmptyRect(rect)) return false;
     const PersonalizationSettings appearance = CurrentDockAppearance();
@@ -33,7 +33,7 @@ bool DesktopApp::DrawDockControlBackground(
     const int height = std::max(1, static_cast<int>(rect.bottom - rect.top));
     const float scale = static_cast<float>(std::min(width, height)) / 52.0f;
     DrawBeautifiedIconPlate(ctx, rect, fill, border,
-        (active ? 1.6f : 1.0f) * std::max(0.75f, scale));
+        (active ? 1.6f : 1.0f) * std::max(0.75f, scale), ownerKey);
     return lightSurface;
 }
 
@@ -139,7 +139,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             kDesktopIconClsidRecycleBin) == 0;
         if (recycleBin)
         {
-            DrawDockControlBackground(ctx, target, 0, !lt);
+            DrawDockControlBackground(ctx, target, 0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
             const int shortSide = std::max(1, static_cast<int>(std::min(
                 target.right - target.left, target.bottom - target.top)));
             const int inset = std::max(1, static_cast<int>(std::round(shortSide * 0.16f)));
@@ -346,7 +346,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 }, hwnd_, kBackgroundShellReadyMessage);
         }
         if (local.value && local.value->Get())
-            DrawIconBitmap(ctx, local.value->Get(), iconRect);
+            DrawIconBitmap(ctx, local.value->Get(), iconRect, 1.0f, reinterpret_cast<std::uintptr_t>(&entry));
         else if (local.fresh)
             DrawPrivacyFaIcon(ctx, iconRect, true);
         else
@@ -364,7 +364,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             CalculateLayout(iconRect);
     DrawDockControlBackground(
         ctx, collectionLayout.background,
-        0, !lt);
+        0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
     for (size_t i = 0; i < std::min<size_t>(4, widget.itemKeys.size()); ++i)
     {
         size_t itemIndex = FindItemIndexByKey(widget.itemKeys[i]);
@@ -408,7 +408,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawDemoIdentityIcon(ctx, identity, iconRect);
     }
     else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
-        DrawIconBitmap(ctx, bitmap, iconRect);
+        DrawIconBitmap(ctx, bitmap, iconRect, 1.0f, reinterpret_cast<std::uintptr_t>(&app));
     else
         DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);
     if (state == 2)

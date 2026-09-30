@@ -502,7 +502,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
                     detected.r, detected.g, detected.b };
             }
         }
-        needsGlassBackdrop = iconBeautifySettings_.glassEnabled && !edgeFill;
+        needsGlassBackdrop = iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled && !edgeFill;
         buffer.pixels = snowdesktop::icon_beautify::Render(
             buffer.pixels, buffer.width, buffer.height,
             iconBeautifySettings_, edgeFill);
@@ -596,7 +596,7 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         static_cast<float>(top + fitted.height));
 
     const auto glass = iconGlassBackdrop_.find(bitmap);
-    if (glass != iconGlassBackdrop_.end() && glass->second && iconBeautifySettings_.glassEnabled)
+    if (glass != iconGlassBackdrop_.end() && glass->second && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
     {
         RegisterIconBackdrop({left, top, left + fitted.width, top + fitted.height}, opacity, ownerKey);
     }

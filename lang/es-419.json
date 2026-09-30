@@ -473,7 +473,7 @@
     "app.settings.beautify_texture_highlight_size": "Alcance del reflejo",
     "app.settings.beautify_texture_highlight_angle": "Ángulo del reflejo",
     "app.settings.beautify_texture_shade": "Intensidad del sombreado",
-    "app.settings.beautify_texture_edge": "Brillo del borde",
+    "app.settings.beautify_texture_edge": "Aclarado del borde de la textura",
     "app.settings.beautify_filter": "Filtro de color unificado",
     "app.settings.beautify_filter_color": "Color unificado",
     "app.settings.beautify_filter_strength": "Intensidad de unificación",

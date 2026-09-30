@@ -473,7 +473,7 @@
     "app.settings.beautify_texture_highlight_size": "Glanzlichtbereich",
     "app.settings.beautify_texture_highlight_angle": "Glanzlichtwinkel",
     "app.settings.beautify_texture_shade": "Abdunklungsstärke",
-    "app.settings.beautify_texture_edge": "Kantenlicht",
+    "app.settings.beautify_texture_edge": "Aufhellung der Texturkanten",
     "app.settings.beautify_filter": "Einheitlicher Farbfilter",
     "app.settings.beautify_filter_color": "Zielfarbe",
     "app.settings.beautify_filter_strength": "Vereinheitlichungsstärke",

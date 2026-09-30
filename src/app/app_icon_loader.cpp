@@ -123,7 +123,7 @@ void DesktopApp::StartDemoIconLoader()
                     ? snowdesktop::icon_beautify::DetectEdgeFill(
                         result->pixels, result->width, result->height)
                     : std::nullopt;
-                result->needsGlassBackdrop = task.beautify.glassEnabled && !edge;
+                result->needsGlassBackdrop = task.beautify.enabled && task.beautify.glassEnabled && !edge;
                 result->pixels = snowdesktop::icon_beautify::Render(
                     result->pixels, result->width, result->height,
                     task.beautify, edge);

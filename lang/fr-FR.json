@@ -473,7 +473,7 @@
     "app.settings.beautify_texture_highlight_size": "Étendue des reflets",
     "app.settings.beautify_texture_highlight_angle": "Angle des reflets",
     "app.settings.beautify_texture_shade": "Intensité de l’ombre",
-    "app.settings.beautify_texture_edge": "Reflet de bord",
+    "app.settings.beautify_texture_edge": "Éclaircissement des bords de la texture",
     "app.settings.beautify_filter": "Filtre de couleur unifiée",
     "app.settings.beautify_filter_color": "Couleur unifiée",
     "app.settings.beautify_filter_strength": "Intensité d’unification",
