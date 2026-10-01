@@ -81,8 +81,34 @@ void CheckEverythingIconRows()
     std::cout << "Everything synthetic1024 rows/64 icons: completion visits=1024; re-queries=0\n";
 }
 
+void CheckSlowCallLimit()
+{
+    using Phase = snowdesktop::SlowCallPhase;
+    snowdesktop::SlowCallLimiter limiter;
+    unsigned writes = 0;
+    std::uint64_t reported = 0;
+    for (int event = 0; event < 100; ++event)
+    {
+        if (const auto result = limiter.Record(Phase::Message, event * 10.0, event + 60.0))
+        { ++writes; reported += result->count; }
+    }
+    Check(writes == 1, "100 slow calls in one second emit one phase record");
+    const auto next = limiter.Record(Phase::Message, 1000, 70);
+    Check(next && next->count == 99 && next->maximumMs == 159,
+        "next phase record carries the suppressed count and maximum");
+    Check(limiter.Record(Phase::Due, 1000, 80).has_value(), "other phases have independent quotas");
+    limiter.Record(Phase::Due, 1001, 90);
+    const auto final = limiter.Flush(Phase::Due);
+    Check(final && final->count == 1 && final->maximumMs == 90 && !limiter.Flush(Phase::Due),
+        "normal shutdown reports pending samples exactly once");
+    Check(limiter.Record(Phase::Message, 1, 80).has_value(), "clock reversal starts a new quota");
+    Check(reported == 0, "first record has no fabricated prior samples");
+    std::cout << "slow-call synthetic100 events/1s: sink writes=1; next record suppressed=99\n";
+}
+
 void CheckDockRefreshContinuity()
 {
+    CheckSlowCallLimit();
     CheckEverythingIconRows();
     CheckBoundedIconCache();
     CheckDockProcessSnapshotReuse();

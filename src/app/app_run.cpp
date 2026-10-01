@@ -14,6 +14,7 @@
 #include "../widget_settings_service.h"
 #include "../widget_system_data_provider.h"
 
+#include "../slow_call_limiter.h"
 #include <commoncontrols.h>
 #include <imm.h>
 #include <new>
@@ -21,15 +22,24 @@
 
 namespace
 {
-void LogSlowMessageLoopCall(const wchar_t* phase, double started, const MSG* message = nullptr) noexcept try
+snowdesktop::SlowCallLimiter slowCallLimiter;
+constexpr const wchar_t* slowCallPhaseNames[] = {
+    L"DispatchMessage", L"FlushComposition", L"FlushQuickNavigation", L"DispatchDue" };
+void LogSlowMessageLoopCall(snowdesktop::SlowCallPhase phase, double started,
+    const MSG* message = nullptr) noexcept try
 {
     const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started;
     if (elapsed <= 50.0) return;
+    const auto summary = slowCallLimiter.Record(phase,
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), elapsed);
+    if (!summary) return;
     // Wall time includes any nested modal loop. Record no text, key payloads or
     // window titles; a slow entry is a timing observation, not a hang verdict.
-    wchar_t line[224]{};
-    swprintf_s(line, L"MessageLoopSlowCall phase=%ls elapsedMs=%.3f hwnd=%p message=0x%04X timer=%llu",
-        phase, elapsed, message ? static_cast<void*>(message->hwnd) : nullptr,
+    wchar_t line[320]{};
+    swprintf_s(line, L"MessageLoopSlowCall phase=%ls elapsedMs=%.3f suppressed=%llu maxSuppressedMs=%.3f hwnd=%p message=0x%04X timer=%llu",
+        slowCallPhaseNames[static_cast<std::size_t>(phase)], elapsed,
+        static_cast<unsigned long long>(summary->count), summary->maximumMs,
+        message ? static_cast<void*>(message->hwnd) : nullptr,
         message ? message->message : 0U,
         message && message->message == WM_TIMER ? static_cast<unsigned long long>(message->wParam) : 0ULL);
     WriteDiagnosticLogEntry(line);
@@ -1789,7 +1799,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 TranslateMessage(&msg);
                 const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
                 DispatchMessageW(&msg);
-                LogSlowMessageLoopCall(L"DispatchMessage", dispatchStarted, &msg);
+                LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Message, dispatchStarted, &msg);
             }
             if (exitRequested_) break;
             operationFeedback.Drain();
@@ -1807,10 +1817,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // panel animation transaction cannot delay this presentation.
             const double commitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingCompositionCommit();
-            LogSlowMessageLoopCall(L"FlushComposition", commitStarted, &msg);
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Composition, commitStarted, &msg);
             const double quickCommitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingQuickNavigationCompositionCommit();
-            LogSlowMessageLoopCall(L"FlushQuickNavigation", quickCommitStarted, &msg);
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::QuickNavigation, quickCommitStarted, &msg);
             ++processedMessages;
         }
         if (!running || exitRequested_) break;
@@ -1826,14 +1836,24 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // waitable timer is auto-reset and that wait consumes its signal.
             const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             uiAnimationScheduler_.DispatchDue();
-            LogSlowMessageLoopCall(L"DispatchDue", dispatchStarted);
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Due, dispatchStarted);
             FinishWidgetGroupTransitions();
             const double commitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingCompositionCommit();
-            LogSlowMessageLoopCall(L"FlushComposition", commitStarted);
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Composition, commitStarted);
             const double quickCommitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingQuickNavigationCompositionCommit();
-            LogSlowMessageLoopCall(L"FlushQuickNavigation", quickCommitStarted);
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::QuickNavigation, quickCommitStarted);
+        }
+    }
+    for (std::size_t phase = 0; phase < static_cast<std::size_t>(snowdesktop::SlowCallPhase::Count); ++phase)
+    {
+        if (const auto summary = slowCallLimiter.Flush(static_cast<snowdesktop::SlowCallPhase>(phase)))
+        {
+            wchar_t line[224]{};
+            swprintf_s(line, L"MessageLoopSlowCallSummary phase=%ls suppressed=%llu maxSuppressedMs=%.3f",
+                slowCallPhaseNames[phase], static_cast<unsigned long long>(summary->count), summary->maximumMs);
+            WriteDiagnosticLogEntry(line);
         }
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");

@@ -13,6 +13,7 @@
 #include "dock_refresh_cache.h"
 #include "dock_process_snapshot.h"
 #include "bounded_lru_cache.h"
+#include "slow_call_limiter.h"
 #include "icon_row_index.h"
 #include <memory>
 #include "item_location.h"
