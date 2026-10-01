@@ -2,6 +2,8 @@
   "font.title": "介面字型",
   "font.family": "字型",
   "font.system": "系統預設",
+  "font.search": "搜尋字型名稱",
+  "font.noResults": "沒有符合的字型",
   "font.importFile": "匯入字型檔案",
   "font.importFolder": "匯入字型資料夾",
   "font.hint": "用於桌面與設定頁的預設文字，重新啟動後生效。可選本機已安裝字型，也可匯入 TTF、OTF、TTC 檔案或字型資料夾。",

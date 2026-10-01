@@ -3,6 +3,7 @@
 #include "dock_gradient_storage.h"
 #include "status_bar_appearance.h"
 #include "item_title_layout.h"
+#include "winui/font_picker_search.h"
 
 #include <windows.h>
 #include <d2d1.h>
@@ -133,6 +134,30 @@ HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
 int main(int argc, char** argv)
 {
     using namespace snowdesktop;
+    {
+        // The picker must find a middle-of-name query (native ComboBox type
+        // search only finds prefixes), including a family's English alias.
+        const std::vector<app_fonts::Choice> fonts{
+            {{}, L"System", L"Segoe UI Variable, Segoe UI"},
+            {{"installed", "Microsoft YaHei"}, L"\u5fae\u8f6f\u96c5\u9ed1", L"Microsoft YaHei"},
+            {{"MiSans", "MiSans"}, L"MiSans", L""},
+            {{"custom-package", "MiSans"}, L"MiSans", L""},
+            {{"HarmonyOS-Sans", "HarmonyOS Sans SC"}, L"HarmonyOS Sans SC", L""},
+        };
+        const auto search = [&](std::wstring_view query) {
+            return winui::font_picker::Filter(fonts, query, L"\u7cfb\u7edf\u9ed8\u8ba4");
+        };
+        Check(search(L"  yAhEi\t") == std::vector<std::size_t>{1},
+            "font search matches a canonical English substring case-insensitively after trimming spaces");
+        Check(search(L"\u96c5\u9ed1") == std::vector<std::size_t>{1},
+            "font search also matches the localized family name");
+        Check(search(L"sAnS") == std::vector<std::size_t>{2, 3, 4},
+            "font search preserves source indices for built-in and imported families with identical display names");
+        Check(search(L"\u9ed8\u8ba4") == std::vector<std::size_t>{0},
+            "font search matches the localized system default option");
+        Check(search(L"missing font").empty() && search(L" \t\u3000") == std::vector<std::size_t>{0, 1, 2, 3, 4},
+            "unmatched font queries return no candidates and clearing the query restores the complete list");
+    }
     {
         const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopFontSettings-" + std::to_wstring(GetCurrentProcessId()) + L".json");
         GeneralSettings saved, loaded;

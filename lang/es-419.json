@@ -2,6 +2,8 @@
   "font.title": "Fuente de la interfaz",
   "font.family": "Fuente",
   "font.system": "Predeterminada del sistema",
+  "font.search": "Buscar nombres de fuentes",
+  "font.noResults": "No hay fuentes coincidentes",
   "font.importFile": "Importar archivo de fuente",
   "font.importFolder": "Importar carpeta de fuentes",
   "font.hint": "Texto predeterminado del escritorio y los ajustes. Se aplica al reiniciar. Elige fuentes instaladas o importa archivos TTF, OTF, TTC y carpetas de fuentes.",

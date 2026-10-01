@@ -6,6 +6,7 @@
 #include "appearance_sections.h"
 #include "edge_light_editor.h"
 #include "panel_appearance_editor.h"
+#include "font_picker_search.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -153,12 +154,21 @@ struct PersonalizationPagePresenter::Impl
     SettingsCard themeCard;
     SettingsCard fontCard;
     SettingRow fontRow;
-    muxc::ComboBox fontCombo;
+    muxc::DropDownButton fontPicker;
+    muxc::TextBlock fontPickerLabel;
+    muxc::Flyout fontFlyout;
+    muxc::StackPanel fontPopup;
+    muxc::TextBox fontSearch;
+    muxc::ListView fontResults;
+    muxc::TextBlock fontEmpty;
+    muxc::Button fontImportFile, fontImportFolder;
     muxc::Button fontRestartButton;
     muxc::InfoBar fontRestart;
     muxc::TextBlock fontError;
-    winrt::event_token fontToken{}, fontOpenToken{}, fontRestartToken{};
+    winrt::event_token fontOpenToken{}, fontSearchToken{}, fontSearchKeyToken{}, fontResultToken{}, fontResultKeyToken{};
+    winrt::event_token fontImportFileToken{}, fontImportFolderToken{}, fontRestartToken{};
     std::vector<app_fonts::Choice> fonts;
+    std::vector<std::size_t> visibleFonts;
     app_fonts::Selection selectedFont;
     SettingsCard themeTargetsCard;
     SettingsCard popupThemeCard, dockThemeCard;
@@ -488,11 +498,33 @@ struct PersonalizationPagePresenter::Impl
         InitializeNavigationCard(statusBarLink, statusBarLinkTitle, statusBarLinkDescription);
         InitializeNavigationCard(taskbarLink, taskbarLinkTitle, taskbarLinkDescription);
         InitializeCard(fontCard, cardStyle, themeRoot);
-        fontCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        fontCombo.MaxWidth(520.0);
-        fontCombo.MaxDropDownHeight(420.0);
-        fontCombo.IsTextSearchEnabled(true);
-        fontRow.Initialize(fontCombo);
+        fontPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        fontPicker.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        fontPicker.MaxWidth(520.0);
+        fontPickerLabel.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+        fontPicker.Content(fontPickerLabel);
+        fontPopup.Width(presenter_controls::kSettingControlWidth);
+        fontPopup.Spacing(8.0);
+        fontSearch.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        fontResults.SelectionMode(muxc::ListViewSelectionMode::Single);
+        fontResults.IsItemClickEnabled(true);
+        fontResults.MaxHeight(300.0);
+        fontEmpty.TextWrapping(mux::TextWrapping::Wrap);
+        fontEmpty.Margin({12.0, 8.0, 12.0, 8.0});
+        fontEmpty.Visibility(mux::Visibility::Collapsed);
+        fontPopup.Children().Append(fontSearch);
+        fontPopup.Children().Append(fontResults);
+        fontPopup.Children().Append(fontEmpty);
+        for (const auto& button : {fontImportFile, fontImportFolder})
+        {
+            button.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            button.HorizontalContentAlignment(mux::HorizontalAlignment::Left);
+            fontPopup.Children().Append(button);
+        }
+        fontFlyout.Content(fontPopup);
+        fontFlyout.Placement(muxc::Primitives::FlyoutPlacementMode::BottomEdgeAlignedLeft);
+        fontPicker.Flyout(fontFlyout);
+        fontRow.Initialize(fontPicker);
         fontCard.content.Children().Append(fontRow.root);
         fontRestart.IsClosable(false);
         fontRestart.IsOpen(false);
@@ -679,25 +711,53 @@ struct PersonalizationPagePresenter::Impl
 
     void HookEvents()
     {
-        fontOpenToken = fontCombo.DropDownOpened([this](const auto&, const auto&) {
-            if (CanEmit()) RefreshFonts();
+        fontOpenToken = fontFlyout.Opened([this](const auto&, const auto&) {
+            if (!CanEmit()) return;
+            // Rescan newly installed fonts, but never commit a search query or
+            // replace a saved font just because the dropdown is opened.
+            updatingControls = true;
+            fontSearch.Text(L"");
+            updatingControls = false;
+            fontPopup.Width(std::clamp(fontPicker.ActualWidth(), 240.0, 520.0));
+            RefreshFonts();
+            fontSearch.Focus(mux::FocusState::Programmatic);
         });
-        fontToken = fontCombo.SelectionChanged([this](const auto&, const auto&) {
-            const int index = fontCombo.SelectedIndex();
-            if (!CanEmit() || index < 0) return;
-            if (static_cast<std::size_t>(index) >= fonts.size())
+        fontSearchToken = fontSearch.TextChanged([this](const auto&, const auto&) {
+            if (CanEmit()) FilterFonts();
+        });
+        fontSearchKeyToken = fontSearch.KeyDown([this](const auto&, const muxi::KeyRoutedEventArgs& args) {
+            if (!CanEmit() || visibleFonts.empty()) return;
+            if (args.Key() == winrt::Windows::System::VirtualKey::Down)
             {
-                const int command = index - static_cast<int>(fonts.size());
-                const auto previous = std::find_if(fonts.begin(), fonts.end(), [this](const auto& choice) { return choice.selection == selectedFont; });
-                updatingControls = true;
-                fontCombo.SelectedIndex(previous == fonts.end() ? -1 : static_cast<int>(previous - fonts.begin()));
-                updatingControls = false;
-                if (command == 1 || command == 2) ImportFonts(command == 2);
-                return;
+                if (fontResults.SelectedIndex() < 0) fontResults.SelectedIndex(0);
+                fontResults.Focus(mux::FocusState::Keyboard);
+                fontResults.ScrollIntoView(fontResults.SelectedItem());
+                args.Handled(true);
             }
-            selectedFont = fonts[static_cast<std::size_t>(index)].selection;
-            EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
-            UpdateFontRestartNotice();
+            else if (IsEnter(args))
+            {
+                ChooseFont(fontResults.SelectedIndex() < 0 ? 0 : fontResults.SelectedIndex());
+                args.Handled(true);
+            }
+        });
+        fontResultToken = fontResults.ItemClick([this](const auto&, const muxc::ItemClickEventArgs& args) {
+            uint32_t index = 0;
+            if (fontResults.Items().IndexOf(args.ClickedItem(), index)) ChooseFont(static_cast<int>(index));
+        });
+        fontResultKeyToken = fontResults.KeyDown([this](const auto&, const muxi::KeyRoutedEventArgs& args) {
+            if (IsEnter(args))
+            {
+                ChooseFont(fontResults.SelectedIndex());
+                args.Handled(true);
+            }
+        });
+        fontImportFileToken = fontImportFile.Click([this](const auto&, const auto&) {
+            fontFlyout.Hide();
+            ImportFonts(false);
+        });
+        fontImportFolderToken = fontImportFolder.Click([this](const auto&, const auto&) {
+            fontFlyout.Hide();
+            ImportFonts(true);
         });
         fontRestartToken = fontRestartButton.Click([this](const auto&, const auto&) {
             if (CanEmit() && fontRestart.IsOpen() && actions.restartApplication)
@@ -1040,38 +1100,56 @@ struct PersonalizationPagePresenter::Impl
         fontRestart.IsOpen(selectedFont != hostFont);
     }
 
+    std::wstring FontChoiceName(const app_fonts::Choice& choice) const
+    {
+        auto name = choice.selection.package == "system" ? L("font.system", L"System default") : choice.name;
+        if (choice.selection.package == "installed") name += L" · " + L("font.installed", L"Installed");
+        return name;
+    }
+
+    void FilterFonts()
+    {
+        visibleFonts = font_picker::Filter(fonts, fontSearch.Text().c_str(), L("font.system", L"System default"));
+        fontResults.Items().Clear();
+        int selected = -1;
+        for (std::size_t i = 0; i < visibleFonts.size(); ++i)
+        {
+            const auto& choice = fonts[visibleFonts[i]];
+            fontResults.Items().Append(winrt::box_value(FontChoiceName(choice)));
+            if (choice.selection == selectedFont) selected = static_cast<int>(i);
+        }
+        fontResults.SelectedIndex(selected);
+        fontResults.Visibility(visibleFonts.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        fontEmpty.Visibility(visibleFonts.empty() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    }
+
+    void ChooseFont(int index)
+    {
+        if (!CanEmit() || index < 0 || static_cast<std::size_t>(index) >= visibleFonts.size()) return;
+        const auto& choice = fonts[visibleFonts[static_cast<std::size_t>(index)]];
+        selectedFont = choice.selection;
+        fontPickerLabel.Text(FontChoiceName(choice));
+        fontFlyout.Hide();
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
+        UpdateFontRestartNotice();
+    }
+
     void RefreshFonts()
     {
         if (!actions.listFonts) return;
         const bool previous = updatingControls;
         updatingControls = true;
         fonts = actions.listFonts();
-        fontCombo.Items().Clear();
-        int index = -1;
-        for (std::size_t i = 0; i < fonts.size(); ++i)
-        {
-            const auto& choice = fonts[i];
-            auto name = choice.selection.package == "system" ? L("font.system", L"System default") : choice.name;
-            if (choice.selection.package == "installed") name += L" · " + L("font.installed", L"Installed");
-            fontCombo.Items().Append(winrt::box_value(name));
-            if (choice.selection == selectedFont) index = static_cast<int>(i);
-        }
+        const auto selected = std::find_if(fonts.begin(), fonts.end(), [this](const auto& choice) { return choice.selection == selectedFont; });
         // Missing packages retain the saved selection. Merely opening settings
-        // must never replace a unavailable user font with the system default.
-        if (index < 0)
+        // must never replace an unavailable user font with the system default.
+        if (selected == fonts.end())
         {
             fonts.push_back({selectedFont, L("font.unavailable", L"Saved font unavailable"), {}});
-            fontCombo.Items().Append(winrt::box_value(fonts.back().name));
-            index = static_cast<int>(fonts.size() - 1);
+            fontPickerLabel.Text(fonts.back().name);
         }
-        muxc::ComboBoxItem separator;
-        separator.IsEnabled(false);
-        separator.IsTabStop(false);
-        separator.Content(muxc::MenuFlyoutSeparator{});
-        fontCombo.Items().Append(separator);
-        fontCombo.Items().Append(winrt::box_value(L("font.importFile")));
-        fontCombo.Items().Append(winrt::box_value(L("font.importFolder")));
-        fontCombo.SelectedIndex(index);
+        else fontPickerLabel.Text(FontChoiceName(*selected));
+        FilterFonts();
         updatingControls = previous;
         UpdateFontRestartNotice();
     }
@@ -1230,7 +1308,13 @@ struct PersonalizationPagePresenter::Impl
 
         SetCardText(fontCard, "font.title", L"Interface font");
         fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
-        muxa::AutomationProperties::SetName(fontCombo, fontRow.label.Text());
+        muxa::AutomationProperties::SetName(fontPicker, fontRow.label.Text());
+        fontSearch.PlaceholderText(L("font.search", L"Search fonts"));
+        muxa::AutomationProperties::SetName(fontSearch, fontSearch.PlaceholderText());
+        muxa::AutomationProperties::SetName(fontResults, fontRow.label.Text());
+        fontEmpty.Text(L("font.noResults", L"No matching fonts"));
+        fontImportFile.Content(winrt::box_value(L("font.importFile")));
+        fontImportFolder.Content(winrt::box_value(L("font.importFolder")));
         fontRestartButton.Content(winrt::box_value(L("font.restartNow", L"Restart now")));
         fontRestart.Message(L("font.restartRequired", L"Restart SnowDesktop to apply this font."));
         RefreshFonts();
@@ -1465,7 +1549,7 @@ struct PersonalizationPagePresenter::Impl
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;
-        if (id == "personalization.font") return fontCombo;
+        if (id == "personalization.font") return fontPicker;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
         if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
@@ -1597,8 +1681,14 @@ struct PersonalizationPagePresenter::Impl
         dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken);
         try
         {
-            fontCombo.SelectionChanged(fontToken);
-            fontCombo.DropDownOpened(fontOpenToken);
+            fontFlyout.Hide();
+            fontFlyout.Opened(fontOpenToken);
+            fontSearch.TextChanged(fontSearchToken);
+            fontSearch.KeyDown(fontSearchKeyToken);
+            fontResults.ItemClick(fontResultToken);
+            fontResults.KeyDown(fontResultKeyToken);
+            fontImportFile.Click(fontImportFileToken);
+            fontImportFolder.Click(fontImportFolderToken);
             fontRestartButton.Click(fontRestartToken);
             presetCombo.SelectionChanged(presetToken);
             quickNavigationThemeCombo.SelectionChanged(
@@ -1708,6 +1798,7 @@ void PersonalizationPagePresenter::Deactivate() noexcept
     impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
+    try { impl_->fontFlyout.Hide(); } catch (...) {}
 }
 
 mux::FrameworkElement PersonalizationPagePresenter::FocusTarget(

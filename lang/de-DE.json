@@ -2,6 +2,8 @@
   "font.title": "Schrift der Oberfläche",
   "font.family": "Schrift",
   "font.system": "Systemstandard",
+  "font.search": "Schriftarten suchen",
+  "font.noResults": "Keine passenden Schriftarten",
   "font.importFile": "Schriftdatei importieren",
   "font.importFolder": "Schriftordner importieren",
   "font.hint": "Standardschrift für Desktop und Einstellungen. Wird nach einem Neustart angewendet. Lokal installierte Schriften wählen oder TTF-, OTF-, TTC-Dateien und Schriftordner importieren.",

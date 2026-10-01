@@ -2,6 +2,8 @@
   "font.title": "Fonte da interface",
   "font.family": "Fonte",
   "font.system": "Padrão do sistema",
+  "font.search": "Pesquisar nomes de fontes",
+  "font.noResults": "Nenhuma fonte correspondente",
   "font.importFile": "Importar arquivo de fonte",
   "font.importFolder": "Importar pasta de fontes",
   "font.hint": "Texto padrão da área de trabalho e das configurações. Aplicado após reiniciar. Escolha fontes instaladas ou importe arquivos TTF, OTF, TTC e pastas de fontes.",

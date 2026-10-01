@@ -2,6 +2,8 @@
   "font.title": "Police de l’interface",
   "font.family": "Police",
   "font.system": "Police du système",
+  "font.search": "Rechercher des polices",
+  "font.noResults": "Aucune police correspondante",
   "font.importFile": "Importer un fichier de police",
   "font.importFolder": "Importer un dossier de polices",
   "font.hint": "Texte par défaut du bureau et des paramètres. Appliqué après redémarrage. Choisissez une police installée ou importez des fichiers TTF, OTF, TTC et des dossiers de polices.",

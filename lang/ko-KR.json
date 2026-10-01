@@ -2,6 +2,8 @@
   "font.title": "인터페이스 글꼴",
   "font.family": "글꼴",
   "font.system": "시스템 기본값",
+  "font.search": "글꼴 이름 검색",
+  "font.noResults": "일치하는 글꼴이 없습니다",
   "font.importFile": "글꼴 파일 가져오기",
   "font.importFolder": "글꼴 폴더 가져오기",
   "font.hint": "데스크톱과 설정의 기본 텍스트에 사용하며 다시 시작하면 적용됩니다. 설치된 글꼴을 선택하거나 TTF, OTF, TTC 파일과 글꼴 폴더를 가져올 수 있습니다.",

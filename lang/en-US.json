@@ -2,6 +2,8 @@
   "font.title": "Interface font",
   "font.family": "Font",
   "font.system": "System default",
+  "font.search": "Search font names",
+  "font.noResults": "No matching fonts",
   "font.importFile": "Import font file",
   "font.importFolder": "Import font folder",
   "font.hint": "Default text on the desktop and in settings. Takes effect after restart. Choose installed fonts or import TTF, OTF, TTC files and font folders.",

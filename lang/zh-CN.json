@@ -2,6 +2,8 @@
   "font.title": "界面字体",
   "font.family": "字体",
   "font.system": "系统默认",
+  "font.search": "搜索字体名称",
+  "font.noResults": "没有匹配的字体",
   "font.importFile": "导入字体文件",
   "font.importFolder": "导入字体文件夹",
   "font.hint": "用于桌面与设置页的默认文字，重启后生效。可选本机已安装字体，也可导入 TTF、OTF、TTC 文件或字体文件夹。",
