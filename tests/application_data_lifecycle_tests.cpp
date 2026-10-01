@@ -1123,13 +1123,31 @@ int main()
         "component spacing, icon size, and the legacy global Collection titleless mode decode as optional migration settings");
     snowdesktop::layout_storage::Document legacyFontLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
-            "{\"itemFontSize\":18,\"listItemFontSize\":16}",
+            "{\"itemFontSize\":18,\"listItemFontSize\":16,\"itemFontWeight\":600}",
             legacyFontLayout, &layoutError) &&
             legacyFontLayout.itemFontSize.value_or(0.0f) == 18.0f &&
             legacyFontLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
             !legacyFontLayout.itemFontSizeCu.has_value() &&
-            !legacyFontLayout.listItemFontSizeCu.has_value(),
-        "legacy point font fields remain available as migration inputs");
+            !legacyFontLayout.listItemFontSizeCu.has_value() &&
+            legacyFontLayout.itemFontWeight.value_or(0.f) == 600.f &&
+            !legacyFontLayout.desktopTitleLines.has_value() &&
+            !legacyFontLayout.largeFolderTitleLines.has_value() &&
+            !legacyFontLayout.scrollingTitleLines.has_value(),
+        "legacy font weight remains unchanged and absent title limits retain the host's two-line defaults");
+    const std::string titleSettingsText =
+        "{\"itemFontWeight\":600,\"desktopTitleLines\":1,"
+        "\"largeFolderTitleLines\":2,\"scrollingTitleLines\":1}";
+    const auto titleSettingsPath = root / L"title-settings.json";
+    snowdesktop::layout_storage::Document titleSettingsLayout;
+    Expect(snowdesktop::layout_storage::SaveDocument(
+            titleSettingsPath, titleSettingsText, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(titleSettingsPath, titleSettingsLayout).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            titleSettingsLayout.itemFontWeight.value_or(0.f) == 600.f &&
+            titleSettingsLayout.desktopTitleLines.value_or(0) == 1 &&
+            titleSettingsLayout.largeFolderTitleLines.value_or(0) == 2 &&
+            titleSettingsLayout.scrollingTitleLines.value_or(0) == 1,
+        "restart retains independent desktop, large-folder and scrolling title limits alongside the original weight");
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"

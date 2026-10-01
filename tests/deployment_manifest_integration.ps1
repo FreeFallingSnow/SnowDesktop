@@ -22,6 +22,8 @@ try {
         [pscustomobject]@{ name = "SettingsShell.xbf"; source = "SnowDesktop" },
         [pscustomobject]@{ name = "SnowDesktop.pri"; source = "SnowDesktop" },
         [pscustomobject]@{ name = "SnowDesktop.winmd"; source = "SnowDesktop" },
+        [pscustomobject]@{ name = "Assets/Fonts/MiSans/MiSans-Regular.otf"; source = "SnowDesktop" },
+        [pscustomobject]@{ name = "Assets/Fonts/HarmonyOS-Sans/HarmonyOS_Sans_SC_Regular.ttf"; source = "SnowDesktop" },
         [pscustomobject]@{ name = "Microsoft.WindowsAppRuntime.dll"; source = "Microsoft.WindowsAppSDK" },
         [pscustomobject]@{ name = "Microsoft.ui.xaml.dll"; source = "Microsoft.WindowsAppSDK" },
         [pscustomobject]@{ name = "Microsoft.UI.Xaml.winmd"; source = "Microsoft.WindowsAppSDK" },
@@ -182,6 +184,24 @@ try {
         [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $payload "licenses\YASB-LICENSE.txt"))) -cne
             [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot "third_party\yasb\LICENSE")))) {
         throw "Deployment integration assertions failed."
+    }
+    foreach ($destination in @($payload, $relocatedPayload)) {
+        foreach ($font in @($required | Where-Object { $_.name -like "Assets/Fonts/*" })) {
+            $fontPath = Join-Path $destination $font.name
+            if (-not (Test-Path -LiteralPath $fontPath -PathType Leaf) -or
+                [IO.File]::ReadAllText($fontPath) -cne "fixture:$($font.name)" -or
+                (Test-Path -LiteralPath (Join-Path $destination "$runtimeDirectory/$($font.name)"))) {
+                throw "Application fonts must retain their root-relative URI paths after runtime relocation."
+            }
+        }
+        foreach ($notice in @(
+            @{ destination = "licenses/MiSans-LICENSE.pdf"; original = "third_party/misans/LICENSE.pdf" },
+            @{ destination = "licenses/HarmonyOS-Sans-LICENSE.txt"; original = "third_party/harmonyos-sans/LICENSE.txt" })) {
+            if ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $destination $notice.destination))) -cne
+                [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot $notice.original)))) {
+                throw "Font license agreements must be packaged byte-for-byte unchanged."
+            }
+        }
     }
     Write-Host "Deployment manifest integration checks passed."
 }

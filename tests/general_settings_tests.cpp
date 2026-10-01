@@ -68,7 +68,9 @@ int main(int argc, char** argv)
             Microsoft::WRL::ComPtr<IDWriteTextLayout4> variable;
             layout.As(&variable);
             DWRITE_FONT_AXIS_VALUE axis{};
-            Check(layout->GetFontWeight() == static_cast<DWRITE_FONT_WEIGHT>(416) && variable &&
+            DWRITE_FONT_WEIGHT requestedWeight{};
+            Check(SUCCEEDED(layout->GetFontWeight(0, &requestedWeight)) &&
+                requestedWeight == static_cast<DWRITE_FONT_WEIGHT>(416) && variable &&
                 SUCCEEDED(variable->GetFontAxisValues(0, &axis, 1, nullptr)) && axis.axisTag == DWRITE_FONT_AXIS_TAG_WEIGHT && axis.value == 416,
                 "rendering requests the corrected weight in both classic and axis formats even when only Regular is bundled");
             Check(!app_fonts::Select({"../escape", "fake"}, assets, data) && app_fonts::current.load()->selection == mi->selection,

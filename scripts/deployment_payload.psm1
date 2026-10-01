@@ -101,7 +101,9 @@ function Read-SnowDesktopDeploymentManifest {
         "licenses/WindowsML-NOTICE.txt",
         "licenses/WebView2-LICENSE.txt",
         "licenses/WebView2-NOTICE.txt",
-        "licenses/YASB-LICENSE.txt"
+        "licenses/YASB-LICENSE.txt",
+        "licenses/MiSans-LICENSE.pdf",
+        "licenses/HarmonyOS-Sans-LICENSE.txt"
     )
     $noticeDestinations = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase)
