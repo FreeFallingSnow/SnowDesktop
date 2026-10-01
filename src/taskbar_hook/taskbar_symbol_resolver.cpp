@@ -92,7 +92,8 @@ DWORD DownloadPdb(const std::filesystem::path& destination, const std::wstring& 
         if (!WinHttpReadData(request.value, buffer.data(), static_cast<DWORD>(buffer.size()), &read)) return GetLastError();
         if (!read) break;
         total += read;
-        if (total > 32 * 1024 * 1024 || GetTickCount64() - started > 20000) return ERROR_TIMEOUT;
+        if (total > 32 * 1024 * 1024) return ERROR_FILE_TOO_LARGE;
+        if (GetTickCount64() - started > 45000) return ERROR_TIMEOUT;
         file.write(buffer.data(), read);
         if (!file) return ERROR_WRITE_FAULT;
     }

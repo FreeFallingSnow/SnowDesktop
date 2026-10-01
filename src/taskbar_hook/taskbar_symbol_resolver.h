@@ -18,5 +18,5 @@ struct AutoHideResolution
 std::optional<int> TryRunTaskbarSymbolHelper();
 AutoHideResolution ResolveTaskbarSymbols(const std::filesystem::path& cacheRoot);
 AutoHideResolution RunTaskbarSymbolHelper(const std::filesystem::path& executable,
-    const std::filesystem::path& cacheRoot, HANDLE cancel, DWORD timeoutMs = 30000);
+    const std::filesystem::path& cacheRoot, HANDLE cancel, DWORD timeoutMs = 60000);
 }
