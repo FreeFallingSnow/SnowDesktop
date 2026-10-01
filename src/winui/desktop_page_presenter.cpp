@@ -6,11 +6,13 @@
 #include "settings_presenter_controls.h"
 
 #include "../constants.h"
+#include "../font_weight_rules.h"
 #include "../layout_spacing_rules.h"
 #include "../icon_beautify.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.Globalization.NumberFormatting.h>
 
 #include <algorithm>
 #include <array>
@@ -556,6 +558,9 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock shortcutArrowLabel{nullptr};
     muxc::ComboBox shortcutArrow{nullptr};
     SettingRow shortcutArrowRow;
+    std::array<muxc::ComboBox, 3> titleLineCombos;
+    std::array<SettingRow, 3> titleLineRows;
+    std::array<winrt::event_token, 3> titleLineTokens{};
 
     muxc::ToggleSwitch showCategoryTabCounts{nullptr};
     SettingRow showCategoryTabCountsRow;
@@ -767,20 +772,28 @@ struct DesktopPagePresenter::Impl
             [](DesktopDisplaySettings& settings, double value) {
                 settings.listItemFontSizeCu = static_cast<float>(value);
             }, 16.0);
-        itemFontWeight = MakeDesktopNumber(100.0, 900.0, 50.0, 0,
+        itemFontWeight = MakeDesktopNumber(
+            font_weight_rules::ToPercent(font_weight_rules::kMinimumWeight),
+            font_weight_rules::ToPercent(font_weight_rules::kMaximumWeight),
+            font_weight_rules::ToPercent(1), 1,
             [](DesktopDisplaySettings& settings, double value) {
-                settings.itemFontWeight = static_cast<int>(std::lround(value));
-            }, 600.0);
+                settings.itemFontWeight = font_weight_rules::FromPercent(value);
+            }, 100.0);
+        winrt::Windows::Globalization::NumberFormatting::DecimalFormatter weightFormatter;
+        weightFormatter.FractionDigits(1);
+        itemFontWeight->number.NumberFormatter(weightFormatter);
         iconSpacing->SetUnit(L"%");
         iconSize->SetUnit(L"%");
         itemFontSize->SetUnit(L"cu");
         listFontSize->SetUnit(L"cu");
+        itemFontWeight->SetUnit(L"%");
         for (const auto* editor : {iconSize.get(),
                  itemFontSize.get(), listFontSize.get(), itemFontWeight.get()})
         {
             displayCard.content.Children().Append(editor->root);
         }
         AppendCombo(displayCard, shortcutArrowRow, shortcutArrow);
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i) AppendCombo(displayCard, titleLineRows[i], titleLineCombos[i]);
 
         InitializeCard(categoryLayoutCard, cardStyle, categoryRoot);
         showCategoryTabCounts = muxc::ToggleSwitch{};
@@ -1090,6 +1103,15 @@ struct DesktopPagePresenter::Impl
 
     void HookEvents()
     {
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i)
+            titleLineTokens[i] = titleLineCombos[i].SelectionChanged([this, i](const auto&, const auto&) {
+                const int lines = titleLineCombos[i].SelectedIndex() + 1;
+                if (lines < 1 || lines > 2) return;
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit, [i, lines](DesktopDisplaySettings& s) {
+                    const std::array<int DesktopDisplaySettings::*, 3> fields{&DesktopDisplaySettings::desktopTitleLines, &DesktopDisplaySettings::largeFolderTitleLines, &DesktopDisplaySettings::scrollingTitleLines};
+                    s.*fields[i] = lines;
+                });
+            });
         shortcutArrowToken = shortcutArrow.SelectionChanged(
             [this](const auto&, const auto&) {
                 const int selection = shortcutArrow.SelectedIndex();
@@ -1451,11 +1473,13 @@ struct DesktopPagePresenter::Impl
 
     void PatchDesktop(const DesktopDisplaySettings& settings)
     {
+        const std::array<int, 3> lines{settings.desktopTitleLines, settings.largeFolderTitleLines, settings.scrollingTitleLines};
+        for (std::size_t i = 0; i < lines.size(); ++i) titleLineCombos[i].SelectedIndex(std::clamp(lines[i], 1, 2) - 1);
         iconSpacing->SetValue(settings.iconSpacingScale * 100.0);
         iconSize->SetValue(settings.itemIconSizeScale * 100.0);
         itemFontSize->SetValue(settings.itemFontSizeCu);
         listFontSize->SetValue(settings.listItemFontSizeCu);
-        itemFontWeight->SetValue(settings.itemFontWeight);
+        itemFontWeight->SetValue(font_weight_rules::ToPercent(settings.itemFontWeight));
         shortcutArrow.SelectedIndex(
             std::clamp(settings.shortcutArrowMode, 0, 2));
 
@@ -1679,6 +1703,15 @@ struct DesktopPagePresenter::Impl
             "app.settings.title_font_size", L"Title font size"));
         listFontSize->SetLabel(L(
             "app.settings.list_font_size", L"List font size"));
+        const std::array<const char*, 3> lineKeys{"titleLines.desktop", "titleLines.largeFolder", "titleLines.scrolling"};
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i)
+        {
+            const int selected = titleLineCombos[i].SelectedIndex();
+            titleLineRows[i].SetText(L(lineKeys[i]));
+            SetComboItems(titleLineCombos[i], {L("titleLines.one"), L("titleLines.two")}, selected);
+            titleLineCombos[i].SelectedIndex(selected);
+            muxa::AutomationProperties::SetName(titleLineCombos[i], titleLineRows[i].label.Text());
+        }
         itemFontWeight->SetLabel(L(
             "app.settings.title_font_weight", L"Title font weight"));
         for (NumericEditor* editor : {iconSpacing.get(), iconSize.get(),
@@ -1856,6 +1889,9 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.iconSize") return iconSize->slider;
         if (id == "desktop.itemFontSize") return itemFontSize->number;
         if (id == "desktop.listFontSize") return listFontSize->number;
+        if (id == "desktop.titleLines") return titleLineCombos[0];
+        if (id == "desktop.largeFolderTitleLines") return titleLineCombos[1];
+        if (id == "desktop.scrollingTitleLines") return titleLineCombos[2];
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
@@ -1919,6 +1955,7 @@ struct DesktopPagePresenter::Impl
         itemFontSize->Close();
         listFontSize->Close();
         itemFontWeight->Close();
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i) titleLineCombos[i].SelectionChanged(titleLineTokens[i]);
         backgroundStart->Close();
         backgroundOpacity->Close();
         glassBlurRadius->Close(); reflectionWidth->Close(); reflectionStrength->Close();

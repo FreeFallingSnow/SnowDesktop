@@ -1,3 +1,4 @@
+#include "app_font.h"
 #include <ole2.h>
 #include <UIAutomation.h>
 #include <UIAutomationCoreApi.h>
@@ -287,7 +288,7 @@ struct NativeTooltip::Impl
         const float maximumHeight = std::max(1.f, std::min(192.f, static_cast<float>(work.bottom - work.top) / scale - 8.f));
         if (!format)
         {
-            const auto result = text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+            const auto result = snowdesktop::app_fonts::CreateTextFormat(text, L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13, L"", &format);
             if (FAILED(result)) { Error(result); return; }
             format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);

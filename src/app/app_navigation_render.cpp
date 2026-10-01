@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "../page_navigation_rules.h"
 
@@ -247,8 +248,7 @@ void DesktopApp::DrawPageNavHotEdgeHint(
 
     if (!dwriteFactory_ || !textBrush) return;
     ComPtr<IDWriteTextFormat> format;
-    dwriteFactory_->CreateTextFormat(
-        L"Segoe UI", nullptr,
+    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI",
         DWRITE_FONT_WEIGHT_SEMI_BOLD,
         DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL,

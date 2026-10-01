@@ -1,3 +1,4 @@
+#include "app_font.h"
 #include "widget_system_control_data.h"
 #include "widget_gpu_lua.h"
 #include "background_work.h"
@@ -1011,7 +1012,7 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
     }
     else
     {
-        state->dwrite->CreateTextFormat(L"Segoe UI", nullptr, weight,
+        snowdesktop::app_fonts::CreateTextFormat(state->dwrite, L"Segoe UI", weight,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     }
     if (!format) return nullptr;
@@ -20700,7 +20701,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     ComPtr<IDWriteTextFormat> format;
                     const float errFontSize = std::max(9.0f, 15.0f * CalculateWidgetCellScale(
                         d2dState_->gridCellW, d2dState_->gridCellH));
-                    d2dState_->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+                    snowdesktop::app_fonts::CreateTextFormat(d2dState_->dwrite, L"Segoe UI",
                         DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                         errFontSize, L"", &format);
                     if (format)

@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "../logical_slot_picker_rules.h"
 #include "name_pinyin.h"
@@ -542,7 +543,7 @@ void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& request)
         static_cast<int>(std::round(request.fontSize)), 9, 96);
     luaInlineEditFont_ = CreateFontW(-editFontSize, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(luaInlineEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(luaInlineEditFont_ ? luaInlineEditFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     SendMessageW(luaInlineEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(8, 8));

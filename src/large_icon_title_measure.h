@@ -1,3 +1,4 @@
+#include "app_font.h"
 #pragma once
 #include "large_icon_render_rules.h"
 #include <dwrite.h>
@@ -15,7 +16,7 @@ inline MeasureTitle MeasureTitleText(IDWriteFactory* factory, const LargeIconCon
     if (!factory || name.empty() || scale <= 0) return {};
     const float size = static_cast<float>(config.revealTitleSize * scale);
     ComPtr<IDWriteTextFormat> format;
-    if (FAILED(factory->CreateTextFormat(L"Segoe UI", nullptr, static_cast<DWRITE_FONT_WEIGHT>(config.titleWeight),
+    if (FAILED(snowdesktop::app_fonts::CreateTextFormat(factory, L"Segoe UI", static_cast<DWRITE_FONT_WEIGHT>(config.titleWeight),
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return {};
     format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, size * 1.3f, size);

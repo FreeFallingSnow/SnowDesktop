@@ -1,3 +1,4 @@
+#include "app_font.h"
 #include "large_icon_renderer.h"
 #include "panel_gradient_renderer.h"
 #include "large_icon_title_measure.h"
@@ -140,7 +141,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     {
         const float size = static_cast<float>(c.revealTitleSize) * view.scale;
         ComPtr<IDWriteTextFormat> format;
-        fonts->CreateTextFormat(L"Segoe UI", nullptr, static_cast<DWRITE_FONT_WEIGHT>(c.titleWeight),
+        snowdesktop::app_fonts::CreateTextFormat(fonts, L"Segoe UI", static_cast<DWRITE_FONT_WEIGHT>(c.titleWeight),
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
         const unsigned textColor = large_icon_render_rules::TextColor(c,
             fill ? view.neutral : background.color, view.componentForeground);

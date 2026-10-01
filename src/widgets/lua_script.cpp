@@ -722,9 +722,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 handle.bottom - Cu(bh * 0.083f)
             };
             auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
-                std::max<int>(100,
-                    static_cast<int>(app_->GetItemFontWeight()) +
-                        chromeForeground.fontWeightAdjustment));
+                snowdesktop::font_weight_rules::RenderedWeight(
+                    app_->GetItemFontWeight(), chromeForeground.darkForeground));
             IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
             app_->DrawD2DText(context, data_->title, titleRect,
                 titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),

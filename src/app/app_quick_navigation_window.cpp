@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "quick_navigation_helpers.h"
 #include "quick_navigation_rules.h"
@@ -223,7 +224,7 @@ void DesktopApp::EnsureQuickNavigationSearchEdit()
 
     quickNavigationSearchFont_ = CreateFontW(-QuickNavScale(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(quickNavigationSearchEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(quickNavigationSearchFont_ ? quickNavigationSearchFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,

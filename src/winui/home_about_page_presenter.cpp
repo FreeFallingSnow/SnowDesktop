@@ -321,6 +321,10 @@ struct HomeAboutPagePresenter::Impl
             L"Copyright (C) 1994-2024 Lua.org, PUC-Rio");
         AddAttribution(HomeAboutLink::PinyinData, L"pinyin-data", L"(MIT)",
             L"Copyright (c) 2016 mozillazg");
+        AddAttribution(HomeAboutLink::MiSans, L"MiSans Regular · 4.009", L"(MiSans font license)",
+            L"Copyright © 2020-2025 Beijing Xiaomi Mobile Software Co., Ltd.", L"SnowDesktop uses MiSans as an optional interface font; original font file unchanged.");
+        AddAttribution(HomeAboutLink::HarmonyOsSans, L"HarmonyOS Sans SC · 1.0", L"(HarmonyOS Sans Fonts License Agreement)",
+            L"Copyright 2021 Huawei Device Co., Ltd.", L"SnowDesktop uses HarmonyOS Sans as an optional interface font; original font files unchanged.");
         AddAttribution(HomeAboutLink::Yasb, L"YASB · d6d1e6d553b0", L"(MIT)",
             L"Copyright (c) 2024 amnweb · Copyright (c) 2021 denBot");
         AddAttribution(HomeAboutLink::TranslucentTb,

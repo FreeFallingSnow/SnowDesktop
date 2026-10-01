@@ -1,3 +1,4 @@
+#include "app_font.h"
 #pragma once
 
 // Internal styling for the existing Win32 form controls. Text, selection, IME,
@@ -39,7 +40,7 @@ inline Palette ResolvePalette(const PersonalizationSettings& appearance)
 inline HFONT CreateFormFont(UINT dpi,int dip=13,int weight=FW_NORMAL)
 {
     return CreateFontW(-Scale(dip,dpi),0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+        OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,snowdesktop::app_fonts::GdiFamily().c_str());
 }
 // Ordinary GDI children draw into their top-level parent's redirection bitmap.
 // A DirectComposition host can intentionally have no such bitmap. Give only

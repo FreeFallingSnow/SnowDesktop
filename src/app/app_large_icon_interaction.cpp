@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "../animation_settings.h"
 #include "../widgets/widget_chrome_rules.h"
@@ -134,7 +135,7 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         {
             ComPtr<IDWriteTextFormat> format;
             ComPtr<ID2D1SolidColorBrush> brush;
-            dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL, 14.f, L"", &format);
             context->CreateSolidColorBrush(D2D1::ColorF(0xffffff), &brush);
             const auto* page = FindGridPage(gridPages_, gesture.cell.pageId);

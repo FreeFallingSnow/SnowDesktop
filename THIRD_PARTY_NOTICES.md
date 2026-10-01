@@ -45,6 +45,8 @@ described under "Optional Steamworks dependency" below.
 | MinHook | bundled source | BSD 2-Clause | Copyright (c) 2009-2017 Tsuda Kageyu; <https://github.com/TsudaKageyu/minhook> |
 | Font Awesome 6 Free Solid | 6.5.2 font | SIL Open Font License 1.1 | Copyright (c) Font Awesome; <https://fontawesome.com/license/free> |
 | Fluent System Icons Regular | upstream commit `21d5d02f724be2aaf586564775fff73a18a76eb6` | MIT | Copyright (c) 2020 Microsoft Corporation; <https://github.com/microsoft/fluentui-system-icons> |
+| MiSans Regular | 4.009 original OTF | MiSans font intellectual property license | Copyright © 2020-2025 Beijing Xiaomi Mobile Software Co., Ltd.; <https://hyperos.mi.com/font/zh/> |
+| HarmonyOS Sans SC | 1.0 original Regular TTF | HarmonyOS Sans Fonts License Agreement | Copyright 2021 Huawei Device Co., Ltd.; <https://developer.huawei.com/consumer/cn/design/resource/> |
 | DeskMakeover shape catalog | upstream `main` as referenced in 2026 | MIT | Copyright (c) 2026 Jinming Yang; <https://github.com/nicepkg/deskmakeover> |
 | OpenHarmony GraphicsEffect adapted rim calculations | upstream commit `da8e11652a705ea2141c35de1a1fff501148740e` | Apache-2.0 | Copyright (c) 2025-2026 Huawei Device Co., Ltd.; <https://github.com/openharmony/graphic_graphics_effect> |
 | TranslucentTB-derived portions | upstream commit `322e2b7395a51975150126276308b415970e080b` | GPL-3.0-only | Copyright (c) TranslucentTB contributors; <https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b> |
@@ -63,6 +65,22 @@ release packagers copy them to the payload `licenses` directory. The pinned
 Windows ML 2.1.74 and WebView2 1.0.3719.77 licenses and third-party notices are
 copied the same way, along with the Microsoft.Windows.CppWinRT 3.0.260818.1 MIT
 license.
+
+## Optional interface fonts / 可选界面字体
+
+SnowDesktop uses MiSans and HarmonyOS Sans as optional interface fonts. They are
+separate licensed assets, not GPL-licensed SnowDesktop code. Their original OTF/TTF
+files are bundled unchanged with SnowDesktop; no glyph subsetting, conversion,
+or font redevelopment is performed. The full agreements are retained in
+`third_party/misans/LICENSE.pdf` and `third_party/harmonyos-sans/LICENSE.txt` and
+copied into release payloads as `MiSans-LICENSE.pdf` and
+`HarmonyOS-Sans-LICENSE.txt`. These fonts may not be redistributed as standalone
+font products. The font settings and About page identify their use and owners.
+
+SnowDesktop 使用 MiSans 与 HarmonyOS Sans 作为可选界面字体，字体资源分别适用
+自己的许可，不适用 SnowDesktop 源码的 GPL 许可。仅随应用分发原始 OTF/TTF 文件，
+不进行字形裁剪、转换或字体再开发；保留完整协议并随发行包交付。禁止将这些字体
+作为独立字体产品再次分发。字体设置与关于页面标明使用的字体和权利人。
 
 ## YASB references and adapted portions
 

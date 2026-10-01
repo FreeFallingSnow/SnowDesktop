@@ -7,6 +7,7 @@
 #include <dwrite.h>
 
 #include "widget_ui_metrics.h"
+#include "font_weight_rules.h"
 
 namespace snowdesktop::widget_runtime
 {
@@ -58,8 +59,8 @@ struct LayoutMetrics
     int gridCellHeight = 116;
     int gridGapY = 8;
     int barHeight = 24;
-    DWRITE_FONT_WEIGHT itemFontWeight =
-        DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    DWRITE_FONT_WEIGHT itemFontWeight = static_cast<DWRITE_FONT_WEIGHT>(
+        font_weight_rules::kDefaultWeight);
     float semanticCuScale = 1.0f;
     SemanticUiMetricTokens semanticUiMetrics;
 

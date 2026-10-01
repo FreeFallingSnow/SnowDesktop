@@ -1,3 +1,5 @@
+#include "../app_font.h"
+#include "../item_title_layout.h"
 #include "app.h"
 #include "quick_navigation_theme.h"
 
@@ -220,10 +222,11 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
 
 void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     const std::wstring& text, bool selected, float opacity, bool lightTheme,
-    bool componentPanel)
+    bool componentPanel, int titleLines)
 {
     if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
 
+    titleLines = titleLines > 0 ? std::clamp(titleLines, 1, 2) : desktopTitleLines_;
     RECT textRect = GetItemTextRect(bounds, selected);
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
@@ -232,6 +235,13 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     const float fontScale = visualMetrics.fontScale;
     const float fontSize = visualMetrics.fontSize;
     const float lineHeight = fontSize * 7.0f / 6.0f;
+    if (!selected)
+    {
+        th = static_cast<float>(snowdesktop::item_layout_rules::TextHeightForLineCount(lineHeight, titleLines));
+        textRect.bottom = textRect.top + static_cast<LONG>(th);
+    }
+    const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
+        snowdesktop::font_weight_rules::RenderedWeight(itemFontWeight_, lightTheme));
     auto createConfiguredLayout =
         [&](const std::wstring& layoutText,
             float maxWidth,
@@ -259,6 +269,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         result->SetFontSize(
             fontSize,
             range);
+        snowdesktop::app_fonts::SetWeight(result.Get(), fontWeight, range);
         result->SetLineSpacing(
             DWRITE_LINE_SPACING_METHOD_UNIFORM,
             lineHeight,
@@ -271,51 +282,13 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
         std::to_wstring(scaleKey) + L"@" +
         std::to_wstring(lightTheme ? 1 : 0) + L"@" +
-        std::to_wstring(selected ? 1 : 0);
+        std::to_wstring(selected ? 1 : 0) + L"@" + std::to_wstring(titleLines);
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
         std::wstring visibleText = text;
-        if (!selected)
-        {
-            ComPtr<IDWriteTextLayout>
-                wrappedMeasureLayout;
-            if (createConfiguredLayout(
-                    text, tw, 10000.0f,
-                    wrappedMeasureLayout))
-            {
-                UINT32 lineCount = 0;
-                wrappedMeasureLayout->
-                    GetLineMetrics(
-                        nullptr, 0,
-                        &lineCount);
-                if (lineCount > 2)
-                {
-                    std::vector<
-                        DWRITE_LINE_METRICS>
-                        lines(lineCount);
-                    UINT32 actualLineCount = 0;
-                    if (SUCCEEDED(
-                            wrappedMeasureLayout->
-                                GetLineMetrics(
-                                    lines.data(),
-                                    lineCount,
-                                    &actualLineCount)))
-                    {
-                        visibleText.resize(
-                            snowdesktop::
-                                item_layout_rules::
-                                    VisibleTextLengthForLineLimit(
-                                        lines.data(),
-                                        actualLineCount,
-                                        2,
-                                        text.size()));
-                    }
-                }
-            }
-        }
 
-        float layoutHeight = th;
+        float layoutHeight = selected ? th : lineHeight * static_cast<float>(titleLines);
         if (selected)
         {
             const int measurementHeight =
@@ -357,6 +330,13 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                 layoutHeight, layout))
             return;
 
+        if (!selected)
+        {
+            ComPtr<IDWriteTextFormat> ellipsisFormat;
+            snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", fontWeight,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &ellipsisFormat);
+            snowdesktop::TrimItemTitle(dwriteFactory_.Get(), layout.Get(), ellipsisFormat.Get(), titleLines, lineHeight);
+        }
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);
         bool isSingleLine = (metrics.lineCount == 1);
@@ -376,6 +356,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                 measureLayout->SetFontSize(
                     fontSize,
                     measureRange);
+                snowdesktop::app_fonts::SetWeight(measureLayout.Get(), fontWeight, measureRange);
                 DWRITE_TEXT_METRICS m{};
                 measureLayout->GetMetrics(&m);
                 isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
@@ -413,6 +394,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             const DWRITE_TEXT_RANGE fullRange{
                 0, static_cast<UINT32>(text.size()) };
             measureLayout->SetFontSize(fontSize, fullRange);
+            snowdesktop::app_fonts::SetWeight(measureLayout.Get(), fontWeight, fullRange);
             DWRITE_TEXT_METRICS m{};
             measureLayout->GetMetrics(&m);
             isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);

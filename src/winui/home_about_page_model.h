@@ -89,6 +89,7 @@ enum class HomeAboutLink : std::uint8_t
     TranslucentTb,
     OfficialWebsite,
     Yasb,
+    MiSans, HarmonyOsSans,
 };
 
 [[nodiscard]] constexpr std::wstring_view HomeAboutLinkUri(
@@ -123,6 +124,8 @@ enum class HomeAboutLink : std::uint8_t
     case HomeAboutLink::TranslucentTb:
         return L"https://github.com/TranslucentTB/TranslucentTB/tree/"
                L"322e2b7395a51975150126276308b415970e080b";
+    case HomeAboutLink::MiSans: return L"https://hyperos.mi.com/font/zh/";
+    case HomeAboutLink::HarmonyOsSans: return L"https://developer.huawei.com/consumer/cn/design/resource/";
     case HomeAboutLink::Yasb:
         return L"https://github.com/amnweb/yasb/tree/d6d1e6d553b0aac34fd5fb34928d3ca82b8d055f";
     }

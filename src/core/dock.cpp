@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "dock.h"
 
 #include "app.h"
@@ -1158,8 +1159,7 @@ RECT DockContainer::CalculateTitleTooltipBounds(
     ComPtr<IDWriteTextFormat> tooltipFormat;
     if (!measurementFormat)
     {
-        app_->dwriteFactory_->CreateTextFormat(
-            L"Segoe UI", nullptr,
+        snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI",
             (app_->CurrentDockAppearance().contentTheme == 1)
                 ? DWRITE_FONT_WEIGHT_LIGHT
                 : DWRITE_FONT_WEIGHT_NORMAL,
@@ -2593,7 +2593,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (!hoveredTitle.empty() && app_->dwriteFactory_)
     {
         ComPtr<IDWriteTextFormat> tooltipFormat;
-        app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+        snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI",
             lt ? DWRITE_FONT_WEIGHT_LIGHT : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, 16.0f, L"zh-CN", &tooltipFormat);
         if (tooltipFormat)

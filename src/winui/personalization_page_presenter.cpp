@@ -150,6 +150,14 @@ struct PersonalizationPagePresenter::Impl
     muxc::StackPanel widgetBehaviorRoot;
 
     SettingsCard themeCard;
+    SettingsCard fontCard;
+    SettingRow fontRow;
+    muxc::ComboBox fontCombo;
+    muxc::Button fontFileButton, fontFolderButton;
+    muxc::TextBlock fontNotice, fontError;
+    winrt::event_token fontToken{}, fontFileToken{}, fontFolderToken{};
+    std::vector<app_fonts::Choice> fonts;
+    app_fonts::Selection selectedFont;
     SettingsCard themeTargetsCard;
     SettingsCard popupThemeCard, dockThemeCard, statusBarLinkCard, taskbarLinkCard;
     std::shared_ptr<PanelAppearanceEditor> quickAppearanceEditor, popupAppearanceEditor, dockAppearanceEditor;
@@ -254,7 +262,7 @@ struct PersonalizationPagePresenter::Impl
 
     [[nodiscard]] std::wstring L(
         std::string_view key,
-        std::wstring_view fallback) const
+        std::wstring_view fallback = {}) const
     {
         if (localize)
         {
@@ -311,6 +319,24 @@ struct PersonalizationPagePresenter::Impl
         presetRow.Initialize(presetCombo);
         themeCard.content.Children().Append(presetRow.root);
 
+        InitializeCard(fontCard, cardStyle, themeRoot);
+        fontCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        fontCombo.MaxWidth(520.0);
+        fontRow.Initialize(fontCombo);
+        fontCard.content.Children().Append(fontRow.root);
+        muxc::StackPanel imports;
+        imports.Orientation(muxc::Orientation::Horizontal);
+        imports.Spacing(8.0);
+        imports.Children().Append(fontFileButton);
+        imports.Children().Append(fontFolderButton);
+        fontCard.content.Children().Append(imports);
+        fontNotice.TextWrapping(mux::TextWrapping::Wrap);
+        fontNotice.FontSize(12.0);
+        fontNotice.Opacity(0.7);
+        fontCard.content.Children().Append(fontNotice);
+        fontError.TextWrapping(mux::TextWrapping::Wrap);
+        fontError.Visibility(mux::Visibility::Collapsed);
+        fontCard.content.Children().Append(fontError);
         InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
         appearanceSections.Initialize(widgetAppearanceCard.content, true, true);
         InitializeColorControl(backgroundColor,
@@ -635,6 +661,14 @@ struct PersonalizationPagePresenter::Impl
 
     void HookEvents()
     {
+        fontToken = fontCombo.SelectionChanged([this](const auto&, const auto&) {
+            const int index = fontCombo.SelectedIndex();
+            if (!CanEmit() || index < 0 || static_cast<std::size_t>(index) >= fonts.size()) return;
+            selectedFont = fonts[static_cast<std::size_t>(index)].selection;
+            EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
+        });
+        fontFileToken = fontFileButton.Click([this](const auto&, const auto&) { ImportFonts(false); });
+        fontFolderToken = fontFolderButton.Click([this](const auto&, const auto&) { ImportFonts(true); });
         presetToken = presetCombo.SelectionChanged(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
@@ -964,8 +998,52 @@ struct PersonalizationPagePresenter::Impl
         UpdateDependentStates();
     }
 
+    void RefreshFonts()
+    {
+        if (!actions.listFonts) return;
+        const bool previous = updatingControls;
+        updatingControls = true;
+        fonts = actions.listFonts();
+        fontCombo.Items().Clear();
+        int index = -1;
+        for (std::size_t i = 0; i < fonts.size(); ++i)
+        {
+            const auto& choice = fonts[i];
+            fontCombo.Items().Append(winrt::box_value(choice.selection.package == "system" ? L("font.system", L"System default") : choice.name));
+            if (choice.selection == selectedFont) index = static_cast<int>(i);
+        }
+        // Missing packages retain the saved selection. Merely opening settings
+        // must never replace a unavailable user font with the system default.
+        if (index < 0)
+        {
+            fonts.push_back({selectedFont, L("font.unavailable", L"Saved font unavailable"), {}});
+            fontCombo.Items().Append(winrt::box_value(fonts.back().name));
+            index = static_cast<int>(fonts.size() - 1);
+        }
+        fontCombo.SelectedIndex(index);
+        updatingControls = previous;
+    }
+
+    void ImportFonts(bool folder)
+    {
+        if (!CanEmit() || !actions.importFonts) return;
+        std::string error;
+        const auto imported = actions.importFonts(folder, error);
+        fontError.Text(error.empty() ? L"" : L(error));
+        fontError.Visibility(error.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        if (imported.empty()) return;
+        selectedFont = imported.front().selection;
+        RefreshFonts();
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
+    }
+
     void PatchGeneral(const GeneralSettings& settings)
     {
+        if (selectedFont != settings.font || fonts.empty())
+        {
+            selectedFont = settings.font;
+            RefreshFonts();
+        }
         const auto index = [this](const SurfaceTheme& theme, int legacy) {
             if (theme.mode != -2) return theme.mode + 1;
             return currentGlobalAppearance.backgroundPreset == kAppearancePresetCustom ? NormalizeFourThemeSelection(legacy) + 1 : 0;
@@ -1098,6 +1176,13 @@ struct PersonalizationPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
+        SetCardText(fontCard, "font.title", L"Interface font");
+        fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
+        muxa::AutomationProperties::SetName(fontCombo, fontRow.label.Text());
+        fontFileButton.Content(winrt::box_value(L("font.importFile")));
+        fontFolderButton.Content(winrt::box_value(L("font.importFolder")));
+        fontNotice.Text(L("font.notice"));
+        RefreshFonts();
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");
         SetCardText(themeTargetsCard, "appearance.quickPanelCard", L"Quick panel theme");
@@ -1329,6 +1414,7 @@ struct PersonalizationPagePresenter::Impl
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;
+        if (id == "personalization.font") return fontCombo;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
         if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
@@ -1460,6 +1546,8 @@ struct PersonalizationPagePresenter::Impl
         dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken);
         try
         {
+            fontCombo.SelectionChanged(fontToken);
+            fontFileButton.Click(fontFileToken); fontFolderButton.Click(fontFolderToken);
             presetCombo.SelectionChanged(presetToken);
             quickNavigationThemeCombo.SelectionChanged(
                 quickNavigationThemeToken);
@@ -1505,7 +1593,10 @@ void PersonalizationPagePresenter::SetActions(
     PersonalizationPageActions actions)
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->actions = std::move(actions);
+        impl_->RefreshFonts();
+    }
 }
 
 void PersonalizationPagePresenter::SetLayoutSpacingContent(

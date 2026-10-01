@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "quick_navigation_helpers.h"
 #include "quick_navigation_rules.h"
@@ -134,7 +135,7 @@ void DesktopApp::EnsureQuickNavTextFormats()
         if (stale)
         {
             fmt.Reset();
-            dwriteFactory_->CreateTextFormat(family, nullptr, weight,
+            snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, family, weight,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &fmt);
             if (fmt)
             {

@@ -1,4 +1,5 @@
 #include "native_ui_scene.h"
+#include "app_font.h"
 #include <d2d1_1helper.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -229,9 +230,13 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         auto& format=formats[{size,bold,center,glyph,wrap,trailing}];
         if(!format)
         {
-        if (FAILED(factory->CreateTextFormat(glyph ? L"Segoe MDL2 Assets" : L"Segoe UI", nullptr,
-            bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return;
+        const auto weight = bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL;
+        const HRESULT result = glyph
+            ? factory->CreateTextFormat(L"Segoe MDL2 Assets", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, size, L"", &format)
+            : app_fonts::CreateTextFormat(factory, L"Segoe UI", weight, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+        if (FAILED(result)) return;
         format->SetWordWrapping(wrap?DWRITE_WORD_WRAPPING_WRAP:DWRITE_WORD_WRAPPING_NO_WRAP); format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         format->SetTextAlignment(center ? DWRITE_TEXT_ALIGNMENT_CENTER : trailing ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
         ComPtr<IDWriteInlineObject> ellipsis; factory->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);

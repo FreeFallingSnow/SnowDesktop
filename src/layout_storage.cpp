@@ -659,6 +659,9 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.listItemFontSize, error) ||
         !ReadOptionalFloat(root, "itemFontWeight", "itemFontWeight",
             decoded.itemFontWeight, error) ||
+        !ReadOptionalInteger(root, "desktopTitleLines", "desktopTitleLines", decoded.desktopTitleLines, error) ||
+        !ReadOptionalInteger(root, "largeFolderTitleLines", "largeFolderTitleLines", decoded.largeFolderTitleLines, error) ||
+        !ReadOptionalInteger(root, "scrollingTitleLines", "scrollingTitleLines", decoded.scrollingTitleLines, error) ||
         !ReadOptionalFloat(root, "iconSpacing", "iconSpacing",
             decoded.iconSpacing, error) ||
         !ReadOptionalFloat(root, "componentSpacing", "componentSpacing",

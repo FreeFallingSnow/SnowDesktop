@@ -125,6 +125,13 @@ RECT DesktopApp::GetQuickNavItemIconRect(RECT bounds) const
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
 }
 
+int DesktopApp::ResolveItemTitleLines(const DesktopWidget* widget) const
+{
+    if (!widget) return desktopTitleLines_;
+    return widget->type == DesktopWidgetType::Collection && !widget->scrollContainerMode
+        ? largeFolderTitleLines_ : scrollingTitleLines_;
+}
+
 RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
 {
     const auto metrics = GetItemVisualMetrics(bounds);

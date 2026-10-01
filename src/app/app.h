@@ -2207,7 +2207,7 @@ private:
     /** @brief 实时预览组件列表字号，不保存布局。 */
     void PreviewListItemFontSize(float valueCu);
     float GetListItemFontSize() const { return listItemFontSizeCu_; }
-    /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
+    /** @brief 设置图标标题字体粗细。 @param weight 未经深色文字补偿的 DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
     /** @brief 实时预览标题字体粗细，不保存布局。 */
     void PreviewItemFontWeight(DWRITE_FONT_WEIGHT weight);
@@ -2658,7 +2658,8 @@ private:
      */
     void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f,
-        bool lightTheme = false, bool componentPanel = false);
+        bool lightTheme = false, bool componentPanel = false, int titleLines = 0);
+    int ResolveItemTitleLines(const DesktopWidget* widget = nullptr) const;
     /**
      * @brief 快捷导航大图标下标签的自绘文本（不依赖桌面 DrawItemText）。
      * 使用 quickNavItemTextFormat_（变量字体 + 细字重），居中、可换行。
@@ -3729,8 +3730,12 @@ private:
     bool itemFontSizePreviewActive_ = false;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
     bool listItemFontSizePreviewActive_ = false;
-    DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    DWRITE_FONT_WEIGHT itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(
+        snowdesktop::font_weight_rules::kDefaultWeight);
     bool itemFontWeightPreviewActive_ = false;
+    int desktopTitleLines_ = 2;
+    int largeFolderTitleLines_ = 2;
+    int scrollingTitleLines_ = 2;
     int shortcutArrowMode_ = 0;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     std::wstring primaryMonitorId_;

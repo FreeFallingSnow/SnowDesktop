@@ -399,9 +399,9 @@ void Collection::DrawTitlelessTooltip(
                 frameInset * 2 - horizontalPadding * 2));
     IDWriteTextFormat* format = GetCuTextFormatWeight(
         app_->itemFontSizeCu_,
-        app_->IsLightContentTheme()
-            ? DWRITE_FONT_WEIGHT_LIGHT
-            : app_->itemFontWeight_, true);
+        static_cast<DWRITE_FONT_WEIGHT>(
+            snowdesktop::font_weight_rules::RenderedWeight(
+                app_->itemFontWeight_, app_->IsLightContentTheme())), true);
     if (!format || !app_->dwriteFactory_) return;
 
     ComPtr<IDWriteTextLayout> layout;
@@ -755,7 +755,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 app_->DrawItemText(context, allRect,
                     collectionTitle, false, 1.0f,
-                    app_->IsLightContentTheme(), true);
+                    app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
             }
             else if (canShowTitlelessTooltip &&
                 PtInRect(&allRect,

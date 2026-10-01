@@ -505,6 +505,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.itemFontSizeCu = itemFontSizeCu_;
         desktopSettings.listItemFontSizeCu = listItemFontSizeCu_;
         desktopSettings.itemFontWeight = static_cast<int>(itemFontWeight_);
+        desktopSettings.desktopTitleLines = desktopTitleLines_;
+        desktopSettings.largeFolderTitleLines = largeFolderTitleLines_;
+        desktopSettings.scrollingTitleLines = scrollingTitleLines_;
         desktopSettings.shortcutArrowMode = shortcutArrowMode_;
         desktopSettings.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(
@@ -891,6 +894,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.itemFontSizeCu = itemFontSizeCu_;
         desktop.listItemFontSizeCu = listItemFontSizeCu_;
         desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
+        desktop.desktopTitleLines = desktopTitleLines_;
+        desktop.largeFolderTitleLines = largeFolderTitleLines_;
+        desktop.scrollingTitleLines = scrollingTitleLines_;
         desktop.shortcutArrowMode = shortcutArrowMode_;
         desktop.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(std::move(desktop));

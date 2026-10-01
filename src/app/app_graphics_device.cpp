@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "dock_taskbar_diagnostics.h"
 
@@ -93,7 +94,7 @@ bool DesktopApp::InitGraphics()
     RecreateItemTextFormat();
     RecreateComponentListTextFormat();
 
-    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &listItemTextFormat_);
     if (listItemTextFormat_)
     {
@@ -102,7 +103,7 @@ bool DesktopApp::InitGraphics()
         listItemTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
-    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &navTabTextFormat_);
     if (navTabTextFormat_)
     {
@@ -111,7 +112,7 @@ bool DesktopApp::InitGraphics()
         navTabTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
-    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
+    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", DWRITE_FONT_WEIGHT_BOLD,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"",
         &fileCategoryTabTextFormat_);
     if (fileCategoryTabTextFormat_)
@@ -163,7 +164,7 @@ void DesktopApp::RecreateItemTextFormat()
     float fontSize = itemFontSizeCu_;
     float lineHeight = fontSize * 7.0f / 6.0f;
     float baseline = fontSize * 5.0f / 6.0f;
-    dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr, itemFontWeight_,
+    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", itemFontWeight_,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &itemTextFormat_);
     if (itemTextFormat_)
     {
@@ -183,8 +184,7 @@ void DesktopApp::RecreateComponentListTextFormat()
     componentListTextFormat_.Reset();
     const float lineHeight = listItemFontSizeCu_ * 7.0f / 6.0f;
     const float baseline = listItemFontSizeCu_ * 5.0f / 6.0f;
-    dwriteFactory_->CreateTextFormat(
-        L"Segoe UI", nullptr, itemFontWeight_,
+    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", itemFontWeight_,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         listItemFontSizeCu_, L"", &componentListTextFormat_);
     if (!componentListTextFormat_) return;

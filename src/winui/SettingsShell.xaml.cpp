@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "SettingsShell.xaml.h"
+#include "../app_font.h"
 #include "../usage_guide.h"
 #if __has_include("SettingsShell.g.cpp")
 #include "SettingsShell.g.cpp"
@@ -1326,6 +1327,7 @@ bool SettingsShell::ApplySnapshot(
         {
             return false;
         }
+        FontFamily(muxm::FontFamily{snowdesktop::app_fonts::XamlFamily()});
         sessionActive_ = snapshot.sessionActive;
         desktopStyleDockEnabled_ = snapshot.values.general.dockEnabled;
         if (sessionActive_)
@@ -2457,6 +2459,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
+                "personalization.font",
                 "personalization.backgroundColor",
                 "personalization.borderColor",
                 "personalization.widgetAlpha",
@@ -2560,7 +2563,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerDesktopFocus({
                 "desktop.iconSize",
                 "desktop.itemFontSize", "desktop.listFontSize",
-                "desktop.fontWeight", "desktop.shortcutArrow"});
+                "desktop.fontWeight", "desktop.shortcutArrow", "desktop.titleLines", "desktop.largeFolderTitleLines", "desktop.scrollingTitleLines"});
             desktopPage_->Activate();
         }
         break;

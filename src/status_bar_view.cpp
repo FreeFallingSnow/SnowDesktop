@@ -1,3 +1,4 @@
+#include "app_font.h"
 #include "status_bar_view.h"
 #include "status_bar_glyphs.h"
 #include "status_bar_battery.h"
@@ -208,7 +209,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4), &brush);
     ComPtr<IDWriteTextFormat> format;
 
-    text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+    snowdesktop::app_fonts::CreateTextFormat(text, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &format);
     ComPtr<IDWriteTextFormat> iconFormat;
     iconFormat.Attach(CreateFluentTextFormat(text, 18.f * scale));

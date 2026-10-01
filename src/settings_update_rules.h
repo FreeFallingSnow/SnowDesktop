@@ -39,6 +39,7 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.collectionPopupTheme == after.collectionPopupTheme &&
         before.quickNavigationAppearance == after.quickNavigationAppearance &&
         before.collectionPopupAppearance == after.collectionPopupAppearance &&
+        before.font == after.font &&
         before.dockEnabled == after.dockEnabled &&
         before.statusBar == after.statusBar &&
         before.animationMode == after.animationMode &&

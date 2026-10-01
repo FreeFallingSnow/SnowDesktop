@@ -17,6 +17,7 @@
 #include "shell_file_operation_worker.h"
 #include "popup_drag_rules.h"
 #include "item_layout_rules.h"
+#include "item_title_layout.h"
 #include "item_render_layer_rules.h"
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
@@ -3722,6 +3723,33 @@ int main(int argc, char** argv)
                 DWRITE_LINE_SPACING_METHOD_UNIFORM,
                 standardLineHeight,
                 14.0f * 5.0f / 6.0f);
+            for (const auto& title : {std::wstring(L"一二三四五六七八九十一二三四五六七八九十"),
+                std::wstring(L"A\U0001f600B\U0001f600C\U0001f600D long filename"), std::wstring(L"first\nsecond\nthird")})
+            {
+                for (const UINT32 limit : {1u, 2u})
+                {
+                    Microsoft::WRL::ComPtr<IDWriteTextLayout> trimmed;
+                    dwriteFactory->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()), format.Get(),
+                        48, 10000, &trimmed);
+                    UINT32 before = 0;
+                    trimmed->GetLineMetrics(nullptr, 0, &before);
+                    Check(before > limit, "overflow regression inputs exceed the configured line count before applying title trimming");
+                    Check(SUCCEEDED(snowdesktop::TrimItemTitle(dwriteFactory.Get(), trimmed.Get(), format.Get(),
+                        static_cast<int>(limit), standardLineHeight)), "production title trimming applies the configured line limit");
+                    Microsoft::WRL::ComPtr<IDWriteInlineObject> sign;
+                    DWRITE_TRIMMING rule{};
+                    trimmed->GetTrimming(&rule, &sign);
+                    UINT32 count = 0; trimmed->GetLineMetrics(nullptr, 0, &count);
+                    std::vector<DWRITE_LINE_METRICS> lines(count);
+                    trimmed->GetLineMetrics(lines.data(), count, &count);
+                    const auto last = std::find_if(lines.begin(), lines.end(), [](const auto& line) { return line.isTrimmed != FALSE; });
+                    Check(last != lines.end() && static_cast<UINT32>(last - lines.begin()) + 1 == limit,
+                        "native ellipsis belongs to the last allowed title line, including CJK, emoji and explicit newlines");
+                    DWRITE_INLINE_OBJECT_METRICS signMetrics{}; sign->GetMetrics(&signMetrics);
+                    Check(signMetrics.width > 0 && signMetrics.width <= 14.0f,
+                        "native ellipsis uses the compact font glyph without a wide placeholder or added spaces");
+                }
+            }
             const std::wstring longChineseTitle =
                 L"一二三四五六七八九十"
                 L"一二三四五六七八九十";

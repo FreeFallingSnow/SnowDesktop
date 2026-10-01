@@ -32,15 +32,14 @@ constexpr bool ShowsCompactMoveHandle(
 struct WidgetChromeForegroundStyle
 {
     bool darkForeground = false;
-    int fontWeightAdjustment = 0;
 };
 
 constexpr WidgetChromeForegroundStyle ResolveWidgetChromeForegroundStyle(
     int contentTheme) noexcept
 {
     return contentTheme == 1
-        ? WidgetChromeForegroundStyle{ true, -200 }
-        : WidgetChromeForegroundStyle{ false, 0 };
+        ? WidgetChromeForegroundStyle{ true }
+        : WidgetChromeForegroundStyle{ false };
 }
 
 inline int CompactEdgeHandleWidth(

@@ -124,6 +124,9 @@ struct Document
     std::optional<float> itemFontSize;
     std::optional<float> listItemFontSize;
     std::optional<float> itemFontWeight;
+    std::optional<int> desktopTitleLines;
+    std::optional<int> largeFolderTitleLines;
+    std::optional<int> scrollingTitleLines;
     std::optional<float> iconSpacing;
     std::optional<float> componentSpacing;
     std::optional<float> iconSizeScale;

@@ -87,6 +87,8 @@
           DependsOnTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents"
           Condition="'$(WindowsAppSDKSelfContained)' == 'true'">
     <ItemGroup>
+      <_SnowDesktopTextFont Include="$(SnowDesktopSourceDirectory)\assets\fonts\MiSans\*.otf"><FontPackage>MiSans</FontPackage></_SnowDesktopTextFont>
+      <_SnowDesktopTextFont Include="$(SnowDesktopSourceDirectory)\assets\fonts\HarmonyOS-Sans\*.ttf"><FontPackage>HarmonyOS-Sans</FontPackage></_SnowDesktopTextFont>
       <_SnowDesktopSettingsIcon Include="$(SnowDesktopSourceDirectory)\assets\settings\icons\*.svg" />
     </ItemGroup>
     <MakeDir Directories="$(TargetDir)Assets\App;$(TargetDir)Assets\Fonts;$(TargetDir)Assets\Settings\Icons" />
@@ -98,6 +100,9 @@
           SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(SnowDesktopSourceDirectory)\assets\fonts\fa-solid-900.ttf"
           DestinationFiles="$(TargetDir)Assets\Fonts\fa-solid-900.ttf"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_SnowDesktopTextFont)"
+          DestinationFiles="@(_SnowDesktopTextFont->'$(TargetDir)Assets\Fonts\%(FontPackage)\%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(_SnowDesktopSettingsIcon)"
           DestinationFolder="$(TargetDir)Assets\Settings\Icons"
@@ -177,6 +182,14 @@
         <DeploymentPath>Assets\Fonts\FluentSystemIcons-Regular.ttf</DeploymentPath>
         <SourcePackage>SnowDesktop</SourcePackage>
         <DeploymentKind>Asset</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\MiSans\*.otf">
+        <DeploymentPath>Assets\Fonts\MiSans\%(Filename)%(Extension)</DeploymentPath>
+        <SourcePackage>MiSans</SourcePackage><DeploymentKind>Asset</DeploymentKind>
+      </_SnowDesktopDeploymentFile>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\HarmonyOS-Sans\*.ttf">
+        <DeploymentPath>Assets\Fonts\HarmonyOS-Sans\%(Filename)%(Extension)</DeploymentPath>
+        <SourcePackage>HarmonyOS-Sans</SourcePackage><DeploymentKind>Asset</DeploymentKind>
       </_SnowDesktopDeploymentFile>
       <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\fa-solid-900.ttf">
         <DeploymentPath>Assets\Fonts\fa-solid-900.ttf</DeploymentPath>

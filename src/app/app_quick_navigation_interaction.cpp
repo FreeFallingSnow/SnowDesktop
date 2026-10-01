@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "../shell_call_diagnostics.h"
 
@@ -74,7 +75,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
         CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE,
-        L"Segoe UI");
+        snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(
         renameEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(

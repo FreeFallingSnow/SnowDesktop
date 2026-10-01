@@ -1,3 +1,4 @@
+#include "../app_font.h"
 /**
  * @file widget_base.cpp
  * @brief Widget 基类、容器布局、滚动列表、组件 Chrome 绘制、滚动条绘制及组件工厂的实现。
@@ -189,7 +190,7 @@ IDWriteTextFormat* Widget::GetCuTextFormat(float value, bool bold, bool centered
         return found->second.Get();
 
     ComPtr<IDWriteTextFormat> format;
-    app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+    snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI",
         bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     if (!format)
@@ -214,7 +215,7 @@ IDWriteTextFormat* Widget::GetCuTextFormatWeight(float value, DWRITE_FONT_WEIGHT
         return found->second.Get();
 
     ComPtr<IDWriteTextFormat> format;
-    app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+    snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI",
         weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     if (!format)
         return nullptr;
@@ -2043,11 +2044,14 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
         std::max<LONG>(1, textRect.bottom - textRect.top));
     const float layoutScale = GetCellScale();
     const float fontSize = FontCu(app_->listItemFontSizeCu_);
+    const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
+        snowdesktop::font_weight_rules::RenderedWeight(
+            app_->itemFontWeight_, lightTheme));
     const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
     std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
-        std::to_wstring(scaleKey);
+        std::to_wstring(scaleKey) + L"@" + std::to_wstring(fontWeight);
     auto layoutIt = app_->componentListTextLayoutCache_.find(layoutKey);
     if (layoutIt == app_->componentListTextLayoutCache_.end())
     {
@@ -2061,6 +2065,7 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
                 0, static_cast<UINT32>(title.size())
             };
             layout->SetFontSize(fontSize, fullRange);
+            snowdesktop::app_fonts::SetWeight(layout.Get(), fontWeight, fullRange);
             layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -2070,9 +2075,12 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
             DWRITE_TRIMMING trimming{};
             trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
             ComPtr<IDWriteInlineObject> ellipsis;
+            ComPtr<IDWriteTextFormat> ellipsisFormat;
+            snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI", fontWeight,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &ellipsisFormat);
             if (SUCCEEDED(app_->dwriteFactory_->
                     CreateEllipsisTrimmingSign(
-                        app_->componentListTextFormat_.Get(),
+                        ellipsisFormat ? ellipsisFormat.Get() : app_->componentListTextFormat_.Get(),
                         &ellipsis)) && ellipsis)
                 layout->SetTrimming(&trimming, ellipsis.Get());
             layoutIt = app_->componentListTextLayoutCache_.emplace(
@@ -2180,7 +2188,9 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         : RECT{};
 
     IDWriteTextFormat* format = GetCuTextFormatWeight(
-        app_->listItemFontSizeCu_, app_->itemFontWeight_, false);
+        app_->listItemFontSizeCu_, static_cast<DWRITE_FONT_WEIGHT>(
+            snowdesktop::font_weight_rules::RenderedWeight(
+                app_->itemFontWeight_, light)), false);
     if (!format) format = app_->componentListTextFormat_.Get();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.66f)
@@ -2237,7 +2247,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                app_->IsLightContentTheme(), true);
+                app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
         return;
     }
 
@@ -2266,7 +2276,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                app_->IsLightContentTheme(), true);
+                app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
         return;
     }
 
@@ -2617,9 +2627,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             {
                 auto* dwrite = app_->GetDWriteFactory();
                 auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
-                    std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
-                if (UsesTopTitleBar())
-                    titleWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+                    snowdesktop::font_weight_rules::RenderedWeight(
+                        UsesTopTitleBar() ? DWRITE_FONT_WEIGHT_SEMI_BOLD
+                            : app_->GetItemFontWeight(), lightTheme));
                 IDWriteTextFormat* fmt = GetCuTextFormatWeight(UsesTopTitleBar()
                     ? GetBarHeight() * 18.0f / 34.0f
                     : GetBarHeight() * 0.542f, titleWeight, UsesTopTitleBar());

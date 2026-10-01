@@ -438,6 +438,7 @@ set(SNOWDESKTOP_SOURCES
     src/taskbar_hook/taskbar_symbol_resolver.cpp
     src/navigation_settings.cpp
     src/general_settings.cpp
+    src/app_font.cpp
     src/category_settings.cpp
     src/component_preview.cpp
     src/native_component_preview_export.cpp
@@ -1500,8 +1501,11 @@ if (BUILD_TESTING)
         SOURCES
             tests/general_settings_tests.cpp
             src/general_settings.cpp
+            src/app_font.cpp
             src/personalization.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES dwrite gdi32 ole32
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract settings)
 
     snowdesktop_add_test(

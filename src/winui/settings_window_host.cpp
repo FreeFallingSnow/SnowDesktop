@@ -1,6 +1,8 @@
 #include "pch.h"
 
 #include "settings_window_host.h"
+#include "../data_paths.h"
+#include "../app_font.h"
 #include "../pending_window_message.h"
 #include "../performance_trace.h"
 #include "../diagnostic_log.h"
@@ -437,6 +439,10 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceDesktopIcons, "desktop.listFontSize",
         "app.settings.list_font_size",
         "settings.desktop.typography.description"},
+    {SettingsPage::AppearanceTheme, "personalization.font", "font.title", "font.hint"},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.titleLines", "titleLines.desktop", "titleLines.hint"},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.largeFolderTitleLines", "titleLines.largeFolder", "titleLines.hint"},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.scrollingTitleLines", "titleLines.scrolling", "titleLines.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.fontWeight",
         "app.settings.title_font_weight",
         "settings.desktop.typography.description"},
@@ -2273,6 +2279,19 @@ struct SettingsWindowHost::Impl
 
         PersonalizationPageActions personalization;
         personalization.contextMenu = options.contextMenu;
+        personalization.listFonts = [] {
+            return app_fonts::List(std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());
+        };
+        personalization.importFonts = [weak](bool folder, std::string& error) {
+            std::vector<app_fonts::Choice> choices;
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+            {
+                const auto path = ShowOpenPathDialog(state->owner->window,
+                    state->owner->L("font.title"), {{L"TTF / OTF / TTC", L"*.ttf;*.otf;*.ttc"}}, folder);
+                if (path) app_fonts::Import(*path, GetDataDirectoryPath(), choices, error);
+            }
+            return choices;
+        };
         personalization.update = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,

@@ -1,3 +1,4 @@
+#include "app_font.h"
 #include "system_panel_preview.h"
 #include "system_panel_model.h"
 #include "system_calendar_editor.h"
@@ -1930,7 +1931,7 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
             if(const auto* action=scene.Find(id))
             {
                 ComPtr<IDWriteTextFormat> format;ComPtr<IDWriteTextLayout> layout;
-                Require(text->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,
+                Require(snowdesktop::app_fonts::CreateTextFormat(text, L"Segoe UI",DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,
                     DWRITE_FONT_STRETCH_NORMAL,action->fontSize,L"",&format));
                 Require(text->CreateTextLayout(action->text.data(),static_cast<UINT32>(action->text.size()),format.Get(),4096,256,&layout));
                 DWRITE_TEXT_METRICS metrics{};Require(layout->GetMetrics(&metrics));
@@ -1942,7 +1943,7 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 if(const auto* action=scene.Find(id))
                 {
                     ComPtr<IDWriteTextFormat> format;ComPtr<IDWriteTextLayout> layout;
-                    Require(text->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,
+                    Require(snowdesktop::app_fonts::CreateTextFormat(text, L"Segoe UI",DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,
                         DWRITE_FONT_STRETCH_NORMAL,action->fontSize,L"",&format));
                     Require(text->CreateTextLayout(action->text.data(),static_cast<UINT32>(action->text.size()),
                         format.Get(),4096,256,&layout));

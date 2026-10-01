@@ -3,6 +3,7 @@
 #include "App.xaml.g.h"
 
 #include <winrt/Microsoft.UI.Xaml.Hosting.h>
+#include <winrt/Microsoft.Windows.ApplicationModel.Resources.h>
 
 namespace winrt::SnowDesktop::implementation
 {
@@ -20,6 +21,7 @@ struct App : AppT<App>
     void Close() noexcept;
 
 private:
+    winrt::Microsoft::Windows::ApplicationModel::Resources::ResourceManager fontResourceManager_{nullptr};
     winrt::Microsoft::UI::Xaml::Hosting::WindowsXamlManager
         windowsXamlManager_{nullptr};
 };

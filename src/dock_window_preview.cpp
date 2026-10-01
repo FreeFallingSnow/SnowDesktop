@@ -1,3 +1,4 @@
+#include "app_font.h"
 #include "dock_window_preview.h"
 
 #include <shellscalingapi.h>
@@ -922,7 +923,7 @@ void DockWindowPreview::Paint()
         -ScaleForDpi(14, dpi_), 0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
     HGDIOBJ oldFont = SelectObject(dc, font);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text);

@@ -1,3 +1,4 @@
+#include "app_font.h"
 #include "status_bar_preview.h"
 #include "status_bar_presentation.h"
 #include "status_bar_layout.h"
@@ -149,7 +150,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         "available system controls must retain their hit targets without an absent-battery slot");
     std::vector<RECT> rectangles;
     ComPtr<IDWriteTextFormat> font;
-    Require(text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
+    Require(snowdesktop::app_fonts::CreateTextFormat(text, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &font));
     font->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     for (std::size_t i = 0; i < items.size(); ++i)

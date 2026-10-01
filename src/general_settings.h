@@ -11,6 +11,7 @@
 
 #include <string>
 #include "animation_settings.h"
+#include "app_font.h"
 #include "calendar_display.h"
 #include "dock_layout_settings.h"
 #include "surface_theme.h"
@@ -53,6 +54,7 @@ struct GeneralSettings
     bool animationOnBattery = false;
     snowdesktop::calendar::DisplayPreferences calendarDisplay;
     snowdesktop::shell_extensions::Preferences shellExtensions;
+    snowdesktop::app_fonts::Selection font;
     char language[85] = "system";
 };
 

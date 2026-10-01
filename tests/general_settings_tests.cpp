@@ -30,9 +30,74 @@ void Check(bool condition, const char* message)
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     using namespace snowdesktop;
+    {
+        const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopFontSettings-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings saved, loaded;
+        saved.font = {"missing-package", "字体 \"name\"\\line\n"};
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.font == saved.font,
+            "font selection preserves Unicode, quotes, control characters and unavailable packages across restarts");
+        { std::ofstream old(path); old << "{}"; }
+        GeneralSettings legacy;
+        Check(LoadGeneralSettings(path.c_str(), legacy) && legacy.font.package == "system" && legacy.font.family.empty(),
+            "older profiles default to system fonts without migration writes");
+        std::error_code ec; std::filesystem::remove(path, ec);
+    }
+    if (argc > 1)
+    {
+        const auto assets = std::filesystem::path(argv[1]) / "assets";
+        const auto data = std::filesystem::temp_directory_path() / (L"SnowDesktopFontPackageTests-" + std::to_wstring(GetCurrentProcessId()));
+        const auto choices = app_fonts::List(assets, data);
+        Check(choices.size() == 3, "system, MiSans and HarmonyOS appear once per family, without duplicate static weight choices");
+        const auto mi = std::find_if(choices.begin(), choices.end(), [](const auto& c) { return c.selection.package == "MiSans"; });
+        const auto harmony = std::find_if(choices.begin(), choices.end(), [](const auto& c) { return c.selection.package == "HarmonyOS-Sans"; });
+        Check(mi != choices.end() && harmony != choices.end(), "both bundled font packages load via DirectWrite");
+        if (mi != choices.end())
+        {
+            Check(app_fonts::Select(mi->selection, assets, data), "select original MiSans Regular font");
+            Microsoft::WRL::ComPtr<IDWriteFactory> factory;
+            DWriteCreateFactory(DWRITE_FACTORY_TYPE_ISOLATED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(factory.GetAddressOf()));
+            Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
+            Check(SUCCEEDED(app_fonts::CreateTextFormat(factory.Get(), L"Segoe UI", static_cast<DWRITE_FONT_WEIGHT>(520),
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 16, L"", &format)), "selected font produces text formats");
+            Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+            factory->CreateTextLayout(L"Title", 5, format.Get(), 100, 40, &layout);
+            app_fonts::SetWeight(layout.Get(), static_cast<DWRITE_FONT_WEIGHT>(416), {0, 5});
+            Microsoft::WRL::ComPtr<IDWriteTextLayout4> variable;
+            layout.As(&variable);
+            DWRITE_FONT_AXIS_VALUE axis{};
+            Check(layout->GetFontWeight() == static_cast<DWRITE_FONT_WEIGHT>(416) && variable &&
+                SUCCEEDED(variable->GetFontAxisValues(0, &axis, 1, nullptr)) && axis.axisTag == DWRITE_FONT_AXIS_TAG_WEIGHT && axis.value == 416,
+                "rendering requests the corrected weight in both classic and axis formats even when only Regular is bundled");
+            Check(!app_fonts::Select({"../escape", "fake"}, assets, data) && app_fonts::current.load()->selection == mi->selection,
+                "invalid or unavailable selection does not mutate the active font");
+        }
+        if (harmony != choices.end()) Check(harmony->xamlSource.find(L"Regular.ttf") != std::wstring::npos,
+            "settings font URI selects the regular face rather than the alphabetically first bold file");
+        std::vector<app_fonts::Choice> imported;
+        std::string error;
+        Check(app_fonts::Import(assets / "fonts" / "HarmonyOS-Sans", data, imported, error) && imported.size() == 1,
+            "a font folder imports as a selectable family");
+        if (!imported.empty())
+        {
+            const auto all = app_fonts::List(assets, data);
+            Check(std::any_of(all.begin(), all.end(), [&](const auto& c) { return c.selection == imported.front().selection; }),
+                "imported family remains available on the next package scan");
+            const auto package = std::filesystem::path(imported.front().selection.package);
+            const auto file = std::filesystem::directory_iterator(data / "fonts" / package)->path().filename();
+            const auto uri = L"Files/SnowDesktopUserFonts/" + package.wstring() + L"/" + file.wstring();
+            Check(!app_fonts::ResolveXamlResource(uri, data).empty(), "managed custom font resolves for unpackaged and MSIX settings");
+        }
+        Check(app_fonts::ResolveXamlResource(L"Files/SnowDesktopUserFonts/../secret.ttf", data).empty() &&
+            app_fonts::ResolveXamlResource(L"Files/SnowDesktopUserFonts/id/../../secret.ttf", data).empty(),
+            "custom XAML resource lookup rejects traversal and unrelated resources");
+        Check(!app_fonts::Import(assets / "fonts" / "README.md", data, imported, error), "non-font packages are rejected");
+        app_fonts::Select({}, assets, data);
+        std::error_code ec; std::filesystem::remove_all(data, ec);
+        Check(!ec, "only the test-owned imported package directory is removed");
+    }
     {
         GeneralSettings value;
         Check(!value.statusBar.cpu && !value.statusBar.memory && !value.statusBar.gpu && !value.statusBar.traffic,

@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 
 // Rename command target selection and editor placement.
@@ -203,7 +204,7 @@ void DesktopApp::BeginRenameSelected(
             ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
         SendMessageW(renameEdit_, WM_SETFONT,
             reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
         const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
@@ -336,7 +337,7 @@ void DesktopApp::BeginRenameSelected(
         ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(renameEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));

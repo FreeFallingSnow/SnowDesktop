@@ -37,6 +37,8 @@ struct PersonalizationPageActions
         GeneralEdit edit)> updateGeneral;
     std::function<void(std::uint64_t, SettingsUpdateMode, DockEdit)> updateDock;
     std::function<void(const SettingsRoute&)> navigate;
+    std::function<std::vector<app_fonts::Choice>()> listFonts;
+    std::function<std::vector<app_fonts::Choice>(bool folder, std::string& error)> importFonts;
 };
 
 /**

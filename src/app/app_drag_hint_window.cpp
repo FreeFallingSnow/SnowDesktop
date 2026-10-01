@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "../drag_hint_rules.h"
 
@@ -255,7 +256,7 @@ void DesktopApp::ShowDragHintWindowScreen(
         -ScaleDragHintMetric(13, dpi), 0, 0, 0,
         FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
     if (!font)
     {
         ReleaseDC(nullptr, screenDc);

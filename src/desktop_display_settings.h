@@ -1,6 +1,7 @@
 #pragma once
 
 #include "constants.h"
+#include "font_weight_rules.h"
 #include "dock_layout_settings.h"
 #include "icon_beautify.h"
 
@@ -14,7 +15,10 @@ struct DesktopDisplaySettings
     float itemIconSizeScale = kDefaultItemIconSizeScale;
     float itemFontSizeCu = kDefaultItemFontSizeCu;
     float listItemFontSizeCu = kDefaultItemFontSizeCu;
-    int itemFontWeight = 600;
+    int itemFontWeight = font_weight_rules::kDefaultWeight;
+    int desktopTitleLines = 2;
+    int largeFolderTitleLines = 2;
+    int scrollingTitleLines = 2;
     int shortcutArrowMode = 0;
     IconBeautifySettings iconBeautify;
 };

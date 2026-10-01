@@ -1,3 +1,4 @@
+#include "app_font.h"
 #include "modern_menu.h"
 
 #include "menu_icon_render.h"
@@ -165,7 +166,7 @@ public:
         textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
         // Only the official Regular face is embedded.  Requesting Semibold
         // makes GDI synthesize thicker outlines, which distorts the 20px
         // Fluent masters most visibly on 96-DPI / low-resolution screens.
@@ -186,7 +187,7 @@ public:
         quickTextFont_ = CreateFontW(quickTextHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
         quickFluentIconFont_ = CreateFontW(quickIconHeight, 0, 0, 0,
             FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
             OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS,

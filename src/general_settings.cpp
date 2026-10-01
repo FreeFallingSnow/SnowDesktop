@@ -154,6 +154,14 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.collectionPopupAppearance)) return false;
     if (const auto* value = appearanceDocument.Find("statusBar"))
         if (!snowdesktop::DecodeStatusBarSettings(*value, settings.statusBar)) return false;
+    if (const auto* font = appearanceDocument.Find("font"))
+    {
+        if (!font->IsObject()) return false;
+        const auto* package = font->Find("package");
+        const auto* family = font->Find("family");
+        if (!package || !package->IsString() || !family || !family->IsString()) return false;
+        settings.font = {package->string, family->string};
+    }
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     ReadIntField(text, "animationMode", settings.animationMode);
     ReadIntField(text, "popupAnimationEffect", settings.popupAnimationEffect);
@@ -179,7 +187,20 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     if (!file) return false;
     auto calendar = settings.calendarDisplay;
     snowdesktop::calendar::Normalize(calendar);
+    const auto quote = [](std::string_view text) {
+        std::string result = "\"";
+        constexpr char hex[] = "0123456789abcdef";
+        for (const unsigned char c : text)
+        {
+            if (c == '"' || c == '\\') { result += '\\'; result += static_cast<char>(c); }
+            else if (c < 0x20) { result += "\\u00"; result += hex[c >> 4]; result += hex[c & 15]; }
+            else result += static_cast<char>(c);
+        }
+        return result + '"';
+    };
     file << "{\n";
+    file << "  \"font\": {\"package\":" << quote(settings.font.package)
+         << ",\"family\":" << quote(settings.font.family) << "},\n";
     file << "  \"statusBar\": " << statusBar << ",\n";
     file << "  \"shellExtensions\": " << snowdesktop::shell_extensions::WritePreferences(settings.shellExtensions) << ",\n";
     file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";

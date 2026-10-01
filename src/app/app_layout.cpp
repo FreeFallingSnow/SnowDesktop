@@ -160,6 +160,9 @@ void DesktopApp::LoadLayoutSlots()
     listItemFontSizeCu_ = savedListFontSizeCu.value_or(
         itemFontSizeCu_);
 
+    if (document.desktopTitleLines) desktopTitleLines_ = std::clamp(*document.desktopTitleLines, 1, 2);
+    if (document.largeFolderTitleLines) largeFolderTitleLines_ = std::clamp(*document.largeFolderTitleLines, 1, 2);
+    if (document.scrollingTitleLines) scrollingTitleLines_ = std::clamp(*document.scrollingTitleLines, 1, 2);
     if (document.itemFontWeight &&
         *document.itemFontWeight >= 100 &&
         *document.itemFontWeight <= 950)
@@ -971,6 +974,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
+         << ",\n  \"desktopTitleLines\": " << desktopTitleLines_
+         << ",\n  \"largeFolderTitleLines\": " << largeFolderTitleLines_
+         << ",\n  \"scrollingTitleLines\": " << scrollingTitleLines_
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
          << ",\n  \"iconSizeScale\": " << itemIconSizeScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
