@@ -11,6 +11,7 @@
 #include <fstream>
 #include "dock_folder_rules.h"
 #include "dock_refresh_cache.h"
+#include "dock_process_snapshot.h"
 #include "item_location.h"
 #include "dock_collection_icon_rules.h"
 #include "collection_popup_layout.h"

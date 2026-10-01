@@ -86,6 +86,7 @@ DesktopApp::CollectDockWindowPreviewItems(
             pendingCloseWindows = nullptr;
         bool includeCloaked = false;
         bool preferTaskbarDocumentProxies = false;
+        std::optional<DockProcessParentMap> processParents = std::nullopt;
     };
 
     std::vector<DockWindowPreviewItem> regularItems;
@@ -134,7 +135,8 @@ DesktopApp::CollectDockWindowPreviewItems(
                 window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
             cloaked != 0)
             return TRUE;
-        if (!DockWindowMatchesAppIdentity(window, *context->identity))
+        if (!DockWindowMatchesAppIdentity(window, *context->identity,
+                &context->processParents))
             return TRUE;
 
         wchar_t titleBuffer[512]{};

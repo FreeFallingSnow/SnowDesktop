@@ -1,7 +1,39 @@
 // Shell reads are represented by explicitly ordered completions. The actual
 // UI-owned cache and running-app matcher execute; no timing/sleeps are needed.
+void CheckDockProcessSnapshotReuse()
+{
+    using Snapshot = std::unordered_map<std::uint32_t, std::uint32_t>;
+    unsigned queries = 0;
+    const auto query = [&] { ++queries; return Snapshot{{2, 1}}; };
+    {
+        std::optional<Snapshot> pass;
+        const Snapshot* first = nullptr;
+        for (int window = 0; window < 128; ++window)
+        {
+            const auto& parents = snowdesktop::dock_process_snapshot::Read(pass, query);
+            if (!first) first = &parents;
+            Check(&parents == first && parents.at(2) == 1,
+                "all probes in one enumeration borrow one consistent parent snapshot");
+        }
+        Check(queries == 1, "many preview probes query the process snapshot once");
+    }
+    {
+        std::optional<Snapshot> nextPass;
+        snowdesktop::dock_process_snapshot::Read(nextPass, query);
+        Check(queries == 2, "a new enumeration gets a fresh process snapshot");
+    }
+    unsigned failures = 0;
+    std::optional<Snapshot> failedPass;
+    const auto unavailable = [&] { ++failures; return Snapshot{}; };
+    Check(snowdesktop::dock_process_snapshot::Read(failedPass, unavailable).empty() &&
+            snowdesktop::dock_process_snapshot::Read(failedPass, unavailable).empty() &&
+            failures == 1, "an unavailable snapshot retries on the next pass rather than every window");
+    std::cout << "preview synthetic128 probes: process snapshots=1; next pass fresh\n";
+}
+
 void CheckDockRefreshContinuity()
 {
+    CheckDockProcessSnapshotReuse();
     {
         // Exercise the production cache policy used by window AppID reads.
         // Shell itself is the controlled completion boundary, not mocked UI
