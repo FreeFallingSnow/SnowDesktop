@@ -69,12 +69,12 @@ function Snapshot([string]$Reason) {
 }
 
 function Check([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
-function Wait-Until([scriptblock]$Condition, [string]$Message, $Run = $null) {
+function Wait-Until([scriptblock]$Condition, [string]$Message, $ObservedRun = $null) {
     $timer = [Diagnostics.Stopwatch]::StartNew()
     while (-not (& $Condition)) {
-        if ($null -ne $Run -and $Run.process.HasExited) {
-            Complete $Run | Out-Null
-            throw "Command exited before expected signal: $Message; PID=$($Run.process.Id); args=$($Run.arguments)"
+        if ($null -ne $ObservedRun -and $ObservedRun.process.HasExited) {
+            Complete $ObservedRun | Out-Null
+            throw "Command exited before expected signal: $Message; PID=$($ObservedRun.process.Id); args=$($ObservedRun.arguments)"
         }
         if ($timer.Elapsed.TotalSeconds -gt 20 -or $fixtureTimer.Elapsed.TotalSeconds -gt 160) {
             Snapshot ("Timed out: $Message")
