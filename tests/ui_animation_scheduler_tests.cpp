@@ -4,6 +4,7 @@
 #include "popup_animation_rules.h"
 #include "status_bar_shell_shortcut.h"
 #include "status_bar_activation.h"
+#include "system_panel_transition.h"
 
 #include <windows.h>
 
@@ -117,6 +118,95 @@ void TestStatusBarContinuationDispatch()
     state.queue.Post(window, kBarContinuation, [&] { ++delivered; });
     Check(PumpMessagesUntil([&] { return delivered == 102; }),
         "a later explicit click after cancellation remains a new deliverable action");
+    DestroyWindow(window);
+    UnregisterClassW(name, cls.hInstance);
+}
+
+void TestSystemPanelTransitionHandoff()
+{
+    // Same production queue as the popup. Native rendering/device services are
+    // outside this boundary; resource-release reentry and message order are not.
+    struct Request
+    {
+        int page, owner;
+        bool powerConfirmation = false;
+        bool SameTarget(const Request& other) const
+        { return page == other.page && owner == other.owner && powerConfirmation == other.powerConfirmation; }
+    };
+    using Transition = snowdesktop::SystemPanelTransition<Request>;
+    using Action = Transition::Action;
+    Transition transition;
+    const std::optional<Request> current = Request{1, 10};
+    Check(transition.Queue({2, 10}, current, true, false) == Action::Close,
+        "switching pages first closes the current panel");
+    Check(transition.Queue({3, 10}, current, true, true) == Action::Wait &&
+        transition.Pending()->page == 3,
+        "rapid switching while closing retains only the latest destination");
+    Check(transition.Queue({3, 10}, current, true, true) == Action::Close && !transition.Pending(),
+        "a second click on the pending destination cancels its opening");
+    Check(transition.Queue({1, 10}, current, true, false) == Action::Close && !transition.Pending(),
+        "clicking the current page closes it without scheduling a reopen");
+    Check(transition.Queue({1, 10}, current, true, true) == Action::Wait,
+        "an explicit click after dismissal may reopen the closing page");
+    transition.Cancel();
+    Check(transition.Queue({1, 20}, current, true, false) == Action::Close &&
+        transition.Pending()->owner == 20,
+        "the same page on another monitor transfers instead of toggling off");
+    transition.Cancel();
+    Check(transition.Queue({1, 10, true}, current, true, false) == Action::Close &&
+        transition.Pending()->powerConfirmation,
+        "a power confirmation is distinct from the control overview");
+    transition.Cancel();
+
+    constexpr wchar_t name[] = L"SnowDesktop.SystemPanelHandoffTest";
+    WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpszClassName = name; cls.lpfnWndProc = BarContinuationProc;
+    Check(RegisterClassW(&cls) != 0, "panel handoff fixture registers");
+    BarContinuationFixture state;
+    const HWND window = CreateWindowExW(0, name, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
+        nullptr, cls.hInstance, &state);
+    Check(window != nullptr, "panel handoff fixture is message-only");
+    bool oldConsumerAttached = true;
+    int opened = 0;
+    const auto dispatch = [&] {
+        if (auto request = transition.Take())
+        {
+            Check(!oldConsumerAttached, "new page never subscribes before old consumer release");
+            opened = request->page;
+        }
+    };
+    {
+        auto release = transition.BeginRelease();
+        Check(static_cast<bool>(release), "old panel acquires release ownership");
+        // HideNow has detached its model and reset showing. This used to let a
+        // nested click open immediately, then be erased by the old cleanup.
+        Check(transition.Queue({2, 10}, {}, false, false) == Action::Wait,
+            "click during consumer release waits despite the hidden HWND");
+        Check(state.queue.Post(window, kBarContinuation, dispatch), "release callback posts nested opening");
+        Check(PumpMessagesUntil([&] { return state.messages == 1; }) && opened == 0 &&
+            transition.Pending()->page == 2,
+            "nested message cannot consume or open the destination during cleanup");
+        {
+            auto nested = transition.BeginRelease();
+            Check(!nested, "reentrant hiding cannot clean up the same panel twice");
+        }
+        Check(transition.Releasing(), "nested guard cannot end its parent's release");
+        Check(transition.Queue({3, 10}, {}, false, false) == Action::Wait,
+            "newest page supersedes the old request during release");
+        oldConsumerAttached = false;
+    }
+    Check(state.queue.Post(window, kBarContinuation, dispatch), "release endpoint reposts opening");
+    Check(PumpMessagesUntil([&] { return opened == 3; }) && !transition.Pending(),
+        "release endpoint opens only the newest page exactly once");
+    Check(transition.Queue({2, 10}, {}, false, true) == Action::Wait,
+        "menu lifetime defers the next destination");
+    transition.Cancel();
+    dispatch();
+    Check(opened == 3, "outside dismissal removes the queued destination");
+    Check(transition.Queue({2, 10}, {}, false, false) == Action::Open,
+        "a new click after cancellation remains deliverable");
+    dispatch();
+    Check(opened == 2, "later click opens after the old consumer is gone");
     DestroyWindow(window);
     UnregisterClassW(name, cls.hInstance);
 }
@@ -366,6 +456,7 @@ void TestStatusBarShellShortcuts()
 int main()
 {
     TestStatusBarContinuationDispatch();
+    TestSystemPanelTransitionHandoff();
     TestTaskViewTransition();
     TestTaskViewMouseHandoff();
     TestStatusBarShellShortcuts();
