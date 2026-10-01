@@ -193,6 +193,8 @@ private:
         const RECT& baseRect) const;
     std::vector<RECT> GetElementBaseRects() const;
     RECT ResolveMagnificationFocusRect(POINT pointer) const;
+    snowdesktop::dock_magnification::SingleFocusGeometry
+        GetSingleMagnificationGeometry(const RECT& baseRect) const;
     float GetMagnificationScale(
         const RECT& baseRect, const RECT& focusRect,
         POINT pointer) const;

@@ -177,31 +177,25 @@ private:
     float progress_ = 0.0f;
 };
 
-// Keep a single visual owner even while the semantic hover moves to another
-// item. Shrink the old owner before growing the new one; repeated pointer
-// samples never restart a phase, and reversals continue from the current size.
+// Animate only entry/exit amplitude. Pointer movement transfers that amplitude
+// between adjacent icons without shrinking the Dock at every semantic switch.
 class SingleFocusAnimation
 {
 public:
     static constexpr double kDurationMilliseconds = 80.0;
-    static constexpr double kSwitchPhaseMilliseconds = 40.0;
-
-    void SetTarget(RECT target, double now, double durationScale)
+    void SetTarget(RECT target, double now, double durationScale, int pointerAxis)
     {
+        if (!IsRectEmpty(&target)) pointerAxis_ = pointerAxis;
         if (EqualRect(&target, &requested_)) return;
         Advance(now);
         requested_ = target;
         const double speed = std::isfinite(durationScale) ? std::max(0.01, durationScale) : 1.0;
-        const bool switching = !IsRectEmpty(&target) && !IsRectEmpty(&current_) &&
-            !EqualRect(&target, &current_);
-        nextDuration_ = (switching ? kSwitchPhaseMilliseconds : kDurationMilliseconds) * speed;
-        if (IsRectEmpty(&current_) || amount_ == 0.0f)
+        if (!IsRectEmpty(&target))
         {
             current_ = target;
-            Begin(IsRectEmpty(&target) ? 0.0f : 1.0f, now, nextDuration_);
+            if (animating_ && to_ == 1.0f) return;
         }
-        else
-            Begin(EqualRect(&target, &current_) ? 1.0f : 0.0f, now, nextDuration_);
+        Begin(IsRectEmpty(&target) ? 0.0f : 1.0f, now, kDurationMilliseconds * speed);
     }
 
     void Advance(double now)
@@ -212,21 +206,13 @@ public:
         if (progress < 1.0f) return;
         animating_ = false;
         if (to_ == 0.0f)
-        {
             current_ = requested_;
-            if (!IsRectEmpty(&current_))
-            {
-                Begin(1.0f, started_ + duration_, nextDuration_);
-                Advance(now); // At most one follow-up phase, including a late frame.
-            }
-        }
     }
 
     bool IsAnimating() const { return animating_; }
     const RECT& CurrentRect() const { return current_; }
+    int PointerAxis() const { return pointerAxis_; }
     float Scale() const { return 1.0f + (kSingleFocusScale - 1.0f) * amount_; }
-    float ScaleFor(const RECT& rect) const
-    { return EqualRect(&rect, &current_) && !IsRectEmpty(&rect) ? Scale() : 1.0f; }
 
 private:
     void Begin(float to, double now, double duration)
@@ -237,7 +223,7 @@ private:
     RECT current_{}, requested_{};
     float amount_ = 0.0f, from_ = 0.0f, to_ = 0.0f;
     double started_ = 0.0, duration_ = kDurationMilliseconds;
-    double nextDuration_ = kDurationMilliseconds;
+    int pointerAxis_ = 0;
     bool animating_ = false;
 };
 
@@ -245,6 +231,73 @@ inline int GrowthForScale(float scale, int baseIconSize)
 {
     return std::max(0, static_cast<int>(std::round(
         std::max(1, baseIconSize) * (std::max(1.0f, scale) - 1.0f))));
+}
+
+// The two icons surrounding the pointer share one fixed growth budget. Packing
+// with that same integer budget keeps gaps and both Dock ends stable, including
+// odd-pixel growth and unequal distances across separators.
+struct SingleFocusGeometry
+{
+    RECT leading{}, trailing{};
+    int leadingGrowth = 0, trailingGrowth = 0;
+    bool vertical = false;
+
+    int Center(const RECT& rect) const
+    { return vertical ? (rect.top + rect.bottom) / 2 : (rect.left + rect.right) / 2; }
+
+    int GrowthFor(const RECT& rect) const
+    {
+        if (!IsRectEmpty(&leading) && EqualRect(&rect, &leading)) return leadingGrowth;
+        if (!IsRectEmpty(&trailing) && EqualRect(&rect, &trailing)) return trailingGrowth;
+        return 0;
+    }
+
+    float ScaleFor(const RECT& rect, int baseIconSize) const
+    { return 1.0f + static_cast<float>(GrowthFor(rect)) / std::max(1, baseIconSize); }
+
+    int AxisShiftFor(const RECT& rect) const
+    {
+        int precedingGrowth = 0;
+        const int center = Center(rect);
+        if (!IsRectEmpty(&leading) && center > Center(leading)) precedingGrowth += leadingGrowth;
+        if (!IsRectEmpty(&trailing) && center > Center(trailing)) precedingGrowth += trailingGrowth;
+        return precedingGrowth + GrowthFor(rect) / 2 - (leadingGrowth + trailingGrowth) / 2;
+    }
+};
+
+inline SingleFocusGeometry ResolveSingleFocusGeometry(
+    const std::vector<RECT>& candidates, bool vertical,
+    int pointerAxis, int baseIconSize, float focusScale)
+{
+    SingleFocusGeometry result;
+    result.vertical = vertical;
+    for (const RECT& candidate : candidates)
+    {
+        if (IsRectEmpty(&candidate)) continue;
+        const int center = result.Center(candidate);
+        if (center <= pointerAxis)
+        {
+            if (IsRectEmpty(&result.leading) || center > result.Center(result.leading))
+                result.leading = candidate;
+        }
+        else if (IsRectEmpty(&result.trailing) || center < result.Center(result.trailing))
+            result.trailing = candidate;
+    }
+    const int growth = GrowthForScale(focusScale, baseIconSize);
+    if (IsRectEmpty(&result.leading))
+    {
+        result.leading = result.trailing;
+        result.trailing = {};
+    }
+    else if (!IsRectEmpty(&result.trailing))
+    {
+        const float progress = static_cast<float>(pointerAxis - result.Center(result.leading)) /
+            static_cast<float>(result.Center(result.trailing) - result.Center(result.leading));
+        result.trailingGrowth = static_cast<int>(std::lround(
+            static_cast<float>(growth) * SmoothStep(progress)));
+    }
+    if (!IsRectEmpty(&result.leading)) result.leadingGrowth = growth - result.trailingGrowth;
+    return result;
 }
 
 inline float ScaleForAxisDistance(

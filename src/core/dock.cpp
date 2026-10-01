@@ -986,13 +986,33 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
                 singleMagnification_ = {};
             singleMagnification_.SetTarget(nextFocus,
                 snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
-                snowdesktop::animation::RuntimeDurationScale());
+                snowdesktop::animation::RuntimeDurationScale(),
+                IsVertical() ? pointer.y : pointer.x);
         }
         else singleMagnification_ = {};
         if (IsMagnificationAnimating())
             app_->EnsureUiAnimationFrame();
     }
     return nextFocus;
+}
+
+snowdesktop::dock_magnification::SingleFocusGeometry
+DockContainer::GetSingleMagnificationGeometry(const RECT& baseRect) const
+{
+    const RECT visualOwner = singleMagnification_.CurrentRect();
+    if (IsRectEmpty(&visualOwner) || GetMaximumMagnificationScale() <= 1.0f) return {};
+    std::vector<RECT> candidates;
+    if (UsesEdgeAnchoredMagnification())
+    {
+        const auto zone = GetMagnificationZone(baseRect);
+        if (zone == MagnificationZone::None || zone != GetMagnificationZone(visualOwner)) return {};
+        candidates = zone == MagnificationZone::Leading
+            ? GetLeadingMagnificationRects() : GetTrailingMagnificationRects();
+    }
+    else candidates = GetElementBaseRects();
+    return snowdesktop::dock_magnification::ResolveSingleFocusGeometry(
+        candidates, IsVertical(), singleMagnification_.PointerAxis(),
+        ItemIconSize(), singleMagnification_.Scale());
 }
 
 float DockContainer::GetMagnificationScale(
@@ -1002,7 +1022,7 @@ float DockContainer::GetMagnificationScale(
     if (!app_)
         return 1.0f;
     if (app_->dockSettings_.hoverEffect == 1)
-        return GetMaximumMagnificationScale() > 1.0f ? singleMagnification_.ScaleFor(baseRect) : 1.0f;
+        return GetSingleMagnificationGeometry(baseRect).ScaleFor(baseRect, ItemIconSize());
     if (IsRectEmpty(&focusRect))
         return 1.0f;
     if (UsesEdgeAnchoredMagnification())
@@ -1034,20 +1054,7 @@ int DockContainer::GetMagnificationAxisShift(
 {
     if (!app_) return 0;
     if (app_->dockSettings_.hoverEffect == 1)
-    {
-        const RECT visualOwner = singleMagnification_.CurrentRect();
-        if (IsRectEmpty(&visualOwner) || GetMaximumMagnificationScale() <= 1.0f) return 0;
-        if (UsesEdgeAnchoredMagnification())
-        {
-            const auto zone = GetMagnificationZone(baseRect);
-            if (zone == MagnificationZone::None || zone != GetMagnificationZone(visualOwner)) return 0;
-        }
-        const int distance = IsVertical()
-            ? (baseRect.top + baseRect.bottom - visualOwner.top - visualOwner.bottom) / 2
-            : (baseRect.left + baseRect.right - visualOwner.left - visualOwner.right) / 2;
-        return snowdesktop::dock_magnification::SingleFocusAxisShift(
-            distance, ItemIconSize(), singleMagnification_.Scale());
-    }
+        return GetSingleMagnificationGeometry(baseRect).AxisShiftFor(baseRect);
     if (IsRectEmpty(&focusRect) ||
         GetCurrentMagnificationScale() <= 1.0f)
         return 0;
