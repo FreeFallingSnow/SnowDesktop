@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "startup_diagnostics.h"
 #include "../performance_trace.h"
 #include "../drag_input_rules.h"
@@ -324,8 +325,15 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                         TrackMouseEvent(&tracking);
                     }))
             {
+                snowdesktop::dock_taskbar_diagnostics::Record(
+                    hitWindow == hwnd
+                        ? L"Dock mouse-leave retained on content"
+                        : L"Dock mouse-leave retained on backdrop",
+                    hitWindow);
                 return 0;
             }
+            snowdesktop::dock_taskbar_diagnostics::Record(
+                L"Dock mouse-leave outside content/backdrop", hitWindow);
         }
         if (rightButtonDownDockHost_ == &host)
             rightButtonDownDockHost_ = nullptr;

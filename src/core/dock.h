@@ -143,6 +143,19 @@ public:
     bool SharesStatusBarAppearance() const;
     bool IsMagnificationAnimating() const;
     bool AdvanceMagnificationAnimation(double nowMilliseconds);
+    // Host runtime-tree rebuilds replace item wrappers, but a stationary
+    // pointer must keep its presentation timeline. This snapshot owns no
+    // Container, Item or Slot pointers.
+    struct PresentationState
+    {
+        RECT reservedArea{};
+        RECT focusRect{};
+        int scrollOffset = 0;
+        snowdesktop::dock_magnification::HoverEntryAnimation entry;
+        snowdesktop::dock_magnification::SingleFocusAnimation single;
+    };
+    PresentationState CapturePresentationState() const;
+    bool RestorePresentationState(const PresentationState& state);
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../desktop_hover_rules.h"
 #include "../steam_app_identity.h"
 #include "../widget_visibility_rules.h"
@@ -53,7 +54,7 @@ void DesktopApp::OnMouseLeave()
         return;
     }
     POINT cursorScreen{};
-    GetCursorPos(&cursorScreen);
+    const bool cursorValid = GetCursorPos(&cursorScreen) != FALSE;
     const bool pointerStillInteractsWithDockPreview =
         dockWindowPreview_ &&
         dockWindowPreview_->ContainsInteractionPoint(cursorScreen);
@@ -111,6 +112,11 @@ void DesktopApp::OnMouseLeave()
                 luaWidgetPanelMouseDown_);
     if (canClearPassiveHover)
     {
+        wchar_t phase[160]{};
+        swprintf_s(phase, L"Passive hover cleared by mouse-leave: previous=%ld,%ld cursor=%ld,%ld cursorValid=%d",
+            lastMousePoint_.x, lastMousePoint_.y, cursorScreen.x, cursorScreen.y,
+            cursorValid ? 1 : 0);
+        snowdesktop::dock_taskbar_diagnostics::Record(phase);
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();

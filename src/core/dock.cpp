@@ -273,6 +273,27 @@ ComPtr<IDataObject> DockEntryItem::CreateDataObject()
 DockContainer::DockContainer(DesktopApp* app, std::vector<DockEntry>* entries, RECT area)
     : app_(app), entries_(entries), area_(area) {}
 
+DockContainer::PresentationState DockContainer::CapturePresentationState() const
+{
+    return {area_, magnificationFocusRect_, scrollOffset_,
+        magnificationEntry_, singleMagnification_};
+}
+
+bool DockContainer::RestorePresentationState(const PresentationState& state)
+{
+    if (!EqualRect(&area_, &state.reservedArea))
+        return false;
+
+    // BuildSlots clamps the restored viewport against the new model. The
+    // focus resolver then checks ownership, pointer leave and suppression
+    // before the replacement container's first presentation.
+    scrollOffset_ = state.scrollOffset;
+    magnificationFocusRect_ = state.focusRect;
+    magnificationEntry_ = state.entry;
+    singleMagnification_ = state.single;
+    return true;
+}
+
 void DockContainer::SetReservedArea(RECT area)
 {
     if (area_.left == area.left && area_.top == area.top &&
