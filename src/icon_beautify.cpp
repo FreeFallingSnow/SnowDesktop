@@ -764,14 +764,14 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.edgeHighlightStrength = preset == IconBeautifyPreset::FrostedGlassDark ? .24f :
             preset == IconBeautifyPreset::FrostedGlassLight ? .30f : .28f;
         settings.edgeLight.innerGlow = 1.6f;
-        // Icon reflections have broader, stronger weak sectors than panels.
-        // Keep their width and peak light while lowering the ambient floor
-        // and widening the smooth angular transition. Values remain editable.
-        settings.edgeLight.spread = 80.f;
-        settings.edgeLight.feather = 60.f;
-        settings.edgeLight.ambient = .12f;
-        settings.edgeLight.primary = .64f;
-        settings.edgeLight.opposite = .60f;
+        // Start fading earlier along the contour instead of keeping a long
+        // bright plateau followed by a localized dip. The broader feather
+        // carries the transition across the weak arcs at normal icon sizes.
+        settings.edgeLight.spread = 50.f;
+        settings.edgeLight.feather = 70.f;
+        settings.edgeLight.ambient = .10f;
+        settings.edgeLight.primary = .67f;
+        settings.edgeLight.opposite = .63f;
         settings.edgeLight.glowStrength = .12f;
         if (preset != IconBeautifyPreset::FrostedGlass)
         {
