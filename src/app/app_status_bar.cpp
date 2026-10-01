@@ -109,9 +109,8 @@ void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
         CloseQuickNavigation(false);
     if (systemPanel_)
     {
-        if (!immediate && (!monitor || systemPanel_->IsOpenForMonitor(monitor))) systemPanel_->Hide();
-        else if (monitor && immediate) systemPanel_->HideForMonitor(monitor);
-        else if (!monitor) systemPanel_->Hide();
+        if (monitor) systemPanel_->HideForMonitor(monitor, !immediate);
+        else systemPanel_->Hide();
     }
 }
 
@@ -361,7 +360,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {
         TraceStatusBarShellActivation(action, generation, L"wait-system-panel", hold->shortcutStartedMilliseconds);
-        systemPanel_->CloseThen(resume);
+        systemPanel_->CloseThen(resume, owner);
         return;
     }
     const auto chord = snowdesktop::ResolveStatusBarShellChord(action,

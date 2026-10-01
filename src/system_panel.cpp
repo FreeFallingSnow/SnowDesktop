@@ -51,6 +51,7 @@ struct SystemPanel::Impl
         StatusBarAction action;HWND owner;RECT anchor;PersonalizationSettings appearance;StatusBarSettings settings;std::shared_ptr<tray::Service> tray;std::shared_ptr<wr::WidgetSystemDataProvider> data;std::string confirmPower;bool clockAtRight=false;
         bool SameTarget(const Request& other) const
         {return action==other.action&&owner==other.owner&&confirmPower==other.confirmPower;}
+        HMONITOR Monitor() const {return MonitorFromRect(&anchor,MONITOR_DEFAULTTONEAREST);}
     };
     SettingsChanged changed;SystemCalendarActions calendar;std::function<bool(std::string_view,POINT)> dropOutside;Background background;
     TrayDragFeedback dragFeedback;std::function<void(HWND,RECT)> nativeControls;
@@ -64,7 +65,7 @@ struct SystemPanel::Impl
     std::unique_ptr<WidgetAccessibilityProviderHost> accessibility;
     std::unique_ptr<SystemCalendarInputs> calendarInputs;
     bool calendarMenu=false;
-    std::shared_ptr<SystemPanelModel> model;ui::Input input;std::string hovered;std::function<void()> afterClose;
+    std::shared_ptr<SystemPanelModel> model;ui::Input input;std::string hovered;std::function<void()> afterClose;HWND afterCloseOwner=nullptr;
     std::shared_ptr<PanelLifetime> lifetime=std::make_shared<PanelLifetime>();
     bool paintDirty=true;
     bool controlInputRefreshPending=false;
@@ -294,7 +295,7 @@ struct SystemPanel::Impl
         for(auto& card:next)OffsetRect(&card,kSurfacePadding,kSurfacePadding);
         const bool shape=cards.size()!=next.size()||!std::equal(cards.begin(),cards.end(),next.begin(),[](const auto& x,const auto& y){return EqualRect(&x,&y);});cards=std::move(next);
         if(w!=width||h!=height){width=w;height=h;surface.Reset();paintDirty=true;}RECT previous{};GetWindowRect(window,&previous);const bool moved=previous.left!=left||previous.top!=top||previous.right!=left+w||previous.bottom!=top+h;
-        if(moved)SetWindowPos(window,nullptr,left,top,w,h,SWP_NOACTIVATE|SWP_NOZORDER);
+        if(moved){auto moving=transition.BeginPlacement();SetWindowPos(window,nullptr,left,top,w,h,SWP_NOACTIVATE|SWP_NOZORDER);}
         if(Glass()&&(moved||shape||!backdrop.IsAvailable()))
         {
             if(!backdrop.IsAvailable())backdrop.InitializePopup(window,true,false);
@@ -584,8 +585,11 @@ struct SystemPanel::Impl
             if(m==WM_GETOBJECT&&self->accessibility){LRESULT result=0;if(self->accessibility->TryHandleGetObject(w,wp,lp,result))return result;}
             if(m==WM_PAINT){PAINTSTRUCT p{};BeginPaint(w,&p);self->Paint();EndPaint(w,&p);return 0;}
             if(m==WM_CLOSE){self->transition.Cancel();self->afterClose={};self->Animate(false);return 0;}
+            if(m==WM_DPICHANGED&&!self->transition.ShouldDismissForDpiChange())return 0;
             if(m==WM_DPICHANGED||m==WM_DISPLAYCHANGE){self->transition.Cancel();self->afterClose={};++self->closeGeneration;self->HideNow();return 0;}
-            if(m==WM_ACTIVATE&&LOWORD(wp)==WA_INACTIVE&&!self->modal&&self->closing&&self->current&&reinterpret_cast<HWND>(lp)!=self->current->owner)
+            if(m==WM_ACTIVATE&&LOWORD(wp)==WA_INACTIVE&&!self->modal&&self->closing&&self->current&&
+                self->transition.ShouldCancelOnDeactivation(self->current->owner,reinterpret_cast<HWND>(lp))&&
+                (!self->afterClose||self->afterCloseOwner!=reinterpret_cast<HWND>(lp)))
             {self->transition.Cancel();self->afterClose={};++self->closeGeneration;}
             if(m==WM_ACTIVATE&&LOWORD(wp)==WA_INACTIVE&&!self->modal&&self->showing&&!self->closing)
             {if(!self->RetainTrayMenu(reinterpret_cast<HWND>(lp)))self->Animate(false);}
@@ -683,9 +687,10 @@ void SystemPanel::ShowPowerConfirmation(std::string task,HWND owner,RECT anchor,
     impl_->Queue({StatusBarAction::ControlCenter,owner,anchor,appearance,settings,{},std::move(data),std::move(task)});
 }
 void SystemPanel::Hide(){impl_->transition.Cancel();impl_->afterClose={};++impl_->closeGeneration;if(impl_->showing)impl_->Animate(false);}
-void SystemPanel::CloseThen(std::function<void()> next)
+void SystemPanel::CloseThen(std::function<void()> next, HWND destinationOwner)
 {
     impl_->transition.Cancel();impl_->afterClose=std::move(next);
+    impl_->afterCloseOwner=destinationOwner?destinationOwner:impl_->current?impl_->current->owner:nullptr;
     if(impl_->closing||impl_->transition.Releasing())return;
     if(impl_->showing||impl_->modal)impl_->Animate(false);
     else if(auto fn=std::move(impl_->afterClose)){impl_->afterClose={};fn();}
@@ -694,7 +699,8 @@ bool SystemPanel::IsOpen()const{return impl_->showing||impl_->modal||impl_->tran
 bool SystemPanel::IsOpenForMonitor(HMONITOR monitor)const
 {
     if(!monitor)return false;
-    if((impl_->showing||impl_->modal||impl_->transition.Releasing()||impl_->afterClose)&&impl_->monitor==monitor)return true;
+    if((impl_->showing||impl_->modal||impl_->transition.Releasing())&&impl_->monitor==monitor)return true;
+    if(impl_->afterClose&&MonitorFromWindow(impl_->afterCloseOwner,MONITOR_DEFAULTTONULL)==monitor)return true;
     // A queued replacement owns the same interaction hold between the close
     // endpoint and kOpenPending; that message gap must not hide the merged bar.
     const auto& pending=impl_->transition.Pending();
@@ -717,11 +723,19 @@ bool SystemPanel::ContainsPoint(POINT screen)const
 }
 void SystemPanel::UpdateSettings(const StatusBarSettings& settings)
 {if(impl_->current)impl_->current->settings=settings;if(impl_->model){impl_->model->UpdateSettings(settings);impl_->paintDirty=true;}}
-void SystemPanel::HideForMonitor(HMONITOR m)
+void SystemPanel::HideForMonitor(HMONITOR m, bool animate)
 {
-    const auto& pending=impl_->transition.Pending();
-    if(pending&&MonitorFromRect(&pending->anchor,MONITOR_DEFAULTTONEAREST)==m)impl_->transition.Cancel();
-    if(impl_->monitor==m){impl_->transition.Cancel();impl_->afterClose={};++impl_->closeGeneration;impl_->HideNow();}
+    const bool canceled=impl_->transition.CancelForMonitor(m);
+    const bool continuation=impl_->afterClose&&MonitorFromWindow(impl_->afterCloseOwner,MONITOR_DEFAULTTONULL)==m;
+    if(continuation)impl_->afterClose={};
+    if(canceled||continuation)++impl_->closeGeneration;
+    // Hiding the old bar closes only its current surface. A replacement (or
+    // external continuation) on another monitor retains its request and hold.
+    if(impl_->monitor==m&&(impl_->showing||impl_->modal||impl_->transition.Releasing()))
+    {
+        if(animate)impl_->Animate(false);
+        else {++impl_->closeGeneration;impl_->FinishClose();}
+    }
 }
 bool SystemPanel::PreTranslateMessage(MSG*){return false;}
 bool SystemPanel::DropTrayIcon(std::string_view key,POINT p){if(!impl_->showing||impl_->closing||impl_->modal||impl_->slide.IsAnimating()||!impl_->model)return false;ScreenToClient(impl_->window,&p);const bool ok=impl_->model->Drop(key,impl_->ModelPoint(p.x,p.y));if(ok){impl_->Arrange();impl_->Paint();}return ok;}

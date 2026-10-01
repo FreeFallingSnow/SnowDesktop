@@ -132,6 +132,7 @@ void TestSystemPanelTransitionHandoff()
         bool powerConfirmation = false;
         bool SameTarget(const Request& other) const
         { return page == other.page && owner == other.owner && powerConfirmation == other.powerConfirmation; }
+        int Monitor() const { return owner; }
     };
     using Transition = snowdesktop::SystemPanelTransition<Request>;
     using Action = Transition::Action;
@@ -152,7 +153,29 @@ void TestSystemPanelTransitionHandoff()
     Check(transition.Queue({1, 20}, current, true, false) == Action::Close &&
         transition.Pending()->owner == 20,
         "the same page on another monitor transfers instead of toggling off");
-    transition.Cancel();
+    // Each fixture bar is on its own monitor. This is the cancellation path
+    // taken when the old monitor's auto-hidden bar reports its disappearance.
+    Check(!transition.CancelForMonitor(10) && transition.Pending()->owner == 20,
+        "old-monitor hiding cannot discard the new-monitor popup request");
+    Check(!transition.ShouldCancelOnDeactivation(10, 20),
+        "activation of the destination bar retains cross-monitor handoff");
+    Check(transition.ShouldCancelOnDeactivation(10, 30),
+        "unrelated foreground activation still dismisses queued opening");
+    Check(transition.CancelForMonitor(20) && !transition.Pending(),
+        "hiding the destination monitor cancels its own queued popup");
+
+    Check(transition.ShouldDismissForDpiChange(), "external DPI changes dismiss an idle popup");
+    {
+        auto placement = transition.BeginPlacement();
+        Check(!transition.ShouldDismissForDpiChange(),
+            "cross-monitor window placement cannot dismiss the destination on WM_DPICHANGED");
+        {
+            auto nested = transition.BeginPlacement();
+            Check(!transition.ShouldDismissForDpiChange(), "nested placement preserves DPI ownership");
+        }
+        Check(!transition.ShouldDismissForDpiChange(), "inner placement cannot clear its parent's DPI ownership");
+    }
+    Check(transition.ShouldDismissForDpiChange(), "DPI dismissal resumes after destination placement");
     Check(transition.Queue({1, 10, true}, current, true, false) == Action::Close &&
         transition.Pending()->powerConfirmation,
         "a power confirmation is distinct from the control overview");

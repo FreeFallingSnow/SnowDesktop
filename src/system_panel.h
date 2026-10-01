@@ -20,8 +20,8 @@ public:
     void ShowPowerConfirmation(std::string task,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
         std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
     void Hide();
-    void HideForMonitor(HMONITOR);
-    void CloseThen(std::function<void()>);
+    void HideForMonitor(HMONITOR, bool animate = false);
+    void CloseThen(std::function<void()>, HWND destinationOwner = nullptr);
     bool IsOpen() const;
     bool IsOpenForMonitor(HMONITOR monitor) const;
     // Includes visible cards and the active prompt/retained tray menu.

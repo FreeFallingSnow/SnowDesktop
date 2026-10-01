@@ -29,6 +29,16 @@ public:
 
     void Defer(Request request) { pending_ = std::move(request); }
     void Cancel() { pending_.reset(); }
+    template <typename Monitor>
+    bool CancelForMonitor(Monitor monitor)
+    {
+        if (!pending_ || pending_->Monitor() != monitor) return false;
+        pending_.reset();
+        return true;
+    }
+    template <typename Owner>
+    bool ShouldCancelOnDeactivation(Owner currentOwner, Owner activated) const
+    { return activated != currentOwner && (!pending_ || pending_->owner != activated); }
     const std::optional<Request>& Pending() const { return pending_; }
     bool Releasing() const { return releasing_; }
     std::optional<Request> Take()
@@ -54,8 +64,27 @@ public:
     };
     ReleaseGuard BeginRelease() { return ReleaseGuard(*this); }
 
+    // SetWindowPos can synchronously deliver WM_DPICHANGED when a reused popup
+    // moves to another monitor. Its layout already uses the destination bar's
+    // DPI, so that notification belongs to placement, not outside dismissal.
+    class PlacementGuard
+    {
+    public:
+        explicit PlacementGuard(SystemPanelTransition& state)
+            : state_(state), previous_(std::exchange(state.placing_, true)) {}
+        ~PlacementGuard() { state_.placing_ = previous_; }
+        PlacementGuard(const PlacementGuard&) = delete;
+        PlacementGuard& operator=(const PlacementGuard&) = delete;
+    private:
+        SystemPanelTransition& state_;
+        bool previous_;
+    };
+    PlacementGuard BeginPlacement() { return PlacementGuard(*this); }
+    bool ShouldDismissForDpiChange() const { return !placing_; }
+
 private:
     std::optional<Request> pending_;
     bool releasing_ = false;
+    bool placing_ = false;
 };
 }
