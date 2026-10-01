@@ -22,12 +22,12 @@ void CheckDockProcessSnapshotReuse()
         snowdesktop::dock_process_snapshot::Read(nextPass, query);
         Check(queries == 2, "a new enumeration gets a fresh process snapshot");
     }
-    unsigned failures = 0;
+    unsigned unavailableQueries = 0;
     std::optional<Snapshot> failedPass;
-    const auto unavailable = [&] { ++failures; return Snapshot{}; };
+    const auto unavailable = [&] { ++unavailableQueries; return Snapshot{}; };
     Check(snowdesktop::dock_process_snapshot::Read(failedPass, unavailable).empty() &&
             snowdesktop::dock_process_snapshot::Read(failedPass, unavailable).empty() &&
-            failures == 1, "an unavailable snapshot retries on the next pass rather than every window");
+            unavailableQueries == 1, "an unavailable snapshot retries on the next pass rather than every window");
     std::cout << "preview synthetic128 probes: process snapshots=1; next pass fresh\n";
 }
 
