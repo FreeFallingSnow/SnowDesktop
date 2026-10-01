@@ -104,7 +104,8 @@ DesktopApp::CollectDockWindowPreviewItems(
              context->pendingCloseWindows->contains(window)))
             return TRUE;
 
-        const bool taskWindow = IsDockTaskWindow(window);
+        const bool taskWindow = IsDockTaskWindow(
+            window, context->includeCloaked);
         const bool taskbarDocumentProxyCandidate =
             context->preferTaskbarDocumentProxies &&
             IsDockTaskbarDocumentProxyCandidate(window);
@@ -125,11 +126,13 @@ DesktopApp::CollectDockWindowPreviewItems(
                     applicationLevelWindow))
             return TRUE;
 
+        // Document proxies bypass ordinary task-window presentation rules.
+        // They still need the cloak filter unless collecting all windows to close.
         DWORD cloaked = 0;
-        if (SUCCEEDED(DwmGetWindowAttribute(
+        if (taskbarDocumentProxyCandidate && !context->includeCloaked &&
+            SUCCEEDED(DwmGetWindowAttribute(
                 window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
-            cloaked != 0 &&
-            !context->includeCloaked)
+            cloaked != 0)
             return TRUE;
         if (!DockWindowMatchesAppIdentity(window, *context->identity))
             return TRUE;

@@ -524,11 +524,13 @@ constexpr bool IsTaskWindowStyleEligible(
  * 普通最小化窗口仍保留 WS_VISIBLE，因此可以继续显示。部分托盘应用会在
  * 处理 WM_CLOSE 时先最小化再隐藏窗口，此时 IsIconic 仍可能为真；隐藏状态
  * 必须优先，不能因为窗口仍处于最小化态就把它重新加入 Dock。
+ * 系统设置等应用关闭后还可能保留 WS_VISIBLE，但已由 DWM cloak 隐藏；
+ * 这种后台窗口同样不能作为正在运行的任务窗口。
  */
 constexpr bool IsTaskWindowPresentationEligible(
-    bool visible, bool /*iconic*/) noexcept
+    bool visible, bool /*iconic*/, bool cloaked = false) noexcept
 {
-    return visible;
+    return visible && !cloaked;
 }
 
 /**

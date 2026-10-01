@@ -5448,6 +5448,14 @@ int main(int argc, char** argv)
     Check(!rules::IsTaskWindowPresentationEligible(false, false) &&
             !rules::IsTaskWindowPresentationEligible(false, true),
         "hidden windows must stay out of the Dock even when still iconic");
+    // Windows Settings in the reported scene retained WS_VISIBLE after the
+    // Shell cloaked both its CoreWindow and ApplicationFrameWindow.
+    Check(!rules::IsTaskWindowPresentationEligible(true, false, true) &&
+            !rules::IsTaskWindowPresentationEligible(true, true, true),
+        "cloaked Settings windows must not mark pinned or frequent items as running, even when WS_VISIBLE remains set");
+    Check(rules::IsTaskWindowPresentationEligible(true, false, false) &&
+            rules::IsTaskWindowPresentationEligible(true, true, false),
+        "uncloaked normal and minimized task windows must retain their running indicators");
     Check(rules::IsTaskWindowProcessEligible(false, false) &&
             rules::IsTaskWindowProcessEligible(true, true) &&
             !rules::IsTaskWindowProcessEligible(true, false),

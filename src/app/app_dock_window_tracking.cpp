@@ -512,12 +512,9 @@ void DesktopApp::RefreshDockRunningWindows(
             }
             const std::wstring appUserModelId = context->owner->GetDockWindowAppUserModelIdAsync(window);
 
-            DWORD cloaked = 0;
-            const bool isCloaked = SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
-                &cloaked, sizeof(cloaked))) && cloaked != 0;
             int score = DockWindowsShareActivationGroup(
                 window, context->scoringForeground) ? 1000 : 0;
-            if (!isCloaked) score += 100;
+            score += 100;
             if (!IsIconic(window)) score += 20;
             if (!GetWindow(window, GW_OWNER)) score += 10;
 
@@ -543,7 +540,7 @@ void DesktopApp::RefreshDockRunningWindows(
                 target.score = score;
             }
 
-            if (isCloaked || pathIt->second.empty()) return TRUE;
+            if (pathIt->second.empty()) return TRUE;
             bool fixed = false;
             for (const DockAppIdentity& identity : *context->fixedIdentities)
             {

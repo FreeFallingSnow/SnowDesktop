@@ -541,14 +541,19 @@ inline bool DockWindowsShareApplicationIdentity(
             QueryDockWindowExecutablePath(second);
 }
 
-inline bool IsDockTaskWindow(HWND window)
+inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
 {
     if (!window || GetAncestor(window, GA_ROOT) != window)
         return false;
+    DWORD cloaked = 0;
+    const bool isCloaked = !includeCloaked &&
+        SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
+            &cloaked, sizeof(cloaked))) && cloaked != 0;
     if (!snowdesktop::dock_window_rules::
             IsTaskWindowPresentationEligible(
                 IsWindowVisible(window) != FALSE,
-                IsIconic(window) != FALSE))
+                IsIconic(window) != FALSE,
+                isCloaked))
         return false;
     wchar_t className[64]{};
     GetClassNameW(window, className, static_cast<int>(std::size(className)));
