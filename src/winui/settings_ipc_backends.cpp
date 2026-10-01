@@ -280,6 +280,7 @@ struct BackendServer::Impl
         channel.Bind<Return>("options." #Name, [this] { return options.Name ? options.Name() : Return{}; });
         SD_OPTION(searchInput, SettingsSearchIndexInput)
         SD_OPTION(startupConflict, GeneralStartupConflict)
+        SD_OPTION(appliedFont, app_fonts::Selection)
         SD_OPTION(advancedFeatureStatus, GeneralAdvancedFeatureStatus)
         SD_OPTION(developerToolsVisible, bool)
         SD_OPTION(debugVisible, bool)
@@ -488,6 +489,7 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.Name = [&channel] { return channel.Call<Return>("options." #Name); };
     SD_REMOTE_OPTION(searchInput, SettingsSearchIndexInput)
     SD_REMOTE_OPTION(startupConflict, GeneralStartupConflict)
+    SD_REMOTE_OPTION(appliedFont, app_fonts::Selection)
     SD_REMOTE_OPTION(advancedFeatureStatus, GeneralAdvancedFeatureStatus)
     SD_REMOTE_OPTION(developerToolsVisible, bool)
     SD_REMOTE_OPTION(debugVisible, bool)

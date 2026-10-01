@@ -192,4 +192,19 @@ inline PageItemVisualMetrics ResolvePageItemVisualMetrics(
     return result;
 }
 
+// Native containers reserve a little breathing room around one visible line.
+// Keep the page's icon/font sizing; changing title lines must not enlarge icons.
+inline PageItemVisualMetrics ResolveWidgetTitleMetrics(
+    PageItemVisualMetrics metrics, int titleLines)
+{
+    if (titleLines == 1)
+    {
+        const int previousHeight = metrics.titleHeight;
+        metrics.titleHeight = std::max(1, static_cast<int>(std::ceil(
+            metrics.fontSize * 7.0f / 6.0f * 1.35f)));
+        metrics.minimumGridHeight += metrics.titleHeight - previousHeight;
+    }
+    return metrics;
+}
+
 } // namespace snowdesktop

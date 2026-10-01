@@ -14,8 +14,8 @@ namespace
 {
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-// Font selection and the three global title line counts extend the snapshot.
-constexpr std::uint32_t Version = 30;
+// Font settings extend the snapshot; restart state queries the host's active font.
+constexpr std::uint32_t Version = 31;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;

@@ -123,6 +123,8 @@ std::vector<Choice> List(const fs::path& assets, const fs::path& data)
 
 bool Select(const Selection& selection, const fs::path& assets, const fs::path& data)
 {
+    const auto applied = current.load();
+    if (applied && applied->selection == selection) return true;
     if (selection.package == "system") { current.store(nullptr); ++revision; return true; }
     const fs::path id(selection.package);
     if (!SafePart(id.wstring())) return false;

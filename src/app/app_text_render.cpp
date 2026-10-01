@@ -227,11 +227,12 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
 
     titleLines = titleLines > 0 ? std::clamp(titleLines, 1, 2) : desktopTitleLines_;
-    RECT textRect = GetItemTextRect(bounds, selected);
+    const int componentTitleLines = componentPanel ? titleLines : 0;
+    RECT textRect = GetItemTextRect(bounds, selected, componentTitleLines);
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
-    const auto visualMetrics = GetItemVisualMetrics(bounds);
+    const auto visualMetrics = GetItemVisualMetrics(bounds, componentTitleLines);
     const float fontScale = visualMetrics.fontScale;
     const float fontSize = visualMetrics.fontSize;
     const float lineHeight = fontSize * 7.0f / 6.0f;
@@ -368,6 +369,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     }
 
     float ty = static_cast<float>(textRect.top);
+    if (componentPanel && !selected && titleLines == 1)
+        ty += std::max(0.0f, (static_cast<float>(visualMetrics.titleHeight) - th) / 2.0f);
     DWRITE_TEXT_METRICS metrics{};
     layoutIt->second->GetMetrics(&metrics);
     if (selected)
@@ -402,7 +405,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     }
     if (isSingleLine && selected)
     {
-        RECT cr = GetItemTextRect(bounds, false);
+        RECT cr = GetItemTextRect(bounds, false, componentTitleLines);
         float collapsedH = static_cast<float>(cr.bottom - cr.top);
         ty = cr.top + (collapsedH - th) * 0.5f;
     }

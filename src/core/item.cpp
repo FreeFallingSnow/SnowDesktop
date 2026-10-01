@@ -124,12 +124,16 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     const float dragOpacity = dragged ? 0.6f : 1.0f;
     const float alpha = dragOpacity * cutOpacity;
 
+    const auto* widget = dynamic_cast<WidgetContainer*>(container_);
+    const int componentTitleLines = demoCollection || widget
+        ? app_->ResolveItemTitleLines(demoCollection ? demoCollection : widget->GetWidgetData()) : 0;
+
     RECT iconRect = forcedIconSize > 0 && !quickNavLayout
         ? snowdesktop::ResolveCenteredIconRect(
             rect, forcedIconSize)
         : (quickNavLayout
             ? app_->GetQuickNavItemIconRect(rect)
-            : app_->GetItemIconRect(rect));
+            : app_->GetItemIconRect(rect, componentTitleLines));
     if (forcedIconSize <= 0 &&
         centerIconVertically && !quickNavLayout)
         iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
@@ -165,7 +169,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             ? highlightRect
             : (quickNavLayout
                 ? rect
-                : app_->GetItemSelectionRect(rect, true));
+                : app_->GetItemSelectionRect(rect, true, componentTitleLines));
         const float radius = quickNavLayout
             ? static_cast<float>(app_->QuickNavScale(6))
             : 6.0f * app_->GetItemLayoutScale(rect);
@@ -336,6 +340,8 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
     const bool selected = (state == 2 || state == 3);
     const bool dragged = (state == 3);
     const float opacity = dragged ? 0.6f : (entry_->isCut ? 0.4f : 1.0f);
+    const auto* widget = dynamic_cast<WidgetContainer*>(container_);
+    const int componentTitleLines = widget ? app_->ResolveItemTitleLines(widget->GetWidgetData()) : 0;
 
     if (hovered && !selected)
     {
@@ -352,7 +358,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
 
     RECT iconRect = quickNavLayout
         ? app_->GetQuickNavItemIconRect(rect)
-        : app_->GetItemIconRect(rect);
+        : app_->GetItemIconRect(rect, componentTitleLines);
 
     if (selected && !dragged)
     {
@@ -360,7 +366,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
             ? static_cast<float>(app_->QuickNavScale(6))
             : 6.0f * app_->GetItemLayoutScale(rect);
         app_->DrawD2DRoundedRectangle(context,
-            quickNavLayout ? rect : app_->GetItemSelectionRect(rect, true),
+            quickNavLayout ? rect : app_->GetItemSelectionRect(rect, true, componentTitleLines),
             radius,
             lightTheme ? D2D1::ColorF(0.20f, 0.40f, 0.70f, 0.18f * opacity)
                        : D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),

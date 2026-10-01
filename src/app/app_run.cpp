@@ -805,6 +805,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         std::uint64_t) {
         return BuildHomeAboutStatus(generation);
     };
+    settingsHostOptions.appliedFont = [] {
+        const auto applied = snowdesktop::app_fonts::current.load();
+        return applied ? applied->selection : snowdesktop::app_fonts::Selection{};
+    };
     settingsHostOptions.startupConflict = [this]() {
         using snowdesktop::winui::GeneralStartupConflict;
         using snowdesktop::winui::GeneralStartupConflictKind;

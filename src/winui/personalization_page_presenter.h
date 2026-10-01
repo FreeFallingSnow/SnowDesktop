@@ -38,7 +38,9 @@ struct PersonalizationPageActions
     std::function<void(std::uint64_t, SettingsUpdateMode, DockEdit)> updateDock;
     std::function<void(const SettingsRoute&)> navigate;
     std::function<std::vector<app_fonts::Choice>()> listFonts;
+    std::function<app_fonts::Selection()> appliedFont;
     std::function<std::vector<app_fonts::Choice>(bool folder, std::string& error)> importFonts;
+    std::function<void(std::uint64_t generation)> restartApplication;
 };
 
 /**
@@ -56,7 +58,8 @@ public:
 
     PersonalizationPagePresenter(
         LocalizeCallback localize,
-        const winrt::Microsoft::UI::Xaml::Style& cardStyle);
+        const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        const winrt::Microsoft::UI::Xaml::Style& navigationStyle = nullptr);
     ~PersonalizationPagePresenter();
 
     PersonalizationPagePresenter(

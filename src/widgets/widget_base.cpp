@@ -121,7 +121,7 @@ float Widget::GetLayoutSpacingScale() const
 snowdesktop::PageItemVisualMetrics Widget::GetItemVisualMetrics() const
 {
     return app_
-        ? app_->GetItemVisualMetrics(GetBounds())
+        ? app_->GetItemVisualMetrics(GetBounds(), app_->ResolveItemTitleLines(data_))
         : snowdesktop::ResolvePageItemVisualMetrics(
             kCellWidth, kMinCellHeight, kDefaultItemFontSizeCu);
 }
@@ -388,7 +388,7 @@ RECT WidgetContainer::GetCollapseButtonRect() const
 snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 {
     return app_
-        ? app_->GetItemVisualMetrics(GetLayoutFrameRect())
+        ? app_->GetItemVisualMetrics(GetLayoutFrameRect(), app_->ResolveItemTitleLines(data_))
         : Widget::GetItemVisualMetrics();
 }
 
@@ -2269,7 +2269,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         std::round(50.0f * layoutScale));
     if (height >= regularLayoutThreshold)
     {
-        RECT iconRect = app_->GetItemIconRect(rect);
+        RECT iconRect = app_->GetItemIconRect(rect, app_->ResolveItemTitleLines(data_));
         if (centerIconVertically)
             iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
                 rect, iconRect);

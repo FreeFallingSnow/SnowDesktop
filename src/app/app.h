@@ -2606,18 +2606,18 @@ private:
     snowdesktop::PageItemVisualMetrics GetPageItemVisualMetrics(
         const GridPage& page) const;
     snowdesktop::PageItemVisualMetrics GetItemVisualMetrics(
-        RECT bounds) const;
+        RECT bounds, int componentTitleLines = 0) const;
     /** @brief 从项边界矩形计算图标区域。 @param bounds 项边界 @return 图标矩形 */
-    RECT GetItemIconRect(RECT bounds) const;
+    RECT GetItemIconRect(RECT bounds, int componentTitleLines = 0) const;
     /** @brief 从快捷导航项边界计算图标区域（独立于桌面网格缩放）。 @param bounds 项边界 @return 图标矩形 */
     RECT GetQuickNavItemIconRect(RECT bounds) const;
     /** @brief 从项边界矩形计算文本区域。 @param bounds 项边界 @param expanded 是否展开 @return 文本矩形 */
-    RECT GetItemTextRect(RECT bounds, bool expanded) const;
+    RECT GetItemTextRect(RECT bounds, bool expanded, int componentTitleLines = 0) const;
     /** @brief 获取项目所在网格单元相对于 92x116 基准尺寸的布局缩放比例。 */
     float GetItemLayoutScale(RECT bounds) const;
     bool UpdateWidgetHandleCursor(POINT point);
     /** @brief 从项边界矩形计算选中框区域。 @param bounds 项边界 @param expanded 是否展开 @return 选中框矩形 */
-    RECT GetItemSelectionRect(RECT bounds, bool expanded) const;
+    RECT GetItemSelectionRect(RECT bounds, bool expanded, int componentTitleLines = 0) const;
     /**
      * @brief 绘制圆角矩形。
      * @param ctx D2D 上下文

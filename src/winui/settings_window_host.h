@@ -50,6 +50,8 @@ struct SettingsWindowHostOptions
     HomeAboutStatusProvider homeAboutStatus;
     /** Runtime-only ownership warnings for the Windows auto-start setting. */
     std::function<GeneralStartupConflict()> startupConflict;
+    /** Font actually active in the desktop host, independent of a settings child restart. */
+    std::function<app_fonts::Selection()> appliedFont;
     std::function<GeneralAdvancedFeatureStatus()> advancedFeatureStatus;
     std::function<void()> registerAdvancedFeatures;
     std::function<bool()> resetAdvancedFeatures;

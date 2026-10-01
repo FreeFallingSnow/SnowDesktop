@@ -132,8 +132,8 @@ bool IsEnter(const muxi::KeyRoutedEventArgs& args) noexcept
 
 struct PersonalizationPagePresenter::Impl
 {
-    explicit Impl(LocalizeCallback callback, const mux::Style& style)
-        : localize(std::move(callback)), cardStyle(style)
+    explicit Impl(LocalizeCallback callback, const mux::Style& style, const mux::Style& navigation)
+        : localize(std::move(callback)), cardStyle(style), navigationStyle(navigation)
     {
         BuildControls();
         HookEvents();
@@ -143,6 +143,7 @@ struct PersonalizationPagePresenter::Impl
     LocalizeCallback localize;
     PersonalizationPageActions actions;
     mux::Style cardStyle{nullptr};
+    mux::Style navigationStyle{nullptr};
     muxc::StackPanel themeRoot{nullptr}, dockThemeRoot{nullptr};
     muxc::ContentControl dockAppearanceHost;
     muxc::StackPanel menuRoot;
@@ -153,19 +154,19 @@ struct PersonalizationPagePresenter::Impl
     SettingsCard fontCard;
     SettingRow fontRow;
     muxc::ComboBox fontCombo;
-    muxc::Button fontFileButton, fontFolderButton;
+    muxc::Button fontRestartButton;
     muxc::InfoBar fontRestart;
     muxc::TextBlock fontError;
-    winrt::event_token fontToken{}, fontFileToken{}, fontFolderToken{};
+    winrt::event_token fontToken{}, fontRestartToken{};
     std::vector<app_fonts::Choice> fonts;
     app_fonts::Selection selectedFont;
     SettingsCard themeTargetsCard;
-    SettingsCard popupThemeCard, dockThemeCard, statusBarLinkCard, taskbarLinkCard;
+    SettingsCard popupThemeCard, dockThemeCard;
     std::shared_ptr<PanelAppearanceEditor> quickAppearanceEditor, popupAppearanceEditor, dockAppearanceEditor;
     muxc::ComboBox dockAppearanceCombo{nullptr};
-    muxc::HyperlinkButton taskbarLink{nullptr}, statusBarLink{nullptr};
-    SettingRow taskbarThemeRow;
-    SettingRow dockAppearanceRow, statusBarThemeRow;
+    muxc::Button taskbarLink{nullptr}, statusBarLink{nullptr};
+    muxc::TextBlock taskbarLinkTitle, taskbarLinkDescription, statusBarLinkTitle, statusBarLinkDescription;
+    SettingRow dockAppearanceRow;
     winrt::event_token dockAppearanceToken{}, statusBarLinkToken{}, taskbarLinkToken{};
     PersonalizationSettings currentGlobalAppearance;
     std::uint64_t dockRevision = 0;
@@ -320,24 +321,6 @@ struct PersonalizationPagePresenter::Impl
         presetRow.Initialize(presetCombo);
         themeCard.content.Children().Append(presetRow.root);
 
-        InitializeCard(fontCard, cardStyle, themeRoot);
-        fontCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        fontCombo.MaxWidth(520.0);
-        fontRow.Initialize(fontCombo);
-        fontCard.content.Children().Append(fontRow.root);
-        muxc::StackPanel imports;
-        imports.Orientation(muxc::Orientation::Horizontal);
-        imports.Spacing(8.0);
-        imports.Children().Append(fontFileButton);
-        imports.Children().Append(fontFolderButton);
-        fontCard.content.Children().Append(imports);
-        fontRestart.IsClosable(false);
-        fontRestart.IsOpen(false);
-        fontRestart.Severity(muxc::InfoBarSeverity::Informational);
-        fontCard.content.Children().Append(fontRestart);
-        fontError.TextWrapping(mux::TextWrapping::Wrap);
-        fontError.Visibility(mux::Visibility::Collapsed);
-        fontCard.content.Children().Append(fontError);
         InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
         appearanceSections.Initialize(widgetAppearanceCard.content, true, true);
         InitializeColorControl(backgroundColor,
@@ -502,18 +485,21 @@ struct PersonalizationPagePresenter::Impl
                     [value](auto& settings) { settings.customAppearance = value; settings.appearancePreset = kAppearancePresetCustom; });
             });
         dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
-        InitializeCard(statusBarLinkCard, cardStyle, themeRoot);
-        statusBarLink = muxc::HyperlinkButton{};
-        statusBarLink.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        statusBarThemeRow.Initialize(statusBarLink);
-        statusBarThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        statusBarLinkCard.content.Children().Append(statusBarThemeRow.root);
-        InitializeCard(taskbarLinkCard, cardStyle, themeRoot);
-        taskbarLink = muxc::HyperlinkButton{};
-        taskbarLink.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        taskbarThemeRow.Initialize(taskbarLink);
-        taskbarThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        taskbarLinkCard.content.Children().Append(taskbarThemeRow.root);
+        InitializeNavigationCard(statusBarLink, statusBarLinkTitle, statusBarLinkDescription);
+        InitializeNavigationCard(taskbarLink, taskbarLinkTitle, taskbarLinkDescription);
+        InitializeCard(fontCard, cardStyle, themeRoot);
+        fontCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        fontCombo.MaxWidth(520.0);
+        fontRow.Initialize(fontCombo);
+        fontCard.content.Children().Append(fontRow.root);
+        fontRestart.IsClosable(false);
+        fontRestart.IsOpen(false);
+        fontRestart.Severity(muxc::InfoBarSeverity::Informational);
+        fontRestart.ActionButton(fontRestartButton);
+        fontCard.content.Children().Append(fontRestart);
+        fontError.TextWrapping(mux::TextWrapping::Wrap);
+        fontError.Visibility(mux::Visibility::Collapsed);
+        fontCard.content.Children().Append(fontError);
 
         InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
         InitializeCard(behaviorCard, cardStyle, widgetBehaviorRoot);
@@ -559,6 +545,35 @@ struct PersonalizationPagePresenter::Impl
             100.0, 1.0, kDefaultPopupHoverDelayMs);
         SetUnit(popupHoverDelayMs, L"ms");
         behaviorCard.content.Children().Append(popupHoverDelayMs.row.root);
+    }
+
+    void InitializeNavigationCard(muxc::Button& button, muxc::TextBlock& title, muxc::TextBlock& description)
+    {
+        button = muxc::Button{};
+        if (navigationStyle) button.Style(navigationStyle);
+        muxc::Grid content;
+        content.ColumnSpacing(20);
+        muxc::ColumnDefinition textColumn, actionColumn;
+        textColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+        actionColumn.Width(mux::GridLengthHelper::Auto());
+        content.ColumnDefinitions().Append(textColumn);
+        content.ColumnDefinitions().Append(actionColumn);
+        muxc::StackPanel text;
+        text.Spacing(4);
+        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        title.TextWrapping(mux::TextWrapping::Wrap);
+        description.TextWrapping(mux::TextWrapping::Wrap);
+        description.Opacity(0.68);
+        text.Children().Append(title);
+        text.Children().Append(description);
+        content.Children().Append(text);
+        muxc::FontIcon chevron;
+        chevron.Glyph(L"\xE76C");
+        chevron.FontSize(14);
+        muxc::Grid::SetColumn(chevron, 1);
+        content.Children().Append(chevron);
+        button.Content(content);
+        themeRoot.Children().Append(button);
     }
 
     void InitializeColorControl(
@@ -664,13 +679,25 @@ struct PersonalizationPagePresenter::Impl
     {
         fontToken = fontCombo.SelectionChanged([this](const auto&, const auto&) {
             const int index = fontCombo.SelectedIndex();
-            if (!CanEmit() || index < 0 || static_cast<std::size_t>(index) >= fonts.size()) return;
+            if (!CanEmit() || index < 0) return;
+            if (static_cast<std::size_t>(index) >= fonts.size())
+            {
+                const int command = index - static_cast<int>(fonts.size());
+                const auto previous = std::find_if(fonts.begin(), fonts.end(), [this](const auto& choice) { return choice.selection == selectedFont; });
+                updatingControls = true;
+                fontCombo.SelectedIndex(previous == fonts.end() ? -1 : static_cast<int>(previous - fonts.begin()));
+                updatingControls = false;
+                if (command == 1 || command == 2) ImportFonts(command == 2);
+                return;
+            }
             selectedFont = fonts[static_cast<std::size_t>(index)].selection;
             EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
             UpdateFontRestartNotice();
         });
-        fontFileToken = fontFileButton.Click([this](const auto&, const auto&) { ImportFonts(false); });
-        fontFolderToken = fontFolderButton.Click([this](const auto&, const auto&) { ImportFonts(true); });
+        fontRestartToken = fontRestartButton.Click([this](const auto&, const auto&) {
+            if (CanEmit() && fontRestart.IsOpen() && actions.restartApplication)
+                actions.restartApplication(generation);
+        });
         presetToken = presetCombo.SelectionChanged(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
@@ -736,7 +763,7 @@ struct PersonalizationPagePresenter::Impl
                 actions.navigate(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.theme"));
         });
         taskbarLinkToken = taskbarLink.Click([this](auto const&, auto const&) {
-            if (!closed && active && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Taskbar));
+            if (!closed && active && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Taskbar, "taskbar.theme"));
         });
         gradientToken = gradientToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -1003,7 +1030,9 @@ struct PersonalizationPagePresenter::Impl
     void UpdateFontRestartNotice()
     {
         const auto applied = app_fonts::current.load();
-        fontRestart.IsOpen(selectedFont != (applied ? applied->selection : app_fonts::Selection{}));
+        const auto hostFont = actions.appliedFont ? actions.appliedFont()
+            : (applied ? applied->selection : app_fonts::Selection{});
+        fontRestart.IsOpen(selectedFont != hostFont);
     }
 
     void RefreshFonts()
@@ -1028,6 +1057,13 @@ struct PersonalizationPagePresenter::Impl
             fontCombo.Items().Append(winrt::box_value(fonts.back().name));
             index = static_cast<int>(fonts.size() - 1);
         }
+        muxc::ComboBoxItem separator;
+        separator.IsEnabled(false);
+        separator.IsTabStop(false);
+        separator.Content(muxc::MenuFlyoutSeparator{});
+        fontCombo.Items().Append(separator);
+        fontCombo.Items().Append(winrt::box_value(L("font.importFile")));
+        fontCombo.Items().Append(winrt::box_value(L("font.importFolder")));
         fontCombo.SelectedIndex(index);
         updatingControls = previous;
         UpdateFontRestartNotice();
@@ -1188,8 +1224,7 @@ struct PersonalizationPagePresenter::Impl
         SetCardText(fontCard, "font.title", L"Interface font");
         fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
         muxa::AutomationProperties::SetName(fontCombo, fontRow.label.Text());
-        fontFileButton.Content(winrt::box_value(L("font.importFile")));
-        fontFolderButton.Content(winrt::box_value(L("font.importFolder")));
+        fontRestartButton.Content(winrt::box_value(L("font.restartNow", L"Restart now")));
         fontRestart.Message(L("font.restartRequired", L"Restart SnowDesktop to apply this font."));
         RefreshFonts();
         SetCardText(themeCard,
@@ -1197,13 +1232,13 @@ struct PersonalizationPagePresenter::Impl
         SetCardText(themeTargetsCard, "appearance.quickPanelCard", L"Quick panel theme");
         SetCardText(popupThemeCard, "appearance.popupCard", L"Popup theme");
         SetCardText(dockThemeCard, "settings.dock.dock", L"Dock");
-        SetCardText(statusBarLinkCard, "settings.nav.statusBar", L"Status bar");
-        statusBarLink.Content(winrt::box_value(L("appearance.openStatusBar", L"Open status bar settings")));
-        statusBarThemeRow.SetText(L("app.settings.theme", L"Theme"));
-        SetCardText(taskbarLinkCard, "settings.dock.taskbar", L"Taskbar");
-        taskbarLink.Content(winrt::box_value(L("appearance.openTaskbar", L"Open taskbar settings")));
+        statusBarLinkTitle.Text(L("settings.nav.statusBar", L"Status bar"));
+        statusBarLinkDescription.Text(L("appearance.openStatusBar", L"Open status bar settings"));
+        taskbarLinkTitle.Text(L("settings.dock.taskbar", L"Taskbar"));
+        taskbarLinkDescription.Text(L("appearance.openTaskbar", L"Open taskbar settings"));
+        muxa::AutomationProperties::SetName(statusBarLink, statusBarLinkDescription.Text());
+        muxa::AutomationProperties::SetName(taskbarLink, taskbarLinkDescription.Text());
         dockAppearanceRow.SetText(L("app.settings.theme", L"Theme"));
-        taskbarThemeRow.SetText(L("app.settings.theme", L"Theme"));
         ReplaceComboItems(dockAppearanceCombo, {{"app.settings.taskbar_follow_global", L"Follow global theme"},
             {"app.settings.dark", L"Dark"}, {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
@@ -1556,7 +1591,7 @@ struct PersonalizationPagePresenter::Impl
         try
         {
             fontCombo.SelectionChanged(fontToken);
-            fontFileButton.Click(fontFileToken); fontFolderButton.Click(fontFolderToken);
+            fontRestartButton.Click(fontRestartToken);
             presetCombo.SelectionChanged(presetToken);
             quickNavigationThemeCombo.SelectionChanged(
                 quickNavigationThemeToken);
@@ -1588,8 +1623,9 @@ struct PersonalizationPagePresenter::Impl
 
 PersonalizationPagePresenter::PersonalizationPagePresenter(
     LocalizeCallback localize,
-    const mux::Style& cardStyle)
-    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle))
+    const mux::Style& cardStyle,
+    const mux::Style& navigationStyle)
+    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, navigationStyle))
 {
 }
 

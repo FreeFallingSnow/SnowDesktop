@@ -16,6 +16,7 @@
   "titleLines.two": "2 行",
   "titleLines.hint": "全体設定。収まらない場合は最終行にコンパクトな省略記号を表示します。",
   "font.restartRequired": "フォントを保存しました。SnowDesktop を再起動すると適用されます。",
+  "font.restartNow": "今すぐ再起動",
   "statusBar.inputMethod": "入力方式",
   "statusBar.inputMethod.switch": "左クリックで入力モードを切り替え、右クリックで入力方式のメニューを表示",
   "app.settings.popup_hover_open": "マウスを重ねてポップアップを開く",

@@ -16,6 +16,7 @@
   "titleLines.two": "Dos líneas",
   "titleLines.hint": "Ajuste global. El texto que no cabe termina con puntos suspensivos compactos en la última línea.",
   "font.restartRequired": "Fuente guardada. Reinicia SnowDesktop para aplicarla.",
+  "font.restartNow": "Reiniciar ahora",
   "statusBar.inputMethod": "Método de entrada",
   "statusBar.inputMethod.switch": "Clic izquierdo para cambiar el modo de entrada; clic derecho para abrir el menú del método de entrada",
   "app.settings.popup_hover_open": "Abrir ventanas emergentes al pasar el cursor",

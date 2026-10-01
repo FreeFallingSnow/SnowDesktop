@@ -16,6 +16,7 @@
   "titleLines.two": "Deux lignes",
   "titleLines.hint": "Réglage global. Le texte excédentaire se termine par des points de suspension compacts sur la dernière ligne.",
   "font.restartRequired": "Police enregistrée. Redémarrez SnowDesktop pour l’appliquer.",
+  "font.restartNow": "Redémarrer maintenant",
   "statusBar.inputMethod": "Méthode de saisie",
   "statusBar.inputMethod.switch": "Clic gauche pour changer de mode de saisie ; clic droit pour ouvrir le menu de la méthode de saisie",
   "app.settings.popup_hover_open": "Ouvrir les fenêtres contextuelles au survol",

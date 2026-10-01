@@ -16,6 +16,7 @@
   "titleLines.two": "Zwei Zeilen",
   "titleLines.hint": "Globale Einstellung. Überlauf endet mit kompakten Auslassungspunkten in der letzten Zeile.",
   "font.restartRequired": "Schrift gespeichert. Starten Sie SnowDesktop neu, um sie anzuwenden.",
+  "font.restartNow": "Jetzt neu starten",
   "statusBar.inputMethod": "Eingabemethode",
   "statusBar.inputMethod.switch": "Linksklick wechselt den Eingabemodus; Rechtsklick öffnet das Menü der Eingabemethode",
   "app.settings.popup_hover_open": "Popups bei Mauszeigerkontakt öffnen",

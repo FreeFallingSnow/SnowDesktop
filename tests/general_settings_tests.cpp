@@ -2,6 +2,7 @@
 #include "personalization.h"
 #include "dock_gradient_storage.h"
 #include "status_bar_appearance.h"
+#include "item_title_layout.h"
 
 #include <windows.h>
 #include <d2d1.h>
@@ -15,6 +16,7 @@
 #include <iterator>
 #include <utility>
 #include <thread>
+#include <functional>
 
 std::wstring GetDataFilePath(const wchar_t* filename)
 {
@@ -34,11 +36,11 @@ void Check(bool condition, const char* message)
 
 // Startup draws the selected collection on another thread. Layout-only tests
 // cannot expose released font loaders: glyph data is consumed during drawing.
-HRESULT DrawSelectedFont()
+HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
 {
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(apartment)) return apartment;
-    const auto draw = []() -> HRESULT {
+    const auto draw = [&]() -> HRESULT {
         Microsoft::WRL::ComPtr<ID2D1Factory> d2d;
         auto result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2d.GetAddressOf());
         if (FAILED(result)) return result;
@@ -59,13 +61,60 @@ HRESULT DrawSelectedFont()
         result = snowdesktop::app_fonts::CreateTextFormat(factory, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 24, L"", &format);
         if (FAILED(result)) return result;
+        if (beforeDraw) beforeDraw();
+        // Real selected-family shaping must keep fitting labels intact.
+        for (const auto* title : {L"PowerPoint", L"MATLAB", L"CAXA", L"Workbench"})
+        {
+            Microsoft::WRL::ComPtr<IDWriteTextLayout> natural;
+            result = factory->CreateTextLayout(title, static_cast<UINT32>(wcslen(title)), format.Get(), 10000, 10000, &natural);
+            if (FAILED(result)) return result;
+            DWRITE_TEXT_METRICS measure{};
+            result = natural->GetMetrics(&measure);
+            if (FAILED(result)) return result;
+            Microsoft::WRL::ComPtr<IDWriteTextLayout> fitting;
+            result = factory->CreateTextLayout(title, static_cast<UINT32>(wcslen(title)), format.Get(), measure.widthIncludingTrailingWhitespace + 1, 1000, &fitting);
+            if (FAILED(result)) return result;
+            fitting->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 28, 20);
+            result = snowdesktop::TrimItemTitle(factory.Get(), fitting.Get(), format.Get(), 1, 28);
+            if (FAILED(result)) return result;
+            Microsoft::WRL::ComPtr<IDWriteInlineObject> unexpectedSign;
+            DWRITE_TRIMMING rule{};
+            result = fitting->GetTrimming(&rule, &unexpectedSign);
+            if (FAILED(result) || unexpectedSign || rule.granularity != DWRITE_TRIMMING_GRANULARITY_NONE) return E_FAIL;
+        }
+        constexpr wchar_t text[] = L"SnowDesktop 中文 520";
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> clipped;
+        result = factory->CreateTextLayout(text, static_cast<UINT32>(std::size(text) - 1), format.Get(), 70, 1000, &clipped);
+        if (FAILED(result)) return result;
+        clipped->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 28, 20);
+        result = snowdesktop::TrimItemTitle(factory.Get(), clipped.Get(), format.Get(), 1, 28);
+        if (FAILED(result)) return result;
+        Microsoft::WRL::ComPtr<IDWriteInlineObject> sign;
+        DWRITE_TRIMMING trimming{};
+        result = clipped->GetTrimming(&trimming, &sign);
+        if (FAILED(result) || !sign) return E_FAIL;
+        DWRITE_INLINE_OBJECT_METRICS metrics{};
+        result = sign->GetMetrics(&metrics);
+        if (FAILED(result) || metrics.width <= 0) return E_FAIL;
+        // The tightened three periods must be narrower than Windows' normal
+        // sign. CJK full-em and unadjusted native signs fail this regression.
+        Microsoft::WRL::ComPtr<IDWriteTextFormat> nativeFormat;
+        result = factory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 24, L"", &nativeFormat);
+        if (FAILED(result)) return result;
+        Microsoft::WRL::ComPtr<IDWriteInlineObject> nativeSign;
+        result = factory->CreateEllipsisTrimmingSign(nativeFormat.Get(), &nativeSign);
+        if (FAILED(result)) return result;
+        DWRITE_INLINE_OBJECT_METRICS nativeMetrics{};
+        result = nativeSign->GetMetrics(&nativeMetrics);
+        if (FAILED(result) || metrics.width >= nativeMetrics.width || metrics.width > 24 * .6f) return E_FAIL;
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
         result = target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
         if (FAILED(result)) return result;
         target->BeginDraw();
         target->Clear(D2D1::ColorF(D2D1::ColorF::Black));
-        constexpr wchar_t text[] = L"SnowDesktop 中文 520";
         target->DrawText(text, static_cast<UINT32>(std::size(text) - 1), format.Get(), D2D1::RectF(0, 0, 320, 80), brush.Get());
+        target->DrawTextLayout(D2D1::Point2F(0, 40), clipped.Get(), brush.Get());
         result = target->EndDraw();
         if (FAILED(result)) return result;
         std::vector<BYTE> pixels(320 * 80 * 4);
@@ -111,7 +160,12 @@ int main(int argc, char** argv)
             if (choice == choices.end()) continue;
             Check(app_fonts::Select(choice->selection, assets, data), "select bundled font before startup rendering");
             HRESULT rendered = E_FAIL;
-            std::thread renderer([&] { rendered = DrawSelectedFont(); });
+            std::thread renderer([&] {
+                rendered = DrawSelectedFont([&] {
+                    Check(app_fonts::Select(choice->selection, assets, data),
+                        "reloading the active choice while formats exist retains usable font resources");
+                });
+            });
             renderer.join();
             Check(SUCCEEDED(rendered), "selected original font rasterizes on the startup rendering thread after package enumeration returns");
         }

@@ -127,10 +127,22 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
     }
     if (CollectionTitlelessActive(widget))
         return CollectionDenseLayout(widget).geometry;
-    return snowdesktop::widget_item_layout::ResolveGrid(
+    auto layout = snowdesktop::widget_item_layout::ResolveGrid(
         content, std::max(1, data->gridSpan.columns), fixedRows,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
+    const int savedTitleHeight = std::max(0,
+        snowdesktop::item_layout_rules::CollapsedTextHeight(
+            metrics.fontSize * 7.0f / 6.0f) - metrics.titleHeight);
+    if (!data->scrollContainerMode && savedTitleHeight > 0)
+    {
+        layout = snowdesktop::widget_item_layout::ResolveGrid(
+            content, std::max(1, data->gridSpan.columns), fixedRows,
+            metrics.minimumGridWidth, metrics.minimumGridHeight + savedTitleHeight, spacing);
+        layout = snowdesktop::widget_item_layout::CompressFixedGridRows(
+            layout, savedTitleHeight);
+    }
+    return layout;
 }
 
 /**
@@ -516,7 +528,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         DrawListItem(context, cell, nullptr, -1, L"", false, false);
                     else
                         app_->DrawPlaceholderIcon(context, -1,
-                            app_->GetItemIconRect(cell), 1.0f);
+                            app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_)), 1.0f);
                 }
                 continue;
             }
@@ -610,7 +622,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 const RECT iconRect = compact ? GetThumbnailIconRect(slotRect) : titlelessLargeFolder
                     ? snowdesktop::ResolveCenteredIconRect(slotRect, titlelessIconSize)
-                    : app_->GetItemIconRect(slotRect);
+                    : app_->GetItemIconRect(slotRect, app_->ResolveItemTitleLines(data_));
                 app_->DrawPlaceholderIcon(context, -1, iconRect, 1.0f);
             }
             continue;
@@ -706,7 +718,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 return;
             }
 
-            RECT mosaicRect = app_->GetItemIconRect(allRect);
+            RECT mosaicRect = app_->GetItemIconRect(allRect, app_->ResolveItemTitleLines(data_));
             if (titlelessLargeFolder)
                 mosaicRect =
                     snowdesktop::ResolveCenteredIconRect(

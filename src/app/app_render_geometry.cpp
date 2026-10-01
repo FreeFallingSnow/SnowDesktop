@@ -61,7 +61,7 @@ snowdesktop::PageItemVisualMetrics DesktopApp::GetPageItemVisualMetrics(
 }
 
 snowdesktop::PageItemVisualMetrics DesktopApp::GetItemVisualMetrics(
-    RECT bounds) const
+    RECT bounds, int componentTitleLines) const
 {
     const POINT center = {
         bounds.left + (bounds.right - bounds.left) / 2,
@@ -70,11 +70,12 @@ snowdesktop::PageItemVisualMetrics DesktopApp::GetItemVisualMetrics(
     for (const auto& page : gridPages_)
     {
         if (PtInRect(&page.bounds, center))
-            return GetPageItemVisualMetrics(page);
+            return snowdesktop::ResolveWidgetTitleMetrics(
+                GetPageItemVisualMetrics(page), componentTitleLines);
     }
-    return snowdesktop::ResolvePageItemVisualMetrics(
+    return snowdesktop::ResolveWidgetTitleMetrics(snowdesktop::ResolvePageItemVisualMetrics(
         kCellWidth, kMinCellHeight, itemFontSizeCu_,
-        itemIconSizeScale_);
+        itemIconSizeScale_), componentTitleLines);
 }
 
 float DesktopApp::GetItemLayoutScale(RECT bounds) const
@@ -82,9 +83,9 @@ float DesktopApp::GetItemLayoutScale(RECT bounds) const
     return GetItemVisualMetrics(bounds).layoutScale;
 }
 
-RECT DesktopApp::GetItemIconRect(RECT bounds) const
+RECT DesktopApp::GetItemIconRect(RECT bounds, int componentTitleLines) const
 {
-    const auto metrics = GetItemVisualMetrics(bounds);
+    const auto metrics = GetItemVisualMetrics(bounds, componentTitleLines);
     const int cellW = bounds.right - bounds.left;
     const int cellH = bounds.bottom - bounds.top;
     if (cellH < static_cast<int>(std::round(
@@ -132,10 +133,10 @@ int DesktopApp::ResolveItemTitleLines(const DesktopWidget* widget) const
         ? largeFolderTitleLines_ : scrollingTitleLines_;
 }
 
-RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
+RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded, int componentTitleLines) const
 {
-    const auto metrics = GetItemVisualMetrics(bounds);
-    RECT iconRect = GetItemIconRect(bounds);
+    const auto metrics = GetItemVisualMetrics(bounds, componentTitleLines);
+    RECT iconRect = GetItemIconRect(bounds, componentTitleLines);
     const int textTop = iconRect.bottom +
         metrics.titleGap;
     const float lineHeight = metrics.fontSize * 7.0f / 6.0f;
@@ -153,11 +154,11 @@ RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded) const
         bounds, textTop, textH);
 }
 
-RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded) const
+RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded, int componentTitleLines) const
 {
     const float layoutScale = GetItemVisualMetrics(bounds).layoutScale;
-    RECT textRect = GetItemTextRect(bounds, expanded);
-    RECT selection = UnionCopy(GetItemIconRect(bounds), textRect);
+    RECT textRect = GetItemTextRect(bounds, expanded, componentTitleLines);
+    RECT selection = UnionCopy(GetItemIconRect(bounds, componentTitleLines), textRect);
     const int verticalPad = std::max(1, static_cast<int>(std::round(2.0f * layoutScale)));
     selection.left = bounds.left;
     selection.top = std::max(bounds.top, selection.top - verticalPad);

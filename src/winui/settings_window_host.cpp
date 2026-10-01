@@ -2279,6 +2279,18 @@ struct SettingsWindowHost::Impl
 
         PersonalizationPageActions personalization;
         personalization.contextMenu = options.contextMenu;
+        personalization.appliedFont = options.appliedFont;
+        personalization.restartApplication = [weak](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation) ||
+                !state->owner->FlushPendingChanges()) return;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::RestartApplication;
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+        };
         personalization.listFonts = [] {
             return app_fonts::List(std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());
         };

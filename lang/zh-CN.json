@@ -16,6 +16,7 @@
   "titleLines.two": "两行",
   "titleLines.hint": "全局设置，溢出时在最后一行显示紧凑省略号。",
   "font.restartRequired": "字体已保存，重启 SnowDesktop 后生效。",
+  "font.restartNow": "立即重启",
   "statusBar.inputMethod": "输入法",
   "statusBar.inputMethod.switch": "左键切换输入模式，右键打开输入法菜单",
   "app.settings.popup_hover_open": "悬停延时展开弹窗",

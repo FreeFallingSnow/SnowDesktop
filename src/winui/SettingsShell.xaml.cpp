@@ -74,6 +74,36 @@ using snowdesktop::SettingsSearchEntryKind;
     return nullptr;
 }
 
+// Collapsed Expander contents may not have a visual parent yet. Walk the
+// owned content tree before checking IsLoaded so deep links can realize them.
+bool ExpandFocusContainers(const mux::DependencyObject& node,
+    const mux::FrameworkElement& target, bool& expanded)
+{
+    if (!node) return false;
+    const auto expander = node.try_as<muxc::Expander>();
+    bool found = node == target;
+    if (!found)
+    {
+        if (expander)
+            found = ExpandFocusContainers(expander.Content().try_as<mux::DependencyObject>(), target, expanded);
+        else if (const auto panel = node.try_as<muxc::Panel>())
+        {
+            for (const auto& child : panel.Children())
+                if (ExpandFocusContainers(child, target, expanded)) { found = true; break; }
+        }
+        else if (const auto border = node.try_as<muxc::Border>())
+            found = ExpandFocusContainers(border.Child(), target, expanded);
+        else if (const auto content = node.try_as<muxc::ContentControl>())
+            found = ExpandFocusContainers(content.Content().try_as<mux::DependencyObject>(), target, expanded);
+    }
+    if (found && expander && !expander.IsExpanded())
+    {
+        expander.IsExpanded(true);
+        expanded = true;
+    }
+    return found;
+}
+
 [[nodiscard]] bool IsWithinNumberBox(
     const winrt::Windows::Foundation::IInspectable& element,
     const muxc::NumberBox& number) noexcept
@@ -337,7 +367,8 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
             return;
         personalizationPage_ = std::make_unique<
             snowdesktop::winui::PersonalizationPagePresenter>(
-                localize, cardStyle());
+                localize, cardStyle(), Resources().Lookup(
+                    winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>());
         personalizationPage_->SetActions(personalizationPageActions_);
     };
     const auto ensureDesktop = [&]() {
@@ -2901,6 +2932,19 @@ void SettingsShell::FocusPendingTarget()
         {
             if (auto target = it->second.get())
             {
+                bool expanded = false;
+                ExpandFocusContainers(PageCards(), target, expanded);
+                auto parent = VisualParent(target);
+                while (parent && parent != PageCards())
+                {
+                    if (const auto expander = parent.try_as<muxc::Expander>(); expander && !expander.IsExpanded())
+                    {
+                        expander.IsExpanded(true);
+                        expanded = true;
+                    }
+                    parent = VisualParent(parent);
+                }
+                if (expanded) { focusPendingLayout_ = true; return; }
                 if (!target.IsLoaded() || target.ActualHeight() <= 0) { focusPendingLayout_ = true; return; }
                 HighlightSetting(target);
                 (void)target.Focus(mux::FocusState::Programmatic);

@@ -2978,6 +2978,32 @@ int main(int argc, char** argv)
 
     const auto pageVisual = itemVisual::ResolvePageItemVisualMetrics(
         104, 128, kDefaultItemFontSizeCu);
+    for (const int pitch : {64, 104, 208})
+    {
+        const auto two = itemVisual::ResolvePageItemVisualMetrics(pitch, pitch * 2, kDefaultItemFontSizeCu);
+        const auto one = itemVisual::ResolveWidgetTitleMetrics(two, 1);
+        const float line = one.fontSize * 7.0f / 6.0f;
+        Check(one.titleHeight > line && one.titleHeight < two.titleHeight &&
+                one.iconSize == two.iconSize && one.fontSize == two.fontSize,
+            "single-line widget labels keep breathing room and preserve icon/font size across page scales");
+        const RECT viewport{0, 0, pitch * 3, pitch * 8};
+        const auto oldScroll = localLayout::ResolveGrid(viewport, 3, 0, two.minimumGridWidth, two.minimumGridHeight, 1);
+        const auto newScroll = localLayout::ResolveGrid(viewport, 3, 0, one.minimumGridWidth, one.minimumGridHeight, 1);
+        const auto oldRow = localLayout::ItemRect(oldScroll, 3);
+        const auto newRow = localLayout::ItemRect(newScroll, 3);
+        Check(newRow.top < oldRow.top && newRow.bottom < oldRow.bottom &&
+                localLayout::ContentHeight(newScroll, 15) < localLayout::ContentHeight(oldScroll, 15),
+            "single-line scrolling rows shorten both item hit rectangles and total content extent");
+        const auto fixed = localLayout::ResolveGrid(viewport, 3, 4, two.minimumGridWidth, two.minimumGridHeight, 1);
+        const auto compact = localLayout::CompressFixedGridRows(fixed, two.titleHeight - one.titleHeight);
+        const auto first = localLayout::ItemRect(compact, 0);
+        const auto next = localLayout::ItemRect(compact, 3);
+        const auto last = localLayout::ItemRect(compact, 11);
+        Check(compact.vertical.count == fixed.vertical.count && compact.horizontal.count == fixed.horizontal.count &&
+                next.top - first.top < localLayout::ItemRect(fixed, 3).top - localLayout::ItemRect(fixed, 0).top &&
+                first.top > fixed.viewport.top && last.bottom < fixed.viewport.bottom,
+            "single-line large folders reflow and center shorter rows without changing saved capacity");
+    }
     const auto smallIconVisual = itemVisual::ResolvePageItemVisualMetrics(
         104, 128, kDefaultItemFontSizeCu,
         kMinimumItemIconSizeScale);
@@ -3724,7 +3750,8 @@ int main(int argc, char** argv)
                 standardLineHeight,
                 14.0f * 5.0f / 6.0f);
             for (const auto& title : {std::wstring(L"一二三四五六七八九十一二三四五六七八九十"),
-                std::wstring(L"A\U0001f600B\U0001f600C\U0001f600D long filename"), std::wstring(L"first\nsecond\nthird")})
+                std::wstring(L"A\U0001f600B\U0001f600C\U0001f600D long filename"), std::wstring(L"first\nsecond\nthird"),
+                std::wstring(L"SOLIDWORKS\n2025"), std::wstring(L"Workbench\n2023 R2")})
             {
                 for (const UINT32 limit : {1u, 2u})
                 {
@@ -3757,6 +3784,23 @@ int main(int argc, char** argv)
                     Check(signMetrics.width > 0 && signMetrics.width <= 14.0f,
                         "native ellipsis uses the compact font glyph without a wide placeholder or added spaces");
                 }
+            }
+            for (const auto* title : {L"PowerPoint", L"MATLAB", L"R2025a", L"2023 R2"})
+            {
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> natural;
+                dwriteFactory->CreateTextLayout(title, static_cast<UINT32>(wcslen(title)), format.Get(), 10000, 10000, &natural);
+                DWRITE_TEXT_METRICS measure{};
+                natural->GetMetrics(&measure);
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> exactFit;
+                dwriteFactory->CreateTextLayout(title, static_cast<UINT32>(wcslen(title)), format.Get(), measure.widthIncludingTrailingWhitespace + 1, 10000, &exactFit);
+                snowdesktop::TrimItemTitle(dwriteFactory.Get(), exactFit.Get(), format.Get(), 1, standardLineHeight);
+                Microsoft::WRL::ComPtr<IDWriteInlineObject> sign;
+                DWRITE_TRIMMING rule{};
+                exactFit->GetTrimming(&rule, &sign);
+                DWRITE_TEXT_METRICS actual{};
+                exactFit->GetMetrics(&actual);
+                Check(actual.lineCount == 1 && !sign && rule.granularity == DWRITE_TRIMMING_GRANULARITY_NONE,
+                    "a complete title fitting the real single-line width reserves no ellipsis space");
             }
             const std::wstring longChineseTitle =
                 L"一二三四五六七八九十"
