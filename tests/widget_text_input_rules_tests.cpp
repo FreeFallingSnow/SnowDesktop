@@ -1,4 +1,5 @@
 #include "widget_text_input_rules.h"
+#include "text_input_state.h"
 
 #include <dwrite.h>
 #include <cmath>
@@ -267,6 +268,32 @@ void TestWrappedLineVerticalCaretMovement()
 
 int main()
 {
+    using namespace snowdesktop::text_input;
+    const std::wstring clusters = L"a\u0301\U0001f469\u200d\U0001f4bb\U0001f1e8\U0001f1f3Z";
+    const auto accentEnd = NextBoundary(clusters, 0);
+    const auto emojiEnd = NextBoundary(clusters, accentEnd);
+    const auto flagEnd = NextBoundary(clusters, emojiEnd);
+    Check(accentEnd == 2 && PreviousBoundary(clusters, accentEnd) == 0,
+        "combining marks must move and delete with their base character");
+    Check(emojiEnd == 7 && PreviousBoundary(clusters, emojiEnd) == accentEnd,
+        "a surrogate-pair ZWJ emoji must remain a single editing unit");
+    Check(flagEnd == 11 && NextBoundary(clusters, flagEnd) == clusters.size(),
+        "regional indicator pairs must remain a single editing unit");
+    Check(NextBoundary(L"\r\nx", 0) == 2 && SnapBoundary(clusters, 4) == accentEnd,
+        "CRLF and positions inside a cluster must resolve to stable boundaries");
+    History history;
+    std::wstring draft = L"draft"; std::size_t cursor = 5, anchor = 0;
+    const Snapshot initial{draft, cursor, anchor};
+    draft = L"中文"; cursor = anchor = 2;
+    history.Record(initial, {draft, cursor, anchor});
+    history.Record({draft, cursor, anchor}, {draft, 0, 0});
+    Check(history.Undo(draft, cursor, anchor) && draft == L"draft" && cursor == 5 && anchor == 0,
+        "one completed input must undo together with its original selection");
+    Check(history.Redo(draft, cursor, anchor) && draft == L"中文" && cursor == 2 && anchor == 2,
+        "redo must restore the completed input and caret");
+    history.Undo(draft, cursor, anchor);
+    history.Record({draft, cursor, anchor}, {L"replacement", 11, 11});
+    Check(!history.CanRedo(), "a new edit after undo must retire the old redo branch");
     TestUtf8Counting();
     TestBoundedReplacement();
     TestReadOnlyMutationGate();

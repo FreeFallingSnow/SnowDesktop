@@ -25,7 +25,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         dragDropController_.IsTransportActive() ||
         widgetAction_ != WidgetAction::None || largeIconGesture_ ||
         middleButtonWidgetMove_ || detailColumnResizeActive_ ||
-        luaWidgetPanelMouseDown_ || renameEdit_ || GetCapture() ||
+        luaWidgetPanelMouseDown_ || renameController_.IsActive() || GetCapture() ||
         HasActiveContextMenuSession() ||
         (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
         ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
@@ -1208,6 +1208,6 @@ ShowDockFolderPopupContextMenu(
     RestoreDesktopWindowLayer();
     if (snowdesktop::right_click_contract::
             ShouldRestoreInteractionFocusAfterMenu(
-                false, renameEdit_ != nullptr))
+                false, renameController_.IsActive()))
         RestoreInteractionInputFocus();
 }

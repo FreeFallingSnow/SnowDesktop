@@ -14,7 +14,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (middleButtonWidgetMove_) return;
     // Popup/Dock hosts do not activate on clicks, so the EDIT may never
     // receive WM_KILLFOCUS. Finish before hit testing can change its target.
-    if (renameEdit_ != nullptr)
+    if (renameController_.IsActive())
         CommitRename(false);
     keyboardNavVisualFocus_ = false;
     ClearPopupMouseDownItem();

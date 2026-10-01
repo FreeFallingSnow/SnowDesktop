@@ -7,7 +7,7 @@ void DesktopApp::BeginRenameSelected(
     std::optional<RECT> dockRenameAnchor)
 {
     CancelRenameClick();
-    if (renameEdit_ != nullptr) return;
+    if (renameController_.IsActive()) return;
     if (const auto* popup = GetOpenPopupWidget(); popup && UsesCollectionPopupFan(*popup))
         ShowAllCollectionPopupItems();
     renameCommitPending_ = false;
@@ -183,15 +183,15 @@ void DesktopApp::BeginRenameSelected(
 
         const DWORD editStyle = snowdesktop::rename_edit_layout::EditStyle(
             popupTitleRename);
-        renameEdit_ = CreateWindowExW(
-            WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-            L"EDIT",
+        renameInputWindow_ = CreateWindowExW(
+             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            snowdesktop::text_input::WindowClass(),
             widgets_[selectedWidgetIndex].title.c_str(),
             editStyle,
             screenRect.left, screenRect.top,
             screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
             hwnd_, nullptr, instance_, nullptr);
-        if (!renameEdit_)
+        if (!renameInputWindow_)
         {
             renameController_.Reset();
             return;
@@ -205,18 +205,20 @@ void DesktopApp::BeginRenameSelected(
             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
-        SendMessageW(renameEdit_, WM_SETFONT,
+        SendMessageW(renameInputWindow_, WM_SETFONT,
             reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
         const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
-        SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        SendMessageW(renameInputWindow_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
             MAKELPARAM(renameMargin, renameMargin));
-        SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
+        SetWindowSubclass(renameInputWindow_, &DesktopApp::RenameEditSubclassProc, 1,
             reinterpret_cast<DWORD_PTR>(this));
-        renameEditLayout_.Begin(renameEdit_);
-        SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+        snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
+        snowdesktop::text_input::SetLogicalSingleLine(renameInputWindow_, true);
+        renameEditLayout_.Begin(renameInputWindow_);
+        SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-        SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
-        SetFocus(renameEdit_);
+        SendMessageW(renameInputWindow_, EM_SETSEL, 0, -1);
+        SetFocus(renameInputWindow_);
         if (visibilityWidgetIndex < widgets_.size())
         {
             interactionPinnedWidgetId_ =
@@ -315,16 +317,16 @@ void DesktopApp::BeginRenameSelected(
 
     const DWORD renameStyle =
         snowdesktop::rename_edit_layout::EditStyle(singleLineRename);
-    renameEdit_ = CreateWindowExW(
-        WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        L"EDIT",
+    renameInputWindow_ = CreateWindowExW(
+         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        snowdesktop::text_input::WindowClass(),
         items_[selectedIndex].name.c_str(),
         renameStyle,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
 
-    if (!renameEdit_)
+    if (!renameInputWindow_)
     {
         renameController_.Reset();
         return;
@@ -338,19 +340,21 @@ void DesktopApp::BeginRenameSelected(
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
-    SendMessageW(renameEdit_, WM_SETFONT,
+    SendMessageW(renameInputWindow_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
     const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
-    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+    SendMessageW(renameInputWindow_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(renameMargin, renameMargin));
-    SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
+    SetWindowSubclass(renameInputWindow_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
-    renameEditLayout_.Begin(renameEdit_);
-    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+    snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
+    snowdesktop::text_input::SetLogicalSingleLine(renameInputWindow_, true);
+    renameEditLayout_.Begin(renameInputWindow_);
+    SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    SendMessageW(renameEdit_, EM_SETSEL, 0,
+    SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(items_[selectedIndex].name, isDirectory));
-    SetFocus(renameEdit_);
+    SetFocus(renameInputWindow_);
     if (visibilityWidgetIndex < widgets_.size())
     {
         interactionPinnedWidgetId_ =

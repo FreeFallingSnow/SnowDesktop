@@ -856,6 +856,8 @@
     "app.website_icon.fetch_failed": "Es konnte kein verwendbares Website-Symbol abgerufen werden. Das bisherige Symbol wurde beibehalten.",
     "app.website_icon.save_failed": "Das Symbol konnte nicht gespeichert werden: Die Verknüpfung wurde möglicherweise geändert, gelöscht oder ist schreibgeschützt. Das bisherige Symbol wurde beibehalten.",
   "app.menu.rename": "Umbenennen",
+  "app.menu.undo": "Rückgängig",
+  "app.menu.redo": "Wiederholen",
   "app.menu.cut": "Ausschneiden",
   "app.menu.copy": "Kopieren",
   "app.menu.hide_desktop_icon": "Desktop-Symbol ausblenden",

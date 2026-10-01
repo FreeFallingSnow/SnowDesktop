@@ -1,4 +1,6 @@
 #include "system_control_prompt.h"
+#include "text_input_window.h"
+#include "modern_menu.h"
 #include "native_form_style.h"
 #include "widget_scroll_rules.h"
 #include "l10n.h"
@@ -48,6 +50,7 @@ struct Prompt
     std::wstring actor,target;
     unsigned dpi=96;
     int width=440,height=320,maximumHeight=700,bodyHeight=0,viewportHeight=180,scroll=0,dragStart=0,dragOffset=0,previewResult=0;
+    int securityChoice=1;
     struct Item{HWND window;std::wstring label;int height=0,gap=0,top=0;bool paragraph=false;};
     std::vector<Item> items;
     ~Prompt(){if(font)DeleteObject(font);if(headingFont)DeleteObject(headingFont);if(backgroundBrush)DeleteObject(backgroundBrush);if(fieldBrush)DeleteObject(fieldBrush);}
@@ -79,8 +82,11 @@ struct Prompt
         for(const auto& item:items)SendMessageW(item.window,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);
         for(const int id:{IDCANCEL,IDOK})if(const auto button=GetDlgItem(window,id))SendMessageW(button,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);
         if(old)DeleteObject(old);if(oldHeading)DeleteObject(oldHeading);
-        for(const auto edit:{ssid,password})if(edit)native_form::UpdateEdit(edit,palette,dpi);
-        if(security){SendMessageW(security,CB_SETITEMHEIGHT,static_cast<WPARAM>(-1),Px(28));SendMessageW(security,CB_SETITEMHEIGHT,0,Px(28));}
+        for(const auto edit:{ssid,password})if(edit)
+        {
+            text_input::SetColors(edit,{palette.field,palette.foreground,palette.border,palette.accent,palette.accentText,palette.secondary},6.f*static_cast<float>(dpi)/96.f);
+            text_input::SetPadding(edit,12.f*static_cast<float>(dpi)/96.f,4.f*static_cast<float>(dpi)/96.f);
+        }
     }
     static LRESULT CALLBACK ChildProcedure(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR data)
     {
@@ -94,16 +100,18 @@ struct Prompt
         if(m==WM_NCDESTROY)RemoveWindowSubclass(w,ButtonProcedure,2);
         return DefSubclassProc(w,m,wp,lp);
     }
-    static LRESULT CALLBACK ComboProcedure(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR data)
+    void PickSecurity()
     {
-        auto* self=reinterpret_cast<Prompt*>(data);
-        if(m==WM_NCDESTROY){RemoveWindowSubclass(w,ComboProcedure,3);return DefSubclassProc(w,m,wp,lp);}
-        if(m==WM_PAINT){PAINTSTRUCT paint{};const auto dc=BeginPaint(w,&paint);native_form::DrawComboFace(w,dc,self->palette,self->font,self->dpi);EndPaint(w,&paint);return 0;}
-        if(m==WM_PRINT||m==WM_PRINTCLIENT){native_form::DrawComboFace(w,reinterpret_cast<HDC>(wp),self->palette,self->font,self->dpi);return 0;}
-        const auto result=DefSubclassProc(w,m,wp,lp);
-        if(m==WM_SETFOCUS||m==WM_KILLFOCUS||m==WM_ENABLE||m==CB_SETCURSEL||m==CB_SHOWDROPDOWN||m==WM_KEYDOWN||m==WM_LBUTTONUP)
-            InvalidateRect(w,nullptr,FALSE);
-        return result;
+        std::vector<modern_menu::Item> choices;
+        const wchar_t* labels[]{_LW("controlCenter.openNetwork"),L"WPA2-Personal",L"WPA3-Personal"};
+        for(int i=0;i<3;++i){modern_menu::Item item;item.command=static_cast<UINT>(i+1);item.label=labels[i];item.checked=i==securityChoice;choices.push_back(std::move(item));}
+        modern_menu::Options options;options.owner=security;options.zOrderOwner=window;options.dpi=dpi;
+        options.appearance=GetRValue(palette.background)>128?modern_menu::Appearance::OpaqueLight:modern_menu::Appearance::OpaqueDark;
+        GetWindowRect(security,&options.anchorRect);options.anchor={options.anchorRect.left,options.anchorRect.bottom};
+        options.rootPlacement=modern_menu::RootPlacement::BelowAnchorRect;
+        const auto result=modern_menu::Show(choices,options);
+        if(!window||!PromptValid(state))return;
+        if(result.command>=1&&result.command<=3){securityChoice=static_cast<int>(result.command)-1;SecurityChanged();}
     }
     widget_scroll_rules::ScrollbarAxisGeometry Scrollbar() const
     {return widget_scroll_rules::ResolveScrollbarAxisGeometry(0,viewportHeight,bodyHeight,viewportHeight,scroll);}
@@ -120,6 +128,7 @@ struct Prompt
         if(m==WM_PAINT&&self){PAINTSTRUCT paint{};const auto dc=BeginPaint(w,&paint);self->PaintViewport(dc);EndPaint(w,&paint);return 0;}
         if((m==WM_PRINT||m==WM_PRINTCLIENT)&&self){self->PaintViewport(reinterpret_cast<HDC>(wp));return 0;}
         if(m==WM_ERASEBKGND)return 1;
+        if(self&&(m==WM_COMMAND||m==WM_DRAWITEM))return SendMessageW(self->window,m,wp,lp);
         if(self&&(m==WM_LBUTTONDOWN||m==WM_MOUSEMOVE||m==WM_LBUTTONUP))
         {
             const int x=self->Dip(GET_X_LPARAM(lp)),y=self->Dip(GET_Y_LPARAM(lp));const auto axis=self->Scrollbar();
@@ -148,8 +157,11 @@ struct Prompt
     void Label(const std::wstring& text,int gap=6){Child(L"STATIC",text,SS_NOPREFIX,-1,20,gap,true);}
     HWND Edit(int id,DWORD style)
     {
-        const auto edit=Child(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL|style,id,34,16);
-        if(!native_form::AttachEdit(edit,palette,dpi))throw std::runtime_error("prompt input style unavailable");return edit;
+        const auto edit=Child(text_input::WindowClass(),L"",WS_TABSTOP|ES_AUTOHSCROLL|style,id,34,16);
+        text_input::SetColors(edit,{palette.field,palette.foreground,palette.border,palette.accent,palette.accentText,palette.secondary},6.f*static_cast<float>(dpi)/96.f);
+        text_input::SetPadding(edit,12.f*static_cast<float>(dpi)/96.f,4.f*static_cast<float>(dpi)/96.f);
+        text_input::SetAccessibleName(edit,_LW(id==kPassword?"controlCenter.password":"controlCenter.ssid"));
+        return edit;
     }
     void Build()
     {
@@ -162,10 +174,8 @@ struct Prompt
         if(hidden)
         {
             Label(_LW("controlCenter.ssid"));ssid=Edit(kSsid,0);SendMessageW(ssid,EM_SETLIMITTEXT,32,0);
-            Label(_LW("controlCenter.security"));security=Child(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS,kSecurity,32,16);
-            if(!SetWindowSubclass(security,ComboProcedure,3,reinterpret_cast<DWORD_PTR>(this)))throw std::runtime_error("prompt combo style unavailable");
-            for(const auto* name:{_LW("controlCenter.openNetwork"),L"WPA2-Personal",L"WPA3-Personal"})SendMessageW(security,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(name));
-            SendMessageW(security,CB_SETCURSEL,1,0);SendMessageW(security,CB_SETITEMHEIGHT,static_cast<WPARAM>(-1),Px(28));SendMessageW(security,CB_SETITEMHEIGHT,0,Px(28));
+            Label(_LW("controlCenter.security"));security=Child(L"BUTTON",L"WPA2-Personal",WS_TABSTOP|BS_OWNERDRAW,kSecurity,34,16);
+            if(!SetWindowSubclass(security,ButtonProcedure,2,0))throw std::runtime_error("prompt selection handler unavailable");
         }
         if(passwordForm)
         {
@@ -200,7 +210,7 @@ struct Prompt
     {
         scroll=std::clamp(scroll,0,(std::max)(0,bodyHeight-viewportHeight));
         MoveWindow(viewport,Px(20),Px(56),Px(width-40),Px(viewportHeight),TRUE);
-        for(const auto& item:items)MoveWindow(item.window,0,Px(item.top-scroll),Px(width-56),Px(item.window==security?180:item.height),TRUE);
+        for(const auto& item:items)MoveWindow(item.window,0,Px(item.top-scroll),Px(width-56),Px(item.height),TRUE);
         const int buttonWidth=(std::min)(132,(width-52)/2);
         MoveWindow(GetDlgItem(window,IDCANCEL),Px(width-32-2*buttonWidth),Px(height-52),Px(buttonWidth),Px(34),TRUE);
         MoveWindow(GetDlgItem(window,IDOK),Px(width-20-buttonWidth),Px(height-52),Px(buttonWidth),Px(34),TRUE);
@@ -233,7 +243,9 @@ struct Prompt
     }
     void SecurityChanged()
     {
-        if(!password)return;const bool secured=SendMessageW(security,CB_GETCURSEL,0,0)!=0;
+        const wchar_t* labels[]{_LW("controlCenter.openNetwork"),L"WPA2-Personal",L"WPA3-Personal"};
+        if(security)SetWindowTextW(security,labels[securityChoice]);
+        if(!password)return;const bool secured=securityChoice!=0;
         EnableWindow(password,secured);if(!secured){SetWindowTextW(password,L"");request.password.Clear();}
         InvalidateRect(security,nullptr,FALSE);
     }
@@ -245,13 +257,13 @@ struct Prompt
             wchar_t name[64]{};GetWindowTextW(ssid,name,64);char utf8[256]{};
             const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,name,-1,utf8,256,nullptr,nullptr);
             if(count<=1||count>33){SetFocus(ssid);return;}
-            const auto selected=SendMessageW(security,CB_GETCURSEL,0,0);if(selected<0||selected>2){SetFocus(security);return;}
+            const auto selected=securityChoice;if(selected<0||selected>2){SetFocus(security);return;}
             request.arguments["ssid"]=utf8;request.arguments["security"]=selected==0?"open":selected==2?"wpa3":"wpa2";
         }
         if(password&&IsWindowEnabled(password))
         {
             struct SecretBuffer{wchar_t value[64]{};~SecretBuffer(){SecureZeroMemory(value,sizeof(value));}} secret;
-            GetWindowTextW(password,secret.value,64);request.password=system_control::Secret(secret.value);SetWindowTextW(password,L"");
+            text_input::CopySecret(password,secret.value,64);request.password=system_control::Secret(secret.value);SetWindowTextW(password,L"");
         }
         request.hostConfirmed=true;End(IDOK);
     }
@@ -278,18 +290,17 @@ struct Prompt
                 const bool field=m==WM_CTLCOLORLISTBOX;SetTextColor(dc,self->palette.foreground);SetBkColor(dc,field?self->palette.field:self->palette.background);
                 return reinterpret_cast<INT_PTR>(field?self->fieldBrush:self->backgroundBrush);
             }
-            if(m==WM_DRAWITEM){const auto& item=*reinterpret_cast<DRAWITEMSTRUCT*>(lp);if(item.CtlID==kSecurity)native_form::DrawComboItem(item,self->palette,self->font,self->dpi);else native_form::DrawButton(item,self->palette,self->font,self->dpi,item.CtlID==IDOK);return TRUE;}
-            if(m==WM_MEASUREITEM){reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->itemHeight=self->Px(28);return TRUE;}
+            if(m==WM_DRAWITEM){const auto& item=*reinterpret_cast<DRAWITEMSTRUCT*>(lp);native_form::DrawButton(item,self->palette,self->font,self->dpi,item.CtlID==IDOK);return TRUE;}
             if(m==kReveal){self->Reveal(reinterpret_cast<HWND>(wp));return TRUE;}
             if(m==WM_MOUSEWHEEL){self->scroll=widget_scroll_rules::ApplyWheelDelta(self->scroll,(std::max)(0,self->bodyHeight-self->viewportHeight),GET_WHEEL_DELTA_WPARAM(wp)).offset;self->Layout();return TRUE;}
             if(m==WM_TIMER&&wp==1&&!PromptValid(self->state)){self->End(IDCANCEL);return TRUE;}
             if(m==WM_DPICHANGED)
             {self->dpi=HIWORD(wp);if(!self->dpi)self->dpi=96;self->Fonts();self->Place(reinterpret_cast<const RECT*>(lp));if(const auto focus=GetFocus();focus&&IsChild(self->viewport,focus))self->Reveal(focus);return TRUE;}
             if(m==WM_SETTINGCHANGE||m==WM_THEMECHANGED)
-            {self->Colors();for(const auto edit:{self->ssid,self->password})if(edit)native_form::UpdateEdit(edit,self->palette,self->dpi);RedrawWindow(w,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_ERASE);return TRUE;}
+            {self->Colors();for(const auto edit:{self->ssid,self->password})if(edit)text_input::SetColors(edit,{self->palette.field,self->palette.foreground,self->palette.border,self->palette.accent,self->palette.accentText,self->palette.secondary},6.f*static_cast<float>(self->dpi)/96.f);RedrawWindow(w,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_ERASE);return TRUE;}
             if(m==WM_COMMAND)
             {
-                if(LOWORD(wp)==kSecurity&&HIWORD(wp)==CBN_SELCHANGE){self->SecurityChanged();return TRUE;}
+                if(LOWORD(wp)==kSecurity&&HIWORD(wp)==BN_CLICKED){self->PickSecurity();return TRUE;}
                 if(LOWORD(wp)==IDCANCEL){self->End(IDCANCEL);return TRUE;}
                 if(LOWORD(wp)==IDOK){self->Confirm();return TRUE;}
             }
@@ -330,7 +341,7 @@ SystemControlPromptPreview CapturePrompt(Prompt& prompt,const char* name)
     if(shape)DeleteObject(shape);
     if(prompt.hidden)
     {
-        SendMessageW(prompt.security,CB_SETCURSEL,0,0);SendMessageW(window,WM_COMMAND,MAKEWPARAM(kSecurity,CBN_SELCHANGE),reinterpret_cast<LPARAM>(prompt.security));
+        prompt.securityChoice=0;prompt.SecurityChanged();
         if(IsWindowEnabled(prompt.password)||GetWindowTextLengthW(prompt.password)!=0||!prompt.request.password.View().empty())throw std::runtime_error("open network retained credentials");
     }
     const auto defaultButton=SendMessageW(window,DM_GETDEFID,0,0);

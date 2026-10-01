@@ -775,7 +775,7 @@ void DesktopApp::FinishWidgetGroupTransitions()
     // stack-local widget/container references (including Dock input handlers).
     const bool canRestore = !mouseDown_ && !dragSession_.HasContext() &&
         !dragDropController_.IsTransportActive() &&
-        widgetAction_ == WidgetAction::None && !renameEdit_ &&
+        widgetAction_ == WidgetAction::None && !renameController_.IsActive() &&
         !HasActiveContextMenuSession() && !reloading_ &&
         !compositionPaintInProgress_;
     if (!widgetGroupTransition_.FinishDispatch(canRestore,

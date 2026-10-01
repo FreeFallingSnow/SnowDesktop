@@ -856,6 +856,8 @@
     "app.website_icon.fetch_failed": "無法取得可用的網站圖示，已保留原圖示。",
     "app.website_icon.save_failed": "無法儲存圖示：捷徑可能已變更、遭刪除或無法寫入。已保留原圖示。",
   "app.menu.rename": "重新命名",
+  "app.menu.undo": "復原",
+  "app.menu.redo": "重做",
   "app.menu.cut": "剪下",
   "app.menu.copy": "複製",
   "app.menu.hide_desktop_icon": "隱藏桌面圖示",

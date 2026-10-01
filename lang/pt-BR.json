@@ -856,6 +856,8 @@
     "app.website_icon.fetch_failed": "Não foi possível obter um ícone válido do site. O ícone original foi mantido.",
     "app.website_icon.save_failed": "Não foi possível salvar o ícone: o atalho pode ter sido alterado, excluído ou estar protegido contra gravação. O ícone original foi mantido.",
   "app.menu.rename": "Renomear",
+  "app.menu.undo": "Desfazer",
+  "app.menu.redo": "Refazer",
   "app.menu.cut": "Recortar",
   "app.menu.copy": "Copiar",
   "app.menu.hide_desktop_icon": "Ocultar ícone da área de trabalho",

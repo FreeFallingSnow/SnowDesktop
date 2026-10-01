@@ -58,7 +58,7 @@ void DesktopApp::ApplyPendingRenames()
     // Sorting entries/rebuilding adapters must not invalidate a live editor,
     // pointer press, menu or retained native/OLE drag source.
     if (shellFileOperationInFlight_ > 0 || mouseDown_ || reloading_ ||
-        renameEdit_ || HasActiveContextMenuSession() ||
+        renameController_.IsActive() || HasActiveContextMenuSession() ||
         snowdesktop::drag_input_rules::ShouldDeferModelReload(
             dragSession_.HasContext(), dragDropController_.IsTransportActive()))
     {
@@ -207,7 +207,7 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
 void DesktopApp::CommitRename(bool cancel)
 {
     renameCommitPending_ = false;
-    if (renameEdit_ == nullptr)
+    if (renameInputWindow_ == nullptr)
     {
         renameController_.
             SetQuickNavigationPresentation(false);
@@ -222,8 +222,8 @@ void DesktopApp::CommitRename(bool cancel)
     const size_t renameIndex =
         renameController_.Index();
 
-    HWND edit = renameEdit_;
-    renameEdit_ = nullptr;
+    HWND edit = renameInputWindow_;
+    renameInputWindow_ = nullptr;
     renameEditLayout_.Reset();
     RemoveWindowSubclass(edit, &DesktopApp::RenameEditSubclassProc, 1);
 

@@ -10,7 +10,7 @@ bool DesktopApp::TryHandlePageNavigationKey(
     if (key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT)
         return false;
 
-    bool textInputActive = renameEdit_ != nullptr ||
+    bool textInputActive = renameController_.IsActive() ||
         (widgetEngine_ && widgetEngine_->HasFocusedHostInput());
     for (const auto& container : containers_)
     {
@@ -167,7 +167,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         return false;
     }
 
-    if (renameEdit_ != nullptr) return false;
+    if (renameController_.IsActive()) return false;
 
     // Handle searchable widget keyboard input.
     {

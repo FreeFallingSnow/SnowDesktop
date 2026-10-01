@@ -947,11 +947,11 @@ void CheckAdaptiveRenameEditor()
         const std::wstring longName = leftAligned
             ? std::wstring(100, L'A') + L".txt"
             : L"这是一个包含很多汉字的长文件名称需要完整显示自动换行后的所有文字以便在重命名时查看和编辑.txt";
-        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW,
-            L"EDIT", longName.c_str(), layout::EditStyle(leftAligned),
+        HWND edit = CreateWindowExW(WS_EX_TOOLWINDOW,
+            snowdesktop::text_input::WindowClass(), longName.c_str(), layout::EditStyle(leftAligned),
             available.left + 40, available.top + 40, 160, 26,
             owner, nullptr, windowClass.hInstance, nullptr);
-        Check(edit != nullptr, "the native multiline rename fixture can be created");
+        Check(edit != nullptr, "the shared multiline rename fixture can be created");
         if (!edit)
             continue;
         HFONT font = CreateFontW(leftAligned ? -26 : -13,
@@ -964,17 +964,9 @@ void CheckAdaptiveRenameEditor()
         adaptive.Begin(edit);
         RECT initial{};
         GetWindowRect(edit, &initial);
-        RECT formatting{};
-        SendMessageW(edit, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&formatting));
-        HDC dc = GetDC(edit);
-        const HGDIOBJ previous = SelectObject(dc, font);
-        TEXTMETRICW metrics{};
-        GetTextMetricsW(dc, &metrics);
-        SelectObject(dc, previous);
-        ReleaseDC(edit, dc);
         const LRESULT lines = SendMessageW(edit, EM_GETLINECOUNT, 0, 0);
         Check(lines > 1 && initial.bottom - initial.top > 26 &&
-                formatting.bottom - formatting.top >= lines * metrics.tmHeight,
+                initial.bottom - initial.top >= snowdesktop::text_input::DesiredHeight(edit),
             "initial Chinese and unbroken names fit all wrapped lines at different font sizes");
 
         // EM_REPLACESEL follows the same EN_UPDATE route as native typing and

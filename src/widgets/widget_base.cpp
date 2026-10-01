@@ -1016,18 +1016,22 @@ bool ScrollingItemWidget::EraseSearchSelection()
 void ScrollingItemWidget::ReplaceSearchSelection(
     const std::wstring& text)
 {
+    const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
     EraseSearchSelection();
     searchCursorPos_ =
         std::min(searchCursorPos_, searchText_.size());
     searchText_.insert(searchCursorPos_, text);
     searchCursorPos_ += text.size();
     searchSelectionAnchor_ = searchCursorPos_;
+    searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
     InvalidateSlots();
 }
 
 void ScrollingItemWidget::SetSearchText(
     const std::wstring& text)
 {
+    if (searchText_ == text) return;
+    searchHistory_.Clear();
     searchText_ = text;
     searchCursorPos_ = searchText_.size();
     searchSelectionAnchor_ = searchCursorPos_;
@@ -1038,39 +1042,59 @@ void ScrollingItemWidget::SetSearchText(
 
 void ScrollingItemWidget::AppendSearchChar(wchar_t ch)
 {
+    if(!searchDuplicateImeResult_.empty()&&searchDuplicateImeResult_.front()==ch)
+    {searchDuplicateImeResult_.erase(0,1);return;}
+    searchDuplicateImeResult_.clear();
+    if (ch >= 0xd800 && ch <= 0xdbff) { searchHighSurrogate_ = ch; return; }
+    if (searchHighSurrogate_ && ch >= 0xdc00 && ch <= 0xdfff)
+    {
+        const wchar_t pair[]{searchHighSurrogate_, ch}; searchHighSurrogate_ = 0;
+        ReplaceSearchSelection(std::wstring(pair, 2)); return;
+    }
+    searchHighSurrogate_ = 0;
+    if (ch >= 0xdc00 && ch <= 0xdfff) return;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
     ReplaceSearchSelection(std::wstring(1, ch));
 }
 
-void ScrollingItemWidget::BackspaceSearchText()
+void ScrollingItemWidget::BackspaceSearchText(bool word)
 {
+    const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
+    if(word&&!HasSearchSelection())searchSelectionAnchor_=snowdesktop::text_input::WordBoundary(searchText_,searchCursorPos_,false);
     if (!EraseSearchSelection() && searchCursorPos_ > 0)
     {
-        searchText_.erase(searchCursorPos_ - 1, 1);
-        --searchCursorPos_;
+        const auto start = snowdesktop::text_input::PreviousBoundary(searchText_, searchCursorPos_);
+        searchText_.erase(start, searchCursorPos_ - start);
+        searchCursorPos_ = start;
         searchSelectionAnchor_ = searchCursorPos_;
     }
+    searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
     InvalidateSlots();
 }
 
-void ScrollingItemWidget::DeleteSearchText()
+void ScrollingItemWidget::DeleteSearchText(bool word)
 {
+    const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
+    if(word&&!HasSearchSelection())searchSelectionAnchor_=snowdesktop::text_input::WordBoundary(searchText_,searchCursorPos_,true);
     if (!EraseSearchSelection() &&
         searchCursorPos_ < searchText_.size())
     {
-        searchText_.erase(searchCursorPos_, 1);
+        searchText_.erase(searchCursorPos_, snowdesktop::text_input::NextBoundary(searchText_, searchCursorPos_) - searchCursorPos_);
         searchSelectionAnchor_ = searchCursorPos_;
     }
+    searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
     InvalidateSlots();
 }
 
 void ScrollingItemWidget::ClearSearchText()
 {
+    searchHistory_.Clear(); searchHighSurrogate_ = 0;
+    searchComposing_=false;searchDuplicateImeResult_.clear();
     searchText_.clear();
     searchCursorPos_ = 0;
     searchSelectionAnchor_ = 0;
@@ -1091,6 +1115,7 @@ void ScrollingItemWidget::SetSearchFocused(bool focused)
     searchFocused_ = focused;
     if (!focused)
     {
+        searchComposing_=false;searchDuplicateImeResult_.clear();searchHighSurrogate_=0;
         searchSelectionAnchor_ = searchCursorPos_;
         searchCompositionText_.clear();
         searchCompositionCursor_ = 0;
@@ -1101,7 +1126,7 @@ void ScrollingItemWidget::SetSearchFocused(bool focused)
 void ScrollingItemWidget::SetSearchCursorPosition(
     size_t position)
 {
-    searchCursorPos_ = std::min(position, searchText_.size());
+    searchCursorPos_ = snowdesktop::text_input::SnapBoundary(searchText_,position);
     searchSelectionAnchor_ = searchCursorPos_;
 }
 
@@ -1124,7 +1149,7 @@ void ScrollingItemWidget::MoveCursorLeft(bool extendSelection)
     if (!extendSelection && HasSearchSelection())
         searchCursorPos_ = GetSearchSelectionStart();
     else if (searchCursorPos_ > 0)
-        --searchCursorPos_;
+        searchCursorPos_ = snowdesktop::text_input::PreviousBoundary(searchText_, searchCursorPos_);
     if (!extendSelection)
         searchSelectionAnchor_ = searchCursorPos_;
     ClearSearchComposition();
@@ -1135,7 +1160,7 @@ void ScrollingItemWidget::MoveCursorRight(bool extendSelection)
     if (!extendSelection && HasSearchSelection())
         searchCursorPos_ = GetSearchSelectionEnd();
     else if (searchCursorPos_ < searchText_.size())
-        ++searchCursorPos_;
+        searchCursorPos_ = snowdesktop::text_input::NextBoundary(searchText_, searchCursorPos_);
     if (!extendSelection)
         searchSelectionAnchor_ = searchCursorPos_;
     ClearSearchComposition();
@@ -1162,10 +1187,22 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
     if (!searchFocused_)
         return false;
 
+    searchDuplicateImeResult_.clear();
+    if(searchComposing_)return true;
+
     const bool control =
         (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift =
         (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    searchHighSurrogate_ = 0;
+    if (control && (key == 'Z' || key == 'Y'))
+    {
+        const bool changed = key == 'Y' || shift
+            ? searchHistory_.Redo(searchText_, searchCursorPos_, searchSelectionAnchor_)
+            : searchHistory_.Undo(searchText_, searchCursorPos_, searchSelectionAnchor_);
+        if (changed) { ClearSearchComposition(); InvalidateSlots(); }
+        return true;
+    }
     searchCursorPos_ =
         std::min(searchCursorPos_, searchText_.size());
     searchSelectionAnchor_ =
@@ -1218,7 +1255,9 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
         }
         if (key == 'X' && copied)
         {
+            const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
             EraseSearchSelection();
+            searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
             InvalidateSlots();
         }
         ClearSearchComposition();
@@ -1259,21 +1298,23 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
     }
     if (key == VK_BACK)
     {
-        BackspaceSearchText();
+        BackspaceSearchText(control);
         return true;
     }
     if (key == VK_DELETE)
     {
-        DeleteSearchText();
+        DeleteSearchText(control);
         return true;
     }
     if (key == VK_LEFT)
     {
+        if (control) { searchCursorPos_ = snowdesktop::text_input::WordBoundary(searchText_, searchCursorPos_, false); if (!shift) searchSelectionAnchor_ = searchCursorPos_; return true; }
         MoveCursorLeft(shift);
         return true;
     }
     if (key == VK_RIGHT)
     {
+        if (control) { searchCursorPos_ = snowdesktop::text_input::WordBoundary(searchText_, searchCursorPos_, true); if (!shift) searchSelectionAnchor_ = searchCursorPos_; return true; }
         MoveCursorRight(shift);
         return true;
     }
@@ -1395,6 +1436,7 @@ void ScrollingItemWidget::SetSearchComposition(
 {
     if (!searchFocused_)
         return;
+    searchComposing_=true;
     searchCompositionText_ = text;
     searchCompositionCursor_ =
         std::min(cursor, text.size());
@@ -1406,15 +1448,19 @@ void ScrollingItemWidget::CommitSearchComposition(
     if (!searchFocused_)
         return;
     ReplaceSearchSelection(text);
+    searchDuplicateImeResult_=text;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
 }
 
 void ScrollingItemWidget::ClearSearchComposition()
 {
+    searchComposing_=false;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
 }
+void ScrollingItemWidget::BeginSearchComposition()
+{searchComposing_=true;searchCompositionText_.clear();searchCompositionCursor_=0;searchDuplicateImeResult_.clear();}
 
 bool ScrollingItemWidget::GetSearchCaretRect(
     RECT& rect) const

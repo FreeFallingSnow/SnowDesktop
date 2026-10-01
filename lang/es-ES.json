@@ -856,6 +856,8 @@
     "app.website_icon.fetch_failed": "No se pudo obtener un icono válido del sitio web. Se ha conservado el icono original.",
     "app.website_icon.save_failed": "No se pudo guardar el icono: el acceso directo puede haber cambiado, haberse eliminado o ser de solo lectura. Se ha conservado el icono original.",
   "app.menu.rename": "Cambiar nombre",
+  "app.menu.undo": "Deshacer",
+  "app.menu.redo": "Rehacer",
   "app.menu.cut": "Cortar",
   "app.menu.copy": "Copiar",
   "app.menu.hide_desktop_icon": "Ocultar icono del escritorio",

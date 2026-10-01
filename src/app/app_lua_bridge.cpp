@@ -476,7 +476,7 @@ void DesktopApp::LuaSetWidgetTitle(const std::wstring& widgetId, const std::wstr
  */
 void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& request)
 {
-    if (renameEdit_ != nullptr || request.widgetId.empty() || request.storageKey.empty())
+    if (renameController_.IsActive() || request.widgetId.empty() || request.storageKey.empty())
         return;
     if (luaInlineEdit_ != nullptr)
         CommitLuaInlineTextEdit(false);
@@ -518,7 +518,7 @@ void DesktopApp::BeginLuaInlineTextEdit(const LuaInlineTextEditRequest& request)
         style |= ES_AUTOHSCROLL;
 
     luaInlineEdit_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        L"EDIT", initial.c_str(), style,
+        snowdesktop::text_input::WindowClass(), initial.c_str(), style,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
@@ -644,6 +644,8 @@ LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
     switch (message)
     {
     case WM_KEYDOWN:
+        if (snowdesktop::text_input::IsComposing(hwnd))
+            break;
         if (wParam == VK_ESCAPE) { app->CommitLuaInlineTextEdit(true); return 0; }
         if (wParam == VK_RETURN)
         {
@@ -654,7 +656,9 @@ LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
                 return 0;
             }
         }
-        if (wParam == VK_DELETE && app->luaInlineEditLiveUpdate_)
+        if ((wParam == VK_DELETE || wParam == VK_BACK ||
+            ((GetKeyState(VK_CONTROL)&0x8000)&&(wParam=='Z'||wParam=='Y'||wParam=='X'||wParam=='V')))
+            && app->luaInlineEditLiveUpdate_)
         {
             LRESULT result = DefSubclassProc(hwnd, message, wParam, lParam);
             app->PreviewLuaInlineTextEdit();
@@ -679,6 +683,8 @@ LRESULT CALLBACK DesktopApp::LuaInlineEditSubclassProc(
         return result;
     }
     case WM_KILLFOCUS:
+        if (snowdesktop::text_input::HasEditingMenu(hwnd)) return 0;
+        snowdesktop::text_input::CompleteComposition(hwnd);
         app->CommitLuaInlineTextEdit(false);
         return 0;
     }

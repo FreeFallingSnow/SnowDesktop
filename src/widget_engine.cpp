@@ -15,6 +15,8 @@
  */
 
 #include "widget_engine.h"
+#include "text_input_accessibility.h"
+namespace text_input = snowdesktop::text_input;
 #include "widget_appearance_presets.h"
 #include "edge_light_codec.h"
 #include "native_control_geometry.h"
@@ -26965,10 +26967,27 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
         focusedHostInput_.minimum = control.minimum;
         focusedHostInput_.maximum = control.maximum;
         focusedHostInput_.step = control.step;
+        const std::wstring modelText=Utf8ToWideLocal(control.controlled?control.controlledText:
+            RuntimeGetStorageValue(widgetId,control.storageKey));
+        if(modelText!=focusedHostInput_.modelText&&(control.controlled||control.liveUpdate))
+        {
+            focusedHostInput_.modelText=modelText;
+            if(modelText==focusedHostInput_.text)focusedHostInput_.deferredModelText.reset();
+            else if(focusedHostInput_.composing)focusedHostInput_.deferredModelText=modelText;
+            else
+            {
+                focusedHostInput_.text=modelText;focusedHostInput_.originalText=modelText;
+                focusedHostInput_.cursor=text_input::SnapBoundary(modelText,focusedHostInput_.cursor);
+                focusedHostInput_.selectionAnchor=text_input::SnapBoundary(modelText,focusedHostInput_.selectionAnchor);
+                focusedHostInput_.history.Clear();focusedHostInput_.caretVisibility.Request();
+            }
+        }
         const bool selectionChanged =
             focusedHostInput_.controlledSelection != control.selection;
         focusedHostInput_.controlledSelection = control.selection;
-        if (selectionChanged && control.selection)
+        if (selectionChanged && control.selection && focusedHostInput_.composing)
+            focusedHostInput_.deferredSelection=true;
+        else if (selectionChanged && control.selection)
         {
             const auto anchor = snowdesktop::widget_runtime::
                 HostTextOffsetFromUtf8ByteOffset(
@@ -27102,6 +27121,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
             if (storedText != focusedHostInput_.text)
             {
                 focusedHostInput_.text = storedText;
+                focusedHostInput_.history.Clear();
                 focusedHostInput_.originalText = storedText;
                 focusedHostInput_.cursor = storedText.size();
                 focusedHostInput_.selectionAnchor =
@@ -27166,6 +27186,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
         ? found->controlledText
         : RuntimeGetStorageValue(widgetId, found->storageKey));
     focusedHostInput_.originalText = focusedHostInput_.text;
+    focusedHostInput_.modelText = focusedHostInput_.text;
     focusedHostInput_.cursor = focusedHostInput_.text.size();
     focusedHostInput_.selectionAnchor = found->selectAll
         ? 0 : focusedHostInput_.cursor;
@@ -28586,6 +28607,56 @@ WidgetEngine::RuntimeAccessibilitySnapshots() const
                         widget.widgetId, control->storageKey);
             }
             node.valueReadOnly = control->readOnly;
+            if (d2dState_)
+            {
+                text_input::AccessibleDocument document;
+                document.text=Utf8ToWideLocal(node.valueText);
+                document.cursor=document.anchor=document.text.size();
+                if(focusedHostInput_.active&&focusedHostInput_.widgetId==widget.widgetId&&focusedHostInput_.id==node.key)
+                {document.cursor=focusedHostInput_.cursor;document.anchor=focusedHostInput_.selectionAnchor;}
+                document.enabled=node.enabled;document.readOnly=control->readOnly;
+                const float innerWidth=std::max(1.f,node.bounds.width-control->padding.left-control->padding.right-(control->multiline?8.f:0.f));
+                const float innerHeight=std::max(1.f,node.bounds.height-control->padding.top-control->padding.bottom);
+                auto layout=control->multiline
+                    ? CreateHostMultilineTextLayout(d2dState_,document.text,control->fontSize,innerWidth)
+                    : CreateHostSingleLineTextLayout(d2dState_,document.text,control->fontSize,innerWidth,innerHeight);
+                const float left=static_cast<float>(widget.lastBounds.left)+node.bounds.x+control->padding.left;
+                const float top=static_cast<float>(widget.lastBounds.top)+node.bounds.y+control->padding.top;
+                const float scroll=control->multiline?static_cast<float>(RuntimeGetScrollOffset(widget.widgetId,node.key)):0.f;
+                const D2D1_RECT_F clip=D2D1::RectF(left,top,left+innerWidth,top+innerHeight);
+                auto access=std::make_shared<text_input::TextAccess>();
+                access->document=[document]{return std::optional<text_input::AccessibleDocument>{document};};
+                access->rectangles=[layout,left,top,scroll,clip](std::size_t start,std::size_t end){
+                    std::vector<text_input::Rectangle> boxesResult;if(!layout)return boxesResult;
+                    UINT32 count=0;layout->HitTestTextRange(static_cast<UINT32>(start),static_cast<UINT32>(end-start),left,top-scroll,nullptr,0,&count);
+                    std::vector<DWRITE_HIT_TEST_METRICS> boxes(count);
+                    if(count&&SUCCEEDED(layout->HitTestTextRange(static_cast<UINT32>(start),static_cast<UINT32>(end-start),left,top-scroll,boxes.data(),count,&count)))
+                        for(const auto& box:boxes){const float x=std::max(clip.left,box.left),y=std::max(clip.top,box.top);
+                            const float right=std::min(clip.right,box.left+box.width),bottom=std::min(clip.bottom,box.top+box.height);
+                            if(right>=x&&bottom>y)boxesResult.push_back({x,y,right-x,bottom-y});}
+                    return boxesResult;
+                };
+                access->hit=[layout,left,top,scroll,text=document.text](text_input::Point point)->std::optional<std::size_t>{
+                    if(!layout)return {};BOOL trailing=FALSE,inside=FALSE;DWRITE_HIT_TEST_METRICS hit{};
+                    if(FAILED(layout->HitTestPoint(static_cast<float>(point.x)-left,static_cast<float>(point.y)-top+scroll,&trailing,&inside,&hit)))return {};
+                    return text_input::SnapBoundary(text,hit.textPosition+(trailing?hit.length:0));
+                };
+                access->unitBoundaries=[layout,length=document.text.size()](text_input::Unit unit){
+                    std::vector<std::size_t> positions;if(unit!=text_input::Unit::Line||!layout)return positions;
+                    UINT32 count=0;layout->GetLineMetrics(nullptr,0,&count);std::vector<DWRITE_LINE_METRICS> lines(count);
+                    if(count&&SUCCEEDED(layout->GetLineMetrics(lines.data(),count,&count))){std::size_t at=0;positions.push_back(0);
+                        for(const auto& line:lines){at=std::min(length,at+line.length);positions.push_back(at);}}
+                    return positions;
+                };
+                access->visibleRanges=[layout,scroll,innerHeight,length=document.text.size()]{
+                    std::vector<std::pair<std::size_t,std::size_t>> ranges;if(!layout)return ranges;
+                    UINT32 count=0;layout->GetLineMetrics(nullptr,0,&count);std::vector<DWRITE_LINE_METRICS> lines(count);
+                    if(count&&SUCCEEDED(layout->GetLineMetrics(lines.data(),count,&count))){std::size_t at=0;float y=-scroll;
+                        for(const auto& line:lines){const auto end=std::min(length,at+line.length);if(y+line.height>0&&y<innerHeight)ranges.emplace_back(at,end);at=end;y+=line.height;}}
+                    return ranges;
+                };
+                node.textAccess=std::move(access);node.textAccessUsesScreenCoordinates=false;
+            }
             if (control->numeric)
             {
                 node.minimum = control->minimum;
@@ -28773,6 +28844,7 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
         if (focused)
         {
             focusedHostInput_.text = value;
+            focusedHostInput_.history.Clear();
             focusedHostInput_.originalText = value;
             focusedHostInput_.cursor = value.size();
             focusedHostInput_.selectionAnchor = value.size();
@@ -28799,6 +28871,37 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
 
     if (request.kind == LuaWidgetAccessibilityActionKind::SetValue)
         return setHostValue(request.textValue);
+    if (request.kind == LuaWidgetAccessibilityActionKind::SetTextSelection ||
+        request.kind == LuaWidgetAccessibilityActionKind::RevealTextPosition)
+    {
+        const auto control=std::find_if(widget.hostControls.rbegin(),widget.hostControls.rend(),[&](const auto& candidate){
+            return candidate.type==LuaWidget::HostControl::Type::Input&&candidate.enabled&&candidate.id==request.nodeKey;});
+        if(control==widget.hostControls.rend())return false;
+        if(request.kind==LuaWidgetAccessibilityActionKind::SetTextSelection)
+        {
+            if(!focusedHostInput_.active||focusedHostInput_.widgetId!=request.widgetId||focusedHostInput_.id!=request.nodeKey)
+                if(!RuntimeFocusHostInput(request.widgetId,request.nodeKey,"accessibility"))return false;
+            if(focusedHostInput_.composing)return false;
+            const auto previousAnchor=focusedHostInput_.selectionAnchor,previousCursor=focusedHostInput_.cursor;
+            focusedHostInput_.selectionAnchor=text_input::SnapBoundary(focusedHostInput_.text,request.textAnchor);
+            focusedHostInput_.cursor=text_input::SnapBoundary(focusedHostInput_.text,request.textCursor);
+            focusedHostInput_.caretVisibility.Request();
+            if(focusedHostInput_.controlledSelection)
+                DispatchHostInputSelectionChange(request.widgetId,request.nodeKey,focusedHostInput_.selectionChangeAction,
+                    focusedHostInput_.text,previousAnchor,previousCursor,focusedHostInput_.selectionAnchor,focusedHostInput_.cursor,"accessibility");
+        }
+        else if(control->multiline&&d2dState_)
+        {
+            const auto text=focusedHostInput_.active&&focusedHostInput_.widgetId==request.widgetId&&focusedHostInput_.id==request.nodeKey
+                ?focusedHostInput_.text:Utf8ToWideLocal(control->controlled?control->controlledText:RuntimeGetStorageValue(request.widgetId,control->storageKey));
+            const auto layout=CreateHostMultilineTextLayout(d2dState_,text,control->fontSize,
+                std::max(1.f,static_cast<float>(control->rect.right-control->rect.left)-control->padding.left-control->padding.right-8.f));
+            if(!layout)return false;float x=0,y=0;DWRITE_HIT_TEST_METRICS hit{};
+            if(FAILED(layout->HitTestTextPosition(static_cast<UINT32>(std::min(request.textCursor,text.size())),FALSE,&x,&y,&hit)))return false;
+            RuntimeSetScrollOffset(request.widgetId,request.nodeKey,static_cast<int>(std::lround(y)));
+        }
+        RuntimeInvalidateHost(request.widgetId);return true;
+    }
     if (request.kind ==
         LuaWidgetAccessibilityActionKind::SetScrollOffset)
     {
@@ -29261,6 +29364,7 @@ bool WidgetEngine::SetHostInputComposition(
         return true;
     }
     focusedHostInput_.pendingHighSurrogate = 0;
+    focusedHostInput_.composing = true;
     const size_t boundedCursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
     const size_t boundedAnchor = std::min(
@@ -29301,6 +29405,10 @@ bool WidgetEngine::CommitHostInputComposition(
     }
     focusedHostInput_.pendingHighSurrogate = 0;
 
+    const snowdesktop::text_input::Snapshot before{
+        focusedHostInput_.text, focusedHostInput_.cursor,
+        focusedHostInput_.selectionAnchor};
+
     const std::wstring previousText = focusedHostInput_.text;
     focusedHostInput_.cursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
@@ -29330,6 +29438,9 @@ bool WidgetEngine::CommitHostInputComposition(
     focusedHostInput_.compositionText.clear();
     focusedHostInput_.compositionCursor = 0;
     focusedHostInput_.caretVisibility.Request();
+    focusedHostInput_.history.Record(before, {focusedHostInput_.text,
+        focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
+    focusedHostInput_.duplicateImeResult = text;
     if (focusedHostInput_.liveUpdate)
     {
         if (focusedHostInput_.controlled)
@@ -29349,13 +29460,33 @@ bool WidgetEngine::CommitHostInputComposition(
 
 void WidgetEngine::ClearHostInputComposition()
 {
-    if (!focusedHostInput_.active ||
-        focusedHostInput_.compositionText.empty())
-        return;
+    if (!focusedHostInput_.active) return;
+    focusedHostInput_.composing = false;
     focusedHostInput_.compositionText.clear();
     focusedHostInput_.compositionCursor = 0;
+    if(focusedHostInput_.deferredModelText)
+    {
+        focusedHostInput_.text=std::move(*focusedHostInput_.deferredModelText);focusedHostInput_.deferredModelText.reset();
+        focusedHostInput_.originalText=focusedHostInput_.text;
+        focusedHostInput_.cursor=text_input::SnapBoundary(focusedHostInput_.text,focusedHostInput_.cursor);
+        focusedHostInput_.selectionAnchor=text_input::SnapBoundary(focusedHostInput_.text,focusedHostInput_.selectionAnchor);
+        focusedHostInput_.history.Clear();
+    }
+    if(focusedHostInput_.deferredSelection&&focusedHostInput_.controlledSelection)
+    {
+        const auto anchor=snowdesktop::widget_runtime::HostTextOffsetFromUtf8ByteOffset(focusedHostInput_.text,focusedHostInput_.controlledSelection->start);
+        const auto cursor=snowdesktop::widget_runtime::HostTextOffsetFromUtf8ByteOffset(focusedHostInput_.text,focusedHostInput_.controlledSelection->finish);
+        if(anchor&&cursor){focusedHostInput_.selectionAnchor=*anchor;focusedHostInput_.cursor=*cursor;}
+    }
+    focusedHostInput_.deferredSelection=false;
     focusedHostInput_.caretVisibility.Request();
     RuntimeInvalidateHost(focusedHostInput_.widgetId);
+}
+void WidgetEngine::BeginHostInputComposition()
+{
+    if(!focusedHostInput_.active)return;
+    focusedHostInput_.composing=true;focusedHostInput_.compositionText.clear();
+    focusedHostInput_.compositionCursor=0;focusedHostInput_.duplicateImeResult.clear();
 }
 
 bool WidgetEngine::HandleHostInputChar(wchar_t ch)
@@ -29364,6 +29495,11 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
         return false;
     if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
             true, focusedHostInput_.readOnly)) return true;
+    if(!focusedHostInput_.duplicateImeResult.empty()&&focusedHostInput_.duplicateImeResult.front()==ch)
+    {focusedHostInput_.duplicateImeResult.erase(0,1);return true;}
+    focusedHostInput_.duplicateImeResult.clear();
+    const snowdesktop::text_input::Snapshot before{
+        focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor};
     if (ch >= 0xD800 && ch <= 0xDBFF)
     {
         focusedHostInput_.pendingHighSurrogate = ch;
@@ -29410,6 +29546,8 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
     focusedHostInput_.selectionAnchor =
         focusedHostInput_.cursor;
     focusedHostInput_.caretVisibility.Request();
+    focusedHostInput_.history.Record(before, {focusedHostInput_.text,
+        focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
     if (focusedHostInput_.liveUpdate)
     {
         if (focusedHostInput_.controlled)
@@ -29601,6 +29739,8 @@ bool WidgetEngine::ExecuteHostInputEditCommand(
 
     if (changed)
     {
+        focusedHostInput_.history.Record({previousText, previousCursor, previousSelectionAnchor},
+            {focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
         focusedHostInput_.caretVisibility.Request();
         if (focusedHostInput_.liveUpdate)
         {
@@ -29632,6 +29772,9 @@ bool WidgetEngine::ExecuteHostInputEditCommand(
 bool WidgetEngine::HandleHostInputKey(WPARAM key)
 {
     if (!focusedHostInput_.active) return false;
+    focusedHostInput_.duplicateImeResult.clear();
+    if (focusedHostInput_.composing &&
+        (key == VK_RETURN || key == VK_ESCAPE)) return true;
     focusedHostInput_.pendingHighSurrogate = 0;
 
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -29716,12 +29859,23 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     };
 
     bool changed = false;
-    if (key == VK_ESCAPE)
+    const bool historyNavigation = ctrl && (key == 'Z' || key == 'Y');
+    if (historyNavigation)
+    {
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly)) return true;
+        changed = key == 'Y' || shift
+            ? focusedHostInput_.history.Redo(focusedHostInput_.text,
+                focusedHostInput_.cursor, focusedHostInput_.selectionAnchor)
+            : focusedHostInput_.history.Undo(focusedHostInput_.text,
+                focusedHostInput_.cursor, focusedHostInput_.selectionAnchor);
+    }
+    else if (key == VK_ESCAPE)
     {
         BlurHostInput(true);
         return true;
     }
-    if (key == VK_RETURN)
+    else if (key == VK_RETURN)
     {
         if (!focusedHostInput_.multiline || ctrl)
         {
@@ -29734,6 +29888,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         const size_t start = selectionStart();
         const size_t end = selectionEnd();
         size_t nextCursor = focusedHostInput_.cursor;
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly)) return true;
         if (!snowdesktop::widget_runtime::TryApplyHostTextReplacement(
                 focusedHostInput_.text, start, end, L"\n",
                 focusedHostInput_.maximumUtf8Bytes, nextCursor))
@@ -29755,7 +29911,11 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         changed = eraseSelection();
         if (!changed && focusedHostInput_.cursor > 0)
         {
-            focusedHostInput_.text.erase(--focusedHostInput_.cursor, 1);
+            const auto start = ctrl ? snowdesktop::text_input::WordBoundary(
+                focusedHostInput_.text, focusedHostInput_.cursor, false)
+                : snowdesktop::text_input::PreviousBoundary(focusedHostInput_.text, focusedHostInput_.cursor);
+            focusedHostInput_.text.erase(start, focusedHostInput_.cursor - start);
+            focusedHostInput_.cursor = start;
             focusedHostInput_.selectionAnchor =
                 focusedHostInput_.cursor;
             changed = true;
@@ -29769,7 +29929,10 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         if (!changed &&
             focusedHostInput_.cursor < focusedHostInput_.text.size())
         {
-            focusedHostInput_.text.erase(focusedHostInput_.cursor, 1);
+            const auto end = ctrl ? snowdesktop::text_input::WordBoundary(
+                focusedHostInput_.text, focusedHostInput_.cursor, true)
+                : snowdesktop::text_input::NextBoundary(focusedHostInput_.text, focusedHostInput_.cursor);
+            focusedHostInput_.text.erase(focusedHostInput_.cursor, end - focusedHostInput_.cursor);
             focusedHostInput_.selectionAnchor =
                 focusedHostInput_.cursor;
             changed = true;
@@ -29920,8 +30083,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         }
         else
             focusedHostInput_.cursor = key == VK_HOME
-                ? 0 : (focusedHostInput_.cursor > 0
-                    ? focusedHostInput_.cursor - 1 : 0);
+                ? 0 : (ctrl ? snowdesktop::text_input::WordBoundary(focusedHostInput_.text, focusedHostInput_.cursor, false)
+                    : snowdesktop::text_input::PreviousBoundary(focusedHostInput_.text, focusedHostInput_.cursor));
         return finishMovement(focusedHostInput_.cursor);
     }
     else if (key == VK_RIGHT || key == VK_END)
@@ -29941,8 +30104,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         else
             focusedHostInput_.cursor = key == VK_END
                 ? focusedHostInput_.text.size()
-                : std::min(focusedHostInput_.cursor + 1,
-                    focusedHostInput_.text.size());
+                : (ctrl ? snowdesktop::text_input::WordBoundary(focusedHostInput_.text, focusedHostInput_.cursor, true)
+                    : snowdesktop::text_input::NextBoundary(focusedHostInput_.text, focusedHostInput_.cursor));
         return finishMovement(focusedHostInput_.cursor);
     }
     else if (key == VK_CONTROL || key == VK_SHIFT || key == VK_MENU ||
@@ -29959,6 +30122,9 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
 
     if (changed)
     {
+        if (!historyNavigation)
+            focusedHostInput_.history.Record({previousText, previousCursor, previousSelectionAnchor},
+                {focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
         focusedHostInput_.caretVisibility.Request();
         if (focusedHostInput_.liveUpdate)
         {

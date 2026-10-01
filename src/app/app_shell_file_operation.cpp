@@ -780,7 +780,7 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
     // Commit on the UI thread only, using the same revision/interaction fences
     // as normal refresh. The worker must not overwrite edits made after timeout.
     if (exitRequested_ || !initialShellReadPending_ || reloading_ ||
-        compositionPaintInProgress_ || mouseDown_ || renameEdit_ ||
+        compositionPaintInProgress_ || mouseDown_ || renameController_.IsActive() ||
         HasActiveContextMenuSession() || shellFileOperationInFlight_ > 0 ||
         !pendingRenames_.empty() || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive())

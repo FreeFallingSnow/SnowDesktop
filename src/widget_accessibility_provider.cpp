@@ -4,6 +4,7 @@
 
 #include "widget_accessibility_provider.h"
 #include "widget_accessibility_events.h"
+#include "text_input_accessibility.h"
 
 #include <oleauto.h>
 #include <wrl/client.h>
@@ -948,6 +949,61 @@ public:
         const auto pattern = PatternForId(patternId);
         const auto& node = snapshots[resolved->widgetIndex]
             .nodes[*resolved->nodeIndex];
+        if (patternId == UIA_TextPatternId && node.textAccess && !node.password)
+        {
+            auto access=std::make_shared<text_input::TextAccess>();
+            access->lifetimeIdentity=state_.get();access->elementIdentity=reference_.widgetId+L":"+Utf8ToWide(node.semanticId);
+            const auto current=[state=state_,reference=reference_]() -> std::optional<AccessibilityNode> {
+                std::vector<LuaWidgetAccessibilitySnapshot> values;
+                if(!state->Capture(values))return {};
+                const auto found=ResolveElement(values,reference);
+                if(!found||!found->nodeIndex)return {};
+                return values[found->widgetIndex].nodes[*found->nodeIndex];
+            };
+            access->document=[current]() -> std::optional<text_input::AccessibleDocument> {
+                const auto value=current();return value&&value->textAccess&&value->textAccess->document?value->textAccess->document():std::optional<text_input::AccessibleDocument>{};
+            };
+            access->rectangles=[current,state=state_](std::size_t start,std::size_t end) {
+                const auto value=current();std::vector<text_input::Rectangle> boxes;
+                if(!value||!value->textAccess||!value->textAccess->rectangles)return boxes;
+                boxes=value->textAccess->rectangles(start,end);
+                if(!value->textAccessUsesScreenCoordinates){POINT origin{};WindowClientOrigin(state->window,origin);for(auto& box:boxes){box.left+=origin.x;box.top+=origin.y;}}
+                return boxes;
+            };
+            access->hit=[current,state=state_](text_input::Point point)->std::optional<std::size_t>{
+                const auto value=current();if(!value||!value->textAccess||!value->textAccess->hit)return {};
+                if(!value->textAccessUsesScreenCoordinates){POINT origin{};WindowClientOrigin(state->window,origin);point.x-=origin.x;point.y-=origin.y;}
+                return value->textAccess->hit(point);
+            };
+            access->select=[current,state=state_,reference=reference_](std::size_t anchor,std::size_t cursor){
+                const auto value=current();if(!value||!value->enabled||value->password)return false;
+                if(value->textAccess&&value->textAccess->select)return value->textAccess->select(anchor,cursor);
+                if(!state->focusProvider||!state->focusProvider(reference.widgetId,value->key)||!state->actionProvider)return false;
+                LuaWidgetAccessibilityActionRequest request;request.kind=LuaWidgetAccessibilityActionKind::SetTextSelection;
+                request.widgetId=reference.widgetId;request.nodeKey=value->key;request.textAnchor=anchor;request.textCursor=cursor;
+                return state->actionProvider(request);
+            };
+            access->reveal=[current,state=state_,reference=reference_](std::size_t at,bool top){
+                const auto value=current();if(!value||!value->enabled||value->password)return false;
+                if(value->textAccess&&value->textAccess->reveal)return value->textAccess->reveal(at,top);
+                if(!state->actionProvider)return false;
+                LuaWidgetAccessibilityActionRequest request;request.kind=LuaWidgetAccessibilityActionKind::RevealTextPosition;
+                request.widgetId=reference.widgetId;request.nodeKey=value->key;request.textCursor=at;
+                return state->actionProvider(request);
+            };
+            access->unitBoundaries=[current](text_input::Unit unit){const auto value=current();return value&&value->textAccess&&value->textAccess->unitBoundaries
+                ?value->textAccess->unitBoundaries(unit):std::vector<std::size_t>{};};
+            access->visibleRanges=[current]{
+                const auto value=current();std::vector<std::pair<std::size_t,std::size_t>> ranges;
+                if(!value||!value->textAccess)return ranges;
+                if(value->textAccess->visibleRanges)return value->textAccess->visibleRanges();
+                const auto document=value->textAccess->document?value->textAccess->document():std::optional<text_input::AccessibleDocument>{};
+                if(document&&!document->offscreen)ranges.emplace_back(0,document->text.size());return ranges;
+            };
+            Microsoft::WRL::ComPtr<ITextProvider> provider;
+            const auto hr=text_input::CreateTextProvider(std::move(access),this,&provider);
+            return FAILED(hr)?hr:provider.CopyTo(result);
+        }
         if (!pattern || !SupportsPattern(node, *pattern)) return S_OK;
         if (patternId == UIA_InvokePatternId)
             return QueryInterface(IID_IInvokeProvider,
@@ -1012,6 +1068,10 @@ public:
 
         if (node)
         {
+            if (propertyId == UIA_IsPasswordPropertyId)
+            {SetBoolVariant(result,node->password);return S_OK;}
+            if (propertyId == UIA_IsTextPatternAvailablePropertyId)
+            {SetBoolVariant(result,node->textAccess&&!node->password);return S_OK;}
             const auto availability =
                 AvailabilityPropertyPattern(propertyId);
             if (availability)
@@ -1431,7 +1491,7 @@ public:
         const HRESULT hr = ResolvePatternNode(
             AccessibilityPattern::Value, node);
         if (FAILED(hr)) return hr;
-        if (node.valueReadOnly) return UIA_E_NOTSUPPORTED;
+        if (node.valueReadOnly || node.password) return UIA_E_NOTSUPPORTED;
         return PerformAction(
             AccessibilityPattern::Value,
             LuaWidgetAccessibilityActionKind::SetValue,
@@ -1446,6 +1506,7 @@ public:
         const HRESULT hr = ResolvePatternNode(
             AccessibilityPattern::Value, node);
         if (FAILED(hr)) return hr;
+        if (node.password) return E_ACCESSDENIED;
         const std::wstring value = Utf8ToWide(node.valueText);
         *result = SysAllocStringLen(value.data(),
             static_cast<UINT>(value.size()));

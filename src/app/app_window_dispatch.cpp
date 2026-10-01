@@ -301,13 +301,13 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         if (widgetEngine_ &&
             widgetEngine_->HasFocusedHostInput())
         {
-            widgetEngine_->ClearHostInputComposition();
+            widgetEngine_->BeginHostInputComposition();
             UpdateHostInputImePosition();
             return 0;
         }
         if (auto* searchable = focusedSearchWidget())
         {
-            searchable->ClearSearchComposition();
+            searchable->BeginSearchComposition();
             UpdateHostInputImePosition();
             return 0;
         }
@@ -451,6 +451,9 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case WM_KEYDOWN:
     {
+        if ((widgetEngine_&&widgetEngine_->IsHostInputComposing()) ||
+            (focusedSearchWidget()&&focusedSearchWidget()->IsSearchComposing()))
+            return DefWindowProcW(hwnd,msg,wp,lp);
         const bool repeated =
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
         if (TryHandlePageNavigationKey(wp, repeated))

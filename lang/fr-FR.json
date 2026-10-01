@@ -856,6 +856,8 @@
     "app.website_icon.fetch_failed": "Impossible de récupérer une icône utilisable pour ce site. L’icône d’origine a été conservée.",
     "app.website_icon.save_failed": "Impossible d’enregistrer l’icône : le raccourci a peut-être été modifié, supprimé ou est en lecture seule. L’icône d’origine a été conservée.",
   "app.menu.rename": "Renommer",
+  "app.menu.undo": "Annuler",
+  "app.menu.redo": "Rétablir",
   "app.menu.cut": "Couper",
   "app.menu.copy": "Copier",
   "app.menu.hide_desktop_icon": "Masquer l’icône du Bureau",

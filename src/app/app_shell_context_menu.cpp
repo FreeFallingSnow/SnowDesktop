@@ -195,7 +195,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
             else
                 BeginRenameFolderEntry(
                     widgetIndex, memberIndex);
-            inlineEditorStarted = renameEdit_ != nullptr;
+            inlineEditorStarted = renameController_.IsActive();
         }
         break;
     case kContextCutCommand:

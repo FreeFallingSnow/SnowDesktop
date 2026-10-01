@@ -176,7 +176,7 @@ void DesktopApp::OnRightButtonDown(
 {
     CancelPopupHover(true);
     CancelRenameClick();
-    if (renameEdit_ != nullptr)
+    if (renameController_.IsActive())
         CommitRename(false);
     rightButtonDownDockHost_ = dockHost;
     // Right-click menu interaction is never an edge-swipe gesture. Cancel an
@@ -195,7 +195,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     // A right click cancels placement as one complete press/release gesture.
     // Preserve surface ownership on press, then consume release without a menu.
     if (largeIconGesture_) { CancelLargeIconGesture(); return; }
-    if (renameEdit_ != nullptr) return;
+    if (renameController_.IsActive()) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT screenPt = pt;
@@ -435,7 +435,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             InvalidateRect(owner, nullptr, FALSE);
         }
     } visibilityGuard{
-        interactionPinnedWidgetId_, hwnd_, renameEdit_, luaInlineEdit_,
+        interactionPinnedWidgetId_, hwnd_, renameInputWindow_, luaInlineEdit_,
         interactionPinnedWidgetId_
     };
     if (contextWidgetIndex < widgets_.size())

@@ -19,6 +19,7 @@
  * - 渲染通过 D2DState 结构管理资源，支持逐小部件独立绘制
  */
 #pragma once
+#include "text_input_state.h"
 
 #include <windows.h>
 #include <d2d1_1.h>
@@ -1651,6 +1652,8 @@ public:
         const std::wstring& text, size_t cursor);
     bool CommitHostInputComposition(const std::wstring& text);
     void ClearHostInputComposition();
+    void BeginHostInputComposition();
+    bool IsHostInputComposing() const { return focusedHostInput_.active && focusedHostInput_.composing; }
     bool HasFocusedHostInput() const;
     bool GetFocusedHostInputCaretRect(RECT& rect) const;
     bool IsHostInputAt(const std::wstring& widgetId, int x, int y,
@@ -1987,6 +1990,7 @@ private:
     bool previewOnly_ = false;
     struct FocusedHostInput
     {
+        snowdesktop::text_input::History history;
         bool active = false;
         std::wstring widgetId;
         std::string id;
@@ -1998,6 +2002,8 @@ private:
         snowdesktop::widget_runtime::InteractionAction submitAction;
         std::wstring text;
         std::wstring originalText;
+        std::wstring modelText;
+        std::optional<std::wstring> deferredModelText;
         size_t cursor = 0;
         size_t selectionAnchor = 0;
         std::optional<snowdesktop::widget_runtime::ViewTextSelection>
@@ -2007,6 +2013,9 @@ private:
         size_t pointerSelectionStartCursor = 0;
         size_t pointerSelectionStartAnchor = 0;
         std::wstring compositionText;
+        std::wstring duplicateImeResult;
+        bool composing = false;
+        bool deferredSelection = false;
         size_t compositionCursor = 0;
         wchar_t pendingHighSurrogate = 0;
         bool pointerSelecting = false;

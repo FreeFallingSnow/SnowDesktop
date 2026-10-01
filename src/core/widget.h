@@ -18,6 +18,7 @@
  */
 
 #pragma once
+#include "../text_input_state.h"
 #include "item.h"
 #include "container.h"
 #include "slot.h"
@@ -328,8 +329,8 @@ public:
     const std::wstring& GetSearchText() const { return searchText_; }
     void SetSearchText(const std::wstring& text);
     void AppendSearchChar(wchar_t ch);
-    void BackspaceSearchText();
-    void DeleteSearchText();
+    void BackspaceSearchText(bool word = false);
+    void DeleteSearchText(bool word = false);
     void ClearSearchText();
     bool IsSearchFocused() const { return searchFocused_; }
     void SetSearchFocused(bool focused);
@@ -370,6 +371,8 @@ public:
     void CommitSearchComposition(
         const std::wstring& text);
     void ClearSearchComposition();
+    void BeginSearchComposition();
+    bool IsSearchComposing() const { return searchComposing_; }
     bool GetSearchCaretRect(RECT& rect) const;
     virtual RECT GetSearchBoxRect() const { return {}; }
     bool IsSearchActive() const { return !searchText_.empty(); }
@@ -435,6 +438,10 @@ public:
 protected:
     snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
     std::wstring searchText_;
+    snowdesktop::text_input::History searchHistory_;
+    wchar_t searchHighSurrogate_ = 0;
+    bool searchComposing_ = false;
+    std::wstring searchDuplicateImeResult_;
     size_t searchCursorPos_ = 0;
     size_t searchSelectionAnchor_ = 0;
     std::wstring searchCompositionText_;

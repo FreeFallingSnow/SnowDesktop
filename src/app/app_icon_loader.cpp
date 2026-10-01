@@ -255,7 +255,7 @@ void DesktopApp::StartIconLoader() {}
 void DesktopApp::DrainBackgroundShellWork()
 {
     if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
-        HasActiveContextMenuSession() || renameEdit_ ||
+        HasActiveContextMenuSession() || renameController_.IsActive() ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty())
         return; // The maintenance timer retries after the interaction fence.
     // Directory results can fill a newly opened drop destination while the

@@ -2,7 +2,7 @@
 
 DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
 {
-    if (renameEdit_ || quickNavigationOpen_ || largeIconGesture_ ||
+    if (renameController_.IsActive() || quickNavigationOpen_ || largeIconGesture_ ||
         !luaWidgetPanelRequest_.widgetId.empty() || HasActiveContextMenuSession() ||
         IsPointInUsageGuide(point))
         return {};

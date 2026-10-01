@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../modern_menu.h"
 #include "../system_control_prompt.h"
 #include "dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
@@ -383,6 +384,22 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
     snowdesktop::operation_feedback::Session operationFeedback;
+    snowdesktop::text_input::SetMenuHandler([this](HWND window,POINT point,const snowdesktop::text_input::MenuState& state){
+        namespace menu=snowdesktop::modern_menu;
+        using Command=snowdesktop::text_input::MenuCommand;
+        std::vector<menu::Item> items;
+        const auto add=[&](Command command,const wchar_t* label,bool enabled){menu::Item item;item.command=static_cast<UINT>(command);item.label=label;item.enabled=enabled;items.push_back(std::move(item));};
+        add(Command::Undo,_LW("app.menu.undo"),state.undo);add(Command::Redo,_LW("app.menu.redo"),state.redo);
+        menu::Item separator;separator.separator=true;items.push_back(separator);
+        add(Command::Cut,_LW("app.menu.cut"),state.cut);add(Command::Copy,_LW("app.menu.copy"),state.copy);add(Command::Paste,_LW("app.menu.paste"),state.paste);
+        items.push_back(separator);add(Command::SelectAll,_LW("app.menu.select_all"),state.selectAll);
+        menu::Options options;options.owner=window;options.anchor=point;options.dpi=GetDpiForWindow(window);
+        options.zOrderOwner=(GetWindowLongPtrW(window,GWL_STYLE)&WS_CHILD)?GetParent(window):window;
+        options.topmost=(GetWindowLongPtrW(options.zOrderOwner,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
+        options.appearance=static_cast<menu::Appearance>(menuAppearanceStyle_);
+        return static_cast<Command>(menu::Show(items,options).command);
+    });
+    struct InputMenuSession{~InputMenuSession(){snowdesktop::text_input::SetMenuHandler({});}} inputMenuSession;
 
     const ULONGLONG startupStarted = GetTickCount64();
     const auto logStartupStage = [startupStarted](const wchar_t* stage) {

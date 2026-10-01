@@ -209,14 +209,11 @@ void DesktopApp::EnsureQuickNavigationSearchEdit()
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
         return;
 
-    // 无重定向的 DComp 主窗口不能可靠承载 GDI 子控件，因此搜索框使用
-    // 由快捷导航拥有的独立 popup HWND；它仍与主窗口位于同一 UI 线程。
+    // Only focus and IME use this child. Its visible contents are part of the
+    // quick-navigation surface, including opening and closing transforms.
     quickNavigationSearchEdit_ = CreateWindowExW(
-        WS_EX_TOOLWINDOW |
-            (quickNavigationTopmost_ ? WS_EX_TOPMOST : 0) |
-            WS_EX_LAYERED,
-        L"EDIT", L"", WS_POPUP | ES_AUTOHSCROLL,
-        0, 0, 1, 1, quickNavigationHwnd_, nullptr,
+        0, snowdesktop::text_input::WindowClass(), L"", WS_CHILD | ES_AUTOHSCROLL,
+        -32000, -32000, 1, 1, quickNavigationHwnd_, nullptr,
         instance_, nullptr);
     if (!quickNavigationSearchEdit_)
         return;
@@ -234,6 +231,7 @@ void DesktopApp::EnsureQuickNavigationSearchEdit()
         : _LW("app.nav.search_hint");
     SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
         reinterpret_cast<LPARAM>(searchHint));
+    snowdesktop::text_input::SetAccessibleName(quickNavigationSearchEdit_,searchHint);
     SetWindowSubclass(quickNavigationSearchEdit_, &DesktopApp::QuickNavigationSearchSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
 }
@@ -250,28 +248,17 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
         1, search.right - search.left - QuickNavScale(8));
     const int height = std::max<LONG>(
         1, search.bottom - search.top - QuickNavScale(10));
-    // The edit occupies only the solid center of the Direct2D search field.
-    // Leave its HWND rectangular: a Win32 rounded region is a binary mask and
-    // would add a non-antialiased edge inside the smooth Direct2D outline.
-    SetWindowPos(
-        quickNavigationSearchEdit_,
-        quickNavigationTopmost_
-            ? HWND_TOPMOST
-            : HWND_NOTOPMOST,
-        search.left + virtualLeft_ + QuickNavScale(4),
-        search.top + virtualTop_ + QuickNavScale(6),
-        width, height,
-        SWP_NOACTIVATE);
+    const RECT frame{search.left - quickNavigationHostRect_.left + QuickNavScale(4),
+        search.top - quickNavigationHostRect_.top + QuickNavScale(6),
+        search.left - quickNavigationHostRect_.left + QuickNavScale(4) + width,
+        search.top - quickNavigationHostRect_.top + QuickNavScale(6) + height};
+    snowdesktop::text_input::SetEmbeddedPose(quickNavigationSearchEdit_, frame, frame,
+        true, true);
 }
 
 std::wstring DesktopApp::GetQuickNavigationEffectiveSearchText() const
 {
-    if (quickNavigationSearchCompositionText_.empty())
-        return quickNavigationSearchText_;
-
-    std::wstring result = quickNavigationSearchText_;
-    result += quickNavigationSearchCompositionText_;
-    return result;
+    return quickNavigationEffectiveSearchText_;
 }
 
 void DesktopApp::RefreshQuickNavigationSearchCompositionText(HWND editHwnd, LPARAM compositionFlags)
@@ -281,6 +268,7 @@ void DesktopApp::RefreshQuickNavigationSearchCompositionText(HWND editHwnd, LPAR
 
     const std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
     quickNavigationSearchCompositionText_ = QuickNavigationReadImeCompositionString(editHwnd);
+    quickNavigationEffectiveSearchText_ = snowdesktop::text_input::DisplayText(editHwnd);
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
     {
         quickNavigationInitialJumpOpen_ = false;
@@ -299,6 +287,7 @@ void DesktopApp::ClearQuickNavigationSearchCompositionText()
 
     const std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
     quickNavigationSearchCompositionText_.clear();
+    quickNavigationEffectiveSearchText_ = snowdesktop::text_input::DisplayText(quickNavigationSearchEdit_);
     if (GetQuickNavigationEffectiveSearchText() != previousQuery)
     {
         quickNavigationInitialJumpOpen_ = false;
@@ -319,6 +308,7 @@ void DesktopApp::RefreshQuickNavigationSearchText()
     quickNavigationInitialJumpOpen_ = false;
     std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
     quickNavigationSearchText_.clear();
+    quickNavigationEffectiveSearchText_ = snowdesktop::text_input::DisplayText(quickNavigationSearchEdit_);
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
     {
         if (!previousQuery.empty())
@@ -930,6 +920,7 @@ void DesktopApp::OpenQuickNavigation(
             : _LW("app.nav.search_hint");
         SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE,
             reinterpret_cast<LPARAM>(searchHint));
+        snowdesktop::text_input::SetAccessibleName(quickNavigationSearchEdit_,searchHint);
     }
     EnsureQuickNavTextFormats();
     UpdateQuickNavTabWidths();
@@ -1004,6 +995,7 @@ void DesktopApp::OpenQuickNavigation(
     quickNavigationInitialJumpOpen_ = false;
     ResetQuickNavigationKeyboardTarget();
     quickNavigationSearchText_.clear();
+    quickNavigationEffectiveSearchText_.clear();
     quickNavigationSearchCompositionText_.clear();
     ClearQuickNavigationEverythingResults();
     StartQuickNavigationAppIndexing();
@@ -1081,7 +1073,7 @@ void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
         logicalSlotPickerRequest_ = {};
     if (renameController_.
             IsQuickNavigationPresentation() &&
-        renameEdit_ && IsWindow(renameEdit_))
+        renameInputWindow_ && IsWindow(renameInputWindow_))
         CommitRename(false);
     quickNavigationAnimation_.Advance(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
@@ -1280,30 +1272,10 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
     // Both layers now contain this frame's geometry and pose.
     quickNavBackdropCompositor_.CommitVisualChanges();
 
-    if (quickNavigationSearchEdit_ &&
-        IsWindow(quickNavigationSearchEdit_))
+    if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
     {
-        if (!visual.visible)
-        {
-            ShowWindow(
-                quickNavigationSearchEdit_,
-                SW_HIDE);
-            quickNavigationLastEditAnimationOpacity_ = 0;
-            quickNavigationHasLastEditAnimationFrame_ = true;
-            return;
-        }
-        const BYTE opacity =
-            quickNavigationAnimation_.IsAnimating()
-                ? 0 : 255;
-        if (!quickNavigationHasLastEditAnimationFrame_ ||
-            opacity != quickNavigationLastEditAnimationOpacity_)
-        {
-            SetLayeredWindowAttributes(
-                quickNavigationSearchEdit_,
-                0, opacity, LWA_ALPHA);
-        }
-        quickNavigationLastEditAnimationOpacity_ = opacity;
-        quickNavigationHasLastEditAnimationFrame_ = true;
+        UpdateQuickNavigationSearchEditRect();
+        if (!visual.visible) ShowWindow(quickNavigationSearchEdit_, SW_HIDE);
     }
 }
 
@@ -1334,6 +1306,7 @@ void DesktopApp::FinalizeCloseQuickNavigation()
     quickNavigationTabScrollOffset_ = 0;
     quickNavigationInitialJumpOpen_ = false;
     quickNavigationSearchText_.clear();
+    quickNavigationEffectiveSearchText_.clear();
     quickNavigationSearchCompositionText_.clear();
     ClearQuickNavigationEverythingResults();
     quickNavigationRect_ = {};

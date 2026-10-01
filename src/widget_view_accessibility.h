@@ -7,6 +7,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <memory>
+
+namespace snowdesktop::text_input { struct TextAccess; }
 
 namespace snowdesktop::widget_runtime
 {
@@ -51,6 +54,10 @@ struct ViewAccessibilityNode
     std::optional<float> maximum;
     std::optional<float> step;
     bool valueReadOnly = true;
+    bool password = false;
+    // Internal UIA adapter, never part of Lua's serialized view contract.
+    std::shared_ptr<snowdesktop::text_input::TextAccess> textAccess;
+    bool textAccessUsesScreenCoordinates = true;
     bool rangeValueReadOnly = true;
     std::optional<int> gridRow;
     std::optional<int> gridColumn;

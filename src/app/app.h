@@ -16,6 +16,7 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "../text_input_window.h"
 #include "../operation_feedback.h"
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
@@ -4192,7 +4193,7 @@ private:
 
     /** @name 重命名编辑控件 */
     /** @{ */
-    HWND renameEdit_ = nullptr;
+    HWND renameInputWindow_ = nullptr;
     HFONT renameFont_ = nullptr;
     bool renameCommitPending_ = false;
     RenameController renameController_;
@@ -4451,6 +4452,7 @@ private:
     RECT quickNavigationHostRect_{};
     bool quickNavigationWindowRegionExpanded_ = false;
     std::wstring quickNavigationSearchText_;
+    std::wstring quickNavigationEffectiveSearchText_;
     std::wstring quickNavigationSearchCompositionText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
     DWORD quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;

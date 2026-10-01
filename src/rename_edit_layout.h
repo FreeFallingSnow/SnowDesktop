@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <windows.h>
+#include "text_input_window.h"
 
 namespace snowdesktop::rename_edit_layout
 {
@@ -62,7 +63,7 @@ public:
             workArea_.bottom - workArea_.top > margin * 2)
             InflateRect(&workArea_, -margin, -margin);
 
-        // Width must be final before asking EDIT for its wrapped line count.
+        // Width must be final before measuring the shared wrapped layout.
         const RECT initial = CalculateRect(anchor_, workArea_,
             anchor_.bottom - anchor_.top, heightAnchor_);
         updating_ = true;
@@ -71,76 +72,18 @@ public:
         Update(edit);
     }
 
-    // Called on EN_UPDATE: EDIT has already wrapped the text, but has not
-    // painted it yet. This covers typing, paste, undo and IME changes alike.
+    // Changes notify the owner before paint, so all rename surfaces share the
+    // actual DirectWrite height, including wrapped unbroken file names.
     void Update(HWND edit)
     {
-        if (!edit || edit != edit_ || updating_)
-            return;
-        RECT window{}, client{}, formatting{};
-        if (!GetWindowRect(edit, &window) || !GetClientRect(edit, &client))
-            return;
-        SendMessageW(edit, EM_GETRECT, 0,
-            reinterpret_cast<LPARAM>(&formatting));
-        const HDC dc = GetDC(edit);
-        if (!dc)
-            return;
-        HFONT font = reinterpret_cast<HFONT>(SendMessageW(edit, WM_GETFONT, 0, 0));
-        const HGDIOBJ previous = SelectObject(dc,
-            font ? font : GetStockObject(DEFAULT_GUI_FONT));
-        TEXTMETRICW metrics{};
-        const bool measured = GetTextMetricsW(dc, &metrics) != FALSE;
-        SelectObject(dc, previous);
-        ReleaseDC(edit, dc);
-        if (!measured)
-            return;
-
-        auto lineCount = std::max<LRESULT>(1,
-            SendMessageW(edit, EM_GETLINECOUNT, 0, 0));
-        const int borderHeight = (window.bottom - window.top) -
-            (client.bottom - client.top);
-        // EDIT's formatting bottom can exclude a partial line; use the top
-        // inset symmetrically instead of treating that remainder as padding.
-        const int padding = 2 * std::max<int>(1, formatting.top - client.top);
-        long long textHeight = 0;
-        bool resized = false;
+        if (!edit || edit != edit_ || updating_) return;
+        const RECT next = CalculateRect(anchor_, workArea_,
+            std::max<int>(anchor_.bottom - anchor_.top,
+                text_input::DesiredHeight(edit)), heightAnchor_);
         updating_ = true;
-        // If the initial rectangle is shorter than a line of the new font,
-        // EDIT defers its font reflow until WM_SIZE. Read the resulting line
-        // count once more after growing; width stays fixed for both passes.
-        for (int pass = 0; pass < 2; ++pass)
-        {
-            textHeight = static_cast<long long>(lineCount) *
-                std::max<LONG>(1, metrics.tmHeight) + borderHeight + padding;
-            const int desiredHeight = static_cast<int>(std::clamp<long long>(
-                textHeight, anchor_.bottom - anchor_.top,
-                std::numeric_limits<int>::max()));
-            const RECT next = CalculateRect(anchor_, workArea_,
-                desiredHeight, heightAnchor_);
-            if (EqualRect(&window, &next))
-                break;
-            Position(next);
-            window = next;
-            resized = true;
-            const auto reflowedLines = std::max<LRESULT>(1,
-                SendMessageW(edit, EM_GETLINECOUNT, 0, 0));
-            if (reflowedLines == lineCount)
-                break;
-            lineCount = reflowedLines;
-        }
-        if (resized && textHeight <= window.bottom - window.top)
-        {
-            // A formerly scrolled long name must show its first line once all
-            // lines fit again. Keep the selection and undo history untouched.
-            const LRESULT first = SendMessageW(edit, EM_GETFIRSTVISIBLELINE, 0, 0);
-            if (first > 0)
-                SendMessageW(edit, EM_LINESCROLL, 0, -first);
-        }
-        else if (resized)
-            SendMessageW(edit, EM_SCROLLCARET, 0, 0);
+        Position(next);
         updating_ = false;
     }
-
 private:
     void Position(const RECT& rect)
     {

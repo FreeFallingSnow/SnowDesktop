@@ -856,6 +856,8 @@
     "app.website_icon.fetch_failed": "使用できるウェブサイトのアイコンを取得できませんでした。元のアイコンを保持しました。",
     "app.website_icon.save_failed": "アイコンを保存できませんでした。ショートカットが変更、削除されたか、書き込みできない可能性があります。元のアイコンを保持しました。",
   "app.menu.rename": "名前の変更",
+  "app.menu.undo": "元に戻す",
+  "app.menu.redo": "やり直し",
   "app.menu.cut": "カット",
   "app.menu.copy": "コピー",
   "app.menu.hide_desktop_icon": "デスクトップ アイコンを非表示",

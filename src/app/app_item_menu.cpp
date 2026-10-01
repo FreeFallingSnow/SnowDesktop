@@ -812,7 +812,7 @@ void DesktopApp::ShowItemContextMenu(
                 static_cast<size_t>(itemIndex));
         else
             BeginRenameSelected(dockRenameAnchor);
-        inlineEditorStarted = renameEdit_ != nullptr;
+        inlineEditorStarted = renameController_.IsActive();
         break;
     case kContextCutCommand:
     case kContextCopyCommand:

@@ -856,6 +856,8 @@
     "app.website_icon.fetch_failed": "No usable website icon could be fetched. The original icon was kept.",
     "app.website_icon.save_failed": "Could not save the icon: the shortcut may have changed, been deleted, or be read-only. The original icon was kept.",
     "app.menu.rename": "Rename",
+    "app.menu.undo": "Undo",
+    "app.menu.redo": "Redo",
     "app.menu.cut": "Cut",
     "app.menu.copy": "Copy",
     "app.menu.hide_desktop_icon": "Hide desktop icon",

@@ -415,7 +415,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 dragSession_.HasContext(),
                 dragDropController_.IsTransportActive());
         if (mouseDown_ || reloading_ || deferForDrag ||
-            renameEdit_ || HasActiveContextMenuSession())
+            renameController_.IsActive() || HasActiveContextMenuSession())
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);

@@ -54,6 +54,11 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             msg, wp, lp, shellMenuResult))
         return shellMenuResult;
 
+    if (!quickNavigationAnimation_.IsAnimating() &&
+        snowdesktop::text_input::RoutePointer(quickNavigationSearchEdit_, msg, wp,
+            {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}))
+        return 0;
+
     switch (msg)
     {
     case WM_NCHITTEST:
@@ -436,10 +441,10 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         OnMouseWheel(wp, lp);
         return 0;
     case WM_COMMAND:
-        if (renameEdit_ && reinterpret_cast<HWND>(lp) == renameEdit_ &&
+        if (renameInputWindow_ && reinterpret_cast<HWND>(lp) == renameInputWindow_ &&
             HIWORD(wp) == EN_UPDATE)
         {
-            renameEditLayout_.Update(renameEdit_);
+            renameEditLayout_.Update(renameInputWindow_);
             return 0;
         }
         if (reinterpret_cast<HWND>(lp) == quickNavigationSearchEdit_ && HIWORD(wp) == EN_CHANGE)
@@ -484,7 +489,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 activatedWindow == quickNavigationSearchEdit_ ||
                 (renameController_.
                     IsQuickNavigationPresentation() &&
-                    activatedWindow == renameEdit_) ||
+                    activatedWindow == renameInputWindow_) ||
                 quickNavBackdropCompositor_.IsBackdropWindow(
                     activatedWindow) ||
                 IsWindowOwnedBy(
@@ -574,6 +579,8 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
 
     if (message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE)
     {
+        if (snowdesktop::text_input::HasEditingMenu(hwnd))
+            return DefSubclassProc(hwnd,message,wParam,lParam);
         const HWND activatedWindow = reinterpret_cast<HWND>(lParam);
         const bool retainedInteraction =
             activatedWindow == app->quickNavigationHwnd_ ||
@@ -594,7 +601,8 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         }
     }
 
-    if (message == WM_KEYDOWN && wParam == VK_ESCAPE)
+    if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
+        !snowdesktop::text_input::IsComposing(hwnd))
     {
         if (app->
             HandleQuickNavigationInitialJumpKeyboardInput(
@@ -607,6 +615,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         snowdesktop::quick_navigation_rules::
             ShouldRouteSearchEditKeyToResults(
                 wParam) &&
+        !snowdesktop::text_input::IsComposing(hwnd) &&
         app->quickNavigationSearchCompositionText_.empty() &&
         app->HandleQuickNavigationKeyboardInput(wParam))
     {
@@ -619,15 +628,21 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     }
     if (message == WM_IME_STARTCOMPOSITION)
     {
+        const auto result=DefSubclassProc(hwnd,message,wParam,lParam);
         app->ClearQuickNavigationSearchCompositionText();
+        return result;
     }
     if (message == WM_IME_COMPOSITION)
     {
+        const auto result=DefSubclassProc(hwnd,message,wParam,lParam);
         app->RefreshQuickNavigationSearchCompositionText(hwnd, lParam);
+        return result;
     }
     if (message == WM_IME_ENDCOMPOSITION)
     {
+        const auto result=DefSubclassProc(hwnd,message,wParam,lParam);
         app->ClearQuickNavigationSearchCompositionText();
+        return result;
     }
 
     return DefSubclassProc(hwnd, message, wParam, lParam);

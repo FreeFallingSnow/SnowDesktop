@@ -856,6 +856,8 @@
     "app.website_icon.fetch_failed": "未能获取可用的网站图标，原图标已保留。",
     "app.website_icon.save_failed": "无法保存图标：快捷方式可能已更改、被删除或不可写。原图标已保留。",
     "app.menu.rename": "重命名",
+    "app.menu.undo": "撤销",
+    "app.menu.redo": "重做",
     "app.menu.cut": "剪切",
     "app.menu.copy": "复制",
     "app.menu.hide_desktop_icon": "隐藏桌面图标",

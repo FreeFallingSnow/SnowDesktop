@@ -7,13 +7,14 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "text_input_accessibility.h"
 
 namespace snowdesktop
 {
 struct SystemCalendarInputField;
 
-// Native EDIT children of the existing panel. There is no calendar top-level
-// window or nested modal loop. The model owns draft values and all actions.
+// Offscreen focus/IME hosts; visible fields are drawn in the panel's surface.
+// The model owns draft values and all actions.
 class SystemCalendarInputs
 {
 public:
@@ -33,15 +34,17 @@ public:
     bool HandleCommand(WPARAM,LPARAM);
     HBRUSH ControlColor(HWND,HDC) const;
     void Clear();
-    // The HDC origin is the panel client origin. Includes each input's native
-    // text and shared nonclient styling, clipped exactly like the live child.
+    // Offline GDI adapter for the same production renderer.
     void Print(HDC) const;
+    void Draw(ID2D1RenderTarget*) const;
+    bool HandlePointer(UINT,WPARAM,POINT);
+    std::shared_ptr<text_input::TextAccess> Accessibility(std::string_view) const;
 private:
     struct Impl;
     std::shared_ptr<Impl> impl_;
 };
 
-// Internal offline helpers. Only their own hidden parent/EDIT children exist;
+// Internal offline helpers. Only their own hidden parent/focus hosts exist;
 // they never show a window, read a live draft, or write the calendar service.
 void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>&,
     const PersonalizationSettings&,UINT dpi,int width,int height,std::vector<std::uint32_t>& pixels);

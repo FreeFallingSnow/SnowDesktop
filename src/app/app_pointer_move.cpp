@@ -15,7 +15,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     CancelPopupHover(true);
     CancelRenameClick();
     (void)wp;
-    if (renameEdit_ != nullptr)
+    if (renameController_.IsActive())
         CommitRename(false);
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelRequest_.modal)

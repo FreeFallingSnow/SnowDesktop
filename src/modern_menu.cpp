@@ -1,5 +1,6 @@
 #include "app_font.h"
 #include "modern_menu.h"
+#include "text_input_state.h"
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
@@ -449,6 +450,8 @@ public:
             return 0;
         }
         case WM_KEYDOWN:
+            textDuplicateImeResult_.clear();
+            if(textInputComposing_)return DefWindowProcW(hwnd,message,wParam,lParam);
             if (!HandleTextInputKey(wParam))
                 HandleKey(wParam);
             return 0;
@@ -482,6 +485,8 @@ public:
             }
             return 0;
         case WM_IME_STARTCOMPOSITION:
+            textInputComposing_=true;
+            textDuplicateImeResult_.clear();
             textInputComposition_.clear();
             textInputCompositionCursor_ = 0;
             ResetTextCaret(popup);
@@ -491,6 +496,7 @@ public:
             HandleTextInputImeComposition(hwnd, lParam);
             return 0;
         case WM_IME_ENDCOMPOSITION:
+            textInputComposing_=false;
             textInputComposition_.clear();
             textInputCompositionCursor_ = 0;
             ResetTextCaret(popup);
@@ -1692,8 +1698,10 @@ private:
         if (!item.textInput || !item.enabled)
             return;
         activeDepth_ = popup.depth;
+        if (textInputCommand_ != item.command) textInputHistory_.Clear();
+        textInputComposing_=false;textDuplicateImeResult_.clear();textHighSurrogate_=0;
         textInputCommand_ = item.command;
-        textInputCursor_ = std::min(cursor, item.inputText.size());
+        textInputCursor_ = text_input::SnapBoundary(item.inputText,cursor);
         textInputSelectionAnchor_ = textInputCursor_;
         textInputComposition_.clear();
         textInputCompositionCursor_ = 0;
@@ -1785,7 +1793,7 @@ private:
             std::min(textInputSelectionAnchor_, item.inputText.size()));
     }
 
-    bool ReplaceTextSelection(Item& item, std::wstring text)
+    bool ReplaceTextSelection(Item& item, std::wstring text, const text_input::Snapshot* original = nullptr)
     {
         constexpr size_t kMaximumInputLength = 96;
         const size_t start = TextSelectionStart(item);
@@ -1795,14 +1803,16 @@ private:
         const size_t available = retainedLength < kMaximumInputLength
             ? kMaximumInputLength - retainedLength : 0;
         if (text.size() > available)
-            text.resize(available);
+            text.resize(text_input::SnapBoundary(text,available));
         if (start == end && text.empty())
             return false;
+        const text_input::Snapshot before=original?*original:text_input::Snapshot{item.inputText,textInputCursor_,textInputSelectionAnchor_};
         item.inputText.replace(start, end - start, text);
         textInputCursor_ = start + text.size();
         textInputSelectionAnchor_ = textInputCursor_;
         textInputComposition_.clear();
         textInputCompositionCursor_ = 0;
+        textInputHistory_.Record(before, {item.inputText, textInputCursor_, textInputSelectionAnchor_});
         return true;
     }
 
@@ -1826,10 +1836,21 @@ private:
         Item* input = FindFocusedTextInput(*popup);
         if (!input)
             return false;
+        if(!textDuplicateImeResult_.empty()&&textDuplicateImeResult_.front()==character)
+        {textDuplicateImeResult_.erase(0,1);return true;}
+        textDuplicateImeResult_.clear();
+        if(textInputComposing_)return true;
         if (character == L'\b' || character < L' ' || character == 0x7F ||
             (GetKeyState(VK_CONTROL) & 0x8000) != 0)
             return true;
-        if (ReplaceTextSelection(*input, std::wstring(1, character)))
+        if (character >= 0xd800 && character <= 0xdbff) { textHighSurrogate_ = character; return true; }
+        std::wstring replacement;
+        if (textHighSurrogate_ && character >= 0xdc00 && character <= 0xdfff)
+            replacement.push_back(textHighSurrogate_);
+        textHighSurrogate_ = 0;
+        if (replacement.empty() && character >= 0xdc00 && character <= 0xdfff) return true;
+        replacement.push_back(character);
+        if (ReplaceTextSelection(*input, replacement))
             NotifyTextInputChanged(*popup, *input);
         return true;
     }
@@ -1912,7 +1933,7 @@ private:
         Item* input = FindFocusedTextInput(*popup);
         if (!input)
             return false;
-        if (!textInputComposition_.empty())
+        if (textInputComposing_)
             return true;
 
         if (IsTextInputEditor(*popup))
@@ -1943,7 +1964,15 @@ private:
             textInputSelectionAnchor_, input->inputText.size());
         bool changed = false;
 
-        if (control && key == 'A')
+        textHighSurrogate_ = 0;
+        const text_input::Snapshot beforeKey{input->inputText,textInputCursor_,textInputSelectionAnchor_};
+        if (control && (key == 'Z' || key == 'Y'))
+        {
+            changed = key == 'Y' || shift
+                ? textInputHistory_.Redo(input->inputText, textInputCursor_, textInputSelectionAnchor_)
+                : textInputHistory_.Undo(input->inputText, textInputCursor_, textInputSelectionAnchor_);
+        }
+        else if (control && key == 'A')
         {
             textInputSelectionAnchor_ = 0;
             textInputCursor_ = input->inputText.size();
@@ -1964,8 +1993,9 @@ private:
                 changed = ReplaceTextSelection(*input, L"");
             else if (textInputCursor_ > 0)
             {
-                textInputSelectionAnchor_ = textInputCursor_ - 1;
-                changed = ReplaceTextSelection(*input, L"");
+                textInputSelectionAnchor_ = control ? text_input::WordBoundary(input->inputText, textInputCursor_, false)
+                    : text_input::PreviousBoundary(input->inputText, textInputCursor_);
+                changed = ReplaceTextSelection(*input, L"", &beforeKey);
             }
         }
         else if (key == VK_DELETE)
@@ -1974,8 +2004,9 @@ private:
                 changed = ReplaceTextSelection(*input, L"");
             else if (textInputCursor_ < input->inputText.size())
             {
-                textInputSelectionAnchor_ = textInputCursor_ + 1;
-                changed = ReplaceTextSelection(*input, L"");
+                textInputSelectionAnchor_ = control ? text_input::WordBoundary(input->inputText, textInputCursor_, true)
+                    : text_input::NextBoundary(input->inputText, textInputCursor_);
+                changed = ReplaceTextSelection(*input, L"", &beforeKey);
             }
         }
         else if (key == VK_LEFT || key == VK_RIGHT ||
@@ -1993,10 +2024,12 @@ private:
                     : TextSelectionEnd(*input);
             }
             else if (key == VK_LEFT && textInputCursor_ > 0)
-                --textInputCursor_;
+                textInputCursor_ = control ? text_input::WordBoundary(input->inputText, textInputCursor_, false)
+                    : text_input::PreviousBoundary(input->inputText, textInputCursor_);
             else if (key == VK_RIGHT &&
                 textInputCursor_ < input->inputText.size())
-                ++textInputCursor_;
+                textInputCursor_ = control ? text_input::WordBoundary(input->inputText, textInputCursor_, true)
+                    : text_input::NextBoundary(input->inputText, textInputCursor_);
             if (!shift)
                 textInputSelectionAnchor_ = textInputCursor_;
         }
@@ -2058,8 +2091,8 @@ private:
         bool changed = false;
         if ((flags & GCS_RESULTSTR) != 0)
         {
-            changed = ReplaceTextSelection(
-                *input, ReadImeString(context, GCS_RESULTSTR));
+            textDuplicateImeResult_=ReadImeString(context,GCS_RESULTSTR);
+            changed = ReplaceTextSelection(*input,textDuplicateImeResult_);
         }
         if ((flags & (GCS_COMPSTR | GCS_CURSORPOS)) != 0)
         {
@@ -2854,8 +2887,12 @@ private:
     int activeDepth_ = 0;
     UINT textInputCommand_ = 0;
     size_t textInputCursor_ = 0;
+    text_input::History textInputHistory_;
+    wchar_t textHighSurrogate_ = 0;
     size_t textInputSelectionAnchor_ = 0;
     std::wstring textInputComposition_;
+    std::wstring textDuplicateImeResult_;
+    bool textInputComposing_=false;
     size_t textInputCompositionCursor_ = 0;
     bool textCaretVisible_ = true;
     bool done_ = false;

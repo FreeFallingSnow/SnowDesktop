@@ -90,10 +90,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg)
     {
     case WM_COMMAND:
-        if (renameEdit_ && reinterpret_cast<HWND>(lp) == renameEdit_ &&
+        if (renameInputWindow_ && reinterpret_cast<HWND>(lp) == renameInputWindow_ &&
             HIWORD(wp) == EN_UPDATE)
         {
-            renameEditLayout_.Update(renameEdit_);
+            renameEditLayout_.Update(renameInputWindow_);
             return 0;
         }
         break;
@@ -1200,7 +1200,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 static_cast<std::size_t>(lp)))
             return 0;
         renameCommitPending_ = false;
-        if (GetFocus() != renameEdit_)
+        if (GetFocus() != renameInputWindow_)
             CommitRename(wp != 0);
         return 0;
     case kShellFileOperationCompletedMessage:

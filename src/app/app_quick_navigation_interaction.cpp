@@ -14,7 +14,7 @@ namespace shellCalls = snowdesktop::shell_call_diagnostics;
 void DesktopApp::BeginQuickNavigationItemRename(
     const std::wstring& name, bool isDirectory)
 {
-    if (renameEdit_ || name.empty() ||
+    if (renameInputWindow_ || name.empty() ||
         !quickNavigationOpen_ ||
         !quickNavigationHwnd_ ||
         !IsWindow(quickNavigationHwnd_) ||
@@ -47,11 +47,10 @@ void DesktopApp::BeginQuickNavigationItemRename(
     // The no-redirection DComp host cannot reliably display GDI child
     // controls. Match the search box: use an owned popup positioned over the
     // item's name area so the editor remains visually inside the panel.
-    renameEdit_ = CreateWindowExW(
-        WS_EX_CLIENTEDGE |
+    renameInputWindow_ = CreateWindowExW(
             WS_EX_TOOLWINDOW |
             WS_EX_TOPMOST,
-        L"EDIT", name.c_str(),
+        snowdesktop::text_input::WindowClass(), name.c_str(),
         snowdesktop::rename_edit_layout::EditStyle(),
         editRect.left + virtualLeft_,
         editRect.top + virtualTop_,
@@ -59,7 +58,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
         editRect.bottom - editRect.top,
         quickNavigationHwnd_, nullptr,
         instance_, nullptr);
-    if (!renameEdit_)
+    if (!renameInputWindow_)
     {
         renameController_.Reset();
         return;
@@ -77,7 +76,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
         DEFAULT_PITCH | FF_DONTCARE,
         snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(
-        renameEdit_, WM_SETFONT,
+        renameInputWindow_, WM_SETFONT,
         reinterpret_cast<WPARAM>(
             renameFont_
                 ? renameFont_
@@ -85,18 +84,20 @@ void DesktopApp::BeginQuickNavigationItemRename(
                     DEFAULT_GUI_FONT)),
         TRUE);
     SendMessageW(
-        renameEdit_, EM_SETMARGINS,
+        renameInputWindow_, EM_SETMARGINS,
         EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(
             std::max(1, QuickNavScale(4)),
             std::max(1, QuickNavScale(4))));
     SetWindowSubclass(
-        renameEdit_,
+        renameInputWindow_,
         &DesktopApp::RenameEditSubclassProc,
         1,
         reinterpret_cast<DWORD_PTR>(this));
-    renameEditLayout_.Begin(renameEdit_);
-    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+    snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
+    snowdesktop::text_input::SetLogicalSingleLine(renameInputWindow_, true);
+    renameEditLayout_.Begin(renameInputWindow_);
+    SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
 
     int selectionEnd = -1;
@@ -110,9 +111,9 @@ void DesktopApp::BeginQuickNavigationItemRename(
                 static_cast<int>(dot);
     }
     SendMessageW(
-        renameEdit_, EM_SETSEL,
+        renameInputWindow_, EM_SETSEL,
         0, selectionEnd);
-    SetFocus(renameEdit_);
+    SetFocus(renameInputWindow_);
 }
 
 void DesktopApp::

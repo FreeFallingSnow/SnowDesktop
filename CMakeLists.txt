@@ -1044,6 +1044,19 @@ if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
         COMMENT "Embedding the permitted Steamworks runtime for the Agent Skill Workshop CLI...")
 endif()
 
+add_library(SnowDesktopTextInput STATIC src/text_input_window.cpp src/text_input_accessibility.cpp)
+target_include_directories(SnowDesktopTextInput PUBLIC src)
+target_compile_features(SnowDesktopTextInput PUBLIC cxx_std_20)
+target_compile_definitions(SnowDesktopTextInput PRIVATE
+    _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(SnowDesktopTextInput PUBLIC d2d1 dwrite gdi32 imm32 user32 ole32 oleaut32 uuid uiautomationcore)
+if (MSVC)
+    set_property(TARGET SnowDesktopTextInput PROPERTY MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopTextInput PRIVATE /W4 /permissive- /EHsc /utf-8)
+endif()
+target_link_libraries(SnowDesktop PRIVATE SnowDesktopTextInput)
+
 include(CTest)
 if (BUILD_TESTING)
     set(SNOWDESKTOP_TEST_TARGETS)
@@ -1066,6 +1079,7 @@ if (BUILD_TESTING)
         endif()
 
         add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
+        target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopTextInput)
         if (SNOW_TEST_NATIVE_WINDOW_COMPATIBILITY)
             snowdesktop_enable_native_window_compatibility(${TEST_TARGET})
         endif()
@@ -1932,6 +1946,13 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES dwrite
         LABELS contract interaction lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopTextInputWindowTests
+        text_input_window
+        SOURCES tests/text_input_window_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS core contract interaction accessibility security)
 
     snowdesktop_add_test(
         SnowDesktopWidgetStorageTransactionTests

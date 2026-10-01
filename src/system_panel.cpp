@@ -209,11 +209,10 @@ struct SystemPanel::Impl
             {
                 node.role="textbox";node.controlType="Edit";node.name=PanelUtf8(field->label);node.valueText=PanelUtf8(field->text);
                 node.patterns=wr::ViewAccessibilityPattern::Value;node.valueReadOnly=!field->enabled;
+                node.password=field->password;
+                node.textAccess=calendarInputs?calendarInputs->Accessibility(field->id):nullptr;
             }
         }
-        // Real ES_PASSWORD children provide their native IsPassword contract;
-        // never shadow them with a synthetic ordinary Value provider.
-        std::erase_if(snapshot.nodes,[](const auto& node){return node.key.starts_with("control.password:");});
         if(model->MaximumScroll()>0)
         {
             const auto clip=model->ScrollViewport();wr::ViewAccessibilityNode scroll;scroll.semanticId=scroll.key="panel.scroll";scroll.role="group";scroll.controlType="pane";scroll.name=snapshot.name;scroll.patterns=wr::ViewAccessibilityPattern::Scroll;
@@ -333,6 +332,12 @@ struct SystemPanel::Impl
         }
         dc->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x+kSurfacePadding),static_cast<float>(offset.y+kSurfacePadding)));dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         const auto result=ui::Draw(dc.Get(),text.Get(),model->View(),Palette(),hovered,GetFocus()==window?input.VisibleFocus():std::string_view{},input.Pressed());
+        if(calendarInputs)
+        {
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),static_cast<float>(offset.y)));
+            calendarInputs->Draw(dc.Get());
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x+kSurfacePadding),static_cast<float>(offset.y+kSurfacePadding)));
+        }
         if(dropIndicator)
         {
             ComPtr<ID2D1SolidColorBrush> line;if(SUCCEEDED(dc->CreateSolidColorBrush(Palette().accent,&line)))
@@ -610,6 +615,8 @@ struct SystemPanel::Impl
             // Opening uses translated visuals; controls become interactive only
             // once their drawn, hit-test and accessibility coordinates coincide.
             if(self->slide.IsAnimating()&&((m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_KEYDOWN))return 0;
+            if(self->calendarInputs&&self->calendarInputs->HandlePointer(m,wp,{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)}))
+            {self->Paint();return 0;}
             if(m==WM_LBUTTONDOWN||m==WM_RBUTTONDOWN)
             {
                 self->pointerHover.Resume();
