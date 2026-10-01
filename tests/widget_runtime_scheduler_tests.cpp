@@ -180,6 +180,51 @@ void TestDueConsumption()
         "one-shot timers must be removed and repeating timers retained");
 }
 
+void TestLongSuspensionsAndRepeatPhase()
+{
+    const Schedule::TimePoint start{};
+    for (const auto hours : { 24, 24 * 366 })
+    {
+        Schedule schedule;
+        Check(schedule.Set("continued", 100, true, start),
+            "long-gap repeating timer is accepted");
+        const auto now = start + std::chrono::hours(hours);
+        const auto result = schedule.ConsumeDueInfo("continued", now);
+        const auto total = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::hours(hours)).count() / 100;
+        Check(result && result->coalesced &&
+                result->missed == static_cast<std::size_t>(total - 1) &&
+                schedule.DueNames(now + std::chrono::milliseconds(99)).empty() &&
+                schedule.DueNames(now + std::chrono::milliseconds(100)).size() == 1,
+            "day/year gaps coalesce once and retain the next exact repeating phase");
+    }
+    Schedule fractional;
+    Check(fractional.Set("fraction", 100, true, start),
+        "fractional repeating timer is accepted");
+    const auto justBefore = start + std::chrono::milliseconds(600) -
+        std::chrono::nanoseconds(1);
+    const auto result = fractional.ConsumeDueInfo("fraction", justBefore);
+    Check(result && result->missed == 4 && result->coalesced &&
+            fractional.DueNames(justBefore).empty() &&
+            fractional.DueNames(start + std::chrono::milliseconds(600)).size() == 1,
+        "fractional remainder preserves phase without an early deadline");
+    const auto exact = fractional.ConsumeDueInfo("fraction",
+        start + std::chrono::milliseconds(600));
+    Check(exact && exact->missed == 0 && !exact->coalesced,
+        "an exact next deadline is delivered once with no missed interval");
+    Schedule hidden;
+    Check(hidden.Set("hidden", 100, true, start, HiddenPolicy::Throttle) &&
+            hidden.SetVisible(false, start), "hidden repeating timer is accepted");
+    const auto day = start + std::chrono::hours(24);
+    const auto throttled = hidden.ConsumeDueInfo("hidden", day);
+    Check(throttled && throttled->missed == 17279 &&
+            hidden.DueNames(day + std::chrono::milliseconds(4999)).empty() &&
+            hidden.DueNames(day + std::chrono::milliseconds(5000)).size() == 1 &&
+            hidden.Cancel("hidden") && !hidden.ConsumeDueInfo("hidden", day),
+        "hidden floor, missed count, exact phase and cancellation remain intact after a long gap");
+    std::cout << "repeat synthetic: 24h=863999 missed, 366d=316223999 missed; constant deadline advance\n";
+}
+
 void TestDelayClampingAndRounding()
 {
     const Schedule::TimePoint start{};
@@ -463,6 +508,7 @@ int main()
     TestDataRefreshWithAnimation();
     TestLimitsAndReplacement();
     TestDueConsumption();
+    TestLongSuspensionsAndRepeatPhase();
     TestDelayClampingAndRounding();
     TestVisibilityPolicies();
     TestAbsoluteDeadlines();

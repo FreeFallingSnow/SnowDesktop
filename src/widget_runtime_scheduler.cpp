@@ -249,15 +249,12 @@ NamedTimerSchedule::ConsumeDueInfo(
             timer->second.hiddenPolicy == ScheduleHiddenPolicy::Throttle
         ? std::max(timer->second.intervalMs, HiddenThrottleIntervalMs)
         : timer->second.intervalMs;
-    auto nextDue = timer->second.due +
-        std::chrono::milliseconds(effectiveInterval);
-    while (nextDue <= now)
-    {
-        ++result.missed;
-        nextDue +=
-            std::chrono::milliseconds(effectiveInterval);
-    }
-    timer->second.due = nextDue;
+    const auto interval = std::chrono::milliseconds(effectiveInterval);
+    const auto elapsed = now - timer->second.due;
+    // The currently delivered deadline is not missed. Advance in constant
+    // work after a long suspension, preserving the original fractional phase.
+    result.missed = static_cast<std::size_t>(elapsed / interval);
+    timer->second.due = now + (interval - elapsed % interval);
     result.coalesced = result.missed > 0;
     return result;
 }
