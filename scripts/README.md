@@ -52,6 +52,19 @@ scripts\release.bat steam-upload-public -Yes -ConfirmVersion 1.0.5.0 -ConfirmPub
 对应使用 `-ReloadShell`；发布 TUI 检测到实际构建输出占用时会在执行前请求一次明确确认。
 本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
 
+MSBuild 同时构建的项目数由预设的 `jobs` 控制；每个项目内 MSVC 同时编译的源码数由
+`SNOWDESKTOP_COMPILE_JOBS` 控制。后者默认使用本机逻辑处理器数的一半，最少 1、最多 8，
+避免直接占满开发机。可按内存和其他任务负载覆盖，设置保存在该构建目录的 CMake 缓存中：
+
+```bat
+cmake --preset release -DSNOWDESKTOP_COMPILE_JOBS=4
+scripts\build.bat
+```
+
+Debug 构建对应使用 `--preset debug` 和 `scripts\build_debug.bat`。恢复当前机器的自动默认值时，
+运行 `cmake --preset release -U SNOWDESKTOP_COMPILE_JOBS`。项目数与项目内编译数可能相乘，
+因此不要同时大幅提高两者；比较构建耗时时应固定源码输入并记录实际配置。
+
 测试按使用场景分层：日常改动优先用 `name <regex>` 或 `label <regex>` 运行最小充分集合；
 `core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；无参数或 `full` 运行完整自动测试集合。
 这些自动模式与对应 CTest 预设都排除 `manual` 手动诊断。Shell 文件操作集成测试已独立为手动诊断，

@@ -11,6 +11,8 @@ if (NOT CMAKE_GENERATOR MATCHES "^Visual Studio ")
         "SnowDesktop WinUI 3 requires a Visual Studio/MSBuild generator")
 endif()
 
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
+
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
 string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
 
@@ -568,7 +570,7 @@ target_include_directories(SnowDesktopWorkshopImgui PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopWorkshopImgui PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopWorkshopImgui PRIVATE /MP4 /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_options(SnowDesktopWorkshopImgui PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS} /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktopWorkshopImgui PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
@@ -579,7 +581,7 @@ target_include_directories(SnowDesktopLua PUBLIC third_party/lua)
 if(MSVC)
     set_property(TARGET SnowDesktopLua PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopLua PRIVATE /MP4
+    target_compile_options(SnowDesktopLua PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS}
         /wd4244 /wd4310 /wd4324 /wd4701 /wd4702)
 endif()
 
@@ -590,7 +592,7 @@ target_include_directories(SnowDesktopEverything PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopEverything PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopEverything PRIVATE /MP4 /wd4100 /wd4133 /wd4996)
+    target_compile_options(SnowDesktopEverything PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS} /wd4100 /wd4133 /wd4996)
 endif()
 
 add_library(SnowDesktopPinyinData STATIC ${PINYIN_DATA_SOURCES})
@@ -600,7 +602,7 @@ target_include_directories(SnowDesktopPinyinData PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopPinyinData PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopPinyinData PRIVATE /MP4)
+    target_compile_options(SnowDesktopPinyinData PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS})
 endif()
 
 if (MSVC)
@@ -898,7 +900,7 @@ target_include_directories(SnowDesktop PRIVATE
 
 if (MSVC)
     set_property(TARGET SnowDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktop PRIVATE /MP4 /bigobj /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_options(SnowDesktop PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS} /bigobj /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00
