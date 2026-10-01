@@ -336,6 +336,7 @@ constexpr UINT_PTR kNativeDragHoverRecoveryTimerId = 25;
 constexpr UINT_PTR kLargeIconRetryTimerId = 26;
 constexpr UINT_PTR kRenameClickTimerId = 27;
 constexpr UINT_PTR kPopupHoverTimerId = 28;
+constexpr UINT_PTR kLayoutScrollSaveTimerId = 29;
 constexpr UINT kPopupHoverPollIntervalMs = 50;
 constexpr UINT kNativeDragHoverRecoveryIntervalMs = 50;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;

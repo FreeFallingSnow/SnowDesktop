@@ -1519,8 +1519,9 @@ void FileGroup::ApplyMarqueeSelection(
         source->ApplyMarqueeSelection(contentRect);
 }
 
-bool FileGroup::TryScrollTabs(POINT pt, int delta)
+bool FileGroup::TryScrollTabs(POINT pt, int delta, bool* changed)
 {
+    if (changed) *changed = false;
     if (!data_ || !app_) return false;
     RECT sourceTabs = FileGroupSourceTabsRect(this);
     if (!IsRectEmptyRect(sourceTabs) &&
@@ -1541,19 +1542,20 @@ bool FileGroup::TryScrollTabs(POINT pt, int delta)
                     TotalTabWidth(widths),
                     sourceTabs.right -
                         sourceTabs.left);
+        if (changed) *changed = old != data_->tabScrollOffset;
         if (old != data_->tabScrollOffset)
         {
             InvalidateHostedView();
             InvalidateRect(app_->hwnd_, nullptr, FALSE);
             return true;
         }
-        return false;
+        return true;
     }
 
     auto* source = GetActiveSourceContainer();
     if (!source) return false;
     HostedFileSourceScope hosted(this, source);
-    return hosted && source->TryScrollTabs(pt, delta);
+    return hosted && source->TryScrollTabs(pt, delta, changed);
 }
 
 WidgetHit FileGroup::HitTestWidget(POINT pt) const

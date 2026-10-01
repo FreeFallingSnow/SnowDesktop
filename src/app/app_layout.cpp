@@ -58,6 +58,7 @@ void DesktopApp::ReloadLayoutStateFromDisk()
  */
 void DesktopApp::LoadLayoutSlots()
 {
+    CancelDeferredLayoutSave();
     initializeGridFromWindows_ = false;
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     snowdesktop::layout_storage::Document document;
@@ -837,8 +838,44 @@ void DesktopApp::LoadLayoutSlots()
  *
  * 写入内容包括：首选监视器、页面列表、桌面项（排除组件所属项）以及所有组件的完整定义。
  */
+void DesktopApp::CancelDeferredLayoutSave()
+{
+    if (controlHwnd_) KillTimer(controlHwnd_, kLayoutScrollSaveTimerId);
+    layoutScrollSave_.Clear();
+}
+
+void DesktopApp::DeferScrollLayoutSave()
+{
+    if (layoutReload_.Pending() || !desktopItemsReady_ || gridPages_.empty())
+        return;
+    layoutSavePending_ = true;
+    const auto now = snowdesktop::LayoutScrollSave::Clock::now();
+    const bool alreadyDue = layoutScrollSave_.Due(now);
+    const unsigned delay = layoutScrollSave_.Request(now);
+    // Once the bounded deadline is due, leave its timer queued. Repeated
+    // wheel input must not continually reset it just before dispatch.
+    if (alreadyDue) return;
+    if (!controlHwnd_ || !SetTimer(controlHwnd_, kLayoutScrollSaveTimerId,
+            delay, nullptr))
+    {
+        // Preserve pending state during a drag if a timer cannot be armed;
+        // the normal commit/backup/exit boundary will retry the current model.
+        if (dragSession_.HasContext() ||
+            dragDropController_.IsTransportActive() ||
+            widgetAction_ != WidgetAction::None)
+        {
+            CancelDeferredLayoutSave();
+            WriteDiagnosticLogEntry(L"Scroll layout save timer unavailable; layout remains pending",
+                DiagnosticLogLevel::Warning);
+        }
+        else
+            SaveLayoutSlots();
+    }
+}
+
 bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
 {
+    CancelDeferredLayoutSave();
     // A backup may already be on disk while Shell still shows the old model.
     // Exit and unrelated settings commits must not overwrite that document.
     if (layoutReload_.Pending())

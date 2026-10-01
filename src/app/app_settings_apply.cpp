@@ -2179,6 +2179,7 @@ void DesktopApp::ApplyLanguageChange()
 
 void DesktopApp::ToggleDesktopIconsVisibility()
 {
+    if (layoutScrollSave_.Pending()) SaveLayoutSlots();
     desktopIconsHidden_ = !desktopIconsHidden_;
     // The control-window timer also maintains the Explorer taskbar hook and
     // the blurred desktop background. Keep it alive while icons are hidden.

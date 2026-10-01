@@ -427,7 +427,7 @@ public:
         return categorizedTabRowOffset_;
     }
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
-    virtual bool TryScrollTabs(POINT pt, int delta) { (void)pt; (void)delta; return false; }
+    virtual bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) { (void)pt; (void)delta; if (changed) *changed = false; return false; }
     virtual void EnsureCategoryTabVisible(size_t index)
     {
         (void)index;
@@ -578,7 +578,7 @@ public:
     WidgetHit HitTestWidget(POINT pt) const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool IsPointInTabsRect(POINT pt) const;
-    bool TryScrollTabs(POINT pt, int delta) override;
+    bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void EnsureCategoryTabVisible(size_t index) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
     void InvalidateCategoryCache();
@@ -696,7 +696,7 @@ public:
     bool NeedsShellReloadAfterDrop() const override { return false; }
     RECT GetSearchBoxRect() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
-    bool TryScrollTabs(POINT pt, int delta) override;
+    bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void EnsureCategoryTabVisible(size_t index) override;
     const std::vector<size_t>& GetVisibleEntryIndices() const;
     const std::vector<std::wstring>& GetVisibleCategoryIds() const;
@@ -813,7 +813,7 @@ public:
     RECT GetSearchBoxRect() const override;
     const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
-    bool TryScrollTabs(POINT pt, int delta) override;
+    bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
     const std::vector<std::wstring>& GetVisibleCollectionIds() const;
     const std::vector<std::wstring>& GetVisibleItemKeys() const;
@@ -912,7 +912,7 @@ public:
     RECT GetSearchBoxRect() const override;
     const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
-    bool TryScrollTabs(POINT pt, int delta) override;
+    bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
     const std::vector<std::wstring>& GetVisibleSourceIds() const;

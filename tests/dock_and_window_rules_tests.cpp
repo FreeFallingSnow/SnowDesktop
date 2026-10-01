@@ -1,4 +1,5 @@
 #include "test_source_boundary.h"
+#include "layout_scroll_save.h"
 #include "dock_magnification.h"
 #include "desktop_hover_rules.h"
 #include "dock_launch_animation.h"
@@ -1341,6 +1342,33 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    {
+        // Protect scroll durability deadlines and stale deadline cancellation
+        // used by load/explicit save. A continuously active wheel cannot keep
+        // deferring a normal idle model beyond one second.
+        snowdesktop::LayoutScrollSave save;
+        using Clock = snowdesktop::LayoutScrollSave::Clock;
+        const Clock::time_point start{};
+        Check(!save.Pending(), "no scroll must create no persistence deadline");
+        Check(save.Request(start) == 250, "scroll quiet deadline");
+        Check(save.Request(start + std::chrono::milliseconds(100)) == 250,
+            "new scroll replaces the quiet deadline");
+        Check(!save.Due(start + std::chrono::milliseconds(349)) &&
+            save.Due(start + std::chrono::milliseconds(350)),
+            "save only at the quiet deadline");
+        save.Clear();
+        for (int milliseconds = 0; milliseconds <= 900; milliseconds += 100)
+            save.Request(start + std::chrono::milliseconds(milliseconds));
+        Check(!save.Due(start + std::chrono::milliseconds(999)) &&
+            save.Due(start + std::chrono::milliseconds(1000)),
+            "continuous scroll has a bounded persistence delay");
+        save.Clear();
+        Check(!save.Pending() && !save.Due(start + std::chrono::seconds(2)),
+            "explicit save/reload must not replay a stale scroll deadline");
+        Check(save.Request(start + std::chrono::seconds(5)) == 250,
+            "a later scroll starts a fresh burst");
+    }
+
     if (const auto result = TryRunTaskbarSymbolTestHelper()) return *result;
     if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
     // These are real settings predicates shared by all three entry points.
@@ -7208,6 +7236,8 @@ int main(int argc, char** argv)
             {"src/app/app_popup_geometry.cpp", "bool DesktopApp::UsesCollectionPopupFan(",
              "bool DesktopApp::UsesCollectionPopupList(",
              {"popupAnimationCompositorDriven_", "popupAnimationOverlay_"}},
+            {"src/app/app_scroll_interaction.cpp", "void DesktopApp::OnMouseWheel(",
+             "", {"SaveLayoutSlots(", "WriteFile(", "FlushFileBuffers("}},
             {"src/app/dock_platform_helpers.h", "", "", {"swThumbnailWnd", "PROME-TASKBAR"}},
             {"src/app/app_drag_target_update.cpp", "void DesktopApp::ResolveCurrentDragTargetAt(",
              "void DesktopApp::RefreshDragTargetAt(",

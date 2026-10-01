@@ -1238,8 +1238,9 @@ std::wstring FolderMapping::CategoryIdAtPoint(POINT pt) const
     return L"";
 }
 
-bool FolderMapping::TryScrollTabs(POINT pt, int delta)
+bool FolderMapping::TryScrollTabs(POINT pt, int delta, bool* changed)
 {
+    if (changed) *changed = false;
     if (!data_ || !app_ || !data_->showFileCategories) return false;
     RECT tabs = FolderMappingTabsRect(this);
     if (IsRectEmptyRect(tabs) || !PtInRect(&tabs, pt)) return false;
@@ -1249,8 +1250,10 @@ bool FolderMapping::TryScrollTabs(POINT pt, int delta)
         FolderMappingTabTotalWidth(widths) -
         static_cast<int>(tabs.right - tabs.left));
     if (maxScroll <= 0) return false;
+    const int previous = data_->tabScrollOffset;
     data_->tabScrollOffset =
         std::clamp(data_->tabScrollOffset - delta / 2, 0, maxScroll);
+    if (changed) *changed = previous != data_->tabScrollOffset;
     return true;
 }
 

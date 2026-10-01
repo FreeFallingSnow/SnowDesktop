@@ -17,6 +17,7 @@
  */
 #pragma once
 #include "../text_input_window.h"
+#include "../layout_scroll_save.h"
 #include "../operation_feedback.h"
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
@@ -1726,6 +1727,9 @@ private:
     void LoadLayoutSlots();
     /** @brief 将当前布局信息保存到磁盘文件。 */
     bool SaveLayoutSlots(bool notifyFailure = true);
+    void DeferScrollLayoutSave();
+    void CancelDeferredLayoutSave();
+    snowdesktop::LayoutScrollSave layoutScrollSave_;
     bool layoutSavePending_ = false;
     bool layoutSaveFailureNotified_ = false;
     bool CanEditLargeIcons() const;

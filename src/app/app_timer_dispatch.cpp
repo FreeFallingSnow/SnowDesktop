@@ -304,6 +304,33 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
 
 void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kLayoutScrollSaveTimerId)
+    {
+        if (controlHwnd_) KillTimer(controlHwnd_, kLayoutScrollSaveTimerId);
+        if (!layoutScrollSave_.Pending()) return;
+        const auto now = snowdesktop::LayoutScrollSave::Clock::now();
+        // Never persist an intermediate drag/transport model. The pending
+        // flag still protects explicit backup/settings/exit save boundaries.
+        const bool interactionActive = dragSession_.HasContext() ||
+            dragDropController_.IsTransportActive() ||
+            widgetAction_ != WidgetAction::None;
+        if (!layoutScrollSave_.Due(now) || interactionActive)
+        {
+            const UINT delay = interactionActive
+                ? snowdesktop::LayoutScrollSave::QuietMilliseconds
+                : layoutScrollSave_.Delay(now);
+            if (!controlHwnd_ || !SetTimer(controlHwnd_, kLayoutScrollSaveTimerId,
+                    delay, nullptr))
+            {
+                CancelDeferredLayoutSave();
+                WriteDiagnosticLogEntry(L"Scroll layout save timer unavailable; layout remains pending",
+                    DiagnosticLogLevel::Warning);
+            }
+            return;
+        }
+        SaveLayoutSlots();
+        return;
+    }
     if (timerId == kRenameClickTimerId)
     {
         OnRenameClickTimer();

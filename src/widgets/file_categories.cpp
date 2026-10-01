@@ -1527,8 +1527,9 @@ bool FileCategories::IsPointInTabsRect(POINT pt) const
  * @param delta 鼠标滚轮滚动量。
  * @return true 如果成功处理滚动（点在标签页内且可滚动）；否则返回 false。
  */
-bool FileCategories::TryScrollTabs(POINT pt, int delta)
+bool FileCategories::TryScrollTabs(POINT pt, int delta, bool* changed)
 {
+    if (changed) *changed = false;
     if (!data_ || !app_ || !data_->showFileCategories) return false;
     RECT tabs = FileCategoryTabsRect(this);
     if (IsRectEmptyRect(tabs) || !PtInRect(&tabs, pt)) return false;
@@ -1543,7 +1544,9 @@ bool FileCategories::TryScrollTabs(POINT pt, int delta)
     int maxScroll = std::max(0, totalWidth - tabsWidth);
     if (maxScroll <= 0) return false;
 
+    const int previous = data_->tabScrollOffset;
     data_->tabScrollOffset = std::clamp(data_->tabScrollOffset - delta / 2, 0, maxScroll);
+    if (changed) *changed = previous != data_->tabScrollOffset;
     return true;
 }
 
