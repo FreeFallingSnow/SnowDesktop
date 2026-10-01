@@ -1192,7 +1192,7 @@ void DesktopApp::SetIconBeautifySettings(
 
     d2dIconCache_.clear();
     iconGlassBackdrop_.clear();
-    iconReflectionCache_.clear();
+    iconReflectionCache_.Clear();
     ResetDemoIconLoader();
     placeholderIconCache_.clear();
     dockFolderBitmapCache_.Retain([](const auto&) { return false; });

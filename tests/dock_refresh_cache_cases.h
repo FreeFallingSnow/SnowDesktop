@@ -31,8 +31,37 @@ void CheckDockProcessSnapshotReuse()
     std::cout << "preview synthetic128 probes: process snapshots=1; next pass fresh\n";
 }
 
+void CheckBoundedIconCache()
+{
+    snowdesktop::BoundedLruCache<int, std::unique_ptr<int>> cache(2);
+    cache.Insert(1, std::make_unique<int>(10));
+    cache.Insert(2, std::make_unique<int>(20));
+    Check(cache.Find(1) && **cache.Find(1) == 10, "a hit preserves the owned value");
+    cache.Insert(3, std::make_unique<int>(30));
+    Check(cache.Size() == 2 && !cache.Find(2) && cache.Find(1),
+        "inserting evicts only the least recently used icon");
+    cache.Insert(1, std::make_unique<int>(40));
+    Check(cache.Size() == 2 && **cache.Find(1) == 40, "replacement keeps one entry");
+    cache.Clear();
+    Check(cache.Size() == 0 && !cache.Find(1), "device/style reset releases all owned values");
+    snowdesktop::BoundedLruCache<int, int> disabled(0);
+    Check(!disabled.Insert(1, 2) && disabled.Size() == 0, "zero capacity keeps no value");
+    snowdesktop::BoundedLruCache<int, int> reflection(64);
+    unsigned misses = 0;
+    for (int size = 0; size < 64; ++size) reflection.Insert(size, size);
+    for (int size = 64; size < 128; ++size)
+    {
+        if (!reflection.Find(63)) ++misses;
+        reflection.Insert(size, size);
+        Check(reflection.Size() <= 64, "mixed sizes retain the configured bound");
+    }
+    Check(misses == 0 && reflection.Find(63), "mixed rare sizes keep the frequently drawn reflection");
+    std::cout << "reflection synthetic mixed sizes: hot-key misses=0; retained<=64\n";
+}
+
 void CheckDockRefreshContinuity()
 {
+    CheckBoundedIconCache();
     CheckDockProcessSnapshotReuse();
     {
         // Exercise the production cache policy used by window AppID reads.

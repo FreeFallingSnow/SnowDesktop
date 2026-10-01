@@ -453,8 +453,8 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     const int pixelWidth = rect.right - rect.left, pixelHeight = rect.bottom - rect.top;
     const auto key = (static_cast<std::uint64_t>(pixelWidth) << 32) |
         static_cast<std::uint32_t>(pixelHeight);
-    auto found = iconReflectionCache_.find(key);
-    if (found == iconReflectionCache_.end())
+    auto* cached = iconReflectionCache_.Find(key);
+    if (!cached)
     {
         const auto pixels = snowdesktop::icon_beautify::RenderEdgeReflection(
             pixelWidth, pixelHeight, iconBeautifySettings_);
@@ -465,10 +465,9 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
                 D2D1::SizeU(static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight)),
                 pixels.data(), static_cast<UINT32>(pixelWidth * sizeof(std::uint32_t)),
                 &properties, &bitmap))) return;
-        if (iconReflectionCache_.size() >= 64) iconReflectionCache_.clear();
-        found = iconReflectionCache_.emplace(key, std::move(bitmap)).first;
+        cached = iconReflectionCache_.Insert(key, std::move(bitmap));
     }
-    ctx->DrawBitmap(found->second.Get(), ToD2DRect(rect), 1.0f,
+    ctx->DrawBitmap(cached->Get(), ToD2DRect(rect), 1.0f,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 

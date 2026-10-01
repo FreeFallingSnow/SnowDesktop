@@ -25,6 +25,7 @@
 #include "shell_icon_work.h"
 #include "shell_icon_request.h"
 #include "../dock_refresh_cache.h"
+#include "../bounded_lru_cache.h"
 #include "dock_icon_work.h"
 #include "../desktop_namespace_registry.h"
 #include "item.h"
@@ -3888,7 +3889,7 @@ private:
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
     bool renderingFloatingPopup_ = false;
-    std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap1>> iconReflectionCache_;
+    snowdesktop::BoundedLruCache<std::uint64_t, ComPtr<ID2D1Bitmap1>> iconReflectionCache_{64};
     bool handlingFloatingPopupInput_ = false;
     /** @brief 浮动 Dock 被动 hover 最近一次同步提交时刻（8ms 限频用）。 */
     ULONGLONG floatingDockLastPointerPresentTick_ = 0;
