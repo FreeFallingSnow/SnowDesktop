@@ -32,12 +32,12 @@ struct Package
     std::vector<Choice> choices;
     std::vector<fs::path> files;
 };
-std::wstring LocalizedName(IDWriteLocalizedStrings* names)
+std::wstring LocalizedName(IDWriteLocalizedStrings* names, UINT32 index = 0)
 {
     UINT32 length = 0;
-    if (!names || FAILED(names->GetStringLength(0, &length))) return {};
+    if (!names || FAILED(names->GetStringLength(index, &length))) return {};
     std::wstring name(length + 1, L'\0');
-    if (FAILED(names->GetString(0, name.data(), length + 1))) return {};
+    if (FAILED(names->GetString(index, name.data(), length + 1))) return {};
     name.resize(length);
     return name;
 }
@@ -101,6 +101,39 @@ Package Load(std::string_view id, const fs::path& folder, bool builtin)
     result.collection = collection;
     return result;
 }
+
+Package LoadInstalled()
+{
+    Package result;
+    if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_ISOLATED, __uuidof(IDWriteFactory6),
+            reinterpret_cast<IUnknown**>(result.factory.GetAddressOf())))) return {};
+    // Exclude cloud fonts: choosing a local family must not trigger downloads.
+    ComPtr<IDWriteFontCollection1> collection;
+    if (FAILED(result.factory->GetSystemFontCollection(FALSE, &collection, TRUE))) return {};
+    result.collection = collection;
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
+    GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH);
+    for (UINT32 i = 0; i < collection->GetFontFamilyCount(); ++i)
+    {
+        ComPtr<IDWriteFontFamily> family;
+        ComPtr<IDWriteLocalizedStrings> names;
+        if (FAILED(collection->GetFontFamily(i, &family)) || !family ||
+            family->GetFontCount() == 0 || FAILED(family->GetFamilyNames(&names))) continue;
+        UINT32 canonicalIndex = 0, displayIndex = 0;
+        BOOL exists = FALSE;
+        if (FAILED(names->FindLocaleName(L"en-us", &canonicalIndex, &exists)) || !exists) canonicalIndex = 0;
+        exists = FALSE;
+        if (!locale[0] || FAILED(names->FindLocaleName(locale, &displayIndex, &exists)) || !exists) displayIndex = canonicalIndex;
+        const auto canonical = LocalizedName(names.Get(), canonicalIndex);
+        const auto display = LocalizedName(names.Get(), displayIndex);
+        if (!canonical.empty()) result.choices.push_back({{"installed", Utf8(canonical)},
+            display.empty() ? canonical : display, canonical});
+    }
+    std::sort(result.choices.begin(), result.choices.end(), [](const Choice& a, const Choice& b) {
+        return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+    });
+    return result;
+}
 }
 
 std::vector<Choice> List(const fs::path& assets, const fs::path& data)
@@ -118,6 +151,8 @@ std::vector<Choice> List(const fs::path& assets, const fs::path& data)
         auto package = Load(entry.path().filename().string(), entry.path(), false);
         choices.insert(choices.end(), package.choices.begin(), package.choices.end());
     }
+    const auto installed = LoadInstalled();
+    choices.insert(choices.end(), installed.choices.begin(), installed.choices.end());
     return choices;
 }
 
@@ -128,13 +163,15 @@ bool Select(const Selection& selection, const fs::path& assets, const fs::path& 
     if (selection.package == "system") { current.store(nullptr); ++revision; return true; }
     const fs::path id(selection.package);
     if (!SafePart(id.wstring())) return false;
+    const bool installed = selection.package == "installed";
     const bool builtin = selection.package == "MiSans" || selection.package == "HarmonyOS-Sans";
-    auto package = Load(selection.package, (builtin ? assets / L"Fonts" : data / L"fonts") / id, builtin);
+    auto package = installed ? LoadInstalled()
+        : Load(selection.package, (builtin ? assets / L"Fonts" : data / L"fonts") / id, builtin);
     const auto choice = std::find_if(package.choices.begin(), package.choices.end(), [&](const Choice& c) { return c.selection == selection; });
     if (choice == package.choices.end()) return false;
     auto resource = std::make_shared<Resource>();
     resource->selection = selection;
-    resource->family = choice->name;
+    resource->family = installed ? choice->xamlSource : choice->name;
     resource->xamlSource = choice->xamlSource;
     resource->factory = package.factory;
     resource->collection = package.collection;

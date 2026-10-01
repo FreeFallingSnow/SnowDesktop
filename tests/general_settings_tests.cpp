@@ -150,7 +150,32 @@ int main(int argc, char** argv)
         const auto assets = std::filesystem::path(argv[1]) / "assets";
         const auto data = std::filesystem::temp_directory_path() / (L"SnowDesktopFontPackageTests-" + std::to_wstring(GetCurrentProcessId()));
         const auto choices = app_fonts::List(assets, data);
-        Check(choices.size() == 3, "system, MiSans and HarmonyOS appear once per family, without duplicate static weight choices");
+        Check(std::count_if(choices.begin(), choices.end(), [](const auto& choice) { return choice.selection.package != "installed"; }) == 3,
+            "system, MiSans and HarmonyOS appear once per family, alongside installed fonts without duplicate static weight choices");
+        const auto local = std::find_if(choices.begin(), choices.end(), [](const auto& choice) {
+            return choice.selection == app_fonts::Selection{"installed", "Segoe UI"};
+        });
+        Check(local != choices.end(), "Windows' installed Segoe UI family is directly selectable without importing a font package");
+        if (local != choices.end())
+        {
+            Check(local->xamlSource == L"Segoe UI" && app_fonts::Select(local->selection, assets, data),
+                "installed font selection uses its canonical family for WinUI and DirectWrite");
+            Check(app_fonts::GdiFamily() == L"Segoe UI" && app_fonts::XamlFamily() == L"Segoe UI" && !std::filesystem::exists(data / "fonts"),
+                "installed selection uses the local family without creating or copying a managed font package");
+            const auto active = app_fonts::current.load();
+            Check(!app_fonts::Select({"installed", "SnowDesktop missing font 26E6C3A8"}, assets, data) && app_fonts::current.load() == active,
+                "an unavailable installed family preserves the active choice rather than silently selecting a substitute");
+            HRESULT rendered = E_FAIL;
+            std::thread renderer([&] { rendered = DrawSelectedFont(); });
+            renderer.join();
+            Check(SUCCEEDED(rendered), "a selected installed family rasterizes on the startup thread after enumeration returns");
+            const auto path = data.parent_path() / (L"SnowDesktopInstalledFontSettings-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+            GeneralSettings saved, restored;
+            saved.font = local->selection;
+            Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), restored) && restored.font == local->selection,
+                "installed font choice survives saving and restarting without altering package or family identity");
+            std::error_code error; std::filesystem::remove(path, error);
+        }
         const auto mi = std::find_if(choices.begin(), choices.end(), [](const auto& c) { return c.selection.package == "MiSans"; });
         const auto harmony = std::find_if(choices.begin(), choices.end(), [](const auto& c) { return c.selection.package == "HarmonyOS-Sans"; });
         Check(mi != choices.end() && harmony != choices.end(), "both bundled font packages load via DirectWrite");

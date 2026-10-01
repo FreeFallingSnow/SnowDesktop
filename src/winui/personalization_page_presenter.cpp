@@ -157,7 +157,7 @@ struct PersonalizationPagePresenter::Impl
     muxc::Button fontRestartButton;
     muxc::InfoBar fontRestart;
     muxc::TextBlock fontError;
-    winrt::event_token fontToken{}, fontRestartToken{};
+    winrt::event_token fontToken{}, fontOpenToken{}, fontRestartToken{};
     std::vector<app_fonts::Choice> fonts;
     app_fonts::Selection selectedFont;
     SettingsCard themeTargetsCard;
@@ -490,6 +490,8 @@ struct PersonalizationPagePresenter::Impl
         InitializeCard(fontCard, cardStyle, themeRoot);
         fontCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         fontCombo.MaxWidth(520.0);
+        fontCombo.MaxDropDownHeight(420.0);
+        fontCombo.IsTextSearchEnabled(true);
         fontRow.Initialize(fontCombo);
         fontCard.content.Children().Append(fontRow.root);
         fontRestart.IsClosable(false);
@@ -677,6 +679,9 @@ struct PersonalizationPagePresenter::Impl
 
     void HookEvents()
     {
+        fontOpenToken = fontCombo.DropDownOpened([this](const auto&, const auto&) {
+            if (CanEmit()) RefreshFonts();
+        });
         fontToken = fontCombo.SelectionChanged([this](const auto&, const auto&) {
             const int index = fontCombo.SelectedIndex();
             if (!CanEmit() || index < 0) return;
@@ -1046,7 +1051,9 @@ struct PersonalizationPagePresenter::Impl
         for (std::size_t i = 0; i < fonts.size(); ++i)
         {
             const auto& choice = fonts[i];
-            fontCombo.Items().Append(winrt::box_value(choice.selection.package == "system" ? L("font.system", L"System default") : choice.name));
+            auto name = choice.selection.package == "system" ? L("font.system", L"System default") : choice.name;
+            if (choice.selection.package == "installed") name += L" · " + L("font.installed", L"Installed");
+            fontCombo.Items().Append(winrt::box_value(name));
             if (choice.selection == selectedFont) index = static_cast<int>(i);
         }
         // Missing packages retain the saved selection. Merely opening settings
@@ -1591,6 +1598,7 @@ struct PersonalizationPagePresenter::Impl
         try
         {
             fontCombo.SelectionChanged(fontToken);
+            fontCombo.DropDownOpened(fontOpenToken);
             fontRestartButton.Click(fontRestartToken);
             presetCombo.SelectionChanged(presetToken);
             quickNavigationThemeCombo.SelectionChanged(
