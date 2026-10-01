@@ -80,7 +80,7 @@ namespace snowdesktop::tray { struct Icon; }
 #include "floating_dock_rules.h"
 #include "../floating_popup_rules.h"
 #include "../widget_composition_layer_rules.h"
-#include "../desktop_hover_rules.h"
+#include "../desktop_hover_types.h"
 #include "../desktop_drop_cache.h"
 #include "../dock_app_identity_rules.h"
 #include "../shell_launch_worker.h"

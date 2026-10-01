@@ -1,17 +1,12 @@
 #pragma once
 
+#include "desktop_hover_types.h"
+
 #include <cstdint>
 
 namespace snowdesktop::desktop_hover_rules
 {
 inline constexpr std::uint32_t kActivationSettleMs = 150;
-
-enum class ReconcileMode
-{
-    DeactivateOnly,
-    AllowImmediateActivation,
-    AllowActivationAfterForegroundSettle,
-};
 
 constexpr ReconcileMode ShellPopupCloseReconcileMode()
 {

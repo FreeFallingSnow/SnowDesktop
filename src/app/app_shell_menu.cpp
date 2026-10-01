@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_hover_rules.h"
 #include "popup_window_pair_z_order.h"
 #include "dock_taskbar_diagnostics.h"
 #include "../shell_context_menu_invoke.h"

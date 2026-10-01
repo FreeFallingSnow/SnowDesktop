@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_hover_rules.h"
 #include "shell_change_notification.h"
 #include "../desktop_keyboard_rules.h"
 #include "../drag_input_rules.h"
