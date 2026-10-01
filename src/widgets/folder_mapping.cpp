@@ -9,6 +9,7 @@
  */
 
 #include "widget.h"
+#include "folder_mapping_rules.h"
 #include "slot.h"
 #include "item.h"
 #include "types.h"
@@ -185,14 +186,15 @@ void FolderMapping::EnsureCategorySnapshot() const
 {
     if (!data_ || !app_) return;
 
-    std::vector<std::wstring> currentPaths;
-    currentPaths.reserve(data_->folderEntries.size());
-    for (const auto& entry : data_->folderEntries)
-        currentPaths.push_back(ToUpperInvariant(entry.fullPath));
-    if (categorySnapshotValid_ && currentPaths == categorySnapshotPaths_)
+    if (categorySnapshotValid_ && snowdesktop::folder_mapping_rules::PathsMatch(
+            data_->folderEntries, categorySnapshotPaths_,
+            [](const auto& entry) -> const std::wstring& { return entry.fullPath; }))
         return;
 
-    categorySnapshotPaths_ = std::move(currentPaths);
+    categorySnapshotPaths_.clear();
+    categorySnapshotPaths_.reserve(data_->folderEntries.size());
+    for (const auto& entry : data_->folderEntries)
+        categorySnapshotPaths_.push_back(entry.fullPath);
     entryIndicesByCategory_.clear();
     visibleCategoryIds_.clear();
     visibleEntryIndices_.clear();

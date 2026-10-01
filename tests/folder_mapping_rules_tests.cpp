@@ -31,6 +31,22 @@ void CheckEqual(const std::wstring& actual,
 
 int main()
 {
+    std::vector<std::wstring> source{L"C:\\a.txt", L"C:\\b.txt"};
+    const auto snapshot = source;
+    unsigned reads = 0;
+    auto path = [&](const auto& value) -> const std::wstring& { ++reads; return value; };
+    Check(rules::PathsMatch(source, snapshot, path) && reads == 2,
+        "unchanged snapshot compares borrowed paths");
+    source[0] = L"C:\\A.txt";
+    Check(!rules::PathsMatch(source, snapshot, path), "case-only mutation permits a safe rebuild");
+    source = snapshot; std::swap(source[0], source[1]);
+    Check(!rules::PathsMatch(source, snapshot, path), "reordered entries invalidate their indices");
+    source = snapshot; source.push_back(L"C:\\c.txt");
+    Check(!rules::PathsMatch(source, snapshot, path), "added entries invalidate their indices");
+    source = snapshot; source.pop_back();
+    Check(!rules::PathsMatch(source, snapshot, path), "removed entries invalidate their indices");
+    source.clear();
+    Check(rules::PathsMatch(source, std::vector<std::wstring>{}, path), "empty snapshots match");
     // 普通目录：路径原样拼接
     CheckEqual(rules::ChildPath(L"D:\\Code\\工作区", L"a.txt"),
         L"D:\\Code\\工作区\\a.txt",
