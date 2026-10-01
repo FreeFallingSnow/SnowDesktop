@@ -1,5 +1,6 @@
 #include "test_source_boundary.h"
 #include "dock_magnification.h"
+#include "desktop_hover_rules.h"
 #include "dock_launch_animation.h"
 #include "dock_rename_layout.h"
 #include "rename_edit_layout.h"
