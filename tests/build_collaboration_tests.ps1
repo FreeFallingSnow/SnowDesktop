@@ -12,12 +12,74 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 $processes = New-Object 'System.Collections.Generic.List[System.Diagnostics.Process]'
 $manager = Join-Path $scripts 'build_manager.ps1'
 $powershell = Join-Path $PSHOME 'powershell.exe'
+$runs = New-Object 'System.Collections.Generic.List[object]'
+$fixtureTimer = [Diagnostics.Stopwatch]::StartNew()
+$script:stage = 'setup'
+$succeeded = $false
+$events = Join-Path $fixture 'commands.jsonl'
+
+function Record($Event) {
+    $Event.utc = [DateTime]::UtcNow.ToString('o')
+    $Event.elapsedSeconds = $fixtureTimer.Elapsed.TotalSeconds
+    [IO.File]::AppendAllText($events, (($Event | ConvertTo-Json -Depth 8 -Compress) + "`r`n"), $utf8)
+}
+function Stage([string]$Name) {
+    $script:stage = $Name
+    Record @{ event = 'stage'; stage = $Name }
+    Write-Output ("STAGE {0} elapsed={1:N2}s" -f $Name, $fixtureTimer.Elapsed.TotalSeconds)
+}
+function Read-SharedText([string]$Path) {
+    if (-not [IO.File]::Exists($Path)) { return '' }
+    $stream = $null
+    $reader = $null
+    try {
+        $stream = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+        $reader = New-Object IO.StreamReader($stream)
+        return $reader.ReadToEnd()
+    }
+    catch { return ('Evidence read failed: ' + $_.Exception.Message) }
+    finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        elseif ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+function Snapshot([string]$Reason) {
+    # Read-only evidence from this exclusively owned disposable fixture. Never
+    # acquire the production coordinator lease or inspect unrelated processes.
+    $summary = @($runs | ForEach-Object {
+        $run = $_
+        $exited = $run.process.HasExited
+        @{ pid = $run.process.Id; arguments = $run.arguments; stage = $run.stage;
+           startedUtc = $run.startedUtc; exited = $exited;
+           exitCode = $(if ($exited) { $run.process.ExitCode } else { $null });
+           stdout = $run.output; stderr = $run.errorFile;
+           stdoutText = Read-SharedText $run.output; stderrText = Read-SharedText $run.errorFile }
+        if (-not $exited) {
+            Write-Host ("WAITING pid={0} args={1} stage={2} stdout={3} stderr={4}" -f
+                $run.process.Id, $run.arguments, $run.stage,
+                (Read-SharedText $run.output), (Read-SharedText $run.errorFile))
+        }
+    })
+    [IO.File]::WriteAllText((Join-Path $fixture 'failure.json'),
+        (@{ reason = $Reason; stage = $script:stage; utc = [DateTime]::UtcNow.ToString('o');
+            elapsedSeconds = $fixtureTimer.Elapsed.TotalSeconds; commands = $summary;
+            gates = @(Get-ChildItem -LiteralPath $fixture -File | Where-Object Name -Match '^(hold-|fail-|.*-started|child.pid)' | Select-Object Name, Length, LastWriteTimeUtc)
+        } | ConvertTo-Json -Depth 10), $utf8)
+    Write-Output ("EVIDENCE retained at {0}; stage={1}; reason={2}" -f $fixture, $script:stage, $Reason)
+}
 
 function Check([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
-function Wait-Until([scriptblock]$Condition, [string]$Message) {
+function Wait-Until([scriptblock]$Condition, [string]$Message, $Run = $null) {
     $timer = [Diagnostics.Stopwatch]::StartNew()
     while (-not (& $Condition)) {
-        if ($timer.Elapsed.TotalSeconds -gt 20) { throw "Timed out: $Message" }
+        if ($null -ne $Run -and $Run.process.HasExited) {
+            Complete $Run | Out-Null
+            throw "Command exited before expected signal: $Message; PID=$($Run.process.Id); args=$($Run.arguments)"
+        }
+        if ($timer.Elapsed.TotalSeconds -gt 20 -or $fixtureTimer.Elapsed.TotalSeconds -gt 160) {
+            Snapshot ("Timed out: $Message")
+            throw "Timed out: $Message; stage=$script:stage; evidence=$fixture"
+        }
         Start-Sleep -Milliseconds 50
     }
 }
@@ -32,7 +94,12 @@ function Start-Command([string]$Arguments) {
     # otherwise loses ExitCode when Start-Process only retains its PID.
     $null = $process.Handle
     $processes.Add($process)
-    return [pscustomobject]@{ process = $process; output = $output; errorFile = $errorFile }
+    $run = [pscustomobject]@{ process = $process; output = $output; errorFile = $errorFile;
+        arguments = $Arguments; stage = $script:stage; startedUtc = [DateTime]::UtcNow.ToString('o') }
+    $runs.Add($run)
+    Record @{ event = 'start'; pid = $process.Id; arguments = $Arguments; stage = $script:stage;
+        stdout = $output; stderr = $errorFile }
+    return $run
 }
 function Complete($Run, [int]$Code = 0) {
     Wait-Until { $Run.process.HasExited } ('command PID ' + $Run.process.Id)
@@ -46,7 +113,9 @@ function Complete($Run, [int]$Code = 0) {
             $errorText += [IO.File]::ReadAllText($reported.logPath)
         }
     }
-    Check ($actual -eq $Code) "Expected exit $Code, got $actual. $errorText $output"
+    Record @{ event = 'complete'; pid = $Run.process.Id; arguments = $Run.arguments;
+        stage = $Run.stage; actualExitCode = $actual; expectedExitCode = $Code }
+    Check ($actual -eq $Code) "Expected exit $Code, got $actual. PID=$($Run.process.Id); args=$($Run.arguments); stage=$($Run.stage). $errorText $output"
     if ($output.Trim()) { return $output | ConvertFrom-Json }
     return $null
 }
@@ -119,6 +188,7 @@ exit 0
     $readOnly = Call 'status'
     Check ($null -eq $readOnly.current -and -not [IO.File]::Exists((Join-Path $fixture '.build\collaboration\state.json'))) 'A read-only status query must not register or start a build'
 
+    Stage 'overlap'
     # A returns first and waits for B; duplicate finish and begin are harmless.
     $a = Call 'begin task-a'
     $b = Call 'begin task-b'
@@ -140,13 +210,13 @@ exit 0
     Wait-Until {
         if ($last.process.HasExited) { Complete $last | Out-Null }
         Test-Path -LiteralPath (Join-Path $fixture 'build-started')
-    } 'single build starts'
+    } 'single build starts' $last
     Check ((Counts).Count -eq 1) 'Concurrent finish callers must trigger exactly one build'
     $pending = Start-Command 'begin task-c'
     Call 'begin task-d -WaitSeconds 1' 2 | Out-Null
     Check (-not $pending.process.HasExited -and (State).current.participants.Count -eq 2) 'New begin must wait without entering the frozen batch'
     Remove-Gate 'hold-build'
-    Wait-Until { Test-Path -LiteralPath (Join-Path $fixture 'test-started') } 'single test starts'
+    Wait-Until { Test-Path -LiteralPath (Join-Path $fixture 'test-started') } 'single test starts' $last
     Check (-not $pending.process.HasExited -and (Counts).Count -eq 2) 'begin must also wait throughout testing'
     Remove-Gate 'hold-test'
     $resultA = Complete $first
@@ -164,6 +234,7 @@ exit 0
     Check ((Counts).Count -eq 4) 'The next batch must independently build and test once'
     Write-Output 'PASS overlapping editors, duplicate calls, fixed batch, common result, begin/build race, next-batch isolation'
 
+    Stage 'race-and-failure'
     # Simultaneous last finish calls contend for the same atomic transition.
     $raceA = Call 'begin race-a'
     Call 'begin race-b' | Out-Null
@@ -189,6 +260,7 @@ exit 0
     }
     Write-Output 'PASS simultaneous finish, build/test failures, persistent error, failure lease release'
 
+    Stage 'stale-recovery'
     # Age cannot imply completion. Recovery withdraws only the selected editor.
     $stale = Call 'begin stale-editor'
     Call 'begin live-editor' | Out-Null
@@ -211,6 +283,7 @@ exit 0
     Check ((Call ('status -Batch ' + $cancelled.batchId)).outcome -eq 'cancelled') 'All-withdrawn batch must persist cancellation rather than success'
     Write-Output 'PASS stale registrations, explicit targeted recovery, no automatic completion'
 
+    Stage 'crash-recovery'
     # Abrupt coordinator death kills its own build tree but leaves an orphan
     # batch blocked. Live-owner recovery and newer-batch recovery are refused.
     Remove-Gate 'build-started'
@@ -220,7 +293,7 @@ exit 0
     Wait-Until {
         if ($crashRun.process.HasExited) { Complete $crashRun | Out-Null }
         Test-Path -LiteralPath (Join-Path $fixture 'build-started')
-    } 'crash fixture starts'
+    } 'crash fixture starts' $crashRun
     $childId = [int][IO.File]::ReadAllText((Join-Path $fixture 'child.pid'))
     $before = (Counts).Count
     Call ('recover -Batch ' + $crashed.batchId + ' -ConfirmStopped -Reason inspected') 2 | Out-Null
@@ -240,6 +313,7 @@ exit 0
     Call ('finish after-crash -Batch ' + $new.batchId) | Out-Null
     Write-Output 'PASS coordinator crash, private job cleanup, orphan refusal, explicit recovery, newer batch preservation'
 
+    Stage 'published-recovery'
     # Crash after publishing a result but before retiring state is recoverable
     # without rebuilding. Emulate only this disk commit boundary.
     $saved = State
@@ -254,6 +328,7 @@ exit 0
     Check ($null -eq (State).current -and (Counts).Count -eq $before) 'Published result recovery must retire only its own batch without rerunning'
     Write-Output 'PASS result-before-retirement crash recovery'
 
+    Stage 'input-invalidation'
     # Unregistered edits cannot be physically stopped. Endpoint content checks
     # must invalidate the result even when the fake build/test both succeeded.
     foreach ($change in @('content', 'addition', 'deletion', 'rename', 'configuration', 'local-configuration')) {
@@ -265,7 +340,7 @@ exit 0
         Gate 'hold-build'
         $editing = Call ('begin input-' + $change)
         $checking = Start-Command ('finish input-' + $change + ' -Batch ' + $editing.batchId)
-        Wait-Until { Test-Path -LiteralPath (Join-Path $fixture 'build-started') } ('input test starts: ' + $change)
+        Wait-Until { Test-Path -LiteralPath (Join-Path $fixture 'build-started') } ('input test starts: ' + $change) $checking
         switch ($change) {
             'content' { [IO.File]::WriteAllText((Join-Path $fixture 'src\fixture.cpp'), 'modified source', $utf8) }
             'addition' { [IO.File]::WriteAllText((Join-Path $fixture 'src\added.h'), 'new input', $utf8) }
@@ -288,6 +363,11 @@ exit 0
     Check ($newResult.inputCheck -eq 'stable' -and $newResult.inputStart.digest -ne $resultA.inputStart.digest) 'A new batch must bind the actual new inputs'
     Compare-Results $resultA (Call ('status -Batch ' + $resultA.batchId))
     Write-Output 'PASS content/add/delete/rename/config changes invalidate verification, ignored local presets covered, old result refuses newer edits'
+    $succeeded = $true
+}
+catch {
+    Snapshot $_.Exception.Message
+    throw
 }
 finally {
     foreach ($process in $processes) {
@@ -297,5 +377,6 @@ finally {
     $resolved = [IO.Path]::GetFullPath($fixture)
     Check ($resolved.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgnoreCase) -and
         [IO.Path]::GetFileName($resolved).StartsWith('SnowDesktop-collaboration-')) 'Cleanup must remain within the disposable fixture'
-    Remove-Item -LiteralPath $resolved -Recurse -Force
+    if ($succeeded) { Remove-Item -LiteralPath $resolved -Recurse -Force }
+    else { Write-Output ("EVIDENCE cleanup stopped only fixture-owned processes; directory preserved: " + $resolved) }
 }

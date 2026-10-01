@@ -1914,14 +1914,22 @@ if (BUILD_TESTING)
         COMMAND_ARGUMENTS
             "$<TARGET_FILE:snowwidget>"
             "$<TARGET_FILE:SnowDesktop>"
-            "${CMAKE_CURRENT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}" native
         LABELS authoring integration lua preview render widget)
     add_dependencies(SnowDesktopWidgetAuthorPreviewCliTests
         snowwidget SnowDesktop)
-    # Actual authoring plus calendar/control/tray/resource rendering measured
-    # 57 seconds before resource fixtures were added. Keep a bounded budget
-    # with headroom for all real XAML hosts, rather than the default 60 seconds.
+    # One executable, five independently bounded scenes. Every child deadline
+    # is below its 80-second suite budget and CTest's 90-second outer watchdog.
     set_tests_properties(widget_author_preview_cli PROPERTIES TIMEOUT 90)
+    foreach(preview_suite background materials runtime validation)
+        add_test(NAME widget_author_preview_cli_${preview_suite}
+            COMMAND SnowDesktopWidgetAuthorPreviewCliTests
+                "$<TARGET_FILE:snowwidget>" "$<TARGET_FILE:SnowDesktop>"
+                "${CMAKE_CURRENT_SOURCE_DIR}" ${preview_suite})
+        set_tests_properties(widget_author_preview_cli_${preview_suite} PROPERTIES
+            TIMEOUT 90 LABELS "authoring;integration;lua;preview;render;widget"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetAuthorPreviewCliTests>")
+    endforeach()
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewTreeTests
