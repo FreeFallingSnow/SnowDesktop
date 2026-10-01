@@ -15,7 +15,7 @@
   "titleLines.one": "한 줄",
   "titleLines.two": "두 줄",
   "titleLines.hint": "전역 설정입니다. 넘치는 텍스트는 마지막 줄에 간결한 줄임표로 표시됩니다.",
-  "font.notice": "SnowDesktop은 MiSans와 HarmonyOS Sans를 선택 가능한 인터페이스 글꼴로 사용하며 각 라이선스에 따라 수정하지 않은 원본 파일을 포함합니다. 사용 권한이 있는 사용자 글꼴을 가져오세요.\nMiSans © 2020–2025 Beijing Xiaomi Mobile Software Co., Ltd. · HarmonyOS Sans © 2021 Huawei Device Co., Ltd.",
+  "font.restartRequired": "글꼴을 저장했습니다. SnowDesktop을 다시 시작하면 적용됩니다.",
   "statusBar.inputMethod": "입력 방식",
   "statusBar.inputMethod.switch": "왼쪽 클릭으로 입력 모드 전환, 오른쪽 클릭으로 입력기 메뉴 열기",
   "app.settings.popup_hover_open": "마우스를 올려 팝업 열기",

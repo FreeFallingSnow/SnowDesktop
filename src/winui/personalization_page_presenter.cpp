@@ -154,7 +154,8 @@ struct PersonalizationPagePresenter::Impl
     SettingRow fontRow;
     muxc::ComboBox fontCombo;
     muxc::Button fontFileButton, fontFolderButton;
-    muxc::TextBlock fontNotice, fontError;
+    muxc::InfoBar fontRestart;
+    muxc::TextBlock fontError;
     winrt::event_token fontToken{}, fontFileToken{}, fontFolderToken{};
     std::vector<app_fonts::Choice> fonts;
     app_fonts::Selection selectedFont;
@@ -330,10 +331,10 @@ struct PersonalizationPagePresenter::Impl
         imports.Children().Append(fontFileButton);
         imports.Children().Append(fontFolderButton);
         fontCard.content.Children().Append(imports);
-        fontNotice.TextWrapping(mux::TextWrapping::Wrap);
-        fontNotice.FontSize(12.0);
-        fontNotice.Opacity(0.7);
-        fontCard.content.Children().Append(fontNotice);
+        fontRestart.IsClosable(false);
+        fontRestart.IsOpen(false);
+        fontRestart.Severity(muxc::InfoBarSeverity::Informational);
+        fontCard.content.Children().Append(fontRestart);
         fontError.TextWrapping(mux::TextWrapping::Wrap);
         fontError.Visibility(mux::Visibility::Collapsed);
         fontCard.content.Children().Append(fontError);
@@ -666,6 +667,7 @@ struct PersonalizationPagePresenter::Impl
             if (!CanEmit() || index < 0 || static_cast<std::size_t>(index) >= fonts.size()) return;
             selectedFont = fonts[static_cast<std::size_t>(index)].selection;
             EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
+            UpdateFontRestartNotice();
         });
         fontFileToken = fontFileButton.Click([this](const auto&, const auto&) { ImportFonts(false); });
         fontFolderToken = fontFolderButton.Click([this](const auto&, const auto&) { ImportFonts(true); });
@@ -998,6 +1000,12 @@ struct PersonalizationPagePresenter::Impl
         UpdateDependentStates();
     }
 
+    void UpdateFontRestartNotice()
+    {
+        const auto applied = app_fonts::current.load();
+        fontRestart.IsOpen(selectedFont != (applied ? applied->selection : app_fonts::Selection{}));
+    }
+
     void RefreshFonts()
     {
         if (!actions.listFonts) return;
@@ -1022,6 +1030,7 @@ struct PersonalizationPagePresenter::Impl
         }
         fontCombo.SelectedIndex(index);
         updatingControls = previous;
+        UpdateFontRestartNotice();
     }
 
     void ImportFonts(bool folder)
@@ -1181,7 +1190,7 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(fontCombo, fontRow.label.Text());
         fontFileButton.Content(winrt::box_value(L("font.importFile")));
         fontFolderButton.Content(winrt::box_value(L("font.importFolder")));
-        fontNotice.Text(L("font.notice"));
+        fontRestart.Message(L("font.restartRequired", L"Restart SnowDesktop to apply this font."));
         RefreshFonts();
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");

@@ -15,7 +15,7 @@
   "titleLines.one": "1 行",
   "titleLines.two": "2 行",
   "titleLines.hint": "全体設定。収まらない場合は最終行にコンパクトな省略記号を表示します。",
-  "font.notice": "SnowDesktop は MiSans と HarmonyOS Sans を任意のインターフェースフォントとして使用し、各ライセンスに従い未変更の原本を同梱します。カスタムフォントは使用許可のあるものを読み込んでください。\nMiSans © 2020–2025 Beijing Xiaomi Mobile Software Co., Ltd. · HarmonyOS Sans © 2021 Huawei Device Co., Ltd.",
+  "font.restartRequired": "フォントを保存しました。SnowDesktop を再起動すると適用されます。",
   "statusBar.inputMethod": "入力方式",
   "statusBar.inputMethod.switch": "左クリックで入力モードを切り替え、右クリックで入力方式のメニューを表示",
   "app.settings.popup_hover_open": "マウスを重ねてポップアップを開く",

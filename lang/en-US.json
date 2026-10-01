@@ -15,7 +15,7 @@
   "titleLines.one": "One line",
   "titleLines.two": "Two lines",
   "titleLines.hint": "Global setting. Overflow ends with a compact ellipsis on the last line.",
-  "font.notice": "SnowDesktop uses MiSans and HarmonyOS Sans as optional interface fonts, bundling original unmodified files under their own licenses. Import custom fonts you have permission to use.\nMiSans © 2020–2025 Beijing Xiaomi Mobile Software Co., Ltd. · HarmonyOS Sans © 2021 Huawei Device Co., Ltd.",
+  "font.restartRequired": "Font saved. Restart SnowDesktop to apply it.",
   "statusBar.inputMethod": "Input method",
   "statusBar.inputMethod.switch": "Left-click to switch input mode; right-click for the input method menu",
   "app.settings.popup_hover_open": "Open popups on hover",

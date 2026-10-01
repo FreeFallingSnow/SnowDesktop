@@ -15,7 +15,7 @@
   "titleLines.one": "一行",
   "titleLines.two": "兩行",
   "titleLines.hint": "全域設定，溢出時在最後一行顯示緊湊的省略號。",
-  "font.notice": "SnowDesktop 使用 MiSans 與 HarmonyOS Sans 作為可選介面字型，依各自授權散布未修改的原檔。自訂字型請使用已獲授權的檔案。\nMiSans © 2020–2025 Beijing Xiaomi Mobile Software Co., Ltd. · HarmonyOS Sans © 2021 Huawei Device Co., Ltd.",
+  "font.restartRequired": "字型已儲存，重新啟動 SnowDesktop 後生效。",
   "statusBar.inputMethod": "輸入法",
   "statusBar.inputMethod.switch": "左鍵切換輸入模式，右鍵開啟輸入法選單",
   "app.settings.popup_hover_open": "懸停延遲展開彈出視窗",

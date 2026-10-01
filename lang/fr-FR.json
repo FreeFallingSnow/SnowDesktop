@@ -15,7 +15,7 @@
   "titleLines.one": "Une ligne",
   "titleLines.two": "Deux lignes",
   "titleLines.hint": "Réglage global. Le texte excédentaire se termine par des points de suspension compacts sur la dernière ligne.",
-  "font.notice": "SnowDesktop utilise MiSans et HarmonyOS Sans comme polices facultatives et inclut leurs fichiers originaux non modifiés sous leurs licences respectives. Importez les polices dont vous avez les droits d’utilisation.\nMiSans © 2020–2025 Beijing Xiaomi Mobile Software Co., Ltd. · HarmonyOS Sans © 2021 Huawei Device Co., Ltd.",
+  "font.restartRequired": "Police enregistrée. Redémarrez SnowDesktop pour l’appliquer.",
   "statusBar.inputMethod": "Méthode de saisie",
   "statusBar.inputMethod.switch": "Clic gauche pour changer de mode de saisie ; clic droit pour ouvrir le menu de la méthode de saisie",
   "app.settings.popup_hover_open": "Ouvrir les fenêtres contextuelles au survol",

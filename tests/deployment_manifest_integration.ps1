@@ -147,8 +147,8 @@ try {
     $namespace = [System.Xml.XmlNamespaceManager]::new($xml.NameTable)
     $namespace.AddNamespace(
         "m", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
-    if (@($deployment.files).Count -ne 9 -or
-        @($deployment.notices).Count -ne 8 -or
+    if (@($deployment.files).Count -ne $required.Count -or
+        @($deployment.notices).Count -ne 10 -or
         $xml.SelectNodes(
             "/m:Package/m:Extensions/m:Extension", $namespace).Count -ne 1 -or
         $xml.SelectSingleNode(

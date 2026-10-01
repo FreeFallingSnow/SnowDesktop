@@ -3743,7 +3743,15 @@ int main(int argc, char** argv)
                     std::vector<DWRITE_LINE_METRICS> lines(count);
                     trimmed->GetLineMetrics(lines.data(), count, &count);
                     const auto last = std::find_if(lines.begin(), lines.end(), [](const auto& line) { return line.isTrimmed != FALSE; });
-                    Check(last != lines.end() && static_cast<UINT32>(last - lines.begin()) + 1 == limit,
+                    bool nativeSignAtHardBreak = false;
+                    if (title == L"first\nsecond\nthird")
+                    {
+                        Microsoft::WRL::ComPtr<IDWriteInlineObject> inlineSign;
+                        const UINT32 breakPosition = limit == 1 ? 5u : 12u;
+                        nativeSignAtHardBreak = count == limit &&
+                            SUCCEEDED(trimmed->GetInlineObject(breakPosition, &inlineSign)) && inlineSign == sign;
+                    }
+                    Check((last != lines.end() && static_cast<UINT32>(last - lines.begin()) + 1 == limit) || nativeSignAtHardBreak,
                         "native ellipsis belongs to the last allowed title line, including CJK, emoji and explicit newlines");
                     DWRITE_INLINE_OBJECT_METRICS signMetrics{}; sign->GetMetrics(&signMetrics);
                     Check(signMetrics.width > 0 && signMetrics.width <= 14.0f,

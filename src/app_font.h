@@ -32,6 +32,9 @@ struct Resource
     Selection selection;
     std::wstring family;
     std::wstring xamlSource;
+    // The isolated factory owns the local font loader. Retain it until all
+    // selected glyphs have been consumed, including the startup draw thread.
+    Microsoft::WRL::ComPtr<IDWriteFactory6> factory;
     Microsoft::WRL::ComPtr<IDWriteFontCollection> collection;
 };
 

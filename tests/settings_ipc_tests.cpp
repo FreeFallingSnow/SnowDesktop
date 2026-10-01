@@ -227,7 +227,7 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     settings.values.general.font = {"user-package", "中文 Family"};
-    settings.values.desktop.itemFontWeight = 600.f;
+    settings.values.desktop.itemFontWeight = 600;
     settings.values.desktop.desktopTitleLines = 1;
     settings.values.desktop.largeFolderTitleLines = 2;
     settings.values.desktop.scrollingTitleLines = 1;

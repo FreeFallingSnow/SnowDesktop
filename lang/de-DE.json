@@ -15,7 +15,7 @@
   "titleLines.one": "Eine Zeile",
   "titleLines.two": "Zwei Zeilen",
   "titleLines.hint": "Globale Einstellung. Überlauf endet mit kompakten Auslassungspunkten in der letzten Zeile.",
-  "font.notice": "SnowDesktop verwendet MiSans und HarmonyOS Sans als optionale Schriften und enthält unveränderte Originaldateien unter deren eigenen Lizenzen. Importieren Sie nur Schriften, die Sie verwenden dürfen.\nMiSans © 2020–2025 Beijing Xiaomi Mobile Software Co., Ltd. · HarmonyOS Sans © 2021 Huawei Device Co., Ltd.",
+  "font.restartRequired": "Schrift gespeichert. Starten Sie SnowDesktop neu, um sie anzuwenden.",
   "statusBar.inputMethod": "Eingabemethode",
   "statusBar.inputMethod.switch": "Linksklick wechselt den Eingabemodus; Rechtsklick öffnet das Menü der Eingabemethode",
   "app.settings.popup_hover_open": "Popups bei Mauszeigerkontakt öffnen",

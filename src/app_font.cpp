@@ -27,6 +27,7 @@ bool SafePart(std::wstring_view part)
 }
 struct Package
 {
+    ComPtr<IDWriteFactory6> factory;
     ComPtr<IDWriteFontCollection1> collection;
     std::vector<Choice> choices;
     std::vector<fs::path> files;
@@ -96,6 +97,7 @@ Package Load(std::string_view id, const fs::path& folder, bool builtin)
     ComPtr<IDWriteFontSet> fonts;
     ComPtr<IDWriteFontCollection2> collection;
     if (FAILED(builder->CreateFontSet(&fonts)) || FAILED(factory->CreateFontCollectionFromFontSet(fonts.Get(), DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC, &collection))) return {};
+    result.factory = factory;
     result.collection = collection;
     return result;
 }
@@ -132,6 +134,7 @@ bool Select(const Selection& selection, const fs::path& assets, const fs::path& 
     resource->selection = selection;
     resource->family = choice->name;
     resource->xamlSource = choice->xamlSource;
+    resource->factory = package.factory;
     resource->collection = package.collection;
     for (const auto& file : package.files) AddFontResourceExW(file.c_str(), FR_PRIVATE, nullptr);
     current.store(std::move(resource));

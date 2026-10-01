@@ -15,7 +15,7 @@
   "titleLines.one": "Uma linha",
   "titleLines.two": "Duas linhas",
   "titleLines.hint": "Configuração global. O texto excedente termina com reticências compactas na última linha.",
-  "font.notice": "SnowDesktop usa MiSans e HarmonyOS Sans como fontes opcionais e inclui arquivos originais sem alterações sob suas respectivas licenças. Importe fontes que você tenha permissão para usar.\nMiSans © 2020–2025 Beijing Xiaomi Mobile Software Co., Ltd. · HarmonyOS Sans © 2021 Huawei Device Co., Ltd.",
+  "font.restartRequired": "Fonte salva. Reinicie o SnowDesktop para aplicá-la.",
   "statusBar.inputMethod": "Método de entrada",
   "statusBar.inputMethod.switch": "Clique com o botão esquerdo para alternar o modo de entrada; com o direito para abrir o menu do método de entrada",
   "app.settings.popup_hover_open": "Abrir pop-ups ao passar o mouse",
