@@ -1504,7 +1504,7 @@ if (BUILD_TESTING)
             src/app_font.cpp
             src/personalization.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES dwrite gdi32 ole32
+        LINK_LIBRARIES dwrite d2d1 windowscodecs gdi32 ole32
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract settings)
 

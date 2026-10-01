@@ -4,6 +4,8 @@
 #include "status_bar_appearance.h"
 
 #include <windows.h>
+#include <d2d1.h>
+#include <wincodec.h>
 
 #include <cstring>
 #include <cmath>
@@ -12,6 +14,7 @@
 #include <iostream>
 #include <iterator>
 #include <utility>
+#include <thread>
 
 std::wstring GetDataFilePath(const wchar_t* filename)
 {
@@ -27,6 +30,54 @@ void Check(bool condition, const char* message)
     if (condition) return;
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
+}
+
+// Startup draws the selected collection on another thread. Layout-only tests
+// cannot expose released font loaders: glyph data is consumed during drawing.
+HRESULT DrawSelectedFont()
+{
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(apartment)) return apartment;
+    const auto draw = []() -> HRESULT {
+        Microsoft::WRL::ComPtr<ID2D1Factory> d2d;
+        auto result = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2d.GetAddressOf());
+        if (FAILED(result)) return result;
+        Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
+        result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic));
+        if (FAILED(result)) return result;
+        Microsoft::WRL::ComPtr<IWICBitmap> bitmap;
+        result = wic->CreateBitmap(320, 80, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap);
+        if (FAILED(result)) return result;
+        Microsoft::WRL::ComPtr<ID2D1RenderTarget> target;
+        result = d2d->CreateWicBitmapRenderTarget(bitmap.Get(),
+            D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE), &target);
+        if (FAILED(result)) return result;
+        Microsoft::WRL::ComPtr<IDWriteFactory> factory;
+        result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(factory.GetAddressOf()));
+        if (FAILED(result)) return result;
+        Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
+        result = snowdesktop::app_fonts::CreateTextFormat(factory, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 24, L"", &format);
+        if (FAILED(result)) return result;
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+        result = target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
+        if (FAILED(result)) return result;
+        target->BeginDraw();
+        target->Clear(D2D1::ColorF(D2D1::ColorF::Black));
+        constexpr wchar_t text[] = L"SnowDesktop 中文 520";
+        target->DrawText(text, static_cast<UINT32>(std::size(text) - 1), format.Get(), D2D1::RectF(0, 0, 320, 80), brush.Get());
+        result = target->EndDraw();
+        if (FAILED(result)) return result;
+        std::vector<BYTE> pixels(320 * 80 * 4);
+        result = bitmap->CopyPixels(nullptr, 320 * 4, static_cast<UINT>(pixels.size()), pixels.data());
+        if (FAILED(result)) return result;
+        for (std::size_t i = 0; i < pixels.size(); i += 4)
+            if (pixels[i] || pixels[i + 1] || pixels[i + 2]) return S_OK;
+        return E_FAIL;
+    };
+    const auto result = draw();
+    CoUninitialize();
+    return result;
 }
 }
 
@@ -54,6 +105,16 @@ int main(int argc, char** argv)
         const auto mi = std::find_if(choices.begin(), choices.end(), [](const auto& c) { return c.selection.package == "MiSans"; });
         const auto harmony = std::find_if(choices.begin(), choices.end(), [](const auto& c) { return c.selection.package == "HarmonyOS-Sans"; });
         Check(mi != choices.end() && harmony != choices.end(), "both bundled font packages load via DirectWrite");
+        for (const auto* id : {"MiSans", "HarmonyOS-Sans"})
+        {
+            const auto choice = std::find_if(choices.begin(), choices.end(), [id](const auto& c) { return c.selection.package == id; });
+            if (choice == choices.end()) continue;
+            Check(app_fonts::Select(choice->selection, assets, data), "select bundled font before startup rendering");
+            HRESULT rendered = E_FAIL;
+            std::thread renderer([&] { rendered = DrawSelectedFont(); });
+            renderer.join();
+            Check(SUCCEEDED(rendered), "selected original font rasterizes on the startup rendering thread after package enumeration returns");
+        }
         if (mi != choices.end())
         {
             Check(app_fonts::Select(mi->selection, assets, data), "select original MiSans Regular font");
