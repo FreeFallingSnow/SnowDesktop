@@ -31,8 +31,58 @@ void CheckDockProcessSnapshotReuse()
     std::cout << "preview synthetic128 probes: process snapshots=1; next pass fresh\n";
 }
 
+class CacheComReference final : public IUnknown
+{
+public:
+    explicit CacheComReference(unsigned& released) : released_(released) {}
+    virtual ~CacheComReference() = default;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override
+    {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        if (iid != __uuidof(IUnknown)) return E_NOINTERFACE;
+        *result = static_cast<IUnknown*>(this);
+        AddRef();
+        return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++references_; }
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        const ULONG remaining = --references_;
+        if (!remaining) { ++released_; delete this; }
+        return remaining;
+    }
+private:
+    ULONG references_ = 1;
+    unsigned& released_;
+};
+
+void CheckCacheComPtrOwnership()
+{
+    using Owned = Microsoft::WRL::ComPtr<CacheComReference>;
+    unsigned released = 0;
+    snowdesktop::BoundedLruCache<int, Owned> cache(1);
+    auto make = [&] { Owned owned; owned.Attach(new CacheComReference(released)); return owned; };
+    const auto* inserted = cache.Insert(1, make());
+    Check(inserted && inserted->Get() && released == 0,
+        "returning an inserted ComPtr address does not release its resource");
+    const auto* hit = cache.Find(1);
+    Check(hit && hit->Get() && released == 0,
+        "returning a hit ComPtr address does not release its resource");
+    const auto* replaced = cache.Insert(1, make());
+    Check(replaced && replaced->Get() && released == 1,
+        "replacement releases only the old resource and preserves the new ComPtr");
+    const auto* evicted = cache.Insert(2, make());
+    Check(evicted && evicted->Get() && released == 2 && !cache.Find(1),
+        "LRU eviction releases one resource and preserves the returned ComPtr");
+    cache.Clear();
+    Check(released == 3 && cache.Size() == 0,
+        "Clear releases each remaining COM resource exactly once");
+}
+
 void CheckBoundedIconCache()
 {
+    CheckCacheComPtrOwnership();
     snowdesktop::BoundedLruCache<int, std::unique_ptr<int>> cache(2);
     cache.Insert(1, std::make_unique<int>(10));
     cache.Insert(2, std::make_unique<int>(20));

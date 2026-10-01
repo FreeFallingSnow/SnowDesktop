@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <list>
+#include <memory>
 #include <unordered_map>
 #include <utility>
 
@@ -20,7 +21,7 @@ public:
         const auto found = values_.find(key);
         if (found == values_.end()) return nullptr;
         recency_.splice(recency_.begin(), recency_, found->second.position);
-        return &found->second.value;
+        return std::addressof(found->second.value);
     }
     Value* Insert(const Key& key, Value value)
     {
@@ -34,7 +35,7 @@ public:
             values_.erase(recency_.back());
             recency_.pop_back();
         }
-        return &values_.find(key)->second.value;
+        return std::addressof(values_.find(key)->second.value);
     }
     void Clear() { values_.clear(); recency_.clear(); }
     std::size_t Size() const noexcept { return values_.size(); }
