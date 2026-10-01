@@ -1384,7 +1384,7 @@ private:
     void PruneDockShellMetadata();
     static DockAppIdentity ReadDockAppIdentity(const std::wstring& path);
     std::wstring GetDockWindowAppUserModelIdAsync(HWND window);
-    std::unordered_map<HWND, std::pair<DWORD, std::wstring>> dockWindowAppIds_;
+    snowdesktop::dock_refresh_cache::Cache<std::wstring, HWND> dockWindowAppIds_;
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
     void RefreshDockForegroundState();
     void RefreshDockRunningWindows(bool invalidateChanged = true,

@@ -2,6 +2,46 @@
 // UI-owned cache and running-app matcher execute; no timing/sleeps are needed.
 void CheckDockRefreshContinuity()
 {
+    {
+        // Exercise the production cache policy used by window AppID reads.
+        // Shell itself is the controlled completion boundary, not mocked UI
+        // enumeration. Empty IDs are valid negative metadata with short age.
+        using AppIds = snowdesktop::dock_refresh_cache::Cache<std::wstring, std::uintptr_t>;
+        AppIds cache;
+        const AppIds::Clock::time_point start{};
+        unsigned requests = 0, changes = 0;
+        for (int second = 0; second < 60; ++second)
+        {
+            const auto now = start + std::chrono::seconds(second);
+            cache.ReadOrSubmit(7, L"pid:thread", [&](std::uint64_t ticket) {
+                ++requests;
+                const auto changed = cache.PublishWithLifetimeChanged(7, ticket,
+                    L"stable.app", std::chrono::seconds(30), now);
+                if (changed && *changed) ++changes;
+            }, now);
+        }
+        Check(requests == 2 && changes == 1,
+            "stable AppID reads revalidate by age, not every maintenance pass");
+        const auto reusedAt = start + std::chrono::seconds(60);
+        const auto old = cache.Read(7, L"pid:thread", reusedAt);
+        const auto reused = cache.Read(7, L"other-pid:thread", reusedAt);
+        Check(!reused.sameSourceVersion && !cache.PublishWithLifetime(7, old.ticket,
+            L"stale.app", std::chrono::seconds(30), reusedAt),
+            "reused window identity rejects the obsolete completion");
+        cache.PublishWithLifetime(7, reused.ticket, L"", std::chrono::seconds(5), reusedAt);
+        Check(cache.Read(7, L"other-pid:thread", reusedAt + std::chrono::seconds(4)).fresh &&
+            !cache.Read(7, L"other-pid:thread", reusedAt + std::chrono::seconds(5)).fresh,
+            "negative AppIDs retry after their short lifetime");
+        const auto pending = cache.Read(7, L"other-pid:thread", reusedAt + std::chrono::seconds(5));
+        cache.Invalidate();
+        const auto replacement = cache.Read(7, L"other-pid:thread", reusedAt + std::chrono::seconds(5));
+        Check(!cache.PublishWithLifetime(7, pending.ticket, L"late", std::chrono::seconds(30), reusedAt + std::chrono::seconds(5)) &&
+            replacement.ticket != pending.ticket,
+            "window events retire in-flight identity tickets");
+        cache.Retain([](auto) { return false; });
+        Check(!cache.PeekValue(7, L"other-pid:thread"), "dead windows release their metadata");
+        std::cout << "AppID synthetic 60s: requests=2, first-identity refresh=1, identical-result refresh=0\n";
+    }
     using snowdesktop::dock_refresh_cache::Cache;
     {
         Cache<int> pixels;
