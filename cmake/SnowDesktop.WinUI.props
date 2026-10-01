@@ -183,13 +183,13 @@
         <SourcePackage>SnowDesktop</SourcePackage>
         <DeploymentKind>Asset</DeploymentKind>
       </_SnowDesktopDeploymentFile>
-      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\MiSans\*.otf">
-        <DeploymentPath>Assets\Fonts\MiSans\%(Filename)%(Extension)</DeploymentPath>
-        <SourcePackage>MiSans</SourcePackage><DeploymentKind>Asset</DeploymentKind>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\MiSans\MiSans-Regular.otf">
+        <DeploymentPath>Assets\Fonts\MiSans\MiSans-Regular.otf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage><DeploymentKind>Asset</DeploymentKind>
       </_SnowDesktopDeploymentFile>
-      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\HarmonyOS-Sans\*.ttf">
-        <DeploymentPath>Assets\Fonts\HarmonyOS-Sans\%(Filename)%(Extension)</DeploymentPath>
-        <SourcePackage>HarmonyOS-Sans</SourcePackage><DeploymentKind>Asset</DeploymentKind>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\HarmonyOS-Sans\HarmonyOS_Sans_SC_Regular.ttf">
+        <DeploymentPath>Assets\Fonts\HarmonyOS-Sans\HarmonyOS_Sans_SC_Regular.ttf</DeploymentPath>
+        <SourcePackage>SnowDesktop</SourcePackage><DeploymentKind>Asset</DeploymentKind>
       </_SnowDesktopDeploymentFile>
       <_SnowDesktopDeploymentFile Include="$(TargetDir)Assets\Fonts\fa-solid-900.ttf">
         <DeploymentPath>Assets\Fonts\fa-solid-900.ttf</DeploymentPath>
