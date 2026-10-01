@@ -26,6 +26,7 @@
 #include "shell_icon_request.h"
 #include "../dock_refresh_cache.h"
 #include "../bounded_lru_cache.h"
+#include "../icon_row_index.h"
 #include "dock_icon_work.h"
 #include "../desktop_namespace_registry.h"
 #include "item.h"
@@ -609,6 +610,7 @@ public:
         std::wstring modifiedText;
         bool isDirectory = false;
         int systemIconIndex = -1;
+        std::wstring iconCacheKey;
     };
 
     struct QuickNavigationAppEntry
@@ -1650,7 +1652,8 @@ private:
         WPARAM cookie);
     void ApplyQuickNavigationEverythingSearchResult(
         snowdesktop::QuickNavigationEverythingSearchResult result);
-    int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
+    int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory,
+        std::wstring* outKey = nullptr);
     const QuickNavigationAppEntry* FindQuickNavigationEverythingAppEntry() const;
     std::wstring GetQuickNavigationEverythingNoticeText() const;
     bool TryLaunchQuickNavigationEverythingApp();
@@ -4495,7 +4498,8 @@ private:
     QuickNavigationPointerTarget
         quickNavigationPointerTarget_{};
     HIMAGELIST quickNavigationSystemImageListSmall_ = nullptr;
-    std::unordered_map<std::wstring, int> quickNavigationEverythingIconCache_;
+    snowdesktop::BoundedLruCache<std::wstring, int> quickNavigationEverythingIconCache_{512};
+    snowdesktop::IconRowIndex<std::wstring> quickNavigationEverythingIconRows_;
     snowdesktop::QuickNavigationEverythingSearchAsync
         quickNavigationEverythingSearch_;
     bool everythingSearchAvailable_ = true;

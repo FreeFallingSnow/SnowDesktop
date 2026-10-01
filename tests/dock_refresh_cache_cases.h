@@ -59,8 +59,31 @@ void CheckBoundedIconCache()
     std::cout << "reflection synthetic mixed sizes: hot-key misses=0; retained<=64\n";
 }
 
+void CheckEverythingIconRows()
+{
+    snowdesktop::IconRowIndex<int> rows;
+    for (unsigned row = 0; row < 1024; ++row) rows.Add(static_cast<int>(row % 64), row);
+    unsigned visits = 0;
+    for (int icon = 0; icon < 64; ++icon)
+        rows.Visit(icon, 1024, [&](std::size_t row) {
+            ++visits;
+            Check(row % 64 == static_cast<unsigned>(icon), "completion visits matching rows only");
+        });
+    Check(visits == 1024, "64 completions touch1024 matching rows rather than65536 rows");
+    rows.Add(100, 2000);
+    rows.Visit(100, 1024, [&](std::size_t) { Check(false, "out-of-range rows are skipped"); });
+    rows.Clear();
+    rows.Add(200, 0);
+    rows.Visit(1, 1, [&](std::size_t) { Check(false, "obsolete query row index is retired"); });
+    unsigned current = 0;
+    rows.Visit(200, 1, [&](std::size_t row) { ++current; Check(row == 0, "new query owns its row"); });
+    Check(current == 1, "replacement rows accept their matching completion");
+    std::cout << "Everything synthetic1024 rows/64 icons: completion visits=1024; re-queries=0\n";
+}
+
 void CheckDockRefreshContinuity()
 {
+    CheckEverythingIconRows();
     CheckBoundedIconCache();
     CheckDockProcessSnapshotReuse();
     {

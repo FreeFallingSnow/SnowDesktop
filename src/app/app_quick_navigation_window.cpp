@@ -349,6 +349,7 @@ void DesktopApp::ClearQuickNavigationEverythingResults()
     quickNavigationAppResultIndices_.clear();
     quickNavigationAppsExpanded_ = false;
     quickNavigationEverythingResults_.clear();
+    quickNavigationEverythingIconRows_.Clear();
     quickNavigationEverythingHasMore_ = false;
     quickNavigationEverythingSearchPending_ = false;
     quickNavigationEverythingResultsQuery_.clear();
@@ -356,7 +357,7 @@ void DesktopApp::ClearQuickNavigationEverythingResults()
 }
 
 int DesktopApp::GetQuickNavigationEverythingIconIndex(
-    const std::wstring& path, bool isDirectory)
+    const std::wstring& path, bool isDirectory, std::wstring* outKey)
 {
     auto extension = ToUpperInvariant(PathFindExtensionW(path.c_str()));
     if (extension.empty()) extension = L"<FILE>";
@@ -364,8 +365,8 @@ int DesktopApp::GetQuickNavigationEverythingIconIndex(
         extension == L".DLL" || extension == L".ICO" || extension == L".SCR" ||
         extension == L".MSI" || extension == L".CPL");
     const auto key = isDirectory ? std::wstring(L"<DIR>") : perFile ? ToUpperInvariant(path) : extension;
-    if (const auto found = quickNavigationEverythingIconCache_.find(key);
-        found != quickNavigationEverythingIconCache_.end()) return found->second;
+    if (outKey) *outKey = key;
+    if (const auto* cached = quickNavigationEverythingIconCache_.Find(key)) return *cached;
     shellVisualWork_.Submit(L"everything:" + key, [path, extension, perFile, isDirectory] {
         SHFILEINFOW info{};
         DWORD_PTR loaded = 0;
@@ -376,11 +377,18 @@ int DesktopApp::GetQuickNavigationEverythingIconIndex(
             SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
         return loaded ? info.iIcon : -1;
     }, [this, key](int index) {
-        quickNavigationEverythingIconCache_[key] = index;
-        // Apply only to current results. A previous query cannot append rows.
-        for (auto& entry : quickNavigationEverythingResults_)
-            entry.systemIconIndex = GetQuickNavigationEverythingIconIndex(entry.path, entry.isDirectory);
-        InvalidateQuickNavigationWindow();
+        quickNavigationEverythingIconCache_.Insert(key, index);
+        // Metadata can serve a later query, but row numbers belong only to the
+        // current result vector. No callback re-queries unrelated icons.
+        bool changed = false;
+        quickNavigationEverythingIconRows_.Visit(key, quickNavigationEverythingResults_.size(),
+            [&](std::size_t row) {
+                auto& entry = quickNavigationEverythingResults_[row];
+                if (entry.iconCacheKey != key || entry.systemIconIndex == index) return;
+                entry.systemIconIndex = index;
+                changed = true;
+            });
+        if (changed) InvalidateQuickNavigationWindow();
     }, hwnd_, kBackgroundShellReadyMessage);
     return -1;
 }
@@ -403,6 +411,7 @@ void DesktopApp::RefreshQuickNavigationEverythingResults()
     {
         ++quickNavigationEverythingSearchGeneration_;
         quickNavigationEverythingResults_.clear();
+        quickNavigationEverythingIconRows_.Clear();
         quickNavigationEverythingHasMore_ = false;
         quickNavigationEverythingSearchPending_ = false;
         quickNavigationEverythingResultsQuery_.clear();
@@ -418,7 +427,10 @@ void DesktopApp::RefreshQuickNavigationEverythingResults()
         requestLimit > kQuickNavigationEverythingResultBatchSize &&
         !quickNavigationEverythingResults_.empty();
     if (!preserveLoadedOrder)
+    {
         quickNavigationEverythingResults_.clear();
+        quickNavigationEverythingIconRows_.Clear();
+    }
     quickNavigationEverythingHasMore_ = false;
     quickNavigationEverythingSearchPending_ = true;
     everythingSearchAvailable_ = true;
@@ -513,6 +525,7 @@ void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
         previousResults = quickNavigationEverythingResults_;
 
     quickNavigationEverythingResults_.clear();
+    quickNavigationEverythingIconRows_.Clear();
     quickNavigationEverythingSearchPending_ = false;
     quickNavigationEverythingResultsQuery_ = result.query;
     everythingSearchAvailable_ = result.error != 2;
@@ -546,7 +559,9 @@ void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
         entry.dateModified = result.dateModified;
         entry.modifiedText = QuickNavigationFormatModifiedTime(result.dateModified);
         entry.isDirectory = result.isDirectory;
-        entry.systemIconIndex = GetQuickNavigationEverythingIconIndex(entry.path, entry.isDirectory);
+        entry.systemIconIndex = GetQuickNavigationEverythingIconIndex(
+            entry.path, entry.isDirectory, &entry.iconCacheKey);
+        quickNavigationEverythingIconRows_.Add(entry.iconCacheKey, quickNavigationEverythingResults_.size());
         quickNavigationEverythingResults_.push_back(std::move(entry));
     };
 
