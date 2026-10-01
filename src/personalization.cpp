@@ -17,6 +17,7 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 /**
  * @brief 从 JSON 文本中读取指定字段的 double 值
@@ -251,6 +252,22 @@ PersonalizationSettings MakeAppearancePreset(int presetId)
     }
 }
 
+void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId)
+{
+    auto preset = MakeAppearancePreset(presetId);
+    preset.cornerRadius = settings.cornerRadius;
+    preset.barHeight = settings.barHeight;
+    preset.scrollableTitleBarOnTop = settings.scrollableTitleBarOnTop;
+    preset.categorizedTabHeight = settings.categorizedTabHeight;
+    preset.luaWidgetContentRowHeight = settings.luaWidgetContentRowHeight;
+    preset.showCategoryTabCounts = settings.showCategoryTabCounts;
+    preset.showGroupTabCounts = settings.showGroupTabCounts;
+    preset.popupHoverOpen = settings.popupHoverOpen;
+    preset.popupHoverDelayMs = settings.popupHoverDelayMs;
+    preset.contextMenuStyle = settings.contextMenuStyle;
+    settings = std::move(preset);
+}
+
 PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId)
 {
     PersonalizationSettings s;
@@ -440,7 +457,8 @@ bool LoadPersonalization(
         s.luaWidgetContentRowHeight = std::clamp(
             static_cast<float>(v) * 0.70f, 18.0f, 48.0f);
     }
-    if (ReadDoubleField(text, "backgroundPreset", v))
+    const bool backgroundPresetLoaded = ReadDoubleField(text, "backgroundPreset", v);
+    if (backgroundPresetLoaded)
     {
         s.backgroundPreset = NormalizeAppearancePresetId((int)v);
     }
@@ -483,62 +501,12 @@ bool LoadPersonalization(
             kDefaultEdgeHighlightStrength;
     if (!edgeHighlightEnabledLoaded && s.glassEnabled)
         s.widgetBorderAlpha = 0.0f;
-    // One-time compatibility migration for layouts written before shared
-    // material parameters. New profiles retain their saved appearance values,
-    // even when their last selected preset ID is still present.
-    const bool transparentGlassPreset =
-        s.backgroundPreset == kAppearancePresetGlassTransparent;
-    if (documentParsed && !document.Find("edgeLight") && (s.backgroundPreset == kAppearancePresetAcrylicDark ||
-        s.backgroundPreset == kAppearancePresetAcrylicLight ||
-        transparentGlassPreset))
-    {
-        const float explicitBorderWidth = s.widgetBorderWidth;
-        const bool explicitEdgeHighlightEnabled =
-            s.widgetEdgeHighlightEnabled;
-        const float explicitEdgeHighlightWidth =
-            s.widgetEdgeHighlightWidth;
-        const float explicitEdgeHighlightStrength =
-            s.widgetEdgeHighlightStrength;
-        const float cornerRadius = s.cornerRadius;
-        const float barHeight = s.barHeight;
-        const bool titleBarOnTop = s.scrollableTitleBarOnTop;
-        const bool popupHoverOpen = s.popupHoverOpen;
-        const float popupHoverDelayMs = s.popupHoverDelayMs;
-        const float categorizedTabHeight =
-            s.categorizedTabHeight;
-        const float luaWidgetContentRowHeight =
-            s.luaWidgetContentRowHeight;
-        const bool showCategoryTabCounts =
-            s.showCategoryTabCounts;
-        const bool showGroupTabCounts = s.showGroupTabCounts;
-        const int contextMenuStyle = s.contextMenuStyle;
-        s = MakeAppearancePreset(s.backgroundPreset);
-        s.cornerRadius = cornerRadius;
-        s.barHeight = barHeight;
-        s.scrollableTitleBarOnTop = titleBarOnTop;
-        s.popupHoverOpen = popupHoverOpen;
-        s.popupHoverDelayMs = popupHoverDelayMs;
-        s.categorizedTabHeight =
-            categorizedTabHeight;
-        s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
-        s.showCategoryTabCounts =
-            showCategoryTabCounts;
-        s.showGroupTabCounts = showGroupTabCounts;
-        s.contextMenuStyle = contextMenuStyle;
-        if (borderWidthLoaded)
-            s.widgetBorderWidth = explicitBorderWidth;
-        if (edgeHighlightEnabledLoaded)
-            s.widgetEdgeHighlightEnabled = explicitEdgeHighlightEnabled;
-        // The first transparent preset shipped with a weaker lip than the
-        // ordinary glass preset. Refresh those default values while retaining
-        // independently edited widths, strengths and the disabled state.
-        if (edgeHighlightWidthLoaded && (!transparentGlassPreset ||
-                std::abs(explicitEdgeHighlightWidth - 1.25f) > 0.0005f))
-            s.widgetEdgeHighlightWidth = explicitEdgeHighlightWidth;
-        if (edgeHighlightStrengthLoaded && (!transparentGlassPreset ||
-                std::abs(explicitEdgeHighlightStrength - 0.45f) > 0.0005f))
-            s.widgetEdgeHighlightStrength = explicitEdgeHighlightStrength;
-    }
+    // A selected built-in theme is a live recipe, not a saved material snapshot.
+    // Profiles without a selection and explicit custom profiles retain their values.
+    if (backgroundPresetLoaded && s.backgroundPreset != kAppearancePresetCustom)
+        ApplyAppearancePreset(s, s.backgroundPreset);
+    else if (!backgroundPresetLoaded)
+        s.backgroundPreset = kAppearancePresetCustom;
     return true;
 }
 

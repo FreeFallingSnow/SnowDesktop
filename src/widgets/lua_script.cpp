@@ -162,8 +162,6 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         ? GetRenderPointer() : app_->lastMousePoint_;
     const bool hovered = PtInRect(&frame, renderPointer) != FALSE;
     const bool lightTheme = app_->IsLightContentTheme();
-    const int globalContentTheme =
-        app_->CurrentPersonalization().contentTheme;
 
     // Seed the widget-local layout context before package evaluation so
     // top-level code and setup() observe the same semantic CU metrics as
@@ -238,53 +236,15 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
         if (customStyle && widgetOk)
         {
-            effectSettings = PersonalizationSettings::DarkPreset();
-            float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
-            float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, borderAlpha = 0.0f;
-            float luaBorderWidth = 1.0f;
-            bool luaEdgeHighlightEnabled = false;
-            float luaEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-            float luaEdgeHighlightStrength =
-                kDefaultEdgeHighlightStrength;
-            float luaGradientEndA = gradientEndA;
-            bool luaGlassEnabled = false;
-            bool luaAcrylicEnabled = false;
-            if (engine->ReadCustomColors(data_->id,
-                bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
-                luaBorderWidth, luaEdgeHighlightEnabled,
-                luaEdgeHighlightWidth, luaEdgeHighlightStrength,
-                luaGradientEndA,
-                luaGlassEnabled, luaAcrylicEnabled, &effectSettings.panelGradient, &effectSettings.edgeLight))
+            if (engine->ReadCustomAppearance(data_->id, effectSettings))
             {
-                fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
-                borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
-                gradientEndA = luaGradientEndA;
-                effectSettings.widgetBorderWidth = luaBorderWidth;
-                effectSettings.widgetEdgeHighlightEnabled =
-                    luaEdgeHighlightEnabled;
-                effectSettings.widgetEdgeHighlightWidth =
-                    luaEdgeHighlightWidth;
-                effectSettings.widgetEdgeHighlightStrength =
-                    luaEdgeHighlightStrength;
-                effectSettings.glassEnabled = luaGlassEnabled;
-                effectSettings.acrylicEnabled =
-                    luaGlassEnabled && luaAcrylicEnabled;
-
+                fillColor = D2D1::ColorF(effectSettings.widgetBgR, effectSettings.widgetBgG,
+                    effectSettings.widgetBgB, effectSettings.widgetAlpha);
+                borderColor = D2D1::ColorF(effectSettings.widgetBorderR, effectSettings.widgetBorderG,
+                    effectSettings.widgetBorderB, effectSettings.widgetBorderAlpha);
+                gradientEndA = effectSettings.gradientEndA;
             }
         }
-
-        // 所有面板共享原生模糊半径；Lua 仅保留实例级毛玻璃开关。
-        // 自定义风格组件保留文字颜色设置：优先组件级存储，其次使用全局值
-        if (customStyle)
-        {
-            int ct = globalContentTheme;
-            std::string stored = engine->RuntimeGetStorageValue(data_->id, "__contentTheme");
-            if (!stored.empty())
-                ct = std::clamp(std::stoi(stored), 0, 1);
-            effectSettings.contentTheme = ct;
-        }
-        effectSettings.glassBlurRadius =
-            app_->CurrentPersonalization().glassBlurRadius;
 
         if (widgetOk)
         {

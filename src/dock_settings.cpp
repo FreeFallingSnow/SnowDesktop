@@ -1179,12 +1179,6 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         taskbarStyle.backgroundPreset = NormalizeAppearancePresetId(static_cast<int>(value));
     ReadBoolField(text, "taskbarGlassEnabled", taskbarStyle.glassEnabled);
     ReadBoolField(text, "taskbarAcrylicEnabled", taskbarStyle.acrylicEnabled);
-    if (taskbarStyle.backgroundPreset == kAppearancePresetAcrylicDark ||
-        taskbarStyle.backgroundPreset == kAppearancePresetAcrylicLight)
-    {
-        taskbarStyle = MakeAppearancePreset(
-            taskbarStyle.backgroundPreset);
-    }
     if (ReadDoubleField(text, "taskbarContentTheme", value)) // legacy name
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
     if (ReadDoubleField(text, "systemTaskbarContentTheme", value))
@@ -1201,6 +1195,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     JsonValue gradientDocument;
     if (!ParseJson(text, gradientDocument) ||
         !snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
+    if (taskbarStyle.backgroundPreset == kAppearancePresetTaskbarTransparent)
+        taskbarStyle = MakeTransparentTaskbarAppearance();
+    else if (taskbarStyle.backgroundPreset != kAppearancePresetCustom)
+        ApplyAppearancePreset(taskbarStyle, taskbarStyle.backgroundPreset);
     ReadBoolField(text, "followComponentAppearance", settings.followComponentAppearance);
     if (ReadDoubleField(text, "dockAppearancePreset", value))
         settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));

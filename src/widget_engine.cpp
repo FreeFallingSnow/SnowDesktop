@@ -15,6 +15,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_appearance_presets.h"
 #include "edge_light_codec.h"
 #include "native_control_geometry.h"
 #include "native_tooltip_content.h"
@@ -22509,6 +22510,37 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& packageId, const char* flag,
     return defaultVal;
 }
 
+bool WidgetEngine::ReadCustomAppearance(const std::wstring& widgetId,
+    PersonalizationSettings& appearance) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto selection = RuntimeGetStorageValue(widgetId, "__preset");
+    const auto& widget = widgets_[index];
+    const auto findPreset = [&](const auto& presets) -> const LuaWidgetManifest::SettingPreset* {
+        const auto found = std::find_if(presets.begin(), presets.end(),
+            [&](const auto& preset) { return preset.id == selection; });
+        return found == presets.end() ? nullptr : &*found;
+    };
+    const auto* authored = findPreset(widget.manifest.presets);
+    if (!authored) authored = findPreset(widget.scriptPresets);
+    const int fallbackContentTheme = appearance.contentTheme;
+    if (!ReadCustomColors(widgetId,
+            appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha,
+            appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha,
+            appearance.widgetBorderWidth, appearance.widgetEdgeHighlightEnabled,
+            appearance.widgetEdgeHighlightWidth, appearance.widgetEdgeHighlightStrength,
+            appearance.gradientEndA, appearance.glassEnabled, appearance.acrylicEnabled,
+            &appearance.panelGradient, &appearance.edgeLight, !authored)) return false;
+    const auto contentTheme = RuntimeGetStorageValue(widgetId, "__contentTheme");
+    if (contentTheme == "0" || contentTheme == "1") appearance.contentTheme = contentTheme == "1" ? 1 : 0;
+    if (authored && !authored->values.contains("__contentTheme"))
+        appearance.contentTheme = fallbackContentTheme;
+    appearance = snowdesktop::widget_runtime::ResolveWidgetHostAppearancePreset(
+        std::move(appearance), selection, authored ? &authored->values : nullptr);
+    return true;
+}
+
 bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& bgR, float& bgG, float& bgB, float& alpha,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
@@ -22517,7 +22549,8 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& gradientEndA,
     bool& glassEnabled, bool& acrylicEnabled,
     snowdesktop::PanelGradient* panelGradient,
-    snowdesktop::EdgeLightSettings* edgeLight) const
+    snowdesktop::EdgeLightSettings* edgeLight,
+    bool includeStoredValues) const
 {
     if (panelGradient) *panelGradient = {};
     if (edgeLight) *edgeLight = {};
@@ -22587,9 +22620,12 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     readFloat("edgeHighlightStrength", edgeHighlightStrength,
         kDefaultEdgeHighlightStrength);
 
+    const auto readStorage = [&](const char* key) {
+        return includeStoredValues ? RuntimeGetStorageValue(widgetId, key) : std::string{};
+    };
     auto readStoredColor = [&](const char* key, float& r, float& g,
                                float& b) {
-        const std::string value = RuntimeGetStorageValue(widgetId, key);
+        const std::string value = readStorage(key);
         if (value.empty()) return;
         const int encoded = std::atoi(value.c_str());
         r = ((encoded >> 16) & 0xFF) / 255.0f;
@@ -22597,12 +22633,12 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
         b = (encoded & 0xFF) / 255.0f;
     };
     auto readStoredFloat = [&](const char* key, float& out) {
-        const std::string value = RuntimeGetStorageValue(widgetId, key);
+        const std::string value = readStorage(key);
         if (!value.empty())
             out = static_cast<float>(std::atof(value.c_str()));
     };
     auto readStoredBool = [&](const char* key, bool& out) {
-        const std::string value = RuntimeGetStorageValue(widgetId, key);
+        const std::string value = readStorage(key);
         if (!value.empty())
             out = value == "1" || value == "true";
     };
@@ -22616,20 +22652,20 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     if (panelGradient)
     {
         JsonValue value;
-        if (ParseJson(RuntimeGetStorageValue(widgetId, "__panelGradient"), value))
+        if (ParseJson(readStorage("__panelGradient"), value))
             (void)snowdesktop::DecodePanelGradient(value, *panelGradient);
     }
 
     if (edgeLight)
     {
         JsonValue value;
-        if (ParseJson(RuntimeGetStorageValue(widgetId, "__edgeLight"), value))
+        if (ParseJson(readStorage("__edgeLight"), value))
             (void)snowdesktop::DecodeEdgeLight(value, *edgeLight);
     }
     const std::string storedLegacyBorderStyle =
-        RuntimeGetStorageValue(widgetId, "borderStyle");
+        readStorage("borderStyle");
     const std::string storedBorderWidth =
-        RuntimeGetStorageValue(widgetId, "borderWidth");
+        readStorage("borderWidth");
     if (!storedBorderWidth.empty())
     {
         borderWidth = static_cast<float>(
@@ -22638,7 +22674,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     else if (!borderWidthDeclared)
         borderWidth = 1.0f;
     const std::string storedEdgeHighlightEnabled =
-        RuntimeGetStorageValue(widgetId, "edgeHighlightEnabled");
+        readStorage("edgeHighlightEnabled");
     if (!storedEdgeHighlightEnabled.empty())
         edgeHighlightEnabled = storedEdgeHighlightEnabled == "1" ||
             storedEdgeHighlightEnabled == "true";
@@ -22648,7 +22684,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             : legacyBorderStyleDeclared
                 ? legacyBorderStyle == 1 : glassEnabled;
     const std::string storedEdgeHighlightWidth =
-        RuntimeGetStorageValue(widgetId, "edgeHighlightWidth");
+        readStorage("edgeHighlightWidth");
     if (!storedEdgeHighlightWidth.empty())
         edgeHighlightWidth = static_cast<float>(
             std::atof(storedEdgeHighlightWidth.c_str()));
@@ -22659,7 +22695,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             (!storedBorderWidth.empty() || borderWidthDeclared)
             ? borderWidth : kDefaultEdgeHighlightWidth;
     const std::string storedEdgeHighlightStrength =
-        RuntimeGetStorageValue(widgetId, "edgeHighlightStrength");
+        readStorage("edgeHighlightStrength");
     if (!storedEdgeHighlightStrength.empty())
         edgeHighlightStrength = static_cast<float>(
             std::atof(storedEdgeHighlightStrength.c_str()));

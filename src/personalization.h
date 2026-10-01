@@ -248,6 +248,9 @@ int NormalizeAppearancePresetId(int presetId);
 /** @brief 根据预设 ID 创建纯色、毛玻璃、亚克力或自定义主题。 */
 PersonalizationSettings MakeAppearancePreset(int presetId);
 
+/** Apply current material defaults without changing independent layout/interaction preferences. */
+void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId);
+
 /** @brief 根据预设 ID 创建针对快捷搜索可读性优化的外观主题。 */
 PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId);
 

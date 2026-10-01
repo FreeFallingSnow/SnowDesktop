@@ -121,6 +121,8 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs);
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings);
 IconBeautifySettings MakePreset(IconBeautifyPreset preset);
 IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings);
+IconBeautifySettings ResolvePersistedSettings(IconBeautifySettings settings,
+    bool hasExplicitPreset);
 void ApplyLegacyFinish(IconBeautifySettings& settings,
     IconBeautifyFinish finish);
 

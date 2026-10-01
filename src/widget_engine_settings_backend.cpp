@@ -530,12 +530,20 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
     float gradientEndOpacity = 0.0f;
     bool glassEnabled = false;
     bool acrylicEnabled = false;
-    (void)engine_.ReadCustomColors(widget.widgetId,
-        bgR, bgG, bgB, backgroundOpacity,
-        borderR, borderG, borderB, borderOpacity,
-        borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
-        edgeHighlightStrength,
-        gradientEndOpacity, glassEnabled, acrylicEnabled, &appearance.panelGradient, &appearance.edgeLight);
+    PersonalizationSettings material;
+    material.contentTheme = engine_.RuntimeGetWidgetTheme(widget.widgetId).contentTheme;
+    (void)engine_.ReadCustomAppearance(widget.widgetId, material);
+    bgR = material.widgetBgR; bgG = material.widgetBgG; bgB = material.widgetBgB;
+    borderR = material.widgetBorderR; borderG = material.widgetBorderG; borderB = material.widgetBorderB;
+    backgroundOpacity = material.widgetAlpha; borderOpacity = material.widgetBorderAlpha;
+    borderWidth = material.widgetBorderWidth;
+    edgeHighlightEnabled = material.widgetEdgeHighlightEnabled;
+    edgeHighlightWidth = material.widgetEdgeHighlightWidth;
+    edgeHighlightStrength = material.widgetEdgeHighlightStrength;
+    gradientEndOpacity = material.gradientEndA;
+    glassEnabled = material.glassEnabled; acrylicEnabled = material.acrylicEnabled;
+    appearance.panelGradient = std::move(material.panelGradient);
+    appearance.edgeLight = material.edgeLight;
     const auto colorToInteger = [](float red, float green, float blue) {
         const auto channel = [](float value) {
             if (!std::isfinite(value)) value = 0.0f;
@@ -566,8 +574,7 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
         gradientEndOpacity, 0.0f);
     appearance.glassEnabled = glassEnabled;
     appearance.acrylicEnabled = acrylicEnabled;
-    appearance.contentTheme = std::clamp(
-        engine_.RuntimeGetWidgetTheme(widget.widgetId).contentTheme, 0, 1);
+    appearance.contentTheme = std::clamp(material.contentTheme, 0, 1);
 
     const auto& storage = widget.preview
         ? widget.previewStorage
@@ -583,17 +590,6 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
         ? widget.followPersonalizationDefault
         : follow == "1" || follow == "true";
     appearance.presetId = std::string(stored("__preset"));
-    const std::string_view contentTheme = stored("__contentTheme");
-    if (!contentTheme.empty())
-    {
-        const std::string encodedTheme(contentTheme);
-        char* end = nullptr;
-        const long parsed = std::strtol(encodedTheme.c_str(), &end, 10);
-        if (end && *end == '\0')
-            appearance.contentTheme = std::clamp(
-                static_cast<int>(parsed), 0, 1);
-    }
-
     if (appearance.presetId.empty())
     {
         const WidgetSettingPresetSchema* defaultPreset = nullptr;

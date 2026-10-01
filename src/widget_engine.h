@@ -1080,7 +1080,11 @@ public:
      */
     bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
 
-    /** Reads the effective widget appearance used by desktop host menus. */
+    /** Resolve the selected host material recipe while retaining custom values. */
+    bool ReadCustomAppearance(const std::wstring& widgetId,
+        PersonalizationSettings& appearance) const;
+
+    /** Reads stored/script material values for custom appearance resolution. */
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
@@ -1089,7 +1093,8 @@ public:
         float& gradientEndA,
         bool& glassEnabled, bool& acrylicEnabled,
         snowdesktop::PanelGradient* panelGradient = nullptr,
-        snowdesktop::EdgeLightSettings* edgeLight = nullptr) const;
+        snowdesktop::EdgeLightSettings* edgeLight = nullptr,
+        bool includeStoredValues = true) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表

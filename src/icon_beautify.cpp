@@ -799,6 +799,22 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
     }
 }
 
+IconBeautifySettings ResolvePersistedSettings(IconBeautifySettings settings,
+    bool hasExplicitPreset)
+{
+    settings = Normalize(settings);
+    if (!hasExplicitPreset)
+    {
+        settings.preset = IdentifyPreset(settings);
+        return settings;
+    }
+    if (settings.preset == IconBeautifyPreset::Custom) return settings;
+    auto current = MakePreset(settings.preset);
+    if (current.preset != IconBeautifyPreset::None)
+        current.enabled = settings.enabled;
+    return current;
+}
+
 void ApplyLegacyFinish(IconBeautifySettings& settings,
     IconBeautifyFinish finish)
 {

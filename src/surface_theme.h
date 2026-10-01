@@ -34,7 +34,7 @@ inline PersonalizationSettings ResolveSurfaceTheme(const SurfaceTheme& theme,
 {
     if (theme.mode == 4) return theme.appearance;
     if (IsCustomSurfaceTheme(theme, global))
-        return theme.customized ? theme.appearance : global;
+        return global;
     const int selection = theme.mode == -2
         ? (global.backgroundPreset == kAppearancePresetCustom ? NormalizeFourThemeSelection(legacySelection) : GlobalSurfaceThemeSelection(global))
         : theme.mode == -1 ? GlobalSurfaceThemeSelection(global) : NormalizeFourThemeSelection(theme.mode);

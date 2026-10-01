@@ -784,29 +784,7 @@ struct PersonalizationPagePresenter::Impl
                                 kAppearancePresetCustom;
                             return;
                         }
-                        const float corner = settings.cornerRadius;
-                        const float bar = settings.barHeight;
-                        const bool titleOnTop = settings.scrollableTitleBarOnTop;
-                        const float tab = settings.categorizedTabHeight;
-                        const float luaWidgetContentRowHeight =
-                            settings.luaWidgetContentRowHeight;
-                        const bool counts = settings.showCategoryTabCounts;
-                        const bool groupCounts = settings.showGroupTabCounts;
-                        const bool hoverOpen = settings.popupHoverOpen;
-                        const float hoverDelayMs = settings.popupHoverDelayMs;
-                        const int menu = settings.contextMenuStyle;
-                        settings = MakeAppearancePreset(preset);
-                        settings.cornerRadius = corner;
-                        settings.barHeight = bar;
-                        settings.scrollableTitleBarOnTop = titleOnTop;
-                        settings.categorizedTabHeight = tab;
-                        settings.luaWidgetContentRowHeight =
-                            luaWidgetContentRowHeight;
-                        settings.showCategoryTabCounts = counts;
-                        settings.showGroupTabCounts = groupCounts;
-                        settings.popupHoverOpen = hoverOpen;
-                        settings.popupHoverDelayMs = hoverDelayMs;
-                        settings.contextMenuStyle = menu;
+                        ApplyAppearancePreset(settings, preset);
                     });
             });
         quickNavigationThemeToken = quickNavigationThemeCombo.SelectionChanged(

@@ -2,6 +2,7 @@
 #include "personalization.h"
 #include "dock_gradient_storage.h"
 #include "status_bar_appearance.h"
+#include "widget_appearance_presets.h"
 #include "item_title_layout.h"
 #include "winui/font_picker_search.h"
 
@@ -680,8 +681,9 @@ int main(int argc, char** argv)
         Check(IsCustomSurfaceTheme(theme, global) && ResolveSurfaceTheme(theme, global, 0, true) == global,
             "following a custom global theme exposes the actual custom fill and material");
         theme.customized = true; theme.appearance.widgetAlpha = .23f;
-        Check(ResolveSurfaceTheme(theme, global, 0, false).widgetAlpha == .23f,
-            "editing a following custom popup applies its independent appearance");
+        Check(ResolveSurfaceTheme(theme, global, 0, false) == global &&
+                ResolveSurfaceTheme(theme, global, 0, true) == global,
+            "following popup and quick navigation ignore retained independent snapshots");
         auto light = PersonalizationSettings::LightPreset();
         Check(!IsCustomSurfaceTheme(theme, light) && ResolveSurfaceTheme(theme, light, 0, false).contentTheme == 1,
             "switching global back to a preset resumes inheritance without deleting custom values");
@@ -724,6 +726,36 @@ int main(int argc, char** argv)
         Check(ResolveDockAppearance(dock, global) == global, "Dock follow mode uses the complete component appearance");
         dock.appearancePreset = 123; NormalizeDockSettings(dock);
         Check(dock.appearancePreset == kAppearancePresetCustom, "unsupported Dock preset falls back to retained custom settings");
+        auto staleWidget = global;
+        staleWidget.widgetAlpha = .17f;
+        staleWidget.edgeLight.direction = 137.f;
+        staleWidget.cornerRadius = 31.f;
+        for (const auto& [id, preset] : {
+                std::pair{"__global_dark", kAppearancePresetDark},
+                std::pair{"__global_light", kAppearancePresetLight},
+                std::pair{"__global_glass_dark", kAppearancePresetGlassDark},
+                std::pair{"__global_glass_light", kAppearancePresetGlassLight},
+                std::pair{"__global_glass_transparent", kAppearancePresetGlassTransparent},
+                std::pair{"__global_acrylic_dark", kAppearancePresetAcrylicDark},
+                std::pair{"__global_acrylic_light", kAppearancePresetAcrylicLight}})
+        {
+            auto expected = MakeAppearancePreset(preset);
+            expected.cornerRadius = staleWidget.cornerRadius;
+            Check(widget_runtime::ResolveWidgetHostAppearancePreset(staleWidget, id) == expected,
+                "Lua built-in host themes resolve current material rather than stored copies");
+        }
+        for (const auto* id : {"__custom", "", "removed-author-theme"})
+            Check(widget_runtime::ResolveWidgetHostAppearancePreset(staleWidget, id) == staleWidget,
+                "custom and unavailable Lua themes retain their saved appearance");
+        const std::unordered_map<std::string, std::string> authored{
+            {"bg", "0x123456"}, {"alpha", ".42"}, {"glassEnabled", "1"},
+            {"edgeHighlightWidth", "1.5"}, {"__contentTheme", "1"}, {"path", "untouched"}};
+        const auto updatedWidget = widget_runtime::ResolveWidgetHostAppearancePreset(staleWidget, "author-theme", &authored);
+        Check(std::abs(updatedWidget.widgetBgR - 18.f / 255.f) < .00001f &&
+                updatedWidget.widgetAlpha == .42f && updatedWidget.glassEnabled &&
+                updatedWidget.widgetEdgeHighlightWidth == 1.5f && updatedWidget.contentTheme == 1 &&
+                updatedWidget.cornerRadius == staleWidget.cornerRadius,
+            "Lua authored theme refresh reads current host material without mutating ordinary settings");
         theme = saved.quickNavigationAppearance;
         Check(ResolveSurfaceTheme(theme, global, 0, true) == theme.appearance,
             "custom surface preserves gradient, opacity, material and foreground independently");
@@ -961,35 +993,42 @@ int main(int argc, char** argv)
                 "group count preference survives material preset refresh independently from category counts");
         }
     }
-    // Once the shared material object is saved, a preset ID is only a label;
-    // restarting must preserve the user's actual fill, blur and reflection.
-    for (const bool editedEdge : {false, true})
+    // A saved built-in selection follows the current recipe even when all old
+    // material fields are present. Independent layout/interaction fields survive.
+    for (const int preset : {kAppearancePresetDark, kAppearancePresetLight,
+            kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+            kAppearancePresetGlassTransparent, kAppearancePresetAcrylicDark,
+            kAppearancePresetAcrylicLight})
     {
-        auto previousGlass = PersonalizationSettings::GlassTransparentPreset();
+        auto previousGlass = MakeAppearancePreset(preset);
+        previousGlass.widgetBgR = .25f; previousGlass.widgetBgG = .50f; previousGlass.widgetBgB = .75f;
+        previousGlass.widgetBorderR = .75f; previousGlass.widgetBorderG = .50f; previousGlass.widgetBorderB = .25f;
         previousGlass.widgetAlpha = 0.06f;
         previousGlass.glassBlurRadius = 24.0f;
-        previousGlass.widgetEdgeHighlightWidth = editedEdge ? 3.0f : 1.25f;
-        previousGlass.widgetEdgeHighlightStrength = editedEdge ? 0.60f : 0.45f;
-        previousGlass.widgetEdgeHighlightEnabled = !editedEdge;
+        previousGlass.widgetEdgeHighlightWidth = 3.0f;
+        previousGlass.widgetEdgeHighlightStrength = 0.60f;
+        previousGlass.widgetEdgeHighlightEnabled = false;
+        previousGlass.edgeLight.direction = 127.f;
+        previousGlass.panelGradient = savedAppearance.panelGradient;
         previousGlass.cornerRadius = 32.0f;
         previousGlass.barHeight = 37.0f;
         previousGlass.luaWidgetContentRowHeight = 34.0f;
         previousGlass.contextMenuStyle = 6;
 
+        auto expected = MakeAppearancePreset(preset);
+        expected.cornerRadius = previousGlass.cornerRadius;
+        expected.barHeight = previousGlass.barHeight;
+        expected.luaWidgetContentRowHeight = previousGlass.luaWidgetContentRowHeight;
+        expected.contextMenuStyle = previousGlass.contextMenuStyle;
         Check(SavePersonalization(personalizationPath.c_str(), previousGlass) &&
                 LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
-                loadedAppearance.widgetAlpha == previousGlass.widgetAlpha &&
-                loadedAppearance.glassBlurRadius == previousGlass.glassBlurRadius &&
-                loadedAppearance.contentTheme == 0 &&
-                loadedAppearance.backgroundPreset == kAppearancePresetGlassTransparent &&
-                loadedAppearance.widgetEdgeHighlightWidth == previousGlass.widgetEdgeHighlightWidth &&
-                loadedAppearance.widgetEdgeHighlightStrength == previousGlass.widgetEdgeHighlightStrength &&
-                loadedAppearance.widgetEdgeHighlightEnabled == !editedEdge &&
-                loadedAppearance.cornerRadius == previousGlass.cornerRadius &&
-                loadedAppearance.barHeight == previousGlass.barHeight &&
-                loadedAppearance.luaWidgetContentRowHeight == previousGlass.luaWidgetContentRowHeight &&
-                loadedAppearance.contextMenuStyle == 6,
-            "saved material parameters survive restart without preset-ID overrides");
+                loadedAppearance == expected,
+            "loading a selected component preset replaces stale material without changing layout preferences");
+        previousGlass.backgroundPreset = kAppearancePresetCustom;
+        Check(SavePersonalization(personalizationPath.c_str(), previousGlass) &&
+                LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                loadedAppearance == previousGlass,
+            "custom component appearance retains the same edited material and layout");
     }
     // Persist through a non-custom theme as well: applying a preset must not
     // discard the independent context-menu selection.
@@ -1002,6 +1041,18 @@ int main(int argc, char** argv)
                 loadedAppearance.contextMenuStyle == style,
             "all existing and Win10 menu styles survive save/load with a theme preset");
     }
+    {
+        std::ofstream legacy(personalizationPath, std::ios::binary | std::ios::trunc);
+        legacy << "{\"widgetAlpha\":0.31,\"glassBlurRadius\":19}";
+    }
+    Check(LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+            loadedAppearance.backgroundPreset == kAppearancePresetCustom &&
+            loadedAppearance.widgetAlpha == .31f && loadedAppearance.glassBlurRadius == 19.f &&
+            SavePersonalization(personalizationPath.c_str(), loadedAppearance),
+        "legacy appearance without a preset is retained as custom before saving");
+    Check(LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+            loadedAppearance.widgetAlpha == .31f && loadedAppearance.glassBlurRadius == 19.f,
+        "saving a migrated legacy appearance does not turn it into a refreshing built-in preset");
     Check(SavePersonalization(personalizationPath.c_str(), savedAppearance),
         "restore the valid gradient fixture before testing rejected writes");
     auto invalidAppearance = savedAppearance;
@@ -1103,12 +1154,8 @@ int main(int argc, char** argv)
     PersonalizationSettings explicitAppearance;
     Check(LoadPersonalization(
             personalizationPath.c_str(), explicitAppearance) &&
-            !explicitAppearance.widgetEdgeHighlightEnabled &&
-            explicitAppearance.widgetBorderWidth ==
-                kMaximumWidgetBorderWidth &&
-            explicitAppearance.widgetEdgeHighlightWidth ==
-                kMaximumWidgetBorderWidth &&
-            explicitAppearance.widgetEdgeHighlightStrength == 0.0f &&
+            explicitAppearance.edgeLight == MakeAppearancePreset(kAppearancePresetAcrylicDark).edgeLight &&
+            explicitAppearance.widgetEdgeHighlightEnabled == MakeAppearancePreset(kAppearancePresetAcrylicDark).widgetEdgeHighlightEnabled &&
             explicitAppearance.luaWidgetContentRowHeight == 48.0f,
         "legacy Lua title-area height migrates to the clamped content row height");
     std::filesystem::remove(personalizationPath, error);

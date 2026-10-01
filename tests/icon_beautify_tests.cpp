@@ -131,6 +131,38 @@ int main()
         Check(beautify::IdentifyPreset(presetSettings) == preset,
             "built-in icon beautify presets round-trip through identification");
     }
+    // The loader must refresh explicit recipes, but preserve custom/legacy
+    // material and geometry values. This protects updates, not visual taste.
+    for (const auto preset : builtInPresets)
+    {
+        auto previous = beautify::MakePreset(preset);
+        previous.edgeLight.direction = 127.f;
+        previous.edgeLight.spread = 117.f;
+        previous.backgroundOpacity = .47f;
+        previous.mode = 1;
+        previous.contentScale = .79f;
+        const auto loaded = beautify::ResolvePersistedSettings(previous, true);
+        Check(beautify::Equal(loaded, preset == IconBeautifyPreset::Custom
+                ? previous : beautify::MakePreset(preset)),
+            "explicit built-in icon presets refresh while custom parameters survive loading");
+        if (preset != IconBeautifyPreset::None && preset != IconBeautifyPreset::Custom)
+        {
+            previous.enabled = false;
+            auto expected = beautify::MakePreset(preset); expected.enabled = false;
+            Check(beautify::Equal(beautify::ResolvePersistedSettings(previous, true), expected),
+                "refreshing an icon recipe does not re-enable disabled beautification");
+        }
+    }
+    {
+        auto legacy = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
+        legacy.mode = 1; legacy.contentScale = .79f;
+        auto expected = legacy; expected.preset = IconBeautifyPreset::Custom;
+        Check(beautify::Equal(beautify::ResolvePersistedSettings(legacy, false), expected),
+            "layouts without an explicit icon preset preserve saved scaling and appearance");
+        legacy.preset = static_cast<IconBeautifyPreset>(2);
+        Check(beautify::Equal(beautify::ResolvePersistedSettings(legacy, true), expected),
+            "retired icon preset identities retain their material as custom");
+    }
     {
         auto plate = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
         const auto baseline = beautify::RenderEdgeReflection(104, 104, plate);

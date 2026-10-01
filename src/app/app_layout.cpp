@@ -182,7 +182,10 @@ void DesktopApp::LoadLayoutSlots()
             *document.shortcutArrowMode, 0, 2);
 
     // Missing beautification fields are the compatibility path for old layouts.
-    iconBeautifySettings_ = snowdesktop::IconBeautifySettings{};
+    iconBeautifySettings_ = document.iconBeautifyPreset
+        ? snowdesktop::icon_beautify::MakePreset(
+            static_cast<snowdesktop::IconBeautifyPreset>(*document.iconBeautifyPreset))
+        : snowdesktop::IconBeautifySettings{};
     if (document.iconBeautifyEnabled)
         iconBeautifySettings_.enabled = *document.iconBeautifyEnabled;
     if (document.iconBeautifyPreset)
@@ -281,17 +284,8 @@ void DesktopApp::LoadLayoutSlots()
     if (document.iconBeautifyShadowStrength)
         iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
     if (document.iconBeautifyEdgeLight) iconBeautifySettings_.edgeLight = *document.iconBeautifyEdgeLight;
-    iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
-        iconBeautifySettings_);
-    if (!document.iconBeautifyEdgeLight && document.iconBeautifyPreset &&
-        (iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::DefaultBeautify ||
-         iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlass ||
-         iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlassDark ||
-         iconBeautifySettings_.preset == snowdesktop::IconBeautifyPreset::FrostedGlassLight))
-        iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(iconBeautifySettings_.preset);
-    else if (!document.iconBeautifyPreset)
-        iconBeautifySettings_.preset = snowdesktop::icon_beautify::IdentifyPreset(
-            iconBeautifySettings_);
+    iconBeautifySettings_ = snowdesktop::icon_beautify::ResolvePersistedSettings(
+        iconBeautifySettings_, document.iconBeautifyPreset.has_value());
 
     for (const auto& page : document.pages)
     {

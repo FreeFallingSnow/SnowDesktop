@@ -935,11 +935,29 @@ struct WidgetSettingsPresenter::Impl
                         preset.widgetEdgeHighlightStrength;
                     patch.edgeLight = preset.edgeLight;
                     patch.gradientEndOpacity = preset.gradientEndA;
-                    patch.panelGradient = currentHostAppearance.panelGradient;
-                    patch.panelGradient->enabled = false;
+                    patch.panelGradient = preset.panelGradient;
                     patch.glassEnabled = preset.glassEnabled;
                     patch.acrylicEnabled = preset.acrylicEnabled;
                     patch.contentTheme = preset.contentTheme;
+                }
+                else if (choice.kind == AppearanceThemeKind::Custom)
+                {
+                    // Enter custom editing from the effective current recipe,
+                    // including a preset that changed since the saved snapshot.
+                    patch.backgroundColor = currentHostAppearance.backgroundColor;
+                    patch.borderColor = currentHostAppearance.borderColor;
+                    patch.backgroundOpacity = currentHostAppearance.backgroundOpacity;
+                    patch.borderOpacity = currentHostAppearance.borderOpacity;
+                    patch.borderWidth = currentHostAppearance.borderWidth;
+                    patch.edgeHighlightEnabled = currentHostAppearance.edgeHighlightEnabled;
+                    patch.edgeHighlightWidth = currentHostAppearance.edgeHighlightWidth;
+                    patch.edgeHighlightStrength = currentHostAppearance.edgeHighlightStrength;
+                    patch.edgeLight = currentHostAppearance.edgeLight;
+                    patch.gradientEndOpacity = currentHostAppearance.gradientEndOpacity;
+                    patch.panelGradient = currentHostAppearance.panelGradient;
+                    patch.glassEnabled = currentHostAppearance.glassEnabled;
+                    patch.acrylicEnabled = currentHostAppearance.acrylicEnabled;
+                    patch.contentTheme = currentHostAppearance.contentTheme;
                 }
                 RunAppearancePatch(std::move(patch));
             });
