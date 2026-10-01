@@ -183,8 +183,8 @@ private:
 class SingleFocusAnimation
 {
 public:
-    static constexpr double kDurationMilliseconds = 160.0;
-    static constexpr double kSwitchPhaseMilliseconds = 80.0;
+    static constexpr double kDurationMilliseconds = 80.0;
+    static constexpr double kSwitchPhaseMilliseconds = 40.0;
 
     void SetTarget(RECT target, double now, double durationScale)
     {

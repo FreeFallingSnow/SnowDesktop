@@ -97,51 +97,51 @@ void CheckDockMagnificationEntry()
     single.SetTarget(base, 3000.0, 1.0);
     Check(single.ScaleFor(base) == 1.0f && single.IsAnimating(),
         "single-icon hover enters from the existing icon geometry");
-    single.Advance(3080.0);
+    single.Advance(3040.0);
     const float singleMiddle = single.ScaleFor(base);
     Check(singleMiddle > 1.0f && singleMiddle < magnification::kSingleFocusScale &&
             single.ScaleFor(next) == 1.0f,
         "single-icon entry enlarges only its target through an intermediate frame");
-    single.SetTarget(base, 3080.0, 1.0);
+    single.SetTarget(base, 3040.0, 1.0);
     Check(single.ScaleFor(base) == singleMiddle,
         "repeated hit tests do not restart single-icon animation");
-    single.SetTarget(next, 3080.0, 1.0);
+    single.SetTarget(next, 3040.0, 1.0);
     Check(single.ScaleFor(base) == singleMiddle && single.ScaleFor(next) == 1.0f,
         "switching icons preserves the outgoing frame rather than jumping the growth to the new target");
-    single.Advance(3120.0);
+    single.Advance(3060.0);
     Check(single.ScaleFor(base) > 1.0f && single.ScaleFor(base) < singleMiddle &&
             single.ScaleFor(next) == 1.0f,
         "the outgoing icon contracts before another icon can magnify");
-    single.Advance(3160.0);
+    single.Advance(3080.0);
     Check(single.ScaleFor(base) == 1.0f && single.ScaleFor(next) == 1.0f && single.IsAnimating(),
         "single-icon ownership changes only at normal size");
-    single.Advance(3200.0);
+    single.Advance(3100.0);
     Check(single.ScaleFor(base) == 1.0f && single.ScaleFor(next) > 1.0f &&
             single.ScaleFor(next) < magnification::kSingleFocusScale,
         "the newly hovered icon grows smoothly while the previous icon stays normal");
-    single.Advance(3240.0);
+    single.Advance(3120.0);
     Check(single.ScaleFor(next) == magnification::kSingleFocusScale && !single.IsAnimating(),
-        "a single-icon switch settles and releases its animation frame subscription");
-    single.SetTarget({}, 3240.0, 1.0);
+        "a single-icon switch settles within 80ms and releases its animation frame subscription");
+    single.SetTarget({}, 3120.0, 1.0);
     Check(single.ScaleFor(next) == magnification::kSingleFocusScale && single.IsAnimating(),
         "leaving preserves the first exit frame instead of snapping to normal size");
-    single.Advance(3320.0);
+    single.Advance(3160.0);
     const float leavingScale = single.ScaleFor(next);
     Check(leavingScale > 1.0f && leavingScale < magnification::kSingleFocusScale,
         "single-icon exit renders a partially contracted frame without pointer motion");
-    single.SetTarget(next, 3320.0, 1.0);
+    single.SetTarget(next, 3160.0, 1.0);
     Check(single.ScaleFor(next) == leavingScale,
         "re-entering the outgoing icon reverses continuously from its current size");
-    single.Advance(3480.0);
-    single.SetTarget({}, 3480.0, 1.0);
-    single.Advance(3640.0);
+    single.Advance(3240.0);
+    single.SetTarget({}, 3240.0, 1.0);
+    single.Advance(3320.0);
     Check(!single.IsAnimating() && IsRectEmpty(&single.CurrentRect()) && single.ScaleFor(next) == 1.0f,
         "completed exit restores normal geometry and leaves no perpetual animation");
     single.SetTarget(base, 4000.0, 2.0);
-    single.Advance(4160.0);
+    single.Advance(4080.0);
     Check(single.ScaleFor(base) > 1.0f && single.ScaleFor(base) < magnification::kSingleFocusScale,
         "single-icon animation honors the shared duration preference");
-    single.Advance(4320.0);
+    single.Advance(4160.0);
     for (const auto position : {DockPosition::Bottom, DockPosition::Top,
             DockPosition::Left, DockPosition::Right})
     {
