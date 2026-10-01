@@ -192,8 +192,9 @@ HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
         DWRITE_INLINE_OBJECT_METRICS metrics{};
         result = sign->GetMetrics(&metrics);
         if (FAILED(result) || metrics.width <= 0) return E_FAIL;
-        // The tightened three periods must be narrower than Windows' normal
-        // sign. CJK full-em and unadjusted native signs fail this regression.
+        // The tightened periods, including the requested preceding gap, must
+        // remain narrower than Windows' normal sign. Real glyph placement and
+        // the preceding gap are checked separately below.
         Microsoft::WRL::ComPtr<IDWriteTextFormat> nativeFormat;
         result = factory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 24, L"", &nativeFormat);
@@ -203,7 +204,7 @@ HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
         if (FAILED(result)) return result;
         DWRITE_INLINE_OBJECT_METRICS nativeMetrics{};
         result = nativeSign->GetMetrics(&nativeMetrics);
-        if (FAILED(result) || metrics.width >= nativeMetrics.width || metrics.width > 24 * .6f) return E_FAIL;
+        if (FAILED(result) || metrics.width >= nativeMetrics.width) return E_FAIL;
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
         result = target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
         if (FAILED(result)) return result;
