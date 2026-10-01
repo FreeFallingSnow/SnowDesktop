@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../layout_scroll_save_rules.h"
 #include "../desktop_hover_rules.h"
 #include "shell_change_notification.h"
 #include "../desktop_keyboard_rules.h"
@@ -1227,6 +1228,18 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kTrayCallbackMessage:
         OnTrayCallback(lp);
         return 0;
+    case WM_QUERYENDSESSION:
+    case WM_ENDSESSION:
+        // The hidden control window is top-level and receives session events.
+        // Best-effort flush never vetoes shutdown or serializes a partial drag
+        // or reload. Failure stays pending; a canceled session can still retry.
+        if (snowdesktop::ShouldFlushScrollLayoutForSession(
+                layoutSavePending_, msg == WM_QUERYENDSESSION, wp != 0,
+                reloading_, dragSession_.HasContext(),
+                dragDropController_.IsTransportActive(),
+                widgetAction_ != WidgetAction::None))
+            SaveLayoutSlots(false);
+        return msg == WM_QUERYENDSESSION ? TRUE : 0;
     case WM_CLOSE:
         RequestExit();
         return 0;

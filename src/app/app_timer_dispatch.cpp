@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../layout_scroll_save_rules.h"
 #include "dock_taskbar_diagnostics.h"
 #include "../drag_input_rules.h"
 #include "../ole_drag_rules.h"
@@ -311,9 +312,10 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const auto now = snowdesktop::LayoutScrollSave::Clock::now();
         // Never persist an intermediate drag/transport model. The pending
         // flag still protects explicit backup/settings/exit save boundaries.
-        const bool interactionActive = dragSession_.HasContext() ||
-            dragDropController_.IsTransportActive() ||
-            widgetAction_ != WidgetAction::None;
+        const bool interactionActive = !snowdesktop::CanFlushScrollLayout(
+            reloading_, dragSession_.HasContext(),
+            dragDropController_.IsTransportActive(),
+            widgetAction_ != WidgetAction::None);
         if (!layoutScrollSave_.Due(now) || interactionActive)
         {
             const UINT delay = interactionActive

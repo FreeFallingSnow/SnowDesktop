@@ -1,5 +1,6 @@
 #include "test_source_boundary.h"
 #include "layout_scroll_save.h"
+#include "layout_scroll_save_rules.h"
 #include "dock_magnification.h"
 #include "desktop_hover_rules.h"
 #include "dock_launch_animation.h"
@@ -1346,6 +1347,26 @@ int main(int argc, char** argv)
         // Protect scroll durability deadlines and stale deadline cancellation
         // used by load/explicit save. A continuously active wheel cannot keep
         // deferring a normal idle model beyond one second.
+        // A reload/drag cannot publish a partial layout through timer
+        // failure or session-end. Canceling shutdown must not create a save.
+        for (int busy = 0; busy <= 4; ++busy)
+        {
+            const bool reloading = busy == 1, dragging = busy == 2;
+            const bool transporting = busy == 3, action = busy == 4;
+            Check(snowdesktop::CanFlushScrollLayout(reloading, dragging,
+                transporting, action) == (busy == 0), "partial models cannot flush");
+            Check(snowdesktop::ShouldFlushScrollLayoutForSession(true, true,
+                false, reloading, dragging, transporting, action) == (busy == 0),
+                "session query flushes only a stable pending layout");
+            Check(snowdesktop::ShouldFlushScrollLayoutForSession(true, false,
+                true, reloading, dragging, transporting, action) == (busy == 0),
+                "approved session end retries only a stable pending layout");
+        }
+        Check(!snowdesktop::ShouldFlushScrollLayoutForSession(true, false,
+                false, false, false, false, false) &&
+              !snowdesktop::ShouldFlushScrollLayoutForSession(false, true,
+                true, false, false, false, false),
+            "canceled session or clean layout must not create a write");
         snowdesktop::LayoutScrollSave save;
         using Clock = snowdesktop::LayoutScrollSave::Clock;
         const Clock::time_point start{};

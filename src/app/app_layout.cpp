@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../layout_scroll_save_rules.h"
 #include "../large_icon_backup.h"
 #include "../operation_recovery_dialog.h"
 #include <set>
@@ -860,9 +861,10 @@ void DesktopApp::DeferScrollLayoutSave()
     {
         // Preserve pending state during a drag if a timer cannot be armed;
         // the normal commit/backup/exit boundary will retry the current model.
-        if (dragSession_.HasContext() ||
-            dragDropController_.IsTransportActive() ||
-            widgetAction_ != WidgetAction::None)
+        if (!snowdesktop::CanFlushScrollLayout(
+                reloading_, dragSession_.HasContext(),
+                dragDropController_.IsTransportActive(),
+                widgetAction_ != WidgetAction::None))
         {
             CancelDeferredLayoutSave();
             WriteDiagnosticLogEntry(L"Scroll layout save timer unavailable; layout remains pending",
