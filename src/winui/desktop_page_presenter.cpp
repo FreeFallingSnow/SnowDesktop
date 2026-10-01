@@ -561,6 +561,9 @@ struct DesktopPagePresenter::Impl
     std::array<muxc::ComboBox, 3> titleLineCombos;
     std::array<SettingRow, 3> titleLineRows;
     std::array<winrt::event_token, 3> titleLineTokens{};
+    muxc::ComboBox titleOverflow{nullptr};
+    SettingRow titleOverflowRow;
+    winrt::event_token titleOverflowToken{};
 
     muxc::ToggleSwitch showCategoryTabCounts{nullptr};
     SettingRow showCategoryTabCountsRow;
@@ -794,6 +797,7 @@ struct DesktopPagePresenter::Impl
         }
         AppendCombo(displayCard, shortcutArrowRow, shortcutArrow);
         for (std::size_t i = 0; i < titleLineCombos.size(); ++i) AppendCombo(displayCard, titleLineRows[i], titleLineCombos[i]);
+        AppendCombo(displayCard, titleOverflowRow, titleOverflow);
 
         InitializeCard(categoryLayoutCard, cardStyle, categoryRoot);
         showCategoryTabCounts = muxc::ToggleSwitch{};
@@ -1111,6 +1115,15 @@ struct DesktopPagePresenter::Impl
                     const std::array<int DesktopDisplaySettings::*, 3> fields{&DesktopDisplaySettings::desktopTitleLines, &DesktopDisplaySettings::largeFolderTitleLines, &DesktopDisplaySettings::scrollingTitleLines};
                     s.*fields[i] = lines;
                 });
+            });
+        titleOverflowToken = titleOverflow.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int selection = titleOverflow.SelectedIndex();
+                if (selection < 0 || selection > 1) return;
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [selection](DesktopDisplaySettings& settings) {
+                        settings.titleEllipsis = selection == 0;
+                    });
             });
         shortcutArrowToken = shortcutArrow.SelectionChanged(
             [this](const auto&, const auto&) {
@@ -1475,6 +1488,7 @@ struct DesktopPagePresenter::Impl
     {
         const std::array<int, 3> lines{settings.desktopTitleLines, settings.largeFolderTitleLines, settings.scrollingTitleLines};
         for (std::size_t i = 0; i < lines.size(); ++i) titleLineCombos[i].SelectedIndex(std::clamp(lines[i], 1, 2) - 1);
+        titleOverflow.SelectedIndex(settings.titleEllipsis ? 0 : 1);
         iconSpacing->SetValue(settings.iconSpacingScale * 100.0);
         iconSize->SetValue(settings.itemIconSizeScale * 100.0);
         itemFontSize->SetValue(settings.itemFontSizeCu);
@@ -1712,6 +1726,11 @@ struct DesktopPagePresenter::Impl
             titleLineCombos[i].SelectedIndex(selected);
             muxa::AutomationProperties::SetName(titleLineCombos[i], titleLineRows[i].label.Text());
         }
+        const int overflowSelected = titleOverflow.SelectedIndex();
+        titleOverflowRow.SetText(L("titleOverflow.title"), L("titleOverflow.hint"));
+        SetComboItems(titleOverflow, {L("titleOverflow.ellipsis"), L("titleOverflow.clip")}, overflowSelected);
+        titleOverflow.SelectedIndex(overflowSelected);
+        muxa::AutomationProperties::SetName(titleOverflow, titleOverflowRow.label.Text());
         itemFontWeight->SetLabel(L(
             "app.settings.title_font_weight", L"Title font weight"));
         for (NumericEditor* editor : {iconSpacing.get(), iconSize.get(),
@@ -1892,6 +1911,7 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.titleLines") return titleLineCombos[0];
         if (id == "desktop.largeFolderTitleLines") return titleLineCombos[1];
         if (id == "desktop.scrollingTitleLines") return titleLineCombos[2];
+        if (id == "desktop.titleOverflow") return titleOverflow;
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
@@ -1956,6 +1976,7 @@ struct DesktopPagePresenter::Impl
         listFontSize->Close();
         itemFontWeight->Close();
         for (std::size_t i = 0; i < titleLineCombos.size(); ++i) titleLineCombos[i].SelectionChanged(titleLineTokens[i]);
+        titleOverflow.SelectionChanged(titleOverflowToken);
         backgroundStart->Close();
         backgroundOpacity->Close();
         glassBlurRadius->Close(); reflectionWidth->Close(); reflectionStrength->Close();

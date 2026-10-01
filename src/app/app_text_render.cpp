@@ -271,6 +271,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             fontSize,
             range);
         snowdesktop::app_fonts::SetWeight(result.Get(), fontWeight, range);
+        result->SetWordWrapping(DWRITE_WORD_WRAPPING_CHARACTER);
         result->SetLineSpacing(
             DWRITE_LINE_SPACING_METHOD_UNIFORM,
             lineHeight,
@@ -283,7 +284,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
         std::to_wstring(scaleKey) + L"@" +
         std::to_wstring(lightTheme ? 1 : 0) + L"@" +
-        std::to_wstring(selected ? 1 : 0) + L"@" + std::to_wstring(titleLines);
+        std::to_wstring(selected ? 1 : 0) + L"@" + std::to_wstring(titleLines) + L"@" +
+        std::to_wstring(titleEllipsis_ ? 1 : 0);
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
@@ -336,7 +338,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             ComPtr<IDWriteTextFormat> ellipsisFormat;
             snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", fontWeight,
                 DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &ellipsisFormat);
-            snowdesktop::TrimItemTitle(dwriteFactory_.Get(), layout.Get(), ellipsisFormat.Get(), titleLines, lineHeight);
+            snowdesktop::TrimItemTitle(dwriteFactory_.Get(), layout.Get(), ellipsisFormat.Get(), titleLines, lineHeight, titleEllipsis_);
         }
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);

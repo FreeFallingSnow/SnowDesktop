@@ -3000,9 +3000,18 @@ int main(int argc, char** argv)
         const auto next = localLayout::ItemRect(compact, 3);
         const auto last = localLayout::ItemRect(compact, 11);
         Check(compact.vertical.count == fixed.vertical.count && compact.horizontal.count == fixed.horizontal.count &&
-                next.top - first.top < localLayout::ItemRect(fixed, 3).top - localLayout::ItemRect(fixed, 0).top &&
+                first.bottom - first.top < localLayout::ItemRect(fixed, 0).bottom - localLayout::ItemRect(fixed, 0).top &&
                 first.top > fixed.viewport.top && last.bottom < fixed.viewport.bottom,
-            "single-line large folders reflow and center shorter rows without changing saved capacity");
+            "single-line large folders shorten item hit rectangles without changing saved capacity");
+        const auto firstIcon = itemVisual::ResolveGridItemIconRect(first, one);
+        const auto nextIcon = itemVisual::ResolveGridItemIconRect(next, one);
+        const auto lastIcon = itemVisual::ResolveGridItemIconRect(last, one);
+        const int topPadding = firstIcon.top - viewport.top;
+        const int middlePadding = nextIcon.top - firstIcon.bottom - one.titleGap - one.titleHeight;
+        const int bottomPadding = viewport.bottom - lastIcon.bottom - one.titleGap - one.titleHeight;
+        Check(std::abs(topPadding * 2 - middlePadding) <= one.topInset * 2 + 2 &&
+                std::abs(bottomPadding * 2 - middlePadding) <= one.topInset * 2 + 2,
+            "one-line large-folder edge padding stays about half the inner gap instead of accumulating every row's freed height");
     }
     const auto smallIconVisual = itemVisual::ResolvePageItemVisualMetrics(
         104, 128, kDefaultItemFontSizeCu,

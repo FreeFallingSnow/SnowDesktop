@@ -662,6 +662,7 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         !ReadOptionalInteger(root, "desktopTitleLines", "desktopTitleLines", decoded.desktopTitleLines, error) ||
         !ReadOptionalInteger(root, "largeFolderTitleLines", "largeFolderTitleLines", decoded.largeFolderTitleLines, error) ||
         !ReadOptionalInteger(root, "scrollingTitleLines", "scrollingTitleLines", decoded.scrollingTitleLines, error) ||
+        !ReadOptionalRootBoolean(root, "titleEllipsis", decoded.titleEllipsis, error) ||
         !ReadOptionalFloat(root, "iconSpacing", "iconSpacing",
             decoded.iconSpacing, error) ||
         !ReadOptionalFloat(root, "componentSpacing", "componentSpacing",

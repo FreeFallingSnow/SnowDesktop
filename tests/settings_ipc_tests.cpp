@@ -231,13 +231,14 @@ void TestCodec()
     settings.values.desktop.desktopTitleLines = 1;
     settings.values.desktop.largeFolderTitleLines = 2;
     settings.values.desktop.scrollingTitleLines = 1;
+    settings.values.desktop.titleEllipsis = false;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
     Check(restored.values.general.font == settings.values.general.font &&
         restored.values.desktop.itemFontWeight == 600.f &&
         restored.values.desktop.desktopTitleLines == 1 &&
         restored.values.desktop.largeFolderTitleLines == 2 &&
-        restored.values.desktop.scrollingTitleLines == 1,
-        "font choice and three independent title limits cross settings IPC without rewriting the original weight");
+        restored.values.desktop.scrollingTitleLines == 1 && !restored.values.desktop.titleEllipsis,
+        "font choice, title limits and direct truncation cross settings IPC without rewriting the original weight");
     Check(restored.values.desktop.iconBeautify.preset == snowdesktop::IconBeautifyPreset::FrostedGlass &&
         restored.values.desktop.iconBeautify.glassEnabled && restored.values.desktop.iconBeautify.glassBlurRadius == 28.0f &&
         restored.values.desktop.iconBeautify.edgeHighlightEnabled && restored.values.desktop.iconBeautify.edgeHighlightWidth == 1.7f &&

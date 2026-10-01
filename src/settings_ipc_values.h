@@ -81,7 +81,7 @@ SD_IPC_FIELDS(IconBeautifySettings,
     v.outlineG, v.outlineB, v.shadowStrength);
 SD_IPC_FIELDS(DesktopDisplaySettings,
     v.dockEnabled, v.iconSpacingScale, v.itemIconSizeScale, v.itemFontSizeCu,
-    v.listItemFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify);
+    v.listItemFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis);
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path);

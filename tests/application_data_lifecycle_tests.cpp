@@ -1132,11 +1132,12 @@ int main()
             legacyFontLayout.itemFontWeight.value_or(0.f) == 600.f &&
             !legacyFontLayout.desktopTitleLines.has_value() &&
             !legacyFontLayout.largeFolderTitleLines.has_value() &&
-            !legacyFontLayout.scrollingTitleLines.has_value(),
-        "legacy font weight remains unchanged and absent title limits retain the host's two-line defaults");
+            !legacyFontLayout.scrollingTitleLines.has_value() &&
+            !legacyFontLayout.titleEllipsis.has_value(),
+        "legacy font weight remains unchanged and absent title limits/overflow retain the host's defaults");
     const std::string titleSettingsText =
         "{\"itemFontWeight\":600,\"desktopTitleLines\":1,"
-        "\"largeFolderTitleLines\":2,\"scrollingTitleLines\":1}";
+        "\"largeFolderTitleLines\":2,\"scrollingTitleLines\":1,\"titleEllipsis\":false}";
     const auto titleSettingsPath = root / L"title-settings.json";
     snowdesktop::layout_storage::Document titleSettingsLayout;
     Expect(snowdesktop::layout_storage::SaveDocument(
@@ -1146,8 +1147,9 @@ int main()
             titleSettingsLayout.itemFontWeight.value_or(0.f) == 600.f &&
             titleSettingsLayout.desktopTitleLines.value_or(0) == 1 &&
             titleSettingsLayout.largeFolderTitleLines.value_or(0) == 2 &&
-            titleSettingsLayout.scrollingTitleLines.value_or(0) == 1,
-        "restart retains independent desktop, large-folder and scrolling title limits alongside the original weight");
+            titleSettingsLayout.scrollingTitleLines.value_or(0) == 1 &&
+            titleSettingsLayout.titleEllipsis.has_value() && !*titleSettingsLayout.titleEllipsis,
+        "restart retains title limits and direct truncation alongside the original weight");
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"

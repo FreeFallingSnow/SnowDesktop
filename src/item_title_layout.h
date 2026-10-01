@@ -33,7 +33,8 @@ public:
         if (FAILED(result)) return result;
         result = layout_->GetOverhangMetrics(&overhang_);
         if (FAILED(result)) return result;
-        metrics_ = {text.widthIncludingTrailingWhitespace + std::max(0.0f, overhang_.right),
+        leadingGap_ = format->GetFontSize() * .1f;
+        metrics_ = {leadingGap_ + text.widthIncludingTrailingWhitespace + std::max(0.0f, overhang_.right),
             text.height, line.baseline, FALSE};
         return S_OK;
     }
@@ -41,7 +42,9 @@ public:
     IFACEMETHODIMP Draw(void* context, IDWriteTextRenderer* renderer,
         FLOAT x, FLOAT y, BOOL, BOOL, IUnknown*) override
     {
-        return layout_->Draw(context, renderer, x, y - metrics_.baseline);
+        // DirectWrite supplies the inline object's top-left, with its baseline
+        // already aligned. Subtracting the baseline draws the sign a line early.
+        return layout_->Draw(context, renderer, x + leadingGap_, y);
     }
     IFACEMETHODIMP GetMetrics(DWRITE_INLINE_OBJECT_METRICS* result) override
     { if (!result) return E_POINTER; *result = metrics_; return S_OK; }
@@ -57,13 +60,14 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextLayout> layout_;
     DWRITE_INLINE_OBJECT_METRICS metrics_{};
     DWRITE_OVERHANG_METRICS overhang_{};
+    float leadingGap_ = 0;
 };
 
 // Keep the complete text for shaping, surrogate pairs and explicit newlines.
 // DirectWrite replaces only the overflowing end of the final visible line
-// with three tightly tracked periods, without added whitespace.
+// with three tightly tracked periods and a small gap before the sign.
 inline HRESULT TrimItemTitle(IDWriteFactory* factory, IDWriteTextLayout* layout,
-    IDWriteTextFormat* format, int lines, float lineHeight)
+    IDWriteTextFormat* format, int lines, float lineHeight, bool showEllipsis = true)
 {
     if (!factory || !layout || !format || lineHeight <= 0) return E_INVALIDARG;
     // Ordinary WRAP trims an overlong English word on an earlier line even
@@ -74,7 +78,7 @@ inline HRESULT TrimItemTitle(IDWriteFactory* factory, IDWriteTextLayout* layout,
     if (FAILED(result)) return result;
     UINT32 untrimmedCount = 0;
     layout->GetLineMetrics(nullptr, 0, &untrimmedCount);
-    if (untrimmedCount <= static_cast<UINT32>(std::clamp(lines, 1, 2)))
+    if (!showEllipsis || untrimmedCount <= static_cast<UINT32>(std::clamp(lines, 1, 2)))
     {
         const DWRITE_TRIMMING none{DWRITE_TRIMMING_GRANULARITY_NONE, 0, 0};
         return layout->SetTrimming(&none, nullptr);

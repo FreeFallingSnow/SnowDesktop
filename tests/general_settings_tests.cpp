@@ -35,6 +35,101 @@ void Check(bool condition, const char* message)
     ++failures;
 }
 
+// Metrics previously reported trimming on the last line while the inline
+// object's Draw placed its glyphs on the first. Delegate actual inline draws
+// and observe glyph coordinates, rather than trusting isTrimmed alone.
+class TitleGlyphRecorder final : public Microsoft::WRL::RuntimeClass<
+    Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IDWriteTextRenderer>
+{
+public:
+    struct Sign { float baseline, leadingGap; };
+    std::vector<Sign> signs;
+    IFACEMETHODIMP IsPixelSnappingDisabled(void*, BOOL* disabled) override
+    { *disabled = TRUE; return S_OK; }
+    IFACEMETHODIMP GetCurrentTransform(void*, DWRITE_MATRIX* transform) override
+    { *transform = {1, 0, 0, 1, 0, 0}; return S_OK; }
+    IFACEMETHODIMP GetPixelsPerDip(void*, FLOAT* pixelsPerDip) override
+    { *pixelsPerDip = 1; return S_OK; }
+    IFACEMETHODIMP DrawGlyphRun(void*, FLOAT x, FLOAT y, DWRITE_MEASURING_MODE,
+        const DWRITE_GLYPH_RUN*, const DWRITE_GLYPH_RUN_DESCRIPTION* description, IUnknown*) override
+    {
+        if (description && description->stringLength == 3 &&
+            wcsncmp(description->string, L"...", 3) == 0)
+            signs.push_back({y, x - inlineX_});
+        return S_OK;
+    }
+    IFACEMETHODIMP DrawUnderline(void*, FLOAT, FLOAT, const DWRITE_UNDERLINE*, IUnknown*) override
+    { return S_OK; }
+    IFACEMETHODIMP DrawStrikethrough(void*, FLOAT, FLOAT, const DWRITE_STRIKETHROUGH*, IUnknown*) override
+    { return S_OK; }
+    IFACEMETHODIMP DrawInlineObject(void* context, FLOAT x, FLOAT y,
+        IDWriteInlineObject* object, BOOL sideways, BOOL rtl, IUnknown* effect) override
+    {
+        inlineX_ = x;
+        return object->Draw(context, this, x, y, sideways, rtl, effect);
+    }
+private:
+    float inlineX_ = 0;
+};
+
+HRESULT CheckTitleDrawing(IDWriteFactory* factory, IDWriteTextFormat* format,
+    ID2D1RenderTarget* target, IWICBitmap* bitmap, ID2D1Brush* brush)
+{
+    unsigned drawnSigns = 0;
+    for (const auto* title : {L"VMware Workstation Pro", L"Visual Studio Code", L"TwinCAT XAE Shell",
+             L"Android Studio", L"Arduino IDE", L"SOLIDWORKS\n2025\nExtra", L"中文\U0001F600标题测试名称"})
+    for (const float width : {90.f, 110.f, 130.f})
+    for (const int lines : {1, 2})
+    for (const bool ellipsis : {true, false})
+    {
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+        auto result = factory->CreateTextLayout(title, static_cast<UINT32>(wcslen(title)),
+            format, width, 1000, &layout);
+        if (FAILED(result)) return result;
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, 28, 20);
+        result = snowdesktop::TrimItemTitle(factory, layout.Get(), format, lines, 28, ellipsis);
+        if (FAILED(result)) return result;
+        const auto recorder = Microsoft::WRL::Make<TitleGlyphRecorder>();
+        result = layout->Draw(nullptr, recorder.Get(), 0, 0);
+        if (FAILED(result)) return result;
+        for (const auto& sign : recorder->signs)
+        {
+            ++drawnSigns;
+            if (!ellipsis || std::abs(sign.baseline - (20.f + (lines - 1) * 28.f)) > .05f ||
+                sign.leadingGap < 1.f || sign.leadingGap > 3.f)
+                return E_FAIL;
+        }
+        if (!ellipsis)
+        {
+            Microsoft::WRL::ComPtr<IDWriteInlineObject> unexpected;
+            DWRITE_TRIMMING rule{};
+            result = layout->GetTrimming(&rule, &unexpected);
+            if (FAILED(result) || unexpected || rule.granularity != DWRITE_TRIMMING_GRANULARITY_NONE ||
+                layout->GetWordWrapping() != DWRITE_WORD_WRAPPING_CHARACTER) return E_FAIL;
+            // Exercise the host's real D2D clipping option: hidden lines must
+            // not leave any pixels below the configured one/two-line rectangle.
+            target->BeginDraw();
+            target->Clear(D2D1::ColorF(D2D1::ColorF::Black));
+            target->DrawTextLayout(D2D1::Point2F(0, 0), layout.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            result = target->EndDraw();
+            if (FAILED(result)) return result;
+            std::vector<BYTE> pixels(320 * 80 * 4);
+            result = bitmap->CopyPixels(nullptr, 320 * 4, static_cast<UINT>(pixels.size()), pixels.data());
+            if (FAILED(result)) return result;
+            bool visible = false;
+            for (std::size_t i = 0; i < pixels.size(); i += 4)
+            {
+                if (!(pixels[i] || pixels[i + 1] || pixels[i + 2])) continue;
+                if (i / (320 * 4) >= static_cast<std::size_t>(lines * 28)) return E_FAIL;
+                visible = true;
+            }
+            if (!visible) return E_FAIL;
+        }
+    }
+    return drawnSigns > 0 ? S_OK : E_FAIL;
+}
+
 // Startup draws the selected collection on another thread. Layout-only tests
 // cannot expose released font loaders: glyph data is consumed during drawing.
 HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
@@ -111,6 +206,8 @@ HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
         if (FAILED(result) || metrics.width >= nativeMetrics.width || metrics.width > 24 * .6f) return E_FAIL;
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
         result = target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
+        if (FAILED(result)) return result;
+        result = CheckTitleDrawing(factory.Get(), format.Get(), target.Get(), bitmap.Get(), brush.Get());
         if (FAILED(result)) return result;
         target->BeginDraw();
         target->Clear(D2D1::ColorF(D2D1::ColorF::Black));

@@ -443,6 +443,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceDesktopIcons, "desktop.titleLines", "titleLines.desktop", "titleLines.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.largeFolderTitleLines", "titleLines.largeFolder", "titleLines.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.scrollingTitleLines", "titleLines.scrolling", "titleLines.hint"},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.titleOverflow", "titleOverflow.title", "titleOverflow.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.fontWeight",
         "app.settings.title_font_weight",
         "settings.desktop.typography.description"},

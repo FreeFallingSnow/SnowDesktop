@@ -19,6 +19,7 @@ struct DesktopDisplaySettings
     int desktopTitleLines = 2;
     int largeFolderTitleLines = 2;
     int scrollingTitleLines = 2;
+    bool titleEllipsis = true;
     int shortcutArrowMode = 0;
     IconBeautifySettings iconBeautify;
 };

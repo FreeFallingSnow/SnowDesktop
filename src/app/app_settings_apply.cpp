@@ -753,6 +753,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.desktopTitleLines = desktopTitleLines_;
     desktop.largeFolderTitleLines = largeFolderTitleLines_;
     desktop.scrollingTitleLines = scrollingTitleLines_;
+    desktop.titleEllipsis = titleEllipsis_;
     desktop.shortcutArrowMode = shortcutArrowMode_;
     desktop.iconBeautify = iconBeautifySettings_;
     const bool generalSynchronized =
@@ -1029,6 +1030,7 @@ public:
             app_.desktopTitleLines_ = std::clamp(snapshot.values.desktop.desktopTitleLines, 1, 2);
             app_.largeFolderTitleLines_ = std::clamp(snapshot.values.desktop.largeFolderTitleLines, 1, 2);
             app_.scrollingTitleLines_ = std::clamp(snapshot.values.desktop.scrollingTitleLines, 1, 2);
+            app_.titleEllipsis_ = snapshot.values.desktop.titleEllipsis;
             app_.InvalidateAllWidgetSlots();
             app_.PreviewIconSpacing(
                 snapshot.values.desktop.iconSpacingScale);
@@ -1231,6 +1233,7 @@ public:
             app_.desktopTitleLines_ = std::clamp(desktop.desktopTitleLines, 1, 2);
             app_.largeFolderTitleLines_ = std::clamp(desktop.largeFolderTitleLines, 1, 2);
             app_.scrollingTitleLines_ = std::clamp(desktop.scrollingTitleLines, 1, 2);
+            app_.titleEllipsis_ = desktop.titleEllipsis;
             app_.InvalidateAllWidgetSlots();
             app_.SetIconSpacing(desktop.iconSpacingScale);
             app_.SetItemIconSize(desktop.itemIconSizeScale);

@@ -508,6 +508,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.desktopTitleLines = desktopTitleLines_;
         desktopSettings.largeFolderTitleLines = largeFolderTitleLines_;
         desktopSettings.scrollingTitleLines = scrollingTitleLines_;
+        desktopSettings.titleEllipsis = titleEllipsis_;
         desktopSettings.shortcutArrowMode = shortcutArrowMode_;
         desktopSettings.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(
@@ -901,6 +902,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.desktopTitleLines = desktopTitleLines_;
         desktop.largeFolderTitleLines = largeFolderTitleLines_;
         desktop.scrollingTitleLines = scrollingTitleLines_;
+        desktop.titleEllipsis = titleEllipsis_;
         desktop.shortcutArrowMode = shortcutArrowMode_;
         desktop.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(std::move(desktop));

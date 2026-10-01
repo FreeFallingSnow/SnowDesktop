@@ -127,6 +127,7 @@ struct Document
     std::optional<int> desktopTitleLines;
     std::optional<int> largeFolderTitleLines;
     std::optional<int> scrollingTitleLines;
+    std::optional<bool> titleEllipsis;
     std::optional<float> iconSpacing;
     std::optional<float> componentSpacing;
     std::optional<float> iconSizeScale;

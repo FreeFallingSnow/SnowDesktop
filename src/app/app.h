@@ -3736,6 +3736,7 @@ private:
     int desktopTitleLines_ = 2;
     int largeFolderTitleLines_ = 2;
     int scrollingTitleLines_ = 2;
+    bool titleEllipsis_ = true;
     int shortcutArrowMode_ = 0;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     std::wstring primaryMonitorId_;

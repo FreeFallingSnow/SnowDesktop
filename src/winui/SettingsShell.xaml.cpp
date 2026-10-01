@@ -2594,7 +2594,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerDesktopFocus({
                 "desktop.iconSize",
                 "desktop.itemFontSize", "desktop.listFontSize",
-                "desktop.fontWeight", "desktop.shortcutArrow", "desktop.titleLines", "desktop.largeFolderTitleLines", "desktop.scrollingTitleLines"});
+                "desktop.fontWeight", "desktop.shortcutArrow", "desktop.titleLines", "desktop.largeFolderTitleLines", "desktop.scrollingTitleLines", "desktop.titleOverflow"});
             desktopPage_->Activate();
         }
         break;
