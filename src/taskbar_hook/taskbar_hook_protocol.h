@@ -6,19 +6,20 @@
 #include <cstdint>
 #include "../panel_gradient.h"
 #include "taskbar_autohide_trace.h"
+#include "taskbar_autohide_adapter.h"
 
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 11;
+inline constexpr std::uint32_t kSharedStateVersion = 12;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v11";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v12";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v11";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v12";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v11";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v12";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -137,6 +138,9 @@ struct SharedState
     volatile LONG lastError = ERROR_SUCCESS;
     volatile LONG diagnosticStage = 0;
     AutoHideTraceBuffer autoHideTrace;
+    // Written by the host under generation, after an isolated symbol helper.
+    AutoHideAdapter autoHideAdapter;
+    DWORD autoHideResolutionError = ERROR_IO_PENDING;
 };
 
 struct SharedRegistryQueryState
@@ -178,6 +182,8 @@ struct Snapshot
     Gradient gradient;
     LONG targetCount = 0;
     TargetAppearance targets[kMaximumTaskbarTargets]{};
+    AutoHideAdapter autoHideAdapter;
+    DWORD autoHideResolutionError = ERROR_IO_PENDING;
 };
 inline bool ShouldSuppressTaskbar(const Snapshot& snapshot, std::uintptr_t taskbar) noexcept
 {
@@ -229,6 +235,8 @@ inline bool ReadSharedSnapshot(const SharedState* state, Snapshot& snapshot)
             static_cast<LONG>(kMaximumTaskbarTargets));
         std::copy_n(state->targets, snapshot.targetCount,
             snapshot.targets);
+        snapshot.autoHideAdapter = state->autoHideAdapter;
+        snapshot.autoHideResolutionError = state->autoHideResolutionError;
         MemoryBarrier();
         if (generation == state->generation &&
             (generation & 1) == 0)

@@ -61,6 +61,10 @@
 #include "app/layout_reload.h"
 #include "taskbar_hook/taskbar_autohide_trace.h"
 #include "taskbar_hook/taskbar_autohide_rules.h"
+#include "taskbar_hook/taskbar_symbol_resolver.h"
+
+int RunTaskbarSymbolResolverTests();
+std::optional<int> TryRunTaskbarSymbolTestHelper();
 
 #include <dwrite.h>
 #include <windowsx.h>
@@ -256,7 +260,7 @@ void CheckTaskbarActivationRevealDispatch()
     hidden.protectedTaskbar = ShouldProtectAutoHideTaskbar(settings, true, true);
     hidden.geometryValid = true;
     hidden.activation = WA_ACTIVE;
-    hidden.callerRva = 0x92af3;
+    hidden.callerIsActivationHandler = true;
     hidden.monitor = {0, 0, 2560, 1440};
     hidden.taskbar = {0, 1438, 2560, 1498};
     hidden.cursor = {987, 1407};
@@ -292,7 +296,7 @@ void CheckTaskbarActivationRevealDispatch()
     alternate.geometryValid = false;
     expect(alternate, 0, 8, false, "failed geometry or pointer queries must fail open");
     alternate = hidden;
-    alternate.callerRva = 0x12345;
+    alternate.callerIsActivationHandler = false;
     expect(alternate, 0, 8, false, "request 8 from an unrecognized call site must pass");
     alternate = hidden;
     alternate.taskbar = {0, 1380, 2560, 1440};
@@ -305,7 +309,6 @@ void CheckTaskbarActivationRevealDispatch()
     expect(alternate, 0, 8, false, "a top taskbar is outside the bottom-Dock policy");
     alternate = hidden;
     alternate.secondary = true;
-    alternate.callerRva = 0x22550;
     alternate.monitor = {-1920, 0, 0, 1080};
     alternate.taskbar = {-1920, 1078, 0, 1138};
     alternate.cursor = {987, 1407};
@@ -328,7 +331,6 @@ void CheckTaskbarActivationRevealDispatch()
                 "permanent taskbar hiding must remain limited to Dock screens");
             alternate = hidden;
             alternate.secondary = secondary;
-            alternate.callerRva = secondary ? 0x22550 : 0x92af3;
             alternate.monitor = secondary ? RECT{-1920, 0, 0, 1080} : hidden.monitor;
             alternate.taskbar = secondary ? RECT{-1920, 1078, 0, 1138} : hidden.taskbar;
             alternate.protectedTaskbar = target.protectAutoHideActivation;
@@ -1346,6 +1348,7 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    if (const auto result = TryRunTaskbarSymbolTestHelper()) return *result;
     if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
     // These are real settings predicates shared by all three entry points.
     // First/last scopes coincide on one display but only partially overlap on two.
@@ -1608,6 +1611,7 @@ int main(int argc, char** argv)
     CheckClipboardShellDropKeys();
     CheckTaskbarAutoHideTraceTransport();
     CheckTaskbarActivationRevealDispatch();
+    failures += RunTaskbarSymbolResolverTests();
     CheckNativeDesktopCaptureReadiness();
     CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();

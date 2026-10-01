@@ -737,7 +737,8 @@ public:
         for (LONG index = 0; index < snapshot.targetCount; ++index)
             if (reinterpret_cast<HWND>(snapshot.targets[index].taskbar) == taskbar)
                 protectActivation = snapshot.targets[index].protectAutoHideActivation != FALSE;
-        autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, hookEnabled, protectActivation);
+        autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, hookEnabled, protectActivation,
+            snapshot.autoHideAdapter, snapshot.autoHideResolutionError);
 
         bool applied = false;
         for (auto& [handle, info] : taskbars_)

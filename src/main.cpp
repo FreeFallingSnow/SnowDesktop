@@ -28,6 +28,7 @@
 #include "widget_author_preview.h"
 #include "native_component_preview_export.h"
 #include "steam_runtime_startup.h"
+#include "taskbar_hook/taskbar_symbol_resolver.h"
 
 #include <commctrl.h>
 
@@ -370,6 +371,7 @@ void ShowStartupFailure(const snowdesktop::operation_feedback::Failure& failure)
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
     snowdesktop::steam_runtime::startup::Begin();
     // Helpers and deployment discovery may access settings before Run.
     // Conservatively prohibit automatic downgrade from this boundary.

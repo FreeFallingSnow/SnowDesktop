@@ -435,6 +435,7 @@ set(SNOWDESKTOP_SOURCES
     src/ui_animation_scheduler.cpp
     src/personalization.cpp
     src/dock_settings.cpp
+    src/taskbar_hook/taskbar_symbol_resolver.cpp
     src/navigation_settings.cpp
     src/general_settings.cpp
     src/category_settings.cpp
@@ -2263,6 +2264,8 @@ if (BUILD_TESTING)
         SOURCES
             tests/dock_and_window_rules_tests.cpp
             tests/taskbar_native_tests.cpp
+            tests/taskbar_symbol_resolver_tests.cpp
+            src/taskbar_hook/taskbar_symbol_resolver.cpp
             src/taskbar_hook/taskbar_native.cpp
             src/taskbar_hook/taskbar_classic_surface.cpp
             ${MINHOOK64_SOURCES}
@@ -2279,7 +2282,7 @@ if (BUILD_TESTING)
             src/dock_window_transition.cpp
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dcomp dwrite dwmapi dxgi dxguid gdi32 ole32 runtimeobject shell32 shcore user32 windowsapp
+        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 ole32 runtimeobject shell32 shcore user32 windowsapp winhttp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
