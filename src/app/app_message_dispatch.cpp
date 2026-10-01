@@ -2,6 +2,7 @@
 #include "../desktop_hover_rules.h"
 #include "shell_change_notification.h"
 #include "../desktop_keyboard_rules.h"
+#include "../desktop_source.h"
 #include "../drag_input_rules.h"
 #include "../performance_trace.h"
 
@@ -853,6 +854,28 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 return 0;
             }
             if (wc->IsCollapsed()) continue;
+            if (auto* group = dynamic_cast<FileGroup*>(wc);
+                group && wc->HitTestWidget(pt) == WidgetHit::SourceTab)
+            {
+                // Source tabs are outside the content slots. Resolve the
+                // clicked source rather than the group's active source.
+                const size_t sourceIndex =
+                    FindWidgetIndexById(group->SourceIdAtPoint(pt));
+                if (sourceIndex < widgets_.size())
+                {
+                    const DesktopWidget& source = widgets_[sourceIndex];
+                    const std::wstring path =
+                        source.type == DesktopWidgetType::FolderMapping
+                        ? source.sourceFolderPath
+                        : (source.type == DesktopWidgetType::FileCategories
+                            ? snowdesktop::desktop_source::Directory()
+                            : L"");
+                    if (!path.empty())
+                        clearSelectionAfterAcceptedOpen(
+                            shellLaunchWorker_.Enqueue(hwnd_, path));
+                }
+                return 0;
+            }
             RECT bodyRect = wc->GetBodyRect();
             for (auto& slot : wc->GetSlots())
             {
