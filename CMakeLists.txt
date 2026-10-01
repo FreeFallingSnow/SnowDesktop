@@ -2448,6 +2448,11 @@ if (BUILD_TESTING)
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selection_tests.ps1")
     set_tests_properties(test_selection PROPERTIES
         TIMEOUT 30 LABELS "core;contract;build")
+    add_test(NAME build_collaboration
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_collaboration_tests.ps1")
+    set_tests_properties(build_collaboration PROPERTIES
+        TIMEOUT 180 LABELS "core;contract;build")
     # Partial environment coverage must not be presented as a passing entry.
     # Failures take precedence over this distinct unavailable-environment code.
     set_tests_properties(application_data_lifecycle steam_runtime_update steam_workshop_manager

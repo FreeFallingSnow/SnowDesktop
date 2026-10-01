@@ -2,6 +2,12 @@
 setlocal
 cd /d "%~dp0.."
 
+rem Shared-directory collaboration commands reuse the standard build below.
+if /i "%~1"=="begin" goto collaboration
+if /i "%~1"=="finish" goto collaboration
+if /i "%~1"=="status" goto collaboration
+if /i "%~1"=="recover" goto collaboration
+
 set "RELOAD_SHELL="
 if /i "%~1"=="--reload-shell" (
     set "RELOAD_SHELL=1"
@@ -9,6 +15,7 @@ if /i "%~1"=="--reload-shell" (
 )
 if not "%~1"=="" (
     echo Usage: scripts\build.bat [--reload-shell]
+    echo Collaboration: scripts\build.bat begin ID ^| finish ID -Batch BATCH ^| status ^| recover -Batch BATCH
     exit /b 2
 )
 
@@ -96,3 +103,7 @@ echo.
 echo For a version release, run scripts\release.bat to open the unified release center.
 echo Agent and automation usage is available through scripts\release.bat COMMAND.
 exit /b 0
+
+:collaboration
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_manager.ps1 %*
+exit /b %ERRORLEVEL%

@@ -113,6 +113,95 @@ CLI 的兼容目录；每份 Skill 自带 `bin\snowwidget.exe`，并提供 `capa
 
 发布流程的完整说明见 `packaging\README.md`。
 
+## 同目录协作构建
+
+只有实际修改源码、构建配置或相关构建输入的任务登记。只读代码审计、性能评估、阅读日志和
+写外置报告的任务不调用 `begin`/`finish`，不触发构建，也不阻塞开发参与者；`status` 只查询状态。
+性能测量另需避开正在运行的构建/测试，登记协议不提供测量资源预约。
+
+两个开发对话各自先登记，保存 JSON 返回的 `batchId`，再开始修改：
+
+```bat
+scripts\build.bat begin task-a
+scripts\build.bat begin task-b
+```
+
+仍在编辑阶段的登记进入同一批次。每个参与者用同一个任务 ID 和返回的批次 ID 完成：
+
+```bat
+scripts\build.bat finish task-a -Batch <batchId>
+scripts\build.bat finish task-b -Batch <batchId>
+scripts\build.bat status
+scripts\build.bat status -Batch <batchId>
+```
+
+先完成的调用等待；最后完成者在同一个状态事务内冻结成员并取得构建权，调用原有
+`build.bat` 和 `test.bat`，构建失败时不启动测试。所有参与者得到相同的 JSON 结果、批次 ID、
+参与者列表、退出码、错误和日志路径。重复 `begin` 复用尚在编辑的登记；重复 `finish` 等待或读取
+指定批次的历史结果，不重新构建。`finish` 必须传批次 ID，避免任务 ID 被下一批复用后串批。
+同一任务 ID 已重新登记时，`finish` 拒绝返回旧批成功；没有新登记但输入已变时也拒绝重放
+旧成功结果。已在等待该批的参与者始终取得同一份持久化结果。`status -Batch` 用于读取历史，
+它不验证当前改动；早于输入校验功能的成功记录也只能作为历史查询。
+
+构建和测试期间的新 `begin` 等待，上一批结果持久化后才登记到下一批。登记成功前、`finish`
+调用后至结果返回前不得修改共享目录。`-WaitSeconds 60` 可限制登记/屏障等待时间（默认 24 小时）；
+等待超时返回 2 并保留已有登记，稍后重复同一个命令。该参数不会中止已启动的构建。
+成功返回 0；标准构建/测试失败返回原始退出码；用法/状态错误返回 2；显式恢复出的中断或取消
+结果返回 4；输入起止校验失败返回 5（`invalidated`），即使构建/测试命令自身返回 0 也不算通过。
+`status` 和成功执行的 `recover` 返回 0，结果内的 `exitCode` 保留原始结论。
+
+协调状态、每批不可覆盖的结果 `<batchId>.json` 和日志 `<batchId>.log` 保存在忽略的
+`.build\collaboration\`，不要删除或提交。短事务使用 Windows 文件共享锁，构建另持独占租约；
+进程退出自动释放句柄。结果以临时文件、落盘和原子替换发布，发布后才清理该批登记；不会清空
+其他活动批次。JSON 损坏或版本/路径不匹配时停止，保留证据供诊断，不自动重置。
+
+冻结成员后、启动构建前记录 `inputStart`；构建与测试结束后记录 `inputEnd`。摘要使用
+SHA-256，包含 Git 的已跟踪和未忽略的新增文件的相对路径与实际内容，因而覆盖未提交内容、
+删除与重命名；同时包含 HEAD、`CMakeUserPresets.json`（即使被 Git 忽略）和相关工具链/SDK
+环境路径。所有参与者的结果绑定同一个批次、输入摘要及原始 `pipelineExitCode`。
+生成输出、协调状态、忽略的探测/报告目录和根目录说明文档不参与摘要，避免构建自触发；
+运行时分发的 notices 和组件 Skill 等资源仍属于输入。外置报告放在仓库之外或 `.codex-probes/`。
+
+这保证守约的 `begin` 调用者在构建期间等待，并检测绕过登记后在两个采样端点之间仍有差异的
+输入变动；不锁住源文件，也不是完整的文件系统快照。中途修改后又恢复、采样过程中的竞态、
+仓库之外的 SDK/工具内容及生成缓存的外部改写不由此摘要保证。起止一致只能报告“端点摘要一致”，
+不能声称未发生任何中途改动。检测出变动或末尾无法读取输入时结果失效，保留日志并释放租约，
+不自动重试；先确认所有修改者停止，再重新登记新批次。
+
+异常恢复必须先查看 `status`、日志和共享目录差异，确认对应编辑者或构建已停止，检查残留改动
+及同文件冲突。编辑登记不绑定短暂的 `begin` 进程；登记年龄只用于诊断，不自动判为完成。
+确认放弃一个编辑者后可显式撤回它：
+
+```bat
+scripts\build.bat recover task-b -Batch <batchId> -ConfirmStopped -Reason "editor stopped; remaining changes reviewed"
+```
+
+撤回记为 `withdrawn` 并保留到批次结果持久化，其他编辑和已完成登记都保留；不表示该编辑者
+成功完成。其他参与者完成后仍构建共享目录中的实际改动。全部撤回时持久化 `cancelled` 结果，
+不构建。如果编辑者可以继续，直接用原任务 ID 继续修改后调用 `finish`，无需撤回。
+
+每次构建的子进程树在专用 Windows Job 中运行，协调器崩溃会停止它启动的构建/测试子进程，
+不会停止其他任务或用户应用。协作子进程临时设置 `MSBUILDDISABLENODEREUSE=1`，避免复用
+本批之外的旧 MSBuild worker；不修改系统环境。批次继续保持冻结，不自动重跑或放行编辑。
+确认 owner 已退出后：
+
+```bat
+scripts\build.bat recover -Batch <batchId> -ConfirmStopped -Reason "build owner exited; log reviewed"
+```
+
+脚本拒绝恢复仍活着、无法检查或仍持构建租约的 owner。恢复持久化 `interrupted` 结果并放行下一批；
+若结果已落盘而清理状态前进程退出，则复用原结果完成清理，不重复构建。恢复从不自动启动构建。
+失败或中断后的修改/重试属于新批次，各参与者重新 `begin`。
+
+此协议只约束调用者。原有无参数/`--reload-shell` 构建、Debug、单独测试和 IDE 入口保持原来的
+行为，协作期间不要另行调用。启用协议前等待已有编译退出，要求所有修改者遵守登记屏障。
+协作构建不提供自动停止应用或重启 Explorer 的选项；占用时记录原有预检失败，正常退出占用
+应用后在新批次重试。共享目录中的同文件冲突和未登记修改无法由脚本自动解决。
+
+轻量并发回归入口为 `scripts\test.bat name "^build_collaboration$"`；测试使用临时目录与可控假
+构建，不操作真实构建产物或用户数据。实现位于 `build_manager.ps1`，`build_job.cs` 只负责
+受控进程树生命周期，`build_inputs.ps1` 负责输入内容身份。
+
 ## 耦合运行性能调试
 
 `profile.bat` 是默认关闭的性能采集入口。`status` 查询当前宿主能力，
