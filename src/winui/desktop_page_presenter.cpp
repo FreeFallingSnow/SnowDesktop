@@ -961,7 +961,9 @@ struct DesktopPagePresenter::Impl
         beautifyAdvanced.Children().Clear();
         std::vector<muxc::Expander> geometryDisclosures;
         auto geometry = AppearanceSections::Section(beautifyAdvanced, geometryTitle, &geometryDisclosures);
-        geometry.Children().Append(shapeRow.root); geometry.Children().Append(contentScale->root);
+        geometry.Children().Append(beautifyModeRow.root);
+        geometry.Children().Append(shapeRow.root);
+        geometry.Children().Append(contentScale->root);
         beautifySections.Initialize(beautifyAdvanced, true, false, false);
         beautifySections.disclosures.insert(beautifySections.disclosures.begin(), geometryDisclosures.begin(), geometryDisclosures.end());
         for (auto const& control : {backgroundStart->root, backgroundOpacity->root, gradientEnabledRow.root, backgroundEnd->root, gradientDirectionRow.root})
@@ -1860,7 +1862,7 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.iconBeautify" ||
             id == "desktop.iconBeautify.preset")
             return beautifyPreset;
-        if (id == "desktop.iconBeautify.mode") return beautifyMode;
+        if (id == "desktop.iconBeautify.mode") return appearanceTarget(beautifyMode);
         if (id == "desktop.iconBeautify.backgroundColor")
             return appearanceTarget(backgroundStart->editor.button);
         if (id == "desktop.iconBeautify.glass") return appearanceTarget(glassEnabled);

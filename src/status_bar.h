@@ -105,6 +105,9 @@ public:
     std::optional<RECT> MergedDockArea(HMONITOR monitor) const;
     bool MergesDock(HMONITOR monitor) const;
     std::optional<RECT> MergedStripBounds(HMONITOR monitor) const;
+    // Host-private query: include prepared hidden strips, but require a live
+    // glass target and complete screen-space coverage before icons inherit it.
+    bool HasMergedGlassBackdrop(HMONITOR monitor, const RECT& screenFrame) const;
     void SetDockChanged(std::function<void(bool geometry)> changed);
     // Application-owned window observations; must not enable taskbar effects.
     void SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider);

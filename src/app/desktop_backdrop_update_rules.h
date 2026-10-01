@@ -8,6 +8,23 @@
 namespace snowdesktop::desktop_backdrop_update_rules
 {
 
+// An enclosing material may belong to another native target (the merged
+// status strip), so the icon compositor cannot discover it in its own panels.
+// Reconcile during the same frame even for partial collections, retiring an
+// old per-icon blur before it can sample the enclosing strip a second time.
+template<class Compositor, class Shape>
+void ReconcileIconPanel(Compositor& compositor, const RECT& frame, Shape shape,
+    float blurRadius, float opacity, std::uintptr_t ownerKey, bool inheritedGlass)
+{
+    if (inheritedGlass || compositor.HasPanelContaining(frame) || opacity <= 0.0f)
+    {
+        compositor.RemoveIconPanel(frame, ownerKey);
+        return;
+    }
+    if (compositor.AddIconPanel(frame, shape, blurRadius, ownerKey))
+        (void)compositor.SetPanelOpacity(frame, opacity);
+}
+
 // A retained widget can be painted before its backdrop target exists, or
 // outlive a target reset. Reconcile every visible request even when that
 // widget is outside the current paint rectangle and its surface is reused.

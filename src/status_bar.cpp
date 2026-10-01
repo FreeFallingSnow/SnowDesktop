@@ -1525,6 +1525,21 @@ std::optional<RECT> StatusBar::MergedStripBounds(HMONITOR monitor) const
     }
     return {};
 }
+bool StatusBar::HasMergedGlassBackdrop(HMONITOR monitor, const RECT& screenFrame) const
+{
+    if (impl_->removingWindows || IsRectEmpty(&screenFrame) || HighContrast()) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->monitor != monitor || !window->mergedDockHeight ||
+            window->failed || !window->positioned || !window->appearance.glassEnabled ||
+            !window->backdrop.IsAvailable() || window->backdrop.PanelCount() == 0) continue;
+        const auto& strip = window->placedBounds;
+        return screenFrame.left >= strip.left && screenFrame.top >= strip.top &&
+            screenFrame.right <= strip.right && screenFrame.bottom <= strip.bottom;
+    }
+    return false;
+}
 bool StatusBar::IsFullscreen(HMONITOR monitor) const
 {
     for (const auto& [id, window] : impl_->windows)

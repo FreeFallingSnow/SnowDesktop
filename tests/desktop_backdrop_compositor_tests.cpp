@@ -563,6 +563,40 @@ int RunDesktopBackdropCompositorTests()
     check(glass.PanelCount() == 0 && glass.BlurFactoryCount() == 0,
         "hiding icons and panels retires their native blur resources");
 
+    // Reproduce the merged-Dock ownership gap with two real native targets.
+    // The strip is external, so the Dock's own panel list cannot find it.
+    using snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel;
+    constexpr RECT mergedIcon{20, 20, 84, 84};
+    glass.BeginFrame(false);
+    ReconcileIconPanel(glass, mergedIcon, snowdesktop::IconBeautifyShape::ContinuousRounded,
+        16.f, 1.f, 101, false);
+    glass.EndFrame();
+    check(otherGlass.HasPanelContaining(mergedIcon) && !glass.HasPanelContaining(mergedIcon) &&
+            glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1,
+        "missing external inheritance reproduces an unnecessary second native blur");
+    for (int i = 0; i < 6; ++i)
+    {
+        const RECT moved{20 + i, 20, 84 + i, 84};
+        glass.BeginFrame(false);
+        ReconcileIconPanel(glass, moved, snowdesktop::IconBeautifyShape::ContinuousRounded,
+            16.f, 1.f, 101, otherGlass.IsAvailable() && otherGlass.HasPanelContaining(moved));
+        glass.EndFrame();
+        check(glass.PanelCount() == 0 && glass.BlurFactoryCount() == 0 && otherGlass.PanelCount() == 1,
+            "merged icon repaint retires the old blur and retains only its external parent material");
+    }
+    glass.BeginFrame(false);
+    ReconcileIconPanel(glass, mergedIcon, snowdesktop::IconBeautifyShape::ContinuousRounded,
+        16.f, .4f, 101, false);
+    glass.EndFrame();
+    check(glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1,
+        "icons restore their own glass when the enclosing material is unavailable or disabled");
+    glass.BeginFrame(false);
+    ReconcileIconPanel(glass, mergedIcon, snowdesktop::IconBeautifyShape::ContinuousRounded,
+        16.f, 0.f, 101, false);
+    glass.EndFrame();
+    check(glass.PanelCount() == 0 && glass.BlurFactoryCount() == 0,
+        "zero-opacity icons retire their retained blur even in a partial frame");
+
     glass.Reset();
     check(otherGlass.SetVisualOpacity(0.5f),
         "closing one popup preserves another popup's shared controller");

@@ -1,5 +1,6 @@
 #include "../icon_hbitmap_pixels.h"
 #include "app.h"
+#include "desktop_backdrop_update_rules.h"
 
 // HBITMAP analysis, icon beautification and Direct2D bitmap caching.
 
@@ -620,21 +621,26 @@ void DesktopApp::RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t 
     // transaction. Icons inherit that panel rather than adding a second blur.
     if (renderingFloatingPopup_ || quickNavCompositionPaintInProgress_) return;
     DesktopBackdropCompositor* compositor = &desktopBackdropCompositor_;
+    bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
+        desktopWidgetBackdropRequestedDuringDraw_;
     if (renderingPersistentDockHost_)
     {
+        // Merged Dock chrome is painted by the status bar's separate target.
+        // Its backdrop is absent from this compositor's local panel list.
+        if (statusBar_ && renderingPersistentDockHost_->container &&
+            renderingPersistentDockHost_->container->IsMergedWithStatusBar())
+        {
+            RECT screenFrame = frame;
+            OffsetRect(&screenFrame, virtualLeft_, virtualTop_);
+            parentSuppliesGlass = parentSuppliesGlass || statusBar_->HasMergedGlassBackdrop(
+                renderingPersistentDockHost_->monitor, screenFrame);
+        }
         compositor = &renderingPersistentDockHost_->backdrop;
         frame = snowdesktop::floating_dock_rules::DesktopRectToWindowRect(
             frame, renderingPersistentDockHost_->sourceRect);
     }
     const auto key = ownerKey ? ownerKey | 1u : 0;
-    const bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
-        desktopWidgetBackdropRequestedDuringDraw_;
-    if (parentSuppliesGlass || compositor->HasPanelContaining(frame) || opacity <= 0.0f)
-    {
-        compositor->RemoveIconPanel(frame, key);
-        return;
-    }
-    if (compositor->AddIconPanel(frame, iconBeautifySettings_.shape,
-            iconBeautifySettings_.glassBlurRadius, key))
-        (void)compositor->SetPanelOpacity(frame, opacity);
+    snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(*compositor,
+        frame, iconBeautifySettings_.shape, iconBeautifySettings_.glassBlurRadius,
+        opacity, key, parentSuppliesGlass);
 }
