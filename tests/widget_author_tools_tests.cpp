@@ -234,6 +234,11 @@ void TestStandalonePackageExport()
         result = ExportDevelopmentPackageFile(source, temporary.path / L"wrong.zip", id, "1.0.0");
         checks.push_back({!result.succeeded && !std::filesystem::exists(temporary.path / L"wrong.zip"),
             "independent export enforces the installer package extension"});
+        result = ExportDevelopmentPackageFile(source, source / L"nested.snowwidget", id, "1.0.0");
+        checks.push_back({!result.succeeded && !std::filesystem::exists(source / L"nested.snowwidget") &&
+            std::distance(std::filesystem::directory_iterator(source),
+                std::filesystem::directory_iterator{}) == 2,
+            "export cannot modify its source or recursively include a previous package"});
         bool temporaryFilesRemain = false;
         for (const auto& item : std::filesystem::directory_iterator(temporary.path))
             temporaryFilesRemain |= item.path().filename().wstring().starts_with(L".snowwidget-export-");

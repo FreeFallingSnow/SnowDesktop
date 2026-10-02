@@ -50,10 +50,37 @@ inline PackageFileExportResult ExportDevelopmentPackageFile(
         return result;
     }
 
+    std::error_code error;
+    const auto canonicalSource = std::filesystem::weakly_canonical(source, error);
+    if (error)
+    {
+        result.error = error.message();
+        return result;
+    }
+    const auto canonicalOutput = std::filesystem::weakly_canonical(output, error);
+    if (error)
+    {
+        result.error = error.message();
+        return result;
+    }
+    auto sourcePart = canonicalSource.begin();
+    auto outputPart = canonicalOutput.begin();
+    for (; sourcePart != canonicalSource.end() && outputPart != canonicalOutput.end();
+        ++sourcePart, ++outputPart)
+    {
+        if (CompareStringOrdinal(sourcePart->c_str(), -1, outputPart->c_str(), -1,
+                TRUE) != CSTR_EQUAL)
+            break;
+    }
+    if (sourcePart == canonicalSource.end())
+    {
+        result.error = "choose an export location outside the development component directory";
+        return result;
+    }
+
     const std::string uuid = WidgetPackageManager::GenerateUuid();
     const auto temporaryDirectory = output.parent_path() /
         (L".snowwidget-export-" + std::wstring(uuid.begin(), uuid.end()));
-    std::error_code error;
     if (!std::filesystem::create_directory(temporaryDirectory, error))
     {
         result.error = error ? error.message() : "temporary export directory already exists";

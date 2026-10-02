@@ -1921,7 +1921,8 @@ if (BUILD_TESTING)
     add_test(NAME widget_package_file_export
         COMMAND SnowDesktopWidgetAuthorToolsTests --package-export)
     set_tests_properties(widget_package_file_export PROPERTIES
-        TIMEOUT 30 LABELS "authoring;contract;data;security;widget")
+        TIMEOUT 30 LABELS "authoring;contract;data;security;widget"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetAuthorToolsTests>")
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorPreviewCliTests
