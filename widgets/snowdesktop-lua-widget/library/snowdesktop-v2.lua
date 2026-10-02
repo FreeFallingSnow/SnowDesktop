@@ -618,6 +618,7 @@
 ---@field selectAll? boolean Select all text when focus is first acquired.
 ---@field liveUpdate? boolean Persist accepted edits immediately; defaults to true.
 ---@field maxBytes? integer UTF-8 limit from 1..65536; defaults to 4096.
+---@field events? {submit: SnowInteractionAction}? Optional Enter/textArea Ctrl+Enter action; requires control.inputEvents. The host commits storage and blurs before dispatch, with current text and targetKey.
 
 ---@class SnowTextAreaDescriptor: SnowTextInputDescriptor
 ---@field placeholderWhenWhitespace? boolean Show the placeholder for unfocused whitespace-only values.

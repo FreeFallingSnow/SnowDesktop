@@ -14,7 +14,7 @@
   "titleKeys": [
     "lua_widget.reminders.legacy_name"
   ],
-  "version": "2.0.15",
+  "version": "2.0.16",
   "description": "An interactive local ToDo list with quick add, completion, editing, and filtering.",
   "descriptionKey": "lua_widget.reminders.description",
   "locales": {
@@ -318,18 +318,22 @@
   "optionalPermissions": [],
   "requiredFeatures": [
     "control.focus",
+    "control.blur",
+    "control.inputEvents",
     "control.textArea",
     "draw.advanced",
     "draw.immediate",
     "interaction.contextMenu",
     "interaction.contextMenu.submenu",
     "interaction.pointerActions",
+    "interaction.pointerCapture",
     "interaction.region",
     "interaction.scroll",
     "lifecycle.event",
     "lifecycle.model",
     "l10n.basic",
     "layout.relativeUnits",
+    "schedule.basic",
     "storage.transaction",
     "ui.semanticMetrics.rowUnit",
     "widget.confirmRemoval"

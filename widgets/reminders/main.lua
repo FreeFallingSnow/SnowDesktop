@@ -2,6 +2,7 @@
 local descriptor
 local taskLayout = module.require("modules/task_layout.lua")
 local taskPriority = module.require("modules/task_priority.lua")
+local taskOrder = module.require("modules/task_order.lua")
 
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
@@ -120,7 +121,17 @@ local function loadTasks(includeCompleted)
             end
         end
     end
+    if storage.get("manualOrder") == "1" then return tasks end
     return taskPriority.sort(tasks)
+end
+
+local function moveTask(id, beforeId)
+    local ids = taskOrder.move(loadTasks(true), id, beforeId)
+    if not ids then return end
+    storage.transaction(function(tx)
+        saveOrder(tx, ids)
+        tx:set("manualOrder", "1")
+    end)
 end
 
 local function setTaskPriority(id, level)
@@ -304,6 +315,21 @@ local function setup()
     return { editingTaskId = nil, selectedId = nil }
 end
 
+local function cancelDrag(model)
+    model.drag = nil
+    model.scrollStep = nil
+    schedule.cancel("tasks.dragScroll")
+    schedule.cancel("tasks.dragTimeout")
+end
+
+local function dragEvents(id)
+    return {
+        pointerDown = { id = "task.dragStart", value = id },
+        pointerMove = { id = "task.dragMove", value = id },
+        pointerUp = { id = "task.dragEnd", value = id },
+    }
+end
+
 local function clipShape(shape, viewport)
     local x, y = shape.x, shape.y
     local width, height = shape.width, shape.height
@@ -323,7 +349,7 @@ local function clipShape(shape, viewport)
 end
 
 local function registerRegion(key, shape, cursor, events, accessibility,
-    enabled, viewport)
+    enabled, viewport, capturePointer)
     -- Drawing clips do not clip immediate-mode hit regions in the host.
     if viewport then shape = clipShape(shape, viewport) end
     if not shape then return end
@@ -334,6 +360,7 @@ local function registerRegion(key, shape, cursor, events, accessibility,
         events = events,
         accessibility = accessibility,
         enabled = enabled ~= false,
+        capturePointer = capturePointer == true,
     })
 end
 
@@ -341,6 +368,10 @@ local function render(context, model)
     if not context.selected then
         model.selectedId = nil
         model.editingTaskId = nil
+        model.drag = nil
+    end
+    if model.drag and not interaction.isPressed("task.row." .. model.drag.id) then
+        model.drag = nil
     end
     local w = layout.contentWidth()
     local h = layout.contentHeight()
@@ -399,6 +430,7 @@ local function render(context, model)
         selectAll = false,
         liveUpdate = true,
         maxBytes = 4096,
+        events = { submit = { id = "task.add" } },
     })
 
     local addEnabled = trim(storage.get("draft") or "") ~= ""
@@ -442,6 +474,8 @@ local function render(context, model)
     local viewportH = math.max(unit, listBottom - listTop)
     local viewportShape = { type = "rect", x = contentInset, y = listTop,
         width = w - contentInset * 2, height = viewportH }
+    model.viewport = viewportShape
+    model.dragThreshold = metrics.spacingXs
     registerRegion("tasks.background", viewportShape, "default", {
         click = { id = "task.clearSelection" },
         contextMenu = { id = "task.menu", scope = "component" },
@@ -493,6 +527,15 @@ local function render(context, model)
         shape = viewportShape,
         contentHeight = math.ceil(contentHeight),
     })
+    if model.drag and model.drag.active and model.scrollStep then
+        scroll.offset = interaction.setScrollOffset("tasks.scroll",
+            scroll.offset + model.scrollStep)
+        model.scrollStep = nil
+    end
+    model.rows = rows
+    model.scrollOffset = scroll.offset
+    model.scrollAmount = baseCardH
+    model.scrollMaximum = scroll.maximum
     local first, last = taskLayout.visibleRange(rows, scroll.offset, viewportH)
     local selectedId = model.selectedId
 
@@ -517,16 +560,18 @@ local function render(context, model)
                 math.max(0, metrics.controlRadius - inset),
                 metrics.strokeWidth, 0.42)
         end
-        registerRegion(rowKey, {
-            type = "roundedRect", x = contentInset, y = cardY,
-            width = cardW, height = cardH,
-            radius = metrics.controlRadius,
-        }, "hand", {
-            click = { id = "task.select", value = task.id },
-            doubleClick = { id = "task.edit", value = task.id },
-            contextMenu = { id = "task.menu", value = task.id },
-        }, { role = "listitem", label = task.text .. ", " ..
-            urgencyLabels[task.priority] }, nil, viewportShape)
+        local events = dragEvents(task.id)
+        events.click = { id = "task.select", value = task.id }
+        events.doubleClick = { id = "task.edit", value = task.id }
+        events.contextMenu = { id = "task.menu", value = task.id }
+        if not (model.drag and model.drag.active and model.drag.id == task.id) then
+            registerRegion(rowKey, {
+                type = "roundedRect", x = contentInset, y = cardY,
+                width = cardW, height = cardH,
+                radius = metrics.controlRadius,
+            }, "hand", events, { role = "listitem", label = task.text .. ", " ..
+                urgencyLabels[task.priority] }, nil, viewportShape, true)
+        end
 
         local checkboxY = cardY + (cardH - checkboxSize) / 2
         local checkboxKey = "task.toggle." .. task.id
@@ -617,57 +662,153 @@ local function render(context, model)
                 nil, viewportShape)
         end
     end
+    local drag = model.drag
+    if drag and drag.active then
+        -- Keep the captured stable key alive even after scrolling its row out.
+        registerRegion("task.row." .. drag.id, viewportShape, "hand",
+            dragEvents(drag.id), { role = "listitem", label = drag.text },
+            nil, nil, true)
+        if taskOrder.contains(viewportShape, drag.x, drag.y) then
+            local _, marker = taskOrder.target(rows, drag.id,
+                drag.y - listTop + scroll.offset)
+            if marker then
+                local y = math.max(listTop + unit,
+                    math.min(listBottom - unit, listTop + marker - scroll.offset))
+                draw.line(contentInset + metrics.spacingXs, y,
+                    w - contentInset - metrics.spacingXs, y,
+                    px(2), palette.accent, 0.85)
+            end
+        end
+    end
     draw.popClip()
 end
 
+local function updateDrag(model, value)
+    local drag = model.drag
+    if not drag or type(value.x) ~= "number" or type(value.y) ~= "number" then return end
+    drag.x, drag.y = value.x, value.y
+    if not drag.active and math.max(math.abs(drag.x - drag.startX),
+        math.abs(drag.y - drag.startY)) >= (model.dragThreshold or 4) then
+        drag.active = true
+        model.selectedId = drag.id
+        model.editingTaskId = nil
+        schedule.every("tasks.dragScroll", 100, { whenHidden = "pause" })
+    end
+end
+
 local function event(_context, model, value)
+    if (value.kind == "visibility" and not value.visible) or value.kind == "resize" then
+        cancelDrag(model)
+        return
+    end
     if value.kind == "environment" then
+        cancelDrag(model)
         widget.setTitle(l10n.tr("lua_widget.reminders.name"))
+        return
+    end
+    if value.kind == "schedule" then
+        if value.id == "tasks.dragTimeout" or not model.drag then
+            cancelDrag(model)
+        elseif value.id == "tasks.dragScroll" and model.drag.active then
+            local drag, viewport = model.drag, model.viewport
+            if taskOrder.contains(viewport, drag.x, drag.y) then
+                local edge = math.min(model.scrollAmount, viewport.height / 4)
+                if drag.y < viewport.y + edge and model.scrollOffset > 0 then
+                    model.scrollStep = -model.scrollAmount / 2
+                elseif drag.y > viewport.y + viewport.height - edge and
+                    model.scrollOffset < model.scrollMaximum then
+                    model.scrollStep = model.scrollAmount / 2
+                end
+            end
+        end
         return
     end
     if value.kind ~= "action" then return end
     local id = value.value and tostring(value.value) or nil
-    if value.id == "task.add" then
+    if value.id == "task.dragStart" and id and value.button == 1 then
+        cancelDrag(model)
+        model.suppressSelection = nil
+        if taskOrder.contains(model.viewport, value.x, value.y) and
+            storage.get(taskTextKey(id)) ~= nil then
+            model.drag = { id = id, text = storage.get(taskTextKey(id)),
+                startX = value.x, startY = value.y, x = value.x, y = value.y }
+            schedule.after("tasks.dragTimeout", 30000)
+        end
+    elseif value.id == "task.dragMove" and model.drag and model.drag.id == id then
+        if interaction.isPressed("task.row." .. id) then
+            updateDrag(model, value)
+        else
+            cancelDrag(model)
+        end
+    elseif value.id == "task.dragEnd" and model.drag and model.drag.id == id then
+        updateDrag(model, value)
+        local drag = model.drag
+        if drag.active then
+            model.suppressSelection = true
+            if value.button == 1 and not value.cancelled and
+                taskOrder.contains(model.viewport, value.x, value.y) then
+                local beforeId = taskOrder.target(model.rows, id,
+                    value.y - model.viewport.y + model.scrollOffset)
+                moveTask(id, beforeId)
+            end
+        end
+        cancelDrag(model)
+    elseif value.id == "task.add" then
+        cancelDrag(model)
+        -- Flush a still-focused editor before the button consumes its draft.
+        if value.action ~= "submit" then control.blur("new-task") end
         if addDraft() then
             model.selectedId = nil
             model.editingTaskId = nil
         end
     elseif value.id == "task.clearSelection" then
+        cancelDrag(model)
         model.selectedId = nil
         model.editingTaskId = nil
     elseif value.id == "task.select" and id then
+        if model.suppressSelection then
+            model.suppressSelection = nil
+            return
+        end
         model.selectedId = id
         model.editingTaskId = nil
     elseif value.id == "task.edit" and id then
+        cancelDrag(model)
         model.selectedId = id
         model.editingTaskId = id
         control.focus("edit-task-" .. id)
     elseif value.id == "task.toggle" and id then
+        cancelDrag(model)
         model.editingTaskId = nil
         toggleTask(id)
     elseif value.id == "task.delete" and id then
+        cancelDrag(model)
         model.selectedId = nil
         model.editingTaskId = nil
         deleteTask(id)
     elseif id and type(value.id) == "string" and
         value.id:match("^task%.priority%.[0-3]$") then
+        cancelDrag(model)
         model.editingTaskId = nil
         setTaskPriority(id, tonumber(value.id:match("(%d)$")))
     elseif value.id == "task.focusAdd" then
         control.focus("new-task")
     elseif value.id == "task.clearCompleted" then
+        cancelDrag(model)
         model.selectedId = nil
         model.editingTaskId = nil
         clearCompleted()
     elseif value.id == "task.setAll" then
+        cancelDrag(model)
         model.editingTaskId = nil
         local total, completed = taskCounts()
         if total > 0 then setAllCompleted(completed < total) end
     end
 end
 
-local function menu(_context, _model, request)
+local function menu(_context, model, request)
     if request.id ~= "task.menu" then return nil end
+    cancelDrag(model)
     local total, completed = taskCounts()
     local taskId = request.value and tostring(request.value) or nil
     if taskId and storage.get(taskTextKey(taskId)) ~= nil then

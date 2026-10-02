@@ -7786,6 +7786,9 @@ static void DrawHostCompositionUnderline(D2DState* state,
     }
 }
 
+static snowdesktop::widget_runtime::InteractionAction ReadControlSubmitAction(
+    lua_State* state, int descriptor, const char* api);
+
 static int lua_UiTextInput(lua_State* L)
 {
     const char* id = luaL_checkstring(L, 1);
@@ -7978,6 +7981,7 @@ static int lua_UiTextInput(lua_State* L)
         control.fontSize = fontSize;
         control.padding = padding;
         control.maximumUtf8Bytes = maximumUtf8Bytes;
+        control.submitAction = ReadControlSubmitAction(L, options, "control.textInput");
         std::string error;
         if (!s->engine->RuntimeRegisterV2HostControl(
                 BoundWidgetId(L), std::move(control), error))
@@ -8142,6 +8146,7 @@ static int lua_UiTextArea(lua_State* L)
         control.contentHeight = verticalExtents.content;
         control.viewportHeight = verticalExtents.viewport;
         control.maximumUtf8Bytes = maximumUtf8Bytes;
+        control.submitAction = ReadControlSubmitAction(L, options, "control.textArea");
         std::string error;
         if (!s->engine->RuntimeRegisterV2HostControl(
                 BoundWidgetId(L), std::move(control), error))
@@ -8352,6 +8357,43 @@ static std::string ReadControlIdentifier(lua_State* state, int table,
     return result;
 }
 
+static snowdesktop::widget_runtime::InteractionAction ReadControlSubmitAction(
+    lua_State* state, int descriptor, const char* api)
+{
+    snowdesktop::widget_runtime::InteractionAction action;
+    if (!descriptor) return action;
+    lua_getfield(state, lua_absindex(state, descriptor), "events");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return action;
+    }
+    luaL_checktype(state, -1, LUA_TTABLE);
+    const int events = lua_absindex(state, -1);
+    static constexpr const char* eventFields[] = { "submit" };
+    ValidateControlTableFields(state, events, eventFields, api);
+    lua_getfield(state, events, "submit");
+    if (!lua_isnil(state, -1))
+    {
+        luaL_checktype(state, -1, LUA_TTABLE);
+        const int binding = lua_absindex(state, -1);
+        static constexpr const char* actionFields[] = { "id", "value" };
+        ValidateControlTableFields(state, binding, actionFields, api);
+        action.id = ReadControlIdentifier(state, binding, "id", api);
+        lua_getfield(state, binding, "value");
+        std::size_t nodes = 0;
+        std::size_t bytes = 0;
+        std::unordered_set<const void*> ancestors;
+        std::string error;
+        if (!ReadInteractionValue(state, -1, action.value, 0,
+                nodes, bytes, ancestors, error))
+            luaL_error(state, "%s: %s", api, error.c_str());
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 2);
+    return action;
+}
+
 static double ReadControlNumber(lua_State* state, int table,
     const char* field, const char* api)
 {
@@ -8470,7 +8512,7 @@ static int LuaControlText(lua_State* state, bool multiline)
         "borderColor", "focusedBorderColor", "backgroundAlpha",
         "focusedBackgroundAlpha", "borderAlpha", "focusedBorderAlpha",
         "radius", "padding", "borderThickness", "selectAll",
-        "liveUpdate", "maxBytes",
+        "liveUpdate", "maxBytes", "events",
     };
     static constexpr const char* areaFields[] = {
         "key", "storageKey", "shape", "placeholder",
@@ -8479,7 +8521,7 @@ static int LuaControlText(lua_State* state, bool multiline)
         "focusedBorderColor", "backgroundAlpha",
         "focusedBackgroundAlpha", "borderAlpha", "focusedBorderAlpha",
         "radius", "padding", "borderThickness", "selectAll",
-        "liveUpdate", "maxBytes",
+        "liveUpdate", "maxBytes", "events",
     };
     ValidateControlTableFields(state, descriptor,
         multiline ? std::span<const char* const>(areaFields)
@@ -8488,6 +8530,7 @@ static int LuaControlText(lua_State* state, bool multiline)
         state, descriptor, "key", api);
     const std::string storageKey = ReadControlIdentifier(
         state, descriptor, "storageKey", api);
+    (void)ReadControlSubmitAction(state, descriptor, api);
 
     lua_getfield(state, descriptor, "shape");
     if (lua_type(state, -1) != LUA_TTABLE)
@@ -29956,6 +29999,22 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     {
         if (!focusedHostInput_.multiline || ctrl)
         {
+            if (!focusedHostInput_.controlled &&
+                !focusedHostInput_.submitAction.id.empty())
+            {
+                // Commit the storage-bound editor before the callback consumes
+                // or clears its value. A later blur must not restore the draft.
+                const auto widgetId = focusedHostInput_.widgetId;
+                const auto inputId = focusedHostInput_.id;
+                const auto inputSurface = focusedHostInput_.surface;
+                const auto submitAction = focusedHostInput_.submitAction;
+                const auto text = focusedHostInput_.text;
+                BlurHostInput(false);
+                WidgetSurfaceScope surfaceScope(d2dState_, inputSurface.c_str());
+                DispatchHostInputAction(widgetId, inputId,
+                    submitAction, "submit", text, false, "keyboard");
+                return true;
+            }
             DispatchHostInputAction(focusedHostInput_.widgetId,
                 focusedHostInput_.id, focusedHostInput_.submitAction,
                 "submit", focusedHostInput_.text, false, "keyboard");

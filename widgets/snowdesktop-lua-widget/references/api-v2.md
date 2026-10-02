@@ -1610,6 +1610,15 @@ Ctrl+Enter 提交，滚轮与光标跟随会调整实例内滚动位置。普通
 `view.keyboardNavigation.basic` 后，这两个即时兼容控件也进入所属 desktop/panel
 surface 的 Tab 顺序。
 
+探测 `control.inputEvents` 后，这两个即时控件可声明
+`events={submit={id="task.add", value=...}}`。`events` 当前只接受 `submit`，绑定只接受
+`id/value`；value 沿用 interaction action 的 JSON-like 限制。单行 Enter、多行 Ctrl+Enter
+触发一次 `kind="action"`、`action="submit"` 事件，携带 `id/value/targetKey/text/source/surface`。
+宿主先提交 storage 绑定并失焦，再投递动作，因而回调可以清空草稿而不会被后续失焦写回。
+输入法组合期间 Enter 仍留给输入法；多行普通 Enter 仍换行。没有绑定时保留原有提交与失焦行为。
+旧宿主不接受此字段，依赖提交动作的组件必须声明 `control.inputEvents` 为 required feature；
+可降级组件须在 feature 探测后才传入 `events`。`apiVersion` 仍为 2，不能仅凭相同版本号推断支持。
+
 `control.focus(key)` 只能在直接 click/doubleClick/pointerDown/pointerUp/wheel、菜单命令
 或宿主明确标记的打开回调同步栈中接受；render、panel render、schedule、data.change 和
 task.complete 不能抢走键盘焦点。探测 `view.focus.request` 后，key 除文本输入外还可

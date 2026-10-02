@@ -28,6 +28,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "calendar.series",
     "control.blur",
     "control.focus",
+    "control.inputEvents",
     "control.textArea",
     "control.textInput",
     "data.app.indexStatus",

@@ -306,6 +306,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "control.focus") &&
             snowdesktop::widget_api::SupportsFeature(
+                "control.inputEvents") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "control.textArea") &&
             snowdesktop::widget_api::SupportsFeature(
                 "control.textInput") &&

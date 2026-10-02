@@ -811,6 +811,90 @@ return hostWidget.define({
 
 // Exercise both public controls through the real Lua validator and renderer.
 // The 8.4 case reproduces 70% font scaling in sticky-note and reminders.
+void CheckRemindersInteraction(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root,
+    const std::filesystem::path& repository)
+{
+    const auto source = root / L"reminders-interaction";
+    const auto original = repository / L"widgets" / L"reminders";
+    std::filesystem::create_directory(source);
+    CopyManifestAndPreview(original, source);
+    std::filesystem::copy(original / L"modules", source / L"modules",
+        std::filesystem::copy_options::recursive);
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        std::string text{std::istreambuf_iterator<char>(input), {}};
+        Check(input.is_open() && !input.bad() && !text.empty(),
+            "reminders production entry and interaction fixture are read");
+        return text;
+    };
+    auto fixture = read(repository / L"tests" / L"fixtures" / L"reminders_interaction.lua");
+    constexpr std::string_view marker = "-- REMINDERS_ENTRY";
+    const auto position = fixture.find(marker);
+    Check(position != std::string::npos, "reminders fixture has its production-entry insertion point");
+    fixture.replace(position, marker.size(), read(original / L"main.lua"));
+    Write(source / L"main.lua", "local cases = (function()\n" + fixture + R"lua(
+end)()
+return widget.define({ render = function()
+    for name, run in pairs(cases) do
+        local ok, message = pcall(run)
+        assert(ok, name .. ": " .. tostring(message))
+    end
+    draw.text(8, 8, l10n.tr("lua_widget.reminders.name"), 12, 0xFFFFFF)
+end })
+)lua");
+    const auto [exit, json] = Run(snowwidget, { L"preview", source.wstring(),
+        (root / L"reminders-interaction.png").wstring(), L"--host", host.wstring() });
+    if (exit != 0) std::cerr << json << '\n';
+    Check(exit == 0 && json.find("\"ok\":true") != std::string::npos,
+        "actual reminders actions create once, persist manual order, preserve metadata and cancel invalid drops");
+}
+
+void TestControlSubmitEvents(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root)
+{
+    const auto source = root / L"control-submit-events";
+    std::filesystem::create_directory(source);
+    Write(source / L"widget.json", R"json({
+        "schemaVersion":2,"apiVersion":2,"dataVersion":1,
+        "id":"f834a4f0-bf30-4381-b9bb-17907d6b5645",
+        "slug":"control-submit-events","version":"1.0.0","entry":"main.lua",
+        "minHostVersion":"1.0.8.0","name":"Submit event regression",
+        "description":"Checks immediate editor submit event declarations.",
+        "author":"SnowDesktop","license":"MIT","defaultSize":{"columns":2,"rows":2},
+        "requiredFeatures":["control.textArea","control.textInput","control.inputEvents"]
+    })json");
+    Write(source / L"main.lua", R"lua(
+return widget.define({ render = function()
+    assert(widget.hasFeature("control.inputEvents"))
+    for index, api in ipairs({control.textInput, control.textArea}) do
+        local serial = 0
+        local function spec(events)
+            serial = serial + 1
+            return {key="input."..index.."."..serial, storageKey="text."..index,
+                shape={type="rect",x=8,y=8+(index-1)*40,width=180,height=32},events=events}
+        end
+        api(spec(nil))
+        api(spec({submit={id="task.add",value={origin="input",index=index}}}))
+        local invalid = {
+            false, {change={id="change"}}, {submit="task.add"}, {submit={id=""}},
+            {submit={id=123}}, {submit={id="submit",scope="component"}},
+            {submit={id="submit",value=0/0}}, {submit={id="submit",value=string.rep("x",16385)}},
+        }
+        for _, events in ipairs(invalid) do
+            assert(not pcall(api,spec(events)), "invalid submit event descriptor was accepted")
+        end
+        api(spec({submit={id="task.add"}}))
+    end
+end })
+)lua");
+    const auto [exit, json] = Run(snowwidget, { L"preview", source.wstring(),
+        (root / L"control-submit-events.png").wstring(), L"--host", host.wstring() });
+    if (exit != 0) std::cerr << json << '\n';
+    Check(exit == 0 && json.find("\"ok\":true") != std::string::npos,
+        "both immediate editors accept optional submit actions and reject invalid events and payloads");
+}
+
 void TestTextControlFontSizing(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& root)
 {
@@ -1788,6 +1872,7 @@ int wmain(int argc, wchar_t** argv) try
         TestResourcePanelPreview(snowwidget, host, temporary.path);
         TestStatusBarPreview(snowwidget, host, temporary.path);
         TestTextControlFontSizing(snowwidget, host, temporary.path);
+        TestControlSubmitEvents(snowwidget, host, temporary.path);
         const auto tooltipRoot = temporary.path / L"tooltip";
         std::filesystem::create_directory(tooltipRoot);
         TestImmediateTooltip(host, tooltipRoot);
@@ -2515,6 +2600,7 @@ int wmain(int argc, wchar_t** argv) try
             "System Monitor defaults, legacy all-GPU selection and missing saved selection render a concrete available device");
         CheckModuleRequireErrors(snowwidget, host, temporary.path, monitorSource);
         CheckSystemMonitorMenu(snowwidget, host, temporary.path, monitorSource);
+        CheckRemindersInteraction(snowwidget, host, temporary.path, repository);
 
         const auto environmentSource =
             CreateEnvironmentFixture(temporary.path);
