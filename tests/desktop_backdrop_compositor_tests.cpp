@@ -43,6 +43,33 @@ struct RetainedWidget
     int backdropBlurRadius = 24;
 };
 
+struct OwnedBackdropQuery
+{
+    const DesktopBackdropCompositor* compositor = nullptr;
+    HWND helper = nullptr;
+};
+
+BOOL CALLBACK MatchOwnedBackdrop(HWND window, LPARAM parameter)
+{
+    auto& query = *reinterpret_cast<OwnedBackdropQuery*>(parameter);
+    DWORD process = 0;
+    if (GetWindowThreadProcessId(window, &process) == GetCurrentThreadId() &&
+        process == GetCurrentProcessId() && query.compositor->IsBackdropWindow(window))
+    {
+        query.helper = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+HWND FindOwnedBackdrop(const DesktopBackdropCompositor& compositor)
+{
+    OwnedBackdropQuery query{&compositor};
+    EnumThreadWindows(GetCurrentThreadId(), MatchOwnedBackdrop,
+        reinterpret_cast<LPARAM>(&query));
+    return query.helper;
+}
+
 bool WaitForCommit(HWND window, WPARAM token)
 {
     const ULONGLONG deadline = GetTickCount64() + 3000;
@@ -328,7 +355,15 @@ int RunDesktopBackdropCompositorTests()
                 cardsGlass.AddPanel({16, 148, 304, 212}, 12, 24, 31002),
             "two independent cards register before animation starts");
         cardsGlass.EndFrame(false);
-        const HWND cardsHelper = GetWindow(cardsContent.handle, GW_HWNDNEXT);
+        // A Z-order neighbor need not be this compositor's helper. Keep a
+        // different test-owned window nearby while checking exact identity.
+        PopupWindow unrelatedHidden;
+        if (!check(unrelatedHidden.handle && SetWindowPos(unrelatedHidden.handle,
+                cardsContent.handle, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE),
+                "identity fixture inserts only its own hidden neighboring popup"))
+            return failures;
+        const HWND cardsHelper = FindOwnedBackdrop(cardsGlass);
         if (!check(cardsGlass.IsBackdropWindow(cardsHelper),
                 "card-animation assertions address only this fixture's helper HWND"))
             return failures;
