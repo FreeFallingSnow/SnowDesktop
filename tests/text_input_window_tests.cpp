@@ -56,10 +56,19 @@ void Ordinary(HWND owner)
     SendMessageW(window,EM_SETLIMITTEXT,5,0);SendMessageW(window,EM_SETSEL,5,5);SendMessageW(window,WM_CHAR,L'x',0);Check(Value(window)==L"model","limit rejects oversized edits");
     DestroyWindow(window);
 }
-void StableEmbeddedPresentation(HWND owner)
+void StableEmbeddedPresentation()
 {
+    // Hidden owners discard their update region even when InvalidateRect succeeds.
+    // Keep this isolated window shown offscreen without activating it so the
+    // unchanged/changed setter checks can actually observe paint requests.
+    const auto owner=CreateWindowExW(WS_EX_NOACTIVATE,L"SnowDesktop.TextInputTestOwner",L"",WS_OVERLAPPED,
+        -32000,-32000,400,300,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    Check(owner!=nullptr,"create isolated offscreen presentation owner");if(!owner)return;
+    ShowWindow(owner,SW_SHOWNOACTIVATE);
+    InvalidateRect(owner,nullptr,FALSE);
+    Check(GetUpdateRect(owner,nullptr,FALSE)!=FALSE,"presentation fixture exposes a requested parent paint");
     const auto window=Create(owner,ES_AUTOHSCROLL,L"search text");
-    Check(window!=nullptr,"create embedded presentation regression");if(!window)return;
+    Check(window!=nullptr,"create embedded presentation regression");if(!window){DestroyWindow(owner);return;}
     input::Colors colors;const RECT frame{20,30,340,72};
     input::SetEmbeddedPose(window,frame,frame,true,true);
     input::SetColors(window,colors,0.f);input::SetPadding(window,4.f,0.f);input::SetCaretHeight(window,19.f);
@@ -88,7 +97,7 @@ void StableEmbeddedPresentation(HWND owner)
     repaint([&]{SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(L"Search commands"));},"changed placeholder repaints the embedded owner");
     repaint([&]{input::SetCaretHeight(window,20.f);},"changed caret height requests a paint");
     repaint([&]{input::SetPadding(window,6.f,1.f);},"changed padding requests a paint");
-    DestroyWindow(window);ValidateRect(owner,nullptr);
+    DestroyWindow(window);DestroyWindow(owner);
 }
 void Accessible(HWND owner)
 {
@@ -357,7 +366,7 @@ int main(int argc,char** argv)
     if(!owner)Check(false,"create isolated hidden test owner");
     else if(argc>3&&std::string(argv[2])=="--border-preview")
     {RoundedBorder(owner,std::filesystem::path(argv[3]));DestroyWindow(owner);}
-    else{Ordinary(owner);StableEmbeddedPresentation(owner);Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);ScrolledGlyphs(owner);RoundedBorder(owner);
+    else{Ordinary(owner);StableEmbeddedPresentation();Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);ScrolledGlyphs(owner);RoundedBorder(owner);
         Check(argc>1,"the bundled-font regression receives the repository root");
         if(argc>1)BundledFonts(owner,std::filesystem::path(argv[1]));DestroyWindow(owner);}
     if(SUCCEEDED(apartment))CoUninitialize();
