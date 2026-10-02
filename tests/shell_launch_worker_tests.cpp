@@ -1085,6 +1085,33 @@ void TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped()
     CloseHandle(finished);
 }
 
+
+std::wstring capturedRunTarget, capturedRunParameters;
+BOOL WINAPI CaptureRunExecute(SHELLEXECUTEINFOW* info)
+{
+    capturedRunTarget = info->lpFile ? info->lpFile : L"";
+    capturedRunParameters = info->lpParameters ? info->lpParameters : L"";
+    Check((info->fMask & SEE_MASK_NOASYNC) != 0,"Run executes synchronously only inside the supervised helper");
+    return TRUE;
+}
+BOOL WINAPI CaptureRunGrant(DWORD process) {return process == ASFW_ANY;}
+void TestRunCommandBoundary()
+{
+    namespace process = snowdesktop::shell_launch_process;
+    process::Request request; request.action = process::Action::RunCommand;
+    request.path = L"\"C:\\Program Files\\Example\\app.exe\" --flag \"two words\"";
+    process::ExecutionApi api; api.execute = CaptureRunExecute; api.allow = CaptureRunGrant;
+    Check(process::ExecuteRequestWithApi(request,api) && capturedRunTarget == L"C:\\Program Files\\Example\\app.exe" && capturedRunParameters == L"--flag \"two words\"","Run uses the Shell filename/parameters boundary with exact argument quoting");
+    const auto decoded = process::Decode(process::Encode(request));
+    Check(decoded && decoded->action == process::Action::RunCommand && decoded->path == request.path,"the private helper carries the new Run action unchanged");
+    request.path = L"ms-settings:display";
+    Check(process::ExecuteRequestWithApi(request,api) && capturedRunTarget == request.path && capturedRunParameters.empty(),"URI targets use normal Shell associations");
+    request.path = L"cmd /c echo one | more";
+    Check(process::ExecuteRequestWithApi(request,api) && capturedRunTarget == L"cmd" && capturedRunParameters == L"/c echo one | more","pipeline semantics are delegated only to the explicit interpreter");
+    request.path = L"\"unclosed"; capturedRunTarget.clear();
+    Check(!process::ExecuteRequestWithApi(request,api) && capturedRunTarget.empty(),"invalid Run text never reaches ShellExecute");
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv)
@@ -1155,6 +1182,7 @@ int wmain(int argc, wchar_t** argv)
     CheckElevationDispatch(L"explicit-administrator.exe",
         snowdesktop::shell_launch_process::Action::RunAs);
     TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
+    TestRunCommandBoundary();
     TestHelperFailureReachesCaller();
     TestExtendedPathLaunch();
     TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped();

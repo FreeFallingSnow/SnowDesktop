@@ -119,11 +119,11 @@ void DesktopApp::EnsureQuickNavTextFormats()
     if (!dwriteFactory_)
         return;
 
-    const float tabSize = static_cast<float>(QuickNavScale(14));
-    const float itemSize = static_cast<float>(QuickNavScale(13));
-    const float pathSize = static_cast<float>(QuickNavScale(11));
-    // 深色用极细字重：Segoe UI Variable 支持连续字重轴，100=Thin 才能真正比 Light(300) 更细。
-    const float itemWeightValue = quickNavLightTheme_ ? 550.0f : 100.0f;
+    const float tabSize = static_cast<float>(QuickNavScale(navigationSettings_.layout.fontSize));
+    const float itemSize = static_cast<float>(QuickNavScale(navigationSettings_.layout.fontSize));
+    const float pathSize = static_cast<float>(QuickNavScale(navigationSettings_.layout.secondaryFontSize));
+    // Both content themes share regular text weight for consistent readability.
+    const float itemWeightValue = 400.0f;
     const DWRITE_FONT_WEIGHT itemWeight =
         static_cast<DWRITE_FONT_WEIGHT>(static_cast<int>(itemWeightValue));
 
@@ -148,6 +148,7 @@ void DesktopApp::EnsureQuickNavTextFormats()
 
     createOrRecreate(quickNavTabTextFormat_, L"Segoe UI", tabSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     createOrRecreate(quickNavItemTextFormat_, L"Segoe UI Variable", itemSize, itemWeight, DWRITE_TEXT_ALIGNMENT_LEADING);
+    createOrRecreate(quickNavSearchTextFormat_, L"Segoe UI", static_cast<float>(QuickNavScale(navigationSettings_.layout.searchFontSize)), DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
     createOrRecreate(quickNavPathTextFormat_, L"Segoe UI", pathSize, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING);
     if (!quickNavFluentTextFormat_ ||
         std::abs(
@@ -410,7 +411,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         quickNavCompositionPaintInProgress_
     };
 
-    const QuickNavTheme& t = quickNavLightTheme_ ? kQuickNavLight : kQuickNavDark;
 
     HRESULT hr = CreateOrResizeQuickNavCompositionSurface();
     if (FAILED(hr))
@@ -451,10 +451,39 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     brushCache_.clear();
     brushCacheContext_ = ctx.Get();
 
+    DrawQuickNavigationSurface(ctx.Get());
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    ctx.Reset();
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+
+    hr = quickNavDcompSurface_->EndDraw();
+    if (FAILED(hr))
+    {
+        RecoverQuickNavCompositionFailure(L"EndDraw", hr);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    if (!CommitQuickNavigationCompositionFrame())
+    {
+        RecoverQuickNavCompositionFailure(
+            L"Queue Paint Commit", E_FAIL);
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    quickNavCompositionRenderRecoveryPending_ = false;
+
+    EndPaint(hwnd, &ps);
+}
+
+void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
+{
+    ComPtr<ID2D1DeviceContext> ctx = context;
+    const QuickNavTheme t = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_);
     const RECT& overlay = quickNavigationRect_;
     const float windowCornerRadius =
         static_cast<float>(
-            QuickNavScale(16)) / 2.0f;
+            QuickNavScale(navigationSettings_.layout.cornerRadius));
     ComPtr<ID2D1RoundedRectangleGeometry>
         windowClipGeometry;
     bool windowClipPushed = false;
@@ -488,7 +517,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     if (quickNavAppearance_.glassEnabled && quickNavAppearance_.acrylicEnabled)
     {
         POINT screenOrigin{};
-        ClientToScreen(quickNavigationHwnd_, &screenOrigin);
+        if (!quickNavigationPreview_) ClientToScreen(quickNavigationHwnd_, &screenOrigin);
         DrawAcrylicNoise(ctx.Get(), overlay, windowCornerRadius,
             quickNavAppearance_.contentTheme == 1, screenOrigin);
     }
@@ -556,13 +585,20 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     const RECT searchRect = GetQuickNavigationSearchRect(overlay);
     DrawD2DRoundedRectangle(ctx.Get(),
         searchRect,
-        static_cast<float>(QuickNavScale(12)) / 2.0f,
-        ToD2DColor(t.searchBg), ToD2DColor(t.searchBorder));
-    const RECT searchInput = QuickNavigationSearchInputRect(searchRect, QuickNavScale(4));
+        static_cast<float>(QuickNavScale(navigationSettings_.layout.searchRadius)),
+        ToD2DColor(t.searchBg), ToD2DColor(quickNavigationSearchEdit_ && GetFocus() == quickNavigationSearchEdit_ ? t.searchFocus : t.searchBorder));
+    const RECT searchInput = GetQuickNavigationInputRect(overlay);
+    snowdesktop::text_input::SetColors(quickNavigationSearchEdit_,
+        {t.searchBg, t.searchText, t.searchBorder, t.searchFocus, t.selectedText, t.searchPlaceholder});
     snowdesktop::text_input::Draw(quickNavigationSearchEdit_, ctx.Get(),
         ToD2DRect(searchInput), 1.f, false);
+    if (!quickNavigationSearchEdit_)
+        DrawD2DTextEllipsis(ctx.Get(), GetQuickNavigationEffectiveSearchText().empty() ? _LW("app.nav.search_hint") : GetQuickNavigationEffectiveSearchText(),
+            searchInput, quickNavSearchTextFormat_.Get(), ToD2DColor(GetQuickNavigationEffectiveSearchText().empty() ? t.searchPlaceholder : t.searchText));
 
-    if (!searching)
+    DrawQuickNavigationMenus(ctx.Get());
+
+    if (!searching && !UseQuickNavigationList() && quickNavigationMenu_ == QuickNavigationMenu::None)
     {
         RECT tabs = GetQuickNavigationTabsRect(overlay);
         const int tabsStart =
@@ -654,14 +690,14 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                                 : ToD2DColor(t.tabDefaultStroke, 0.72f);
             }
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
-                static_cast<float>(QuickNavScale(14)) / 2.0f, fill, stroke);
+                static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)), fill, stroke);
 
             std::wstring label = GetQuickNavTabLabel(tab);
             RECT textRect = tabRect;
             textRect.left += QuickNavScale(8);
             textRect.right -= QuickNavScale(8);
             DrawD2DTextEllipsis(ctx.Get(), label, textRect, quickNavTabTextFormat_.Get(),
-                active ? ToD2DColor(RGB(245, 248, 252)) : ToD2DColor(t.tabText),
+                ToD2DColor(active ? t.tabActiveText : hovered ? t.tabHoverText : t.tabText),
                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         };
 
@@ -729,7 +765,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     tabsStart));
             tabRect.right = std::min<LONG>(tabRect.right, static_cast<LONG>(tabClipRight));
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
-                static_cast<float>(QuickNavScale(14)) / 2.0f,
+                static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)),
                 ToD2DColor(t.tabDragFloatFill, 0.82f),
                 ToD2DColor(t.tabDragFloatStroke, 0.88f));
 
@@ -779,7 +815,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             DrawD2DRoundedRectangle(
                 ctx.Get(), modeButton,
                 static_cast<float>(
-                    QuickNavScale(14)) / 2.0f,
+                    QuickNavScale(navigationSettings_.layout.tabRadius)),
                 fill, stroke);
             const std::wstring_view glyph =
                 snowdesktop::
@@ -787,10 +823,15 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         QuickNavigationDesktopViewModeGlyph(
                             navigationSettings_.
                                 desktopViewMode);
+            RECT glyphRect = modeButton; glyphRect.right = glyphRect.left + QuickNavScale(28);
+            RECT labelRect = modeButton; labelRect.left += QuickNavScale(28); labelRect.right -= QuickNavScale(24);
+            RECT chevronRect = modeButton; chevronRect.left = chevronRect.right - QuickNavScale(24);
+            DrawD2DText(ctx.Get(), L"\uF2A4", chevronRect, quickNavFluentTextFormat_.Get(), ToD2DColor(t.tabText));
+            DrawD2DTextEllipsis(ctx.Get(), QuickNavigationViewLabel(), labelRect, quickNavPathTextFormat_.Get(), ToD2DColor(t.tabText));
             DrawD2DText(
                 ctx.Get(),
                 std::wstring(glyph),
-                modeButton,
+                glyphRect,
                 quickNavFluentTextFormat_
                 ? quickNavFluentTextFormat_.Get()
                 : (fluentIconTextFormat_
@@ -801,8 +842,19 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     }
 
     RECT contentApp = GetQuickNavigationContentRect(overlay);
+    if (contentApp.bottom <= contentApp.top)
+    {
+        if (windowClipPushed) ctx->PopLayer();
+        return;
+    }
     ctx->PushAxisAlignedClip(ToD2DRect(contentApp), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (quickNavigationInitialJumpOpen_)
+    if (quickNavigationMenu_ != QuickNavigationMenu::None)
+    {
+        // Menu drawing and keyboard selection use the same row geometry.
+    }
+    else if (UseQuickNavigationList())
+        DrawQuickNavigationList(ctx.Get());
+    else if (quickNavigationInitialJumpOpen_)
     {
         RECT titleRect = MakeRect(
             contentApp.left + QuickNavScale(8),
@@ -915,8 +967,8 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     {
         RECT emptyRect = contentApp;
         emptyRect.top += QuickNavScale(28);
-        if (searching && !everythingSearchAvailable_)
-            DrawD2DTextEllipsis(ctx.Get(), GetQuickNavigationEverythingNoticeText(),
+        if (searching && (!everythingSearchAvailable_ || quickNavigationEverythingSearchPending_ || !quickNavigationAppsIndexed_))
+            DrawD2DTextEllipsis(ctx.Get(), !quickNavigationAppsIndexed_ ? _LW("quickNav.apps.loading") : quickNavigationEverythingSearchPending_ ? _LW("quickNav.files.loading") : GetQuickNavigationEverythingNoticeText(),
                 emptyRect, quickNavItemTextFormat_.Get(), ToD2DColor(t.emptyText),
                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, false);
         else
@@ -1026,11 +1078,19 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 i);
 
             const QuickNavigationEntry& entry = entries[i];
-            const int state = (PtInRect(
-                    &itemRectApp,
-                    quickNavigationLastMousePoint_) != FALSE ||
-                IsQuickNavigationKeyboardTarget(
-                    QuickNavigationKeyboardTargetKind::Item, i)) ? 1 : 0;
+            const bool selected = IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::Item, i);
+            const bool hovered = PtInRect(&itemRectApp, quickNavigationLastMousePoint_) != FALSE;
+            if (selected || hovered || navigationSettings_.colors.contains("resultFill") || navigationSettings_.colors.contains("resultBorder"))
+                DrawD2DRoundedRectangle(ctx.Get(), itemRectApp,
+                    static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                    ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill),
+                    ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder,
+                        selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
+            if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
+                DrawD2DRoundedRectangle(ctx.Get(), GetQuickNavItemIconRect(itemRectApp),
+                    static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                    ToD2DColor(t.iconPlateFill, navigationSettings_.colors.contains("iconPlateFill") ? 1.f : 0.f),
+                    ToD2DColor(t.iconPlateBorder, navigationSettings_.colors.contains("iconPlateBorder") ? 1.f : 0.f));
             // 图标本体复用桌面绘制，标题由快捷导航自绘，避免桌面标题布局和字重互相影响。
             if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
                 entry.itemIndex < items_.size())
@@ -1039,11 +1099,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     entry.demoCollectionIndex < widgets_.size()
                     ? &widgets_[entry.demoCollectionIndex] : nullptr;
                 DesktopIcon icon(&items_[entry.itemIndex], nullptr, this);
-                icon.Draw(ctx.Get(), itemRectApp, state,
+                icon.Draw(ctx.Get(), itemRectApp, 0,
                     quickNavLightTheme_, false, true, demoCollection);
                 if (!IsRenamingItem(&items_[entry.itemIndex]))
                     DrawQuickNavItemText(ctx.Get(), itemRectApp, entry.name,
-                        false, quickNavLightTheme_);
+                        IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::Item, i), quickNavLightTheme_);
             }
             else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
                 entry.widgetIndex < widgets_.size() &&
@@ -1052,10 +1112,10 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 FolderEntry& folderEntry =
                     widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
                 FolderEntryIcon icon(&folderEntry, nullptr, this);
-                icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false, true);
+                icon.Draw(ctx.Get(), itemRectApp, 0, quickNavLightTheme_, false, true);
                 if (!IsRenamingItem(&folderEntry))
                     DrawQuickNavItemText(ctx.Get(), itemRectApp, folderEntry.name,
-                        false, quickNavLightTheme_);
+                        IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::Item, i), quickNavLightTheme_);
             }
         }
 
@@ -1066,9 +1126,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 (static_cast<int>(entries.size()) + columns - 1) / columns;
             const int headerH = QuickNavScale(28);
             const int gap = QuickNavScale(8);
-            const int rowH = QuickNavScale(46);
+            const int rowH = QuickNavScale(navigationSettings_.layout.resultRowHeight);
             const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
-                QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
+                QuickNavScale(QuickNavigationGridCellHeight()), QuickNavScale(navigationSettings_.layout.rowGap));
             const int appHeaderTop = contentApp.top + headerH + gap
                 + desktopGridH
                 + gap - quickNavigationScrollOffset_;
@@ -1108,14 +1168,12 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         QuickNavigationPointerTargetKind::App,
                         i);
 
-                    if (PtInRect(
-                            &rowRectApp,
-                            quickNavigationLastMousePoint_) != FALSE ||
-                        IsQuickNavigationKeyboardTarget(
-                            QuickNavigationKeyboardTargetKind::App, i))
-                        DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
-                            static_cast<float>(QuickNavScale(10)) / 2.0f,
-                            ToD2DColor(t.appRowHoverFill), ToD2DColor(t.appRowHoverStroke));
+                    const bool selected = IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::App, i);
+                    const bool hovered = PtInRect(&rowRectApp, quickNavigationLastMousePoint_) != FALSE;
+                    DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
+                        static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered ? 1.f : 0.22f),
+                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered ? 1.f : 0.f));
 
                     const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[appIndex];
                     const int iconSz = QuickNavScale(28);
@@ -1136,13 +1194,13 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     RECT nameRect = rowRectApp;
                     nameRect.left = textLeft;
                     nameRect.right -= QuickNavScale(12);
-                    nameRect.top += QuickNavScale(5);
-                    nameRect.bottom = nameRect.top + QuickNavScale(18);
+                    nameRect.top += QuickNavScale(6);
+                    nameRect.bottom = nameRect.top + QuickNavScale(navigationSettings_.layout.fontSize + 6);
 
                     RECT typeRect = rowRectApp;
                     typeRect.left = textLeft;
                     typeRect.right -= QuickNavScale(12);
-                    typeRect.top += QuickNavScale(24);
+                    typeRect.top = nameRect.bottom;
                     typeRect.bottom -= QuickNavScale(5);
 
                     const std::wstring appName =
@@ -1152,7 +1210,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         ? GetDemoIdentityTitle(entry.parsingName)
                         : entry.name;
                     DrawD2DTextEllipsis(ctx.Get(), appName, nameRect,
-                        quickNavItemTextFormat_.Get(), ToD2DColor(t.appNameText),
+                        quickNavItemTextFormat_.Get(), ToD2DColor(selected ? t.selectedText : t.appNameText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                     DrawD2DTextEllipsis(ctx.Get(), _LW("app.nav.app_label"), typeRect,
                         quickNavPathTextFormat_.Get(), ToD2DColor(t.appTypeText),
@@ -1206,7 +1264,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     everythingHeaderTop,
                     contentApp.right - QuickNavScale(12),
                     everythingHeaderTop + headerH);
-                std::wstring everythingLabel = L"Everything  " +
+                std::wstring everythingLabel = quickNavigationEverythingSearchPending_ ? _LW("quickNav.files.loading") : L"Everything  " +
                     std::to_wstring(quickNavigationEverythingResults_.size()) +
                     (quickNavigationEverythingHasMore_
                         ? _LW("app.interact.plus_items")
@@ -1234,14 +1292,12 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                         QuickNavigationPointerTargetKind::Everything,
                         i);
 
-                    if (PtInRect(
-                            &rowRectApp,
-                            quickNavigationLastMousePoint_) != FALSE ||
-                        IsQuickNavigationKeyboardTarget(
-                            QuickNavigationKeyboardTargetKind::Everything, i))
-                        DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
-                            static_cast<float>(QuickNavScale(10)) / 2.0f,
-                            ToD2DColor(t.appRowHoverFill), ToD2DColor(t.appRowHoverStroke));
+                    const bool selected = IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::Everything, i);
+                    const bool hovered = PtInRect(&rowRectApp, quickNavigationLastMousePoint_) != FALSE;
+                    DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
+                        static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered ? 1.f : 0.22f),
+                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered ? 1.f : 0.f));
 
                     const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];
                     const int iconSz = QuickNavScale(28);
@@ -1255,18 +1311,18 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     RECT nameRect = rowRectApp;
                     nameRect.left = textLeft;
                     nameRect.right -= QuickNavScale(12);
-                    nameRect.top += QuickNavScale(5);
-                    nameRect.bottom = nameRect.top + QuickNavScale(18);
+                    nameRect.top += QuickNavScale(6);
+                    nameRect.bottom = nameRect.top + QuickNavScale(navigationSettings_.layout.fontSize + 6);
 
                     RECT pathRect = rowRectApp;
                     pathRect.left = textLeft;
                     pathRect.right -= QuickNavScale(12);
-                    pathRect.top += QuickNavScale(24);
+                    pathRect.top = nameRect.bottom;
                     pathRect.bottom -= QuickNavScale(5);
 
                     DrawD2DTextEllipsis(ctx.Get(),
                         entry.name.empty() ? FileNameFromPath(entry.path) : entry.name,
-                        nameRect, quickNavItemTextFormat_.Get(), ToD2DColor(t.appNameText),
+                        nameRect, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? t.selectedText : t.appNameText),
                         DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
                     const std::wstring modifiedText = entry.modifiedText.empty()
@@ -1342,110 +1398,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             ToD2DColor(thumbColor), ToD2DColor(thumbColor));
     }
 
-    const RECT modeButton =
-        GetQuickNavigationViewModeButtonRect(
-            overlay);
-    if (!IsRectEmpty(&modeButton) &&
-        PtInRect(
-            &modeButton,
-            quickNavigationLastMousePoint_) != FALSE)
-    {
-        auto modeLabel = [](
-            QuickNavigationDesktopViewMode mode) {
-            return mode ==
-                QuickNavigationDesktopViewMode::Source
-                ? std::wstring(
-                    _LW("app.nav.view_source"))
-                : (mode ==
-                    QuickNavigationDesktopViewMode::Initial
-                    ? std::wstring(
-                        _LW("app.nav.view_initial"))
-                    : std::wstring(
-                        _LW("app.nav.view_tile")));
-        };
-        const auto nextMode =
-            snowdesktop::quick_navigation_rules::
-                NextQuickNavigationDesktopViewMode(
-                    navigationSettings_.
-                        desktopViewMode);
-        const std::wstring tooltip = _LFW(
-            "app.nav.view_mode_tooltip",
-            modeLabel(
-                navigationSettings_.
-                    desktopViewMode),
-            modeLabel(nextMode));
-        const int tooltipWidth =
-            QuickNavScale(240);
-        const int tooltipHeight =
-            QuickNavScale(28);
-        const int tooltipLeft =
-            std::clamp(
-                static_cast<int>(
-                    modeButton.left),
-                static_cast<int>(
-                    overlay.left +
-                    QuickNavScale(8)),
-                std::max(
-                    static_cast<int>(
-                        overlay.left +
-                        QuickNavScale(8)),
-                    static_cast<int>(
-                        overlay.right -
-                        QuickNavScale(8) -
-                        tooltipWidth)));
-        const RECT tooltipRect = MakeRect(
-            tooltipLeft,
-            modeButton.bottom +
-                QuickNavScale(4),
-            tooltipLeft + tooltipWidth,
-            modeButton.bottom +
-                QuickNavScale(4) +
-                tooltipHeight);
-        DrawD2DRoundedRectangle(
-            ctx.Get(), tooltipRect,
-            static_cast<float>(
-                QuickNavScale(10)) / 2.0f,
-            t.popupBg,
-            t.popupBorder);
-        RECT tooltipTextRect = tooltipRect;
-        tooltipTextRect.left +=
-            QuickNavScale(8);
-        tooltipTextRect.right -=
-            QuickNavScale(8);
-        DrawD2DTextEllipsis(
-            ctx.Get(), tooltip,
-            tooltipTextRect,
-            quickNavPathTextFormat_.Get(),
-            t.popupTitle,
-            DWRITE_TEXT_ALIGNMENT_LEADING,
-            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    }
-
-    if (windowClipPushed)
-        ctx->PopLayer();
-    quickNavigationPointerTarget_ =
-        HitTestQuickNavigationPointerTarget(
-            quickNavigationLastMousePoint_);
-    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
-    ctx.Reset();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
-
-    hr = quickNavDcompSurface_->EndDraw();
-    if (FAILED(hr))
-    {
-        RecoverQuickNavCompositionFailure(L"EndDraw", hr);
-        EndPaint(hwnd, &ps);
-        return;
-    }
-    if (!CommitQuickNavigationCompositionFrame())
-    {
-        RecoverQuickNavCompositionFailure(
-            L"Queue Paint Commit", E_FAIL);
-        EndPaint(hwnd, &ps);
-        return;
-    }
-    quickNavCompositionRenderRecoveryPending_ = false;
-
-    EndPaint(hwnd, &ps);
+    if (windowClipPushed) ctx->PopLayer();
+    quickNavigationPointerTarget_ = HitTestQuickNavigationPointerTarget(quickNavigationLastMousePoint_);
 }

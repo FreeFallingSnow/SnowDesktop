@@ -1,3 +1,4 @@
+#include "quick_navigation_query.h"
 #include "shell_launch_worker.h"
 #include "operation_feedback.h"
 #include "shell_context_menu_invoke.h"
@@ -453,6 +454,20 @@ bool shell_launch_process::ExecuteRequestWithApi(
         return false;
     const HWND validOwner = IsLaunchOwner(request.owner)
         ? request.owner : nullptr;
+    if (request.action == Action::RunCommand)
+    {
+        const auto command = quick_navigation_query::ParseCommand(path);
+        if (!command) return false;
+        SHELLEXECUTEINFOW info{};
+        info.cbSize = sizeof(info);
+        info.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
+        info.hwnd = validOwner;
+        info.lpFile = command->target.c_str();
+        info.lpParameters = command->parameters.empty() ? nullptr : command->parameters.c_str();
+        info.nShow = request.showCommand;
+        api.allow(ASFW_ANY);
+        return api.execute(&info) != FALSE;
+    }
     const bool runAs = request.action == Action::RunAs ||
         (request.action == Action::OpenWithShortcutPolicy &&
             ShellLaunchWorker::ShortcutRequestsAdministrator(path));

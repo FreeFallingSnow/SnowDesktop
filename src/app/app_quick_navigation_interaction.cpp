@@ -214,6 +214,9 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         return false;
     }
 
+    if (HandleQuickNavigationToolbarClick(point)) return true;
+    if (UseQuickNavigationList() || quickNavigationMenu_ != QuickNavigationMenu::None)
+        return HandleQuickNavigationListClick(point);
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     if (!searching)
@@ -301,10 +304,10 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
                 (static_cast<int>(entries.size()) + columns - 1) / columns;
             const int headerH = QuickNavScale(28);
             const int gap = QuickNavScale(8);
-            const int rowH = QuickNavScale(46);
+            const int rowH = QuickNavScale(navigationSettings_.layout.resultRowHeight);
             const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
             const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
-                QuickNavScale(kQuickNavigationCellHeight), QuickNavScale(kQuickNavigationItemRowGap));
+                QuickNavScale(QuickNavigationGridCellHeight()), QuickNavScale(navigationSettings_.layout.rowGap));
             const int appSectionHeight = quickNavigationAppResultIndices_.empty()
                 ? 0
                 : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
@@ -446,6 +449,7 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
         return false;
     if (IsLuaLogicalSlotPickerOpen())
         return true;
+    if (UseQuickNavigationList()) return HandleQuickNavigationListClick(point, true, screenPoint);
 
     const QuickNavigationAppEntry* appEntry = nullptr;
     if (TryGetQuickNavigationAppEntryAtPoint(point, appEntry) && appEntry)

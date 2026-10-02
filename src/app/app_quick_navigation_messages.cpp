@@ -184,7 +184,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             }
         }
 
-        if (GetQuickNavigationEffectiveSearchText().empty())
+        if (!UseQuickNavigationList() && quickNavigationMenu_ == QuickNavigationMenu::None && GetQuickNavigationEffectiveSearchText().empty())
         {
             RECT overlay = quickNavigationRect_;
             std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
@@ -363,7 +363,9 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             quickNavigationHoverRegions_.empty();
         quickNavigationPointerTarget_ =
             pointerTarget;
-        if (wasHovered != quickNavScrollbarHovered_ ||
+        if (UseQuickNavigationList() || quickNavigationMenu_ != QuickNavigationMenu::None ||
+            (appPoint.y < GetQuickNavigationSearchRect(quickNavigationRect_).bottom) ||
+            wasHovered != quickNavScrollbarHovered_ ||
             hoverChanged || keyboardHoverCleared ||
             hoverMapMissing)
             queuePointerFrame();
@@ -456,6 +458,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         }
         break;
     case WM_KEYDOWN:
+        if (snowdesktop::text_input::IsComposing(quickNavigationSearchEdit_) || !quickNavigationSearchCompositionText_.empty()) break;
+        if (HandleQuickNavigationSearchKey(wp)) return 0;
         if (HandleQuickNavigationKeyboardInput(wp))
             return 0;
         if (wp == VK_ESCAPE)
@@ -552,14 +556,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             GET_X_LPARAM(lParam) - app->virtualLeft_,
             GET_Y_LPARAM(lParam) - app->virtualTop_
         };
-        const RECT search = app->GetQuickNavigationSearchRect(
-            app->quickNavigationRect_);
-        const RECT targetEdit{
-            search.left + app->QuickNavScale(4),
-            search.top + app->QuickNavScale(6),
-            search.right - app->QuickNavScale(4),
-            search.bottom - app->QuickNavScale(4)
-        };
+        const RECT targetEdit = app->GetQuickNavigationInputRect(app->quickNavigationRect_);
         RECT animatedEdit{};
         GetWindowRect(hwnd, &animatedEdit);
         OffsetRect(
@@ -601,8 +598,11 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         }
     }
 
+    if (message == WM_KEYDOWN && !snowdesktop::text_input::IsComposing(hwnd) &&
+        app->quickNavigationSearchCompositionText_.empty() && app->HandleQuickNavigationSearchKey(wParam)) return 0;
+
     if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
-        !snowdesktop::text_input::IsComposing(hwnd))
+        !snowdesktop::text_input::IsComposing(hwnd) && app->quickNavigationSearchCompositionText_.empty())
     {
         if (app->
             HandleQuickNavigationInitialJumpKeyboardInput(

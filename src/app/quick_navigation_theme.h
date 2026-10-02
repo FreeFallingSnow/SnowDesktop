@@ -2,6 +2,10 @@
 
 #include <d2d1.h>
 #include <windows.h>
+#include "../navigation_settings.h"
+#include <array>
+#include <cstdlib>
+#include <utility>
 
 // Colors shared by quick-navigation rendering and desktop label rendering.
 
@@ -29,15 +33,21 @@ struct QuickNavTheme {
     D2D1_COLOR_F iconSelectBgFill, iconSelectBgStroke;
     D2D1_COLOR_F iconTextColor;
     D2D1_COLOR_F iconShadowFallback;
+    COLORREF searchText = RGB(28,34,44), searchPlaceholder = RGB(100,105,115), searchFocus = RGB(75,120,205);
+    COLORREF typeFill = RGB(224,232,246), typeText = RGB(45,80,145);
+    COLORREF resultFill = RGB(246,248,252), resultBorder = RGB(246,248,252);
+    COLORREF tabActiveText = RGB(30,60,110), tabHoverText = RGB(28,34,44);
+    COLORREF iconPlateFill = RGB(255,255,255), iconPlateBorder = RGB(255,255,255);
+    COLORREF selectedFill = RGB(222,234,252), selectedBorder = RGB(185,210,246), selectedText = RGB(28,34,44);
 };
 
 inline const QuickNavTheme kQuickNavDark = {
     // GDI
     RGB(18, 22, 30),    // windowBg
     RGB(120, 130, 150),  // windowBorder
-    RGB(255, 255, 255),  // searchBg
+    RGB(35, 40, 51),    // searchBg
     RGB(92, 105, 128),   // searchBorder
-    RGB(18, 22, 30),     // searchEditBg
+    RGB(35, 40, 51),     // searchEditBg
     RGB(48, 112, 215),   // tabActiveFill
     RGB(82, 140, 235),   // tabActiveStroke
     RGB(66, 72, 84),     // tabHoverFill
@@ -130,3 +140,56 @@ inline const QuickNavTheme kQuickNavLight = {
 };
 
 // ── Graphics ─────────────────────────────────────────────────
+inline constexpr std::pair<const char*, COLORREF QuickNavTheme::*> kQuickNavColorFields[] = {
+    {"searchBg", &QuickNavTheme::searchBg}, {"searchBorder", &QuickNavTheme::searchBorder},
+    {"searchText", &QuickNavTheme::searchText}, {"searchPlaceholder", &QuickNavTheme::searchPlaceholder},
+    {"searchFocus", &QuickNavTheme::searchFocus}, {"typeFill", &QuickNavTheme::typeFill}, {"typeText", &QuickNavTheme::typeText},
+    {"tabDefaultFill", &QuickNavTheme::tabDefaultFill}, {"tabDefaultStroke", &QuickNavTheme::tabDefaultStroke},
+    {"tabText", &QuickNavTheme::tabText}, {"tabHoverFill", &QuickNavTheme::tabHoverFill}, {"tabHoverStroke", &QuickNavTheme::tabHoverStroke},
+    {"tabActiveFill", &QuickNavTheme::tabActiveFill}, {"tabActiveStroke", &QuickNavTheme::tabActiveStroke},
+    {"tabActiveText", &QuickNavTheme::tabActiveText}, {"tabHoverText", &QuickNavTheme::tabHoverText},
+    {"iconPlateFill", &QuickNavTheme::iconPlateFill}, {"iconPlateBorder", &QuickNavTheme::iconPlateBorder},
+    {"headerText", &QuickNavTheme::headerText}, {"headerSeparator", &QuickNavTheme::headerSeparator},
+    {"resultFill", &QuickNavTheme::resultFill}, {"resultBorder", &QuickNavTheme::resultBorder},
+    {"appNameText", &QuickNavTheme::appNameText}, {"appTypeText", &QuickNavTheme::appTypeText},
+    {"appRowHoverFill", &QuickNavTheme::appRowHoverFill}, {"appRowHoverStroke", &QuickNavTheme::appRowHoverStroke},
+    {"selectedFill", &QuickNavTheme::selectedFill}, {"selectedBorder", &QuickNavTheme::selectedBorder}, {"selectedText", &QuickNavTheme::selectedText},
+    {"itemText", &QuickNavTheme::itemText}, {"itemHoverFill", &QuickNavTheme::itemHoverFill}, {"itemHoverStroke", &QuickNavTheme::itemHoverStroke},
+    {"scrollTrack", &QuickNavTheme::scrollTrack}, {"scrollThumbDefault", &QuickNavTheme::scrollThumbDefault},
+    {"scrollThumbHover", &QuickNavTheme::scrollThumbHover}, {"emptyText", &QuickNavTheme::emptyText}
+};
+
+inline QuickNavTheme ResolveQuickNavTheme(bool light, const NavigationSettings& settings)
+{
+    QuickNavTheme t = light ? kQuickNavLight : kQuickNavDark;
+    t.searchBg = light ? RGB(255,255,255) : RGB(35,40,51);
+    t.searchEditBg = t.searchBg;
+    t.searchBorder = light ? RGB(219,224,232) : RGB(58,64,77);
+    t.searchText = light ? RGB(30,36,47) : RGB(237,240,246);
+    t.searchPlaceholder = light ? RGB(112,120,135) : RGB(156,165,181);
+    t.tabActiveText = light ? RGB(35,70,129) : RGB(222,235,255); t.tabHoverText = t.searchText;
+    t.appTypeText = light ? RGB(92,104,124) : RGB(162,173,192);
+    t.emptyText = t.appTypeText;
+    t.searchFocus = light ? RGB(68,112,199) : RGB(117,161,239);
+    t.tabDefaultFill = light ? RGB(236,240,247) : RGB(35,40,51);
+    t.tabDefaultStroke = t.tabDefaultFill;
+    t.tabActiveFill = light ? RGB(217,231,251) : RGB(49,71,104);
+    t.tabActiveStroke = light ? RGB(189,213,246) : RGB(71,99,139);
+    t.tabHoverFill = light ? RGB(227,233,243) : RGB(46,53,67);
+    t.tabHoverStroke = t.tabHoverFill;
+    t.typeFill = t.tabActiveFill; t.typeText = t.searchText;
+    t.resultFill = light ? RGB(246,248,252) : RGB(23,27,35);
+    t.resultBorder = t.resultFill;
+    t.selectedFill = t.tabActiveFill; t.selectedBorder = t.tabActiveStroke; t.selectedText = t.searchText;
+    t.appRowHoverFill = t.tabHoverFill; t.appRowHoverStroke = t.tabHoverFill;
+    t.headerSeparator = light ? RGB(226,231,239) : RGB(51,57,70);
+    for (const auto& [name, field] : kQuickNavColorFields)
+    {
+        auto it = settings.colors.find(name);
+        if (it == settings.colors.end() || it->second.size() != 7) continue;
+        char* end = nullptr; const auto rgb = std::strtoul(it->second.c_str() + 1, &end, 16);
+        if (end && *end == '\0') t.*field = RGB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+    }
+    t.searchEditBg = t.searchBg;
+    return t;
+}

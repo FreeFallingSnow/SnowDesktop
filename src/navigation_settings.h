@@ -11,6 +11,12 @@
 
 #include <string>
 #include <string_view>
+#include <array>
+#include <algorithm>
+#include <cctype>
+#include <unordered_set>
+#include <map>
+#include <vector>
 
 /** @brief 快捷导航“桌面”聚合标签的显示方式。 */
 enum class QuickNavigationDesktopViewMode
@@ -51,6 +57,25 @@ inline bool QuickNavigationDesktopViewModeFromJson(
  * @brief 快捷导航设置
  * @details 存储快捷导航面板的启用状态和热键组合（修饰键+虚拟键码）
  */
+enum class QuickNavigationSearchType { All, App, File, Web, Settings, Run, Calculator };
+
+struct QuickNavigationSearchEngine
+{
+    std::string id, name, prefix, url;
+    bool operator==(const QuickNavigationSearchEngine&) const = default;
+};
+
+struct QuickNavigationLayout
+{
+    int expandedWidth = 860, collapsedWidth = 640, maximumHeight = 640;
+    int visibleRows = 8, padding = 16, searchHeight = 52;
+    int iconSize = 48, gridGap = 20, rowGap = 16;
+    int fontSize = 14, secondaryFontSize = 12, searchFontSize = 17;
+    int resultRowHeight = 56, labelLines = 2;
+    int cornerRadius = 16, searchRadius = 10, tabRadius = 8, itemRadius = 10;
+    bool operator==(const QuickNavigationLayout&) const = default;
+};
+
 struct NavigationSettings
 {
     bool enabled = false;
@@ -58,7 +83,22 @@ struct NavigationSettings
     UINT virtualKey = VK_SPACE;
     QuickNavigationDesktopViewMode desktopViewMode =
         QuickNavigationDesktopViewMode::Tile;
+    bool defaultCollapsed = false;
+    QuickNavigationLayout layout;
+    std::array<std::string, 6> prefixes{"app", "file", "web", "set", "run", "calc"};
+    std::string defaultEngine = "bing";
+    std::vector<QuickNavigationSearchEngine> engines{
+        {"bing", "Bing", "bing", "https://www.bing.com/search?q={query}"},
+        {"google", "Google", "google", "https://www.google.com/search?q={query}"},
+        {"baidu", "Baidu", "baidu", "https://www.baidu.com/s?wd={query}"},
+        {"duckduckgo", "DuckDuckGo", "ddg", "https://duckduckgo.com/?q={query}"}};
+    // Missing entries follow the resolved theme. Colors are #RRGGBB.
+    std::map<std::string, std::string> colors;
+    bool operator==(const NavigationSettings&) const = default;
 };
+
+void NormalizeNavigationSettings(NavigationSettings& settings);
+bool ValidateNavigationSearchConfiguration(const NavigationSettings& settings);
 
 /**
  * @brief 获取导航设置文件路径
@@ -91,3 +131,51 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
  * @return std::wstring 格式化后的热键文本
  */
 std::wstring FormatNavigationHotkey(const NavigationSettings& settings);
+
+inline bool ValidateNavigationSearchConfiguration(const NavigationSettings& settings)
+{
+    std::unordered_set<std::string> prefixes, identifiers;
+    auto validPrefix = [&](const std::string& prefix) {
+        if (prefix.empty() || prefix.size() > 32) return false;
+        for (unsigned char c : prefix) if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+        return prefixes.insert(prefix).second;
+    };
+    for (const auto& prefix : settings.prefixes) if (!validPrefix(prefix)) return false;
+    if (settings.engines.empty() || settings.engines.size() > 32) return false;
+    for (const auto& e : settings.engines)
+    {
+        if (e.id.empty() || !identifiers.insert(e.id).second || e.name.empty() || e.name.size() > 128 ||
+            !validPrefix(e.prefix) || e.url.size() > 4096 || e.url.find("{query}") == std::string::npos ||
+            (!e.url.starts_with("https://") && !e.url.starts_with("http://"))) return false;
+        for (unsigned char c : e.url) if (c < 32 || c == ' ' || c == '\\') return false;
+        const auto hostStart = e.url.find("://") + 3;
+        const auto hostEnd = e.url.find_first_of("/?#",hostStart);
+        const auto host = e.url.substr(hostStart,hostEnd == std::string::npos ? hostEnd : hostEnd - hostStart);
+        if (host.empty() || host.find_first_of("{}") != std::string::npos) return false;
+    }
+    return identifiers.contains(settings.defaultEngine);
+}
+
+inline void NormalizeNavigationSettings(NavigationSettings& settings)
+{
+    auto& l = settings.layout;
+#define SD_NAV_CLAMP(name, low, high) l.name = std::clamp(l.name, low, high)
+    SD_NAV_CLAMP(expandedWidth, 400, 1800); SD_NAV_CLAMP(collapsedWidth, 360, 1400); SD_NAV_CLAMP(maximumHeight, 220, 1400);
+    SD_NAV_CLAMP(visibleRows, 1, 20); SD_NAV_CLAMP(padding, 8, 40); SD_NAV_CLAMP(searchHeight, 40, 80);
+    SD_NAV_CLAMP(iconSize, 24, 96); SD_NAV_CLAMP(gridGap, 4, 48); SD_NAV_CLAMP(rowGap, 0, 48);
+    SD_NAV_CLAMP(fontSize, 10, 24); SD_NAV_CLAMP(secondaryFontSize, 10, 20); SD_NAV_CLAMP(searchFontSize, 12, 24);
+    SD_NAV_CLAMP(resultRowHeight, 40, 96); SD_NAV_CLAMP(labelLines, 1, 3);
+    SD_NAV_CLAMP(cornerRadius, 0, 32); SD_NAV_CLAMP(searchRadius, 0, 24); SD_NAV_CLAMP(tabRadius, 0, 20); SD_NAV_CLAMP(itemRadius, 0, 24);
+#undef SD_NAV_CLAMP
+    l.searchHeight = std::max(l.searchHeight,l.searchFontSize + 16);
+    l.resultRowHeight = std::max(l.resultRowHeight,l.fontSize + l.secondaryFontSize + 16);
+    if (!ValidateNavigationSearchConfiguration(settings))
+    { const NavigationSettings defaults; settings.prefixes = defaults.prefixes; settings.engines = defaults.engines; settings.defaultEngine = defaults.defaultEngine; }
+    for (auto it = settings.colors.begin(); it != settings.colors.end();)
+    {
+        bool valid = it->second.size() == 7 && it->second[0] == '#';
+        for (size_t i = 1; valid && i < it->second.size(); ++i) valid = std::isxdigit(static_cast<unsigned char>(it->second[i])) != 0;
+        if (!valid) it = settings.colors.erase(it); else ++it;
+    }
+}
+

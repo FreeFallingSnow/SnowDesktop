@@ -274,6 +274,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_popup_render.cpp
     src/app/app_popup_transition.cpp
     src/app/app_quick_navigation_interaction.cpp
+    src/app/app_quick_navigation_features.cpp
+    src/app/app_quick_navigation_preview.cpp
     src/app/app_quick_navigation_layout.cpp
     src/app/app_quick_navigation_messages.cpp
     src/app/app_quick_navigation_model.cpp

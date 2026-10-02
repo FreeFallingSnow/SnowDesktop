@@ -8,12 +8,16 @@
 
 #include "navigation_settings.h"
 #include "data_paths.h"
+#include "json_value.h"
+#include "quick_navigation_query.h"
 
 #include <shlwapi.h>
 
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
+#include <unordered_set>
 
 namespace
 {
@@ -183,6 +187,9 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
     ss << file.rdbuf();
     std::string text = ss.str();
     if (text.empty()) return false;
+    JsonValue document;
+    if (!ParseJson(text, document) || !document.IsObject()) return false;
+    settings = NavigationSettings{};
 
     bool enabled = false;
     int modifiers = 0;
@@ -203,6 +210,36 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
         QuickNavigationDesktopViewModeFromJson(
             desktopViewMode, parsedMode))
         settings.desktopViewMode = parsedMode;
+    if (const auto* value = document.Find("defaultCollapsed"); value && value->IsBoolean()) settings.defaultCollapsed = value->boolean;
+    if (const auto* layout = document.Find("layout"); layout && layout->IsObject())
+    {
+#define SD_NAV_READ(name) if (const auto* value = layout->Find(#name); value && value->IsNumber() && std::isfinite(value->number) && value->number >= -32768 && value->number <= 32768) settings.layout.name = static_cast<int>(value->number)
+        SD_NAV_READ(expandedWidth); SD_NAV_READ(collapsedWidth); SD_NAV_READ(maximumHeight);
+        SD_NAV_READ(visibleRows); SD_NAV_READ(padding); SD_NAV_READ(searchHeight);
+        SD_NAV_READ(iconSize); SD_NAV_READ(gridGap); SD_NAV_READ(rowGap);
+        SD_NAV_READ(fontSize); SD_NAV_READ(secondaryFontSize); SD_NAV_READ(searchFontSize);
+        SD_NAV_READ(resultRowHeight); SD_NAV_READ(labelLines);
+        SD_NAV_READ(cornerRadius); SD_NAV_READ(searchRadius); SD_NAV_READ(tabRadius); SD_NAV_READ(itemRadius);
+#undef SD_NAV_READ
+    }
+    if (const auto* value = document.Find("prefixes"); value && value->IsArray() && value->array.size() == settings.prefixes.size())
+        for (size_t i = 0; i < value->array.size(); ++i) if (value->array[i].IsString()) settings.prefixes[i] = value->array[i].string;
+    if (const auto* value = document.Find("defaultEngine"); value && value->IsString()) settings.defaultEngine = value->string;
+    if (const auto* value = document.Find("engines"); value && value->IsArray())
+    {
+        std::vector<QuickNavigationSearchEngine> engines;
+        for (const auto& entry : value->array)
+        {
+            QuickNavigationSearchEngine engine;
+            auto field = [&](const char* key, std::string& out) { if (const auto* v = entry.Find(key); v && v->IsString()) out = v->string; };
+            field("id", engine.id); field("name", engine.name); field("prefix", engine.prefix); field("url", engine.url);
+            engines.push_back(std::move(engine));
+        }
+        settings.engines = std::move(engines);
+    }
+    if (const auto* value = document.Find("colors"); value && value->IsObject())
+        for (const auto& [key, color] : value->object) if (color.IsString()) settings.colors[key] = color.string;
+    NormalizeNavigationSettings(settings);
     return true;
 }
 
@@ -227,9 +264,43 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     file << "  \"desktopViewMode\": \""
          << QuickNavigationDesktopViewModeToJson(
                 settings.desktopViewMode)
-         << "\"\n";
+         << "\",\n";
+    file << "  \"defaultCollapsed\": " << (settings.defaultCollapsed ? "true" : "false") << ",\n  \"layout\": {";
+    bool first = true;
+#define SD_NAV_WRITE(name) if (!first) file << ','; first = false; file << "\"" #name "\":" << settings.layout.name
+    SD_NAV_WRITE(expandedWidth); SD_NAV_WRITE(collapsedWidth); SD_NAV_WRITE(maximumHeight);
+    SD_NAV_WRITE(visibleRows); SD_NAV_WRITE(padding); SD_NAV_WRITE(searchHeight);
+    SD_NAV_WRITE(iconSize); SD_NAV_WRITE(gridGap); SD_NAV_WRITE(rowGap);
+    SD_NAV_WRITE(fontSize); SD_NAV_WRITE(secondaryFontSize); SD_NAV_WRITE(searchFontSize);
+    SD_NAV_WRITE(resultRowHeight); SD_NAV_WRITE(labelLines);
+    SD_NAV_WRITE(cornerRadius); SD_NAV_WRITE(searchRadius); SD_NAV_WRITE(tabRadius); SD_NAV_WRITE(itemRadius);
+#undef SD_NAV_WRITE
+    const auto quoted = [](const std::string& input) {
+        std::string out = "\"";
+        constexpr char hex[] = "0123456789abcdef";
+        for (unsigned char c : input)
+        {
+            if (c == '\\' || c == '"') { out += '\\'; out += static_cast<char>(c); }
+            else if (c < 32) { out += "\\u00"; out += hex[c >> 4]; out += hex[c & 15]; }
+            else out += static_cast<char>(c);
+        }
+        return out + '"';
+    };
+    file << "},\n  \"prefixes\": [";
+    for (size_t i = 0; i < settings.prefixes.size(); ++i) { if (i) file << ','; file << quoted(settings.prefixes[i]); }
+    file << "],\n  \"defaultEngine\": " << quoted(settings.defaultEngine) << ",\n  \"engines\": [";
+    for (size_t i = 0; i < settings.engines.size(); ++i)
+    {
+        if (i) file << ',';
+        const auto& e = settings.engines[i];
+        file << "{\"id\":" << quoted(e.id) << ",\"name\":" << quoted(e.name)
+             << ",\"prefix\":" << quoted(e.prefix) << ",\"url\":" << quoted(e.url) << '}';
+    }
+    file << "],\n  \"colors\": {"; first = true;
+    for (const auto& [key, value] : settings.colors) { if (!first) file << ','; first = false; file << quoted(key) << ':' << quoted(value); }
     file << "}\n";
-    return true;
+    file << "}\n";
+    return file.good();
 }
 
 /**

@@ -13,7 +13,7 @@ namespace snowdesktop::shell_launch_process
 {
 
 // Private, same-executable transport. This is not a supported command-line API.
-enum class Action : std::uint32_t { Open, OpenWithShortcutPolicy, RunAs };
+enum class Action : std::uint32_t { Open, OpenWithShortcutPolicy, RunAs, RunCommand };
 
 struct Request
 {

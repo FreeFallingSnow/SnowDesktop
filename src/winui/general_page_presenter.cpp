@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "quick_navigation_options.h"
 
 #include "general_page_presenter.h"
 #include "settings_presenter_controls.h"
@@ -100,6 +101,9 @@ struct GeneralPagePresenter::Impl
     mux::Style cardStyle{nullptr};
     mux::Style navigationCardStyle{nullptr};
     muxc::StackPanel root{nullptr};
+    muxc::StackPanel quickRoot{nullptr};
+    muxc::Button quickLink;
+    std::unique_ptr<QuickNavigationOptions> quickOptions;
     muxc::StackPanel desktopRoot{nullptr};
     muxc::StackPanel pageNavigationRoot{nullptr};
     muxc::StackPanel dockShortcutRoot{nullptr};
@@ -255,7 +259,11 @@ struct GeneralPagePresenter::Impl
         languageRow.Initialize(languageCombo);
         languageCard.content.Children().Append(languageRow.root);
 
-        InitializeCard(quickNavigationCard, cardStyle, root);
+        quickRoot = muxc::StackPanel{}; quickRoot.Spacing(8);
+        quickLink.Style(navigationCardStyle);
+        quickLink.Click([this](auto&&, auto&&) {if (!closed && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::QuickNavigation));});
+        root.Children().Append(quickLink);
+        InitializeCard(quickNavigationCard, cardStyle, quickRoot);
         quickNavigationToggle = muxc::ToggleSwitch{};
         quickNavigationToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -269,6 +277,8 @@ struct GeneralPagePresenter::Impl
         quickNavigationCard.content.Children().Append(
             quickNavigationHotkeyRow.row.root);
 
+        quickOptions = std::make_unique<QuickNavigationOptions>(localize, [this](auto edit) {CommitNavigation(std::move(edit));});
+        quickRoot.Children().Append(quickOptions->Content());
         InitializeCard(pageNavigationCard, cardStyle, pageNavigationRoot);
         pageNavigationToggle = muxc::ToggleSwitch{};
         pageNavigationToggle.HorizontalAlignment(
@@ -685,6 +695,8 @@ struct GeneralPagePresenter::Impl
         updatingControls = true;
 
         onboarding->RefreshLocalizedText();
+        quickLink.Content(winrt::box_value(L("quickNav.title")));
+        quickOptions->RefreshText();
         SetCardText(startupCard, "settings.general.startup");
         SetCardText(advancedFeaturesCard,
             "settings.general.advancedFeatures");
@@ -926,6 +938,7 @@ struct GeneralPagePresenter::Impl
     {
         if (closed) return;
         onboarding->ApplySnapshot(snapshot);
+        quickOptions->Apply(snapshot.values.navigation, ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, snapshot.values.personalization, snapshot.values.general.quickNavTheme, true).contentTheme == 1);
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
         const bool generalChanged = newGeneration ||
@@ -1000,6 +1013,7 @@ struct GeneralPagePresenter::Impl
         catch (...)
         {
         }
+        quickOptions->Close();
         quickNavigationHotkey.Close();
         previousPageHotkey.Close();
         nextPageHotkey.Close();
@@ -1091,6 +1105,7 @@ void GeneralPagePresenter::RegisterFocusTargets(
     registerAliases(impl_->softwareDesktopToggle,
         {"desktop.softwareDesktop", "general.softwareDesktop"});
     registerAliases(impl_->languageCombo, {"general.language"});
+    impl_->quickOptions->Register(registrar);
     registerAliases(impl_->quickNavigationToggle,
         {"general.hotkeys", "general.quickNavigation",
             "general.quickNavigation.enabled"});
@@ -1184,6 +1199,11 @@ void GeneralPagePresenter::CaptureRegisteredHotkey(
 void GeneralPagePresenter::Close() noexcept
 {
     if (impl_) impl_->Close();
+}
+
+muxc::StackPanel GeneralPagePresenter::QuickNavigationContent() const noexcept
+{
+    return impl_ ? impl_->quickRoot : nullptr;
 }
 
 } // namespace snowdesktop::winui

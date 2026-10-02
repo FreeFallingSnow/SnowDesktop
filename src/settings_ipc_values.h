@@ -40,7 +40,12 @@ SD_IPC_FIELDS(DockSettings,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme);
 SD_IPC_FIELDS(NavigationSettings,
-    v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode);
+    v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.defaultCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors);
+SD_IPC_FIELDS(QuickNavigationLayout, v.expandedWidth, v.collapsedWidth, v.maximumHeight,
+    v.visibleRows, v.padding, v.searchHeight, v.iconSize, v.gridGap, v.rowGap,
+    v.fontSize, v.secondaryFontSize, v.searchFontSize, v.resultRowHeight, v.labelLines,
+    v.cornerRadius, v.searchRadius, v.tabRadius, v.itemRadius);
+SD_IPC_FIELDS(QuickNavigationSearchEngine, v.id, v.name, v.prefix, v.url);
 SD_IPC_FIELDS(calendar::DisplayPreferences, v.enabled, v.calendar, v.holidaysEnabled, v.region);
 SD_IPC_FIELDS(shell_extensions::Selection, v.provider, v.command, v.label, v.placement);
 SD_IPC_FIELDS(shell_extensions::HiddenItem, v.id, v.context);

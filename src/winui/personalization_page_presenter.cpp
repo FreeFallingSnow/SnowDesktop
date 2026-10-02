@@ -146,6 +146,8 @@ struct PersonalizationPagePresenter::Impl
     mux::Style cardStyle{nullptr};
     mux::Style navigationStyle{nullptr};
     muxc::StackPanel themeRoot{nullptr}, dockThemeRoot{nullptr};
+    muxc::StackPanel quickRoot;
+    muxc::Button quickLink;
     muxc::ContentControl dockAppearanceHost;
     muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
@@ -452,7 +454,12 @@ struct PersonalizationPagePresenter::Impl
         contextMenuRow.Initialize(contextMenuCombo);
         contextMenuCard.content.Children().Append(contextMenuRow.root);
 
-        InitializeCard(themeTargetsCard, cardStyle, themeRoot);
+        quickRoot.Spacing(8);
+        quickLink.Content(winrt::box_value(L("quickNav.title")));
+        quickLink.Style(navigationStyle);
+        quickLink.Click([this](auto&&, auto&&) {if (!closed && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::QuickNavigation));});
+        themeRoot.Children().Append(quickLink);
+        InitializeCard(themeTargetsCard, cardStyle, quickRoot);
         quickNavigationThemeCombo = muxc::ComboBox{};
         collectionPopupThemeCombo = muxc::ComboBox{};
         for (const auto& combo : {
@@ -1293,6 +1300,7 @@ struct PersonalizationPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        quickLink.Content(winrt::box_value(L("quickNav.title")));
         edgeLightEditor->RefreshLocalizedText();
         appearanceSections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
         if (panelGradientEditor) panelGradientEditor->RefreshLocalizedText();
@@ -1816,6 +1824,11 @@ void PersonalizationPagePresenter::Close() noexcept
 {
     if (impl_)
         impl_->Close();
+}
+
+mux::UIElement PersonalizationPagePresenter::QuickNavigationAppearanceContent() const noexcept
+{
+    return impl_ ? impl_->quickRoot : nullptr;
 }
 
 } // namespace snowdesktop::winui

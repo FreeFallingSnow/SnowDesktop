@@ -1068,6 +1068,14 @@ public:
         {
             app_.navigationSettings_ = snapshot.values.navigation;
             app_.ApplyNavigationHotkey();
+            app_.EnsureQuickNavTextFormats();
+            app_.EnsureQuickNavigationSearchEdit();
+            if (app_.quickNavigationOpen_)
+            {
+                app_.RefreshQuickNavigationTypedResults();
+                app_.PositionQuickNavigationWindow();
+                app_.InvalidateQuickNavigationWindow();
+            }
             return snowdesktop::SettingsActionResult::Success(domains);
         }
         if (domains == SettingsDomain::General &&
@@ -1170,6 +1178,14 @@ public:
         {
             app_.navigationSettings_ = snapshot.values.navigation;
             app_.ApplyNavigationHotkey();
+            app_.EnsureQuickNavTextFormats();
+            app_.EnsureQuickNavigationSearchEdit();
+            if (app_.quickNavigationOpen_)
+            {
+                app_.RefreshQuickNavigationTypedResults();
+                app_.PositionQuickNavigationWindow();
+                app_.InvalidateQuickNavigationWindow();
+            }
         }
         if (generalCommitted)
         {
@@ -1273,6 +1289,14 @@ public:
             break;
         case Action::RegisterHotkeys:
             app_.ApplyNavigationHotkey();
+            app_.EnsureQuickNavTextFormats();
+            app_.EnsureQuickNavigationSearchEdit();
+            if (app_.quickNavigationOpen_)
+            {
+                app_.RefreshQuickNavigationTypedResults();
+                app_.PositionQuickNavigationWindow();
+                app_.InvalidateQuickNavigationWindow();
+            }
             app_.ApplyDesktopPassthroughHotkey();
             app_.ApplyFloatingDockHotkey();
             break;
@@ -2172,7 +2196,10 @@ void DesktopApp::ApplyLanguageChange()
     if (titleChanged)
         SaveLayoutSlots();
     if (quickNavigationOpen_)
+    {
+        RefreshQuickNavigationTypedResults();
         InvalidateQuickNavigationWindow();
+    }
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
 }

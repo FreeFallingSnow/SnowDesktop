@@ -1,4 +1,5 @@
 #include "navigation_settings.h"
+#include "quick_navigation_query.h"
 #include "quick_navigation_animation_rules.h"
 #include "quick_navigation_genie_rules.h"
 #include "quick_navigation_rules.h"
@@ -774,8 +775,60 @@ void TestAnimatedPointerHitRules()
 }
 }
 
+
+void TestExtendedSearchAndConfiguration()
+{
+    namespace query = snowdesktop::quick_navigation_query;
+    NavigationSettings settings;
+    Check(!settings.defaultCollapsed && settings.layout.expandedWidth == 860 && settings.layout.collapsedWidth == 640,
+        "legacy and new settings default to the expanded panel dimensions");
+    const wchar_t* prefixes[] = {L"app",L"file",L"web",L"set",L"run",L"calc"};
+    for (size_t i = 0; i < std::size(prefixes); ++i)
+    { const auto scope = query::ResolvePrefix(settings,prefixes[i]); Check(scope && scope->type == static_cast<QuickNavigationSearchType>(i + 1),"each exact prefix resolves to the configured type"); }
+    Check(query::ResolvePrefix(settings,L" APP ")->type == QuickNavigationSearchType::App,"prefix input tolerates surrounding whitespace and case");
+    Check(!query::ResolvePrefix(settings,L"app editor") && !query::ResolvePrefix(settings,L"unknown") && !query::ResolvePrefix(settings,L"application"),"ordinary queries never implicitly select a search type");
+    const auto google = query::ResolvePrefix(settings,L"google");
+    Check(google && google->type == QuickNavigationSearchType::Web && google->engine == "google","engine prefixes retain the chosen engine");
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",true,false) == query::SubmitIntent::Composition,"IME confirmation outranks both prefix locking and activation");
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,false) == query::SubmitIntent::ConfirmPrefix,"Enter confirms only an exact unscoped prefix");
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::File,L"app",false,false) == query::SubmitIntent::ActivateResult && query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,true) == query::SubmitIntent::ActivateResult,"typed queries and open menus never relock their query as a prefix");
+    Check(query::EncodeQuery(L"中文 &+#/U0001F600") == "%E4%B8%AD%E6%96%87%20%26%2B%23%2F%F0%9F%98%80","web queries are encoded as UTF-8 bytes including CJK, punctuation and supplementary characters");
+    Check(query::SearchUrl(settings.engines.front(),L"a&b") == "https://www.bing.com/search?q=a%26b","engine substitution cannot turn a keyword into extra URL parameters");
+    auto invalid = settings; invalid.engines[0].prefix = "app"; Check(!ValidateNavigationSearchConfiguration(invalid),"engine and type prefixes cannot collide");
+    invalid = settings; invalid.prefixes[0] = invalid.prefixes[1]; Check(!ValidateNavigationSearchConfiguration(invalid),"type prefixes must be unique");
+    for (const auto* url : {"file:///a/{query}","https://example.com/search", "http://{query}","https:///search?q={query}","https://example.com/a b?q={query}"})
+    { invalid = settings; invalid.engines[0].url = url; Check(!ValidateNavigationSearchConfiguration(invalid),"invalid search templates are rejected before persistence"); }
+    settings.defaultCollapsed = true; settings.layout.iconSize = 64; settings.layout.collapsedWidth = 720;
+    settings.colors["searchBg"] = "#123456"; settings.prefixes[0] = "apps";
+    settings.engines.push_back({"example","Example \"search\"","example","https://example.com/?q={query}"});
+    const auto path = MakeTemporarySettingsPath(); NavigationSettings loaded;
+    Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && settings == loaded,"layout, colors, scopes and custom engines round trip with escaped names");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << "{\"enabled\":true,\"modifiers\":3,\"virtualKey\":32}"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && !loaded.defaultCollapsed && loaded.colors.empty() && loaded.layout == QuickNavigationLayout{},"missing new fields use defaults even when reusing a previously populated object");
+    DeleteFileW(path.c_str());
+    invalid = settings; invalid.prefixes[0] = "file"; invalid.layout.iconSize = 999; NormalizeNavigationSettings(invalid);
+    Check(invalid.prefixes == NavigationSettings{}.prefixes && invalid.layout.iconSize == 96 && invalid.colors == settings.colors,"invalid search config is reset without losing independent appearance overrides");
+    const auto command = query::ParseCommand(L"\"C:\\Program Files\\Example\\app.exe\" --flag \"two words\"");
+    Check(command && command->target == L"C:\\Program Files\\Example\\app.exe" && command->parameters == L"--flag \"two words\"","Run preserves quoted full paths and exact argument quoting");
+    Check(!query::ParseCommand(L"\"unclosed") && !query::ParseCommand(L"\"app.exe\"argument") && !query::ParseCommand(L""),"malformed command targets are never executed");
+    Check(query::ParseCommand(L"https://example.com/a?q=b&x=c")->parameters.empty(),"URI parameters remain part of the Shell target");
+    Check(query::ParseCommand(L"cmd /c echo a | more")->parameters == L"/c echo a | more","an explicit command interpreter retains pipeline syntax");
+    SetEnvironmentVariableW(L"SNOWDESKTOP_QUERY_TEST",L"C:\\Program Files\\Example");
+    const auto environment = query::ParseCommand(L"\"%SNOWDESKTOP_QUERY_TEST%\\app.exe\" --path \"%SNOWDESKTOP_QUERY_TEST%\"");
+    Check(environment && environment->target == L"C:\\Program Files\\Example\\app.exe" && environment->parameters == L"--path \"C:\\Program Files\\Example\"","environment expansion covers targets and parameters before parsing");
+    SetEnvironmentVariableW(L"SNOWDESKTOP_QUERY_TEST",nullptr);
+    query::Calculator calculator;
+    for (const auto& [expression,expected] : std::vector<std::pair<std::wstring,double>>{{L"2+3*4",14},{L"(2+3)*4",20},{L"2^3^2",512},{L"-2^2",-4},{L"2^-2",.25},{L".5 + 50%",1},{L"(-3 + +5) / 2",1},{L"(12.5 + 7.5) * 3 ^ 2 + 50%",180.5}})
+    { const auto result = calculator.Evaluate(expression); Check(result.error == query::CalculationError::None && std::abs(result.value - expected) < 1e-9,"calculator respects precedence, signs, right-associative powers and percentages"); }
+    Check(calculator.Evaluate(L"1/0").error == query::CalculationError::DivisionByZero,"division by zero is distinguished from syntax errors");
+    Check(calculator.Evaluate(L"10^9999").error == query::CalculationError::NonFinite && calculator.Evaluate(L"(-1)^.5").error == query::CalculationError::NonFinite,"overflow and non-real results never produce copyable infinity or NaN");
+    for (const auto* expression : {L"",L"2+",L"(1+2",L"1.2.3",L"2foo",L"()"}) Check(calculator.Evaluate(expression).error == query::CalculationError::Invalid,"invalid expressions display a specific syntax error");
+    Check(calculator.Evaluate(std::wstring(140,L'-') + L"1").error == query::CalculationError::Invalid,"deep recursive expressions are bounded");
+}
+
 int main()
 {
+    TestExtendedSearchAndConfiguration();
     TestViewModePersistenceValues();
     TestExtendedNavigationKeyNames();
     TestViewModeFilePersistence();

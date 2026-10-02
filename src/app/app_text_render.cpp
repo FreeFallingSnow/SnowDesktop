@@ -420,7 +420,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
 }
 
 void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
-    const std::wstring& text, bool /*selected*/, bool lightTheme)
+    const std::wstring& text, bool selected, bool lightTheme)
 {
     if (!ctx || !dwriteFactory_ || !quickNavItemTextFormat_ || text.empty())
         return;
@@ -428,10 +428,10 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     const float fontSize = quickNavItemTextFormat_->GetFontSize();
     const float lineSpacing = std::max(1.0f, std::floor(fontSize * 1.08f));
     const float baseline = std::max(1.0f, std::floor(fontSize * 0.84f));
-    const int textHeight = std::max(1, static_cast<int>(std::ceil(lineSpacing * 2.0f)));
+    const int textHeight = std::max(1, static_cast<int>(std::ceil(lineSpacing * static_cast<float>(navigationSettings_.layout.labelLines))));
     RECT iconRect = GetQuickNavItemIconRect(bounds);
     const int horizontalPad = QuickNavScale(4);
-    const int topGap = std::max(1, QuickNavScale(2));
+    const int topGap = std::max(1, QuickNavScale(10));
     RECT textRect = QuickNavigationItemTextRect(bounds, iconRect, horizontalPad, topGap, textHeight);
     if (IsRectEmptyRect(textRect))
         return;
@@ -454,9 +454,6 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         quickNavItemTextFormat_.Get(), &trimmingSign)) && trimmingSign)
         layout->SetTrimming(&trimming, trimmingSign.Get());
 
-    DWRITE_TEXT_METRICS metrics{};
-    if (SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.lineCount == 1)
-        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
     {
@@ -476,8 +473,8 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         return it->second.Get();
     };
 
-    const QuickNavTheme& theme = lightTheme ? kQuickNavLight : kQuickNavDark;
-    ID2D1SolidColorBrush* textBrush = getBrush(ToD2DColor(theme.itemText));
+    const QuickNavTheme theme = ResolveQuickNavTheme(lightTheme, navigationSettings_);
+    ID2D1SolidColorBrush* textBrush = getBrush(ToD2DColor(selected ? theme.selectedText : theme.itemText));
     if (!textBrush)
         return;
 

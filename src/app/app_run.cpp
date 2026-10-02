@@ -1,3 +1,4 @@
+#include "../settings_search_catalog.h"
 #include "app.h"
 #include "../modern_menu.h"
 #include "../system_control_prompt.h"
@@ -774,60 +775,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         return languages;
     };
-    settingsHostOptions.searchInput = [this]() {
-        snowdesktop::SettingsSearchIndexInput input;
-        input.languageTag = Locale::Instance().GetEffectiveLanguage();
-        if (!widgetSettingsBackend_)
-            return input;
-        // Indexing must not replace live WidgetSettingsService sessions or
-        // advance their revisions. A short-lived reader evaluates the same
-        // v2 dependency/visibility rules without publishing UI events.
-        snowdesktop::widget_runtime::WidgetSettingsService searchReader(
-            *widgetSettingsBackend_);
-        for (const auto& widget : widgets_)
-        {
-            if (widget.type != DesktopWidgetType::LuaScript)
-                continue;
-            const auto loaded = searchReader.Load(widget.id);
-            if (!loaded.Succeeded() || !loaded.snapshot)
-            {
-                continue;
-            }
-            const auto& snapshot = *loaded.snapshot;
-            snowdesktop::WidgetSettingsSearchDescriptor searchable;
-            searchable.instanceId = widget.id;
-            searchable.widgetName = Utf8ToWide(snapshot.widgetName);
-            if (searchable.widgetName.empty())
-                searchable.widgetName = widget.title;
-
-            std::unordered_map<std::string, std::wstring> groupLabels;
-            for (const auto& group : snapshot.groups)
-                groupLabels[group.id] = Utf8ToWide(group.label);
-            std::unordered_set<std::string> indexedKeys;
-            for (const auto& fieldState : snapshot.fields)
-            {
-                const auto& schema = fieldState.schema;
-                if (!fieldState.visible || schema.key.empty() ||
-                    schema.label.empty() ||
-                    !indexedKeys.insert(schema.key).second)
-                {
-                    continue;
-                }
-                snowdesktop::WidgetSettingSearchFieldDescriptor field;
-                field.key = schema.key;
-                field.focusId = schema.key;
-                field.label = Utf8ToWide(schema.label);
-                field.description = Utf8ToWide(schema.description);
-                const auto group = groupLabels.find(schema.group);
-                if (group != groupLabels.end())
-                    field.groupLabel = group->second;
-                searchable.fields.push_back(std::move(field));
-            }
-            if (!searchable.fields.empty())
-                input.widgets.push_back(std::move(searchable));
-        }
-        return input;
-    };
+    settingsHostOptions.searchInput = [this]() { return BuildSettingsSearchInput(); };
     settingsHostOptions.homeAboutStatus = [this](
         std::uint64_t generation,
         std::uint64_t) {
@@ -1862,4 +1810,66 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     ShutdownSettingsInfrastructure();
     uiAnimationScheduler_.Shutdown();
     return exitRequested_ ? 0 : static_cast<int>(msg.wParam);
+}
+
+snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
+{
+        snowdesktop::SettingsSearchIndexInput input;
+        input.languageTag = Locale::Instance().GetEffectiveLanguage();
+        input.developerToolsVisible = generalSettings_.widgetDeveloperToolsEnabled;
+        input.debugVisible = snowdesktop::debug_profile::Enabled() || !initializationExperimentDirectory_.empty();
+        snowdesktop::PopulateSettingsSearchCatalog(input, [](std::string_view key) {return std::wstring(_LW(std::string(key).c_str()));},
+            steamEntitlementService_ && ToGeneralAdvancedFeatureStatus(steamEntitlementService_->Current(),
+                snowdesktop::deployment::GetRuntimeDeploymentContext().kind).cardVisible,
+            snowdesktop::StatusBarSupportsSystemQuickSettings());
+        if (!widgetSettingsBackend_)
+            return input;
+        // Indexing must not replace live WidgetSettingsService sessions or
+        // advance their revisions. A short-lived reader evaluates the same
+        // v2 dependency/visibility rules without publishing UI events.
+        snowdesktop::widget_runtime::WidgetSettingsService searchReader(
+            *widgetSettingsBackend_);
+        for (const auto& widget : widgets_)
+        {
+            if (widget.type != DesktopWidgetType::LuaScript)
+                continue;
+            const auto loaded = searchReader.Load(widget.id);
+            if (!loaded.Succeeded() || !loaded.snapshot)
+            {
+                continue;
+            }
+            const auto& snapshot = *loaded.snapshot;
+            snowdesktop::WidgetSettingsSearchDescriptor searchable;
+            searchable.instanceId = widget.id;
+            searchable.widgetName = Utf8ToWide(snapshot.widgetName);
+            if (searchable.widgetName.empty())
+                searchable.widgetName = widget.title;
+
+            std::unordered_map<std::string, std::wstring> groupLabels;
+            for (const auto& group : snapshot.groups)
+                groupLabels[group.id] = Utf8ToWide(group.label);
+            std::unordered_set<std::string> indexedKeys;
+            for (const auto& fieldState : snapshot.fields)
+            {
+                const auto& schema = fieldState.schema;
+                if (!fieldState.visible || schema.key.empty() ||
+                    schema.label.empty() ||
+                    !indexedKeys.insert(schema.key).second)
+                {
+                    continue;
+                }
+                snowdesktop::WidgetSettingSearchFieldDescriptor field;
+                field.key = schema.key;
+                field.focusId = schema.key;
+                field.label = Utf8ToWide(schema.label);
+                field.description = Utf8ToWide(schema.description);
+                const auto group = groupLabels.find(schema.group);
+                if (group != groupLabels.end())
+                    field.groupLabel = group->second;
+                searchable.fields.push_back(std::move(field));
+            }
+            if (!searchable.fields.empty())
+                input.widgets.push_back(std::move(searchable));
+        }
+        return input;
 }

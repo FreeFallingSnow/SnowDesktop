@@ -41,6 +41,7 @@ enum class SettingsPage : std::uint8_t
     StatusBar,
     DesktopStyle,
     WidgetBehavior,
+    QuickNavigation,
 };
 
 /**

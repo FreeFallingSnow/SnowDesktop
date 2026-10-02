@@ -147,6 +147,10 @@ void TestCodec()
     Check(restoredGuide.generation == 71 && restoredGuide.revision == 9 &&
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");
+    NavigationSettings navigation; navigation.defaultCollapsed = true; navigation.layout.collapsedWidth = 700; navigation.colors["searchText"] = "#123456"; navigation.prefixes[0] = "applications";
+    navigation.engines.push_back({"custom","Custom","custom","https://example.com/?q={query}"});
+    Check(Unpack<NavigationSettings>(Pack(navigation)) == navigation,"all navigation settings survive the private process boundary");
+    Check(Unpack<snowdesktop::SettingsRoute>(Pack(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::QuickNavigation,"quickNav.layout.iconSize"))).page == snowdesktop::SettingsPage::QuickNavigation,"the appended navigation page crosses private IPC");
     // These types exercise Unicode paths, optional values, wide counters and
     // nested metadata used by settings and component editor snapshots.
     using Value = std::tuple<std::wstring, std::uint64_t,

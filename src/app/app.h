@@ -1636,6 +1636,36 @@ private:
     void EnsureQuickNavTextFormats();
     /** @brief 绘制快捷导航窗口内容。 @param hwnd 窗口句柄 */
     void PaintQuickNavigationWindow(HWND hwnd);
+    void DrawQuickNavigationSurface(ID2D1DeviceContext* context);
+    snowdesktop::native_component_preview::Result ExportQuickNavigationPreviews(
+        const snowdesktop::native_component_preview::Request& request);
+    snowdesktop::SettingsSearchIndexInput BuildSettingsSearchInput();
+    bool UseQuickNavigationList() const;
+    int QuickNavigationGridCellWidth() const;
+    int QuickNavigationGridCellHeight() const;
+    RECT GetQuickNavigationInputRect(const RECT& overlay) const;
+    RECT GetQuickNavigationToolbarRect(const RECT& overlay, int button) const;
+    void ToggleQuickNavigationCollapsed();
+    bool HandleQuickNavigationSearchKey(WPARAM key);
+    bool HandleQuickNavigationToolbarClick(POINT point);
+    void SetQuickNavigationSearchScope(QuickNavigationSearchType type, std::string engine = {});
+    std::wstring QuickNavigationTypeLabel() const;
+    std::wstring QuickNavigationViewLabel() const;
+    void RefreshQuickNavigationTypedResults();
+    struct QuickNavigationListRow
+    {
+        enum class Kind { Header, Item, App, Everything, ExpandApps, LoadMore, Settings, Web, Run, Calculator, Notice };
+        Kind kind = Kind::Notice;
+        size_t index = 0;
+        std::wstring title, detail, value;
+        bool enabled = true;
+    };
+    std::vector<QuickNavigationListRow> BuildQuickNavigationListRows() const;
+    RECT GetQuickNavigationListRowRect(size_t index) const;
+    void DrawQuickNavigationList(ID2D1DeviceContext* context);
+    void DrawQuickNavigationMenus(ID2D1DeviceContext* context);
+    bool HandleQuickNavigationListClick(POINT point, bool contextMenu = false, POINT screenPoint = {});
+    bool ActivateQuickNavigationListRow(size_t index);
     /** @brief 确保快速导航搜索编辑框已创建。 */
     void EnsureQuickNavigationSearchEdit();
     /** @brief 更新快速导航搜索编辑框的位置和大小。 */
@@ -2723,7 +2753,8 @@ private:
      */
     void DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
-        DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis = true);
+        DWRITE_TEXT_ALIGNMENT hAlign = DWRITE_TEXT_ALIGNMENT_LEADING,
+        DWRITE_PARAGRAPH_ALIGNMENT vAlign = DWRITE_PARAGRAPH_ALIGNMENT_CENTER, bool ellipsis = true);
     /**
      * @brief 绘制集合弹出面板内容。
      * @param ctx D2D 上下文
@@ -3565,6 +3596,19 @@ private:
     HANDLE steamWorkshopWatcherStopEvent_ = nullptr;
     std::atomic<bool> steamWorkshopWatcherActive_{ false };
     NavigationSettings navigationSettings_;
+    bool quickNavigationCollapsed_ = false;
+    bool quickNavigationFixedTop_ = false;
+    int quickNavigationAnchorTop_ = 0;
+    QuickNavigationSearchType quickNavigationSearchType_ = QuickNavigationSearchType::All;
+    std::string quickNavigationSearchEngine_;
+    enum class QuickNavigationMenu { None, Types, Views };
+    QuickNavigationMenu quickNavigationMenu_ = QuickNavigationMenu::None;
+    int quickNavigationMenuSelection_ = 0;
+    int quickNavigationListSelection_ = -1;
+    std::vector<snowdesktop::SettingsSearchResult> quickNavigationSettingsResults_;
+    std::wstring quickNavigationActionNotice_;
+    bool quickNavigationPreview_ = false;
+    ULONGLONG quickNavigationSettingsRefreshTick_ = 0;
     GeneralSettings generalSettings_;
     DockSettings dockSettings_;
     PersonalizationSettings personalizationSettings_ =
@@ -3980,6 +4024,7 @@ private:
     // 快捷导航 DirectWrite 文本格式（替代 GDI HFONT）
     ComPtr<IDWriteTextFormat> quickNavTabTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
+    ComPtr<IDWriteTextFormat> quickNavSearchTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavFluentTextFormat_;
     /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按索引和源尺寸）。 */

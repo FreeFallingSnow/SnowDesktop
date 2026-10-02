@@ -443,6 +443,8 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
 
     switch (page)
     {
+    case SettingsPage::QuickNavigation:
+        ensureGeneral(); ensurePersonalization(); break;
     case SettingsPage::About:
     case SettingsPage::Debug:
         ensureHomeAbout();
@@ -758,6 +760,7 @@ void SettingsShell::RefreshLocalizedText()
     if (closed_)
         return;
 
+    QuickNavigationItem().Content(winrt::box_value(Localize("quickNav.title")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     DesktopStyleItem().Content(winrt::box_value(Localize("settings.desktopStyle.title")));
     AppearanceHeader().Content(winrt::box_value(Localize("settings.nav.group.appearance")));
@@ -982,6 +985,7 @@ void SettingsShell::SetCalendarPageActions(snowdesktop::winui::CalendarPageActio
 void SettingsShell::SetGeneralPageActions(
     snowdesktop::winui::GeneralPageActions actions)
 {
+    actions.navigate = [this](const SettingsRoute& route) { RequestRoute(route); };
     generalPageActions_ = std::move(actions);
     if (generalPage_)
         generalPage_->SetActions(generalPageActions_);
@@ -2098,6 +2102,7 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/pages.svg", L"\xE8A5"},
         IconDescriptor{CategoriesItem(),
             L"ms-appx:///Assets/Settings/Icons/categories.svg", L"\xE8B7"},
+        IconDescriptor{QuickNavigationItem(), L"ms-appx:///Assets/Settings/Icons/search.svg", L"\xE721"},
         IconDescriptor{DockItem(),
             L"ms-appx:///Assets/Settings/Icons/dock.svg", L"\xEBC8"},
         IconDescriptor{StatusBarItem(),
@@ -2280,13 +2285,13 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     }
 
     const auto usesGeneralPresenter = [](SettingsPage page) {
-        return page == SettingsPage::General ||
+        return page == SettingsPage::QuickNavigation || page == SettingsPage::General ||
             page == SettingsPage::Desktop ||
             page == SettingsPage::Dock ||
             page == SettingsPage::DesktopPages;
     };
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
-        return page == SettingsPage::Personalization ||
+        return page == SettingsPage::QuickNavigation || page == SettingsPage::Personalization ||
             page == SettingsPage::AppearanceTheme ||
             page == SettingsPage::AppearanceWidgets || page == SettingsPage::WidgetBehavior ||
             page == SettingsPage::ContextMenu || page == SettingsPage::Dock;
@@ -2479,6 +2484,20 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                     RegisterFocusTarget(std::move(focusId), element);
                 });
             generalPage_->Activate(pageRoute.focusId);
+        }
+        break;
+    case SettingsPage::QuickNavigation:
+        if (generalPage_)
+        {
+            PageCards().Children().Append(generalPage_->QuickNavigationContent());
+            generalPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& target) {RegisterFocusTarget(std::move(id),target);});
+            generalPage_->Activate();
+        }
+        if (personalizationPage_)
+        {
+            PageCards().Children().Append(personalizationPage_->QuickNavigationAppearanceContent());
+            registerPersonalizationFocus({"personalization.quickNavigationTheme", "personalization.quickNavTheme"});
+            personalizationPage_->Activate();
         }
         break;
     case SettingsPage::Personalization:
@@ -3087,6 +3106,7 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     switch (page)
     {
     case SettingsPage::Home: return Localize("settings.nav.home");
+    case SettingsPage::QuickNavigation: return Localize("quickNav.title");
     case SettingsPage::General: return Localize("app.settings.general");
     case SettingsPage::Personalization:
         return Localize("app.settings.appearance");
@@ -3135,6 +3155,7 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
     case SettingsPage::Calendar: return Localize("settings.calendar.pageDescription");
     case SettingsPage::AnimationPerformance: return Localize("settings.page.animation.description");
     case SettingsPage::Home: return Localize("settings.page.home.description");
+    case SettingsPage::QuickNavigation: return Localize("quickNav.description");
     case SettingsPage::General:
         return Localize("settings.page.general.description");
     case SettingsPage::Personalization:
@@ -3184,6 +3205,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     switch (page)
     {
     case SettingsPage::Home: return GeneralItem();
+    case SettingsPage::QuickNavigation: return QuickNavigationItem();
     case SettingsPage::General: return GeneralItem();
     case SettingsPage::ContextMenu: return ContextMenuItem();
     case SettingsPage::Calendar: return CalendarItem();

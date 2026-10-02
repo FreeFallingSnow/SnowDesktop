@@ -55,13 +55,16 @@ inline bool IsGeneralShortcutOnlyCommit(
 
 inline bool IsNavigationShortcutOnlyCommit(
     const NavigationSettings& before,
-    const NavigationSettings& after) noexcept
+    const NavigationSettings& after)
 {
     const bool shortcutChanged = before.enabled != after.enabled ||
         before.modifiers != after.modifiers ||
         before.virtualKey != after.virtualKey;
-    return shortcutChanged &&
-        before.desktopViewMode == after.desktopViewMode;
+    NavigationSettings comparable = before;
+    comparable.enabled = after.enabled;
+    comparable.modifiers = after.modifiers;
+    comparable.virtualKey = after.virtualKey;
+    return shortcutChanged && comparable == after;
 }
 
 inline bool IsFloatingDockShortcutOnlyCommit(

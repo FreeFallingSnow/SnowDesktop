@@ -295,6 +295,7 @@ void SettingsController::UpdateNavigation(
     SettingsUpdateMode mode)
 {
     if (externalReplacementPending_) return;
+    NormalizeNavigationSettings(settings);
     values_.navigation = std::move(settings);
     MarkChanged(SettingsDomain::Navigation, mode);
 }

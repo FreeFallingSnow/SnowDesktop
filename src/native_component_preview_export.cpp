@@ -151,7 +151,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -327,6 +327,8 @@ DesktopApp::ExportNativeComponentPreviews(
                 DrawStatusBarEdge(context, frame, style, scale, position);
                 brushCache_.clear(); brushCacheContext_ = nullptr;
             });
+
+    if (request.component == "quick-navigation") return ExportQuickNavigationPreviews(request);
 
     const float scale = static_cast<float>(request.dpi) /
         static_cast<float>(USER_DEFAULT_SCREEN_DPI);

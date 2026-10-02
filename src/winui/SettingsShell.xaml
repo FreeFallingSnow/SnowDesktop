@@ -178,11 +178,12 @@
                 <NavigationViewItem x:Name="ContextMenuItem" Tag="context-menu" />
                 <NavigationViewItemHeader x:Name="DesktopBarsHeader" />
                 <NavigationViewItem x:Name="DesktopStyleItem" Tag="desktop-style" />
+                <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
+                <NavigationViewItem x:Name="QuickNavigationItem" Tag="quick-navigation" />
                 <NavigationViewItem x:Name="DockItem" Tag="dock" />
                 <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
                 <NavigationViewItem x:Name="StatusBarItem" Tag="status-bar" Visibility="Collapsed" />
                 <NavigationViewItemHeader x:Name="DesktopShellHeader" />
-                <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
                 <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
                 <NavigationViewItemHeader x:Name="WidgetsAndCategoriesHeader" />
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />

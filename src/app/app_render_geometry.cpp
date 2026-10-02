@@ -112,12 +112,12 @@ RECT DesktopApp::GetQuickNavItemIconRect(RECT bounds) const
     const int cellW = std::max<LONG>(1, bounds.right - bounds.left);
     const int cellH = std::max<LONG>(1, bounds.bottom - bounds.top);
     const int inset = std::max(1, QuickNavScale(2));
-    const int titleBandH = std::max(1, QuickNavScale(kQuickNavigationTextHeight));
-    const int titleGap = std::max(1, QuickNavScale(2));
+    const int titleBandH = std::max(1, QuickNavScale((navigationSettings_.layout.fontSize + 4) * navigationSettings_.layout.labelLines));
+    const int titleGap = std::max(1, QuickNavScale(10));
     const int maxIconW = std::max(1, cellW - inset * 2);
     const int maxIconH = std::max(1, cellH - titleBandH - titleGap - inset);
     const int iconSz = std::max(1, std::min({
-        QuickNavScale(48),
+        QuickNavScale(navigationSettings_.layout.iconSize),
         maxIconW,
         maxIconH
     }));

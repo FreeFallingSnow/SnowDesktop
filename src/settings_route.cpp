@@ -77,6 +77,11 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    if ((route.page == SettingsPage::General &&
+         (route.focusId.starts_with("general.quickNavigation") || route.focusId == "general.hotkeys")) ||
+        ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
+         (route.focusId == "personalization.quickNavigationTheme" || route.focusId == "personalization.quickNavTheme")))
+        route.page = SettingsPage::QuickNavigation;
     // Preserve old search and host links after relocating behavior controls.
     if ((route.page == SettingsPage::Personalization ||
          route.page == SettingsPage::AppearanceWidgets) &&
@@ -254,6 +259,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::StatusBar:
     case SettingsPage::DesktopStyle:
     case SettingsPage::WidgetBehavior:
+    case SettingsPage::QuickNavigation:
         break;
     default:
         return false;
@@ -299,6 +305,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::StatusBar: return "status-bar";
     case SettingsPage::DesktopStyle: return "desktop-style";
     case SettingsPage::WidgetBehavior: return "widget-behavior";
+    case SettingsPage::QuickNavigation: return "quick-navigation";
     }
     return "home";
 }

@@ -20,6 +20,11 @@ void Check(bool condition, const char* message)
 
 void TestHistoryAndFocusRoutes()
 {
+    Check(static_cast<int>(SettingsPage::General) == 1 && static_cast<int>(SettingsPage::WidgetBehavior) == 25 && static_cast<int>(SettingsPage::QuickNavigation) == 26,"new pages append without changing existing route IDs");
+    for (const auto focus : {"general.quickNavigation","general.quickNavigation.hotkey","general.hotkeys"})
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::General,focus)).page == SettingsPage::QuickNavigation,"legacy navigation shortcuts route to the dedicated page");
+    for (const auto focus : {"personalization.quickNavigationTheme","personalization.quickNavTheme"})
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::QuickNavigation,"legacy appearance links preserve their focus on the dedicated page");
     for (const auto focus : {"animation.hover", "animation.hoverScale", "animation.launch", "animation.window"})
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::Dock,
             "old Dock animation links reach the Dock tab after settings reorganization");

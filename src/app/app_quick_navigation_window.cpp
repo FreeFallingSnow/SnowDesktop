@@ -97,6 +97,7 @@ void DesktopApp::DestroyQuickNavigationWindow()
     quickNavCompositionCommitPending_ = false;
     quickNavTabTextFormat_.Reset();
     quickNavItemTextFormat_.Reset();
+    quickNavSearchTextFormat_.Reset();
     quickNavPathTextFormat_.Reset();
     quickNavFluentTextFormat_.Reset();
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
@@ -181,7 +182,7 @@ void DesktopApp::UpdateQuickNavigationBackdrop()
     };
     if (IsRectEmptyRect(clientRect))
         return;
-    const float cornerRadius = static_cast<float>(QuickNavScale(16)) / 2.0f;
+    const float cornerRadius = static_cast<float>(QuickNavScale(navigationSettings_.layout.cornerRadius));
     quickNavBackdropCompositor_.BeginFrame(true);
     quickNavBackdropCompositor_.AddPanel(clientRect, cornerRadius,
         quickNavBlurRadius_);
@@ -219,7 +220,7 @@ void DesktopApp::EnsureQuickNavigationSearchEdit()
         return;
     SetWindowLongPtrW(quickNavigationSearchEdit_, GWLP_ID, 1002);
 
-    quickNavigationSearchFont_ = CreateFontW(-QuickNavScale(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    quickNavigationSearchFont_ = CreateFontW(-QuickNavScale(navigationSettings_.layout.searchFontSize), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(quickNavigationSearchEdit_, WM_SETFONT,
@@ -243,8 +244,18 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
 {
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
         return;
-    RECT frame = QuickNavigationSearchInputRect(
-        GetQuickNavigationSearchRect(quickNavigationRect_), QuickNavScale(4));
+    LOGFONTW font{};
+    if (!quickNavigationSearchFont_ || GetObjectW(quickNavigationSearchFont_,sizeof(font),&font) != sizeof(font) || font.lfHeight != -QuickNavScale(navigationSettings_.layout.searchFontSize))
+    {
+        HFONT replacement = CreateFontW(-QuickNavScale(navigationSettings_.layout.searchFontSize),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH | FF_SWISS,snowdesktop::app_fonts::GdiFamily().c_str());
+        if (replacement)
+        {
+            SendMessageW(quickNavigationSearchEdit_,WM_SETFONT,reinterpret_cast<WPARAM>(replacement),FALSE);
+            if (quickNavigationSearchFont_) DeleteObject(quickNavigationSearchFont_);
+            quickNavigationSearchFont_ = replacement;
+        }
+    }
+    RECT frame = GetQuickNavigationInputRect(quickNavigationRect_);
     OffsetRect(&frame, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
     snowdesktop::text_input::SetEmbeddedPose(quickNavigationSearchEdit_, frame, frame,
         true, true);
@@ -317,6 +328,7 @@ void DesktopApp::RefreshQuickNavigationSearchText()
             quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
             RefreshQuickNavigationEverythingResults();
         }
+        if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
         return;
     }
     std::wstring buffer(static_cast<size_t>(len) + 1, L'\0');
@@ -328,6 +340,7 @@ void DesktopApp::RefreshQuickNavigationSearchText()
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
     }
+    if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
 }
 
 void DesktopApp::ClearQuickNavigationEverythingResults()
@@ -391,6 +404,13 @@ void DesktopApp::RefreshQuickNavigationEverythingResults()
 {
     quickNavigationAppResultIndices_.clear();
     quickNavigationAppsExpanded_ = false;
+    RefreshQuickNavigationTypedResults();
+    if (quickNavigationSearchType_ != QuickNavigationSearchType::All && quickNavigationSearchType_ != QuickNavigationSearchType::File)
+    {
+        ClearQuickNavigationEverythingResults();
+        RefreshQuickNavigationAppResults();
+        return;
+    }
     const std::wstring query = GetQuickNavigationEffectiveSearchText();
     if (query.empty())
     {
@@ -502,6 +522,7 @@ void DesktopApp::OnQuickNavigationEverythingSearchCompleted(
 
     ApplyQuickNavigationEverythingSearchResult(
         std::move(*result));
+    if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
 }
 
 void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
@@ -601,6 +622,8 @@ void DesktopApp::PositionQuickNavigationWindow()
         return;
 
     quickNavigationRect_ = GetQuickNavigationRect();
+    quickNavigationAnchorTop_ = quickNavigationRect_.top;
+    quickNavigationFixedTop_ = true;
     RECT anchorRect = MakeRect(
         quickNavigationAnimationAnchorPoint_.x - 1,
         quickNavigationAnimationAnchorPoint_.y - 1,
@@ -987,6 +1010,13 @@ void DesktopApp::OpenQuickNavigation(
     }
 
     quickNavigationOpen_ = true;
+    quickNavigationCollapsed_ = navigationSettings_.defaultCollapsed && !IsLuaLogicalSlotPickerOpen();
+    quickNavigationFixedTop_ = false;
+    quickNavigationSearchType_ = QuickNavigationSearchType::All;
+    quickNavigationSearchEngine_.clear();
+    quickNavigationMenu_ = QuickNavigationMenu::None;
+    quickNavigationListSelection_ = -1;
+    quickNavigationActionNotice_.clear();
     EnsureNavTabOrder();
     if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
     {

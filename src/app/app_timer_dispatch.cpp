@@ -533,6 +533,16 @@ void DesktopApp::OnTimer(WPARAM timerId)
         // window's host-watch timer. Some display-driver paths leave that
         // timer alive but do not deliver its low-priority WM_TIMER promptly.
         PollDisplayTopology();
+        if (quickNavigationOpen_ && quickNavigationSearchType_ == QuickNavigationSearchType::Settings &&
+            GetTickCount64() - quickNavigationSettingsRefreshTick_ >= 1000)
+        {
+            quickNavigationSettingsRefreshTick_ = GetTickCount64();
+            const auto previous = quickNavigationSettingsResults_;
+            const auto selection = quickNavigationListSelection_;
+            RefreshQuickNavigationTypedResults();
+            if (previous == quickNavigationSettingsResults_) quickNavigationListSelection_ = selection;
+            else { if (quickNavigationCollapsed_) PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
+        }
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
         TrimHiddenDesktopWidgetSurfaces();
