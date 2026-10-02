@@ -220,6 +220,7 @@ void TestCodec()
     settings.values.personalization.panelGradient.enabled = true;
     settings.values.personalization.showGroupTabCounts = true;
     settings.values.personalization.scrollableTitleBarOnTop = true;
+    settings.values.personalization.widgetTransformCursors = false;
     settings.values.personalization.popupHoverOpen = true;
     settings.values.personalization.popupHoverDelayMs = 1700.0f;
     settings.values.personalization.showCategoryTabCounts = false;
@@ -274,6 +275,8 @@ void TestCodec()
             restored.values.personalization.popupHoverDelayMs == 1700.0f &&
             !restored.values.personalization.showCategoryTabCounts,
         "group tab counts cross the settings process boundary independently from category counts");
+    Check(!restored.values.personalization.widgetTransformCursors,
+        "disabling component transform cursors survives the settings process boundary despite the enabled default");
     for (const int style : {5, 6})
     {
         auto menuSettings = settings;

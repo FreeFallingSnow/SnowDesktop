@@ -462,6 +462,8 @@
     "app.settings.text_color": "文字颜色",
     "app.settings.corner_radius": "圆角半径",
     "app.settings.bar_height": "底栏高度",
+    "app.settings.widget_transform_cursors": "显示组件移动和缩放指针",
+    "app.settings.widget_transform_cursors_hint": "悬停或拖动组件的移动、缩放区域时切换指针样式；关闭后使用普通指针。",
     "app.settings.restore_default": "恢复默认",
     "app.settings.desktop_icons": "桌面图标",
     "app.settings.system_appearance": "系统外观",

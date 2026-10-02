@@ -288,6 +288,12 @@ void TestRoutes()
     Check(groupCounts.page == SettingsPage::WidgetBehavior &&
             groupCounts.focusId == "personalization.showGroupTabCounts",
         "group count links reach Widget behavior without redirecting to desktop categories");
+    const auto transformCursors = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.widgetTransformCursors"));
+    Check(transformCursors.page == SettingsPage::AppearanceWidgets &&
+            transformCursors.focusId == "personalization.widgetTransformCursors",
+        "component transform cursor links reach Components and layout");
     const auto popupHover = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.popupHoverOpen"));

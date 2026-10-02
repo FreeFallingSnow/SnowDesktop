@@ -258,6 +258,7 @@ void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId)
     preset.cornerRadius = settings.cornerRadius;
     preset.barHeight = settings.barHeight;
     preset.scrollableTitleBarOnTop = settings.scrollableTitleBarOnTop;
+    preset.widgetTransformCursors = settings.widgetTransformCursors;
     preset.categorizedTabHeight = settings.categorizedTabHeight;
     preset.luaWidgetContentRowHeight = settings.luaWidgetContentRowHeight;
     preset.showCategoryTabCounts = settings.showCategoryTabCounts;
@@ -467,6 +468,8 @@ bool LoadPersonalization(
         s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 6);
     s.scrollableTitleBarOnTop = false;
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
+    s.widgetTransformCursors = true;
+    ReadBoolField(text, "widgetTransformCursors", s.widgetTransformCursors);
     s.popupHoverOpen = false;
     ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
     s.popupHoverDelayMs = kDefaultPopupHoverDelayMs;
@@ -560,6 +563,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"barHeight\": " << s.barHeight << ",\n";
     file << "  \"scrollableTitleBarOnTop\": "
          << (s.scrollableTitleBarOnTop ? "true" : "false") << ",\n";
+    file << "  \"widgetTransformCursors\": "
+         << (s.widgetTransformCursors ? "true" : "false") << ",\n";
     file << "  \"categorizedTabHeight\": "
          << std::clamp(
                 s.categorizedTabHeight,

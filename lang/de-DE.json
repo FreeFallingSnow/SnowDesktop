@@ -462,6 +462,8 @@
   "app.settings.text_color": "Textfarbe",
   "app.settings.corner_radius": "Eckenradius",
   "app.settings.bar_height": "Leistenhöhe",
+  "app.settings.widget_transform_cursors": "Mauszeiger zum Verschieben und Skalieren von Komponenten anzeigen",
+  "app.settings.widget_transform_cursors_hint": "Ändert den Mauszeiger beim Überfahren oder Ziehen der Griffe zum Verschieben und Skalieren von Komponenten. Deaktivieren, um den normalen Mauszeiger zu verwenden.",
   "app.settings.restore_default": "Standard wiederherstellen",
   "app.settings.desktop_icons": "Desktop-Symbole",
   "app.settings.system_appearance": "Systemdarstellung",

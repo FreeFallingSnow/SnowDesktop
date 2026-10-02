@@ -462,6 +462,8 @@
   "app.settings.text_color": "Cor do texto",
   "app.settings.corner_radius": "Raio de canto",
   "app.settings.bar_height": "Altura da barra",
+  "app.settings.widget_transform_cursors": "Mostrar cursores para mover e redimensionar componentes",
+  "app.settings.widget_transform_cursors_hint": "Muda o ponteiro ao passar sobre as alças para mover ou redimensionar componentes, ou ao arrastá-las. Desative para usar o ponteiro padrão.",
   "app.settings.restore_default": "Restaurar",
   "app.settings.desktop_icons": "Ícones da área de trabalho",
   "app.settings.system_appearance": "Aparência do sistema",

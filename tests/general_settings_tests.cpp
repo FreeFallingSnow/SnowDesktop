@@ -933,6 +933,9 @@ int main(int argc, char** argv)
     Check(!savedAppearance.scrollableTitleBarOnTop,
         "existing profiles default to a bottom title bar");
     savedAppearance.scrollableTitleBarOnTop = true;
+    Check(savedAppearance.widgetTransformCursors,
+        "new profiles retain move and resize pointer feedback by default");
+    savedAppearance.widgetTransformCursors = false;
     Check(!savedAppearance.popupHoverOpen,
         "popup hover opening defaults off for new profiles");
     Check(savedAppearance.popupHoverDelayMs == 600.0f,
@@ -963,6 +966,7 @@ int main(int argc, char** argv)
             loadedAppearance.luaWidgetContentRowHeight == 34.0f &&
             loadedAppearance.showGroupTabCounts &&
             loadedAppearance.scrollableTitleBarOnTop &&
+            !loadedAppearance.widgetTransformCursors &&
             loadedAppearance.popupHoverOpen &&
             loadedAppearance.popupHoverDelayMs == 1200.0f &&
             !loadedAppearance.showCategoryTabCounts &&
@@ -979,6 +983,7 @@ int main(int argc, char** argv)
             auto appearance = MakeAppearancePreset(preset);
             appearance.showGroupTabCounts = enabled;
             appearance.scrollableTitleBarOnTop = enabled;
+            appearance.widgetTransformCursors = enabled;
             appearance.popupHoverOpen = enabled;
             appearance.popupHoverDelayMs = 1400.0f;
             appearance.showCategoryTabCounts = !enabled;
@@ -987,6 +992,7 @@ int main(int argc, char** argv)
                     LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
                     loadedAppearance.showGroupTabCounts == enabled &&
                     loadedAppearance.scrollableTitleBarOnTop == enabled &&
+                    loadedAppearance.widgetTransformCursors == enabled &&
                     loadedAppearance.popupHoverOpen == enabled &&
                     loadedAppearance.popupHoverDelayMs == 1400.0f &&
                     loadedAppearance.showCategoryTabCounts == !enabled,
@@ -1013,12 +1019,14 @@ int main(int argc, char** argv)
         previousGlass.cornerRadius = 32.0f;
         previousGlass.barHeight = 37.0f;
         previousGlass.luaWidgetContentRowHeight = 34.0f;
+        previousGlass.widgetTransformCursors = false;
         previousGlass.contextMenuStyle = 6;
 
         auto expected = MakeAppearancePreset(preset);
         expected.cornerRadius = previousGlass.cornerRadius;
         expected.barHeight = previousGlass.barHeight;
         expected.luaWidgetContentRowHeight = previousGlass.luaWidgetContentRowHeight;
+        expected.widgetTransformCursors = false;
         expected.contextMenuStyle = previousGlass.contextMenuStyle;
         Check(SavePersonalization(personalizationPath.c_str(), previousGlass) &&
                 LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
@@ -1082,12 +1090,14 @@ int main(int argc, char** argv)
     PersonalizationSettings migratedGlass;
     migratedGlass.showGroupTabCounts = true;
     migratedGlass.scrollableTitleBarOnTop = true;
+    migratedGlass.widgetTransformCursors = false;
     migratedGlass.popupHoverOpen = true;
     migratedGlass.popupHoverDelayMs = 2200.0f;
     migratedGlass.panelGradient = savedAppearance.panelGradient;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
             !migratedGlass.showGroupTabCounts &&
             !migratedGlass.scrollableTitleBarOnTop &&
+            migratedGlass.widgetTransformCursors &&
             !migratedGlass.popupHoverOpen &&
             migratedGlass.popupHoverDelayMs == 600.0f &&
             migratedGlass.widgetEdgeHighlightEnabled &&

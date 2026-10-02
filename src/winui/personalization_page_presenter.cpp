@@ -214,6 +214,9 @@ struct PersonalizationPagePresenter::Impl
     muxc::ToggleSwitch topTitleBarToggle{nullptr};
     SettingRow topTitleBarRow;
     winrt::event_token topTitleBarToken{};
+    muxc::ToggleSwitch widgetTransformCursors{nullptr};
+    SettingRow widgetTransformCursorsRow;
+    winrt::event_token widgetTransformCursorsToken{};
     ContinuousControl luaWidgetContentRowHeight;
     muxc::ToggleSwitch showGroupTabCounts{nullptr};
     SettingRow showGroupTabCountsRow;
@@ -563,6 +566,11 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(luaWidgetContentRowHeight, L"cu");
         layoutCard.content.Children().Append(
             luaWidgetContentRowHeight.row.root);
+        widgetTransformCursors = muxc::ToggleSwitch{};
+        widgetTransformCursors.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        widgetTransformCursorsRow.Initialize(widgetTransformCursors);
+        widgetTransformCursorsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(widgetTransformCursorsRow.root);
         showGroupTabCounts = muxc::ToggleSwitch{};
         showGroupTabCounts.HorizontalAlignment(mux::HorizontalAlignment::Right);
         showGroupTabCountsRow.Initialize(showGroupTabCounts);
@@ -891,6 +899,14 @@ struct PersonalizationPagePresenter::Impl
                         settings.popupHoverOpen = enabled;
                     });
             });
+        widgetTransformCursorsToken = widgetTransformCursors.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = widgetTransformCursors.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.widgetTransformCursors = enabled;
+                    });
+            });
         for (ContinuousControl* control : continuousControls)
             HookContinuousControl(*control);
     }
@@ -1063,6 +1079,7 @@ struct PersonalizationPagePresenter::Impl
         showGroupTabCounts.IsOn(settings.showGroupTabCounts);
         popupHoverOpen.IsOn(settings.popupHoverOpen);
         topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
+        widgetTransformCursors.IsOn(settings.widgetTransformCursors);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
         contextMenuCombo.SelectedIndex(
@@ -1420,6 +1437,13 @@ struct PersonalizationPagePresenter::Impl
         SetContinuousText(luaWidgetContentRowHeight,
             "app.settings.lua_widget_row_height",
             L"Lua Widget Row Height");
+        widgetTransformCursorsRow.SetText(
+            L("app.settings.widget_transform_cursors",
+                L"Show component move and resize cursors"),
+            L("app.settings.widget_transform_cursors_hint",
+                L"Change the pointer when hovering over or dragging component move and resize handles. Turn off to use the standard pointer."));
+        muxa::AutomationProperties::SetName(
+            widgetTransformCursors, widgetTransformCursorsRow.label.Text());
         showGroupTabCountsRow.SetText(
             L("app.settings.group_show_count", L"Show file counts on group tabs"),
             L("app.settings.group_show_count_hint",
@@ -1585,6 +1609,8 @@ struct PersonalizationPagePresenter::Impl
             return topTitleBarToggle;
         if (id == "personalization.luaWidgetRowHeight")
             return luaWidgetContentRowHeight.slider;
+        if (id == "personalization.widgetTransformCursors")
+            return widgetTransformCursors;
         if (id == "desktop.categoryLayout" ||
             id == "desktop.tabHeight" ||
             id == "personalization.tabHeight")
@@ -1682,6 +1708,7 @@ struct PersonalizationPagePresenter::Impl
             showGroupTabCounts.Toggled(showGroupTabCountsToken);
             popupHoverOpen.Toggled(popupHoverOpenToken);
             topTitleBarToggle.Toggled(topTitleBarToken);
+            widgetTransformCursors.Toggled(widgetTransformCursorsToken);
         }
         catch (...)
         {

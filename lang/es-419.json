@@ -462,6 +462,8 @@
   "app.settings.text_color": "Color del texto",
   "app.settings.corner_radius": "Radio de esquina",
   "app.settings.bar_height": "Altura de la barra",
+  "app.settings.widget_transform_cursors": "Mostrar cursores para mover y cambiar el tamaño de los componentes",
+  "app.settings.widget_transform_cursors_hint": "Cambia el cursor al pasar por los controles para mover o cambiar el tamaño de los componentes, o al arrastrarlos. Desactiva esta opción para usar el cursor normal.",
   "app.settings.restore_default": "Restaurar el valor predeterminado",
   "app.settings.desktop_icons": "Iconos de escritorio",
   "app.settings.system_appearance": "Apariencia del sistema",

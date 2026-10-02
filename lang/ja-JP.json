@@ -462,6 +462,8 @@
   "app.settings.text_color": "文字色",
   "app.settings.corner_radius": "コーナー半径",
   "app.settings.bar_height": "バーの高さ",
+  "app.settings.widget_transform_cursors": "コンポーネントの移動・サイズ変更カーソルを表示",
+  "app.settings.widget_transform_cursors_hint": "コンポーネントの移動・サイズ変更ハンドルにポインターを合わせるか、ドラッグするとカーソルが切り替わります。オフにすると通常のポインターを使用します。",
   "app.settings.restore_default": "デフォルトに戻す",
   "app.settings.desktop_icons": "デスクトップ アイコン",
   "app.settings.system_appearance": "システム外観",

@@ -172,6 +172,9 @@ struct PersonalizationSettings
     /** Scrollable native storage title bars; independent of theme presets. */
     bool scrollableTitleBarOnTop = false;
 
+    /** Move/resize pointer feedback for widget handles; independent of themes. */
+    bool widgetTransformCursors = true;
+
     /** Lua desktop widget semantic row height in page CU. */
     float luaWidgetContentRowHeight = 28.0f;
 

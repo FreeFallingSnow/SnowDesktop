@@ -462,6 +462,8 @@
   "app.settings.text_color": "文字顏色",
   "app.settings.corner_radius": "圓角半徑",
   "app.settings.bar_height": "底欄高度",
+  "app.settings.widget_transform_cursors": "顯示元件移動與縮放游標",
+  "app.settings.widget_transform_cursors_hint": "將游標停留在元件的移動、縮放區域或拖曳時切換游標樣式；關閉後使用一般游標。",
   "app.settings.restore_default": "還原預設",
   "app.settings.desktop_icons": "桌面圖示",
   "app.settings.system_appearance": "系統外觀",

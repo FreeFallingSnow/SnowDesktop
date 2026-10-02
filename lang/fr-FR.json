@@ -462,6 +462,8 @@
   "app.settings.text_color": "Couleur du texte",
   "app.settings.corner_radius": "Rayon de coin",
   "app.settings.bar_height": "Hauteur de barre",
+  "app.settings.widget_transform_cursors": "Afficher les curseurs de déplacement et de redimensionnement des composants",
+  "app.settings.widget_transform_cursors_hint": "Change le pointeur au survol ou lors du déplacement des poignées permettant de déplacer ou de redimensionner les composants. Désactivez cette option pour utiliser le pointeur habituel.",
   "app.settings.restore_default": "Restaurer la valeur par défaut",
   "app.settings.desktop_icons": "Icônes du bureau",
   "app.settings.system_appearance": "Apparence du système",

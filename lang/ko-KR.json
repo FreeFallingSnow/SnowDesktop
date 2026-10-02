@@ -462,6 +462,8 @@
   "app.settings.text_color": "텍스트 색상",
   "app.settings.corner_radius": "코너 반경",
   "app.settings.bar_height": "바 높이",
+  "app.settings.widget_transform_cursors": "구성 요소 이동 및 크기 조절 커서 표시",
+  "app.settings.widget_transform_cursors_hint": "구성 요소의 이동 및 크기 조절 핸들에 포인터를 올리거나 드래그하면 커서 모양이 바뀝니다. 끄면 일반 포인터를 사용합니다.",
   "app.settings.restore_default": "기본값 복원",
   "app.settings.desktop_icons": "바탕 화면 아이콘",
   "app.settings.system_appearance": "시스템 외관",

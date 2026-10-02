@@ -462,6 +462,8 @@
     "app.settings.text_color": "Text Color",
     "app.settings.corner_radius": "Corner Radius",
     "app.settings.bar_height": "Bar Height",
+    "app.settings.widget_transform_cursors": "Show component move and resize cursors",
+    "app.settings.widget_transform_cursors_hint": "Change the pointer when hovering over or dragging component move and resize handles. Turn off to use the standard pointer.",
     "app.settings.restore_default": "Restore Default",
     "app.settings.desktop_icons": "Desktop Icons",
     "app.settings.system_appearance": "System Appearance",
