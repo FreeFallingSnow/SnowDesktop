@@ -123,6 +123,37 @@ void TestContextMenuState()
         "empty inputs expose only an available paste operation");
 }
 
+void TestSubmittedInputFocusScope()
+{
+    using snowdesktop::widget_runtime::HostInputSubmitFocusScope;
+    const HostInputSubmitFocusScope* active = nullptr;
+    {
+        HostInputSubmitFocusScope submit(active, L"reminders", "new-task", "desktop");
+        Check(active && active->AllowsFocus(
+                L"reminders", "new-task", "desktop", true, false, true),
+            "a live submit can restore its own editor without outer widget selection");
+        Check(!active->AllowsFocus(L"other", "new-task", "desktop", true, false, true) &&
+                !active->AllowsFocus(L"reminders", "other", "desktop", true, false, true) &&
+                !active->AllowsFocus(L"reminders", "new-task", "panel", true, false, true),
+            "submit focus cannot transfer to another widget, editor or surface");
+        Check(!active->AllowsFocus(L"reminders", "new-task", "desktop", false, false, true) &&
+                !active->AllowsFocus(L"reminders", "new-task", "desktop", true, true, true) &&
+                !active->AllowsFocus(L"reminders", "new-task", "desktop", true, false, false),
+            "invalid, preview and hidden editors cannot be restored");
+        {
+            HostInputSubmitFocusScope nested(active, L"reminders", "panel-input", "panel");
+            Check(active->AllowsFocus(L"reminders", "panel-input", "panel", true, false, true) &&
+                    !active->AllowsFocus(L"reminders", "new-task", "desktop", true, false, true),
+                "a nested submit temporarily owns the focus grant");
+        }
+        Check(active == &submit && active->AllowsFocus(
+                L"reminders", "new-task", "desktop", true, false, true),
+            "a nested submit returns the grant to its still-active caller");
+    }
+    Check(active == nullptr,
+        "the submit grant expires before a later render or timer can request focus");
+}
+
 void TestDeferredFocusRequest()
 {
     using snowdesktop::widget_runtime::DeferredHostInputFocus;
@@ -298,6 +329,7 @@ int main()
     TestBoundedReplacement();
     TestReadOnlyMutationGate();
     TestContextMenuState();
+    TestSubmittedInputFocusScope();
     TestDeferredFocusRequest();
     TestCaretVisibilityRequest();
     TestVerticalExtents();

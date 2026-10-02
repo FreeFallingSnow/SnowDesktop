@@ -1617,6 +1617,8 @@ surface 的 Tab 顺序。
 宿主先提交 storage 绑定并失焦，再投递动作，因而回调可以清空草稿而不会被后续失焦写回。
 该键盘提交属于 trusted gesture；同步 submit 回调可调用 `control.focus(key)` 恢复输入焦点，
 重新聚焦时读取回调更新后的 storage 值。render、schedule 等非用户操作回调仍不得抢焦点。
+点击输入框不要求选中组件外框；同步 submit 仍可恢复本次提交的同一输入框，但不能借此
+跳过其他组件、其他控件或其他 surface 的聚焦约束，也不能恢复已隐藏或停用的输入框。
 输入法组合期间 Enter 仍留给输入法；多行普通 Enter 仍换行。没有绑定时保留原有提交与失焦行为。
 旧宿主不接受此字段，依赖提交动作的组件必须声明 `control.inputEvents` 为 required feature；
 可降级组件须在 feature 探测后才传入 `events`。`apiVersion` 仍为 2，不能仅凭相同版本号推断支持。

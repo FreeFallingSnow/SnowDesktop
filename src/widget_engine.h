@@ -1967,6 +1967,8 @@ private:
     std::unordered_map<int, std::uint64_t> networkRequestTasks_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState
         trustedGestureState_;
+    const snowdesktop::widget_runtime::HostInputSubmitFocusScope*
+        hostInputSubmitFocus_ = nullptr;
     std::uint64_t nextWidgetRuntimeToken_ = 0;
     std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
         widgetSystemDataProvider_;

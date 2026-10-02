@@ -30013,6 +30013,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
                 WidgetSurfaceScope surfaceScope(d2dState_, inputSurface.c_str());
                 snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
                     trustedGestureState_, true);
+                snowdesktop::widget_runtime::HostInputSubmitFocusScope focusScope(
+                    hostInputSubmitFocus_, widgetId, inputId, inputSurface);
                 DispatchHostInputAction(widgetId, inputId,
                     submitAction, "submit", text, false, "keyboard");
                 return true;
@@ -32537,6 +32539,28 @@ bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
     if (!trustedGestureState_.Active())
     {
         error = "trustedGestureRequired";
+        return false;
+    }
+    const std::string submitSurface(CurrentWidgetSurface(d2dState_));
+    if (hostInputSubmitFocus_ &&
+        hostInputSubmitFocus_->Matches(widgetId, id, submitSurface))
+    {
+        const int submittedIndex = FindWidget(widgetId);
+        if (submittedIndex < 0)
+        {
+            error = "hostUnavailable";
+            return false;
+        }
+        const auto& submittedWidget = widgets_[submittedIndex];
+        // Input-field clicks clear the containing widget's selection. Restore
+        // only this live editor, using the callback's fresh storage value.
+        if (hostInputSubmitFocus_->AllowsFocus(widgetId, id, submitSurface,
+                submittedWidget.valid, submittedWidget.preview,
+                IsPanelSurface(submitSurface) ? submittedWidget.panelActive
+                                             : submittedWidget.desktopVisible) &&
+            RuntimeFocusHostInput(widgetId, id, "programmatic"))
+            return true;
+        error = "controlNotFound";
         return false;
     }
     if (RuntimeFocusViewTarget(widgetId, id, "programmatic"))

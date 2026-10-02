@@ -33,12 +33,6 @@ local fluent = {
     urgency = utf8.char(0xF40B), -- Flag 20 Regular
     sort = utf8.char(0xF18A), -- Arrow Sort 20 Regular
     autoSort = utf8.char(0xF190), -- Arrow Sync 20 Regular
-    priorities = {
-        [3] = utf8.char(0xF49F), -- Important 20 Regular
-        [2] = utf8.char(0xF19B), -- Arrow Up 20 Regular
-        [1] = utf8.char(0xF40B), -- Flag 20 Regular
-        [0] = utf8.char(0xF148), -- Arrow Down 20 Regular
-    },
 }
 
 local settings = {
@@ -397,11 +391,11 @@ local function render(context, model)
     if not context.selected then
         model.selectedId = nil
         model.editingTaskId = nil
-        model.drag = nil
+        cancelDrag(model)
     end
     local autoSort = automaticSorting()
     if model.drag and (autoSort or not interaction.isPressed("task.row." .. model.drag.id)) then
-        model.drag = nil
+        cancelDrag(model)
     end
     local w = layout.contentWidth()
     local h = layout.contentHeight()
@@ -502,8 +496,9 @@ local function render(context, model)
         inputY + inputH + metrics.spacingXs)
     local listBottom = h - metrics.spacingXs
     local viewportH = math.max(unit, listBottom - listTop)
-    local viewportShape = { type = "rect", x = contentInset, y = listTop,
-        width = w - contentInset * 2, height = viewportH }
+    -- The scroll viewport reaches the component edge; card spacing is inside it.
+    local viewportShape = { type = "rect", x = 0, y = listTop,
+        width = w, height = viewportH }
     model.viewport = viewportShape
     model.dragThreshold = metrics.spacingXs
     registerRegion("tasks.background", viewportShape, "default", {
@@ -559,7 +554,7 @@ local function render(context, model)
     })
     if model.drag and model.drag.active and model.scrollStep then
         scroll.offset = interaction.setScrollOffset("tasks.scroll",
-            scroll.offset + model.scrollStep)
+            math.floor(scroll.offset + model.scrollStep + 0.5))
         model.scrollStep = nil
     end
     model.rows = rows
@@ -569,8 +564,7 @@ local function render(context, model)
     local first, last = taskLayout.visibleRange(rows, scroll.offset, viewportH)
     local selectedId = model.selectedId
 
-    draw.pushClip(contentInset, listTop,
-        w - contentInset * 2, viewportH)
+    draw.pushClip(0, listTop, w, viewportH)
     for index = first, last do
         local row = rows[index]
         local task = row.task
@@ -717,6 +711,7 @@ local function updateDrag(model, value)
     local drag = model.drag
     if not drag or type(value.x) ~= "number" or type(value.y) ~= "number" then return end
     drag.x, drag.y = value.x, value.y
+    model.scrollStep = nil
     if not drag.active and math.max(math.abs(drag.x - drag.startX),
         math.abs(drag.y - drag.startY)) >= (model.dragThreshold or 4) then
         drag.active = true
@@ -740,6 +735,7 @@ local function event(_context, model, value)
         if value.id == "tasks.dragTimeout" or not model.drag then
             cancelDrag(model)
         elseif value.id == "tasks.dragScroll" and model.drag.active then
+            model.scrollStep = nil
             local drag, viewport = model.drag, model.viewport
             if taskOrder.contains(viewport, drag.x, drag.y) then
                 local edge = math.min(model.scrollAmount, viewport.height / 4)
@@ -873,8 +869,6 @@ local function menu(_context, model, request)
                 id = "task.priority." .. level,
                 label = labels[level],
                 checked = currentPriority == level,
-                icon = fluent.priorities[level],
-                iconFont = "fluent",
             }
         end
         local items = {

@@ -1,5 +1,8 @@
 -- Drive the actual entry's registered actions. Only host storage, drawing,
 -- pointer routing and timers are substituted; no sorting or event logic is mocked.
+-- Keep the native integer offset boundary: fractional semantic row sizes used
+-- to pass the permissive substitute but fail during a real drag-scroll render.
+local hostSetScrollOffset = interaction.setScrollOffset
 local descriptor
 local storage, l10n, widget, schedule, control, ui, layout, draw, interaction
 -- The C++ preview test inserts the repository's actual main.lua in this loader.
@@ -37,7 +40,7 @@ local function harness(initial)
         end,
         blur = function() return true end,
     }
-    ui = { metrics = function() return { layoutRowHeight = 28 } end,
+    ui = { metrics = function() return { layoutRowHeight = h.rowHeight or 28 } end,
         menu = function(items) return items end }
     layout = { contentWidth = function() return 250 end,
         contentHeight = function() return 200 end }
@@ -55,16 +58,17 @@ local function harness(initial)
         scroll = function()
             return { offset = h.offset, maximum = 300 }
         end,
-        setScrollOffset = function(_, offset)
+        setScrollOffset = function(key, offset)
+            hostSetScrollOffset(key, offset)
             h.offset = math.max(0, math.min(300, offset))
             return h.offset
         end,
     }
     if not descriptor then descriptor = loadReminders() end
     h.model = descriptor.setup()
-    function h:render()
+    function h:render(selected)
         self.regions, self.controls = {}, {}
-        descriptor.render({ selected = true }, self.model)
+        descriptor.render({ selected = selected ~= false }, self.model)
     end
     function h:action(key, name, x, y)
         local region = self.regions[key] or self.controls[key]
@@ -102,7 +106,7 @@ end
 harness({})
 
 return {
-    ["submit creates once and refocuses the cleared input for consecutive tasks"] = function()
+    ["submit creates once and requests the cleared editor for consecutive tasks"] = function()
         local h = harness({ draft = "  first\nsecond  " })
         h:render()
         h:action("new-task", "submit")
@@ -171,6 +175,42 @@ return {
         h:action(key, "pointerUp", x, h.model.viewport.y + 1)
         assert(h.values.task_2_text == "normal" and h.values.doneIds == "2")
     end,
+    ["scaled drag-scroll offsets satisfy the native integer boundary"] = function()
+        for _, direction in ipairs({ "up", "down" }) do
+            local h = harness(initial())
+            h.rowHeight, h.offset = 29.4, 50
+            local key, x = h:start("3")
+            local y = h.model.viewport.y +
+                (direction == "up" and 1 or h.model.viewport.height - 1)
+            h:action(key, "pointerMove", x, y)
+            descriptor.event({}, h.model, { kind = "schedule", id = "tasks.dragScroll" })
+            h:render()
+            assert(h.offset == math.floor(h.offset))
+            assert(direction == "up" and h.offset < 50 or direction == "down" and h.offset > 50)
+            assert(h.transactions == 0 and h.regions[key].capturePointer)
+        end
+    end,
+    ["leaving the viewport clears pending scrolling and capture loss cleans timers"] = function()
+        for _, reason in ipairs({ "outside", "capture", "selection" }) do
+            local h = harness(initial())
+            local key, x = h:start("3")
+            h:action(key, "pointerMove", x, h.model.viewport.y + h.model.viewport.height - 1)
+            descriptor.event({}, h.model, { kind = "schedule", id = "tasks.dragScroll" })
+            assert(h.model.scrollStep ~= nil)
+            if reason == "outside" then
+                h:action(key, "pointerMove", -20, -20)
+                descriptor.event({}, h.model, { kind = "schedule", id = "tasks.dragScroll" })
+                h:render()
+                assert(h.offset == 0, "an outside pointer must not consume a queued edge scroll")
+                h:action(key, "pointerUp", -20, -20)
+            elseif reason == "capture" then
+                h.pressed = nil
+                h:render()
+            else h:render(false) end
+            assert(h.model.drag == nil and next(h.timers) == nil)
+            assert(h.transactions == 0 and h.values.order == "1,2,3")
+        end
+    end,
     ["completion stays at the end after manual moves and reopening"] = function()
         local h = harness(initial())
         h:command("task.toggle", "1")
@@ -220,7 +260,7 @@ return {
         reloaded:command("task.priority.0", "3")
         assert(reloaded.model.rows[1].task.id == "3", "disabling automatic sorting must preserve its last order")
     end,
-    ["task and background menus expose sort modes and urgency glyphs"] = function()
+    ["menus expose sort modes and a parent urgency glyph with text-only levels"] = function()
         local h = harness(initial())
         h:render()
         local function find(items, id)
@@ -228,7 +268,9 @@ return {
         end
         local items = h:menu("1")
         assert(items[2].icon and items[2].iconFont == "fluent")
-        for _, item in ipairs(items[2].children) do assert(item.icon and item.iconFont == "fluent") end
+        for _, item in ipairs(items[2].children) do
+            assert(item.icon == nil and item.iconFont == nil)
+        end
         for _, taskId in ipairs({ false, "1" }) do
             items = h:menu(taskId or nil)
             assert(find(items, "task.sortPriority").enabled)
