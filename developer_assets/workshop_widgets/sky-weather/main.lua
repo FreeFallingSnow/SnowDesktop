@@ -41,6 +41,13 @@ local function textAtInkTop(x,y,value,size,color,width,bold)
     text(x,y-measured.ink.top,value,size,color,width,bold,measured.height)
     return measured
 end
+local function textAtInkCenter(x,y,value,size,color,width,bold)
+    local measured=draw.measureText(tostring(value),size,0,bold or false)
+    text(x,y-measured.ink.top-measured.ink.height*0.5,value,size,color,width,bold,measured.height)
+end
+local function forecastLabel(day,data)
+    return day.date==data.localTime:sub(1,10) and l10n.tr("lua_widget.sky_weather.today") or l10n.tr(weekdayKeys[(weather.weekday(day.date) or 0)+1])
+end
 local function sun(x,y,s)
     draw.circle(x,y,s*0.45,0xFC9012,1)
     for i=1,12 do
@@ -176,7 +183,7 @@ local function render(_context,m)
     draw.line(rx+header*0.78,headerCenter-header*0.08,rx+header*0.80,headerCenter-header*0.25,header*0.055,colors.primary,0.9)
     region("settings",w-p-header,headerTop,header,headerHeight,l10n.tr("lua_widget.sky_weather.settings"))
     for i=0,2 do draw.circle(w-p-header*0.74+i*header*0.23,headerCenter,header*0.035,colors.primary,1) end
-    local wide=w/h>1.8;local tall=w/h<0.7
+    local wide=w/h>1.8
     local heroX,heroY,heroW,heroH=p,headerTop+headerHeight+short*0.045,w-p*2,h*0.235
     local fx,fy,fw,fh=p,h*0.49,w-p*2,h*0.37
     local wideCenter
@@ -186,7 +193,6 @@ local function render(_context,m)
         fx=w*0.44;fw=w-fx-p;fh=bodyBottom-bodyTop;fy=wideCenter-fh*0.5
         heroW=fx-p-short*0.06;heroH=h*0.34
     end
-    if tall then heroH=h*0.19;fy=h*0.40;fh=h*0.46 end
     if not data then
         glyph("cloudSun",w*0.5,h*0.36,short*0.27)
         draw.text(p,h*0.53,status(m),short*0.041,colors.primary,w-p*2,true,false,h*0.14)
@@ -238,7 +244,25 @@ local function render(_context,m)
             local rangeMeasure=textAtInkTop(ix,infoTop+infoSize*3.30,range,infoSize,colors.secondary,heroW*0.36)
             weatherBottom=math.max(weatherBottom,infoTop+infoSize*3.30+rangeMeasure.ink.height)
         end
-        if not wide and not tall then
+        local count=#data.days;local gap=short*0.018
+        local listTop=weatherBottom+short*0.065;local listHeight=h-short*0.15-listTop
+        local rowHeight=(listHeight-gap*(count-1))/count
+        local columnWidth=(fw-gap*(count-1))/count
+        local rowLayout=not wide and listHeight>columnWidth*2.8 and rowHeight>=short*0.12
+        if rowLayout then
+            for _,d in ipairs(data.days) do
+                local label=draw.measureText(forecastLabel(d,data),short*0.043,0,true)
+                local high=draw.measureText(weather.temperature(d.high,cfg.unit),short*0.047,0,true)
+                local low=draw.measureText(weather.temperature(d.low,cfg.unit),short*0.045,0,false)
+                local inkHeight=math.max(label.ink.height,high.ink.height,low.ink.height)
+                if label.width>fw*0.29 or high.width>fw*0.18 or low.width>fw*0.16 or rowHeight<inkHeight+short*0.06 then
+                    rowLayout=false;break
+                end
+            end
+        end
+        if rowLayout then
+            fy=listTop;fh=listHeight
+        elseif not wide then
             local hint=l10n.tr("lua_widget.sky_weather.five_days")
             if data.days[2] and data.days[2].high<today.high-2 then
                 local delta=today.high-data.days[2].high
@@ -248,20 +272,20 @@ local function render(_context,m)
             local hintMeasure=textAtInkTop(p,hintTop,hint,short*0.034,colors.secondary,w-p*2)
             fy=hintTop+hintMeasure.ink.height+short*0.035;fh=h-short*0.14-fy
         end
-        local count=#data.days;local gap=short*0.018
         for i,d in ipairs(data.days) do
             local x,y,cw,ch
-            if tall then x=fx;y=fy+(i-1)*(fh/count+gap*0.18);cw=fw;ch=fh/count-gap*0.75
+            if rowLayout then ch=rowHeight;x=fx;y=fy+(i-1)*(ch+gap);cw=fw
             else cw=(fw-gap*(count-1))/count;ch=fh;x=fx+(i-1)*(cw+gap);y=fy end
             draw.rect(x,y,cw,ch,colors.card,short*0.016,colors.cardAlpha+(i==1 and 0.06 or 0))
-            local dayLabel=d.date==data.localTime:sub(1,10) and l10n.tr("lua_widget.sky_weather.today") or l10n.tr(weekdayKeys[(weather.weekday(d.date) or 0)+1])
+            local dayLabel=forecastLabel(d,data)
             local _,dayKind=weather.condition(d.code,false)
             local labelSize=math.min(short*(wide and 0.054 or 0.039),cw*0.26)
-            if tall then
-                text(x+cw*0.05,y+ch*0.24,dayLabel,short*0.043,colors.primary,cw*0.29,true)
-                glyph(dayKind,x+cw*0.46,y+ch*0.51,ch*0.60)
-                text(x+cw*0.65,y+ch*0.24,weather.temperature(d.high,cfg.unit),short*0.047,colors.primary,cw*0.18,true)
-                text(x+cw*0.83,y+ch*0.24,weather.temperature(d.low,cfg.unit),short*0.045,colors.secondary,cw*0.16)
+            if rowLayout then
+                local rowCenter=y+ch*0.5
+                textAtInkCenter(x+cw*0.05,rowCenter,dayLabel,short*0.043,colors.primary,cw*0.29,true)
+                glyph(dayKind,x+cw*0.46,rowCenter,math.min(ch*0.60,short*0.13))
+                textAtInkCenter(x+cw*0.65,rowCenter,weather.temperature(d.high,cfg.unit),short*0.047,colors.primary,cw*0.18,true)
+                textAtInkCenter(x+cw*0.83,rowCenter,weather.temperature(d.low,cfg.unit),short*0.045,colors.secondary,cw*0.16)
             else
                 center(x,y+ch*0.08,cw,dayLabel,labelSize,colors.primary,true)
                 glyph(dayKind,x+cw*0.5,y+ch*0.40,math.min(cw*0.64,ch*0.24))
