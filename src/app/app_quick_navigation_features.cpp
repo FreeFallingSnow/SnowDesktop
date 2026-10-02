@@ -8,7 +8,7 @@ namespace
 {
 constexpr const char* kScopeKeys[] = {"quickNav.type.all", "quickNav.type.app", "quickNav.type.file",
     "quickNav.type.web", "quickNav.type.settings", "quickNav.type.run", "quickNav.type.calculator"};
-constexpr const wchar_t* kScopeGlyphs[] = {L"\uF68F", L"\uF122", L"\uF378", L"\uE6B2", L"\uF6A9", L"\uF582", L"\uE233"};
+constexpr const wchar_t* kScopeGlyphs[] = {L"\uF690", L"\uF123", L"\uF419", L"\uF45B", L"\uF6AA", L"\uF583", L"\uE233"};
 std::wstring ScopeLabel(QuickNavigationSearchType type)
 {
     return _LW(kScopeKeys[static_cast<size_t>(type)]);
@@ -233,10 +233,14 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             continue;
         }
         DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-            ToD2DColor(selected ? theme.selectedFill : hovered ? theme.appRowHoverFill : theme.resultFill, selected || hovered ? 1.f : 0.22f),
-            ToD2DColor(selected ? theme.selectedBorder : hovered ? theme.appRowHoverStroke : theme.resultBorder, selected || hovered ? 1.f : 0.f));
+            ToD2DColor(selected ? theme.selectedFill : hovered ? theme.appRowHoverFill : theme.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.22f),
+            ToD2DColor(selected ? theme.selectedBorder : hovered ? theme.appRowHoverStroke : theme.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
         const int size = QuickNavScale(28);
         RECT icon = MakeRect(bounds.left + QuickNavScale(12), (bounds.top + bounds.bottom - size) / 2, bounds.left + QuickNavScale(12) + size, (bounds.top + bounds.bottom + size) / 2);
+        if (row.kind != Kind::Notice && (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder")))
+            DrawD2DRoundedRectangle(context, icon, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                ToD2DColor(theme.iconPlateFill, navigationSettings_.colors.contains("iconPlateFill") ? 1.f : 0.f),
+                ToD2DColor(theme.iconPlateBorder, navigationSettings_.colors.contains("iconPlateBorder") ? 1.f : 0.f));
         if (row.kind == Kind::App && row.index < quickNavigationAppResultIndices_.size())
             DrawQuickNavAppIcon(context, quickNavigationAppEntries_[quickNavigationAppResultIndices_[row.index]], icon);
         else if (row.kind == Kind::Everything && row.index < quickNavigationEverythingResults_.size())
@@ -282,7 +286,7 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         const bool chip = button == 0 && quickNavigationSearchType_ != QuickNavigationSearchType::All;
         if (hovered || chip) DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(6)),
             ToD2DColor(chip ? theme.typeFill : theme.tabHoverFill), ToD2DColor(theme.searchBorder, 0.f));
-        const wchar_t* glyph = button == 0 ? kScopeGlyphs[static_cast<size_t>(quickNavigationSearchType_)] : button == 1 ? L"\uF6A9" : (quickNavigationCollapsed_ ? L"\uF2A4" : L"\uF2B7");
+        const wchar_t* glyph = button == 0 ? kScopeGlyphs[static_cast<size_t>(quickNavigationSearchType_)] : button == 1 ? L"\uF6AA" : (quickNavigationCollapsed_ ? L"\uF2A4" : L"\uF2B7");
         RECT symbol = bounds; if (chip) symbol.right = symbol.left + QuickNavScale(28);
         DrawD2DText(context, glyph, symbol, format, ToD2DColor(chip ? theme.typeText : theme.searchPlaceholder));
         if (chip)
@@ -290,7 +294,7 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
             RECT label = bounds; label.left += QuickNavScale(30); label.right -= QuickNavScale(24);
             DrawD2DTextEllipsis(context, QuickNavigationTypeLabel(), label, quickNavPathTextFormat_.Get(), ToD2DColor(theme.typeText));
             RECT dismiss = bounds; dismiss.left = dismiss.right - QuickNavScale(24);
-            DrawD2DText(context, L"\uF369", dismiss, format, ToD2DColor(theme.typeText));
+            DrawD2DText(context, L"\uF36A", dismiss, format, ToD2DColor(theme.typeText));
         }
     }
     if (quickNavigationMenu_ == QuickNavigationMenu::None) return;
@@ -310,7 +314,7 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         DrawD2DText(context, glyph, icon, format, ToD2DColor(theme.typeText));
         RECT label = bounds; label.left = icon.right + QuickNavScale(8); label.right -= QuickNavScale(90);
         constexpr const char* views[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"};
-        DrawD2DTextEllipsis(context, quickNavigationMenu_ == QuickNavigationMenu::Types ? ScopeLabel(static_cast<QuickNavigationSearchType>(i)) : _LW(views[i]), label, quickNavItemTextFormat_.Get(), ToD2DColor(theme.appNameText));
+        DrawD2DTextEllipsis(context, quickNavigationMenu_ == QuickNavigationMenu::Types ? ScopeLabel(static_cast<QuickNavigationSearchType>(i)) : _LW(views[i]), label, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? theme.selectedText : theme.appNameText));
         if (quickNavigationMenu_ == QuickNavigationMenu::Types && i > 0)
         {
             RECT prefix = bounds; prefix.left = prefix.right - QuickNavScale(80); prefix.right -= QuickNavScale(12);

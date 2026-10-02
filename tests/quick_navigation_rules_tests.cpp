@@ -812,6 +812,10 @@ void TestExtendedSearchAndConfiguration()
     Check(command && command->target == L"C:\\Program Files\\Example\\app.exe" && command->parameters == L"--flag \"two words\"","Run preserves quoted full paths and exact argument quoting");
     Check(!query::ParseCommand(L"\"unclosed") && !query::ParseCommand(L"\"app.exe\"argument") && !query::ParseCommand(L""),"malformed command targets are never executed");
     Check(query::ParseCommand(L"https://example.com/a?q=b&x=c")->parameters.empty(),"URI parameters remain part of the Shell target");
+    Check(query::ParseCommand(L"editor.exe https://example.com/a?q=b")->target == L"editor.exe" &&
+        query::ParseCommand(L"cmd /c start https://example.com")->parameters == L"/c start https://example.com",
+        "URL parameters do not turn a program command into a URI target");
+    Check(query::ParseCommand(L"ms-settings:display")->target == L"ms-settings:display", "non-hierarchical Shell URIs remain complete targets");
     Check(query::ParseCommand(L"cmd /c echo a | more")->parameters == L"/c echo a | more","an explicit command interpreter retains pipeline syntax");
     SetEnvironmentVariableW(L"SNOWDESKTOP_QUERY_TEST",L"C:\\Program Files\\Example");
     const auto environment = query::ParseCommand(L"\"%SNOWDESKTOP_QUERY_TEST%\\app.exe\" --path \"%SNOWDESKTOP_QUERY_TEST%\"");

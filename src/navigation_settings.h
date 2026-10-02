@@ -178,4 +178,3 @@ inline void NormalizeNavigationSettings(NavigationSettings& settings)
         if (!valid) it = settings.colors.erase(it); else ++it;
     }
 }
-

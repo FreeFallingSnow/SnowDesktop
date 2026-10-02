@@ -17,6 +17,12 @@ public:
     QuickNavigationOptions(Localize localize, std::function<void(Edit)> commit)
         : localize_(std::move(localize)), commit_(std::move(commit))
     {
+        auto apply = std::move(commit_);
+        commit_ = [this, apply = std::move(apply)](Edit edit) {
+            auto candidate = values_;
+            edit(candidate);
+            if (Accept(candidate)) apply(std::move(edit));
+        };
         root_.Spacing(8);
         notice_.Severity(winrt::Microsoft::UI::Xaml::Controls::InfoBarSeverity::Error);
         notice_.IsClosable(false); notice_.IsOpen(false); root_.Children().Append(notice_);
@@ -62,7 +68,7 @@ public:
             if (!sync_ && index >= 0 && static_cast<size_t>(index) < values_.engines.size())
                 commit_([id = values_.engines[static_cast<size_t>(index)].id](auto& value) {value.defaultEngine = id;});
         });
-        AddRow(engines, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = value.engines.front().id;});
+        AddRow(engines, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = std::any_of(value.engines.begin(), value.engines.end(), [](const auto& engine) {return engine.id == "bing";}) ? "bing" : value.engines.front().id;});
         engines.Children().Append(engineRows_);
         addEngine_.Click([this](auto&&, auto&&) {
             auto candidate = values_;

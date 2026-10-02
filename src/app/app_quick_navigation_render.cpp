@@ -687,7 +687,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     : (hovered ? ToD2DColor(t.tabHoverFill, 0.72f)
                                : ToD2DColor(t.tabDefaultFill, 0.62f));
                 stroke = active ? ToD2DColor(t.tabActiveStroke, 0.88f)
-                                : ToD2DColor(t.tabDefaultStroke, 0.72f);
+                                : ToD2DColor(hovered ? t.tabHoverStroke : t.tabDefaultStroke, 0.72f);
             }
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)), fill, stroke);
@@ -1083,8 +1083,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             if (selected || hovered || navigationSettings_.colors.contains("resultFill") || navigationSettings_.colors.contains("resultBorder"))
                 DrawD2DRoundedRectangle(ctx.Get(), itemRectApp,
                     static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                    ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill),
-                    ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder,
+                    ToD2DColor(selected ? t.selectedFill : hovered ? t.itemHoverFill : t.resultFill),
+                    ToD2DColor(selected ? t.selectedBorder : hovered ? t.itemHoverStroke : t.resultBorder,
                         selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
             if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
                 DrawD2DRoundedRectangle(ctx.Get(), GetQuickNavItemIconRect(itemRectApp),
@@ -1172,8 +1172,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     const bool hovered = PtInRect(&rowRectApp, quickNavigationLastMousePoint_) != FALSE;
                     DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered ? 1.f : 0.22f),
-                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered ? 1.f : 0.f));
+                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.22f),
+                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
 
                     const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[appIndex];
                     const int iconSz = QuickNavScale(28);
@@ -1181,6 +1181,11 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         rowRectApp.top + (rowH - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         rowRectApp.top + (rowH + iconSz) / 2);
+                    if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
+                        DrawD2DRoundedRectangle(ctx.Get(), iconRect,
+                            static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                            ToD2DColor(t.iconPlateFill, navigationSettings_.colors.contains("iconPlateFill") ? 1.f : 0.f),
+                            ToD2DColor(t.iconPlateBorder, navigationSettings_.colors.contains("iconPlateBorder") ? 1.f : 0.f));
                     if (!IsLuaLogicalSlotPickerOpen() &&
                         generalSettings_.demoModeEnabled &&
                         demoIdentityAssetsAvailable_)
@@ -1296,8 +1301,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     const bool hovered = PtInRect(&rowRectApp, quickNavigationLastMousePoint_) != FALSE;
                     DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered ? 1.f : 0.22f),
-                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered ? 1.f : 0.f));
+                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.22f),
+                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
 
                     const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];
                     const int iconSz = QuickNavScale(28);
@@ -1305,6 +1310,11 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         rowRectApp.top + (rowH - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         rowRectApp.top + (rowH + iconSz) / 2);
+                    if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
+                        DrawD2DRoundedRectangle(ctx.Get(), iconRect,
+                            static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                            ToD2DColor(t.iconPlateFill, navigationSettings_.colors.contains("iconPlateFill") ? 1.f : 0.f),
+                            ToD2DColor(t.iconPlateBorder, navigationSettings_.colors.contains("iconPlateBorder") ? 1.f : 0.f));
                     DrawQuickNavSysIcon(ctx.Get(), entry.systemIconIndex, iconRect);
 
                     const int textLeft = iconRect.right + QuickNavScale(10);

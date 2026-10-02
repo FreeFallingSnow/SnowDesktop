@@ -96,7 +96,11 @@ inline std::optional<Command> ParseCommand(std::wstring_view text)
     else
     {
         // A complete existing path may contain spaces without being quoted.
-        if (GetFileAttributesW(command.c_str()) != INVALID_FILE_ATTRIBUTES || command.find(L"://") != std::wstring::npos)
+        const auto colon = command.find(L':');
+        bool uri = colon != std::wstring::npos && colon > 1 && iswalpha(command.front());
+        for (size_t i = 1; uri && i < colon; ++i)
+            uri = iswalnum(command[i]) || command[i] == L'+' || command[i] == L'-' || command[i] == L'.';
+        if (GetFileAttributesW(command.c_str()) != INVALID_FILE_ATTRIBUTES || uri)
             result.target = command;
         else
         {
