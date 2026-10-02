@@ -629,6 +629,7 @@ function Copy-SnowDesktopRepositoryLicenses {
     $licenses = [ordered]@{
         "third_party\everything\LICENSE.txt" = "Everything-SDK-LICENSE.txt"
         "third_party\fluentui-system-icons\LICENSE" = "FluentSystemIcons-LICENSE.txt"
+        "third_party\microsoft-ui-xaml\LICENSE" = "WinUI-AcrylicNoise-LICENSE.txt"
         "third_party\font-awesome\LICENSE.txt" = "FontAwesome-LICENSE.txt"
         "third_party\imgui\LICENSE.txt" = "DearImGui-LICENSE.txt"
         "third_party\lua\LICENSE.txt" = "Lua-LICENSE.txt"

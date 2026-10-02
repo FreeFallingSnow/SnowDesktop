@@ -1,4 +1,5 @@
 #include "widget_preview_stage.h"
+#include "acrylic_noise_asset.h"
 #include "flat_glass_rim.h"
 #include "widget_composition_layer_rules.h"
 
@@ -459,23 +460,46 @@ Wallpaper CropWallpaper(const Wallpaper& source, const RECT& sourceBounds,
     return result;
 }
 
-AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme)
+const AcrylicNoisePixels& GenerateAcrylicNoise(bool /*lightTheme*/)
 {
-    AcrylicNoisePixels pixels{};
-    std::uint32_t state = 0x534E4F57u; // "SNOW", fixed seed.
-    for (std::uint32_t& pixel : pixels)
-    {
-        state ^= state << 13;
-        state ^= state >> 17;
-        state ^= state << 5;
-        const std::uint8_t alpha = static_cast<std::uint8_t>(
-            2u + ((state >> 24) & 0x06u));
-        const std::uint8_t channel = lightTheme ? 0u : alpha;
-        pixel = (static_cast<std::uint32_t>(alpha) << 24) |
-            (static_cast<std::uint32_t>(channel) << 16) |
-            (static_cast<std::uint32_t>(channel) << 8) |
-            static_cast<std::uint32_t>(channel);
-    }
+    // Decode the original, embedded PNG once on the heap. A 256x256 BGRA tile
+    // must not create large return-value copies on render/test thread stacks.
+    static const AcrylicNoisePixels pixels = [] {
+        ScopedCom com;
+        if (FAILED(com.result) && com.result != RPC_E_CHANGED_MODE)
+            return AcrylicNoisePixels{};
+        ComPtr<IWICImagingFactory> factory;
+        ComPtr<IWICStream> stream;
+        ComPtr<IWICBitmapDecoder> decoder;
+        ComPtr<IWICBitmapFrameDecode> frame;
+        ComPtr<IWICFormatConverter> converter;
+        if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) || !factory ||
+            FAILED(factory->CreateStream(&stream)) || !stream ||
+            FAILED(stream->InitializeFromMemory(
+                const_cast<BYTE*>(acrylic_noise_asset::Png.data()),
+                static_cast<DWORD>(acrylic_noise_asset::Png.size()))) ||
+            FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
+                WICDecodeMetadataCacheOnLoad, &decoder)) || !decoder ||
+            FAILED(decoder->GetFrame(0, &frame)) || !frame ||
+            FAILED(factory->CreateFormatConverter(&converter)) || !converter ||
+            FAILED(converter->Initialize(frame.Get(),
+                GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+                nullptr, 0.0, WICBitmapPaletteTypeCustom)))
+            return AcrylicNoisePixels{};
+        UINT width = 0;
+        UINT height = 0;
+        if (FAILED(converter->GetSize(&width, &height)) ||
+            width != AcrylicNoiseSize || height != AcrylicNoiseSize)
+            return AcrylicNoisePixels{};
+        AcrylicNoisePixels decoded(AcrylicNoiseSize * AcrylicNoiseSize);
+        if (FAILED(converter->CopyPixels(nullptr,
+                static_cast<UINT>(AcrylicNoiseSize * sizeof(std::uint32_t)),
+                static_cast<UINT>(decoded.size() * sizeof(std::uint32_t)),
+                reinterpret_cast<BYTE*>(decoded.data()))))
+            return AcrylicNoisePixels{};
+        return decoded;
+    }();
     return pixels;
 }
 
@@ -545,7 +569,8 @@ void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, bool lightTheme, POINT pixelOrigin)
 {
     if (!context || IsRectEmpty(&bounds)) return;
-    const AcrylicNoisePixels pixels = GenerateAcrylicNoise(lightTheme);
+    const auto& pixels = GenerateAcrylicNoise(lightTheme);
+    if (pixels.empty()) return;
     const D2D1_BITMAP_PROPERTIES1 bitmapProperties =
         D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -565,6 +590,7 @@ void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
     if (FAILED(context->CreateBitmapBrush(bitmap.Get(), &brushProperties,
             nullptr, &brush)) || !brush)
         return;
+    brush->SetOpacity(AcrylicNoiseOpacity);
     brush->SetTransform(D2D1::Matrix3x2F::Translation(
         -static_cast<float>(pixelOrigin.x),
         -static_cast<float>(pixelOrigin.y)));

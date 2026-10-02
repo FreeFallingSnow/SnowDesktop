@@ -204,8 +204,9 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
         if (acrylicNoiseBrushCache_.size() >= 8)
             acrylicNoiseBrushCache_.clear();
 
-        const auto pixels =
+        const auto& pixels =
             snowdesktop::widget_preview::GenerateAcrylicNoise(lightTheme);
+        if (pixels.empty()) return;
 
         D2D1_BITMAP_PROPERTIES1 bitmapProperties =
             D2D1::BitmapProperties1(
@@ -229,6 +230,7 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
         if (FAILED(ctx->CreateBitmapBrush(bitmap.Get(), &brushProperties,
                 nullptr, &brush)) || !brush)
             return;
+        brush->SetOpacity(snowdesktop::widget_preview::AcrylicNoiseOpacity);
         found = acrylicNoiseBrushCache_.emplace(cacheKey,
             std::move(brush)).first;
     }

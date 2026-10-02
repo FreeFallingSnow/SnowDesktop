@@ -53,9 +53,9 @@ enum class WallpaperPosition
 WallpaperPosition WallpaperPositionFromLegacySettings(
     int wallpaperStyle, bool tileWallpaper);
 
-inline constexpr std::size_t AcrylicNoiseSize = 64;
-using AcrylicNoisePixels = std::array<std::uint32_t,
-    AcrylicNoiseSize * AcrylicNoiseSize>;
+inline constexpr std::size_t AcrylicNoiseSize = 256;
+inline constexpr float AcrylicNoiseOpacity = 0.02f;
+using AcrylicNoisePixels = std::vector<std::uint32_t>;
 
 /** Decode an author-selected image and composite any transparency to opaque. */
 Wallpaper LoadWallpaperImage(const std::filesystem::path& path);
@@ -86,8 +86,8 @@ Wallpaper RenderWallpaperRegion(const Wallpaper& source,
 Wallpaper CropWallpaper(const Wallpaper& source, const RECT& sourceBounds,
     const RECT& targetBounds);
 
-/** Generate the same fixed acrylic texture used by live widget panels. */
-AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme);
+/** Shared opaque WinUI grayscale texture; the text theme does not alter it. */
+const AcrylicNoisePixels& GenerateAcrylicNoise(bool lightTheme);
 
 /** Draw the sharp wallpaper and, when requested, its clipped blurred layer. */
 bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,

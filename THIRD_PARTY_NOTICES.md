@@ -45,6 +45,7 @@ described under "Optional Steamworks dependency" below.
 | MinHook | bundled source | BSD 2-Clause | Copyright (c) 2009-2017 Tsuda Kageyu; <https://github.com/TsudaKageyu/minhook> |
 | Font Awesome 6 Free Solid | 6.5.2 font | SIL Open Font License 1.1 | Copyright (c) Font Awesome; <https://fontawesome.com/license/free> |
 | Fluent System Icons Regular | upstream commit `21d5d02f724be2aaf586564775fff73a18a76eb6` | MIT | Copyright (c) 2020 Microsoft Corporation; <https://github.com/microsoft/fluentui-system-icons> |
+| Microsoft WinUI acrylic noise texture | upstream commit `7b68d3e0b771a57d80098799406234efee479517` | MIT | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/microsoft-ui-xaml> |
 | MiSans Regular | 4.009 original OTF | MiSans font intellectual property license | Copyright © 2020-2025 Beijing Xiaomi Mobile Software Co., Ltd.; <https://hyperos.mi.com/font/zh/> |
 | HarmonyOS Sans SC | 1.0 original Regular TTF | HarmonyOS Sans Fonts License Agreement | Copyright 2021 Huawei Device Co., Ltd.; <https://developer.huawei.com/consumer/cn/design/resource/> |
 | DeskMakeover shape catalog | upstream `main` as referenced in 2026 | MIT | Copyright (c) 2026 Jinming Yang; <https://github.com/nicepkg/deskmakeover> |
@@ -349,3 +350,30 @@ SnowDesktop GPL license or the bridge MIT license. See
 
    END OF TERMS AND CONDITIONS
 ```
+
+## Microsoft WinUI acrylic noise texture
+
+The original 256×256 noise PNG is embedded in the host and author preview.
+Source and regeneration details: `third_party/microsoft-ui-xaml/README.md`.
+
+    MIT License
+
+    Copyright (c) Microsoft Corporation. All rights reserved.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE
