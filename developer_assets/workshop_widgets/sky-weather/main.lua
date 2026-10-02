@@ -59,19 +59,19 @@ local function circularArc(commands,cx,from,sweep)
             x2=cx+bx+tangent*by,y2=by-tangent*bx,x=cx+bx,y=by}
     end
 end
--- Equal-radius circles share both tips; centering their visible bounds keeps the crescent upright.
-local moonOffset=0.56
+-- The outer arc keeps the full disc's center; both arcs meet at identical tips.
+local moonOffset=0.68
+local moonScale=0.50
 local moonAngle=math.acos(moonOffset*0.5)
-local moonCenter=(1-moonOffset*0.5)*0.5
-local moonPath={{op="move",x=moonCenter+moonOffset*0.5,y=-math.sin(moonAngle)}}
-circularArc(moonPath,moonCenter,-moonAngle,-math.pi*2+moonAngle*2)
-circularArc(moonPath,moonCenter+moonOffset,math.pi-moonAngle,moonAngle*2)
+local moonPath={{op="move",x=moonOffset*0.5,y=-math.sin(moonAngle)}}
+circularArc(moonPath,0,-moonAngle,-math.pi*2+moonAngle*2)
+circularArc(moonPath,moonOffset,math.pi-moonAngle,moonAngle*2)
 moonPath[#moonPath+1]={op="close"}
 local function moon(x,y,s)
     local commands={}
     for _,p in ipairs(moonPath) do
         local q={op=p.op}
-        for k,v in pairs(p) do if k~="op" then q[k]=(k:sub(1,1)=="x" and x or y)+v*s*0.46 end end
+        for k,v in pairs(p) do if k~="op" then q[k]=(k:sub(1,1)=="x" and x or y)+v*s*moonScale end end
         commands[#commands+1]=q
     end
     draw.path(commands,{fillColor=0xFFE6A2,alpha=1})
@@ -205,7 +205,7 @@ local function render(_context,m)
         if natural.width>budget then size=size*budget/natural.width end
         local measure=draw.measureText(value,size,heroW,false)
         local numberInk=measure.ink
-        local heroVisibleHeight=math.max(numberInk.height,icon*0.9)
+        local heroVisibleHeight=math.max(numberInk.height,icon*(kind=="moon" and moonScale*2*math.sin(moonAngle) or 0.9))
         local infoSize=short*(wide and 0.054 or 0.037)
         local today=data.days[1]
         local range=weather.temperature(today.high,cfg.unit).." / "..weather.temperature(today.low,cfg.unit)
