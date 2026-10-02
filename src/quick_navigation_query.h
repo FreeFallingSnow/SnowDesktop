@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace snowdesktop::quick_navigation_query
 {
@@ -28,6 +29,25 @@ inline std::string Prefix(std::wstring_view text)
     return result;
 }
 struct Scope { QuickNavigationSearchType type; std::string engine; };
+struct PrefixCandidate { Scope scope; std::string prefix; };
+inline std::vector<PrefixCandidate> PrefixCandidates(const NavigationSettings& settings, std::wstring_view input)
+{
+    const auto prefix = Prefix(input);
+    if (prefix.empty()) return {};
+    std::vector<PrefixCandidate> candidates;
+    for (const auto type : kQuickNavigationSearchTypes)
+        if (type != QuickNavigationSearchType::All)
+        {
+            const auto& value = settings.prefixes[static_cast<size_t>(type) - 1];
+            if (value.starts_with(prefix)) candidates.push_back({{type, {}}, value});
+        }
+    for (const auto& engine : settings.engines)
+        if (!engine.prefix.empty() && engine.prefix.starts_with(prefix))
+            candidates.push_back({{QuickNavigationSearchType::Web, engine.id}, engine.prefix});
+    // Exact matches stay first even when another custom prefix extends them.
+    std::stable_partition(candidates.begin(), candidates.end(), [&](const auto& value) { return value.prefix == prefix; });
+    return candidates;
+}
 inline std::optional<Scope> ResolvePrefix(const NavigationSettings& settings, std::wstring_view input)
 {
     const auto prefix = Prefix(input);

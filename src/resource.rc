@@ -6,6 +6,14 @@ IDR_FA_FONT RCDATA "../assets/fonts/fa-solid-900.ttf"
 // Microsoft Fluent System Icons Regular, embedded under the MIT license
 IDR_FLUENT_REGULAR_FONT RCDATA "../assets/fonts/FluentSystemIcons-Regular.ttf"
 
+// Sources and provenance: assets/quick-navigation/icons/sources.json.
+IDR_QUICK_NAV_ALL RCDATA "../assets/quick-navigation/icons/all.png"
+IDR_QUICK_NAV_APP RCDATA "../assets/quick-navigation/icons/app.png"
+IDR_QUICK_NAV_WEB RCDATA "../assets/quick-navigation/icons/web.png"
+IDR_QUICK_NAV_SETTINGS RCDATA "../assets/quick-navigation/icons/settings.png"
+IDR_QUICK_NAV_RUN RCDATA "../assets/quick-navigation/icons/run.png"
+IDR_QUICK_NAV_CALCULATOR RCDATA "../assets/quick-navigation/icons/calculator.png"
+
 // Generated IDs map to src/menu_builtin_icon.cpp; SVG sources are in assets/menu/icons.
 IDR_MENU_SORT_NATIVE_LIGHT RCDATA "../assets/menu/icons/sort-native-light.png"
 IDR_MENU_SORT_NATIVE_DARK RCDATA "../assets/menu/icons/sort-native-dark.png"

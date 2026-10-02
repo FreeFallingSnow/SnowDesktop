@@ -51,7 +51,7 @@ RECT DesktopApp::GetQuickNavigationRect() const
     int height = QuickNavScale(layout.maximumHeight);
     if (quickNavigationMenu_ == QuickNavigationMenu::Types)
         height = base + QuickNavScale(12 + layout.padding + static_cast<int>(kQuickNavigationSearchTypes.size()) * layout.resultRowHeight);
-    else if (quickNavigationCollapsed_)
+    else if (UseQuickNavigationList())
     {
         height = base + QuickNavScale(48);
         const auto rows = BuildQuickNavigationListRows();
@@ -181,10 +181,11 @@ RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
 {
     const RECT search = GetQuickNavigationSearchRect(overlay);
     const bool browsing = !UseQuickNavigationList() && GetQuickNavigationEffectiveSearchText().empty() && quickNavigationMenu_ != QuickNavigationMenu::Types;
-    const int padding = QuickNavScale(navigationSettings_.layout.padding);
+    const int padding = QuickNavScale(UseQuickNavigationList() || quickNavigationMenu_ == QuickNavigationMenu::Types ?
+        std::max(4, navigationSettings_.layout.padding - 8) : navigationSettings_.layout.padding);
     const bool idleHints = quickNavigationCollapsed_ && GetQuickNavigationEffectiveSearchText().empty() && quickNavigationMenu_ == QuickNavigationMenu::None;
     return MakeRect(search.left + padding, search.bottom + QuickNavScale(browsing ? 56 : 12),
-        search.right - std::max(padding, QuickNavScale(12)), overlay.bottom - padding - QuickNavScale(idleHints ? 32 : 0));
+        search.right - padding, overlay.bottom - padding - QuickNavScale(idleHints ? 32 : 0));
 }
 
 int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& /*overlay*/) const

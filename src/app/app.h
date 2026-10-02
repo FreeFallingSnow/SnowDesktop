@@ -1666,8 +1666,10 @@ private:
     RECT GetQuickNavigationListRowRect(size_t index) const;
     void DrawQuickNavigationList(ID2D1DeviceContext* context);
     void DrawQuickNavigationMenus(ID2D1DeviceContext* context);
+    void DrawQuickNavigationActionIcon(ID2D1DeviceContext* context, QuickNavigationSearchType type, RECT bounds, int sizeDip);
     void DrawQuickNavigationCenteredText(ID2D1DeviceContext* context, const std::wstring& text,
         RECT bounds, IDWriteTextFormat* format, const D2D1_COLOR_F& color, float fontSize = 0.f);
+    bool DismissQuickNavigationMenuAtPoint(POINT point);
     bool HandleQuickNavigationListClick(POINT point, bool contextMenu = false, POINT screenPoint = {});
     bool ActivateQuickNavigationListRow(size_t index);
     /** @brief 确保快速导航搜索编辑框已创建。 */
@@ -4036,6 +4038,8 @@ private:
     std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
     /** @brief 应用图标快照的 D2D 缓存；键为 AppsFolder 稳定解析身份。 */
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap>> quickNavAppIconCache_;
+    std::array<ComPtr<ID2D1Bitmap>, 7> quickNavActionIconCache_;
+    ID2D1DeviceContext* quickNavActionIconContext_ = nullptr;
     std::vector<int> quickNavTabWidths_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);

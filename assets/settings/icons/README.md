@@ -56,3 +56,8 @@ these application icons using the actual Dock collection layout rules.
 | `preview-media.svg` | Play Circle 24 Filled + Regular |
 | `preview-folder.svg` | Folder 24 Filled + Regular |
 | `preview-trash.svg` | Delete 24 Filled + Regular |
+
+The native Quick Navigation action set uses the same pinned upstream and pairing
+contract. Its Search, Apps, Globe, Settings, Code and Calculator mapping, source
+hashes and raster assets are documented in
+[assets/quick-navigation/icons](../../quick-navigation/icons/README.md).

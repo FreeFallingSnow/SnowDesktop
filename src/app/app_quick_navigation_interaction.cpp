@@ -200,13 +200,20 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         {
             PersistentDockHost* requestedDockHost =
                 FindPersistentDockHost(dock);
-            if (requestedDockHost &&
-                requestedDockHost != quickNavigationDockHost_)
+            RECT screenPanel = quickNavigationRect_;
+            OffsetRect(&screenPanel, virtualLeft_, virtualTop_);
+            const POINT screenPoint{point.x + virtualLeft_, point.y + virtualTop_};
+            const bool sameScreen = MonitorFromRect(&screenPanel, MONITOR_DEFAULTTONEAREST) ==
+                MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+            if (snowdesktop::quick_navigation_rules::ResolveDockSearchPressAction(true, sameScreen, requestedDockHost != nullptr) ==
+                snowdesktop::quick_navigation_rules::DockSearchPressAction::Relocate)
             {
                 OpenQuickNavigation(
                     QuickNavigationInvocationSource::DockSearch);
                 return true;
             }
+            CloseQuickNavigation();
+            return true; // Consume the toggle so Dock routing cannot reopen it.
         }
         CloseQuickNavigation();
         // Outside dismissal is a notification, not ownership of the press.
@@ -214,6 +221,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         return false;
     }
 
+    if (DismissQuickNavigationMenuAtPoint(point)) return true;
     if (HandleQuickNavigationToolbarClick(point)) return true;
     if (UseQuickNavigationList() || quickNavigationMenu_ != QuickNavigationMenu::None)
         return HandleQuickNavigationListClick(point);
@@ -449,6 +457,8 @@ bool DesktopApp::HandleQuickNavigationRightClick(POINT point, POINT screenPoint)
         return false;
     if (IsLuaLogicalSlotPickerOpen())
         return true;
+    if (DismissQuickNavigationMenuAtPoint(point)) return true;
+    if (quickNavigationMenu_ != QuickNavigationMenu::None) return true;
     if (UseQuickNavigationList()) return HandleQuickNavigationListClick(point, true, screenPoint);
 
     const QuickNavigationAppEntry* appEntry = nullptr;

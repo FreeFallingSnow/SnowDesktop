@@ -236,6 +236,8 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
     }
     if (const auto* value = document.Find("prefixes"); value && value->IsArray() && value->array.size() == settings.prefixes.size())
         for (size_t i = 0; i < value->array.size(); ++i) if (value->array[i].IsString()) settings.prefixes[i] = value->array[i].string;
+    // Migrate the previous trial default once; explicitly saved current prefixes survive.
+    if (!document.Find("prefixesVersion") && settings.prefixes.back() == "calc") settings.prefixes.back() = "=";
     if (const auto* value = document.Find("defaultEngine"); value && value->IsString()) settings.defaultEngine = value->string;
     if (const auto* value = document.Find("engines"); value && value->IsArray())
     {
@@ -299,7 +301,7 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
         }
         return out + '"';
     };
-    file << "},\n  \"prefixes\": [";
+    file << "},\n  \"prefixesVersion\": 1,\n  \"prefixes\": [";
     for (size_t i = 0; i < settings.prefixes.size(); ++i) { if (i) file << ','; file << quoted(settings.prefixes[i]); }
     file << "],\n  \"defaultEngine\": " << quoted(settings.defaultEngine) << ",\n  \"engines\": [";
     for (size_t i = 0; i < settings.engines.size(); ++i)

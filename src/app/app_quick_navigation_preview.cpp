@@ -75,7 +75,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
         constexpr const char* scenarios[] = {"expanded-tile", "expanded-source", "expanded-initial", "collapsed-empty", "collapsed-composite",
             "expanded-mixed", "type-menu", "view-menu", "typed-app", "typed-empty", "typed-web", "typed-settings", "typed-run", "typed-calculator",
             "calculator-error", "everything-unavailable", "index-loading", "empty-results",
-            "expanded-scrolled", "expanded-scrolled-tab-hover", "collapsed-scrolled"};
+            "expanded-scrolled", "expanded-scrolled-tab-hover", "collapsed-scrolled",
+            "collapsed-prefix", "expanded-prefix", "engine-prefix", "expanded-calculator"};
         for (const auto* scenario : scenarios)
         {
             const std::string name(scenario);
@@ -103,8 +104,10 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
                 quickNavigationSettingsResults_.push_back({SettingsSearchEntryKind::WidgetSetting, SettingsRoute::ForWidget(L"preview-widget","color"), "color", L"组件颜色 Widget color", L"Color and appearance", L"Calendar"}); // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
             }
             if (name == "typed-run") {quickNavigationSearchType_ = QuickNavigationSearchType::Run; quickNavigationEffectiveSearchText_ = L"\"C:\\Program Files\\Example\\editor.exe\" --new-window";}
-            if (name == "typed-calculator" || name == "calculator-error") {quickNavigationSearchType_ = QuickNavigationSearchType::Calculator; quickNavigationEffectiveSearchText_ = name == "calculator-error" ? L"1 / 0" : L"(12.5 + 7.5) * 3 ^ 2 + 50%";}
+            if (name == "typed-calculator" || name == "calculator-error" || name == "expanded-calculator") {quickNavigationSearchType_ = QuickNavigationSearchType::Calculator; quickNavigationEffectiveSearchText_ = name == "calculator-error" ? L"1 / 0" : L"(12.5 + 7.5) * 3 ^ 2 + 50%";}
             if (name == "empty-results") {quickNavigationSearchType_ = QuickNavigationSearchType::App; quickNavigationEffectiveSearchText_ = L"No matching application";}
+            if (name == "collapsed-prefix" || name == "expanded-prefix") quickNavigationEffectiveSearchText_ = L"ap";
+            if (name == "engine-prefix") {quickNavigationCollapsed_ = true; quickNavigationEffectiveSearchText_ = L"goo";}
             if (name == "expanded-mixed" || name == "collapsed-composite" || name == "collapsed-scrolled" || name == "typed-app")
                 for (size_t i = 0; i < (name == "typed-app" ? quickNavigationAppEntries_.size() : size_t{1}); ++i) quickNavigationAppResultIndices_.push_back(i);
             if (name == "expanded-mixed" || name == "collapsed-composite" || name == "collapsed-scrolled")

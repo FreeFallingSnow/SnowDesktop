@@ -247,7 +247,8 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
     const wchar_t* hint = IsLuaLogicalSlotPickerOpen() ? _LW("app.nav.slot_picker_search_hint") :
         _LW(quickNavigationSearchType_ == QuickNavigationSearchType::All ? "app.nav.search_hint" : "quickNav.search.scopedPlaceholder");
     SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(hint));
-    snowdesktop::text_input::SetAccessibleName(quickNavigationSearchEdit_, hint);
+    const auto accessibleName = quickNavigationSearchType_ == QuickNavigationSearchType::All ? std::wstring(hint) : QuickNavigationTypeLabel() + L" · " + hint;
+    snowdesktop::text_input::SetAccessibleName(quickNavigationSearchEdit_, accessibleName);
     LOGFONTW font{};
     if (!quickNavigationSearchFont_ || GetObjectW(quickNavigationSearchFont_,sizeof(font),&font) != sizeof(font) || font.lfHeight != -QuickNavScale(navigationSettings_.layout.searchFontSize))
     {
@@ -333,7 +334,7 @@ void DesktopApp::RefreshQuickNavigationSearchText()
             quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
             RefreshQuickNavigationEverythingResults();
         }
-        if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
+        if (quickNavigationCollapsed_ || quickNavigationSearchType_ == QuickNavigationSearchType::All) PositionQuickNavigationWindow();
         return;
     }
     std::wstring buffer(static_cast<size_t>(len) + 1, L'\0');
@@ -345,7 +346,7 @@ void DesktopApp::RefreshQuickNavigationSearchText()
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
     }
-    if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
+    if (quickNavigationCollapsed_ || quickNavigationSearchType_ == QuickNavigationSearchType::All) PositionQuickNavigationWindow();
 }
 
 void DesktopApp::ClearQuickNavigationEverythingResults()
@@ -892,10 +893,18 @@ void DesktopApp::OpenQuickNavigation(
 
     if (quickNavigationOpen_)
     {
-        if (source != QuickNavigationInvocationSource::DockSearch ||
-            !requestedDockHost ||
-            requestedDockHost == quickNavigationDockHost_)
+        if (source != QuickNavigationInvocationSource::DockSearch) return;
+        RECT screenPanel = quickNavigationRect_;
+        OffsetRect(&screenPanel, virtualLeft_, virtualTop_);
+        const POINT screenPoint{requestedOpenPoint.x + virtualLeft_, requestedOpenPoint.y + virtualTop_};
+        const bool sameScreen = MonitorFromRect(&screenPanel, MONITOR_DEFAULTTONEAREST) ==
+            MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+        if (snowdesktop::quick_navigation_rules::ResolveDockSearchPressAction(true, sameScreen, requestedDockHost != nullptr) ==
+            snowdesktop::quick_navigation_rules::DockSearchPressAction::Close)
+        {
+            CloseQuickNavigation();
             return;
+        }
 
         quickNavigationAnimation_.Advance(static_cast<std::uint64_t>(
             snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));

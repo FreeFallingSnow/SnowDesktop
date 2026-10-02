@@ -222,6 +222,8 @@ void DesktopApp::ResetCompositionRenderCaches()
     dockIconWork_.Cancel(L"dock-folder:");
     quickNavSysIconCache_.clear();
     quickNavAppIconCache_.clear();
+    for (auto& icon : quickNavActionIconCache_) icon.Reset();
+    quickNavActionIconContext_ = nullptr;
     shortcutArrowBitmap_.Reset();
     shortcutArrowBitmapSize_ = {};
     itemTextShadowCache_.clear();

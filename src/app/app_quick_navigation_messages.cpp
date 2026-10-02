@@ -139,6 +139,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             pt.x + quickNavigationHostRect_.left,
             pt.y + quickNavigationHostRect_.top
         };
+        if (DismissQuickNavigationMenuAtPoint(appPoint)) return 0;
 
         {
             RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
@@ -532,6 +533,14 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     auto* app = reinterpret_cast<DesktopApp*>(refData);
     if (!app) return DefSubclassProc(hwnd, message, wParam, lParam);
 
+    if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN)
+    {
+        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ClientToScreen(hwnd, &point);
+        point.x -= app->virtualLeft_;
+        point.y -= app->virtualTop_;
+        app->DismissQuickNavigationMenuAtPoint(point);
+    }
     if (message == WM_NCHITTEST)
     {
         if (app->quickNavigationAnimation_.IsAnimating())

@@ -730,6 +730,15 @@ void TestDeactivateRules()
         "the Dock search press that dismissed Quick Navigation must not reopen it");
     Check(rules::ShouldOpenFromDockSearchPress(false),
         "a fresh Dock search press opens Quick Navigation");
+    using DockAction = rules::DockSearchPressAction;
+    Check(rules::ResolveDockSearchPressAction(false, true, true) == DockAction::Open,
+        "Dock search opens a closed panel");
+    Check(rules::ResolveDockSearchPressAction(true, true, true) == DockAction::Close,
+        "a same-monitor Dock closes the panel regardless of its original invocation source");
+    Check(rules::ResolveDockSearchPressAction(true, false, true) == DockAction::Relocate,
+        "a Dock on a different monitor relocates an open panel");
+    Check(rules::ResolveDockSearchPressAction(true, false, false) == DockAction::Close,
+        "an unavailable target Dock cannot strand an open panel");
 
 }
 
@@ -782,18 +791,42 @@ void TestExtendedSearchAndConfiguration()
     NavigationSettings settings;
     Check(!settings.defaultCollapsed && settings.layout.expandedWidth == 860 && settings.layout.collapsedWidth == 640,
         "legacy and new settings default to the expanded panel dimensions");
-    const wchar_t* prefixes[] = {L"app",L"file",L"web",L"set",L"run",L"calc"};
+    const wchar_t* prefixes[] = {L"app",L"file",L"web",L"set",L"run",L"="};
     for (size_t i = 0; i < std::size(prefixes); ++i)
     {
         const auto scope = query::ResolvePrefix(settings,prefixes[i]);
         Check(i == 1 ? !scope : scope && scope->type == static_cast<QuickNavigationSearchType>(i + 1),"active prefixes select their type and file stays a composite keyword");
     }
     Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"file",false,false) == query::SubmitIntent::ActivateResult,"file never creates a separate search chip");
+    Check(ValidateNavigationSearchConfiguration(settings) && query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"=",false,false) == query::SubmitIntent::ConfirmPrefix,
+        "equals is a valid calculator default confirmed by Enter");
+    Check(!query::ResolvePrefix(settings,L"calc"), "the former calculator default remains an ordinary composite query");
+    auto invalidSymbol = settings; invalidSymbol.prefixes[0] = "=";
+    Check(!ValidateNavigationSearchConfiguration(invalidSymbol), "equals is reserved for the calculator type");
+    invalidSymbol = settings; invalidSymbol.engines[0].prefix = "=";
+    Check(!ValidateNavigationSearchConfiguration(invalidSymbol), "engines cannot reuse the calculator symbol");
     auto legacy = settings; legacy.prefixes[1] = "web";
     Check(ValidateNavigationSearchConfiguration(legacy),"the retained file-prefix slot does not conflict with active types");
     legacy.engines.front().prefix = "file";
     Check(query::ResolvePrefix(legacy,L"file")->engine == "bing","a custom engine may reuse the retired file prefix");
     Check(query::ResolvePrefix(settings,L" APP ")->type == QuickNavigationSearchType::App,"prefix input tolerates surrounding whitespace and case");
+    const auto partial = query::PrefixCandidates(settings, L" AP ");
+    Check(partial.size() == 1 && partial[0].scope.type == QuickNavigationSearchType::App && partial[0].prefix == "app",
+        "partial prefixes produce case-insensitive completion candidates without locking the scope");
+    Check(!query::ResolvePrefix(settings, L"ap"), "suggestions never implicitly lock a partially typed prefix");
+    Check(query::PrefixCandidates(settings, L"application").empty() && query::PrefixCandidates(settings, L"app editor").empty() &&
+        query::PrefixCandidates(settings, L"文件").empty() && query::PrefixCandidates(settings, L"").empty(),
+        "ordinary queries and blank input are not prefix suggestions");
+    const auto engineCandidate = query::PrefixCandidates(settings, L"goo");
+    Check(engineCandidate.size() == 1 && engineCandidate[0].scope.engine == "google" && engineCandidate[0].prefix == "google",
+        "engine suggestions preserve the selected engine when completed");
+    Check(query::PrefixCandidates(settings, L"file").empty(), "retired file scope is absent from prefix suggestions");
+    auto overlapping = settings;
+    overlapping.prefixes[0] = "apps";
+    overlapping.engines.front().prefix = "app";
+    const auto ordered = query::PrefixCandidates(overlapping, L"app");
+    Check(ordered.size() == 2 && ordered[0].scope.engine == "bing" && ordered[1].scope.type == QuickNavigationSearchType::App,
+        "exact engine keywords precede longer type-prefix completions");
     Check(!query::ResolvePrefix(settings,L"app editor") && !query::ResolvePrefix(settings,L"unknown") && !query::ResolvePrefix(settings,L"application"),"ordinary queries never implicitly select a search type");
     const auto google = query::ResolvePrefix(settings,L"google");
     Check(google && google->type == QuickNavigationSearchType::Web && google->engine == "google","engine prefixes retain the chosen engine");
@@ -823,6 +856,13 @@ void TestExtendedSearchAndConfiguration()
     settings.layout.cornerRadius = 16;
     Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && loaded.layout.cornerRadius == 16 && loaded.layout.iconSize == 48,
         "explicit radii in the current layout version survive persistence");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"prefixes":["app","file","web","set","run","calc"]})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.prefixes.back() == "=", "the previous trial calculator default migrates to equals");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"prefixes":["app","file","web","set","run","math"]})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.prefixes.back() == "math", "other customized calculator prefixes survive migration");
+    settings.prefixes.back() = "calc";
+    Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && loaded.prefixes.back() == "calc",
+        "explicitly saved current calculator overrides are never migrated");
     DeleteFileW(path.c_str());
     invalid = settings; invalid.prefixes[0] = "web"; invalid.layout.iconSize = 999; NormalizeNavigationSettings(invalid);
     Check(invalid.prefixes == NavigationSettings{}.prefixes && invalid.layout.iconSize == 96 && invalid.colors == settings.colors,"invalid search config is reset without losing independent appearance overrides");

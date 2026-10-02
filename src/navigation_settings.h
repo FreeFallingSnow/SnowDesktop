@@ -90,7 +90,7 @@ struct NavigationSettings
         QuickNavigationDesktopViewMode::Tile;
     bool defaultCollapsed = false;
     QuickNavigationLayout layout;
-    std::array<std::string, 6> prefixes{"app", "file", "web", "set", "run", "calc"};
+    std::array<std::string, 6> prefixes{"app", "file", "web", "set", "run", "="};
     std::string defaultEngine = "bing";
     std::vector<QuickNavigationSearchEngine> engines{
         {"bing", "Bing", "bing", "https://www.bing.com/search?q={query}"},
@@ -140,13 +140,14 @@ std::wstring FormatNavigationHotkey(const NavigationSettings& settings);
 inline bool ValidateNavigationSearchConfiguration(const NavigationSettings& settings)
 {
     std::unordered_set<std::string> prefixes, identifiers;
-    auto validPrefix = [&](const std::string& prefix) {
+    auto validPrefix = [&](const std::string& prefix, bool calculator = false) {
         if (prefix.empty() || prefix.size() > 32) return false;
-        for (unsigned char c : prefix) if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+        if (!(calculator && prefix == "="))
+            for (unsigned char c : prefix) if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
         return prefixes.insert(prefix).second;
     };
     for (const auto type : kQuickNavigationSearchTypes)
-        if (type != QuickNavigationSearchType::All && !validPrefix(settings.prefixes[static_cast<size_t>(type) - 1])) return false;
+        if (type != QuickNavigationSearchType::All && !validPrefix(settings.prefixes[static_cast<size_t>(type) - 1], type == QuickNavigationSearchType::Calculator)) return false;
     if (settings.engines.empty() || settings.engines.size() > 32) return false;
     for (const auto& e : settings.engines)
     {

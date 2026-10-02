@@ -361,6 +361,13 @@ constexpr bool ShouldOpenFromDockSearchPress(
     return !dismissedBySamePress;
 }
 
+enum class DockSearchPressAction { Open, Close, Relocate };
+constexpr DockSearchPressAction ResolveDockSearchPressAction(bool panelOpen, bool sameMonitor, bool targetDockAvailable)
+{
+    if (!panelOpen) return DockSearchPressAction::Open;
+    return !sameMonitor && targetDockAvailable ? DockSearchPressAction::Relocate : DockSearchPressAction::Close;
+}
+
 constexpr bool ShouldRouteSearchEditKeyToResults(
     WPARAM key)
 {
