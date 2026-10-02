@@ -183,7 +183,7 @@ struct State
             // asymmetric ascent/descent box. Use a stable reference so typing
             // and switching between the cue and the value cannot move it.
             ComPtr<IDWriteTextLayout> reference;
-            if (SUCCEEDED(factory->CreateTextLayout(L"国Hg", 3, format.Get(), 1000.f, 1000.f, &reference)))
+            if (SUCCEEDED(factory->CreateTextLayout(L"国Hg", 3, format.Get(), 1000.f, 1000.f, &reference))) // l10n-allow: fixed font measurement glyphs, never displayed
             {
                 DWRITE_TEXT_METRICS band{}; DWRITE_OVERHANG_METRICS ink{};
                 reference->GetMetrics(&band); reference->GetOverhangMetrics(&ink);
