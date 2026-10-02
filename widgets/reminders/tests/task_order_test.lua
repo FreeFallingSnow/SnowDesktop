@@ -44,7 +44,22 @@ return {
         id, marker = order.target(rows, "1", 200)
         assert(id == nil and marker == 148)
         id, marker = order.target({ rows[1] }, "1", 0)
-        assert(id == nil and marker == nil)
+        assert(id == nil and marker == 0)
+    end,
+    ["drops stay within the source completion group"] = function()
+        local source = {
+            { id = "1" }, { id = "2" }, { id = "3", done = true },
+            { id = "4", done = true },
+        }
+        assert(table.concat(order.move(source, "1", nil), ",") == "2,1,3,4")
+        assert(table.concat(order.move(source, "4", "3"), ",") == "1,2,4,3")
+        assert(order.move(source, "3", "1") == nil)
+        local rows = {}
+        for i, task in ipairs(source) do rows[i] = { task = task, top = (i-1)*32, height = 28 } end
+        local id, marker = order.target(rows, "1", 1000)
+        assert(id == nil and marker == 60, "pending insertion ends before completed rows")
+        id, marker = order.target(rows, "4", -1)
+        assert(id == "3" and marker == 64, "completed insertion starts after pending rows")
     end,
     ["outside and missing pointer coordinates cannot commit a drop"] = function()
         local shape = { x = 8, y = 40, width = 200, height = 100 }

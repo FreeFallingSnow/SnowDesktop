@@ -14,7 +14,7 @@
   "titleKeys": [
     "lua_widget.reminders.legacy_name"
   ],
-  "version": "2.0.16",
+  "version": "2.0.17",
   "description": "An interactive local ToDo list with quick add, completion, editing, and filtering.",
   "descriptionKey": "lua_widget.reminders.description",
   "locales": {
@@ -43,7 +43,9 @@
       "lua_widget.reminders.priority_urgent": "紧急",
       "lua_widget.reminders.priority_high": "高",
       "lua_widget.reminders.priority_normal": "普通",
-      "lua_widget.reminders.priority_low": "低"
+      "lua_widget.reminders.priority_low": "低",
+      "lua_widget.reminders.sort_priority": "按紧急程度排序",
+      "lua_widget.reminders.auto_sort": "自动按紧急程度排序"
     },
     "en-US": {
       "lua_widget.reminders.name": "ToDo List",
@@ -70,7 +72,9 @@
       "lua_widget.reminders.priority_urgent": "Urgent",
       "lua_widget.reminders.priority_high": "High",
       "lua_widget.reminders.priority_normal": "Normal",
-      "lua_widget.reminders.priority_low": "Low"
+      "lua_widget.reminders.priority_low": "Low",
+      "lua_widget.reminders.sort_priority": "Sort by Urgency",
+      "lua_widget.reminders.auto_sort": "Automatically Sort by Urgency"
     },
     "zh-TW": {
       "lua_widget.reminders.name": "ToDo列表",
@@ -97,7 +101,9 @@
       "lua_widget.reminders.priority_urgent": "緊急",
       "lua_widget.reminders.priority_high": "高",
       "lua_widget.reminders.priority_normal": "一般",
-      "lua_widget.reminders.priority_low": "低"
+      "lua_widget.reminders.priority_low": "低",
+      "lua_widget.reminders.sort_priority": "依緊急程度排序",
+      "lua_widget.reminders.auto_sort": "自動依緊急程度排序"
     },
     "ja-JP": {
       "lua_widget.reminders.name": "ToDo リスト",
@@ -124,7 +130,9 @@
       "lua_widget.reminders.priority_urgent": "至急",
       "lua_widget.reminders.priority_high": "高",
       "lua_widget.reminders.priority_normal": "通常",
-      "lua_widget.reminders.priority_low": "低"
+      "lua_widget.reminders.priority_low": "低",
+      "lua_widget.reminders.sort_priority": "緊急度順に並べ替え",
+      "lua_widget.reminders.auto_sort": "緊急度順に自動で並べ替え"
     },
     "ko-KR": {
       "lua_widget.reminders.name": "할 일 목록",
@@ -151,7 +159,9 @@
       "lua_widget.reminders.priority_urgent": "긴급",
       "lua_widget.reminders.priority_high": "높음",
       "lua_widget.reminders.priority_normal": "보통",
-      "lua_widget.reminders.priority_low": "낮음"
+      "lua_widget.reminders.priority_low": "낮음",
+      "lua_widget.reminders.sort_priority": "긴급도순 정렬",
+      "lua_widget.reminders.auto_sort": "긴급도순 자동 정렬"
     },
     "de-DE": {
       "lua_widget.reminders.name": "Aufgabenliste",
@@ -178,7 +188,9 @@
       "lua_widget.reminders.priority_urgent": "Dringend",
       "lua_widget.reminders.priority_high": "Hoch",
       "lua_widget.reminders.priority_normal": "Normal",
-      "lua_widget.reminders.priority_low": "Niedrig"
+      "lua_widget.reminders.priority_low": "Niedrig",
+      "lua_widget.reminders.sort_priority": "Nach Dringlichkeit sortieren",
+      "lua_widget.reminders.auto_sort": "Automatisch nach Dringlichkeit sortieren"
     },
     "fr-FR": {
       "lua_widget.reminders.name": "Liste de tâches",
@@ -205,7 +217,9 @@
       "lua_widget.reminders.priority_urgent": "Urgent",
       "lua_widget.reminders.priority_high": "Élevé",
       "lua_widget.reminders.priority_normal": "Normal",
-      "lua_widget.reminders.priority_low": "Faible"
+      "lua_widget.reminders.priority_low": "Faible",
+      "lua_widget.reminders.sort_priority": "Trier par urgence",
+      "lua_widget.reminders.auto_sort": "Trier automatiquement par urgence"
     },
     "es-ES": {
       "lua_widget.reminders.name": "Tareas",
@@ -232,7 +246,9 @@
       "lua_widget.reminders.priority_urgent": "Urgente",
       "lua_widget.reminders.priority_high": "Alta",
       "lua_widget.reminders.priority_normal": "Normal",
-      "lua_widget.reminders.priority_low": "Baja"
+      "lua_widget.reminders.priority_low": "Baja",
+      "lua_widget.reminders.sort_priority": "Ordenar por urgencia",
+      "lua_widget.reminders.auto_sort": "Ordenar automáticamente por urgencia"
     },
     "es-419": {
       "lua_widget.reminders.name": "Lista de tareas",
@@ -259,7 +275,9 @@
       "lua_widget.reminders.priority_urgent": "Urgente",
       "lua_widget.reminders.priority_high": "Alta",
       "lua_widget.reminders.priority_normal": "Normal",
-      "lua_widget.reminders.priority_low": "Baja"
+      "lua_widget.reminders.priority_low": "Baja",
+      "lua_widget.reminders.sort_priority": "Ordenar por urgencia",
+      "lua_widget.reminders.auto_sort": "Ordenar automáticamente por urgencia"
     },
     "pt-BR": {
       "lua_widget.reminders.name": "Lista de tarefas",
@@ -286,7 +304,9 @@
       "lua_widget.reminders.priority_urgent": "Urgente",
       "lua_widget.reminders.priority_high": "Alta",
       "lua_widget.reminders.priority_normal": "Normal",
-      "lua_widget.reminders.priority_low": "Baixa"
+      "lua_widget.reminders.priority_low": "Baixa",
+      "lua_widget.reminders.sort_priority": "Ordenar por urgência",
+      "lua_widget.reminders.auto_sort": "Ordenar automaticamente por urgência"
     }
   },
   "defaultSize": {

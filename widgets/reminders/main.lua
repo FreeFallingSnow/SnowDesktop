@@ -30,6 +30,15 @@ local fluent = {
     complete = utf8.char(0xE309),
     reset = utf8.char(0xF19F),
     edit = utf8.char(0xE70F),
+    urgency = utf8.char(0xF40B), -- Flag 20 Regular
+    sort = utf8.char(0xF18A), -- Arrow Sort 20 Regular
+    autoSort = utf8.char(0xF190), -- Arrow Sync 20 Regular
+    priorities = {
+        [3] = utf8.char(0xF49F), -- Important 20 Regular
+        [2] = utf8.char(0xF19B), -- Arrow Up 20 Regular
+        [1] = utf8.char(0xF40B), -- Flag 20 Regular
+        [0] = utf8.char(0xF148), -- Arrow Down 20 Regular
+    },
 }
 
 local settings = {
@@ -107,6 +116,10 @@ local function savePriorities(tx, ids, priorities)
     setOrRemove(tx, "priorities", taskPriority.encode(ids, priorities))
 end
 
+local function automaticSorting()
+    return storage.get("autoSort") == "1"
+end
+
 local function loadTasks(includeCompleted)
     local tasks = {}
     local done = loadDoneIds()
@@ -121,16 +134,32 @@ local function loadTasks(includeCompleted)
             end
         end
     end
-    if storage.get("manualOrder") == "1" then return tasks end
-    return taskPriority.sort(tasks)
+    return automaticSorting() and taskPriority.sort(tasks) or taskPriority.groupCompleted(tasks)
 end
 
 local function moveTask(id, beforeId)
+    if automaticSorting() then return end
     local ids = taskOrder.move(loadTasks(true), id, beforeId)
     if not ids then return end
     storage.transaction(function(tx)
         saveOrder(tx, ids)
-        tx:set("manualOrder", "1")
+    end)
+end
+
+local function sortByPriority()
+    local ids = {}
+    for _, task in ipairs(taskPriority.sort(loadTasks(true))) do ids[#ids + 1] = task.id end
+    storage.transaction(function(tx) saveOrder(tx, ids) end)
+end
+
+local function toggleAutomaticSorting()
+    -- Save the current visible order when disabling, so rows do not jump back.
+    local enabled = not automaticSorting()
+    local ids = {}
+    for _, task in ipairs(loadTasks(true)) do ids[#ids + 1] = task.id end
+    storage.transaction(function(tx)
+        tx:set("autoSort", enabled and "1" or "0")
+        if not enabled then saveOrder(tx, ids) end
     end)
 end
 
@@ -370,7 +399,8 @@ local function render(context, model)
         model.editingTaskId = nil
         model.drag = nil
     end
-    if model.drag and not interaction.isPressed("task.row." .. model.drag.id) then
+    local autoSort = automaticSorting()
+    if model.drag and (autoSort or not interaction.isPressed("task.row." .. model.drag.id)) then
         model.drag = nil
     end
     local w = layout.contentWidth()
@@ -560,7 +590,7 @@ local function render(context, model)
                 math.max(0, metrics.controlRadius - inset),
                 metrics.strokeWidth, 0.42)
         end
-        local events = dragEvents(task.id)
+        local events = autoSort and {} or dragEvents(task.id)
         events.click = { id = "task.select", value = task.id }
         events.doubleClick = { id = "task.edit", value = task.id }
         events.contextMenu = { id = "task.menu", value = task.id }
@@ -570,7 +600,7 @@ local function render(context, model)
                 width = cardW, height = cardH,
                 radius = metrics.controlRadius,
             }, "hand", events, { role = "listitem", label = task.text .. ", " ..
-                urgencyLabels[task.priority] }, nil, viewportShape, true)
+                urgencyLabels[task.priority] }, nil, viewportShape, not autoSort)
         end
 
         local checkboxY = cardY + (cardH - checkboxSize) / 2
@@ -724,6 +754,10 @@ local function event(_context, model, value)
         return
     end
     if value.kind ~= "action" then return end
+    if automaticSorting() and type(value.id) == "string" and value.id:match("^task%.drag") then
+        cancelDrag(model)
+        return
+    end
     local id = value.value and tostring(value.value) or nil
     if value.id == "task.dragStart" and id and value.button == 1 then
         cancelDrag(model)
@@ -761,6 +795,7 @@ local function event(_context, model, value)
             model.selectedId = nil
             model.editingTaskId = nil
         end
+        if value.action == "submit" then control.focus("new-task") end
     elseif value.id == "task.clearSelection" then
         cancelDrag(model)
         model.selectedId = nil
@@ -793,6 +828,11 @@ local function event(_context, model, value)
         setTaskPriority(id, tonumber(value.id:match("(%d)$")))
     elseif value.id == "task.focusAdd" then
         control.focus("new-task")
+    elseif value.id == "task.sortPriority" or value.id == "task.autoSort" then
+        cancelDrag(model)
+        model.editingTaskId = nil
+        if value.id == "task.autoSort" then toggleAutomaticSorting()
+        elseif not automaticSorting() then sortByPriority() end
     elseif value.id == "task.clearCompleted" then
         cancelDrag(model)
         model.selectedId = nil
@@ -804,6 +844,19 @@ local function event(_context, model, value)
         local total, completed = taskCounts()
         if total > 0 then setAllCompleted(completed < total) end
     end
+end
+
+local function appendSortMenu(items, total)
+    items[#items + 1] = { type = "separator" }
+    items[#items + 1] = {
+        id = "task.sortPriority", label = l10n.tr("lua_widget.reminders.sort_priority"),
+        icon = fluent.sort, iconFont = "fluent",
+        enabled = total > 1 and not automaticSorting(),
+    }
+    items[#items + 1] = {
+        id = "task.autoSort", label = l10n.tr("lua_widget.reminders.auto_sort"),
+        icon = fluent.autoSort, iconFont = "fluent", checked = automaticSorting(),
+    }
 end
 
 local function menu(_context, model, request)
@@ -820,9 +873,11 @@ local function menu(_context, model, request)
                 id = "task.priority." .. level,
                 label = labels[level],
                 checked = currentPriority == level,
+                icon = fluent.priorities[level],
+                iconFont = "fluent",
             }
         end
-        return ui.menu({
+        local items = {
             {
                 id = "task.edit",
                 label = l10n.tr("lua_widget.reminders.edit_selected"),
@@ -831,6 +886,8 @@ local function menu(_context, model, request)
             },
             {
                 label = l10n.tr("lua_widget.reminders.priority"),
+                icon = fluent.urgency,
+                iconFont = "fluent",
                 children = priorityItems,
             },
             {
@@ -839,7 +896,9 @@ local function menu(_context, model, request)
                 icon = fluent.delete,
                 iconFont = "fluent",
             },
-        })
+        }
+        appendSortMenu(items, total)
+        return ui.menu(items)
     end
     local items = {
         {
@@ -849,6 +908,7 @@ local function menu(_context, model, request)
             iconFont = "fluent",
         },
     }
+    appendSortMenu(items, total)
     items[#items + 1] = { type = "separator" }
     items[#items + 1] = {
         id = "task.clearCompleted",

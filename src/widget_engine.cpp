@@ -30011,6 +30011,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
                 const auto text = focusedHostInput_.text;
                 BlurHostInput(false);
                 WidgetSurfaceScope surfaceScope(d2dState_, inputSurface.c_str());
+                snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+                    trustedGestureState_, true);
                 DispatchHostInputAction(widgetId, inputId,
                     submitAction, "submit", text, false, "keyboard");
                 return true;

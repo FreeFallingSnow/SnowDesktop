@@ -8,7 +8,7 @@ local function loadReminders()
 end
 local function harness(initial)
     local h = { values = initial or {}, regions = {}, controls = {}, timers = {},
-        transactions = 0, offset = 0, pressed = nil }
+        transactions = 0, offset = 0, pressed = nil, focused = nil, focusCalls = 0 }
     storage = {
         get = function(key) return h.values[key] end,
         transaction = function(callback)
@@ -29,10 +29,16 @@ local function harness(initial)
     }
     control = {
         textArea = function(spec) h.controls[spec.key] = spec end,
-        focus = function() return true end,
+        focus = function(key)
+            h.focused = key
+            h.focusedText = h.values.draft
+            h.focusCalls = h.focusCalls + 1
+            return true
+        end,
         blur = function() return true end,
     }
-    ui = { metrics = function() return { layoutRowHeight = 28 } end }
+    ui = { metrics = function() return { layoutRowHeight = 28 } end,
+        menu = function(items) return items end }
     layout = { contentWidth = function() return 250 end,
         contentHeight = function() return 200 end }
     draw = {
@@ -77,6 +83,13 @@ local function harness(initial)
         self:action(key, "pointerDown", x, y)
         return key, x, y
     end
+    function h:menu(taskId)
+        return descriptor.menu({}, self.model, { id = "task.menu", value = taskId })
+    end
+    function h:command(id, value)
+        descriptor.event({}, self.model, { kind = "action", id = id, value = value })
+        self:render()
+    end
     return h
 end
 
@@ -89,14 +102,20 @@ end
 harness({})
 
 return {
-    ["submit creates one multiline task, clears draft and ignores empty repeat"] = function()
+    ["submit creates once and refocuses the cleared input for consecutive tasks"] = function()
         local h = harness({ draft = "  first\nsecond  " })
         h:render()
         h:action("new-task", "submit")
         assert(h.values.task_1_text == "first\nsecond" and h.values.order == "1")
         assert(h.values.draft == nil and h.values.nextId == "2" and h.transactions == 1)
+        assert(h.focused == "new-task" and h.focusedText == nil and h.focusCalls == 1)
         h:action("new-task", "submit")
         assert(h.transactions == 1 and h.values.task_2_text == nil)
+        assert(h.focusCalls == 2, "an empty submit must keep keyboard entry available")
+        h.values.draft = "third"
+        h:action("new-task", "submit")
+        assert(h.values.task_2_text == "third" and h.values.order == "1,2")
+        assert(h.focusedText == nil and h.focusCalls == 3)
     end,
     ["drag commits once, survives reload, and leaves completion and urgency intact"] = function()
         local values = initial()
@@ -108,7 +127,7 @@ return {
         assert(h.transactions == 0, "pointer motion must not persist intermediate order")
         h:render()
         h:action(key, "pointerUp", x, h.model.viewport.y + 1)
-        assert(h.transactions == 1 and h.values.order == "3,1,2" and h.values.manualOrder == "1")
+        assert(h.transactions == 1 and h.values.order == "3,1,2")
         assert(h.values.doneIds == "2" and h.values.priorities == "1:3,3:0")
         assert(h.values.task_3_text == "low")
         local reloaded = harness(h.values)
@@ -122,7 +141,6 @@ return {
         h:action(key, "pointerUp", x + 1, y + 1)
         h:action(key, "click", x, y)
         assert(h.model.selectedId == "1" and h.transactions == 0)
-        assert(h.values.manualOrder == nil)
     end,
     ["outside release, resize, hidden surface and lost capture cancel without writes"] = function()
         for _, reason in ipairs({ "outside", "resize", "hidden", "capture", "timeout" }) do
@@ -152,5 +170,72 @@ return {
         assert(h.regions[key].shape == h.model.viewport)
         h:action(key, "pointerUp", x, h.model.viewport.y + 1)
         assert(h.values.task_2_text == "normal" and h.values.doneIds == "2")
+    end,
+    ["completion stays at the end after manual moves and reopening"] = function()
+        local h = harness(initial())
+        h:command("task.toggle", "1")
+        assert(h.model.rows[3].task.id == "1" and h.values.doneIds == "1")
+        local key, x = h:start("1")
+        h:action(key, "pointerMove", x, h.model.viewport.y + 1)
+        h:action(key, "pointerUp", x, h.model.viewport.y + 1)
+        h:render()
+        assert(h.model.rows[3].task.id == "1", "completed rows cannot cross into pending rows")
+        h:command("task.toggle", "1")
+        assert(h.model.rows[1].task.id == "1" and h.values.doneIds == nil)
+    end,
+    ["one-off urgency sorting saves the order without enabling automatic sorting"] = function()
+        local values = initial()
+        values.order, values.doneIds = "3,2,1", "1"
+        local h = harness(values)
+        h:render()
+        h:command("task.sortPriority")
+        assert(h.values.order == "2,3,1" and h.values.autoSort ~= "1")
+        local reloaded = harness(h.values)
+        reloaded:render()
+        assert(reloaded.model.rows[1].task.id == "2" and reloaded.model.rows[3].task.id == "1")
+        reloaded:command("task.priority.3", "3")
+        assert(reloaded.model.rows[1].task.id == "2", "manual order survives urgency edits")
+    end,
+    ["automatic urgency sorting blocks drag and disabling retains the current order"] = function()
+        local values = initial()
+        values.order = "3,2,1"
+        local h = harness(values)
+        h:render()
+        h:command("task.autoSort")
+        assert(h.values.autoSort == "1" and h.model.rows[1].task.id == "1")
+        local row = h.regions["task.row.1"]
+        assert(not row.capturePointer and row.events.pointerDown == nil and row.events.click)
+        local before = h.transactions
+        h:command("task.dragStart", "1")
+        h:command("task.sortPriority")
+        assert(h.model.drag == nil and h.transactions == before and h.values.order == "3,2,1")
+        h:command("task.priority.3", "3")
+        assert(h.model.rows[1].task.id == "3" and h.model.rows[2].task.id == "1", "urgency ties are stable")
+        local reloaded = harness(h.values)
+        reloaded:render()
+        assert(reloaded.regions["task.row.3"].events.pointerDown == nil)
+        reloaded:command("task.autoSort")
+        assert(reloaded.values.autoSort == "0" and reloaded.values.order == "3,1,2")
+        assert(reloaded.regions["task.row.3"].capturePointer)
+        reloaded:command("task.priority.0", "3")
+        assert(reloaded.model.rows[1].task.id == "3", "disabling automatic sorting must preserve its last order")
+    end,
+    ["task and background menus expose sort modes and urgency glyphs"] = function()
+        local h = harness(initial())
+        h:render()
+        local function find(items, id)
+            for _, item in ipairs(items) do if item.id == id then return item end end
+        end
+        local items = h:menu("1")
+        assert(items[2].icon and items[2].iconFont == "fluent")
+        for _, item in ipairs(items[2].children) do assert(item.icon and item.iconFont == "fluent") end
+        for _, taskId in ipairs({ false, "1" }) do
+            items = h:menu(taskId or nil)
+            assert(find(items, "task.sortPriority").enabled)
+            assert(not find(items, "task.autoSort").checked)
+        end
+        h:command("task.autoSort")
+        assert(not find(h:menu("1"), "task.sortPriority").enabled)
+        assert(find(h:menu(), "task.autoSort").checked)
     end,
 }

@@ -1,6 +1,6 @@
 local taskOrder = {}
 
--- Reorder the complete displayed list, retaining hidden tasks and metadata.
+-- Reorder within a completion group, retaining hidden tasks and metadata.
 function taskOrder.move(tasks, sourceId, beforeId)
     if sourceId == beforeId then return nil end
     local ids, sourceIndex, targetIndex = {}, nil, nil
@@ -10,8 +10,18 @@ function taskOrder.move(tasks, sourceId, beforeId)
         if task.id == beforeId then targetIndex = index end
     end
     if not sourceIndex or (beforeId and not targetIndex) then return nil end
+    local done = tasks[sourceIndex].done == true
+    if targetIndex and (tasks[targetIndex].done == true) ~= done then return nil end
     table.remove(ids, sourceIndex)
     if targetIndex and sourceIndex < targetIndex then targetIndex = targetIndex - 1 end
+    if not targetIndex and not done then
+        for index, task in ipairs(tasks) do
+            if task.done then
+                targetIndex = index - (sourceIndex < index and 1 or 0)
+                break
+            end
+        end
+    end
     table.insert(ids, targetIndex or (#ids + 1), sourceId)
     for index, task in ipairs(tasks) do
         if ids[index] ~= task.id then return ids end
@@ -21,16 +31,21 @@ end
 
 -- Midpoints handle wrapped rows and gaps without relying on fixed row heights.
 function taskOrder.target(rows, sourceId, contentY)
+    local source
+    for _, row in ipairs(rows) do
+        if row.task.id == sourceId then source = row; break end
+    end
+    if not source then return nil end
     local last
     for _, row in ipairs(rows) do
-        if row.task.id ~= sourceId then
+        if row.task.id ~= sourceId and (row.task.done == true) == (source.task.done == true) then
             if contentY < row.top + row.height / 2 then
                 return row.task.id, row.top
             end
             last = row
         end
     end
-    return nil, last and (last.top + last.height) or nil
+    return nil, last and (last.top + last.height) or source.top
 end
 
 function taskOrder.contains(shape, x, y)

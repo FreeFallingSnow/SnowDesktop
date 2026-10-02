@@ -36,4 +36,14 @@ function taskPriority.sort(tasks)
     return sorted
 end
 
+function taskPriority.groupCompleted(tasks)
+    local sorted = {}
+    for _, done in ipairs({ false, true }) do
+        for _, task in ipairs(tasks) do
+            if (task.done == true) == done then sorted[#sorted + 1] = task end
+        end
+    end
+    return sorted
+end
+
 return taskPriority

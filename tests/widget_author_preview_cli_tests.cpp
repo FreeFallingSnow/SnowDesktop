@@ -809,8 +809,6 @@ return hostWidget.define({
     CheckPng(output);
 }
 
-// Exercise both public controls through the real Lua validator and renderer.
-// The 8.4 case reproduces 70% font scaling in sticky-note and reminders.
 void CheckRemindersInteraction(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& root,
     const std::filesystem::path& repository)
@@ -847,7 +845,7 @@ end })
         (root / L"reminders-interaction.png").wstring(), L"--host", host.wstring() });
     if (exit != 0) std::cerr << json << '\n';
     Check(exit == 0 && json.find("\"ok\":true") != std::string::npos,
-        "actual reminders actions create once, persist manual order, preserve metadata and cancel invalid drops");
+        "actual reminders actions refocus after creation, retain completion groups and enforce persistent sorting modes");
 }
 
 void TestControlSubmitEvents(const std::filesystem::path& snowwidget,
@@ -895,6 +893,8 @@ end })
         "both immediate editors accept optional submit actions and reject invalid events and payloads");
 }
 
+// Exercise both public controls through the real Lua validator and renderer.
+// The 8.4 case reproduces 70% font scaling in sticky-note and reminders.
 void TestTextControlFontSizing(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& root)
 {
