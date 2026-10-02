@@ -477,7 +477,7 @@ local function dispose(_context,m)
     if m.locationTask then task.cancel(m.locationTask) end
     schedule.cancel("weather.tick");schedule.cancel("city.search")
 end
-return widget.define({name=l10n.tr("lua_widget.sky_weather.name"),useCustomStyle=false,showTitle=false,
+return widget.define({name=l10n.tr("lua_widget.sky_weather.name"),useCustomStyle=true,followPersonalizationDefault=true,showTitle=false,
     backgroundLayer={render=background,blurRadius=0},render=render,panel=panel,setup=setup,event=event,dispose=dispose,
     menu=function() return ui.menu({{id="cities",label=l10n.tr("lua_widget.sky_weather.choose_city")},
         {id="refresh",label=l10n.tr("lua_widget.sky_weather.refresh")},{id="settings",label=l10n.tr("lua_widget.sky_weather.settings")}}) end,
