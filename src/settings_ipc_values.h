@@ -40,7 +40,7 @@ SD_IPC_FIELDS(DockSettings,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme);
 SD_IPC_FIELDS(NavigationSettings,
-    v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.defaultCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors);
+    v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors);
 SD_IPC_FIELDS(QuickNavigationLayout, v.expandedWidth, v.collapsedWidth, v.maximumHeight,
     v.visibleRows, v.padding, v.searchHeight, v.iconSize, v.gridGap, v.rowGap,
     v.fontSize, v.secondaryFontSize, v.searchFontSize, v.resultRowHeight, v.labelLines,
@@ -72,7 +72,7 @@ SD_IPC_FIELDS(GeneralSettings,
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions);
 SD_IPC_FIELDS(CategorySettings,
-    v.tabFontSize, v.rules);
+    v.tabFontSize, v.rules, v.collectProgramsEnabled);
 SD_IPC_FIELDS(IconBeautifySettings,
     v.enabled, v.preset, v.mode, v.backgroundOpacity,
     v.glassEnabled, v.glassBlurRadius, v.edgeHighlightEnabled,

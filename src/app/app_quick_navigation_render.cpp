@@ -45,30 +45,31 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
             rect(quickNavigationAnimationDockRect_), edge, collapsed, width, height,
             index, quickNavigationHostRect_.left, quickNavigationHostRect_.top);
     };
+    const auto clipFor = [&](size_t index) {
+        return navigation::GenieRasterBandClip(rect(quickNavigationRect_),
+            rect(quickNavigationAnimationDockRect_), edge, collapsed, width, height,
+            index, quickNavigationHostRect_.left, quickNavigationHostRect_.top,
+            quickNavigationHostRect_.right - quickNavigationHostRect_.left,
+            quickNavigationHostRect_.bottom - quickNavigationHostRect_.top);
+    };
     HRESULT hr = S_OK;
     if (quickNavGenieStrips_.empty())
     {
-        // All strips share the live panel surface. Search updates need no
-        // capture, and glass uses these same source intervals and matrices.
+        // Store each untransformed destination clip and its projected bitmap
+        // as a pair. Reuse the same live surface and visuals on every frame.
+        quickNavGenieStrips_.reserve(genie::StripCount * 2);
         for (size_t i = 0; i < genie::StripCount && SUCCEEDED(hr); ++i)
         {
             ComPtr<IDCompositionVisual2> strip;
             hr = quickNavDcompDevice_->CreateVisual(&strip);
             if (FAILED(hr)) break;
             quickNavGenieStrips_.push_back(strip);
-            // Hard band clips partition the translucent content exactly once.
-            // A separate soft-edged bitmap preserves antialiasing around the
-            // outside silhouette without blending the internal joins twice.
-            const auto projection = projectionFor(i);
-            const auto bounds = navigation::GenieBandClip(projection, i, edge);
-            const D2D1_RECT_F clip = D2D1::RectF(
-                static_cast<float>(bounds.left), static_cast<float>(bounds.top),
-                static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
-            hr = strip->SetClip(clip);
-            if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+            hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
             ComPtr<IDCompositionVisual2> content;
             if (SUCCEEDED(hr)) hr = quickNavDcompDevice_->CreateVisual(&content);
+            if (SUCCEEDED(hr)) quickNavGenieStrips_.push_back(content);
             if (SUCCEEDED(hr)) hr = content->SetContent(quickNavDcompSurface_.Get());
+            const auto projection = projectionFor(i);
             if (SUCCEEDED(hr)) hr = content->SetOffsetX(-projection.sourceX);
             if (SUCCEEDED(hr)) hr = content->SetOffsetY(-projection.sourceY);
             if (SUCCEEDED(hr)) hr = content->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
@@ -88,11 +89,18 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         }
         quickNavGenieStripEdge_ = quickNavigationAnimationDockEdge_;
     }
-    for (size_t i = 0; i < quickNavGenieStrips_.size() && SUCCEEDED(hr); ++i)
+    for (size_t i = 0; i < genie::StripCount && SUCCEEDED(hr); ++i)
     {
+        // Clipping before perspective leaves fractional independently sampled
+        // joins. Partition the final pixels on the parent instead, preserving
+        // soft bitmap edges without gaps or double-blended translucent bands.
+        const auto bounds = clipFor(i);
+        hr = quickNavGenieStrips_[i * 2]->SetClip(D2D1::RectF(
+            static_cast<float>(bounds.left), static_cast<float>(bounds.top),
+            static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)));
         const auto matrix = projectionFor(i);
         ComPtr<IDCompositionVisual3> projectedStrip;
-        hr = quickNavGenieStrips_[i].As(&projectedStrip);
+        if (SUCCEEDED(hr)) hr = quickNavGenieStrips_[i * 2 + 1].As(&projectedStrip);
         if (SUCCEEDED(hr)) hr = projectedStrip->SetTransform(D2D1_MATRIX_4X4_F{
             matrix.m11, matrix.m12, 0.0f, matrix.m14,
             matrix.m21, matrix.m22, 0.0f, matrix.m24,
@@ -817,7 +825,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             DrawQuickNavigationCenteredText(ctx.Get(), L"\uF2A4", chevronRect, quickNavFluentTextFormat_.Get(),
                 ToD2DColor(t.appTypeText), static_cast<float>(QuickNavScale(12)));
             DrawQuickNavigationCenteredText(ctx.Get(), QuickNavigationViewLabel(), labelRect,
-                quickNavPathTextFormat_.Get(), ToD2DColor(t.tabText));
+                quickNavTabTextFormat_.Get(), ToD2DColor(t.tabText));
         }
     }
 
@@ -1144,8 +1152,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         continue;
 
                     const int rowTop = appHeaderTop + headerH + gap + static_cast<int>(i) * rowH;
-                    RECT rowRectApp = MakeRect(contentApp.left + QuickNavScale(8), rowTop,
-                        contentApp.right - QuickNavScale(12), rowTop + rowH);
+                    RECT rowRectApp = QuickNavigationResultRowRect(MakeRect(contentApp.left + QuickNavScale(8), rowTop,
+                        contentApp.right - QuickNavScale(12), rowTop + rowH), QuickNavScale(2));
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
                         continue;
 
@@ -1164,9 +1172,9 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[appIndex];
                     const int iconSz = QuickNavScale(28);
                     RECT iconRect = MakeRect(rowRectApp.left + QuickNavScale(12),
-                        rowRectApp.top + (rowH - iconSz) / 2,
+                        (rowRectApp.top + rowRectApp.bottom - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
-                        rowRectApp.top + (rowH + iconSz) / 2);
+                        (rowRectApp.top + rowRectApp.bottom + iconSz) / 2);
                     if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
                         DrawD2DRoundedRectangle(ctx.Get(), iconRect,
                             static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
@@ -1212,8 +1220,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 if (HasQuickNavigationAppExpandButton())
                 {
                     const int buttonTop = appHeaderTop + headerH + gap + appRowsHeight;
-                    RECT buttonRectApp = MakeRect(contentApp.left + QuickNavScale(8), buttonTop,
-                        contentApp.right - QuickNavScale(12), buttonTop + rowH);
+                    RECT buttonRectApp = QuickNavigationResultRowRect(MakeRect(contentApp.left + QuickNavScale(8), buttonTop,
+                        contentApp.right - QuickNavScale(12), buttonTop + rowH), QuickNavScale(2));
                     if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
                     {
                         registerClippedHoverRegion(
@@ -1273,8 +1281,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 {
                     const int rowTop = everythingHeaderTop + headerH + gap
                         + static_cast<int>(i) * rowH;
-                    RECT rowRectApp = MakeRect(contentApp.left + QuickNavScale(8), rowTop,
-                        contentApp.right - QuickNavScale(12), rowTop + rowH);
+                    RECT rowRectApp = QuickNavigationResultRowRect(MakeRect(contentApp.left + QuickNavScale(8), rowTop,
+                        contentApp.right - QuickNavScale(12), rowTop + rowH), QuickNavScale(2));
                     if (rowRectApp.bottom <= contentApp.top || rowRectApp.top >= contentApp.bottom)
                         continue;
 
@@ -1293,9 +1301,9 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];
                     const int iconSz = QuickNavScale(28);
                     RECT iconRect = MakeRect(rowRectApp.left + QuickNavScale(12),
-                        rowRectApp.top + (rowH - iconSz) / 2,
+                        (rowRectApp.top + rowRectApp.bottom - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
-                        rowRectApp.top + (rowH + iconSz) / 2);
+                        (rowRectApp.top + rowRectApp.bottom + iconSz) / 2);
                     if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
                         DrawD2DRoundedRectangle(ctx.Get(), iconRect,
                             static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
@@ -1353,8 +1361,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 {
                     const int buttonTop = everythingHeaderTop + headerH + gap
                         + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH;
-                    RECT buttonRectApp = MakeRect(contentApp.left + QuickNavScale(8), buttonTop,
-                        contentApp.right - QuickNavScale(12), buttonTop + rowH);
+                    RECT buttonRectApp = QuickNavigationResultRowRect(MakeRect(contentApp.left + QuickNavScale(8), buttonTop,
+                        contentApp.right - QuickNavScale(12), buttonTop + rowH), QuickNavScale(2));
                     if (buttonRectApp.bottom > contentApp.top && buttonRectApp.top < contentApp.bottom)
                     {
                         registerClippedHoverRegion(

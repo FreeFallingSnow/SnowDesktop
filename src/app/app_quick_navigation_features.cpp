@@ -1,5 +1,6 @@
 #include "app.h"
 #include "quick_navigation_theme.h"
+#include "quick_navigation_helpers.h"
 #include "../quick_navigation_query.h"
 #include "../quick_navigation_rules.h"
 #include "../shell_launch_process.h"
@@ -45,10 +46,8 @@ RECT DesktopApp::GetQuickNavigationInputRect(const RECT& overlay) const
     const RECT search = GetQuickNavigationSearchRect(overlay);
     const RECT type = GetQuickNavigationToolbarRect(overlay, 0);
     const RECT settings = GetQuickNavigationToolbarRect(overlay, 1);
-    const int height = std::min(QuickNavScale(navigationSettings_.layout.searchFontSize + 16), static_cast<int>(search.bottom - search.top) - QuickNavScale(8));
-    const int top = search.top + (static_cast<int>(search.bottom - search.top) - height) / 2;
     return MakeRect(type.right + QuickNavScale(2),
-        top, settings.left - QuickNavScale(8), top + height);
+        search.top, settings.left - QuickNavScale(8), search.bottom);
 }
 std::wstring DesktopApp::QuickNavigationTypeLabel() const
 {
@@ -66,6 +65,10 @@ void DesktopApp::ToggleQuickNavigationCollapsed()
 {
     if (IsLuaLogicalSlotPickerOpen()) return;
     quickNavigationCollapsed_ = !quickNavigationCollapsed_;
+    navigationSettings_.lastCollapsed = quickNavigationCollapsed_;
+    SaveNavigationSettings(GetNavigationSettingsPath().c_str(), navigationSettings_);
+    if (settingsController_)
+        (void)settingsController_->SynchronizeNavigation(navigationSettings_);
     quickNavigationInitialJumpOpen_ = false;
     quickNavigationMenu_ = QuickNavigationMenu::None;
     quickNavigationScrollOffset_ = 0;
@@ -207,7 +210,8 @@ std::vector<DesktopApp::QuickNavigationListRow> DesktopApp::BuildQuickNavigation
                 if (HasQuickNavigationAppExpandButton()) rows.push_back({Kind::ExpandApps, 0, _LW("quickNav.more"), {}, {}, true});
             }
         }
-        if (quickNavigationSearchType_ == QuickNavigationSearchType::All || quickNavigationSearchType_ == QuickNavigationSearchType::File)
+        if ((quickNavigationSearchType_ == QuickNavigationSearchType::All || quickNavigationSearchType_ == QuickNavigationSearchType::File) &&
+            (!quickNavigationEverythingResults_.empty() || quickNavigationEverythingSearchPending_ || !everythingSearchAvailable_))
         {
             header(ScopeLabel(QuickNavigationSearchType::File));
             for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
@@ -237,18 +241,23 @@ RECT DesktopApp::GetQuickNavigationListRowRect(size_t index) const
     {
         const auto anchor = GetQuickNavigationViewModeButtonRect(quickNavigationRect_);
         top = std::max<LONG>(content.top + QuickNavScale(4), anchor.bottom + QuickNavScale(8)) + QuickNavScale(static_cast<int>(index) * 36);
-        return MakeRect(content.left + QuickNavScale(4), top, std::min<LONG>(content.right - QuickNavScale(4), content.left + QuickNavScale(180)), top + QuickNavScale(36));
+        return QuickNavigationResultRowRect(MakeRect(content.left + QuickNavScale(4), top, std::min<LONG>(content.right - QuickNavScale(4), content.left + QuickNavScale(180)), top + QuickNavScale(36)), QuickNavScale(2));
     }
     if (quickNavigationMenu_ != QuickNavigationMenu::None)
     {
         top += static_cast<int>(index) * QuickNavScale(navigationSettings_.layout.resultRowHeight);
-        return MakeRect(content.left, top, content.right, top + QuickNavScale(navigationSettings_.layout.resultRowHeight));
+        return QuickNavigationResultRowRect(MakeRect(content.left, top, content.right, top + QuickNavScale(navigationSettings_.layout.resultRowHeight)), QuickNavScale(2));
     }
     const auto rows = BuildQuickNavigationListRows();
     for (size_t i = 0; i < rows.size(); ++i)
     {
         const int height = QuickNavigationListRowHeight(rows[i]);
-        if (i == index) return MakeRect(content.left, top, content.right, top + height);
+        if (i == index)
+        {
+            const RECT slot = MakeRect(content.left, top, content.right, top + height);
+            return rows[i].kind == QuickNavigationListRow::Kind::Header || rows[i].kind == QuickNavigationListRow::Kind::Notice ?
+                slot : QuickNavigationResultRowRect(slot, QuickNavScale(2));
+        }
         top += height;
     }
     return {};
@@ -266,6 +275,8 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
         const auto& row = rows[i];
         RECT bounds = MakeRect(content.left, top, content.right, top + QuickNavigationListRowHeight(row));
         top = bounds.bottom;
+        if (row.kind != Kind::Header && row.kind != Kind::Notice)
+            bounds = QuickNavigationResultRowRect(bounds, QuickNavScale(2));
         if (bounds.bottom <= content.top || bounds.top >= content.bottom) continue;
         const bool selected = quickNavigationListSelection_ == static_cast<int>(i) ||
             (quickNavigationListSelection_ < 0 && row.kind == Kind::Scope && i == 1);
@@ -386,6 +397,53 @@ void DesktopApp::DrawQuickNavigationCenteredText(ID2D1DeviceContext* context, co
     RECT bounds, IDWriteTextFormat* format, const D2D1_COLOR_F& color, float fontSize)
 {
     if (!context || !dwriteFactory_ || !format || text.empty() || IsRectEmpty(&bounds)) return;
+    // Fluent's font boxes can exceed the actual path, especially for chevrons.
+    // Center the official outline itself; this also avoids baseline rounding
+    // shifting small symbols independently of the search text and caret.
+    if (format == quickNavFluentTextFormat_.Get() && text.size() == 1)
+    {
+        ComPtr<IDWriteFontCollection> collection;
+        ComPtr<IDWriteFontFamily> family;
+        ComPtr<IDWriteFont> font;
+        ComPtr<IDWriteFontFace> face;
+        UINT32 familyIndex = 0;
+        BOOL found = FALSE;
+        if (SUCCEEDED(format->GetFontCollection(&collection)) && collection &&
+            SUCCEEDED(collection->FindFamilyName(L"FluentSystemIcons-Regular", &familyIndex, &found)) && found &&
+            SUCCEEDED(collection->GetFontFamily(familyIndex, &family)) &&
+            SUCCEEDED(family->GetFirstMatchingFont(format->GetFontWeight(), format->GetFontStretch(), format->GetFontStyle(), &font)) &&
+            SUCCEEDED(font->CreateFontFace(&face)))
+        {
+            const UINT32 codepoint = static_cast<UINT32>(text.front());
+            UINT16 glyph = 0;
+            ComPtr<ID2D1Factory> factory;
+            ComPtr<ID2D1PathGeometry> geometry;
+            ComPtr<ID2D1GeometrySink> sink;
+            context->GetFactory(&factory);
+            if (SUCCEEDED(face->GetGlyphIndices(&codepoint, 1, &glyph)) && glyph && factory &&
+                SUCCEEDED(factory->CreatePathGeometry(&geometry)) && SUCCEEDED(geometry->Open(&sink)) &&
+                SUCCEEDED(face->GetGlyphRunOutline(fontSize > 0.f ? fontSize : format->GetFontSize(),
+                    &glyph, nullptr, nullptr, 1, FALSE, FALSE, sink.Get())) && SUCCEEDED(sink->Close()))
+            {
+                D2D1_RECT_F ink{};
+                ComPtr<ID2D1SolidColorBrush> brush;
+                if (SUCCEEDED(geometry->GetBounds(nullptr, &ink)) && ink.bottom > ink.top &&
+                    SUCCEEDED(context->CreateSolidColorBrush(color, &brush)))
+                {
+                    D2D1_MATRIX_3X2_F original{};
+                    context->GetTransform(&original);
+                    context->PushAxisAlignedClip(ToD2DRect(bounds), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    context->SetTransform(D2D1::Matrix3x2F::Translation(
+                        (static_cast<float>(bounds.left) + static_cast<float>(bounds.right) - ink.left - ink.right) * .5f,
+                        (static_cast<float>(bounds.top) + static_cast<float>(bounds.bottom) - ink.top - ink.bottom) * .5f) * original);
+                    context->FillGeometry(geometry.Get(), brush.Get());
+                    context->SetTransform(original);
+                    context->PopAxisAlignedClip();
+                    return;
+                }
+            }
+        }
+    }
     ComPtr<IDWriteTextLayout> layout;
     const float width = static_cast<float>(bounds.right - bounds.left);
     const float height = static_cast<float>(bounds.bottom - bounds.top);
@@ -420,13 +478,16 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         if (hovered) DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.searchRadius)),
             ToD2DColor(theme.tabHoverFill), ToD2DColor(theme.searchBorder, 0.f));
         const wchar_t* glyph = button == 0 ? kScopeGlyphs[static_cast<size_t>(quickNavigationSearchType_)] : button == 1 ? L"\uF6AA" : (quickNavigationCollapsed_ ? L"\uF2A4" : L"\uF2B7");
-        RECT symbol = bounds; if (chip) symbol.left += QuickNavScale(28);
+        RECT symbol = bounds;
+        const RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
+        symbol.top = search.top; symbol.bottom = search.bottom;
+        if (chip) symbol.left += QuickNavScale(28);
         if (chip) DrawQuickNavigationActionIcon(context, quickNavigationSearchType_, symbol, 24);
         else DrawQuickNavigationCenteredText(context, glyph, symbol, format,
             ToD2DColor(theme.searchPlaceholder), static_cast<float>(QuickNavScale(button == 2 ? 16 : 20)));
         if (chip)
         {
-            RECT back = bounds; back.right = back.left + QuickNavScale(24);
+            RECT back = symbol; back.left = bounds.left; back.right = back.left + QuickNavScale(24);
             DrawQuickNavigationCenteredText(context, L"\uF15C", back, format, ToD2DColor(theme.searchPlaceholder), static_cast<float>(QuickNavScale(16)));
         }
     }
@@ -567,7 +628,7 @@ bool DesktopApp::ActivateQuickNavigationListRow(size_t index)
     else if (row.kind == Kind::Calculator)
     {
         quickNavigationActionNotice_ = _LW(CopyTextToClipboard(row.value) ? "quickNav.copied" : "quickNav.copyFailed");
-        if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
+        PositionQuickNavigationWindow();
         InvalidateQuickNavigationWindow();
     }
     else if (row.kind == Kind::Settings)

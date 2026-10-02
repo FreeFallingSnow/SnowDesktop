@@ -631,8 +631,8 @@ void TestGenieTranslucentContentCoverage()
                     const auto matrix = navigation::GenieProjection(window, dock, edge,
                         collapsed, width, height, index, -3200.25, -1500.75);
                     const auto band = navigation::GenieBandClip(matrix, index, edge);
-                    // Intersect the parent clip with the child bitmap, matching
-                    // the actual renderer, including its float clip coordinates.
+                    // Check continuous geometry separately from raster clips:
+                    // mathematical adjacency alone cannot prove pixel coverage.
                     const double left = std::max(0.0,
                         matrix.sourceX + static_cast<double>(static_cast<float>(band.left)));
                     const double top = std::max(0.0,
@@ -699,6 +699,67 @@ void TestGenieTranslucentContentCoverage()
                             "source-over beside a warped seam must not darken content or reveal a gap");
                     }
                 }
+            }
+        }
+    }
+}
+
+void TestGenieDestinationPixelCoverage()
+{
+    namespace genie = snowdesktop::dock_genie;
+    namespace navigation = snowdesktop::quick_navigation_animation_rules;
+    constexpr int hostWidth = 5200, hostHeight = 3600;
+    for (const int dpi : {96, 144, 192})
+    for (const bool compact : {false, true})
+    for (const auto edge : {genie::Edge::Bottom, genie::Edge::Top,
+            genie::Edge::Left, genie::Edge::Right})
+    {
+        const double width = (compact ? 640.0 : 860.0) * dpi / 96;
+        const double height = (compact ? 52.0 : 637.0) * dpi / 96;
+        const genie::Rect window{-2381.0, -1017.0,
+            -2381.0 + width, -1017.0 + height};
+        const genie::Rect targets[] = {{-1280.0, 450.0, -1216.0, 514.0},
+            {-2100.0, -1280.0, -2036.0, -1216.0},
+            {-2980.0, -480.0, -2916.0, -416.0},
+            {780.0, -180.0, 844.0, -116.0}};
+        std::vector<double> stages;
+        for (int frame = 0; frame <= 240; ++frame) stages.push_back(frame / 240.0);
+        // Old float-projected joins straddled pixel centers at these phases.
+        for (double stage : {0.0001, 0.0004, 0.0026, 0.0047, 0.0298, 0.0456,
+                0.0608, 0.111, 0.2022, 0.2096, 0.2994, 0.5603}) stages.push_back(stage);
+        for (const auto& dock : targets)
+        for (const double collapsed : stages)
+        {
+            const bool vertical = genie::Vertical(edge);
+            double previousEnd = 0.0;
+            double firstBegin = 0.0;
+            std::vector<int> coverage(vertical ? hostHeight : hostWidth, 0);
+            for (std::size_t band = 0; band < genie::StripCount; ++band)
+            {
+                const auto clip = navigation::GenieRasterBandClip(window, dock,
+                    edge, collapsed, width, height, band, -3200.0, -1500.0,
+                    hostWidth, hostHeight);
+                const double begin = vertical ? clip.top : clip.left;
+                const double end = vertical ? clip.bottom : clip.right;
+                Check(begin == std::floor(begin) && end == std::floor(end),
+                    "Genie internal raster clips must align to physical pixels at every DPI");
+                Check(end >= begin,
+                    "subpixel Genie bands may be empty but must not invert");
+                if (band == 0) firstBegin = begin;
+                else Check(begin == previousEnd,
+                    "adjacent destination clips must share exactly the same pixel boundary");
+                previousEnd = end;
+                const int first = std::max(0, static_cast<int>(begin));
+                const int last = std::min(static_cast<int>(coverage.size()),
+                    static_cast<int>(end));
+                for (int pixel = first; pixel < last; ++pixel) ++coverage[pixel];
+            }
+            for (std::size_t pixel = 0; pixel < coverage.size(); ++pixel)
+            {
+                const double center = static_cast<double>(pixel) + 0.5;
+                const bool inside = center >= firstBegin && center < previousEnd;
+                Check(coverage[pixel] == (inside ? 1 : 0),
+                    "each Genie output pixel must be covered once, preventing cracks and alpha stripes");
             }
         }
     }
@@ -789,8 +850,20 @@ void TestExtendedSearchAndConfiguration()
 {
     namespace query = snowdesktop::quick_navigation_query;
     NavigationSettings settings;
-    Check(!settings.defaultCollapsed && settings.layout.expandedWidth == 860 && settings.layout.collapsedWidth == 640,
+    Check(!settings.lastCollapsed && settings.layout.expandedWidth == 860 && settings.layout.collapsedWidth == 640,
         "legacy and new settings default to the expanded panel dimensions");
+    for (const RECT work : {RECT{0, 0, 1920, 1040}, RECT{-1920, -120, 0, 920}, RECT{80, 60, 1280, 860}})
+    {
+        const RECT initial = rules::PlacePanel(work, 640, 376, 24);
+        Check(initial.left + initial.right == work.left + work.right && initial.top + initial.bottom == work.top + work.bottom,
+            "a reopened compact panel centers its actual dimensions in the selected work area including negative monitor coordinates");
+        const RECT grown = rules::PlacePanel(work, 640, 640, 24, initial.top, 100);
+        Check(grown.top == initial.top && grown.bottom <= work.bottom - 24,
+            "results grow below the opening search-bar anchor and scroll before exceeding a short monitor work area");
+        const RECT limited = rules::PlacePanel(work, 4000, 3000, 24, work.bottom);
+        Check(limited.left >= work.left + 24 && limited.right <= work.right - 24 && limited.top >= work.top + 24 && limited.bottom <= work.bottom - 24,
+            "oversized panels and stale anchors remain inside the target monitor work area");
+    }
     const wchar_t* prefixes[] = {L"app",L"file",L"web",L"set",L"run",L"="};
     for (size_t i = 0; i < std::size(prefixes); ++i)
     {
@@ -839,13 +912,17 @@ void TestExtendedSearchAndConfiguration()
     invalid = settings; invalid.prefixes[0] = invalid.prefixes[2]; Check(!ValidateNavigationSearchConfiguration(invalid),"type prefixes must be unique");
     for (const auto* url : {"file:///a/{query}","https://example.com/search", "http://{query}","https:///search?q={query}","https://example.com/a b?q={query}"})
     { invalid = settings; invalid.engines[0].url = url; Check(!ValidateNavigationSearchConfiguration(invalid),"invalid search templates are rejected before persistence"); }
-    settings.defaultCollapsed = true; settings.layout.iconSize = 64; settings.layout.collapsedWidth = 720;
+    settings.lastCollapsed = true; settings.layout.iconSize = 64; settings.layout.collapsedWidth = 720;
     settings.colors["searchBg"] = "#123456"; settings.prefixes[0] = "apps";
     settings.engines.push_back({"example","Example \"search\"","example","https://example.com/?q={query}"});
     const auto path = MakeTemporarySettingsPath(); NavigationSettings loaded;
     Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && settings == loaded,"layout, colors, scopes and custom engines round trip with escaped names");
     { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << "{\"enabled\":true,\"modifiers\":3,\"virtualKey\":32}"; }
-    Check(LoadNavigationSettings(path.c_str(),loaded) && !loaded.defaultCollapsed && loaded.colors.empty() && loaded.layout == QuickNavigationLayout{},"missing new fields use defaults even when reusing a previously populated object");
+    Check(LoadNavigationSettings(path.c_str(),loaded) && !loaded.lastCollapsed && loaded.colors.empty() && loaded.layout == QuickNavigationLayout{},"missing new fields use defaults even when reusing a previously populated object");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"defaultCollapsed":true})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.lastCollapsed, "the former opening preference seeds remembered state without losing existing choices");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"defaultCollapsed":true,"lastCollapsed":false})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && !loaded.lastCollapsed, "the last recorded expansion state takes precedence over the obsolete opening preference");
     { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"layout":{"expandedWidth":900,"cornerRadius":16,"searchRadius":10,"tabRadius":8,"itemRadius":10}})"; }
     Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.layout.cornerRadius == 8 && loaded.layout.searchRadius == 6 && loaded.layout.expandedWidth == 900,
         "the previous trial's default radii migrate without losing customized widths");
@@ -902,6 +979,7 @@ int main()
     TestAnimationRules();
     TestAnimationEffects();
     TestGenieTranslucentContentCoverage();
+    TestGenieDestinationPixelCoverage();
     TestDeactivateRules();
     TestSearchEditKeyboardRouting();
     TestAnimatedPointerHitRules();

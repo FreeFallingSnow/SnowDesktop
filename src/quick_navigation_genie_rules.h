@@ -121,4 +121,35 @@ inline dock_genie::Rect GenieBandClip(const GenieStripProjection& projection,
         ? dock_genie::Rect{-crossPadding, begin, projection.width + crossPadding, end}
         : dock_genie::Rect{begin, -crossPadding, end, projection.height + crossPadding};
 }
+
+inline dock_genie::Rect GenieRasterBandClip(const dock_genie::Rect& window,
+    const dock_genie::Rect& dock, dock_genie::Edge edge, double collapsed,
+    double width, double height, std::size_t index,
+    double hostLeft, double hostTop, double hostWidth, double hostHeight) noexcept
+{
+    if (index >= dock_genie::StripCount || width <= 0.0 || height <= 0.0)
+        return {};
+    const bool vertical = dock_genie::Vertical(edge);
+    // All bands share one axial scale. Compute every join from the same frame,
+    // rather than projecting two independently rounded local matrices. Clips
+    // live on untransformed parents, in physical host pixels AFTER perspective.
+    const auto frame = dock_genie::StripMatrix(window, dock, edge, collapsed,
+        width, height, 0.0, 0.0, hostLeft, hostTop);
+    const double origin = vertical ? frame.dy : frame.dx;
+    const double length = (vertical ? height : width) *
+        (vertical ? frame.m22 : frame.m11);
+    const auto boundary = [&](std::size_t value) {
+        return origin + length * static_cast<double>(value) / dock_genie::StripCount;
+    };
+    // A shared integer boundary assigns each destination pixel to exactly one
+    // band. Bands narrower than a pixel may be empty; do not overlap alpha to
+    // conceal a crack. The bitmap still antialiases the outer silhouette.
+    const double begin = index == 0 ? std::floor(boundary(0)) - 2.0
+        : std::round(boundary(index));
+    const double end = index + 1 == dock_genie::StripCount
+        ? std::ceil(boundary(dock_genie::StripCount)) + 2.0
+        : std::round(boundary(index + 1));
+    return vertical ? dock_genie::Rect{0.0, begin, hostWidth, end}
+        : dock_genie::Rect{begin, 0.0, end, hostHeight};
+}
 }

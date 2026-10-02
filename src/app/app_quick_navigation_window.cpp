@@ -334,7 +334,7 @@ void DesktopApp::RefreshQuickNavigationSearchText()
             quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
             RefreshQuickNavigationEverythingResults();
         }
-        if (quickNavigationCollapsed_ || quickNavigationSearchType_ == QuickNavigationSearchType::All) PositionQuickNavigationWindow();
+        PositionQuickNavigationWindow();
         return;
     }
     std::wstring buffer(static_cast<size_t>(len) + 1, L'\0');
@@ -346,7 +346,7 @@ void DesktopApp::RefreshQuickNavigationSearchText()
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
     }
-    if (quickNavigationCollapsed_ || quickNavigationSearchType_ == QuickNavigationSearchType::All) PositionQuickNavigationWindow();
+    PositionQuickNavigationWindow();
 }
 
 void DesktopApp::ClearQuickNavigationEverythingResults()
@@ -528,7 +528,7 @@ void DesktopApp::OnQuickNavigationEverythingSearchCompleted(
 
     ApplyQuickNavigationEverythingSearchResult(
         std::move(*result));
-    if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
+    if (UseQuickNavigationList()) PositionQuickNavigationWindow();
 }
 
 void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
@@ -912,6 +912,7 @@ void DesktopApp::OpenQuickNavigation(
         quickNavigationInvocationSource_ = source;
         quickNavigationDockHost_ = requestedDockHost;
         quickNavigationOpenPoint_ = requestedOpenPoint;
+        quickNavigationFixedTop_ = false;
         quickNavigationLastMousePoint_ = requestedOpenPoint;
         quickNavigationAnimationAnchorPoint_ =
             requestedAnchorPoint;
@@ -1024,7 +1025,7 @@ void DesktopApp::OpenQuickNavigation(
     }
 
     quickNavigationOpen_ = true;
-    quickNavigationCollapsed_ = navigationSettings_.defaultCollapsed && !IsLuaLogicalSlotPickerOpen();
+    quickNavigationCollapsed_ = navigationSettings_.lastCollapsed && !IsLuaLogicalSlotPickerOpen();
     quickNavigationFixedTop_ = false;
     quickNavigationSearchType_ = QuickNavigationSearchType::All;
     quickNavigationSearchEngine_.clear();

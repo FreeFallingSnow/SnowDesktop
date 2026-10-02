@@ -148,10 +148,27 @@ void TestCodec()
     Check(restoredGuide.generation == 71 && restoredGuide.revision == 9 &&
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");
-    NavigationSettings navigation; navigation.defaultCollapsed = true; navigation.layout.collapsedWidth = 700; navigation.colors["searchText"] = "#123456"; navigation.prefixes[0] = "applications";
+    NavigationSettings navigation; navigation.lastCollapsed = true; navigation.layout.collapsedWidth = 700; navigation.colors["searchText"] = "#123456"; navigation.prefixes[0] = "applications";
     navigation.engines.push_back({"custom","Custom","custom","https://example.com/?q={query}"});
     Check(Unpack<NavigationSettings>(Pack(navigation)) == navigation,"all navigation settings survive the private process boundary");
     Check(Unpack<snowdesktop::SettingsRoute>(Pack(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::QuickNavigation,"quickNav.layout.iconSize"))).page == snowdesktop::SettingsPage::QuickNavigation,"the appended navigation page crosses private IPC");
+    Check(!CategorySettings{}.collectProgramsEnabled, "program collection is disabled by default");
+    for (const bool enabled : {false, true})
+    {
+        CategorySettings categories;
+        categories.tabFontSize = 18.5f;
+        categories.collectProgramsEnabled = enabled;
+        categories.rules = {{L"programs", L"程序 Programs", L"EXE LNK URL"},
+            {L"documents", L"资料 Documents", L"PDF DOCX"}};
+        const auto restored = Unpack<CategorySettings>(Pack(categories));
+        Check(restored.collectProgramsEnabled == enabled && restored.tabFontSize == categories.tabFontSize &&
+            restored.rules.size() == categories.rules.size() &&
+            restored.rules[0].id == categories.rules[0].id && restored.rules[0].customLabel == categories.rules[0].customLabel &&
+            restored.rules[0].extensions == categories.rules[0].extensions &&
+            restored.rules[1].id == categories.rules[1].id && restored.rules[1].customLabel == categories.rules[1].customLabel &&
+            restored.rules[1].extensions == categories.rules[1].extensions,
+            "both program collection states preserve category identity, labels, extensions and font size across private IPC");
+    }
     // These types exercise Unicode paths, optional values, wide counters and
     // nested metadata used by settings and component editor snapshots.
     using Value = std::tuple<std::wstring, std::uint64_t,

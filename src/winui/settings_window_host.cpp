@@ -1848,6 +1848,10 @@ struct SettingsWindowHost::Impl
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
                 state->owner->EditDock(generation, mode, std::move(edit));
         };
+        personalization.updateNavigation = [weak](std::uint64_t generation, SettingsUpdateMode mode, PersonalizationPageActions::NavigationEdit edit) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->EditNavigation(generation, mode, std::move(edit));
+        };
         personalization.navigate = [weak](const SettingsRoute& route) {
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner) state->owner->RequestRoute(route);
         };

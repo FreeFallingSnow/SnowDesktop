@@ -210,7 +210,10 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
         QuickNavigationDesktopViewModeFromJson(
             desktopViewMode, parsedMode))
         settings.desktopViewMode = parsedMode;
-    if (const auto* value = document.Find("defaultCollapsed"); value && value->IsBoolean()) settings.defaultCollapsed = value->boolean;
+    // Seed the remembered state from the former opening preference once.
+    const auto* collapsed = document.Find("lastCollapsed");
+    if (!collapsed || !collapsed->IsBoolean()) collapsed = document.Find("defaultCollapsed");
+    if (collapsed && collapsed->IsBoolean()) settings.lastCollapsed = collapsed->boolean;
     if (const auto* layout = document.Find("layout"); layout && layout->IsObject())
     {
 #define SD_NAV_READ(name) if (const auto* value = layout->Find(#name); value && value->IsNumber() && std::isfinite(value->number) && value->number >= -32768 && value->number <= 32768) settings.layout.name = static_cast<int>(value->number)
@@ -280,7 +283,7 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
          << QuickNavigationDesktopViewModeToJson(
                 settings.desktopViewMode)
          << "\",\n";
-    file << "  \"defaultCollapsed\": " << (settings.defaultCollapsed ? "true" : "false") << ",\n  \"layout\": {";
+    file << "  \"lastCollapsed\": " << (settings.lastCollapsed ? "true" : "false") << ",\n  \"layout\": {";
     bool first = true;
 #define SD_NAV_WRITE(name) if (!first) file << ','; first = false; file << "\"" #name "\":" << settings.layout.name
     SD_NAV_WRITE(expandedWidth); SD_NAV_WRITE(collapsedWidth); SD_NAV_WRITE(maximumHeight);

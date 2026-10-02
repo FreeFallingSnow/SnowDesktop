@@ -1,5 +1,6 @@
 #pragma once
 #include "settings_presenter_controls.h"
+#include "appearance_sections.h"
 #include "../app/quick_navigation_theme.h"
 #include "../quick_navigation_query.h"
 #include <memory>
@@ -14,8 +15,9 @@ class QuickNavigationOptions final
 public:
     using Edit = std::function<void(NavigationSettings&)>;
     using Localize = std::function<std::wstring(std::string_view)>;
-    QuickNavigationOptions(Localize localize, std::function<void(Edit)> commit, const winrt::Microsoft::UI::Xaml::Style& style)
-        : localize_(std::move(localize)), commit_(std::move(commit)), cardStyle_(style)
+    QuickNavigationOptions(Localize localize, std::function<void(Edit)> commit, const winrt::Microsoft::UI::Xaml::Style& style,
+        bool appearanceOnly = false)
+        : localize_(std::move(localize)), commit_(std::move(commit)), cardStyle_(style), appearanceOnly_(appearanceOnly)
     {
         auto apply = std::move(commit_);
         commit_ = [this, apply = std::move(apply)](Edit edit) {
@@ -26,97 +28,108 @@ public:
         root_.Spacing(8);
         notice_.Severity(winrt::Microsoft::UI::Xaml::Controls::InfoBarSeverity::Error);
         notice_.IsClosable(false); notice_.IsOpen(false); root_.Children().Append(notice_);
-        auto opening = Section("quickNav.opening", {}, [this] {commit_([](auto& value) {value.defaultCollapsed = false; value.desktopViewMode = QuickNavigationDesktopViewMode::Tile;});});
-        collapsed_.Toggled([this](auto&&, auto&&) { if (!sync_) commit_([value = collapsed_.IsOn()](auto& settings) {settings.defaultCollapsed = value;}); });
-        AddRow(opening, "quickNav.defaultCollapsed", collapsed_, [](auto& value) {value.defaultCollapsed = false;});
-        view_.SelectionChanged([this](auto&&, auto&&) {if (!sync_ && view_.SelectedIndex() >= 0) commit_([mode = static_cast<QuickNavigationDesktopViewMode>(view_.SelectedIndex())](auto& value) {value.desktopViewMode = mode;});});
-        AddRow(opening, "quickNav.view", view_, [](auto& value) {value.desktopViewMode = QuickNavigationDesktopViewMode::Tile;});
-        auto layout = Group("quickNav.layout", [this] {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
-        focus_.emplace("quickNav.layout.searchRadius", layout);
-        AddNumber(layout, "expandedWidth", &QuickNavigationLayout::expandedWidth, 400, 1800);
-        AddNumber(layout, "collapsedWidth", &QuickNavigationLayout::collapsedWidth, 360, 1400);
-        AddNumber(layout, "maximumHeight", &QuickNavigationLayout::maximumHeight, 220, 1400);
-        AddNumber(layout, "visibleRows", &QuickNavigationLayout::visibleRows, 1, 20);
-        AddNumber(layout, "padding", &QuickNavigationLayout::padding, 8, 40);
-        AddNumber(layout, "searchHeight", &QuickNavigationLayout::searchHeight, 40, 80);
-        AddNumber(layout, "iconSize", &QuickNavigationLayout::iconSize, 24, 96);
-        AddNumber(layout, "gridGap", &QuickNavigationLayout::gridGap, 4, 48);
-        AddNumber(layout, "rowGap", &QuickNavigationLayout::rowGap, 0, 48);
-        AddNumber(layout, "fontSize", &QuickNavigationLayout::fontSize, 10, 24);
-        AddNumber(layout, "secondaryFontSize", &QuickNavigationLayout::secondaryFontSize, 10, 20);
-        AddNumber(layout, "searchFontSize", &QuickNavigationLayout::searchFontSize, 12, 24);
-        AddNumber(layout, "resultRowHeight", &QuickNavigationLayout::resultRowHeight, 40, 96);
-        AddNumber(layout, "labelLines", &QuickNavigationLayout::labelLines, 1, 3);
-        AddNumber(layout, "cornerRadius", &QuickNavigationLayout::cornerRadius, 0, 32);
-        AddNumber(layout, "tabRadius", &QuickNavigationLayout::tabRadius, 0, 20);
-        AddNumber(layout, "itemRadius", &QuickNavigationLayout::itemRadius, 0, 24);
-        auto prefixes = Section("quickNav.prefixes", "quickNav.prefixes.hint", [this] {commit_([](auto& value) {value.prefixes = NavigationSettings{}.prefixes;});});
-        constexpr const char* typeKeys[] = {"quickNav.type.app", "quickNav.type.file", "quickNav.type.web", "quickNav.type.settings", "quickNav.type.run", "quickNav.type.calculator"};
-        for (size_t i = 0; i < prefixes_.size(); ++i)
+        if (!appearanceOnly_)
         {
-            if (i == static_cast<size_t>(QuickNavigationSearchType::File) - 1) continue;
-            prefixes_[i].MaxLength(32);
-            prefixes_[i].LostFocus([this, i](auto&&, auto&&) {
-                if (sync_) return;
-                const auto prefix = quick_navigation_query::Prefix(prefixes_[i].Text().c_str());
-                auto candidate = values_; candidate.prefixes[i] = prefix;
-                if (Accept(candidate)) commit_([i, prefix](auto& value) {value.prefixes[i] = prefix;});
-            });
-            AddRow(prefixes, typeKeys[i], prefixes_[i], [i](auto& value) {value.prefixes[i] = NavigationSettings{}.prefixes[i];});
+            auto opening = Section("quickNav.opening", {}, [this] {commit_([](auto& value) {value.desktopViewMode = QuickNavigationDesktopViewMode::Tile;});});
+            view_.SelectionChanged([this](auto&&, auto&&) {if (!sync_ && view_.SelectedIndex() >= 0) commit_([mode = static_cast<QuickNavigationDesktopViewMode>(view_.SelectedIndex())](auto& value) {value.desktopViewMode = mode;});});
+            AddRow(opening, "quickNav.view", view_, [](auto& value) {value.desktopViewMode = QuickNavigationDesktopViewMode::Tile;});
+            focus_.emplace("quickNav.defaultCollapsed", opening);
         }
-        auto engines = Section("quickNav.engines", {}, [this] {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
-        defaultEngine_.SelectionChanged([this](auto&&, auto&&) {
-            const int index = defaultEngine_.SelectedIndex();
-            if (!sync_ && index >= 0 && static_cast<size_t>(index) < values_.engines.size())
-                commit_([id = values_.engines[static_cast<size_t>(index)].id](auto& value) {value.defaultEngine = id;});
-        });
-        AddRow(engines, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = std::any_of(value.engines.begin(), value.engines.end(), [](const auto& engine) {return engine.id == "bing";}) ? "bing" : value.engines.front().id;});
-        Panel management; management.Spacing(8);
-        winrt::Microsoft::UI::Xaml::Controls::TextBlock engineHint; engineHint.Text(L("quickNav.engines.hint"));
-        engineHint.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap); engineHint.Opacity(.68);
-        labels_.emplace_back("quickNav.engines.hint",engineHint); management.Children().Append(engineHint);
-        management.Children().Append(engineRows_);
-        engineManagement_.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
-        engineManagement_.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
-        engineManagement_.Header(winrt::box_value(L("quickNav.engines.manage"))); engineManagement_.Content(management);
-        groups_.emplace_back("quickNav.engines.manage",engineManagement_); engines.Children().Append(engineManagement_);
-        addEngine_.Click([this](auto&&, auto&&) {
-            auto candidate = values_;
-            unsigned id = 1;
-            while (std::any_of(candidate.engines.begin(), candidate.engines.end(), [id](auto& engine) {return engine.id == "custom" + std::to_string(id) || engine.prefix == "web" + std::to_string(id);})) ++id;
-            expandedEngine_ = "custom" + std::to_string(id);
-            candidate.engines.push_back({"custom" + std::to_string(id), "Bing " + std::to_string(id), "web" + std::to_string(id), "https://www.bing.com/search?q={query}"});
-            if (Accept(candidate)) commit_([engines = candidate.engines](auto& value) {value.engines = engines;});
-        });
-        addEngine_.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
-        management.Children().Append(addEngine_);
-        std::map<std::string, winrt::Microsoft::UI::Xaml::Controls::StackPanel> colorGroups;
-        for (const auto& [key, field] : kQuickNavColorFields)
+        if (appearanceOnly_)
         {
-            (void)field;
-            const std::string name(key);
-            const std::string area = name.starts_with("search") || name.starts_with("type") ? "search" :
-                name.starts_with("tab") || name.starts_with("header") ? "navigation" : "results";
-            if (!colorGroups.contains(area)) colorGroups.emplace(area, Group("quickNav.colors." + area, [this, area] {
-                commit_([area](auto& value) {std::erase_if(value.colors, [&](auto& color) {
-                    const auto& key = color.first;
-                    const std::string owner = key.starts_with("search") || key.starts_with("type") ? "search" : key.starts_with("tab") || key.starts_with("header") ? "navigation" : "results";
-                    return owner == area;
-                });});
-            }));
-            auto color = std::make_unique<Color>(); color->key = name;
-            color->editor = std::make_unique<presenter_controls::ColorFlyoutEditor>();
-            auto* current = color.get();
-            current->editor->Initialize([this, current](auto rgba, SettingsUpdateMode mode) {
-                if (sync_ || mode == SettingsUpdateMode::Preview) return;
-                char hex[8]{}; std::snprintf(hex, sizeof(hex), "#%02X%02X%02X", rgba.R, rgba.G, rgba.B);
-                commit_([key = current->key, value = std::string(hex)](auto& settings) {settings.colors[key] = value;});
+            auto layout = Group("quickNav.layout", [this] {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
+            focus_.emplace("quickNav.layout.searchRadius", layout);
+            AddNumber(layout, "expandedWidth", &QuickNavigationLayout::expandedWidth, 400, 1800);
+            AddNumber(layout, "collapsedWidth", &QuickNavigationLayout::collapsedWidth, 360, 1400);
+            AddNumber(layout, "maximumHeight", &QuickNavigationLayout::maximumHeight, 220, 1400);
+            AddNumber(layout, "visibleRows", &QuickNavigationLayout::visibleRows, 1, 20);
+            AddNumber(layout, "padding", &QuickNavigationLayout::padding, 8, 40);
+            AddNumber(layout, "searchHeight", &QuickNavigationLayout::searchHeight, 40, 80);
+            AddNumber(layout, "iconSize", &QuickNavigationLayout::iconSize, 24, 96);
+            AddNumber(layout, "gridGap", &QuickNavigationLayout::gridGap, 4, 48);
+            AddNumber(layout, "rowGap", &QuickNavigationLayout::rowGap, 0, 48);
+            AddNumber(layout, "fontSize", &QuickNavigationLayout::fontSize, 10, 24);
+            AddNumber(layout, "secondaryFontSize", &QuickNavigationLayout::secondaryFontSize, 10, 20);
+            AddNumber(layout, "searchFontSize", &QuickNavigationLayout::searchFontSize, 12, 24);
+            AddNumber(layout, "resultRowHeight", &QuickNavigationLayout::resultRowHeight, 40, 96);
+            AddNumber(layout, "labelLines", &QuickNavigationLayout::labelLines, 1, 3);
+            AddNumber(layout, "cornerRadius", &QuickNavigationLayout::cornerRadius, 0, 32);
+            AddNumber(layout, "tabRadius", &QuickNavigationLayout::tabRadius, 0, 20);
+            AddNumber(layout, "itemRadius", &QuickNavigationLayout::itemRadius, 0, 24);
+        }
+        if (!appearanceOnly_)
+        {
+            auto prefixes = Section("quickNav.prefixes", "quickNav.prefixes.hint", [this] {commit_([](auto& value) {value.prefixes = NavigationSettings{}.prefixes;});});
+            constexpr const char* typeKeys[] = {"quickNav.type.app", "quickNav.type.file", "quickNav.type.web", "quickNav.type.settings", "quickNav.type.run", "quickNav.type.calculator"};
+            for (size_t i = 0; i < prefixes_.size(); ++i)
+            {
+                if (i == static_cast<size_t>(QuickNavigationSearchType::File) - 1) continue;
+                prefixes_[i].MaxLength(32);
+                prefixes_[i].LostFocus([this, i](auto&&, auto&&) {
+                    if (sync_) return;
+                    const auto prefix = quick_navigation_query::Prefix(prefixes_[i].Text().c_str());
+                    auto candidate = values_; candidate.prefixes[i] = prefix;
+                    if (Accept(candidate)) commit_([i, prefix](auto& value) {value.prefixes[i] = prefix;});
+                });
+                AddRow(prefixes, typeKeys[i], prefixes_[i], [i](auto& value) {value.prefixes[i] = NavigationSettings{}.prefixes[i];});
+            }
+            auto engines = Section("quickNav.engines", {}, [this] {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
+            defaultEngine_.SelectionChanged([this](auto&&, auto&&) {
+                const int index = defaultEngine_.SelectedIndex();
+                if (!sync_ && index >= 0 && static_cast<size_t>(index) < values_.engines.size())
+                    commit_([id = values_.engines[static_cast<size_t>(index)].id](auto& value) {value.defaultEngine = id;});
             });
-            current->editor->SetText(L(std::string("quickNav.color.") + name), {}, L("app.settings.cancel"));
-            presenter_controls::AddRestoreDefaultAction(current->editor->row, L("app.settings.restore_default"), [this, name] {commit_([name](auto& value) {value.colors.erase(name);});});
-            colorGroups.at(area).Children().Append(current->editor->row.root);
-            focus_.emplace("quickNav.color." + name,current->editor->row.root);
-            colors_.push_back(std::move(color));
+            AddRow(engines, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = std::any_of(value.engines.begin(), value.engines.end(), [](const auto& engine) {return engine.id == "bing";}) ? "bing" : value.engines.front().id;});
+            Panel management; management.Spacing(8);
+            winrt::Microsoft::UI::Xaml::Controls::TextBlock engineHint; engineHint.Text(L("quickNav.engines.hint"));
+            engineHint.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap); engineHint.Opacity(.68);
+            labels_.emplace_back("quickNav.engines.hint",engineHint); management.Children().Append(engineHint);
+            management.Children().Append(engineRows_);
+            engineManagement_.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+            engineManagement_.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+            engineManagement_.Header(winrt::box_value(L("quickNav.engines.manage"))); engineManagement_.Content(management);
+            groups_.emplace_back("quickNav.engines.manage",engineManagement_); engines.Children().Append(engineManagement_);
+            addEngine_.Click([this](auto&&, auto&&) {
+                auto candidate = values_;
+                unsigned id = 1;
+                while (std::any_of(candidate.engines.begin(), candidate.engines.end(), [id](auto& engine) {return engine.id == "custom" + std::to_string(id) || engine.prefix == "web" + std::to_string(id);})) ++id;
+                expandedEngine_ = "custom" + std::to_string(id);
+                candidate.engines.push_back({"custom" + std::to_string(id), "Bing " + std::to_string(id), "web" + std::to_string(id), "https://www.bing.com/search?q={query}"});
+                if (Accept(candidate)) commit_([engines = candidate.engines](auto& value) {value.engines = engines;});
+            });
+            addEngine_.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
+            management.Children().Append(addEngine_);
+        }
+        if (appearanceOnly_)
+        {
+            std::map<std::string, winrt::Microsoft::UI::Xaml::Controls::StackPanel> colorGroups;
+            for (const auto& [key, field] : kQuickNavColorFields)
+            {
+                (void)field;
+                const std::string name(key);
+                const std::string area = name.starts_with("search") || name.starts_with("type") ? "search" :
+                    name.starts_with("tab") || name.starts_with("header") ? "navigation" : "results";
+                if (!colorGroups.contains(area)) colorGroups.emplace(area, Group("quickNav.colors." + area, [this, area] {
+                    commit_([area](auto& value) {std::erase_if(value.colors, [&](auto& color) {
+                        const auto& key = color.first;
+                        const std::string owner = key.starts_with("search") || key.starts_with("type") ? "search" : key.starts_with("tab") || key.starts_with("header") ? "navigation" : "results";
+                        return owner == area;
+                    });});
+                }));
+                auto color = std::make_unique<Color>(); color->key = name;
+                color->editor = std::make_unique<presenter_controls::ColorFlyoutEditor>();
+                auto* current = color.get();
+                current->editor->Initialize([this, current](auto rgba, SettingsUpdateMode mode) {
+                    if (sync_ || mode == SettingsUpdateMode::Preview) return;
+                    char hex[8]{}; std::snprintf(hex, sizeof(hex), "#%02X%02X%02X", rgba.R, rgba.G, rgba.B);
+                    commit_([key = current->key, value = std::string(hex)](auto& settings) {settings.colors[key] = value;});
+                });
+                current->editor->SetText(L(std::string("quickNav.color.") + name), {}, L("app.settings.cancel"));
+                presenter_controls::AddRestoreDefaultAction(current->editor->row, L("app.settings.restore_default"), [this, name] {commit_([name](auto& value) {value.colors.erase(name);});});
+                colorGroups.at(area).Children().Append(current->editor->row.root);
+                focus_.emplace("quickNav.color." + name,current->editor->row.root);
+                colors_.push_back(std::move(color));
+            }
         }
         RefreshText();
     }
@@ -126,12 +139,15 @@ public:
         if (hasValues_ && values == values_ && light == light_) return;
         const bool enginesChanged = !hasValues_ || values.engines != values_.engines;
         sync_ = true; values_ = values; light_ = light; hasValues_ = true;
-        collapsed_.IsOn(values.defaultCollapsed); view_.SelectedIndex(static_cast<int>(values.desktopViewMode));
+        if (!appearanceOnly_)
+        {
+            view_.SelectedIndex(static_cast<int>(values.desktopViewMode));
+            for (size_t i = 0; i < prefixes_.size(); ++i)
+                if (prefixes_[i].Text() != winrt::to_hstring(values.prefixes[i])) prefixes_[i].Text(winrt::to_hstring(values.prefixes[i]));
+            if (enginesChanged) BuildEngines();
+            for (size_t i = 0; i < values.engines.size(); ++i) if (values.engines[i].id == values.defaultEngine) defaultEngine_.SelectedIndex(static_cast<int>(i));
+        }
         for (const auto& number : numbers_) presenter_controls::SyncNumberBoxValue(number->box, values.layout.*number->field);
-        for (size_t i = 0; i < prefixes_.size(); ++i)
-            if (prefixes_[i].Text() != winrt::to_hstring(values.prefixes[i])) prefixes_[i].Text(winrt::to_hstring(values.prefixes[i]));
-        if (enginesChanged) BuildEngines();
-        for (size_t i = 0; i < values.engines.size(); ++i) if (values.engines[i].id == values.defaultEngine) defaultEngine_.SelectedIndex(static_cast<int>(i));
         const auto theme = ResolveQuickNavTheme(light, values);
         for (const auto& color : colors_)
             for (const auto& [name, field] : kQuickNavColorFields) if (color->key == name)
@@ -147,16 +163,31 @@ public:
         for (const auto& [key, label] : labels_) label.Text(L(key));
         for (const auto& [key, row] : rows_) row->SetText(L(key));
         for (const auto& [key, group] : groups_) group.Header(winrt::box_value(L(key)));
-        view_.Items().Clear();
-        for (const char* key : {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"}) view_.Items().Append(winrt::box_value(L(key)));
-        view_.SelectedIndex(static_cast<int>(values_.desktopViewMode));
-        addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));
+        if (!appearanceOnly_)
+        {
+            view_.Items().Clear();
+            for (const char* key : {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"}) view_.Items().Append(winrt::box_value(L(key)));
+            view_.SelectedIndex(static_cast<int>(values_.desktopViewMode));
+            addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));
+            if (hasValues_) BuildEngines();
+        }
         for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), {}, L("app.settings.cancel"));
-        if (hasValues_) BuildEngines();
         sync_ = false;
     }
     void Register(const std::function<void(std::string, const winrt::Microsoft::UI::Xaml::FrameworkElement&)>& registrar) const
     {for (const auto& [id, target] : focus_) registrar(id, target);}
+    winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(std::string_view id) const noexcept
+    {
+        try
+        {
+            const auto found = focus_.find(std::string(id));
+            if (found == focus_.end()) return nullptr;
+            AppearanceSections::RevealWithin(root_, found->second);
+            return found->second;
+        }
+        catch (...) {return nullptr;}
+    }
+    void Dismiss() { for (const auto& color : colors_) color->editor->Dismiss(); }
     void Close() { for (const auto& color : colors_) color->editor->Close(); }
 private:
     using Panel = winrt::Microsoft::UI::Xaml::Controls::StackPanel;
@@ -204,8 +235,13 @@ private:
         button.Click([reset](auto&&, auto&&) {reset();}); panel.Children().Append(button);
         winrt::Microsoft::UI::Xaml::Controls::Expander expander; expander.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
         expander.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch); expander.Header(winrt::box_value(L(key))); expander.Content(panel);
-        winrt::Microsoft::UI::Xaml::Controls::Border card; card.Style(cardStyle_); card.Padding({0,0,0,0}); card.Child(expander);
-        root_.Children().Append(card); groups_.emplace_back(key,expander); focus_.emplace(key,expander); return panel;
+        if (appearanceOnly_) root_.Children().Append(expander);
+        else
+        {
+            winrt::Microsoft::UI::Xaml::Controls::Border card; card.Style(cardStyle_); card.Padding({0,0,0,0}); card.Child(expander);
+            root_.Children().Append(card);
+        }
+        groups_.emplace_back(key,expander); focus_.emplace(key,expander); return panel;
     }
     void AddNumber(Panel panel, const char* key, int QuickNavigationLayout::* field, int min, int max)
     {
@@ -267,9 +303,8 @@ private:
         expandedEngine_.clear();
     }
     Localize localize_; std::function<void(Edit)> commit_; winrt::Microsoft::UI::Xaml::Style cardStyle_{nullptr}; NavigationSettings values_;
-    bool sync_ = false, hasValues_ = false, light_ = false;
+    bool appearanceOnly_ = false, sync_ = false, hasValues_ = false, light_ = false;
     Panel root_, engineRows_;
-    winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch collapsed_;
     winrt::Microsoft::UI::Xaml::Controls::ComboBox view_, defaultEngine_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar notice_;
     winrt::Microsoft::UI::Xaml::Controls::Button addEngine_;

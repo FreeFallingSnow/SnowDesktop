@@ -25,6 +25,16 @@ inline RECT QuickNavigationItemTextRect(RECT item, RECT icon, int pad, int gap, 
     return {item.left + pad, top, item.right - pad, std::min<LONG>(item.bottom, top + height)};
 }
 
+// Keep drawing, hover, activation and keyboard bounds clear of the row gap.
+inline RECT QuickNavigationResultRowRect(RECT slot, int inset)
+{
+    const LONG bounded = std::min<LONG>(std::max(0, inset),
+        std::max<LONG>(0, (slot.bottom - slot.top - 1) / 2));
+    slot.top += bounded;
+    slot.bottom -= bounded;
+    return slot;
+}
+
 inline std::wstring QuickNavigationReadImeCompositionString(HWND hwnd)
 {
     HIMC context = ImmGetContext(hwnd);

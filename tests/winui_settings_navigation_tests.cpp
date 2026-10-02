@@ -25,6 +25,15 @@ void TestHistoryAndFocusRoutes()
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::General,focus)).page == SettingsPage::QuickNavigation,"legacy navigation shortcuts route to the dedicated page");
     for (const auto focus : {"personalization.quickNavigationTheme","personalization.quickNavTheme"})
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::AppearanceTheme,"quick-navigation theme links retain their original appearance page");
+    for (const auto focus : {"quickNav.layout", "quickNav.layout.iconSize", "quickNav.colors.search", "quickNav.color.searchBg"})
+    {
+        const auto route = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::QuickNavigation, focus));
+        Check(route.page == SettingsPage::AppearanceTheme && route.focusId == focus,
+            "legacy navigation appearance links retain their focus within the existing custom theme");
+    }
+    for (const auto focus : {"quickNav.view", "quickNav.defaultCollapsed", "quickNav.prefixes", "quickNav.defaultEngine"})
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::QuickNavigation, focus)).page == SettingsPage::QuickNavigation,
+            "navigation behavior and legacy opening links remain on the functional page");
     for (const auto focus : {"animation.hover", "animation.hoverScale", "animation.launch", "animation.window"})
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::Dock,
             "old Dock animation links reach the Dock tab after settings reorganization");

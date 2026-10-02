@@ -88,7 +88,7 @@ struct NavigationSettings
     UINT virtualKey = VK_SPACE;
     QuickNavigationDesktopViewMode desktopViewMode =
         QuickNavigationDesktopViewMode::Tile;
-    bool defaultCollapsed = false;
+    bool lastCollapsed = false;
     QuickNavigationLayout layout;
     std::array<std::string, 6> prefixes{"app", "file", "web", "set", "run", "="};
     std::string defaultEngine = "bing";
