@@ -1052,9 +1052,9 @@ void CheckSingleLineRenameEditor()
             SendMessageW(edit,EM_SETSEL,0,-1);
             const std::wstring longName(100,L'项');
             SendMessageW(edit,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(longName.c_str()));
-            RECT grown{};GetWindowRect(edit,&grown);
-            Check(SendMessageW(edit,EM_GETLINECOUNT,0,0)>1 && grown.top==title.top &&
-                    grown.bottom>=title.bottom && grown.right==title.right,
+            RECT wrappedRect{};GetWindowRect(edit,&wrappedRect);
+            Check(SendMessageW(edit,EM_GETLINECOUNT,0,0)>1 && wrappedRect.top==title.top &&
+                    wrappedRect.bottom>=title.bottom && wrappedRect.right==title.right,
                 "grid rename wraps long names while retaining the original title position and minimum height");
             SendMessageW(edit,EM_SETSEL,0,0);
             const auto access=snowdesktop::text_input::Accessibility(edit);

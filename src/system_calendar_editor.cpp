@@ -366,7 +366,7 @@ void CheckSystemCalendarInputs()
         // title, scaled form font and field height rather than an empty proxy.
         std::vector<std::uint32_t> titlePixels(static_cast<std::size_t>(width)*height,untouched);
         const std::vector<SystemCalendarInputField> titleSample{
-            {"title",L"Title",L"测试",{16,16,100,52},{0,0,120,80},false,true,512}};
+            {"title",L"Title",L"测试",{16,16,100,52},{0,0,120,80},false,true,512}}; // l10n-allow: user-reported text in an isolated rendering regression, never application copy
         OverlaySystemCalendarInputs(titleSample,appearanceSample,dpi,width,height,titlePixels);
         const int top=static_cast<int>(16*dpi/96),bottom=static_cast<int>(52*dpi/96);
         int first=bottom,last=-1;
