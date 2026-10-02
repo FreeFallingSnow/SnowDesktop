@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 namespace snowdesktop::widget::detail
 {
@@ -67,10 +68,13 @@ inline PackageFileExportResult ExportDevelopmentPackageFile(
             std::error_code ignored;
             std::filesystem::remove(archive, ignored);
             std::filesystem::remove(archive.wstring() + L".tmp", ignored);
+            std::filesystem::remove(directory / L"validation", ignored);
             std::filesystem::remove(directory, ignored);
         }
     } temporary{temporaryDirectory, temporaryDirectory / L"package.snowwidget"};
-    WidgetPackageManager manager(PackagePaths{});
+    PackagePaths validationPaths;
+    validationPaths.staging = temporaryDirectory / L"validation";
+    WidgetPackageManager manager(std::move(validationPaths));
     PackageArtifact artifact;
     if (!manager.ExportDirectory(source, temporary.archive, artifact,
             result.report, result.error))

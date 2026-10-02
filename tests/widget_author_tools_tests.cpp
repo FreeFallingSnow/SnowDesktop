@@ -198,7 +198,9 @@ void TestStandalonePackageExport()
         auto result = ExportDevelopmentPackageFile(source, output, id, "1.0.0");
         if (!result.succeeded) std::cerr << result.error << "\n" << result.report.ToJson() << '\n';
         checks.push_back({result.succeeded, "settings export produces an independent .snowwidget file"});
-        WidgetPackageManager validator(PackagePaths{});
+        PackagePaths validationPaths;
+        validationPaths.staging = temporary.path / L"validation";
+        WidgetPackageManager validator(std::move(validationPaths));
         PackageManifest exported;
         checks.push_back({validator.ValidateArchive(output, &exported).Ok() &&
             exported.id == id && exported.version == "1.0.0",
