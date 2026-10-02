@@ -19,7 +19,21 @@ WidgetPackageImageCache::WidgetPackageImageCache(
 const PackageImageSource* WidgetPackageImageCache::Fail(
     const std::string& contentKey, PackageImageAcquireError* error)
 {
-    if (!contentKey.empty()) failures_.insert(contentKey);
+    if (!contentKey.empty() && !failures_.contains(contentKey))
+    {
+        failureOrder_.push_back(contentKey);
+        try { failures_.insert(contentKey); }
+        catch (...)
+        {
+            failureOrder_.pop_back();
+            throw;
+        }
+        if (failureOrder_.size() > MaximumFailureEntries)
+        {
+            failures_.erase(failureOrder_.front());
+            failureOrder_.pop_front();
+        }
+    }
     if (error) *error = PackageImageAcquireError::DecodeFailed;
     return nullptr;
 }
@@ -150,6 +164,7 @@ void WidgetPackageImageCache::Clear() noexcept
 {
     sources_.clear();
     failures_.clear();
+    failureOrder_.clear();
     bytes_ = 0;
 }
 }

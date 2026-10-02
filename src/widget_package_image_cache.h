@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -65,6 +66,10 @@ private:
     std::size_t maximumTotalBytes_ = DefaultMaximumTotalBytes;
     std::size_t bytes_ = 0;
     std::unordered_map<std::string, Entry> sources_;
+    // Failed digests have no resource handle whose release can retire them.
+    // Bound their lifetime independently of decoded sources and references.
+    static constexpr std::size_t MaximumFailureEntries = 512;
+    std::deque<std::string> failureOrder_;
     std::unordered_set<std::string> failures_;
 };
 }
