@@ -63,5 +63,6 @@
   </Applications>
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="location" />
   </Capabilities>
 </Package>

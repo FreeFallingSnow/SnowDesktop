@@ -467,6 +467,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_preview_context.cpp
     src/widget_data_broker.cpp
     src/widget_task_broker.cpp
+    src/widget_location_task_executor.cpp
     src/widget_notification_runtime.cpp
     src/widget_notification_schedule_store.cpp
     src/widget_media_task_executor.cpp
@@ -1246,6 +1247,15 @@ if (BUILD_TESTING)
             src/widget_time.cpp
         INCLUDE_DIRECTORIES src
         LABELS integration contract l10n lua time widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetLocationTaskExecutorTests
+        widget_location_task_executor
+        SOURCES tests/widget_location_task_executor_tests.cpp
+            src/widget_location_task_executor.cpp src/widget_task_broker.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES windowsapp user32
+        LABELS contract permission widget location)
 
     snowdesktop_add_test(
         SnowDesktopWidgetRuntimeDiagnosticsTests

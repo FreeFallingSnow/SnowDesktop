@@ -54,6 +54,8 @@ constexpr std::array kPermissionDescriptors = {
     WidgetPermissionDescriptor{ "network.internet",
         PermissionRiskClass::ExternalCommunication,
         "app.settings.widgets_permission_network_internet" },
+    WidgetPermissionDescriptor{ "location.read", PermissionRiskClass::Sensor,
+        "app.settings.widgets_permission_location_read" },
     WidgetPermissionDescriptor{ "ui.notify",
         PermissionRiskClass::ExternalCommunication,
         "app.settings.widgets_permission_ui_notify" },

@@ -2490,6 +2490,33 @@ local updateId, err = task.start("calendar.update", {
 `invalid_time`、`invalid_reminder`、`event_limit`、`save_failed`、
 `permissionDenied`、`userGestureRequired` 和 `previewReadOnly`。
 
+`location.current`（可选 capability `task.location.current`）要求用户授予 `location.read`，
+并且从直接指针、键盘或菜单动作的可信手势调用。宿主必须处于前台，Windows 系统位置服务和
+应用位置权限必须允许访问。它在 UI 线程调用 Windows `Geolocator.RequestAccessAsync`，获准后
+异步读取位置，不调用第三方 IP 定位服务。每个实例最多一个在途请求。
+
+```lua
+if widget.hasFeature("task.location.current") and widget.hasPermission("location.read") then
+    local id, err = task.start("location.current", { timeoutMs = 15000, maximumAgeMs = 300000 })
+end
+```
+
+两个参数都必须为整数：`timeoutMs` 为 1000–30000，默认 10000；`maximumAgeMs` 为
+0–3600000，默认 300000。位置读取的超时不包含 Windows 用户授权对话框的等待时间。
+完成事件的成功 `value` 为 `{ latitude, longitude, accuracyMeters, timestampMs, source }`；
+时间戳为 UTC Unix 毫秒，精度为米。`source` 为 `satellite/wifi/cellular/ip/default/obfuscated/unknown`。
+Windows 自身可能返回 IP 或默认位置；组件不能把这些来源写成精确 GPS，应显示来源和精度，
+并提供城市选择。位置不会自动写入宿主持久化存储；组件只应保存其功能所需的数据。
+
+错误包括 `permissionDenied`、`userGestureRequired`、`foregroundRequired`、`locationDenied`、
+`locationUnavailable`、`locationTimeout`、`permissionRevoked` 和 `canceled`。
+预览返回 `previewUnavailable`，不会访问系统定位或弹出授权。取消、权限撤销和实例销毁
+会取消 Windows 异步操作，迟到的结果不再交付到组件。API 仍为 v2 的增量扩展；依赖该功能
+的官方社区组件应在支持该 capability 的宿主发布后发布。新宿主上的权限拒绝或定位不可用
+可降级到城市选择。旧宿主和同版本早期构建的清单校验器不认识 `location.read`，即使它
+声明为可选权限也会拒绝加载；依赖此权限的组件必须声明 `task.location.current` 为
+required feature，不能承诺这些构建能够加载。低于组件 `minHostVersion` 的宿主也会拒绝加载。
+
 `network.request` 要求 `network.internet`，支持 HTTP/HTTPS 的 `GET/HEAD/POST/PUT/PATCH/DELETE`、
 有界自定义请求头和请求体，但仍不启用 WinHTTP Cookie 或系统认证。默认可访问公网、本机和局域网服务，
 使用 Windows 系统及当前用户的代理设置，兼容 TUN 虚拟地址，不按 DNS 或连接 IP 的公网属性拦截。

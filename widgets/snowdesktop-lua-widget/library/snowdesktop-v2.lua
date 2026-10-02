@@ -738,7 +738,7 @@
 ---@field taskId? integer
 ---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowLocationTaskValue|SnowStateValue
 ---@field error? string
 ---@field notificationId? string Host-issued notification ID for notification.delivered.
 ---@field actionId? string Declared action ID for notification.action.
@@ -2041,6 +2041,17 @@ function data.subscribe(topic, options) end
 ---@field id string Host-issued event ID; preserved for update/remove.
 ---@field revision integer New revision for create/update; zero for remove.
 
+---@class SnowLocationArguments
+---@field timeoutMs? integer Position timeout, 1000..30000 ms; default 10000. Windows consent is outside this timeout.
+---@field maximumAgeMs? integer Maximum reading age, 0..3600000 ms; default 300000.
+
+---@class SnowLocationTaskValue
+---@field latitude number Degrees in [-90,90].
+---@field longitude number Degrees in [-180,180].
+---@field accuracyMeters number Reported horizontal uncertainty in meters.
+---@field timestampMs integer UTC epoch milliseconds of the system reading.
+---@field source 'satellite'|'wifi'|'cellular'|'ip'|'default'|'obfuscated'|'unknown' System source; never assume GPS accuracy.
+
 ---@class SnowNetworkRequestArguments
 ---@field url string HTTP/HTTPS URL including local services; optional widget.json networkDomains narrows it to exact declared hostnames. Requires task.network.standardHttp for HTTP/local targets and system proxy support.
 ---@field method? 'GET'|'HEAD'|'POST'|'PUT'|'PATCH'|'DELETE' Defaults to GET.
@@ -2134,6 +2145,7 @@ task = {}
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error
+---@overload fun(name: 'location.current', arguments?: SnowLocationArguments): taskId: integer?, error: string?
 function task.start(name, arguments) end
 
 ---Request cancellation of a task owned by the current Lua VM.

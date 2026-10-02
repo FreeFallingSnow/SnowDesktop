@@ -1255,6 +1255,13 @@ void TestMachineReadableSystemContract()
     const JsonValue* analysis = findNamed(*topics,
         "audio.output.analysis");
     const JsonValue* request = findNamed(*tasks, "network.request");
+    const JsonValue* location = findNamed(*tasks, "location.current");
+    Check(location && location->Find("permission") && location->Find("permission")->string == "location.read" &&
+        location->Find("feature") && location->Find("feature")->string == "task.location.current" &&
+        location->Find("requiresTrustedGesture") && location->Find("requiresTrustedGesture")->boolean &&
+        location->Find("argumentsType") && location->Find("argumentsType")->string == "SnowLocationArguments" &&
+        location->Find("resultType") && location->Find("resultType")->string == "SnowLocationTaskValue",
+        "system location contract must expose consent, gesture and typed result gates");
     const JsonValue* format = findNamed(*functions, "time.format");
     for (const auto& expected : kControlTasks)
     {

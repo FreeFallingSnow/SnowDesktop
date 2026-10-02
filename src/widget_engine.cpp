@@ -5540,7 +5540,26 @@ static int lua_TaskStart(lua_State* state)
         }
     }
 
-    if (snowdesktop::widget_runtime::IsSystemControlTask(taskName))
+    if (taskName == "location.current")
+    {
+        if (hasArguments)
+        {
+            lua_pushnil(state);
+            while (lua_next(state, 2) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING || !lua_isinteger(state, -1))
+                    return luaL_error(state, "task.start: location.current requires integer options");
+                size_t length = 0;
+                const char* key = lua_tolstring(state, -2, &length);
+                arguments[std::string(key, length)] = std::to_string(lua_tointeger(state, -1));
+                lua_pop(state, 1);
+            }
+        }
+        snowdesktop::widget_runtime::LocationOptions options;
+        if (!snowdesktop::widget_runtime::ParseLocationOptions(arguments, options))
+            return luaL_error(state, "task.start: invalid location.current options");
+    }
+    else if (snowdesktop::widget_runtime::IsSystemControlTask(taskName))
     {
         using snowdesktop::widget_runtime::SystemControlArgumentKind;
         if (hasArguments)
@@ -12439,6 +12458,7 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     }
     if (previewOnly_)
     {
+        locationTaskExecutor_.reset();
         mediaTaskExecutor_.reset();
         audioOutputTaskExecutor_.reset();
         clipboardTaskExecutor_.reset();
@@ -12449,6 +12469,8 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     }
     else
     {
+        locationTaskExecutor_ = std::make_unique<snowdesktop::widget_runtime::WidgetLocationTaskExecutor>();
+        locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
         mediaTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetMediaTaskExecutor>();
         audioOutputTaskExecutor_ = std::make_unique<
@@ -12629,6 +12651,17 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (std::exchange(pending, false) && wake) wake();
         }
     } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
+    if (locationTaskExecutor_)
+        for (auto& completion : locationTaskExecutor_->DrainCompletions())
+        {
+            const auto snapshot = taskBroker_->Snapshot(completion.id);
+            if (!snapshot || snapshot->cancelRequested) continue;
+            const auto id = completion.id;
+            const auto ok = completion.ok;
+            const auto error = completion.error;
+            if (ok) locationTaskCompletions_.insert_or_assign(id, std::move(completion));
+            (void)taskBroker_->Complete(id, ok, error);
+        }
     if (systemControlTasks_)
         for (auto& completion : systemControlTasks_->Drain())
             (void)taskBroker_->Complete(completion.id, completion.ok, std::move(completion.error));
@@ -12807,6 +12840,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 ? Utf8ToWideLocal(action.instanceId) : std::wstring{}, action.id);
         if (action.type == TaskBrokerActionType::Cancel)
         {
+            if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(action.id);
+            locationTaskCompletions_.erase(action.id);
+            if (action.name == "location.current") (void)taskBroker_->Complete(action.id, false);
             if (systemControlTasks_) (void)systemControlTasks_->Cancel(action.id);
             if (mediaTaskExecutor_)
                 (void)mediaTaskExecutor_->Cancel(action.id);
@@ -12861,6 +12897,19 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (action.name == "location.current")
+        {
+            snowdesktop::widget_runtime::LocationOptions options;
+            if (!snowdesktop::widget_runtime::ParseLocationOptions(action.arguments, options))
+                (void)taskBroker_->Complete(action.id, false, "invalidArguments");
+            else if (action.preview)
+                (void)taskBroker_->Complete(action.id, false, "previewUnavailable");
+            else if (!snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(owner->permissions, "location.read"))
+                (void)taskBroker_->Complete(action.id, false, "permissionRevoked");
+            else if (!locationTaskExecutor_ || !locationTaskExecutor_->Start(action.id, options, false))
+                (void)taskBroker_->Complete(action.id, false, "taskExecutorUnavailable");
+            continue;
+        }
         if (snowdesktop::widget_runtime::IsSystemControlTask(action.name))
         {
             snowdesktop::system_control::Request request;
@@ -14729,6 +14778,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             calendarMutationCompletions_.find(completion.id);
         const auto notificationCompletion =
             notificationTaskCompletions_.find(completion.id);
+        const auto locationCompletion = locationTaskCompletions_.find(completion.id);
         const auto networkCompletion =
             networkTaskCompletions_.find(completion.id);
         const auto clipboardCompletion =
@@ -14740,6 +14790,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
         {
+            locationTaskCompletions_.erase(completion.id);
             if (searchCompletion != appSearchCompletions_.end())
                 appSearchCompletions_.erase(searchCompletion);
             if (itemSearchCompletion != itemSearchCompletions_.end())
@@ -14779,6 +14830,14 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             completion.name == "calendar.series.remove";
         if (calendarTask &&
             calendarCompletion == calendarMutationCompletions_.end())
+        {
+            completion.ok = false;
+            completion.error = "taskResultUnavailable";
+        }
+        const bool locationTask = completion.name == "location.current";
+        const auto* locationResult = locationCompletion != locationTaskCompletions_.end() ? &locationCompletion->second : nullptr;
+        if (completion.ok && locationTask && (!locationResult ||
+            !snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(widget->permissions, "location.read")))
         {
             completion.ok = false;
             completion.error = "taskResultUnavailable";
@@ -15044,7 +15103,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 nextOffset, hasMore,
                 catalogRevision, calendarTask, itemSearchTask,
                 calendarResult, notificationIdTask,
-                notificationCompletion, networkTask,
+                notificationCompletion, locationTask, locationResult, networkTask,
                 networkResult, clipboardReadTask,
                 clipboardResult, filesystemPickerTask,
                 filesystemPickerResult, filesystemDataTask,
@@ -15113,6 +15172,16 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             notificationCompletion->second.size());
                         lua_setfield(eventState, -2,
                             "notificationId");
+                    }
+                    else if (locationTask)
+                    {
+                        lua_createtable(eventState, 0, 6);
+                        lua_pushnumber(eventState, locationResult->latitude); lua_setfield(eventState, -2, "latitude");
+                        lua_pushnumber(eventState, locationResult->longitude); lua_setfield(eventState, -2, "longitude");
+                        lua_pushnumber(eventState, locationResult->accuracyMeters); lua_setfield(eventState, -2, "accuracyMeters");
+                        lua_pushinteger(eventState, locationResult->timestampMs); lua_setfield(eventState, -2, "timestampMs");
+                        lua_pushlstring(eventState, locationResult->source.data(), locationResult->source.size());
+                        lua_setfield(eventState, -2, "source");
                     }
                     else if (networkTask)
                     {
@@ -15360,6 +15429,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         if (notificationCompletion !=
                 notificationTaskCompletions_.end())
             notificationTaskCompletions_.erase(notificationCompletion);
+        locationTaskCompletions_.erase(completion.id);
         if (networkCompletion != networkTaskCompletions_.end())
             networkTaskCompletions_.erase(networkCompletion);
         if (clipboardCompletion != clipboardTaskCompletions_.end())
@@ -15387,6 +15457,8 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     for (const std::uint64_t taskId : widget.taskIds)
     {
         (void)taskBroker_->Cancel(taskId, reason);
+        if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
+        locationTaskCompletions_.erase(taskId);
         if (systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
         if (mediaTaskExecutor_)
             (void)mediaTaskExecutor_->Cancel(taskId);
@@ -15604,6 +15676,8 @@ void WidgetEngine::Shutdown()
     widgetSystemDataProvider_.reset();
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
+    locationTaskExecutor_.reset();
+    locationTaskCompletions_.clear();
     mediaTaskExecutor_.reset();
     audioOutputTaskExecutor_.reset();
     clipboardTaskExecutor_.reset();
@@ -21319,6 +21393,7 @@ void WidgetEngine::OnAudioAnalysisWake()
 void WidgetEngine::SetTaskWakeCallback(TaskWakeCallback callback)
 {
     taskWakeCallback_ = std::move(callback);
+    if (locationTaskExecutor_) locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
     if (filesystemTaskExecutor_)
         filesystemTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
 }
@@ -26357,6 +26432,8 @@ bool WidgetEngine::RuntimeCancelTask(
     if (!snapshot || snapshot->ownerToken != widget.runtimeToken)
         return false;
     const bool canceled = taskBroker_->Cancel(taskId);
+    if (canceled && locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
+    if (canceled) locationTaskCompletions_.erase(taskId);
     if (canceled && systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
     if (canceled && mediaTaskExecutor_)
         (void)mediaTaskExecutor_->Cancel(taskId);

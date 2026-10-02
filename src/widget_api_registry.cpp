@@ -137,6 +137,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "task.desktop.refresh",
     "task.desktop.search",
     "task.everything.search",
+    "task.location.current",
     "task.network.request",
     "task.network.standardHttp",
     "task.network.headers",
@@ -427,7 +428,9 @@ kSystemDataTopicContracts = {{
         "SnowFilesystemWatchSubscribeOptions",
         "SnowFilesystemWatchDataValue" },
 }};
-constexpr std::array<SystemTaskContract, 64> kSystemTaskContracts = {{
+constexpr std::array<SystemTaskContract, 65> kSystemTaskContracts = {{
+    { "location.current", "task.location.current", "location.read",
+        true, 1, "SnowLocationArguments", "SnowLocationTaskValue" },
     { "network.request", "task.network.request", "network.internet",
         false, 2, "SnowNetworkRequestArguments", "SnowNetworkTaskValue" },
     { "notification.show", "task.notification.show", "notification.post",

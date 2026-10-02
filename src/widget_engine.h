@@ -43,6 +43,7 @@
 #include "widget_lua_lifecycle.h"
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
+#include "widget_location_task_executor.h"
 #include "widget_notification_runtime.h"
 #include "widget_notification_schedule_store.h"
 #include "widget_media_task_executor.h"
@@ -1888,6 +1889,8 @@ private:
         snowdesktop::widget_runtime::WidgetNotificationScheduleStore>
         notificationScheduleStore_;
     std::filesystem::path notificationSchedulePath_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetLocationTaskExecutor> locationTaskExecutor_;
+    std::unordered_map<std::uint64_t, snowdesktop::widget_runtime::LocationResult> locationTaskCompletions_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
         mediaTaskExecutor_;
