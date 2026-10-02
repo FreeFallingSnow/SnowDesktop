@@ -136,8 +136,13 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         const auto& gesture = *largeIconGesture_;
         DesktopWidget geometry;
         geometry.gridCell = gesture.cell;
-        geometry.bounds = GetGridRect(gridPages_, gesture.cell, {gesture.config.columns, gesture.config.rows});
-        if (const auto* page = FindGridPage(gridPages_, gesture.cell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
+        const GridSpan span{gesture.config.columns, gesture.config.rows};
+        if (const auto* page = FindGridPage(gridPages_, gesture.cell.pageId))
+        {
+            geometry.gridCell = ClampGridCellToFitPage(*page, gesture.cell, span);
+            geometry.cellScale = GetGridPageCuScale(*page);
+        }
+        geometry.bounds = GetGridRect(gridPages_, geometry.gridCell, span);
         const auto rect = GetStandaloneWidgetFrameRect(geometry);
         const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
             gesture.config, CurrentPersonalization().cornerRadius);

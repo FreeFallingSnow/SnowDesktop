@@ -725,14 +725,24 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         });
         if (hasLarge)
         {
-            // Use the rejected group anchor and offsets, just as commit does.
-            // Clip only the paint at page edges; never shrink the requested span.
-            const auto anchor = app_->ResolveDesktopRequestCell(app_->dragSession_.SourceList(), dragPoint);
+            // Fit the blocked preview like a widget: move its origin inward
+            // instead of letting GetGridRect shorten the requested footprint.
+            auto anchor = app_->ResolveDesktopRequestCell(app_->dragSession_.SourceList(), dragPoint);
             if (const auto* page = FindGridPage(app_->gridPages_, anchor.pageId))
             {
                 int left = INT_MAX, top = INT_MAX;
+                int right = INT_MIN, bottom = INT_MIN;
                 for (const auto& entry : entries)
-                { left = std::min(left, entry.originalCell.column); top = std::min(top, entry.originalCell.row); }
+                {
+                    left = std::min(left, entry.originalCell.column);
+                    top = std::min(top, entry.originalCell.row);
+                    right = std::max(right, entry.originalCell.column + std::max(1, entry.originalSpan.columns));
+                    bottom = std::max(bottom, entry.originalCell.row + std::max(1, entry.originalSpan.rows));
+                }
+                // Fit the whole selection once so individual icons keep their
+                // original spans and relative positions at the right/bottom edge.
+                anchor = ClampGridCellToFitPage(*page, anchor,
+                    {std::max(1, right - left), std::max(1, bottom - top)});
                 ctx->PushAxisAlignedClip(app_->ToD2DRect(page->bounds), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
                 for (const auto& entry : entries)
                 {
