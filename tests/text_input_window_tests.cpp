@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 
 using Microsoft::WRL::ComPtr;
 namespace input = snowdesktop::text_input;
@@ -240,6 +241,67 @@ void ScrolledGlyphs(HWND owner)
     SendMessageW(window,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),FALSE);
     DeleteObject(font);DestroyWindow(window);
 }
+void RoundedBorder(HWND owner,const std::filesystem::path& output={})
+{
+    // Render the real custom window and apply its actual HWND region. Region
+    // existence alone cannot detect the missing half-stroke at the corners.
+    for(const bool multiline:{false,true})for(const int radius:{6,9})
+    {
+        const int width=20*radius,height=(multiline?13:6)*radius;
+        const auto window=Create(owner,multiline?ES_MULTILINE:ES_AUTOHSCROLL,L"");
+        Check(window!=nullptr,"create rounded rename border regression");if(!window)continue;
+        input::Colors colors;colors.background=RGB(255,255,255);
+        colors.border=colors.accent=RGB(0,103,192);input::SetColors(window,colors,static_cast<float>(radius));
+        SetWindowPos(window,nullptr,0,0,width,height,SWP_NOZORDER|SWP_NOACTIVATE);
+        const auto region=CreateRectRgn(0,0,0,0);
+        Check(region&&GetWindowRgn(window,region)!=ERROR,"rounded border uses the production window clip");
+        BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth=width;info.bmiHeader.biHeight=-height;
+        info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
+        void* pixels=nullptr;const auto dc=CreateCompatibleDC(nullptr);
+        const auto bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&pixels,nullptr,0);
+        Check(dc&&bitmap,"create isolated rounded-border render surface");
+        if(dc&&bitmap)
+        {
+            const auto previous=SelectObject(dc,bitmap);
+            SendMessageW(window,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT);GdiFlush();
+            const auto* data=static_cast<const DWORD*>(pixels);
+            const auto red=[&](int x,int y){return (data[y*width+x]>>16)&255;};
+            Check(red(width/2,0)<=24&&red(width/2,height-1)<=24&&
+                    red(0,height/2)<=24&&red(width-1,height/2)<=24,
+                "all four rename edges retain the full one-pixel stroke inside the client area");
+            for(const bool right:{false,true})for(const bool bottom:{false,true})
+            {
+                int ink=0;
+                for(int y=0;y<radius;++y)for(int x=0;x<radius;++x)
+                {
+                    const int px=right?width-1-x:x,py=bottom?height-1-y:y;
+                    if(PtInRegion(region,px,py)&&red(px,py)<96)++ink;
+                }
+                Check(ink>=3,"every rounded corner retains visible outline after the actual window clip");
+            }
+            if(!output.empty())
+            {
+                std::error_code error;std::filesystem::create_directories(output,error);
+                Check(!error,"create isolated border-preview directory");
+                std::vector<DWORD> shown(data,data+width*height);
+                for(int y=0;y<height;++y)for(int x=0;x<width;++x)
+                    shown[y*width+x]=PtInRegion(region,x,y)?shown[y*width+x]|0xff000000:0xff363c46;
+                BITMAPFILEHEADER header{};header.bfType=0x4d42;
+                header.bfOffBits=sizeof(header)+sizeof(info.bmiHeader);
+                header.bfSize=header.bfOffBits+static_cast<DWORD>(shown.size()*sizeof(DWORD));
+                const std::string name=std::string(multiline?"multiline-":"single-")+std::to_string(radius)+".bmp";
+                std::ofstream file(output/name,std::ios::binary);
+                file.write(reinterpret_cast<const char*>(&header),sizeof(header));
+                file.write(reinterpret_cast<const char*>(&info.bmiHeader),sizeof(info.bmiHeader));
+                file.write(reinterpret_cast<const char*>(shown.data()),static_cast<std::streamsize>(shown.size()*sizeof(DWORD)));
+                Check(static_cast<bool>(file),"save actual clipped border rendering for inspection");
+            }
+            SelectObject(dc,previous);
+        }
+        if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);if(region)DeleteObject(region);DestroyWindow(window);
+    }
+}
 void BundledFonts(HWND owner,const std::filesystem::path& root)
 {
     namespace fonts=snowdesktop::app_fonts;
@@ -276,7 +338,10 @@ int main(int argc,char** argv)
     const auto apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     WNDCLASSW cls{};cls.lpfnWndProc=Owner;cls.hInstance=GetModuleHandleW(nullptr);cls.lpszClassName=L"SnowDesktop.TextInputTestOwner";RegisterClassW(&cls);
     const auto owner=CreateWindowExW(0,cls.lpszClassName,L"",WS_OVERLAPPED,0,0,400,300,nullptr,nullptr,cls.hInstance,nullptr);
-    if(!owner)Check(false,"create isolated hidden test owner");else{Ordinary(owner);StableEmbeddedPresentation(owner);Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);ScrolledGlyphs(owner);
+    if(!owner)Check(false,"create isolated hidden test owner");
+    else if(argc>3&&std::string(argv[2])=="--border-preview")
+    {RoundedBorder(owner,std::filesystem::path(argv[3]));DestroyWindow(owner);}
+    else{Ordinary(owner);StableEmbeddedPresentation(owner);Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);ScrolledGlyphs(owner);RoundedBorder(owner);
         Check(argc>1,"the bundled-font regression receives the repository root");
         if(argc>1)BundledFonts(owner,std::filesystem::path(argv[1]));DestroyWindow(owner);}
     if(SUCCEEDED(apartment))CoUninitialize();

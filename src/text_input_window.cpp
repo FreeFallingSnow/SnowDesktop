@@ -447,14 +447,25 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
     scale = (std::max)(0.01f, scale); state.Layout();
     ComPtr<ID2D1SolidColorBrush> brush; target->CreateSolidColorBrush(Color(state.colors.background), &brush);
     if (!brush) return;
+    const auto drawBorder = [&]
+    {
+        if (!drawFrame) return;
+        const float stroke = 1.f / scale;
+        const float inset = stroke * .5f;
+        const auto borderFrame = D2D1::RectF(frame.left + inset, frame.top + inset,
+            frame.right - inset, frame.bottom - inset);
+        const float radius = (std::max)(0.f, state.radius / scale - inset);
+        brush->SetColor(Color(GetFocus() == state.window ? state.colors.accent : state.colors.border));
+        // Keep the entire stroke inside the client area and rounded window
+        // region. Drawing on the outer edge loses half the stroke to clipping.
+        target->DrawRoundedRectangle(D2D1::RoundedRect(borderFrame, radius, radius), brush.Get(), stroke);
+    };
     if (drawFrame)
     {
         const auto rounded = D2D1::RoundedRect(frame, state.radius / scale, state.radius / scale);
         target->FillRoundedRectangle(rounded, brush.Get());
-        brush->SetColor(Color(GetFocus() == state.window ? state.colors.accent : state.colors.border));
-        target->DrawRoundedRectangle(rounded, brush.Get(), 1.f / scale);
     }
-    if (!state.layout) return;
+    if (!state.layout) { drawBorder(); return; }
     D2D1_MATRIX_3X2_F old{}; target->GetTransform(&old);
     target->PushAxisAlignedClip(frame, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     target->SetTransform(D2D1::Matrix3x2F::Scale(1.f/scale,1.f/scale) *
@@ -515,6 +526,8 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
         target->FillRectangle(caret,brush.Get());
     }
     target->PopAxisAlignedClip(); target->SetTransform(old); target->PopAxisAlignedClip();
+    // Selection and caret painting must not cover the frame's outline.
+    drawBorder();
 }
 void Paint(State& state, HDC dc)
 {
