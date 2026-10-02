@@ -106,6 +106,7 @@ enum class WidgetInstallConfirmationReasonKind : std::uint8_t
     NewWebsite,
     SourceChange,
     Other,
+    FileLockWarning,
 };
 
 /** One independently rendered reason for an installation confirmation. */

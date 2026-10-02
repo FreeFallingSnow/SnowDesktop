@@ -1904,6 +1904,7 @@ if (BUILD_TESTING)
         widget_author_tools
         SOURCES
             tests/widget_author_tools_tests.cpp
+            tests/widget_package_review_tests.cpp
             tools/snowwidget/gpu_diagnostics.cpp
             src/widget_gpu_sampler.cpp
             src/widget_author_permissions.cpp

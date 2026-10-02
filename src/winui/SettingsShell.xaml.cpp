@@ -3345,10 +3345,17 @@ winrt::fire_and_forget SettingsShell::ShowWidgetInstallConfirmationAsync(
         dialog.XamlRoot(XamlRoot());
         dialog.Title(winrt::box_value(Localize(
             "app.settings.widgets_confirm_install")));
-        dialog.PrimaryButtonText(Localize(
-            "app.settings.widgets_confirm_install"));
+        const bool hasLockWarning = std::any_of(request.reasons.begin(), request.reasons.end(),
+            [](const auto& reason) {
+                return reason.kind == snowdesktop::winui::
+                    WidgetInstallConfirmationReasonKind::FileLockWarning;
+            });
+        dialog.PrimaryButtonText(Localize(hasLockWarning
+            ? "settings.widgets.install.anyway"
+            : "app.settings.widgets_confirm_install"));
         dialog.CloseButtonText(Localize("app.settings.cancel"));
-        dialog.DefaultButton(muxc::ContentDialogButton::Primary);
+        dialog.DefaultButton(hasLockWarning ? muxc::ContentDialogButton::Close
+            : muxc::ContentDialogButton::Primary);
 
         muxc::StackPanel content;
         content.Spacing(8.0);
@@ -3366,9 +3373,11 @@ winrt::fire_and_forget SettingsShell::ShowWidgetInstallConfirmationAsync(
             content.Children().Append(block);
         };
 
-        appendText(Localize(request.reasons.empty()
-                ? "settings.widgets.install.reviewPrompt"
-                : "app.settings.widgets_install_confirm"));
+        appendText(Localize(hasLockWarning
+                ? "settings.widgets.install.lockWarning"
+                : request.reasons.empty()
+                    ? "settings.widgets.install.reviewPrompt"
+                    : "app.settings.widgets_install_confirm"));
         if (!request.packageName.empty())
             appendText(request.packageName, true);
         if (!request.version.empty())
@@ -3414,6 +3423,8 @@ winrt::fire_and_forget SettingsShell::ShowWidgetInstallConfirmationAsync(
                 break;
             case snowdesktop::winui::
                     WidgetInstallConfirmationReasonKind::Other:
+            case snowdesktop::winui::
+                    WidgetInstallConfirmationReasonKind::FileLockWarning:
             default:
                 break;
             }

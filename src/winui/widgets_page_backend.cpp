@@ -2,6 +2,8 @@
 
 #include "widgets_page_backend.h"
 #include "widgets_page_backend_state.h"
+#include "widget_package_review.h"
+#include "../diagnostic_log.h"
 #include "source_search_worker.h"
 
 #include "../utils.h"
@@ -511,174 +513,7 @@ bool IsGranted(std::span<const std::string> granted,
 using PackageFileIdentity =
     widgets_page_backend_detail::ReviewedPackageFileIdentity;
 
-bool ReadFileIdentity(HANDLE handle, PackageFileIdentity& identity) noexcept
-{
-    FILE_ID_INFO information{};
-    if (handle == INVALID_HANDLE_VALUE)
-    {
-        return false;
-    }
-    if (GetFileInformationByHandleEx(handle, FileIdInfo,
-            &information, sizeof(information)))
-    {
-        identity.volumeSerialNumber = information.VolumeSerialNumber;
-        std::memcpy(identity.fileId.data(), information.FileId.Identifier,
-            identity.fileId.size());
-        return true;
-    }
-
-    // Some removable filesystems do not implement FileIdInfo but do expose
-    // the stable volume/index pair through the legacy handle information.
-    BY_HANDLE_FILE_INFORMATION fallback{};
-    if (!GetFileInformationByHandle(handle, &fallback)) return false;
-    identity = {};
-    identity.volumeSerialNumber = fallback.dwVolumeSerialNumber;
-    const std::uint64_t fileIndex =
-        (static_cast<std::uint64_t>(fallback.nFileIndexHigh) << 32) |
-        fallback.nFileIndexLow;
-    std::memcpy(identity.fileId.data(), &fileIndex, sizeof(fileIndex));
-    return fileIndex != 0;
-}
-
-bool IsSafeDiskObject(HANDLE handle, bool directory) noexcept
-{
-    FILE_ATTRIBUTE_TAG_INFO information{};
-    return handle != INVALID_HANDLE_VALUE &&
-        GetFileType(handle) == FILE_TYPE_DISK &&
-        GetFileInformationByHandleEx(handle, FileAttributeTagInfo,
-            &information, sizeof(information)) &&
-        (information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
-        ((information.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) ==
-            directory;
-}
-
-class ScopedPackageIdentityLock final
-{
-public:
-    explicit ScopedPackageIdentityLock(
-        const std::filesystem::path& path,
-        const std::filesystem::path& trustedRoot,
-        const std::optional<PackageFileIdentity>& expected = {},
-        bool directory = false)
-        : directory_(directory)
-    {
-        std::error_code error;
-        path_ = std::filesystem::absolute(path, error).lexically_normal();
-        if (error) return;
-        const std::filesystem::path root =
-            std::filesystem::absolute(trustedRoot, error).lexically_normal();
-        if (error || path_.parent_path() != root) return;
-
-        // Lock every lexical ancestor from the volume root down. Omitting
-        // FILE_SHARE_DELETE prevents an ancestor from being renamed while a
-        // validator or the package manager reopens the reviewed path.
-        std::vector<std::filesystem::path> ancestors;
-        for (std::filesystem::path current = path_.parent_path();
-             !current.empty();)
-        {
-            ancestors.push_back(current);
-            const std::filesystem::path parent = current.parent_path();
-            if (parent == current) break;
-            current = parent;
-        }
-        std::reverse(ancestors.begin(), ancestors.end());
-        for (const std::filesystem::path& ancestor : ancestors)
-        {
-            HANDLE handle = CreateFileW(ancestor.c_str(), FILE_READ_ATTRIBUTES,
-                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-                nullptr);
-            if (!IsSafeDiskObject(handle, true))
-            {
-                if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-                Reset();
-                return;
-            }
-            ancestorHandles_.push_back(handle);
-        }
-
-        handle_ = OpenPath();
-        if (!IsSafeDiskObject(handle_, directory_) ||
-            !ReadFileIdentity(handle_, identity_) ||
-            (expected && identity_ != *expected))
-        {
-            Reset();
-        }
-    }
-
-    ~ScopedPackageIdentityLock() { Reset(); }
-
-    ScopedPackageIdentityLock(const ScopedPackageIdentityLock&) = delete;
-    ScopedPackageIdentityLock& operator=(
-        const ScopedPackageIdentityLock&) = delete;
-
-    [[nodiscard]] bool Acquired() const noexcept
-    {
-        return handle_ != INVALID_HANDLE_VALUE;
-    }
-
-    [[nodiscard]] const PackageFileIdentity& Identity() const noexcept
-    {
-        return identity_;
-    }
-
-    /** Verify both the held object and a fresh path open at every IO boundary. */
-    [[nodiscard]] bool MatchesPathIdentity() const noexcept
-    {
-        if (!Acquired() || !AncestorsRemainSafe()) return false;
-        PackageFileIdentity heldIdentity;
-        if (!ReadFileIdentity(handle_, heldIdentity) ||
-            heldIdentity != identity_)
-        {
-            return false;
-        }
-        HANDLE reopened = OpenPath();
-        PackageFileIdentity reopenedIdentity;
-        const bool matches = IsSafeDiskObject(reopened, directory_) &&
-            ReadFileIdentity(reopened, reopenedIdentity) &&
-            reopenedIdentity == identity_;
-        if (reopened != INVALID_HANDLE_VALUE) CloseHandle(reopened);
-        return matches;
-    }
-
-private:
-    [[nodiscard]] HANDLE OpenPath() const noexcept
-    {
-        return CreateFileW(path_.c_str(),
-            directory_ ? FILE_READ_ATTRIBUTES : GENERIC_READ,
-            FILE_SHARE_READ,
-            nullptr, OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT |
-                (directory_ ? FILE_FLAG_BACKUP_SEMANTICS
-                            : FILE_FLAG_SEQUENTIAL_SCAN),
-            nullptr);
-    }
-
-    [[nodiscard]] bool AncestorsRemainSafe() const noexcept
-    {
-        return !ancestorHandles_.empty() &&
-            std::all_of(ancestorHandles_.begin(), ancestorHandles_.end(),
-                [](HANDLE handle) { return IsSafeDiskObject(handle, true); });
-    }
-
-    void Reset() noexcept
-    {
-        if (handle_ != INVALID_HANDLE_VALUE)
-        {
-            CloseHandle(handle_);
-            handle_ = INVALID_HANDLE_VALUE;
-        }
-        for (HANDLE handle : ancestorHandles_)
-            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-        ancestorHandles_.clear();
-    }
-
-    std::filesystem::path path_;
-    bool directory_ = false;
-    HANDLE handle_ = INVALID_HANDLE_VALUE;
-    std::vector<HANDLE> ancestorHandles_;
-    PackageFileIdentity identity_;
-};
+using widgets_page_backend_detail::ScopedPackageIdentityLock;
 
 void RemoveAbandonedSettingsReviewPackages(
     const std::filesystem::path& stagingRoot) noexcept
@@ -835,7 +670,8 @@ struct WidgetsPageBackend::Impl final
         std::filesystem::path path;
         PackageManifest manifest;
         std::string sha256;
-        PackageFileIdentity identity;
+        std::optional<PackageFileIdentity> identity;
+        std::wstring lockWarning;
 
         ~LocalPackageSnapshot()
         {
@@ -860,11 +696,12 @@ struct WidgetsPageBackend::Impl final
         std::string externalItemId;
         std::string version;
         std::shared_ptr<LocalPackageSnapshot> localSnapshot;
-        /** Non-empty only for an immutable export of a development tree. */
+        /** Non-empty only for a reviewed export of a development tree. */
         std::string developmentPackageId;
         bool developmentOverrideWasActive = false;
         bool allowSourceChange = false;
         bool allowPermissionExpansion = false;
+        bool allowUnlockedReview = false;
     };
 
     explicit Impl(WidgetEngine& value, WidgetsPageBackendOptions valueOptions)
@@ -1965,7 +1802,7 @@ struct WidgetsPageBackend::Impl final
     }
 
     WidgetsPageHostOperationResult ExecuteInstall(
-        const PendingInstall& install)
+        const PendingInstall& install, std::wstring& lockWarning)
     {
         std::wstring error;
         bool installed = false;
@@ -1986,55 +1823,36 @@ struct WidgetsPageBackend::Impl final
             {
                 return identityChanged();
             }
-            // Keep the reviewed staging object read-only and non-replaceable
-            // until the package manager has consumed it. Every validation,
-            // hash and extraction below therefore observes the same bytes.
-            const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
-            const ScopedPackageIdentityLock packageLock(install.path,
-                packagePaths.staging, install.localSnapshot->identity);
-            if (!packageLock.Acquired() ||
-                !packageLock.MatchesPathIdentity())
+            const auto result = widgets_page_backend_detail::InstallReviewedPackage(
+                install.path, WidgetEngine::GetWidgetPackagePaths(),
+                install.localSnapshot->identity, install.localSnapshot->sha256,
+                install.localSnapshot->manifest, install.allowUnlockedReview,
+                [&]() {
+                    return engine.InstallAndVerifyWidgetPackage(
+                        install.path.wstring(), error, install.allowSourceChange,
+                        install.allowPermissionExpansion);
+                });
+            using Status = widgets_page_backend_detail::ReviewedPackageInstallStatus;
+            switch (result.status)
             {
+            case Status::Installed:
+                installed = true;
+                break;
+            case Status::NeedsLockConfirmation:
+                lockWarning = result.lockDetails;
+                return WidgetsPageHostOperationResult::Failure({});
+            case Status::Changed:
                 return identityChanged();
-            }
-            const std::string actualSha256 =
-                snowdesktop::widget::WidgetPackageManager::Sha256File(
-                    install.path);
-            if (!packageLock.MatchesPathIdentity())
-            {
-                return identityChanged();
-            }
-            snowdesktop::widget::WidgetPackageManager validator(
-                packagePaths);
-            PackageManifest currentManifest;
-            if (!packageLock.MatchesPathIdentity())
-            {
-                return identityChanged();
-            }
-            const auto report = validator.ValidateArchive(
-                install.path, &currentManifest);
-            if (!packageLock.MatchesPathIdentity() || actualSha256.empty() ||
-                actualSha256 != install.localSnapshot->sha256 ||
-                !report.Ok() ||
-                currentManifest.id != install.localSnapshot->manifest.id ||
-                currentManifest.version !=
-                    install.localSnapshot->manifest.version)
-            {
-                return identityChanged();
-            }
-            if (!packageLock.MatchesPathIdentity())
-            {
-                return identityChanged();
-            }
-            installed = engine.InstallAndVerifyWidgetPackage(
-                install.path.wstring(), error, install.allowSourceChange,
-                install.allowPermissionExpansion);
-            if (!packageLock.MatchesPathIdentity())
-            {
-                return identityChanged(
-                    L("app.settings.widgets_error_install_identity_changed",
-                        L"The selected component package changed while it was "
-                        L"being installed. Choose the package again."));
+            case Status::Unreadable:
+                error = L("settings.widgets.install.readFailed",
+                    L"The prepared package could not be read. Check that the file "
+                    L"is accessible and try again.") + L"\n" + install.path.wstring();
+                break;
+            case Status::Invalid:
+                error = Utf8ToWide(result.validationDetails);
+                break;
+            case Status::InstallFailed:
+                break;
             }
         }
         else
@@ -2050,7 +1868,7 @@ struct WidgetsPageBackend::Impl final
     }
 
     void RequestInstallConfirmation(PendingInstall install,
-        std::wstring reason)
+        std::wstring reason, std::wstring lockWarning = {})
     {
         activeTaskId = 0;
         state->task = {};
@@ -2067,6 +1885,20 @@ struct WidgetsPageBackend::Impl final
         WidgetInstallConfirmationRequest dialogRequest;
         dialogRequest.reasons = ParseInstallConfirmationReasons(reason);
         dialogRequest.technicalDetails = reason;
+        if (lockWarning.empty() && install.localSnapshot && !install.allowUnlockedReview)
+            lockWarning = install.localSnapshot->lockWarning;
+        const bool hasLockWarning = !lockWarning.empty();
+        if (hasLockWarning)
+        {
+            dialogRequest.reasons.push_back({
+                WidgetInstallConfirmationReasonKind::FileLockWarning, {}, {}});
+            if (!dialogRequest.technicalDetails.empty()) dialogRequest.technicalDetails += L"\n\n";
+            dialogRequest.technicalDetails += lockWarning;
+            // This pending operation is executed only by the confirmed callback.
+            install.allowUnlockedReview = true;
+            const std::wstring diagnostic = L"Component install review lock unavailable: " + lockWarning;
+            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Warning);
+        }
         const bool sourceChange = std::any_of(
             dialogRequest.reasons.begin(), dialogRequest.reasons.end(),
             [](const auto& item) {
@@ -2115,8 +1947,12 @@ struct WidgetsPageBackend::Impl final
         awaitingConfirmation = true;
         confirmationRequestId = NextTaskId();
         SetFeedback(WidgetsPageFeedbackSeverity::Warning,
-            L("app.settings.widgets_install_confirm",
-                L"Confirm the component installation to continue."));
+            hasLockWarning
+                ? L("settings.widgets.install.lockWarning",
+                    L"The package could not be locked against changes by other programs. "
+                    L"You can still try installing it if you trust its source.")
+                : L("settings.widgets.install.reviewPrompt",
+                    L"Verify the selected package identity before installation."));
         Publish();
         const std::uint64_t requestGeneration = generation;
         const std::uint64_t requestActivation = activation;
@@ -2151,6 +1987,9 @@ struct WidgetsPageBackend::Impl final
                                 owner->Publish();
                                 return;
                             }
+                            if (install.allowUnlockedReview)
+                                WriteDiagnosticLogEntry(L"Component install: user confirmed continuing without the review lock.",
+                                    DiagnosticLogLevel::Info);
                             owner->RunInstall(std::move(install));
                         });
                 });
@@ -2206,50 +2045,59 @@ struct WidgetsPageBackend::Impl final
             return {};
         }
 
-        // Bind the manifest and fingerprint to one immutable staging object.
-        // The same lock discipline is repeated during confirmed installation.
-        const ScopedPackageIdentityLock packageLock(
-            snapshot->path, stagingRoot);
-        if (!packageLock.Acquired() ||
-            !packageLock.MatchesPathIdentity())
-        {
-            error = L("app.settings.widgets_error_package_lock_review",
-                L"The selected package could not be locked for review.");
-            return {};
-        }
-        snapshot->identity = packageLock.Identity();
-
-        snowdesktop::widget::WidgetPackageManager validator(
-            WidgetEngine::GetWidgetPackagePaths());
-        if (!packageLock.MatchesPathIdentity())
-        {
-            error = L("app.settings.widgets_error_package_identity_changed",
-                L"The selected package identity changed during review.");
-            return {};
-        }
-        const auto report = validator.ValidateArchive(
-            snapshot->path, &snapshot->manifest);
-        if (!packageLock.MatchesPathIdentity())
-        {
-            error = L("app.settings.widgets_error_package_identity_changed",
-                L"The selected package identity changed during review.");
-            return {};
-        }
-        snapshot->sha256 =
-            snowdesktop::widget::WidgetPackageManager::Sha256File(
-                snapshot->path);
-        if (!packageLock.MatchesPathIdentity() || !report.Ok() ||
-            snapshot->sha256.empty() ||
-            snapshot->manifest.id.empty() ||
-            snapshot->manifest.version.empty())
-        {
-            error = report.Ok()
-                ? L("app.settings.widgets_error_package_identity_read",
-                      L"The selected package identity could not be read.")
-                : Utf8ToWide(report.ToJson());
-            return {};
-        }
+        if (!ReviewPreparedPackage(*snapshot, error)) return {};
         return snapshot;
+    }
+
+    bool ReviewPreparedPackage(LocalPackageSnapshot& snapshot, std::wstring& error)
+    {
+        const auto paths = WidgetEngine::GetWidgetPackagePaths();
+        ScopedPackageIdentityLock packageLock(snapshot.path, paths.staging);
+        const bool locked = packageLock.MatchesPathIdentity();
+        if (locked) snapshot.identity = packageLock.Identity();
+        else
+        {
+            if (!snapshot.lockWarning.empty()) snapshot.lockWarning += L"\n\n";
+            snapshot.lockWarning += packageLock.Details();
+            const auto diagnostic = L"Component package review lock unavailable: " + packageLock.Details();
+            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Warning);
+        }
+        const auto hashBefore = snowdesktop::widget::WidgetPackageManager::Sha256File(snapshot.path);
+        if (hashBefore.empty())
+        {
+            error = L("settings.widgets.install.readFailed",
+                L"The prepared package could not be read. Check that the file is accessible and try again.") +
+                L"\n" + snapshot.path.wstring();
+            return false;
+        }
+        snowdesktop::widget::WidgetPackageManager validator(paths);
+        const auto report = validator.ValidateArchive(snapshot.path, &snapshot.manifest);
+        if (!report.Ok())
+        {
+            error = Utf8ToWide(report.ToJson());
+            return false;
+        }
+        snapshot.sha256 = snowdesktop::widget::WidgetPackageManager::Sha256File(snapshot.path);
+        if (snapshot.sha256.empty())
+        {
+            error = L("settings.widgets.install.readFailed",
+                L"The prepared package could not be read. Check that the file is accessible and try again.") +
+                L"\n" + snapshot.path.wstring();
+            return false;
+        }
+        if (snapshot.sha256 != hashBefore || snapshot.manifest.id.empty() ||
+            snapshot.manifest.version.empty())
+        {
+            error = L("settings.widgets.install.identityChanged",
+                L"The selected component package changed after review. Choose the package again.");
+            return false;
+        }
+        if (locked && !packageLock.MatchesPathIdentity())
+        {
+            if (!snapshot.lockWarning.empty()) snapshot.lockWarning += L"\n\n";
+            snapshot.lockWarning += packageLock.Details();
+        }
+        return true;
     }
 
     std::shared_ptr<LocalPackageSnapshot> StageDevelopmentPackage(
@@ -2276,21 +2124,13 @@ struct WidgetsPageBackend::Impl final
             return {};
         }
 
-        // Bind the selected development directory while exporting it. The
+        // Try to bind the selected development directory while exporting it. The
         // resulting archive, rather than the mutable tree, becomes the sole
         // reviewed input to confirmation and installation.
-        const ScopedPackageIdentityLock sourceLock(development.root,
+        ScopedPackageIdentityLock sourceLock(development.root,
             packagePaths.development, std::nullopt, true);
-        if (!sourceLock.Acquired() || !sourceLock.MatchesPathIdentity())
-        {
-            error = L(
-                "app.settings.widgets_error_development_directory_changed",
-                L"The development component directory is unsafe or changed "
-                L"before it could be prepared.");
-            return {};
-        }
-
         auto snapshot = std::make_shared<LocalPackageSnapshot>();
+        if (!sourceLock.MatchesPathIdentity()) snapshot->lockWarning = sourceLock.Details();
         snapshot->path = packagePaths.staging /
             Utf8ToWide("settings-review-development-" +
                 snowdesktop::widget::WidgetPackageManager::GenerateUuid() +
@@ -2300,8 +2140,7 @@ struct WidgetsPageBackend::Impl final
         snowdesktop::widget::ValidationReport exportReport;
         std::string exportError;
         if (!manager.ExportDirectory(development.root, snapshot->path,
-                artifact, exportReport, exportError) ||
-            !sourceLock.MatchesPathIdentity())
+                artifact, exportReport, exportError))
         {
             error = exportError.empty()
                 ? L("app.settings.widgets_error_development_export_changed",
@@ -2311,33 +2150,9 @@ struct WidgetsPageBackend::Impl final
             return {};
         }
 
-        const ScopedPackageIdentityLock archiveLock(
-            snapshot->path, packagePaths.staging);
-        if (!archiveLock.Acquired() ||
-            !archiveLock.MatchesPathIdentity())
-        {
-            error = L(
-                "app.settings.widgets_error_development_snapshot_lock",
-                L"The prepared development snapshot could not be locked for "
-                L"review.");
-            return {};
-        }
-        snapshot->identity = archiveLock.Identity();
-        const auto archiveReport = manager.ValidateArchive(
-            snapshot->path, &snapshot->manifest);
-        if (!archiveLock.MatchesPathIdentity())
-        {
-            error = L(
-                "app.settings.widgets_error_development_snapshot_changed",
-                L"The prepared development snapshot changed during review.");
-            return {};
-        }
-        snapshot->sha256 =
-            snowdesktop::widget::WidgetPackageManager::Sha256File(
-                snapshot->path);
-        if (!archiveLock.MatchesPathIdentity() || !archiveReport.Ok() ||
-            snapshot->sha256.empty() ||
-            snapshot->manifest.id != development.manifest.id ||
+        if (!sourceLock.MatchesPathIdentity()) snapshot->lockWarning = sourceLock.Details();
+        if (!ReviewPreparedPackage(*snapshot, error)) return {};
+        if (snapshot->manifest.id != development.manifest.id ||
             snapshot->manifest.version != development.manifest.version ||
             artifact.packageId != development.manifest.id ||
             artifact.version != development.manifest.version ||
@@ -2357,9 +2172,10 @@ struct WidgetsPageBackend::Impl final
         BeginTask(WidgetsPageTaskKind::Installing,
             Utf8ToWide(install.packageId), Utf8ToWide(install.sourceId));
         WidgetsPageHostOperationResult result;
+        std::wstring lockWarning;
         try
         {
-            result = ExecuteInstall(install);
+            result = ExecuteInstall(install, lockWarning);
         }
         catch (const std::exception& exception)
         {
@@ -2371,6 +2187,12 @@ struct WidgetsPageBackend::Impl final
             result = WidgetsPageHostOperationResult::Failure(
                 L("app.settings.widgets_error_install_failed",
                     L"The component could not be installed."));
+        }
+
+        if (!lockWarning.empty())
+        {
+            RequestInstallConfirmation(std::move(install), {}, std::move(lockWarning));
+            return;
         }
 
         const bool packageInstalled = result.succeeded;

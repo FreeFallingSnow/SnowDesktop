@@ -21,6 +21,8 @@ extern "C" {
 #include <iostream>
 #include <string>
 
+void TestReviewedPackageInstallation();
+
 namespace
 {
 void Check(bool condition, const char* message)
@@ -267,6 +269,7 @@ void TestPermissionReport()
 
 int main()
 {
+    TestReviewedPackageInstallation();
     TestStandalonePackageExport();
     TestPermissionReport();
     TestGpuDiagnostics();
