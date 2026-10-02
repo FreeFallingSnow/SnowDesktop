@@ -255,7 +255,8 @@ if ($Mode -eq "plan") {
     $coveragePath=Join-Path $planRoot ($PlanBatch+'.coverage.json')
     $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     try {
-        $pattern='^(?:'+(($names | ForEach-Object {[regex]::Escape($_)}) -join '|')+')$'
+        # CTest uses the CMake regex engine, which does not support (?:...).
+        $pattern='^('+ (($names | ForEach-Object {[regex]::Escape($_)}) -join '|') +')$'
         $arguments=@('-R',$pattern)
         if ($plan.mode -eq 'full') { Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset 'tests' -TestPreset 'all-tests'; Test-IsolatedOutput }
         else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' }
