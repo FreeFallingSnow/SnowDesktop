@@ -977,6 +977,95 @@ return widget.define({
         "in-range editor font sizes retain their distinct rendered scale");
 }
 
+void CheckTextInkMetrics(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root)
+{
+    const auto source = root / L"text-ink-metrics-widget";
+    Check(std::filesystem::create_directory(source),
+        "text ink metrics fixture directory is created");
+    Write(source / L"widget.json", R"json({
+  "schemaVersion": 2, "apiVersion": 2, "dataVersion": 1,
+  "id": "6fce27d7-9f5e-4e62-8cf0-087fbb3f9640",
+  "slug": "text-ink-metrics-fixture", "version": "1.0.0",
+  "entry": "main.lua", "minHostVersion": "1.0.8.0",
+  "name": "Text ink metrics fixture", "author": "SnowDesktop", "license": "MIT",
+  "description": "Checks measured glyph bounds against native rendered pixels.",
+  "defaultSize": {"columns": 3, "rows": 2},
+  "requiredFeatures": ["draw.immediate", "draw.textInkMetrics"]
+})json");
+    Write(source / L"main.lua", R"lua(
+return widget({render = function()
+    local title = "\u{5F53}\u{524D}\u{4F4D}\u{7F6E}"
+    local titleMetrics = draw.measureText(title, 18, 220, true)
+    local number = draw.measureText("17", 72, 220, false)
+    local unit = draw.measureText("\u{B0}C", 19, 80, false)
+    for _, metrics in ipairs({titleMetrics, number, unit}) do
+        assert(metrics.width > 0 and metrics.height > 0)
+        assert(metrics.ink and metrics.ink.width > 0 and metrics.ink.height > 0)
+        assert(metrics.ink.height < metrics.height, "glyph height must exclude line whitespace")
+    end
+    local trailing = draw.measureText("17   ", 72, 220, false)
+    assert(trailing.width > number.width and math.abs(trailing.ink.width - number.ink.width) < 0.01,
+        "trailing spaces contribute to layout width but not visible glyph width")
+    for _, value in ipairs({"", "   "}) do
+        local empty = draw.measureText(value, 18)
+        assert(empty.ink and empty.ink.width == 0 and empty.ink.height == 0)
+    end
+    local center, top = 35, 80
+    draw.rect(5, center - 4, 8, 8, 0xFF0000, 0, 1)
+    draw.text(25, center - titleMetrics.ink.top - titleMetrics.ink.height / 2,
+        title, 18, 0x00FFFF, 220, true, true, titleMetrics.height, 1)
+    draw.text(25, top - number.ink.top, "17", 72, 0x00FF00, 220,
+        false, true, number.height, 1)
+    draw.text(125, top - unit.ink.top, "\u{B0}C", 19, 0xFF00FF, 80,
+        false, true, unit.height, 1)
+end})
+)lua");
+
+    // Exercise measureText and draw.text through the real engine, then locate
+    // their colored pixels independently. Wrong overhang signs or use of the
+    // line box must fail even when the returned table has all expected fields.
+    for (const auto* dpi : { L"96", L"144" })
+    {
+        const auto output = root / (std::wstring(L"text-ink-") + dpi + L".png");
+        const auto [exit, json] = Run(snowwidget, {
+            L"preview", source.wstring(), output.wstring(), L"--dpi", dpi,
+            L"--content-only", L"--host", host.wstring() });
+        if (exit != 0) std::cerr << json << '\n';
+        Check(exit == 0 && json.find("\"ok\":true") != std::string::npos,
+            "native text ink metrics fixture renders successfully");
+        const auto bitmap = ReadPng(output);
+        std::array<PixelBounds, 4> bounds;
+        for (UINT y = 0; y < bitmap.height; ++y)
+        {
+            for (UINT x = 0; x < bitmap.width; ++x)
+            {
+                const auto pixel = PixelAt(bitmap, x, y);
+                if (pixel[3] < 128) continue;
+                const bool red = pixel[0] > 200;
+                const bool green = pixel[1] > 200;
+                const bool blue = pixel[2] > 200;
+                int index = -1;
+                if (red && !green && !blue) index = 0;
+                else if (!red && green && blue) index = 1;
+                else if (!red && green && !blue) index = 2;
+                else if (red && !green && blue) index = 3;
+                if (index >= 0) bounds[static_cast<std::size_t>(index)].Include(
+                    static_cast<int>(x), static_cast<int>(y));
+            }
+        }
+        for (const auto& bound : bounds)
+            Check(!bound.Empty(), "reference shape and each text run have visible pixels");
+        const double scale = std::wcstod(dpi, nullptr) / 96.0;
+        const double markerCenter = (bounds[0].top + bounds[0].bottom) * 0.5;
+        const double titleCenter = (bounds[1].top + bounds[1].bottom) * 0.5;
+        Check(std::abs(markerCenter - titleCenter) <= 2.0 * scale,
+            "measured CJK glyph center aligns with the independent shape center");
+        Check(std::abs(bounds[2].top - bounds[3].top) <= 2.0 * scale,
+            "measured large numerals and small unit glyphs align at their visible top");
+    }
+}
+
 std::filesystem::path CreateEnvironmentFixture(
     const std::filesystem::path& root)
 {
@@ -2601,6 +2690,7 @@ int wmain(int argc, wchar_t** argv) try
         CheckModuleRequireErrors(snowwidget, host, temporary.path, monitorSource);
         CheckSystemMonitorMenu(snowwidget, host, temporary.path, monitorSource);
         CheckRemindersInteraction(snowwidget, host, temporary.path, repository);
+        CheckTextInkMetrics(snowwidget, host, temporary.path);
 
         const auto environmentSource =
             CreateEnvironmentFixture(temporary.path);

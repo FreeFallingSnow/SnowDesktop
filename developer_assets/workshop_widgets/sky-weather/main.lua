@@ -135,11 +135,12 @@ local function render(_context,m)
     local titleWidth=w-p*2-header*3.6
     local titleSize=header*0.68
     local measuredTitle=draw.measureText(title,titleSize,0,true)
+    local titleInk=measuredTitle.ink
     region("cities",p,p*0.65,w-p*2-header*2.6,header*1.35,l10n.tr("lua_widget.sky_weather.choose_city"))
     draw.path({{op="move",x=p+header*0.05,y=headerCenter-header*0.09},{op="line",x=p+header*0.62,y=headerCenter-header*0.32},
         {op="line",x=p+header*0.4,y=headerCenter+header*0.32},{op="line",x=p+header*0.3,y=headerCenter+header*0.03},{op="close"}},
         {fillColor=colors.primary,alpha=1})
-    text(p+header*0.9,headerCenter-measuredTitle.height*0.5,title,titleSize,colors.primary,titleWidth-header*0.8,true,measuredTitle.height)
+    text(p+header*0.9,headerCenter-titleInk.top-titleInk.height*0.5,title,titleSize,colors.primary,titleWidth-header*0.8,true,measuredTitle.height)
     local cx=p+header*1.2+math.min(measuredTitle.width,titleWidth-header*0.8)
     draw.line(cx,headerCenter-header*0.075,cx+header*0.15,headerCenter+header*0.075,header*0.04,colors.primary,1)
     draw.line(cx+header*0.15,headerCenter+header*0.075,cx+header*0.30,headerCenter-header*0.075,header*0.04,colors.primary,1)
@@ -163,7 +164,6 @@ local function render(_context,m)
     else
         local condition,kind=weather.condition(data.code,data.night)
         local icon=math.min(heroH*0.78,heroW*0.21)
-        glyph(kind,heroX+icon*0.5,heroY+heroH*0.42,icon)
         local size=math.min(heroH*0.91,heroW*0.20)
         local value=weather.temperature(data.temp,cfg.unit):gsub("°$","")
         local tx=heroX+icon*1.15;local ix=heroX+heroW*0.67
@@ -171,8 +171,16 @@ local function render(_context,m)
         local natural=draw.measureText(value,size,heroW,false)
         if natural.width>budget then size=size*budget/natural.width end
         local measure=draw.measureText(value,size,heroW,false)
-        text(tx,heroY-heroH*0.02,value,size,colors.primary,budget,false,heroH)
-        text(tx+measure.width+size*0.02,heroY+size*0.12,cfg.unit=="f" and l10n.tr("lua_widget.sky_weather.fahrenheit") or l10n.tr("lua_widget.sky_weather.celsius"),size*0.27,colors.primary,size)
+        local numberY=heroY-heroH*0.02
+        local numberInk=measure.ink
+        local numberTop=numberY+numberInk.top
+        glyph(kind,heroX+icon*0.5,numberTop+numberInk.height*0.5,icon)
+        text(tx,numberY,value,size,colors.primary,budget,false,heroH)
+        local unit=cfg.unit=="f" and l10n.tr("lua_widget.sky_weather.fahrenheit") or l10n.tr("lua_widget.sky_weather.celsius")
+        local unitSize=size*0.27
+        local unitMeasure=draw.measureText(unit,unitSize,0,false)
+        local unitInk=unitMeasure.ink
+        text(tx+measure.width+size*0.02,numberTop-unitInk.top,unit,unitSize,colors.primary,size,false,unitMeasure.height)
         local infoSize=short*0.037
         text(ix,heroY+heroH*0.14,l10n.tr(condition),infoSize,colors.primary,heroW*0.36,true)
         text(ix,heroY+heroH*0.39,l10n.tr("lua_widget.sky_weather.feels",weather.temperature(data.feels,cfg.unit)),infoSize*0.91,colors.secondary,heroW*0.36)
@@ -258,9 +266,9 @@ local function panel(_context,m)
         for i,p in ipairs(m.results) do items[#items+1]=cityButton("result."..i,p) end
     end
     local savedInfo=cities.valid(selected) and selected.device and selected.label or nil
-    local enabled=not m.locating and widget.hasFeature("task.location.current") and widget.hasPermission("location.read")
-    local info=m.locationInfo or savedInfo or (not widget.hasFeature("task.location.current") and l10n.tr("lua_widget.sky_weather.old_host") or
-        not widget.hasPermission("location.read") and l10n.tr("lua_widget.sky_weather.location_permission_short") or l10n.tr("lua_widget.sky_weather.location_idle"))
+    local enabled=not m.locating and widget.hasPermission("location.read")
+    local info=m.locationInfo or savedInfo or (not widget.hasPermission("location.read") and
+        l10n.tr("lua_widget.sky_weather.location_permission_short") or l10n.tr("lua_widget.sky_weather.location_idle"))
     local hint=label("location.info",info,row*0.46,row*1.20,true);hint.textWrap="wrap";hint.maxLines=2
     local children={
         view.text({key="picker.subtitle",text=l10n.tr("lua_widget.sky_weather.picker_subtitle"),width="fill",height=row*1.2,flexShrink=0,fontSize=row*0.48,
@@ -293,7 +301,9 @@ local function panel(_context,m)
 end
 
 local function setup(context)
-    local m={preview=context.preview,query="",results={},searchTask=nil,searchLoading=false,locationTask=nil,locating=false}
+    local m={preview=context.preview,query="",results={},searchLoading=false,locationTask=nil,locating=false}
+    m.citySearch=cities.search({start=function(args)return task.start("network.request",args)end,cancel=task.cancel,
+        decode=json.decode,encode=weather.encode,language=function()return langs[l10n.language()] or "en"end})
     m.weather=weather.new({config=config,permission=function() return widget.hasPermission("network.internet") end,
         language=l10n.language,now=time.now,monotonic=time.monotonic,decode=json.decode,
         start=function(args) return task.start("network.request",args) end,cancel=task.cancel,
@@ -319,12 +329,11 @@ local function setup(context)
     return m
 end
 local function search(m)
-    if m.searchTask then task.cancel(m.searchTask);m.searchTask=nil end
+    m.citySearch:cancel()
     m.results={};m.searchError=nil
     if weather.trim(m.query)=="" or m.preview then m.searchLoading=false;return end
-    local id=task.start("network.request",{url="https://geocoding-api.open-meteo.com/v1/search?name="..weather.encode(weather.trim(m.query))..
-        "&count=20&format=json&language="..(langs[l10n.language()] or "en"),timeoutMs=12000,cacheSeconds=3600,maxBytes=131072})
-    m.searchTask=id;m.searchLoading=id~=nil;m.searchError=id==nil
+    m.citySearch:query(m.query)
+    m.searchLoading=m.citySearch.loading;m.searchError=m.citySearch.error
 end
 local function choose(m,p)
     if not cities.valid(p) then return end
@@ -336,10 +345,8 @@ local function choose(m,p)
 end
 local function event(_context,m,e)
     if e.kind=="task.complete" then
-        if e.taskId==m.searchTask then
-            m.searchTask=nil;m.searchLoading=false
-            local ok,p=pcall(json.decode,e.ok and e.value and e.value.body or "")
-            m.searchError=not ok;m.results=ok and cities.results(p) or {}
+        if m.citySearch:complete(e) then
+            m.searchLoading=m.citySearch.loading;m.searchError=m.citySearch.error;m.results=m.citySearch.results
         elseif e.taskId==m.locationTask then
             m.locationTask=nil;m.locating=false
             local p=e.value
@@ -358,7 +365,7 @@ local function event(_context,m,e)
     elseif e.kind=="visibility" and e.visible and not m.preview then m.weather:tick()
     elseif e.kind=="settings.changed" and not e.preview and not m.preview then m.weather:tick()
     elseif e.kind=="panel" and e.action=="closed" then
-        if m.searchTask then task.cancel(m.searchTask);m.searchTask=nil end
+        m.citySearch:cancel()
         if m.locationTask then task.cancel(m.locationTask);m.locationTask=nil end
         m.locating=false;m.searchLoading=false;schedule.cancel("city.search")
     elseif e.kind=="action" then
@@ -370,12 +377,12 @@ local function event(_context,m,e)
         elseif id=="choose" and not m.preview then choose(m,e.value)
         elseif id=="query" then
             m.query=tostring(e.text or ""):sub(1,256)
-            if m.searchTask then task.cancel(m.searchTask);m.searchTask=nil end
+            m.citySearch:cancel()
             m.results={};m.searchLoading=weather.trim(m.query)~="";m.searchError=nil
             schedule.after("city.search",350,{whenHidden="pause"})
         elseif id=="search" then schedule.cancel("city.search");search(m)
         elseif id=="locate" and not m.preview and not m.locating then
-            if widget.hasFeature("task.location.current") and widget.hasPermission("location.read") then
+            if widget.hasPermission("location.read") then
                 local taskId=task.start("location.current",{timeoutMs=15000,maximumAgeMs=300000})
                 m.locationTask=taskId;m.locating=taskId~=nil
                 if taskId then m.locationInfo=nil end
@@ -387,7 +394,7 @@ local function event(_context,m,e)
 end
 local function dispose(_context,m)
     m.weather:dispose()
-    if m.searchTask then task.cancel(m.searchTask) end
+    m.citySearch:cancel()
     if m.locationTask then task.cancel(m.locationTask) end
     schedule.cancel("weather.tick");schedule.cancel("city.search")
 end

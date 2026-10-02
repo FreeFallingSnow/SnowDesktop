@@ -2631,6 +2631,15 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 - `draw.marqueeText({key, x, y, width, height, text, size?, color?, bold?,
   speed?, gap?, alpha?, font?}) -> scrolling`
 - `draw.measureText(text, size?, maxWidth?, bold?, font?)`
+
+  返回原有 `width`、`height` 行框度量。支持 `draw.textInkMetrics` 的宿主在
+  渲染时还返回可选 `ink={left,top,width,height}`：相对于同参数 `draw.text`
+  原点的可见字形边界，单位与绘制坐标一致。`left`、`top` 可为负，宽高非负；
+  空串及纯空白的边界为零，无法测量时省略 `ink`。字体留白使行框中心不一定等于
+  字形中心；需要对齐字形顶部或中心时使用 `ink`。像素微调可能带来少量栅格差异。
+  此增量不改变调用参数或原有宽高字段；依赖它的组件应声明
+  `draw.textInkMetrics`，同版本早期构建也可能缺少该 feature。
+
 - `draw.rect(...)`、`draw.strokeRect(...)`、`draw.line(...)`、`draw.circle(...)`
 - `draw.arc(cx, cy, radius, startDegrees, sweepDegrees, thickness?, color?, alpha?)`
 - `draw.path(commands, options?)`

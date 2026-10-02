@@ -7,6 +7,8 @@
 首次打开提供搜索提示，不预置城市或推断用户偏好；最近选择仅来自该实例的实际选择。
 选城面板沿用宿主弹窗背景与语义配色，不另铺整面背景；保留定位操作行和可滚动的城市结果，并声明键盘导航能力。
 搜索使用 Open-Meteo Geocoding API（GeoNames 地名数据）；天气使用 Open-Meteo Forecast API。
+中文地点搜索同时查询原名和适用的“市”全名，合并去重后优先展示名称匹配、人口较大的地点，
+保留原始坐标并显示市级行政区、省份和国家，不用内置城市坐标替换接口结果。
 接口使用所选地点的 `timezone=auto` 和 `current.is_day`，不按电脑所在城市推断昼夜。
 
 “使用当前位置”调用 Windows Geolocator，需组件 `location.read` 可选权限和 Windows 系统位置授权，
@@ -21,9 +23,10 @@ Windows 返回 IP、默认、模糊或未知来源时不会自动采用该坐标
 按 `is_day` 调整夜间效果。晴夜使用独立星空资源；雷暴使用雨云和闪电形状；未知代码使用中性背景。
 背景静态渲染，不增加持续动画定时器。更新失败保留同地点的成功缓存，切换城市不会显示另一城市的缓存。
 
-本组件需要 API v2、宿主 1.0.8.0 及 `task.location.current`、`widget.backgroundLayer` 等清单所列能力。
-旧宿主和同版本早期构建不认识 `location.read` 权限，即使其为可选权限也不能加载此包。
-组件只能在包含新定位接口的宿主发布后正式发布；新宿主上不授权定位仍可使用城市搜索。
+本组件直接使用 API v2、宿主 1.0.8.0 及清单所列能力，包括 `task.location.current`、
+`draw.textInkMetrics` 和 `widget.backgroundLayer`。字形边界用于城市标题、天气图标及温度单位的对齐。
+组件不适配缺少这些能力的宿主；同版本早期构建也可能缺少新能力，清单会阻止加载。
+组件应在包含定位和字形测量能力的宿主发布后正式发布；未授权定位仍可使用城市搜索。
 Windows 授权、实际定位精度和桌面面板交互需要用户实机验收；离屏预览不访问网络或系统定位。
 
 ## 开发与检查
@@ -39,7 +42,7 @@ scripts\widget-dev.bat developer_assets\workshop_widgets\sky-weather -Configurat
 确定性预览可通过 `--storage previewCode=97`、`--storage previewNight=true`、`--storage unit=f`、
 `--storage previewTemperature=-24` 和 `--storage previewState=empty|loading|error|permission|stale` 检查状态。
 预览温度与天气不是真实当前天气。纯模块测试覆盖 JSON 空值、异常响应、城市切换、迟到完成、
-缓存身份、拒权、取消、有限重试、全球重名城市与全部天气码的昼夜背景归类。
+缓存身份、拒权、取消、有限重试、中文城市全名查询、合并排序与迟到搜索完成，以及全部天气码的昼夜背景归类。
 
 ## 来源与使用条件
 

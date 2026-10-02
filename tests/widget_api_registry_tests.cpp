@@ -353,6 +353,7 @@ void TestV2Contract()
                 "draw.imageFit.roundedClip") &&
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature("draw.marqueeText") &&
+            snowdesktop::widget_api::SupportsFeature("draw.textInkMetrics") &&
             snowdesktop::widget_api::SupportsFeature(
                 "widget.backgroundLayer") &&
             snowdesktop::widget_api::SupportsFeature(

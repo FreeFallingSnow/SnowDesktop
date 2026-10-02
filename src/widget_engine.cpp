@@ -2687,12 +2687,26 @@ static int lua_MeasureText(lua_State* L)
                 "draw.measureText: invalid font resource handle");
     }
 
-    auto pushSize = [&](float width, float height) {
-        lua_createtable(L, 0, 2);
+    auto pushSize = [&](float width, float height,
+        const std::optional<D2D1_RECT_F>& ink = std::nullopt) {
+        lua_createtable(L, 0, ink ? 3 : 2);
         lua_pushnumber(L, width);
         lua_setfield(L, -2, "width");
         lua_pushnumber(L, height);
         lua_setfield(L, -2, "height");
+        if (ink)
+        {
+            lua_createtable(L, 0, 4);
+            lua_pushnumber(L, ink->left);
+            lua_setfield(L, -2, "left");
+            lua_pushnumber(L, ink->top);
+            lua_setfield(L, -2, "top");
+            lua_pushnumber(L, std::max(0.0f, ink->right - ink->left));
+            lua_setfield(L, -2, "width");
+            lua_pushnumber(L, std::max(0.0f, ink->bottom - ink->top));
+            lua_setfield(L, -2, "height");
+            lua_setfield(L, -2, "ink");
+        }
         return 1;
     };
 
@@ -2719,6 +2733,19 @@ static int lua_MeasureText(lua_State* L)
 
     DWRITE_TEXT_METRICS metrics{};
     layout->GetMetrics(&metrics);
+    DWRITE_OVERHANG_METRICS overhang{};
+    if (SUCCEEDED(layout->GetOverhangMetrics(&overhang)))
+    {
+        // Visible bounds are separate from the unchanged line metrics.
+        // Negative overhang denotes unused space inside the whole layout box.
+        D2D1_RECT_F ink{};
+        if (metrics.width > 0.0f)
+            ink = { -overhang.left, -overhang.top,
+                layout->GetMaxWidth() + overhang.right,
+                layout->GetMaxHeight() + overhang.bottom };
+        return pushSize(metrics.widthIncludingTrailingWhitespace,
+            metrics.height, ink);
+    }
     return pushSize(metrics.widthIncludingTrailingWhitespace, metrics.height);
 }
 

@@ -71,6 +71,40 @@ return {
         for i=1,9 do recent=cities.recent(recent,{name=tostring(i),label=tostring(i),lat=i,lon=i}) end
         assert(#recent==6 and recent[1].lat==9)
     end,
+    ["Chinese city search retrieves the full city name and ranks the live place fixture"]=function()
+        local queries=cities.queries("大连")
+        assert(#queries==2 and queries[1]=="大连" and queries[2]=="大连市")
+        assert(cities.queries("大连,辽宁")[2]=="大连市,辽宁")
+        assert(cities.queries("大连，辽宁")[2]=="大连市,辽宁")
+        assert(cities.queries(" 大连 , 辽宁 ")[2]=="大连市, 辽宁")
+        for _,query in ipairs({"大连市","北京市","朝阳区","Dalian","Paris","大"}) do assert(#cities.queries(query)==1,query) end
+        local payload={results={
+            {id=7640558,name="大连",admin1="福建省",admin2="龙岩市",country="中国",latitude=25.09238,longitude=116.68508},
+            {id=7758940,name="大连",admin1="海南",admin2="澄迈县",country="中国",latitude=19.85415,longitude=110.10711},
+            {id=1814087,name="大连市",admin1="辽宁",admin2="大连市",country="中国",population=4913879,latitude=38.91222,longitude=121.60222},
+            {id=1814087,name="大连市",admin1="辽宁",country="中国",population=4913879,latitude=38.91222,longitude=121.60222}}}
+        local results=cities.results(payload,"大连")
+        assert(#results==3 and results[1].id==1814087 and results[1].lat==38.91222 and results[1].lon==121.60222)
+        assert(results[1].label=="大连市 · 辽宁 · 中国")
+        assert(results[2].label=="大连 · 龙岩市 · 福建省 · 中国")
+    end,
+    ["City search waits for both queries and cancels every stale request"]=function()
+        local requests,canceled={},{}
+        local state=cities.search({start=function(args)requests[#requests+1]=args;return #requests end,
+            cancel=function(id)canceled[id]=true end,encode=w.encode,decode=j.decode,language=function()return"zh"end})
+        state:query("大连")
+        assert(#requests==2 and requests[2].url:find(w.encode("大连市"),1,true) and state.loading)
+        assert(state:complete({taskId=1,ok=true,value={body='{"results":[{"id":7640558,"name":"大连","admin1":"福建省","latitude":25.09238,"longitude":116.68508}]}'}}))
+        assert(state.loading and #state.results==0)
+        assert(state:complete({taskId=2,ok=true,value={body='{"results":[{"id":1814087,"name":"大连市","admin1":"辽宁","latitude":38.91222,"longitude":121.60222,"population":4913879}]}'}}))
+        assert(not state.loading and not state.error and state.results[1].id==1814087)
+        state:query("北京");state:query("London")
+        assert(canceled[3] and canceled[4] and #requests==5)
+        assert(not state:complete({taskId=3,ok=true,value={body='{}'}}))
+        state:cancel();assert(canceled[5] and not state.loading)
+        assert(not state:complete({taskId=5,ok=true,value={body='{}'}}))
+        state:query("Paris");state:complete({taskId=6,ok=false});assert(state.error and not state.loading)
+    end,
     ["Date temperature and WMO codes use independent expected values"]=function()
         assert(w.weekday("2026-10-02")==5 and not w.validDate("2026-02-29") and w.validDate("2024-02-29"))
         assert(w.temperature(-1.5,"c")=="-2°" and w.temperature(0,"f")=="32°")

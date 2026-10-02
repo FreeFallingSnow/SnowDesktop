@@ -901,6 +901,13 @@
 ---@class SnowTextMetrics
 ---@field width number
 ---@field height number
+---@field ink? SnowTextInkBounds Visible glyph bounds relative to the draw.text origin; available with draw.textInkMetrics during rendering. Empty/whitespace-only text has zero bounds. Unavailable measurements omit ink.
+
+---@class SnowTextInkBounds
+---@field left number May be negative for a glyph overhang.
+---@field top number Offset relative to the text origin, independent of line-box padding.
+---@field width number Nonnegative visible glyph width in logical drawing units.
+---@field height number Nonnegative visible glyph height in logical drawing units; raster hinting may change final pixel bounds slightly.
 
 ---@class SnowMarqueeTextOptions
 ---@field key string Stable 1..128-byte key used to preserve the native scroll phase across data refreshes.

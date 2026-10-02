@@ -70,6 +70,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "draw.imageFit.roundedClip",
     "draw.immediate",
     "draw.marqueeText",
+    "draw.textInkMetrics",
     "interaction.accessibility.metadata",
     "interaction.contextMenu",
     "interaction.contextMenu.resourceImage",
