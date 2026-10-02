@@ -1,8 +1,9 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("full", "fast", "core", "label", "name", "list")]
+    [ValidateSet("full", "fast", "core", "label", "name", "list", "plan")]
     [string]$Mode = "full",
-    [string]$Filter = ""
+    [string]$Filter = "",
+    [ValidatePattern("^[a-f0-9]{32}$")][string]$PlanBatch
 )
 
 Set-StrictMode -Version Latest
@@ -23,7 +24,9 @@ function Invoke-Checked {
     if ($FilePath -eq "ctest") {
         $reportRoot = Join-Path $repositoryRoot ".build\Testing"
         [void][IO.Directory]::CreateDirectory($reportRoot)
+        $script:lastReportPath = $null
         $reportPath = Join-Path $reportRoot ("test-run-" + [Guid]::NewGuid().ToString("N") + ".xml")
+        $script:lastReportPath = $reportPath
         $Arguments += @("--output-junit", $reportPath)
     }
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
@@ -142,6 +145,18 @@ function Invoke-FilteredTests {
     }
 
     Write-Host ""
+    if($Mode -eq 'plan'){
+        $artifacts=@()
+        foreach($test in $selection.Tests){
+            $cmd=@(Get-Field $test 'command' @());if($cmd.Count -eq 0){continue}
+            $path=[IO.Path]::GetFullPath([string]$cmd[0])
+            if($path.StartsWith($repositoryRoot+'\',[StringComparison]::OrdinalIgnoreCase) -and [IO.File]::Exists($path)){
+                $artifacts += [pscustomobject]@{test=$test.name;executable=$path.Substring($repositoryRoot.Length+1);sha256=(Get-FileDigest $path);bytes=(Get-Item -LiteralPath $path).Length}
+            }
+        }
+        Set-Field $coverage 'testExecutablesBeforeRun' $artifacts
+        $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
+    }
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
     Invoke-Checked -FilePath "ctest" -Arguments (
         @("--preset", $TestPreset) + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
@@ -219,10 +234,56 @@ function Test-IsolatedOutput {
     }
 }
 
+. (Join-Path $PSScriptRoot 'build_protocol.ps1')
+$script:lastReportPath=$null
 Write-Host "=== Configuring tests ==="
 Invoke-Checked -FilePath "cmake" -Arguments @("--preset", "tests")
 
-if ($Mode -eq "list") {
+if ($Mode -eq "plan") {
+    if (-not $PlanBatch) { throw 'Plan mode requires a frozen batch ID.' }
+    $planRoot=Join-Path $repositoryRoot '.build\collaboration'
+    $plan=[IO.File]::ReadAllText((Join-Path $planRoot ($PlanBatch+'.plan.json'))) | ConvertFrom-Json
+    if ($plan.schemaVersion -ne 1 -or $plan.batchId -ne $PlanBatch -or $plan.configuration -ne 'Release') { throw 'Invalid frozen testing plan.' }
+    $inventory=Get-TestSelection -TestPreset 'all-tests'
+    $names=@(Resolve-PlanTests $plan $inventory.Tests)
+    $coverage=[pscustomobject]@{schemaVersion=1;batchId=$PlanBatch;mode=$plan.mode;status='running';selected=$names;completed=@();tasks=@();report=$null;error=''}
+    foreach($task in $plan.tasks) {
+        $request=$task.requirement
+        $single=[pscustomobject]@{tests=$request.tests;suites=$request.suites;mode=$(if($request.suites -contains 'none'){'skipped'}elseif($request.requiredFull -or $request.suites -contains 'full'){'full'}else{'selected'});tasks=@()}
+        $coverage.tasks += [pscustomobject]@{participant=$task.participant;requested=@(Resolve-PlanTests $single $inventory.Tests);status=$(if($single.mode -eq 'skipped'){'not-required'}else{'not-run'});reason=$request.reason;failed=@()}
+    }
+    $coveragePath=Join-Path $planRoot ($PlanBatch+'.coverage.json')
+    $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
+    try {
+        $pattern='^(?:'+(($names | ForEach-Object {[regex]::Escape($_)}) -join '|')+')$'
+        $arguments=@('-R',$pattern)
+        if ($plan.mode -eq 'full') { Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset 'tests' -TestPreset 'all-tests'; Test-IsolatedOutput }
+        else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' }
+        $coverage.status='passed'
+    } catch { $coverage.status='failed';$coverage.error=$_.Exception.Message; throw }
+    finally {
+        $coverage.report=$script:lastReportPath
+        if ($script:lastReportPath -and [IO.File]::Exists($script:lastReportPath)) {
+            $report=[xml][IO.File]::ReadAllText($script:lastReportPath)
+            $coverage.completed=@($report.SelectNodes('//testcase') | ForEach-Object {
+                [pscustomobject]@{name=$_.GetAttribute('name');status=$(if($_.SelectSingleNode('failure|error')){'failed'}elseif($_.SelectSingleNode('skipped') -or $_.GetAttribute('status') -in 'notrun','disabled'){'not-run'}else{'passed'});seconds=$_.GetAttribute('time')}
+            })
+            foreach($task in $coverage.tasks) {
+                if($task.status -eq 'not-required'){continue}
+                $actual=@($coverage.completed | Where-Object {$task.requested -contains $_.name})
+                $task.failed=@($actual | Where-Object status -eq 'failed' | ForEach-Object {$_.name})
+                $task.status=if($task.failed.Count){'failed'}elseif($actual.Count -eq $task.requested.Count -and @($actual | Where-Object status -ne 'passed').Count -eq 0){'passed'}else{'not-run'}
+            }
+        }
+        foreach($artifact in @(Get-Field $coverage 'testExecutablesBeforeRun' @())){
+            $path=Join-Path $repositoryRoot $artifact.executable
+            if(-not [IO.File]::Exists($path) -or (Get-FileDigest $path) -ne $artifact.sha256){$coverage.status='invalidated';$coverage.error='Test executable changed during run.'}
+        }
+        $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
+        if($coverage.status -eq 'invalidated'){throw $coverage.error}
+    }
+}
+elseif ($Mode -eq "list") {
         $selection = Get-TestSelection -TestPreset "all-tests"
         foreach ($test in $selection.Tests) {
             $labelProperty = @($test.properties |

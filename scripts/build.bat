@@ -7,6 +7,16 @@ if /i "%~1"=="begin" goto collaboration
 if /i "%~1"=="finish" goto collaboration
 if /i "%~1"=="status" goto collaboration
 if /i "%~1"=="recover" goto collaboration
+if /i "%~1"=="ready" goto collaboration
+if /i "%~1"=="wait" goto collaboration
+if /i "%~1"=="check" goto collaboration
+if /i "%~1"=="plan" goto collaboration
+
+if /i "%~1"=="claim" goto collaboration
+
+if /i "%~1"=="commit" goto collaboration
+
+if /i "%~1"=="issue" goto collaboration
 
 set "RELOAD_SHELL="
 if /i "%~1"=="--reload-shell" (
@@ -20,32 +30,11 @@ if not "%~1"=="" (
 )
 
 if defined RELOAD_SHELL (
-    echo WARNING: --reload-shell stops SnowDesktop and restarts Explorer.
-    taskkill /f /im SnowDesktop.exe >nul 2>&1
-    tasklist /fi "IMAGENAME eq explorer.exe" /nh 2>nul | find /i "explorer.exe" >nul
-    if not errorlevel 1 (
-        taskkill /f /im explorer.exe >nul 2>&1
-        powershell -NoProfile -Command "Start-Sleep -Seconds 2"
-        rem Launch Explorer detached: Start-Process creates the process without
-        rem inheriting this script's console/pipe handles, so captured build
-        rem output pipelines reach EOF instead of hanging forever.
-        powershell -NoProfile -Command "Start-Process explorer.exe -WindowStyle Hidden"
-    )
-    goto configure
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_preflight.ps1" -ReloadShell
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_preflight.ps1"
 )
-
-powershell -NoProfile -Command "$target=[IO.Path]::GetFullPath('.build\Release\SnowDesktop.exe'); try { $blocked=@(Get-Process -Name SnowDesktop -ErrorAction SilentlyContinue | Where-Object { if (-not $_.Path) { throw 'Process path unavailable' }; $_.Path -eq $target }).Count -ne 0 } catch { exit 2 }; if ($blocked) { exit 1 }"
-if errorlevel 1 (
-    echo Build preflight stopped: this build's SnowDesktop.exe is running or its path cannot be checked.
-    echo Exit SnowDesktop normally before building.
-    exit /b 3
-)
-powershell -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build\Release\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build\Release\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop | ForEach-Object { $_.Modules } | Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
-if errorlevel 1 (
-    echo Build preflight stopped: Explorer still has the Release build's SnowDesktopTaskbarHook.dll loaded.
-    echo Run scripts\build.bat --reload-shell only when an Explorer restart is acceptable.
-    exit /b 3
-)
+if errorlevel 1 exit /b 3
 
 :configure
 echo === Configuring CMake (Release preset) ===
@@ -105,5 +94,7 @@ echo Agent and automation usage is available through scripts\release.bat COMMAND
 exit /b 0
 
 :collaboration
+rem Automatically ensure the read-only monitor; unavailable Python/port must not block builds.
+python.exe "%~dp0..\tools\build-dashboard\manage.py" start >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_manager.ps1 %*
 exit /b %ERRORLEVEL%

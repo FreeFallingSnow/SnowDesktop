@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SnowDesktop · 构建状态</title><link rel="icon" href="/app-icon.png" type="image/png"><link rel="stylesheet" href="/style.css"></head>
+<body><div class="shell">
+<header><div class="brand"><img class="app-icon" src="/app-icon.png" alt="SnowDesktop 软件图标"><div><strong>SnowDesktop</strong><p>协作构建 / BUILD MONITOR</p></div></div><div class="connection"><span id="signal" class="dot"></span><span id="connection">连接中</span><small>仅本机 · 只读</small></div></header>
+<aside id="fixture" hidden>模拟数据 / FIXTURE — 此页面不代表真实构建结果</aside>
+<main><section class="hero"><div><p class="eyebrow">共享目录 · 共同结果</p><h1 id="headline">读取协作状态</h1><p id="description">完成编辑后，等待同批任务就绪。</p></div><div class="batch"><span>当前查看的批次</span><code id="batch">—</code><span id="stamp">—</span></div></section>
+<div class="metrics"><article><span>参与任务</span><strong id="taskCount">—</strong><small id="readyCount">等待登记</small></article><article><span>当前阶段</span><strong id="stage">未知</strong><small id="stageNote">从实际日志判断</small></article><article><span>测试执行</span><strong id="testCount">未知</strong><small id="coverage">等待冻结测试计划</small></article><article><span>输入与证据</span><strong id="freshness">未冻结</strong><small id="inputNote">记录与批次绑定</small></article></div>
+<div class="columns"><section class="panel tasks"><div class="section-title"><h2>参与者</h2><span>编辑 → 检查 → 等待</span></div><div id="tasks" class="task-list"></div><p class="muted footnote">仅显示登记的协作调用者。陈旧登记需要诊断与显式恢复；不会自动视为完成。</p></section>
+<section class="panel evidence"><div class="section-title"><h2>验证与交接</h2><span id="owner">—</span></div><div id="evidence"></div></section></div>
+<section class="panel logs"><div class="section-title"><h2>构建日志</h2><div><span id="logHint">等待日志</span><button id="pause" type="button">暂停滚动</button></div></div><pre id="log" tabindex="0">尚无本批日志。</pre><p class="muted">增量读取，显示最近 180 行。并行构建阶段由日志推断；未报告的总量显示为未知。</p></section>
+<section class="panel history"><div class="section-title"><h2>历史批次</h2><button id="current" type="button">返回当前批次</button></div><div id="history"></div><p class="muted">历史通过仅对应当时的输入与输出，不能代替当前源码的验证。</p></section></main>
+<footer><span id="updated">—</span><span>关闭网页不会停止构建。协作命令自动确保看板运行；可用 build-dashboard.bat 手动停止。</span></footer>
+</div><script src="/app.js"></script></body></html>

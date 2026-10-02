@@ -84,6 +84,13 @@ function Wait-Until([scriptblock]$Condition, [string]$Message, $ObservedRun = $n
     }
 }
 function Start-Command([string]$Arguments) {
+    if($Arguments -match '^finish ([a-zA-Z0-9._-]+) -Batch ([a-f0-9]{32})' -and $Arguments -notmatch '-Revision') {
+        $taskId=$Matches[1];$batchId=$Matches[2]
+        $st=State;$part=$null
+        if($st.current -and $st.current.id -eq $batchId){$part=@($st.current.participants|Where-Object id -eq $taskId)|Select-Object -First 1}
+        else{$rp=Join-Path $fixture ('.build\collaboration\'+$batchId+'.json');if(Test-Path -LiteralPath $rp){$part=@(([IO.File]::ReadAllText($rp)|ConvertFrom-Json).participants|Where-Object id -eq $taskId)|Select-Object -First 1}}
+        if($part){$rev=if($part.PSObject.Properties['editRevision']){$part.editRevision}else{0};$Arguments+=' -Revision '+$rev}
+    }
     $token = [Guid]::NewGuid().ToString('N')
     $output = Join-Path $fixture ($token + '.out')
     $errorFile = Join-Path $fixture ($token + '.err')
@@ -150,14 +157,22 @@ function Compare-Results($First, $Second) {
 try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\scripts\build_manager.ps1'),
         (Join-Path $PSScriptRoot '..\scripts\build_inputs.ps1'),
-        (Join-Path $PSScriptRoot '..\scripts\build_job.cs') -Destination $scripts
+        (Join-Path $PSScriptRoot '..\scripts\build_job.cs'),
+        (Join-Path $PSScriptRoot '..\scripts\build_protocol.ps1'),
+        (Join-Path $PSScriptRoot '..\scripts\build_ownership.ps1'),
+        (Join-Path $PSScriptRoot '..\scripts\build_preflight.ps1'),
+        (Join-Path $PSScriptRoot '..\scripts\build_waiter.ps1') -Destination $scripts
+    [IO.File]::WriteAllText((Join-Path $scripts 'build_batch_tests.ps1'), 'param([string]$Batch)' + "`r`n" + '& (Join-Path $PSScriptRoot fake.ps1) -Phase test; exit $LASTEXITCODE', $utf8)
     $fake = @'
-param([string]$Phase)
+param([string]$Phase, [string]$BuildArgument = '')
 $ErrorActionPreference = 'Stop'
 $root = [IO.Directory]::GetParent($PSScriptRoot).FullName
 [IO.File]::AppendAllText((Join-Path $root 'calls.txt'), $Phase + "`r`n")
+if ($Phase -eq 'build') {
+    [IO.File]::WriteAllText((Join-Path $root 'child.pid'), $PID.ToString())
+    [IO.File]::WriteAllText((Join-Path $root 'build-arguments.txt'), $BuildArgument)
+}
 [IO.File]::WriteAllText((Join-Path $root ($Phase + '-started')), 'started')
-if ($Phase -eq 'build') { [IO.File]::WriteAllText((Join-Path $root 'child.pid'), $PID.ToString()) }
 $timer = [Diagnostics.Stopwatch]::StartNew()
 while (Test-Path -LiteralPath (Join-Path $root ('hold-' + $Phase))) {
     if ($timer.Elapsed.TotalSeconds -gt 30) { throw 'Fixture gate was not released' }
@@ -174,7 +189,7 @@ exit 0
     [IO.File]::WriteAllText((Join-Path $scripts 'fake.ps1'), $fake, $utf8)
     foreach ($phase in @('build', 'test')) {
         $batchScript = '@echo off' + "`r`n" +
-            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake.ps1" -Phase ' + $phase + "`r`n" +
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake.ps1" -Phase ' + $phase + ' -BuildArgument "%~1"' + "`r`n" +
             'exit /b %ERRORLEVEL%' + "`r`n"
         [IO.File]::WriteAllText((Join-Path $scripts ($phase + '.bat')), $batchScript, $utf8)
     }
@@ -206,7 +221,7 @@ exit 0
     Call ('finish task-a -Batch ' + $a.batchId + ' -WaitSeconds 1') 2 | Out-Null
     Check ((State).current.participants.Count -eq 2) 'Wait timeout must retain both registrations'
     $duplicate = Start-Command ('finish task-a -Batch ' + $a.batchId)
-    Wait-Until { [IO.File]::Exists($duplicate.errorFile) -and (Read-SharedText $duplicate.errorFile) -match 'Waiting for this batch' } 'duplicate finish waits'
+    Wait-Until { [IO.File]::Exists($duplicate.errorFile) -and (Read-SharedText $duplicate.errorFile) -match 'Waiting for this batch|Waiting for the collaboration state transaction' } 'duplicate finish waits'
     $originalRegistration = (State).current.participants[0].registeredUtc
     $reopened = Call 'begin task-a'
     $reopenedState = State
@@ -223,8 +238,9 @@ exit 0
     Check ((State).current.participants[0].state -eq 'editing' -and (Counts).Count -eq 0) 'Superseded finish waiters must not finish the reopened editor or start a build'
     $repeatedReopen = Call 'begin task-a'
     Check ($repeatedReopen.batchId -eq $a.batchId -and (State).current.participants[0].editRevision -eq 1) 'Repeated begin must keep the reopened edit revision stable'
-    $first = Start-Command ('finish task-a -Batch ' + $a.batchId)
+    $first = Start-Command ('finish task-a -Batch ' + $a.batchId + ' -ReloadShell')
     Wait-Until { (State).current.participants[0].state -eq 'finished' } 'reopened A finishes'
+    Check ((Counts).Count -eq 0 -and -not [IO.File]::Exists((Join-Path $fixture 'build-arguments.txt'))) 'Requesting Shell reload must not start cleanup while another participant edits'
     $duplicate = Start-Command ('finish task-a -Batch ' + $a.batchId)
     $last = Start-Command ('finish task-b -Batch ' + $b.batchId)
     Wait-Until {
@@ -232,6 +248,7 @@ exit 0
         Test-Path -LiteralPath (Join-Path $fixture 'build-started')
     } 'single build starts' $last
     Check ((Counts).Count -eq 1) 'Concurrent finish callers must trigger exactly one build'
+    Check ([IO.File]::ReadAllText((Join-Path $fixture 'build-arguments.txt')) -eq '--reload-shell') 'The actual owner must receive the waiting participant explicit reload request'
     $pending = Start-Command 'begin task-c'
     Call 'begin task-d -WaitSeconds 1' 2 | Out-Null
     Check (-not $pending.process.HasExited -and (State).current.participants.Count -eq 2) 'New begin must wait without entering the frozen batch'
@@ -251,6 +268,7 @@ exit 0
     Compare-Results $resultA (Call ('status -Batch ' + $a.batchId))
     Check ((State).current.participants.Count -eq 1 -and (State).current.participants[0].id -eq 'task-c') 'Publishing the old result must preserve the new registration'
     Call ('finish task-c -Batch ' + $c.batchId) | Out-Null
+    Check ([IO.File]::ReadAllText((Join-Path $fixture 'build-arguments.txt')) -eq '') 'A new batch must not inherit Shell reload from the previous batch'
     Check ((Counts).Count -eq 4) 'The next batch must independently build and test once'
     Write-Output 'PASS overlapping editors, reopen before build, superseded finish isolation, duplicate calls, fixed batch, common result, begin/build race, next-batch isolation'
 

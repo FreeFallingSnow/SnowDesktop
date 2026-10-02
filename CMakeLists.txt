@@ -2519,3 +2519,23 @@ if (BUILD_TESTING)
             -AllowMissingFirstPartyRuntime
         DEPENDS ${SNOWDESKTOP_TEST_TARGETS})
 endif()
+
+
+# Local collaboration tool regression. Existing runtimes only; no installation.
+if(BUILD_TESTING AND WIN32)
+    find_program(SNOWDESKTOP_PYTHON_EXECUTABLE NAMES python.exe python)
+    if(SNOWDESKTOP_PYTHON_EXECUTABLE)
+        add_test(NAME build_workflow COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_workflow_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(build_workflow PROPERTIES LABELS "integration;tools" TIMEOUT 180)
+        add_test(NAME build_plan_execution COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_plan_execution_tests.py")
+        set_tests_properties(build_plan_execution PROPERTIES LABELS "tools;core" TIMEOUT 120)
+        add_test(NAME build_dashboard COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_dashboard_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(build_dashboard PROPERTIES LABELS "tools;core" TIMEOUT 60)
+        add_test(NAME build_dashboard_browser COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_dashboard_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}" --browser)
+        set_tests_properties(build_dashboard_browser PROPERTIES LABELS "manual;integration;tools" TIMEOUT 180)
+    endif()
+endif()

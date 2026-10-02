@@ -53,7 +53,7 @@ function Get-BuildInputIdentity([string]$Root) {
     [string[]]$ordered = @($paths)
     [Array]::Sort($ordered, [StringComparer]::Ordinal)
     $content = New-Object Text.StringBuilder
-    [void]$content.Append("sha256-repository-inputs-v1`nHEAD`0$head`n")
+    [void]$content.Append("sha256-repository-inputs-v2`n")
     $sha = [Security.Cryptography.SHA256]::Create()
     $encoding = New-Object Text.UTF8Encoding($false)
     try {
@@ -79,5 +79,5 @@ function Get-BuildInputIdentity([string]$Root) {
         $digest = [BitConverter]::ToString($sha.ComputeHash($encoding.GetBytes($content.ToString()))).Replace('-', '').ToLowerInvariant()
     }
     finally { $sha.Dispose() }
-    return [pscustomobject]@{ algorithm = 'sha256-repository-inputs-v1'; digest = $digest; fileCount = $ordered.Count; head = $head }
+    return [pscustomobject]@{ algorithm = 'sha256-repository-inputs-v2'; digest = $digest; fileCount = $ordered.Count; head = $head }
 }

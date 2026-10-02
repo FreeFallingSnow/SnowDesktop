@@ -143,6 +143,12 @@ scripts\build.bat status -Batch <batchId>
 旧成功结果。未重新打开登记的等待者取得同一份持久化结果。`status -Batch` 用于读取历史，
 它不验证当前改动；早于输入校验功能的成功记录也只能作为历史查询。
 
+确认当前构建输出被 SnowDesktop 或 Hook 占用时，可显式使用
+`scripts\build.bat finish task-a -Batch <batchId> -ReloadShell`。此请求保存在本批，
+由实际取得构建权的参与者传入标准 `build.bat --reload-shell`；等待其他编辑者时不执行清理，
+无此参数时维持默认不终止应用的行为。执行前告知关闭 SnowDesktop、短暂重启 Explorer 的副作用，
+并在整个构建和测试结束前避免重新打开被链接的应用。新批次不会继承此参数。
+
 `finish` 后需要继续修改时，先查询 `status`，再用同一任务 ID 调用 `begin`。
 批次仍为 `editing` 时，`begin` 在原批次重新打开已完成的登记、清除完成时间，不重复添加参与者；
 只有收到成功登记结果后才可编辑。旧的 `finish` 等待进程会以退出码 2 结束并提示登记已重新打开，
@@ -164,7 +170,7 @@ scripts\build.bat status -Batch <batchId>
 
 冻结成员后、启动构建前记录 `inputStart`；构建与测试结束后记录 `inputEnd`。摘要使用
 SHA-256，包含 Git 的已跟踪和未忽略的新增文件的相对路径与实际内容，因而覆盖未提交内容、
-删除与重命名；同时包含 HEAD、`CMakeUserPresets.json`（即使被 Git 忽略）和相关工具链/SDK
+删除与重命名；HEAD 仅作为元数据记录，摘要不包含提交身份；另包含`CMakeUserPresets.json`（即使被 Git 忽略）和相关工具链/SDK
 环境路径。所有参与者的结果绑定同一个批次、输入摘要及原始 `pipelineExitCode`。
 生成输出、协调状态、忽略的探测/报告目录和根目录说明文档不参与摘要，避免构建自触发；
 运行时分发的 notices 和组件 Skill 等资源仍属于输入。外置报告放在仓库之外或 `.codex-probes/`。
@@ -234,3 +240,49 @@ ctest --test-dir .build -C Release -R "^widget_author_tools$" --no-tests=error -
 `profile.bat` 是默认关闭的性能采集入口。`status` 查询当前宿主能力，
 `capture -Seconds 60` 采集并生成 JSON/CSV，`start` / `stop -Session ...`
 支持异步自动化控制，`report` / `compare` 支持离线分析。
+
+## 协作协议 v2：非阻塞就绪、检查与选择计划
+
+`begin` 返回 `batchId` 与 `editRevision`。开始写文件前登记；各对话使用独立 ID。
+`claim` 用同一状态锁检查路径及父目录冲突，不会解决同文件的修改合并。已有脏文件必须先审阅，再显式 `-AdoptExistingChanges`；没有声明的老参与者会显示为未确定所有权。
+
+```bat
+scripts\build.bat begin task-a
+scripts\build.bat claim task-a -Batch <batchId> -Revision <editRevision> -Files src/my_module.cpp,tests/my_module_tests.cpp
+scripts\build.bat plan task-a -Batch <batchId> -Revision <editRevision> -Scope module -Suites selected -Tests my_module -Inputs src/my_module.cpp,tests/my_module_tests.cpp -Reason "reviewed independent module; dependency mapping to my_module"
+scripts\build.bat ready task-a -Batch <batchId> -Revision <editRevision>
+scripts\build.bat status -Batch <batchId>
+scripts\build.bat wait task-a -Batch <batchId> -Revision <editRevision>
+```
+
+示例测试名必须替换为 `scripts\test.bat list` 的实际名称。`ready` 原子标记就绪、记录输入并排队内置轻量检查，返回后由隐藏的独立等待进程接管，无需占住调用终端。重复调用不会重复开启同修订的存活等待者；所有参与者共用冻结批次结果。`wait` 只观察，不会替正在编辑的任务完成登记。兼容的阻塞 `finish` 在新批次也必须带修订号；推荐 `ready`。
+
+等待阶段可只读审查接口、签名、夹具、测试名称、静态语法及已有可复用证据。内置 `check` 只做差异空白、变化的 PowerShell 和指定构建 JSON 语法及输出占用观察，不声称完成原生编译、接口语义审查或宿主 UI 验收。
+
+```bat
+scripts\build.bat check task-a -Batch <batchId> -Revision <editRevision>
+scripts\build.bat begin task-a
+rem begin 成功返回后才能修复文件；使用新 editRevision 重报 plan，再 ready
+```
+
+检查输入、编辑修订及 operationId 一起持久化。失败、中断、待执行或失效的检查挡住冻结；异常退出不会当作通过。`check` 可显式重试已退出检查的只读评估；需要写入时先 `begin` 原子重开。旧进程或旧修订命令无权标记新编辑完成；重开后旧计划与证据失效。检查结束与冻结都核对输入，范围中的内容变化需要重开/更新计划；不自动把编辑者的异常退出变成完成。
+
+测试计划接受 `full/core/fast/selected/none` 与字面 CTest 名称，拒绝 shell/regex。未知影响、公共接口、基础设施和声明的构建/公共路径按规则升级为全量自动测试；全量排除 manual，显式声明的 manual 仍执行。独立模块允许选定测试；文档、独立组件或工具可按现有规则 `-Suites none`，必须有输入范围与审查/豁免理由；这会报告 `skipped/not-required`，不声称宿主通过。空集合、未知名称、失败、跳过或未运行不算通过。源码依赖关系仍需要人/Agent 审阅，脚本不自动推导 C++ 依赖。
+
+冻结时合并、去重并持久化 `<batch>.plan.json`，之后不可改写；`coverage.json` 记录每个任务请求、实际覆盖、失败和执行前测试二进制 SHA-256。覆盖关联不是缺陷责任认定。源码摘要 v2 按文件内容计算，HEAD 作为元数据，不因只改变提交身份而失效。结果另记实际构建阶段及可观测输出二进制身份。端点身份检查不能排除构建途中改动后恢复、外部 SDK 或未登记写入者。
+
+全部就绪后只读核对输出占用；没有明确授权则保留编辑批次、等待占用释放。当前执行者获得冻结和构建权后才使用显式 `ready/finish -ReloadShell` 授权，优先关闭已核对路径的应用，必要时重载确实占用输出的 Explorer。无法核对身份的进程不得终止。新批次不继承授权；普通 `begin/status/check` 不会停止应用。
+
+Git 提交使用协作事务租约与明确认领的路径，不把其他任务的暂存文件混进提交，也不 reset/stash：
+
+```bat
+scripts\build.bat commit task-a -Batch <batchId> -Revision <editRevision> -Files src/my_module.cpp,tests/my_module_tests.cpp -MessageFile C:\Temp\task-a-commit.txt
+scripts\build.bat issue task-a -Batch <batchId> -Reason "Alpha failed; reproduction and logs reviewed" -Assignee task-b
+scripts\build.bat issue task-b -Batch <batchId> -IssueId <issueId> -IssueState deferred -Assignee task-b -Reason "repair in next batch; old result retained"
+```
+
+消息文件使用 UTF-8，并遵守双语提交规范。Git 租约只约束合作调用者；手动 Git、Git hook 自己的修改及同文件混合修改仍需协调。事务保存 parent/commit/实际路径和其他 index 条目稳定性；异常时保留证据，无回滚或覆盖用户修改。问题交接单独持久化，失败责任初始未分配；不得按测试请求者自动归责或重写冻结结果。
+
+热升级不强制迁移活动 v1 批次。其 `begin/finish/status/recover` 合同继续保留，`ready/check/plan` 拒绝并要求下一批启用；已在运行的旧 PowerShell 使用其启动时加载的逻辑，无法被新文件追溯升级。旧结果只能按其证据查询，不充当新协议验证。不要删除活动登记强行换协议。
+
+看板由协作入口自动启动，地址和手动停启详见 [本地看板](../tools/build-dashboard/README.md)。

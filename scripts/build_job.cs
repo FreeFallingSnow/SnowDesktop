@@ -62,6 +62,30 @@ namespace SnowDesktop.Build
         }
 
         public static int Run(string directory, string logPath)
+        { return RunCommand(directory, logPath, "call scripts\\build.bat && call scripts\\test.bat"); }
+
+        public static int RunBatch(string directory, string logPath, string batch, bool build)
+        {
+            if (batch == null || batch.Length != 32 || !System.Text.RegularExpressions.Regex.IsMatch(batch, "^[a-f0-9]{32}$"))
+                throw new ArgumentException("Invalid batch identity");
+            string command = (build ? "call scripts\\build.bat && " : "") +
+                "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
+            return RunCommand(directory, logPath, command);
+        }
+
+        public static int Run(string directory, string logPath, bool reloadShell)
+        { return RunCommand(directory, logPath, "call scripts\\build.bat" + (reloadShell ? " --reload-shell" : "") + " && call scripts\\test.bat"); }
+
+        public static int RunBatch(string directory, string logPath, string batch, bool build, bool reloadShell)
+        {
+            if (batch == null || !System.Text.RegularExpressions.Regex.IsMatch(batch, "^[a-f0-9]{32}$"))
+                throw new ArgumentException("Invalid batch identity");
+            string command = (build ? "call scripts\\build.bat" + (reloadShell ? " --reload-shell" : "") + " && " : "") +
+                "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
+            return RunCommand(directory, logPath, command);
+        }
+
+        static int RunCommand(string directory, string logPath, string pipeline)
         {
             IntPtr job = IntPtr.Zero, output = IntPtr.Zero, input = IntPtr.Zero;
             IntPtr attributes = IntPtr.Zero, handles = IntPtr.Zero, jobList = IntPtr.Zero;
@@ -105,7 +129,7 @@ namespace SnowDesktop.Build
                 startup.startup.output = startup.startup.error = output;
                 startup.attributes = attributes;
                 string cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
-                StringBuilder command = new StringBuilder("\"" + cmd + "\" /d /s /c \"call scripts\\build.bat && call scripts\\test.bat\"");
+                StringBuilder command = new StringBuilder("\"" + cmd + "\" /d /s /c \"" + pipeline + "\"");
                 Check(CreateProcess(cmd, command, IntPtr.Zero, IntPtr.Zero, true,
                     0x80000 | 0x8000000, IntPtr.Zero, directory, ref startup, out process));
                 Check(WaitForSingleObject(process.process, uint.MaxValue) == 0);

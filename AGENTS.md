@@ -580,3 +580,11 @@
   - 优先只删除 `CMakeCache.txt` 和 `CMakeFiles/`，保留 `Release/data/`；
   - 如确需完整清理 `.build`，必须先向用户说明数据丢失风险并等待确认；
   - 清理前应尝试将 `.build\Release\data\` 备份到安全位置。
+
+
+## 协作构建调用补充
+
+- 新批次保存 `begin` 返回的 `batchId/editRevision`；推荐 `plan` 声明本任务按现有规则所需的测试、影响范围及豁免依据，`ready ID -Batch B -Revision R` 非阻塞就绪，`status/wait` 观察共同结果。新协议 `finish/wait` 必须带修订号。
+- 就绪后继续只读走查；若发现需改文件，先用同 ID `begin` 原子重开并使用新的修订号重报计划。检查失败或中断必须显式处理，不能当作完成。
+- 写文件前 `claim` 声明范围并协调冲突；有既存改动先审查，必要时显式 `-AdoptExistingChanges`。提交使用 `commit ... -Files ... -MessageFile ...`，保留其他暂存内容。失败交接使用 `issue`，不得自动归责或清除其他活动登记。
+- 看板随协作入口自动启动，直接查看 `http://127.0.0.1:8765/`；不会因为页面关闭而停止构建。活动旧协议批次不强制迁移。准确参数与恢复约定见 `scripts/README.md` 和 `tools/build-dashboard/README.md`；协调实现留在脚本中。

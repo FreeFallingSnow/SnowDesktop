@@ -1,12 +1,19 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('begin', 'finish', 'status', 'recover')][string]$Command,
+    [ValidateSet('begin', 'ready', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover')][string]$Command,
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [ValidateRange(1, 86400)][int]$WaitSeconds = 86400,
     [switch]$ConfirmStopped,
-    [string]$Reason
+    [switch]$ReloadShell,
+    [string]$Reason,
+    [long]$Revision = -1,
+    [ValidateSet('unknown','module','docs','component','tool','public','infrastructure')][string]$Scope = 'unknown',
+    [string]$Suites = 'full', [string]$Tests = '', [string]$Inputs = '',
+    [switch]$AdoptExistingChanges, [string]$Files = '', [string]$MessageFile = '',
+    [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
+    [switch]$AutoCheck
 )
 
 Set-StrictMode -Version Latest
@@ -20,6 +27,10 @@ $hasFinishedCurrentBatch = $false
 $finishedRevision = $null
 $utf8 = New-Object Text.UTF8Encoding($false)
 . (Join-Path $PSScriptRoot 'build_inputs.ps1')
+. (Join-Path $PSScriptRoot 'build_protocol.ps1')
+. (Join-Path $PSScriptRoot 'build_ownership.ps1')
+. (Join-Path $PSScriptRoot 'build_preflight.ps1')
+$observedRevision = $null
 
 function Write-AtomicJson($Value, [string]$Path) {
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
@@ -110,11 +121,11 @@ function Owner-State($Owner) {
 }
 function New-Result($Current, [string]$Outcome, [int]$Code, [string]$ErrorText) {
     return [pscustomobject]@{
-        schemaVersion = 1; batchId = $Current.id; repositoryRoot = $repositoryRoot
+        schemaVersion = 1; protocolVersion=(Get-Field $Current 'protocolVersion' 1); batchId = $Current.id; repositoryRoot = $repositoryRoot
         outcome = $Outcome; exitCode = $Code; error = $ErrorText
         createdUtc = $Current.createdUtc; buildStartedUtc = $Current.buildStartedUtc
         completedUtc = [DateTime]::UtcNow.ToString('o'); participants = @($Current.participants)
-        logPath = $Current.logPath; commands = @('scripts\build.bat', 'scripts\test.bat')
+        logPath = $Current.logPath; commands = if(Get-Field $Current 'testingPlan'){@($(if($Current.testingPlan.buildRequired){'scripts\build.bat'});'scripts\build_batch_tests.ps1 -Batch '+$Current.id)}else{@('scripts\build.bat','scripts\test.bat')}
         inputStart = if ($Current.PSObject.Properties['inputStart']) { $Current.inputStart } else { $null }
         inputEnd = $null; inputCheck = 'not-run'; pipelineExitCode = $null
     }
@@ -129,26 +140,83 @@ function Publish-Result($State, $Result) {
     $State.current = $null
     Write-AtomicJson $State $statePath
 }
+function Start-ReadyWorker($Current, $Entry) {
+    $existing = Get-Field $Entry 'waiter'
+    if ($existing -and (Get-Field $existing 'editRevision' -1) -eq (Get-EditRevision $Entry) -and (Owner-State $existing) -eq 'alive') { return $existing }
+    $revision = Get-EditRevision $Entry
+    $waiterScript=Join-Path $PSScriptRoot 'build_waiter.ps1'
+    $arguments='-NoProfile -ExecutionPolicy Bypass -File "'+$waiterScript+'" -Participant '+$Entry.id+' -Batch '+$Current.id+' -Revision '+$revision
+    $info=New-Object Diagnostics.ProcessStartInfo
+    $info.FileName=Join-Path $PSHOME 'powershell.exe';$info.Arguments=$arguments
+    $info.UseShellExecute=$true;$info.WindowStyle='Hidden';$info.WorkingDirectory=$repositoryRoot
+    $worker=[Diagnostics.Process]::Start($info)
+    try {
+        $null = $worker.Handle
+        $owner = [pscustomobject]@{ pid=$worker.Id; startTicks=$worker.StartTime.ToUniversalTime().Ticks.ToString(); editRevision=$revision }
+        Set-Field $Entry 'waiter' $owner
+        return $owner
+    } finally { $worker.Dispose() }
+}
+function Start-CheckRecord($Current, $Entry) {
+    $plan = Get-Field $Entry 'testPlan'
+    if (-not $plan) { $plan=Default-TaskPlan $Entry }
+    $start = Get-TaskIdentity $plan
+    $record = [pscustomobject]@{ operationId=[Guid]::NewGuid().ToString('N'); status='running'; source='builtin-basic';
+        editRevision=(Get-EditRevision $Entry); startedUtc=[DateTime]::UtcNow.ToString('o'); completedUtc=$null;
+        owner=[pscustomobject]@{pid=$PID;startTicks=(Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()};
+        inputStart=$start; inputEnd=$null; summary=$null; reason='' }
+    Set-Field $Entry 'check' $record
+    return [pscustomobject]@{ batchId=$Current.id; participant=$Entry.id; revision=(Get-EditRevision $Entry); record=$record; plan=$plan }
+}
+function Complete-CheckRecord($Selection) {
+    $report=$Selection.record; $code=3
+    try {
+        $report.summary=Invoke-LightCheck $Selection.plan
+        Set-Field $report.summary 'preflight' (Get-ReadOnlyPreflight $repositoryRoot)
+        $report.inputEnd=Get-TaskIdentity $Selection.plan
+        $report.status=if($report.inputStart.digest -ne $report.inputEnd.digest){'invalidated'}elseif($report.summary.passed){'passed'}else{'failed'}
+        $code=if($report.status -eq 'passed'){0}elseif($report.status -eq 'invalidated'){5}else{3}
+    } catch { $report.status='failed'; $report.reason=$_.Exception.Message }
+    $report.completedUtc=[DateTime]::UtcNow.ToString('o')
+    $lease=Lock-State
+    try {
+        $latest=Read-State; $entry=$null
+        if ($latest.current -and $latest.current.id -eq $Selection.batchId) { $entry=@($latest.current.participants | Where-Object id -eq $Selection.participant) | Select-Object -First 1 }
+        $active=Get-Field $entry 'check'
+        if (-not $entry -or (Get-EditRevision $entry) -ne $Selection.revision -or -not $active -or $active.operationId -ne $report.operationId) {
+            $report.status='superseded'; $report.reason='Registration/check changed; this operation has no completion authority.'; $code=2
+        } else { Set-Field $entry 'check' $report; Write-AtomicJson $latest $statePath }
+        Write-AtomicJson $report (Join-Path $stateRoot ($report.operationId + '.check.json'))
+    } finally { $lease.Dispose() }
+    return [pscustomobject]@{ check=$report; exitCode=$code }
+}
 function Emit-Result($Result) {
     ConvertTo-Json -InputObject $Result -Depth 20
     exit $Result.exitCode
 }
 
 try {
-    if ($Command -in 'begin', 'finish' -and -not $Participant) { throw "$Command requires a participant ID." }
-    if ($Command -in 'finish', 'recover' -and -not $Batch) { throw "$Command requires -Batch from begin; this prevents mixing batches." }
+    if ($ReloadShell -and $Command -notin 'ready','finish') { throw '-ReloadShell is only valid with finish.' }
+    if ($Command -in 'begin', 'ready', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue' -and -not $Participant) { throw "$Command requires a participant ID." }
+    if ($Command -in 'ready', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'recover' -and -not $Batch) { throw "$Command requires -Batch from begin; this prevents mixing batches." }
     if ($Command -eq 'begin' -and $Batch) { throw 'begin allocates its batch ID; do not supply -Batch.' }
     if ($Command -eq 'recover' -and (-not $ConfirmStopped -or [string]::IsNullOrWhiteSpace($Reason))) {
         throw 'Recovery requires -ConfirmStopped and -Reason after inspecting status and confirming the editor/build is stopped.'
     }
+    if ($Command -in 'ready','check','plan','claim','commit' -and $Revision -lt 0) { throw "$Command requires -Revision from begin; stale commands must not finish a new edit round." }
     [void][IO.Directory]::CreateDirectory($stateRoot)
     while ($true) {
         $metadata = Lock-State
         $buildLease = $null
         $selected = $null
+        $checkSelected = $null
+        $commitSelected = $null; $gitLease = $null
         try {
             $state = Read-State
             $current = $state.current
+            if($Command -in 'begin','ready','finish','plan','claim','recover') {
+                $gitProbe=Try-Lease 'git.lock';if(-not $gitProbe){throw 'A Git transaction is running; retry after its receipt is durable.'};$gitProbe.Dispose()
+            }
             $result = if ($Batch) { Read-Result $Batch } else { $null }
             if ($Command -eq 'status') {
                 if ($null -ne $result) { ConvertTo-Json -InputObject $result -Depth 20; exit 0 }
@@ -166,12 +234,14 @@ try {
                 ConvertTo-Json -InputObject ([pscustomobject]@{ schemaVersion = 1; stateRoot = $stateRoot; current = $diagnostic }) -Depth 20
                 exit 0
             }
-            if ($Command -eq 'finish' -and $null -ne $result) {
+            if ($Command -in 'finish','wait' -and $null -ne $result) {
                 if ($null -ne $current -and $current.id -ne $Batch -and
                     @($current.participants | Where-Object id -eq $Participant).Count -gt 0) {
                     throw 'This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.'
                 }
                 if (@($result.participants | Where-Object id -eq $Participant).Count -ne 1) { throw 'Participant does not belong to this result.' }
+                if((Get-Field $result 'protocolVersion' 1) -ge 2 -and $Revision -lt 0){throw 'Result requires persisted edit revision.'}
+                Assert-EditRevision (@($result.participants | Where-Object id -eq $Participant)[0]) $Revision
                 $completedEntry = @($result.participants | Where-Object id -eq $Participant)[0]
                 if ($null -ne $finishedRevision -and (Participant-Revision $completedEntry) -ne $finishedRevision) {
                     throw 'This finish was superseded by a reopened registration. Use finish for the current edit revision.'
@@ -180,6 +250,7 @@ try {
                     if (-not $result.PSObject.Properties['inputEnd'] -or $null -eq $result.inputEnd) {
                         throw 'This historical result has no input identity. Read it with status; begin a new batch to verify edits.'
                     }
+                    Assert-ResultBinaries $result
                     $nowInputs = Get-BuildInputIdentity $repositoryRoot
                     if ($nowInputs.digest -ne $result.inputEnd.digest) {
                         throw 'Repository inputs differ from this historical result. Use status for history; begin a new batch for current edits.'
@@ -193,16 +264,17 @@ try {
                 }
                 if ($null -eq $current) {
                     $current = [pscustomobject]@{
-                        id = [Guid]::NewGuid().ToString('N'); phase = 'editing'; participants = @()
+                        id = [Guid]::NewGuid().ToString('N'); protocolVersion = 2; phase = 'editing'; participants = @()
                         createdUtc = [DateTime]::UtcNow.ToString('o'); buildStartedUtc = $null; owner = $null; logPath = $null; inputStart = $null
                     }
                     $state.current = $current
                 }
                 if ($current.phase -eq 'editing') {
                     $entry = @($current.participants | Where-Object id -eq $Participant)
+                    if ($entry.Count -eq 1 -and $entry[0].state -eq 'finished') { Reopen-Entry $entry[0]; Write-AtomicJson $state $statePath }
                     if ($entry.Count -eq 0) {
                         $current.participants = @($current.participants) + @([pscustomobject]@{
-                            id = $Participant; state = 'editing'; registeredUtc = [DateTime]::UtcNow.ToString('o')
+                            id = $Participant; state = 'editing'; editRevision = 0; registeredUtc = [DateTime]::UtcNow.ToString('o')
                             finishedUtc = $null; withdrawalReason = $null
                         })
                         Write-AtomicJson $state $statePath
@@ -214,9 +286,77 @@ try {
                         Write-AtomicJson $state $statePath
                     }
                     elseif ($entry[0].state -ne 'editing') { throw 'This participant was withdrawn. Use a different task ID or wait for the batch result.' }
-                    ConvertTo-Json -InputObject ([pscustomobject]@{ participant = $Participant; batchId = $current.id; state = 'editing' })
+                    ConvertTo-Json -InputObject ([pscustomobject]@{ participant = $Participant; batchId = $current.id; state = 'editing'; editRevision=(Get-EditRevision (@($current.participants | Where-Object id -eq $Participant)[0])) })
                     exit 0
                 }
+            }
+            elseif ($Command -in 'plan','ready','check','claim','commit') {
+                if (-not $current -or $current.id -ne $Batch -or $current.phase -ne 'editing') { throw 'Batch is frozen/retired. Use begin and wait for the next permitted editing window; no current input was changed.' }
+                $entries=@($current.participants | Where-Object id -eq $Participant)
+                if ($entries.Count -ne 1 -or $entries[0].state -eq 'withdrawn') { throw 'Participant is not active.' }
+                $entry=$entries[0]; Assert-EditRevision $entry $Revision
+                if ($Command -in 'ready','check','plan' -and (Get-Field $current 'protocolVersion' 1) -lt 2) { throw 'Legacy active batch: keep finish contract; advanced ready/plan/check begin with the next batch. No live migration.' }
+                if ($Command -in 'claim','commit') {
+                    if($entry.state -ne 'editing'){throw 'Claim/commit require begin/reopen before changing files or Git.'}
+                    if($Command -eq 'claim'){
+                        Set-Ownership $current $entry $Files $AdoptExistingChanges
+                        Write-AtomicJson $state $statePath
+                        $entry | ConvertTo-Json -Depth 10; exit 0
+                    }
+                    $gitLease=Try-Lease 'git.lock'; if(-not $gitLease){throw 'A cooperating Git transaction is running. Retry; shared index was not changed.'}
+                    $commitSelected=[pscustomobject]@{batchId=$Batch;participant=$Participant;editRevision=$Revision;ownedFiles=@(Get-Field $entry 'ownedFiles' @())}
+                } else {
+
+                if ($Command -eq 'plan') {
+                    if ($entry.state -ne 'editing') { throw 'Plan changes require atomic begin/reopen before editing.' }
+                    Set-Field $entry 'testPlan' (New-TaskPlan $entry $Scope $Suites $Tests $Inputs $Reason)
+                    Write-AtomicJson $state $statePath
+                    ConvertTo-Json -InputObject ([pscustomobject]@{participant=$Participant;batchId=$Batch;editRevision=$Revision;testPlan=$entry.testPlan}) -Depth 15
+                    exit 0
+                } elseif ($Command -eq 'check') {
+                    if ($entry.state -ne 'finished') { throw 'This recorded check is for ready/waiting tasks. Unregistered read-only work does not need registration.' }
+                    $active=Get-Field $entry 'check'
+                    if ($active -and $active.status -eq 'running' -and (Owner-State $active.owner) -in 'alive','unknown') { throw 'A check is already running; observe status instead of duplicating it.' }
+                    $checkSelected=Start-CheckRecord $current $entry
+                    Write-AtomicJson $state $statePath
+                } else {
+                    if ($entry.state -eq 'editing') {
+                        $plan=Get-Field $entry 'testPlan'; if (-not $plan) { $plan=Default-TaskPlan $entry }
+                        if ($plan.editRevision -ne $Revision) { throw 'Plan belongs to an older revision; update it before ready.' }
+                        $plan.inputIdentity=Get-TaskIdentity $plan
+                        Set-Field $entry 'testPlan' $plan
+                        $entry.state='finished'; $entry.finishedUtc=[DateTime]::UtcNow.ToString('o')
+                        Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$Revision;reason='Post-ready lightweight check is queued.'})
+                        Write-AtomicJson $state $statePath # crash leaves an explicit pending check, never permission to build
+                    }
+                    $check=Get-Field $entry 'check'
+                    if ($check -and $check.status -in 'failed','invalidated','interrupted') { throw 'Check requires attention. Use begin/reopen for repairs, or check for a bounded read-only reassessment.' }
+                    if($ReloadShell){Set-Field $current 'reloadShellRequested' $true}
+                    $waiter=Start-ReadyWorker $current $entry
+                    Write-AtomicJson $state $statePath
+                    ConvertTo-Json -InputObject ([pscustomobject]@{participant=$Participant;batchId=$Batch;editRevision=$Revision;state='ready';checkStatus=(Get-Field (Get-Field $entry 'check') 'status');waiter=$waiter}) -Depth 8
+                    exit 0
+                }
+                }
+            }
+            elseif ($Command -eq 'issue') {
+                $path=Join-Path $stateRoot ($Batch+'.issues.json')
+                if(($null -eq $current -or $current.id -ne $Batch) -and -not $result){throw 'Unknown batch for issue.'}
+                if(@($(if($result){$result.participants}else{$current.participants}) | Where-Object id -eq $Participant).Count -ne 1){throw 'Issue reporter must belong to this batch.'}
+                if([string]::IsNullOrWhiteSpace($Reason)){throw 'Issue requires -Reason with evidence or handoff.'}
+                $ledger=if([IO.File]::Exists($path)){[IO.File]::ReadAllText($path)|ConvertFrom-Json}else{[pscustomobject]@{batchId=$Batch;issues=@()}}
+                if($IssueId -and $IssueId -notmatch '^[a-f0-9]{32}$'){throw 'Invalid issue ID.'}
+                $item=@($ledger.issues|Where-Object id -eq $IssueId) | Select-Object -First 1
+                if(-not $item){if($IssueId){throw 'Unknown issue ID.'};$item=[pscustomobject]@{id=[Guid]::NewGuid().ToString('N');reportedBy=$Participant;assignee=$Assignee;state=$IssueState;reason=$Reason;updatedUtc=$null};$ledger.issues=@($ledger.issues)+@($item)}else{$item.assignee=$Assignee;$item.state=$IssueState;$item.reason=$Reason}
+                $item.updatedUtc=[DateTime]::UtcNow.ToString('o');Write-AtomicJson $ledger $path;$item|ConvertTo-Json;exit 0
+            }
+            elseif ($Command -eq 'wait') {
+                if (-not $current -or $current.id -ne $Batch) { throw 'Unknown current batch.' }
+                $entry=@($current.participants | Where-Object id -eq $Participant)
+                if ($entry.Count -ne 1) { throw 'Participant does not belong to batch.' }
+                if((Get-Field $current 'protocolVersion' 1) -ge 2 -and $Revision -lt 0){throw 'wait requires -Revision.'}
+                Assert-EditRevision $entry[0] $Revision
+                # Observes only. It never marks an editing task ready.
             }
             elseif ($Command -eq 'recover') {
                 if ($null -eq $current -or $current.id -ne $Batch) {
@@ -258,26 +398,57 @@ try {
                 exit 0
             }
             else { # finish is idempotent, including a second concurrent waiter.
+                if ($observedRevision -eq $null) { $observedRevision=$Revision }
                 if ($null -eq $current -or $current.id -ne $Batch) { throw 'Unknown current batch; registration was not changed.' }
                 $entries = @($current.participants | Where-Object id -eq $Participant)
                 if ($entries.Count -ne 1 -or $entries[0].state -eq 'withdrawn') { throw 'Participant is not registered or was withdrawn.' }
-                $revision = Participant-Revision $entries[0]
-                if ($null -ne $finishedRevision -and $finishedRevision -ne $revision) {
+                $currentRevision = Participant-Revision $entries[0]
+                if ($null -ne $finishedRevision -and $finishedRevision -ne $currentRevision) {
                     throw 'This finish was superseded by a reopened registration. The task remains editing until its new finish.'
                 }
-                $finishedRevision = $revision
+                $finishedRevision = $currentRevision
+                Assert-EditRevision $entries[0] $Revision
+                if((Get-Field $current 'protocolVersion' 1) -ge 2 -and $observedRevision -lt 0){throw 'Protocol v2 finish requires -Revision from begin.'}
+                Assert-EditRevision $entries[0] $observedRevision
+                if($observedRevision -lt 0){$observedRevision=Get-EditRevision $entries[0]}
                 $hasFinishedCurrentBatch = $true
                 if ($current.phase -eq 'editing') {
+                    # Remember an explicit request for this batch, even when
+                    # another participant eventually owns the build. Shell
+                    # cleanup remains inside that owner's build process.
+                    if ($ReloadShell -and (-not $current.PSObject.Properties['reloadShellRequested'] -or -not $current.reloadShellRequested)) {
+                        $current | Add-Member -NotePropertyName reloadShellRequested -NotePropertyValue $true -Force
+                        Write-AtomicJson $state $statePath
+                    }
                     if ($entries[0].state -eq 'editing') {
                         $entries[0].state = 'finished'
                         $entries[0].finishedUtc = [DateTime]::UtcNow.ToString('o')
                         Write-AtomicJson $state $statePath
                     }
-                    if (@($current.participants | Where-Object state -eq 'editing').Count -eq 0) {
+                    $check=Get-Field $entries[0] 'check'
+                    if($AutoCheck -and @($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and $check -and $check.status -eq 'passed' -and (Get-Field $entries[0] 'testPlan').source -eq 'legacy-default' -and (Get-TaskIdentity $entries[0].testPlan).digest -ne $check.inputEnd.digest){$check.status='pending';$check.reason='Global input changed while peers edited; repeat read-only checks.'}
+                    if ($AutoCheck -and $check -and $check.status -eq 'pending') {
+                        $checkSelected=Start-CheckRecord $current $entries[0]
+                        Write-AtomicJson $state $statePath
+                    }
+                    if (@($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and -not (Checks-BlockFreeze $current)) {
                         $buildLease = Try-Lease 'build.lock'
                         if ($null -eq $buildLease) { throw 'Unexpected occupied build lease; inspect status without clearing registrations.' }
                         # The metadata lease covers membership freeze and the
                         # input identity, closing the new-begin/start-build race.
+                        try { $frozenPlan=New-FrozenPlan $current } catch {
+                            Set-Field $current 'planStatus' 'blocked'; Set-Field $current 'planError' $_.Exception.Message
+                            Write-AtomicJson $state $statePath; throw
+                        }
+                        $preflight=Get-Field $current 'preflight'
+                        if(-not $preflight -or ([DateTime]::UtcNow-[DateTime]::Parse($preflight.observedUtc).ToUniversalTime()).TotalSeconds -gt 10){$preflight=Get-ReadOnlyPreflight $repositoryRoot}
+                        Set-Field $current 'preflight' $preflight
+                        if($frozenPlan.buildRequired -and $preflight.status -ne 'clear' -and -not (Get-Field $current 'reloadShellRequested' $false)) {
+                            Set-Field $current 'planStatus' 'waiting-output-owner';Write-AtomicJson $state $statePath
+                            $buildLease.Dispose();$buildLease=$null
+                        } else {
+                        Write-AtomicJson $frozenPlan (Join-Path $stateRoot ($current.id + '.plan.json'))
+                        Set-Field $current 'testingPlan' $frozenPlan
                         $startInputs = Get-BuildInputIdentity $repositoryRoot
                         $current | Add-Member -NotePropertyName inputStart -NotePropertyValue $startInputs -Force
                         $current.phase = 'building'
@@ -286,6 +457,7 @@ try {
                         $current.logPath = Join-Path $stateRoot ($current.id + '.log')
                         Write-AtomicJson $state $statePath
                         $selected = $current
+                        }
                     }
                 }
             }
@@ -293,6 +465,20 @@ try {
         finally {
             $metadata.Dispose()
             if ($null -eq $selected -and $null -ne $buildLease) { $buildLease.Dispose() }
+        }
+        if ($commitSelected) {
+            try {
+                Push-Location $repositoryRoot
+                try {$receipt=Invoke-OwnedCommit $commitSelected $Files $MessageFile} finally {Pop-Location}
+                $metadata=Lock-State
+                try {Write-AtomicJson $receipt (Join-Path $stateRoot ([Guid]::NewGuid().ToString('N')+'.commit.json'))} finally {$metadata.Dispose()}
+                $receipt | ConvertTo-Json -Depth 10;exit 0
+            } finally {$gitLease.Dispose()}
+        }
+        if ($null -ne $checkSelected) {
+            $checkResult=Complete-CheckRecord $checkSelected
+            if ($Command -eq 'check' -or $checkResult.exitCode -ne 0) { ConvertTo-Json -InputObject $checkResult -Depth 15; exit $checkResult.exitCode }
+            continue
         }
         if ($null -ne $selected) {
             try {
@@ -304,8 +490,8 @@ try {
                     [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE', '1', 'Process')
                     Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')
                     [Console]::Error.WriteLine("Building batch $($selected.id). Log: $($selected.logPath)")
-                    $code = [SnowDesktop.Build.Job]::Run($repositoryRoot, $selected.logPath)
-                    if ($code -eq 0) { $outcome = 'passed' }
+                    $code = [SnowDesktop.Build.Job]::RunBatch($repositoryRoot, $selected.logPath, $selected.id, $selected.testingPlan.buildRequired, [bool](Get-Field $selected 'reloadShellRequested' $false))
+                    if ($code -eq 0) { $outcome = if($selected.testingPlan.mode -eq 'skipped'){'skipped'}else{'passed'} }
                     else { $errorText = "Build/test pipeline exited with code $code. See the batch log." }
                 }
                 catch { $errorText = $_.Exception.ToString() }
@@ -323,6 +509,13 @@ try {
                 try {
                     $state = Read-State
                     $result = New-Result $selected $outcome $code $errorText
+                    Set-Field $result 'testingPlan' $selected.testingPlan
+                    $stagePath=Join-Path $stateRoot ($selected.id+'.stage.json');$buildPassed=$false
+                    if([IO.File]::Exists($stagePath)){$stageRecord=[IO.File]::ReadAllText($stagePath)|ConvertFrom-Json;$buildPassed=$stageRecord.batchId -eq $selected.id -and $stageRecord.hostBuildPassed}
+                    Set-Field $result 'binaryEvidence' (Get-BinaryEvidence $selected $buildPassed)
+                    if($outcome -in 'failed','interrupted','invalidated'){Set-Field $result 'responsibility' 'unassigned; coverage identifies affected requests, not proven defect ownership; use issue for handoff.'}
+                    $coveragePath=Join-Path $stateRoot ($selected.id + '.coverage.json')
+                    if ([IO.File]::Exists($coveragePath)) { Set-Field $result 'coverage' ([IO.File]::ReadAllText($coveragePath,$utf8) | ConvertFrom-Json) }
                     $result.inputEnd = $endInputs
                     $result.inputCheck = $inputCheck
                     $result.pipelineExitCode = $pipelineCode

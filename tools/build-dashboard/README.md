@@ -1,0 +1,41 @@
+# 本地协作构建看板
+
+直接打开 **http://127.0.0.1:8765/**。`scripts\build.bat` 的协作命令自动确保服务运行；关闭网页不会停止构建。服务没有登录启动项，电脑重启后第一次协作命令会重新启动它。
+
+看板只监听 `127.0.0.1`，复用现有 Python 3.8+ 标准库。没有依赖安装、外部托管、下载、自动浏览器弹窗或防火墙修改。
+
+```bat
+scripts\build-dashboard.bat status
+scripts\build-dashboard.bat stop
+scripts\build-dashboard.bat start
+scripts\build-dashboard.bat start --port 8766
+```
+
+双击 `scripts\build-dashboard.bat` 也可启动。端口冲突时拒绝启动，不终止未知监听者；协作构建不会因为看板不可用而失败。手动停止只通过已核对实例 nonce 的本地请求文件通知自身服务，完全独立于构建进程。自动入口使用默认端口；另一个端口需手动选择。
+
+## 数据与限制
+
+- 只读 `.build/collaboration/` 下固定的状态、结果、覆盖、问题交接与日志文件；没有 HTTP 写操作、命令执行、任意路径读取、环境变量枚举或跨域权限。
+- 当前批次、编辑修订号、重开编辑、检查与占用观察、冻结输入 SHA-256、实际测试进度、请求与覆盖关联、失败交接和历史结果分别展示。
+- 检查中、失败或中断保持屏障；陈旧登记年龄不等于进程死亡或修改完成。未登记的会话与尚未登记的新 `begin` 等待者无法完整获知。
+- 历史结果是历史快照；HTTP 轮询不会重新散列整个仓库，也不会将历史通过声明为当前源码通过。`finish/wait` 复用历史通过时另行验证内容和已记录的二进制身份。
+- 构建与链接阶段从日志推断，并行阶段可能交错。CTest 报告 `N/M Test` 后才显示测试计数；不存在假百分比。链接输出数量只是已观察到的下界。
+- 状态缓存 2 秒；日志每次最多新增读取 256 KiB，最多显示最近 180 行。超长旧日志从尾部开始，明确标记省略；错误和敏感键赋值做有界显示与遮盖，这不是完整的任意文本脱敏器。
+- 元数据和日志在 Windows 使用 `FILE_SHARE_READ|WRITE|DELETE`，避免监控读取挡住协调器的原子替换。拒绝 reparse point、路径穿越、外部 Host/Origin、跨站访问与写入方法。页面只用 `textContent` 显示任务和日志，配置 CSP。
+- 本地 HTTP 服务没有用户认证。能够以当前用户修改协作状态的程序也能伪造记录；看板不是安全边界或不可篡改审计系统。
+
+## 验证
+
+```bat
+python tests\build_dashboard_tests.py
+python tests\build_dashboard_tests.py --browser
+python tests\build_workflow_tests.py
+python tests\build_plan_execution_tests.py
+powershell.exe -NoProfile -File tests\build_collaboration_tests.ps1
+```
+
+HTTP/浏览器用临时独立夹具、独立端口和醒目的“模拟数据”标志，不写真实登记。浏览器检查复用已安装 Edge 和 Node 22 的内建 CDP WebSocket；使用独立 headless profile，不控制用户已打开的浏览器或桌面。覆盖等待、检查、运行、通过、失败、陈旧登记、中断和长日志；截图与夹具证据保存在打印出的临时目录。
+
+原 PowerShell 看板启动器在开发中被安全软件以 `HEUR:TrojanDownloader/PS.NetLoader.ae` 删除，未恢复、未加入白名单。最终入口改为 `manage.py`，没有 PowerShell 网络请求和启动器；没有更改防护设置。该事件不被当作“已证明误报”。
+
+界面使用亮色主题，页面与标签图标复用 `assets/icon/icon.png` 的实际软件图标。等待与构建不调用大模型；桌面回合完成通知由 Work 设置管理，本地批次完成不会自动唤醒原对话。
