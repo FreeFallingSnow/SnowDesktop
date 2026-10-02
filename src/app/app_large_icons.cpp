@@ -7,7 +7,8 @@
 #include "../large_icon_preset_rules.h"
 #include "../large_icon_visibility_rules.h"
 
-void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant)
+void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant,
+    std::vector<std::wstring> importKeys)
 {
     if (index >= items_.size() || !items_[index].largeIcon || IsItemInAnyWidget(items_[index])) return;
     auto& item = items_[index];
@@ -19,6 +20,7 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
     request.reference = snowdesktop::LargeIconActiveImage(config); request.lastGood = config.cachedCover;
     request.fillLayer = snowdesktop::IsLargeIconFill(config);
     request.refresh = refresh; request.localOnly = config.localOnly; request.importPath = std::move(importPath);
+    request.importKeys = std::move(importKeys);
     // The display signature must stay identical while an initial import is
     // pending. Otherwise a paint requests the original and cancels the import.
     if (request.content == 1 && request.reference.empty()) request.content = 0;
@@ -104,10 +106,20 @@ void DesktopApp::ProcessLargeIconAssets()
         if (!result.request.importPath.empty())
         {
             if (!CanEditLargeIcons() || snowdesktop::IsLargeIconFill(*items_[index].largeIcon) != result.request.fillLayer) continue;
-            auto config = *items_[index].largeIcon;
-            if (result.request.fillLayer) { config.content = 1; config.image = result.asset->reference; }
-            else { config.foregroundContent = 1; config.foregroundImage = result.asset->reference; }
-            if (!SetLargeIconConfig(index, config)) { state.error = "largeIcon.saveFailed"; continue; }
+            auto keys = result.request.importKeys;
+            if (keys.empty()) keys = {items_[index].layoutKey};
+            std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
+            for (const auto& key : keys)
+            {
+                const auto target = FindItemIndexByKey(key);
+                if (target >= items_.size() || !items_[target].largeIcon ||
+                    snowdesktop::IsLargeIconFill(*items_[target].largeIcon) != result.request.fillLayer) break;
+                auto config = *items_[target].largeIcon;
+                if (result.request.fillLayer) { config.content = 1; config.image = result.asset->reference; }
+                else { config.foregroundContent = 1; config.foregroundImage = result.asset->reference; }
+                changes.emplace_back(target, std::move(config));
+            }
+            if (changes.size() != keys.size() || !SetLargeIconConfigs(changes)) { state.error = "largeIcon.saveFailed"; continue; }
         }
         if (state.asset && state.asset != result.asset) EraseD2DIconCacheForBitmap(state.asset->bitmap);
         state.asset = std::move(result.asset);
@@ -125,54 +137,82 @@ void DesktopApp::ProcessLargeIconAssets()
 
 bool DesktopApp::CanEditLargeIcons() const
 {
-    return steamEntitlementService_ && steamEntitlementService_->IsRegistered();
+    if (!steamEntitlementService_) return false;
+    const auto entitlement = steamEntitlementService_->Current();
+    return snowdesktop::large_icon_edit_rules::ResolveEntryAccess(entitlement.bridgeAvailable, entitlement.registered) ==
+        snowdesktop::large_icon_edit_rules::EntryAccess::Edit;
 }
 
 bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::LargeIconConfig> config)
 {
-    if (index >= items_.size()) return false;
-    auto& item = items_[index];
-    const bool desktop = !IsItemInAnyWidget(item) && item.gridCell.pageId != kDockPageId;
-    if (!snowdesktop::large_icon_edit_rules::CanStore(config, CanEditLargeIcons(), desktop)) return false;
-    if (config && snowdesktop::IsLargeIconFill(*config) && config->content == 2)
+    return SetLargeIconConfigs({{index, std::move(config)}});
+}
+
+bool DesktopApp::SetLargeIconConfigs(const std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>>& configs)
+{
+    std::vector<snowdesktop::large_icon_edit_rules::Change<DesktopItem, GridSpan>> changes;
+    std::unordered_set<size_t> targets;
+    bool resize = false;
+    for (const auto& [index, config] : configs)
     {
-        wchar_t url[2048]{};
-        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
-        if (!snowdesktop::large_icon_steam::AppId(url)) return false;
+        if (index >= items_.size() || !targets.insert(index).second) return false;
+        auto& item = items_[index];
+        const bool desktop = !IsItemInAnyWidget(item) && item.gridCell.pageId != kDockPageId;
+        if (!snowdesktop::large_icon_edit_rules::CanStore(config, CanEditLargeIcons(), desktop)) return false;
+        if (config && snowdesktop::IsLargeIconFill(*config) && config->content == 2)
+        {
+            wchar_t url[2048]{};
+            GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
+            if (!snowdesktop::large_icon_steam::AppId(url)) return false;
+        }
+        const bool sameSize = config && item.largeIcon && config->columns == item.largeIcon->columns && config->rows == item.largeIcon->rows;
+        const GridSpan span = sameSize ? item.gridSpan : config ? GridSpan{config->columns, config->rows} : GridSpan{1, 1};
+        if (config && !sameSize)
+        {
+            resize = true;
+            const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
+            if (!page || item.gridCell.column < 0 || item.gridCell.row < 0 ||
+                item.gridCell.column + span.columns > page->columns || item.gridCell.row + span.rows > page->rows) return false;
+        }
+        changes.push_back({&item, config, span});
     }
-    const bool sameDesiredSize = config && item.largeIcon && config->columns == item.largeIcon->columns && config->rows == item.largeIcon->rows;
-    const GridSpan span = sameDesiredSize ? item.gridSpan : config ? GridSpan{config->columns, config->rows} : GridSpan{1, 1};
-    if (config && !sameDesiredSize)
+    if (resize)
     {
-        const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
-        if (!page || item.gridCell.column + span.columns > page->columns ||
-            item.gridCell.row + span.rows > page->rows) return false;
         std::unordered_set<std::wstring> occupied;
         for (size_t i = 0; i < items_.size(); ++i)
-            if (i != index && !IsItemInAnyWidget(items_[i]))
-                MarkGridArea(occupied, items_[i].gridCell, items_[i].gridSpan);
+            if (!targets.contains(i) && !IsItemInAnyWidget(items_[i])) MarkGridArea(occupied, items_[i].gridCell, items_[i].gridSpan);
         for (const auto& widget : widgets_)
             if (!IsGroupedWidget(widget)) MarkGridArea(occupied, widget.gridCell, widget.gridSpan);
-        if (AreGridSlotsMarked(occupied, item.gridCell, span)) return false;
+        for (const auto& change : changes)
+        {
+            if (change.config && AreGridSlotsMarked(occupied, change.item->gridCell, change.span)) return false;
+            MarkGridArea(occupied, change.item->gridCell, change.span);
+        }
     }
     const auto previousRecords = layoutRecords_;
-    if (!snowdesktop::large_icon_edit_rules::Store(item, std::move(config), span, CanEditLargeIcons(), desktop,
+    if (!snowdesktop::large_icon_edit_rules::StoreMany(changes, CanEditLargeIcons(),
         [this] { return SaveLayoutSlots(); }))
     {
         layoutRecords_ = previousRecords;
         return false;
     }
-    if (!item.largeIcon && largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
-    else if (largeIconEdit_.key == item.layoutKey)
-    { largeIconEdit_.preview.reset(); ++largeIconEdit_.revision; }
+    for (const auto& change : changes)
+        if (snowdesktop::large_icon_edit_rules::Contains(largeIconEdit_, change.item->layoutKey))
+        {
+            if (!change.item->largeIcon) { largeIconEdit_ = {}; break; }
+            largeIconEdit_.preview.reset(); largeIconEdit_.previews.clear(); ++largeIconEdit_.revision;
+        }
     LayoutItems();
-    if (items_[index].largeIcon) RequestLargeIconAsset(index);
-    else if (const auto runtime = largeIconRuntime_.find(items_[index].layoutKey); runtime != largeIconRuntime_.end())
+    for (const auto& [index, config] : configs)
     {
-        desktopBackdropCompositor_.RemovePanel(runtime->second.backdropFrame);
-        if (largeIconAssets_) largeIconAssets_->Cancel(items_[index].layoutKey);
-        if (runtime->second.asset) EraseD2DIconCacheForBitmap(runtime->second.asset->bitmap);
-        largeIconRuntime_.erase(runtime);
+        if (config) RequestLargeIconAsset(index);
+        else if (const auto runtime = largeIconRuntime_.find(items_[index].layoutKey); runtime != largeIconRuntime_.end())
+        {
+            desktopBackdropCompositor_.RemovePanel(runtime->second.backdropFrame);
+            if (largeIconAssets_) largeIconAssets_->Cancel(items_[index].layoutKey);
+            if (runtime->second.asset) EraseD2DIconCacheForBitmap(runtime->second.asset->bitmap);
+            largeIconRuntime_.erase(runtime);
+        }
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
@@ -212,6 +252,11 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
 
 void DesktopApp::OpenLargeIconSettings(size_t index)
 {
+    OpenLargeIconSettings(index < items_.size() ? std::vector<std::wstring>{items_[index].layoutKey} : std::vector<std::wstring>{});
+}
+
+void DesktopApp::OpenLargeIconSettings(std::vector<std::wstring> keys)
+{
     const auto entitlement = steamEntitlementService_
         ? steamEntitlementService_->Current() : snowdesktop::steam_entitlement::Snapshot{};
     using snowdesktop::large_icon_edit_rules::EntryAccess;
@@ -224,7 +269,13 @@ void DesktopApp::OpenLargeIconSettings(size_t index)
             snowdesktop::SettingsPage::General, "general.advancedFeatures.unlockRequired"));
         return;
     }
+    if (keys.empty()) return;
+    const auto index = FindItemIndexByKey(keys.front());
     if (index >= items_.size() || !items_[index].largeIcon) return;
+    largeIconSettingsKeys_ = std::move(keys);
+    // A new selection with the same first item still needs a fresh settings route.
+    if (snowdesktop::large_icon_edit_rules::Contains(largeIconEdit_, items_[index].layoutKey))
+    { largeIconEdit_.keys = largeIconSettingsKeys_; largeIconEdit_.preview.reset(); largeIconEdit_.previews.clear(); ++largeIconEdit_.revision; }
     auto route = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::LargeIcon);
     route.itemKey = items_[index].layoutKey;
     ShowSettingsWindow(std::move(route));
@@ -253,6 +304,17 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
         return result;
     }
     auto& item = items_[index];
+    auto keys = request.action == "read" ? largeIconSettingsKeys_ : largeIconEdit_.keys;
+    if (keys.empty() || keys.front() != request.key) keys = {request.key};
+    for (const auto& key : keys)
+    {
+        const auto target = FindItemIndexByKey(key);
+        if (target >= items_.size() || !items_[target].largeIcon || IsItemInAnyWidget(items_[target]) || items_[target].gridCell.pageId == kDockPageId)
+        {
+            largeIconEdit_ = {}; result.error = "largeIcon.unavailable"; return result;
+        }
+    }
+    result.itemCount = static_cast<int>(keys.size());
     result.available = true;
     result.editable = CanEditLargeIcons();
     result.name = item.name;
@@ -269,6 +331,15 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     wchar_t steamUrl[2048]{};
     GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", steamUrl, static_cast<DWORD>(std::size(steamUrl)), item.parsingName.c_str());
     result.steam = snowdesktop::large_icon_steam::AppId(steamUrl).has_value();
+    for (const auto& key : keys)
+    {
+        const auto& target = items_[FindItemIndexByKey(key)];
+        wchar_t url[2048]{};
+        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), target.parsingName.c_str());
+        result.steam = result.steam && snowdesktop::large_icon_steam::AppId(url).has_value();
+        result.anyFill = result.anyFill || snowdesktop::IsLargeIconFill(*target.largeIcon);
+    }
+    if (keys.size() > 1) result.name = _LW("largeIcon.batchName");
     result.maxColumns = std::max(item.largeIcon->columns, item.gridSpan.columns);
     result.maxRows = std::max(item.largeIcon->rows, item.gridSpan.rows);
     if (const auto* page = FindGridPage(gridPages_, item.gridCell.pageId))
@@ -290,6 +361,15 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
             result.frameHeights.push_back(rect.bottom - rect.top);
         }
     }
+    for (const auto& key : keys)
+    {
+        const auto& target = items_[FindItemIndexByKey(key)];
+        if (const auto* page = FindGridPage(gridPages_, target.gridCell.pageId))
+        {
+            result.maxColumns = std::min(result.maxColumns, page->columns - target.gridCell.column);
+            result.maxRows = std::min(result.maxRows, page->rows - target.gridCell.row);
+        }
+    }
     if (const auto error = snowdesktop::large_icon_edit_rules::CheckRequest(largeIconEdit_, request, result.editable); !error.empty())
     {
         result.error = error;
@@ -298,6 +378,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     else if (request.action == "read")
     {
         largeIconEdit_ = { request.key, ++largeIconSessionSerial_, 1, {} };
+        largeIconEdit_.keys = keys;
         result.succeeded = true;
     }
     else if (request.action == "status")
@@ -305,6 +386,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     else if (request.action == "cancel")
     {
         largeIconEdit_.preview.reset();
+        largeIconEdit_.previews.clear();
         result.succeeded = true;
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
@@ -314,8 +396,12 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
             result.error = "largeIcon.invalid";
         else
         {
-            RequestLargeIconAsset(index, true);
-            for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, true, {}, variant);
+            for (const auto& key : keys)
+            {
+                const auto target = FindItemIndexByKey(key);
+                RequestLargeIconAsset(target, true);
+                for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(target, true, {}, variant);
+            }
             result.succeeded = true;
         }
     }
@@ -324,7 +410,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
         if (request.path.empty()) result.error = "largeIcon.invalid";
         else
         {
-            RequestLargeIconAsset(index, true, request.path);
+            RequestLargeIconAsset(index, true, request.path, 0, keys);
             result.succeeded = true;
         }
     }
@@ -334,18 +420,42 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
         snowdesktop::LargeIconConfig config;
         if (!ParseJson(request.config, json) || !snowdesktop::DecodeLargeIconConfig(json, config))
             result.error = "largeIcon.invalid";
-        else if (request.action == "preview")
+        else
         {
-            largeIconEdit_.preview = std::move(config);
-            result.succeeded = true;
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
+            for (const auto& key : keys)
+            {
+                const auto target = FindItemIndexByKey(key);
+                auto merged = *items_[target].largeIcon;
+                if (keys.size() == 1) merged = config;
+                else
+                {
+                    if (std::find(request.fields.begin(), request.fields.end(), "backgroundStyle") != request.fields.end())
+                    {
+                        const auto runtime = largeIconRuntime_.find(key);
+                        const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
+                        if (!snowdesktop::large_icon_preset_rules::ApplyBackground(merged, config.backgroundStyle, result.editable,
+                            asset && asset->hasEdgeColor, asset ? asset->accent : 0, asset ? asset->edgeColor : 0))
+                        { result.error = "largeIcon.invalid"; break; }
+                    }
+                    if (!snowdesktop::large_icon_edit_rules::Patch(merged, config, request.fields))
+                    { result.error = "largeIcon.invalid"; break; }
+                }
+                changes.emplace_back(target, std::move(merged));
+            }
+            if (result.error.empty() && request.action == "preview")
+            {
+                largeIconEdit_.previews.clear();
+                for (const auto& [target, merged] : changes) largeIconEdit_.previews.emplace(items_[target].layoutKey, *merged);
+                largeIconEdit_.preview = *changes.front().second;
+                result.succeeded = true; InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            else if (result.error.empty())
+            {
+                if (SetLargeIconConfigs(changes)) result.succeeded = true;
+                else result.error = "largeIcon.saveFailed";
+            }
         }
-        else if (SetLargeIconConfig(index, std::move(config)))
-        {
-            largeIconEdit_.preview.reset();
-            result.succeeded = true;
-        }
-        else result.error = "largeIcon.saveFailed";
     }
     else result.error = "largeIcon.invalid";
     result.session = largeIconEdit_.token;
@@ -377,11 +487,28 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
         }
         if (result.error.empty() && !runtime->second.error.empty()) result.error = runtime->second.error;
     }
+    if (keys.size() > 1)
+    {
+        auto first = EffectiveLargeIconConfig(item);
+        snowdesktop::large_icon_preset_rules::PrepareForEditing(first, result.accent, result.hasEdgeColor, result.edgeColor);
+        for (const auto& key : keys)
+        {
+            const auto runtime = largeIconRuntime_.find(key);
+            result.hasEdgeColor = result.hasEdgeColor && runtime != largeIconRuntime_.end() && runtime->second.asset && runtime->second.asset->hasEdgeColor;
+            auto config = EffectiveLargeIconConfig(items_[FindItemIndexByKey(key)]);
+            const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
+            snowdesktop::large_icon_preset_rules::PrepareForEditing(config, asset ? asset->accent : 0, asset && asset->hasEdgeColor, asset ? asset->edgeColor : 0);
+            for (const auto& name : snowdesktop::large_icon_edit_rules::ChangedFields(first, config))
+                if (std::find(result.mixedFields.begin(), result.mixedFields.end(), name) == result.mixedFields.end()) result.mixedFields.push_back(name);
+        }
+    }
     return result;
 }
 
 const snowdesktop::LargeIconConfig& DesktopApp::EffectiveLargeIconConfig(const DesktopItem& item) const
 {
+    if (CanEditLargeIcons())
+        if (const auto preview = largeIconEdit_.previews.find(item.layoutKey); preview != largeIconEdit_.previews.end()) return preview->second;
     if (largeIconEdit_.key == item.layoutKey && largeIconEdit_.preview && CanEditLargeIcons())
         return *largeIconEdit_.preview;
     return *item.largeIcon;

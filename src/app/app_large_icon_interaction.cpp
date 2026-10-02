@@ -179,6 +179,7 @@ void DesktopApp::UpdateLargeIconHover()
     {
         CancelLargeIconGesture();
         largeIconEdit_.preview.reset();
+        largeIconEdit_.previews.clear();
     }
     const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
     bool moving = false;

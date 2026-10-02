@@ -60,7 +60,7 @@ struct LargeIconConfig
 
     // v2: background selector is flat; nonnegative values are component preset
     // IDs (including 9/custom). Foreground and fill sources are independent.
-    int backgroundStyle = -5; // -5 neutral, -4 icon plate, -3 legacy default, -2 image fill, -1 follow components
+    int backgroundStyle = -1; // -5 retired neutral, -4 icon plate, -3 legacy default, -2 image fill, -1 follow components
     // themeColor is the legacy storage name for the beautify-style background,
     // not an accent color. It is mutually exclusive with themeGradient.
     bool smartFill = true, themeColor = true, themeGradient = false;
@@ -232,6 +232,9 @@ inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& resul
         // Explicit v1 images were full-frame content. The image reference stays
         // in the fill source; no copy is mistaken for a foreground replacement.
     }
+    // The retired neutral preset becomes the explicit light component theme.
+    // Decode only: existing custom, plate and fill backgrounds remain intact.
+    if (c.backgroundStyle == -5) c.backgroundStyle = 1;
     result = std::move(c);
     return true;
 }

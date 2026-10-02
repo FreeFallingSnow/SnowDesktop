@@ -6,7 +6,7 @@ namespace snowdesktop::large_icon_preset_rules
 {
 struct Option { int value; const char* label; };
 inline constexpr std::array backgrounds{
-    Option{-5, "largeIcon.default"}, Option{-4, "largeIcon.platePreset"},
+    Option{-4, "largeIcon.platePreset"},
     Option{-2, "largeIcon.fill"}, Option{-1, "largeIcon.follow"},
     Option{0, "app.settings.dark"}, Option{1, "app.settings.light"},
     Option{6, "app.settings.dark_glass"}, Option{7, "app.settings.light_glass"},

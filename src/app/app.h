@@ -1739,14 +1739,17 @@ private:
     bool CanEditLargeIcons() const;
     snowdesktop::LargeIconConfig MakeLargeIconDefaults(size_t itemIndex);
     bool SetLargeIconConfig(size_t itemIndex, std::optional<snowdesktop::LargeIconConfig> config);
+    bool SetLargeIconConfigs(const std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>>& configs);
     void OpenLargeIconSettings(size_t itemIndex);
+    void OpenLargeIconSettings(std::vector<std::wstring> keys);
     RECT GetLargeIconFrameRect(const DesktopItem& item) const;
     bool IsRetainedLargeIcon(const DesktopItem& item) const;
     bool IsLargeIconVisible(const DesktopItem& item, POINT pointer, bool hidden) const;
     void DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state);
     snowdesktop::LargeIconSettingsSnapshot EditLargeIcon(snowdesktop::LargeIconSettingsRequest request);
     const snowdesktop::LargeIconConfig& EffectiveLargeIconConfig(const DesktopItem& item) const;
-    void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {}, int variant = 0);
+    void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {}, int variant = 0,
+        std::vector<std::wstring> importKeys = {});
     void ProcessLargeIconAssets();
     void UpdateLargeIconHover();
     bool HandleLargeIconPointerDown(POINT point);
@@ -3489,6 +3492,7 @@ private:
         widgetSettingsService_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     snowdesktop::LargeIconEditSession largeIconEdit_;
+    std::vector<std::wstring> largeIconSettingsKeys_;
     std::uint64_t largeIconSessionSerial_ = 0;
     std::unique_ptr<snowdesktop::LargeIconAssets> largeIconAssets_;
     struct LargeIconRuntime

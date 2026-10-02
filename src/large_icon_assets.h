@@ -32,6 +32,7 @@ struct LargeIconAssetRequest
     bool fillLayer = false; // import destination and generation identity
     std::string language = "english", reference, lastGood;
     std::filesystem::path importPath;
+    std::vector<std::wstring> importKeys; // Captured batch; never follows later desktop selection.
 };
 struct LargeIconAssetResult
 {

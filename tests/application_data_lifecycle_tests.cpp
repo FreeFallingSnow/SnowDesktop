@@ -1000,12 +1000,18 @@ int main()
         Expect(ParseJson(R"({"version":2})", legacyValue) && snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) &&
             legacy.columns == 2 && legacy.rows == 2 && legacy.backgroundStyle == -3,
             "omitted legacy span and style do not adopt new creation defaults");
-        for (const int preset : {-5, -4})
+        for (const int preset : {-5, -4, -3, -2, -1, 1, 9})
         {
             auto modern = snowdesktop::LargeIconConfig{}; modern.backgroundStyle = preset;
+            modern.foregroundContent = 1; modern.foregroundImage = "kept-foreground.png";
+            modern.radiusPercent = 37; modern.effect = 4;
             Expect(ParseJson(snowdesktop::EncodeLargeIconConfig(modern), legacyValue) &&
+                snowdesktop::DecodeLargeIconConfig(legacyValue, legacy), "existing background config remains decodable");
+            if (preset == -5) modern.backgroundStyle = 1;
+            Expect(legacy == modern, "retired neutral migrates only to light theme while other styles and per-item settings are preserved");
+            Expect(ParseJson(snowdesktop::EncodeLargeIconConfig(legacy), legacyValue) &&
                 snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy == modern,
-                "neutral and plate presets survive restart with one-cell desired spans");
+                "migrated light theme is stable on subsequent saves and restarts");
         }
         Expect(ParseJson(R"({"version":2,"titleDirection":1,"themeColor":true,"themeGradient":true})", legacyValue) &&
             snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.fillScale == 1 && !legacy.autoTitleDirection &&

@@ -316,6 +316,7 @@ void TestCodec()
     large.frameWidths = {100, 212, 324, 436}; large.frameHeights = {100, 213};
     auto defaults = snowdesktop::LargeIconConfig{}; defaults.radius = 27; defaults.titleSize = 15;
     large.defaultConfig = snowdesktop::EncodeLargeIconConfig(defaults); large.imageWidth = 64; large.imageHeight = 48;
+    large.itemCount = 3; large.anyFill = true; large.mixedFields = {"backgroundStyle", "effect"};
     const auto largeCopy = Unpack<snowdesktop::LargeIconSettingsSnapshot>(Pack(large));
     Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
         largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&
@@ -323,7 +324,8 @@ void TestCodec()
         largeCopy.frameWidth == 436 && largeCopy.frameHeight == 213 && largeCopy.frameColumns == 4 && largeCopy.frameRows == 2 &&
         largeCopy.unitScale == 1.5 && largeCopy.durationScale == 2 && largeCopy.frameLimit == 30 && !largeCopy.animations && largeCopy.neutral == large.neutral &&
         largeCopy.frameWidths == large.frameWidths && largeCopy.frameHeights == large.frameHeights &&
-        largeCopy.defaultConfig == large.defaultConfig && largeCopy.imageWidth == 64 && largeCopy.imageHeight == 48,
+        largeCopy.defaultConfig == large.defaultConfig && largeCopy.imageWidth == 64 && largeCopy.imageHeight == 48 &&
+        largeCopy.itemCount == 3 && largeCopy.anyFill && largeCopy.mixedFields == large.mixedFields,
         "large-icon editing guards, Unicode references and thumbnail provenance survive private IPC");
     WidgetSettingsSnapshot widget;
     widget.widgetId = L"music-1";
@@ -581,6 +583,51 @@ void TestLargeIconEditing()
     Check(CheckRequest(edit, request, true) == "largeIcon.stale", "deletion, conversion or editor teardown invalidates old requests");
     request.action = "read";
     Check(CheckRequest(edit, request, true).empty(), "reopening may establish a fresh session after re-unlock");
+
+    // The real batch editor sends a field patch, not a cloned first-item config.
+    // Protect distinct Steam covers, imported foregrounds and untouched spans.
+    LargeIconConfig first, second;
+    first.backgroundStyle = -2; first.content = 2; first.cachedCover = "steam-first.png";
+    second.backgroundStyle = 9; second.foregroundContent = 1; second.foregroundImage = "second.png";
+    second.columns = 3; second.opacity = .4; second.gradient.enabled = true;
+    auto draft = first; draft.backgroundStyle = -1;
+    const auto preserved = second;
+    Check(Patch(second, draft, {"backgroundStyle"}) && second.backgroundStyle == -1 &&
+        second.foregroundImage == preserved.foregroundImage && second.columns == 3 && second.opacity == .4 && second.gradient == preserved.gradient,
+        "batch background change preserves each item's resources, size and custom settings");
+    Check(Patch(first, draft, {"backgroundStyle"}) && first.cachedCover == "steam-first.png" && first.content == 2,
+        "switching Steam background preserves the item's own retained cover source");
+    draft.opacity = .4;
+    Check(Patch(second, draft, {"opacity"}) && second.opacity == .4,
+        "an explicitly selected field applies even when equal to the reference item's value");
+    Check(!Patch(second, draft, {"cachedCover"}) && !Patch(second, draft, {"unknown"}),
+        "batch patches cannot overwrite asset ownership or introduce unknown fields");
+    auto fill = first; fill.backgroundStyle = -2;
+    draft.effect = 2;
+    Check(!Patch(fill, draft, {"effect"}), "batch dynamic-title selection rejects any image-fill target");
+
+    Item a{first, {1, 1}}, b{second, {3, 1}};
+    const std::vector<Change<Item, std::pair<int, int>>> changes{{&a, draft, {2, 2}}, {&b, draft, {2, 2}}};
+    Check(!StoreMany(changes, false, persist) && a.largeIcon == first && b.largeIcon == second,
+        "unlock loss rejects the entire batch before persistence");
+    Check(!StoreMany(changes, true, [] { return false; }) && a.largeIcon == first && b.largeIcon == second &&
+        a.gridSpan == std::pair{1, 1} && b.gridSpan == std::pair{3, 1},
+        "failed batch persistence restores every appearance and span");
+    Check(!StoreMany(changes, true, []() -> bool { throw std::runtime_error("batch write failed"); }) &&
+        a.largeIcon == first && b.largeIcon == second, "exceptional batch persistence rolls back every target");
+    const auto writesBeforeBatch = writes;
+    Check(StoreMany(changes, true, persist) && writes == writesBeforeBatch + 1 && a.largeIcon == draft && b.largeIcon == draft,
+        "one successful batch stores all targets in a single persistence operation");
+    const std::vector<Change<Item, std::pair<int, int>>> restore{{&a, {}, {1, 1}}, {&b, {}, {1, 1}}};
+    Check(StoreMany(restore, false, persist) && !a.largeIcon && !b.largeIcon,
+        "batch return to ordinary icons remains possible after losing unlock");
+    edit = {L"first", 12, 1, draft}; edit.keys = {L"first", L"second"}; edit.previews.emplace(L"second", draft);
+    Check(Contains(edit, L"second") && !Contains(edit, L"other"), "session membership is the captured batch rather than live selection");
+    request = {L"first", 12, 1, "preview", EncodeLargeIconConfig(draft), {}, {"backgroundStyle"}};
+    const auto requestCopy = settings_ipc::Unpack<LargeIconSettingsRequest>(settings_ipc::Pack(request));
+    Check(requestCopy.fields == request.fields && requestCopy.key == request.key, "batch field intent reaches the host through private IPC");
+    Check(CheckRequest(edit, request, false) == "largeIcon.locked" && !edit.preview && edit.previews.empty(),
+        "unlock loss clears all batch previews");
 }
 
 int RunSettingsIpcTests()

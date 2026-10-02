@@ -84,12 +84,12 @@ SD_IPC_FIELDS(DesktopDisplaySettings,
     v.listItemFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis);
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
-SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path);
+SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path, v.fields);
 SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,
     v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.steam,
     v.frameWidth, v.frameHeight, v.frameColumns, v.frameRows, v.frameLimit, v.unitScale, v.durationScale, v.frameWidths, v.frameHeights, v.animations, v.neutral,
-    v.defaultConfig, v.imageWidth, v.imageHeight, v.hasEdgeColor, v.loading, v.edgeColor);
+    v.defaultConfig, v.imageWidth, v.imageHeight, v.hasEdgeColor, v.loading, v.edgeColor, v.itemCount, v.anyFill, v.mixedFields);
 SD_IPC_FIELDS(SettingsActionResult,
     v.status, v.completedDomains, v.failedDomains, v.message);
 SD_IPC_FIELDS(SettingsValues,

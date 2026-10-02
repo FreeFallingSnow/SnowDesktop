@@ -145,7 +145,7 @@ int main(int argc, char** argv)
         // lifecycle shared by both ordinary foreground and image-fill icons.
         for (int effect : {3, 4, 5}) for (bool fill : {false, true})
         {
-            auto c = config; c.backgroundStyle = fill ? -2 : -5;
+            auto c = config; c.backgroundStyle = fill ? -2 : -1;
             const auto locked = c;
             Check(!presets::ApplyEffect(c, effect, false) && c == locked, "locked edits cannot select new effects");
             Check(presets::ApplyEffect(c, effect, true), "new effects support foreground and fill sources");
@@ -325,14 +325,14 @@ int main(int argc, char** argv)
         }
         c.content = 2;
         Check(presets::DefaultEffect(c) == 3, "Steam fill has the same zoom default as local image fill");
-        c.backgroundStyle = -5;
+        c.backgroundStyle = -1;
         Check(presets::DefaultEffect(c) == 2, "Steam foreground resets use title according to current mode rather than item type");
         JsonValue legacy; snowdesktop::LargeIconConfig loaded;
         Check(ParseJson("{\"version\":2}", legacy) && snowdesktop::DecodeLargeIconConfig(legacy, loaded) && loaded.effect == 0,
             "new creation defaults never enable effects in existing layouts missing the effect field");
     }
-    Check(config.columns == 1 && config.rows == 1 && config.backgroundStyle == -5, "new large icons occupy one cell with neutral preset");
-    Check(DefaultBackground(config, 0x008800, true, 0x0112ff).color == 0xe8ecf4, "neutral default never auto-selects detected plate color");
+    Check(config.columns == 1 && config.rows == 1 && config.backgroundStyle == -1, "new non-Steam large icons occupy one cell and follow component backgrounds");
+    Check(!presets::ApplyBackground(config, -5, true, true), "retired default cannot be selected from either authoring entry");
     config.columns = 4; config.rows = 3; config.radiusPercent = 78;
     config.gradient.enabled = true; config.gradient.angle = 234; config.gradientOpacity = .4;
     config.titleWeight = 800; config.titleColor = 0x123456; config.autoTitleDirection = false; config.titleDirection = 1;
