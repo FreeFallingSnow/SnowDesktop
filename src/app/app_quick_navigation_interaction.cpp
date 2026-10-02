@@ -26,18 +26,13 @@ void DesktopApp::BeginQuickNavigationItemRename(
         quickNavigationRenameItemRect_;
     const RECT iconRect =
         GetQuickNavItemIconRect(itemRect);
-    const int horizontalPad = QuickNavScale(3);
-    const int textTop = std::max<LONG>(
-        itemRect.top,
-        iconRect.bottom +
-            std::max(1, QuickNavScale(2)));
-    RECT editRect = MakeRect(
-        itemRect.left + horizontalPad,
-        textTop,
-        itemRect.right - horizontalPad,
-        std::min<LONG>(
-            itemRect.bottom,
-            textTop + QuickNavScale(32)));
+    const float fontSize = quickNavItemTextFormat_
+        ? quickNavItemTextFormat_->GetFontSize() : static_cast<float>(QuickNavScale(13));
+    const int textHeight = std::max(1, static_cast<int>(std::ceil(
+        std::max(1.0f, std::floor(fontSize * 1.08f)) * 2.0f)));
+    RECT editRect = QuickNavigationItemTextRect(itemRect, iconRect, QuickNavScale(4),
+        std::max(1, QuickNavScale(2)), textHeight);
+    InflateRect(&editRect, std::max(1, QuickNavScale(4)), 0);
     if (IsRectEmptyRect(editRect))
         return;
 
@@ -67,7 +62,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
     if (renameFont_)
         DeleteObject(renameFont_);
     renameFont_ = CreateFontW(
-        -std::max(1, QuickNavScale(13)),
+        -std::max(1, static_cast<int>(std::lround(fontSize))),
         0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -95,7 +90,6 @@ void DesktopApp::BeginQuickNavigationItemRename(
         1,
         reinterpret_cast<DWORD_PTR>(this));
     snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
-    snowdesktop::text_input::SetLogicalSingleLine(renameInputWindow_, true);
     renameEditLayout_.Begin(renameInputWindow_);
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);

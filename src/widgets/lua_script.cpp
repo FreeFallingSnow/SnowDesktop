@@ -9,6 +9,7 @@
  */
 
 #include "widget.h"
+#include "../widget_title_layout.h"
 #include "../widget_clip_geometry.h"
 #include "widget_chrome_rules.h"
 #include "types.h"
@@ -675,12 +676,8 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         if (!data_->title.empty())
         {
             const float bh = GetBarHeight();
-            RECT titleRect = {
-                handle.left + Cu(4.0f),
-                handle.top + Cu(bh * 0.083f),
-                std::max<LONG>(handle.left + Cu(5.0f), handle.right - Cu(bh * 1.17f)),
-                handle.bottom - Cu(bh * 0.083f)
-            };
+            const RECT titleRect = snowdesktop::widget_title_layout::LuaTitleRect(
+                handle, Cu(4.0f), Cu(bh * 0.083f), Cu(bh * 1.17f));
             auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
                 snowdesktop::font_weight_rules::RenderedWeight(
                     app_->GetItemFontWeight(), chromeForeground.darkForeground));

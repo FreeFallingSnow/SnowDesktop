@@ -23,7 +23,9 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
         renameController_.Reset();
         return;
     }
-    InflateRect(&rect, 2, 2);
+    const float renameScale = GetGridCuScaleForBounds(gridPages_, rect);
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    InflateRect(&rect, renameMargin, 0);
     RECT screenRect = rect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
@@ -43,8 +45,6 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetGridCuScaleForBounds(
-        gridPages_, rect);
     renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
         ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -52,13 +52,13 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(renameInputWindow_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
     SendMessageW(renameInputWindow_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(renameMargin, renameMargin));
     SetWindowSubclass(renameInputWindow_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
     snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
-    snowdesktop::text_input::SetLogicalSingleLine(renameInputWindow_, true);
+    snowdesktop::text_input::SetPadding(renameInputWindow_,
+        static_cast<float>(renameMargin), 4.0f * renameScale);
     renameEditLayout_.Begin(renameInputWindow_);
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
@@ -164,7 +164,6 @@ bool DesktopApp::BeginDockAnchoredRename(
         : dockSettings_.position == DockPosition::Top
             ? HeightAnchor::Top : HeightAnchor::Center;
     snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
-    snowdesktop::text_input::SetLogicalSingleLine(renameInputWindow_, true);
     renameEditLayout_.Begin(renameInputWindow_, heightAnchor);
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
@@ -214,7 +213,9 @@ BeginRenameDockFolderPopupEntry(
         renameController_.Reset();
         return;
     }
-    InflateRect(&rect, 2, 2);
+    const float renameScale = GetGridCuScaleForBounds(gridPages_, itemRect);
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    InflateRect(&rect, renameMargin, 0);
     RECT screenRect = rect;
     MapWindowPoints(
         hwnd_, nullptr,
@@ -243,8 +244,6 @@ BeginRenameDockFolderPopupEntry(
 
     if (renameFont_)
         DeleteObject(renameFont_);
-    const float renameScale =
-        GetGridCuScaleForBounds(gridPages_, itemRect);
     renameFont_ = CreateFontW(
         -std::max(
             1, static_cast<int>(
@@ -267,11 +266,6 @@ BeginRenameDockFolderPopupEntry(
                 : GetStockObject(
                     DEFAULT_GUI_FONT)),
         TRUE);
-    const int renameMargin =
-        std::max(
-            1, static_cast<int>(
-                std::round(
-                    6.0f * renameScale)));
     SendMessageW(
         renameInputWindow_, EM_SETMARGINS,
         EC_LEFTMARGIN |
@@ -287,7 +281,8 @@ BeginRenameDockFolderPopupEntry(
         reinterpret_cast<DWORD_PTR>(
             this));
     snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
-    snowdesktop::text_input::SetLogicalSingleLine(renameInputWindow_, true);
+    snowdesktop::text_input::SetPadding(renameInputWindow_,
+        static_cast<float>(renameMargin), 4.0f * renameScale);
     renameEditLayout_.Begin(renameInputWindow_);
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);

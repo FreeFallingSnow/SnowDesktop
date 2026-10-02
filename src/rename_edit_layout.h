@@ -9,10 +9,10 @@ namespace snowdesktop::rename_edit_layout
 {
 enum class HeightAnchor { Top, Center, Bottom };
 
-// Start hidden so the initial full-name measurement precedes the first paint.
+// Rename is a real single-line viewport; long names scroll horizontally.
 inline DWORD EditStyle(bool leftAligned = false)
 {
-    return WS_POPUP | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN |
+    return WS_POPUP | ES_AUTOHSCROLL |
         (leftAligned ? ES_LEFT : ES_CENTER);
 }
 
@@ -44,7 +44,7 @@ public:
         updating_ = false;
     }
 
-    void Begin(HWND edit, HeightAnchor heightAnchor = HeightAnchor::Top)
+    void Begin(HWND edit, HeightAnchor heightAnchor = HeightAnchor::Center)
     {
         Reset();
         if (!edit || !GetWindowRect(edit, &anchor_))
@@ -63,7 +63,7 @@ public:
             workArea_.bottom - workArea_.top > margin * 2)
             InflateRect(&workArea_, -margin, -margin);
 
-        // Width must be final before measuring the shared wrapped layout.
+        // Keep the original title's center while sizing one font line.
         const RECT initial = CalculateRect(anchor_, workArea_,
             anchor_.bottom - anchor_.top, heightAnchor_);
         updating_ = true;
@@ -72,14 +72,12 @@ public:
         Update(edit);
     }
 
-    // Changes notify the owner before paint, so all rename surfaces share the
-    // actual DirectWrite height, including wrapped unbroken file names.
+    // Text edits and undo keep the same one-line geometry.
     void Update(HWND edit)
     {
         if (!edit || edit != edit_ || updating_) return;
         const RECT next = CalculateRect(anchor_, workArea_,
-            std::max<int>(anchor_.bottom - anchor_.top,
-                text_input::DesiredHeight(edit)), heightAnchor_);
+            text_input::DesiredHeight(edit), heightAnchor_);
         updating_ = true;
         Position(next);
         updating_ = false;

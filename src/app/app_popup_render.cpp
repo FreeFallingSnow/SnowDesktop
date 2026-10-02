@@ -116,14 +116,11 @@ void DesktopApp::DrawCollectionPopup(
         const auto headerBounds =
             snowdesktop::collection_popup_layout::
                 ResolveHeaderVerticalBounds(popupMetrics.scale);
-        RECT titleRect = snowdesktop::collection_popup_layout::
-            ResolveTitleRect(popupRect_, popupMetrics.scale);
-        if (dockFolderPopupOpen_)
-            titleRect.right =
-                GetDockFolderPopupSortButtonRect(
-                    popupRect_).left -
-                snowdesktop::collection_popup_layout::
-                    ScaleDimension(10, popupMetrics.scale);
+        const RECT titleRect = snowdesktop::collection_popup_layout::
+            ResolveTitleRect(popupRect_, popupMetrics.scale,
+                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
+                    snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
+                    : (std::numeric_limits<LONG>::max)());
         std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
             ? GetDemoCollectionCategoryTitle(widget)
             : (widget.title.empty()

@@ -287,6 +287,13 @@ void DesktopApp::CommitRename(bool cancel)
                 SaveLayoutSlots();
             }
         }
+        if (!cancel && renameIndex < widgets_.size() && dockFolderPopupOpen_ &&
+            dockFolderPopupMappingWidgetId_ == widgets_[renameIndex].id)
+        {
+            dockFolderPopupWidget_.title = widgets_[renameIndex].title;
+            ResetCollectionPopupAnimationCache();
+            InvalidateFloatingPopupWindow(false);
+        }
         renameController_.Reset();
         InvalidateRect(hwnd_, nullptr, TRUE);
         if (quickNavigationRename)

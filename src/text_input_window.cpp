@@ -78,6 +78,7 @@ struct State
     float radius = 6.f, leftMargin = 8.f, rightMargin = 8.f, verticalMargin = 4.f;
     int width = 1, height = 1;
     float scrollX = 0, scrollY = 0;
+    float singleLineOffsetY = 0;
     RECT frame{}, clip{};
     bool embedded = false, shown = true, interactive = true;
     bool password = false, multiline = false, singleLine = true, readOnly = false;
@@ -140,6 +141,14 @@ struct State
         if(notify){Notify(EN_UPDATE);Notify(EN_CHANGE);}else if(!password)RaiseEvent(*this,UIA_Text_TextChangedEventId);
     }
     float FontSize() const { return static_cast<float>(fontInfo.lfHeight ? std::abs(fontInfo.lfHeight) : 12L); }
+    float TextY() const { return verticalMargin + singleLineOffsetY - scrollY; }
+    void UpdateWindowClip()
+    {
+        if (!window || embedded) return;
+        const int diameter = static_cast<int>(std::lround((std::max)(0.f, radius) * 2.f));
+        const auto region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
+        if (region && !SetWindowRgn(window, region, TRUE)) DeleteObject(region);
+    }
     void Layout()
     {
         if (layout) return;
@@ -161,7 +170,27 @@ struct State
             (std::max)(1.f, static_cast<float>(width) - leftMargin - rightMargin),
             multiline ? 100000.f : (std::max)(1.f, static_cast<float>(height) - verticalMargin*2.f), &layout);
         if (!layout) return;
-        if (!multiline) layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        singleLineOffsetY = 0;
+        if (!multiline)
+        {
+            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DWRITE_TEXT_METRICS metrics{}; layout->GetMetrics(&metrics);
+            // Center short titles, but keep the entire beginning of an
+            // overflowing name reachable by horizontal scrolling.
+            if (metrics.widthIncludingTrailingWhitespace > layout->GetMaxWidth())
+                layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            // Center the font's visible Latin/CJK band rather than its
+            // asymmetric ascent/descent box. Use a stable reference so typing
+            // and switching between the cue and the value cannot move it.
+            ComPtr<IDWriteTextLayout> reference;
+            if (SUCCEEDED(factory->CreateTextLayout(L"国Hg", 3, format.Get(), 1000.f, 1000.f, &reference)))
+            {
+                DWRITE_TEXT_METRICS band{}; DWRITE_OVERHANG_METRICS ink{};
+                reference->GetMetrics(&band); reference->GetOverhangMetrics(&ink);
+                singleLineOffsetY = (band.height + ink.top - 1000.f - ink.bottom) / 2.f;
+            }
+            scrollY = 0;
+        }
         float x = 0, y = 0; DWRITE_HIT_TEST_METRICS hit{};
         const auto position = composition.empty() ? cursor : (std::min)(cursor, anchor) + compositionCursor;
         layout->HitTestTextPosition(static_cast<UINT32>((std::min)(position, display.size())), FALSE, &x, &y, &hit);
@@ -180,7 +209,7 @@ struct State
     {
         Layout(); if (!layout) return 0;
         BOOL trailing = FALSE, inside = FALSE; DWRITE_HIT_TEST_METRICS metrics{};
-        layout->HitTestPoint(x - leftMargin + scrollX, y - verticalMargin + scrollY, &trailing, &inside, &metrics);
+        layout->HitTestPoint(x - leftMargin + scrollX, y - TextY(), &trailing, &inside, &metrics);
         return SnapBoundary(Value(), (std::min)(static_cast<std::size_t>(metrics.textPosition + (trailing ? metrics.length : 0)), Value().size()));
     }
     void ImePosition()
@@ -190,7 +219,7 @@ struct State
         float x = 0, y = 0; DWRITE_HIT_TEST_METRICS hit{};
         const auto position = composition.empty() ? cursor : (std::min)(cursor, anchor) + compositionCursor;
         layout->HitTestTextPosition(static_cast<UINT32>((std::min)(position, display.size())), FALSE, &x, &y, &hit);
-        POINT point{static_cast<LONG>(std::lround(x + leftMargin - scrollX)), static_cast<LONG>(std::lround(y + verticalMargin - scrollY))};
+        POINT point{static_cast<LONG>(std::lround(x + leftMargin - scrollX)), static_cast<LONG>(std::lround(y + TextY()))};
         if (embedded)
         { point.x += frame.left; point.y += frame.top; MapWindowPoints(GetParent(window), window, &point, 1); }
         if (const auto context = ImmGetContext(window))
@@ -244,7 +273,8 @@ struct State
                 std::vector<DWRITE_LINE_METRICS> lines(count);
                 if(count&&SUCCEEDED(documentLayout->GetLineMetrics(lines.data(),count,&count)))
                 {
-                    std::size_t at=0;float top=verticalMargin-scrollY;query.boundaries.push_back(0);
+                    DWRITE_TEXT_METRICS metrics{}; documentLayout->GetMetrics(&metrics);
+                    std::size_t at=0;float top=TextY()+metrics.top;query.boundaries.push_back(0);
                     for(const auto& line:lines)
                     {
                         const auto end=(std::min)(text.size(),at+line.length);
@@ -255,9 +285,9 @@ struct State
                             BOOL trailing=FALSE,inside=FALSE;DWRITE_HIT_TEST_METRICS hit{};
                             const float left=embedded?static_cast<float>((std::max)(0L,clip.left-frame.left)):0.f;
                             const float right=embedded?static_cast<float>((std::min)(static_cast<LONG>(width),clip.right-frame.left)):static_cast<float>(width);
-                            documentLayout->HitTestPoint(left-leftMargin+scrollX,top-verticalMargin+scrollY+line.height/2,&trailing,&inside,&hit);
+                            documentLayout->HitTestPoint(left-leftMargin+scrollX,top-TextY()+line.height/2,&trailing,&inside,&hit);
                             const auto first=SnapBoundary(text,hit.textPosition);
-                            documentLayout->HitTestPoint(right-leftMargin+scrollX,top-verticalMargin+scrollY+line.height/2,&trailing,&inside,&hit);
+                            documentLayout->HitTestPoint(right-leftMargin+scrollX,top-TextY()+line.height/2,&trailing,&inside,&hit);
                             const auto last=SnapBoundary(text,hit.textPosition+(trailing?hit.length:0));
                             query.visible.emplace_back((std::min)(first,last),(std::max)(first,last));
                         }
@@ -269,7 +299,7 @@ struct State
             else if(query.kind==AccessQuery::Kind::Hit)
             {BOOL trailing=FALSE,inside=FALSE;DWRITE_HIT_TEST_METRICS hit{};
                 documentLayout->HitTestPoint(static_cast<float>(query.point.x-origin.x)-leftMargin+scrollX,
-                    static_cast<float>(query.point.y-origin.y)-verticalMargin+scrollY,&trailing,&inside,&hit);
+                    static_cast<float>(query.point.y-origin.y)-TextY(),&trailing,&inside,&hit);
                 query.start=SnapBoundary(text,hit.textPosition+(trailing?hit.length:0));query.result=true;}
             else if(query.kind==AccessQuery::Kind::Reveal)
             {
@@ -282,16 +312,18 @@ struct State
             {
                 const auto start=(std::min)(query.start,text.size()),end=std::clamp(query.end,start,text.size());
                 UINT32 count=0;documentLayout->HitTestTextRange(static_cast<UINT32>(start),static_cast<UINT32>(end-start),
-                    static_cast<float>(origin.x)+leftMargin-scrollX,static_cast<float>(origin.y)+verticalMargin-scrollY,nullptr,0,&count);
+                    static_cast<float>(origin.x)+leftMargin-scrollX,static_cast<float>(origin.y)+TextY(),nullptr,0,&count);
                 std::vector<DWRITE_HIT_TEST_METRICS> boxes(count);
                 if(count&&SUCCEEDED(documentLayout->HitTestTextRange(static_cast<UINT32>(start),static_cast<UINT32>(end-start),
-                    static_cast<float>(origin.x)+leftMargin-scrollX,static_cast<float>(origin.y)+verticalMargin-scrollY,boxes.data(),count,&count)))
+                    static_cast<float>(origin.x)+leftMargin-scrollX,static_cast<float>(origin.y)+TextY(),boxes.data(),count,&count)))
                     for(const auto& box:boxes)
                     {
                         POINT clipping{clip.left,clip.top};if(embedded)ClientToScreen(GetParent(window),&clipping);
-                        const float left=(std::max)(box.left,static_cast<float>(embedded?(std::max)(origin.x,clipping.x):origin.x));
+                        const float left=(std::max)(box.left,(std::max)(static_cast<float>(origin.x)+leftMargin,
+                            static_cast<float>(embedded?clipping.x:origin.x)));
                         const float top=(std::max)(box.top,static_cast<float>(embedded?(std::max)(origin.y,clipping.y):origin.y));
-                        const float right=(std::min)(box.left+box.width,static_cast<float>(embedded?(std::min)(origin.x+width,clipping.x+clip.right-clip.left):origin.x+width));
+                        const float right=(std::min)(box.left+box.width,(std::min)(static_cast<float>(origin.x+width)-rightMargin,
+                            static_cast<float>(embedded?clipping.x+clip.right-clip.left:origin.x+width)));
                         const float bottom=(std::min)(box.top+box.height,static_cast<float>(embedded?(std::min)(origin.y+height,clipping.y+clip.bottom-clip.top):origin.y+height));
                         if(right>=left&&bottom>top)query.rectangles.push_back({left,top,right-left,bottom-top});
                     }
@@ -403,7 +435,10 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
     target->PushAxisAlignedClip(frame, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     target->SetTransform(D2D1::Matrix3x2F::Scale(1.f/scale,1.f/scale) *
         D2D1::Matrix3x2F::Translation(frame.left, frame.top) * old);
-    const float x = state.leftMargin - state.scrollX, y = state.verticalMargin - state.scrollY;
+    target->PushAxisAlignedClip(D2D1::RectF(state.leftMargin, 0.f,
+        std::max(state.leftMargin + 1.f, static_cast<float>(state.width) - state.rightMargin),
+        static_cast<float>(state.height)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const float x = state.leftMargin - state.scrollX, y = state.TextY();
     std::vector<DWRITE_HIT_TEST_METRICS> selectionBoxes;
     const auto ranges = [&](std::size_t start, std::size_t count, bool underline)
     {
@@ -436,17 +471,11 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
     if (!state.composition.empty()) ranges((std::min)(state.cursor,state.anchor), state.composition.size(), true);
     if (state.display.empty() && !state.cue.empty())
     {
-        ComPtr<IDWriteTextFormat> format;
-        state.factory->CreateTextFormat(state.fontInfo.lfFaceName[0] ? state.fontInfo.lfFaceName : L"Segoe UI", nullptr,
-            DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,state.FontSize(),L"",&format);
-        if (format)
-        {
-            format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); brush->SetColor(Color(state.colors.secondary));
-            ComPtr<IDWriteTextLayout> hint;
-            state.factory->CreateTextLayout(state.cue.data(),static_cast<UINT32>(state.cue.size()),format.Get(),
-                static_cast<float>(state.width)-state.leftMargin-state.rightMargin,static_cast<float>(state.height),&hint);
-            if(hint)target->DrawTextLayout(D2D1::Point2F(state.leftMargin,0),hint.Get(),brush.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        }
+        brush->SetColor(Color(state.colors.secondary));
+        ComPtr<IDWriteTextLayout> hint;
+        state.factory->CreateTextLayout(state.cue.data(),static_cast<UINT32>(state.cue.size()),state.layout.Get(),
+            state.layout->GetMaxWidth(),state.layout->GetMaxHeight(),&hint);
+        if(hint)target->DrawTextLayout(D2D1::Point2F(state.leftMargin,y),hint.Get(),brush.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     if (GetFocus() == state.window && state.caret && state.interactive)
     {
@@ -456,7 +485,7 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
         brush->SetColor(Color(state.colors.foreground));
         target->FillRectangle(D2D1::RectF(x+cx,y+cy,x+cx+1.5f,y+cy+hit.height),brush.Get());
     }
-    target->SetTransform(old); target->PopAxisAlignedClip();
+    target->PopAxisAlignedClip(); target->SetTransform(old); target->PopAxisAlignedClip();
 }
 void Paint(State& state, HDC dc)
 {
@@ -557,7 +586,7 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
     case WM_GETTEXT:
         if(wp&&lp){auto* out=reinterpret_cast<wchar_t*>(lp);const auto count=state->password?0:(std::min)(state->text.size(),static_cast<std::size_t>(wp-1));
             if(count)std::memcpy(out,state->text.data(),count*sizeof(wchar_t));out[count]=0;return static_cast<LRESULT>(count);}return 0;
-    case WM_SIZE:if(!state->embedded){state->width=LOWORD(lp);state->height=HIWORD(lp);state->Dirty();}return 0;
+    case WM_SIZE:if(!state->embedded){state->width=LOWORD(lp);state->height=HIWORD(lp);state->UpdateWindowClip();state->Dirty();}return 0;
     case EM_SETLIMITTEXT:state->limit=static_cast<std::size_t>(wp);return 0;
     case EM_GETLIMITTEXT:return static_cast<LRESULT>(state->limit);
     case EM_SETREADONLY:state->readOnly=wp!=0;state->Dirty();return TRUE;
@@ -720,7 +749,7 @@ const wchar_t* WindowClass()
     return kClass;
 }
 void SetColors(HWND window,const Colors& colors,float radius)
-{if(const auto state=Get(window)){state->colors=colors;state->explicitColors=true;state->radius=radius;state->Dirty();}}
+{if(const auto state=Get(window)){state->colors=colors;state->explicitColors=true;state->radius=radius;state->UpdateWindowClip();state->Dirty();}}
 bool IsComposing(HWND window) {const auto state=Get(window);return state&&state->composing;}
 void SetLogicalSingleLine(HWND window,bool value) {if(const auto state=Get(window))state->singleLine=value;}
 void SetEmbeddedPose(HWND window,RECT frame,RECT clip,bool shown,bool interactive)
@@ -729,6 +758,7 @@ void SetEmbeddedPose(HWND window,RECT frame,RECT clip,bool shown,bool interactiv
     {
         const bool place=!state->embedded||state->shown!=shown;
         const bool changed=!EqualRect(&state->frame,&frame)||!EqualRect(&state->clip,&clip)||state->shown!=shown||state->interactive!=interactive;
+        if(!state->embedded)SetWindowRgn(window,nullptr,FALSE);
         state->embedded=true;state->frame=frame;state->clip=clip;state->shown=shown;state->interactive=interactive;
         state->width=(std::max)(1L,frame.right-frame.left);state->height=(std::max)(1L,frame.bottom-frame.top);
         if(place)SetWindowPos(window,nullptr,-32000,-32000,1,1,SWP_NOACTIVATE|SWP_NOZORDER|(shown?SWP_SHOWWINDOW:SWP_HIDEWINDOW));

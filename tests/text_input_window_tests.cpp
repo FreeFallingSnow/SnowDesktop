@@ -1,9 +1,12 @@
 #include "text_input_window.h"
+#include <commctrl.h>
 #include <wrl/client.h>
 #include <UIAutomation.h>
 #include <UIAutomationCoreApi.h>
 #include <iostream>
 #include <string>
+#include <algorithm>
+#include <cmath>
 
 using Microsoft::WRL::ComPtr;
 namespace input = snowdesktop::text_input;
@@ -99,13 +102,51 @@ void Reentrant(HWND owner)
     const auto window=Create(owner);const auto access=input::Accessibility(window);destroyOnChange=true;
     SendMessageW(window,WM_CHAR,L'x',0);destroyOnChange=false;Check(access&&!access->document(),"change callback may destroy its input safely");
 }
+std::pair<int,int> InkBand(HWND window)
+{
+    constexpr int width=120,height=48;
+    BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth=width;info.bmiHeader.biHeight=-height;
+    info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
+    void* pixels=nullptr;
+    const auto dc=CreateCompatibleDC(nullptr);
+    const auto bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&pixels,nullptr,0);
+    if(!dc||!bitmap){if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);return {-1,-1};}
+    const auto previous=SelectObject(dc,bitmap);
+    SendMessageW(window,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT);
+    GdiFlush();
+    int first=height,last=-1;
+    const auto* data=static_cast<const DWORD*>(pixels);
+    for(int y=4;y<height-4;++y)for(int x=8;x<width-8;++x)
+        if((data[y*width+x]&0xffffff)!=0xffffff){first=std::min(first,y);last=std::max(last,y);}
+    SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);return {first,last};
+}
+void VerticalAlignment(HWND owner)
+{
+    const auto window=Create(owner,ES_AUTOHSCROLL,L"");if(!window)return;
+    SetWindowPos(window,nullptr,0,0,120,48,SWP_NOZORDER|SWP_NOACTIVATE);
+    const auto font=CreateFontW(-23,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+    SendMessageW(window,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
+    input::Colors colors;colors.foreground=colors.secondary=RGB(0,0,0);
+    colors.background=colors.border=colors.accent=RGB(255,255,255);input::SetColors(window,colors);
+    SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(L"国Hg"));
+    const auto cue=InkBand(window);SetWindowTextW(window,L"国Hg");const auto value=InkBand(window);
+    Check(cue.second>=cue.first&&value==cue,"cue and value share the same rendered glyph band");
+    Check(std::abs(value.first+value.second-47)<=2,"single-line Latin/CJK ink is vertically centered");
+    const auto access=input::Accessibility(window);const auto boxes=access->rectangles(0,3);
+    Check(!boxes.empty(),"centered input still exposes actual text geometry");
+    if(!boxes.empty())Check(access->hit({boxes[0].left+1,boxes[0].top+boxes[0].height/2})==0,
+        "pointer and accessibility hit testing use the centered text origin");
+    DestroyWindow(window);DeleteObject(font);
+}
 }
 int main()
 {
     const auto apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     WNDCLASSW cls{};cls.lpfnWndProc=Owner;cls.hInstance=GetModuleHandleW(nullptr);cls.lpszClassName=L"SnowDesktop.TextInputTestOwner";RegisterClassW(&cls);
     const auto owner=CreateWindowExW(0,cls.lpszClassName,L"",WS_OVERLAPPED,0,0,400,300,nullptr,nullptr,cls.hInstance,nullptr);
-    if(!owner)Check(false,"create isolated hidden test owner");else{Ordinary(owner);Accessible(owner);Password(owner);Reentrant(owner);DestroyWindow(owner);}
+    if(!owner)Check(false,"create isolated hidden test owner");else{Ordinary(owner);Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);DestroyWindow(owner);}
     if(SUCCEEDED(apartment))CoUninitialize();
     if(failures)return 1;std::cout<<"shared text input production checks passed\n";return 0;
 }

@@ -243,15 +243,9 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
 {
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
         return;
-    RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
-    const int width = std::max<LONG>(
-        1, search.right - search.left - QuickNavScale(8));
-    const int height = std::max<LONG>(
-        1, search.bottom - search.top - QuickNavScale(10));
-    const RECT frame{search.left - quickNavigationHostRect_.left + QuickNavScale(4),
-        search.top - quickNavigationHostRect_.top + QuickNavScale(6),
-        search.left - quickNavigationHostRect_.left + QuickNavScale(4) + width,
-        search.top - quickNavigationHostRect_.top + QuickNavScale(6) + height};
+    RECT frame = QuickNavigationSearchInputRect(
+        GetQuickNavigationSearchRect(quickNavigationRect_), QuickNavScale(4));
+    OffsetRect(&frame, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
     snowdesktop::text_input::SetEmbeddedPose(quickNavigationSearchEdit_, frame, frame,
         true, true);
 }

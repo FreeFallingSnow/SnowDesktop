@@ -6,9 +6,24 @@
 #include <windows.h>
 
 #include <string>
+#include <algorithm>
 
 inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
+
+inline RECT QuickNavigationSearchInputRect(RECT search, int inset)
+{
+    InflateRect(&search, -inset, -inset);
+    search.right = std::max<LONG>(search.left + 1, search.right);
+    search.bottom = std::max<LONG>(search.top + 1, search.bottom);
+    return search;
+}
+
+inline RECT QuickNavigationItemTextRect(RECT item, RECT icon, int pad, int gap, int height)
+{
+    const LONG top = std::max(item.top, icon.bottom + gap);
+    return {item.left + pad, top, item.right - pad, std::min<LONG>(item.bottom, top + height)};
+}
 
 inline std::wstring QuickNavigationReadImeCompositionString(HWND hwnd)
 {

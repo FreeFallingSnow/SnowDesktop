@@ -558,11 +558,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         searchRect,
         static_cast<float>(QuickNavScale(12)) / 2.0f,
         ToD2DColor(t.searchBg), ToD2DColor(t.searchBorder));
+    const RECT searchInput = QuickNavigationSearchInputRect(searchRect, QuickNavScale(4));
     snowdesktop::text_input::Draw(quickNavigationSearchEdit_, ctx.Get(),
-        D2D1::RectF(static_cast<float>(searchRect.left + QuickNavScale(4)),
-            static_cast<float>(searchRect.top + QuickNavScale(6)),
-            static_cast<float>(searchRect.right - QuickNavScale(4)),
-            static_cast<float>(searchRect.bottom - QuickNavScale(4))), 1.f, false);
+        ToD2DRect(searchInput), 1.f, false);
 
     if (!searching)
     {

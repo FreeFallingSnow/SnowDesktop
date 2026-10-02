@@ -2,6 +2,7 @@
 #include "../item_title_layout.h"
 #include "app.h"
 #include "quick_navigation_theme.h"
+#include "quick_navigation_helpers.h"
 
 // DirectWrite item text rendering.
 
@@ -431,12 +432,7 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     RECT iconRect = GetQuickNavItemIconRect(bounds);
     const int horizontalPad = QuickNavScale(4);
     const int topGap = std::max(1, QuickNavScale(2));
-    const int textTop = std::max<LONG>(bounds.top, iconRect.bottom + topGap);
-    RECT textRect = MakeRect(
-        bounds.left + horizontalPad,
-        textTop,
-        bounds.right - horizontalPad,
-        std::min<LONG>(bounds.bottom, textTop + textHeight));
+    RECT textRect = QuickNavigationItemTextRect(bounds, iconRect, horizontalPad, topGap, textHeight);
     if (IsRectEmptyRect(textRect))
         return;
 
