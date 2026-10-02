@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../dock_snapshot_warmup_rules.h"
 #include "../layout_scroll_save_rules.h"
 #include "dock_taskbar_diagnostics.h"
 #include "../drag_input_rules.h"
@@ -555,9 +556,18 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (dockWindowTransition_)
         {
             const HWND foreground = GetForegroundWindow();
-            const bool tracked = generalSettings_.dockEnabled &&
-                !dragSession_.HasContext() &&
-                !quickNavigationAnimation_.IsAnimating() &&
+            const bool presentationVisible = std::any_of(containers_.begin(), containers_.end(),
+                [this](const auto& container) {
+                    const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+                    if (!dock || !IsDockContainerInteractionVisible(dock)) return false;
+                    const auto* host = FindPersistentDockHost(dock);
+                    // Active persistent/merged hosts use their existing visibility
+                    // policy. A fallback desktop surface also requires visible icons.
+                    return (host && host->active) || (customDesktopVisible_ && !desktopIconsHidden_);
+                });
+            const bool tracked = snowdesktop::dock_snapshot_warmup_rules::CanOfferForeground(
+                generalSettings_.dockEnabled, presentationVisible,
+                dragSession_.HasContext(), quickNavigationAnimation_.IsAnimating()) &&
                 (std::any_of(dockRunningWindows_.begin(), dockRunningWindows_.end(),
                     [foreground](const auto& entry) {
                         return entry.second.running && entry.second.window == foreground;

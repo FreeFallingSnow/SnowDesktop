@@ -7,6 +7,12 @@
 
 namespace snowdesktop::dock_snapshot_warmup_rules
 {
+constexpr bool CanOfferForeground(bool dockEnabled, bool presentationVisible,
+    bool dragging, bool panelAnimating) noexcept
+{
+    return dockEnabled && presentationVisible && !dragging && !panelAnimating;
+}
+
 constexpr bool ShouldStart(bool enabled, bool active, bool eligible, bool pending,
     std::uint64_t now, std::uint64_t lastAttempt, std::uint32_t foregroundAge) noexcept
 {

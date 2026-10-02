@@ -6198,6 +6198,13 @@ int main(int argc, char** argv)
             PreferDockSnapshotEviction(true, 100, true, 200),
         "cache pressure must evict recapturable windows before minimized ones, then use LRU");
     namespace warmup = snowdesktop::dock_snapshot_warmup_rules;
+    Check(warmup::CanOfferForeground(true, true, false, false),
+        "visible eligible Dock presentation may offer its tracked foreground");
+    Check(!warmup::CanOfferForeground(true, false, false, false) &&
+            !warmup::CanOfferForeground(false, true, false, false) &&
+            !warmup::CanOfferForeground(true, true, true, false) &&
+            !warmup::CanOfferForeground(true, true, false, true),
+        "hidden/disabled Dock, drag or active panel must not offer new warmup work");
     Check(warmup::ShouldStart(true, false, true, false, 1000, 0, 250),
         "the first eligible warmup may start after foreground has settled");
     Check(!warmup::ShouldStart(false, false, true, false, 5000, 3000, 250) &&
