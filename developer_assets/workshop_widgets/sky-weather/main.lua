@@ -131,22 +131,24 @@ local function render(_context,m)
     local w,h=layout.contentWidth(),layout.contentHeight();local short=math.min(w,h)
     local p=short*0.065;local colors=palette();local a=m.weather;local data=a.weather;local cfg=config()
     local header=short*0.07;local title=a.city~="" and a.city or l10n.tr("lua_widget.sky_weather.choose_city")
-    region("cities",p,p*0.65,w-p*2-header*2.6,header*1.35,l10n.tr("lua_widget.sky_weather.choose_city"))
-    draw.path({{op="move",x=p+header*0.05,y=p+header*0.20},{op="line",x=p+header*0.62,y=p-header*0.03},
-        {op="line",x=p+header*0.4,y=p+header*0.61},{op="line",x=p+header*0.3,y=p+header*0.32},{op="close"}},
-        {fillColor=colors.primary,alpha=1})
+    local headerCenter=p+header*0.18
     local titleWidth=w-p*2-header*3.6
-    text(p+header*0.9,p*0.69,title,header*0.68,colors.primary,titleWidth-header*0.8,true)
-    local measuredTitle=draw.measureText(title,header*0.68,titleWidth-header*0.8,true)
-    local cx=p+header*1.2+measuredTitle.width
-    draw.line(cx,p+header*0.10,cx+header*0.15,p+header*0.25,header*0.04,colors.primary,1)
-    draw.line(cx+header*0.15,p+header*0.25,cx+header*0.30,p+header*0.10,header*0.04,colors.primary,1)
+    local titleSize=header*0.68
+    local measuredTitle=draw.measureText(title,titleSize,0,true)
+    region("cities",p,p*0.65,w-p*2-header*2.6,header*1.35,l10n.tr("lua_widget.sky_weather.choose_city"))
+    draw.path({{op="move",x=p+header*0.05,y=headerCenter-header*0.09},{op="line",x=p+header*0.62,y=headerCenter-header*0.32},
+        {op="line",x=p+header*0.4,y=headerCenter+header*0.32},{op="line",x=p+header*0.3,y=headerCenter+header*0.03},{op="close"}},
+        {fillColor=colors.primary,alpha=1})
+    text(p+header*0.9,headerCenter-measuredTitle.height*0.5,title,titleSize,colors.primary,titleWidth-header*0.8,true,measuredTitle.height)
+    local cx=p+header*1.2+math.min(measuredTitle.width,titleWidth-header*0.8)
+    draw.line(cx,headerCenter-header*0.075,cx+header*0.15,headerCenter+header*0.075,header*0.04,colors.primary,1)
+    draw.line(cx+header*0.15,headerCenter+header*0.075,cx+header*0.30,headerCenter-header*0.075,header*0.04,colors.primary,1)
     local rx=w-p-header*2.25
     region("refresh",rx,p*0.65,header*1.1,header*1.35,l10n.tr("lua_widget.sky_weather.refresh"))
-    draw.arc(rx+header*0.55,p+header*0.23,header*0.23,35,290,header*0.065,colors.primary,0.9)
-    draw.line(rx+header*0.78,p+header*0.15,rx+header*0.80,p-header*0.02,header*0.055,colors.primary,0.9)
+    draw.arc(rx+header*0.55,headerCenter,header*0.23,35,290,header*0.065,colors.primary,0.9)
+    draw.line(rx+header*0.78,headerCenter-header*0.08,rx+header*0.80,headerCenter-header*0.25,header*0.055,colors.primary,0.9)
     region("settings",w-p-header,p*0.65,header,header*1.35,l10n.tr("lua_widget.sky_weather.settings"))
-    for i=0,2 do draw.circle(w-p-header*0.74+i*header*0.23,p+header*0.23,header*0.035,colors.primary,1) end
+    for i=0,2 do draw.circle(w-p-header*0.74+i*header*0.23,headerCenter,header*0.035,colors.primary,1) end
     local wide=w/h>1.8;local tall=w/h<0.7
     local heroX,heroY,heroW,heroH=p,h*0.20,w-p*2,h*0.235
     local fx,fy,fw,fh=p,h*0.49,w-p*2,h*0.37
@@ -216,50 +218,41 @@ local function render(_context,m)
 end
 local function panel(_context,m)
     local row=ui.metrics().layoutRowHeight
-    local light=widget.theme().contentTheme==1
-    local colors={background=light and 0xFFFFFF or 0x172230,
-        field=light and 0xF4F7FB or 0x202F40,
-        border=light and 0xE0E8F1 or 0x35475C,
-        location=light and 0xEFF6FF or 0x203A55,
-        selected=light and 0xE6F0FE or 0x274F76,
-        accent=light and 0x2468B2 or 0x8AC0FF}
-    if _context.accessibility and _context.accessibility.highContrast then
-        colors={background="widgetBackground",field="surface",border="border",location="surfaceVariant",selected="surfaceVariant",accent="info"}
-    end
+    local colors={field="surface",border="border",selected="surfaceVariant",accent="info"}
     local function label(key,value,size,height,secondary,bold)
-        return view.text({key=key,text=value,width="fill",height=height or row*0.5,fontSize=size,
+        return view.text({key=key,text=value,width="fill",height=height or row*0.75,fontSize=size,
             bold=bold==true,verticalAlign="center",style={foreground=secondary and "textSecondary" or "textPrimary"}})
     end
     local selected=storage.get("citySelection")
     local function cityButton(key,p)
         local active=cities.valid(selected) and math.abs(selected.lat-p.lat)<0.001 and math.abs(selected.lon-p.lon)<0.001
-        return view.button({key=key,label=p.label or p.name,width="fill",height=row*1.45,
-            flexShrink=0,fontSize=row*0.34,textAlign="start",padding={left=row*0.30,right=row*0.30,top=row*0.18,bottom=row*0.18},textWrap="wrap",maxLines=2,
+        return view.button({key=key,label=p.label or p.name,width="fill",height=row*2.1,
+            flexShrink=0,fontSize=row*0.54,textAlign="start",padding={left=row*0.32,right=row*0.32,top=row*0.22,bottom=row*0.22},textWrap="wrap",maxLines=2,
             accessibility={label=p.label or p.name},events={click={id="choose",value=p}},
             style={foreground="textPrimary",background=active and colors.selected or colors.field,
                 borderColor=active and colors.accent or colors.border,borderWidth=active and 1.3 or 1,cornerRadius=row*0.20},
-            hoverStyle={background=colors.selected,borderColor=colors.accent},pressedStyle={background=colors.location}})
+            hoverStyle={background=colors.selected,borderColor=colors.accent},pressedStyle={background=colors.selected}})
     end
     local items={}
     if m.query=="" then
         local recent=cities.recent(storage.get("recentCities"))
         if #recent>0 then
-            items[#items+1]=label("recent.title",l10n.tr("lua_widget.sky_weather.recent"),row*0.29,row*0.52,true,true)
+            items[#items+1]=label("recent.title",l10n.tr("lua_widget.sky_weather.recent"),row*0.50,row*0.82,true,true)
             for i,p in ipairs(recent) do items[#items+1]=cityButton("recent."..i,p) end
         end
         if #recent==0 then
-            items[#items+1]=view.column({key="city.empty",width="fill",height=row*2.8,gap=row*0.18,justifyContent="center",children={
-                view.text({key="city.empty.title",text=l10n.tr("lua_widget.sky_weather.search_empty_title"),width="fill",height=row*0.52,
-                    fontSize=row*0.35,bold=true,textAlign="center",style={foreground="textPrimary"}}),
-                view.text({key="city.empty.hint",text=l10n.tr("lua_widget.sky_weather.search_empty_hint"),width="fill",height=row*1.2,
-                    fontSize=row*0.29,textAlign="center",textWrap="wrap",maxLines=3,verticalAlign="start",style={foreground="textSecondary"}})}})
+            items[#items+1]=view.column({key="city.empty",width="fill",height=row*4,gap=row*0.20,justifyContent="center",children={
+                view.text({key="city.empty.title",text=l10n.tr("lua_widget.sky_weather.search_empty_title"),width="fill",height=row*0.78,
+                    fontSize=row*0.54,bold=true,textAlign="center",style={foreground="textPrimary"}}),
+                view.text({key="city.empty.hint",text=l10n.tr("lua_widget.sky_weather.search_empty_hint"),width="fill",height=row*2,
+                    fontSize=row*0.46,textAlign="center",textWrap="wrap",maxLines=3,verticalAlign="start",style={foreground="textSecondary"}})}})
         end
     else
         local notice=m.searchLoading and l10n.tr("lua_widget.sky_weather.searching") or
             m.searchError and l10n.tr("lua_widget.sky_weather.network_error") or
             #m.results==0 and l10n.tr("lua_widget.sky_weather.no_results") or nil
         if notice then
-            local node=label("search.status",notice,row*0.32,row*1.2,true);node.textWrap="wrap";node.maxLines=2
+            local node=label("search.status",notice,row*0.50,row*1.6,true);node.textWrap="wrap";node.maxLines=2
             items[#items+1]=node
         end
         for i,p in ipairs(m.results) do items[#items+1]=cityButton("result."..i,p) end
@@ -268,38 +261,35 @@ local function panel(_context,m)
     local enabled=not m.locating and widget.hasFeature("task.location.current") and widget.hasPermission("location.read")
     local info=m.locationInfo or savedInfo or (not widget.hasFeature("task.location.current") and l10n.tr("lua_widget.sky_weather.old_host") or
         not widget.hasPermission("location.read") and l10n.tr("lua_widget.sky_weather.location_permission_short") or l10n.tr("lua_widget.sky_weather.location_idle"))
-    local hint=label("location.info",info,row*0.28,row*0.80,true);hint.textWrap="wrap";hint.maxLines=2
+    local hint=label("location.info",info,row*0.46,row*1.20,true);hint.textWrap="wrap";hint.maxLines=2
     local children={
-        view.column({key="picker.header",width="fill",height=row*1.50,flexShrink=0,gap=2,children={
-            label("picker.title",l10n.tr("lua_widget.sky_weather.picker_title"),row*0.48,row*0.6,false,true),
-            view.text({key="picker.subtitle",text=l10n.tr("lua_widget.sky_weather.picker_subtitle"),width="fill",height=row*0.82,fontSize=row*0.29,
-                textWrap="wrap",maxLines=2,verticalAlign="start",style={foreground="textSecondary"}})}}),
+        view.text({key="picker.subtitle",text=l10n.tr("lua_widget.sky_weather.picker_subtitle"),width="fill",height=row*1.2,flexShrink=0,fontSize=row*0.48,
+            textWrap="wrap",maxLines=2,verticalAlign="start",style={foreground="textSecondary"}}),
         view.searchBox({key="city.search",value=m.query,placeholder=l10n.tr("lua_widget.sky_weather.search_hint"),
-            width="fill",height=row,flexShrink=0,fontSize=row*0.34,maxBytes=256,padding=row*0.28,
+            width="fill",height=row*1.3,flexShrink=0,fontSize=row*0.54,maxBytes=256,padding=row*0.28,
             accessibility={label=l10n.tr("lua_widget.sky_weather.search_hint")},
             style={foreground="textPrimary",background=colors.field,borderColor=colors.border,borderWidth=1,cornerRadius=row*0.22},
             events={change={id="query"},submit={id="search"}}}),
-        view.row({key="location.card",width="fill",height=row*1.95,flexShrink=0,padding=row*0.28,gap=row*0.24,alignItems="center",
-            style={background=colors.location,cornerRadius=row*0.24},children={
-                view.column({key="location.copy",width="fill",height="auto",gap=2,children={
-                    label("location.title",l10n.tr("lua_widget.sky_weather.use_location"),row*0.34,row*0.48,false,true),hint}}),
+        view.row({key="location.card",width="fill",height=row*2.35,flexShrink=0,padding={left=0,right=0,top=row*0.20,bottom=row*0.20},gap=row*0.36,alignItems="center",
+            children={
+                view.column({key="location.copy",width="fill",height="auto",gap=row*0.10,children={
+                    label("location.title",l10n.tr("lua_widget.sky_weather.use_location"),row*0.54,row*0.72,false,true),hint}}),
                 view.button({key="location",label=m.locating and l10n.tr("lua_widget.sky_weather.locating_short") or l10n.tr("lua_widget.sky_weather.locate_short"),
-                    width=row*1.85,height=row*0.82,flexShrink=0,fontSize=row*0.30,enabled=enabled,textAlign="center",verticalAlign="center",
+                    width=row*2.6,height=row*1.3,flexShrink=0,fontSize=row*0.50,enabled=enabled,textAlign="center",verticalAlign="center",
                     padding={left=row*0.18,right=row*0.18,top=0,bottom=0},
                     accessibility={label=l10n.tr("lua_widget.sky_weather.use_location")},events={click={id="locate"}},
-                    style={foreground=enabled and colors.accent or "textDisabled",background=colors.background,
+                    style={foreground=enabled and colors.accent or "textDisabled",background=colors.field,
                         borderColor=colors.border,borderWidth=1,cornerRadius=row*0.18},hoverStyle={background=colors.selected}})
             }}),
         view.scroll({key="city.scroll",width="fill",height="fill",children={view.column({key="city.items",width="fill",height="auto",gap=row*0.22,children=items})}}),
-        view.row({key="picker.footer",width="fill",height=row*0.76,flexShrink=0,gap=row*0.2,alignItems="center",children={
-            label("picker.source","Open-Meteo · GeoNames",row*0.24,row*0.76,true),
-            view.button({key="panel.settings",label=l10n.tr("lua_widget.sky_weather.settings"),width="auto",height=row*0.76,flexShrink=0,
-                fontSize=row*0.28,padding=row*0.20,textAlign="center",verticalAlign="center",accessibility={label=l10n.tr("lua_widget.sky_weather.settings")},events={click={id="settings"}},
-                style={foreground=colors.accent,background=colors.background,borderWidth=0,cornerRadius=row*0.16},hoverStyle={background=colors.location}})
+        view.row({key="picker.footer",width="fill",height=row*1.2,flexShrink=0,gap=row*0.2,alignItems="center",children={
+            label("picker.source","Open-Meteo · GeoNames",row*0.43,row*1.2,true),
+            view.button({key="panel.settings",label=l10n.tr("lua_widget.sky_weather.settings"),width="auto",height=row*1.2,flexShrink=0,
+                fontSize=row*0.46,padding=row*0.20,textAlign="center",verticalAlign="center",accessibility={label=l10n.tr("lua_widget.sky_weather.settings")},events={click={id="settings"}},
+                style={foreground=colors.accent,borderWidth=0,cornerRadius=row*0.16},hoverStyle={background=colors.selected}})
             }})
     }
-    return view.column({key="cities.panel",width="fill",height="fill",padding=row*0.44,gap=row*0.27,
-        style={background=colors.background},children=children})
+    return view.column({key="cities.panel",width="fill",height="fill",padding=row*0.50,gap=row*0.36,children=children})
 end
 
 local function setup(context)

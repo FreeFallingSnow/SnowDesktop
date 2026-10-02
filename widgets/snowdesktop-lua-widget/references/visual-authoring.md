@@ -188,7 +188,9 @@ Review each changed surface, including panels and other auxiliary interfaces;
 a desktop or catalog preview does not verify a different surface. If the preview
 CLI cannot render the required surface directly, an isolated temporary package
 may route its actual view callback to a previewable surface to inspect parsing
-and layout. Record that adaptation and its limits: it does not verify native
+and layout. Match the target surface's content bounds, semantic UI metrics and
+theme; an unrelated preview scale cannot establish runtime text readability.
+Record that adaptation and its limits: it does not verify native
 surface routing, focus, keyboard interaction or runtime permission prompts.
 Keep temporary inspection changes out of the delivered package, fix visible
 defects, and inspect the new render before claiming visual acceptance.
