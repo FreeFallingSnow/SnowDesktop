@@ -374,7 +374,6 @@ bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan s
     for (const auto& item : items_)
     {
         if (item.selected || item.name.empty()) continue;
-        if (IsItemInAnyWidget(item)) continue;
         if (item.gridCell.pageId != cell.pageId) continue;
         const int right1 = cell.column + std::max(1, span.columns);
         const int bottom1 = cell.row + std::max(1, span.rows);
@@ -382,7 +381,10 @@ bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan s
         const int bottom2 = item.gridCell.row + std::max(1, item.gridSpan.rows);
         if (cell.column < right2 && right1 > item.gridCell.column &&
             cell.row < bottom2 && bottom1 > item.gridCell.row)
-            return true;
+        {
+            // Normalizing long layout keys is only needed for intersecting items.
+            if (!IsItemInAnyWidget(item)) return true;
+        }
     }
     for (const auto& w : widgets_)
     {
