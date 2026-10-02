@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../dock_app_identity_rules.h"
+#include "../types.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -8,9 +9,11 @@
 #include <wrl/client.h>
 
 #include <filesystem>
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 
 namespace snowdesktop::dock_running_app_pin
 {
@@ -122,6 +125,62 @@ inline std::wstring CreateShortcut(const std::filesystem::path& directory,
         return {};
     }
     return {};
+}
+
+// Materialize the file just created by this operation before publishing its
+// Dock entry. Waiting for desktop enumeration would expose an empty Dock slot.
+inline std::optional<DesktopItem> ReadShortcutItem(const std::wstring& path,
+    const std::wstring& name)
+{
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes) ||
+        (attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+        return std::nullopt;
+    PIDLIST_ABSOLUTE absolute = nullptr;
+    if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &absolute, 0, nullptr)))
+        return std::nullopt;
+    DesktopItem item;
+    item.absolutePidl.reset(absolute);
+    // Local desktop enumeration uses full PIDLs for filesystem sources too.
+    item.childPidl.reset(ILCloneFull(absolute));
+    if (!item.childPidl.get()) return std::nullopt;
+    item.name = name;
+    item.parsingName = path;
+    item.modifiedTime = attributes.ftLastWriteTime;
+    item.fileSize = (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) |
+        attributes.nFileSizeLow;
+    item.isShortcut = true;
+    item.isApplicationShortcut = true;
+    item.slot = -1;
+    return item;
+}
+
+// Commit the visible handoff using the live running model, not the menu's
+// shallow snapshot. The bitmap has one owner and sibling windows remain usable
+// immediately, before any asynchronous identity query or periodic discovery.
+template<class RunningApps, class WindowState, class ReleaseBitmap>
+bool AdoptRunningPresentation(DesktopItem& item, WindowState& windowState,
+    RunningApps& runningApps, const std::wstring& identityKey,
+    ReleaseBitmap releaseBitmap)
+{
+    const auto running = std::find_if(runningApps.begin(), runningApps.end(),
+        [&](const auto& app) { return app.identityKey == identityKey; });
+    if (running == runningApps.end()) return false;
+    if (!item.iconBitmap && running->iconBitmap)
+    {
+        item.iconBitmap = std::exchange(running->iconBitmap, nullptr);
+        item.iconBitmapSize = running->iconBitmapSize;
+        item.iconState = IconState::IconReady;
+    }
+    windowState.window = running->window;
+    windowState.running = true;
+    windowState.minimized = running->minimized;
+    windowState.foreground = running->foreground;
+    windowState.trackedWindows = std::move(running->trackedWindows);
+    if (running->iconBitmap)
+        releaseBitmap(std::exchange(running->iconBitmap, nullptr));
+    runningApps.erase(running);
+    return true;
 }
 
 // A failed capacity check must create nothing. Failed Dock insertion removes

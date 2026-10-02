@@ -148,6 +148,72 @@ void CheckCatalogOnlyDockPin()
         std::vector<std::wstring>{LR"(C:\APPS\EDITOR\LAUNCHER.EXE)"}) == 0,
         "a catalog launcher may pin its verified executable family");
 
+    // Pinning must publish a usable icon and all existing windows in the same
+    // model update that removes the running-area duplicate. No Shell worker or
+    // real application window participates in this presentation handoff.
+    struct RunningApp
+    {
+        std::wstring identityKey;
+        HBITMAP iconBitmap = nullptr;
+        SIZE iconBitmapSize{};
+        HWND window = nullptr;
+        bool minimized = false;
+        bool foreground = false;
+        std::vector<HWND> trackedWindows;
+    };
+    struct WindowState
+    {
+        HWND window = nullptr;
+        bool running = false;
+        bool minimized = false;
+        bool foreground = false;
+        std::vector<HWND> trackedWindows;
+    };
+    const HWND firstWindow = reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
+    const HWND siblingWindow = reinterpret_cast<HWND>(static_cast<UINT_PTR>(2));
+    const HBITMAP runningBitmap = CreateBitmap(2, 2, 1, 32, nullptr);
+    Check(runningBitmap != nullptr, "the pin handoff fixture owns a real bitmap");
+    std::vector<RunningApp> runningApps{
+        {L"before"},
+        {L"editor", runningBitmap, {2, 2}, firstWindow, true, false,
+            {firstWindow, siblingWindow}},
+        {L"after"},
+    };
+    DesktopItem pinnedItem;
+    WindowState pinnedWindow;
+    int released = 0;
+    auto release = [&](HBITMAP bitmap) { ++released; DeleteObject(bitmap); };
+    Check(pin::AdoptRunningPresentation(pinnedItem, pinnedWindow, runningApps,
+            L"editor", release) && runningApps.size() == 2 &&
+            runningApps[0].identityKey == L"before" && runningApps[1].identityKey == L"after" &&
+            pinnedItem.iconBitmap == runningBitmap && released == 0 &&
+            pinnedItem.iconBitmapSize.cx == 2 && pinnedItem.iconState == IconState::IconReady,
+        "pinning must retain the visible bitmap while removing exactly the running duplicate");
+    BITMAP liveBitmap{};
+    Check(GetObjectW(pinnedItem.iconBitmap, sizeof(liveBitmap), &liveBitmap) != 0 &&
+            pinnedWindow.running && pinnedWindow.window == firstWindow &&
+            pinnedWindow.minimized && !pinnedWindow.foreground &&
+            pinnedWindow.trackedWindows == std::vector<HWND>{firstWindow, siblingWindow},
+        "the first pinned presentation must retain a live bitmap and every sibling window");
+    Check(!pin::AdoptRunningPresentation(pinnedItem, pinnedWindow, runningApps,
+            L"closed-app", release) && runningApps.size() == 2 && released == 0 &&
+            pinnedItem.iconBitmap == runningBitmap,
+        "a running app that closed before commit must not consume unrelated presentation state");
+
+    const HBITMAP existingBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    DesktopItem existingItem;
+    existingItem.iconBitmap = existingBitmap;
+    existingItem.iconState = IconState::FullQuality;
+    const HBITMAP redundantBitmap = CreateBitmap(2, 2, 1, 32, nullptr);
+    runningApps.push_back({L"existing", redundantBitmap, {2, 2}, siblingWindow,
+        false, true, {siblingWindow}});
+    WindowState existingWindow;
+    Check(pin::AdoptRunningPresentation(existingItem, existingWindow, runningApps,
+            L"existing", release) && runningApps.size() == 2 && released == 1 &&
+            existingItem.iconBitmap == existingBitmap &&
+            existingItem.iconState == IconState::FullQuality && existingWindow.foreground,
+        "pinning an existing desktop source keeps its artwork and releases the redundant running bitmap once");
+
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Check(SUCCEEDED(initialized), "shortcut fixture initializes COM");
     if (FAILED(initialized)) return;
@@ -172,6 +238,15 @@ void CheckCatalogOnlyDockPin()
         std::getline(original, content);
         original.close();
         Check(content == "existing user shortcut", "same-name source content survives pinning");
+        const auto prepared = pin::ReadShortcutItem(created, L"Application");
+        Check(prepared && prepared->parsingName == created &&
+            prepared->absolutePidl.get() && prepared->childPidl.get() &&
+            !ILIsEqual(prepared->absolutePidl.get(), pidl) &&
+            prepared->modifiedTime.has_value() && prepared->fileSize.value_or(0) > 0 &&
+            prepared->isShortcut && prepared->isApplicationShortcut,
+            "the initial Dock model references the new shortcut file with its real source stamp");
+        Check(!pin::ReadShortcutItem((directory / L"missing.lnk").wstring(), L"Missing"),
+            "failed shortcut materialization must not publish an empty fixed slot");
         Microsoft::WRL::ComPtr<IShellLinkW> link;
         Microsoft::WRL::ComPtr<IPersistFile> file;
         PIDLIST_ABSOLUTE restored = nullptr;

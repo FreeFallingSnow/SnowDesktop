@@ -2,6 +2,7 @@
 #include "../menu_fluent_glyphs.h"
 #include "dock_platform_helpers.h"
 #include "dock_running_app_pin_rules.h"
+#include "shell_icon_request.h"
 #include "../desktop_source.h"
 #include "../logical_slot_picker_rules.h"
 
@@ -223,10 +224,16 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         return;
     shellVisualWork_.Cancel(L"dock-running-menu:");
 
+    struct CatalogApplication
+    {
+        QuickNavigationAppEntry entry;
+        snowdesktop::dock_running_app_pin::ApplicationIdentity identity;
+    };
+
     // Own the target across the native menu loop: application indexing and
     // desktop refresh may replace their vectors while the menu is open.
     auto showMenu = [this, running, identity, screenPoint](
-        std::shared_ptr<QuickNavigationAppEntry> application) {
+        std::shared_ptr<CatalogApplication> application) {
         if (!hwnd_ || !IsWindow(hwnd_) ||
             std::none_of(dockUnpinnedRunningApps_.begin(),
                 dockUnpinnedRunningApps_.end(), [&](const auto& current) {
@@ -282,6 +289,22 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         ClearMenuIcons();
         RestoreDesktopWindowLayer();
         RestoreInteractionInputFocus();
+        if (!hwnd_ || !IsWindow(hwnd_) || dragSession_.HasContext() ||
+            dragDropController_.IsTransportActive())
+            return;
+
+        auto adoptRunning = [&](size_t itemIndex) {
+            auto& item = items_[itemIndex];
+            const auto key = DockItemWindowKey(item);
+            snowdesktop::dock_running_app_pin::AdoptRunningPresentation(
+                item, dockRunningWindows_[key], dockUnpinnedRunningApps_,
+                running.identityKey, [this](HBITMAP bitmap) {
+                    EraseD2DIconCacheForBitmap(bitmap);
+                    DeleteObject(bitmap);
+                });
+            InvalidateDockContainers();
+            InvalidateDragStaticScene();
+        };
 
         // The native menu pumps messages. Prefer a desktop source that appeared
         // while it was open, rather than creating a second shortcut for that app.
@@ -312,6 +335,12 @@ void DesktopApp::ShowDockRunningAppContextMenu(
                         { &source }, nullptr, dock,
                         dock->GetInsertIndexAtPoint(clientPoint),
                         mods);
+                    if (std::any_of(dockEntries_.begin(), dockEntries_.end(),
+                            [&](const auto& entry) {
+                                return entry.type == DockEntryType::DesktopItem &&
+                                    entry.reference == ToUpperInvariant(matchingDesktopKey);
+                            }))
+                        adoptRunning(itemIndex);
                     SaveLayoutSlots();
                     ApplyPageMapping();
                     LayoutItems();
@@ -333,11 +362,38 @@ void DesktopApp::ShowDockRunningAppContextMenu(
                 [&] {
                     return snowdesktop::dock_running_app_pin::CreateShortcut(
                         snowdesktop::desktop_source::Directory(),
-                        SanitizeShortcutFileStem(application->name),
-                        application->absolutePidl.get());
+                        SanitizeShortcutFileStem(application->entry.name),
+                        application->entry.absolutePidl.get());
                 },
                 [&](const std::wstring& path) {
-                    return AddMaterializedItemsToDock({ path }, insertIndex, false);
+                    auto item = snowdesktop::dock_running_app_pin::ReadShortcutItem(
+                        path, application->entry.name);
+                    if (!item) return false;
+                    item->layoutKey = ToUpperInvariant(path);
+                    item->gridCell = { kDockPageId, 0, 0 };
+                    if (!AddMaterializedItemsToDock({ path }, insertIndex, false))
+                        return false;
+                    items_.push_back(std::move(*item));
+                    RefreshDesktopItemIndexCache();
+                    const size_t itemIndex = items_.size() - 1;
+                    const auto key = DockItemWindowKey(items_[itemIndex]);
+                    const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
+                    const auto stamp = snowdesktop::shell_icon_request::Stamp(items_[itemIndex]);
+                    const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
+                    DockAppIdentity pinnedIdentity;
+                    pinnedIdentity.sourceParsingName = path;
+                    pinnedIdentity.executablePath = application->identity.executablePath;
+                    pinnedIdentity.appUserModelId = application->identity.appUserModelId;
+                    pinnedIdentity.kind = !pinnedIdentity.executablePath.empty()
+                        ? DockAppIdentityKind::Executable : DockAppIdentityKind::Applications;
+                    dockAppIdentityCache_.Publish(cacheKey, cached.ticket, std::move(pinnedIdentity));
+                    adoptRunning(itemIndex);
+                    // Appending can relocate every DesktopItem. Rebind all
+                    // wrappers before any layout, persistence or repaint.
+                    RebuildContainersAndItems();
+                    ApplyPageMapping();
+                    LayoutItems();
+                    return true;
                 },
                 [](const std::wstring& path) { DeleteFileW(path.c_str()); },
                 [this] { SaveLayoutSlots(); });
@@ -346,9 +402,9 @@ void DesktopApp::ShowDockRunningAppContextMenu(
                 MessageBeep(MB_ICONWARNING);
                 return;
             }
-            ReloadItems();
-            ApplyPageMapping();
-            LayoutItems();
+            // Reconcile metadata later while retaining the committed icon and
+            // identity; a full reload would reset every desktop icon first.
+            RequestShellRefresh();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -412,11 +468,13 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             const auto match = snowdesktop::dock_running_app_pin::FindApplication(
                 identities, running.executablePath, running.appUserModelId,
                 running.ancestorExecutablePaths);
-            return match ? std::make_shared<QuickNavigationAppEntry>(
-                std::move((*applications)[*match])) :
-                std::shared_ptr<QuickNavigationAppEntry>{};
+            if (!match) return std::shared_ptr<CatalogApplication>{};
+            auto application = std::make_shared<CatalogApplication>();
+            application->entry = std::move((*applications)[*match]);
+            application->identity = std::move(identities[*match]);
+            return application;
         }, [showMenu, screenPoint, foreground = GetForegroundWindow()](
-            std::shared_ptr<QuickNavigationAppEntry> application) {
+            std::shared_ptr<CatalogApplication> application) {
             POINT cursor{};
             // A slow Shell provider must not open an obsolete context menu
             // after the user has moved to another target or another window.
