@@ -104,7 +104,8 @@ void Reentrant(HWND owner)
 }
 std::pair<int,int> InkBand(HWND window)
 {
-    constexpr int width=120,height=48;
+    RECT client{};GetClientRect(window,&client);
+    const int width=client.right,height=client.bottom;
     BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
     info.bmiHeader.biWidth=width;info.bmiHeader.biHeight=-height;
     info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
@@ -124,21 +125,52 @@ std::pair<int,int> InkBand(HWND window)
 void VerticalAlignment(HWND owner)
 {
     const auto window=Create(owner,ES_AUTOHSCROLL,L"");if(!window)return;
-    SetWindowPos(window,nullptr,0,0,120,48,SWP_NOZORDER|SWP_NOACTIVATE);
-    const auto font=CreateFontW(-23,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
-    SendMessageW(window,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
     input::Colors colors;colors.foreground=colors.secondary=RGB(0,0,0);
     colors.background=colors.border=colors.accent=RGB(255,255,255);input::SetColors(window,colors);
-    SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(L"国Hg"));
-    const auto cue=InkBand(window);SetWindowTextW(window,L"国Hg");const auto value=InkBand(window);
-    Check(cue.second>=cue.first&&value==cue,"cue and value share the same rendered glyph band");
-    Check(std::abs(value.first+value.second-47)<=2,"single-line Latin/CJK ink is vertically centered");
-    const auto access=input::Accessibility(window);const auto boxes=access->rectangles(0,3);
-    Check(!boxes.empty(),"centered input still exposes actual text geometry");
-    if(!boxes.empty())Check(access->hit({boxes[0].left+1,boxes[0].top+boxes[0].height/2})==0,
-        "pointer and accessibility hit testing use the centered text origin");
-    DestroyWindow(window);DeleteObject(font);
+    const auto access=input::Accessibility(window);
+    for(const auto* family:{L"Segoe UI",L"Microsoft YaHei UI"})
+    for(const int fontSize:{20,23,26})
+    {
+        const auto font=CreateFontW(-fontSize,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,family);
+        SendMessageW(window,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
+        for(const int height:{48,55})
+        {
+            SetWindowPos(window,nullptr,0,0,800,height,SWP_NOZORDER|SWP_NOACTIVATE);
+            double lineTop=0,lineHeight=0;
+            for(const std::wstring value:{L"测试",L"在桌面、应用、Everything中搜索",L"Everything",L"日程 Event",L"gjpq"})
+            {
+                SetWindowTextW(window,L"");
+                SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(value.c_str()));
+                const auto cue=InkBand(window);SetWindowTextW(window,value.c_str());const auto band=InkBand(window);
+                Check(cue.second>=cue.first&&band==cue,"actual search/calendar cue and value share their rendered band");
+                // Descenders intentionally extend below the common baseline.
+                // Center the user-reported CJK fields; use other strings to
+                // check baseline stability rather than centering each glyph.
+                if(value==L"测试"||value==L"在桌面、应用、Everything中搜索")
+                {
+                    const int error=band.first+band.second-(height-1);
+                    if(std::abs(error)>2)
+                        std::cerr<<"alignment: font="<<fontSize<<" height="<<height<<" glyphs="<<value.size()<<" band="<<band.first<<','<<band.second<<'\n';
+                    Check(std::abs(error)<=2,"actual search/calendar upright text is centered within one pixel");
+                }
+                const auto boxes=access->rectangles(0,value.size());
+                Check(!boxes.empty(),"centered input exposes actual text geometry");
+                if(!boxes.empty())
+                {
+                    if(lineHeight==0){lineTop=boxes[0].top;lineHeight=boxes[0].height;}
+                    Check(std::abs(boxes[0].top-lineTop)<0.01&&std::abs(boxes[0].height-lineHeight)<0.01,
+                        "CJK, Latin and fallback glyphs retain one baseline and line height");
+                    Check(access->hit({boxes[0].left+1,boxes[0].top+boxes[0].height/2})==0,
+                        "pointer and accessibility hit testing use the centered text origin");
+                }
+            }
+        }
+        // Release the selected font before deleting it.
+        SendMessageW(window,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),FALSE);
+        DeleteObject(font);
+    }
+    DestroyWindow(window);
 }
 }
 int main()

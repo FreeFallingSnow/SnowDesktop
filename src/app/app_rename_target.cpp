@@ -308,10 +308,29 @@ RECT DesktopApp::GetFolderEntryRenameRect(size_t widgetIndex, size_t memberIndex
             const RECT bounds = slot->GetBounds();
             const auto* list = dynamic_cast<const ScrollingItemWidget*>(wc);
             return list && list->SingleColumn() ? list->GetListItemTextRect(bounds)
-                : GetItemTextRect(bounds, true);
+                : GetItemRenameRect(bounds, ResolveItemTitleLines(wc->GetWidgetData()));
         }
     }
     return {};
+}
+
+bool DesktopApp::IsRenamingItem(const DesktopItem* item) const
+{
+    return renameInputWindow_ && renameController_.IsDesktopItem() &&
+        renameController_.Index() < items_.size() &&
+        item == &items_[renameController_.Index()];
+}
+
+bool DesktopApp::IsRenamingItem(const FolderEntry* entry) const
+{
+    if (!renameInputWindow_ || !renameController_.IsFolderEntry()) return false;
+    const auto index = renameController_.Index();
+    if (renameController_.IsDockFolderEntry())
+        return dockFolderPopupOpen_ && index < dockFolderPopupWidget_.folderEntries.size() &&
+            entry == &dockFolderPopupWidget_.folderEntries[index];
+    const auto owner = renameController_.OwnerIndex();
+    return owner < widgets_.size() && index < widgets_[owner].folderEntries.size() &&
+        entry == &widgets_[owner].folderEntries[index];
 }
 
 /**

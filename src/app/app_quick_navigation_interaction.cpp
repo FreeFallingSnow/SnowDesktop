@@ -29,7 +29,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
     const float fontSize = quickNavItemTextFormat_
         ? quickNavItemTextFormat_->GetFontSize() : static_cast<float>(QuickNavScale(13));
     const int textHeight = std::max(1, static_cast<int>(std::ceil(
-        std::max(1.0f, std::floor(fontSize * 1.08f)) * 2.0f)));
+        std::max(1.0f, std::floor(fontSize * 1.08f)))));
     RECT editRect = QuickNavigationItemTextRect(itemRect, iconRect, QuickNavScale(4),
         std::max(1, QuickNavScale(2)), textHeight);
     InflateRect(&editRect, std::max(1, QuickNavScale(4)), 0);
@@ -108,6 +108,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
         renameInputWindow_, EM_SETSEL,
         0, selectionEnd);
     SetFocus(renameInputWindow_);
+    InvalidateQuickNavigationWindow();
 }
 
 void DesktopApp::

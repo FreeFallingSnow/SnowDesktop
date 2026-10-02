@@ -306,7 +306,8 @@ public:
         std::wstring_view demoIdentity = {},
         const DesktopWidget* demoCollection = nullptr,
         const ListItemDetails& details = {},
-        std::optional<bool> lightTheme = std::nullopt) const;
+        std::optional<bool> lightTheme = std::nullopt,
+        bool drawTitle = true) const;
 
     int GetListRowHeight() const;
     RECT GetListItemTextRect(RECT cell) const;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <windows.h>
 #include "text_input_window.h"
@@ -14,6 +15,14 @@ inline DWORD EditStyle(bool leftAligned = false)
 {
     return WS_POPUP | ES_AUTOHSCROLL |
         (leftAligned ? ES_LEFT : ES_CENTER);
+}
+
+// Grid names edit at their first title line, independently of the configured
+// display line count and the taller selected/expanded title region.
+inline RECT FirstTitleLine(RECT title, float lineHeight)
+{
+    title.bottom = title.top + std::max(1L, static_cast<LONG>(std::ceil(lineHeight)));
+    return title;
 }
 
 inline RECT CalculateRect(const RECT& anchor, const RECT& workArea,

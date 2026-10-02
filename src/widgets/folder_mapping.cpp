@@ -1133,7 +1133,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                 entry.name, entry.selected, entry.iconIsMediaThumbnail,
                 {}, nullptr,
                 { entry.typeName, entry.lastWriteTime,
-                  entry.fileSize, entry.isDirectory });
+                  entry.fileSize, entry.isDirectory }, std::nullopt, !app_->IsRenamingItem(&entry));
     }
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(

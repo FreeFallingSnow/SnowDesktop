@@ -1041,8 +1041,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                 DesktopIcon icon(&items_[entry.itemIndex], nullptr, this);
                 icon.Draw(ctx.Get(), itemRectApp, state,
                     quickNavLightTheme_, false, true, demoCollection);
-                DrawQuickNavItemText(ctx.Get(), itemRectApp, entry.name,
-                    false, quickNavLightTheme_);
+                if (!IsRenamingItem(&items_[entry.itemIndex]))
+                    DrawQuickNavItemText(ctx.Get(), itemRectApp, entry.name,
+                        false, quickNavLightTheme_);
             }
             else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry &&
                 entry.widgetIndex < widgets_.size() &&
@@ -1052,8 +1053,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
                     widgets_[entry.widgetIndex].folderEntries[entry.folderEntryIndex];
                 FolderEntryIcon icon(&folderEntry, nullptr, this);
                 icon.Draw(ctx.Get(), itemRectApp, state, quickNavLightTheme_, false, true);
-                DrawQuickNavItemText(ctx.Get(), itemRectApp, folderEntry.name,
-                    false, quickNavLightTheme_);
+                if (!IsRenamingItem(&folderEntry))
+                    DrawQuickNavItemText(ctx.Get(), itemRectApp, folderEntry.name,
+                        false, quickNavLightTheme_);
             }
         }
 

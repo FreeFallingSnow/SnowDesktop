@@ -380,7 +380,7 @@ void DesktopApp::DrawCollectionPopup(
                         entry.fileSize,
                         entry.isDirectory,
                     },
-                    collectionPopupLightTheme_);
+                    collectionPopupLightTheme_, !IsRenamingItem(&entry));
                 continue;
             }
             const bool hovered =
@@ -451,7 +451,7 @@ void DesktopApp::DrawCollectionPopup(
                         item.fileSize,
                         false,
                     },
-                    collectionPopupLightTheme_);
+                    collectionPopupLightTheme_, !IsRenamingItem(&item));
                 continue;
             }
             bool hovered =

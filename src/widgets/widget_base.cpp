@@ -2158,7 +2158,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     bool iconIsMediaThumbnail, std::wstring_view demoIdentity,
     const DesktopWidget* demoCollection,
     const ListItemDetails& details,
-    std::optional<bool> lightTheme) const
+    std::optional<bool> lightTheme, bool drawTitle) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
@@ -2213,8 +2213,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             ? app_->GetDemoCollectionIdentityTitle(
                 *demoCollection, demoIdentity)
             : app_->GetDemoIdentityTitle(demoIdentity));
-    DrawListItemTitle(
-        context, nameCell, iconRect, title, light);
+    if (drawTitle)
+        DrawListItemTitle(context, nameCell, iconRect, title, light);
 
     if (!IsDetailsVisible() || !demoIdentity.empty()) return;
 

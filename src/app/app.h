@@ -2622,6 +2622,9 @@ private:
     RECT GetQuickNavItemIconRect(RECT bounds) const;
     /** @brief 从项边界矩形计算文本区域。 @param bounds 项边界 @param expanded 是否展开 @return 文本矩形 */
     RECT GetItemTextRect(RECT bounds, bool expanded, int componentTitleLines = 0) const;
+    RECT GetItemRenameRect(RECT bounds, int componentTitleLines = 0) const;
+    bool IsRenamingItem(const DesktopItem* item) const;
+    bool IsRenamingItem(const FolderEntry* entry) const;
     /** @brief 获取项目所在网格单元相对于 92x116 基准尺寸的布局缩放比例。 */
     float GetItemLayoutScale(RECT bounds) const;
     bool UpdateWidgetHandleCursor(POINT point);

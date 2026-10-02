@@ -206,8 +206,9 @@ BeginRenameDockFolderPopupEntry(
         GetCollectionPopupItemRect(
             popup, memberIndex);
     RECT rect =
-        GetCollectionPopupItemTextRect(
-            itemRect);
+        UsesCollectionPopupList(dockFolderPopupWidget_)
+            ? GetCollectionPopupItemTextRect(itemRect)
+            : GetItemRenameRect(itemRect, ResolveItemTitleLines(&dockFolderPopupWidget_));
     if (IsRectEmptyRect(rect))
     {
         renameController_.Reset();
@@ -292,6 +293,8 @@ BeginRenameDockFolderPopupEntry(
             entry.name,
             entry.isDirectory));
     SetFocus(renameInputWindow_);
+    InvalidateCollectionPopupContent();
+    InvalidateFloatingPopupWindow(false);
 }
 
 LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(

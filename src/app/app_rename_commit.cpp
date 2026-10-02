@@ -243,6 +243,8 @@ void DesktopApp::CommitRename(bool cancel)
     if (renameFont_) { DeleteObject(renameFont_); renameFont_ = nullptr; }
     interactionPinnedWidgetId_.clear();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateCollectionPopupContent();
+    InvalidateFloatingPopupWindow(false);
 
     if (renameController_.IsFolderEntry())
     {

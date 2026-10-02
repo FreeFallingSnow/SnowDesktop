@@ -166,29 +166,38 @@ struct State
         format->SetWordWrapping(multiline ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
         if ((GetWindowLongPtrW(window, GWL_STYLE) & ES_CENTER) != 0)
             format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        singleLineOffsetY = 0;
+        if (!multiline)
+        {
+            // Use the upright CJK/capital band. Including a Latin descender
+            // centers the reference lower than everyday Chinese/search text.
+            // Fix the line height and baseline as well: fallback fonts must
+            // not move the text when the cue becomes a value or IME text.
+            ComPtr<IDWriteTextLayout> reference;
+            if (SUCCEEDED(factory->CreateTextLayout(L"国H", 2, format.Get(), 1000.f, 1000.f, &reference))) // l10n-allow: fixed font measurement glyphs, never displayed
+            {
+                DWRITE_LINE_METRICS line{}; UINT32 count = 0;
+                DWRITE_OVERHANG_METRICS ink{};
+                if (SUCCEEDED(reference->GetLineMetrics(&line, 1, &count)) && count == 1 &&
+                    SUCCEEDED(reference->GetOverhangMetrics(&ink)))
+                {
+                    format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, line.height, line.baseline);
+                    singleLineOffsetY = (line.height + ink.top - 1000.f - ink.bottom) / 2.f;
+                }
+            }
+            format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
         factory->CreateTextLayout(display.data(), static_cast<UINT32>(display.size()), format.Get(),
             (std::max)(1.f, static_cast<float>(width) - leftMargin - rightMargin),
             multiline ? 100000.f : (std::max)(1.f, static_cast<float>(height) - verticalMargin*2.f), &layout);
         if (!layout) return;
-        singleLineOffsetY = 0;
         if (!multiline)
         {
-            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             DWRITE_TEXT_METRICS metrics{}; layout->GetMetrics(&metrics);
             // Center short titles, but keep the entire beginning of an
             // overflowing name reachable by horizontal scrolling.
             if (metrics.widthIncludingTrailingWhitespace > layout->GetMaxWidth())
                 layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            // Center the font's visible Latin/CJK band rather than its
-            // asymmetric ascent/descent box. Use a stable reference so typing
-            // and switching between the cue and the value cannot move it.
-            ComPtr<IDWriteTextLayout> reference;
-            if (SUCCEEDED(factory->CreateTextLayout(L"国Hg", 3, format.Get(), 1000.f, 1000.f, &reference))) // l10n-allow: fixed font measurement glyphs, never displayed
-            {
-                DWRITE_TEXT_METRICS band{}; DWRITE_OVERHANG_METRICS ink{};
-                reference->GetMetrics(&band); reference->GetOverhangMetrics(&ink);
-                singleLineOffsetY = (band.height + ink.top - 1000.f - ink.bottom) / 2.f;
-            }
             scrollY = 0;
         }
         float x = 0, y = 0; DWRITE_HIT_TEST_METRICS hit{};

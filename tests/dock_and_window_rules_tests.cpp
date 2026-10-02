@@ -908,6 +908,15 @@ void CheckSingleLineRenameEditor()
     namespace layout = snowdesktop::rename_edit_layout;
     const RECT work{ -1920, -100, 0, 980 };
     const RECT anchor{ -1200, 200, -1040, 226 };
+    const RECT expandedTitle{ -1200, 200, -1040, 278 };
+    const RECT configuredTwoLines{ -1200, 200, -1040, 236 };
+    const RECT firstLine = layout::FirstTitleLine(expandedTitle, 18.0f);
+    const RECT firstConfiguredLine = layout::FirstTitleLine(configuredTwoLines, 18.0f);
+    const RECT gridEditor = layout::CalculateRect(firstLine, work, 26, layout::HeightAnchor::Center);
+    Check(EqualRect(&firstLine, &firstConfiguredLine) && firstLine.top == expandedTitle.top &&
+            gridEditor.top + gridEditor.bottom == firstLine.top + firstLine.bottom &&
+            gridEditor.bottom < configuredTwoLines.bottom,
+        "grid rename occupies the first title line regardless of display or expanded line count");
     const RECT grown = layout::CalculateRect(anchor, work, 110);
     Check(grown.top == anchor.top && grown.bottom - grown.top == 110 &&
             grown.left == anchor.left && grown.right == anchor.right,
@@ -954,9 +963,12 @@ void CheckSingleLineRenameEditor()
         const std::wstring longName = leftAligned
             ? std::wstring(100, L'A') + L".txt"
             : L"这是一个包含很多汉字的长文件名称需要完整显示自动换行后的所有文字以便在重命名时查看和编辑.txt";
+        const RECT title = layout::FirstTitleLine(
+            { available.left + 40, available.top + 40, available.left + 200, available.top + 118 },
+            leftAligned ? 30.0f : 15.0f);
         HWND edit = CreateWindowExW(WS_EX_TOOLWINDOW,
             snowdesktop::text_input::WindowClass(), longName.c_str(), layout::EditStyle(leftAligned),
-            available.left + 40, available.top + 40, 160, 26,
+            title.left, title.top, title.right - title.left, title.bottom - title.top,
             owner, nullptr, windowClass.hInstance, nullptr);
         Check(edit != nullptr, "the shared single-line rename fixture can be created");
         if (!edit)
@@ -973,7 +985,8 @@ void CheckSingleLineRenameEditor()
         GetWindowRect(edit, &initial);
         const LRESULT lines = SendMessageW(edit, EM_GETLINECOUNT, 0, 0);
         Check(lines == 1 && initial.bottom - initial.top == snowdesktop::text_input::DesiredHeight(edit) &&
-                (GetWindowLongPtrW(edit, GWL_STYLE) & ES_MULTILINE) == 0,
+                (GetWindowLongPtrW(edit, GWL_STYLE) & ES_MULTILINE) == 0 &&
+                std::abs(initial.top + initial.bottom - title.top - title.bottom) <= 1,
             "Chinese and unbroken names use one line at different font sizes");
         const auto access = snowdesktop::text_input::Accessibility(edit);
         const auto endBoxes = access->rectangles(longName.size() - 1, longName.size());

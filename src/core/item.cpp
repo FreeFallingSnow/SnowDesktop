@@ -223,7 +223,7 @@ void DesktopIcon::DrawTitle(ID2D1RenderTarget* context, RECT rect,
     bool selected, float opacity, bool lightTheme,
     const DesktopWidget* demoCollection)
 {
-    if (!app_ || !item_ || !context) return;
+    if (!app_ || !item_ || !context || app_->IsRenamingItem(item_)) return;
     const bool useDemoIdentity = demoCollection
         ? app_->ShouldUseDemoCollectionIdentity(demoCollection)
         : app_->ShouldUseDemoIdentity(*item_);
@@ -406,7 +406,7 @@ void FolderEntryIcon::DrawTitle(ID2D1RenderTarget* context,
     RECT rect, bool selected, float opacity,
     bool lightTheme, const DesktopWidget*)
 {
-    if (!app_ || !entry_ || !context) return;
+    if (!app_ || !entry_ || !context || app_->IsRenamingItem(entry_)) return;
     app_->DrawItemText(
         context, rect, entry_->name,
         selected, opacity, lightTheme,

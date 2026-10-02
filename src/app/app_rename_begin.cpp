@@ -302,12 +302,14 @@ void DesktopApp::BeginRenameSelected(
         !dockFolderPopupOpen_ &&
         popupWidgetIndex_ < widgets_.size() &&
         IsCollectionPopupInteractive();
-    bool singleLineRename = popupRename &&
+    bool leftAlignedRename = popupRename &&
         UsesCollectionPopupList(widgets_[popupWidgetIndex_]);
-    RECT textRect = popupRename
+    const DesktopWidget* titleWidget = popupRename ? &widgets_[popupWidgetIndex_] :
+        visibilityWidgetIndex < widgets_.size() ? &widgets_[visibilityWidgetIndex] : nullptr;
+    RECT textRect = leftAlignedRename
         ? GetCollectionPopupItemTextRect(
             itemBounds)
-        : GetItemTextRect(itemBounds, true);
+        : GetItemRenameRect(itemBounds, ResolveItemTitleLines(titleWidget));
     if (!popupRename)
     {
         for (const auto& container : containers_)
@@ -320,11 +322,11 @@ void DesktopApp::BeginRenameSelected(
                 if (icon && icon->GetDesktopItem() == &items_[selectedIndex])
                 {
                     textRect = list->GetListItemTextRect(slot->GetBounds());
-                    singleLineRename = true;
+                    leftAlignedRename = true;
                     break;
                 }
             }
-            if (singleLineRename) break;
+            if (leftAlignedRename) break;
         }
     }
     const float renameScale = GetGridCuScaleForBounds(gridPages_, itemBounds);
@@ -334,7 +336,7 @@ void DesktopApp::BeginRenameSelected(
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
     const DWORD renameStyle =
-        snowdesktop::rename_edit_layout::EditStyle(singleLineRename);
+        snowdesktop::rename_edit_layout::EditStyle(leftAlignedRename);
     renameInputWindow_ = CreateWindowExW(
          WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         snowdesktop::text_input::WindowClass(),
@@ -375,6 +377,11 @@ void DesktopApp::BeginRenameSelected(
     {
         interactionPinnedWidgetId_ =
             widgets_[visibilityWidgetIndex].id;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (popupRename)
+    {
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
     }
 }
