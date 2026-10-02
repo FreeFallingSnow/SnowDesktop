@@ -1,6 +1,7 @@
 #include "large_icon_renderer.h"
 #include "icon_loading_placeholder.h"
 #include "preview_png_writer.h"
+#include "large_icon_shape_geometry.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <d2d1helper.h>
@@ -130,6 +131,67 @@ void Save(const char* directory, const char* name, const std::vector<unsigned>& 
     std::string error;
     const bool saved = snowdesktop::preview_png::Save(std::filesystem::path(directory) / name, Canvas::width, Canvas::height, pixels, error);
     Check(saved, error.c_str());
+}
+
+void CheckShapes(Canvas& canvas, const char* outputDirectory)
+{
+    // Exercise the actual card renderer on unequal grid dimensions. These
+    // pixels catch ellipse stretching, lost rounding, and rectangular material
+    // or effect layers leaking outside a nonrectangular silhouette.
+    snowdesktop::LargeIconConfig config;
+    config.backgroundStyle = -2; config.radiusPercent = 35;
+    snowdesktop::large_icon_renderer::View view;
+    view.frame = {40, 60, 440, 260};
+    auto image = canvas.Image(64, 64); view.bitmap = image.Get();
+    const char* names[]{"shape-rounded-rectangle.png", "shape-rounded-square.png", "shape-circle.png",
+        "shape-flag.png", "shape-diamond.png", "shape-hexagon.png"};
+    for (int shape = 0; shape <= 5; ++shape)
+    {
+        config.shape = shape; config.effect = 0; view.hover = 0; view.selected = false;
+        const auto pixels = canvas.Draw(config, view);
+        Check(Red(Pixel(pixels, 240, 160)), "every silhouette keeps the central image visible");
+        if (shape != 3) Check(Pixel(pixels, 40, 60) == 0, "rounded and polygonal silhouettes leave their outer corner transparent");
+        if (shape == 1 || shape == 2)
+        {
+            const auto bounds = RedBounds(pixels);
+            Check(bounds.left == 140 && bounds.right == 340 && bounds.top == 60 && bounds.bottom == 260,
+                "rendered square and circle have equal width and height inside a wide allocation");
+            Check(Pixel(pixels, 145, 65) == 0, "square corners remain rounded and circle corners remain transparent");
+            Check(Red(Pixel(pixels, 150, 85)) == (shape == 1), "rounded square is visibly distinct from a circle");
+        }
+        if (shape == 3)
+            Check(Pixel(pixels, 410, 160) == 0 && Red(Pixel(pixels, 410, 80)),
+                "flag silhouette has a transparent swallowtail notch and retains its upper tip");
+        if (shape == 4 || shape == 5)
+            Check(Pixel(pixels, 80, 80) == 0, "diamond and hexagon clip their slanted corners");
+        Save(outputDirectory, names[shape], pixels);
+        config.effect = 4; view.hover = 1; view.selected = true;
+        const auto glow = canvas.Draw(config, view);
+        if (shape == 3)
+            Check(Pixel(glow, 410, 160) == 0, "edge glow and selection follow the flag notch");
+        else if (shape >= 1)
+            Check(Pixel(glow, 80, 80) == 0, "edge glow and selection leave transparent corners clear");
+        config.backgroundStyle = 9; config.effect = 0; view.hover = 0; view.selected = false;
+        view.bitmap = nullptr;
+        view.drawBackground = [](ID2D1RenderTarget* target, RECT rect, float, float opacity) {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            Require(target->CreateSolidColorBrush(D2D1::ColorF(0x204080, opacity), &brush), "shape material fixture");
+            target->FillRectangle(D2D1::RectF(float(rect.left), float(rect.top), float(rect.right), float(rect.bottom)), brush.Get());
+        };
+        if (shape >= 2)
+        {
+            const auto material = canvas.Draw(config, view);
+            Check(Pixel(material, shape == 3 ? 410 : 80, shape == 3 ? 160 : 80) == 0 && Pixel(material, 240, 160) != 0,
+                "component material callback is masked by the same silhouette as the image");
+            if (shape == 3) Check(Pixel(material, 410, 160) == 0, "component material does not refill the flag notch");
+        }
+        view.drawBackground = {}; view.bitmap = image.Get(); config.backgroundStyle = -2;
+    }
+    config.shape = 2; config.radiusPercent = 0; view.frame = {140, 10, 340, 350};
+    const auto circle = canvas.Draw(config, view);
+    const auto bounds = RedBounds(circle);
+    Check(bounds.left == 140 && bounds.right == 340 && bounds.top == 80 && bounds.bottom == 280,
+        "circle remains round and centered in a tall allocation even with a zero saved radius");
 }
 
 void CheckNewEffects(Canvas& canvas, const char* outputDirectory)
@@ -326,6 +388,7 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
     {
         Canvas canvas;
         CheckLoadingPlaceholder(canvas, outputDirectory);
+        CheckShapes(canvas, outputDirectory);
         snowdesktop::LargeIconConfig config;
         snowdesktop::large_icon_renderer::View view;
         view.frame = {100, 60, 300, 260}; view.name = L"SnowDesktop";

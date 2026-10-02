@@ -17,6 +17,8 @@ inline LargeIconConfig ResolveComponentRadius(LargeIconConfig config, double com
 inline double Radius(const LargeIconConfig& c, double width, double height, double scale)
 {
     const double maximum = std::max(0., std::min(width, height) / 2);
+    if (c.shape == 2) return maximum; // Circle ignores saved corner rounding.
+    if (c.shape >= 3) return 0;
     return c.radiusPercent >= 0 ? maximum * c.radiusPercent / 100 : std::min(maximum, c.radius * scale);
 }
 inline double RadiusPercent(const LargeIconConfig& c, double width, double height, double scale)

@@ -21,6 +21,7 @@ struct LargeIconConfig
 {
     int version = 2;
     int columns = 1, rows = 1;
+    int shape = 0; // rounded rectangle, rounded square, circle, flag, diamond, hexagon
     double contentScale = .60;
     double fillScale = 1; // Independent of the foreground; relative to contain/cover fit.
     double radius = 12;
@@ -95,7 +96,7 @@ struct LargeIconConfig
 template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
 {
 #define LI_FIELD(name) f(#name, c.name)
-    LI_FIELD(version); LI_FIELD(columns); LI_FIELD(rows);
+    LI_FIELD(version); LI_FIELD(columns); LI_FIELD(rows); LI_FIELD(shape);
     LI_FIELD(followComponentRadius); LI_FIELD(showOnHoverOnly); LI_FIELD(keepWhenDesktopHidden);
     LI_FIELD(contentScale); LI_FIELD(fillScale); LI_FIELD(radius); LI_FIELD(radiusPercent); LI_FIELD(content); LI_FIELD(fit);
     LI_FIELD(focusX); LI_FIELD(focusY); LI_FIELD(image); LI_FIELD(cachedCover);
@@ -138,7 +139,7 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
         c.backgroundStyle == 0 || c.backgroundStyle == 1 || c.backgroundStyle == 6 || c.backgroundStyle == 7 ||
         c.backgroundStyle == 9 || c.backgroundStyle == 10 || c.backgroundStyle == 11 || c.backgroundStyle == 13;
     return (c.version == 1 || c.version == 2) && c.columns >= 1 && c.columns <= 1024 &&
-        c.rows >= 1 && c.rows <= 1024 && range(c.contentScale, .1, 1) && range(c.fillScale, .25, 3) &&
+        c.rows >= 1 && c.rows <= 1024 && c.shape >= 0 && c.shape <= 5 && range(c.contentScale, .1, 1) && range(c.fillScale, .25, 3) &&
         range(c.radius, 0, 512) && (c.radiusPercent == -1 || range(c.radiusPercent, 0, 100)) && c.content >= 0 && c.content <= 2 &&
         c.fit >= 0 && c.fit <= 1 && range(c.focusX, 0, 1) && range(c.focusY, 0, 1) &&
         IsManagedLargeIconImage(c.image) && IsManagedLargeIconImage(c.cachedCover) &&

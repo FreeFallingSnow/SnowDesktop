@@ -17,6 +17,7 @@
 #include "../dock_genie_rules.h"
 #include "../quick_navigation_genie_rules.h"
 #include "../popup_round_geometry.h"
+#include "../large_icon_shape_geometry.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
@@ -198,12 +199,12 @@ struct GaussianBlurEffect : winrt::implements<GaussianBlurEffect,
     winrt::hstring effectName = L"SnowDesktopBackdropBlur";
 };
 
-/** @brief CompositionPath 对不可变 D2D 路径的原生适配。 */
+/** @brief CompositionPath 对不可变 D2D 几何（路径或圆形）的原生适配。 */
 struct BackdropGeometrySource : winrt::implements<BackdropGeometrySource,
     winrt::Windows::Graphics::IGeometrySource2D,
     ABI::Windows::Graphics::IGeometrySource2DInterop>
 {
-    explicit BackdropGeometrySource(winrt::com_ptr<ID2D1PathGeometry> geometry)
+    explicit BackdropGeometrySource(winrt::com_ptr<ID2D1Geometry> geometry)
         : geometry_(std::move(geometry))
     {
     }
@@ -335,6 +336,8 @@ struct DesktopBackdropCompositor::Impl
         bool seen = false;
         int iconShape = -1;
         SIZE iconSize{};
+        int largeIconShape = -1;
+        SIZE largeIconSize{};
     };
 
     HWND contentWindow = nullptr;
@@ -1575,7 +1578,7 @@ bool DesktopBackdropCompositor::AddPanel(
 bool DesktopBackdropCompositor::HasPanelContaining(const RECT& frame) const
 {
     return std::any_of(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
-        return panel.iconShape < 0 && panel.seen &&
+        return panel.iconShape < 0 && panel.largeIconShape < 0 && panel.seen &&
             frame.left >= panel.frame.left && frame.top >= panel.frame.top &&
             frame.right <= panel.frame.right && frame.bottom <= panel.frame.bottom;
     });
@@ -1638,6 +1641,45 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
             panel->clip.Geometry(geometry);
             panel->iconShape = static_cast<int>(shape); panel->iconSize = size;
         }
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
+    int shape, float cornerRadius, float blurRadius, std::uintptr_t ownerKey)
+{
+    if (!AddPanel(frame, cornerRadius, blurRadius, ownerKey)) return false;
+    try
+    {
+        auto panel = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& value) {
+            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                value.ownerKey, value.frame, ownerKey, frame);
+        });
+        if (panel == impl_->panels.end()) return false;
+        if (shape <= 1)
+        {
+            if (panel->largeIconShape >= 0) panel->clip.Geometry(panel->geometry);
+            panel->largeIconShape = -1;
+            return true;
+        }
+        const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
+        if (panel->largeIconShape == shape && panel->largeIconSize.cx == size.cx && panel->largeIconSize.cy == size.cy)
+            return true;
+        if (!impl_->genieGeometryFactory)
+            winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, impl_->genieGeometryFactory.put()));
+        const auto mask = snowdesktop::large_icon_shape::Geometry(impl_->genieGeometryFactory.get(), shape,
+            D2D1::RectF(0, 0, static_cast<float>(size.cx), static_cast<float>(size.cy)), cornerRadius);
+        if (!mask) return false;
+        winrt::com_ptr<ID2D1Geometry> source; source.copy_from(mask.Get());
+        auto geometry = impl_->compositor.CreatePathGeometry();
+        geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+        panel->clip.Geometry(geometry);
+        panel->largeIconShape = shape; panel->largeIconSize = size;
         return true;
     }
     catch (const winrt::hresult_error& error)

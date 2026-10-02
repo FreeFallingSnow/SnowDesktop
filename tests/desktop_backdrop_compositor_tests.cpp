@@ -350,6 +350,20 @@ int RunDesktopBackdropCompositorTests()
                 cardsGlass.InitializePopup(cardsContent.handle, false, false),
                 "card-animation fixture creates its own hidden backdrop target"))
             return failures;
+        // The real native compositor must accept every card silhouette and
+        // reuse one visual through shape changes, including returning to the
+        // original rounded panel. The shared D2D mask is pixel-tested separately.
+        for (int shape : {0, 1, 2, 3, 4, 5, 2, 0})
+        {
+            cardsGlass.BeginFrame(true);
+            check(cardsGlass.AddLargeIconPanel({20, 20, 220, 220}, shape, 24, 24, 31003),
+                "native backdrop accepts all large-icon silhouettes and shape transitions");
+            cardsGlass.EndFrame(false);
+            check(cardsGlass.PanelCount() == 1,
+                "large-icon shape changes retain one native backdrop visual");
+            check(cardsGlass.HasPanelContaining({30, 30, 40, 40}) == (shape <= 1),
+                "arbitrary large-icon silhouettes do not claim rectangular glass coverage");
+        }
         cardsGlass.BeginFrame(true);
         check(cardsGlass.AddPanel({16, 20, 304, 132}, 12, 24, 31001) &&
                 cardsGlass.AddPanel({16, 148, 304, 212}, 12, 24, 31002),

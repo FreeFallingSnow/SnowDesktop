@@ -6,6 +6,7 @@
 #include "../large_icon_edit_rules.h"
 #include "../large_icon_preset_rules.h"
 #include "../large_icon_visibility_rules.h"
+#include "../large_icon_shape_geometry.h"
 
 void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant,
     std::vector<std::wstring> importKeys)
@@ -319,7 +320,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.editable = CanEditLargeIcons();
     result.name = item.name;
     result.defaultConfig = snowdesktop::EncodeLargeIconConfig(MakeLargeIconDefaults(index));
-    const auto frame = GetLargeIconFrameRect(item);
+    const auto frame = snowdesktop::large_icon_shape::Frame(EffectiveLargeIconConfig(item).shape, GetLargeIconFrameRect(item));
     result.frameWidth = std::max<LONG>(1, frame.right - frame.left);
     result.frameHeight = std::max<LONG>(1, frame.bottom - frame.top);
     result.frameColumns = item.gridSpan.columns; result.frameRows = item.gridSpan.rows;
@@ -474,6 +475,9 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.session = largeIconEdit_.token;
     result.revision = largeIconEdit_.revision;
     result.config = snowdesktop::EncodeLargeIconConfig(EffectiveLargeIconConfig(item));
+    const auto visibleFrame = snowdesktop::large_icon_shape::Frame(EffectiveLargeIconConfig(item).shape, GetLargeIconFrameRect(item));
+    result.frameWidth = std::max<LONG>(1, visibleFrame.right - visibleFrame.left);
+    result.frameHeight = std::max<LONG>(1, visibleFrame.bottom - visibleFrame.top);
     RequestLargeIconAsset(index);
     if (result.editable && result.steam && snowdesktop::IsLargeIconFill(EffectiveLargeIconConfig(item)) &&
         EffectiveLargeIconConfig(item).content == 2) for (int variant = 1; variant <= 2; ++variant) RequestLargeIconAsset(index, false, {}, variant);
@@ -535,6 +539,8 @@ RECT DesktopApp::GetLargeIconFrameRect(const DesktopItem& item) const
     DesktopWidget geometry;
     geometry.bounds = item.bounds;
     geometry.gridCell = item.gridCell;
+    // Interaction and resize handles retain the complete grid allocation;
+    // the renderer independently centers an equal-sided square or circle.
     return GetStandaloneWidgetFrameRect(geometry);
 }
 
@@ -573,7 +579,7 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         EffectiveLargeIconConfig(item), CurrentPersonalization().cornerRadius);
     DesktopWidget geometry; geometry.bounds = bounds; geometry.gridCell = item.gridCell;
     snowdesktop::large_icon_renderer::View view;
-    view.frame = GetStandaloneWidgetFrameRect(geometry);
+    view.frame = snowdesktop::large_icon_shape::Frame(config.shape, GetStandaloneWidgetFrameRect(geometry));
     view.scale = GetItemLayoutScale(bounds);
     view.opacity = (item.isCut ? .4f : 1.f) * (state == 3 ? .6f : 1.f);
     view.animations = snowdesktop::animation::RuntimeAnimationsEnabled();
@@ -653,17 +659,28 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
     ComPtr<ID2D1DeviceContext> device;
     context->QueryInterface(IID_PPV_ARGS(&device));
     if (!fill && device)
-        view.drawBackground = [this, appearance, state, scale = view.scale, owner = &runtime](ID2D1RenderTarget* target, RECT rect, float radius, float opacity) mutable {
+        view.drawBackground = [this, appearance, shape = config.shape, state, scale = view.scale, owner = &runtime](ID2D1RenderTarget* target, RECT rect, float radius, float opacity) mutable {
             ComPtr<ID2D1DeviceContext> drawing;
             if (FAILED(target->QueryInterface(IID_PPV_ARGS(&drawing)))) return;
             auto style = appearance;
             style.widgetAlpha *= opacity; style.widgetBorderAlpha *= opacity;
             for (auto& stop : style.panelGradient.stops) stop.opacity *= opacity;
+            const auto border = D2D1::ColorF(style.widgetBorderR, style.widgetBorderG, style.widgetBorderB, style.widgetBorderAlpha);
+            if (shape >= 2)
+            { style.widgetBorderAlpha = 0; style.widgetEdgeHighlightEnabled = false; }
             DrawWidgetPanelBackground(drawing.Get(), rect, radius,
                 D2D1::ColorF(style.widgetBgR, style.widgetBgG, style.widgetBgB, style.widgetAlpha),
                 D2D1::ColorF(style.widgetBorderR, style.widgetBorderG, style.widgetBorderB, style.widgetBorderAlpha),
-                false, style.widgetBorderWidth * scale, &style, state != 3,
+                false, style.widgetBorderWidth * scale, &style, false,
                 reinterpret_cast<std::uintptr_t>(owner), scale);
+            if (style.glassEnabled && state != 3)
+                desktopBackdropCompositor_.AddLargeIconPanel(rect, shape, radius, style.glassBlurRadius,
+                    reinterpret_cast<std::uintptr_t>(owner));
+            if (shape >= 2)
+                snowdesktop::large_icon_shape::DrawMaterialOutline(drawing.Get(), shape, rect, border,
+                    style.widgetBorderWidth * scale,
+                    appearance.widgetEdgeHighlightEnabled ? appearance.widgetEdgeHighlightStrength * opacity : 0,
+                    appearance.widgetEdgeHighlightWidth * scale, appearance.edgeLight);
         };
     const auto transform = snowdesktop::large_icon_transform::Resolve(
         static_cast<float>(view.frame.right - view.frame.left), static_cast<float>(view.frame.bottom - view.frame.top),

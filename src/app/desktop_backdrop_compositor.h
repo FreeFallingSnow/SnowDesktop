@@ -103,6 +103,9 @@ public:
     // Host-private icon regions share the same native blur backend.
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
         float blurRadius, std::uintptr_t ownerKey);
+    // Host-private large-icon silhouettes use the same geometry as the card.
+    bool AddLargeIconPanel(const RECT& frame, int shape, float cornerRadius,
+        float blurRadius, std::uintptr_t ownerKey);
     bool HasPanelContaining(const RECT& frame) const;
     bool RemoveIconPanel(const RECT& frame, std::uintptr_t ownerKey);
 

@@ -9,6 +9,7 @@
 #include "large_icon_transform.h"
 #include "large_icon_settings_rules.h"
 #include "large_icon_visibility_rules.h"
+#include "large_icon_shape_geometry.h"
 
 #include <iostream>
 #include <cstring>
@@ -42,6 +43,46 @@ int main(int argc, char** argv)
     TestIconBitmapRowOrder();
     using namespace snowdesktop::large_icon_render_rules;
     snowdesktop::LargeIconConfig config;
+    {
+        // Production layout codec must preserve the silhouette without
+        // changing grid spans or the user's saved corner rounding.
+        for (int shape = 0; shape <= 5; ++shape)
+        {
+            auto c = config; c.shape = shape; c.columns = 4; c.rows = 2; c.radiusPercent = 35;
+            JsonValue value; snowdesktop::LargeIconConfig restored;
+            Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), value) &&
+                snowdesktop::DecodeLargeIconConfig(value, restored) && restored == c,
+                "shape, grid allocation and rounding survive the production layout codec");
+            value.object.erase("shape");
+            Check(snowdesktop::DecodeLargeIconConfig(value, restored) && restored.shape == 0 && restored.radiusPercent == 35,
+                "old layouts keep their rounded rectangle and saved radius");
+        }
+        auto invalid = config; invalid.shape = 6;
+        Check(!snowdesktop::ValidateLargeIconConfig(invalid) && snowdesktop::EncodeLargeIconConfig(invalid).empty(),
+            "unknown shape values cannot enter persisted layouts");
+        invalid.shape = -1;
+        Check(!snowdesktop::ValidateLargeIconConfig(invalid), "negative shape values are rejected");
+        for (int shape : {1, 2})
+        {
+            const auto wide = snowdesktop::large_icon_shape::Frame(shape, {40, 60, 440, 260});
+            const auto tall = snowdesktop::large_icon_shape::Frame(shape, {60, 40, 260, 440});
+            Check(wide.left == 140 && wide.right == 340 && wide.top == 60 && wide.bottom == 260 &&
+                tall.left == 60 && tall.right == 260 && tall.top == 140 && tall.bottom == 340,
+                "squares and circles remain centered and equal-sided in wide and tall grid allocations");
+        }
+        auto square = config; square.shape = 1; square.radiusPercent = 35;
+        Check(Radius(square, 200, 200, 1) == 35 &&
+            snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::Radius, square),
+            "rounded squares retain adjustable corner rounding");
+        square.followComponentRadius = true;
+        Check(Radius(ResolveComponentRadius(square, 18), 200, 200, 1) == 18,
+            "rounded squares can inherit component corner rounding");
+        square.shape = 2; square.followComponentRadius = false; square.radiusPercent = 0;
+        Check(Radius(square, 200, 200, 1) == 100 &&
+            !snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::Radius, square) &&
+            !snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::RadiusFollow, square),
+            "circles keep their full radius and hide irrelevant corner controls");
+    }
     {
         auto c = config;
         c.followComponentRadius = true; c.radiusPercent = 75;

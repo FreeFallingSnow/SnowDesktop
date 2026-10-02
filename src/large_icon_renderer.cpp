@@ -2,6 +2,7 @@
 #include "large_icon_renderer.h"
 #include "panel_gradient_renderer.h"
 #include "large_icon_title_measure.h"
+#include "large_icon_shape_geometry.h"
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <d2d1helper.h>
@@ -70,12 +71,20 @@ void DrawEdgeGlow(ID2D1RenderTarget* target, const LargeIconConfig& c, const Vie
         const auto inner = D2D1::RectF(frame.left + inset, frame.top + inset, frame.right - inset, frame.bottom - inset);
         const float innerRadius = std::max(0.f, radius - inset);
         brush->SetOpacity(static_cast<float>(c.glowStrength) * view.hover * view.opacity * std::exp(-3.f * i / (steps - 1)));
-        target->DrawRoundedRectangle(D2D1::RoundedRect(inner, innerRadius, innerRadius), brush.Get(), stroke);
+        if (c.shape <= 1) target->DrawRoundedRectangle(D2D1::RoundedRect(inner, innerRadius, innerRadius), brush.Get(), stroke);
+        else
+        {
+            ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
+            const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, inner, innerRadius);
+            if (outline) target->DrawGeometry(outline.Get(), brush.Get(), stroke);
+        }
     }
 }
 }
-void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& c, const View& view)
+void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& c, const View& incoming)
 {
+    auto view = incoming;
+    view.frame = large_icon_shape::Frame(c.shape, view.frame);
     if (!target || view.frame.right <= view.frame.left || view.frame.bottom <= view.frame.top) return;
     const auto frame = Rect(view.frame);
     const float radius = static_cast<float>(large_icon_render_rules::Radius(c,
@@ -83,15 +92,26 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     const bool fill = IsLargeIconFill(c);
     auto background = view.backgroundResolved ? view.background :
         large_icon_render_rules::DefaultBackground(c, view.accent, view.hasEdgeColor, view.edgeColor);
+    ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
+    const auto clip = large_icon_shape::Geometry(factory.Get(), c.shape, frame, radius);
+    ComPtr<ID2D1DeviceContext> context;
+    ComPtr<ID2D1Layer> layer;
+    if (!clip || (FAILED(target->QueryInterface(IID_PPV_ARGS(&context))) &&
+        FAILED(target->CreateLayer(nullptr, &layer)))) return;
+    const auto push = [&] { target->PushLayer(D2D1::LayerParameters(frame, clip.Get()), layer.Get()); };
+    // Arbitrary silhouettes mask the material as well as the image. Preserve
+    // the original rounded panel path and its edge treatment for old layouts.
+    if (c.shape >= 2) push();
+    const float backgroundRadius = c.shape >= 2 ? 0 : radius;
     if (!fill)
     {
-        if (view.drawBackground) view.drawBackground(target, view.frame, radius, view.opacity);
-        else if (!DrawPanelGradient(target, frame, radius, background.gradient, view.opacity))
+        if (view.drawBackground) view.drawBackground(target, view.frame, backgroundRadius, view.opacity);
+        else if (!DrawPanelGradient(target, frame, backgroundRadius, background.gradient, view.opacity))
         {
             ComPtr<ID2D1SolidColorBrush> brush;
             if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(background.color,
                     static_cast<float>(background.opacity) * view.opacity), &brush)))
-                target->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get());
+                target->FillRoundedRectangle(D2D1::RoundedRect(frame, backgroundRadius, backgroundRadius), brush.Get());
         }
     }
     else if (!view.bitmap)
@@ -101,20 +121,10 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
         // or a separate foreground layer. Loaded images retain their own alpha.
         ComPtr<ID2D1SolidColorBrush> brush;
         if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(view.neutral, .65f * view.opacity), &brush)))
-            target->FillRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get());
+            target->FillRoundedRectangle(D2D1::RoundedRect(frame, backgroundRadius, backgroundRadius), brush.Get());
     }
 
-    ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
-    ComPtr<ID2D1RoundedRectangleGeometry> clip;
-    if (factory) factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(frame, radius, radius), &clip);
-    ComPtr<ID2D1DeviceContext> context;
-    ComPtr<ID2D1Layer> layer;
-    // Automatic layers are supported by device contexts. WIC render targets
-    // need an explicit layer to apply the same rounded mask.
-    if (clip && FAILED(target->QueryInterface(IID_PPV_ARGS(&context))) &&
-        FAILED(target->CreateLayer(nullptr, &layer))) return;
-    if (clip) target->PushLayer(D2D1::LayerParameters(frame, clip.Get()), layer.Get());
-    else target->PushAxisAlignedClip(frame, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    if (c.shape <= 1) push();
     const auto sourceSize = view.bitmap ? view.bitmap->GetSize() : D2D1_SIZE_F{};
     const auto geometry = large_icon_render_rules::ResolveContent(c, frame.right - frame.left, frame.bottom - frame.top,
         sourceSize.width, sourceSize.height, view.scale, view.original, c.effect == 3 && !view.animations ? 0 : view.hover,
@@ -166,13 +176,12 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
         }
     }
     DrawEdgeGlow(target, c, view, frame, radius);
-    if (clip) target->PopLayer();
-    else target->PopAxisAlignedClip();
+    target->PopLayer();
     if (view.selected)
     {
         ComPtr<ID2D1SolidColorBrush> brush;
         if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0x75baff, .95f), &brush)))
-            target->DrawRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get(), view.scale);
+            target->DrawGeometry(clip.Get(), brush.Get(), view.scale);
     }
 }
 

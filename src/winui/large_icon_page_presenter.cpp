@@ -194,6 +194,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (field == Field::ForegroundPosition && !enabled) help = L("largeIcon.positionEffectHelp");
 
             if (id == "largeIcon.radius") help = L("largeIcon.radiusHelp");
+            if (id == "largeIcon.shape") help = L("largeIcon.shapeHelp");
             if (id == "largeIcon.direction" && !Supported(draft.autoTitleDirection ? 2 : draft.titleDirection)) help = L("largeIcon.titleUnavailable");
             if (id == "largeIcon.autoTitleColor" && (draft.backgroundStyle >= -1 || (draft.backgroundStyle == -3 && draft.defaultBackground != 0))) help = L("largeIcon.themeTextHelp");
             if (field == Field::Crop)
@@ -449,8 +450,14 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
              {0,"app.settings.dark"},{1,"app.settings.light"},{6,"app.settings.dark_glass"},{7,"app.settings.light_glass"},
              {10,"app.settings.dark_acrylic"},{11,"app.settings.light_acrylic"},{9,"app.settings.custom"}});
         auto size = Group("largeIcon.contentSize");
+        Choice(size, "largeIcon.shape", &LargeIconConfig::shape,
+            {{0,"largeIcon.shape.roundedRectangle"},{1,"largeIcon.shape.roundedSquare"},
+             {2,"largeIcon.shape.circle"},{3,"largeIcon.shape.flag"},
+             {4,"largeIcon.shape.diamond"},{5,"largeIcon.shape.hexagon"}});
         Slider(size, "largeIcon.columns", &LargeIconConfig::columns, 1, std::max(1, snapshot.maxColumns));
         Slider(size, "largeIcon.rows", &LargeIconConfig::rows, 1, std::max(1, snapshot.maxRows));
+        Toggle(size, "largeIcon.followComponentRadius", &LargeIconConfig::followComponentRadius, Field::RadiusFollow, 0);
+        Slider(size, "largeIcon.radius", &LargeIconConfig::radiusPercent, 0, 100, 1, 1, L"%", Field::Radius, 1);
         if (snapshot.steam) Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content,
             {{0,"largeIcon.original"},{1,"largeIcon.image"},{2,"largeIcon.steam"}}, Field::Fill, 1);
         else Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content, {{0,"largeIcon.original"},{1,"largeIcon.image"}}, Field::Fill, 1);
@@ -508,8 +515,6 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         auto text = Section(bg, "appearance.text", Field::Custom);
         Choice(text, "app.settings.text_color", &LargeIconConfig::componentTheme,
             {{0,"app.settings.light"},{1,"app.settings.dark"}}, Field::Custom);
-        Toggle(bg, "largeIcon.followComponentRadius", &LargeIconConfig::followComponentRadius, Field::Always, 0);
-        Slider(bg, "largeIcon.radius", &LargeIconConfig::radiusPercent, 0, 100, 1, 1, L"%", Field::Radius, 1);
         auto icon = Group("largeIcon.foreground", Field::Foreground);
         Choice(icon, "largeIcon.foregroundSource", &LargeIconConfig::foregroundContent, {{0,"largeIcon.original"},{1,"largeIcon.image"}});
         Action(icon, "largeIcon.image", "largeIcon.import", [](auto& self) { self.Send("import"); }, Field::ForegroundImage, 1);
