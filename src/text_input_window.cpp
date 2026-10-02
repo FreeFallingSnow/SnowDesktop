@@ -1,5 +1,6 @@
 #include "text_input_window.h"
 #include "text_input_state.h"
+#include "app_font.h"
 #include <dwrite.h>
 #include <imm.h>
 #include <commctrl.h>
@@ -159,30 +160,33 @@ struct State
             (std::max)(cursor, anchor) - (std::min)(cursor, anchor), composition);
         const auto* family = fontInfo.lfFaceName[0] ? fontInfo.lfFaceName : L"Segoe UI";
         ComPtr<IDWriteTextFormat> format;
-        if (FAILED(factory->CreateTextFormat(family, nullptr,
+        const auto selectedFont = app_fonts::current.load();
+        const bool usesAppFont = selectedFont && _wcsicmp(family, selectedFont->family.c_str()) == 0;
+        const auto weight = fontInfo.lfWeight >= FW_SEMIBOLD ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL;
+        const auto style = fontInfo.lfItalic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
+        const HRESULT formatResult = usesAppFont
+            ? app_fonts::CreateTextFormat(factory, family, weight, style,
+                DWRITE_FONT_STRETCH_NORMAL, FontSize(), L"", &format)
+            : factory->CreateTextFormat(family, nullptr,
                 fontInfo.lfWeight >= FW_SEMIBOLD ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
                 fontInfo.lfItalic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
-                DWRITE_FONT_STRETCH_NORMAL, FontSize(), L"", &format))) return;
+                DWRITE_FONT_STRETCH_NORMAL, FontSize(), L"", &format);
+        if (FAILED(formatResult)) return;
         format->SetWordWrapping(multiline ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
         if ((GetWindowLongPtrW(window, GWL_STYLE) & ES_CENTER) != 0)
             format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         singleLineOffsetY = 0;
         if (!multiline)
         {
-            // Use the upright CJK/capital band. Including a Latin descender
-            // centers the reference lower than everyday Chinese/search text.
-            // Fix the line height and baseline as well: fallback fonts must
-            // not move the text when the cue becomes a value or IME text.
+            // Keep line metrics consistent across fallback fonts. Visible ink
+            // is centered separately after shaping the actual value or cue.
             ComPtr<IDWriteTextLayout> reference;
             if (SUCCEEDED(factory->CreateTextLayout(L"国H", 2, format.Get(), 1000.f, 1000.f, &reference))) // l10n-allow: fixed font measurement glyphs, never displayed
             {
                 DWRITE_LINE_METRICS line{}; UINT32 count = 0;
-                DWRITE_OVERHANG_METRICS ink{};
-                if (SUCCEEDED(reference->GetLineMetrics(&line, 1, &count)) && count == 1 &&
-                    SUCCEEDED(reference->GetOverhangMetrics(&ink)))
+                if (SUCCEEDED(reference->GetLineMetrics(&line, 1, &count)) && count == 1)
                 {
                     format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, line.height, line.baseline);
-                    singleLineOffsetY = (line.height + ink.top - 1000.f - ink.bottom) / 2.f;
                 }
             }
             format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -198,6 +202,17 @@ struct State
             // overflowing name reachable by horizontal scrolling.
             if (metrics.widthIncludingTrailingWhitespace > layout->GetMaxWidth())
                 layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            ComPtr<IDWriteTextLayout> cueLayout;
+            auto* visibleLayout = layout.Get();
+            const auto& visibleText = display.empty() ? cue : display;
+            if (display.empty() && !cue.empty() && SUCCEEDED(factory->CreateTextLayout(
+                    cue.data(), static_cast<UINT32>(cue.size()), layout.Get(),
+                    layout->GetMaxWidth(), layout->GetMaxHeight(), &cueLayout)))
+                visibleLayout = cueLayout.Get();
+            DWRITE_OVERHANG_METRICS ink{};
+            if (visibleText.find_first_not_of(L" \t\r\n") != std::wstring::npos &&
+                SUCCEEDED(visibleLayout->GetOverhangMetrics(&ink)))
+                singleLineOffsetY = (ink.top - ink.bottom) / 2.f;
             scrollY = 0;
         }
         float x = 0, y = 0; DWRITE_HIT_TEST_METRICS hit{};
@@ -465,14 +480,16 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
     if (selected)
     { brush->SetColor(Color(state.colors.accent)); ranges((std::min)(state.cursor,state.anchor), (std::max)(state.cursor,state.anchor)-(std::min)(state.cursor,state.anchor), false); }
     brush->SetColor(Color(state.colors.foreground));
-    target->DrawTextLayout(D2D1::Point2F(x,y), state.layout.Get(), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    // The viewport clips both glyphs and selection. The layout's own clip
+    // would discard overflowing glyphs before horizontal scrolling reveals them.
+    target->DrawTextLayout(D2D1::Point2F(x,y), state.layout.Get(), brush.Get());
     if(selected)
     {
         brush->SetColor(Color(state.colors.selectionText));
         for(const auto& box:selectionBoxes)
         {
             target->PushAxisAlignedClip(D2D1::RectF(box.left,box.top,box.left+box.width,box.top+box.height),D2D1_ANTIALIAS_MODE_ALIASED);
-            target->DrawTextLayout(D2D1::Point2F(x,y),state.layout.Get(),brush.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            target->DrawTextLayout(D2D1::Point2F(x,y),state.layout.Get(),brush.Get());
             target->PopAxisAlignedClip();
         }
         brush->SetColor(Color(state.colors.foreground));
@@ -484,7 +501,7 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
         ComPtr<IDWriteTextLayout> hint;
         state.factory->CreateTextLayout(state.cue.data(),static_cast<UINT32>(state.cue.size()),state.layout.Get(),
             state.layout->GetMaxWidth(),state.layout->GetMaxHeight(),&hint);
-        if(hint)target->DrawTextLayout(D2D1::Point2F(state.leftMargin,y),hint.Get(),brush.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        if(hint)target->DrawTextLayout(D2D1::Point2F(state.leftMargin,y),hint.Get(),brush.Get());
     }
     if (GetFocus() == state.window && state.caret && state.interactive)
     {

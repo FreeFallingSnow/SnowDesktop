@@ -28,8 +28,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
         GetQuickNavItemIconRect(itemRect);
     const float fontSize = quickNavItemTextFormat_
         ? quickNavItemTextFormat_->GetFontSize() : static_cast<float>(QuickNavScale(13));
-    const int textHeight = std::max(1, static_cast<int>(std::ceil(
-        std::max(1.0f, std::floor(fontSize * 1.08f)))));
+    const int textHeight = QuickNavScale(kQuickNavigationTextHeight);
     RECT editRect = QuickNavigationItemTextRect(itemRect, iconRect, QuickNavScale(4),
         std::max(1, QuickNavScale(2)), textHeight);
     InflateRect(&editRect, std::max(1, QuickNavScale(4)), 0);
@@ -46,7 +45,7 @@ void DesktopApp::BeginQuickNavigationItemRename(
             WS_EX_TOOLWINDOW |
             WS_EX_TOPMOST,
         snowdesktop::text_input::WindowClass(), name.c_str(),
-        snowdesktop::rename_edit_layout::EditStyle(),
+        snowdesktop::rename_edit_layout::EditStyle(false, true),
         editRect.left + virtualLeft_,
         editRect.top + virtualTop_,
         editRect.right - editRect.left,

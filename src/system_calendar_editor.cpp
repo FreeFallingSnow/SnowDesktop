@@ -362,6 +362,24 @@ void CheckSystemCalendarInputs()
         OverlaySystemCalendarInputs(sample,appearanceSample,dpi,width,height,pixels);
         Require(pixels[static_cast<std::size_t>(height/2)*width+width/2]!=untouched&&pixels[0]==untouched,
             "drawn input lost its field or overwrote the surrounding surface");
+        // Exercise the real embedded calendar paint path with the reported
+        // title, scaled form font and field height rather than an empty proxy.
+        std::vector<std::uint32_t> titlePixels(static_cast<std::size_t>(width)*height,untouched);
+        const std::vector<SystemCalendarInputField> titleSample{
+            {"title",L"Title",L"测试",{16,16,100,52},{0,0,120,80},false,true,512}};
+        OverlaySystemCalendarInputs(titleSample,appearanceSample,dpi,width,height,titlePixels);
+        const int top=static_cast<int>(16*dpi/96),bottom=static_cast<int>(52*dpi/96);
+        int first=bottom,last=-1;
+        for(int y=top+4;y<bottom-4;++y)
+            for(int x=static_cast<int>(28*dpi/96);x<static_cast<int>(88*dpi/96);++x)
+            {
+                const auto pixel=titlePixels[static_cast<std::size_t>(y)*width+x];
+                const auto r=(pixel>>16)&255,g=(pixel>>8)&255,b=pixel&255;
+                if(theme==0?(r>180&&g>180&&b>180):(r<80&&g<80&&b<80))
+                {first=(std::min)(first,y);last=(std::max)(last,y);}
+            }
+        Require(last>=first&&std::abs(first+last-top-bottom+1)<=2,
+            "actual embedded calendar title glyphs are not vertically centered");
     }
 }
 void CheckSystemControlPasswordInput()

@@ -1,4 +1,5 @@
 #include "text_input_window.h"
+#include "app_font.h"
 #include <commctrl.h>
 #include <wrl/client.h>
 #include <UIAutomation.h>
@@ -7,6 +8,7 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 
 using Microsoft::WRL::ComPtr;
 namespace input = snowdesktop::text_input;
@@ -122,45 +124,46 @@ std::pair<int,int> InkBand(HWND window)
         if((data[y*width+x]&0xffffff)!=0xffffff){first=std::min(first,y);last=std::max(last,y);}
     SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);return {first,last};
 }
-void VerticalAlignment(HWND owner)
+void VerticalAlignment(HWND owner,const wchar_t* selectedFamily=nullptr)
 {
     const auto window=Create(owner,ES_AUTOHSCROLL,L"");if(!window)return;
     input::Colors colors;colors.foreground=colors.secondary=RGB(0,0,0);
     colors.background=colors.border=colors.accent=RGB(255,255,255);input::SetColors(window,colors);
     const auto access=input::Accessibility(window);
-    for(const auto* family:{L"Segoe UI",L"Microsoft YaHei UI"})
-    for(const int fontSize:{20,23,26})
+    const std::vector<const wchar_t*> families=selectedFamily
+        ? std::vector<const wchar_t*>{selectedFamily}
+        : std::vector<const wchar_t*>{L"Segoe UI",L"Microsoft YaHei UI"};
+    for(const auto* family:families)
+    for(const int fontSize:{13,20,23,26})
     {
         const auto font=CreateFontW(-fontSize,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,family);
         SendMessageW(window,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
-        for(const int height:{48,55})
+        for(const int height:{34,48,54,55})
         {
             SetWindowPos(window,nullptr,0,0,800,height,SWP_NOZORDER|SWP_NOACTIVATE);
-            double lineTop=0,lineHeight=0;
+            double lineHeight=0;
             for(const std::wstring value:{L"测试",L"在桌面、应用、Everything中搜索",L"Everything",L"日程 Event",L"gjpq"})
             {
                 SetWindowTextW(window,L"");
                 SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(value.c_str()));
                 const auto cue=InkBand(window);SetWindowTextW(window,value.c_str());const auto band=InkBand(window);
                 Check(cue.second>=cue.first&&band==cue,"actual search/calendar cue and value share their rendered band");
-                // Descenders intentionally extend below the common baseline.
-                // Center the user-reported CJK fields; use other strings to
-                // check baseline stability rather than centering each glyph.
-                if(value==L"测试"||value==L"在桌面、应用、Everything中搜索")
+                // Check the visible glyphs, including Latin descenders, rather
+                // than accepting a centered line box around elevated text.
                 {
                     const int error=band.first+band.second-(height-1);
                     if(std::abs(error)>2)
                         std::cerr<<"alignment: font="<<fontSize<<" height="<<height<<" glyphs="<<value.size()<<" band="<<band.first<<','<<band.second<<'\n';
-                    Check(std::abs(error)<=2,"actual search/calendar upright text is centered within one pixel");
+                    Check(std::abs(error)<=2,"actual search/calendar glyphs are centered within one pixel");
                 }
                 const auto boxes=access->rectangles(0,value.size());
                 Check(!boxes.empty(),"centered input exposes actual text geometry");
                 if(!boxes.empty())
                 {
-                    if(lineHeight==0){lineTop=boxes[0].top;lineHeight=boxes[0].height;}
-                    Check(std::abs(boxes[0].top-lineTop)<0.01&&std::abs(boxes[0].height-lineHeight)<0.01,
-                        "CJK, Latin and fallback glyphs retain one baseline and line height");
+                    if(lineHeight==0)lineHeight=boxes[0].height;
+                    Check(std::abs(boxes[0].height-lineHeight)<0.01,
+                        "CJK, Latin and fallback glyphs retain their line height while visible ink is centered");
                     Check(access->hit({boxes[0].left+1,boxes[0].top+boxes[0].height/2})==0,
                         "pointer and accessibility hit testing use the centered text origin");
                 }
@@ -172,13 +175,83 @@ void VerticalAlignment(HWND owner)
     }
     DestroyWindow(window);
 }
+void ScrolledGlyphs(HWND owner)
+{
+    const auto window=Create(owner,ES_AUTOHSCROLL,L"");if(!window)return;
+    input::Colors colors;colors.background=colors.border=RGB(255,255,255);
+    colors.foreground=colors.secondary=RGB(0,0,0);colors.accent=RGB(0,103,192);
+    colors.selectionText=RGB(0,0,0);input::SetColors(window,colors);
+    const auto font=CreateFontW(-20,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+    SendMessageW(window,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
+    SetWindowPos(window,nullptr,0,0,80,34,SWP_NOZORDER|SWP_NOACTIVATE);
+    const std::wstring value=std::wstring(60,L'W')+L"测试";SetWindowTextW(window,value.c_str());
+    SendMessageW(window,EM_SETSEL,value.size(),value.size());
+    const auto glyphCount=[&]()
+    {
+        BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth=80;info.bmiHeader.biHeight=-34;
+        info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
+        void* pixels=nullptr;const auto dc=CreateCompatibleDC(nullptr);
+        const auto bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&pixels,nullptr,0);
+        if(!dc||!bitmap){if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);return 0;}
+        const auto previous=SelectObject(dc,bitmap);
+        SendMessageW(window,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT);GdiFlush();
+        int count=0;const auto* data=static_cast<const DWORD*>(pixels);
+        // White background and blue selection cannot satisfy this black-ink
+        // check. A geometry-only test would miss invisible scrolled glyphs.
+        for(int y=4;y<30;++y)for(int x=8;x<72;++x)
+        {
+            const auto pixel=data[y*80+x];
+            if((pixel&255)<32&&((pixel>>8)&255)<32&&((pixel>>16)&255)<32)++count;
+        }
+        SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);return count;
+    };
+    Check(glyphCount()>20,"horizontal scrolling draws the last glyphs beyond the original layout width");
+    SendMessageW(window,EM_SETSEL,0,-1);
+    Check(glyphCount()>20,"a selected overflowing name draws glyphs as well as its blue selection");
+    SendMessageW(window,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),FALSE);
+    DeleteObject(font);DestroyWindow(window);
 }
-int main()
+void BundledFonts(HWND owner,const std::filesystem::path& root)
+{
+    namespace fonts=snowdesktop::app_fonts;
+    for(const auto* relative:{L"assets/fonts/MiSans/MiSans-Regular.otf",
+            L"assets/fonts/HarmonyOS-Sans/HarmonyOS_Sans_SC_Regular.ttf"})
+    {
+        auto resource=std::make_shared<fonts::Resource>();
+        ComPtr<IDWriteFontFile> file;ComPtr<IDWriteFontSetBuilder1> builder;
+        ComPtr<IDWriteFontSet> set;ComPtr<IDWriteFontCollection2> collection;
+        ComPtr<IDWriteFontFamily2> family;ComPtr<IDWriteLocalizedStrings> names;
+        const auto path=root/relative;
+        const bool loaded=SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_ISOLATED,
+            __uuidof(IDWriteFactory6),reinterpret_cast<IUnknown**>(resource->factory.GetAddressOf())))&&
+            SUCCEEDED(resource->factory->CreateFontFileReference(path.c_str(),nullptr,&file))&&
+            SUCCEEDED(resource->factory->CreateFontSetBuilder(&builder))&&
+            SUCCEEDED(builder->AddFontFile(file.Get()))&&SUCCEEDED(builder->CreateFontSet(&set))&&
+            SUCCEEDED(resource->factory->CreateFontCollectionFromFontSet(set.Get(),
+                DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC,&collection))&&collection->GetFontFamilyCount()>0&&
+            SUCCEEDED(collection->GetFontFamily(0,&family))&&SUCCEEDED(family->GetFamilyNames(&names));
+        Check(loaded,"load the actual bundled application font collection");
+        if(!loaded)continue;
+        UINT32 length=0;names->GetStringLength(0,&length);
+        resource->family.resize(static_cast<std::size_t>(length)+1);
+        names->GetString(0,resource->family.data(),length+1);resource->family.resize(length);
+        resource->collection=collection;
+        fonts::current.store(resource);
+        VerticalAlignment(owner,resource->family.c_str());
+        fonts::current.store(nullptr);
+    }
+}
+}
+int main(int argc,char** argv)
 {
     const auto apartment=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     WNDCLASSW cls{};cls.lpfnWndProc=Owner;cls.hInstance=GetModuleHandleW(nullptr);cls.lpszClassName=L"SnowDesktop.TextInputTestOwner";RegisterClassW(&cls);
     const auto owner=CreateWindowExW(0,cls.lpszClassName,L"",WS_OVERLAPPED,0,0,400,300,nullptr,nullptr,cls.hInstance,nullptr);
-    if(!owner)Check(false,"create isolated hidden test owner");else{Ordinary(owner);Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);DestroyWindow(owner);}
+    if(!owner)Check(false,"create isolated hidden test owner");else{Ordinary(owner);Accessible(owner);Password(owner);Reentrant(owner);VerticalAlignment(owner);ScrolledGlyphs(owner);
+        Check(argc>1,"the bundled-font regression receives the repository root");
+        if(argc>1)BundledFonts(owner,std::filesystem::path(argv[1]));DestroyWindow(owner);}
     if(SUCCEEDED(apartment))CoUninitialize();
     if(failures)return 1;std::cout<<"shared text input production checks passed\n";return 0;
 }

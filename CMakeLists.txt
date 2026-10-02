@@ -1960,6 +1960,7 @@ if (BUILD_TESTING)
         text_input_window
         SOURCES tests/text_input_window_tests.cpp
         INCLUDE_DIRECTORIES src
+        COMMAND_ARGUMENTS ${CMAKE_SOURCE_DIR}
         LABELS core contract interaction accessibility security)
 
     snowdesktop_add_test(

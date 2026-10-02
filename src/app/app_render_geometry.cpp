@@ -169,7 +169,5 @@ RECT DesktopApp::GetItemSelectionRect(RECT bounds, bool expanded, int componentT
 
 RECT DesktopApp::GetItemRenameRect(RECT bounds, int componentTitleLines) const
 {
-    const auto metrics = GetItemVisualMetrics(bounds, componentTitleLines);
-    return snowdesktop::rename_edit_layout::FirstTitleLine(
-        GetItemTextRect(bounds, false, componentTitleLines), metrics.fontSize * 7.0f / 6.0f);
+    return GetItemTextRect(bounds, true, componentTitleLines);
 }

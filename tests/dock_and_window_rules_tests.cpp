@@ -908,15 +908,6 @@ void CheckSingleLineRenameEditor()
     namespace layout = snowdesktop::rename_edit_layout;
     const RECT work{ -1920, -100, 0, 980 };
     const RECT anchor{ -1200, 200, -1040, 226 };
-    const RECT expandedTitle{ -1200, 200, -1040, 278 };
-    const RECT configuredTwoLines{ -1200, 200, -1040, 236 };
-    const RECT firstLine = layout::FirstTitleLine(expandedTitle, 18.0f);
-    const RECT firstConfiguredLine = layout::FirstTitleLine(configuredTwoLines, 18.0f);
-    const RECT gridEditor = layout::CalculateRect(firstLine, work, 26, layout::HeightAnchor::Center);
-    Check(EqualRect(&firstLine, &firstConfiguredLine) && firstLine.top == expandedTitle.top &&
-            gridEditor.top + gridEditor.bottom == firstLine.top + firstLine.bottom &&
-            gridEditor.bottom < configuredTwoLines.bottom,
-        "grid rename occupies the first title line regardless of display or expanded line count");
     const RECT grown = layout::CalculateRect(anchor, work, 110);
     Check(grown.top == anchor.top && grown.bottom - grown.top == 110 &&
             grown.left == anchor.left && grown.right == anchor.right,
@@ -956,16 +947,15 @@ void CheckSingleLineRenameEditor()
     const RECT available = monitorInfo.rcWork;
     for (bool leftAligned : { false, true })
     {
-        // Both grid and list alignment use the production single-line editor.
+        // Widget titles and list rows use the production single-line editor.
         // The owner stays hidden; this never launches or drives the desktop host.
         layout::EditorLayout adaptive;
         SetWindowLongPtrW(owner, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&adaptive));
         const std::wstring longName = leftAligned
             ? std::wstring(100, L'A') + L".txt"
             : L"这是一个包含很多汉字的长文件名称需要完整显示自动换行后的所有文字以便在重命名时查看和编辑.txt";
-        const RECT title = layout::FirstTitleLine(
-            { available.left + 40, available.top + 40, available.left + 200, available.top + 118 },
-            leftAligned ? 30.0f : 15.0f);
+        const RECT title{ available.left + 40, available.top + 40,
+            available.left + 200, available.top + (leftAligned ? 70 : 55) };
         HWND edit = CreateWindowExW(WS_EX_TOOLWINDOW,
             snowdesktop::text_input::WindowClass(), longName.c_str(), layout::EditStyle(leftAligned),
             title.left, title.top, title.right - title.left, title.bottom - title.top,
@@ -1038,6 +1028,48 @@ void CheckSingleLineRenameEditor()
         DestroyWindow(edit);
         DeleteObject(font);
         SetWindowLongPtrW(owner, GWLP_USERDATA, 0);
+    }
+    {
+        layout::EditorLayout adaptive;
+        SetWindowLongPtrW(owner, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&adaptive));
+        const RECT title{available.left + 40, available.top + 40,
+            available.left + 200, available.top + 118};
+        HWND edit = CreateWindowExW(WS_EX_TOOLWINDOW,
+            snowdesktop::text_input::WindowClass(), L"项目", layout::EditStyle(false, true),
+            title.left, title.top, title.right-title.left, title.bottom-title.top,
+            owner, nullptr, windowClass.hInstance, nullptr);
+        Check(edit != nullptr, "the wrapped grid rename fixture can be created");
+        if (edit)
+        {
+            HFONT font = CreateFontW(-20,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+            SendMessageW(edit,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
+            adaptive.Begin(edit);
+            RECT initial{};GetWindowRect(edit,&initial);
+            Check(EqualRect(&initial,&title) &&
+                    (GetWindowLongPtrW(edit,GWL_STYLE)&ES_MULTILINE)!=0,
+                "grid rename restores the complete original title height for a short name");
+            SendMessageW(edit,EM_SETSEL,0,-1);
+            const std::wstring longName(100,L'项');
+            SendMessageW(edit,EM_REPLACESEL,TRUE,reinterpret_cast<LPARAM>(longName.c_str()));
+            RECT grown{};GetWindowRect(edit,&grown);
+            Check(SendMessageW(edit,EM_GETLINECOUNT,0,0)>1 && grown.top==title.top &&
+                    grown.bottom>=title.bottom && grown.right==title.right,
+                "grid rename wraps long names while retaining the original title position and minimum height");
+            SendMessageW(edit,EM_SETSEL,0,0);
+            const auto access=snowdesktop::text_input::Accessibility(edit);
+            Check(access && !access->rectangles(0,1).empty(),
+                "the first wrapped glyph remains reachable after a long rename");
+            SendMessageW(edit,WM_UNDO,0,0);
+            RECT undone{};GetWindowRect(edit,&undone);
+            Check(EqualRect(&undone,&title) && GetWindowTextLengthW(edit)==2,
+                "undo restores the original grid title region instead of shrinking to one line");
+            const auto region=CreateRectRgn(0,0,0,0);
+            Check(GetWindowRgn(edit,region)!=ERROR && !PtInRegion(region,0,0),
+                "the restored multiline grid editor retains rounded clipping");
+            DeleteObject(region);adaptive.Reset();DestroyWindow(edit);DeleteObject(font);
+        }
+        SetWindowLongPtrW(owner,GWLP_USERDATA,0);
     }
     DestroyWindow(owner);
     UnregisterClassW(className, windowClass.hInstance);

@@ -10,19 +10,12 @@ namespace snowdesktop::rename_edit_layout
 {
 enum class HeightAnchor { Top, Center, Bottom };
 
-// Rename is a real single-line viewport; long names scroll horizontally.
-inline DWORD EditStyle(bool leftAligned = false)
+// Grid labels wrap within their original title region; rows and widget titles
+// keep a single-line viewport with horizontal scrolling.
+inline DWORD EditStyle(bool leftAligned = false, bool multiline = false)
 {
-    return WS_POPUP | ES_AUTOHSCROLL |
+    return WS_POPUP | (multiline ? ES_MULTILINE | ES_AUTOVSCROLL : ES_AUTOHSCROLL) |
         (leftAligned ? ES_LEFT : ES_CENTER);
-}
-
-// Grid names edit at their first title line, independently of the configured
-// display line count and the taller selected/expanded title region.
-inline RECT FirstTitleLine(RECT title, float lineHeight)
-{
-    title.bottom = title.top + std::max(1L, static_cast<LONG>(std::ceil(lineHeight)));
-    return title;
 }
 
 inline RECT CalculateRect(const RECT& anchor, const RECT& workArea,
@@ -59,7 +52,10 @@ public:
         if (!edit || !GetWindowRect(edit, &anchor_))
             return;
         edit_ = edit;
-        heightAnchor_ = heightAnchor;
+        multiline_ = (GetWindowLongPtrW(edit, GWL_STYLE) & ES_MULTILINE) != 0;
+        heightAnchor_ = multiline_ ? HeightAnchor::Top : heightAnchor;
+        // Filenames remain one logical string even when the grid editor wraps.
+        text_input::SetLogicalSingleLine(edit, true);
         MONITORINFO monitorInfo{ sizeof(monitorInfo) };
         if (GetMonitorInfoW(MonitorFromRect(&anchor_,
                 MONITOR_DEFAULTTONEAREST), &monitorInfo))
@@ -72,7 +68,7 @@ public:
             workArea_.bottom - workArea_.top > margin * 2)
             InflateRect(&workArea_, -margin, -margin);
 
-        // Keep the original title's center while sizing one font line.
+        // Preserve the full grid title region before adapting to longer names.
         const RECT initial = CalculateRect(anchor_, workArea_,
             anchor_.bottom - anchor_.top, heightAnchor_);
         updating_ = true;
@@ -81,12 +77,14 @@ public:
         Update(edit);
     }
 
-    // Text edits and undo keep the same one-line geometry.
+    // Rows keep one line; wrapped grids never shrink below their title region.
     void Update(HWND edit)
     {
         if (!edit || edit != edit_ || updating_) return;
+        const int desiredHeight = text_input::DesiredHeight(edit);
         const RECT next = CalculateRect(anchor_, workArea_,
-            text_input::DesiredHeight(edit), heightAnchor_);
+            multiline_ ? std::max<int>(anchor_.bottom - anchor_.top, desiredHeight) : desiredHeight,
+            heightAnchor_);
         updating_ = true;
         Position(next);
         updating_ = false;
@@ -104,5 +102,6 @@ private:
     RECT workArea_{};
     HeightAnchor heightAnchor_ = HeightAnchor::Top;
     bool updating_ = false;
+    bool multiline_ = false;
 };
 } // namespace snowdesktop::rename_edit_layout

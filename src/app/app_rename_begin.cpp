@@ -336,7 +336,7 @@ void DesktopApp::BeginRenameSelected(
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
     const DWORD renameStyle =
-        snowdesktop::rename_edit_layout::EditStyle(leftAlignedRename);
+        snowdesktop::rename_edit_layout::EditStyle(leftAlignedRename, !leftAlignedRename);
     renameInputWindow_ = CreateWindowExW(
          WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         snowdesktop::text_input::WindowClass(),
