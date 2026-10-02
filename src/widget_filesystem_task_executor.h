@@ -96,6 +96,10 @@ public:
     using Clock = std::chrono::steady_clock;
     using Runner = std::function<WidgetFilesystemTaskRunResult(
         const WidgetFilesystemTaskRequest& request)>;
+    // Legacy injected runners retain their one-argument contract. Production
+    // actions and cooperative test runners observe a per-request stop token.
+    using CooperativeRunner = std::function<WidgetFilesystemTaskRunResult(
+        const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)>;
     using NowProvider = std::function<Clock::time_point()>;
     using CompletionCallback = std::function<void()>;
 
@@ -107,7 +111,8 @@ public:
         std::chrono::milliseconds(100);
 
     explicit WidgetFilesystemTaskExecutor(
-        Runner runner = {}, NowProvider nowProvider = {});
+        Runner runner = {}, NowProvider nowProvider = {},
+        CooperativeRunner cooperativeRunner = {});
     ~WidgetFilesystemTaskExecutor();
 
     WidgetFilesystemTaskExecutor(
@@ -135,19 +140,21 @@ private:
         std::uint64_t id = 0;
         std::string instanceId;
         WidgetFilesystemTaskRequest request;
+        std::shared_ptr<std::stop_source> stop;
     };
 
     static WidgetFilesystemTaskRunResult RunSystemAction(
-        const WidgetFilesystemTaskRequest& request);
+        const WidgetFilesystemTaskRequest& request, std::stop_token stopToken);
     void WorkerMain(std::stop_token stopToken);
 
-    Runner runner_;
+    CooperativeRunner runner_;
     NowProvider nowProvider_;
     mutable std::mutex mutex_;
     std::condition_variable condition_;
     std::deque<QueuedRequest> requests_;
     std::unordered_set<std::uint64_t> active_;
     std::unordered_set<std::uint64_t> canceled_;
+    std::unordered_map<std::uint64_t, std::shared_ptr<std::stop_source>> requestStops_;
     std::unordered_map<std::string, Clock::time_point> lastWrites_;
     std::vector<WidgetFilesystemTaskCompletion> completions_;
     CompletionCallback completionCallback_;

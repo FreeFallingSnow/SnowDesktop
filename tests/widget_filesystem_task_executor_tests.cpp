@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <chrono>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -50,6 +51,73 @@ int main()
         std::ofstream output(binaryFile, std::ios::binary);
         output.write(binaryBytes.data(),
             static_cast<std::streamsize>(binaryBytes.size()));
+    }
+
+    // A running cooperative action must relinquish the sole worker, allowing
+    // the next action through. The runner has a bounded failure deadline so a
+    // regression cannot hang teardown. No real file or device blocks here.
+    {
+        std::promise<void> entered;
+        auto started = entered.get_future();
+        WidgetFilesystemTaskExecutor cooperative({}, {},
+            [&](const WidgetFilesystemTaskRequest& request, std::stop_token stop) {
+                if (request.handle == "first")
+                {
+                    entered.set_value();
+                    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                    while (!stop.stop_requested() && std::chrono::steady_clock::now() < deadline)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    WidgetFilesystemTaskRunResult result;
+                    result.error = stop.stop_requested() ? "canceled" : "cancelNotDelivered";
+                    return result;
+                }
+                WidgetFilesystemTaskRunResult result; result.ok = true; return result;
+            });
+        WidgetFilesystemTaskRequest request;
+        request.action = "filesystem.stat"; request.path = file; request.handle = "first";
+        Expect(static_cast<bool>(cooperative.Start(801, "cancel-test", request)), "cooperative action starts");
+        Expect(started.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "first action is running");
+        request.handle = "second";
+        Expect(static_cast<bool>(cooperative.Start(802, "cancel-test", request)), "next action queues");
+        Expect(cooperative.Cancel(801), "running action accepts cancellation");
+        bool canceled = false, advanced = false;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while ((!canceled || !advanced) && std::chrono::steady_clock::now() < deadline)
+        {
+            for (auto& completion : cooperative.DrainCompletions())
+            {
+                if (completion.id == 801) canceled = !completion.ok && completion.error == "canceled";
+                if (completion.id == 802) advanced = completion.ok;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        Expect(canceled && advanced && cooperative.ActiveCount() == 0,
+            "cancellation releases the running worker before500ms and advances the queue");
+        std::cout << "cooperative cancellation: running action released; next queued action completed before500ms\n";
+    }
+
+    {
+        std::promise<void> entered;
+        auto started = entered.get_future();
+        std::atomic<bool> observedStop{false};
+        auto cooperative = std::make_unique<WidgetFilesystemTaskExecutor>(
+            WidgetFilesystemTaskExecutor::Runner{}, WidgetFilesystemTaskExecutor::NowProvider{},
+            [&](const WidgetFilesystemTaskRequest&, std::stop_token stop) {
+                entered.set_value();
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                while (!stop.stop_requested() && std::chrono::steady_clock::now() < deadline)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                observedStop.store(stop.stop_requested());
+                return WidgetFilesystemTaskRunResult{};
+            });
+        WidgetFilesystemTaskRequest request;
+        request.action = "filesystem.stat"; request.path = file;
+        Expect(static_cast<bool>(cooperative->Start(803, "shutdown-test", request)), "shutdown action starts");
+        Expect(started.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "shutdown action is running");
+        const auto began = std::chrono::steady_clock::now();
+        cooperative.reset();
+        Expect(observedStop.load() && std::chrono::steady_clock::now() - began < std::chrono::milliseconds(500),
+            "destructor bridges stop to the active request and joins before500ms");
     }
 
     WidgetFilesystemTaskExecutor executor;
@@ -268,6 +336,29 @@ int main()
     const auto names = WaitFor(executor, 14);
     Expect(names.ok && !names.grantHandles && !names.items.empty() && names.items[0].handle.empty(),
         "names-only enumeration reaches the completion without child grants");
+    const std::u8string unicodeName = u8"r\u00e9sum\u00e9-\u56fe\u50cf.bmp";
+    std::filesystem::copy_file(photo, root / std::filesystem::path(unicodeName));
+    image.path = root;
+    image.name.assign(reinterpret_cast<const char*>(unicodeName.data()), unicodeName.size());
+    image.maxDimension = 2;
+    Expect(static_cast<bool>(executor.Start(30, "unicode-image", image)), "UTF-8 child image starts");
+    const auto unicodeImage = WaitFor(executor, 30);
+    Expect(unicodeImage.ok && unicodeImage.image &&
+            unicodeImage.image->bgraPremultiplied == expectedPixels &&
+            unicodeImage.metadata.handle == "test-owner-folder",
+        "non-ASCII child filename preserves actual decoded pixels and folder authorization");
+
+    const auto chunkedFile = root / L"chunked.txt";
+    const std::string chunkedText = std::string(16 * 1024 - 1, 'a') +
+        "\xe2\x82\xac" + std::string(20 * 1024, 'b');
+    { std::ofstream output(chunkedFile, std::ios::binary); output.write(chunkedText.data(),
+          static_cast<std::streamsize>(chunkedText.size())); }
+    read.path = chunkedFile;
+    read.maxBytes = chunkedText.size();
+    Expect(static_cast<bool>(executor.Start(31, "chunked-read", read)), "exact-ceiling chunked UTF-8 read starts");
+    const auto chunkedResult = WaitFor(executor, 31);
+    Expect(chunkedResult.ok && chunkedResult.text == chunkedText,
+        "multi-byte UTF-8 spanning a chunk boundary round-trips at the exact caller byte ceiling");
     std::cout << "widget filesystem task executor tests passed\n";
     return 0;
 }

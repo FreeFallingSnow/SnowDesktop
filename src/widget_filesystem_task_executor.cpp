@@ -140,8 +140,9 @@ bool ReadMetadata(const std::filesystem::path& path,
 }
 
 WidgetFilesystemTaskRunResult RunStat(
-    const WidgetFilesystemTaskRequest& request)
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
 {
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     std::string error;
     if (!CheckPathWithoutReparsePoints(request.path, false, error))
         return { false, {}, {}, {}, 0, false, std::move(error) };
@@ -155,8 +156,9 @@ WidgetFilesystemTaskRunResult RunStat(
 }
 
 WidgetFilesystemTaskRunResult RunImage(
-    const WidgetFilesystemTaskRequest& request)
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
 {
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     using Microsoft::WRL::ComPtr;
     const auto fail = [](std::string error) {
         WidgetFilesystemTaskRunResult result;
@@ -180,6 +182,7 @@ WidgetFilesystemTaskRunResult RunImage(
     auto current = path.root_path();
     for (const auto& part : path.relative_path())
     {
+        if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
         current /= part;
         const bool leaf = current == path;
         HANDLE handle = CreateFileW(current.c_str(),
@@ -269,6 +272,7 @@ WidgetFilesystemTaskRunResult RunImage(
                 WICBitmapInterpolationModeFant)) || FAILED(scaler.As(&source)))
             return fail("imageDecodeFailed");
     }
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     ComPtr<IWICFormatConverter> converter;
     if (FAILED(factory->CreateFormatConverter(&converter)) ||
         FAILED(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppPBGRA,
@@ -282,8 +286,10 @@ WidgetFilesystemTaskRunResult RunImage(
     if (FAILED(converter->CopyPixels(nullptr, pixels->stride,
             static_cast<UINT>(pixels->bgraPremultiplied.size()),
             pixels->bgraPremultiplied.data()))) return fail("imageDecodeFailed");
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     WidgetFilesystemTaskRunResult result;
     if (!ReadMetadata(path, result.metadata, error)) return fail(error);
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     result.resourceToken = MakeWidgetRuntimeImageToken("filesystem", *pixels);
     result.image = std::move(pixels);
     result.ok = !result.resourceToken.empty();
@@ -292,8 +298,9 @@ WidgetFilesystemTaskRunResult RunImage(
 }
 
 WidgetFilesystemTaskRunResult RunList(
-    const WidgetFilesystemTaskRequest& request)
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
 {
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     std::string error;
     if (!CheckPathWithoutReparsePoints(request.path, false, error))
         return { false, {}, {}, {}, 0, false, std::move(error) };
@@ -310,6 +317,7 @@ WidgetFilesystemTaskRunResult RunList(
         !filesystemError && iterator != end;
         iterator.increment(filesystemError))
     {
+        if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
         if (entries.size() >=
             WidgetFilesystemTaskExecutor::MaximumDirectoryEntries)
             return { false, {}, {}, {}, 0, false,
@@ -328,6 +336,7 @@ WidgetFilesystemTaskRunResult RunList(
     }
     if (filesystemError)
         return { false, {}, {}, {}, 0, false, "listFailed" };
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     std::sort(entries.begin(), entries.end(), [](const auto& left,
         const auto& right) {
             return left.path.filename().wstring() <
@@ -357,8 +366,9 @@ WidgetFilesystemTaskRunResult RunList(
 }
 
 WidgetFilesystemTaskRunResult RunRead(
-    const WidgetFilesystemTaskRequest& request)
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
 {
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     std::string error;
     if (!CheckPathWithoutReparsePoints(request.path, false, error))
         return { false, {}, {}, {}, 0, false, std::move(error) };
@@ -375,8 +385,18 @@ WidgetFilesystemTaskRunResult RunRead(
     if (!file)
         return { false, {}, {}, {}, 0, false, "readFailed" };
     std::string text;
-    text.assign(std::istreambuf_iterator<char>(file),
-        std::istreambuf_iterator<char>());
+    text.reserve(static_cast<std::size_t>(metadata.size));
+    std::array<char, 16 * 1024> chunk{};
+    while (file)
+    {
+        if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+        // Detect growth without reading past the authorized limit plus one byte.
+        const auto bytes = std::min(chunk.size(), request.maxBytes + 1 - text.size());
+        file.read(chunk.data(), static_cast<std::streamsize>(bytes));
+        text.append(chunk.data(), static_cast<std::size_t>(file.gcount()));
+        if (text.size() > request.maxBytes)
+            return { false, {}, {}, {}, 0, false, "fileChanged" };
+    }
     if (file.bad())
         return { false, {}, {}, {}, 0, false, "readFailed" };
     if (text.size() != metadata.size)
@@ -398,8 +418,9 @@ WidgetFilesystemTaskRunResult RunRead(
 }
 
 WidgetFilesystemTaskRunResult RunWrite(
-    const WidgetFilesystemTaskRequest& request)
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
 {
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     std::string error;
     if (!CheckPathWithoutReparsePoints(request.path, true, error))
         return { false, {}, {}, {}, 0, false, std::move(error) };
@@ -423,6 +444,10 @@ WidgetFilesystemTaskRunResult RunWrite(
         (!exists || before.revision != request.expectedRevision))
         return { false, {}, {}, {}, 0, false, "conflict" };
 
+    // Cancellation is advisory after this boundary: the atomic replacement
+    // must finish its backup/rollback protocol once entered. A canceled reply
+    // cannot promise that no durable write occurred.
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     if (!atomic_file::WriteAll(request.path, request.text, {}, &error))
         return { false, {}, {}, {}, 0, false, "writeFailed" };
     WidgetFilesystemMetadata after;
@@ -436,9 +461,13 @@ WidgetFilesystemTaskRunResult RunWrite(
 }
 
 WidgetFilesystemTaskExecutor::WidgetFilesystemTaskExecutor(
-    Runner runner, NowProvider nowProvider)
-    : runner_(std::move(runner)), nowProvider_(std::move(nowProvider))
+    Runner runner, NowProvider nowProvider, CooperativeRunner cooperativeRunner)
+    : runner_(std::move(cooperativeRunner)), nowProvider_(std::move(nowProvider))
 {
+    if (!runner_ && runner)
+        runner_ = [legacy = std::move(runner)](const auto& request, std::stop_token) {
+            return legacy(request);
+        };
     if (!runner_) runner_ = RunSystemAction;
     if (!nowProvider_)
         nowProvider_ = [] { return Clock::now(); };
@@ -476,9 +505,19 @@ WidgetFilesystemTaskStartResult WidgetFilesystemTaskExecutor::Start(
             return { false, "rateLimited" };
         lastWrites_.insert_or_assign(instanceId, now);
     }
-    active_.insert(id);
-    requests_.push_back(
-        { id, std::move(instanceId), std::move(request) });
+    auto stop = std::make_shared<std::stop_source>();
+    try
+    {
+        active_.insert(id);
+        requestStops_.emplace(id, stop);
+        requests_.push_back({ id, std::move(instanceId), std::move(request), std::move(stop) });
+    }
+    catch (...)
+    {
+        active_.erase(id);
+        requestStops_.erase(id);
+        throw;
+    }
     if (!worker_.joinable())
     {
         worker_ = std::jthread(
@@ -492,9 +531,15 @@ WidgetFilesystemTaskStartResult WidgetFilesystemTaskExecutor::Start(
 
 bool WidgetFilesystemTaskExecutor::Cancel(std::uint64_t id)
 {
-    std::scoped_lock lock(mutex_);
-    if (!active_.contains(id)) return false;
-    canceled_.insert(id);
+    std::shared_ptr<std::stop_source> stop;
+    {
+        std::scoped_lock lock(mutex_);
+        if (!active_.contains(id)) return false;
+        canceled_.insert(id);
+        stop = requestStops_.at(id);
+    }
+    // Stop callbacks execute inline. Never invoke them under the executor lock.
+    stop->request_stop();
     condition_.notify_all();
     return true;
 }
@@ -570,16 +615,17 @@ bool WidgetFilesystemTaskExecutor::ValidateRequest(
 
 WidgetFilesystemTaskRunResult
 WidgetFilesystemTaskExecutor::RunSystemAction(
-    const WidgetFilesystemTaskRequest& request)
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
 {
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
     if (!ValidateRequest(request))
         return { false, {}, {}, {}, 0, false, "invalidArguments" };
     WidgetFilesystemTaskRunResult result;
-    if (request.action == "filesystem.stat") result = RunStat(request);
-    else if (request.action == "filesystem.list") result = RunList(request);
-    else if (request.action == "filesystem.read") result = RunRead(request);
-    else if (request.action == "filesystem.image") result = RunImage(request);
-    else result = RunWrite(request);
+    if (request.action == "filesystem.stat") result = RunStat(request, stopToken);
+    else if (request.action == "filesystem.list") result = RunList(request, stopToken);
+    else if (request.action == "filesystem.read") result = RunRead(request, stopToken);
+    else if (request.action == "filesystem.image") result = RunImage(request, stopToken);
+    else result = RunWrite(request, stopToken);
     if (result.ok) result.metadata.handle = request.handle;
     return result;
 }
@@ -605,7 +651,8 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
         WidgetFilesystemTaskRunResult result;
         try
         {
-            if (!canceledBeforeRun) result = runner_(request.request);
+            std::stop_callback shutdownSignal(stopToken, [stop = request.stop] { stop->request_stop(); });
+            if (!canceledBeforeRun) result = runner_(request.request, request.stop->get_token());
         }
         catch (...)
         {
@@ -618,6 +665,7 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
             if (canceled_.erase(request.id) > 0)
                 result = { false, {}, {}, {}, 0, false, "canceled" };
             active_.erase(request.id);
+            requestStops_.erase(request.id);
             WidgetFilesystemTaskCompletion completion{ request.id,
                 std::move(request.request.action), result.ok,
                 std::move(result.metadata), std::move(result.items),
