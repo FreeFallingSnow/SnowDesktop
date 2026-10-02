@@ -162,27 +162,28 @@ inline constexpr std::pair<const char*, COLORREF QuickNavTheme::*> kQuickNavColo
 inline QuickNavTheme ResolveQuickNavTheme(bool light, const NavigationSettings& settings)
 {
     QuickNavTheme t = light ? kQuickNavLight : kQuickNavDark;
-    t.searchBg = light ? RGB(255,255,255) : RGB(35,40,51);
+    t.searchBg = light ? RGB(255,255,255) : RGB(38,39,42);
     t.searchEditBg = t.searchBg;
-    t.searchBorder = light ? RGB(219,224,232) : RGB(58,64,77);
+    t.searchBorder = light ? RGB(219,224,232) : RGB(65,66,70);
     t.searchText = light ? RGB(30,36,47) : RGB(237,240,246);
     t.searchPlaceholder = light ? RGB(112,120,135) : RGB(156,165,181);
     t.tabActiveText = light ? RGB(35,70,129) : RGB(222,235,255); t.tabHoverText = t.searchText;
     t.appTypeText = light ? RGB(92,104,124) : RGB(162,173,192);
     t.emptyText = t.appTypeText;
     t.searchFocus = light ? RGB(68,112,199) : RGB(117,161,239);
-    t.tabDefaultFill = light ? RGB(236,240,247) : RGB(35,40,51);
+    t.tabDefaultFill = light ? RGB(237,237,241) : RGB(38,39,42);
     t.tabDefaultStroke = t.tabDefaultFill;
     t.tabActiveFill = light ? RGB(217,231,251) : RGB(49,71,104);
     t.tabActiveStroke = light ? RGB(189,213,246) : RGB(71,99,139);
-    t.tabHoverFill = light ? RGB(227,233,243) : RGB(46,53,67);
+    t.tabHoverFill = light ? RGB(227,233,243) : RGB(48,49,54);
     t.tabHoverStroke = t.tabHoverFill;
     t.typeFill = t.tabActiveFill; t.typeText = t.searchText;
-    t.resultFill = light ? RGB(246,248,252) : RGB(23,27,35);
+    t.resultFill = light ? RGB(247,247,250) : RGB(30,31,34);
     t.resultBorder = t.resultFill;
     t.selectedFill = t.tabActiveFill; t.selectedBorder = t.tabActiveStroke; t.selectedText = t.searchText;
     t.appRowHoverFill = t.tabHoverFill; t.appRowHoverStroke = t.tabHoverFill;
-    t.headerSeparator = light ? RGB(226,231,239) : RGB(51,57,70);
+    t.itemHoverFill = t.tabHoverFill; t.itemHoverStroke = t.tabHoverStroke;
+    t.headerSeparator = light ? RGB(226,231,239) : RGB(54,55,60);
     for (const auto& [name, field] : kQuickNavColorFields)
     {
         auto it = settings.colors.find(name);

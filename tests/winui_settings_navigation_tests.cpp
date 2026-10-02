@@ -24,7 +24,7 @@ void TestHistoryAndFocusRoutes()
     for (const auto focus : {"general.quickNavigation","general.quickNavigation.hotkey","general.hotkeys"})
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::General,focus)).page == SettingsPage::QuickNavigation,"legacy navigation shortcuts route to the dedicated page");
     for (const auto focus : {"personalization.quickNavigationTheme","personalization.quickNavTheme"})
-        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::QuickNavigation,"legacy appearance links preserve their focus on the dedicated page");
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::AppearanceTheme,"quick-navigation theme links retain their original appearance page");
     for (const auto focus : {"animation.hover", "animation.hoverScale", "animation.launch", "animation.window"})
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::Dock,
             "old Dock animation links reach the Dock tab after settings reorganization");

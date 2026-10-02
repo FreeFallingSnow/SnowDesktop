@@ -79,7 +79,7 @@ struct State
     float radius = 6.f, leftMargin = 8.f, rightMargin = 8.f, verticalMargin = 4.f;
     int width = 1, height = 1;
     float scrollX = 0, scrollY = 0;
-    float singleLineOffsetY = 0;
+    float singleLineOffsetY = 0, caretHeight = 0;
     RECT frame{}, clip{};
     bool embedded = false, shown = true, interactive = true;
     bool password = false, multiline = false, singleLine = true, readOnly = false;
@@ -509,7 +509,10 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
         const auto position = state.composition.empty() ? state.cursor : (std::min)(state.cursor,state.anchor)+state.compositionCursor;
         state.layout->HitTestTextPosition(static_cast<UINT32>((std::min)(position,state.display.size())),FALSE,&cx,&cy,&hit);
         brush->SetColor(Color(state.colors.foreground));
-        target->FillRectangle(D2D1::RectF(x+cx,y+cy,x+cx+1.5f,y+cy+hit.height),brush.Get());
+        const auto caret = state.caretHeight > 0.f && !state.multiline
+            ? CenteredCaretRectangle(D2D1::RectF(0.f,0.f,static_cast<float>(state.width),static_cast<float>(state.height)), x + cx, state.caretHeight, 1.5f)
+            : D2D1::RectF(x+cx,y+cy,x+cx+1.5f,y+cy+hit.height);
+        target->FillRectangle(caret,brush.Get());
     }
     target->PopAxisAlignedClip(); target->SetTransform(old); target->PopAxisAlignedClip();
 }
@@ -841,6 +844,8 @@ void CompleteComposition(HWND window,bool cancel)
     const auto state=Get(window);if(!state||!state->composing)return;
     if(const auto context=ImmGetContext(window)){ImmNotifyIME(context,NI_COMPOSITIONSTR,cancel?CPS_CANCEL:CPS_COMPLETE,0);ImmReleaseContext(window,context);}
 }
+void SetCaretHeight(HWND window,float height)
+{if(const auto state=Get(window)){state->caretHeight=std::max(0.f,height);state->Dirty();}}
 void SetPadding(HWND window,float horizontal,float vertical)
 {if(const auto state=Get(window)){state->leftMargin=state->rightMargin=std::max(0.f,horizontal);state->verticalMargin=std::max(0.f,vertical);state->Dirty();}}
 }

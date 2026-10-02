@@ -72,7 +72,7 @@ struct QuickNavigationLayout
     int iconSize = 48, gridGap = 20, rowGap = 16;
     int fontSize = 14, secondaryFontSize = 12, searchFontSize = 17;
     int resultRowHeight = 56, labelLines = 2;
-    int cornerRadius = 16, searchRadius = 10, tabRadius = 8, itemRadius = 10;
+    int cornerRadius = 8, searchRadius = 6, tabRadius = 6, itemRadius = 6;
     bool operator==(const QuickNavigationLayout&) const = default;
 };
 

@@ -521,6 +521,12 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
         DrawAcrylicNoise(ctx.Get(), overlay, windowCornerRadius,
             quickNavAppearance_.contentTheme == 1, screenOrigin);
     }
+    const RECT searchRect = GetQuickNavigationSearchRect(overlay);
+    DrawD2DFilledRectangle(ctx.Get(), searchRect,
+        ToD2DColor(t.searchBg, quickNavGlassTheme_ ? .52f : 1.f), D2D1::ColorF(0,0,0,0.f));
+    if (overlay.bottom > searchRect.bottom)
+        DrawD2DSeparator(ctx.Get(), MakeRect(searchRect.left, searchRect.bottom - QuickNavScale(1), searchRect.right, searchRect.bottom),
+            ToD2DColor(quickNavigationSearchEdit_ && GetFocus() == quickNavigationSearchEdit_ ? t.searchFocus : t.searchBorder, .75f));
     const float windowBorderStrokeWidth = std::clamp(quickNavAppearance_.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
     const float windowBorderInset =
         windowBorderStrokeWidth * 0.5f;
@@ -582,11 +588,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
         GetQuickNavigationItemRects(
             overlay, contentModel);
 
-    const RECT searchRect = GetQuickNavigationSearchRect(overlay);
-    DrawD2DRoundedRectangle(ctx.Get(),
-        searchRect,
-        static_cast<float>(QuickNavScale(navigationSettings_.layout.searchRadius)),
-        ToD2DColor(t.searchBg), ToD2DColor(quickNavigationSearchEdit_ && GetFocus() == quickNavigationSearchEdit_ ? t.searchFocus : t.searchBorder));
+
     const RECT searchInput = GetQuickNavigationInputRect(overlay);
     snowdesktop::text_input::SetColors(quickNavigationSearchEdit_,
         {t.searchBg, t.searchText, t.searchBorder, t.searchFocus, t.selectedText, t.searchPlaceholder});
@@ -596,6 +598,13 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
         DrawD2DTextEllipsis(ctx.Get(), GetQuickNavigationEffectiveSearchText().empty() ? _LW("app.nav.search_hint") : GetQuickNavigationEffectiveSearchText(),
             searchInput, quickNavSearchTextFormat_.Get(), ToD2DColor(GetQuickNavigationEffectiveSearchText().empty() ? t.searchPlaceholder : t.searchText));
 
+    if (quickNavigationPreview_ && quickNavigationCollapsed_ && GetQuickNavigationEffectiveSearchText().empty() && quickNavigationMenu_ == QuickNavigationMenu::None)
+    {
+        const auto caret = snowdesktop::text_input::CenteredCaretRectangle(ToD2DRect(searchInput), static_cast<float>(searchInput.left),
+            static_cast<float>(QuickNavScale(navigationSettings_.layout.searchFontSize + 2)), 1.5f * quickNavDpiScale_);
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (SUCCEEDED(ctx->CreateSolidColorBrush(ToD2DColor(t.searchText), &brush))) ctx->FillRectangle(caret, brush.Get());
+    }
     DrawQuickNavigationMenus(ctx.Get());
 
     if (!searching && !UseQuickNavigationList() && quickNavigationMenu_ == QuickNavigationMenu::None)

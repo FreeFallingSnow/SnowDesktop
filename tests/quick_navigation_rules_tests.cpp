@@ -792,7 +792,7 @@ void TestExtendedSearchAndConfiguration()
     Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",true,false) == query::SubmitIntent::Composition,"IME confirmation outranks both prefix locking and activation");
     Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,false) == query::SubmitIntent::ConfirmPrefix,"Enter confirms only an exact unscoped prefix");
     Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::File,L"app",false,false) == query::SubmitIntent::ActivateResult && query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,true) == query::SubmitIntent::ActivateResult,"typed queries and open menus never relock their query as a prefix");
-    Check(query::EncodeQuery(L"中文 &+#/U0001F600") == "%E4%B8%AD%E6%96%87%20%26%2B%23%2F%F0%9F%98%80","web queries are encoded as UTF-8 bytes including CJK, punctuation and supplementary characters");
+    Check(query::EncodeQuery(L"中文 &+#\U0001F600") == "%E4%B8%AD%E6%96%87%20%26%2B%23%2F%F0%9F%98%80","web queries are encoded as UTF-8 bytes including CJK, punctuation and supplementary characters");
     Check(query::SearchUrl(settings.engines.front(),L"a&b") == "https://www.bing.com/search?q=a%26b","engine substitution cannot turn a keyword into extra URL parameters");
     auto invalid = settings; invalid.engines[0].prefix = "app"; Check(!ValidateNavigationSearchConfiguration(invalid),"engine and type prefixes cannot collide");
     invalid = settings; invalid.prefixes[0] = invalid.prefixes[1]; Check(!ValidateNavigationSearchConfiguration(invalid),"type prefixes must be unique");
@@ -805,6 +805,12 @@ void TestExtendedSearchAndConfiguration()
     Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && settings == loaded,"layout, colors, scopes and custom engines round trip with escaped names");
     { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << "{\"enabled\":true,\"modifiers\":3,\"virtualKey\":32}"; }
     Check(LoadNavigationSettings(path.c_str(),loaded) && !loaded.defaultCollapsed && loaded.colors.empty() && loaded.layout == QuickNavigationLayout{},"missing new fields use defaults even when reusing a previously populated object");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"layout":{"expandedWidth":900,"cornerRadius":16,"searchRadius":10,"tabRadius":8,"itemRadius":10}})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.layout.cornerRadius == 8 && loaded.layout.searchRadius == 6 && loaded.layout.expandedWidth == 900,
+        "the previous trial's default radii migrate without losing customized widths");
+    settings.layout.cornerRadius = 16;
+    Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && loaded.layout.cornerRadius == 16,
+        "explicit radii in the current layout version survive persistence");
     DeleteFileW(path.c_str());
     invalid = settings; invalid.prefixes[0] = "file"; invalid.layout.iconSize = 999; NormalizeNavigationSettings(invalid);
     Check(invalid.prefixes == NavigationSettings{}.prefixes && invalid.layout.iconSize == 96 && invalid.colors == settings.colors,"invalid search config is reset without losing independent appearance overrides");

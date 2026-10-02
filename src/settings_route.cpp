@@ -77,11 +77,12 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
-    if ((route.page == SettingsPage::General &&
-         (route.focusId.starts_with("general.quickNavigation") || route.focusId == "general.hotkeys")) ||
-        ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
-         (route.focusId == "personalization.quickNavigationTheme" || route.focusId == "personalization.quickNavTheme")))
+    if (route.page == SettingsPage::General &&
+        (route.focusId.starts_with("general.quickNavigation") || route.focusId == "general.hotkeys"))
         route.page = SettingsPage::QuickNavigation;
+    if (route.page == SettingsPage::QuickNavigation &&
+        (route.focusId == "personalization.quickNavigationTheme" || route.focusId == "personalization.quickNavTheme"))
+        route.page = SettingsPage::AppearanceTheme;
     // Preserve old search and host links after relocating behavior controls.
     if ((route.page == SettingsPage::Personalization ||
          route.page == SettingsPage::AppearanceWidgets) &&

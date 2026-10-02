@@ -36,8 +36,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
         layoutWorkArea_ = {0,0,virtualWidth_,virtualHeight_};
         gridPages_.clear(); GridPage page; page.bounds = page.workArea = layoutWorkArea_; gridPages_.push_back(page);
         quickNavigationOpenPoint_ = {virtualWidth_ / 2, virtualHeight_ / 2};
-        const wchar_t* names[] = {L"SnowDesktop", L"Microsoft Edge", L"研究资料 Research library", L"文件管理器", L"Terminal", L"照片 Photos",
-            L"季度报告 — 长名称与多语言标签示例.pdf", L"音乐 Music", L"Recycle Bin", L"Visual Studio Code", L"设计草图 Design notes", L"Web documentation"};
+        const wchar_t* names[] = {L"SnowDesktop", L"Microsoft Edge", L"研究资料 Research library", L"文件管理器", L"Terminal", L"照片 Photos", // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
+            L"季度报告 — 长名称与多语言标签示例.pdf", L"音乐 Music", L"Recycle Bin", L"Visual Studio Code", L"设计草图 Design notes", L"Web documentation"}; // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
         const SHSTOCKICONID stocks[] = {SIID_APPLICATION, SIID_WORLD, SIID_FOLDER, SIID_DRIVEFIXED, SIID_APPLICATION, SIID_IMAGEFILES,
             SIID_DOCASSOC, SIID_AUDIOFILES, SIID_RECYCLER, SIID_APPLICATION, SIID_DOCNOASSOC, SIID_WORLD};
         items_.clear(); widgets_.clear(); dockEntries_.clear();
@@ -53,8 +53,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             item.iconState = IconState::FullQuality;
             items_.push_back(std::move(item));
         }
-        DesktopWidget apps; apps.type = DesktopWidgetType::Collection; apps.id = L"preview-apps"; apps.title = L"应用 Applications";
-        DesktopWidget files; files.type = DesktopWidgetType::Collection; files.id = L"preview-files"; files.title = L"资料 Library";
+        DesktopWidget apps; apps.type = DesktopWidgetType::Collection; apps.id = L"preview-apps"; apps.title = L"应用 Applications"; // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
+        DesktopWidget files; files.type = DesktopWidgetType::Collection; files.id = L"preview-files"; files.title = L"资料 Library"; // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
         for (size_t i = 0; i < items_.size(); ++i)
         {
             if (i < 3) {DockEntry entry; entry.type = DockEntryType::DesktopItem; entry.reference = items_[i].layoutKey; dockEntries_.push_back(entry);}
@@ -90,12 +90,12 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             quickNavigationAppsIndexed_ = name != "index-loading";
             if (name == "typed-app") quickNavigationSearchType_ = QuickNavigationSearchType::App;
             if (name == "typed-file") quickNavigationSearchType_ = QuickNavigationSearchType::File;
-            if (name == "typed-web") {quickNavigationSearchType_ = QuickNavigationSearchType::Web; quickNavigationEffectiveSearchText_ = L"SnowDesktop 快捷导航";}
+            if (name == "typed-web") {quickNavigationSearchType_ = QuickNavigationSearchType::Web; quickNavigationEffectiveSearchText_ = L"SnowDesktop 快捷导航";} // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
             if (name == "typed-settings")
             {
                 quickNavigationSearchType_ = QuickNavigationSearchType::Settings;
                 quickNavigationSettingsResults_.push_back({SettingsSearchEntryKind::StaticSetting, SettingsRoute::ForPage(SettingsPage::QuickNavigation,"quickNav.defaultCollapsed"), "quickNav.defaultCollapsed", _LW("quickNav.defaultCollapsed"), _LW("quickNav.description"), _LW("quickNav.title")});
-                quickNavigationSettingsResults_.push_back({SettingsSearchEntryKind::WidgetSetting, SettingsRoute::ForWidget(L"preview-widget","color"), "color", L"组件颜色 Widget color", L"Color and appearance", L"Calendar"});
+                quickNavigationSettingsResults_.push_back({SettingsSearchEntryKind::WidgetSetting, SettingsRoute::ForWidget(L"preview-widget","color"), "color", L"组件颜色 Widget color", L"Color and appearance", L"Calendar"}); // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
             }
             if (name == "typed-run") {quickNavigationSearchType_ = QuickNavigationSearchType::Run; quickNavigationEffectiveSearchText_ = L"\"C:\\Program Files\\Example\\editor.exe\" --new-window";}
             if (name == "typed-calculator" || name == "calculator-error") {quickNavigationSearchType_ = QuickNavigationSearchType::Calculator; quickNavigationEffectiveSearchText_ = name == "calculator-error" ? L"1 / 0" : L"(12.5 + 7.5) * 3 ^ 2 + 50%";}
@@ -103,7 +103,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             if (name == "expanded-mixed" || name == "collapsed-composite" || name == "typed-app")
                 for (size_t i = 0; i < quickNavigationAppEntries_.size(); ++i) quickNavigationAppResultIndices_.push_back(i);
             if (name == "expanded-mixed" || name == "collapsed-composite" || name == "typed-file")
-                for (int i = 0; i < 7; ++i) {QuickNavigationEverythingEntry file; file.name = i % 2 ? L"Research notes — design review.pdf" : L"研究资料与长名称示例.png"; file.path = L"C:\\Preview\\Documents\\" + file.name; SHSTOCKICONINFO stock{}; stock.cbSize = sizeof(stock); if (SUCCEEDED(SHGetStockIconInfo(i % 2 ? SIID_DOCASSOC : SIID_IMAGEFILES,SHGSI_SYSICONINDEX,&stock))) file.systemIconIndex = stock.iSysImageIndex; quickNavigationEverythingResults_.push_back(std::move(file));}
+                for (int i = 0; i < 7; ++i) {QuickNavigationEverythingEntry file; file.name = i % 2 ? L"Research notes — design review.pdf" : L"研究资料与长名称示例.png"; file.path = L"C:\\Preview\\Documents\\" + file.name; SHSTOCKICONINFO stock{}; stock.cbSize = sizeof(stock); if (SUCCEEDED(SHGetStockIconInfo(i % 2 ? SIID_DOCASSOC : SIID_IMAGEFILES,SHGSI_SYSICONINDEX,&stock))) file.systemIconIndex = stock.iSysImageIndex; quickNavigationEverythingResults_.push_back(std::move(file));} // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
             quickNavigationFixedTop_ = false; quickNavigationRect_ = GetQuickNavigationRect(); quickNavigationHostRect_ = quickNavigationRect_;
             quickNavigationListSelection_ = 1; quickNavigationKeyboardTargetKind_ = QuickNavigationKeyboardTargetKind::Item; quickNavigationKeyboardTargetIndex_ = 0;
             const RECT hover = UseQuickNavigationList() ? GetQuickNavigationListRowRect(2) : GetQuickNavigationItemRect(quickNavigationRect_,1);

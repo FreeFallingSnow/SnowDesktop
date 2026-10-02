@@ -2319,7 +2319,7 @@
     "quickNav.layout.resultRowHeight": "결과 행 높이",
     "quickNav.layout.labelLines": "아이콘 이름 행 수",
     "quickNav.layout.cornerRadius": "패널 모서리 반경",
-    "quickNav.layout.searchRadius": "검색창 모서리 반경",
+    "quickNav.layout.searchRadius": "유형 태그 모서리 반경",
     "quickNav.layout.tabRadius": "범주 모서리 반경",
     "quickNav.layout.itemRadius": "결과 모서리 반경",
     "quickNav.color.searchBg": "검색창 · 배경",
@@ -2357,5 +2357,6 @@
     "quickNav.color.scrollTrack": "스크롤 막대 · 트랙",
     "quickNav.color.scrollThumbDefault": "스크롤 막대 · 손잡이 · 기본",
     "quickNav.color.scrollThumbHover": "스크롤 막대 · 손잡이 · 마우스 올림",
-    "quickNav.color.emptyText": "빈 상태 · 텍스트"
+    "quickNav.color.emptyText": "빈 상태 · 텍스트",
+    "quickNav.opening": "열기 및 표시"
 }

@@ -72,7 +72,6 @@ public:
     /** Global, custom-surface, target-surface, and context-menu themes. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         ThemeContent() const noexcept;
-    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement QuickNavigationAppearanceContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockAppearanceContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement MenuContent() const noexcept;
     /** Shared widget dimension and layout controls. */

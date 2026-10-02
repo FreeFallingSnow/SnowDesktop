@@ -2319,7 +2319,7 @@
     "quickNav.layout.resultRowHeight": "Höhe der Ergebniszeilen",
     "quickNav.layout.labelLines": "Zeilen der Symbolbeschriftung",
     "quickNav.layout.cornerRadius": "Eckenradius des Panels",
-    "quickNav.layout.searchRadius": "Eckenradius der Suchleiste",
+    "quickNav.layout.searchRadius": "Eckenradius der Typmarkierung",
     "quickNav.layout.tabRadius": "Eckenradius der Kategorien",
     "quickNav.layout.itemRadius": "Eckenradius der Ergebnisse",
     "quickNav.color.searchBg": "Suchleiste · Hintergrund",
@@ -2357,5 +2357,6 @@
     "quickNav.color.scrollTrack": "Bildlaufleiste · Spur",
     "quickNav.color.scrollThumbDefault": "Bildlaufleiste · Schieber · Normal",
     "quickNav.color.scrollThumbHover": "Bildlaufleiste · Schieber · Bei Mauszeigerkontakt",
-    "quickNav.color.emptyText": "Leerer Zustand · Text"
+    "quickNav.color.emptyText": "Leerer Zustand · Text",
+    "quickNav.opening": "Öffnen und Anzeige"
 }

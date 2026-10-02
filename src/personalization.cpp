@@ -282,21 +282,21 @@ PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId)
     {
     case kAppearancePresetLight:
         s = PersonalizationSettings::LightPreset();
-        s.widgetBgR = 0.965f; s.widgetBgG = 0.973f; s.widgetBgB = 0.988f;
+        s.widgetBgR = 0.970f; s.widgetBgG = 0.970f; s.widgetBgB = 0.975f;
         s.widgetBorderR = 0.706f; s.widgetBorderG = 0.745f; s.widgetBorderB = 0.784f;
         s.widgetAlpha = 1.0f; s.widgetBorderAlpha = 0.34f;
         s.glassEnabled = false;
         break;
     case kAppearancePresetAcrylicDark:
         s = PersonalizationSettings::AcrylicDarkPreset();
-        s.widgetBgR = 0.065f; s.widgetBgG = 0.080f; s.widgetBgB = 0.110f;
+        s.widgetBgR = 0.120f; s.widgetBgG = 0.125f; s.widgetBgB = 0.135f;
         s.widgetBorderR = 0.58f; s.widgetBorderG = 0.66f; s.widgetBorderB = 0.78f;
         s.widgetAlpha = 0.83f; s.widgetBorderAlpha = 0.32f;
         s.glassBlurRadius = 30.0f;
         break;
-case kAppearancePresetAcrylicLight:
+    case kAppearancePresetAcrylicLight:
         s = PersonalizationSettings::AcrylicLightPreset();
-        s.widgetBgR = 0.935f; s.widgetBgG = 0.955f; s.widgetBgB = 0.985f;
+        s.widgetBgR = 0.955f; s.widgetBgG = 0.960f; s.widgetBgB = 0.970f;
         s.widgetBorderR = 0.72f; s.widgetBorderG = 0.77f; s.widgetBorderB = 0.86f;
         s.widgetAlpha = 0.86f; s.widgetBorderAlpha = 0.34f;
         s.glassBlurRadius = 28.0f;
@@ -307,7 +307,7 @@ case kAppearancePresetAcrylicLight:
         break;
     default:
         s = PersonalizationSettings::DarkPreset();
-        s.widgetBgR = 0.055f; s.widgetBgG = 0.071f; s.widgetBgB = 0.102f;
+        s.widgetBgR = 0.105f; s.widgetBgG = 0.108f; s.widgetBgB = 0.116f;
         s.widgetBorderR = 0.471f; s.widgetBorderG = 0.510f; s.widgetBorderB = 0.588f;
         s.widgetAlpha = 1.0f; s.widgetBorderAlpha = 0.30f;
         s.glassEnabled = false;
@@ -321,6 +321,9 @@ PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId)
 {
     PersonalizationSettings s =
         MakeQuickNavigationAppearancePreset(presetId);
+    // Collection popups keep their established edge-light strength independently
+    // of the more restrained quick-navigation presets.
+    s.widgetEdgeHighlightStrength = MakeAppearancePreset(s.backgroundPreset).widgetEdgeHighlightStrength;
     if (s.widgetEdgeHighlightEnabled)
     {
         // Collection popups participate in the independent edge-light

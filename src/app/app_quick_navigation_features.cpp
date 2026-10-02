@@ -43,7 +43,10 @@ RECT DesktopApp::GetQuickNavigationInputRect(const RECT& overlay) const
     const RECT search = GetQuickNavigationSearchRect(overlay);
     const RECT type = GetQuickNavigationToolbarRect(overlay, 0);
     const RECT settings = GetQuickNavigationToolbarRect(overlay, 1);
-    return MakeRect(type.right + QuickNavScale(8), search.top + QuickNavScale(4), settings.left - QuickNavScale(8), search.bottom - QuickNavScale(4));
+    const int height = std::min(QuickNavScale(navigationSettings_.layout.searchFontSize + 16), static_cast<int>(search.bottom - search.top) - QuickNavScale(8));
+    const int top = search.top + (static_cast<int>(search.bottom - search.top) - height) / 2;
+    return MakeRect(type.right + QuickNavScale(quickNavigationSearchType_ == QuickNavigationSearchType::All ? 2 : 8),
+        top, settings.left - QuickNavScale(8), top + height);
 }
 std::wstring DesktopApp::QuickNavigationTypeLabel() const
 {
@@ -284,7 +287,7 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         RECT bounds = GetQuickNavigationToolbarRect(quickNavigationRect_, button);
         const bool hovered = PtInRect(&bounds, quickNavigationLastMousePoint_) != FALSE;
         const bool chip = button == 0 && quickNavigationSearchType_ != QuickNavigationSearchType::All;
-        if (hovered || chip) DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(6)),
+        if (hovered || chip) DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.searchRadius)),
             ToD2DColor(chip ? theme.typeFill : theme.tabHoverFill), ToD2DColor(theme.searchBorder, 0.f));
         const wchar_t* glyph = button == 0 ? kScopeGlyphs[static_cast<size_t>(quickNavigationSearchType_)] : button == 1 ? L"\uF6AA" : (quickNavigationCollapsed_ ? L"\uF2A4" : L"\uF2B7");
         RECT symbol = bounds; if (chip) symbol.right = symbol.left + QuickNavScale(28);

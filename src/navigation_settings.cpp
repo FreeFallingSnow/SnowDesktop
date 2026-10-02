@@ -221,6 +221,15 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
         SD_NAV_READ(resultRowHeight); SD_NAV_READ(labelLines);
         SD_NAV_READ(cornerRadius); SD_NAV_READ(searchRadius); SD_NAV_READ(tabRadius); SD_NAV_READ(itemRadius);
 #undef SD_NAV_READ
+        // Only the unreleased layout's default radii migrate. Explicit values
+        // in the current layout version and all other customization survive.
+        if (!document.Find("layoutVersion"))
+        {
+            if (settings.layout.cornerRadius == 16) settings.layout.cornerRadius = QuickNavigationLayout{}.cornerRadius;
+            if (settings.layout.searchRadius == 10) settings.layout.searchRadius = QuickNavigationLayout{}.searchRadius;
+            if (settings.layout.tabRadius == 8) settings.layout.tabRadius = QuickNavigationLayout{}.tabRadius;
+            if (settings.layout.itemRadius == 10) settings.layout.itemRadius = QuickNavigationLayout{}.itemRadius;
+        }
     }
     if (const auto* value = document.Find("prefixes"); value && value->IsArray() && value->array.size() == settings.prefixes.size())
         for (size_t i = 0; i < value->array.size(); ++i) if (value->array[i].IsString()) settings.prefixes[i] = value->array[i].string;
@@ -258,6 +267,7 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file << "{\n";
+    file << "  \"layoutVersion\": 1,\n";
     file << "  \"enabled\": " << (settings.enabled ? "true" : "false") << ",\n";
     file << "  \"modifiers\": " << settings.modifiers << ",\n";
     file << "  \"virtualKey\": " << settings.virtualKey << ",\n";

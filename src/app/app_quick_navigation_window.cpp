@@ -225,8 +225,8 @@ void DesktopApp::EnsureQuickNavigationSearchEdit()
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(quickNavigationSearchEdit_, WM_SETFONT,
         reinterpret_cast<WPARAM>(quickNavigationSearchFont_ ? quickNavigationSearchFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    SendMessageW(quickNavigationSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-        MAKELPARAM(QuickNavScale(10), QuickNavScale(10)));
+    snowdesktop::text_input::SetPadding(quickNavigationSearchEdit_, 0.f, 0.f);
+    snowdesktop::text_input::SetCaretHeight(quickNavigationSearchEdit_, static_cast<float>(QuickNavScale(navigationSettings_.layout.searchFontSize + 2)));
     const wchar_t* searchHint = IsLuaLogicalSlotPickerOpen()
         ? _LW("app.nav.slot_picker_search_hint")
         : _LW("app.nav.search_hint");
@@ -255,6 +255,7 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
             quickNavigationSearchFont_ = replacement;
         }
     }
+    snowdesktop::text_input::SetCaretHeight(quickNavigationSearchEdit_, static_cast<float>(QuickNavScale(navigationSettings_.layout.searchFontSize + 2)));
     RECT frame = GetQuickNavigationInputRect(quickNavigationRect_);
     OffsetRect(&frame, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
     snowdesktop::text_input::SetEmbeddedPose(quickNavigationSearchEdit_, frame, frame,

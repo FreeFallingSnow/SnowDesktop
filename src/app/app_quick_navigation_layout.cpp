@@ -47,7 +47,7 @@ RECT DesktopApp::GetQuickNavigationRect() const
     const int margin = std::min(QuickNavScale(24), std::min(workWidth, workHeight) / 8);
     const int width = std::min(workWidth - margin * 2,
         QuickNavScale(quickNavigationCollapsed_ ? layout.collapsedWidth : layout.expandedWidth));
-    const int base = QuickNavScale(layout.padding * 2 + layout.searchHeight);
+    const int base = QuickNavScale(layout.searchHeight);
     int height = QuickNavScale(layout.maximumHeight);
     if (quickNavigationMenu_ != QuickNavigationMenu::None)
         height = base + QuickNavScale(12 + (quickNavigationMenu_ == QuickNavigationMenu::Types ? 7 : 3) * layout.resultRowHeight);
@@ -76,15 +76,15 @@ RECT DesktopApp::GetQuickNavigationRect() const
 
 RECT DesktopApp::GetQuickNavigationSearchRect(const RECT& overlay) const
 {
-    const int padding = QuickNavScale(navigationSettings_.layout.padding);
-    return MakeRect(overlay.left + padding, overlay.top + padding,
-        overlay.right - padding, overlay.top + padding + QuickNavScale(navigationSettings_.layout.searchHeight));
+    return MakeRect(overlay.left, overlay.top, overlay.right,
+        overlay.top + QuickNavScale(navigationSettings_.layout.searchHeight));
 }
 
 RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
 {
     const RECT search = GetQuickNavigationSearchRect(overlay);
-    return MakeRect(search.left, search.bottom + QuickNavScale(12), search.right, search.bottom + QuickNavScale(44));
+    const int padding = QuickNavScale(navigationSettings_.layout.padding);
+    return MakeRect(search.left + padding, search.bottom + QuickNavScale(12), search.right - padding, search.bottom + QuickNavScale(44));
 }
 
 RECT DesktopApp::GetQuickNavigationViewModeButtonRect(

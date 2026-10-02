@@ -2319,7 +2319,7 @@
     "quickNav.layout.resultRowHeight": "Altura de fila de resultados",
     "quickNav.layout.labelLines": "Líneas de etiquetas de iconos",
     "quickNav.layout.cornerRadius": "Radio de esquinas del panel",
-    "quickNav.layout.searchRadius": "Radio de esquinas de la barra",
+    "quickNav.layout.searchRadius": "Radio de las esquinas de la etiqueta de tipo",
     "quickNav.layout.tabRadius": "Radio de esquinas de categorías",
     "quickNav.layout.itemRadius": "Radio de esquinas de resultados",
     "quickNav.color.searchBg": "Barra de búsqueda · Fondo",
@@ -2357,5 +2357,6 @@
     "quickNav.color.scrollTrack": "Barra de desplazamiento · Pista",
     "quickNav.color.scrollThumbDefault": "Barra de desplazamiento · Control deslizante · Normal",
     "quickNav.color.scrollThumbHover": "Barra de desplazamiento · Control deslizante · Al pasar el cursor",
-    "quickNav.color.emptyText": "Estado vacío · Texto"
+    "quickNav.color.emptyText": "Estado vacío · Texto",
+    "quickNav.opening": "Apertura y visualización"
 }

@@ -2319,7 +2319,7 @@
     "quickNav.layout.resultRowHeight": "结果行高",
     "quickNav.layout.labelLines": "图标标签行数",
     "quickNav.layout.cornerRadius": "面板圆角",
-    "quickNav.layout.searchRadius": "搜索栏圆角",
+    "quickNav.layout.searchRadius": "类型标签圆角",
     "quickNav.layout.tabRadius": "分类标签圆角",
     "quickNav.layout.itemRadius": "结果项目圆角",
     "quickNav.color.searchBg": "搜索栏 · 背景",
@@ -2357,5 +2357,6 @@
     "quickNav.color.scrollTrack": "滚动条 · 轨道",
     "quickNav.color.scrollThumbDefault": "滚动条 · 滑块 · 普通状态",
     "quickNav.color.scrollThumbHover": "滚动条 · 滑块 · 悬停状态",
-    "quickNav.color.emptyText": "空状态 · 文字"
+    "quickNav.color.emptyText": "空状态 · 文字",
+    "quickNav.opening": "打开与显示"
 }

@@ -2319,7 +2319,7 @@
     "quickNav.layout.resultRowHeight": "結果列高",
     "quickNav.layout.labelLines": "圖示標籤列數",
     "quickNav.layout.cornerRadius": "面板圓角",
-    "quickNav.layout.searchRadius": "搜尋列圓角",
+    "quickNav.layout.searchRadius": "類型標籤圓角",
     "quickNav.layout.tabRadius": "分類標籤圓角",
     "quickNav.layout.itemRadius": "結果項目圓角",
     "quickNav.color.searchBg": "搜尋列 · 背景",
@@ -2357,5 +2357,6 @@
     "quickNav.color.scrollTrack": "捲軸 · 軌道",
     "quickNav.color.scrollThumbDefault": "捲軸 · 滑塊 · 一般狀態",
     "quickNav.color.scrollThumbHover": "捲軸 · 滑塊 · 游標停留狀態",
-    "quickNav.color.emptyText": "空白狀態 · 文字"
+    "quickNav.color.emptyText": "空白狀態 · 文字",
+    "quickNav.opening": "開啟與顯示"
 }

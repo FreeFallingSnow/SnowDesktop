@@ -2319,7 +2319,7 @@
     "quickNav.layout.resultRowHeight": "Result row height",
     "quickNav.layout.labelLines": "Icon label lines",
     "quickNav.layout.cornerRadius": "Panel corner radius",
-    "quickNav.layout.searchRadius": "Search bar corner radius",
+    "quickNav.layout.searchRadius": "Type chip corner radius",
     "quickNav.layout.tabRadius": "Category corner radius",
     "quickNav.layout.itemRadius": "Result corner radius",
     "quickNav.color.searchBg": "Search bar · Background",
@@ -2357,5 +2357,6 @@
     "quickNav.color.scrollTrack": "Scrollbar · Track",
     "quickNav.color.scrollThumbDefault": "Scrollbar · Thumb · Normal",
     "quickNav.color.scrollThumbHover": "Scrollbar · Thumb · Hovered",
-    "quickNav.color.emptyText": "Empty state · Text"
+    "quickNav.color.emptyText": "Empty state · Text",
+    "quickNav.opening": "Opening and display"
 }

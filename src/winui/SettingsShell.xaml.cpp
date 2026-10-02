@@ -444,7 +444,7 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     switch (page)
     {
     case SettingsPage::QuickNavigation:
-        ensureGeneral(); ensurePersonalization(); break;
+        ensureGeneral(); break;
     case SettingsPage::About:
     case SettingsPage::Debug:
         ensureHomeAbout();
@@ -2291,7 +2291,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             page == SettingsPage::DesktopPages;
     };
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
-        return page == SettingsPage::QuickNavigation || page == SettingsPage::Personalization ||
+        return page == SettingsPage::Personalization ||
             page == SettingsPage::AppearanceTheme ||
             page == SettingsPage::AppearanceWidgets || page == SettingsPage::WidgetBehavior ||
             page == SettingsPage::ContextMenu || page == SettingsPage::Dock;
@@ -2492,12 +2492,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(generalPage_->QuickNavigationContent());
             generalPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& target) {RegisterFocusTarget(std::move(id),target);});
             generalPage_->Activate();
-        }
-        if (personalizationPage_)
-        {
-            PageCards().Children().Append(personalizationPage_->QuickNavigationAppearanceContent());
-            registerPersonalizationFocus({"personalization.quickNavigationTheme", "personalization.quickNavTheme"});
-            personalizationPage_->Activate();
         }
         break;
     case SettingsPage::Personalization:

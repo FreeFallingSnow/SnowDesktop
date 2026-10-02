@@ -44,4 +44,13 @@ void SetMenuHandler(MenuHandler);
 bool HasEditingMenu(HWND);
 void CompleteComposition(HWND, bool cancel = false);
 void SetPadding(HWND, float horizontalPixels, float verticalPixels);
+void SetCaretHeight(HWND, float heightPixels);
+inline D2D1_RECT_F CenteredCaretRectangle(D2D1_RECT_F frame, float x, float height, float width)
+{
+    const float available = frame.bottom - frame.top;
+    if (height > available) height = available;
+    if (height < 0.f) height = 0.f;
+    const float top = (frame.top + frame.bottom - height) * .5f;
+    return {x, top, x + width, top + height};
+}
 }

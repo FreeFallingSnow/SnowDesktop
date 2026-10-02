@@ -277,7 +277,7 @@ struct GeneralPagePresenter::Impl
         quickNavigationCard.content.Children().Append(
             quickNavigationHotkeyRow.row.root);
 
-        quickOptions = std::make_unique<QuickNavigationOptions>(localize, [this](auto edit) {CommitNavigation(std::move(edit));});
+        quickOptions = std::make_unique<QuickNavigationOptions>(localize, [this](auto edit) {CommitNavigation(std::move(edit));}, cardStyle);
         quickRoot.Children().Append(quickOptions->Content());
         InitializeCard(pageNavigationCard, cardStyle, pageNavigationRoot);
         pageNavigationToggle = muxc::ToggleSwitch{};

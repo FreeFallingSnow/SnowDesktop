@@ -2319,7 +2319,7 @@
     "quickNav.layout.resultRowHeight": "結果の行の高さ",
     "quickNav.layout.labelLines": "アイコンラベルの行数",
     "quickNav.layout.cornerRadius": "パネルの角の半径",
-    "quickNav.layout.searchRadius": "検索バーの角の半径",
+    "quickNav.layout.searchRadius": "種類ラベルの角丸半径",
     "quickNav.layout.tabRadius": "カテゴリの角の半径",
     "quickNav.layout.itemRadius": "結果の角の半径",
     "quickNav.color.searchBg": "検索バー · 背景",
@@ -2357,5 +2357,6 @@
     "quickNav.color.scrollTrack": "スクロールバー · トラック",
     "quickNav.color.scrollThumbDefault": "スクロールバー · つまみ · 通常",
     "quickNav.color.scrollThumbHover": "スクロールバー · つまみ · ホバー",
-    "quickNav.color.emptyText": "空の状態 · 文字"
+    "quickNav.color.emptyText": "空の状態 · 文字",
+    "quickNav.opening": "起動と表示"
 }

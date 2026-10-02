@@ -2319,7 +2319,7 @@
     "quickNav.layout.resultRowHeight": "Hauteur des lignes de résultats",
     "quickNav.layout.labelLines": "Lignes des étiquettes d’icônes",
     "quickNav.layout.cornerRadius": "Rayon des coins du panneau",
-    "quickNav.layout.searchRadius": "Rayon des coins de la barre",
+    "quickNav.layout.searchRadius": "Rayon des coins de l’étiquette de type",
     "quickNav.layout.tabRadius": "Rayon des coins des catégories",
     "quickNav.layout.itemRadius": "Rayon des coins des résultats",
     "quickNav.color.searchBg": "Barre de recherche · Fond",
@@ -2357,5 +2357,6 @@
     "quickNav.color.scrollTrack": "Barre de défilement · Piste",
     "quickNav.color.scrollThumbDefault": "Barre de défilement · Curseur · Normal",
     "quickNav.color.scrollThumbHover": "Barre de défilement · Curseur · Au survol",
-    "quickNav.color.emptyText": "État vide · Texte"
+    "quickNav.color.emptyText": "État vide · Texte",
+    "quickNav.opening": "Ouverture et affichage"
 }
