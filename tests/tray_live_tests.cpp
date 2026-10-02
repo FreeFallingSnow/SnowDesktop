@@ -245,7 +245,7 @@ int TryRunTrayLiveTests()
     wchar_t executable[32768]{};
     if (GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))))
     {
-        const auto cached = std::filesystem::path(executable).parent_path() / L"data" / L"ShellHookSymbols";
+        const auto cached = std::filesystem::path(executable).parent_path().parent_path() / L"data" / L"ShellHookSymbols";
         if (std::filesystem::is_directory(cached, error))
             std::filesystem::copy(cached, directory / L"ShellHookSymbols",
                 std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing, error);

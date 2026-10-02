@@ -24,6 +24,7 @@ $script:queryArguments = @()
 $script:invocations = @()
 $script:runtimeLocks = @()
 $script:runtimeInspections = 0
+$Mode = "name"
 function Get-HostRuntimeLocks {
     ++$script:runtimeInspections
     $script:runtimeLocks
