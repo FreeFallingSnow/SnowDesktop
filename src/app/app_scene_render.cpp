@@ -537,7 +537,7 @@ void DesktopApp::DrawDynamicOverlays(
                     radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
                         bounds.right - bounds.left, bounds.bottom - bounds.top, GetItemLayoutScale(item->bounds)));
                     if (config.shape >= 2)
-                        largeIconOutline = snowdesktop::large_icon_shape::Geometry(d2dFactory_.Get(), config.shape, ToD2DRect(bounds), radius);
+                        largeIconOutline = snowdesktop::large_icon_shape::Geometry(d2dFactory_.Get(), config.shape, ToD2DRect(bounds), radius, config.flagDirection);
                 }
             }
             if (largeIconOutline)

@@ -62,6 +62,28 @@ int main(int argc, char** argv)
             "unknown shape values cannot enter persisted layouts");
         invalid.shape = -1;
         Check(!snowdesktop::ValidateLargeIconConfig(invalid), "negative shape values are rejected");
+        for (int direction = 0; direction < 4; ++direction)
+        {
+            auto flag = config; flag.shape = 3; flag.flagDirection = direction;
+            JsonValue value; snowdesktop::LargeIconConfig restored;
+            Check(ParseJson(snowdesktop::EncodeLargeIconConfig(flag), value) &&
+                snowdesktop::DecodeLargeIconConfig(value, restored) && restored == flag,
+                "every swallowtail direction survives save and reload");
+            value.object.erase("flagDirection");
+            Check(snowdesktop::DecodeLargeIconConfig(value, restored) && restored.flagDirection == 0,
+                "existing flags retain their right-facing notch when the direction field is absent");
+        }
+        for (int direction : {-1, 4})
+        {
+            auto flag = config; flag.flagDirection = direction;
+            Check(!snowdesktop::ValidateLargeIconConfig(flag), "invalid swallowtail directions cannot enter layouts");
+        }
+        auto flag = config; flag.shape = 3;
+        Check(snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::FlagDirection, flag),
+            "flags expose the swallowtail direction control");
+        flag.shape = 2;
+        Check(!snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::FlagDirection, flag),
+            "other shapes hide the inapplicable swallowtail control");
         for (int shape : {1, 2})
         {
             const auto wide = snowdesktop::large_icon_shape::Frame(shape, {40, 60, 440, 260});

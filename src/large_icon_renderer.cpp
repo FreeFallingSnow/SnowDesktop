@@ -75,11 +75,42 @@ void DrawEdgeGlow(ID2D1RenderTarget* target, const LargeIconConfig& c, const Vie
         else
         {
             ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
-            const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, inner, innerRadius);
+            const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, inner, innerRadius, c.flagDirection);
             if (outline) target->DrawGeometry(outline.Get(), brush.Get(), stroke);
         }
     }
 }
+}
+void DrawPlacementPreview(ID2D1RenderTarget* target, const LargeIconConfig& c,
+    RECT allocation, float scale, bool valid)
+{
+    if (!target) return;
+    const auto frame = Rect(large_icon_shape::Frame(c.shape, allocation));
+    const float radius = static_cast<float>(large_icon_render_rules::Radius(c,
+        frame.right - frame.left, frame.bottom - frame.top, scale));
+    ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
+    const auto outline = large_icon_shape::Geometry(factory.Get(), c.shape, frame, radius, c.flagDirection);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    const unsigned color = valid ? 0x68b5ff : 0xf16d70;
+    if (!outline || FAILED(target->CreateSolidColorBrush(D2D1::ColorF(color, .2f), &brush))) return;
+    target->FillGeometry(outline.Get(), brush.Get());
+    brush->SetColor(D2D1::ColorF(color, .95f));
+    target->DrawGeometry(outline.Get(), brush.Get(), 2.f);
+}
+void DrawResizeHandle(ID2D1RenderTarget* target, POINT center, int diameter, float radius, bool light, bool selected)
+{
+    if (!target || diameter <= 0) return;
+    const auto rect = D2D1::RectF(static_cast<float>(center.x - diameter / 2), static_cast<float>(center.y - diameter / 2),
+        static_cast<float>(center.x + (diameter + 1) / 2), static_cast<float>(center.y + (diameter + 1) / 2));
+    const auto fill = selected ? D2D1::ColorF(.39f, .66f, 1.f, .62f) :
+        (light ? D2D1::ColorF(.06f, .08f, .12f, .34f) : D2D1::ColorF(1.f, 1.f, 1.f, .34f));
+    const auto stroke = light ? D2D1::ColorF(.06f, .08f, .12f, .5f) : D2D1::ColorF(1.f, 1.f, 1.f, .5f);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(target->CreateSolidColorBrush(fill, &brush))) return;
+    const auto rounded = D2D1::RoundedRect(rect, radius, radius);
+    target->FillRoundedRectangle(rounded, brush.Get());
+    brush->SetColor(stroke);
+    target->DrawRoundedRectangle(rounded, brush.Get(), 1.f);
 }
 void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& c, const View& incoming)
 {
@@ -93,7 +124,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     auto background = view.backgroundResolved ? view.background :
         large_icon_render_rules::DefaultBackground(c, view.accent, view.hasEdgeColor, view.edgeColor);
     ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
-    const auto clip = large_icon_shape::Geometry(factory.Get(), c.shape, frame, radius);
+    const auto clip = large_icon_shape::Geometry(factory.Get(), c.shape, frame, radius, c.flagDirection);
     ComPtr<ID2D1DeviceContext> context;
     ComPtr<ID2D1Layer> layer;
     if (!clip || (FAILED(target->QueryInterface(IID_PPV_ARGS(&context))) &&

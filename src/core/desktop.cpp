@@ -16,6 +16,7 @@
 #include "utils.h"
 #include "../l10n.h"
 #include "../large_icon_visibility_rules.h"
+#include "../large_icon_renderer.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -739,6 +740,17 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                         anchor.row + entry.originalCell.row - top};
                     DesktopWidget geometry; geometry.gridCell = cell;
                     geometry.bounds = GetGridRect(app_->gridPages_, cell, entry.originalSpan);
+                    geometry.cellScale = app_->GetGridPageCuScale(*page);
+                    if (!entry.fromDock && entry.desktopIndex < app_->items_.size() &&
+                        app_->items_[entry.desktopIndex].largeIcon)
+                    {
+                        const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
+                            app_->EffectiveLargeIconConfig(app_->items_[entry.desktopIndex]),
+                            app_->CurrentPersonalization().cornerRadius);
+                        snowdesktop::large_icon_renderer::DrawPlacementPreview(ctx, config,
+                            app_->GetStandaloneWidgetFrameRect(geometry), app_->GetItemLayoutScale(geometry.bounds), false);
+                        continue;
+                    }
                     app_->DrawD2DRoundedRectangle(ctx, app_->GetStandaloneWidgetFrameRect(geometry), 8.f,
                         D2D1::ColorF(1.f, .30f, .30f, .18f), D2D1::ColorF(1.f, .25f, .25f, .85f), 2.f);
                 }

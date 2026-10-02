@@ -539,8 +539,8 @@ RECT DesktopApp::GetLargeIconFrameRect(const DesktopItem& item) const
     DesktopWidget geometry;
     geometry.bounds = item.bounds;
     geometry.gridCell = item.gridCell;
-    // Interaction and resize handles retain the complete grid allocation;
-    // the renderer independently centers an equal-sided square or circle.
+    // Grid hit testing retains the allocation; visible frames and resize
+    // handles independently follow the selected silhouette.
     return GetStandaloneWidgetFrameRect(geometry);
 }
 
@@ -659,7 +659,8 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
     ComPtr<ID2D1DeviceContext> device;
     context->QueryInterface(IID_PPV_ARGS(&device));
     if (!fill && device)
-        view.drawBackground = [this, appearance, shape = config.shape, state, scale = view.scale, owner = &runtime](ID2D1RenderTarget* target, RECT rect, float radius, float opacity) mutable {
+        view.drawBackground = [this, appearance, shape = config.shape, flagDirection = config.flagDirection,
+            state, scale = view.scale, owner = &runtime](ID2D1RenderTarget* target, RECT rect, float radius, float opacity) mutable {
             ComPtr<ID2D1DeviceContext> drawing;
             if (FAILED(target->QueryInterface(IID_PPV_ARGS(&drawing)))) return;
             auto style = appearance;
@@ -675,12 +676,12 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
                 reinterpret_cast<std::uintptr_t>(owner), scale);
             if (style.glassEnabled && state != 3)
                 desktopBackdropCompositor_.AddLargeIconPanel(rect, shape, radius, style.glassBlurRadius,
-                    reinterpret_cast<std::uintptr_t>(owner));
+                    reinterpret_cast<std::uintptr_t>(owner), flagDirection);
             if (shape >= 2)
                 snowdesktop::large_icon_shape::DrawMaterialOutline(drawing.Get(), shape, rect, border,
                     style.widgetBorderWidth * scale,
                     appearance.widgetEdgeHighlightEnabled ? appearance.widgetEdgeHighlightStrength * opacity : 0,
-                    appearance.widgetEdgeHighlightWidth * scale, appearance.edgeLight);
+                    appearance.widgetEdgeHighlightWidth * scale, appearance.edgeLight, flagDirection);
         };
     const auto transform = snowdesktop::large_icon_transform::Resolve(
         static_cast<float>(view.frame.right - view.frame.left), static_cast<float>(view.frame.bottom - view.frame.top),

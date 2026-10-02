@@ -3,6 +3,28 @@
 #include "../animation_settings.h"
 #include "../widgets/widget_chrome_rules.h"
 #include "../large_icon_render_rules.h"
+#include "../large_icon_renderer.h"
+#include "../large_icon_shape_geometry.h"
+
+RECT DesktopApp::GetLargeIconResizeHandleRect(const DesktopItem& item, POINT* center) const
+{
+    const auto allocation = GetLargeIconFrameRect(item);
+    const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
+        EffectiveLargeIconConfig(item), CurrentPersonalization().cornerRadius);
+    const auto frame = snowdesktop::large_icon_shape::Frame(config.shape, allocation);
+    const float radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
+        frame.right - frame.left, frame.bottom - frame.top, GetItemLayoutScale(item.bounds)));
+    const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
+    const float cellScale = page ? GetGridPageCuScale(*page) : 1.f;
+    const float barHeight = CurrentPersonalization().barHeight;
+    const int dot = ScaleWidgetCu(barHeight * .333f, cellScale);
+    const int size = std::max(1, ScaleWidgetCu(barHeight, cellScale));
+    const auto position = snowdesktop::large_icon_shape::ResizeHandleCenter(config, allocation, radius,
+        static_cast<float>(dot) / 2 + ScaleWidgetCu(2.f, cellScale));
+    if (center) *center = position;
+    return {std::max(allocation.left, position.x - size / 2), std::max(allocation.top, position.y - size / 2),
+        std::min(allocation.right, position.x + (size + 1) / 2), std::min(allocation.bottom, position.y + (size + 1) / 2)};
+}
 
 DesktopApp::LargeIconMenuScope::LargeIconMenuScope(DesktopApp& app, std::wstring key)
     : app_(app), previousKey_(std::move(app.largeIconMenuKey_))
@@ -66,12 +88,10 @@ bool DesktopApp::HandleLargeIconPointerDown(POINT point)
     if (!CanEditLargeIcons() || HasActiveContextMenuSession() || IsPointOccludedByOpenPopup(point)) return false;
     const auto index = HitTestItem(point);
     if (index < 0 || static_cast<size_t>(index) >= items_.size() || !items_[index].largeIcon) return false;
-    DesktopWidget geometry;
-    geometry.bounds = items_[index].bounds; geometry.gridCell = items_[index].gridCell; geometry.showTitle = false;
-    if (const auto* page = FindGridPage(gridPages_, geometry.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
-    const auto handle = GetStandaloneWidgetResizeHandleRect(geometry);
+    const auto handle = GetLargeIconResizeHandleRect(items_[index]);
     if (!PtInRect(&handle, point)) return false;
     largeIconGesture_ = LargeIconGesture{items_[index].layoutKey, *items_[index].largeIcon, items_[index].gridCell, false, true, true};
+    largeIconGesture_->resizePointerOffset = snowdesktop::large_icon_shape::ResizePointerOffset(items_[index].bounds, point);
     SetCapture(hwnd_);
     UpdateLargeIconHover();
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -85,7 +105,8 @@ bool DesktopApp::HandleLargeIconPointerMove(POINT point)
     auto& gesture = *largeIconGesture_;
     const size_t index = FindItemIndexByKey(gesture.key);
     if (index >= items_.size() || (!gesture.creating && !items_[index].largeIcon)) { CancelLargeIconGesture(); return true; }
-    GridCell hovered = CellFromPointForDrag(point);
+    const auto extent = gesture.resizing ? snowdesktop::large_icon_shape::ResizeExtent(point, gesture.resizePointerOffset) : point;
+    GridCell hovered = CellFromPointForDrag(extent);
     const auto* page = FindGridPage(gridPages_, gesture.resizing ? gesture.cell.pageId : hovered.pageId);
     if (!page || (gesture.resizing && hovered.pageId != page->id))
     { gesture.valid = false; InvalidateRect(hwnd_, nullptr, FALSE); return true; }
@@ -126,11 +147,12 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         DesktopWidget geometry;
         geometry.gridCell = gesture.cell;
         geometry.bounds = GetGridRect(gridPages_, gesture.cell, {gesture.config.columns, gesture.config.rows});
+        if (const auto* page = FindGridPage(gridPages_, gesture.cell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
         const auto rect = GetStandaloneWidgetFrameRect(geometry);
-        const UINT rgb = gesture.valid ? 0x68b5ff : 0xf16d70;
-        DrawD2DRoundedRectangle(context, rect, static_cast<float>(snowdesktop::large_icon_render_rules::Radius(
-            gesture.config, rect.right - rect.left, rect.bottom - rect.top, GetItemLayoutScale(geometry.bounds))),
-            D2D1::ColorF(rgb, .2f), D2D1::ColorF(rgb, .95f), 2);
+        const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
+            gesture.config, CurrentPersonalization().cornerRadius);
+        snowdesktop::large_icon_renderer::DrawPlacementPreview(context, config, rect,
+            GetItemLayoutScale(geometry.bounds), gesture.valid);
         if (gesture.creating)
         {
             ComPtr<IDWriteTextFormat> format;
@@ -159,17 +181,12 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         DesktopWidget geometry;
         geometry.bounds = item.bounds; geometry.gridCell = item.gridCell; geometry.showTitle = false;
         if (const auto* page = FindGridPage(gridPages_, geometry.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
-        rect = GetStandaloneWidgetResizeHandleRect(geometry);
+        POINT center{};
+        GetLargeIconResizeHandleRect(item, &center);
         const float barHeight = CurrentPersonalization().barHeight;
         const int dot = ScaleWidgetCu(barHeight * .333f, geometry.cellScale);
-        const int cx = rect.left + (rect.right - rect.left) / 2;
-        const int cy = rect.top + (rect.bottom - rect.top) / 2;
-        const RECT dotRect{cx - dot / 2, cy - dot / 2, cx + dot / 2, cy + dot / 2};
-        const auto fill = item.selected ? D2D1::ColorF(.39f, .66f, 1.f, .62f) :
-            (IsLightContentTheme() ? D2D1::ColorF(.06f, .08f, .12f, .34f) : D2D1::ColorF(1.f, 1.f, 1.f, .34f));
-        const auto stroke = IsLightContentTheme() ? D2D1::ColorF(.06f, .08f, .12f, .5f) : D2D1::ColorF(1.f, 1.f, 1.f, .5f);
-        DrawD2DRoundedRectangle(context, dotRect,
-            static_cast<float>(ScaleWidgetCu(4.f * barHeight / 24.f, geometry.cellScale)), fill, stroke);
+        snowdesktop::large_icon_renderer::DrawResizeHandle(context, center, dot,
+            static_cast<float>(ScaleWidgetCu(4.f * barHeight / 24.f, geometry.cellScale)), IsLightContentTheme(), item.selected);
     }
 }
 

@@ -364,6 +364,14 @@ int RunDesktopBackdropCompositorTests()
             check(cardsGlass.HasPanelContaining({30, 30, 40, 40}) == (shape <= 1),
                 "arbitrary large-icon silhouettes do not claim rectangular glass coverage");
         }
+        for (int direction : {0, 1, 2, 3, 0})
+        {
+            cardsGlass.BeginFrame(true);
+            check(cardsGlass.AddLargeIconPanel({20, 20, 220, 220}, 3, 0, 24, 31003, direction),
+                "native flag backdrop accepts direction changes without a shape or size change");
+            cardsGlass.EndFrame(false);
+            check(cardsGlass.PanelCount() == 1, "flag direction changes reuse the native owner visual");
+        }
         cardsGlass.BeginFrame(true);
         check(cardsGlass.AddPanel({16, 20, 304, 132}, 12, 24, 31001) &&
                 cardsGlass.AddPanel({16, 148, 304, 212}, 12, 24, 31002),

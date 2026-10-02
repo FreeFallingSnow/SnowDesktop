@@ -3,6 +3,7 @@
 #include "pending_drop_completion.h"
 #include "new_item_placement.h"
 #include "../shell_new_item_capture.h"
+#include "../large_icon_renderer.h"
 
 // Desktop drop-preview rendering, caching and deferred placement.
 
@@ -128,6 +129,23 @@ void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
             std::max(1, landing.span.rows)
         };
         RECT targetRect = GetGridRect(gridPages_, landing.cell, span);
+        if (dragSession_.IsActive())
+        {
+            const auto& sources = dragSession_.SourceList().entries;
+            const auto source = std::find_if(sources.begin(), sources.end(),
+                [&](const auto& entry) { return entry.sourceIndex == landing.sourceIndex; });
+            if (source != sources.end() && !source->fromDock && source->desktopIndex < items_.size() &&
+                items_[source->desktopIndex].largeIcon)
+            {
+                DesktopWidget geometry; geometry.bounds = targetRect; geometry.gridCell = landing.cell;
+                if (const auto* page = FindGridPage(gridPages_, landing.cell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
+                const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
+                    EffectiveLargeIconConfig(items_[source->desktopIndex]), CurrentPersonalization().cornerRadius);
+                snowdesktop::large_icon_renderer::DrawPlacementPreview(ctx, config, GetStandaloneWidgetFrameRect(geometry),
+                    GetItemLayoutScale(targetRect));
+                continue;
+            }
+        }
         DrawD2DRoundedRectangle(ctx, targetRect, 6.0f,
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.12f),
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.50f), 2.0f);

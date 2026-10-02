@@ -337,6 +337,7 @@ struct DesktopBackdropCompositor::Impl
         int iconShape = -1;
         SIZE iconSize{};
         int largeIconShape = -1;
+        int largeIconFlagDirection = 0;
         SIZE largeIconSize{};
     };
 
@@ -1651,7 +1652,7 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
 }
 
 bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
-    int shape, float cornerRadius, float blurRadius, std::uintptr_t ownerKey)
+    int shape, float cornerRadius, float blurRadius, std::uintptr_t ownerKey, int flagDirection)
 {
     if (!AddPanel(frame, cornerRadius, blurRadius, ownerKey)) return false;
     try
@@ -1668,18 +1669,19 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
             return true;
         }
         const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
-        if (panel->largeIconShape == shape && panel->largeIconSize.cx == size.cx && panel->largeIconSize.cy == size.cy)
+        if (panel->largeIconShape == shape && panel->largeIconFlagDirection == flagDirection &&
+            panel->largeIconSize.cx == size.cx && panel->largeIconSize.cy == size.cy)
             return true;
         if (!impl_->genieGeometryFactory)
             winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, impl_->genieGeometryFactory.put()));
         const auto mask = snowdesktop::large_icon_shape::Geometry(impl_->genieGeometryFactory.get(), shape,
-            D2D1::RectF(0, 0, static_cast<float>(size.cx), static_cast<float>(size.cy)), cornerRadius);
+            D2D1::RectF(0, 0, static_cast<float>(size.cx), static_cast<float>(size.cy)), cornerRadius, flagDirection);
         if (!mask) return false;
         winrt::com_ptr<ID2D1Geometry> source; source.copy_from(mask.Get());
         auto geometry = impl_->compositor.CreatePathGeometry();
         geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
         panel->clip.Geometry(geometry);
-        panel->largeIconShape = shape; panel->largeIconSize = size;
+        panel->largeIconShape = shape; panel->largeIconFlagDirection = flagDirection; panel->largeIconSize = size;
         return true;
     }
     catch (const winrt::hresult_error& error)

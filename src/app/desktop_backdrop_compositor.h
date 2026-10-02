@@ -105,7 +105,7 @@ public:
         float blurRadius, std::uintptr_t ownerKey);
     // Host-private large-icon silhouettes use the same geometry as the card.
     bool AddLargeIconPanel(const RECT& frame, int shape, float cornerRadius,
-        float blurRadius, std::uintptr_t ownerKey);
+        float blurRadius, std::uintptr_t ownerKey, int flagDirection = 0);
     bool HasPanelContaining(const RECT& frame) const;
     bool RemoveIconPanel(const RECT& frame, std::uintptr_t ownerKey);
 
