@@ -5,6 +5,9 @@ set "SNOWDESKTOP_BUILD_SCRIPT_DIR=%~dp0"
 cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
 
 rem Shared-directory collaboration commands reuse the standard build below.
+if /i "%~1"=="watch" goto localwait
+if /i "%~1"=="repair" goto collaboration
+if /i "%~1"=="repair-abandon" goto collaboration
 if /i "%~1"=="begin" goto collaboration
 if /i "%~1"=="finish" goto collaboration
 if /i "%~1"=="status" goto collaboration
@@ -95,6 +98,11 @@ echo.
 echo For a version release, run scripts\release.bat to open the unified release center.
 echo Agent and automation usage is available through scripts\release.bat COMMAND.
 exit /b 0
+
+:localwait
+python "%SNOWDESKTOP_BUILD_SCRIPT_DIR%..\tools\build-dashboard\manage.py" start >nul 2>&1
+python "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_wait_tasks.py" %*
+exit /b %ERRORLEVEL%
 
 :collaboration
 rem Automatically ensure the read-only monitor; unavailable Python/port must not block builds.

@@ -286,3 +286,69 @@ scripts\build.bat issue task-b -Batch <batchId> -IssueId <issueId> -IssueState d
 热升级不强制迁移活动 v1 批次。其 `begin/finish/status/recover` 合同继续保留，`ready/check/plan` 拒绝并要求下一批启用；已在运行的旧 PowerShell 使用其启动时加载的逻辑，无法被新文件追溯升级。旧结果只能按其证据查询，不充当新协议验证。不要删除活动登记强行换协议。
 
 看板由协作入口自动启动，地址和手动停启详见 [本地看板](../tools/build-dashboard/README.md)。
+
+
+### 本地等待、有限重试与失败续修
+
+完成自身编辑后先 `ready`，后台按声明计划中的 `lightChecks: ["builtin-basic"]` 执行一次只读检查并等待屏障。
+相同修订的活跃工作进程复用；没有变化时不重复检查、构建或调用模型。只读走查发现需修改时仍先 `begin` 原子重开。
+
+需要等冻结批次结束、文件归属释放或其他编辑者关闭时，可登记一个持久化观察票据（安装好的 Python 3.8+）：
+
+```bat
+scripts\build.bat watch start task-A --condition window --timeout 1800
+scripts\build.bat watch start task-A --condition files --files src/example.cpp --timeout 1800
+scripts\build.bat watch start task-A --condition peers --batch BATCH --revision REVISION --timeout 1800
+scripts\build.bat watch start task-A --condition result --batch BATCH --revision REVISION --timeout 1800
+scripts\build.bat watch status --ticket TICKET
+scripts\build.bat watch resume --ticket TICKET --timeout 1800 --reason "已诊断退出的只读等待进程"
+scripts\build.bat watch cancel --ticket TICKET
+```
+
+`window/files` 可在新任务 `begin` 前调用；`peers/result` 必须使用已有登记的批次和修订。
+票据观察每 2 秒在本地进行，不执行模型/API、检查、构建或编辑授权，默认半小时，最多一天。
+`start` 的相同条件复用票据；仅在旧票据终止后显式 `--new` 才创建新票据。超时/退出不清活动登记。
+结果先写不可变 `.build/collaboration/<ticket>.wait-attempt<N>.json`，再更新 `.wait.json`；进程身份和内核租约防止重复工作进程。
+明确退出的等待进程需显式 `resume`；陈旧编辑者和检查永远不自动完成。未知占用、检查失败、构建退出或自身登记阻止归属释放时返回 `attention`。
+
+票据 `eligible` 只表明曾观察到可操作窗口，恢复时必须重新 `begin/claim` 取得实际权限。
+就绪任务的文件归属会保留到批次结束；不要让自己的 `editing` 登记一边阻止本批结束，一边等待其他就绪者释放文件。
+同目录同文件仍需明确协调编辑顺序；未声明归属的活动任务无法自动证明文件可用。
+传统 `begin/finish/wait -WaitSeconds N` 仍可作为一次长阻塞工具调用，进程内轮询不等于模型轮询。
+
+对话无实质工作时可在登记 `ready/watch` 后结束当前回合，并交接任务、票据、下一步和未完成事项。
+后续回合只读一次票据及结果再恢复操作；不要用“status → 短睡眠 → status”消耗模型调用。
+本地完成、看板变化和持久结果不会自动唤醒 Work 对话；当前没有可信的本地事件回调入口。
+Work 的回合结束通知只能提醒当前回合结束，不代表后续构建完成或任务已全部完成。
+
+计划执行由 `build_batch_tests.ps1` 调用 `build_test_retry.py`：生产构建和首次测试运行只执行一次。
+自动重试只白名单 `build_dashboard/build_dashboard_browser` 且要求 CTest `retry-isolated-resource` 标签，
+并且该隔离用例在断言前已释放全部自建资源，写出绑定本次运行 token 的结构化 `isolated-port-race/exitCode 75` 信号。
+目前只覆盖临时监听端口竞争；普通断言、编译错误、任意 timeout、77 跳过、缺报告、用户进程占用均不自动重试。
+不会按日志关键词猜故障类别，也不关闭用户进程或叠加 CTest 的无限/全套重复。
+
+每项最多 3 次（首次 + 2 次），退避 1/3 秒，总重试预算 300 秒。仅重跑合格失败项，保留原计划集合和分母。
+源码/相关环境、测试二进制和工具指纹改变会中止，不能混用不同输入的通过记录。
+首次报告、每次单项 JUnit/日志/不可变尝试记录以及汇总 `<batch>.retry.json` 都保留。
+重试通过标 `passed-after-retry / flaky`；耗尽、未执行、环境阻断和输入失效分别显示，首次失败不会被抹掉。
+中途崩溃后旧执行 ID 禁止自动重放（即使已完成尝试的汇总尚未落盘）；保留记录、诊断并进入新的续修尝试。
+仅已审查的用例可以扩展白名单与结构化信号；标签或退出码自身不能授权任意测试重试。
+
+失败结束一次执行尝试，不删除已保存成员、需求、冻结计划、输入、日志和责任交接：
+
+```bat
+scripts\build.bat status -Batch FAILED_BATCH
+scripts\build.bat repair task-A -Batch FAILED_BATCH -Revision FAILED_REVISION -Reason "依据编译诊断续修"
+rem 保存返回的新 batchId/editRevision，再 claim 文件、修改和 ready。
+scripts\build.bat claim task-A -Batch CHILD_BATCH -Revision CHILD_REVISION -Files src/example.cpp
+scripts\build.bat ready task-A -Batch CHILD_BATCH -Revision CHILD_REVISION
+scripts\build.bat repair-abandon -Batch FAILED_BATCH -Reason "本次续修明确放弃；保留失败证据"
+```
+
+续修使用新的执行批次 ID，以 `logicalBatchId/repairOf/attempt` 关联同一逻辑轮次；并发 `repair` 原子复用同一子尝试。
+原需求保留在 `originalRequirement`，其他成员无需重登原需求。旧修订、检查和测试通过不沿用：续修保守全量，
+继承成员自动重新只读检查，修复者必须重新取得文件归属（旧归属不自动授权），冻结后统一重测当前输入。
+重复 `repair` 不重开已就绪编辑者；进一步修复必须引用最新失败子尝试，不能覆盖祖先结果。
+映射落盘中断时从当前 `repairOf` 对账；未知遗失状态拒绝创建重复尝试。无关活动批次不会被替换或清空，先登记本地窗口等待。
+`repair-abandon` 只关闭没有活动续修登记的关联，不代替别人撤销活动登记；活动任务只可显式退出自己停止的编辑登记。
+旧活动协议不强制迁移。失败归属仍通过 `issue` 保存证据，受影响覆盖不等于已确认缺陷责任。

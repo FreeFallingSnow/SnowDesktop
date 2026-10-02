@@ -13,5 +13,12 @@ if ($plan.mode -eq 'skipped') {
     Write-Output 'Host build/tests explicitly not required by this frozen task plan; no passing host test result is claimed.'
     exit 0
 }
-& (Join-Path $PSScriptRoot 'test_manager.ps1') -Mode plan -PlanBatch $Batch
-exit 0
+# Keep the existing test entry usable on machines without an installed Python.
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    Write-Output 'Python unavailable: one standard planned test run, automatic retries unavailable.'
+    & (Join-Path $PSScriptRoot 'test_manager.ps1') -Mode plan -PlanBatch $Batch
+    exit $LASTEXITCODE
+}
+# Exactly one initial test pipeline; Python retries only reviewed isolated resource failures.
+& python (Join-Path $PSScriptRoot 'build_test_retry.py') --batch $Batch
+exit $LASTEXITCODE

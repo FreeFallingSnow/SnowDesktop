@@ -2533,9 +2533,12 @@ if(BUILD_TESTING AND WIN32)
         set_tests_properties(build_plan_execution PROPERTIES LABELS "tools;core" TIMEOUT 120)
         add_test(NAME build_dashboard COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_dashboard_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-        set_tests_properties(build_dashboard PROPERTIES LABELS "tools;core" TIMEOUT 60)
+        set_tests_properties(build_dashboard PROPERTIES LABELS "tools;core;retry-isolated-resource" TIMEOUT 60)
         add_test(NAME build_dashboard_browser COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_dashboard_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}" --browser)
-        set_tests_properties(build_dashboard_browser PROPERTIES LABELS "manual;integration;tools" TIMEOUT 180)
+        set_tests_properties(build_dashboard_browser PROPERTIES LABELS "manual;integration;tools;retry-isolated-resource" TIMEOUT 180)
+        add_test(NAME build_wait_retry COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_wait_retry_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(build_wait_retry PROPERTIES LABELS "integration;tools" TIMEOUT 240)
     endif()
 endif()

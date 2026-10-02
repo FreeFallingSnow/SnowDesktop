@@ -39,13 +39,13 @@ function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [
     $requiredFull = $Scope -in 'unknown','public','infrastructure' -or $broad
     if ($requiredFull -and $suiteList -contains 'none') { throw 'Shared/public/build inputs cannot claim the no-host-tests exemption.' }
     return [pscustomobject]@{ schemaVersion=1; scope=$Scope; suites=$suiteList; tests=$names; inputs=$paths;
-        reason=$Reason; editRevision=(Get-EditRevision $Entry); source='task-declared'; requiredFull=$requiredFull;
+        reason=$Reason; editRevision=(Get-EditRevision $Entry); source='task-declared'; lightChecks=@('builtin-basic'); requiredFull=$requiredFull;
         escalationReason=$(if($requiredFull){'Unknown impact or shared/public infrastructure requires full automatic coverage.'}else{''}); inputIdentity=$null }
 }
 function Default-TaskPlan($Entry) {
     return [pscustomobject]@{ schemaVersion=1; scope='unknown'; suites=@('full'); tests=@(); inputs=@();
         reason='Legacy registration has no reviewed scope; conservative full automatic coverage.';
-        editRevision=(Get-EditRevision $Entry); source='legacy-default'; requiredFull=$true; escalationReason='Undeclared impact'; inputIdentity=$null }
+        editRevision=(Get-EditRevision $Entry); source='legacy-default'; lightChecks=@('builtin-basic'); requiredFull=$true; escalationReason='Undeclared impact'; inputIdentity=$null }
 }
 function Get-TaskIdentity($Plan) {
     $paths = @(Get-Field $Plan 'inputs' @())
@@ -110,7 +110,7 @@ function Checks-BlockFreeze($Current) {
     }).Count -gt 0
 }
 function New-FrozenPlan($Current) {
-    $tasks=@(); $full=$false; $build=$false
+    $tasks=@(); $full=[bool](Get-Field $Current 'repairOf'); $build=$full
     foreach ($entry in $Current.participants) {
         if ($entry.state -eq 'withdrawn') { continue }
         $plan=Get-Field $entry 'testPlan'

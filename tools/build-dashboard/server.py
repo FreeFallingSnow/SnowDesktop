@@ -229,7 +229,44 @@ class Store:
                 "binaryEvidence": {"capturedUtc": (data.get("binaryEvidence") or {}).get("capturedUtc"),
                                    "buildStagePassed": (data.get("binaryEvidence") or {}).get("buildStagePassed"),
                                    "executables": (data.get("binaryEvidence") or {}).get("executables", [])[:20]},
+                "logicalBatchId":data.get("logicalBatchId",batch_id),"attempt":data.get("attempt",1),"repairOf":data.get("repairOf"),
+                "retry": self.retry_view(batch_id),
                 "log": log}
+
+    def retry_view(self,bid):
+        data=read_json(self.root,bid+'.retry.json') or {}
+        status=data.get('status','not-recorded')
+        if status in ('running','retrying') and owner_state(data.get('owner'))=='exited':status='interrupted'
+        tests=[]
+        for name,item in list((data.get('tests') or {}).items()):
+            if not item.get('failureCount') and item.get('status')=='passed':continue
+            attempts=[]
+            for attempt in item.get('attempts',[])[:3]:
+                number=attempt.get('attempt')
+                attempts.append({'attempt':number,'status':attempt.get('status'),'reason':redact(attempt.get('reason','')),
+                    'logUrl':'/api/retries/'+bid+'/'+name+'/'+str(number)+'/log' if name in ('build_dashboard','build_dashboard_browser') and number in (2,3) else None})
+            tests.append({'name':redact(name),'status':item.get('status'),'failureCount':item.get('failureCount',0),
+                'firstReason':redact(item.get('firstReason','')),'finalReason':redact(item.get('finalReason','')),'attempts':attempts})
+        return {'status':status,'reason':redact(data.get('reason','')),'policy':data.get('policy'),'tests':tests[:40],'selectedCount':len(data.get('selected',[]))}
+
+    def waits(self):
+        files=sorted(self.root.glob('*.wait.json'),key=lambda x:x.stat().st_mtime,reverse=True)[:40]
+        items=[]
+        for file in files:
+            if not HEX.fullmatch(file.name[:-10]):continue
+            ticket=read_json(self.root,file.name) or {}
+            receipt=read_json(self.root,ticket.get('id','')+'.wait-attempt'+str(ticket.get('attempt',1))+'.json')
+            ticket=receipt or ticket
+            status=ticket.get('status','unknown')
+            if status=='waiting' and owner_state(ticket.get('owner'))=='exited':status='interrupted'
+            items.append({**{k:ticket.get(k) for k in ('id','participant','condition','batchId','attempt','createdUtc','deadlineUtc','completedUtc','observations')},'status':status,'reason':redact(ticket.get('reason','')),'next':redact(ticket.get('next',''))})
+        return items
+
+    def retry_log(self,bid,name,attempt):
+        if name not in ('build_dashboard','build_dashboard_browser') or attempt not in (2,3):raise ValueError('Unknown retry log')
+        directory=safe_path(self.root,bid+'.retry')
+        path=safe_path(directory,name+'.attempt'+str(attempt)+'.log')
+        return LogReader().read(path)
 
     def snapshot(self):
         with self.lock:
@@ -250,9 +287,9 @@ class Store:
                     continue
                 data = read_json(self.root, file.name) or {}
                 if data.get("batchId") == file.stem:
-                    history.append({k: data.get(k) for k in ("batchId", "outcome", "completedUtc", "exitCode")})
+                    history.append({k: data.get(k) for k in ("batchId", "outcome", "completedUtc", "exitCode", "logicalBatchId", "attempt", "repairOf")})
             self.cache = {"fixture": self.fixture, "updatedUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
-                          "current": active, "history": history,
+                          "current": active, "history": history, "waits": self.waits(),
                           "limitation": "Only registered cooperating tasks are visible. Stale age is diagnostic; it never completes an editor. Build and link stages are inferred from logs; counts remain unknown until reported."}
             self.cache_time = time.monotonic()
             return self.cache
@@ -295,6 +332,9 @@ class Handler(BaseHTTPRequestHandler):
                 data = self.server.store.snapshot()
             elif path == "/api/history":
                 data = self.server.store.snapshot()["history"]
+            elif re.fullmatch(r'/api/retries/[a-f0-9]{32}/(build_dashboard|build_dashboard_browser)/[23]/log',path):
+                parts=path.split('/')
+                with self.server.store.lock:data=self.server.store.retry_log(parts[3],parts[4],int(parts[5]))
             elif path.startswith("/api/batches/") and HEX.fullmatch(path[len("/api/batches/"):]):
                 bid = path[len("/api/batches/"):]
                 with self.server.store.lock:
