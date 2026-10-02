@@ -4,6 +4,7 @@
 #include "large_icon_shape_geometry.h"
 
 #include <roapi.h>
+#include <imm.h>
 #include <d2d1_1helper.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -117,6 +118,10 @@ int CheckHiddenPopupKeyboardFocus()
         // cannot interact with the user's input desktop or desktop host.
         if (!check(SetThreadDesktop(desktop) != FALSE,
                 "attach the focus test thread to its private desktop")) return;
+        // This private desktop tests focus ownership, never IME composition.
+        // Its EDIT teardown must not wait for the input desktop's CTF monitor.
+        if (!check(ImmDisableIME(GetCurrentThreadId()) != FALSE,
+                "isolate the private focus thread from the system IME monitor")) return;
         struct Apartment
         {
             HRESULT result = RoInitialize(RO_INIT_SINGLETHREADED);
