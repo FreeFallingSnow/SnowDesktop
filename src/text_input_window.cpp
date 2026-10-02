@@ -450,12 +450,15 @@ void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float sc
     const auto drawBorder = [&]
     {
         if (!drawFrame) return;
-        const float stroke = 1.f / scale;
+        const bool focused = GetFocus() == state.window;
+        // A two-pixel focus outline retains a solid blue core through the
+        // antialiased corners instead of fading to a hairline.
+        const float stroke = (focused ? 2.f : 1.f) / scale;
         const float inset = stroke * .5f;
         const auto borderFrame = D2D1::RectF(frame.left + inset, frame.top + inset,
             frame.right - inset, frame.bottom - inset);
         const float radius = (std::max)(0.f, state.radius / scale - inset);
-        brush->SetColor(Color(GetFocus() == state.window ? state.colors.accent : state.colors.border));
+        brush->SetColor(Color(focused ? state.colors.accent : state.colors.border));
         // Keep the entire stroke inside the client area and rounded window
         // region. Drawing on the outer edge loses half the stroke to clipping.
         target->DrawRoundedRectangle(D2D1::RoundedRect(borderFrame, radius, radius), brush.Get(), stroke);

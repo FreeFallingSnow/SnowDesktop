@@ -245,7 +245,7 @@ void RoundedBorder(HWND owner,const std::filesystem::path& output={})
 {
     // Render the real custom window and apply its actual HWND region. Region
     // existence alone cannot detect the missing half-stroke at the corners.
-    for(const bool multiline:{false,true})for(const int radius:{6,9})
+    for(const bool multiline:{false,true})for(const int radius:{6,9})for(const bool focused:{false,true})
     {
         const int width=20*radius,height=(multiline?13:6)*radius;
         const auto window=Create(owner,multiline?ES_MULTILINE:ES_AUTOHSCROLL,L"");
@@ -253,6 +253,8 @@ void RoundedBorder(HWND owner,const std::filesystem::path& output={})
         input::Colors colors;colors.background=RGB(255,255,255);
         colors.border=colors.accent=RGB(0,103,192);input::SetColors(window,colors,static_cast<float>(radius));
         SetWindowPos(window,nullptr,0,0,width,height,SWP_NOZORDER|SWP_NOACTIVATE);
+        const auto previousFocus=GetFocus();
+        if(focused){SetFocus(window);Check(GetFocus()==window,"focus the isolated hidden rename input");}
         const auto region=CreateRectRgn(0,0,0,0);
         Check(region&&GetWindowRgn(window,region)!=ERROR,"rounded border uses the production window clip");
         BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
@@ -269,7 +271,11 @@ void RoundedBorder(HWND owner,const std::filesystem::path& output={})
             const auto red=[&](int x,int y){return (data[y*width+x]>>16)&255;};
             Check(red(width/2,0)<=24&&red(width/2,height-1)<=24&&
                     red(0,height/2)<=24&&red(width-1,height/2)<=24,
-                "all four rename edges retain the full one-pixel stroke inside the client area");
+                "all four rename edges retain a solid stroke inside the client area");
+            if(focused)
+                Check(red(width/2,1)<=24&&red(width/2,height-2)<=24&&
+                        red(1,height/2)<=24&&red(width-2,height/2)<=24,
+                    "focused blue outline remains visibly stronger on all four edges");
             for(const bool right:{false,true})for(const bool bottom:{false,true})
             {
                 int ink=0;
@@ -278,7 +284,7 @@ void RoundedBorder(HWND owner,const std::filesystem::path& output={})
                     const int px=right?width-1-x:x,py=bottom?height-1-y:y;
                     if(PtInRegion(region,px,py)&&red(px,py)<96)++ink;
                 }
-                Check(ink>=3,"every rounded corner retains visible outline after the actual window clip");
+                Check(ink>=(focused?radius:3),"every rounded corner retains solid outline after the actual window clip");
             }
             if(!output.empty())
             {
@@ -290,7 +296,8 @@ void RoundedBorder(HWND owner,const std::filesystem::path& output={})
                 BITMAPFILEHEADER header{};header.bfType=0x4d42;
                 header.bfOffBits=sizeof(header)+sizeof(info.bmiHeader);
                 header.bfSize=header.bfOffBits+static_cast<DWORD>(shown.size()*sizeof(DWORD));
-                const std::string name=std::string(multiline?"multiline-":"single-")+std::to_string(radius)+".bmp";
+                const std::string name=std::string(multiline?"multiline-":"single-")+std::to_string(radius)+
+                    (focused?"-focused.bmp":"-unfocused.bmp");
                 std::ofstream file(output/name,std::ios::binary);
                 file.write(reinterpret_cast<const char*>(&header),sizeof(header));
                 file.write(reinterpret_cast<const char*>(&info.bmiHeader),sizeof(info.bmiHeader));
@@ -299,6 +306,7 @@ void RoundedBorder(HWND owner,const std::filesystem::path& output={})
             }
             SelectObject(dc,previous);
         }
+        if(focused)SetFocus(previousFocus);
         if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);if(region)DeleteObject(region);DestroyWindow(window);
     }
 }
