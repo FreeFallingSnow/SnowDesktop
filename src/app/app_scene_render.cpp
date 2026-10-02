@@ -533,7 +533,7 @@ void DesktopApp::DrawDynamicOverlays(
                     bounds = GetLargeIconFrameRect(*item);
                     const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
                         EffectiveLargeIconConfig(*item), CurrentPersonalization().cornerRadius);
-                    bounds = snowdesktop::large_icon_shape::Frame(config.shape, bounds);
+                    bounds = snowdesktop::large_icon_shape::Frame(config, bounds);
                     radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
                         bounds.right - bounds.left, bounds.bottom - bounds.top, GetItemLayoutScale(item->bounds)));
                     if (config.shape >= 2)

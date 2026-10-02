@@ -22,18 +22,37 @@ inline RECT Frame(int shape, RECT frame)
     return frame;
 }
 
-// Put the resize dot just inside a usable lower-right contour, rather than
-// the corner of the rectangular grid allocation that can be invisible.
+inline RECT Frame(const LargeIconConfig& config, RECT frame)
+{
+    frame = Frame(config.shape, frame);
+    if (config.shape == 5 && config.regularHexagon)
+    {
+        // This horizontal hexagon has width 2s and height sqrt(3)s. Fit it
+        // inside the allocation and retain integer-pixel centering.
+        constexpr double ratio = 1.15470053837925152902;
+        LONG width = std::max<LONG>(0, frame.right - frame.left);
+        LONG height = std::max<LONG>(0, frame.bottom - frame.top);
+        if (width > height * ratio) width = static_cast<LONG>(std::lround(height * ratio));
+        else height = static_cast<LONG>(std::lround(width / ratio));
+        frame.left += (frame.right - frame.left - width) / 2;
+        frame.top += (frame.bottom - frame.top - height) / 2;
+        frame.right = frame.left + width; frame.bottom = frame.top + height;
+    }
+    return frame;
+}
+
+// Choose a usable lower-right edge. The diamond dot sits outside its contour;
+// the other shapes keep the dot inside, with flags/hexagons near the bottom.
 inline POINT ResizeHandleCenter(const LargeIconConfig& config, RECT allocation, float radius, float inset)
 {
-    const RECT frame = Frame(config.shape, allocation);
+    const RECT frame = Frame(config, allocation);
     const float w = static_cast<float>(frame.right - frame.left), h = static_cast<float>(frame.bottom - frame.top);
     inset = std::clamp(inset, 0.f, std::max(0.f, std::min(w, h) * .2f));
     const auto point = [&](float x, float y) { return D2D1::Point2F(frame.left + x * w, frame.top + y * h); };
-    const auto insideEdge = [&](D2D1_POINT_2F a, D2D1_POINT_2F b) {
+    const auto edgePoint = [&](D2D1_POINT_2F a, D2D1_POINT_2F b, float t, float distance) {
         const float dx = b.x - a.x, dy = b.y - a.y, length = std::hypot(dx, dy);
-        return D2D1::Point2F((a.x + b.x) / 2 - (length > 0 ? dy * inset / length : 0),
-            (a.y + b.y) / 2 + (length > 0 ? dx * inset / length : 0));
+        return D2D1::Point2F(a.x + dx * t - (length > 0 ? dy * distance / length : 0),
+            a.y + dy * t + (length > 0 ? dx * distance / length : 0));
     };
     D2D1_POINT_2F center;
     if (config.shape == 2)
@@ -41,12 +60,12 @@ inline POINT ResizeHandleCenter(const LargeIconConfig& config, RECT allocation, 
         const float offset = std::max(0.f, std::min(w, h) / 2 - inset) * .70710678f;
         center = D2D1::Point2F((frame.left + frame.right) / 2.f + offset, (frame.top + frame.bottom) / 2.f + offset);
     }
-    else if (config.shape == 4) center = insideEdge(point(1, .5f), point(.5f, 1));
-    else if (config.shape == 5) center = insideEdge(point(1, .5f), point(.75f, 1));
+    else if (config.shape == 4) center = edgePoint(point(1, .5f), point(.5f, 1), .5f, -inset);
+    else if (config.shape == 5) center = edgePoint(point(1, .5f), point(.75f, 1), .85f, inset);
     else if (config.shape == 3 && config.flagDirection == 0)
-        center = insideEdge(point(.78f, .5f), point(1, 1));
+        center = edgePoint(point(.78f, .5f), point(1, 1), .85f, inset);
     else if (config.shape == 3 && config.flagDirection == 3)
-        center = insideEdge(point(1, 1), point(.5f, .78f));
+        center = edgePoint(point(1, 1), point(.5f, .78f), .15f, inset);
     else
     {
         const float innerRadius = config.shape <= 1 ? std::max(0.f, std::min(radius, std::min(w, h) / 2) - inset) : 0;

@@ -85,7 +85,7 @@ void DrawPlacementPreview(ID2D1RenderTarget* target, const LargeIconConfig& c,
     RECT allocation, float scale, bool valid)
 {
     if (!target) return;
-    const auto frame = Rect(large_icon_shape::Frame(c.shape, allocation));
+    const auto frame = Rect(large_icon_shape::Frame(c, allocation));
     const float radius = static_cast<float>(large_icon_render_rules::Radius(c,
         frame.right - frame.left, frame.bottom - frame.top, scale));
     ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
@@ -115,7 +115,7 @@ void DrawResizeHandle(ID2D1RenderTarget* target, POINT center, int diameter, flo
 void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& c, const View& incoming)
 {
     auto view = incoming;
-    view.frame = large_icon_shape::Frame(c.shape, view.frame);
+    view.frame = large_icon_shape::Frame(c, view.frame);
     if (!target || view.frame.right <= view.frame.left || view.frame.bottom <= view.frame.top) return;
     const auto frame = Rect(view.frame);
     const float radius = static_cast<float>(large_icon_render_rules::Radius(c,

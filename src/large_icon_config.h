@@ -23,6 +23,7 @@ struct LargeIconConfig
     int columns = 1, rows = 1;
     int shape = 0; // rounded rectangle, rounded square, circle, flag, diamond, hexagon
     int flagDirection = 0; // swallowtail notch: right, left, up, down
+    bool regularHexagon = false; // Fit equal edges inside the grid allocation; old hexagons keep their proportions.
     double contentScale = .60;
     double fillScale = 1; // Independent of the foreground; relative to contain/cover fit.
     double radius = 12;
@@ -97,7 +98,7 @@ struct LargeIconConfig
 template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
 {
 #define LI_FIELD(name) f(#name, c.name)
-    LI_FIELD(version); LI_FIELD(columns); LI_FIELD(rows); LI_FIELD(shape); LI_FIELD(flagDirection);
+    LI_FIELD(version); LI_FIELD(columns); LI_FIELD(rows); LI_FIELD(shape); LI_FIELD(flagDirection); LI_FIELD(regularHexagon);
     LI_FIELD(followComponentRadius); LI_FIELD(showOnHoverOnly); LI_FIELD(keepWhenDesktopHidden);
     LI_FIELD(contentScale); LI_FIELD(fillScale); LI_FIELD(radius); LI_FIELD(radiusPercent); LI_FIELD(content); LI_FIELD(fit);
     LI_FIELD(focusX); LI_FIELD(focusY); LI_FIELD(image); LI_FIELD(cachedCover);

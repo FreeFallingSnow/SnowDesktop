@@ -320,7 +320,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.editable = CanEditLargeIcons();
     result.name = item.name;
     result.defaultConfig = snowdesktop::EncodeLargeIconConfig(MakeLargeIconDefaults(index));
-    const auto frame = snowdesktop::large_icon_shape::Frame(EffectiveLargeIconConfig(item).shape, GetLargeIconFrameRect(item));
+    const auto frame = snowdesktop::large_icon_shape::Frame(EffectiveLargeIconConfig(item), GetLargeIconFrameRect(item));
     result.frameWidth = std::max<LONG>(1, frame.right - frame.left);
     result.frameHeight = std::max<LONG>(1, frame.bottom - frame.top);
     result.frameColumns = item.gridSpan.columns; result.frameRows = item.gridSpan.rows;
@@ -475,7 +475,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.session = largeIconEdit_.token;
     result.revision = largeIconEdit_.revision;
     result.config = snowdesktop::EncodeLargeIconConfig(EffectiveLargeIconConfig(item));
-    const auto visibleFrame = snowdesktop::large_icon_shape::Frame(EffectiveLargeIconConfig(item).shape, GetLargeIconFrameRect(item));
+    const auto visibleFrame = snowdesktop::large_icon_shape::Frame(EffectiveLargeIconConfig(item), GetLargeIconFrameRect(item));
     result.frameWidth = std::max<LONG>(1, visibleFrame.right - visibleFrame.left);
     result.frameHeight = std::max<LONG>(1, visibleFrame.bottom - visibleFrame.top);
     RequestLargeIconAsset(index);
@@ -579,7 +579,7 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         EffectiveLargeIconConfig(item), CurrentPersonalization().cornerRadius);
     DesktopWidget geometry; geometry.bounds = bounds; geometry.gridCell = item.gridCell;
     snowdesktop::large_icon_renderer::View view;
-    view.frame = snowdesktop::large_icon_shape::Frame(config.shape, GetStandaloneWidgetFrameRect(geometry));
+    view.frame = snowdesktop::large_icon_shape::Frame(config, GetStandaloneWidgetFrameRect(geometry));
     view.scale = GetItemLayoutScale(bounds);
     view.opacity = (item.isCut ? .4f : 1.f) * (state == 3 ? .6f : 1.f);
     view.animations = snowdesktop::animation::RuntimeAnimationsEnabled();

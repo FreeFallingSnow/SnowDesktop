@@ -83,7 +83,7 @@ struct Canvas
         else snowdesktop::large_icon_renderer::DrawFrame(target.Get(), fonts.Get(), config, view);
         if (handle)
         {
-            const auto frame = snowdesktop::large_icon_shape::Frame(config.shape, view.frame);
+            const auto frame = snowdesktop::large_icon_shape::Frame(config, view.frame);
             const float radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
                 frame.right - frame.left, frame.bottom - frame.top, view.scale));
             const auto center = snowdesktop::large_icon_shape::ResizeHandleCenter(config, view.frame, radius, 6);
@@ -175,16 +175,25 @@ void CheckShapes(Canvas& canvas, const char* outputDirectory)
         if (shape == 4 || shape == 5)
             Check(Pixel(pixels, 80, 80) == 0, "diamond and hexagon clip their slanted corners");
         Save(outputDirectory, names[shape], pixels);
-        const auto frame = snowdesktop::large_icon_shape::Frame(config.shape, view.frame);
+        const auto frame = snowdesktop::large_icon_shape::Frame(config, view.frame);
         const float radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
             frame.right - frame.left, frame.bottom - frame.top, 1));
         const auto handle = snowdesktop::large_icon_shape::ResizeHandleCenter(config, view.frame, radius, 6);
-        Check(Red(Pixel(pixels, handle.x, handle.y)), "every resize handle is located on visible icon content instead of an empty grid corner");
+        if (shape == 4)
+        {
+            Check(Pixel(pixels, handle.x, handle.y) == 0 &&
+                Pixel(pixels, handle.x - 4, handle.y - 4) == 0 && PtInRect(&view.frame, handle),
+                "diamond resize handle sits visibly outside the slanted contour while retaining its rectangular hit allocation");
+            Check(Pixel(canvas.Draw(config, view, nullptr, false, true, true), handle.x, handle.y) != 0,
+                "the exterior diamond handle is drawn in its transparent margin");
+        }
+        else Check(Red(Pixel(pixels, handle.x, handle.y)), "other resize handles remain on visible icon content instead of empty grid corners");
         if (shape == 2)
             Check(handle.x >= 304 && handle.x <= 309 && handle.y >= 224 && handle.y <= 229,
                 "circle resize handle follows the lower-right arc in a wide allocation");
-        if (shape == 4 || shape == 5)
-            Check(handle.x < 400 && handle.y < 240, "polygon resize handles move onto their lower-right sloping edges");
+        if (shape == 5)
+            Check(handle.x < 380 && handle.y >= 240 && handle.y < 256,
+                "hexagon resize handle moves down towards the lower-right corner of its sloping edge");
         const auto offset = snowdesktop::large_icon_shape::ResizePointerOffset(view.frame, handle);
         const auto atRest = snowdesktop::large_icon_shape::ResizeExtent(handle, offset);
         const auto moved = snowdesktop::large_icon_shape::ResizeExtent({handle.x + 60, handle.y + 40}, offset);
@@ -248,7 +257,8 @@ void CheckShapes(Canvas& canvas, const char* outputDirectory)
         const auto handle = snowdesktop::large_icon_shape::ResizeHandleCenter(config, view.frame, 0, 6);
         Check(Red(Pixel(pixels, handle.x, handle.y)), "every flag resize handle avoids its oriented swallowtail notch");
         if (direction == 0 || direction == 3)
-            Check(handle.x < 420 && handle.y < 245, "right and bottom swallowtails place the handle along a surviving slanted edge");
+            Check(handle.y >= 245 && handle.y < 256,
+                "right and bottom swallowtails move the handle down towards the retained lower-right tip");
         Check(Pixel(pixels, notch.x, notch.y) == 0 && Red(Pixel(pixels, tip.x, tip.y)),
             "each flag direction removes the requested edge notch and preserves its corner tip");
         Check(Pixel(preview, notch.x, notch.y) == 0 && Pixel(preview, tip.x, tip.y) != 0 &&
@@ -267,6 +277,31 @@ void CheckShapes(Canvas& canvas, const char* outputDirectory)
         auto legacy = config; legacy.shape = 0; legacy.radius = 0; legacy.radiusPercent = 0;
         Check(Pixel(canvas.Draw(legacy, view, nullptr, true), notch.x, notch.y) != 0,
             "the preview regression fixture distinguishes the former rectangular footprint");
+    }
+    config = {}; config.shape = 5; config.regularHexagon = true; config.backgroundStyle = -2;
+    view = {}; view.frame = {40, 60, 440, 260}; view.bitmap = image.Get();
+    for (const bool tall : {false, true})
+    {
+        if (tall) view.frame = {140, 10, 340, 350};
+        const auto frame = snowdesktop::large_icon_shape::Frame(config, view.frame);
+        const auto pixels = canvas.Draw(config, view);
+        const auto bounds = RedBounds(pixels);
+        Check(std::abs((bounds.right - bounds.left) - (frame.right - frame.left)) <= 2 &&
+            std::abs((bounds.bottom - bounds.top) - (frame.bottom - frame.top)) <= 2,
+            "production rendering fits the regular hexagon without stretching its equal-edge frame");
+        const auto handle = snowdesktop::large_icon_shape::ResizeHandleCenter(config, view.frame, 0, 6);
+        Check(Red(Pixel(pixels, handle.x, handle.y)) && handle.y > frame.bottom - (frame.bottom - frame.top) / 5,
+            "the regular hexagon uses a lowered handle on its own centered contour");
+        const auto preview = canvas.Draw(config, view, nullptr, true);
+        const POINT margin = tall ? POINT{240, 25} : POINT{75, 160};
+        Check(Pixel(pixels, margin.x, margin.y) == 0 && Pixel(preview, margin.x, margin.y) == 0 && Pixel(preview, 240, 160) != 0,
+            "regular-hexagon placement previews keep the same transparent grid margins as the icon");
+        if (!tall)
+        {
+            Save(outputDirectory, "shape-regular-hexagon.png", pixels);
+            Save(outputDirectory, "handled-shape-regular-hexagon.png", canvas.Draw(config, view, nullptr, false, true, true));
+            Save(outputDirectory, "preview-shape-regular-hexagon.png", preview);
+        }
     }
 }
 

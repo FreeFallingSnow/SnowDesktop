@@ -11,7 +11,7 @@ RECT DesktopApp::GetLargeIconResizeHandleRect(const DesktopItem& item, POINT* ce
     const auto allocation = GetLargeIconFrameRect(item);
     const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
         EffectiveLargeIconConfig(item), CurrentPersonalization().cornerRadius);
-    const auto frame = snowdesktop::large_icon_shape::Frame(config.shape, allocation);
+    const auto frame = snowdesktop::large_icon_shape::Frame(config, allocation);
     const float radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
         frame.right - frame.left, frame.bottom - frame.top, GetItemLayoutScale(item.bounds)));
     const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);

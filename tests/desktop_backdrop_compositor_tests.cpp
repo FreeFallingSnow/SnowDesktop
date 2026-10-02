@@ -1,6 +1,7 @@
 #include "app/desktop_backdrop_compositor.h"
 #include "app/desktop_backdrop_update_rules.h"
 #include "popup_round_geometry.h"
+#include "large_icon_shape_geometry.h"
 
 #include <roapi.h>
 #include <d2d1_1helper.h>
@@ -371,6 +372,16 @@ int RunDesktopBackdropCompositorTests()
                 "native flag backdrop accepts direction changes without a shape or size change");
             cardsGlass.EndFrame(false);
             check(cardsGlass.PanelCount() == 1, "flag direction changes reuse the native owner visual");
+        }
+        for (const bool regular : {false, true, false})
+        {
+            snowdesktop::LargeIconConfig hexagon; hexagon.shape = 5; hexagon.regularHexagon = regular;
+            const auto frame = snowdesktop::large_icon_shape::Frame(hexagon, RECT{20, 20, 320, 220});
+            cardsGlass.BeginFrame(true);
+            check(cardsGlass.AddLargeIconPanel(frame, 5, 0, 24, 31003),
+                "native hexagon backdrop accepts equal-edge frame changes");
+            cardsGlass.EndFrame(false);
+            check(cardsGlass.PanelCount() == 1, "regular-hexagon toggles retain one native owner visual");
         }
         cardsGlass.BeginFrame(true);
         check(cardsGlass.AddPanel({16, 20, 304, 132}, 12, 24, 31001) &&

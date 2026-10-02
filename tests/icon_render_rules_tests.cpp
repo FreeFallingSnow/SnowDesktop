@@ -84,6 +84,41 @@ int main(int argc, char** argv)
         flag.shape = 2;
         Check(!snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::FlagDirection, flag),
             "other shapes hide the inapplicable swallowtail control");
+        auto hexagon = config; hexagon.shape = 5; hexagon.regularHexagon = true;
+        JsonValue hexagonValue; snowdesktop::LargeIconConfig restoredHexagon;
+        Check(ParseJson(snowdesktop::EncodeLargeIconConfig(hexagon), hexagonValue) &&
+            snowdesktop::DecodeLargeIconConfig(hexagonValue, restoredHexagon) && restoredHexagon == hexagon,
+            "regular hexagons preserve their grid span and equal-edge preference across save and reload");
+        hexagonValue.object.erase("regularHexagon");
+        Check(snowdesktop::DecodeLargeIconConfig(hexagonValue, restoredHexagon) && !restoredHexagon.regularHexagon,
+            "old hexagons retain their free proportions when the regular-hexagon field is absent");
+        Check(snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::RegularHexagon, hexagon),
+            "hexagons expose the optional equal-edge control");
+        hexagon.shape = 4;
+        Check(!snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::RegularHexagon, hexagon),
+            "other silhouettes hide the inapplicable regular-hexagon control");
+        hexagon.shape = 5;
+        for (const RECT allocation : {RECT{40, 60, 440, 260}, RECT{60, 40, 260, 440}})
+        {
+            const auto frame = snowdesktop::large_icon_shape::Frame(hexagon, allocation);
+            const auto repeated = snowdesktop::large_icon_shape::Frame(hexagon, frame);
+            Check(EqualRect(&frame, &repeated) && frame.left >= allocation.left && frame.top >= allocation.top &&
+                frame.right <= allocation.right && frame.bottom <= allocation.bottom &&
+                std::abs(frame.left + frame.right - allocation.left - allocation.right) <= 1 &&
+                std::abs(frame.top + frame.bottom - allocation.top - allocation.bottom) <= 1,
+                "regular-hexagon fitting stays centered, inside its allocation and stable across repeated frame resolution");
+            const auto outline = snowdesktop::large_icon_shape::Outline(5, D2D1::RectF(
+                float(frame.left), float(frame.top), float(frame.right), float(frame.bottom)));
+            float shortest = 10000, longest = 0;
+            for (size_t i = 0; i < outline.size(); ++i)
+            {
+                const auto a = outline[i], b = outline[(i + 1) % outline.size()];
+                const float length = std::hypot(b.x - a.x, b.y - a.y);
+                shortest = std::min(shortest, length); longest = std::max(longest, length);
+            }
+            Check(outline.size() == 6 && longest - shortest < .6f,
+                "regular hexagons retain equal edge lengths within integer-pixel fitting tolerance in wide and tall allocations");
+        }
         for (int shape : {1, 2})
         {
             const auto wide = snowdesktop::large_icon_shape::Frame(shape, {40, 60, 440, 260});
