@@ -62,6 +62,13 @@ inline int QuickNavigationRowsHeight(int rows, int cellHeight, int rowGap)
     return rows * cellHeight + (rows - 1) * rowGap;
 }
 
+// Empty search sources contribute neither a heading nor its surrounding space.
+inline int QuickNavigationSearchDesktopSectionHeight(int rows, int gridHeight,
+    int headerHeight, int gap)
+{
+    return rows > 0 ? headerHeight + gap + gridHeight + gap : 0;
+}
+
 inline bool QuickNavigationHasFileTime(const FILETIME& value)
 {
     return value.dwLowDateTime != 0 || value.dwHighDateTime != 0;

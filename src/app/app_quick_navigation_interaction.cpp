@@ -320,9 +320,9 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
                 ? 0
                 : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
                     (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
-            const int listHeaderTop = content.top + headerH
-                + desktopGridH
-                + gap + appSectionHeight - quickNavigationScrollOffset_;
+            const int listHeaderTop = content.top +
+                QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridH, headerH, gap)
+                + appSectionHeight - quickNavigationScrollOffset_;
             RECT noticeHeader = MakeRect(
                 content.left + QuickNavScale(8),
                 listHeaderTop,

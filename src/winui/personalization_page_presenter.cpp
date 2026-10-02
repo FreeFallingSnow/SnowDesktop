@@ -1198,7 +1198,7 @@ struct PersonalizationPagePresenter::Impl
         const auto global = currentGlobalAppearance;
         EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [quick, index, global](auto& settings) {
             auto& theme = quick ? settings.quickNavigationAppearance : settings.collectionPopupAppearance;
-            if (index == 5 && !theme.customized)
+            if (index == 5 && (quick || !theme.customized))
             {
                 theme.appearance = ResolveSurfaceTheme(theme, global, quick ? settings.quickNavTheme : settings.collectionPopupTheme, quick);
                 theme.customized = true;

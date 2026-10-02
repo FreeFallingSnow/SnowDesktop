@@ -81,7 +81,9 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             "calculator-error", "everything-unavailable", "index-loading", "empty-results",
             "expanded-scrolled", "expanded-scrolled-tab-hover", "collapsed-scrolled",
             "collapsed-prefix", "expanded-prefix", "engine-prefix", "expanded-calculator",
-            "expanded-run", "expanded-web", "expanded-settings", "expanded-calculator-copy"};
+            "expanded-run", "expanded-web", "expanded-settings", "expanded-calculator-copy",
+            "ime-calculator-preedit", "ime-run-preedit",
+            "expanded-files-only", "expanded-apps-only"};
         for (const auto* scenario : scenarios)
         {
             const std::string name(scenario);
@@ -89,6 +91,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             navigationSettings_.layout.maximumHeight = scrolled && name.starts_with("expanded") ? 420 : NavigationSettings{}.layout.maximumHeight;
             quickNavigationCollapsed_ = name.starts_with("collapsed") || name.starts_with("typed") || name == "calculator-error" || name == "everything-unavailable" || name == "index-loading" || name == "empty-results";
             quickNavigationSearchType_ = QuickNavigationSearchType::All; quickNavigationSearchEngine_.clear();
+            quickNavigationSearchCompositionText_.clear();
             navigationSettings_.desktopViewMode = name == "expanded-source" || (scrolled && name.starts_with("expanded")) ? QuickNavigationDesktopViewMode::Source : name == "expanded-initial" ? QuickNavigationDesktopViewMode::Initial : QuickNavigationDesktopViewMode::Tile;
             quickNavigationMenu_ = name == "type-menu" ? QuickNavigationMenu::Types : name == "view-menu" ? QuickNavigationMenu::Views : QuickNavigationMenu::None;
             quickNavigationMenuSelection_ = 1;
@@ -115,9 +118,18 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             if (name == "empty-results") {quickNavigationSearchType_ = QuickNavigationSearchType::App; quickNavigationEffectiveSearchText_ = L"No matching application";}
             if (name == "collapsed-prefix" || name == "expanded-prefix") quickNavigationEffectiveSearchText_ = L"ap";
             if (name == "engine-prefix") {quickNavigationCollapsed_ = true; quickNavigationEffectiveSearchText_ = L"goo";}
-            if (name == "expanded-mixed" || name == "collapsed-composite" || name == "collapsed-scrolled" || name == "typed-app")
+            if (name == "expanded-files-only" || name == "expanded-apps-only")
+                quickNavigationEffectiveSearchText_ = L"No matching desktop item";
+            if (name.starts_with("ime-"))
+            {
+                quickNavigationCollapsed_ = true;
+                quickNavigationSearchType_ = name == "ime-calculator-preedit" ? QuickNavigationSearchType::Calculator : QuickNavigationSearchType::Run;
+                quickNavigationSearchText_.clear();
+                quickNavigationSearchCompositionText_ = quickNavigationEffectiveSearchText_ = L"ce";
+            }
+            if (name == "expanded-mixed" || name == "collapsed-composite" || name == "collapsed-scrolled" || name == "typed-app" || name == "expanded-apps-only")
                 for (size_t i = 0; i < (name == "typed-app" ? quickNavigationAppEntries_.size() : size_t{1}); ++i) quickNavigationAppResultIndices_.push_back(i);
-            if (name == "expanded-mixed" || name == "collapsed-composite" || name == "collapsed-scrolled")
+            if (name == "expanded-mixed" || name == "collapsed-composite" || name == "collapsed-scrolled" || name == "expanded-files-only")
                 for (int i = 0; i < 7; ++i) {QuickNavigationEverythingEntry file; file.name = (name == "expanded-mixed" || name == "collapsed-composite" ? L"SnowDesktop " : L"") + std::wstring(i % 2 ? L"Research notes — design review.pdf" : L"研究资料与长名称示例.png"); file.path = L"C:\\Preview\\Documents\\" + file.name; SHSTOCKICONINFO stock{}; stock.cbSize = sizeof(stock); if (SUCCEEDED(SHGetStockIconInfo(i % 2 ? SIID_DOCASSOC : SIID_IMAGEFILES,SHGSI_SYSICONINDEX,&stock))) file.systemIconIndex = stock.iSysImageIndex; quickNavigationEverythingResults_.push_back(std::move(file));} // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
             quickNavigationFixedTop_ = false;
             if (name.starts_with("expanded-") && quickNavigationSearchType_ != QuickNavigationSearchType::All)
@@ -141,6 +153,27 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             quickNavigationListSelection_ = 1; quickNavigationKeyboardTargetKind_ = QuickNavigationKeyboardTargetKind::Item; quickNavigationKeyboardTargetIndex_ = 0;
             const RECT hover = UseQuickNavigationList() ? GetQuickNavigationListRowRect(2) : GetQuickNavigationItemRect(quickNavigationRect_,1);
             quickNavigationLastMousePoint_ = {(hover.left + hover.right) / 2, (hover.top + hover.bottom) / 2};
+            if (name == "expanded-files-only" || name == "expanded-apps-only")
+            {
+                // Real search, drawing and activation must agree after an empty
+                // source disappears, with no phantom heading above the first row.
+                const auto targets = GetQuickNavigationKeyboardTargets();
+                const auto content = GetQuickNavigationContentRect(quickNavigationRect_);
+                if (!GetQuickNavigationEntries().empty() || targets.empty() ||
+                    targets.front().rect.top != content.top + QuickNavScale(28) + QuickNavScale(8) + QuickNavScale(2))
+                    throw std::runtime_error("empty search source reserves heading space");
+                const auto& target = targets.front();
+                const POINT point{(target.rect.left + target.rect.right) / 2,
+                    (target.rect.top + target.rect.bottom) / 2};
+                const QuickNavigationAppEntry* app = nullptr;
+                QuickNavigationEverythingEntry file;
+                if (name == "expanded-files-only" ? !TryGetQuickNavigationEverythingEntryAtPoint(point, file) :
+                    !TryGetQuickNavigationAppEntryAtPoint(point, app))
+                    throw std::runtime_error("search activation disagrees with first visible row");
+                quickNavigationKeyboardTargetKind_ = target.kind;
+                quickNavigationKeyboardTargetIndex_ = target.index;
+                quickNavigationLastMousePoint_ = {LONG_MIN, LONG_MIN};
+            }
             if (scrolled)
             {
                 quickNavigationScrollOffset_ = std::min(QuickNavScale(60), GetQuickNavigationMaxScrollOffset(quickNavigationRect_) / 2);
@@ -226,7 +259,9 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             {"genie-expanded-travel", 0, 0.55}, {"genie-expanded-late", 0, 0.81},
             {"genie-collapsed-mid", 1, 0.33}, {"genie-collapsed-late", 1, 0.81},
             {"genie-alpha-expanded", 0, 0.2096, true},
-            {"genie-alpha-collapsed", 1, 0.2994, true}};
+            {"genie-alpha-collapsed", 1, 0.2994, true},
+            {"genie-pole-expanded", 0, 0.55, true},
+            {"genie-pole-collapsed", 1, 0.55, true}};
         for (const auto& fixture : genieFixtures)
         {
             ComPtr<ID2D1DeviceContext> context;
@@ -274,9 +309,14 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
                 if (clip.bottom <= clip.top) continue;
                 const auto projection = navigation::GenieProjection(panel, dock, genie::Edge::Bottom,
                     fixture.collapsed, width, height, band);
-                const auto sourceRect = D2D1::RectF(-projection.sourceX, -projection.sourceY,
-                    static_cast<float>(width) - projection.sourceX,
-                    static_cast<float>(height) - projection.sourceY);
+                const auto crop = navigation::GenieSourceBandClip(projection, clip,
+                    genie::Edge::Bottom, width, height);
+                const auto sourceRect = D2D1::RectF(static_cast<float>(crop.left),
+                    static_cast<float>(crop.top), static_cast<float>(crop.right),
+                    static_cast<float>(crop.bottom));
+                const auto destinationRect = D2D1::RectF(sourceRect.left - projection.sourceX,
+                    sourceRect.top - projection.sourceY, sourceRect.right - projection.sourceX,
+                    sourceRect.bottom - projection.sourceY);
                 const D2D1_MATRIX_4X4_F matrix{
                     projection.m11, projection.m12, 0.f, projection.m14,
                     projection.m21, projection.m22, 0.f, projection.m24,
@@ -285,8 +325,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
                 context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(clip.left),
                     static_cast<float>(clip.top), static_cast<float>(clip.right),
                     static_cast<float>(clip.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
-                context->DrawBitmap(source.Get(), &sourceRect,
-                    1.f, D2D1_INTERPOLATION_MODE_LINEAR, nullptr, &matrix);
+                context->DrawBitmap(source.Get(), &destinationRect,
+                    1.f, D2D1_INTERPOLATION_MODE_LINEAR, &sourceRect, &matrix);
                 context->PopAxisAlignedClip();
             }
             require(context->EndDraw()); context->SetTarget(nullptr);

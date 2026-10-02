@@ -50,12 +50,12 @@ RECT DesktopApp::GetQuickNavigationRect() const
     const int base = QuickNavScale(layout.searchHeight);
     int height = QuickNavScale(layout.maximumHeight);
     int minimumHeight = base + QuickNavScale(48);
-    if (quickNavigationMenu_ == QuickNavigationMenu::Types)
+    if (quickNavigationCollapsed_ && quickNavigationMenu_ == QuickNavigationMenu::Types)
     {
         height = base + QuickNavScale(12 + layout.padding + static_cast<int>(kQuickNavigationSearchTypes.size()) * layout.resultRowHeight);
         minimumHeight = base + QuickNavScale(12 + layout.padding + layout.resultRowHeight);
     }
-    else if (UseQuickNavigationList())
+    else if (quickNavigationCollapsed_ && UseQuickNavigationList())
     {
         height = base + QuickNavScale(48);
         const auto rows = BuildQuickNavigationListRows();
@@ -745,9 +745,9 @@ bool DesktopApp::TryGetQuickNavigationAppEntryAtPoint(
     const int rowH = QuickNavScale(navigationSettings_.layout.resultRowHeight);
     const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
         QuickNavScale(QuickNavigationGridCellHeight()), QuickNavScale(navigationSettings_.layout.rowGap));
-    const int firstRowTop = content.top + headerH + gap
-        + desktopGridH
-        + gap + headerH + gap - quickNavigationScrollOffset_;
+    const int firstRowTop = content.top +
+        QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridH, headerH, gap)
+        + headerH + gap - quickNavigationScrollOffset_;
     const size_t visibleAppCount = GetQuickNavigationVisibleAppResultCount();
 
     for (size_t i = 0; i < visibleAppCount; ++i)
@@ -940,9 +940,9 @@ bool DesktopApp::TryExpandQuickNavigationAppsAtPoint(POINT point)
     const int rowH = QuickNavScale(navigationSettings_.layout.resultRowHeight);
     const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
         QuickNavScale(QuickNavigationGridCellHeight()), QuickNavScale(navigationSettings_.layout.rowGap));
-    const int buttonTop = content.top + headerH + gap
-        + desktopGridH
-        + gap + headerH + gap
+    const int buttonTop = content.top +
+        QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridH, headerH, gap)
+        + headerH + gap
         + static_cast<int>(GetQuickNavigationVisibleAppResultCount()) * rowH
         - quickNavigationScrollOffset_;
     RECT buttonRect = QuickNavigationResultRowRect(MakeRect(content.left + QuickNavScale(8), buttonTop,
@@ -992,9 +992,9 @@ bool DesktopApp::TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point)
         ? 0
         : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
             (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
-    const int buttonTop = content.top + headerH + gap
-        + desktopGridH
-        + gap + appSectionHeight + headerH + gap
+    const int buttonTop = content.top +
+        QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridH, headerH, gap)
+        + appSectionHeight + headerH + gap
         + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH
         - quickNavigationScrollOffset_;
     RECT buttonRect = QuickNavigationResultRowRect(MakeRect(content.left + QuickNavScale(8), buttonTop,
@@ -1030,9 +1030,9 @@ bool DesktopApp::TryLoadMoreQuickNavigationEverythingResultsAtPoint(POINT point)
             ? 0
             : headerH + gap + static_cast<int>(newVisibleAppCount) * rowH +
                 (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
-        const int firstNewRowTop = content.top + headerH + gap
-            + newDesktopGridH
-            + gap + newAppSectionHeight + headerH + gap
+        const int firstNewRowTop = content.top +
+            QuickNavigationSearchDesktopSectionHeight(newDesktopRows, newDesktopGridH, headerH, gap)
+            + newAppSectionHeight + headerH + gap
             + oldResultCount * rowH;
         quickNavigationScrollOffset_ = std::clamp(firstNewRowTop - buttonTopBefore, 0, maxScroll);
     }
@@ -1068,9 +1068,9 @@ bool DesktopApp::TryGetQuickNavigationEverythingEntryAtPoint(
         ? 0
         : headerH + gap + static_cast<int>(visibleAppCount) * rowH +
             (HasQuickNavigationAppExpandButton() ? rowH : 0) + gap;
-    const int firstRowTop = content.top + headerH + gap
-        + desktopGridH
-        + gap + appSectionHeight + headerH + gap - quickNavigationScrollOffset_;
+    const int firstRowTop = content.top +
+        QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridH, headerH, gap)
+        + appSectionHeight + headerH + gap - quickNavigationScrollOffset_;
 
     for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
     {
@@ -1116,8 +1116,9 @@ DesktopApp::GetQuickNavigationKeyboardTargets() const
     const int desktopGridHeight = QuickNavigationRowsHeight(desktopRows,
         QuickNavScale(QuickNavigationGridCellHeight()),
         QuickNavScale(navigationSettings_.layout.rowGap));
-    const int appHeaderTop = content.top + headerHeight + gap +
-        desktopGridHeight + gap - quickNavigationScrollOffset_;
+    const int appHeaderTop = content.top +
+        QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridHeight, headerHeight, gap)
+        - quickNavigationScrollOffset_;
     int everythingHeaderTop = appHeaderTop;
 
     if (!quickNavigationAppResultIndices_.empty())
@@ -1347,8 +1348,7 @@ int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay,
     const int rowH = QuickNavScale(navigationSettings_.layout.resultRowHeight);
     const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
         QuickNavScale(QuickNavigationGridCellHeight()), QuickNavScale(navigationSettings_.layout.rowGap));
-    int height = headerH + gap + desktopGridH
-        + gap;
+    int height = QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridH, headerH, gap);
     if (!quickNavigationAppResultIndices_.empty())
     {
         height += headerH + gap
@@ -1356,10 +1356,11 @@ int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay,
             + (HasQuickNavigationAppExpandButton() ? rowH : 0)
             + gap;
     }
-    height += headerH + gap
-        + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH
-        + (HasQuickNavigationEverythingLoadMoreButton() ? rowH : 0)
-        + QuickNavScale(8);
+    if (!quickNavigationEverythingResults_.empty() || quickNavigationEverythingSearchPending_ || !everythingSearchAvailable_)
+        height += headerH + gap
+            + static_cast<int>(quickNavigationEverythingResults_.size()) * rowH
+            + (HasQuickNavigationEverythingLoadMoreButton() ? rowH : 0)
+            + QuickNavScale(8);
     return std::max(height, std::max(1, static_cast<int>(content.bottom - content.top)));
 }
 

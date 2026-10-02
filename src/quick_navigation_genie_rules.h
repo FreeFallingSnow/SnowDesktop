@@ -152,4 +152,35 @@ inline dock_genie::Rect GenieRasterBandClip(const dock_genie::Rect& window,
     return vertical ? dock_genie::Rect{0.0, begin, hostWidth, end}
         : dock_genie::Rect{begin, 0.0, end, hostHeight};
 }
+
+inline dock_genie::Rect GenieSourceBandClip(const GenieStripProjection& projection,
+    const dock_genie::Rect& destination, dock_genie::Edge edge,
+    double width, double height) noexcept
+{
+    // The strip homography is valid near its own band, not over the full
+    // texture: extrapolating it can cross w=0. Crop before the parent projects
+    // the bitmap; retain two destination pixels for filtering and snapped joins.
+    const bool vertical = dock_genie::Vertical(edge);
+    const double sourceBegin = vertical ? projection.sourceY : projection.sourceX;
+    const double sourceLength = vertical ? height : width;
+    const double scale = vertical ? projection.m22 : projection.m11;
+    const double origin = vertical ? projection.m42 : projection.m41;
+    const double perspective = vertical ? projection.m24 : projection.m14;
+    const auto inverse = [&](double target) {
+        const double denominator = scale - target * perspective;
+        if (denominator <= 0.0)
+            return target < origin ? -sourceBegin : sourceLength - sourceBegin;
+        return (target * projection.m44 - origin) / denominator;
+    };
+    double begin = inverse((vertical ? destination.top : destination.left) - 2.0);
+    double end = inverse((vertical ? destination.bottom : destination.right) + 2.0);
+    // Keep the entire cropped intermediate bitmap on the positive-w branch,
+    // including filtering margins at the first/last band.
+    if (perspective > 0.0) begin = std::max(begin, -0.75 / perspective);
+    if (perspective < 0.0) end = std::min(end, -0.75 / perspective);
+    begin = std::clamp(sourceBegin + begin, 0.0, sourceLength);
+    end = std::clamp(sourceBegin + end, begin, sourceLength);
+    return vertical ? dock_genie::Rect{0.0, begin, width, end}
+        : dock_genie::Rect{begin, 0.0, end, height};
+}
 }

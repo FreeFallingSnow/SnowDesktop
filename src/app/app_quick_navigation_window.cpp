@@ -287,6 +287,7 @@ void DesktopApp::RefreshQuickNavigationSearchCompositionText(HWND editHwnd, LPAR
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
         quickNavigationScrollOffset_ = 0;
+        PositionQuickNavigationWindow();
         InvalidateQuickNavigationWindow();
     }
 }
@@ -306,6 +307,7 @@ void DesktopApp::ClearQuickNavigationSearchCompositionText()
         quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
         RefreshQuickNavigationEverythingResults();
         quickNavigationScrollOffset_ = 0;
+        PositionQuickNavigationWindow();
         InvalidateQuickNavigationWindow();
     }
 }
@@ -502,6 +504,7 @@ void DesktopApp::StartQueuedQuickNavigationEverythingSearch()
     {
         quickNavigationEverythingSearchPending_ = false;
         everythingSearchAvailable_ = false;
+        if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
         InvalidateQuickNavigationWindow();
     }
 }
@@ -528,7 +531,6 @@ void DesktopApp::OnQuickNavigationEverythingSearchCompleted(
 
     ApplyQuickNavigationEverythingSearchResult(
         std::move(*result));
-    if (UseQuickNavigationList()) PositionQuickNavigationWindow();
 }
 
 void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
@@ -616,6 +618,7 @@ void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
         GetQuickNavigationMaxScrollOffset(
             quickNavigationRect_));
     ResetQuickNavigationKeyboardTarget();
+    if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
     InvalidateQuickNavigationWindow();
 }
 
@@ -627,7 +630,17 @@ void DesktopApp::PositionQuickNavigationWindow()
     if (!quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
         return;
 
-    quickNavigationRect_ = GetQuickNavigationRect();
+    const RECT nextRect = GetQuickNavigationRect();
+    const bool geometryChanged = !EqualRect(&quickNavigationRect_, &nextRect);
+    if (geometryChanged && quickNavigationAnimationCompositorDriven_)
+    {
+        // A running native timeline refers to the previous host geometry.
+        // Continue from its current progress with the updated content bounds.
+        quickNavigationAnimation_.Advance(static_cast<std::uint64_t>(
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()));
+        StopQuickNavigationAnimationTimeline();
+    }
+    quickNavigationRect_ = nextRect;
     quickNavigationAnchorTop_ = quickNavigationRect_.top;
     quickNavigationFixedTop_ = true;
     RECT anchorRect = MakeRect(
@@ -677,6 +690,13 @@ void DesktopApp::PositionQuickNavigationWindow()
     EnsureQuickNavigationSearchEdit();
     UpdateQuickNavigationSearchEditRect();
     ApplyQuickNavigationAnimationFrame();
+    if (geometryChanged)
+    {
+        // WM_PAINT can be starved by rapid input. Resize and draw the shared
+        // surface in this update so the old height cannot remain on screen.
+        InvalidateQuickNavigationWindow(true);
+        if (quickNavigationAnimation_.IsAnimating()) EnsureUiAnimationFrame();
+    }
 }
 
 void DesktopApp::UpdateQuickNavigationWindowRegion(

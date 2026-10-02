@@ -55,9 +55,10 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
     HRESULT hr = S_OK;
     if (quickNavGenieStrips_.empty())
     {
-        // Store each untransformed destination clip and its projected bitmap
-        // as a pair. Reuse the same live surface and visuals on every frame.
-        quickNavGenieStrips_.reserve(genie::StripCount * 2);
+        // Destination clip -> projection -> cropped bitmap. The source crop
+        // precedes perspective, so its intermediate bitmap never crosses w=0.
+        // Reuse the same live surface and visuals on every frame.
+        quickNavGenieStrips_.reserve(genie::StripCount * 3);
         for (size_t i = 0; i < genie::StripCount && SUCCEEDED(hr); ++i)
         {
             ComPtr<IDCompositionVisual2> strip;
@@ -65,6 +66,12 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
             if (FAILED(hr)) break;
             quickNavGenieStrips_.push_back(strip);
             hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+            ComPtr<IDCompositionVisual2> projectionVisual;
+            if (SUCCEEDED(hr)) hr = quickNavDcompDevice_->CreateVisual(&projectionVisual);
+            if (SUCCEEDED(hr)) quickNavGenieStrips_.push_back(projectionVisual);
+            if (SUCCEEDED(hr)) hr = projectionVisual->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
+            if (SUCCEEDED(hr)) hr = projectionVisual->SetBitmapInterpolationMode(
+                DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
             ComPtr<IDCompositionVisual2> content;
             if (SUCCEEDED(hr)) hr = quickNavDcompDevice_->CreateVisual(&content);
             if (SUCCEEDED(hr)) quickNavGenieStrips_.push_back(content);
@@ -75,7 +82,8 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
             if (SUCCEEDED(hr)) hr = content->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
             if (SUCCEEDED(hr)) hr = content->SetBitmapInterpolationMode(
                 DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
-            if (SUCCEEDED(hr)) hr = strip->AddVisual(content.Get(), TRUE, nullptr);
+            if (SUCCEEDED(hr)) hr = projectionVisual->AddVisual(content.Get(), TRUE, nullptr);
+            if (SUCCEEDED(hr)) hr = strip->AddVisual(projectionVisual.Get(), TRUE, nullptr);
             if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->AddVisual(strip.Get(), TRUE, nullptr);
         }
         if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetContent(nullptr);
@@ -95,12 +103,16 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         // joins. Partition the final pixels on the parent instead, preserving
         // soft bitmap edges without gaps or double-blended translucent bands.
         const auto bounds = clipFor(i);
-        hr = quickNavGenieStrips_[i * 2]->SetClip(D2D1::RectF(
+        hr = quickNavGenieStrips_[i * 3]->SetClip(D2D1::RectF(
             static_cast<float>(bounds.left), static_cast<float>(bounds.top),
             static_cast<float>(bounds.right), static_cast<float>(bounds.bottom)));
         const auto matrix = projectionFor(i);
+        const auto source = navigation::GenieSourceBandClip(matrix, bounds, edge, width, height);
+        if (SUCCEEDED(hr)) hr = quickNavGenieStrips_[i * 3 + 2]->SetClip(D2D1::RectF(
+            static_cast<float>(source.left), static_cast<float>(source.top),
+            static_cast<float>(source.right), static_cast<float>(source.bottom)));
         ComPtr<IDCompositionVisual3> projectedStrip;
-        if (SUCCEEDED(hr)) hr = quickNavGenieStrips_[i * 2 + 1].As(&projectedStrip);
+        if (SUCCEEDED(hr)) hr = quickNavGenieStrips_[i * 3 + 1].As(&projectedStrip);
         if (SUCCEEDED(hr)) hr = projectedStrip->SetTransform(D2D1_MATRIX_4X4_F{
             matrix.m11, matrix.m12, 0.0f, matrix.m14,
             matrix.m21, matrix.m22, 0.0f, matrix.m24,
@@ -975,7 +987,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
     }
     else
     {
-        if (searching)
+        if (searching && !entries.empty())
         {
             const int headerH = QuickNavScale(28);
             RECT desktopHeader = MakeRect(contentApp.left + QuickNavScale(8),
@@ -993,7 +1005,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 desktopHeader.right, desktopHeader.bottom);
             DrawD2DSeparator(ctx.Get(), desktopSep, ToD2DColor(t.headerSeparator, navigationSettings_.colors.contains("headerSeparator") ? 1.f : .45f));
         }
-        else if (contentModel.IsSectioned())
+        else if (!searching && contentModel.IsSectioned())
         {
             for (size_t sectionIndex = 0;
                 sectionIndex <
@@ -1123,9 +1135,9 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             const int rowH = QuickNavScale(navigationSettings_.layout.resultRowHeight);
             const int desktopGridH = QuickNavigationRowsHeight(desktopRows,
                 QuickNavScale(QuickNavigationGridCellHeight()), QuickNavScale(navigationSettings_.layout.rowGap));
-            const int appHeaderTop = contentApp.top + headerH + gap
-                + desktopGridH
-                + gap - quickNavigationScrollOffset_;
+            const int appHeaderTop = contentApp.top +
+                QuickNavigationSearchDesktopSectionHeight(desktopRows, desktopGridH, headerH, gap)
+                - quickNavigationScrollOffset_;
             int everythingHeaderTop = appHeaderTop;
 
             if (!quickNavigationAppResultIndices_.empty())
@@ -1166,7 +1178,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     const bool hovered = PtInRect(&rowRectApp, contentMousePoint) != FALSE;
                     DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.22f),
+                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.f),
                         ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
 
                     const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[appIndex];
@@ -1257,7 +1269,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     quickNavTabTextFormat_.Get(), ToD2DColor(t.emptyHeaderText),
                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
-            else
+            else if (!quickNavigationEverythingResults_.empty() || quickNavigationEverythingSearchPending_)
             {
                 RECT everythingHeader = MakeRect(contentApp.left + QuickNavScale(8),
                     everythingHeaderTop,
@@ -1295,7 +1307,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     const bool hovered = PtInRect(&rowRectApp, contentMousePoint) != FALSE;
                     DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.22f),
+                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.f),
                         ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
 
                     const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];

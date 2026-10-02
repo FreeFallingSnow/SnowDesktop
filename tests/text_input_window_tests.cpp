@@ -15,12 +15,13 @@ using Microsoft::WRL::ComPtr;
 namespace input = snowdesktop::text_input;
 namespace
 {
-int failures=0,changes=0;
+int failures=0,changes=0,ownerPaints=0;
 bool destroyOnChange=false;
 void Check(bool value,const char* message)
 {if(!value){++failures;std::cerr<<"FAIL: "<<message<<'\n';}}
 LRESULT CALLBACK Owner(HWND window,UINT message,WPARAM wp,LPARAM lp)
 {
+    if(message==WM_PAINT)++ownerPaints;
     if(message==WM_COMMAND&&HIWORD(wp)==EN_CHANGE)
     {++changes;if(destroyOnChange)DestroyWindow(reinterpret_cast<HWND>(lp));return 0;}
     return DefWindowProcW(window,message,wp,lp);
@@ -65,21 +66,28 @@ void StableEmbeddedPresentation(HWND owner)
     SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(L"Search applications"));
     SendMessageW(window,EM_SETSEL,1,4);
     ValidateRect(owner,nullptr);
+    const int stablePaints=ownerPaints;
     for(int i=0;i<100;++i)
     {
         input::SetEmbeddedPose(window,frame,frame,true,true);input::SetColors(window,colors,0.f);
         input::SetPadding(window,4.f,0.f);input::SetCaretHeight(window,19.f);
         SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(L"Search applications"));
     }
-    Check(!GetUpdateRect(owner,nullptr,FALSE),"unchanged presentation never schedules another parent paint");
+    Check(!GetUpdateRect(owner,nullptr,FALSE)&&ownerPaints==stablePaints,"unchanged presentation never schedules or dispatches another parent paint");
     Check(Value(window)==L"search text","presentation updates preserve committed text");
     Selection(window,1,4,"presentation updates preserve the selected range");
-    auto changed=colors;changed.foreground=RGB(40,45,50);input::SetColors(window,changed,0.f);
-    Check(GetUpdateRect(owner,nullptr,FALSE)!=FALSE,"changed colors invalidate the embedded owner");ValidateRect(owner,nullptr);
-    SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(L"Search commands"));
-    Check(GetUpdateRect(owner,nullptr,FALSE)!=FALSE,"changed placeholder invalidates the embedded owner");ValidateRect(owner,nullptr);
-    input::SetCaretHeight(window,20.f);Check(GetUpdateRect(owner,nullptr,FALSE)!=FALSE,"changed caret height requests a paint");ValidateRect(owner,nullptr);
-    input::SetPadding(window,6.f,1.f);Check(GetUpdateRect(owner,nullptr,FALSE)!=FALSE,"changed padding requests a paint");
+    // UIA notifications may dispatch WM_PAINT synchronously. Observe both a
+    // pending region and completed paints instead of requiring it to stay dirty.
+    const auto repaint=[&](auto update,const char* message){
+        const int before=ownerPaints;update();
+        Check(GetUpdateRect(owner,nullptr,FALSE)!=FALSE||ownerPaints>before,message);
+        ValidateRect(owner,nullptr);
+    };
+    auto changed=colors;changed.foreground=RGB(40,45,50);
+    repaint([&]{input::SetColors(window,changed,0.f);},"changed colors repaint the embedded owner");
+    repaint([&]{SendMessageW(window,EM_SETCUEBANNER,0,reinterpret_cast<LPARAM>(L"Search commands"));},"changed placeholder repaints the embedded owner");
+    repaint([&]{input::SetCaretHeight(window,20.f);},"changed caret height requests a paint");
+    repaint([&]{input::SetPadding(window,6.f,1.f);},"changed padding requests a paint");
     DestroyWindow(window);ValidateRect(owner,nullptr);
 }
 void Accessible(HWND owner)

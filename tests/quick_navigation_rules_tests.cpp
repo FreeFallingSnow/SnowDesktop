@@ -709,6 +709,7 @@ void TestGenieDestinationPixelCoverage()
     namespace genie = snowdesktop::dock_genie;
     namespace navigation = snowdesktop::quick_navigation_animation_rules;
     constexpr int hostWidth = 5200, hostHeight = 3600;
+    int unboundedPoleCases = 0;
     for (const int dpi : {96, 144, 192})
     for (const bool compact : {false, true})
     for (const auto edge : {genie::Edge::Bottom, genie::Edge::Top,
@@ -741,6 +742,37 @@ void TestGenieDestinationPixelCoverage()
                     hostWidth, hostHeight);
                 const double begin = vertical ? clip.top : clip.left;
                 const double end = vertical ? clip.bottom : clip.right;
+                const auto projection = navigation::GenieProjection(window, dock, edge,
+                    collapsed, width, height, band, -3200.0, -1500.0);
+                const auto crop = navigation::GenieSourceBandClip(projection, clip, edge,
+                    width, height);
+                const double sourceAxis = vertical ? height : width;
+                const double sourceBegin = vertical ? projection.sourceY : projection.sourceX;
+                const double perspective = vertical ? projection.m24 : projection.m14;
+                const auto denominator = [&](double value) {
+                    return (value - sourceBegin) * perspective + projection.m44;
+                };
+                if (denominator(0.0) <= 0.0 || denominator(sourceAxis) <= 0.0)
+                    ++unboundedPoleCases;
+                const double cropBegin = vertical ? crop.top : crop.left;
+                const double cropEnd = vertical ? crop.bottom : crop.right;
+                Check(cropBegin >= 0.0 && cropEnd <= sourceAxis && cropEnd >= cropBegin &&
+                        denominator(cropBegin) >= 0.249 && denominator(cropEnd) >= 0.249,
+                    "cropped Genie intermediates must stay inside the texture and positive perspective branch");
+                const auto firstPoint = projection.Map(vertical ? width * 0.5 : cropBegin,
+                    vertical ? cropBegin : height * 0.5);
+                const auto lastPoint = projection.Map(vertical ? width * 0.5 : cropEnd,
+                    vertical ? cropEnd : height * 0.5);
+                const double mappedBegin = vertical ? firstPoint.y : firstPoint.x;
+                const double mappedEnd = vertical ? lastPoint.y : lastPoint.x;
+                Check(std::isfinite(mappedBegin) && std::isfinite(mappedEnd),
+                    "cropped Genie source endpoints must produce finite output coordinates");
+                if (end > begin && cropBegin > 0.0 && band != 0)
+                    Check(mappedBegin <= begin - 0.5,
+                        "source filtering margin must cover the snapped destination band's leading edge");
+                if (end > begin && cropEnd < sourceAxis && band + 1 != genie::StripCount)
+                    Check(mappedEnd >= end + 0.5,
+                        "source filtering margin must cover the snapped destination band's trailing edge");
                 Check(begin == std::floor(begin) && end == std::floor(end),
                     "Genie internal raster clips must align to physical pixels at every DPI");
                 Check(end >= begin,
@@ -763,6 +795,8 @@ void TestGenieDestinationPixelCoverage()
             }
         }
     }
+    Check(unboundedPoleCases > 0,
+        "coverage fixtures must reproduce full-texture homographies crossing the perspective pole");
 }
 
 void TestDeactivateRules()

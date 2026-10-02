@@ -92,6 +92,7 @@ void DesktopApp::ToggleQuickNavigationCollapsed()
             row.kind == QuickNavigationListRow::Kind::App ? QuickNavigationKeyboardTargetKind::App :
             row.kind == QuickNavigationListRow::Kind::Everything ? QuickNavigationKeyboardTargetKind::Everything : QuickNavigationKeyboardTargetKind::None;
     }
+    quickNavigationFixedTop_ = false;
     PositionQuickNavigationWindow();
     if (UseQuickNavigationList() && quickNavigationListSelection_ >= 0)
         EnsureQuickNavigationKeyboardTargetVisible(GetQuickNavigationListRowRect(static_cast<size_t>(quickNavigationListSelection_)));
@@ -213,7 +214,8 @@ std::vector<DesktopApp::QuickNavigationListRow> DesktopApp::BuildQuickNavigation
         if ((quickNavigationSearchType_ == QuickNavigationSearchType::All || quickNavigationSearchType_ == QuickNavigationSearchType::File) &&
             (!quickNavigationEverythingResults_.empty() || quickNavigationEverythingSearchPending_ || !everythingSearchAvailable_))
         {
-            header(ScopeLabel(QuickNavigationSearchType::File));
+            if (!quickNavigationEverythingResults_.empty())
+                header(ScopeLabel(QuickNavigationSearchType::File));
             for (size_t i = 0; i < quickNavigationEverythingResults_.size(); ++i)
             {
                 const auto& entry = quickNavigationEverythingResults_[i];
@@ -289,7 +291,7 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             continue;
         }
         DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-            ToD2DColor(selected ? theme.selectedFill : hovered ? theme.appRowHoverFill : theme.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.22f),
+            ToD2DColor(selected ? theme.selectedFill : hovered ? theme.appRowHoverFill : theme.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.f),
             ToD2DColor(selected ? theme.selectedBorder : hovered ? theme.appRowHoverStroke : theme.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
         const int size = QuickNavScale(36);
         RECT icon = MakeRect(bounds.left + QuickNavScale(8), (bounds.top + bounds.bottom - size) / 2, bounds.left + QuickNavScale(8) + size, (bounds.top + bounds.bottom + size) / 2);
@@ -651,7 +653,7 @@ bool DesktopApp::ActivateQuickNavigationListRow(size_t index)
         else CloseQuickNavigationThen([this, path = entry.path]() { LaunchPathWithShortcutPolicy(nullptr, path); });
     }
     else if (row.kind == Kind::ExpandApps) { quickNavigationAppsExpanded_ = true; PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
-    else if (row.kind == Kind::LoadMore) { quickNavigationEverythingResultLimit_ += kQuickNavigationEverythingResultBatchSize; RefreshQuickNavigationEverythingResults(); InvalidateQuickNavigationWindow(); }
+    else if (row.kind == Kind::LoadMore) { quickNavigationEverythingResultLimit_ += kQuickNavigationEverythingResultBatchSize; RefreshQuickNavigationEverythingResults(); PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
     else
     {
         const auto value = row.kind == Kind::Everything ? quickNavigationEverythingResults_[row.index].path : row.value;
