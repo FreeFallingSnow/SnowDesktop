@@ -339,7 +339,13 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
         result.steam = result.steam && snowdesktop::large_icon_steam::AppId(url).has_value();
         result.anyFill = result.anyFill || snowdesktop::IsLargeIconFill(*target.largeIcon);
     }
-    if (keys.size() > 1) result.name = _LW("largeIcon.batchName");
+    if (keys.size() > 1 && !result.steam)
+    {
+        auto defaults = MakeLargeIconDefaults(index);
+        defaults.backgroundStyle = -1; defaults.content = 0;
+        defaults.effect = snowdesktop::large_icon_preset_rules::DefaultEffect(defaults);
+        result.defaultConfig = snowdesktop::EncodeLargeIconConfig(defaults);
+    }
     result.maxColumns = std::max(item.largeIcon->columns, item.gridSpan.columns);
     result.maxRows = std::max(item.largeIcon->rows, item.gridSpan.rows);
     if (const auto* page = FindGridPage(gridPages_, item.gridCell.pageId))
@@ -438,6 +444,13 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
                             asset && asset->hasEdgeColor, asset ? asset->accent : 0, asset ? asset->edgeColor : 0))
                         { result.error = "largeIcon.invalid"; break; }
                     }
+                    else if (!request.fields.empty())
+                    {
+                        const auto runtime = largeIconRuntime_.find(key);
+                        const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
+                        snowdesktop::large_icon_preset_rules::PrepareForEditing(merged, asset ? asset->accent : 0,
+                            asset && asset->hasEdgeColor, asset ? asset->edgeColor : 0);
+                    }
                     if (!snowdesktop::large_icon_edit_rules::Patch(merged, config, request.fields))
                     { result.error = "largeIcon.invalid"; break; }
                 }
@@ -502,13 +515,16 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
                 if (std::find(result.mixedFields.begin(), result.mixedFields.end(), name) == result.mixedFields.end()) result.mixedFields.push_back(name);
         }
     }
+    result.anyFill = std::any_of(keys.begin(), keys.end(), [&](const auto& key) {
+        return snowdesktop::IsLargeIconFill(EffectiveLargeIconConfig(items_[FindItemIndexByKey(key)]));
+    });
     return result;
 }
 
 const snowdesktop::LargeIconConfig& DesktopApp::EffectiveLargeIconConfig(const DesktopItem& item) const
 {
-    if (CanEditLargeIcons())
-        if (const auto preview = largeIconEdit_.previews.find(item.layoutKey); preview != largeIconEdit_.previews.end()) return preview->second;
+    if (const auto preview = largeIconEdit_.previews.find(item.layoutKey);
+        preview != largeIconEdit_.previews.end() && CanEditLargeIcons()) return preview->second;
     if (largeIconEdit_.key == item.layoutKey && largeIconEdit_.preview && CanEditLargeIcons())
         return *largeIconEdit_.preview;
     return *item.largeIcon;

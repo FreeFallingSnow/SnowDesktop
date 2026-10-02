@@ -3,6 +3,7 @@
 #include "status_bar_appearance.h"
 #include "winui/home_about_ipc_values.h"
 #include "large_icon_edit_rules.h"
+#include "large_icon_preset_rules.h"
 #include "settings_process.h"
 #include "shell_extension_service.h"
 
@@ -609,6 +610,14 @@ void TestLargeIconEditing()
     auto fill = first; fill.backgroundStyle = -2;
     draft.effect = 2;
     Check(!Patch(fill, draft, {"effect"}), "batch dynamic-title selection rejects any image-fill target");
+    auto legacyCustom = second;
+    legacyCustom.backgroundStyle = -3; legacyCustom.defaultBackground = 2;
+    legacyCustom.defaultSolidColor = 0x123456; legacyCustom.defaultSolidOpacity = .7;
+    snowdesktop::large_icon_preset_rules::PrepareForEditing(legacyCustom, 0, false, 0);
+    draft.opacity = .25;
+    Check(Patch(legacyCustom, draft, {"opacity"}) && legacyCustom.backgroundStyle == 9 &&
+        legacyCustom.manualColor == 0x123456 && legacyCustom.opacity == .25 && legacyCustom.foregroundImage == "second.png",
+        "batch editing a legacy custom background reaches its visible settings without losing its own color or image");
 
     Item a{first, {1, 1}}, b{second, {3, 1}};
     const std::vector<Change<Item, std::pair<int, int>>> changes{{&a, draft, {2, 2}}, {&b, draft, {2, 2}}};

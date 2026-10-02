@@ -24,6 +24,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     LargeIconSettingsAction action;
     std::function<void()> nameChanged;
     LargeIconSettingsSnapshot snapshot;
+    std::wstring headingName;
     LargeIconConfig draft;
     LargeIconConfig savedDraft;
     std::vector<std::string> fields;
@@ -68,7 +69,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         LargeIconConfig result; JsonValue json;
         if (ParseJson(snapshot.defaultConfig, json)) DecodeLargeIconConfig(json, result);
-        result.effect = large_icon_preset_rules::DefaultEffect(draft);
+        result.effect = snapshot.anyFill ? 3 : large_icon_preset_rules::DefaultEffect(draft);
         return result;
     }
     bool Supported(int direction)
@@ -90,6 +91,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Sync()
     {
         syncing = true;
+        headingName = snapshot.itemCount > 1 ? L("largeIcon.batchName") : snapshot.name;
         status.Text(L(snapshot.error));
         status.Visibility(snapshot.error.empty() ? x::Visibility::Collapsed : x::Visibility::Visible);
         editorHost.IsEnabled(snapshot.available && snapshot.editable && snapshot.error != "largeIcon.stale");
@@ -146,7 +148,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }
         if (oldSteam != snapshot.steam || oldCount != snapshot.itemCount) Build();
         else Sync();
-        if (snapshot.name != oldName && nameChanged) nameChanged();
+        if ((snapshot.name != oldName || snapshot.itemCount != oldCount) && nameChanged) nameChanged();
         return snapshot.succeeded;
     }
     void Cancel()
@@ -224,7 +226,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 if (member == &LargeIconConfig::themeGradient && self.draft.themeGradient) self.draft.themeColor = false;
             }
             if constexpr (std::is_same_v<T, int>)
-                if (member == &LargeIconConfig::titleDirection) self.draft.autoTitleDirection = defaults.autoTitleDirection;
+                if (member == &LargeIconConfig::titleDirection)
+                { self.draft.autoTitleDirection = defaults.autoTitleDirection; self.Mark(&LargeIconConfig::autoTitleDirection); }
             if constexpr (std::is_same_v<T, double>)
                 if (member == &LargeIconConfig::radiusPercent) { self.draft.radius = defaults.radius; self.Mark(&LargeIconConfig::radius); }
             self.Send("commit");
@@ -272,7 +275,9 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         slider.PointerReleased(commit); slider.PointerCaptureLost(commit); slider.KeyUp(commit); slider.LostFocus(commit);
         number.KeyUp(commit); number.LostFocus(commit);
         synchronize.push_back([this, slider, number, member, factor] {
-            const auto value = NumericValue(member) * factor; slider.Value(value); presenter_controls::SyncNumberBoxValue(number, value);
+            const auto value = NumericValue(member) * factor; slider.Value(value);
+            number.PlaceholderText(L("largeIcon.mixed"));
+            presenter_controls::SyncNumberBoxValue(number, Mixed(member) ? std::numeric_limits<double>::quiet_NaN() : value);
         });
         Row(panel, key, pair, Reset(member), field, level);
     }
@@ -342,7 +347,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 member == &LargeIconConfig::effect && IsLargeIconFill(draft) && draft.effect == 2 ? 0 : draft.*member;
             const auto found = std::find(values.begin(), values.end(), value);
             input.PlaceholderText(L("largeIcon.mixed"));
-            input.SelectedIndex(Mixed(member) || found == values.end() ? -1 : static_cast<int>(found - values.begin()));
+            const bool mixed = Mixed(member) || (member == &LargeIconConfig::titleDirection && Mixed(&LargeIconConfig::autoTitleDirection));
+            input.SelectedIndex(mixed || found == values.end() ? -1 : static_cast<int>(found - values.begin()));
         });
         Row(panel, key, input, Reset(member), field, level);
     }
@@ -355,9 +361,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         c::ColorPicker picker; picker.IsAlphaEnabled(false); c::Flyout flyout;
         c::StackPanel body; body.Spacing(8); body.Children().Append(picker); flyout.Content(body); button.Flyout(flyout);
         std::weak_ptr<Impl> weak = shared_from_this();
-        flyout.Opening([weak, body, picker](auto const&, auto const&) {
+        flyout.Opening([weak, body, picker, member](auto const&, auto const&) {
             body.Children().Clear(); body.Children().Append(picker);
-            if (auto self = weak.lock()) self->ColorShortcuts(body, picker);
+            if (auto self = weak.lock()) self->ColorShortcuts(body, picker, [weak, member](unsigned value) {
+                if (auto owner = weak.lock()) { owner->draft.*member = value; owner->Mark(member); owner->Preview(); }
+            });
         });
         picker.ColorChanged([weak, member](auto const&, auto const& args) {
             if (auto self = weak.lock(); self && !self->syncing)
@@ -370,7 +378,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         });
         synchronize.push_back([this, picker, swatch, label, member] {
             const auto color = Color(draft.*member); picker.Color(color); swatch.Background(m::SolidColorBrush(color));
-            wchar_t text[8]; swprintf_s(text, L"#%06X", draft.*member); label.Text(text);
+            wchar_t text[8]; swprintf_s(text, L"#%06X", draft.*member); label.Text(Mixed(member) ? L("largeIcon.mixed") : std::wstring(text));
         });
         Row(panel, key, button, Reset(member), field, level);
     }
@@ -383,12 +391,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         row.SetControlAlignment(x::HorizontalAlignment::Right); row.root.Margin({level * 16., 0, 0, 0});
         panel.Children().Append(row.root); Track(row.root, field);
     }
-    void ColorShortcuts(c::StackPanel panel, c::ColorPicker picker)
+    void ColorShortcuts(c::StackPanel panel, c::ColorPicker picker, std::function<void(unsigned)> selected = {})
     {
         const auto add = [&](const char* key, unsigned value) {
             c::Button button; button.Content(winrt::box_value(L(key)));
             button.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-            button.Click([picker, value](auto const&, auto const&) { picker.Color(Color(value)); });
+            button.Click([picker, value, selected](auto const&, auto const&) { picker.Color(Color(value)); if (selected) selected(value); });
             panel.Children().Append(button);
         };
         if (snapshot.hasEdgeColor) add("largeIcon.useIconBackground", snapshot.edgeColor);
@@ -413,7 +421,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (auto self = weak.lock(); self && !self->syncing && input.SelectedIndex() >= 0)
             { self->draft.gradient.enabled = input.SelectedIndex() == 1; self->Mark(&LargeIconConfig::gradient); self->Send("commit"); }
         });
-        synchronize.push_back([this, input] { input.SelectedIndex(draft.gradient.enabled ? 1 : 0); });
+        synchronize.push_back([this, input] {
+            input.PlaceholderText(L("largeIcon.mixed"));
+            input.SelectedIndex(Mixed(&LargeIconConfig::gradient) ? -1 : draft.gradient.enabled ? 1 : 0);
+        });
         Row(panel, "largeIcon.defaultBackground", input, [](auto& self) { self.draft.gradient.enabled = false; self.Mark(&LargeIconConfig::gradient); self.Send("commit"); }, Field::Custom);
     }
     void Build()
@@ -459,7 +470,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             coverLabels[i].FontSize(12); coverLabels[i].TextWrapping(x::TextWrapping::Wrap); coverLabels[i].MaxWidth(120);
             c::Button choose; choose.Content(winrt::box_value(L(i == 0 ? "largeIcon.landscape" : "largeIcon.portrait")));
             std::weak_ptr<Impl> weak = shared_from_this();
-            choose.Click([weak, i](auto const&, auto const&) { if (auto self = weak.lock()) { self->draft.steamOrientation = i + 1; self->Send("commit"); } });
+            choose.Click([weak, i](auto const&, auto const&) { if (auto self = weak.lock()) { self->draft.steamOrientation = i + 1; self->Mark(&LargeIconConfig::steamOrientation); self->Send("commit"); } });
             visibility.push_back([this, choose, i] { choose.IsEnabled(!(i == 0 ? snapshot.landscapePath : snapshot.portraitPath).empty()); });
             asset.Children().Append(coverImages[i]); asset.Children().Append(coverLabels[i]); asset.Children().Append(choose); gallery.Children().Append(asset);
         }
@@ -547,7 +558,7 @@ LargeIconPagePresenter::LargeIconPagePresenter(std::function<std::wstring(std::s
 LargeIconPagePresenter::~LargeIconPagePresenter() { Deactivate(); impl_->previews.Close(); }
 c::StackPanel LargeIconPagePresenter::Content() const { return impl_->root; }
 std::wstring_view LargeIconPagePresenter::NameForKey(std::wstring_view key) const
-{ return impl_->active && impl_->snapshot.key == key ? std::wstring_view(impl_->snapshot.name) : std::wstring_view{}; }
+{ return impl_->active && impl_->snapshot.key == key ? std::wstring_view(impl_->headingName) : std::wstring_view{}; }
 void LargeIconPagePresenter::Activate(std::wstring key)
 {
     if (impl_->active && impl_->snapshot.key == key) return;
