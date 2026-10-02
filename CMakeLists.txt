@@ -2540,5 +2540,11 @@ if(BUILD_TESTING AND WIN32)
         add_test(NAME build_wait_retry COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_wait_retry_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
         set_tests_properties(build_wait_retry PROPERTIES LABELS "integration;tools" TIMEOUT 240)
+        add_test(NAME build_shared_resources COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_shared_resources_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(build_shared_resources PROPERTIES LABELS "tools;core" TIMEOUT 90)
+        add_test(NAME build_foreground_wait COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_foreground_wait_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(build_foreground_wait PROPERTIES LABELS "tools;integration" TIMEOUT 90)
     endif()
 endif()

@@ -6,6 +6,8 @@ cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
 
 rem Shared-directory collaboration commands reuse the standard build below.
 if /i "%~1"=="watch" goto localwait
+if /i "%~1"=="resource" goto resource
+if /i "%~1"=="ready-and-wait" goto collaboration
 if /i "%~1"=="repair" goto collaboration
 if /i "%~1"=="repair-abandon" goto collaboration
 if /i "%~1"=="begin" goto collaboration
@@ -108,4 +110,8 @@ exit /b %ERRORLEVEL%
 rem Automatically ensure the read-only monitor; unavailable Python/port must not block builds.
 python.exe "%~dp0..\tools\build-dashboard\manage.py" start >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_manager.ps1 %*
+exit /b %ERRORLEVEL%
+
+:resource
+python "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_shared_resources.py" %*
 exit /b %ERRORLEVEL%

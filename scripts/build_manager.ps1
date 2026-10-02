@@ -1,7 +1,7 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('begin', 'ready', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon')][string]$Command,
+    [ValidateSet('begin', 'ready', 'ready-and-wait', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'status', 'recover', 'repair', 'repair-abandon')][string]$Command,
     [Parameter(Position = 1)][ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$')][string]$Participant,
     [ValidatePattern('^[a-f0-9]{32}$')][string]$Batch,
     [ValidateRange(1, 86400)][int]$WaitSeconds = 86400,
@@ -16,6 +16,21 @@ param(
     [switch]$AutoCheck
 )
 
+# Keep one foreground tool process alive; the shared ready worker is reused.
+if($Command -eq 'ready-and-wait') {
+    if(-not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=1800}
+    if($Revision -lt 0){throw 'ready-and-wait requires the latest -Revision.'}
+    & $PSCommandPath ready $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -ReloadShell:$ReloadShell | Out-Null
+    if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+    $python=Get-Command python.exe -ErrorAction SilentlyContinue
+    if($python){
+        & $python.Source (Join-Path $PSScriptRoot 'build_wait_tasks.py') watch wait $Participant --condition result --batch $Batch --revision $Revision --timeout $WaitSeconds
+    }else{
+        # Base collaboration remains usable without installing Python.
+        & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck
+    }
+    exit $LASTEXITCODE
+}
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -484,6 +499,11 @@ try {
                     if ($AutoCheck -and $check -and $check.status -eq 'pending' -and ((Get-Field (Get-Field $entries[0] 'testPlan') 'source') -ne 'repair-carried' -or @($current.participants | Where-Object state -eq 'editing').Count -eq 0)) {
                         $checkSelected=Start-CheckRecord $current $entries[0]
                         Write-AtomicJson $state $statePath
+                    }
+                    $badChecks=@($current.participants | Where-Object {$_.state -eq 'finished' -and (Get-Field (Get-Field $_ 'check') 'status') -in 'failed','invalidated','interrupted'})
+                    if($AutoCheck -and $badChecks.Count -gt 0){
+                        [pscustomobject]@{status='attention';batchId=$Batch;participant=$Participant;editRevision=$observedRevision;reason='A declared check needs explicit repair/reopen; no automatic repeat was started.';checks=@($badChecks | ForEach-Object {[pscustomobject]@{participant=$_.id;check=$_.check}})} | ConvertTo-Json -Depth 10
+                        exit 2
                     }
                     if (@($current.participants | Where-Object state -eq 'editing').Count -eq 0 -and -not (Checks-BlockFreeze $current)) {
                         $buildLease = Try-Lease 'build.lock'

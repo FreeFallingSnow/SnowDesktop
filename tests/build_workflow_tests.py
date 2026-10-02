@@ -57,8 +57,10 @@ def run_tests(repo):
     check_build_entry_preflight(repo)
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-workflow-'))
     scripts=root/'scripts';scripts.mkdir()
-    for name in ('build_manager.ps1','build_inputs.ps1','build_job.cs','build_protocol.ps1','build_ownership.ps1','build_preflight.ps1','build_waiter.ps1'):
+    for name in ('build_manager.ps1','build_inputs.ps1','build_job.cs','build_protocol.ps1','build_ownership.ps1','build_preflight.ps1','build_waiter.ps1','build_wait_tasks.py'):
         shutil.copyfile(repo/'scripts'/name,scripts/name)
+    (root/'tools/build-dashboard').mkdir(parents=True)
+    shutil.copyfile(repo/'tools/build-dashboard/server.py',root/'tools/build-dashboard/server.py')
     (root/'src').mkdir()
     for name in ('a.txt','b.txt','other.txt'):(root/'src'/name).write_text('original')
     (root/'.gitignore').write_text('.build/\n*.out\n*.err\n*.request\n*.log\n*.count\nfail-test\nhold-build\nmessage.txt\nunit.ps1\n')
@@ -78,6 +80,7 @@ Write-Output "controlled $Phase passed";exit 0
     git('init','--quiet');git('add','.');git('commit','--quiet','-m','fixture')
     state_root=root/'.build/collaboration'
     owned=[]
+    foreground=[]
     def call(*args,code=0):
         p=subprocess.run([PS,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(scripts/'build_manager.ps1'),*map(str,args)],cwd=str(root),capture_output=True,text=True,timeout=20)
         assert p.returncode==code,(args,p.returncode,p.stderr,p.stdout)
@@ -111,16 +114,22 @@ Write-Output "controlled $Phase passed";exit 0
         reopened=begin('a');assert reopened['editRevision']==1
         call('finish','a','-Batch',bid,'-Revision',0,code=2)
         call('finish','a','-Batch',bid,code=2)
-        ready('b',bid,0);time.sleep(.8);assert not (root/'build.count').exists()
         call('ready','a','-Batch',bid,'-Revision',1,code=2) # stale plan cannot be re-used
-        plan('a',bid,1,tests='Beta');ready('a',bid,1)
+        plan('a',bid,1,tests='Beta')
+        active=subprocess.Popen([PS,'-NoProfile','-File',str(scripts/'build_manager.ps1'),'ready-and-wait','a','-Batch',bid,'-Revision','1','-WaitSeconds','20'],cwd=str(root),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        foreground.append(active);active_pid=active.pid
+        until(lambda: state()['current']['participants'][0].get('check',{}).get('status')=='passed')
+        owned.append(state()['current']['participants'][0]['waiter'])
+        time.sleep(.3);assert active.poll() is None and active.pid==active_pid and not (root/'build.count').exists(),'foreground must remain blocked while B edits'
+        ready('b',bid,0)
         until(lambda: read_result(bid) is not None)
-        result=read_result(bid);assert result['outcome']=='passed',result
+        stdout,stderr=active.communicate(timeout=8);assert active.returncode==0,(stdout,stderr)
+        result=read_result(bid);assert result['outcome']=='passed' and json.loads(stdout)['status']=='completed' and json.loads(stdout)['result']==result,result
         assert (root/'build.count').read_text().count('run')==1
         assert (root/'test.count').read_text().count('run')==1
         assert result['testingPlan']['tests']==['Beta']
         assert call('wait','a','-Batch',bid,'-Revision',1)==call('wait','b','-Batch',bid,'-Revision',0)
-        print('PASS nonblocking ready, read-only check, reopen, stale finish, frozen selective plan, one pipeline, common result')
+        print('PASS nonblocking ready, read-only check, reopen, stale finish, blocking ready-and-wait resumes the same conversation, frozen selective plan, one pipeline, common result')
 
         # Content digests do not invalidate on a commit of unchanged content.
         (root/'src/a.txt').write_text('changed input')
@@ -208,6 +217,8 @@ $p.tests=@('Missing');try{Resolve-PlanTests $p $inv|Out-Null;throw 'empty pass'}
         print('PASS changed declared input blocks freeze until explicit new revision and plan')
         print('WORKFLOW PASSED; evidence fixture: '+str(root))
     finally:
+        for process in foreground:
+            if process.poll() is None:process.terminate();process.wait(timeout=5)
         # Only worker identities returned by this fixture's ready calls.
         import importlib.util
         spec=importlib.util.spec_from_file_location('reader_cleanup',repo/'tools/build-dashboard/server.py');mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)

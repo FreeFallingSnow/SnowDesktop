@@ -316,7 +316,7 @@ scripts\build.bat watch cancel --ticket TICKET
 同目录同文件仍需明确协调编辑顺序；未声明归属的活动任务无法自动证明文件可用。
 传统 `begin/finish/wait -WaitSeconds N` 仍可作为一次长阻塞工具调用，进程内轮询不等于模型轮询。
 
-对话无实质工作时可在登记 `ready/watch` 后结束当前回合，并交接任务、票据、下一步和未完成事项。
+默认保持对话活动，执行阻塞 `ready-and-wait/watch wait`；脚本等待不重复向模型返回。工具因时限 yield 时继续同一 session，不重新启动 status 命令。后台结束回合仅是明确选择无人值守时的选项。
 后续回合只读一次票据及结果再恢复操作；不要用“status → 短睡眠 → status”消耗模型调用。
 本地完成、看板变化和持久结果不会自动唤醒 Work 对话；当前没有可信的本地事件回调入口。
 Work 的回合结束通知只能提醒当前回合结束，不代表后续构建完成或任务已全部完成。
@@ -352,3 +352,30 @@ scripts\build.bat repair-abandon -Batch FAILED_BATCH -Reason "本次续修明确
 映射落盘中断时从当前 `repairOf` 对账；未知遗失状态拒绝创建重复尝试。无关活动批次不会被替换或清空，先登记本地窗口等待。
 `repair-abandon` 只关闭没有活动续修登记的关联，不代替别人撤销活动登记；活动任务只可显式退出自己停止的编辑登记。
 旧活动协议不强制迁移。失败归属仍通过 `issue` 保存证据，受影响覆盖不等于已确认缺陷责任。
+
+
+### 默认阻塞等待与共享语言条目
+
+```bat
+scripts\build.bat ready-and-wait task-A -Batch BATCH -Revision REVISION -WaitSeconds 1800
+scripts\build.bat watch wait task-A --condition window --timeout 1800
+scripts\build.bat watch wait task-A --condition files --files src/example.cpp --timeout 1800
+scripts\build.bat watch wait --ticket TICKET
+```
+
+默认保持对话活动，执行阻塞 `ready-and-wait/watch wait`；脚本等待不重复向模型返回。工具因时限 yield 时继续同一 session，不重新启动 status 命令。后台结束回合仅是明确选择无人值守时的选项。
+
+完成者的文件声明保留为来源追溯；新任务可在活动编辑窗口 claim 接手，仍在编辑的代码文件需排队。接手只读检查在全体编辑结束后自动重验，原测试要求保留，不需要原会话修改文件。原会话旧轮次或 finished 状态不能再次写入。
+
+明确豁免清单只有 `scripts/shared_resources.json` 中列出的十个 `lang/*.json`；语言条目使用以下安全路径，无需原对话同意：
+
+```bat
+scripts\build.bat resource prepare task-A --batch BATCH --revision REVISION --file lang/zh-CN.json --keys font.title,font.family
+rem 编辑返回的 patchFile，仅填写这些键的新字符串；预期旧值保存在独立登记中。
+scripts\build.bat resource apply task-A --batch BATCH --revision REVISION --request REQUEST_ID
+scripts\build.bat resource status --request REQUEST_ID
+```
+
+prepare 默认有效十五分钟（`--timeout` 至多一小时）。apply 持有短时 state/Git 事务锁，重读最新文件，仅比较已声明键的旧值；不同键合并保留，相同键旧值改变拒绝，忙时重复同一 apply 请求排队。保留原键顺序、无关内容、BOM 和换行，支持新增字符串键；每个受支持语言仍需真实翻译。成功请求可重复读取同一结果；中途崩溃留写入意图，不重放不确定写入。token 过期、旧轮次、finished 编辑者和冻结批次均拒绝。准备/写入不授予任意代码文件豁免，也不撤销活跃代码声明。
+
+共享文件禁止从陈旧副本整文件写回；所有协作写入须走上述事务。整文件重排、格式转换或结构调整用 `claim -Files lang` 串行编辑，并先等待其他活动语言编辑结束。脚本不能拦截绕过规则的普通编辑器，未经协作接口的同时保存仍须人工解决。

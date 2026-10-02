@@ -111,6 +111,7 @@ def task_view(entry):
             "stale": seconds is not None and seconds > 86400,
             "reopenedUtc": entry.get("reopenedUtc"), "finishedUtc": entry.get("finishedUtc"),
             "ownedFiles": [redact(x) for x in entry.get("ownedFiles", [])[:80]],
+            "fileRole": "active-editor" if state=="editing" else "origin-record",
             "unclaimedPeers": entry.get("unclaimedPeers", [])[:80],
             "withdrawalReason": redact(entry.get("withdrawalReason") or ""),
             "check": {"status": check_status, "source": check.get("source"),

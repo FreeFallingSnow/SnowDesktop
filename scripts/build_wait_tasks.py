@@ -133,16 +133,13 @@ def condition(ticket, state, result):
         if result and current.get('id') == expected:
             return 'attention', 'Retirement requires explicit recovery.'
         if ticket['condition'] == 'files':
-            own_editing = any(x['id'] == ticket['participant'] and x['state'] == 'editing' for x in current['participants'])
             for entry in current['participants']:
-                if entry['state'] == 'withdrawn' or entry['id'] == ticket['participant']:
+                if entry['state'] != 'editing' or entry['id'] == ticket['participant']:
                     continue
                 if not entry.get('ownedFiles'):
                     return None, 'A peer has no declared ownership; file availability cannot be proved.'
-                if any(overlaps(a, b) for a in ticket['files'] for b in entry['ownedFiles']):
-                    if own_editing:
-                        return 'attention', 'Your editing registration prevents batch retirement. Coordinate the shared file/handoff; waiting cannot release another owner.'
-                    return None, 'A peer still owns a requested file, including ready registrations.'
+                if any(overlaps(a,b) and not(a in ticket.get('sharedFiles',[]) and b in ticket.get('sharedFiles',[])) for a in ticket['files'] for b in entry['ownedFiles']):
+                    return None, 'A peer is actively editing a requested file; completed declarations are provenance only.'
     return 'eligible', 'An edit/claim window was observed. Execute the saved next step; permissions are rechecked atomically.'
 
 def diagnostic(module, directory, ticket):
@@ -178,25 +175,30 @@ def worker(repo, directory, module, ticket_id):
                 status, reason = 'timed-out', 'Bounded wait expired; inspect/resume explicitly. Registrations were retained.'
             else:
                 try:
-                    state = module.read_json(directory, 'state.json') or {'current': None}
-                    if state.get('repositoryRoot') and Path(state['repositoryRoot']).resolve() != repo:
-                        raise ValueError('Repository identity mismatch')
-                    current = state.get('current')
-                    if current and current.get('phase') not in ('editing', 'building'):
-                        raise ValueError('Unknown batch phase')
-                    if current:
-                        for entry in current['participants']:
-                            check = entry.get('check') or {}
-                            if check.get('status') == 'running' and module.owner_state(check.get('owner')) == 'exited':
-                                check['status'] = 'interrupted'  # This local snapshot is never written back.
-                    result_id = ticket.get('batchId') or (current or {}).get('id')
-                    result = module.read_json(directory, result_id + '.json') if result_id and HEX.fullmatch(result_id) else None
-                    if result and result.get('batchId') != result_id:
-                        raise ValueError('Saved result identity mismatch')
-                    if current and current.get('phase') == 'building' and module.owner_state(current.get('owner')) == 'exited':
-                        status, reason = 'attention', 'Build owner exited; diagnose and explicitly recover the frozen batch.'
-                    else:
-                        status, reason = condition(ticket, state, result)
+                    # Read result/state as one cooperating transaction; a durable-result/retirement gap is not a crash.
+                    with lease(directory/'state.lock'):
+                        state = module.read_json(directory, 'state.json') or {'current': None}
+                        if state.get('repositoryRoot') and Path(state['repositoryRoot']).resolve() != repo:
+                            raise ValueError('Repository identity mismatch')
+                        current = state.get('current')
+                        if current and current.get('phase') not in ('editing', 'building'):
+                            raise ValueError('Unknown batch phase')
+                        if current:
+                            for entry in current['participants']:
+                                check = entry.get('check') or {}
+                                if check.get('status') == 'running' and module.owner_state(check.get('owner')) == 'exited':
+                                    check['status'] = 'interrupted'  # This local snapshot is never written back.
+                        result_id = ticket.get('batchId') or (current or {}).get('id')
+                        result = module.read_json(directory, result_id + '.json') if result_id and HEX.fullmatch(result_id) else None
+                        if result and result.get('batchId') != result_id:
+                            raise ValueError('Saved result identity mismatch')
+                        if current and current.get('phase') == 'building' and module.owner_state(current.get('owner')) == 'exited':
+                            status, reason = 'attention', 'Build owner exited; diagnose and explicitly recover the frozen batch.'
+                        else:
+                            status, reason = condition(ticket, state, result)
+                except BlockingIOError:
+                    time.sleep(.25)
+                    continue
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     status, reason = 'attention', type(error).__name__ + ': state unavailable; no registration changed.'
             ticket['observations'] += 1
@@ -222,10 +224,27 @@ def spawn(repo, directory, ticket):
     ticket['owner'] = process_owner(child.pid)
     atomic(directory/(ticket['id'] + '.wait.json'), ticket)
 
+def foreground_wait(module, directory, ticket):
+    print('Waiting locally on ticket '+ticket['id']+'; this foreground tool call stays active.', file=sys.stderr, flush=True)
+    while True:
+        current = module.read_json(directory, ticket['id']+'.wait.json')
+        if not current:
+            raise ValueError('Wait ticket disappeared; no registration changed')
+        shown = diagnostic(module, directory, current)
+        if shown['status'] != 'waiting':
+            batch_id=shown.get('batchId')
+            if batch_id and HEX.fullmatch(batch_id):
+                result=module.read_json(directory,batch_id+'.json')
+                if result and result.get('batchId')==batch_id:
+                    shown=dict(shown,result=result)
+            print(json.dumps(shown, ensure_ascii=True), flush=True)
+            return 0 if shown['status'] in ('eligible','completed') else 2
+        time.sleep(.25)
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('entry', choices=('watch',))
-    p.add_argument('action', choices=('start', 'status', 'resume', 'cancel', '_worker'))
+    p.add_argument('action', choices=('wait', 'start', 'status', 'resume', 'cancel', '_worker'))
     p.add_argument('participant', nargs='?')
     p.add_argument('--condition', choices=('window', 'files', 'peers', 'result'), default='window')
     p.add_argument('--batch', default='')
@@ -233,11 +252,13 @@ def main():
     p.add_argument('--files', default='')
     p.add_argument('--ticket', default='')
     p.add_argument('--timeout', type=int, default=1800)
-    p.add_argument('--next', default='Read this ticket once, then call begin/claim with the latest receipt before editing.')
+    p.add_argument('--next', default='When this wait returns, execute the saved next step using the latest begin/claim receipt.')
     p.add_argument('--reason', default='')
     p.add_argument('--new', action='store_true')
     p.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
     args = p.parse_args()
+    foreground=args.action=='wait'
+    if foreground:args.action='status' if args.ticket else 'start'
     if not 1 <= args.timeout <= 86400:
         p.error('Timeout must be 1..86400 seconds')
     repo = args.root.resolve()
@@ -247,6 +268,12 @@ def main():
         if part.is_symlink() or getattr(part.stat(), 'st_file_attributes', 0) & 0x400:
             p.error('State parent must not be a reparse point')
     module = reader(repo)
+    if foreground and args.action=='start':
+        command=[sys.executable,str(repo/'scripts/build_wait_tasks.py'),'watch','start',args.participant or '', '--root',str(repo),'--condition',args.condition,'--batch',args.batch,'--revision',str(args.revision),'--files',args.files,'--timeout',str(args.timeout),'--next',args.next]
+        if args.new:command.append('--new')
+        created=subprocess.run(command,capture_output=True,text=True,encoding='utf-8')
+        if created.returncode:raise ValueError(created.stderr.strip())
+        return foreground_wait(module,directory,json.loads(created.stdout))
     if args.action == 'start':
         if not TASK.fullmatch(args.participant or '') or (args.batch and not HEX.fullmatch(args.batch)):
             p.error('Valid participant and optional batch IDs required')
@@ -271,6 +298,8 @@ def main():
                       'files': requested, 'status': 'waiting', 'attempt': 1, 'createdUtc': utc(),
                       'deadlineUtc': (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=args.timeout)).isoformat(),
                       'next': args.next[:2000], 'owner': None, 'observations': 0, 'reason': 'Local worker queued.'}
+            manifest=repo/'scripts/shared_resources.json'
+            ticket['sharedFiles']=json.loads(manifest.read_text(encoding='utf-8-sig'))['languageFiles'] if manifest.is_file() else []
             atomic(directory/(ticket['id'] + '.wait.json'), ticket)
             atomic(directory/('wait-' + key + '.json'), {'id': ticket['id']})
             with lease(directory/(ticket['id'] + '.wait-worker.lock')):
@@ -285,6 +314,7 @@ def main():
         p.error('Unknown wait ticket')
     shown = diagnostic(module, directory, ticket)
     if args.action == 'status':
+        if foreground:return foreground_wait(module,directory,shown)
         print(json.dumps(shown, ensure_ascii=False)); return 0
     if args.action == 'cancel':
         if shown['status'] == 'waiting':

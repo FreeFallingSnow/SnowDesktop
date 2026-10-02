@@ -46,7 +46,7 @@ function renderTask(task,batchId){
  if(task.check.status!=="not-recorded")detail(row,"只读检查 / "+(task.check.source||"来源未知"),label(task.check.status)+(task.check.reason?" · "+task.check.reason:""),tone(task.check.status));
  for(const issue of task.check.issues||[])detail(row,"检查发现",issue,"bad");
  const more=element("details"),summary=element("summary","查看文件声明、测试计划与证据");more.append(summary);retainFold(more,JSON.stringify(["task",batchId,task.id]));
- more.append(element("p","文件："+(task.ownedFiles.join(", ")||"未声明，无法自动判定其他会话的同文件冲突")));
+ more.append(element("p",((task.fileRole||(task.state==="editing"?"active-editor":"origin-record"))==="active-editor"?"当前编辑声明：":"来源会话记录（可由后续任务接手）：")+(task.ownedFiles.join(", ")||"未声明，无法自动判定其他会话的同文件冲突")));
  const plan=task.plan;more.append(element("p","测试计划："+(plan.suites||[]).join(", ")+((plan.tests||[]).length?" / "+plan.tests.join(", "):"")+(plan.requiredFull?" · 要求全量自动测试":"")));
  more.append(element("p","依据："+(plan.reason||"旧协议 / 未声明影响范围")));
  const identity=task.check.inputEnd||task.check.inputStart;if(identity)more.append(element("p","检查输入："+identity.digest));

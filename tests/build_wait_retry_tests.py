@@ -219,7 +219,7 @@ def main(repo):
         for key,value in options.items():arguments+=['--'+key,str(value)]
         out=cli(*arguments);owned.append(out.get('owner'));return out
     def done(t):return until(lambda:(lambda x:x if x and x['status']!='waiting' else None)(read(t['id']+'.wait.json')))
-    # A held finished claim remains a conflict; age cannot close an editing registration.
+    # Finished claims preserve provenance and permit handoff; age cannot close an editing registration.
     bid='a'*32
     state={'schemaVersion':1,'repositoryRoot':str(root),'current':{'id':bid,'phase':'editing','owner':None,
            'participants':[{'id':'peer','state':'editing','registeredUtc':'2000-01-01T00:00:00Z','ownedFiles':['src/a.txt']}]}}
@@ -232,14 +232,14 @@ def main(repo):
     assert read(a['id']+'.wait.json')['status']=='waiting'
     assert initial==(state_root/'state.json').read_bytes(),'Wait must not complete a stale editor or run checks'
     state['current']['participants'][0]['state']='finished';waits.atomic(state_root/'state.json',state)
-    time.sleep(2.1);assert read(a['id']+'.wait.json')['status']=='waiting','Ready ownership is still held'
+    assert done(a)['status']=='eligible','Finished provenance must not block a new task'
     state['current']=None;waits.atomic(state_root/'state.json',state)
     outcome=done(a);assert outcome['status']=='eligible' and outcome['observations']<=6
     receipt=(state_root/(a['id']+'.wait-attempt1.json')).read_bytes()
     assert cli('status','--ticket',a['id'])['status']=='eligible'
     assert cli('resume','--ticket',a['id'],'--reason','observe saved result')['status']=='eligible'
     assert receipt==(state_root/(a['id']+'.wait-attempt1.json')).read_bytes()
-    print('PASS one durable worker, stale editor retained, finished claim retained, condition progression, immutable receipt')
+    print('PASS one durable worker, stale editor retained, finished provenance released for handoff, condition progression, immutable receipt')
 
     state['current']={'id':bid,'phase':'building','owner':waits.process_owner(os.getpid()),'participants':[{'id':'peer','state':'finished'}]}
     waits.atomic(state_root/'state.json',state)

@@ -584,13 +584,15 @@
 
 ## 协作构建调用补充
 
-- 新批次保存 `begin` 返回的 `batchId/editRevision`；推荐 `plan` 声明本任务按现有规则所需的测试、影响范围及豁免依据，`ready ID -Batch B -Revision R` 非阻塞就绪，`status/wait` 观察共同结果。新协议 `finish/wait` 必须带修订号。
+- 新批次保存 `begin` 返回的 `batchId/editRevision`；推荐 `plan` 声明本任务按现有规则所需的测试、影响范围及豁免依据，`ready-and-wait ID -Batch B -Revision R` 非阻塞就绪，`status/wait` 观察共同结果。新协议 `finish/wait` 必须带修订号。
 - 就绪后继续只读走查；若发现需改文件，先用同 ID `begin` 原子重开并使用新的修订号重报计划。检查失败或中断必须显式处理，不能当作完成。
 - 写文件前 `claim` 声明范围并协调冲突；有既存改动先审查，必要时显式 `-AdoptExistingChanges`。提交使用 `commit ... -Files ... -MessageFile ...`，保留其他暂存内容。失败交接使用 `issue`，不得自动归责或清除其他活动登记。
 - 看板随协作入口自动启动，直接查看 `http://127.0.0.1:8765/`；不会因为页面关闭而停止构建。活动旧协议批次不强制迁移。准确参数与恢复约定见 `scripts/README.md` 和 `tools/build-dashboard/README.md`；协调实现留在脚本中。
 
 
-- 无实质变化的跨对话等待由一次 `ready`、长阻塞调用或 `watch start` 本地票据处理，不循环调用模型查询状态。登记后可明确交接并结束回合，后续用 `watch status --ticket T` 读取一次并执行恢复入口；当前无本地事件自动唤醒 Work 对话能力。
-- 等冻结窗口或文件归属可在 `begin` 前 `watch --condition window/files`；已有批次的编辑/结果等待用 `peers/result` 并绑定批次和修订。`eligible` 只是观察，写入仍须重新 `begin/claim`。检查发现修复仍先原子重开。
+- Agent 默认用 `ready-and-wait ID -Batch B -Revision R` 保持原对话阻塞在同一工具进程：本地等待和执行已声明轻量检查，条件变化后继续工作。工具 yield 只表示进程仍在运行，继续等待同一 session，禁止重新启动 status 轮询；减少模型往返不保证零往返。`ready/watch start` 仅用于明确选择的无人值守模式，不默认结束对话。
+- 等冻结窗口或文件归属可在 `begin` 前 `watch wait --condition window/files`；已有批次的编辑/结果等待用 `peers/result` 并绑定批次和修订。`eligible` 只是观察，写入仍须重新 `begin/claim`。检查发现修复仍先原子重开。
 - 自动测试重试只由批次运行器按已审查白名单和结构化故障执行；有限次数、退避和输入校验，保留首次失败并标 flaky，不交给模型盲目重跑整套。未覆盖故障直接交接，准确策略见脚本说明。
 - 失败续修用 `repair ID -Batch FAILED -Revision R -Reason ...`，保存新批次/修订并重新 claim；旧需求和失败证据保留，旧就绪结论重新验证。进一步失败引用最新子尝试；无活动续修时可显式 `repair-abandon`，不得清其他登记。
+
+- 文件声明约束当前活动编辑，完成记录保留来源并可由后续授权任务 `claim` 接手，不要求原对话返工。明确共享清单见 `scripts/shared_resources.json`：语言文件独立条目通过 `resource prepare/apply` 串行重读并逐键比较写入，免整文件长期独占；相同条目冲突拒绝。禁止绕过事务整文件写回；重排/格式转换先独占 `claim -Files lang` 排队串行。所有写入仍绑定当前编辑轮次，冻结后等待下一批。调用范例见脚本说明。

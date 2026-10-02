@@ -1,3 +1,22 @@
+﻿function Get-SharedResourcePaths {
+    $manifest=Join-Path $PSScriptRoot 'shared_resources.json'
+    if(-not [IO.File]::Exists($manifest)){return @()}
+    return @((Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json).languageFiles)
+}
+function Request-HandoffCheck($Current,$Other,[string]$Actor,[string]$File) {
+    $plan=Get-Field $Other 'testPlan'
+    if(-not $plan){return}
+    $check=Get-Field $Other 'check'
+    if($check -and $check.status -in 'running','failed','interrupted'){throw 'Ready check is active/failed; diagnose it before a file handoff.'}
+    if(-not (Get-Field $plan 'handoffCarried' $false)){Set-Field $plan 'sourceBeforeHandoff' $plan.source}
+    # Reuse the existing deferred-check mode, including already-running ready workers.
+    Set-Field $plan 'handoffCarried' $true
+    Set-Field $plan 'source' 'repair-carried';Set-Field $plan 'inputIdentity' $null
+    if($check){Set-Field $Other 'handoffPreviousCheck' $check;Set-Field $Other 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=(Get-EditRevision $Other);reason='Ownership handed off; recheck final inputs after peer editors close.'})}
+    $events=@(Get-Field $Other 'handoffs' @())+@([pscustomobject]@{file=$File;from=$Other.id;to=$Actor;utc=[DateTime]::UtcNow.ToString('o')})
+    Set-Field $Other 'handoffs' @($events | Select-Object -Last 100)
+    if($check){Set-Field $Other 'waiter' (Start-ReadyWorker $Current $Other)}
+}
 function Normalize-OwnedPath([string]$Path) {
     $path=$Path.Replace('\','/').TrimEnd('/')
     if (-not $path -or $path -eq '.' -or [IO.Path]::IsPathRooted($path) -or $path -match '(^|/)\.\.(/|$)|[:*?"<>|]' -or $path -match '^(\.git|\.build|\.codex-probes)(/|$)') { throw 'Ownership paths must be literal source paths inside this repository.' }
@@ -13,11 +32,15 @@ function Normalize-OwnedPath([string]$Path) {
 function Set-Ownership($Current,$Entry,[string]$Files,[bool]$Adopt) {
     $paths=@($Files.Split(',') | Where-Object {$_} | ForEach-Object {Normalize-OwnedPath $_} | Sort-Object -Unique)
     if($paths.Count -eq 0){throw 'Claim requires at least one explicit path.'}
+    $shared=@(Get-SharedResourcePaths)
+    $handoffs=@()
     foreach($other in $Current.participants) {
         if($other.id -eq $Entry.id -or $other.state -eq 'withdrawn'){continue}
         foreach($mine in $paths){foreach($theirs in @(Get-Field $other 'ownedFiles' @())){
             if($mine.Equals($theirs,[StringComparison]::OrdinalIgnoreCase) -or $mine.StartsWith($theirs+'/',[StringComparison]::OrdinalIgnoreCase) -or $theirs.StartsWith($mine+'/',[StringComparison]::OrdinalIgnoreCase)){
-                throw "File claim conflicts with $($other.id): $mine / $theirs. Coordinate the shared file; no ownership was changed."
+                if($mine -in $shared -and $theirs -in $shared){continue}
+                if($other.state -eq 'finished'){$handoffs+=@([pscustomobject]@{other=$other;file=$mine});continue}
+                throw "Active file edit conflicts with $($other.id): $mine / $theirs. Queue a structural edit; shared language keys use resource prepare/apply."
             }
         }}
     }
@@ -29,9 +52,10 @@ function Set-Ownership($Current,$Entry,[string]$Files,[bool]$Adopt) {
             if($dirty.Count -and @(Get-Field $Entry 'ownedFiles' @()).Count -eq 0){throw 'Claimed paths already have changes; review/adopt them explicitly with -AdoptExistingChanges. No claim was changed.'}
         } finally {Pop-Location}
     }
+    foreach($handoff in $handoffs){Request-HandoffCheck $Current $handoff.other $Entry.id $handoff.file}
     Set-Field $Entry 'ownedFiles' $paths
     Set-Field $Entry 'ownershipUtc' ([DateTime]::UtcNow.ToString('o'))
-    Set-Field $Entry 'unclaimedPeers' @($Current.participants | Where-Object {$_.id -ne $Entry.id -and $_.state -ne 'withdrawn' -and @(Get-Field $_ 'ownedFiles' @()).Count -eq 0} | ForEach-Object {$_.id})
+    Set-Field $Entry 'unclaimedPeers' @($Current.participants | Where-Object {$_.id -ne $Entry.id -and $_.state -eq 'editing' -and @(Get-Field $_ 'ownedFiles' @()).Count -eq 0} | ForEach-Object {$_.id})
 }
 function Invoke-OwnedCommit($Selection,[string]$PathText,[string]$MessageFile) {
     $paths=@($PathText.Split(',') | Where-Object {$_} | ForEach-Object {Normalize-OwnedPath $_} | Sort-Object -Unique)
