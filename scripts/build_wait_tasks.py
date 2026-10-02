@@ -112,9 +112,9 @@ def condition(ticket, state, result):
         own = [x for x in current['participants'] if x['id'] == ticket['participant']]
         if len(own) != 1 or own[0].get('editRevision', 0) != ticket['editRevision']:
             return 'attention', 'Registration/revision changed; resume with the latest begin receipt.'
-        if current.get('planStatus') == 'blocked':
+        if current['phase'] == 'editing' and not any(x['state']=='editing' for x in current['participants']) and current.get('planStatus') == 'blocked':
             return 'attention', 'Frozen plan needs attention: ' + str(current.get('planError', 'inspect status'))[:2000]
-        active = [x for x in current['participants'] if x['state'] != 'withdrawn']
+        active = [x for x in current['participants'] if x['state'] == 'finished']
         if any((x.get('check') or {}).get('status') in ('failed', 'invalidated', 'interrupted') for x in active):
             return 'attention', 'A registered check needs a repair/decision; no repeated check was started.'
         if current['phase'] == 'building':
