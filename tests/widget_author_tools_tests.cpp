@@ -267,10 +267,15 @@ void TestPermissionReport()
 
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+    if (argc == 2 && std::string(argv[1]) == "--package-export")
+    {
+        TestStandalonePackageExport();
+        std::cout << "standalone package export tests passed\n";
+        return 0;
+    }
     TestReviewedPackageInstallation();
-    TestStandalonePackageExport();
     TestPermissionReport();
     TestGpuDiagnostics();
     TestGpuLuaDetails();

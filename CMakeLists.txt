@@ -1917,6 +1917,12 @@ if (BUILD_TESTING)
         LINK_LIBRARIES SnowDesktopLua bcrypt ole32 pdh dxgi
         LABELS authoring contract data permission security widget)
 
+    # Keep file-export validation independent from installation-review fixtures.
+    add_test(NAME widget_package_file_export
+        COMMAND SnowDesktopWidgetAuthorToolsTests --package-export)
+    set_tests_properties(widget_package_file_export PROPERTIES
+        TIMEOUT 30 LABELS "authoring;contract;data;security;widget")
+
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorPreviewCliTests
         widget_author_preview_cli
