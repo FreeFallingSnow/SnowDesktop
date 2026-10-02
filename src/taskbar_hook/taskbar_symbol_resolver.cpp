@@ -105,8 +105,9 @@ DWORD DownloadPdb(const std::filesystem::path& destination, const std::wstring& 
 }
 
 DWORD ReadSymbols(const std::filesystem::path& dll, const std::filesystem::path& directory,
-    const AutoHideImageView& image, AutoHideAdapter& adapter)
+    const AutoHideImageView& image, std::span<const BYTE> bytes, AutoHideResolution& resolution)
 {
+    auto& adapter = resolution.adapter;
     const HANDLE process = GetCurrentProcess();
     SymSetOptions(SYMOPT_EXACT_SYMBOLS | SYMOPT_NO_PROMPTS | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_IGNORE_NT_SYMPATH);
     if (!SymInitializeW(process, directory.c_str(), FALSE)) return GetLastError();
@@ -119,6 +120,55 @@ DWORD ReadSymbols(const std::filesystem::path& dll, const std::filesystem::path&
     if (!SymGetModuleInfoW64(process, kBase, &info) || info.SymType != SymPdb || info.PdbUnmatched ||
         info.PdbAge != adapter.image.age || std::memcmp(&info.PdbSig70, &adapter.image.pdb, sizeof(GUID)))
         return ERROR_REVISION_MISMATCH;
+    // Resolve independently: a missing auto-hide method must not disable an
+    // otherwise compatible tray snapshot, or vice versa.
+    const auto resolve = [&](const char* decorated) -> std::optional<DWORD> {
+        alignas(SYMBOL_INFO) std::array<BYTE, sizeof(SYMBOL_INFO) + MAX_SYM_NAME> storage{};
+        auto* symbol = reinterpret_cast<SYMBOL_INFO*>(storage.data());
+        symbol->SizeOfStruct = sizeof(SYMBOL_INFO); symbol->MaxNameLen = MAX_SYM_NAME;
+        const std::string name = std::string("SnowTaskbar!") + decorated;
+        if (!SymFromName(process, name.c_str(), symbol) || std::strcmp(symbol->Name, decorated) ||
+            symbol->ModBase != kBase || symbol->Address < kBase ||
+            symbol->Address - kBase >= adapter.image.imageSize) return {};
+        return static_cast<DWORD>(symbol->Address - kBase);
+    };
+    static constexpr const char* vectorPrefix =
+        "@?$produce@U?$convertible_observable_vector@UNotificationAreaIcon@Shell@UI@WindowsUdk@winrt@@V?$vector@UNotificationAreaIcon@Shell@UI@WindowsUdk@winrt@@V?$allocator@UNotificationAreaIcon@Shell@UI@WindowsUdk@winrt@@@std@@@std@@Usingle_threaded_collection_base@impl@5@@impl@winrt@@U?$IVector@UNotificationAreaIcon@Shell@UI@WindowsUdk@winrt@@@Collections@Foundation@Windows@3@@impl@winrt@@";
+    const std::array<std::string, static_cast<std::size_t>(ModernTraySymbol::Count)> modernNames{
+        "?HandleCopyData@TrayUI@@UEAA_N_KPEAUtagCOPYDATASTRUCT@@PEA_J@Z",
+        "?ShellNotifyIcon@NotificationAreaIconManager2@@QEAA_NQEAU_TRAYNOTIFYDATAW@@@Z",
+        "?ShellNotifyIconGetRect@NotificationAreaIconManager2@@QEAA_JQEAU_TRAYNOTIFYINFO@@@Z",
+        "?Identity@NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@QEBA?AUNotificationAreaIconIdentity@@XZ",
+        "?SendMessageToOwnerWindow@NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@AEAAXIAEBUPoint@Foundation@Windows@6@@Z",
+        "?SetIcon@NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@QEAAXPEAUHICON__@@@Z",
+        "?SetTooltip@NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@QEAAXPEBG@Z",
+        "?c_str@hstring@winrt@@QEBAPEBGXZ",
+        "?VisiblePromotedIcons@NotificationAreaIconManager2@@QEAA?AU?$IObservableVector@UNotificationAreaIcon@Shell@UI@WindowsUdk@winrt@@@Collections@Foundation@Windows@winrt@@XZ",
+        "?VisibleOverflowIcons@NotificationAreaIconManager2@@QEAA?AU?$IObservableVector@UNotificationAreaIcon@Shell@UI@WindowsUdk@winrt@@@Collections@Foundation@Windows@winrt@@XZ",
+        std::string("?get_Size") + vectorPrefix + "UEAAHPEAI@Z",
+        std::string("?GetAt") + vectorPrefix + "UEAAHIPEAPEAX@Z"
+    };
+    auto& modern = resolution.modernTray; modern = {}; modern.image = adapter.image;
+    const auto root = resolve("?g_trayUI@@3V?$ComPtr@UITrayUI@@@WRL@Microsoft@@A");
+    const auto itemVtable = resolve("??_7NotificationAreaIcon2@implementation@Shell@UI@WindowsUdk@winrt@@6B@");
+    bool compatible = root && itemVtable;
+    if (compatible) { modern.root = *root; modern.itemVtable = *itemVtable; }
+    for (std::size_t i = 0; compatible && i < modernNames.size(); ++i)
+    {
+        const auto address = resolve(modernNames[i].c_str());
+        if (!address) { compatible = false; break; }
+        auto function = image.Function(*address);
+        if (i == static_cast<std::size_t>(ModernTraySymbol::StringBuffer) && !function)
+        {
+            AutoHideFunction leaf{*address, *address + 21};
+            if (image.Executable(leaf.begin, leaf.end) && image.Read(leaf.begin, leaf.entry)) function = leaf;
+        }
+        if (!function) { compatible = false; break; }
+        modern.functions[i] = *function;
+    }
+    const auto layout = compatible ? DecodeModernTrayLayout(bytes, modern) : std::nullopt;
+    resolution.modernTrayError = layout ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
+    if (layout) modern.layout = *layout; else modern = {};
     for (std::size_t i = 0; i < std::size(kNames); ++i)
     {
         alignas(SYMBOL_INFO) std::array<BYTE, sizeof(SYMBOL_INFO) + MAX_SYM_NAME> storage{};
@@ -170,11 +220,11 @@ AutoHideResolution ResolveTaskbarSymbols(const std::filesystem::path& cacheRoot)
         const bool cached = std::filesystem::is_regular_file(pdb);
         if (cached)
         {
-            result.error = ReadSymbols(dll, directory, image, result.adapter);
+            result.error = ReadSymbols(dll, directory, image, {bytes, nt.OptionalHeader.SizeOfImage}, result);
             if (result.error != ERROR_REVISION_MISMATCH) return result; // ABI changes are not a network failure.
         }
         result.error = DownloadPdb(pdb, key);
-        if (result.error == ERROR_SUCCESS) result.error = ReadSymbols(dll, directory, image, result.adapter);
+        if (result.error == ERROR_SUCCESS) result.error = ReadSymbols(dll, directory, image, {bytes, nt.OptionalHeader.SizeOfImage}, result);
     }
     catch (...) { result.error = ERROR_INVALID_DATA; }
     return result;
@@ -195,7 +245,7 @@ std::optional<int> TryRunTaskbarSymbolHelper()
     View view{MapViewOfFile(handle, FILE_MAP_WRITE, 0, 0, sizeof(AutoHideResolution))};
     if (!view.value) return static_cast<int>(GetLastError());
     auto* output = static_cast<AutoHideResolution*>(view.value);
-    if (output->magic != AutoHideResolution{}.magic || output->version != 1) return ERROR_INVALID_DATA;
+    if (output->magic != AutoHideResolution{}.magic || output->version != AutoHideResolution{}.version) return ERROR_INVALID_DATA;
     *output = ResolveTaskbarSymbols(args[3]);
     return static_cast<int>(output->error);
 }
@@ -265,7 +315,7 @@ AutoHideResolution RunTaskbarSymbolHelper(const std::filesystem::path& executabl
     DWORD exitCode = ERROR_GEN_FAILURE;
     GetExitCodeProcess(process.value, &exitCode);
     result = *static_cast<const AutoHideResolution*>(view.value);
-    if (result.magic != AutoHideResolution{}.magic || result.version != 1 || exitCode != result.error)
+    if (result.magic != AutoHideResolution{}.magic || result.version != AutoHideResolution{}.version || exitCode != result.error)
         result = AutoHideResolution{.error = ERROR_INVALID_DATA};
     return result;
 }

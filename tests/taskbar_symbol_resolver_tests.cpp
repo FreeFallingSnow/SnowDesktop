@@ -1,6 +1,7 @@
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include "taskbar_hook/taskbar_autohide_rules.h"
+#include "tray_modern_bootstrap.h"
 #include <shellapi.h>
 #include <fstream>
 #include <iostream>
@@ -47,6 +48,52 @@ struct ImageFixture
     }
     AutoHideImageView View() const { return AutoHideImageView(bytes); }
 };
+struct ModernFixture : ImageFixture
+{
+    ModernTrayAdapter modern;
+    explicit ModernFixture(DWORD shift = 0)
+    {
+        bytes.resize(0x8000);
+        IMAGE_NT_HEADERS64 nt{}; std::memcpy(&nt, bytes.data() + 0x80, sizeof(nt));
+        nt.OptionalHeader.SizeOfImage = static_cast<DWORD>(bytes.size());
+        nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size =
+            static_cast<DWORD>(modern.functions.size() * sizeof(RUNTIME_FUNCTION)); Put(0x80, nt);
+        IMAGE_SECTION_HEADER section{}; std::memcpy(&section, bytes.data() + 0x80 + sizeof(nt), sizeof(section));
+        section.Misc.VirtualSize = 0x7000; Put(0x80 + sizeof(nt), section);
+        modern.image = *View().Identity(); modern.root = 0x380; modern.itemVtable = 0x3a0;
+        for (std::size_t i = 0; i < modern.functions.size(); ++i)
+        {
+            const DWORD begin = 0x1000 + static_cast<DWORD>(i) * 0x200;
+            const DWORD length = i == static_cast<std::size_t>(ModernTraySymbol::StringBuffer) ? 21 : 0x180;
+            modern.functions[i] = {begin, begin + length};
+            Put(0x500 + i * sizeof(RUNTIME_FUNCTION), RUNTIME_FUNCTION{begin, begin + length, 0x700});
+        }
+        using S = ModernTraySymbol;
+        const auto emit = [&](S symbol, std::initializer_list<BYTE> data) {
+            std::copy(data.begin(), data.end(), bytes.begin() + modern.Get(symbol).begin);
+        };
+        emit(S::CopyData, {0x48,0x8b,0x97,0x70,0x02,0,0,0x48,0x85,0xd2,0x74,0x33,0x48,0x81,0xc2,0x48,0x02,0,0,
+            0x48,0x8d,0x4d,0xe0,0xe8,0,0,0,0,0x90,0x49,0x8b,0xd0,0x48,0x8b,0x4d,0xe0,0xe8,0,0,0,0,0x0f,0xb6,0xc0});
+        const auto relative = static_cast<std::int32_t>(modern.Get(S::Notify).begin - modern.Get(S::CopyData).begin - 41);
+        Put(modern.Get(S::CopyData).begin + 37, relative);
+        emit(S::GetRect, {0x4c,0x8b,0x43,0x08,0x48,0x8b,0x13});
+        emit(S::Identity, {0x48,0x8b,0x41,static_cast<BYTE>(0x50 + shift),0x48,0x8b,0xda,0x48,0x89,0x02,
+            0x8b,0x41,static_cast<BYTE>(0x58 + shift),0x89,0x42,0x08,
+            0x0f,0x10,0x41,static_cast<BYTE>(0x5c + shift),0xf3,0x0f,0x7f,0x42,0x0c});
+        emit(S::SendOwner, {0x8b,0x93,0x98,0,0,0,0x85,0xd2,0x83,0xbb,0x94,0,0,0,0x04,
+            0x48,0x8b,0x4b,static_cast<BYTE>(0x50 + shift),0xff,0x15,
+            0x44,0x8b,0x43,static_cast<BYTE>(0x58 + shift),0x4c,0x8b,0xce});
+        emit(S::SetIcon, {0x48,0x8d,0x9e,0x38,0x01,0,0,0x48,0x39,0x3b,0x0f,0x84});
+        emit(S::SetTooltip, {0x49,0x8d,0x8e,0xa0,0,0,0,0x48,0x8d,0x44,0x24,0x20});
+        emit(S::StringBuffer, {0x48,0x8b,0x01,0x48,0x85,0xc0,0x74,0x05,0x48,0x8b,0x40,0x10,0xc3});
+        emit(S::Promoted, {0x48,0x8b,0x41,0x18,0x48,0x8b,0xda,0x48,0x8b,0xca,0x48,0x89,0x02});
+        emit(S::Overflow, {0x48,0x8b,0x41,0x20,0x48,0x8b,0xda,0x48,0x8b,0xca,0x48,0x89,0x02});
+        emit(S::VectorSize, {0x48,0x8d,0x41,0xe8,0x48,0xf7,0xd9,0x48,0x8b,0x51,0x78,0x49,0xf7,0xd8,
+            0x48,0x2b,0x50,0x70,0x48,0xc1,0xfa,0x03});
+        emit(S::VectorAt, {0x48,0x8d,0x42,0xe8,0x48,0xf7,0xda});
+        for (auto& function : modern.functions) std::copy_n(bytes.data() + function.begin, 16, function.entry.begin());
+    }
+};
 }
 
 // Only the symbol helper process is substituted here. The production parent
@@ -62,6 +109,9 @@ std::optional<int> TryRunTaskbarSymbolTestHelper()
     if (count != 4) return ERROR_INVALID_PARAMETER;
     const std::filesystem::path root(args[3]);
     const auto mode = root.filename().wstring();
+    // Live-tray fixtures use the real, isolated resolver. Unit fixture modes
+    // below retain their deterministic crash/timeout/ABI-error behavior.
+    if (mode == L"ShellHookSymbols") return TryRunTaskbarSymbolHelper();
     if (mode == L"crash") return ERROR_GEN_FAILURE;
     if (mode == L"timeout" || mode == L"cancel")
     {
@@ -85,6 +135,50 @@ int RunTaskbarSymbolResolverTests()
 {
     int failures = 0;
     auto check = [&](bool ok, const char* text) { if (!ok) { ++failures; std::cerr << "FAIL: " << text << '\n'; } };
+    ModernFixture modern, moved(8);
+    const auto layout = DecodeModernTrayLayout(modern.bytes, modern.modern);
+    const auto movedLayout = DecodeModernTrayLayout(moved.bytes, moved.modern);
+    check(layout && movedLayout && layout->window == 0x50 && movedLayout->window == 0x58 &&
+        layout->callback == 0x98 && layout->version == 0x94 && layout->icon == 0x138 &&
+        layout->vectorAdjustment == 0x18 && layout->vectorBegin == 0x70,
+        "modern snapshot derives owner, callback, version, icon and vector fields from matched methods");
+    auto staleModern = modern.modern; staleModern.image.age++;
+    check(!DecodeModernTrayLayout(modern.bytes, staleModern), "modern bootstrap rejects an unmatched PDB");
+    const auto identity = modern.modern.Get(ModernTraySymbol::Identity).begin;
+    modern.bytes[identity + 18] = 0x6c; // Changed GUID placement, same function entry.
+    check(!DecodeModernTrayLayout(modern.bytes, modern.modern), "an unsupported identity ABI cannot create a tray icon");
+    ModernFixture ambiguous;
+    const auto send = ambiguous.modern.Get(ModernTraySymbol::SendOwner).begin;
+    std::copy_n(ambiguous.bytes.data() + send, 8, ambiguous.bytes.data() + send + 32);
+    check(!DecodeModernTrayLayout(ambiguous.bytes, ambiguous.modern), "ambiguous callback fields disable supplementation");
+    {
+        snowdesktop::tray::ModernTrayReader reader(GetCurrentProcessId());
+        std::array<std::uint64_t, 2> values{0x10000, 0x20000};
+        const auto first = reinterpret_cast<std::uint64_t>(values.data());
+        std::array<std::uint64_t, 2> bounds{first, first + sizeof(values)};
+        std::vector<std::uint64_t> copied;
+        check(reader.Vector(reinterpret_cast<std::uint64_t>(&bounds), copied) && copied == std::vector<std::uint64_t>(values.begin(), values.end()),
+            "read-only native vector copies a bounded, stable list");
+        bounds[1] = first - 8;
+        check(!reader.Vector(reinterpret_cast<std::uint64_t>(&bounds), copied), "reversed native vector bounds cannot allocate");
+        bounds[1] = first + 8 * (snowdesktop::tray::kGeometries + 1);
+        check(!reader.Vector(reinterpret_cast<std::uint64_t>(&bounds), copied), "oversized native vectors cannot escape the tray limit");
+        bounds = {0, 0};
+        check(reader.Vector(reinterpret_cast<std::uint64_t>(&bounds), copied) && copied.empty(), "an empty native list is valid");
+        std::array<std::uint64_t, 32> collection{};
+        std::array<std::uint64_t, 8> vtable{};
+        constexpr std::uint64_t base = 0x180000000;
+        vtable[6] = base + moved.modern.Get(ModernTraySymbol::VectorAt).begin;
+        vtable[7] = base + moved.modern.Get(ModernTraySymbol::VectorSize).begin;
+        collection[3] = reinterpret_cast<std::uint64_t>(vtable.data());
+        collection[14] = first; collection[15] = first + sizeof(values);
+        moved.modern.layout = *movedLayout;
+        check(reader.Visible(reinterpret_cast<std::uint64_t>(collection.data()) + 16, base, moved.modern, copied) && copied.size() == 2,
+            "visible collection is recognized by its exact typed vector methods");
+        vtable[7]++;
+        check(!reader.Visible(reinterpret_cast<std::uint64_t>(collection.data()) + 16, base, moved.modern, copied),
+            "an unknown collection interface cannot hide or expose native icons");
+    }
     ImageFixture old, updated(0x30);
     check(old.View().Validate(old.adapter) && updated.View().Validate(updated.adapter),
         "matching symbol adapters accept changed timestamps, PDB GUIDs and function addresses");

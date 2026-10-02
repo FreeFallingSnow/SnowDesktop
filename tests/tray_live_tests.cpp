@@ -3,6 +3,8 @@
 // This opt-in test does not operate SnowDesktop or third-party application UI.
 #include "tray_service.h"
 #include "diagnostic_log.h"
+#include "tray_modern_bootstrap.h"
+#include "taskbar_hook/taskbar_symbol_resolver.h"
 #include <windowsx.h>
 #include <filesystem>
 #include <iostream>
@@ -13,6 +15,7 @@
 using namespace snowdesktop::tray;
 static std::wstring hookPath;
 namespace snowdesktop::deployment { std::wstring GetTaskbarHookPath() { return hookPath; } }
+std::wstring GetDataDirectoryPath() { return std::filesystem::path(hookPath).parent_path().wstring(); }
 void WriteDiagnosticLogEntry(const wchar_t* text, DiagnosticLogLevel) { std::wcout << text << std::endl; }
 constexpr UINT kCallback = WM_APP + 100, kCommand = WM_APP + 101;
 constexpr UINT kColdIconId = 78;
@@ -192,6 +195,26 @@ int TryRunTrayLiveTests()
     std::vector<std::wstring> arguments(raw, raw + argc); LocalFree(raw);
     std::vector<const wchar_t*> argv;
     for (const auto& argument : arguments) argv.push_back(argument.c_str());
+    if (argc == 3 && wcscmp(argv[1], L"--tray-modern-snapshot") == 0)
+    {
+        // Read-only diagnostic: no collector injection, broadcast or callbacks.
+        const auto resolved = snowdesktop::taskbar_hook::ResolveTaskbarSymbols(argv[2]);
+        if (resolved.modernTrayError != ERROR_SUCCESS)
+        { std::cerr << "modern snapshot unavailable: " << resolved.modernTrayError << '\n'; return 77; }
+        DWORD explorer = 0; GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &explorer);
+        for (unsigned attempt = 0; attempt < 3; ++attempt)
+        {
+            const auto events = BootstrapModernTray(explorer, 1, resolved.modernTray);
+            if (events.empty()) continue;
+            std::cout << "modern snapshot icons=" << events.size() << " explorer=" << explorer << '\n';
+            for (const auto& event : events)
+                std::cout << "pid=" << event.identity.process << " id=" << event.identity.id << " callback=" << event.callback
+                    << " version=" << event.version << " hidden=" << ((event.state & NIS_HIDDEN) != 0)
+                    << " image=" << event.width << 'x' << event.height << '\n';
+            return 0;
+        }
+        std::cerr << "FAIL: no stable native tray snapshot\n"; return 1;
+    }
     if (argc==3 && wcscmp(argv[1],L"--tray-fixture-client")==0) return Client(argv[2]);
     const bool classic = argc == 3 && wcscmp(argv[1], L"--tray-classic") == 0;
     if (!classic && (argc != 3 || wcscmp(argv[1], L"--tray-live") != 0)) return -1;
@@ -217,10 +240,20 @@ int TryRunTrayLiveTests()
     // Explorer pins hook code for callback safety. Keep this exact temporary
     // file until Explorer exits rather than locking any build output.
     hookPath = hook.wstring();
+    // Reuse only cached PDBs, copied to this fixture's isolated directory.
+    // Avoid a fresh network dependency when the matching symbols are present.
+    wchar_t executable[32768]{};
+    if (GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))))
+    {
+        const auto cached = std::filesystem::path(executable).parent_path() / L"data" / L"ShellHookSymbols";
+        if (std::filesystem::is_directory(cached, error))
+            std::filesystem::copy(cached, directory / L"ShellHookSymbols",
+                std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing, error);
+    }
     std::wcout << L"Isolated Hook (released when Explorer exits): " << hookPath << std::endl;
     try
     {
-        Fixture fixture; fixture.Start(classic);
+        Fixture fixture; fixture.Start(true);
         if (classic)
         {
             Check(Read(fixture.value->errors) == 0, "classic fixtures register before the collector exists");
@@ -235,7 +268,11 @@ int TryRunTrayLiveTests()
                             collected = icon;
                     return collected && collected->version == kClassicVersions[i] && !collected->pixels.empty();
                 }), "classic bootstrap preserves the declared protocol without any re-registration");
-                Check(!HasGuid(collected->identity.guid), "the fixture was collected from the native toolbar only");
+                if (HasGuid(collected->identity.guid))
+                {
+                    auto expectedGuid = kIconGuid; expectedGuid.Data1 += i + 1;
+                    Check(collected->identity.guid == expectedGuid, "modern bootstrap retains the actual GUID");
+                }
                 service.SetGeometry(collected->key, {-160, 40, -128, 72});
                 for (auto action : {Activation::RightDown, Activation::RightUp, Activation::ContextKeyboard})
                     Check(service.Activate(collected->key, action, {-144, 56}), "cold icon context action accepted");
@@ -287,6 +324,17 @@ int TryRunTrayLiveTests()
         };
         {
             Service service;
+            for (unsigned i = 0; i < std::size(kClassicVersions); ++i)
+            {
+                Check(Await([&] {
+                    for (const auto& icon : service.Current().icons)
+                        if (icon.identity.window == reinterpret_cast<std::uint64_t>(fixture.value->window) &&
+                            icon.identity.process == fixture.process.dwProcessId && icon.identity.id == kClassicIconId + i)
+                            return icon.version == kClassicVersions[i] && icon.callback == kClassicCallback + i &&
+                                !icon.pixels.empty() && !(icon.state & NIS_HIDDEN);
+                    return false;
+                }, 65000), "startup supplementation finds icons ignoring TaskbarCreated with their original callback protocols");
+            }
             Check(Await([&] {
                 const auto icon = findCold(service.Current());
                 return icon && icon->version == 4 && !icon->pixels.empty() && Read(fixture.value->coldVersionRequests) == 2;

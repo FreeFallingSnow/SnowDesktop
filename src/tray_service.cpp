@@ -2,6 +2,10 @@
 #include "deployment_context.h"
 #include "diagnostic_log.h"
 #include "tray_menu_placement.h"
+#include "tray_modern_bootstrap.h"
+#include "taskbar_hook/taskbar_symbol_resolver.h"
+#include "data_paths.h"
+#include <future>
 #include <map>
 #include <thread>
 
@@ -217,6 +221,11 @@ struct Service::Impl
     }
     void Run(std::stop_token token)
     {
+        // Resolve outside Explorer and without blocking normal tray events.
+        // The helper owns DbgHelp's process-global state and a bounded job.
+        std::future<taskbar_hook::AutoHideResolution> symbols;
+        std::optional<taskbar_hook::ModernTrayAdapter> modernAdapter;
+        bool symbolsRequested = false;
         DWORD reportedError = MAXDWORD;
         std::wstring reportedStage;
         while (!token.stop_requested())
@@ -238,6 +247,24 @@ struct Service::Impl
                 connection = current; geometries.clear(); CancelFocus(); menuPlacement.Cancel();
             }
             if (!current) { WaitForSingleObject(stop, 2000); continue; }
+            if (!symbolsRequested)
+            {
+                symbolsRequested = true;
+                wchar_t executable[32768]{};
+                const DWORD length = GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
+                if (length && length < std::size(executable))
+                {
+                    const auto cache = std::filesystem::path(GetDataDirectoryPath()) / L"ShellHookSymbols";
+                    try
+                    {
+                        symbols = std::async(std::launch::async, [path = std::filesystem::path(executable), cache, cancel = stop] {
+                            try { return taskbar_hook::RunTaskbarSymbolHelper(path, cache, cancel); }
+                            catch (...) { return taskbar_hook::AutoHideResolution{.error = ERROR_NOT_ENOUGH_MEMORY}; }
+                        });
+                    }
+                    catch (...) { WriteDiagnosticLogEntry(L"Tray modern bootstrap symbol worker unavailable", DiagnosticLogLevel::Warning); }
+                }
+            }
             Reregister(current);
             auto& state = *current->shared;
             LONG lost = 0;
@@ -245,9 +272,47 @@ struct Service::Impl
             ULONGLONG lastResync = 0;
             const auto connectedAt = GetTickCount64();
             bool reportedCollection = false;
+            std::uint64_t supplementedEpoch = 0;
+            unsigned supplementAttempts = 0;
             HANDLE handles[]{stop, current->explorer, current->signal};
             while (!token.stop_requested())
             {
+                if (symbols.valid() && symbols.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+                {
+                    const auto resolved = symbols.get();
+                    if (resolved.modernTrayError == ERROR_SUCCESS) modernAdapter = resolved.modernTray;
+                    wchar_t message[192]{};
+                    swprintf_s(message, L"Tray modern bootstrap symbols error=%lu", resolved.modernTrayError);
+                    WriteDiagnosticLogEntry(message);
+                }
+                const auto epoch = static_cast<std::uint64_t>(Read(state.epoch));
+                if (modernAdapter && supplementedEpoch != epoch)
+                {
+                    // Capture before draining the live ring. Ordinary ADD,
+                    // MODIFY and DELETE events take precedence over bootstrap.
+                    const auto supplemented = BootstrapModernTray(state.explorer, epoch, *modernAdapter);
+                    if (!supplemented.empty() && epoch == static_cast<std::uint64_t>(Read(state.epoch)))
+                    {
+                        std::lock_guard guard(mutex);
+                        std::size_t added = 0;
+                        for (const auto& event : supplemented) if (Apply(snapshot.icons, event))
+                        {
+                            ++snapshot.revision; ++added;
+                            wchar_t registration[256]{};
+                            swprintf_s(registration, L"Tray registration pid=%lu id=%lu hwnd=%p operation=%lu effectiveVersion=%lu callback=%lu hidden=%u",
+                                event.identity.process, event.identity.id, reinterpret_cast<HWND>(event.identity.window),
+                                event.operation, event.version, event.callback, (event.state & NIS_HIDDEN) ? 1u : 0u);
+                            WriteDiagnosticLogEntry(registration, DiagnosticLogLevel::Debug);
+                        }
+                        for (auto& icon : snapshot.icons) ResolveApplication(icon);
+                        wchar_t message[192]{};
+                        swprintf_s(message, L"Tray modern bootstrap captured=%zu added=%zu epoch=%llu",
+                            supplemented.size(), added, static_cast<unsigned long long>(epoch));
+                        WriteDiagnosticLogEntry(message);
+                        supplementedEpoch = epoch; supplementAttempts = 0;
+                    }
+                    else if (++supplementAttempts >= 3) { supplementedEpoch = epoch; supplementAttempts = 0; }
+                }
                 Event event;
                 while (Consume(state, event))
                 {
