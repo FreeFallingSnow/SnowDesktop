@@ -285,9 +285,9 @@ void CheckShapes(Canvas& canvas, const char* outputDirectory)
         if (tall) view.frame = {140, 10, 340, 350};
         const auto frame = snowdesktop::large_icon_shape::Frame(config, view.frame);
         const auto pixels = canvas.Draw(config, view);
-        const auto bounds = RedBounds(pixels);
-        Check(std::abs((bounds.right - bounds.left) - (frame.right - frame.left)) <= 2 &&
-            std::abs((bounds.bottom - bounds.top) - (frame.bottom - frame.top)) <= 2,
+        const auto hexagonBounds = RedBounds(pixels);
+        Check(std::abs((hexagonBounds.right - hexagonBounds.left) - (frame.right - frame.left)) <= 2 &&
+            std::abs((hexagonBounds.bottom - hexagonBounds.top) - (frame.bottom - frame.top)) <= 2,
             "production rendering fits the regular hexagon without stretching its equal-edge frame");
         const auto handle = snowdesktop::large_icon_shape::ResizeHandleCenter(config, view.frame, 0, 6);
         Check(Red(Pixel(pixels, handle.x, handle.y)) && handle.y > frame.bottom - (frame.bottom - frame.top) / 5,
