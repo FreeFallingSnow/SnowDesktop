@@ -214,8 +214,7 @@ void DesktopApp::OnMouseMoveAt(
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
         const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
-        const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-        CategorizedPopupScope scope(view, RECT{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom});
+        CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
         if (view->HasCategoryTabPress()) view->UpdateCategoryTabDrag(current);
         else view->UpdateSearchPointerSelection(current);
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -601,8 +600,15 @@ void DesktopApp::OnMouseMoveAt(
                 std::move(visualItemBounds), primaryVisualIndex);
             auto* listSource =
                 dynamic_cast<ListContainer*>(source);
+            const auto* popupWidget = GetOpenPopupWidget();
+            // Collection::SingleColumn describes its inline layout. A popup
+            // row must use the popup's view even in large-folder mode.
+            const bool sourceUsesList =
+                mouseDownHit_ == popupMouseDownItem_.get() && popupWidget
+                    ? UsesCollectionPopupList(*popupWidget)
+                    : listSource && listSource->SingleColumn();
             const bool listIconDrag =
-                listSource && listSource->SingleColumn() &&
+                sourceUsesList &&
                 (dynamic_cast<DesktopIcon*>(mouseDownHit_) ||
                  dynamic_cast<FolderEntryIcon*>(mouseDownHit_));
             if (fanDrag)
