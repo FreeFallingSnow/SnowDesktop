@@ -88,6 +88,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             quickNavigationScrollOffset_ = 0; quickNavigationAppsExpanded_ = false; quickNavigationEverythingHasMore_ = false;
             everythingSearchAvailable_ = name != "everything-unavailable"; quickNavigationEverythingSearchPending_ = name == "index-loading";
             quickNavigationAppsIndexed_ = name != "index-loading";
+            if (name == "everything-unavailable" || name == "index-loading") quickNavigationEffectiveSearchText_ = L"No matching file";
+            if (name == "expanded-mixed" || name == "collapsed-composite") quickNavigationEffectiveSearchText_ = L"SnowDesktop";
             if (name == "typed-app") quickNavigationSearchType_ = QuickNavigationSearchType::App;
             if (name == "typed-file") quickNavigationSearchType_ = QuickNavigationSearchType::File;
             if (name == "typed-web") {quickNavigationSearchType_ = QuickNavigationSearchType::Web; quickNavigationEffectiveSearchText_ = L"SnowDesktop 快捷导航";} // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
@@ -101,9 +103,9 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             if (name == "typed-calculator" || name == "calculator-error") {quickNavigationSearchType_ = QuickNavigationSearchType::Calculator; quickNavigationEffectiveSearchText_ = name == "calculator-error" ? L"1 / 0" : L"(12.5 + 7.5) * 3 ^ 2 + 50%";}
             if (name == "empty-results") {quickNavigationSearchType_ = QuickNavigationSearchType::App; quickNavigationEffectiveSearchText_ = L"No matching application";}
             if (name == "expanded-mixed" || name == "collapsed-composite" || name == "typed-app")
-                for (size_t i = 0; i < quickNavigationAppEntries_.size(); ++i) quickNavigationAppResultIndices_.push_back(i);
+                for (size_t i = 0; i < (name == "typed-app" ? quickNavigationAppEntries_.size() : size_t{1}); ++i) quickNavigationAppResultIndices_.push_back(i);
             if (name == "expanded-mixed" || name == "collapsed-composite" || name == "typed-file")
-                for (int i = 0; i < 7; ++i) {QuickNavigationEverythingEntry file; file.name = i % 2 ? L"Research notes — design review.pdf" : L"研究资料与长名称示例.png"; file.path = L"C:\\Preview\\Documents\\" + file.name; SHSTOCKICONINFO stock{}; stock.cbSize = sizeof(stock); if (SUCCEEDED(SHGetStockIconInfo(i % 2 ? SIID_DOCASSOC : SIID_IMAGEFILES,SHGSI_SYSICONINDEX,&stock))) file.systemIconIndex = stock.iSysImageIndex; quickNavigationEverythingResults_.push_back(std::move(file));} // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
+                for (int i = 0; i < 7; ++i) {QuickNavigationEverythingEntry file; file.name = (name == "expanded-mixed" || name == "collapsed-composite" ? L"SnowDesktop " : L"") + std::wstring(i % 2 ? L"Research notes — design review.pdf" : L"研究资料与长名称示例.png"); file.path = L"C:\\Preview\\Documents\\" + file.name; SHSTOCKICONINFO stock{}; stock.cbSize = sizeof(stock); if (SUCCEEDED(SHGetStockIconInfo(i % 2 ? SIID_DOCASSOC : SIID_IMAGEFILES,SHGSI_SYSICONINDEX,&stock))) file.systemIconIndex = stock.iSysImageIndex; quickNavigationEverythingResults_.push_back(std::move(file));} // l10n-allow: fixed multilingual names for private offscreen visual fixtures, never runtime UI text
             quickNavigationFixedTop_ = false; quickNavigationRect_ = GetQuickNavigationRect(); quickNavigationHostRect_ = quickNavigationRect_;
             quickNavigationListSelection_ = 1; quickNavigationKeyboardTargetKind_ = QuickNavigationKeyboardTargetKind::Item; quickNavigationKeyboardTargetIndex_ = 0;
             const RECT hover = UseQuickNavigationList() ? GetQuickNavigationListRowRect(2) : GetQuickNavigationItemRect(quickNavigationRect_,1);

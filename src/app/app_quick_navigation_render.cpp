@@ -122,6 +122,7 @@ void DesktopApp::EnsureQuickNavTextFormats()
     const float tabSize = static_cast<float>(QuickNavScale(navigationSettings_.layout.fontSize));
     const float itemSize = static_cast<float>(QuickNavScale(navigationSettings_.layout.fontSize));
     const float pathSize = static_cast<float>(QuickNavScale(navigationSettings_.layout.secondaryFontSize));
+    const float fluentSize = static_cast<float>(QuickNavScale(24));
     // Both content themes share regular text weight for consistent readability.
     const float itemWeightValue = 400.0f;
     const DWRITE_FONT_WEIGHT itemWeight =
@@ -153,14 +154,14 @@ void DesktopApp::EnsureQuickNavTextFormats()
     if (!quickNavFluentTextFormat_ ||
         std::abs(
             quickNavFluentTextFormat_->GetFontSize() -
-                tabSize) > 0.01f)
+                fluentSize) > 0.01f)
     {
         quickNavFluentTextFormat_.Reset();
         quickNavFluentTextFormat_ =
             ComPtr<IDWriteTextFormat>(
                 CreateFluentTextFormat(
                     dwriteFactory_.Get(),
-                    tabSize));
+                    fluentSize));
         if (quickNavFluentTextFormat_)
         {
             quickNavFluentTextFormat_->
@@ -526,7 +527,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
         ToD2DColor(t.searchBg, quickNavGlassTheme_ ? .52f : 1.f), D2D1::ColorF(0,0,0,0.f));
     if (overlay.bottom > searchRect.bottom)
         DrawD2DSeparator(ctx.Get(), MakeRect(searchRect.left, searchRect.bottom - QuickNavScale(1), searchRect.right, searchRect.bottom),
-            ToD2DColor(quickNavigationSearchEdit_ && GetFocus() == quickNavigationSearchEdit_ ? t.searchFocus : t.searchBorder, .75f));
+            ToD2DColor(t.searchBorder, navigationSettings_.colors.contains("searchBorder") ? 1.f : .4f));
     const float windowBorderStrokeWidth = std::clamp(quickNavAppearance_.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
     const float windowBorderInset =
         windowBorderStrokeWidth * 0.5f;
@@ -595,7 +596,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
     snowdesktop::text_input::Draw(quickNavigationSearchEdit_, ctx.Get(),
         ToD2DRect(searchInput), 1.f, false);
     if (!quickNavigationSearchEdit_)
-        DrawD2DTextEllipsis(ctx.Get(), GetQuickNavigationEffectiveSearchText().empty() ? _LW("app.nav.search_hint") : GetQuickNavigationEffectiveSearchText(),
+        DrawD2DTextEllipsis(ctx.Get(), GetQuickNavigationEffectiveSearchText().empty() ?
+            _LW(quickNavigationSearchType_ == QuickNavigationSearchType::All ? "app.nav.search_hint" : "quickNav.search.scopedPlaceholder") : GetQuickNavigationEffectiveSearchText(),
             searchInput, quickNavSearchTextFormat_.Get(), ToD2DColor(GetQuickNavigationEffectiveSearchText().empty() ? t.searchPlaceholder : t.searchText));
 
     if (quickNavigationPreview_ && quickNavigationCollapsed_ && GetQuickNavigationEffectiveSearchText().empty() && quickNavigationMenu_ == QuickNavigationMenu::None)
@@ -605,9 +607,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
         ComPtr<ID2D1SolidColorBrush> brush;
         if (SUCCEEDED(ctx->CreateSolidColorBrush(ToD2DColor(t.searchText), &brush))) ctx->FillRectangle(caret, brush.Get());
     }
-    DrawQuickNavigationMenus(ctx.Get());
-
-    if (!searching && !UseQuickNavigationList() && quickNavigationMenu_ == QuickNavigationMenu::None)
+    if (!searching && !UseQuickNavigationList() && quickNavigationMenu_ != QuickNavigationMenu::Types)
     {
         RECT tabs = GetQuickNavigationTabsRect(overlay);
         const int tabsStart =
@@ -694,9 +694,9 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             {
                 fill = active ? ToD2DColor(t.tabActiveFill, 0.82f)
                     : (hovered ? ToD2DColor(t.tabHoverFill, 0.72f)
-                               : ToD2DColor(t.tabDefaultFill, 0.62f));
-                stroke = active ? ToD2DColor(t.tabActiveStroke, 0.88f)
-                                : ToD2DColor(hovered ? t.tabHoverStroke : t.tabDefaultStroke, 0.72f);
+                               : ToD2DColor(t.tabDefaultFill, navigationSettings_.colors.contains("tabDefaultFill") ? 1.f : 0.f));
+                stroke = active ? ToD2DColor(t.tabActiveStroke, navigationSettings_.colors.contains("tabActiveStroke") ? 1.f : 0.f)
+                                : ToD2DColor(hovered ? t.tabHoverStroke : t.tabDefaultStroke, navigationSettings_.colors.contains(hovered ? "tabHoverStroke" : "tabDefaultStroke") ? 1.f : 0.f);
             }
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)), fill, stroke);
@@ -715,7 +715,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             tabsStart + fixedWidth + sepGap;
         RECT sepRect = MakeRect(sepX, tabs.top + QuickNavScale(8),
             sepX + QuickNavScale(1), tabs.bottom - QuickNavScale(8));
-        DrawD2DSeparator(ctx.Get(), sepRect, ToD2DColor(t.tabSeparator));
+        DrawD2DSeparator(ctx.Get(), sepRect, ToD2DColor(t.tabSeparator, .35f));
 
         // Draw fixed tabs (0, 1) and dragged tab displacement
         for (size_t tab = 0; tab < tabCount && tab < 2; ++tab)
@@ -809,55 +809,25 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 PtInRect(
                     &modeButton,
                     quickNavigationLastMousePoint_) != FALSE;
-            const D2D1_COLOR_F fill =
-                hovered
-                    ? ToD2DColor(
-                        t.tabHoverFill, 0.82f)
-                    : ToD2DColor(
-                        t.tabActiveFill, 0.72f);
-            const D2D1_COLOR_F stroke =
-                hovered
-                ? ToD2DColor(
-                    t.tabActiveStroke, 0.92f)
-                : ToD2DColor(
-                    t.tabDefaultStroke, 0.76f);
-            DrawD2DRoundedRectangle(
-                ctx.Get(), modeButton,
-                static_cast<float>(
-                    QuickNavScale(navigationSettings_.layout.tabRadius)),
-                fill, stroke);
-            const std::wstring_view glyph =
-                snowdesktop::
-                    quick_navigation_rules::
-                        QuickNavigationDesktopViewModeGlyph(
-                            navigationSettings_.
-                                desktopViewMode);
-            RECT glyphRect = modeButton; glyphRect.right = glyphRect.left + QuickNavScale(28);
-            RECT labelRect = modeButton; labelRect.left += QuickNavScale(28); labelRect.right -= QuickNavScale(24);
-            RECT chevronRect = modeButton; chevronRect.left = chevronRect.right - QuickNavScale(24);
-            DrawD2DText(ctx.Get(), L"\uF2A4", chevronRect, quickNavFluentTextFormat_.Get(), ToD2DColor(t.tabText));
+            if (hovered || quickNavigationMenu_ == QuickNavigationMenu::Views)
+                DrawD2DRoundedRectangle(ctx.Get(), modeButton, static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)),
+                    ToD2DColor(t.tabHoverFill, .72f), ToD2DColor(t.tabHoverStroke, 0.f));
+            RECT labelRect = modeButton; labelRect.left += QuickNavScale(8); labelRect.right -= QuickNavScale(22);
+            RECT chevronRect = modeButton; chevronRect.left = chevronRect.right - QuickNavScale(22);
+            DrawD2DText(ctx.Get(), L"\uF2A4", chevronRect, quickNavFluentTextFormat_.Get(), ToD2DColor(t.appTypeText));
             DrawD2DTextEllipsis(ctx.Get(), QuickNavigationViewLabel(), labelRect, quickNavPathTextFormat_.Get(), ToD2DColor(t.tabText));
-            DrawD2DText(
-                ctx.Get(),
-                std::wstring(glyph),
-                glyphRect,
-                quickNavFluentTextFormat_
-                ? quickNavFluentTextFormat_.Get()
-                : (fluentIconTextFormat_
-                    ? fluentIconTextFormat_.Get()
-                    : quickNavTabTextFormat_.Get()),
-                ToD2DColor(t.tabText));
         }
     }
 
     RECT contentApp = GetQuickNavigationContentRect(overlay);
     if (contentApp.bottom <= contentApp.top)
     {
+        DrawQuickNavigationMenus(ctx.Get());
         if (windowClipPushed) ctx->PopLayer();
         return;
     }
     ctx->PushAxisAlignedClip(ToD2DRect(contentApp), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (quickNavigationMenu_ != QuickNavigationMenu::None)
+    if (quickNavigationMenu_ == QuickNavigationMenu::Types)
     {
         // Menu drawing and keyboard selection use the same row geometry.
     }
@@ -1006,7 +976,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             RECT desktopSep = MakeRect(desktopHeader.left,
                 desktopHeader.bottom - QuickNavScale(1),
                 desktopHeader.right, desktopHeader.bottom);
-            DrawD2DSeparator(ctx.Get(), desktopSep, ToD2DColor(t.headerSeparator));
+            DrawD2DSeparator(ctx.Get(), desktopSep, ToD2DColor(t.headerSeparator, navigationSettings_.colors.contains("headerSeparator") ? 1.f : .45f));
         }
         else if (contentModel.IsSectioned())
         {
@@ -1417,6 +1387,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             ToD2DColor(thumbColor), ToD2DColor(thumbColor));
     }
 
+    DrawQuickNavigationMenus(ctx.Get());
     if (windowClipPushed) ctx->PopLayer();
     quickNavigationPointerTarget_ = HitTestQuickNavigationPointerTarget(quickNavigationLastMousePoint_);
 }

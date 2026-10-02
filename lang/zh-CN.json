@@ -2358,5 +2358,9 @@
     "quickNav.color.scrollThumbDefault": "滚动条 · 滑块 · 普通状态",
     "quickNav.color.scrollThumbHover": "滚动条 · 滑块 · 悬停状态",
     "quickNav.color.emptyText": "空状态 · 文字",
-    "quickNav.opening": "打开与显示"
+    "quickNav.opening": "打开与显示",
+    "quickNav.engines.manage": "管理搜索引擎",
+    "quickNav.search.shortcutHint": "前缀 + Enter 选择类型 · Ctrl+E 展开",
+    "quickNav.search.scopedHint": "输入关键词或算式，按 Enter 执行 · Backspace 返回综合搜索",
+    "quickNav.search.scopedPlaceholder": "输入搜索内容…"
 }

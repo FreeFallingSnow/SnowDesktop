@@ -2358,5 +2358,9 @@
     "quickNav.color.scrollThumbDefault": "Barre de défilement · Curseur · Normal",
     "quickNav.color.scrollThumbHover": "Barre de défilement · Curseur · Au survol",
     "quickNav.color.emptyText": "État vide · Texte",
-    "quickNav.opening": "Ouverture et affichage"
+    "quickNav.opening": "Ouverture et affichage",
+    "quickNav.engines.manage": "Gérer les moteurs de recherche",
+    "quickNav.search.shortcutHint": "Préfixe + Enter pour choisir le type · Ctrl+E pour développer",
+    "quickNav.search.scopedHint": "Saisissez une recherche ou une expression, puis Enter · Backspace revient à la recherche générale",
+    "quickNav.search.scopedPlaceholder": "Saisissez votre recherche…"
 }

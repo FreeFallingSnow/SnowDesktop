@@ -69,7 +69,7 @@ struct QuickNavigationLayout
 {
     int expandedWidth = 860, collapsedWidth = 640, maximumHeight = 640;
     int visibleRows = 8, padding = 16, searchHeight = 52;
-    int iconSize = 48, gridGap = 20, rowGap = 16;
+    int iconSize = 56, gridGap = 20, rowGap = 16;
     int fontSize = 14, secondaryFontSize = 12, searchFontSize = 17;
     int resultRowHeight = 56, labelLines = 2;
     int cornerRadius = 8, searchRadius = 6, tabRadius = 6, itemRadius = 6;

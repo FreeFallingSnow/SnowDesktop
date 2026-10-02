@@ -2358,5 +2358,9 @@
     "quickNav.color.scrollThumbDefault": "捲軸 · 滑塊 · 一般狀態",
     "quickNav.color.scrollThumbHover": "捲軸 · 滑塊 · 游標停留狀態",
     "quickNav.color.emptyText": "空白狀態 · 文字",
-    "quickNav.opening": "開啟與顯示"
+    "quickNav.opening": "開啟與顯示",
+    "quickNav.engines.manage": "管理搜尋引擎",
+    "quickNav.search.shortcutHint": "前綴 + Enter 選擇類型 · Ctrl+E 展開",
+    "quickNav.search.scopedHint": "輸入關鍵字或算式，按 Enter 執行 · Backspace 返回綜合搜尋",
+    "quickNav.search.scopedPlaceholder": "輸入搜尋內容…"
 }

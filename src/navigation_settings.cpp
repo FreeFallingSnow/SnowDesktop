@@ -221,6 +221,9 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
         SD_NAV_READ(resultRowHeight); SD_NAV_READ(labelLines);
         SD_NAV_READ(cornerRadius); SD_NAV_READ(searchRadius); SD_NAV_READ(tabRadius); SD_NAV_READ(itemRadius);
 #undef SD_NAV_READ
+        const auto* layoutVersion = document.Find("layoutVersion");
+        if ((!layoutVersion || (layoutVersion->IsNumber() && layoutVersion->number < 2)) && settings.layout.iconSize == 48)
+            settings.layout.iconSize = QuickNavigationLayout{}.iconSize;
         // Only the unreleased layout's default radii migrate. Explicit values
         // in the current layout version and all other customization survive.
         if (!document.Find("layoutVersion"))
@@ -267,7 +270,7 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file << "{\n";
-    file << "  \"layoutVersion\": 1,\n";
+    file << "  \"layoutVersion\": 2,\n";
     file << "  \"enabled\": " << (settings.enabled ? "true" : "false") << ",\n";
     file << "  \"modifiers\": " << settings.modifiers << ",\n";
     file << "  \"virtualKey\": " << settings.virtualKey << ",\n";

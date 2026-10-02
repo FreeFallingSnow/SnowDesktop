@@ -164,18 +164,20 @@ inline QuickNavTheme ResolveQuickNavTheme(bool light, const NavigationSettings& 
     QuickNavTheme t = light ? kQuickNavLight : kQuickNavDark;
     t.searchBg = light ? RGB(255,255,255) : RGB(38,39,42);
     t.searchEditBg = t.searchBg;
-    t.searchBorder = light ? RGB(219,224,232) : RGB(65,66,70);
+    t.searchBorder = light ? RGB(185,186,190) : RGB(86,87,91);
     t.searchText = light ? RGB(30,36,47) : RGB(237,240,246);
-    t.searchPlaceholder = light ? RGB(112,120,135) : RGB(156,165,181);
-    t.tabActiveText = light ? RGB(35,70,129) : RGB(222,235,255); t.tabHoverText = t.searchText;
-    t.appTypeText = light ? RGB(92,104,124) : RGB(162,173,192);
+    t.searchPlaceholder = light ? RGB(104,106,112) : RGB(177,179,185);
+    t.tabText = light ? RGB(69,71,77) : RGB(207,209,215);
+    t.tabActiveText = t.searchText; t.tabHoverText = t.searchText;
+    t.appTypeText = light ? RGB(99,101,108) : RGB(168,170,177);
+    t.headerText = t.appTypeText; t.tabSeparator = light ? RGB(163,164,168) : RGB(103,104,109);
     t.emptyText = t.appTypeText;
     t.searchFocus = light ? RGB(68,112,199) : RGB(117,161,239);
     t.tabDefaultFill = light ? RGB(237,237,241) : RGB(38,39,42);
     t.tabDefaultStroke = t.tabDefaultFill;
-    t.tabActiveFill = light ? RGB(217,231,251) : RGB(49,71,104);
-    t.tabActiveStroke = light ? RGB(189,213,246) : RGB(71,99,139);
-    t.tabHoverFill = light ? RGB(227,233,243) : RGB(48,49,54);
+    t.tabActiveFill = light ? RGB(222,224,230) : RGB(60,62,68);
+    t.tabActiveStroke = t.tabActiveFill;
+    t.tabHoverFill = light ? RGB(232,233,237) : RGB(47,49,54);
     t.tabHoverStroke = t.tabHoverFill;
     t.typeFill = t.tabActiveFill; t.typeText = t.searchText;
     t.resultFill = light ? RGB(247,247,250) : RGB(30,31,34);
@@ -183,7 +185,7 @@ inline QuickNavTheme ResolveQuickNavTheme(bool light, const NavigationSettings& 
     t.selectedFill = t.tabActiveFill; t.selectedBorder = t.tabActiveStroke; t.selectedText = t.searchText;
     t.appRowHoverFill = t.tabHoverFill; t.appRowHoverStroke = t.tabHoverFill;
     t.itemHoverFill = t.tabHoverFill; t.itemHoverStroke = t.tabHoverStroke;
-    t.headerSeparator = light ? RGB(226,231,239) : RGB(54,55,60);
+    t.headerSeparator = light ? RGB(198,200,206) : RGB(78,80,86);
     for (const auto& [name, field] : kQuickNavColorFields)
     {
         auto it = settings.colors.find(name);

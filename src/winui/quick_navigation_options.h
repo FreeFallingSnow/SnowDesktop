@@ -63,23 +63,32 @@ public:
             });
             AddRow(prefixes, typeKeys[i], prefixes_[i], [i](auto& value) {value.prefixes[i] = NavigationSettings{}.prefixes[i];});
         }
-        auto engines = Section("quickNav.engines", "quickNav.engines.hint", [this] {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
+        auto engines = Section("quickNav.engines", {}, [this] {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
         defaultEngine_.SelectionChanged([this](auto&&, auto&&) {
             const int index = defaultEngine_.SelectedIndex();
             if (!sync_ && index >= 0 && static_cast<size_t>(index) < values_.engines.size())
                 commit_([id = values_.engines[static_cast<size_t>(index)].id](auto& value) {value.defaultEngine = id;});
         });
         AddRow(engines, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = std::any_of(value.engines.begin(), value.engines.end(), [](const auto& engine) {return engine.id == "bing";}) ? "bing" : value.engines.front().id;});
-        root_.Children().Append(engineRows_);
+        Panel management; management.Spacing(8);
+        winrt::Microsoft::UI::Xaml::Controls::TextBlock engineHint; engineHint.Text(L("quickNav.engines.hint"));
+        engineHint.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap); engineHint.Opacity(.68);
+        labels_.emplace_back("quickNav.engines.hint",engineHint); management.Children().Append(engineHint);
+        management.Children().Append(engineRows_);
+        engineManagement_.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+        engineManagement_.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+        engineManagement_.Header(winrt::box_value(L("quickNav.engines.manage"))); engineManagement_.Content(management);
+        groups_.emplace_back("quickNav.engines.manage",engineManagement_); engines.Children().Append(engineManagement_);
         addEngine_.Click([this](auto&&, auto&&) {
             auto candidate = values_;
             unsigned id = 1;
             while (std::any_of(candidate.engines.begin(), candidate.engines.end(), [id](auto& engine) {return engine.id == "custom" + std::to_string(id) || engine.prefix == "web" + std::to_string(id);})) ++id;
+            expandedEngine_ = "custom" + std::to_string(id);
             candidate.engines.push_back({"custom" + std::to_string(id), "Bing " + std::to_string(id), "web" + std::to_string(id), "https://www.bing.com/search?q={query}"});
             if (Accept(candidate)) commit_([engines = candidate.engines](auto& value) {value.engines = engines;});
         });
         addEngine_.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
-        engines.Children().Append(addEngine_);
+        management.Children().Append(addEngine_);
         std::map<std::string, winrt::Microsoft::UI::Xaml::Controls::StackPanel> colorGroups;
         for (const auto& [key, field] : kQuickNavColorFields)
         {
@@ -206,7 +215,9 @@ private:
     }
     void BuildEngines()
     {
-        engineRows_.Children().Clear(); defaultEngine_.Items().Clear(); engineRows_.Spacing(8);
+        std::map<std::string,bool> expanded;
+        for (const auto& [id, expander] : engineExpanders_) expanded[id] = expander.IsExpanded();
+        engineExpanders_.clear(); engineRows_.Children().Clear(); defaultEngine_.Items().Clear(); engineRows_.Spacing(8);
         for (const auto& engine : values_.engines)
         {
             defaultEngine_.Items().Append(winrt::box_value(winrt::to_hstring(engine.name)));
@@ -241,7 +252,12 @@ private:
                 });
                 group.Children().Append(row.root);
             }
-            engineRows_.Children().Append(card);
+            winrt::Microsoft::UI::Xaml::Controls::Expander expander;
+            expander.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+            expander.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+            expander.Header(winrt::box_value(winrt::to_hstring(engine.name + " · " + engine.prefix)));
+            expander.Content(card); expander.IsExpanded(expanded[id] || expandedEngine_ == id);
+            engineExpanders_.emplace_back(id,expander); engineRows_.Children().Append(expander);
         }
     }
     Localize localize_; std::function<void(Edit)> commit_; winrt::Microsoft::UI::Xaml::Style cardStyle_{nullptr}; NavigationSettings values_;
@@ -251,6 +267,9 @@ private:
     winrt::Microsoft::UI::Xaml::Controls::ComboBox view_, defaultEngine_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar notice_;
     winrt::Microsoft::UI::Xaml::Controls::Button addEngine_;
+    winrt::Microsoft::UI::Xaml::Controls::Expander engineManagement_;
+    std::string expandedEngine_;
+    std::vector<std::pair<std::string,winrt::Microsoft::UI::Xaml::Controls::Expander>> engineExpanders_;
     std::array<winrt::Microsoft::UI::Xaml::Controls::TextBox, 6> prefixes_;
     std::vector<std::unique_ptr<Number>> numbers_;
     std::vector<std::unique_ptr<Color>> colors_;

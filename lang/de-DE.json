@@ -2358,5 +2358,9 @@
     "quickNav.color.scrollThumbDefault": "Bildlaufleiste · Schieber · Normal",
     "quickNav.color.scrollThumbHover": "Bildlaufleiste · Schieber · Bei Mauszeigerkontakt",
     "quickNav.color.emptyText": "Leerer Zustand · Text",
-    "quickNav.opening": "Öffnen und Anzeige"
+    "quickNav.opening": "Öffnen und Anzeige",
+    "quickNav.engines.manage": "Suchmaschinen verwalten",
+    "quickNav.search.shortcutHint": "Präfix + Enter wählt den Typ · Ctrl+E klappt auf",
+    "quickNav.search.scopedHint": "Suchbegriff oder Ausdruck eingeben, dann Enter · Backspace kehrt zur Gesamtsuche zurück",
+    "quickNav.search.scopedPlaceholder": "Suchtext eingeben…"
 }

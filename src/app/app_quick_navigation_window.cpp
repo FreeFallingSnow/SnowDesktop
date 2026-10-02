@@ -244,6 +244,10 @@ void DesktopApp::UpdateQuickNavigationSearchEditRect()
 {
     if (!quickNavigationSearchEdit_ || !IsWindow(quickNavigationSearchEdit_))
         return;
+    const wchar_t* hint = IsLuaLogicalSlotPickerOpen() ? _LW("app.nav.slot_picker_search_hint") :
+        _LW(quickNavigationSearchType_ == QuickNavigationSearchType::All ? "app.nav.search_hint" : "quickNav.search.scopedPlaceholder");
+    SendMessageW(quickNavigationSearchEdit_, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(hint));
+    snowdesktop::text_input::SetAccessibleName(quickNavigationSearchEdit_, hint);
     LOGFONTW font{};
     if (!quickNavigationSearchFont_ || GetObjectW(quickNavigationSearchFont_,sizeof(font),&font) != sizeof(font) || font.lfHeight != -QuickNavScale(navigationSettings_.layout.searchFontSize))
     {
