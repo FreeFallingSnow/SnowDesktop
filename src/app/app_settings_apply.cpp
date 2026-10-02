@@ -1255,6 +1255,8 @@ public:
             }
             if (app_.dockFolderPopupContainer_)
                 app_.dockFolderPopupContainer_->InvalidateFilterCache();
+            app_.InvalidateCollectionPopupContent();
+            app_.InvalidateFloatingPopupWindow(false);
         }
         if (HasSettingsDomain(domains, SettingsDomain::Desktop))
         {
@@ -2125,6 +2127,10 @@ void DesktopApp::LoadCategorySettingsAndApply()
                      dynamic_cast<FileGroup*>(c.get()))
             group->InvalidateHostedView();
     }
+    if (auto* mapping = dynamic_cast<FolderMapping*>(dockFolderPopupContainer_.get()))
+        mapping->InvalidateFilterCache();
+    InvalidateCollectionPopupContent();
+    InvalidateFloatingPopupWindow(false);
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
 }

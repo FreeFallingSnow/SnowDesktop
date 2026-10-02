@@ -36,10 +36,10 @@ static std::wstring FolderEntryCategoryId(
     const FolderEntry& entry, const CategorySettings& settings)
 {
     if (entry.isDirectory)
-        return L"folders";
+        return IsCategoryRuleEnabled(settings, L"folders") ? L"folders" : L"others";
     std::wstring categoryId =
-        CategoryIdForExtension(settings, ToUpperInvariant(PathFindExtensionW(entry.name.c_str())));
-    return categoryId.empty() ? L"others" : categoryId;
+        CategoryIdForItemType(settings, ToUpperInvariant(PathFindExtensionW(entry.name.c_str())), entry.shortcutTarget);
+    return categoryId.empty() ? (entry.isApplicationShortcut && IsCategoryRuleEnabled(settings, L"programs") ? L"programs" : L"others") : categoryId;
 }
 
 static const std::vector<std::wstring>& FolderEntryDateGroupOrder()

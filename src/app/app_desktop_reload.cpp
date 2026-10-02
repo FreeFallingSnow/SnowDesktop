@@ -1185,6 +1185,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 if (!result->typeName.empty()) item.typeName = result->typeName;
                 snowdesktop::shell_icon_request::ApplyPresentation(item, result->phase,
                     result->isShortcut, result->isApplicationShortcut);
+                if (result->phase == IconLoadPhase::Shortcut) item.shortcutTarget = result->shortcutTarget;
                 if (result->phase == IconLoadPhase::Phase1)
                 {
                     IconLoadTask phase2;
@@ -1227,6 +1228,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     if (!result->typeName.empty()) entry.typeName = result->typeName;
                     snowdesktop::shell_icon_request::ApplyPresentation(entry, result->phase,
                         result->isShortcut, result->isApplicationShortcut);
+                    if (result->phase == IconLoadPhase::Shortcut) entry.shortcutTarget = result->shortcutTarget;
                     if (result->phase == IconLoadPhase::Phase1)
                     {
                         IconLoadTask phase2;
@@ -1273,6 +1275,38 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         }
     }
 
+    if (matched && result->phase == IconLoadPhase::Shortcut)
+    {
+        bool membershipChanged = false;
+        if (result->isDesktopItem)
+        {
+            for (size_t index = 0; index < widgets_.size(); ++index)
+            {
+                if (widgets_[index].type != DesktopWidgetType::FileCategories) continue;
+                FileCategories categories(&widgets_[index], this);
+                membershipChanged = categories.PruneUncollectableItems() || membershipChanged;
+                if (widgets_[index].autoCollect)
+                    membershipChanged = CollectFileCategoryWidget(index, false) || membershipChanged;
+            }
+        }
+        if (membershipChanged)
+        {
+            RefreshCollectedKeysCache();
+            LayoutItems();
+            RebuildContainersAndItems();
+            SaveLayoutSlots();
+        }
+        for (auto& container : containers_)
+        {
+            ScrollingItemWidget* view = dynamic_cast<ScrollingItemWidget*>(container.get());
+            if (auto* group = dynamic_cast<FileGroup*>(container.get())) view = group->GetActiveSourceContainer();
+            if (auto* categories = dynamic_cast<FileCategories*>(view)) categories->InvalidateCategoryCache();
+            if (auto* mapping = dynamic_cast<FolderMapping*>(view)) mapping->InvalidateFilterCache();
+        }
+        if (auto* mapping = dynamic_cast<FolderMapping*>(dockFolderPopupContainer_.get())) mapping->InvalidateFilterCache();
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
+    }
     if (!matched && result->bitmap)
         DeleteObject(result->bitmap);
     return matched;

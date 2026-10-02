@@ -827,8 +827,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
         const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
-        const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-        CategorizedPopupScope scope(view, RECT{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom});
+        CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
         if (view->HasCategoryTabPress())
         {
             view->UpdateCategoryTabDrag(upPoint);

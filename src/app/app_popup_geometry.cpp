@@ -9,7 +9,8 @@ bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
 {
     return popupAnchoredToDock_ &&
         (widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping) &&
-        (widget.showSearchBox || widget.showFileCategories);
+        (widget.showSearchBox || widget.showFileCategories) &&
+        !UsesCollectionPopupFan(widget);
 }
 
 ScrollingItemWidget* DesktopApp::GetCategorizedPopupView() const
@@ -36,8 +37,7 @@ RECT DesktopApp::GetCollectionPopupControlsRect(const RECT& popup) const
 {
     auto* view = GetCategorizedPopupView();
     if (!view) return {};
-    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-    RECT frame{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom};
+    const RECT frame = GetCategorizedPopupFrame(popup);
     CategorizedPopupScope scope(view, frame);
     const auto* widget = view->GetWidgetData();
     LONG bottom = frame.top;
@@ -46,6 +46,30 @@ RECT DesktopApp::GetCollectionPopupControlsRect(const RECT& popup) const
     const RECT tabs = view->GetCategorizedTabsRect(widget->showFileCategories);
     if (!IsRectEmptyRect(tabs)) bottom = std::max(bottom, tabs.bottom + view->Cu(8.0f));
     return RECT{frame.left, frame.top, frame.right, bottom};
+}
+
+RECT DesktopApp::GetCategorizedPopupFrame(const RECT& popup) const
+{
+    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+    RECT frame{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom};
+    const auto* view = GetCategorizedPopupView();
+    if (!view) return frame;
+    const LONG left = popup.left + metrics.paddingX;
+    const LONG right = popup.right - metrics.paddingX;
+    const LONG inset = view->Cu(10.0f);
+    const auto* widget = GetOpenPopupWidget();
+    if (widget && UsesCollectionPopupList(*widget))
+    {
+        frame.left = left - inset;
+        frame.right = right + inset;
+        return frame;
+    }
+    const int columns = std::max(1, (static_cast<int>(right - left) + metrics.gapX) /
+        std::max(1, metrics.cellWidth + metrics.gapX));
+    const RECT first = GetItemIconRect(RECT{left, 0, left + metrics.cellWidth, metrics.cellHeight});
+    frame.left = first.left - inset;
+    frame.right = first.right + (columns - 1) * (metrics.cellWidth + metrics.gapX) + inset;
+    return frame;
 }
 
 std::vector<Item*> DesktopApp::GetDockFolderPopupSelectedItems()
@@ -140,14 +164,17 @@ RECT DesktopApp::GetCollectionPopupFanWorkArea(const DesktopWidget& widget) cons
 
 bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
-    if (UsesCategorizedPopupControls(widget)) return false;
     namespace layout = snowdesktop::collection_popup_layout;
+    // The fan always previews the full source. Search/category preferences
+    // apply to its Show all view and must not change the chosen presentation.
+    const size_t sourceCount = widget.type == DesktopWidgetType::FolderMapping
+        ? widget.folderEntries.size() : widget.itemKeys.size();
     // Loading/empty directories retain the chosen presentation. Entry arrivals
     // must not turn a rectangular opening snapshot into a fan at completion.
     if (layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
             widget.listMode, popupFanShowAll_) != layout::View::Fan ||
         !snowdesktop::dock_folder_popup_read::HasFanContent(
-            widget.type == DesktopWidgetType::FolderMapping, GetPopupItemCount(widget)))
+            widget.type == DesktopWidgetType::FolderMapping, sourceCount))
         return false;
     // A vertical side Dock has no native fan counterpart. Use the existing
     // grid there, and when there is insufficient space for an anchored fan.
@@ -316,6 +343,17 @@ void DesktopApp::ShowAllCollectionPopupItems()
     ResetCollectionPopupAnimationCache();
     ResetCollectionPopupFanScroll();
     popupFanShowAll_ = true;
+    if (auto* view = GetCategorizedPopupView())
+    {
+        view->ClearSearchText();
+        view->GetWidgetData()->activeCategoryId = L"all";
+        view->InvalidateSlots();
+        if (dockFolderPopupOpen_)
+        {
+            const size_t source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
+            if (source < widgets_.size()) widgets_[source].activeCategoryId = L"all";
+        }
+    }
     popupFanActionFocused_ = false;
     popupScrollOffset_ = 0;
     popupScrollbarDragging_ = false;
@@ -339,8 +377,16 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     const GridPage* page = ResolveCollectionPopupPage(widget);
     const auto metrics = GetCollectionPopupLayoutMetrics(widget);
     const bool dockFolder = dockFolderPopupOpen_ && &widget == &dockFolderPopupWidget_;
+    // Keep the outer frame based on All. Filtering changes only the content
+    // and scroll range, so choosing a small/empty category cannot move the
+    // Dock popup or shrink its search and tab controls.
+    size_t allItemCount = widget.type == DesktopWidgetType::FolderMapping
+        ? widget.folderEntries.size() : widget.itemKeys.size();
+    if (&widget == GetOpenPopupWidget())
+        if (auto* categories = dynamic_cast<FileCategories*>(GetCategorizedPopupView()))
+            allItemCount = categories->CachedCategoryKeys(L"all").size();
     const size_t itemCount = snowdesktop::collection_popup_layout::LayoutItemCount(
-        dockFolder && dockFolderPopupLoading_, GetPopupItemCount(widget),
+        dockFolder && dockFolderPopupLoading_, allItemCount,
         dockFolder ? dockFolderPopupKnownItemCount_ : 0);
     if (UsesCollectionPopupFan(widget))
     {

@@ -30,12 +30,13 @@ namespace
     const LegacyRuleDescriptor* LegacyRules(size_t& count)
     {
         static const LegacyRuleDescriptor rules[] = {
+            { L"folders", L10N_KEY("widget.categories.folder"), "folders", L".LNK:FOLDER" },
             { L"videos", L10N_KEY("widget.categories.default_video"), "videos", L".MP4 .MOV .AVI .MKV .WMV .WEBM .M4V" },
             { L"images", L10N_KEY("widget.categories.default_image"), "images", L".PNG .JPG .JPEG .GIF .BMP .WEBP .HEIC .SVG" },
             { L"documents", L10N_KEY("widget.categories.default_document"), "documents", L".TXT .MD .DOC .DOCX .PDF .XLS .XLSX .PPT .PPTX .CSV" },
             { L"archives", L10N_KEY("widget.categories.default_archive"), "archives", L".ZIP .RAR .7Z .TAR .GZ .BZ2 .XZ" },
             { L"audio", L10N_KEY("widget.categories.default_audio"), "audio", L".MP3 .WAV .FLAC .AAC .M4A .OGG" },
-            { L"programs", L10N_KEY("widget.categories.default_program"), "programs", L".EXE .MSI .BAT .CMD .LNK .URL" },
+            { L"programs", L10N_KEY("widget.categories.default_program"), "programs", L".EXE .MSI .BAT .CMD .LNK:APP .URL:STEAM" },
         };
         count = sizeof(rules) / sizeof(rules[0]);
         return rules;
@@ -241,7 +242,7 @@ namespace
         {
             CategoryRule rule = settings.rules[i];
             if (rule.id == L"programs") rule.customLabel.clear();
-            if (rule.id.empty() || rule.id == L"all" || rule.id == L"folders" || rule.id == L"others")
+            if (rule.id.empty() || rule.id == L"all" || rule.id == L"others")
                 rule.id = MakeRuleId(i);
             if (rule.customLabel.empty() && !FindBuiltinRule(rule.id))
                 rule.customLabel = _LW("widget.categories.unnamed");
@@ -257,8 +258,21 @@ namespace
         }
 
         settings.rules = std::move(normalized);
+        if (!seenIds.contains(L"folders"))
+            settings.rules.insert(settings.rules.begin(), {L"folders", L"", FindBuiltinRule(L"folders")->extensions});
         if (!seenIds.contains(L"programs"))
             settings.rules.push_back({L"programs", L"", FindBuiltinRule(L"programs")->extensions});
+        size_t builtinCount = 0;
+        const auto* builtins = LegacyRules(builtinCount);
+        for (size_t index = 0; index < builtinCount; ++index)
+        {
+            const auto& builtin = builtins[index];
+            if (builtin.id == std::wstring_view(L"folders") || builtin.id == std::wstring_view(L"programs") ||
+                seenIds.contains(builtin.id)) continue;
+            // A formerly deleted built-in returns disabled; keep the user's
+            // matching behavior while making its fixed row available again.
+            settings.rules.push_back({builtin.id, L"", builtin.extensions, false});
+        }
         settings.tabFontSize = std::clamp(settings.tabFontSize, 10.0f, 22.0f);
     }
 
@@ -302,6 +316,13 @@ namespace
                 }
             }
             rule.extensions = NormalizeCategoryExtensionText(Utf8ToWideLocal(extensionsUtf8));
+            const auto enabled = objectText.find("\"enabled\"");
+            if (enabled != std::string::npos)
+            {
+                const auto colon = objectText.find(':', enabled);
+                const auto value = colon == std::string::npos ? colon : objectText.find_first_not_of(" \t\r\n", colon + 1);
+                rule.enabled = value == std::string::npos || objectText.compare(value, 5, "false") != 0;
+            }
             if (!rule.id.empty() || !rule.customLabel.empty())
                 rules.push_back(std::move(rule));
         }
@@ -317,6 +338,13 @@ void NormalizeCategorySettings(CategorySettings& settings)
 bool IsBuiltinCategoryRuleId(const std::wstring& categoryId)
 {
     return FindBuiltinRule(categoryId) != nullptr;
+}
+
+bool IsCategoryRuleEnabled(const CategorySettings& settings, const std::wstring& categoryId)
+{
+    const auto found = std::find_if(settings.rules.begin(), settings.rules.end(),
+        [&](const CategoryRule& rule) { return rule.id == categoryId; });
+    return found != settings.rules.end() && found->enabled;
 }
 
 CategorySettings CategorySettings::Defaults()
@@ -348,11 +376,7 @@ std::vector<std::wstring> ParseCategoryExtensionList(const std::wstring& text)
 
     auto flushToken = [&]() {
         if (token.empty()) return;
-        while (!token.empty() && token.front() == L'*')
-            token.erase(token.begin());
-        if (!token.empty() && token.front() != L'.')
-            token.insert(token.begin(), L'.');
-        token = UpperWide(token);
+        token = snowdesktop::category_collection_rules::NormalizeExtensionToken(std::move(token));
         if (token.size() > 1 && seen.insert(token).second)
             result.push_back(token);
         token.clear();
@@ -431,6 +455,22 @@ bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings)
     }
 
     NormalizeCategorySettings(settings);
+    double syntaxVersion = 0;
+    if (!ReadDoubleField(text, "ruleSyntaxVersion", syntaxVersion) || syntaxVersion < 2)
+    {
+        for (auto& rule : settings.rules)
+        {
+            if (rule.id != L"programs") continue;
+            const auto tokens = snowdesktop::category_collection_rules::MergeLegacyProgramShortcutRules(
+                ParseCategoryExtensionList(rule.extensions));
+            rule.extensions.clear();
+            for (const auto& token : tokens)
+            {
+                if (!rule.extensions.empty()) rule.extensions += L' ';
+                rule.extensions += token;
+            }
+        }
+    }
     return true;
 }
 
@@ -443,6 +483,7 @@ bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
     if (!file) return false;
 
     file << "{\n";
+    file << "  \"ruleSyntaxVersion\": 2,\n";
     file << "  \"tabFontSize\": " << normalized.tabFontSize << ",\n";
     file << "  \"collectProgramsEnabled\": " <<
         (normalized.collectProgramsEnabled ? "true" : "false") << ",\n";
@@ -452,8 +493,8 @@ bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
         const CategoryRule& rule = normalized.rules[i];
         file << "    { \"id\": \"" << JsonEscapeUtf8(rule.id)
              << "\", \"customLabel\": \"" << JsonEscapeUtf8(rule.customLabel)
-             << "\", \"extensions\": \"" << JsonEscapeUtf8(rule.extensions)
-             << "\" }";
+              << "\", \"extensions\": \"" << JsonEscapeUtf8(rule.extensions)
+              << "\", \"enabled\": " << (rule.enabled ? "true" : "false") << " }";
         if (i + 1 < normalized.rules.size())
             file << ",";
         file << "\n";
@@ -468,9 +509,8 @@ std::vector<std::wstring> GetCategoryOrder(const CategorySettings& settings)
     std::vector<std::wstring> order;
     order.reserve(settings.rules.size() + 3);
     order.push_back(L"all");
-    order.push_back(L"folders");
     for (const CategoryRule& rule : settings.rules)
-        if (!rule.id.empty())
+        if (!rule.id.empty() && rule.enabled)
             order.push_back(rule.id);
     order.push_back(L"others");
     return order;
@@ -479,7 +519,6 @@ std::vector<std::wstring> GetCategoryOrder(const CategorySettings& settings)
 std::wstring GetCategoryLabel(const CategorySettings& settings, const std::wstring& categoryId)
 {
     if (categoryId == L"all") return _LW("widget.categories.all");
-    if (categoryId == L"folders") return _LW("widget.categories.folder");
     if (categoryId == L"others") return _LW("widget.categories.other");
     auto found = std::find_if(settings.rules.begin(), settings.rules.end(),
         [&](const CategoryRule& rule) { return rule.id == categoryId; });
@@ -494,13 +533,22 @@ std::wstring GetCategoryLabel(const CategorySettings& settings, const std::wstri
 
 std::wstring CategoryIdForExtension(const CategorySettings& settings, const std::wstring& extensionUpper)
 {
+    return CategoryIdForItemType(settings, extensionUpper, {});
+}
+
+std::wstring CategoryIdForItemType(const CategorySettings& settings, const std::wstring& extensionUpper,
+    const snowdesktop::category_collection_rules::ShortcutTarget& target)
+{
     const std::wstring ext = UpperWide(extensionUpper);
     if (ext.empty()) return L"";
 
     for (const CategoryRule& rule : settings.rules)
     {
+        if (!rule.enabled) continue;
         const std::vector<std::wstring> extensions = ParseCategoryExtensionList(rule.extensions);
-        if (std::find(extensions.begin(), extensions.end(), ext) != extensions.end())
+        if (std::any_of(extensions.begin(), extensions.end(), [&](const std::wstring& ruleText) {
+                return snowdesktop::category_collection_rules::MatchesExtensionRule(ruleText, ext, target);
+            }))
             return rule.id;
     }
     return L"";
@@ -510,6 +558,6 @@ std::vector<std::wstring> GetProgramCategoryExtensions(const CategorySettings& s
 {
     const auto rule = std::find_if(settings.rules.begin(), settings.rules.end(),
         [](const CategoryRule& value) { return value.id == L"programs"; });
-    return rule == settings.rules.end() ? std::vector<std::wstring>{} :
+    return rule == settings.rules.end() || !rule->enabled ? std::vector<std::wstring>{} :
         ParseCategoryExtensionList(rule->extensions);
 }

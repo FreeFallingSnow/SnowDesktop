@@ -848,7 +848,7 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     RECT body = snowdesktop::storage_title_bar::InsetContent(
         GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(12.0f), Cu(4.0f));
     if (IsRectEmptyRect(body)) return {};
-    InflateRect(&body, -Cu(2.0f), 0);
+    if (!IsPopupHosted()) InflateRect(&body, -Cu(2.0f), 0);
     if (IsRectEmptyRect(body)) return {};
     const LONG bottom = std::min<LONG>(
         body.bottom, body.top + Cu(GetCategorizedSearchBoxHeight()));

@@ -33,10 +33,12 @@ function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [
     if ($suiteList -contains 'none' -and ($suiteList.Count -ne 1 -or $names.Count -gt 0 -or $Scope -notin 'docs','component','tool')) { throw 'Explicit no-host-tests is limited to docs/component/tool and cannot be mixed with tests.' }
     if (($suiteList -contains 'selected') -and $names.Count -eq 0) { throw 'Selected tests must not be empty.' }
     if ($Scope -ne 'unknown' -and ([string]::IsNullOrWhiteSpace($Reason) -or $paths.Count -eq 0)) { throw 'A scoped plan requires Inputs and a reason/dependency mapping (or exemption basis).' }
-    # These are broad/shared inputs even if a caller labels them local. This
-    # is a conservative guard, not an automatic dependency selector.
-    $broad = @($paths | Where-Object { $_ -match '^(CMakeLists\.txt|CMakePresets\.json|scripts/(build|test)|src/(widget_engine|widget_api_registry|core/)|src/winui/)' }).Count -gt 0
-    $requiredFull = $Scope -in 'unknown','public','infrastructure' -or $broad
+    # The reviewed scope describes the behavior/dependency boundary. A folder
+    # name cannot distinguish a local presenter adjustment from a public API
+    # change, or a failed-test supplement from an initial infrastructure run.
+    # Preserve conservative coverage for explicitly high-risk/unknown work;
+    # scoped callers must provide the real inputs, selected tests and mapping.
+    $requiredFull = $Scope -in 'unknown','public','infrastructure'
     if ($requiredFull -and $suiteList -contains 'none') { throw 'Shared/public/build inputs cannot claim the no-host-tests exemption.' }
     return [pscustomobject]@{ schemaVersion=1; scope=$Scope; suites=$suiteList; tests=$names; inputs=$paths;
         reason=$Reason; editRevision=(Get-EditRevision $Entry); source='task-declared'; lightChecks=@('builtin-basic'); requiredFull=$requiredFull;

@@ -159,7 +159,7 @@ void TestCodec()
         categories.tabFontSize = 18.5f;
         categories.collectProgramsEnabled = enabled;
         categories.rules = {{L"programs", L"程序 Programs", L"EXE LNK URL"},
-            {L"documents", L"资料 Documents", L"PDF DOCX"}};
+            {L"documents", L"资料 Documents", L"PDF DOCX", false}};
         const auto restored = Unpack<CategorySettings>(Pack(categories));
         Check(restored.collectProgramsEnabled == enabled && restored.tabFontSize == categories.tabFontSize &&
             restored.rules.size() == categories.rules.size() &&
@@ -167,6 +167,8 @@ void TestCodec()
             restored.rules[0].extensions == categories.rules[0].extensions &&
             restored.rules[1].id == categories.rules[1].id && restored.rules[1].customLabel == categories.rules[1].customLabel &&
             restored.rules[1].extensions == categories.rules[1].extensions,
+            "category rules retain text across private IPC");
+        Check(restored.rules[0].enabled && !restored.rules[1].enabled,
             "both program collection states preserve category identity, labels, extensions and font size across private IPC");
     }
     // These types exercise Unicode paths, optional values, wide counters and

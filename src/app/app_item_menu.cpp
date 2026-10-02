@@ -387,6 +387,13 @@ void DesktopApp::ShowItemContextMenu(
         fanLabel += L"\t";
         fanLabel += dockFolderEntry->fanPopup ? _LW("app.interact.on") : _LW("app.interact.off");
         AppendMenuW(menu, MF_STRING, kContextPopupFan, fanLabel.c_str());
+        auto optionLabel = [](const wchar_t* title, bool enabled) {
+            return std::wstring(title) + L"\t" + (enabled ? _LW("app.interact.on") : _LW("app.interact.off"));
+        };
+        const auto searchLabel = optionLabel(_LW("app.interact.search_box"), dockFolderEntry->showSearchBox);
+        const auto categoriesLabel = optionLabel(_LW("app.interact.file_categories"), dockFolderEntry->showFileCategories);
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleSearchBox, searchLabel.c_str());
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleFileCategories, categoriesLabel.c_str());
         const auto statusLabel = [](
             const wchar_t* title,
             const wchar_t* status) {
@@ -502,6 +509,9 @@ void DesktopApp::ShowItemContextMenu(
         MenuIconFont::FluentRegular);
     if (dockFolderEntry)
     {
+        SetMenuItemIcon(menu, kContextWidgetToggleFileCategories,
+            snowdesktop::menu_fluent_glyphs::kCategoryBar, MenuIconFont::FluentRegular);
+        SetMenuItemIcon(menu, kContextWidgetToggleSearchBox, L"\uF68F", MenuIconFont::FluentRegular);
         SetMenuItemIcon(
             menu,
             kContextWidgetToggleListMode,
@@ -644,6 +654,8 @@ void DesktopApp::ShowItemContextMenu(
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;
         dockFolderPopupWidget_.fanPopup = dockFolderEntry->fanPopup;
+        dockFolderPopupWidget_.showSearchBox = dockFolderEntry->showSearchBox;
+        dockFolderPopupWidget_.showFileCategories = dockFolderEntry->showFileCategories;
         dockFolderPopupWidget_.detailShowModified =
             dockFolderEntry->detailShowModified;
         dockFolderPopupWidget_.detailShowType =
@@ -664,7 +676,12 @@ void DesktopApp::ShowItemContextMenu(
                     dockFolderEntry->detailShowSize);
         popupScrollOffset_ = 0;
         if (dockFolderPopupContainer_)
-            dockFolderPopupContainer_->InvalidateSlots();
+        {
+            if (!dockFolderEntry->showSearchBox) dockFolderPopupContainer_->ClearSearchText();
+            if (!dockFolderEntry->showFileCategories) dockFolderPopupContainer_->EndCategoryTabDrag(false);
+            dockFolderPopupContainer_->InvalidateFilterCache();
+        }
+        InvalidateCollectionPopupContent();
         RefreshDockFolderPopupGeometry();
     };
 
@@ -773,6 +790,15 @@ void DesktopApp::ShowItemContextMenu(
         {
             dockFolderEntry->listMode =
                 !dockFolderEntry->listMode;
+            applyDockFolderDisplayChange();
+        }
+        break;
+    case kContextWidgetToggleSearchBox:
+    case kContextWidgetToggleFileCategories:
+        if (dockFolderEntry)
+        {
+            if (command == kContextWidgetToggleSearchBox) dockFolderEntry->showSearchBox = !dockFolderEntry->showSearchBox;
+            else dockFolderEntry->showFileCategories = !dockFolderEntry->showFileCategories;
             applyDockFolderDisplayChange();
         }
         break;

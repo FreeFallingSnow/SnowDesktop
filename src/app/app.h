@@ -369,6 +369,7 @@ struct IconLoadResult {
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    snowdesktop::category_collection_rules::ShortcutTarget shortcutTarget;
     bool iconIsMediaThumbnail = false;
     IconLoadPhase phase = IconLoadPhase::Phase1;
     bool isDesktopItem = true;
@@ -3096,6 +3097,7 @@ private:
     bool UsesCategorizedPopupControls(const DesktopWidget& widget) const;
     size_t GetPopupFolderEntryIndex(const DesktopWidget& widget, size_t visibleIndex) const;
     RECT GetCollectionPopupControlsRect(const RECT& popup) const;
+    RECT GetCategorizedPopupFrame(const RECT& popup) const;
     bool UsesCollectionPopupFan(const DesktopWidget& widget) const;
     bool UsesCollectionPopupList(const DesktopWidget& widget) const;
     bool CollectionPopupFanRootAbove() const;

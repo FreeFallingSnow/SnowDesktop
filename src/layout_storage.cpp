@@ -546,6 +546,9 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
                 record.folderSortAscending, error) ||
             !ReadStringArray(object, "folderItems",
                 path + ".folderItems", record.folderItems, error) ||
+            !ReadBoolean(object, "showSearchBox", path + ".showSearchBox", record.showSearchBox, error) ||
+            !ReadBoolean(object, "showFileCategories", path + ".showFileCategories", record.showFileCategories, error) ||
+            !ReadStringArray(object, "categoryTabOrder", path + ".categoryTabOrder", record.categoryTabOrder, error) ||
             !ReadBoolean(object, "listMode",
                 path + ".listMode", record.listMode, error) ||
             !ReadBoolean(object, "fanPopup", path + ".fanPopup",

@@ -67,13 +67,11 @@ static std::wstring FileCategoryIdForItem(const DesktopItem& item, const Categor
 {
     const std::wstring ext = DesktopItemExtensionUpper(item);
     if (IsFilesystemFolder(item))
-        return L"folders";
-    if (item.isApplicationShortcut)
-        return L"programs";
-    std::wstring categoryId = CategoryIdForExtension(settings, ext);
+        return IsCategoryRuleEnabled(settings, L"folders") ? L"folders" : L"others";
+    std::wstring categoryId = CategoryIdForItemType(settings, ext, item.shortcutTarget);
     if (!categoryId.empty())
         return categoryId;
-    return L"others";
+    return item.isApplicationShortcut && IsCategoryRuleEnabled(settings, L"programs") ? L"programs" : L"others";
 }
 
 /**
@@ -193,10 +191,11 @@ static bool IsCollectable(const CategorySettings& settings, const DesktopItem& i
         clsid == kDesktopIconClsidControlPanel ||
         clsid == kDesktopIconClsidRecycleBin;
     if (protectedIcon || item.layoutKey.empty()) return false;
+    const auto extension = DesktopItemExtensionUpper(item);
     return IsFilesystemFolder(item) || settings.collectProgramsEnabled ||
         !snowdesktop::category_collection_rules::IsProgramItem(
-            DesktopItemExtensionUpper(item), item.isApplicationShortcut,
-            GetProgramCategoryExtensions(settings));
+            extension, item.isApplicationShortcut,
+            GetProgramCategoryExtensions(settings), item.shortcutTarget);
 }
 
 void FileCategories::EnsureCategorySnapshot() const
@@ -497,6 +496,12 @@ bool FileCategories::CollectTopLevelDesktopItems()
     bool changed = false;
     for (const auto& item : app_->GetDesktopItems())
     {
+        // Wait before admitting a new unknown link. Existing members remain in
+        // place during a refresh until their target classification completes.
+        const auto extension = DesktopItemExtensionUpper(item);
+        if (!app_->GetCategorySettings().collectProgramsEnabled &&
+            (extension == L".LNK" || extension == L".URL") && !item.shortcutTarget.classified)
+            continue;
         if (!IsCollectable(app_->GetCategorySettings(), item) || app_->IsItemInAnyWidget(item))
             continue;
 

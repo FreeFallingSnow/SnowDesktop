@@ -699,6 +699,9 @@ void DesktopApp::LoadLayoutSlots()
             entry.folderItemKeys.push_back(Utf8ToWide(key));
         entry.listMode = saved.listMode;
         entry.fanPopup = saved.fanPopup;
+        entry.showSearchBox = saved.showSearchBox;
+        entry.showFileCategories = saved.showFileCategories;
+        for (const auto& id : saved.categoryTabOrder) entry.categoryTabOrder.push_back(Utf8ToWide(id));
         entry.detailShowModified = saved.detailShowModified;
         entry.detailShowType = saved.detailShowType;
         entry.detailShowSize = saved.detailShowSize;
@@ -887,6 +890,19 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     // Do not replace a loaded layout with incomplete startup/enumeration state.
     if (!desktopItemsReady_ || gridPages_.empty())
         return false;
+
+    if (dockFolderPopupOpen_)
+    {
+        const auto source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
+        if (source < widgets_.size())
+            widgets_[source].categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
+        else
+            for (auto& entry : dockEntries_)
+            {
+                const auto id = std::to_wstring(static_cast<int>(entry.type)) + L":" + ToUpperInvariant(entry.reference);
+                if (id == dockFolderPopupSourceId_) entry.categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
+            }
+    }
 
     layoutSavePending_ = true;
     const auto failed = [this, notifyFailure](const std::wstring& detail) {
@@ -1223,6 +1239,8 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
              << ", \"listMode\": "
              << (entry.listMode ? "true" : "false")
              << ", \"fanPopup\": " << (entry.fanPopup ? "true" : "false")
+             << ", \"showSearchBox\": " << (entry.showSearchBox ? "true" : "false")
+             << ", \"showFileCategories\": " << (entry.showFileCategories ? "true" : "false")
              << ", \"detailShowModified\": "
              << (entry.detailShowModified ? "true" : "false")
              << ", \"detailShowType\": "
@@ -1235,7 +1253,13 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
              << entry.detailTypePosition
              << ", \"detailSizePosition\": "
              << entry.detailSizePosition
-             << ", \"folderItems\": [";
+             << ", \"categoryTabOrder\": [";
+        for (size_t j = 0; j < entry.categoryTabOrder.size(); ++j)
+        {
+            if (j) file << ", ";
+            file << "\"" << JsonEscapeUtf8(entry.categoryTabOrder[j]) << "\"";
+        }
+        file << "], \"folderItems\": [";
         for (size_t j = 0;
             j < entry.folderItemKeys.size(); ++j)
         {

@@ -1,5 +1,6 @@
 #include "shortcut_application_rules.h"
 #include "category_collection_rules.h"
+#include "shortcut_category_target.h"
 #include "empty_group_drop_rules.h"
 #include "shortcut_icon_resource.h"
 #include "large_icon_steam.h"
@@ -92,6 +93,58 @@ void CheckInternetShortcutIconResource()
     Check(!snowdesktop::shortcut_icon_resource::
               ReadInternetShortcutIconResource(missingPath.wstring()),
         "Internet shortcuts without IconFile must use the Shell fallback");
+}
+
+void CheckShortcutCategoryTargets()
+{
+    namespace collection = snowdesktop::category_collection_rules;
+    Check(collection::NormalizeExtensionToken(L"lnk:pdf") == L".LNK:.PDF" &&
+        collection::NormalizeExtensionToken(L"*.lnk:folder") == L".LNK:FOLDER" &&
+        collection::NormalizeExtensionToken(L"url:steam") == L".URL:STEAM",
+        "editable shortcut selectors accept optional dots and normalize case");
+    const auto merged = collection::MergeLegacyProgramShortcutRules({L".PY", L".LNK", L".URL", L".LNK:APP"});
+    Check(merged == std::vector<std::wstring>({L".PY", L".LNK:APP", L".URL:STEAM"}) &&
+        collection::MergeLegacyProgramShortcutRules(merged) == merged,
+        "upgrade merges target selectors without losing custom suffixes or duplicating rules");
+    TemporaryDirectory temporary;
+    const auto initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    Check(SUCCEEDED(initialized) && !temporary.Path().empty(), "shortcut category fixture initializes COM and a private directory");
+    if (FAILED(initialized) || temporary.Path().empty()) return;
+    const auto folder = temporary.Path() / L"folder.with.dots";
+    std::filesystem::create_directory(folder);
+    const auto document = temporary.Path() / L"report.PDF";
+    const auto executable = temporary.Path() / L"program.EXE";
+    std::ofstream(document) << "document";
+    std::ofstream(executable) << "fixture only, never launched";
+    for (const auto& target : {folder, document, executable})
+    {
+        const auto shortcut = temporary.Path() / (target.filename().wstring() + L".lnk");
+        Microsoft::WRL::ComPtr<IShellLinkW> link;
+        Microsoft::WRL::ComPtr<IPersistFile> file;
+        const bool saved = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&link))) && SUCCEEDED(link->SetPath(target.c_str())) &&
+            SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(shortcut.c_str(), TRUE));
+        Check(saved, "real Shell links are saved for folder, document and executable targets");
+        if (!saved) continue;
+        const auto resolved = collection::ReadShortcutTarget(shortcut.wstring());
+        Check(resolved.classified, "saved links complete target classification");
+        const bool isFolder = target == folder;
+        const bool isProgram = target == executable;
+        Check(resolved.directory == isFolder && collection::IsProgramItem(L".LNK", false,
+            {L".EXE", L".LNK:APP", L".URL:STEAM"}, resolved) == isProgram,
+            "only executable links require the default program opt-in");
+        Check(collection::MatchesExtensionRule(L".LNK:FOLDER", L".LNK", resolved) == isFolder,
+            "the editable folder-target rule distinguishes a dotted directory from files");
+        if (target == document)
+            Check(collection::MatchesExtensionRule(L".PDF", L".LNK", resolved) &&
+                collection::MatchesExtensionRule(L".LNK:.PDF", L".LNK", resolved) &&
+                !collection::MatchesExtensionRule(L".LNK:.EXE", L".LNK", resolved),
+                "plain and link-only user suffix rules classify document targets");
+    }
+    const auto broken = collection::ReadShortcutTarget((temporary.Path() / L"missing.lnk").wstring());
+    Check(!collection::IsProgramItem(L".LNK", false, {L".LNK:APP"}, broken),
+        "an unresolved link is not silently treated as a program");
+    CoUninitialize();
 }
 #include "local_shortcut_icon_cases.h"
 } // namespace
@@ -198,13 +251,15 @@ int wmain(int argc, wchar_t** argv)
         "non-launch Steam URLs must remain ordinary Internet shortcuts");
 
     CheckInternetShortcutIconResource();
+    CheckShortcutCategoryTargets();
 
     // The opt-in must cover native executables and app links, including
     // links that have no filesystem extension and user-defined suffixes.
     namespace collection = snowdesktop::category_collection_rules;
     Check(collection::IsProgramItem(L".exe", false, {}), "executables require the program opt-in");
     Check(collection::IsProgramItem(L"", true, {}), "Shell app identities require the program opt-in");
-    Check(collection::IsProgramItem(L".LNK", false, {}), "shortcuts remain gated when their rule suffix is removed");
+    Check(!collection::IsProgramItem(L".LNK", false, {}), "a shortcut suffix alone does not require program collection");
+    Check(!collection::IsProgramItem(L".URL", false, {L".URL:STEAM"}), "ordinary web links remain collectable with programs disabled");
     Check(collection::IsProgramItem(L".PY", false, {L".PY"}), "custom program suffixes require the same opt-in");
     Check(!collection::IsProgramItem(L".PDF", false, {L".PY"}), "ordinary documents stay collectable while programs are disabled");
     const std::vector<std::wstring> defaults{L"all", L"folders", L"programs", L"images", L"others"};

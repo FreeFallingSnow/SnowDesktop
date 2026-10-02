@@ -1081,18 +1081,19 @@ int main()
     // Protect restart behavior through the actual layout store, including
     // the movable All tab and the default ordering of older layouts.
     snowdesktop::layout_storage::Document categoryTabs;
-    const std::string categoryTabsText = R"({"widgets":[{"id":"files","type":"fileCategories","categoryTabOrder":["programs","others","all","folders"]}]})";
+    const std::string categoryTabsText = R"({"widgets":[{"id":"files","page":"page-a","x":0,"y":0,"type":"fileCategories","categoryTabOrder":["programs","others","all","folders"]}]})";
     const auto categoryTabsPath = root / L"layout-storage" / L"category-tabs.layout.json";
     Expect(snowdesktop::layout_storage::SaveDocument(categoryTabsPath, categoryTabsText, &layoutError),
         "custom tab order saves through the production layout store");
     Expect(snowdesktop::layout_storage::LoadDocument(categoryTabsPath, categoryTabs).status ==
             snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
-            categoryTabs.widgets.front().categoryTabOrder ==
+            categoryTabs.widgets.size() == 1 && categoryTabs.widgets.front().categoryTabOrder ==
                 std::vector<std::string>({"programs", "others", "all", "folders"}),
         "restart preserves the position of All and program category tabs");
     Expect(typedLayout.widgets[0].categoryTabOrder.empty(), "old layouts keep their default category tab order");
     Expect(!snowdesktop::layout_storage::ParseDocument(
-        R"({"widgets":[{"id":"bad","categoryTabOrder":[3]}]})", categoryTabs, &layoutError),
+        R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"categoryTabOrder":[3]}]})", categoryTabs, &layoutError) &&
+            layoutError.find("categoryTabOrder[0]") != std::string::npos,
         "invalid category tab identities cannot replace a saved layout");
     const std::string pairLayoutText = R"({"widgets":[
         {"id":"automatic","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":true},
@@ -1264,7 +1265,8 @@ int main()
     }
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"folder-a\","
-            "\"listMode\":true,\"detailShowModified\":true,"
+            "\"listMode\":true,\"showSearchBox\":true,\"showFileCategories\":true,"
+            "\"categoryTabOrder\":[\"folders\",\"all\"],\"detailShowModified\":true,"
             "\"detailShowType\":false,\"detailShowSize\":true,"
             "\"detailModifiedPosition\":0.24,"
             "\"detailTypePosition\":0.58,"
@@ -1272,6 +1274,9 @@ int main()
             dockPopupLayout, &layoutError) &&
             dockPopupLayout.dockEntries.size() == 1 &&
             dockPopupLayout.dockEntries[0].listMode &&
+            dockPopupLayout.dockEntries[0].showSearchBox &&
+            dockPopupLayout.dockEntries[0].showFileCategories &&
+            dockPopupLayout.dockEntries[0].categoryTabOrder == std::vector<std::string>({"folders", "all"}) &&
             dockPopupLayout.dockEntries[0].detailShowModified &&
             !dockPopupLayout.dockEntries[0].detailShowType &&
             dockPopupLayout.dockEntries[0].detailShowSize &&

@@ -496,6 +496,7 @@ struct ColorEditor
 struct RuleRow
 {
     std::wstring id;
+    std::wstring customLabel;
     muxc::Border root{nullptr};
     muxc::StackPanel content{nullptr};
     muxc::Grid nameActions{nullptr};
@@ -504,9 +505,15 @@ struct RuleRow
     muxc::TextBox label{nullptr};
     muxc::TextBox extensions{nullptr};
     muxc::Button remove{nullptr};
+    muxc::ToggleSwitch enabled{nullptr};
+    muxc::Button restoreName{nullptr};
+    muxc::Button restoreExtensions{nullptr};
     winrt::event_token labelToken{};
     winrt::event_token extensionsToken{};
     winrt::event_token removeToken{};
+    winrt::event_token enabledToken{};
+    winrt::event_token restoreNameToken{};
+    winrt::event_token restoreExtensionsToken{};
     bool closed = false;
 
     void Close() noexcept
@@ -518,6 +525,9 @@ struct RuleRow
             label.TextChanged(labelToken);
             extensions.TextChanged(extensionsToken);
             remove.Click(removeToken);
+            enabled.Toggled(enabledToken);
+            restoreName.Click(restoreNameToken);
+            restoreExtensions.Click(restoreExtensionsToken);
         }
         catch (...)
         {
@@ -1055,12 +1065,12 @@ struct DesktopPagePresenter::Impl
             mux::VerticalAlignment::Center);
         applyCategory.MinHeight(32.0);
         restoreCategory.MinHeight(32.0);
-        categoryActions.Children().Append(applyCategory);
-        categoryActions.Children().Append(restoreCategory);
+        applyCategory.Visibility(mux::Visibility::Collapsed);
+        restoreCategory.Visibility(mux::Visibility::Collapsed);
         categoryActionsRow.Initialize(categoryActions);
         categoryActionsRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
-        categoryRulesCard.content.Children().Append(saveCategoryHeading);
+        saveCategoryHeading.Visibility(mux::Visibility::Collapsed);
         categoryRulesCard.content.Children().Append(categoryActionsRow.root);
         categoryStatus = muxc::TextBlock{};
         categoryStatus.Opacity(0.72);
@@ -1153,7 +1163,7 @@ struct DesktopPagePresenter::Impl
         collectProgramsToken = collectPrograms.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = collectPrograms.IsOn();
-                UpdateCategory(SettingsUpdateMode::Draft,
+                UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
                     [enabled](CategorySettings& settings) {
                         settings.collectProgramsEnabled = enabled;
                     });
@@ -1293,6 +1303,8 @@ struct DesktopPagePresenter::Impl
             return L("widget.categories.default_program", L"Programs");
         if (!rule.customLabel.empty())
             return rule.customLabel;
+        if (rule.id == L"folders")
+            return L("widget.categories.folder", L"Folders");
         if (rule.id == L"videos")
             return L("widget.categories.default_video", L"Videos");
         if (rule.id == L"images")
@@ -1316,7 +1328,7 @@ struct DesktopPagePresenter::Impl
         const std::wstring id = L"custom-winui-" +
             std::to_wstring(generation) + L"-" +
             std::to_wstring(nextId.fetch_add(1));
-        UpdateCategory(SettingsUpdateMode::Draft,
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
             [id, label = std::move(label), extensions](
                 CategorySettings& settings) mutable {
                 CategoryRule rule;
@@ -1331,8 +1343,8 @@ struct DesktopPagePresenter::Impl
 
     void RemoveCategoryRule(std::wstring id)
     {
-        if (id == L"programs") return;
-        UpdateCategory(SettingsUpdateMode::Draft,
+        if (IsBuiltinCategoryRuleId(id)) return;
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
             [id = std::move(id)](CategorySettings& settings) {
                 settings.rules.erase(
                     std::remove_if(
@@ -1346,7 +1358,7 @@ struct DesktopPagePresenter::Impl
 
     void EditCategoryLabel(const std::wstring& id, std::wstring label)
     {
-        UpdateCategory(SettingsUpdateMode::Draft,
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
             [id, label = std::move(label)](CategorySettings& settings) {
                 const auto found = std::find_if(
                     settings.rules.begin(), settings.rules.end(),
@@ -1362,7 +1374,7 @@ struct DesktopPagePresenter::Impl
         const std::wstring& id,
         std::wstring extensions)
     {
-        UpdateCategory(SettingsUpdateMode::Draft,
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
             [id, extensions = std::move(extensions)](
                 CategorySettings& settings) {
                 const auto found = std::find_if(
@@ -1373,6 +1385,22 @@ struct DesktopPagePresenter::Impl
                 if (found != settings.rules.end())
                     found->extensions = extensions;
             });
+    }
+
+    void RestoreCategoryField(const std::wstring& id, bool extensions)
+    {
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit, [id, extensions](CategorySettings& settings) {
+            const auto defaults = CategorySettings::Defaults();
+            const auto builtin = std::find_if(defaults.rules.begin(), defaults.rules.end(),
+                [&](const CategoryRule& rule) { return rule.id == id; });
+            if (builtin == defaults.rules.end()) return;
+            for (auto& rule : settings.rules)
+            {
+                if (rule.id != id) continue;
+                if (extensions) rule.extensions = builtin->extensions;
+                else rule.customLabel.clear();
+            }
+        });
     }
 
     void CloseRuleRows() noexcept
@@ -1391,12 +1419,18 @@ struct DesktopPagePresenter::Impl
         {
             auto row = std::make_unique<RuleRow>();
             row->id = rule.id;
+            row->customLabel = rule.customLabel;
             row->root = muxc::Border{};
             row->content = muxc::StackPanel{};
             row->content.Spacing(8.0);
             row->label = muxc::TextBox{};
             row->extensions = muxc::TextBox{};
             row->remove = muxc::Button{};
+            row->enabled = muxc::ToggleSwitch{};
+            row->restoreName = muxc::Button{};
+            row->restoreExtensions = muxc::Button{};
+            row->enabled.IsOn(rule.enabled);
+            row->enabled.VerticalAlignment(mux::VerticalAlignment::Center);
             row->nameActions = muxc::Grid{};
             row->nameActions.ColumnSpacing(8.0);
             muxc::ColumnDefinition labelColumn{};
@@ -1406,6 +1440,9 @@ struct DesktopPagePresenter::Impl
             deleteColumn.Width(mux::GridLengthHelper::Auto());
             row->nameActions.ColumnDefinitions().Append(labelColumn);
             row->nameActions.ColumnDefinitions().Append(deleteColumn);
+            muxc::ColumnDefinition restoreColumn{};
+            restoreColumn.Width(mux::GridLengthHelper::Auto());
+            row->nameActions.ColumnDefinitions().Append(restoreColumn);
             row->label.Text(RuleLabel(rule));
             if (rule.id == L"programs")
             {
@@ -1416,17 +1453,54 @@ struct DesktopPagePresenter::Impl
             row->nameActions.Children().Append(row->label);
             muxc::Grid::SetColumn(row->remove, 1);
             row->nameActions.Children().Append(row->remove);
+            if (IsBuiltinCategoryRuleId(rule.id))
+            {
+                row->remove.Visibility(mux::Visibility::Collapsed);
+                muxc::Grid::SetColumn(row->enabled, 1);
+                row->nameActions.Children().Append(row->enabled);
+                muxc::Grid::SetColumn(row->restoreName, 2);
+                row->nameActions.Children().Append(row->restoreName);
+            }
             row->labelRow.Initialize(row->nameActions);
-            row->extensionsRow.Initialize(row->extensions);
+            muxc::Grid extensionActions{};
+            extensionActions.ColumnSpacing(8.0);
+            muxc::ColumnDefinition extensionColumn{};
+            extensionColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+            muxc::ColumnDefinition restoreExtensionColumn{};
+            restoreExtensionColumn.Width(mux::GridLengthHelper::Auto());
+            extensionActions.ColumnDefinitions().Append(extensionColumn);
+            extensionActions.ColumnDefinitions().Append(restoreExtensionColumn);
+            extensionActions.Children().Append(row->extensions);
+            if (IsBuiltinCategoryRuleId(rule.id))
+            {
+                muxc::Grid::SetColumn(row->restoreExtensions, 1);
+                extensionActions.Children().Append(row->restoreExtensions);
+            }
+            row->extensionsRow.Initialize(extensionActions);
             row->content.Children().Append(row->labelRow.root);
             row->content.Children().Append(row->extensionsRow.root);
             row->root.Child(row->content);
             categoryRulePanel.Children().Append(row->root);
 
             RuleRow* const raw = row.get();
+            row->restoreNameToken = row->restoreName.Click([this, raw](const auto&, const auto&) {
+                if (!raw->closed) RestoreCategoryField(raw->id, false);
+            });
+            row->restoreExtensionsToken = row->restoreExtensions.Click([this, raw](const auto&, const auto&) {
+                if (!raw->closed) RestoreCategoryField(raw->id, true);
+            });
+            row->enabledToken = row->enabled.Toggled([this, raw](const auto&, const auto&) {
+                if (updatingControls || raw->closed) return;
+                const bool enabled = raw->enabled.IsOn();
+                const auto id = raw->id;
+                UpdateCategory(SettingsUpdateMode::PreviewAndCommit, [id, enabled](CategorySettings& settings) {
+                    for (auto& rule : settings.rules) if (rule.id == id) rule.enabled = enabled;
+                });
+            });
             row->labelToken = row->label.TextChanged(
                 [this, raw](const auto&, const auto&) {
                     if (updatingControls || raw->closed) return;
+                    raw->customLabel = raw->label.Text().c_str();
                     EditCategoryLabel(raw->id, raw->label.Text().c_str());
                 });
             row->extensionsToken = row->extensions.TextChanged(
@@ -1466,6 +1540,8 @@ struct DesktopPagePresenter::Impl
         {
             const CategoryRule& rule = settings.rules[index];
             RuleRow& row = *ruleRows[index];
+            row.customLabel = rule.customLabel;
+            row.enabled.IsOn(rule.enabled);
             if (row.label.FocusState() == mux::FocusState::Unfocused)
                 row.label.Text(RuleLabel(rule));
             if (row.extensions.FocusState() == mux::FocusState::Unfocused)
@@ -1478,12 +1554,26 @@ struct DesktopPagePresenter::Impl
     {
         for (const auto& row : ruleRows)
         {
+            // Language changes do not change the category domain revision.
+            // Refresh default names with the captions, without turning their
+            // translated display text into a persisted custom name.
+            if ((row->id == L"programs" ||
+                    (row->customLabel.empty() && IsBuiltinCategoryRuleId(row->id))) &&
+                (row->id == L"programs" || row->label.FocusState() == mux::FocusState::Unfocused))
+                row->label.Text(RuleLabel(CategoryRule{row->id, row->customLabel, L""}));
             row->labelRow.SetText(
                 L("app.settings.category_name", L"Category name"));
             row->extensionsRow.SetText(
                 L("app.settings.category_extensions", L"Extensions"));
             row->remove.Content(winrt::box_value(
                 L("app.settings.delete", L"Delete")));
+            const auto restore = L("app.settings.restore_default", L"Restore default");
+            presenter_controls::ConfigureRestoreDefaultButton(row->restoreName,
+                std::wstring((restore + L" · " + L("app.settings.category_name", L"Category name") + L" · " + row->label.Text()).c_str()));
+            presenter_controls::ConfigureRestoreDefaultButton(row->restoreExtensions,
+                std::wstring((restore + L" · " + L("app.settings.category_extensions", L"Extensions") + L" · " + row->label.Text()).c_str()));
+            muxa::AutomationProperties::SetName(row->enabled,
+                L("app.settings.widgets_enable", L"Enable") + L" " + row->label.Text());
             muxa::AutomationProperties::SetName(row->remove,
                 L("app.settings.delete", L"Delete") + L" " +
                     row->label.Text());

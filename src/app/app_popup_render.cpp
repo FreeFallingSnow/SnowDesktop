@@ -203,8 +203,7 @@ void DesktopApp::DrawCollectionPopup(
     if (auto* view = GetCategorizedPopupView())
     {
         const RECT controls = GetCollectionPopupControlsRect(popupRect_);
-        const RECT frame{popupRect_.left, popupRect_.top + popupMetrics.headerHeight,
-            popupRect_.right, popupRect_.bottom};
+        const RECT frame = GetCategorizedPopupFrame(popupRect_);
         CategorizedPopupScope scope(view, frame);
         ctx->PushAxisAlignedClip(ToD2DRect(controls), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         view->DrawContent(ctx, frame);

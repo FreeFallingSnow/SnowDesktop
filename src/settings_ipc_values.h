@@ -70,7 +70,7 @@ SD_IPC_FIELDS(GeneralSettings,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
     v.quickNavigationAppearance, v.collectionPopupAppearance, v.shellExtensions, v.statusBar);
 SD_IPC_FIELDS(CategoryRule,
-    v.id, v.customLabel, v.extensions);
+    v.id, v.customLabel, v.extensions, v.enabled);
 SD_IPC_FIELDS(CategorySettings,
     v.tabFontSize, v.rules, v.collectProgramsEnabled);
 SD_IPC_FIELDS(IconBeautifySettings,

@@ -213,8 +213,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (view)
         {
             const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
-            const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-            const RECT frame{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom};
+            const RECT frame = GetCategorizedPopupFrame(popup);
             CategorizedPopupScope scope(view, frame);
             const RECT search = view->GetSearchBoxRect();
             if (!IsRectEmptyRect(search) && PtInRect(&search, pt))

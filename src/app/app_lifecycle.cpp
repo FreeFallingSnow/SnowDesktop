@@ -753,8 +753,7 @@ void DesktopApp::UpdateHostInputImePosition()
         if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
         {
             const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
-            const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-            CategorizedPopupScope scope(view, RECT{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom});
+            CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
             hasCaret = view->GetSearchCaretRect(caret);
         }
     if (!hasCaret)

@@ -158,8 +158,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
             if (auto* view = GetCategorizedPopupView())
             {
-                const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-                CategorizedPopupScope scope(view, RECT{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom});
+                CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
                 if (view->TryScrollTabs(pt, delta))
                 {
                     InvalidateRect(hwnd_, nullptr, FALSE);

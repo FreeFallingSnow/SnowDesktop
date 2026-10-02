@@ -5,6 +5,7 @@
 #include "../item_location.h"
 #include "../category_collection_rules.h"
 #include "../empty_group_drop_rules.h"
+#include "../shortcut_category_target.h"
 
 // Internal and file-backed drop-plan execution.
 
@@ -65,8 +66,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     };
     auto containsPrograms = [&] {
         const auto extensions = GetProgramCategoryExtensions(categorySettings_);
-        return preview.action == DropAction::Link ||
-            std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
+        return std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
                 [&](const DragSourceEntry& entry) {
                     const size_t index = FindItemIndexByKey(entry.desktopKey);
                     const bool application = index < items_.size() && items_[index].isApplicationShortcut;
@@ -74,8 +74,18 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
                     const DWORD attributes = path.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
                     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
                         return false;
+                    const auto target = index < items_.size() && items_[index].shortcutTarget.classified
+                        ? items_[index].shortcutTarget
+                        : snowdesktop::category_collection_rules::ReadShortcutTarget(path);
+                    if (index < items_.size() && target.classified)
+                    {
+                        items_[index].shortcutTarget = target;
+                        items_[index].isApplicationShortcut =
+                            snowdesktop::category_collection_rules::IsProgramItem(
+                                ToUpperInvariant(PathFindExtensionW(path.c_str())), false, {}, target);
+                    }
                     return snowdesktop::category_collection_rules::IsProgramItem(
-                        PathFindExtensionW(path.c_str()), application, extensions);
+                        ToUpperInvariant(PathFindExtensionW(path.c_str())), application, extensions, target);
                 });
     };
     if (!preview.Empty() && preview.targetWidget &&
@@ -304,6 +314,10 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         }
         if (changed)
         {
+            // Releasing existing items changes widget membership without a
+            // Shell file event, so auto-collection must run at this boundary.
+            ApplyAutoCollectFileCategoryWidgets();
+            RefreshCollectedKeysCache();
             LayoutItems();
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);

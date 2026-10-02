@@ -195,6 +195,10 @@ exit 0
     }
     [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'src'))
     [IO.File]::WriteAllText((Join-Path $fixture 'src\fixture.cpp'), 'original source', $utf8)
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'src\winui'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'src\core'))
+    [IO.File]::WriteAllText((Join-Path $fixture 'src\winui\presenter.cpp'), 'local presenter fixture', $utf8)
+    [IO.File]::WriteAllText((Join-Path $fixture 'src\core\desktop.cpp'), 'local renderer fixture', $utf8)
     [IO.File]::WriteAllText((Join-Path $fixture '.gitignore'), "/*`n!/scripts/`n!/src/`n!/.gitignore`n!/CMakePresets.json`n", $utf8)
     & git.exe -C $fixture init --quiet
     Check ($LASTEXITCODE -eq 0) 'The isolated input fixture must initialize Git'
@@ -210,6 +214,24 @@ exit 0
     Check ($a.batchId -eq $b.batchId) 'Overlapping editors must join one batch'
     $repeatBegin = Call 'begin task-a'
     Check ($a.batchId -eq $repeatBegin.batchId) 'Repeated begin must reuse the editing registration'
+    # A reviewed local change and a failed-test supplement retain their exact
+    # selection even under native/shared directories. High-risk declarations
+    # still escalate; rejected empty selections cannot replace a valid plan.
+    $planArgs = 'plan task-a -Batch ' + $a.batchId + ' -Revision 0'
+    $mappedInputs = ' -Inputs src/winui/presenter.cpp,src/core/desktop.cpp,scripts/build_protocol.ps1'
+    $scoped = Call ($planArgs + ' -Scope module -Suites selected -Tests Alpha' + $mappedInputs + ' -Reason reviewed-local-dependencies-and-failed-test-supplement')
+    Check (-not $scoped.testPlan.requiredFull -and $scoped.testPlan.tests.Count -eq 1 -and
+        $scoped.testPlan.tests[0] -eq 'Alpha' -and -not (State).current.participants[0].testPlan.requiredFull) 'Reviewed local plans must persist only the requested coverage without directory-based full escalation'
+    Call ($planArgs + ' -Scope module -Suites selected' + $mappedInputs + ' -Reason empty-selection') 2 | Out-Null
+    Check ((State).current.participants[0].testPlan.tests[0] -eq 'Alpha') 'An empty selection must be rejected without replacing the valid plan'
+    foreach ($risk in @('public', 'infrastructure', 'unknown')) {
+        $highRisk = Call ($planArgs + ' -Scope ' + $risk + ' -Suites selected -Tests Alpha' + $mappedInputs + ' -Reason declared-high-risk')
+        Check $highRisk.testPlan.requiredFull 'Unknown/public/infrastructure plans must retain full automatic coverage'
+    }
+    # Preserve the original default-full fixture for the following barrier,
+    # crash recovery and input invalidation scenarios.
+    Call ($planArgs + ' -Scope unknown -Suites full') | Out-Null
+    Write-Output 'PASS scoped native/shared-directory selection, nonempty rejection, and high-risk escalation'
     Call ('finish task-a -Batch ' + ('0' * 32)) 2 | Out-Null
     Gate 'hold-build'
     Gate 'hold-test'

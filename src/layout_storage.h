@@ -99,6 +99,9 @@ struct DockRecord
     std::vector<std::string> folderItems;
     bool listMode = false;
     bool fanPopup = false;
+    bool showSearchBox = false;
+    bool showFileCategories = false;
+    std::vector<std::string> categoryTabOrder;
     bool detailShowModified = false;
     bool detailShowType = false;
     bool detailShowSize = false;

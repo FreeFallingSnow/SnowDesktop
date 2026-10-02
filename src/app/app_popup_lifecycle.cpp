@@ -224,6 +224,9 @@ void DesktopApp::OpenDockFolderPopupAt(
     dockFolderPopupWidget_.listMode =
         entry.listMode;
     dockFolderPopupWidget_.fanPopup = entry.fanPopup;
+    dockFolderPopupWidget_.showSearchBox = entry.showSearchBox;
+    dockFolderPopupWidget_.showFileCategories = entry.showFileCategories;
+    dockFolderPopupWidget_.categoryTabOrder = entry.categoryTabOrder;
     dockFolderPopupWidget_.detailShowModified =
         entry.detailShowModified;
     dockFolderPopupWidget_.detailShowType =

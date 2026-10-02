@@ -158,6 +158,7 @@ inline void TransferIcon(Item& destination, Item& source)
     destination.shortcutArrow = source.shortcutArrow;
     destination.isShortcut = source.isShortcut;
     destination.isApplicationShortcut = source.isApplicationShortcut;
+    destination.shortcutTarget = source.shortcutTarget;
     destination.iconIsMediaThumbnail = source.iconIsMediaThumbnail;
     destination.iconState = source.iconState;
 }
@@ -181,7 +182,11 @@ inline void PreserveRuntime(DesktopItem& item, DesktopItem& previous)
         TransferIcon(item, previous);
         if (item.fileSize != previous.fileSize ||
             !SameTime(item.modifiedTime, previous.modifiedTime))
+        {
             item.iconState = IconState::Loading;
+            item.shortcutTarget = {};
+            item.isApplicationShortcut = false;
+        }
     }
 }
 
@@ -208,7 +213,11 @@ inline void PreserveRuntime(FolderEntry& item, FolderEntry& previous)
         TransferIcon(item, previous);
         if (item.fileSize != previous.fileSize ||
             CompareFileTime(&item.lastWriteTime, &previous.lastWriteTime) != 0)
+        {
             item.iconState = IconState::Loading;
+            item.shortcutTarget = {};
+            item.isApplicationShortcut = false;
+        }
     }
 }
 } // namespace snowdesktop::shell_refresh

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../shortcut_category_target.h"
 #include "../pending_window_message.h"
 #include "shell_icon_request.h"
 #include "initial_icon_bitmap.h"
@@ -465,6 +466,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             namespace shortcutRules = snowdesktop::shortcut_application_rules;
             const bool isLnk = shortcutRules::HasExtension(path, L".lnk");
             const bool isUrl = shortcutRules::HasExtension(path, L".url");
+            result->shortcutTarget.classified = isLnk || isUrl;
             result->isShortcut = isLnk || isUrl;
             ULONGLONG loadMs = 0, classifyMs = 0, targetMs = 0;
             if (isLnk)
@@ -488,6 +490,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                     loadMs = loadedAt - started;
                     if (loaded)
                     {
+                        result->shortcutTarget = snowdesktop::category_collection_rules::ReadShellLinkTarget(shellLink.Get());
                         result->isApplicationShortcut =
                             shellCalls::Call(L"Classify.ApplicationTarget", [&] {
                                 return IsApplicationsShellLinkTarget(shellLink.Get(), path);
@@ -516,7 +519,12 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                                                     path.c_str());
                 });
                 result->isApplicationShortcut = shortcutRules::IsSteamApplicationUrl(url);
+                result->shortcutTarget.application = result->isApplicationShortcut;
             }
+            result->isApplicationShortcut = result->isApplicationShortcut ||
+                snowdesktop::category_collection_rules::IsProgramItem(
+                    ToUpperInvariant(PathFindExtensionW(path.c_str())), false, {}, result->shortcutTarget);
+            result->shortcutTarget.application = result->isApplicationShortcut;
             const auto elapsed = GetTickCount64() - started;
             if (elapsed >= 250)
             {

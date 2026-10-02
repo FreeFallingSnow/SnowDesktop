@@ -12,6 +12,7 @@
 #include "folder_sort_rules.h"
 #include "list_detail_rules.h"
 #include "large_icon_config.h"
+#include "category_collection_rules.h"
 
 #include <cstdint>
 #include <optional>
@@ -202,6 +203,7 @@ struct DesktopItem
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    snowdesktop::category_collection_rules::ShortcutTarget shortcutTarget;
     bool iconIsMediaThumbnail = false;
     bool isCut = false;
     IconState iconState = IconState::Loading;
@@ -230,6 +232,7 @@ struct DesktopItem
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          shortcutTarget(std::move(other.shortcutTarget)),
           iconIsMediaThumbnail(other.iconIsMediaThumbnail),
           isCut(other.isCut),
           iconState(other.iconState)
@@ -268,6 +271,7 @@ struct DesktopItem
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            shortcutTarget = std::move(other.shortcutTarget);
             iconIsMediaThumbnail = other.iconIsMediaThumbnail;
             isCut = other.isCut;
             iconState = other.iconState;
@@ -308,6 +312,7 @@ struct FolderEntry
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    snowdesktop::category_collection_rules::ShortcutTarget shortcutTarget;
     bool iconIsMediaThumbnail = false;
     IconState iconState = IconState::Loading;
 
@@ -328,6 +333,7 @@ struct FolderEntry
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          shortcutTarget(other.shortcutTarget),
           iconIsMediaThumbnail(other.iconIsMediaThumbnail),
           iconState(other.iconState)
     {
@@ -360,6 +366,7 @@ struct FolderEntry
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            shortcutTarget = other.shortcutTarget;
             iconIsMediaThumbnail = other.iconIsMediaThumbnail;
             iconState = other.iconState;
             if (other.iconBitmap != nullptr)
@@ -417,6 +424,7 @@ public:
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
           isApplicationShortcut(other.isApplicationShortcut),
+          shortcutTarget(std::move(other.shortcutTarget)),
           iconIsMediaThumbnail(other.iconIsMediaThumbnail),
           iconState(other.iconState)
     {
@@ -446,6 +454,7 @@ public:
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;
             isApplicationShortcut = other.isApplicationShortcut;
+            shortcutTarget = std::move(other.shortcutTarget);
             iconIsMediaThumbnail = other.iconIsMediaThumbnail;
             iconState = other.iconState;
             other.iconBitmap = nullptr;
@@ -575,6 +584,9 @@ struct DockEntry
     // widget-backed folder popups.
     bool listMode = false;
     bool fanPopup = false;
+    bool showSearchBox = false;
+    bool showFileCategories = false;
+    std::vector<std::wstring> categoryTabOrder;
     bool detailShowModified = false;
     bool detailShowType = false;
     bool detailShowSize = false;
