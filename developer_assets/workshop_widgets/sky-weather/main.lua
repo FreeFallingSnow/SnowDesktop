@@ -29,6 +29,11 @@ local function center(x,y,width,value,size,color,bold)
     local measured=draw.measureText(tostring(value),size,width,bold or false)
     text(x+math.max(0,(width-measured.width)*0.5),y,value,size,color,width,bold)
 end
+local function textAtInkTop(x,y,value,size,color,width,bold)
+    local measured=draw.measureText(tostring(value),size,0,bold or false)
+    text(x,y-measured.ink.top,value,size,color,width,bold,measured.height)
+    return measured
+end
 local function sun(x,y,s)
     draw.circle(x,y,s*0.45,0xFC9012,1)
     for i=1,12 do
@@ -37,9 +42,24 @@ local function sun(x,y,s)
         draw.circle(x-s*0.075*t,y-s*0.095*t,s*(0.45-0.035*i),color,1)
     end
 end
-local moonPath={{op="move",x=0.55,y=-0.78},{op="cubic",x1=-0.08,y1=-1.05,x2=-0.84,y2=-0.50,x=-0.82,y=0.18},
-    {op="cubic",x1=-0.80,y1=0.91,x2=0.28,y2=1.12,x=0.72,y=0.48},
-    {op="cubic",x1=-0.02,y1=0.56,x2=-0.13,y2=-0.24,x=0.55,y=-0.78},{op="close"}}
+local function circularArc(commands,cx,from,sweep)
+    local count=math.ceil(math.abs(sweep)/(math.pi*0.5))
+    local step=sweep/count;local tangent=4/3*math.tan(step*0.25)
+    for i=0,count-1 do
+        local a,b=from+step*i,from+step*(i+1)
+        local ax,ay,bx,by=math.cos(a),math.sin(a),math.cos(b),math.sin(b)
+        commands[#commands+1]={op="cubic",x1=cx+ax-tangent*ay,y1=ay+tangent*ax,
+            x2=cx+bx+tangent*by,y2=by-tangent*bx,x=cx+bx,y=by}
+    end
+end
+-- Equal-radius circles share both tips; centering their visible bounds keeps the crescent upright.
+local moonOffset=0.56
+local moonAngle=math.acos(moonOffset*0.5)
+local moonCenter=(1-moonOffset*0.5)*0.5
+local moonPath={{op="move",x=moonCenter+moonOffset*0.5,y=-math.sin(moonAngle)}}
+circularArc(moonPath,moonCenter,-moonAngle,-math.pi*2+moonAngle*2)
+circularArc(moonPath,moonCenter+moonOffset,math.pi-moonAngle,moonAngle*2)
+moonPath[#moonPath+1]={op="close"}
 local function moon(x,y,s)
     local commands={}
     for _,p in ipairs(moonPath) do
@@ -48,7 +68,6 @@ local function moon(x,y,s)
         commands[#commands+1]=q
     end
     draw.path(commands,{fillColor=0xFFE6A2,alpha=1})
-    draw.circle(x+s*0.31,y-s*0.25,s*0.038,0xE4F5FF,1)
 end
 local function cloud(x,y,s)
     draw.circle(x-s*0.28,y+s*0.04,s*0.21,0xD7E8F9,1)
@@ -132,11 +151,12 @@ local function render(_context,m)
     local p=short*0.065;local colors=palette();local a=m.weather;local data=a.weather;local cfg=config()
     local header=short*0.07;local title=a.city~="" and a.city or l10n.tr("lua_widget.sky_weather.choose_city")
     local headerCenter=p+header*0.18
+    local headerHeight=header*1.35;local headerTop=headerCenter-headerHeight*0.5
     local titleWidth=w-p*2-header*3.6
     local titleSize=header*0.68
     local measuredTitle=draw.measureText(title,titleSize,0,true)
     local titleInk=measuredTitle.ink
-    region("cities",p,p*0.65,w-p*2-header*2.6,header*1.35,l10n.tr("lua_widget.sky_weather.choose_city"))
+    region("cities",p,headerTop,w-p*2-header*2.6,headerHeight,l10n.tr("lua_widget.sky_weather.choose_city"))
     draw.path({{op="move",x=p+header*0.05,y=headerCenter-header*0.09},{op="line",x=p+header*0.62,y=headerCenter-header*0.32},
         {op="line",x=p+header*0.4,y=headerCenter+header*0.32},{op="line",x=p+header*0.3,y=headerCenter+header*0.03},{op="close"}},
         {fillColor=colors.primary,alpha=1})
@@ -145,16 +165,19 @@ local function render(_context,m)
     draw.line(cx,headerCenter-header*0.075,cx+header*0.15,headerCenter+header*0.075,header*0.04,colors.primary,1)
     draw.line(cx+header*0.15,headerCenter+header*0.075,cx+header*0.30,headerCenter-header*0.075,header*0.04,colors.primary,1)
     local rx=w-p-header*2.25
-    region("refresh",rx,p*0.65,header*1.1,header*1.35,l10n.tr("lua_widget.sky_weather.refresh"))
+    region("refresh",rx,headerTop,header*1.1,headerHeight,l10n.tr("lua_widget.sky_weather.refresh"))
     draw.arc(rx+header*0.55,headerCenter,header*0.23,35,290,header*0.065,colors.primary,0.9)
     draw.line(rx+header*0.78,headerCenter-header*0.08,rx+header*0.80,headerCenter-header*0.25,header*0.055,colors.primary,0.9)
-    region("settings",w-p-header,p*0.65,header,header*1.35,l10n.tr("lua_widget.sky_weather.settings"))
+    region("settings",w-p-header,headerTop,header,headerHeight,l10n.tr("lua_widget.sky_weather.settings"))
     for i=0,2 do draw.circle(w-p-header*0.74+i*header*0.23,headerCenter,header*0.035,colors.primary,1) end
     local wide=w/h>1.8;local tall=w/h<0.7
-    local heroX,heroY,heroW,heroH=p,h*0.20,w-p*2,h*0.235
+    local heroX,heroY,heroW,heroH=p,headerTop+headerHeight+short*0.045,w-p*2,h*0.235
     local fx,fy,fw,fh=p,h*0.49,w-p*2,h*0.37
-    if wide then heroY=h*0.26;heroW=w*0.40;heroH=h*0.34;fx=w*0.46;fy=h*0.26;fw=w-fx-p;fh=h*0.57 end
-    if tall then heroY=h*0.16;heroH=h*0.19;fy=h*0.40;fh=h*0.46 end
+    if wide then
+        fx=w*0.44;fy=headerTop+headerHeight+short*0.07;fw=w-fx-p;fh=h-short*0.14-fy
+        heroY=fy+short*0.015;heroW=fx-p-short*0.06;heroH=h*0.34
+    end
+    if tall then heroH=h*0.19;fy=h*0.40;fh=h*0.46 end
     if not data then
         glyph("cloudSun",w*0.5,h*0.36,short*0.27)
         draw.text(p,h*0.53,status(m),short*0.041,colors.primary,w-p*2,true,false,h*0.14)
@@ -165,16 +188,18 @@ local function render(_context,m)
         local condition,kind=weather.condition(data.code,data.night)
         local icon=math.min(heroH*0.78,heroW*0.21)
         local size=math.min(heroH*0.91,heroW*0.20)
+        if wide then icon=math.min(short*0.29,heroW*0.29);size=math.min(short*0.285,heroW*0.38) end
         local value=weather.temperature(data.temp,cfg.unit):gsub("°$","")
         local tx=heroX+icon*1.15;local ix=heroX+heroW*0.67
-        local budget=ix-tx-size*0.38
+        local budget=(wide and fx-short*0.06 or ix)-tx-size*0.38
         local natural=draw.measureText(value,size,heroW,false)
         if natural.width>budget then size=size*budget/natural.width end
         local measure=draw.measureText(value,size,heroW,false)
-        local numberY=heroY-heroH*0.02
         local numberInk=measure.ink
-        local numberTop=numberY+numberInk.top
-        glyph(kind,heroX+icon*0.5,numberTop+numberInk.height*0.5,icon)
+        local heroVisibleHeight=math.max(numberInk.height,icon*0.9)
+        local numberTop=heroY+(heroVisibleHeight-numberInk.height)*0.5
+        local numberY=numberTop-numberInk.top
+        glyph(kind,heroX+icon*0.5,heroY+heroVisibleHeight*0.5,icon)
         text(tx,numberY,value,size,colors.primary,budget,false,heroH)
         local unit=cfg.unit=="f" and l10n.tr("lua_widget.sky_weather.fahrenheit") or l10n.tr("lua_widget.sky_weather.celsius")
         local unitSize=size*0.27
@@ -182,17 +207,33 @@ local function render(_context,m)
         local unitInk=unitMeasure.ink
         text(tx+measure.width+size*0.02,numberTop-unitInk.top,unit,unitSize,colors.primary,size,false,unitMeasure.height)
         local infoSize=short*0.037
-        text(ix,heroY+heroH*0.14,l10n.tr(condition),infoSize,colors.primary,heroW*0.36,true)
-        text(ix,heroY+heroH*0.39,l10n.tr("lua_widget.sky_weather.feels",weather.temperature(data.feels,cfg.unit)),infoSize*0.91,colors.secondary,heroW*0.36)
         local today=data.days[1]
-        text(ix,heroY+heroH*0.63,weather.temperature(today.high,cfg.unit).." / "..weather.temperature(today.low,cfg.unit),infoSize,colors.secondary,heroW*0.36)
+        local range=weather.temperature(today.high,cfg.unit).." / "..weather.temperature(today.low,cfg.unit)
+        local feels=l10n.tr("lua_widget.sky_weather.feels",weather.temperature(data.feels,cfg.unit))
+        local weatherBottom=heroY+heroVisibleHeight
+        if wide then
+            infoSize=short*0.054
+            local infoTop=weatherBottom+short*0.065
+            local conditionWidth=math.min(draw.measureText(l10n.tr(condition),infoSize,0,true).width,heroW*0.5)
+            textAtInkTop(p,infoTop,l10n.tr(condition),infoSize,colors.primary,conditionWidth,true)
+            textAtInkTop(p+conditionWidth+short*0.045,infoTop,feels,infoSize*0.91,colors.secondary,heroW-conditionWidth-short*0.045)
+            textAtInkTop(p,infoTop+infoSize*1.75,range,infoSize,colors.secondary,heroW)
+        else
+            local infoTop=heroY+math.max(0,(heroVisibleHeight-infoSize*4.05)*0.5)
+            textAtInkTop(ix,infoTop,l10n.tr(condition),infoSize,colors.primary,heroW*0.36,true)
+            textAtInkTop(ix,infoTop+infoSize*1.65,feels,infoSize*0.91,colors.secondary,heroW*0.36)
+            local rangeMeasure=textAtInkTop(ix,infoTop+infoSize*3.30,range,infoSize,colors.secondary,heroW*0.36)
+            weatherBottom=math.max(weatherBottom,infoTop+infoSize*3.30+rangeMeasure.ink.height)
+        end
         if not wide and not tall then
             local hint=l10n.tr("lua_widget.sky_weather.five_days")
             if data.days[2] and data.days[2].high<today.high-2 then
                 local delta=today.high-data.days[2].high
                 hint=l10n.tr("lua_widget.sky_weather.cooler",weather.temperature(cfg.unit=="f" and delta*9/5 or delta,"c"))
             end
-            text(p,h*0.424,hint,short*0.034,colors.secondary,w-p*2)
+            local hintTop=weatherBottom+short*0.032
+            local hintMeasure=textAtInkTop(p,hintTop,hint,short*0.034,colors.secondary,w-p*2)
+            fy=hintTop+hintMeasure.ink.height+short*0.035;fh=h-short*0.14-fy
         end
         local count=#data.days;local gap=short*0.018
         for i,d in ipairs(data.days) do
@@ -202,7 +243,7 @@ local function render(_context,m)
             draw.rect(x,y,cw,ch,colors.card,short*0.016,colors.cardAlpha+(i==1 and 0.06 or 0))
             local dayLabel=d.date==data.localTime:sub(1,10) and l10n.tr("lua_widget.sky_weather.today") or l10n.tr(weekdayKeys[(weather.weekday(d.date) or 0)+1])
             local _,dayKind=weather.condition(d.code,false)
-            local labelSize=math.min(short*0.039,cw*0.26)
+            local labelSize=math.min(short*(wide and 0.054 or 0.039),cw*0.26)
             if tall then
                 text(x+cw*0.05,y+ch*0.24,dayLabel,short*0.043,colors.primary,cw*0.29,true)
                 glyph(dayKind,x+cw*0.46,y+ch*0.51,ch*0.60)
