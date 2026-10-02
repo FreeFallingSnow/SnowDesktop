@@ -1317,6 +1317,8 @@ struct WidgetsPageBackend::Impl final
             }
         }
         snapshot.canPublishDevelopmentPackage = publisherAvailable;
+        snapshot.canExportDevelopmentPackage = group.development &&
+            static_cast<bool>(options.exportDevelopmentPackage);
 
         if (group.managed)
         {
@@ -3019,6 +3021,77 @@ struct WidgetsPageBackend::Impl final
         return true;
     }
 
+    bool ExportDevelopmentPackage(const WidgetsPageRequest& request)
+    {
+        if (BusyForMutation()) return ReportBusy();
+        const auto* snapshot = FindSnapshotPackage(request.packageId);
+        const auto* development = FindDevelopmentPackage(WideToUtf8(request.packageId));
+        if (!snapshot || !snapshot->canExportDevelopmentPackage ||
+            !development || !options.exportDevelopmentPackage)
+        {
+            SetFeedback(WidgetsPageFeedbackSeverity::Error,
+                L("app.settings.widgets_error_development_unavailable",
+                    L"The development component is unavailable."), "settings.status.error");
+            Publish();
+            return false;
+        }
+        // Copy only the authoritative development identity. All archive IO and
+        // the save dialog run in the settings process, off the desktop thread.
+        const InstalledPackage selected = *development;
+        BeginTask(WidgetsPageTaskKind::ExportingPackage, request.packageId);
+        const widgets_page_backend_detail::OutstandingOperationIdentity operation{
+            generation, activation, activeTaskId,
+            widgets_page_backend_detail::OutstandingOperationKind::PackageExport};
+        if (!outstandingOperations.Begin(operation))
+        {
+            FinishTask(WidgetsPageHostOperationResult::Failure(L(
+                "app.settings.widgets_error_operation_failed", L"The component operation failed.")));
+            return false;
+        }
+        const std::weak_ptr<Impl> weak = weak_from_this();
+        const auto completed = [weak, operation](
+            std::optional<WidgetsPageHostOperationResult> result) {
+            const auto self = weak.lock();
+            if (!self) return;
+            self->MarshalToOwner([weak, operation, result = std::move(result)]() mutable {
+                const auto owner = weak.lock();
+                if (!owner || !owner->outstandingOperations.Complete(operation)) return;
+                if (owner->closed || !owner->active ||
+                    !widgets_page_backend_detail::CompletionIdentityMatches(
+                        operation.generation, operation.activation, operation.taskId,
+                        owner->generation, owner->activation, owner->activeTaskId))
+                {
+                    owner->MaybeStartDeferredSourceDiscovery();
+                    return;
+                }
+                owner->activeTaskId = 0;
+                owner->state->task = {};
+                if (result)
+                {
+                    owner->SetFeedback(result->succeeded
+                        ? WidgetsPageFeedbackSeverity::Success
+                        : WidgetsPageFeedbackSeverity::Error,
+                        std::move(result->message), result->succeeded
+                            ? std::string{} : std::string{"settings.status.error"});
+                }
+                owner->Publish();
+                owner->MaybeStartDeferredSourceDiscovery();
+            });
+        };
+        try
+        {
+            options.exportDevelopmentPackage(generation, selected.root,
+                selected.manifest.id, selected.manifest.version, completed);
+        }
+        catch (...)
+        {
+            completed(WidgetsPageHostOperationResult::Failure(L(
+                "app.settings.widgets_error_operation_failed", L"The component operation failed.")));
+            return false;
+        }
+        return true;
+    }
+
     bool InstallDevelopmentSnapshot(const WidgetsPageRequest& request)
     {
         if (BusyForMutation()) return ReportBusy();
@@ -3823,6 +3896,8 @@ struct WidgetsPageBackend::Impl final
             return SetDevelopmentOverride(request);
         case WidgetsPageCommand::CreateDevelopmentProject:
             return CreateDevelopmentProject(request);
+        case WidgetsPageCommand::ExportDevelopmentPackage:
+            return ExportDevelopmentPackage(request);
         case WidgetsPageCommand::InstallDevelopmentSnapshot:
             return InstallDevelopmentSnapshot(request);
         case WidgetsPageCommand::RollbackPackage:

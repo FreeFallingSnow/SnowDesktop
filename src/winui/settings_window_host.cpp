@@ -16,6 +16,8 @@
 #include "../steam_app_identity.h"
 #include "../widget_engine.h"
 #include "../widget_settings_service.h"
+#include "../widget_package_file_export.h"
+#include "../utils.h"
 
 #include <shobjidl.h>
 #include <dwmapi.h>
@@ -35,6 +37,8 @@
 #include <new>
 #include <optional>
 #include <utility>
+#include <thread>
+#include <stdexcept>
 #include <vector>
 
 namespace snowdesktop::winui
@@ -1133,6 +1137,88 @@ struct SettingsWindowHost::Impl
                     L"*.snowwidget"}}, false);
             if (completed)
                 completed(std::move(selected));
+        };
+        configured.exportDevelopmentPackage = [weak](std::uint64_t generation,
+            std::filesystem::path projectRoot, std::string packageId, std::string version,
+            WidgetsPageBackendOptions::PackageExportCompletion completed) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                if (completed) completed(std::nullopt);
+                return;
+            }
+            const std::wstring title = state->owner->L("app.settings.widgets_export_package");
+            auto selected = ShowSavePathDialog(state->owner->window, title,
+                projectRoot.filename().wstring() + L"-" + Utf8ToWide(version) + L".snowwidget",
+                {{title, L"*.snowwidget"}}, L"snowwidget");
+            if (!selected || !state->alive.load() || !state->owner ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                if (completed) completed(std::nullopt);
+                return;
+            }
+            const std::wstring successText = state->owner->L("app.settings.widgets_export_package_success");
+            const std::wstring failureText = state->owner->L("app.settings.widgets_export_package_failed");
+            const std::wstring operationError = state->owner->L("app.settings.widgets_error_operation_failed");
+            const auto formatFeedback = [](std::wstring text, std::wstring_view detail) {
+                const auto placeholder = text.find(L"{0}");
+                if (placeholder != std::wstring::npos)
+                    text.replace(placeholder, 3, detail);
+                else
+                    text += L"\n" + std::wstring(detail);
+                return text;
+            };
+            const auto dispatcher = state->dispatcher;
+            const auto done = std::make_shared<WidgetsPageBackendOptions::PackageExportCompletion>(
+                std::move(completed));
+            try
+            {
+                std::thread([weak, dispatcher, done, projectRoot = std::move(projectRoot),
+                    packageId = std::move(packageId), version = std::move(version),
+                    output = std::move(*selected), successText, failureText, operationError, formatFeedback]() {
+                    WidgetsPageHostOperationResult result;
+                    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                    try
+                    {
+                        if (FAILED(apartment))
+                            throw std::runtime_error("export worker COM initialization failed");
+                        const auto exported = snowdesktop::widget::detail::ExportDevelopmentPackageFile(
+                            projectRoot, output, packageId, version);
+                        result.succeeded = exported.succeeded;
+                        std::wstring detail = exported.succeeded ? output.wstring()
+                            : Utf8ToWide(exported.report.Ok() ? exported.error : exported.report.ToJson());
+                        result.message = formatFeedback(
+                            exported.succeeded ? successText : failureText, detail);
+                    }
+                    catch (const std::exception& exception)
+                    {
+                        result = WidgetsPageHostOperationResult::Failure(
+                            formatFeedback(failureText, Utf8ToWide(exception.what())));
+                    }
+                    catch (...)
+                    {
+                        result = WidgetsPageHostOperationResult::Failure(formatFeedback(failureText, operationError));
+                    }
+                    if (SUCCEEDED(apartment)) CoUninitialize();
+                    // The worker owns all file IO inputs. A closed settings
+                    // process/view cannot receive a callback through a raw owner.
+                    try
+                    {
+                        (void)dispatcher.TryEnqueue([weak, done, result = std::move(result)]() mutable {
+                            const auto live = weak.lock();
+                            if (live && live->alive.load() && *done)
+                                (*done)(std::move(result));
+                        });
+                    }
+                    catch (...) {} // The settings dispatcher may already be closed.
+                }).detach();
+            }
+            catch (...)
+            {
+                if (*done) (*done)(WidgetsPageHostOperationResult::Failure(formatFeedback(failureText, operationError)));
+            }
         };
         configured.confirmInstall = [weak](std::uint64_t generation,
                                         WidgetInstallConfirmationRequest request,

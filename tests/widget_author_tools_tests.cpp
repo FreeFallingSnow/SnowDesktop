@@ -1,5 +1,6 @@
 #include "widget_author_permissions.h"
 #include "widget_package.h"
+#include "widget_package_file_export.h"
 #include "widget_api_registry.h"
 #include "gpu_diagnostics.h"
 #include "widget_gpu_lua.h"
@@ -171,6 +172,72 @@ void TestGpuDiagnostics()
     Check(kept == "keep existing evidence", "diagnostic capture never truncates existing output");
 }
 
+// Exercise the exact file-export core used by the settings worker: real ZIP
+// validation, identity changes, and Windows replacement failures, without a UI picker.
+void TestStandalonePackageExport()
+{
+    using namespace snowdesktop::widget;
+    using snowdesktop::widget::detail::ExportDevelopmentPackageFile;
+    std::vector<std::pair<bool, const char*>> checks;
+    {
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto source = temporary.path / L"component";
+        std::filesystem::create_directory(source);
+        const std::string id = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23";
+        const std::string manifest = R"json({
+            "schemaVersion":2,"apiVersion":2,"dataVersion":1,
+            "id":"3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23","slug":"export-test",
+            "name":"Export Test","version":"1.0.0","entry":"main.lua",
+            "minHostVersion":"1.0.7.0","author":"Test","license":"MIT",
+            "description":"Export fixture","defaultSize":{"columns":1,"rows":1},
+            "permissions":[],"optionalPermissions":[],"requiredFeatures":[],"optionalFeatures":[]
+        })json";
+        { std::ofstream file(source / L"widget.json", std::ios::binary); file << manifest; }
+        { std::ofstream file(source / L"main.lua", std::ios::binary); file << "return widget.define({})"; }
+        const auto output = temporary.path / L"standalone.snowwidget";
+        auto result = ExportDevelopmentPackageFile(source, output, id, "1.0.0");
+        if (!result.succeeded) std::cerr << result.error << "\n" << result.report.ToJson() << '\n';
+        checks.push_back({result.succeeded, "settings export produces an independent .snowwidget file"});
+        WidgetPackageManager validator(PackagePaths{});
+        PackageManifest exported;
+        checks.push_back({validator.ValidateArchive(output, &exported).Ok() &&
+            exported.id == id && exported.version == "1.0.0",
+            "exported archive passes the real installer validator with its selected identity"});
+        const std::string originalHash = WidgetPackageManager::Sha256File(output);
+        checks.push_back({!originalHash.empty(), "exported file has a SHA256 fingerprint"});
+        result = ExportDevelopmentPackageFile(source, output,
+            "11111111-1111-4111-8111-111111111111", "1.0.0");
+        checks.push_back({!result.succeeded && WidgetPackageManager::Sha256File(output) == originalHash,
+            "a changed component identity cannot overwrite the previous exported file"});
+        { std::ofstream file(source / L"widget.json", std::ios::binary | std::ios::trunc); file << "{}"; }
+        result = ExportDevelopmentPackageFile(source, output, id, "1.0.0");
+        checks.push_back({!result.succeeded && !result.report.Ok() &&
+            WidgetPackageManager::Sha256File(output) == originalHash,
+            "invalid source reports validation errors and preserves the old export"});
+        { std::ofstream file(source / L"widget.json", std::ios::binary | std::ios::trunc); file << manifest; }
+        HANDLE reader = CreateFileW(output.c_str(), GENERIC_READ, FILE_SHARE_READ,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        result = ExportDevelopmentPackageFile(source, output, id, "1.0.0");
+        if (reader != INVALID_HANDLE_VALUE) CloseHandle(reader);
+        checks.push_back({reader != INVALID_HANDLE_VALUE && !result.succeeded &&
+            WidgetPackageManager::Sha256File(output) == originalHash,
+            "a destination locked by another reader fails without truncating it"});
+        { std::ofstream file(source / L"main.lua", std::ios::binary | std::ios::trunc); file << "return widget.define({model = {exported = true}})"; }
+        result = ExportDevelopmentPackageFile(source, output, id, "1.0.0");
+        checks.push_back({result.succeeded && validator.ValidateArchive(output).Ok() &&
+            WidgetPackageManager::Sha256File(output) != originalHash,
+            "confirmed replacement publishes a complete updated package"});
+        result = ExportDevelopmentPackageFile(source, temporary.path / L"wrong.zip", id, "1.0.0");
+        checks.push_back({!result.succeeded && !std::filesystem::exists(temporary.path / L"wrong.zip"),
+            "independent export enforces the installer package extension"});
+        bool temporaryFilesRemain = false;
+        for (const auto& item : std::filesystem::directory_iterator(temporary.path))
+            temporaryFilesRemain |= item.path().filename().wstring().starts_with(L".snowwidget-export-");
+        checks.push_back({!temporaryFilesRemain, "success and failure both clean their owned export staging files"});
+    }
+    for (const auto& [passed, message] : checks) Check(passed, message);
+}
+
 void TestPermissionReport()
 {
     snowdesktop::widget::PackageManifest manifest;
@@ -198,6 +265,7 @@ void TestPermissionReport()
 
 int main()
 {
+    TestStandalonePackageExport();
     TestPermissionReport();
     TestGpuDiagnostics();
     TestGpuLuaDetails();

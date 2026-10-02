@@ -81,6 +81,19 @@ public:
                     channel.Notify("widgets.picked", id, selected);
             });
         });
+        channel_.Bind<void, Token, Token, std::filesystem::path, std::string, std::string>("widgets.export",
+            [weak, &channel](Token id, Token generation, std::filesystem::path projectRoot,
+                std::string packageId, std::string version) {
+                const auto state = weak.lock();
+                if (!state || state->closed || !state->options.exportDevelopmentPackage)
+                { channel.Notify("widgets.exported", id, std::optional<WidgetsPageHostOperationResult>{}); return; }
+                state->options.exportDevelopmentPackage(generation, std::move(projectRoot),
+                    std::move(packageId), std::move(version),
+                    [weak, &channel, id](std::optional<WidgetsPageHostOperationResult> result) {
+                        if (auto live = weak.lock(); live && !live->closed && channel.Connected())
+                            channel.Notify("widgets.exported", id, result);
+                    });
+            });
         channel_.Bind<void, Token, Token, WidgetInstallConfirmationRequest>("widgets.confirm",
             [weak, &channel](Token id, Token generation, WidgetInstallConfirmationRequest request) {
                 const auto state = weak.lock();
@@ -265,6 +278,7 @@ struct BackendServer::Impl
     std::unique_ptr<BackupDataPageBackend> backup;
     Completions<bool> confirmations;
     Completions<Path> pickers;
+    Completions<std::optional<WidgetsPageHostOperationResult>> exports;
 
     template<class... A> void Notify(const char* name, const A&... args) noexcept
     { try { if (channel.Connected()) channel.Notify(name, args...); } catch (...) {} }
@@ -394,6 +408,8 @@ struct BackendServer::Impl
             return widgets && widgets->Invoke(generation, std::move(request));
         });
         channel.Bind<void>("widgets.Close", [this] { if (widgets) widgets->Close(); widgets.reset(); });
+        channel.Bind<void, Token, std::optional<WidgetsPageHostOperationResult>>("widgets.exported",
+            [this](Token id, auto result) { exports.Complete(id, std::move(result)); });
         channel.Bind<void, Token, Path>("widgets.picked", [this](Token id, Path path) { pickers.Complete(id, std::move(path)); });
         channel.Bind<void, Token, bool>("widgets.confirmed", [this](Token id, bool answer) { confirmations.Complete(id, answer); });
 
@@ -438,6 +454,11 @@ struct BackendServer::Impl
         configured.pickPackage = [this](Token generation, auto done) {
             const auto id = pickers.Add(std::move(done)); Notify("widgets.pick", id, generation);
         };
+        configured.exportDevelopmentPackage = [this](Token generation, std::filesystem::path projectRoot,
+            std::string packageId, std::string version, auto done) {
+            const auto id = exports.Add(std::move(done));
+            Notify("widgets.export", id, generation, projectRoot, packageId, version);
+        };
         configured.confirmInstall = [this](Token generation, auto request, auto done) {
             const auto id = confirmations.Add(std::move(done)); Notify("widgets.confirm", id, generation, request);
         };
@@ -467,6 +488,7 @@ struct BackendServer::Impl
         backup.reset();
         confirmations.Cancel();
         pickers.Cancel();
+        exports.Cancel();
     }
 };
 

@@ -187,7 +187,7 @@ int main(int argc, char** argv)
         Check(snowdesktop::test::CheckSourceBoundaries(argv[1], {
             {"src/winui/widgets_page_backend.cpp", "", "",
              {"ContentDialog", "FileOpenPicker", "ShellExecute", "QuerySteamWorkshopSubscriptions(",
-              "ApplySteamWorkshopSubscriptions(", "schemaVersion =", "apiVersion =", "luaopen_", "ImGui"}},
+              "ApplySteamWorkshopSubscriptions(", "ExportDevelopmentPackageFile(", "schemaVersion =", "apiVersion =", "luaopen_", "ImGui"}},
         }), "Widgets backend ownership boundaries");
     if (!failures)
         std::cout << "Widget operation, source worker lifecycle, bounded library I/O and source boundaries passed; page actions were not exercised.\n";

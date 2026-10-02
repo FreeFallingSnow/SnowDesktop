@@ -268,6 +268,7 @@ struct InstalledWidgetPackageSnapshot
     bool canCreateDevelopmentProject = false;
     bool canInstallDevelopmentSnapshot = false;
     bool canPublishDevelopmentPackage = false;
+    bool canExportDevelopmentPackage = false;
     std::vector<WidgetRestorableVersionSnapshot> restorableVersions;
     WidgetPackagePermissionState permissionState =
         WidgetPackagePermissionState::LegacyImplicit;
@@ -358,6 +359,7 @@ enum class WidgetsPageTaskKind : std::uint8_t
     ApplyingPermissions,
     ApplyingDevelopmentOverride,
     AddingToDesktop,
+    ExportingPackage,
 };
 
 struct WidgetsPageTaskSnapshot
@@ -449,6 +451,7 @@ enum class WidgetsPageCommand : std::uint8_t
     OpenDevelopmentFolder,
     PublishDevelopmentWorkspace,
     ClearWidgetErrors,
+    ExportDevelopmentPackage,
 };
 
 /** Strongly typed payload emitted for all package/source operations. */

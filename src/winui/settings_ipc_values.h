@@ -63,7 +63,9 @@ SD_IPC_FIELDS(winui::InstalledWidgetPackageSnapshot,
     v.developmentOverrideActive, v.canCreateDevelopmentProject, v.canInstallDevelopmentSnapshot, v.canPublishDevelopmentPackage,
     v.restorableVersions, v.permissionState, v.canRevokePermissions, v.permissions,
     v.declaredNetworkDomains, v.grantedNetworkDomains, v.invalidSources, v.workshopInstallFailures,
-    v.instances);
+    v.instances, v.canExportDevelopmentPackage);
+SD_IPC_FIELDS(winui::WidgetsPageHostOperationResult,
+    v.succeeded, v.changed, v.message);
 SD_IPC_FIELDS(winui::WidgetPermissionEditorRequest,
     v.packageId, v.packageName, v.version, v.sourceId,
     v.sourceExternalItemId, v.scopeFingerprint, v.permissionState, v.canRevoke,

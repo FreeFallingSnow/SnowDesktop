@@ -401,6 +401,8 @@ struct WidgetsPagePresenter::Impl
         case WidgetsPageTaskKind::AddingToDesktop:
             return L("app.widget_preview.add_to_desktop",
                 L"Adding to desktop");
+        case WidgetsPageTaskKind::ExportingPackage:
+            return L("app.settings.widgets_exporting_package", L"Exporting package");
         case WidgetsPageTaskKind::None:
         default:
             return {};
@@ -2288,6 +2290,7 @@ struct WidgetsPagePresenter::Impl
             (package.canCreateDevelopmentProject ||
             package.canInstallDevelopmentSnapshot ||
             package.canPublishDevelopmentPackage ||
+            package.canExportDevelopmentPackage ||
             !package.restorableVersions.empty() || hasWorkshopItem);
         muxc::Expander advanced;
         advanced.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -2396,6 +2399,12 @@ struct WidgetsPagePresenter::Impl
             versions.Content(versionRows);
             StretchExpanderBody(versions, versionRows);
             actionsPanel.Children().Append(versions);
+        }
+        if (hasAdvancedAction && package.canExportDevelopmentPackage)
+        {
+            actionsPanel.Children().Append(makeCommand(
+                WidgetsPageCommand::ExportDevelopmentPackage,
+                "app.settings.widgets_export_package", L"Export standalone package"));
         }
         if (hasAdvancedAction && package.canPublishDevelopmentPackage)
         {
