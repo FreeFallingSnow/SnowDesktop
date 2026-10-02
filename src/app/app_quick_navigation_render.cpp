@@ -548,7 +548,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
         GetQuickNavigationMaxTabScrollOffset(overlay));
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
-        GetQuickNavigationMaxScrollOffset(overlay));
+        GetQuickNavigationMaxScrollOffset(overlay, contentModel));
     const std::vector<RECT> itemRects =
         GetQuickNavigationItemRects(
             overlay, contentModel);
@@ -1325,7 +1325,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     RECT track{}, thumb{};
     int maxScroll = 0, contentHeight = 0;
     if (!quickNavigationInitialJumpOpen_ &&
-        GetQuickNavigationScrollbarGeometry(overlay,
+        GetQuickNavigationScrollbarGeometry(overlay, contentModel,
         track, thumb, maxScroll, contentHeight))
     {
         registerHoverRegion(

@@ -3152,8 +3152,15 @@ private:
     int GetQuickNavigationGap(const RECT& overlay) const;
     /** @brief 获取快速导航面板中内容的最大滚动偏移。 @param overlay 面板矩形 @return 最大滚动偏移 */
     int GetQuickNavigationMaxScrollOffset(const RECT& overlay) const;
+    int GetQuickNavigationMaxScrollOffset(const RECT& overlay,
+        const QuickNavigationContentModel& model) const;
     int GetQuickNavigationContentHeight(const RECT& overlay) const;
+    int GetQuickNavigationContentHeight(const RECT& overlay,
+        const QuickNavigationContentModel& model) const;
     bool GetQuickNavigationScrollbarGeometry(const RECT& overlay,
+        RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const;
+    bool GetQuickNavigationScrollbarGeometry(const RECT& overlay,
+        const QuickNavigationContentModel& model,
         RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const;
     QuickNavigationPointerTarget
         HitTestQuickNavigationPointerTarget(

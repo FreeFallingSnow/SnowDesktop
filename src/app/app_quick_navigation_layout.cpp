@@ -1264,10 +1264,14 @@ bool DesktopApp::HandleQuickNavigationKeyboardInput(WPARAM key)
 
 int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) const
 {
+    return GetQuickNavigationContentHeight(overlay, BuildQuickNavigationContentModel());
+}
+
+int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay,
+    const QuickNavigationContentModel& model) const
+{
     RECT content = GetQuickNavigationContentRect(overlay);
     const int columns = GetQuickNavigationColumnCount(overlay);
-    const QuickNavigationContentModel model =
-        BuildQuickNavigationContentModel();
     const int desktopCount =
         static_cast<int>(model.entries.size());
     const int desktopRows = desktopCount == 0 ? 0 : (desktopCount + columns - 1) / columns;
@@ -1326,8 +1330,14 @@ int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) const
 
 int DesktopApp::GetQuickNavigationMaxScrollOffset(const RECT& overlay) const
 {
+    return GetQuickNavigationMaxScrollOffset(overlay, BuildQuickNavigationContentModel());
+}
+
+int DesktopApp::GetQuickNavigationMaxScrollOffset(const RECT& overlay,
+    const QuickNavigationContentModel& model) const
+{
     RECT content = GetQuickNavigationContentRect(overlay);
-    const int contentHeight = GetQuickNavigationContentHeight(overlay);
+    const int contentHeight = GetQuickNavigationContentHeight(overlay, model);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
     return std::max(0, contentHeight - visibleHeight);
 }
@@ -1336,8 +1346,16 @@ bool DesktopApp::GetQuickNavigationScrollbarGeometry(
     const RECT& overlay,
     RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const
 {
+    return GetQuickNavigationScrollbarGeometry(overlay, BuildQuickNavigationContentModel(),
+        outTrack, outThumb, outMaxScroll, outContentHeight);
+}
+
+bool DesktopApp::GetQuickNavigationScrollbarGeometry(
+    const RECT& overlay, const QuickNavigationContentModel& model,
+    RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const
+{
     RECT content = GetQuickNavigationContentRect(overlay);
-    outContentHeight = GetQuickNavigationContentHeight(overlay);
+    outContentHeight = GetQuickNavigationContentHeight(overlay, model);
     const int visibleHeight = std::max(1, static_cast<int>(content.bottom - content.top));
     if (outContentHeight <= visibleHeight)
     {
