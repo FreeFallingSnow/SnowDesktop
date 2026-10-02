@@ -505,7 +505,8 @@ struct RuleRow
     muxc::TextBox label{nullptr};
     muxc::TextBox extensions{nullptr};
     muxc::Button remove{nullptr};
-    muxc::ToggleSwitch enabled{nullptr};
+    muxc::Button enabled{nullptr};
+    bool enabledValue = true;
     muxc::Button restoreName{nullptr};
     muxc::Button restoreExtensions{nullptr};
     winrt::event_token labelToken{};
@@ -525,7 +526,7 @@ struct RuleRow
             label.TextChanged(labelToken);
             extensions.TextChanged(extensionsToken);
             remove.Click(removeToken);
-            enabled.Toggled(enabledToken);
+            enabled.Click(enabledToken);
             restoreName.Click(restoreNameToken);
             restoreExtensions.Click(restoreExtensionsToken);
         }
@@ -1426,10 +1427,12 @@ struct DesktopPagePresenter::Impl
             row->label = muxc::TextBox{};
             row->extensions = muxc::TextBox{};
             row->remove = muxc::Button{};
-            row->enabled = muxc::ToggleSwitch{};
+            row->enabled = muxc::Button{};
             row->restoreName = muxc::Button{};
             row->restoreExtensions = muxc::Button{};
-            row->enabled.IsOn(rule.enabled);
+            row->enabledValue = rule.enabled;
+            row->enabled.MinWidth(88.0);
+            row->enabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
             row->enabled.VerticalAlignment(mux::VerticalAlignment::Center);
             row->nameActions = muxc::Grid{};
             row->nameActions.ColumnSpacing(8.0);
@@ -1451,14 +1454,14 @@ struct DesktopPagePresenter::Impl
             }
             row->extensions.Text(rule.extensions);
             row->nameActions.Children().Append(row->label);
-            muxc::Grid::SetColumn(row->remove, 1);
+            muxc::Grid::SetColumn(row->remove, 2);
             row->nameActions.Children().Append(row->remove);
             if (IsBuiltinCategoryRuleId(rule.id))
             {
                 row->remove.Visibility(mux::Visibility::Collapsed);
-                muxc::Grid::SetColumn(row->enabled, 1);
+                muxc::Grid::SetColumn(row->enabled, 2);
                 row->nameActions.Children().Append(row->enabled);
-                muxc::Grid::SetColumn(row->restoreName, 2);
+                muxc::Grid::SetColumn(row->restoreName, 1);
                 row->nameActions.Children().Append(row->restoreName);
             }
             row->labelRow.Initialize(row->nameActions);
@@ -1489,9 +1492,11 @@ struct DesktopPagePresenter::Impl
             row->restoreExtensionsToken = row->restoreExtensions.Click([this, raw](const auto&, const auto&) {
                 if (!raw->closed) RestoreCategoryField(raw->id, true);
             });
-            row->enabledToken = row->enabled.Toggled([this, raw](const auto&, const auto&) {
+            row->enabledToken = row->enabled.Click([this, raw](const auto&, const auto&) {
                 if (updatingControls || raw->closed) return;
-                const bool enabled = raw->enabled.IsOn();
+                const bool enabled = !raw->enabledValue;
+                raw->enabledValue = enabled;
+                LocalizeCategoryEnabledButton(*raw);
                 const auto id = raw->id;
                 UpdateCategory(SettingsUpdateMode::PreviewAndCommit, [id, enabled](CategorySettings& settings) {
                     for (auto& rule : settings.rules) if (rule.id == id) rule.enabled = enabled;
@@ -1541,13 +1546,22 @@ struct DesktopPagePresenter::Impl
             const CategoryRule& rule = settings.rules[index];
             RuleRow& row = *ruleRows[index];
             row.customLabel = rule.customLabel;
-            row.enabled.IsOn(rule.enabled);
+            row.enabledValue = rule.enabled;
             if (row.label.FocusState() == mux::FocusState::Unfocused)
                 row.label.Text(RuleLabel(rule));
             if (row.extensions.FocusState() == mux::FocusState::Unfocused)
                 row.extensions.Text(rule.extensions);
         }
         LocalizeRuleRows();
+    }
+
+    void LocalizeCategoryEnabledButton(RuleRow& row)
+    {
+        const auto action = row.enabledValue
+            ? L("app.settings.widgets_disable", L"Disable")
+            : L("app.settings.widgets_enable", L"Enable");
+        row.enabled.Content(winrt::box_value(action));
+        muxa::AutomationProperties::SetName(row.enabled, action + L" " + row.label.Text());
     }
 
     void LocalizeRuleRows()
@@ -1572,8 +1586,7 @@ struct DesktopPagePresenter::Impl
                 std::wstring((restore + L" · " + L("app.settings.category_name", L"Category name") + L" · " + row->label.Text()).c_str()));
             presenter_controls::ConfigureRestoreDefaultButton(row->restoreExtensions,
                 std::wstring((restore + L" · " + L("app.settings.category_extensions", L"Extensions") + L" · " + row->label.Text()).c_str()));
-            muxa::AutomationProperties::SetName(row->enabled,
-                L("app.settings.widgets_enable", L"Enable") + L" " + row->label.Text());
+            LocalizeCategoryEnabledButton(*row);
             muxa::AutomationProperties::SetName(row->remove,
                 L("app.settings.delete", L"Delete") + L" " +
                     row->label.Text());
