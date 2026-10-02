@@ -1,6 +1,7 @@
 #include "app.h"
 #include "shell_icon_request.h"
 #include "dock_platform_helpers.h"
+#include "dock_running_app_pin_rules.h"
 #include "animation_settings.h"
 #include "../shell_launch_execution.h"
 
@@ -375,13 +376,29 @@ DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
                     }
                 }
 
-                if (identity.kind == DockAppIdentityKind::None)
+                if (identity.kind != DockAppIdentityKind::Executable)
                 {
                     PIDLIST_ABSOLUTE targetPidl = nullptr;
                     if (SUCCEEDED(shellLink->GetIDList(&targetPidl)) && targetPidl)
                     {
+                        // AppsFolder links for desktop applications may expose
+                        // only an application ID through IShellLink::GetPath.
+                        // Resolve their registered executable on this Shell
+                        // worker so the pin still tracks windows without IDs.
+                        const auto application = snowdesktop::dock_running_app_pin::
+                            ReadApplicationIdentity(targetPidl);
+                        if (!application.executablePath.empty())
+                        {
+                            identity.kind = DockAppIdentityKind::Executable;
+                            identity.executablePath = NormalizeDockExecutablePath(
+                                application.executablePath);
+                        }
+                        if (identity.appUserModelId.empty())
+                            identity.appUserModelId = ToUpperInvariant(
+                                application.appUserModelId);
                         PWSTR parsingName = nullptr;
-                        if (SUCCEEDED(SHGetNameFromIDList(targetPidl,
+                        if (identity.kind != DockAppIdentityKind::Executable &&
+                            SUCCEEDED(SHGetNameFromIDList(targetPidl,
                                 SIGDN_DESKTOPABSOLUTEPARSING, &parsingName)) && parsingName)
                         {
                             const std::wstring targetName(parsingName);

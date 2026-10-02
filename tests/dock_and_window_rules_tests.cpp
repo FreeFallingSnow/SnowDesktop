@@ -33,6 +33,7 @@
 #include "dock_snapshot_warmup.h"
 #include "dock_snapshot_warmup_rules.h"
 #include "dock_app_identity_rules.h"
+#include "app/dock_running_app_pin_rules.h"
 #include "page_navigation_rules.h"
 #include "page_layout_settings.h"
 #include "page_management_rules.h"
@@ -117,6 +118,116 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void CheckCatalogOnlyDockPin()
+{
+    namespace pin = snowdesktop::dock_running_app_pin;
+    // Running-area catalog fallback must identify an application, not merely
+    // another app sharing its host executable or a similar display name.
+    const std::vector<pin::ApplicationIdentity> apps{
+        {LR"(C:\APPS\EDITOR\EDITOR.EXE)", L"VENDOR.EDITOR"},
+        {LR"(C:\APPS\HOST.EXE)", L"VENDOR.FIRST!APP"},
+        {LR"(C:\APPS\HOST.EXE)", L"VENDOR.SECOND!APP"},
+        {{}, L"VENDOR.STORE!APP"},
+    };
+    Check(pin::FindApplication(apps, LR"(C:\APPS\EDITOR\EDITOR.EXE)", {}) == 0,
+        "a catalog-only desktop app can pin without a window application ID");
+    Check(pin::FindApplication(apps, LR"(C:\APPS\HOST.EXE)", L"VENDOR.SECOND!APP") == 2,
+        "an exact application ID selects the correct shared-executable app");
+    Check(pin::FindApplication(apps, {}, L"VENDOR.STORE!APP") == 3,
+        "catalog-only Store applications can pin without an executable path");
+    Check(!pin::FindApplication(apps, LR"(C:\APPS\HOST.EXE)", {}) &&
+            !pin::FindApplication(apps, LR"(C:\APPS\HOST.EXE)", L"VENDOR.OTHER!APP") &&
+            !pin::FindApplication(apps, LR"(C:\OTHER\EDITOR.EXE)", {}),
+        "ambiguous hosts, conflicting IDs and other installs cannot pin the wrong app");
+    const std::vector<pin::ApplicationIdentity> launcher{
+        {LR"(C:\APPS\EDITOR\LAUNCHER.EXE)", {}},
+    };
+    Check(pin::FindApplication(launcher, LR"(C:\APPS\EDITOR\EDITOR.EXE)", {},
+        std::vector<std::wstring>{LR"(C:\APPS\EDITOR\LAUNCHER.EXE)"}) == 0,
+        "a catalog launcher may pin its verified executable family");
+
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    Check(SUCCEEDED(initialized), "shortcut fixture initializes COM");
+    if (FAILED(initialized)) return;
+    const auto directory = std::filesystem::temp_directory_path() /
+        (L"SnowDesktop-DockPin-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+            std::to_wstring(GetTickCount64()));
+    std::filesystem::create_directory(directory);
+    const auto target = directory / L"application.exe";
+    { std::ofstream file(target); file << "isolated application target"; }
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    Check(SUCCEEDED(SHParseDisplayName(target.c_str(), nullptr, &pidl, 0, nullptr)),
+        "shortcut fixture parses its isolated target");
+    if (pidl)
+    {
+        const auto existing = directory / L"Application.lnk";
+        { std::ofstream file(existing); file << "existing user shortcut"; }
+        const auto created = pin::CreateShortcut(directory, L"Application", pidl);
+        Check(created == (directory / L"Application (2).lnk").wstring(),
+            "catalog pin creates a distinct shortcut without overwriting an existing file");
+        std::ifstream original(existing);
+        std::string content;
+        std::getline(original, content);
+        original.close();
+        Check(content == "existing user shortcut", "same-name source content survives pinning");
+        Microsoft::WRL::ComPtr<IShellLinkW> link;
+        Microsoft::WRL::ComPtr<IPersistFile> file;
+        PIDLIST_ABSOLUTE restored = nullptr;
+        const bool loaded = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+            SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Load(created.c_str(), STGM_READWRITE)) &&
+            SUCCEEDED(link->GetIDList(&restored));
+        Check(loaded && restored && ILIsEqual(pidl, restored),
+            "the new native shortcut retains the catalog Shell target for relaunch");
+        if (restored) CoTaskMemFree(restored);
+
+        // Substitute only the installed catalog entry with an isolated Shell
+        // link. The production Shell-property reader remains real.
+        if (loaded)
+        {
+            Microsoft::WRL::ComPtr<IPropertyStore> properties;
+            PROPVARIANT id{};
+            id.vt = VT_LPWSTR;
+            id.pwszVal = const_cast<PWSTR>(L"SnowDesktop.Test.Catalog");
+            Check(SUCCEEDED(link.As(&properties)) &&
+                SUCCEEDED(properties->SetValue(PKEY_AppUserModel_ID, id)) &&
+                SUCCEEDED(properties->Commit()) && SUCCEEDED(file->Save(created.c_str(), TRUE)),
+                "isolated catalog fixture stores its application ID");
+            PIDLIST_ABSOLUTE catalogPidl = nullptr;
+            if (SUCCEEDED(SHParseDisplayName(created.c_str(), nullptr, &catalogPidl, 0, nullptr)))
+            {
+                const auto catalog = pin::ReadApplicationIdentity(catalogPidl);
+                Check(std::filesystem::equivalent(catalog.executablePath, target) &&
+                    catalog.appUserModelId == L"SnowDesktop.Test.Catalog",
+                    "catalog properties preserve both application ID and native executable identity");
+                CoTaskMemFree(catalogPidl);
+            }
+            else Check(false, "isolated catalog shortcut parses for property reading");
+        }
+
+        bool saved = false, inserted = false;
+        Check(!pin::CreateAndPin([] { return false; },
+            [&] { inserted = true; return std::wstring(L"unexpected"); },
+            [](const auto&) { return true; }, [](const auto&) {}, [&] { saved = true; }) &&
+            !inserted && !saved, "a full Dock cannot create a stray desktop shortcut");
+        std::wstring failedPath;
+        Check(!pin::CreateAndPin([] { return true; },
+            [&] { failedPath = pin::CreateShortcut(directory, L"Failed", pidl); return failedPath; },
+            [](const auto&) { return false; },
+            [](const auto& path) { DeleteFileW(path.c_str()); }, [&] { saved = true; }) &&
+            !failedPath.empty() && !std::filesystem::exists(failedPath) && !saved,
+            "a rejected Dock insertion removes only its new shortcut and saves no layout");
+        Check(pin::CreateAndPin([] { return true; }, [&] { return created; },
+            [&](const auto& path) { inserted = path == created; return inserted; },
+            [](const auto&) {}, [&] { saved = inserted; }) && saved &&
+            std::filesystem::exists(created),
+            "successful insertion persists the new shortcut instead of creating a mapping");
+        CoTaskMemFree(pidl);
+    }
+    std::filesystem::remove_all(directory);
+    CoUninitialize();
 }
 
 #include "dock_refresh_cache_cases.h"
@@ -1451,6 +1562,7 @@ int main(int argc, char** argv)
 
     if (const auto result = TryRunTaskbarSymbolTestHelper()) return *result;
     if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
+    CheckCatalogOnlyDockPin();
     // These are real settings predicates shared by all three entry points.
     // First/last scopes coincide on one display but only partially overlap on two.
     {

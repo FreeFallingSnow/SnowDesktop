@@ -1,5 +1,9 @@
 #include "app.h"
 #include "../menu_fluent_glyphs.h"
+#include "dock_platform_helpers.h"
+#include "dock_running_app_pin_rules.h"
+#include "../desktop_source.h"
+#include "../logical_slot_picker_rules.h"
 
 // Dock and running-application context menus.
 
@@ -202,7 +206,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         dockUnpinnedRunningApps_.size())
         return;
 
-    const DockRunningAppInfo& running =
+    const DockRunningAppInfo running =
         dockUnpinnedRunningApps_[runningIndex];
     DockAppIdentity identity;
     identity.executablePath =
@@ -217,88 +221,212 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             DockAppIdentityKind::Executable &&
         identity.executablePath.empty())
         return;
+    shellVisualWork_.Cancel(L"dock-running-menu:");
 
-    std::wstring matchingDesktopKey;
-    if (const std::optional<size_t> itemIndex =
-            FindDesktopItemForDockRunningApp(running);
-        itemIndex && *itemIndex < items_.size())
-        matchingDesktopKey = items_[*itemIndex].layoutKey;
+    // Own the target across the native menu loop: application indexing and
+    // desktop refresh may replace their vectors while the menu is open.
+    auto showMenu = [this, running, identity, screenPoint](
+        std::shared_ptr<QuickNavigationAppEntry> application) {
+        if (!hwnd_ || !IsWindow(hwnd_) ||
+            std::none_of(dockUnpinnedRunningApps_.begin(),
+                dockUnpinnedRunningApps_.end(), [&](const auto& current) {
+                    return current.identityKey == running.identityKey;
+                }) || dragSession_.HasContext() ||
+            dragDropController_.IsTransportActive())
+            return;
 
-    PrepareMenuIconsForPoint(screenPoint);
+        std::wstring matchingDesktopKey;
+        if (const auto itemIndex = FindDesktopItemForDockRunningApp(running);
+            itemIndex && *itemIndex < items_.size())
+            matchingDesktopKey = items_[*itemIndex].layoutKey;
 
-    HMENU menu = CreatePopupMenu();
-    if (!menu)
-        return;
-    if (!matchingDesktopKey.empty())
-    {
-        AppendMenuW(
-            menu, MF_STRING,
-            kContextDockPinMoveToDock,
-            _LW("app.dock.pin_move_to_dock"));
-        AppendMenuW(
-            menu, MF_STRING,
-            kContextDockCreateMapping,
-            _LW("app.dock.create_mapping"));
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        SetMenuItemIcon(
-            menu, kContextDockPinMoveToDock,
-            snowdesktop::menu_fluent_glyphs::kPin,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(
-            menu, kContextDockCreateMapping,
-            snowdesktop::menu_fluent_glyphs::kLinkAdd,
-            MenuIconFont::FluentRegular);
-    }
-    AppendMenuW(
-        menu, MF_STRING,
-        kContextDockCloseApplication,
-        _LW("app.dock.close_application"));
-    SetMenuItemIcon(
-        menu, kContextDockCloseApplication,
-        L"");
+        PrepareMenuIconsForPoint(screenPoint);
 
-    DismissDockWindowPreviewUntilLeave();
-    RestoreInteractionInputFocus();
-    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
-    DestroyMenu(menu);
-    ClearMenuIcons();
-    RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
-
-    if ((command == kContextDockPinMoveToDock ||
-            command == kContextDockCreateMapping) &&
-        !matchingDesktopKey.empty())
-    {
-        const size_t itemIndex =
-            FindItemIndexByKey(matchingDesktopKey);
-        POINT clientPoint = screenPoint;
-        if (itemIndex < items_.size() &&
-            ScreenToClient(hwnd_, &clientPoint))
+        HMENU menu = CreatePopupMenu();
+        if (!menu)
+            return;
+        if (!matchingDesktopKey.empty() || application)
         {
-            if (DockContainer* dock =
-                    GetDockContainerAtPoint(clientPoint))
-            {
-                DesktopIcon source(
-                    &items_[itemIndex], nullptr, this);
-                const int mods =
-                    command == kContextDockCreateMapping
-                    ? MK_CONTROL : 0;
-                CommitDockDrop(
-                    { &source }, nullptr, dock,
-                    dock->GetInsertIndexAtPoint(clientPoint),
-                    mods);
-                SaveLayoutSlots();
-                ApplyPageMapping();
-                LayoutItems();
-                InvalidateRect(hwnd_, nullptr, FALSE);
-            }
+            AppendMenuW(
+                menu, MF_STRING,
+                kContextDockPinMoveToDock,
+                _LW("app.dock.pin_move_to_dock"));
+            if (!matchingDesktopKey.empty())
+                AppendMenuW(
+                    menu, MF_STRING,
+                    kContextDockCreateMapping,
+                    _LW("app.dock.create_mapping"));
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            SetMenuItemIcon(
+                menu, kContextDockPinMoveToDock,
+                snowdesktop::menu_fluent_glyphs::kPin,
+                MenuIconFont::FluentRegular);
+            if (!matchingDesktopKey.empty())
+                SetMenuItemIcon(
+                    menu, kContextDockCreateMapping,
+                    snowdesktop::menu_fluent_glyphs::kLinkAdd,
+                    MenuIconFont::FluentRegular);
         }
+        AppendMenuW(
+            menu, MF_STRING,
+            kContextDockCloseApplication,
+            _LW("app.dock.close_application"));
+        SetMenuItemIcon(
+            menu, kContextDockCloseApplication,
+            L"");
+
+        DismissDockWindowPreviewUntilLeave();
+        RestoreInteractionInputFocus();
+        const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
+        DestroyMenu(menu);
+        ClearMenuIcons();
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+
+        // The native menu pumps messages. Prefer a desktop source that appeared
+        // while it was open, rather than creating a second shortcut for that app.
+        if (command == kContextDockPinMoveToDock)
+            if (const auto itemIndex = FindDesktopItemForDockRunningApp(running);
+                itemIndex && *itemIndex < items_.size())
+                matchingDesktopKey = items_[*itemIndex].layoutKey;
+
+        if ((command == kContextDockPinMoveToDock ||
+                command == kContextDockCreateMapping) &&
+            !matchingDesktopKey.empty())
+        {
+            const size_t itemIndex =
+                FindItemIndexByKey(matchingDesktopKey);
+            POINT clientPoint = screenPoint;
+            if (itemIndex < items_.size() &&
+                ScreenToClient(hwnd_, &clientPoint))
+            {
+                if (DockContainer* dock =
+                        GetDockContainerAtPoint(clientPoint))
+                {
+                    DesktopIcon source(
+                        &items_[itemIndex], nullptr, this);
+                    const int mods =
+                        command == kContextDockCreateMapping
+                        ? MK_CONTROL : 0;
+                    CommitDockDrop(
+                        { &source }, nullptr, dock,
+                        dock->GetInsertIndexAtPoint(clientPoint),
+                        mods);
+                    SaveLayoutSlots();
+                    ApplyPageMapping();
+                    LayoutItems();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+            }
+            return;
+        }
+
+        if (command == kContextDockPinMoveToDock && application)
+        {
+            POINT clientPoint = screenPoint;
+            if (!ScreenToClient(hwnd_, &clientPoint)) return;
+            DockContainer* dock = GetDockContainerAtPoint(clientPoint);
+            if (!dock) return;
+            const size_t insertIndex = dock->GetInsertIndexAtPoint(clientPoint);
+            const bool pinned = snowdesktop::dock_running_app_pin::CreateAndPin(
+                [dock] { return dock->HasCapacity(1); },
+                [&] {
+                    return snowdesktop::dock_running_app_pin::CreateShortcut(
+                        snowdesktop::desktop_source::Directory(),
+                        SanitizeShortcutFileStem(application->name),
+                        application->absolutePidl.get());
+                },
+                [&](const std::wstring& path) {
+                    return AddMaterializedItemsToDock({ path }, insertIndex, false);
+                },
+                [](const std::wstring& path) { DeleteFileW(path.c_str()); },
+                [this] { SaveLayoutSlots(); });
+            if (!pinned)
+            {
+                MessageBeep(MB_ICONWARNING);
+                return;
+            }
+            ReloadItems();
+            ApplyPageMapping();
+            LayoutItems();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+
+        if (command ==
+            kContextDockCloseApplication)
+            CloseDockApplicationWindows(identity);
+    };
+
+    // Desktop sources retain both existing actions without waiting for Shell
+    // providers. Catalog-only sources get one action that creates a new link.
+    if (FindDesktopItemForDockRunningApp(running))
+    {
+        showMenu(nullptr);
         return;
     }
 
-    if (command ==
-        kContextDockCloseApplication)
-        CloseDockApplicationWindows(identity);
+    auto applications = std::make_shared<std::vector<QuickNavigationAppEntry>>();
+    if (quickNavigationAppsIndexed_)
+    {
+        for (const auto& entry : quickNavigationAppEntries_)
+        {
+            QuickNavigationAppEntry copy;
+            copy.name = entry.name;
+            copy.parsingName = entry.parsingName;
+            copy.absolutePidl.reset(ILCloneFull(entry.absolutePidl.get()));
+            if (copy.absolutePidl.get()) applications->push_back(std::move(copy));
+        }
+    }
+    const bool indexed = quickNavigationAppsIndexed_;
+    const bool submitted = shellVisualWork_.Submit(
+        L"dock-running-menu:" + running.identityKey,
+        [applications, indexed, running] {
+            if (!indexed)
+            {
+                HIMAGELIST systemImageList = nullptr;
+                *applications = BuildQuickNavigationAppIndex(
+                    nullptr, systemImageList, 32);
+            }
+            std::vector<snowdesktop::dock_running_app_pin::ApplicationIdentity>
+                identities;
+            identities.reserve(applications->size());
+            for (const auto& entry : *applications)
+            {
+                auto app = snowdesktop::dock_running_app_pin::ReadApplicationIdentity(
+                    entry.absolutePidl.get());
+                app.appUserModelId = ToUpperInvariant(app.appUserModelId);
+                app.executablePath = NormalizeDockExecutablePath(app.executablePath);
+                if (app.appUserModelId.empty())
+                {
+                    const auto target = snowdesktop::logical_slot_picker_rules::
+                        NormalizeApplicationLaunchTarget(entry.parsingName);
+                    constexpr std::wstring_view appsFolderMarker = L"APPSFOLDER\\";
+                    const auto marker = ToUpperInvariant(target).find(appsFolderMarker);
+                    if (marker != std::wstring::npos)
+                        app.appUserModelId = ToUpperInvariant(
+                            target.substr(marker + appsFolderMarker.size()));
+                }
+                identities.push_back(std::move(app));
+            }
+            const auto match = snowdesktop::dock_running_app_pin::FindApplication(
+                identities, running.executablePath, running.appUserModelId,
+                running.ancestorExecutablePaths);
+            return match ? std::make_shared<QuickNavigationAppEntry>(
+                std::move((*applications)[*match])) :
+                std::shared_ptr<QuickNavigationAppEntry>{};
+        }, [showMenu, screenPoint, foreground = GetForegroundWindow()](
+            std::shared_ptr<QuickNavigationAppEntry> application) {
+            POINT cursor{};
+            // A slow Shell provider must not open an obsolete context menu
+            // after the user has moved to another target or another window.
+            if (GetForegroundWindow() != foreground || !GetCursorPos(&cursor) ||
+                std::abs(cursor.x - screenPoint.x) > GetSystemMetrics(SM_CXDRAG) ||
+                std::abs(cursor.y - screenPoint.y) > GetSystemMetrics(SM_CYDRAG))
+                return;
+            showMenu(std::move(application));
+        }, hwnd_, kBackgroundShellReadyMessage);
+    if (!submitted) showMenu(nullptr);
 }
 
 /**
