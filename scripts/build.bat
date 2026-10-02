@@ -1,6 +1,8 @@
 @echo off
 setlocal
-cd /d "%~dp0.."
+rem SHIFT also changes %%0; preserve the entry point before consuming arguments.
+set "SNOWDESKTOP_BUILD_SCRIPT_DIR=%~dp0"
+cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
 
 rem Shared-directory collaboration commands reuse the standard build below.
 if /i "%~1"=="begin" goto collaboration
@@ -30,11 +32,12 @@ if not "%~1"=="" (
 )
 
 if defined RELOAD_SHELL (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_preflight.ps1" -ReloadShell
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -ReloadShell
 ) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_preflight.ps1"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1"
 )
-if errorlevel 1 exit /b 3
+rem PowerShell startup failures can return a negative exit code.
+if %ERRORLEVEL% NEQ 0 exit /b 3
 
 :configure
 echo === Configuring CMake (Release preset) ===

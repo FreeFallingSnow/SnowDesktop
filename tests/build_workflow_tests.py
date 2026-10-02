@@ -13,7 +13,48 @@ import sys
 sys.dont_write_bytecode=True
 PS = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
 
+def check_build_entry_preflight(repo):
+    # Exercise the real batch entry, with no application shutdown or compilation.
+    # A directory containing spaces also verifies quoting after SHIFT.
+    root = Path(tempfile.mkdtemp(prefix='SnowDesktop preflight entry '))
+    scripts = root / 'scripts'
+    scripts.mkdir()
+    shutil.copyfile(repo / 'scripts/build.bat', scripts / 'build.bat')
+    (scripts / 'build_preflight.ps1').write_text('''param([switch]$ReloadShell)
+[IO.File]::WriteAllText((Join-Path $PSScriptRoot '../preflight.json'),
+    (ConvertTo-Json @{reload=[bool]$ReloadShell;directory=$PSScriptRoot}))
+exit ([int]$env:SNOWDESKTOP_PREFLIGHT_FIXTURE_EXIT)
+''')
+    fake_bin = root / 'bin'
+    fake_bin.mkdir()
+    (fake_bin / 'cmake.cmd').write_text('''@echo off
+echo unexpected configure>"%SNOWDESKTOP_PREFLIGHT_FIXTURE_ROOT%\\cmake.txt"
+exit /b 19
+''')
+    for reload, exit_code in ((False, 7), (True, 7), (True, -1), (True, 0)):
+        for marker in (root / 'preflight.json', root / 'cmake.txt'):
+            if marker.exists():
+                marker.unlink()
+        env = os.environ.copy()
+        env['SNOWDESKTOP_PREFLIGHT_FIXTURE_EXIT'] = str(exit_code)
+        env['SNOWDESKTOP_PREFLIGHT_FIXTURE_ROOT'] = str(root)
+        env['PATH'] = str(fake_bin) + os.pathsep + env['PATH']
+        command = 'call "' + str(scripts / 'build.bat') + '"'
+        if reload:
+            command += ' --reload-shell'
+        result = subprocess.run('"' + os.environ['COMSPEC'] + '" /d /c ' + command,
+            cwd=root, env=env, capture_output=True, text=True, timeout=15)
+        marker = root / 'preflight.json'
+        assert marker.exists(), (reload, exit_code, result.stdout, result.stderr)
+        observed = json.loads(marker.read_text(encoding='utf-8-sig'))
+        assert observed['reload'] == reload and Path(observed['directory']).samefile(scripts), observed
+        # The fake .cmd deliberately ends the batch at configure, with code 19.
+        assert result.returncode == (19 if exit_code == 0 else 3), result
+        assert (root / 'cmake.txt').exists() == (exit_code == 0), result
+    print('PASS real build entry preserves preflight path after SHIFT and stops on positive/negative failures')
+
 def run_tests(repo):
+    check_build_entry_preflight(repo)
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-workflow-'))
     scripts=root/'scripts';scripts.mkdir()
     for name in ('build_manager.ps1','build_inputs.ps1','build_job.cs','build_protocol.ps1','build_ownership.ps1','build_preflight.ps1','build_waiter.ps1'):
