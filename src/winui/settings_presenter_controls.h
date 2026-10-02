@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "number_box_update_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
@@ -30,6 +31,42 @@ namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 inline constexpr double kSettingControlWidth = 300.0;
 inline constexpr double kSettingRowStackThreshold = 700.0;
 inline constexpr std::chrono::milliseconds kContinuousPreviewInterval{33};
+
+inline bool IsNumberBoxTextEditing(const muxc::NumberBox& number)
+{
+    const auto root = number.XamlRoot();
+    if (!root) return false;
+    auto focused = muxi::FocusManager::GetFocusedElement(root)
+        .try_as<mux::DependencyObject>();
+    if (!focused || !focused.try_as<muxc::TextBox>()) return false;
+    while (focused)
+    {
+        if (focused == number) return true;
+        focused = muxm::VisualTreeHelper::GetParent(focused);
+    }
+    return false;
+}
+
+// Local slider/spin/reset changes may replace the text, but redundant writes
+// must not format it or move the caret while the user is typing.
+inline void SetNumberBoxValue(const muxc::NumberBox& number, double value)
+{
+    if (number_box_update_rules::ShouldWriteValue(number.Value(), value))
+        number.Value(value);
+}
+
+// Host snapshots can arrive while the inner TextBox still contains an empty
+// draft, a sign, or a partial decimal. Let WinUI evaluate it on Enter/blur.
+inline void SyncNumberBoxValue(const muxc::NumberBox& number, double value)
+{
+    const double current = number.Value();
+    if (!number_box_update_rules::ShouldWriteValue(current, value)) return;
+    if (number_box_update_rules::ShouldWriteValue(
+        current, value, IsNumberBoxTextEditing(number)))
+    {
+        number.Value(value);
+    }
+}
 
 /**
  * Applies the compact Fluent treatment used by low-risk restore-default

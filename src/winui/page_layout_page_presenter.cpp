@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "page_layout_page_presenter.h"
+#include "settings_presenter_controls.h"
 #include "../page_management_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -676,15 +677,15 @@ struct PageLayoutPagePresenter::Impl
                 page - snapshot.pages.data());
             selectedPageText.Text(FormatText(
                 L("settings.pages.selected"), {PageLabel(index)}));
-            columnsBox.Value(page->columns);
-            rowsBox.Value(page->rows);
+            presenter_controls::SyncNumberBoxValue(columnsBox, page->columns);
+            presenter_controls::SyncNumberBoxValue(rowsBox, page->rows);
             if (!nameDirty) nameBox.Text(page->name);
         }
         else
         {
             selectedPageText.Text(L("settings.pages.noSelection"));
-            columnsBox.Value(1.0);
-            rowsBox.Value(1.0);
+            presenter_controls::SyncNumberBoxValue(columnsBox, 1.0);
+            presenter_controls::SyncNumberBoxValue(rowsBox, 1.0);
             nameBox.Text(L"");
         }
         updating = wasUpdating;

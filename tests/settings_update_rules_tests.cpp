@@ -1,7 +1,9 @@
 #include "settings_update_rules.h"
+#include "../src/winui/number_box_update_rules.h"
 
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 // This rule-only target intentionally does not link the native
 // personalization implementation. Supply the value factory used by
@@ -25,6 +27,23 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    using snowdesktop::winui::number_box_update_rules::ShouldWriteValue;
+    // NumberBox's setter formats its inner TextBox even for an unchanged
+    // value. A draft such as "1" (on the way to "125"), "-", or "1." must
+    // survive snapshot echoes; these checks exercise our write policy only.
+    Check(!ShouldWriteValue(100.0, 100.0),
+        "an unchanged snapshot cannot overwrite an unfinished numeric draft");
+    Check(!ShouldWriteValue(100.0, 125.0, true),
+        "a changed snapshot preserves the focused numeric draft until evaluation");
+    Check(ShouldWriteValue(100.0, 125.0),
+        "settled input and explicit slider/reset values can update the number");
+    const double empty = std::numeric_limits<double>::quiet_NaN();
+    Check(!ShouldWriteValue(empty, empty),
+        "repeated empty values cannot reformat an empty numeric draft");
+    Check(!ShouldWriteValue(empty, 125.0, true) &&
+        ShouldWriteValue(empty, 125.0) && ShouldWriteValue(125.0, empty),
+        "an empty draft is protected while editing and can change after evaluation");
+
     using snowdesktop::dock_settings_rules::
         DisableSummonOnlyWhenPrerequisiteDisabled;
     using snowdesktop::dock_settings_rules::

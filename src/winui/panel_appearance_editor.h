@@ -137,7 +137,7 @@ private:
         slider.PointerReleased(flush); slider.PointerCaptureLost(flush); slider.KeyUp(flush); slider.LostFocus(flush); number.KeyUp(flush); number.LostFocus(flush);
         sync_.push_back([this, field, scale, step, minimum, maximum, slider, number] {
             const auto value = presenter_controls::QuantizeNumericValue(value_.*field * scale, minimum, maximum, step);
-            slider.Value(value); number.Value(value);
+            slider.Value(value); presenter_controls::SyncNumberBoxValue(number, value);
         });
         Row(parent, key, pair, [field](auto& value) { value.*field = PersonalizationSettings{}.*field; }, visible);
     }

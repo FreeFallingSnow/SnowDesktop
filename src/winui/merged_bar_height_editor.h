@@ -66,7 +66,7 @@ public:
             snapshot.values.dock, snapshot.values.general.statusBar, GetSystemMetrics(SM_CMONITORS));
         row_.root.Visibility(state.anyMerged ? winrt::Microsoft::UI::Xaml::Visibility::Visible : winrt::Microsoft::UI::Xaml::Visibility::Collapsed);
         if (!state.anyMerged) { timer_.Stop(); dirty_ = false; }
-        if (!dirty_) SetValue(std::clamp(snapshot.values.dock.mergedBarHeight, 32, 96));
+        if (!dirty_) SetValue(std::clamp(snapshot.values.dock.mergedBarHeight, 32, 96), true);
     }
     void Flush()
     {
@@ -85,9 +85,11 @@ public:
             number_.ValueChanged(numberToken_); reset_.Click(resetToken_); } catch (...) {}
     }
 private:
-    void SetValue(int value)
+    void SetValue(int value, bool fromSnapshot = false)
     {
-        syncing_ = true; value_ = value; slider_.Value(value); number_.Value(value);
+        syncing_ = true; value_ = value; slider_.Value(value);
+        if (fromSnapshot) presenter_controls::SyncNumberBoxValue(number_, value);
+        else presenter_controls::SetNumberBoxValue(number_, value);
         reset_.IsEnabled(value != 48); syncing_ = false;
     }
     void Change(double value)

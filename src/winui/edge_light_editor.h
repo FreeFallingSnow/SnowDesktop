@@ -90,7 +90,7 @@ private:
         const auto flush = [weak](auto const&, auto const&) { if (auto self = weak.lock()) self->Flush(); };
         slider.PointerReleased(flush); slider.PointerCaptureLost(flush); slider.KeyUp(flush); slider.LostFocus(flush); number.KeyUp(flush); number.LostFocus(flush);
         restore.Click([weak, field](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply(field, EdgeLightSettings{}.*field, true); });
-        sync_.push_back([this, slider, number, field, scale] { slider.Value(value_.*field * scale); number.Value(value_.*field * scale); });
+        sync_.push_back([this, slider, number, field, scale] { slider.Value(value_.*field * scale); presenter_controls::SyncNumberBoxValue(number, value_.*field * scale); });
     }
     void Build()
     {

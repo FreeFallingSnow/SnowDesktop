@@ -243,7 +243,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         slider.PointerReleased(commit); slider.PointerCaptureLost(commit); slider.KeyUp(commit); slider.LostFocus(commit);
         number.KeyUp(commit); number.LostFocus(commit);
         synchronize.push_back([this, slider, number, member, factor] {
-            const auto value = NumericValue(member) * factor; slider.Value(value); number.Value(value);
+            const auto value = NumericValue(member) * factor; slider.Value(value); presenter_controls::SyncNumberBoxValue(number, value);
         });
         Row(panel, key, pair, Reset(member), field, level);
     }

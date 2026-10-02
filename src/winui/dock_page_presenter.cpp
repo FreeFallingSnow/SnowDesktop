@@ -1347,7 +1347,7 @@ struct DockPagePresenter::Impl
                     return;
                 const double value = control.slider.Value();
                 synchronizingPair = true;
-                control.number.Value(value);
+                presenter_controls::SetNumberBoxValue(control.number, value);
                 synchronizingPair = false;
                 Preview(control, value);
             });
@@ -1698,7 +1698,7 @@ struct DockPagePresenter::Impl
             control.slider.Minimum(), control.slider.Maximum(),
             control.slider.StepFrequency());
         control.slider.Value(value);
-        control.number.Value(value);
+        presenter_controls::SyncNumberBoxValue(control.number, value);
     }
 
     void PatchColor(

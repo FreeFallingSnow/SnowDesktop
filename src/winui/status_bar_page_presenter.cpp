@@ -170,7 +170,7 @@ struct StatusBarPagePresenter::Impl
     {
         if (syncing || closed || !active || !std::isfinite(percent)) return;
         percent = presenter_controls::QuantizeNumericValue(percent, 75, 300, 5);
-        syncing = true; scale.Value(percent); scaleNumber.Value(percent); syncing = false;
+        syncing = true; scale.Value(percent); presenter_controls::SetNumberBoxValue(scaleNumber, percent); syncing = false;
         scaleReset.IsEnabled(percent != 100); scaleDirty = true; scalePreview.Queue(percent);
     }
     Impl(DockPagePresenter::LocalizeCallback callback, const mux::Style& style,
@@ -320,7 +320,7 @@ struct StatusBarPagePresenter::Impl
         if (!scaleDirty)
         {
             const double percent = presenter_controls::QuantizeNumericValue(value.scale * 100., 75, 300, 5);
-            scale.Value(percent); scaleNumber.Value(percent); scaleReset.IsEnabled(percent != 100);
+            scale.Value(percent); presenter_controls::SyncNumberBoxValue(scaleNumber, percent); scaleReset.IsEnabled(percent != 100);
         }
         SyncTheme(defaultTheme, value.theme, force);
         for (auto& rule : rules)

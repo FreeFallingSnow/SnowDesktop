@@ -625,7 +625,7 @@ struct WidgetSettingsPresenter::Impl
                     control.slider.Value(), control.minimum,
                     control.maximum) * control.scale);
                 control.synchronizing = true;
-                control.number.Value(value / control.scale);
+                presenter_controls::SetNumberBoxValue(control.number, value / control.scale);
                 control.synchronizing = false;
                 QueueAppearancePreview(control, value);
             });
@@ -1372,7 +1372,7 @@ struct WidgetSettingsPresenter::Impl
                 if (field.synchronizing || updatingControls) return;
                 const double value = field.slider.Value();
                 field.synchronizing = true;
-                field.number.Value(value);
+                presenter_controls::SetNumberBoxValue(field.number, value);
                 field.synchronizing = false;
                 QueueNumberPreview(field, value);
             });
@@ -1874,7 +1874,7 @@ struct WidgetSettingsPresenter::Impl
             static_cast<double>(value) / control.scale,
             control.minimum, control.maximum);
         control.slider.Value(normalized);
-        control.number.Value(normalized);
+        presenter_controls::SyncNumberBoxValue(control.number, normalized);
         control.synchronizing = false;
     }
 
@@ -2049,7 +2049,7 @@ struct WidgetSettingsPresenter::Impl
                 state.currentValue, field.schema.minimum);
             field.synchronizing = true;
             field.slider.Value(value);
-            field.number.Value(value);
+            presenter_controls::SyncNumberBoxValue(field.number, value);
             field.synchronizing = false;
         }
         if (field.colorEditor)

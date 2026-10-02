@@ -280,7 +280,7 @@ struct NumericEditor
                 if (updating || closed) return;
                 const double value = Normalize(slider.Value());
                 updating = true;
-                number.Value(value);
+                presenter_controls::SetNumberBoxValue(number, value);
                 updating = false;
                 PublishPreview(value);
             });
@@ -290,7 +290,7 @@ struct NumericEditor
                 const double value = Normalize(number.Value());
                 updating = true;
                 slider.Value(value);
-                number.Value(value);
+                presenter_controls::SetNumberBoxValue(number, value);
                 updating = false;
                 PublishPreview(value);
             });
@@ -368,7 +368,7 @@ struct NumericEditor
         const bool wasUpdating = updating;
         updating = true;
         slider.Value(value);
-        number.Value(value);
+        presenter_controls::SyncNumberBoxValue(number, value);
         updating = wasUpdating;
     }
 
