@@ -994,7 +994,7 @@ void CheckTextInkMetrics(const std::filesystem::path& snowwidget,
   "requiredFeatures": ["draw.immediate", "draw.textInkMetrics"]
 })json");
     Write(source / L"main.lua", R"lua(
-return widget({render = function()
+return widget.define({render = function()
     local title = "\u{5F53}\u{524D}\u{4F4D}\u{7F6E}"
     local titleMetrics = draw.measureText(title, 18, 220, true)
     local number = draw.measureText("17", 72, 220, false)
