@@ -776,8 +776,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 RECT content =
                     GetCollectionPopupContentRect(popup);
                 for (size_t i = 0;
-                     i < dockFolderPopupWidget_.
-                        folderEntries.size(); ++i)
+                     i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
                 {
                     RECT itemRect =
                         GetCollectionPopupItemRect(
@@ -792,8 +791,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         !HitTestCollectionPopupItem(popup, i, pt))
                         continue;
                     const std::wstring path =
-                        dockFolderPopupWidget_.
-                            folderEntries[i].fullPath;
+                        dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].fullPath;
                     if (LaunchPathWithShortcutPolicy(
                             hwnd_, path))
                         CloseCollectionPopup();

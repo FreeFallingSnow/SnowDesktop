@@ -3,6 +3,7 @@
 #include "../quick_navigation_rules.h"
 #include "../widget_scroll_rules.h"
 #include "../animation_settings.h"
+#include "categorized_popup_scope.h"
 
 // Primary-button press handling and drag-source initialization.
 
@@ -206,6 +207,46 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
+    if (IsCollectionPopupInteractive())
+    {
+        auto* view = GetCategorizedPopupView();
+        if (view)
+        {
+            const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+            const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+            const RECT frame{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom};
+            CategorizedPopupScope scope(view, frame);
+            const RECT search = view->GetSearchBoxRect();
+            if (!IsRectEmptyRect(search) && PtInRect(&search, pt))
+            {
+                for (auto& candidate : containers_)
+                    if (auto* other = dynamic_cast<ScrollingItemWidget*>(candidate.get()); other && other != view)
+                        other->SetSearchFocused(false);
+                view->BeginSearchPointerSelection(pt, (wp & MK_SHIFT) != 0);
+                FocusDesktopInputWindow();
+                mouseDownHit_ = nullptr;
+                SetCapture(interactionCaptureHwnd);
+                UpdateHostInputImePosition();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            if (view->BeginCategoryTabDrag(pt))
+            {
+                view->SetSearchFocused(false);
+                view->GetWidgetData()->activeCategoryId = view->CategoryIdAtPoint(pt);
+                popupScrollOffset_ = 0;
+                if (auto* categories = dynamic_cast<FileCategories*>(view)) categories->InvalidateCategoryCache();
+                else if (auto* folder = dynamic_cast<FolderMapping*>(view)) folder->InvalidateFilterCache();
+                mouseDownHit_ = nullptr;
+                SetCapture(interactionCaptureHwnd);
+                ResetCollectionPopupAnimationCache();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            view->SetSearchFocused(false);
+        }
+    }
+
     // 外部点击先关闭集合弹窗，但保留本次按下事件，继续命中弹窗下方的真实目标。
     if (IsCollectionPopupInteractive() &&
         popupWidgetIndex_ < widgets_.size())
@@ -366,8 +407,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             bool clickedPopupItem = false;
             for (size_t i = 0;
-                 i < dockFolderPopupWidget_.
-                    folderEntries.size(); ++i)
+                 i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
             {
                 RECT itemRect =
                     GetCollectionPopupItemRect(popup, i);
@@ -383,20 +423,21 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 auto& entries =
                     dockFolderPopupWidget_.folderEntries;
                 ClearSelection();
+                const size_t entryIndex = GetPopupFolderEntryIndex(dockFolderPopupWidget_, i);
                 if (ctrl)
                 {
-                    entries[i].selected =
-                        !entries[i].selected;
+                    entries[entryIndex].selected =
+                        !entries[entryIndex].selected;
                 }
-                else if (!entries[i].selected)
+                else if (!entries[entryIndex].selected)
                 {
                     for (auto& entry : entries)
                         entry.selected = false;
-                    entries[i].selected = true;
+                    entries[entryIndex].selected = true;
                 }
                 popupMouseDownItem_ =
                     std::make_unique<FolderEntryIcon>(
-                        &entries[i],
+                        &entries[entryIndex],
                         dockFolderPopupContainer_.get(),
                         this);
                 popupMouseDownItem_->SetBounds(itemRect);
@@ -1146,6 +1187,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     : L"";
                 if (!id.empty())
                 {
+                    if (categorized && categorized->BeginCategoryTabDrag(pt))
+                    {
+                        mouseDownWidgetIndex_ = wi;
+                        mouseDownHit_ = nullptr;
+                        SetCapture(hwnd_);
+                    }
                     DesktopWidget* categorizedData =
                         &widgets_[wi];
                     if (auto* fileGroup =

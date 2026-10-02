@@ -12,6 +12,7 @@ bool DesktopApp::TryHandlePageNavigationKey(
 
     bool textInputActive = renameController_.IsActive() ||
         (widgetEngine_ && widgetEngine_->HasFocusedHostInput());
+    if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused()) textInputActive = true;
     for (const auto& container : containers_)
     {
         const auto* searchable =
@@ -171,6 +172,14 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 
     // Handle searchable widget keyboard input.
     {
+        if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
+        {
+            const bool handled = view->HandleSearchKey(key);
+            popupScrollOffset_ = 0;
+            ResetCollectionPopupAnimationCache();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (handled || (key != VK_RETURN && key != VK_UP && key != VK_DOWN)) return handled;
+        }
         for (auto& c : containers_)
         {
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
@@ -663,12 +672,13 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             ClearSelection();
             if (dockFolderPopupOpen_)
             {
-                for (auto& entry : popup->folderEntries)
-                    entry.selected = true;
+                for (auto& entry : popup->folderEntries) entry.selected = false;
+                for (size_t i = 0; i < GetPopupItemCount(*popup); ++i)
+                    popup->folderEntries[GetPopupFolderEntryIndex(*popup, i)].selected = true;
             }
             else
             {
-                for (const auto& itemKey : popup->itemKeys)
+                for (const auto& itemKey : GetPopupItemKeys(*popup))
                 {
                     const size_t index = FindItemIndexByKey(itemKey);
                     if (index < items_.size())
@@ -746,6 +756,19 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     case VK_ESCAPE:
         handled = true;
         restoreFloatingDockLayer = true;
+        for (auto& container : containers_)
+            if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->HasCategoryTabPress())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+                ReleaseCapture();
+                return true;
+            }
+        if (auto* view = GetCategorizedPopupView(); view && view->HasCategoryTabPress())
+        {
+            CancelPointerPressWithoutCaptureRelease();
+            ReleaseCapture();
+            return true;
+        }
         if (widgetAction_ != WidgetAction::None)
         {
             CancelPointerPressWithoutCaptureRelease();

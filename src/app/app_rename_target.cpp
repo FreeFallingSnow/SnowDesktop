@@ -24,7 +24,7 @@ DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
         const auto keys = dockFolderPopupOpen_ ? std::vector<std::wstring>{}
             : GetPopupItemKeys(*popupWidget);
         const size_t count = dockFolderPopupOpen_
-            ? dockFolderPopupWidget_.folderEntries.size() : keys.size();
+            ? GetPopupItemCount(dockFolderPopupWidget_) : keys.size();
         for (size_t i = 0; i < count; ++i)
         {
             if (!HitTestCollectionPopupItem(popup, i, point)) continue;
@@ -32,7 +32,7 @@ DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
                 GetCollectionPopupItemRect(popup, i));
             if (dockFolderPopupOpen_)
             {
-                const auto& entry = dockFolderPopupWidget_.folderEntries[i];
+                const auto& entry = dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)];
                 return {{RenameTargetKind::DockFolderEntry, entry.fullPath,
                     L"popup:" + dockFolderPopupSourceId_}, label, entry.selected};
             }

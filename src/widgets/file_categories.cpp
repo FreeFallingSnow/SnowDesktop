@@ -19,6 +19,7 @@
 #include "../menu_fluent_glyphs.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "../category_collection_rules.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
@@ -41,17 +42,6 @@ static std::wstring DesktopItemExtensionUpper(const DesktopItem& item)
     if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
         return ToUpperInvariant(PathFindExtensionW(path));
     return ToUpperInvariant(PathFindExtensionW(item.name.c_str()));
-}
-
-/**
- * @brief 判断桌面项目是否为快捷方式文件（.lnk 或 .url）。
- * @param item 桌面项目。
- * @return true 如果扩展名为 .LNK 或 .URL；否则返回 false。
- */
-static bool IsShortcutItem(const DesktopItem& item)
-{
-    const std::wstring ext = DesktopItemExtensionUpper(item);
-    return ext == L".LNK" || ext == L".URL";
 }
 
 /**
@@ -78,6 +68,8 @@ static std::wstring FileCategoryIdForItem(const DesktopItem& item, const Categor
     const std::wstring ext = DesktopItemExtensionUpper(item);
     if (IsFilesystemFolder(item))
         return L"folders";
+    if (item.isApplicationShortcut)
+        return L"programs";
     std::wstring categoryId = CategoryIdForExtension(settings, ext);
     if (!categoryId.empty())
         return categoryId;
@@ -185,14 +177,13 @@ static std::wstring FileCategoryIdForItemByDate(const DesktopItem& item)
 
 /**
  * @brief 判断桌面项目是否应收录到分类面板中。
- *        排除系统图标（此电脑、用户文件、网络、控制面板、回收站）和快捷方式文件。
+ *        排除受保护的系统图标；程序和快捷方式遵循默认关闭的收纳开关。
  * @param app DesktopApp 实例指针。
  * @param item 待判断的桌面项目。
- * @return true 如果项目应被收录；false 如果受保护或为快捷方式。
+ * @return true 如果项目应被收录；false 如果受保护或程序收纳尚未开启。
  */
-static bool IsCollectable(DesktopApp* app, const DesktopItem& item)
+static bool IsCollectable(const CategorySettings& settings, const DesktopItem& item)
 {
-    (void)app;
     std::wstring clsid = !item.desktopIconClsid.empty()
         ? item.desktopIconClsid
         : ExtractClsidText(item.parsingName);
@@ -201,7 +192,11 @@ static bool IsCollectable(DesktopApp* app, const DesktopItem& item)
         clsid == kDesktopIconClsidNetwork ||
         clsid == kDesktopIconClsidControlPanel ||
         clsid == kDesktopIconClsidRecycleBin;
-    return !protectedIcon && !IsShortcutItem(item) && !item.layoutKey.empty();
+    if (protectedIcon || item.layoutKey.empty()) return false;
+    return IsFilesystemFolder(item) || settings.collectProgramsEnabled ||
+        !snowdesktop::category_collection_rules::IsProgramItem(
+            DesktopItemExtensionUpper(item), item.isApplicationShortcut,
+            GetProgramCategoryExtensions(settings));
 }
 
 void FileCategories::EnsureCategorySnapshot() const
@@ -252,7 +247,7 @@ void FileCategories::EnsureCategorySnapshot() const
         size_t itemIdx = app_->FindItemIndexByKey(rawKey);
         if (itemIdx == static_cast<size_t>(-1)) continue;
         const DesktopItem& item = app_->GetDesktopItems()[itemIdx];
-        if (!IsCollectable(app_, item)) continue;
+        if (!IsCollectable(app_->GetCategorySettings(), item)) continue;
         std::wstring key = ToUpperInvariant(item.layoutKey);
         if (!seen.insert(key).second) continue;
         allKeys.push_back(key);
@@ -307,7 +302,7 @@ void FileCategories::EnsureCategorySnapshot() const
         }
     }
 
-    const auto order = GetCategoryOrder(app_->GetCategorySettings());
+    const auto order = GetCategoryTabOrder();
     for (const auto& id : order)
     {
         auto it = categorySnapshot_.keysByCategory.find(id);
@@ -502,7 +497,7 @@ bool FileCategories::CollectTopLevelDesktopItems()
     bool changed = false;
     for (const auto& item : app_->GetDesktopItems())
     {
-        if (!IsCollectable(app_, item) || app_->IsItemInAnyWidget(item))
+        if (!IsCollectable(app_->GetCategorySettings(), item) || app_->IsItemInAnyWidget(item))
             continue;
 
         std::wstring key = ToUpperInvariant(item.layoutKey);
@@ -534,7 +529,7 @@ bool FileCategories::PruneUncollectableItems()
             [&](const std::wstring& key) {
                 size_t itemIdx = app_->FindItemIndexByKey(key);
                 return itemIdx != static_cast<size_t>(-1) &&
-                    !IsCollectable(app_, app_->GetDesktopItems()[itemIdx]);
+                    !IsCollectable(app_->GetCategorySettings(), app_->GetDesktopItems()[itemIdx]);
             }),
         data_->itemKeys.end());
     if (data_->itemKeys.size() == oldSize) return false;
@@ -1170,7 +1165,7 @@ bool FileCategories::AllowsDesktopKey(const std::wstring& key) const
 {
     size_t itemIdx = app_ ? app_->FindItemIndexByKey(key) : static_cast<size_t>(-1);
     return itemIdx != static_cast<size_t>(-1) &&
-        IsCollectable(app_, app_->GetDesktopItems()[itemIdx]);
+        IsCollectable(app_->GetCategorySettings(), app_->GetDesktopItems()[itemIdx]);
 }
 
 /**
@@ -1187,7 +1182,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
         !PtInRect(&data_->bounds, app_->lastMousePoint_);
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = UsesLightContentTheme();
 
     const auto& categoryIds = CachedVisibleCategoryIds();
     IDWriteTextFormat* normalFormat = GetCuTextFormat(13.0f, false, true);
@@ -1421,7 +1416,7 @@ RECT FileCategories::GetMemberLayoutRect(size_t index) const
 void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = UsesLightContentTheme();
 
     RECT dateToggle = FileCategoryDateToggleRect(this);
     bool dateHot = !IsPreviewRendering() &&
@@ -1500,6 +1495,7 @@ WidgetHit FileCategories::HitTestWidget(POINT pt) const
 std::wstring FileCategories::CategoryIdAtPoint(POINT pt) const
 {
     if (!data_ || !data_->showFileCategories) return L"";
+    if (data_->showSearchBox && !searchText_.empty()) return L"";
     const auto& categories = CachedVisibleCategoryIds();
     for (size_t i = 0; i < categories.size(); ++i)
     {

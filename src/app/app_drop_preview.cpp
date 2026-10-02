@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../widgets/collection_group_rules.h"
+#include "../empty_group_drop_rules.h"
 
 // Drag source normalization and destination preview planning.
 
@@ -541,10 +542,13 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             if (activeIndex >= widgets_.size() ||
                 widgets_[activeIndex].type !=
                     DesktopWidgetType::Collection)
-                return preview;
+            {
+                if (!snowdesktop::empty_group_drop_rules::IsEmptyGroup(*preview.targetWidget, widgets_))
+                    return preview;
+            }
             // 集合组只是当前集合的可视代理。普通图标拖放仍落到
             // 激活标签对应的 Collection 数据中。
-            preview.targetWidget = const_cast<DesktopWidget*>(
+            else preview.targetWidget = const_cast<DesktopWidget*>(
                 &widgets_[activeIndex]);
         }
         if (preview.targetWidget &&
@@ -562,26 +566,13 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
                     DesktopWidgetType::FileCategories &&
                  widgets_[activeIndex].type !=
                     DesktopWidgetType::FolderMapping))
-                return preview;
-            preview.targetWidget =
+            {
+                if (!snowdesktop::empty_group_drop_rules::IsEmptyGroup(*preview.targetWidget, widgets_))
+                    return preview;
+            }
+            else preview.targetWidget =
                 const_cast<DesktopWidget*>(
                     &widgets_[activeIndex]);
-        }
-        if (preview.targetWidget &&
-            preview.targetWidget->type == DesktopWidgetType::FileCategories)
-        {
-            auto isShortcutPath = [](const std::wstring& path) {
-                return !path.empty() && _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-            };
-            bool sourceHasShortcut = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
-                [&](const DragSourceEntry& entry) {
-                    return isShortcutPath(entry.filePath) || isShortcutPath(entry.displayName);
-                });
-            if (preview.action == DropAction::Link || sourceHasShortcut)
-            {
-                preview.targetKind = DropTargetKind::KeyedWidget;
-                return preview;
-            }
         }
         preview.targetKind = preview.targetWidget &&
             preview.targetWidget->type == DesktopWidgetType::FolderMapping

@@ -478,8 +478,7 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
             &marqueeRect_, 0,
             -currentScroll);
         for (size_t i = 0;
-            i < dockFolderPopupWidget_.
-                folderEntries.size(); ++i)
+            i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
         {
             RECT itemRect =
                 GetCollectionPopupItemRect(
@@ -487,12 +486,11 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
             OffsetRect(
                 &itemRect, 0,
                 currentScroll);
-            dockFolderPopupWidget_.
-                folderEntries[i].selected =
-                (i <
+            dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].selected =
+                (GetPopupFolderEntryIndex(dockFolderPopupWidget_, i) <
                     dockFolderPopupMarqueeInitialSelection_.
                         size() &&
-                 dockFolderPopupMarqueeInitialSelection_[i]) ||
+                 dockFolderPopupMarqueeInitialSelection_[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)]) ||
                 (!IsRectEmptyRect(itemRect) && RectsIntersect(
                     itemRect,
                     contentSelectionRect));

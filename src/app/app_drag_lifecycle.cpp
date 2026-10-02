@@ -504,6 +504,11 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    if (auto* view = GetCategorizedPopupView())
+    {
+        view->EndCategoryTabDrag(false);
+        view->EndSearchPointerSelection();
+    }
     CancelRenameClick();
     usageGuidePressedButton_ = 0;
     usageGuidePlacement_.EndDrag();
@@ -545,6 +550,8 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     marqueeDockFolderPopup_ = false;
     for (auto& container : containers_)
     {
+        if (auto* categorized = dynamic_cast<ScrollingItemWidget*>(container.get()))
+            categorized->EndCategoryTabDrag(false);
         if (auto* searchable =
                 dynamic_cast<ScrollingItemWidget*>(container.get());
             searchable && searchable->IsSearchPointerSelecting())

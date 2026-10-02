@@ -7,6 +7,7 @@
 #include "../widget_scroll_rules.h"
 #include "../ole_drag_rules.h"
 #include "../page_navigation_rules.h"
+#include "categorized_popup_scope.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
@@ -209,6 +210,20 @@ void DesktopApp::OnMouseMoveAt(
         *dragPreviewSynced = false;
     (void)wp;
     const POINT tracePoint = current;
+    if (auto* view = GetCategorizedPopupView(); view &&
+        (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
+    {
+        const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+        const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+        CategorizedPopupScope scope(view, RECT{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom});
+        if (view->HasCategoryTabPress()) view->UpdateCategoryTabDrag(current);
+        else view->UpdateSearchPointerSelection(current);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    for (auto& container : containers_)
+        if (auto* categorized = dynamic_cast<ScrollingItemWidget*>(container.get());
+            categorized && categorized->UpdateCategoryTabDrag(current)) return;
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseMoveBegin,
         tracePoint);

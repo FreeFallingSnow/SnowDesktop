@@ -51,6 +51,7 @@ struct WidgetRecord
     std::string packageSourceExternalItemId;
     std::string packageSourceUrl;
     std::string activeCategory;
+    std::vector<std::string> categoryTabOrder;
     int scrollOffset = 0;
     int tabScrollOffset = 0;
     int folderSortMode = -1;

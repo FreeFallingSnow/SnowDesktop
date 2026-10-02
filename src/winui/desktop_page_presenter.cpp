@@ -567,6 +567,8 @@ struct DesktopPagePresenter::Impl
 
     muxc::ToggleSwitch showCategoryTabCounts{nullptr};
     SettingRow showCategoryTabCountsRow;
+    muxc::ToggleSwitch collectPrograms{nullptr};
+    SettingRow collectProgramsRow;
 
     muxc::TextBlock beautifyPresetLabel{nullptr};
     muxc::ComboBox beautifyPreset{nullptr};
@@ -644,6 +646,7 @@ struct DesktopPagePresenter::Impl
 
     winrt::event_token shortcutArrowToken{};
     winrt::event_token showCountsToken{};
+    winrt::event_token collectProgramsToken{};
     winrt::event_token beautifyPresetToken{};
     winrt::event_token beautifyModeToken{};
     winrt::event_token gradientEnabledToken{};
@@ -800,6 +803,11 @@ struct DesktopPagePresenter::Impl
         AppendCombo(displayCard, titleOverflowRow, titleOverflow);
 
         InitializeCard(categoryLayoutCard, cardStyle, categoryRoot);
+        collectPrograms = muxc::ToggleSwitch{};
+        collectPrograms.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        collectProgramsRow.Initialize(collectPrograms);
+        collectProgramsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        categoryLayoutCard.content.Children().Append(collectProgramsRow.root);
         showCategoryTabCounts = muxc::ToggleSwitch{};
         showCategoryTabCounts.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -1142,6 +1150,17 @@ struct DesktopPagePresenter::Impl
                         settings.showCategoryTabCounts = enabled;
                     });
             });
+        collectProgramsToken = collectPrograms.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = collectPrograms.IsOn();
+                UpdateCategory(SettingsUpdateMode::Draft,
+                    [enabled](CategorySettings& settings) {
+                        settings.collectProgramsEnabled = enabled;
+                    });
+                if (!closed && active && hasSnapshot && !updatingControls &&
+                    actions.commitCategory)
+                    actions.commitCategory(generation);
+            });
         beautifyPresetToken = beautifyPreset.SelectionChanged(
             [this](const auto&, const auto&) {
                 const int selection = beautifyPreset.SelectedIndex();
@@ -1270,6 +1289,8 @@ struct DesktopPagePresenter::Impl
 
     std::wstring RuleLabel(const CategoryRule& rule) const
     {
+        if (rule.id == L"programs")
+            return L("widget.categories.default_program", L"Programs");
         if (!rule.customLabel.empty())
             return rule.customLabel;
         if (rule.id == L"videos")
@@ -1310,6 +1331,7 @@ struct DesktopPagePresenter::Impl
 
     void RemoveCategoryRule(std::wstring id)
     {
+        if (id == L"programs") return;
         UpdateCategory(SettingsUpdateMode::Draft,
             [id = std::move(id)](CategorySettings& settings) {
                 settings.rules.erase(
@@ -1385,6 +1407,11 @@ struct DesktopPagePresenter::Impl
             row->nameActions.ColumnDefinitions().Append(labelColumn);
             row->nameActions.ColumnDefinitions().Append(deleteColumn);
             row->label.Text(RuleLabel(rule));
+            if (rule.id == L"programs")
+            {
+                row->label.IsReadOnly(true);
+                row->remove.Visibility(mux::Visibility::Collapsed);
+            }
             row->extensions.Text(rule.extensions);
             row->nameActions.Children().Append(row->label);
             muxc::Grid::SetColumn(row->remove, 1);
@@ -1565,6 +1592,7 @@ struct DesktopPagePresenter::Impl
 
     void PatchCategory(const CategorySettings& settings)
     {
+        collectPrograms.IsOn(settings.collectProgramsEnabled);
         PatchRuleRows(settings);
     }
 
@@ -1859,6 +1887,10 @@ struct DesktopPagePresenter::Impl
 
         categoryHint.Text(L("app.settings.category_hint",
             L"Changes to category rules are applied explicitly."));
+        collectProgramsRow.SetText(
+            L("app.settings.collect_programs", L"Collect programs"),
+            L("app.settings.collect_programs_hint", L"Allow file category widgets to collect programs and shortcuts. Off by default."));
+        muxa::AutomationProperties::SetName(collectPrograms, collectProgramsRow.label.Text());
         categoryTypesHeading.Text(
             L("app.settings.category_type", L"Category type"));
         addCategoryHeading.Text(
@@ -1915,6 +1947,7 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
+        if (id == "desktop.collectPrograms") return collectPrograms;
         if (id == "desktop.iconBeautify" ||
             id == "desktop.iconBeautify.preset")
             return beautifyPreset;
@@ -2022,6 +2055,7 @@ struct DesktopPagePresenter::Impl
             }
             shortcutArrow.SelectionChanged(shortcutArrowToken);
             showCategoryTabCounts.Toggled(showCountsToken);
+            collectPrograms.Toggled(collectProgramsToken);
             beautifyPreset.SelectionChanged(beautifyPresetToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
             gradientEnabled.Toggled(gradientEnabledToken);

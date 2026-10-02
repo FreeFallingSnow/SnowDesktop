@@ -279,6 +279,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             msg == WM_IME_COMPOSITION || msg == WM_IME_CHAR || msg == WM_CONTEXTMENU)) return 0;
     auto focusedSearchWidget =
         [this]() -> ScrollingItemWidget* {
+        if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused()) return view;
         for (auto& container : containers_)
         {
             auto* searchable =
@@ -528,6 +529,15 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         if (ch >= 0x20 && ch != 0x7F)
         {
+            if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
+            {
+                view->AppendSearchChar(ch);
+                popupScrollOffset_ = 0;
+                ResetCollectionPopupAnimationCache();
+                UpdateHostInputImePosition();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
             for (auto& c : containers_)
             {
                 auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());

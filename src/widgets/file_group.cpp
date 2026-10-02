@@ -1893,7 +1893,17 @@ void FileGroup::OnItemsDropped(
     }
 
     auto* source = GetActiveSourceContainer();
-    if (!source) return;
+    if (!source)
+    {
+        const auto& session = app_->dragSession_.SourceList();
+        DragSourceList sources = !session.Empty() && app_->dragSession_.Source() == origin
+            ? session : app_->BuildDragSourceList(sourceItems, origin);
+        const auto preview = app_->BuildDropPreviewList(sources, this, targetSlot, region,
+            mods, app_->dragSession_.CurrentPoint());
+        // Conversion and execution may replace this empty group's runtime view.
+        app_->ExecuteDropPipeline(sources, preview);
+        return;
+    }
     DesktopApp* app = app_;
     DragSourceList sourceList;
     DropPreviewList preview;

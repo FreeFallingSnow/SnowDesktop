@@ -506,6 +506,8 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 path + ".bottomBarHover", record.bottomBarHover, error) ||
             !ReadOptionalBoolean(object, "userRenamed",
                 path + ".userRenamed", record.userRenamed, error) ||
+            !ReadStringArray(object, "categoryTabOrder", path + ".categoryTabOrder",
+                record.categoryTabOrder, error) ||
             !ReadStringArray(object, "items", path + ".items",
                 record.items, error) ||
             !ReadStringArray(object, "childWidgets",

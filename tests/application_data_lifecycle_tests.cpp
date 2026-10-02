@@ -1078,6 +1078,22 @@ int main()
     // are exercised, using only this test's isolated temporary layout directory.
     Expect(!typedLayout.widgets[0].dissolveWhenSingle,
         "legacy groups default to retaining their wrapper");
+    // Protect restart behavior through the actual layout store, including
+    // the movable All tab and the default ordering of older layouts.
+    snowdesktop::layout_storage::Document categoryTabs;
+    const std::string categoryTabsText = R"({"widgets":[{"id":"files","type":"fileCategories","categoryTabOrder":["programs","others","all","folders"]}]})";
+    const auto categoryTabsPath = root / L"layout-storage" / L"category-tabs.layout.json";
+    Expect(snowdesktop::layout_storage::SaveDocument(categoryTabsPath, categoryTabsText, &layoutError),
+        "custom tab order saves through the production layout store");
+    Expect(snowdesktop::layout_storage::LoadDocument(categoryTabsPath, categoryTabs).status ==
+            snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            categoryTabs.widgets.front().categoryTabOrder ==
+                std::vector<std::string>({"programs", "others", "all", "folders"}),
+        "restart preserves the position of All and program category tabs");
+    Expect(typedLayout.widgets[0].categoryTabOrder.empty(), "old layouts keep their default category tab order");
+    Expect(!snowdesktop::layout_storage::ParseDocument(
+        R"({"widgets":[{"id":"bad","categoryTabOrder":[3]}]})", categoryTabs, &layoutError),
+        "invalid category tab identities cannot replace a saved layout");
     const std::string pairLayoutText = R"({"widgets":[
         {"id":"automatic","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":true},
         {"id":"manual","page":"page-a","x":4,"y":0,"type":"collectionGroup","dissolveWhenSingle":false}]})";

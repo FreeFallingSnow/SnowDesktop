@@ -558,6 +558,8 @@ void DesktopApp::LoadLayoutSlots()
             widget.contentSortAscending = widget.folderSortAscending;
         }
         widget.activeCategoryId = Utf8ToWide(saved.activeCategory);
+        for (const auto& id : saved.categoryTabOrder)
+            widget.categoryTabOrder.push_back(Utf8ToWide(id));
         widget.itemKeys.reserve(saved.items.size());
         for (const auto& key : saved.items)
             widget.itemKeys.push_back(Utf8ToWide(key));
@@ -1179,7 +1181,13 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
                     NormalizeMode(w.folderSortMode)
              << ", \"folderSortAscending\": "
              << (w.folderSortAscending ? "true" : "false")
-             << ", \"items\": [";
+             << ", \"categoryTabOrder\": [";
+        for (size_t j = 0; j < w.categoryTabOrder.size(); ++j)
+        {
+            if (j) file << ",";
+            file << "\"" << JsonEscapeUtf8(w.categoryTabOrder[j]) << "\"";
+        }
+        file << "], \"items\": [";
         for (size_t j = 0; j < w.itemKeys.size(); ++j)
         {
             file << "\"" << JsonEscapeUtf8(w.itemKeys[j]) << "\"";

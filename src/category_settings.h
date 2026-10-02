@@ -18,6 +18,7 @@ struct CategoryRule
 struct CategorySettings
 {
     float tabFontSize = 15.0f;
+    bool collectProgramsEnabled = false;
     std::vector<CategoryRule> rules;
 
     static CategorySettings Defaults();
@@ -33,3 +34,4 @@ std::wstring NormalizeCategoryExtensionText(const std::wstring& text);
 std::vector<std::wstring> GetCategoryOrder(const CategorySettings& settings);
 std::wstring GetCategoryLabel(const CategorySettings& settings, const std::wstring& categoryId);
 std::wstring CategoryIdForExtension(const CategorySettings& settings, const std::wstring& extensionUpper);
+std::vector<std::wstring> GetProgramCategoryExtensions(const CategorySettings& settings);

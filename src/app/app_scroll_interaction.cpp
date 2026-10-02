@@ -1,4 +1,5 @@
 #include "app.h"
+#include "categorized_popup_scope.h"
 
 // Mouse-wheel routing across active drag, popup and widget containers.
 
@@ -155,6 +156,16 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         if (PtInRect(&popup, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
+            if (auto* view = GetCategorizedPopupView())
+            {
+                const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+                CategorizedPopupScope scope(view, RECT{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom});
+                if (view->TryScrollTabs(pt, delta))
+                {
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+            }
             if (UsesCollectionPopupFan(*popupWidget))
             {
                 ScrollCollectionPopupFan(-static_cast<double>(delta) / WHEEL_DELTA);

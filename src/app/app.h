@@ -1779,6 +1779,7 @@ private:
     void OpenLargeIconSettings(size_t itemIndex);
     void OpenLargeIconSettings(std::vector<std::wstring> keys);
     RECT GetLargeIconFrameRect(const DesktopItem& item) const;
+    RECT GetLargeIconResizeHandleRect(const DesktopItem& item, POINT* center = nullptr) const;
     bool IsRetainedLargeIcon(const DesktopItem& item) const;
     bool IsLargeIconVisible(const DesktopItem& item, POINT pointer, bool hidden) const;
     void DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state);
@@ -3091,6 +3092,10 @@ private:
     DesktopWidget* GetOpenPopupWidget();
     const DesktopWidget* GetOpenPopupWidget() const;
     size_t GetPopupItemCount(const DesktopWidget& widget) const;
+    ScrollingItemWidget* GetCategorizedPopupView() const;
+    bool UsesCategorizedPopupControls(const DesktopWidget& widget) const;
+    size_t GetPopupFolderEntryIndex(const DesktopWidget& widget, size_t visibleIndex) const;
+    RECT GetCollectionPopupControlsRect(const RECT& popup) const;
     bool UsesCollectionPopupFan(const DesktopWidget& widget) const;
     bool UsesCollectionPopupList(const DesktopWidget& widget) const;
     bool CollectionPopupFanRootAbove() const;
@@ -3571,6 +3576,7 @@ private:
         snowdesktop::LargeIconConfig config;
         GridCell cell;
         bool creating = false, resizing = false, valid = false;
+        POINT resizePointerOffset{};
     };
     std::optional<LargeIconGesture> largeIconGesture_;
     std::unique_ptr<snowdesktop::steam_entitlement::Service>

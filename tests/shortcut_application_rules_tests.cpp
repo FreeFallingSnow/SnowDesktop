@@ -1,4 +1,6 @@
 #include "shortcut_application_rules.h"
+#include "category_collection_rules.h"
+#include "empty_group_drop_rules.h"
 #include "shortcut_icon_resource.h"
 #include "large_icon_steam.h"
 
@@ -196,6 +198,68 @@ int wmain(int argc, wchar_t** argv)
         "non-launch Steam URLs must remain ordinary Internet shortcuts");
 
     CheckInternetShortcutIconResource();
+
+    // The opt-in must cover native executables and app links, including
+    // links that have no filesystem extension and user-defined suffixes.
+    namespace collection = snowdesktop::category_collection_rules;
+    Check(collection::IsProgramItem(L".exe", false, {}), "executables require the program opt-in");
+    Check(collection::IsProgramItem(L"", true, {}), "Shell app identities require the program opt-in");
+    Check(collection::IsProgramItem(L".LNK", false, {}), "shortcuts remain gated when their rule suffix is removed");
+    Check(collection::IsProgramItem(L".PY", false, {L".PY"}), "custom program suffixes require the same opt-in");
+    Check(!collection::IsProgramItem(L".PDF", false, {L".PY"}), "ordinary documents stay collectable while programs are disabled");
+    const std::vector<std::wstring> defaults{L"all", L"folders", L"programs", L"images", L"others"};
+    auto order = collection::ResolveTabOrder(defaults, {L"images", L"all", L"images", L"removed"});
+    Check(order == std::vector<std::wstring>({L"images", L"all", L"folders", L"programs", L"others"}),
+        "saved tab order deduplicates IDs, drops stale IDs, and retains new categories");
+    Check(collection::MoveTab(order, L"all", L"others") && order.back() == L"all",
+        "All can be moved to the end without changing category matching rules");
+    Check(collection::MoveTab(order, L"all", L"images") && order.front() == L"all",
+        "All can be moved back to the beginning");
+    Check(!collection::MoveTab(order, L"all", L"missing"), "an invalid target cannot discard a tab");
+
+    namespace emptyGroup = snowdesktop::empty_group_drop_rules;
+    for (const auto groupType : {DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
+    {
+        for (const bool programs : {false, true})
+        {
+            DesktopWidget group;
+            group.type = groupType;
+            group.id = L"retained-id";
+            group.gridCell.pageId = L"retained-page";
+            group.gridCell.column = 3;
+            group.gridCell.row = 4;
+            group.gridSpan = {5, 2};
+            group.bounds = RECT{111, 222, 777, 555};
+            group.userRenamed = true;
+            group.title = L"My group";
+            group.showSearchBox = true;
+            group.showFileCategories = true;
+            group.childWidgetIds = {L"stale-child"};
+            const std::vector<DesktopWidget> noSources;
+            Check(emptyGroup::Convert(group, noSources, programs, L"Default title") &&
+                group.type == (programs ? DesktopWidgetType::Collection : DesktopWidgetType::FileCategories),
+                "either empty group can convert to the matching drop type");
+            Check(group.id == L"retained-id" && group.gridCell.pageId == L"retained-page" &&
+                group.gridCell.column == 3 && group.gridCell.row == 4 &&
+                group.gridSpan.columns == 5 && group.gridSpan.rows == 2 &&
+                group.bounds.left == 111 && group.bounds.top == 222 &&
+                group.bounds.right == 777 && group.bounds.bottom == 555,
+                "conversion preserves identity, page, position, size and runtime bounds");
+            Check(group.title == L"My group" && group.showSearchBox && group.showFileCategories &&
+                group.childWidgetIds.empty(), "conversion retains renamed titles and display options, clearing stale sources");
+        }
+        DesktopWidget group;
+        group.type = groupType;
+        group.childWidgetIds = {L"valid-child"};
+        DesktopWidget child;
+        child.id = L"valid-child";
+        child.type = groupType == DesktopWidgetType::CollectionGroup
+            ? DesktopWidgetType::Collection : DesktopWidgetType::FolderMapping;
+        const std::vector<DesktopWidget> validSources{child};
+        Check(!emptyGroup::Convert(group, validSources, false, L"Files") && group.type == groupType &&
+            group.childWidgetIds == std::vector<std::wstring>{L"valid-child"},
+            "an existing empty child source prevents conversion and is never discarded");
+    }
 
     if (failures != 0)
     {

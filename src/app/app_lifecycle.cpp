@@ -1,4 +1,5 @@
 #include "app.h"
+#include "categorized_popup_scope.h"
 #include "dock_platform_helpers.h"
 #include "../desktop_keyboard_rules.h"
 #include "../widget_engine_settings_backend.h"
@@ -748,6 +749,14 @@ void DesktopApp::UpdateHostInputImePosition()
     RECT caret{};
     bool hasCaret = widgetEngine_ &&
         widgetEngine_->GetFocusedHostInputCaretRect(caret);
+    if (!hasCaret)
+        if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
+        {
+            const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+            const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+            CategorizedPopupScope scope(view, RECT{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom});
+            hasCaret = view->GetSearchCaretRect(caret);
+        }
     if (!hasCaret)
     {
         for (const auto& container : containers_)

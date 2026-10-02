@@ -2,6 +2,7 @@
 #include "popup_opacity_scope.h"
 #include "quick_navigation_theme.h"
 #include "../item_render_layer_rules.h"
+#include "categorized_popup_scope.h"
 #include <d2d1effects.h>
 
 // Collection-popup rendering.
@@ -85,7 +86,7 @@ void DesktopApp::DrawCollectionPopup(
         }
     }
 
-    const auto& popupKeys = widget.itemKeys;
+    const auto popupKeys = GetPopupItemKeys(widget);
     if (!fan)
     {
         PersonalizationSettings popupBackgroundAppearance =
@@ -199,6 +200,16 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
+    if (auto* view = GetCategorizedPopupView())
+    {
+        const RECT controls = GetCollectionPopupControlsRect(popupRect_);
+        const RECT frame{popupRect_.left, popupRect_.top + popupMetrics.headerHeight,
+            popupRect_.right, popupRect_.bottom};
+        CategorizedPopupScope scope(view, frame);
+        ctx->PushAxisAlignedClip(ToD2DRect(controls), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        view->DrawContent(ctx, frame);
+        ctx->PopAxisAlignedClip();
+    }
     DesktopWidget popupListStyle;
     popupListStyle.type = widget.type;
     popupListStyle.bounds = popupRect_;
@@ -358,7 +369,7 @@ void DesktopApp::DrawCollectionPopup(
 
         if (widget.type == DesktopWidgetType::FolderMapping)
         {
-            FolderEntry& entry = dockFolderPopupWidget_.folderEntries[i];
+            FolderEntry& entry = dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(widget, i)];
             if (fan)
             {
                 drawFanItem(i, entry, nullptr);
@@ -481,7 +492,7 @@ void DesktopApp::DrawCollectionPopup(
         if (widget.type == DesktopWidgetType::FolderMapping)
         {
             FolderEntry& entry =
-                dockFolderPopupWidget_.folderEntries[i];
+                dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(widget, i)];
             if (!entry.selected) continue;
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);

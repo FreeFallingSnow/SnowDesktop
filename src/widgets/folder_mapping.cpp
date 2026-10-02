@@ -213,7 +213,7 @@ void FolderMapping::EnsureCategorySnapshot() const
             data_->folderEntries[i], app_->GetCategorySettings())].push_back(i);
     }
 
-    for (const auto& categoryId : GetCategoryOrder(app_->GetCategorySettings()))
+    for (const auto& categoryId : GetCategoryTabOrder())
     {
         auto it = entryIndicesByCategory_.find(categoryId);
         if (it != entryIndicesByCategory_.end() && !it->second.empty())
@@ -371,7 +371,7 @@ static std::vector<int> FolderMappingTabWidths(
     for (const auto& entry : data->folderEntries)
         ++counts[FolderEntryCategoryId(entry, settings)];
 
-    const std::vector<std::wstring> order = GetCategoryOrder(settings);
+    const std::vector<std::wstring> order = widget->GetCategoryTabOrder();
     std::vector<std::wstring> labels;
     for (const auto& categoryId : order)
     {
@@ -409,7 +409,7 @@ static RECT FolderMappingTabLayoutRect(
     present.insert(L"all");
     for (const auto& entry : data->folderEntries)
         present.insert(FolderEntryCategoryId(entry, settings));
-    for (const auto& categoryId : GetCategoryOrder(settings))
+    for (const auto& categoryId : widget->GetCategoryTabOrder())
         if (present.contains(categoryId))
             categories.push_back(categoryId);
     if (index >= categories.size()) return {};
@@ -967,7 +967,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
         !PtInRect(&data_->bounds, app_->lastMousePoint_);
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = UsesLightContentTheme();
 
     DrawSearchBox(context);
     DrawDetailsHeader(context, FolderMappingContentRect(this));
@@ -1161,7 +1161,7 @@ RECT FolderMapping::GetMemberLayoutRect(size_t index) const
 void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = UsesLightContentTheme();
 
     const float bs = GetBarScale();
     const int btnSize = Cu(14.0f * bs);

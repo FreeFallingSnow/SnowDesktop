@@ -35,6 +35,7 @@ namespace
             { L"documents", L10N_KEY("widget.categories.default_document"), "documents", L".TXT .MD .DOC .DOCX .PDF .XLS .XLSX .PPT .PPTX .CSV" },
             { L"archives", L10N_KEY("widget.categories.default_archive"), "archives", L".ZIP .RAR .7Z .TAR .GZ .BZ2 .XZ" },
             { L"audio", L10N_KEY("widget.categories.default_audio"), "audio", L".MP3 .WAV .FLAC .AAC .M4A .OGG" },
+            { L"programs", L10N_KEY("widget.categories.default_program"), "programs", L".EXE .MSI .BAT .CMD .LNK .URL" },
         };
         count = sizeof(rules) / sizeof(rules[0]);
         return rules;
@@ -220,12 +221,6 @@ namespace
         return L"category-" + std::to_wstring(index + 1);
     }
 
-    bool IsRetiredBuiltinRule(const CategoryRule& rule)
-    {
-        return rule.id == L"programs" &&
-            rule.extensions == L".EXE .MSI .BAT .CMD .LNK";
-    }
-
     const LegacyRuleDescriptor* FindBuiltinRule(const std::wstring& id)
     {
         size_t count = 0;
@@ -245,14 +240,13 @@ namespace
         for (size_t i = 0; i < settings.rules.size(); ++i)
         {
             CategoryRule rule = settings.rules[i];
+            if (rule.id == L"programs") rule.customLabel.clear();
             if (rule.id.empty() || rule.id == L"all" || rule.id == L"folders" || rule.id == L"others")
                 rule.id = MakeRuleId(i);
             if (rule.customLabel.empty() && !FindBuiltinRule(rule.id))
                 rule.customLabel = _LW("widget.categories.unnamed");
 
             rule.extensions = NormalizeCategoryExtensionText(rule.extensions);
-            if (IsRetiredBuiltinRule(rule))
-                continue;
 
             std::wstring baseId = rule.id;
             int suffix = 2;
@@ -263,6 +257,8 @@ namespace
         }
 
         settings.rules = std::move(normalized);
+        if (!seenIds.contains(L"programs"))
+            settings.rules.push_back({L"programs", L"", FindBuiltinRule(L"programs")->extensions});
         settings.tabFontSize = std::clamp(settings.tabFontSize, 10.0f, 22.0f);
     }
 
@@ -394,6 +390,17 @@ bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings)
     std::string text = ss.str();
     if (text.empty()) return false;
 
+    settings.collectProgramsEnabled = false;
+    const auto enabledField = text.find("\"collectProgramsEnabled\"");
+    if (enabledField != std::string::npos)
+    {
+        const auto colon = text.find(':', enabledField);
+        const auto value = colon == std::string::npos ? colon :
+            text.find_first_not_of(" \t\r\n", colon + 1);
+        settings.collectProgramsEnabled = value != std::string::npos &&
+            text.compare(value, 4, "true") == 0;
+    }
+
     double number = 0;
     if (ReadDoubleField(text, "tabFontSize", number))
         settings.tabFontSize = std::clamp(static_cast<float>(number), 10.0f, 22.0f);
@@ -419,6 +426,7 @@ bool LoadCategorySettings(const wchar_t* path, CategorySettings& settings)
                 it->extensions = NormalizeCategoryExtensionText(Utf8ToWideLocal(value));
         }
         migrated.tabFontSize = settings.tabFontSize;
+        migrated.collectProgramsEnabled = settings.collectProgramsEnabled;
         settings = std::move(migrated);
     }
 
@@ -436,6 +444,8 @@ bool SaveCategorySettings(const wchar_t* path, const CategorySettings& settings)
 
     file << "{\n";
     file << "  \"tabFontSize\": " << normalized.tabFontSize << ",\n";
+    file << "  \"collectProgramsEnabled\": " <<
+        (normalized.collectProgramsEnabled ? "true" : "false") << ",\n";
     file << "  \"rules\": [\n";
     for (size_t i = 0; i < normalized.rules.size(); ++i)
     {
@@ -494,4 +504,12 @@ std::wstring CategoryIdForExtension(const CategorySettings& settings, const std:
             return rule.id;
     }
     return L"";
+}
+
+std::vector<std::wstring> GetProgramCategoryExtensions(const CategorySettings& settings)
+{
+    const auto rule = std::find_if(settings.rules.begin(), settings.rules.end(),
+        [](const CategoryRule& value) { return value.id == L"programs"; });
+    return rule == settings.rules.end() ? std::vector<std::wstring>{} :
+        ParseCategoryExtensionList(rule->extensions);
 }

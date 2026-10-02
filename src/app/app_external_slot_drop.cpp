@@ -167,11 +167,6 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         }
         if (widget->type != destination.widgetType ||
             widget->sourceFolderPath != destination.folderPath) return false;
-        if (widget->type == DesktopWidgetType::FileCategories &&
-            ((!owned && preview.action == DropAction::Link) ||
-             std::any_of(paths.begin(), paths.end(), [](const auto& path) {
-                 return _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-             }))) return false;
         preview.targetWidget = widget;
         preview.landings.clear();
         for (size_t index = 0; index < paths.size(); ++index)

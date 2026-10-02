@@ -3,6 +3,8 @@
 #include "../widgets/collection_group_rules.h"
 #include "../folder_self_drop_rules.h"
 #include "../item_location.h"
+#include "../category_collection_rules.h"
+#include "../empty_group_drop_rules.h"
 
 // Internal and file-backed drop-plan execution.
 
@@ -40,14 +42,137 @@ bool DesktopApp::IsSelfContainedFolderDrop(
 }
 
 bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
-    const DropPreviewList& preview,
+    const DropPreviewList& requestedPreview,
     FileOperationCompletion completion,
     bool executeSynchronously,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
+    DropPreviewList preview = requestedPreview;
+    bool convertedGroup = false;
+    std::unique_ptr<Widget> convertedView;
     const bool sourceFromDock = std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
         [](const DragSourceEntry& entry) { return entry.fromDock; });
     if (sourceList.Empty()) return false;
+    auto runtimeContainerIsLive = [&](Container* candidate) {
+        if (!candidate || candidate == dockFolderPopupContainer_.get()) return true;
+        for (const auto& container : containers_)
+        {
+            if (container.get() == candidate) return true;
+            if (auto* group = dynamic_cast<FileGroup*>(container.get());
+                group && group->GetActiveSourceContainer() == candidate) return true;
+        }
+        return false;
+    };
+    auto containsPrograms = [&] {
+        const auto extensions = GetProgramCategoryExtensions(categorySettings_);
+        return preview.action == DropAction::Link ||
+            std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
+                [&](const DragSourceEntry& entry) {
+                    const size_t index = FindItemIndexByKey(entry.desktopKey);
+                    const bool application = index < items_.size() && items_[index].isApplicationShortcut;
+                    const auto& path = entry.filePath.empty() ? entry.displayName : entry.filePath;
+                    const DWORD attributes = path.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
+                    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+                        return false;
+                    return snowdesktop::category_collection_rules::IsProgramItem(
+                        PathFindExtensionW(path.c_str()), application, extensions);
+                });
+    };
+    if (!preview.Empty() && preview.targetWidget &&
+        !sourceList.hasWidgets && !sourceList.hasCollectionGroupEntries && !sourceList.hasFileGroupEntries &&
+        snowdesktop::empty_group_drop_rules::IsEmptyGroup(*preview.targetWidget, widgets_))
+    {
+        const auto id = preview.targetWidget->id;
+        const auto oldType = preview.targetWidget->type;
+        const bool programs = containsPrograms();
+        const TASKDIALOG_BUTTON buttons[] = {
+            {IDYES, _LW("widget.group.convert_continue")}, {IDCANCEL, _LW("app.settings.cancel")}};
+        TASKDIALOGCONFIG dialog{};
+        dialog.cbSize = sizeof(dialog);
+        dialog.hwndParent = controlHwnd_ ? controlHwnd_ : hwnd_;
+        dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+        dialog.pszWindowTitle = L"SnowDesktop";
+        dialog.pszMainInstruction = _LW("widget.group.convert_title");
+        dialog.pszContent = programs ? _LW("widget.group.convert_programs_message") :
+            _LW("widget.group.convert_files_message");
+        dialog.pButtons = buttons;
+        dialog.cButtons = static_cast<UINT>(std::size(buttons));
+        dialog.nDefaultButton = IDCANCEL;
+        int selected = IDCANCEL;
+        if (FAILED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) || selected != IDYES)
+            return false;
+        const size_t index = FindWidgetIndexById(id);
+        if (exitRequested_ || index >= widgets_.size() || &widgets_[index] != preview.targetWidget ||
+            widgets_[index].type != oldType || !runtimeContainerIsLive(sourceList.origin) ||
+            !runtimeContainerIsLive(preview.targetContainer)) return false;
+        if (!snowdesktop::empty_group_drop_rules::Convert(widgets_[index], widgets_, programs,
+                programs ? _LW("widget.collection") : _LW("widget.desktop_files"))) return false;
+        convertedGroup = true;
+        convertedView = CreateWidget(preview.targetWidget, this);
+        preview.targetContainer = dynamic_cast<WidgetContainer*>(convertedView.get());
+        SaveLayoutSlots();
+    }
+    if (preview.targetWidget &&
+        preview.targetWidget->type == DesktopWidgetType::FileCategories &&
+        !categorySettings_.collectProgramsEnabled)
+    {
+        const bool needsPrograms = containsPrograms();
+        if (needsPrograms)
+        {
+            // Show the decision only at commit; hovering never changes settings.
+            const std::wstring targetId = preview.targetWidget->id;
+            const TASKDIALOG_BUTTON buttons[] = {
+                {IDYES, _LW("app.settings.widgets_enable")}, {IDCANCEL, _LW("app.settings.cancel")}};
+            TASKDIALOGCONFIG dialog{};
+            dialog.cbSize = sizeof(dialog);
+            dialog.hwndParent = controlHwnd_ ? controlHwnd_ : hwnd_;
+            dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+            dialog.pszWindowTitle = L"SnowDesktop";
+            dialog.pszMainInstruction = _LW("app.settings.collect_programs_confirm_title");
+            dialog.pszContent = _LW("app.settings.collect_programs_confirm_message");
+            dialog.pButtons = buttons;
+            dialog.cButtons = static_cast<UINT>(std::size(buttons));
+            dialog.nDefaultButton = IDCANCEL;
+            int selected = IDCANCEL;
+            if (FAILED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) ||
+                selected != IDYES) return false;
+            const size_t currentTarget = FindWidgetIndexById(targetId);
+            if (exitRequested_ || currentTarget >= widgets_.size() ||
+                &widgets_[currentTarget] != preview.targetWidget ||
+                !runtimeContainerIsLive(sourceList.origin) || !runtimeContainerIsLive(preview.targetContainer)) return false;
+            CategorySettings enabled = categorySettings_;
+            enabled.collectProgramsEnabled = true;
+            if (!SaveCategorySettings(GetCategorySettingsPath().c_str(), enabled)) return false;
+            categorySettings_ = enabled;
+            // Do not flush an unrelated category editor draft while enabling.
+            if (settingsController_)
+            {
+                const auto reloaded = settingsController_->Reload(
+                    snowdesktop::SettingsReloadPolicy::PreservePendingChanges);
+                if (!reloaded.Succeeded() && reloaded.status != snowdesktop::SettingsActionStatus::Busy)
+                {
+                    const std::wstring message = L"Program collection setting saved, but settings reload failed: " +
+                        reloaded.message;
+                    WriteDiagnosticLogEntry(message.c_str());
+                }
+                if (!reloaded.Succeeded())
+                    if (const auto snapshot = settingsController_->Snapshot();
+                        snapshot && !snapshot->values.category.collectProgramsEnabled)
+                    {
+                        auto draft = snapshot->values.category;
+                        draft.collectProgramsEnabled = true;
+                        settingsController_->UpdateCategory(std::move(draft), snowdesktop::SettingsUpdateMode::Draft);
+                    }
+            }
+            for (auto& container : containers_)
+            {
+                if (auto* categories = dynamic_cast<FileCategories*>(container.get()))
+                    categories->InvalidateCategoryCache();
+                else if (auto* group = dynamic_cast<FileGroup*>(container.get()))
+                    group->InvalidateHostedView();
+            }
+        }
+    }
     // A completely full desktop produces no visible landing preview. File
     // drops must still be materialized; ReloadItems will allocate virtual
     // overflow pages for the newly created desktop entries.
@@ -69,7 +194,7 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
                     L":" + ToUpperInvariant(entry.dockReference));
     }
 
-    auto finish = [this,
+    auto finish = [this, convertedGroup,
         movedDockEntries = std::move(movedDockEntries),
         completion = std::move(completion)](bool succeeded) mutable {
         if (succeeded && !movedDockEntries.empty())
@@ -90,14 +215,31 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
         }
+        if (convertedGroup)
+        {
+            LayoutItems();
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         if (completion)
             completion(succeeded);
     };
 
     if (preview.fileBacked)
-        return ExecuteFileBackedDropPlan(
+    {
+        const bool queued = ExecuteFileBackedDropPlan(
             sourceList, preview, std::move(finish),
             executeSynchronously, std::move(result));
+        // The asynchronous operation already captured IDs and values. Replace
+        // the empty group view now without retaining any temporary container.
+        if (convertedGroup && queued && !executeSynchronously)
+        {
+            LayoutItems();
+            SaveLayoutSlots();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return queued;
+    }
 
     const bool executed = ExecuteInternalDropPlan(sourceList, preview);
     finish(executed);

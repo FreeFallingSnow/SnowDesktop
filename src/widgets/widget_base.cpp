@@ -25,13 +25,99 @@
 #include "widget_preview_scene.h"
 #include "../widget_item_layout.h"
 #include "../widget_scroll_rules.h"
+#include "../category_collection_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
-
-
 #include <algorithm>
 #include <cmath>
+
+namespace
+{
+ScrollingItemWidget* CategoryTabSource(ScrollingItemWidget* widget)
+{
+    if (auto* group = dynamic_cast<FileGroup*>(widget))
+        return group->GetActiveSourceContainer();
+    return dynamic_cast<FileCategories*>(widget) || dynamic_cast<FolderMapping*>(widget)
+        ? widget : nullptr;
+}
+
+void InvalidateCategoryTabSource(ScrollingItemWidget* widget)
+{
+    if (auto* group = dynamic_cast<FileGroup*>(widget)) group->InvalidateHostedView();
+    else if (auto* categories = dynamic_cast<FileCategories*>(widget)) categories->InvalidateCategoryCache();
+    else if (auto* folder = dynamic_cast<FolderMapping*>(widget)) folder->InvalidateFilterCache();
+}
+}
+
+std::vector<std::wstring> ScrollingItemWidget::GetCategoryTabOrder() const
+{
+    auto* source = CategoryTabSource(const_cast<ScrollingItemWidget*>(this));
+    const auto defaults = app_ ? GetCategoryOrder(app_->GetCategorySettings()) : std::vector<std::wstring>{};
+    return source && source->GetWidgetData()
+        ? snowdesktop::category_collection_rules::ResolveTabOrder(defaults, source->GetWidgetData()->categoryTabOrder)
+        : defaults;
+}
+
+bool ScrollingItemWidget::BeginCategoryTabDrag(POINT point)
+{
+    auto* source = CategoryTabSource(this);
+    if (!source || !source->GetWidgetData()) return false;
+    const auto id = CategoryIdAtPoint(point);
+    if (id.empty()) return false;
+    pressedCategoryTab_ = id;
+    pressedCategorySourceId_ = source->GetWidgetData()->id;
+    categoryTabPressPoint_ = point;
+    categoryTabOriginalOrder_ = source->GetWidgetData()->categoryTabOrder;
+    categoryTabDragging_ = false;
+    return true;
+}
+
+bool ScrollingItemWidget::UpdateCategoryTabDrag(POINT point)
+{
+    if (!HasCategoryTabPress()) return false;
+    auto* source = CategoryTabSource(this);
+    if (!source || !source->GetWidgetData() ||
+        source->GetWidgetData()->id != pressedCategorySourceId_) return true;
+    if (!categoryTabDragging_)
+    {
+        if (std::abs(point.x - categoryTabPressPoint_.x) < GetSystemMetrics(SM_CXDRAG) &&
+            std::abs(point.y - categoryTabPressPoint_.y) < GetSystemMetrics(SM_CYDRAG)) return true;
+        categoryTabDragging_ = true;
+    }
+    const auto target = CategoryIdAtPoint(point);
+    if (target.empty()) return true;
+    auto order = GetCategoryTabOrder();
+    if (snowdesktop::category_collection_rules::MoveTab(order, pressedCategoryTab_, target))
+    {
+        source->GetWidgetData()->categoryTabOrder = std::move(order);
+        InvalidateCategoryTabSource(this);
+        if (app_) InvalidateRect(app_->hwnd_, nullptr, FALSE);
+    }
+    return true;
+}
+
+bool ScrollingItemWidget::EndCategoryTabDrag(bool commit)
+{
+    if (!HasCategoryTabPress()) return false;
+    auto* source = CategoryTabSource(this);
+    if (source && source->GetWidgetData() && source->GetWidgetData()->id == pressedCategorySourceId_)
+    {
+        if (!commit)
+        {
+            source->GetWidgetData()->categoryTabOrder = categoryTabOriginalOrder_;
+            InvalidateCategoryTabSource(this);
+        }
+        else if (categoryTabDragging_ && app_)
+            app_->SaveLayoutSlots();
+    }
+    pressedCategoryTab_.clear();
+    pressedCategorySourceId_.clear();
+    categoryTabOriginalOrder_.clear();
+    categoryTabDragging_ = false;
+    return true;
+}
+
 
 using Microsoft::WRL::ComPtr;
 
@@ -116,6 +202,14 @@ float Widget::GetCellScale() const
 float Widget::GetLayoutSpacingScale() const
 {
     return app_ ? app_->GetLayoutSpacingScale() : 1.0f;
+}
+
+bool Widget::UsesLightContentTheme() const
+{
+    if (!app_) return false;
+    const auto* container = dynamic_cast<const WidgetContainer*>(this);
+    return container && container->IsPopupHosted()
+        ? app_->collectionPopupLightTheme_ : app_->IsLightContentTheme();
 }
 
 snowdesktop::PageItemVisualMetrics Widget::GetItemVisualMetrics() const
@@ -398,6 +492,7 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
  */
 RECT WidgetContainer::GetBodyRect() const
 {
+    if (popupFrameActive_) return hostedFrame_;
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
@@ -425,6 +520,7 @@ RECT WidgetContainer::GetResizeHandleRect() const
 
 LONG WidgetContainer::GetScrollContentBottom() const
 {
+    if (popupFrameActive_) return hostedFrame_.bottom;
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).contentBottom;
 }
@@ -432,6 +528,7 @@ LONG WidgetContainer::GetScrollContentBottom() const
 RECT WidgetContainer::GetScrollbarViewportRect() const
 {
     RECT viewport = GetContentViewportRect();
+    if (popupFrameActive_) return viewport;
     if (UsesTopTitleBar())
         viewport.bottom = std::max<LONG>(viewport.top,
             std::min(viewport.bottom, GetResizeHandleRect().top));
@@ -616,10 +713,9 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
             }
         }
 
-        if (sourceHasShortcut)
-            return _LW("widget.desktop.no_shortcut");
-        if (action == DropAction::Link)
-            return _LW("widget.desktop.no_create_shortcut");
+        if (app_ && !app_->GetCategorySettings().collectProgramsEnabled &&
+            (sourceHasShortcut || action == DropAction::Link))
+            return _LW("app.settings.collect_programs_confirm_title");
 
         if (data_->dateHeaders &&
             origin == this && (region == HitRegion::SortBefore || region == HitRegion::SortAfter))
@@ -735,6 +831,12 @@ void WidgetContainer::SetHostedFrame(const RECT* frame)
     hostedFrameActive_ = frame != nullptr;
     hostedFrame_ = frame ? *frame : RECT{};
     InvalidateSlots();
+}
+
+void WidgetContainer::SetPopupFrame(const RECT* frame)
+{
+    SetHostedFrame(frame);
+    popupFrameActive_ = frame != nullptr;
 }
 
 RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
@@ -918,7 +1020,7 @@ void ScrollingItemWidget::DrawCategorizedTab(
         IsRectEmptyRect(visibleTabRect) ||
         IsRectEmptyRect(layoutTabRect))
         return;
-    const bool light = app_->IsLightContentTheme();
+    const bool light = UsesLightContentTheme();
     app_->DrawD2DRoundedRectangle(
         context, visibleTabRect,
         static_cast<float>(Cu(8.0f)),
@@ -1543,7 +1645,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
     RECT searchRect = GetSearchBoxRect();
     if (IsRectEmptyRect(searchRect)) return;
 
-    const bool light = app_->IsLightContentTheme();
+    const bool light = UsesLightContentTheme();
     const bool hovered =
         PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
     const bool keyboardSelected =
@@ -1875,7 +1977,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
     if (IsRectEmptyRect(header)) return;
 
     const bool light = lightTheme.value_or(
-        app_->IsLightContentTheme());
+        UsesLightContentTheme());
     RECT separator = MakeRect(
         header.left, header.bottom - 1,
         header.right, header.bottom);
@@ -2163,7 +2265,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
     const bool light = lightTheme.value_or(
-        app_->IsLightContentTheme());
+        UsesLightContentTheme());
     bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
     if (hovered && !selected)
     {
@@ -2293,7 +2395,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
+                UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
         return;
     }
 
@@ -2306,7 +2408,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         if (showLabel)
             DrawListItemTitle(
                 context, rect, iconRect, label,
-                app_->IsLightContentTheme());
+                UsesLightContentTheme());
         return;
     }
 
@@ -2322,7 +2424,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
+                UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
         return;
     }
 
@@ -2350,7 +2452,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
 
     RECT titleRect = MakeRect(rect.left + Cu(1.0f), iconRect.bottom + Cu(2.0f),
         rect.right - Cu(1.0f), rect.bottom);
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = UsesLightContentTheme();
     IDWriteTextFormat* titleFormat = lt
         ? GetCuTextFormatWeight(12.0f, DWRITE_FONT_WEIGHT_LIGHT, true)
         : GetCuTextFormat(12.0f, false, true);
@@ -2487,7 +2589,7 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
         app_->widgetScrollbarDragContainer_ == this;
     DrawScrollbarAt(context, viewport, content,
         visible, GetScrollOffset(), hovered || active,
-        app_->IsLightContentTheme(), GetCellScale());
+        UsesLightContentTheme(), GetCellScale());
 }
 
 // ── Cached clip geometry ─────────────────────────────────────
@@ -2520,7 +2622,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const bool fixedGuideAppearance =
         data_->type == DesktopWidgetType::Guide;
     const bool lightTheme = fixedGuideAppearance
-        ? true : app_->IsLightContentTheme();
+        ? true : UsesLightContentTheme();
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);

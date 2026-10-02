@@ -503,6 +503,7 @@ struct DesktopWidget
     int folderSortMode = -1;
     bool folderSortAscending = true;
     std::wstring activeCategoryId;
+    std::vector<std::wstring> categoryTabOrder;
     std::wstring packageId;        ///< Lua package UUID used by layouts/runtime
     std::wstring packageSourceProvider; ///< Package provider captured for recovery
     std::wstring packageSourceExternalItemId; ///< Provider item identity captured for recovery

@@ -464,8 +464,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             RECT content =
                 GetCollectionPopupContentRect(popup);
             for (size_t i = 0;
-                 i < dockFolderPopupWidget_.
-                    folderEntries.size(); ++i)
+                 i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
             {
                 RECT itemRect =
                     GetCollectionPopupItemRect(popup, i);
@@ -478,21 +477,19 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     !HitTestCollectionPopupItem(popup, i, pt))
                     continue;
                 ClearSelection();
-                if (!dockFolderPopupWidget_.
-                        folderEntries[i].selected)
+                if (!dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].selected)
                 {
                     for (auto& entry :
                          dockFolderPopupWidget_.
                             folderEntries)
                         entry.selected = false;
-                    dockFolderPopupWidget_.
-                        folderEntries[i].
+                    dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].
                             selected = true;
                 }
                 InvalidateRect(
                     hwnd_, nullptr, FALSE);
                 ShowDockFolderPopupContextMenu(
-                    screenPt, i);
+                    screenPt, GetPopupFolderEntryIndex(dockFolderPopupWidget_, i));
                 return;
             }
             ShowDockFolderPopupContextMenu(

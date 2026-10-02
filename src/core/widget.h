@@ -117,6 +117,7 @@ public:
     DesktopApp* GetApp() const { return app_; }
     float GetCellScale() const;
     float GetLayoutSpacingScale() const;
+    bool UsesLightContentTheme() const;
     virtual snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const;
     int Cu(float value) const;
     float FontCu(float value) const;
@@ -250,7 +251,9 @@ public:
     virtual int  GetVisibleContentHeight() const { return 0; }
     virtual void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const;
     void SetHostedFrame(const RECT* frame);
+    void SetPopupFrame(const RECT* frame);
     bool IsHosted() const { return hostedFrameActive_; }
+    bool IsPopupHosted() const { return popupFrameActive_; }
 
 protected:
     mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
@@ -262,6 +265,7 @@ protected:
     float cachedClipRadius_ = 0.0f;
     RECT hostedFrame_{};
     bool hostedFrameActive_ = false;
+    bool popupFrameActive_ = false;
 
     /** @brief 获取或创建圆角矩形裁剪几何体，frame/radius 不变时跨帧复用。 */
     ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
@@ -428,6 +432,11 @@ public:
         return categorizedTabRowOffset_;
     }
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
+    std::vector<std::wstring> GetCategoryTabOrder() const;
+    bool BeginCategoryTabDrag(POINT point);
+    bool UpdateCategoryTabDrag(POINT point);
+    bool EndCategoryTabDrag(bool commit);
+    bool HasCategoryTabPress() const { return !pressedCategoryTab_.empty(); }
     virtual bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) { (void)pt; (void)delta; if (changed) *changed = false; return false; }
     virtual void EnsureCategoryTabVisible(size_t index)
     {
@@ -472,6 +481,11 @@ private:
     bool categorizedTabsVisibilityOverrideActive_ = false;
     bool categorizedTabsVisible_ = false;
     bool categorizedSearchAllCategories_ = false;
+    std::wstring pressedCategoryTab_;
+    std::wstring pressedCategorySourceId_;
+    POINT categoryTabPressPoint_{};
+    bool categoryTabDragging_ = false;
+    std::vector<std::wstring> categoryTabOriginalOrder_;
 };
 
 /**

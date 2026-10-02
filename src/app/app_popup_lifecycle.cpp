@@ -272,6 +272,10 @@ void DesktopApp::OpenDockFolderPopupAt(
                     itemKeys;
             dockFolderPopupWidget_.listMode =
                 widgets_[widgetIndex].listMode;
+            dockFolderPopupWidget_.showSearchBox = widgets_[widgetIndex].showSearchBox;
+            dockFolderPopupWidget_.showFileCategories = widgets_[widgetIndex].showFileCategories;
+            dockFolderPopupWidget_.categoryTabOrder = widgets_[widgetIndex].categoryTabOrder;
+            dockFolderPopupWidget_.activeCategoryId = widgets_[widgetIndex].activeCategoryId;
             dockFolderPopupWidget_.fanPopup = widgets_[widgetIndex].fanPopup;
             dockFolderPopupWidget_.showDetails =
                 widgets_[widgetIndex].showDetails;
@@ -506,6 +510,12 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    if (auto* view = GetCategorizedPopupView())
+    {
+        view->EndCategoryTabDrag(false);
+        view->EndSearchPointerSelection();
+        view->SetSearchFocused(false);
+    }
     auto pendingOpen =
         std::move(pendingCollectionPopupOpen_);
     pendingCollectionPopupOpen_.reset();

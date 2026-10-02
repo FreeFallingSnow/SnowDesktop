@@ -1228,6 +1228,10 @@ public:
         }
         if (HasSettingsDomain(domains, SettingsDomain::Category))
         {
+            const bool collectionPolicyChanged = app_.categorySettings_.collectProgramsEnabled !=
+                snapshot.values.category.collectProgramsEnabled ||
+                GetProgramCategoryExtensions(app_.categorySettings_) !=
+                    GetProgramCategoryExtensions(snapshot.values.category);
             app_.categorySettings_ = snapshot.values.category;
             NormalizeCategorySettings(app_.categorySettings_);
             for (auto& container : app_.containers_)
@@ -1242,6 +1246,15 @@ public:
                              dynamic_cast<FileGroup*>(container.get()))
                     group->InvalidateHostedView();
             }
+            if (collectionPolicyChanged)
+            {
+                app_.ApplyAutoCollectFileCategoryWidgets();
+                app_.LayoutItems();
+                app_.RebuildContainersAndItems();
+                app_.SaveLayoutSlots();
+            }
+            if (app_.dockFolderPopupContainer_)
+                app_.dockFolderPopupContainer_->InvalidateFilterCache();
         }
         if (HasSettingsDomain(domains, SettingsDomain::Desktop))
         {
