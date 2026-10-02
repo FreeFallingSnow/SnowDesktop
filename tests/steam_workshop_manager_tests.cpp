@@ -10,6 +10,7 @@
 #include "steam_child_environment.h"
 #include "steam_workshop_cache.h"
 #include "steam_workshop_sync.h"
+#include "steam_workshop_watch_thread.h"
 #include "workshop_localization.h"
 #include "workshop_project.h"
 
@@ -21,6 +22,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -150,6 +152,87 @@ struct ScopedSteamRegistry
     ScopedSteamRegistry(const ScopedSteamRegistry&) = delete;
     ScopedSteamRegistry& operator=(const ScopedSteamRegistry&) = delete;
 };
+
+// Regression for the desktop watcher blocking exit while directory I/O is
+// stalled. Real Win32 thread/event ownership is exercised here; only the OS
+// operation is a gated stand-in. The exact desktop producer is also exercised
+// by the isolated native reproducer recorded with this fix.
+struct WorkshopWatchThreadFixture
+{
+    HANDLE entryGate = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::atomic<bool> stopObserved = false;
+
+    ~WorkshopWatchThreadFixture()
+    {
+        if (entryGate) CloseHandle(entryGate);
+        if (entered) CloseHandle(entered);
+        if (release) CloseHandle(release);
+    }
+};
+
+std::atomic<HANDLE> workshopThreadEntryGate = nullptr;
+
+DWORD WINAPI GatedWorkshopWatchThread(LPVOID parameter)
+{
+    // Hold entry before touching the context to cover stop-before-start.
+    WaitForSingleObject(workshopThreadEntryGate.load(), INFINITE);
+    std::unique_ptr<snowdesktop::workshop_watch::ThreadContext> context(
+        static_cast<snowdesktop::workshop_watch::ThreadContext*>(parameter));
+    auto* fixture = reinterpret_cast<WorkshopWatchThreadFixture*>(context->notifyWindow);
+    SetEvent(fixture->entered);
+    WaitForSingleObject(fixture->release, INFINITE);
+    fixture->stopObserved = WaitForSingleObject(context->stopEvent, 0) == WAIT_OBJECT_0;
+    return 0;
+}
+
+void TestSteamWorkshopWatchThreadShutdown(bool delayedEntry)
+{
+    WorkshopWatchThreadFixture fixture;
+    Check(fixture.entryGate && fixture.entered && fixture.release, "create watcher cancellation fixture");
+    if (!fixture.entryGate || !fixture.entered || !fixture.release) return;
+    workshopThreadEntryGate = fixture.entryGate;
+    if (!delayedEntry) SetEvent(fixture.entryGate);
+    DWORD baseline = 0;
+    Check(GetProcessHandleCount(GetCurrentProcess(), &baseline) != FALSE,
+        "read watcher fixture handle baseline");
+    const auto handles = snowdesktop::workshop_watch::StartThread(
+        reinterpret_cast<HWND>(&fixture), &GatedWorkshopWatchThread);
+    Check(handles.thread && handles.stopEvent, "start self-contained watcher worker");
+    if (!handles.thread) return;
+    HANDLE observer = nullptr;
+    const bool observed = DuplicateHandle(GetCurrentProcess(), handles.thread,
+        GetCurrentProcess(), &observer, SYNCHRONIZE, FALSE, 0) != FALSE;
+    Check(observed, "retain only a test-owned completion observation");
+    if (!observed)
+    {
+        SetEvent(fixture.entryGate);
+        SetEvent(fixture.release);
+        const bool completed = WaitForSingleObject(handles.thread, 3000) == WAIT_OBJECT_0;
+        snowdesktop::workshop_watch::StopThread(handles.thread, handles.stopEvent);
+        if (!completed) std::exit(1); // Do not destroy a fixture still used by a worker.
+        return;
+    }
+    const bool entered = delayedEntry ||
+        WaitForSingleObject(fixture.entered, 3000) == WAIT_OBJECT_0;
+    Check(entered, "watcher reached the gated I/O boundary");
+    const ULONGLONG began = GetTickCount64();
+    snowdesktop::workshop_watch::StopThread(handles.thread, handles.stopEvent);
+    const ULONGLONG elapsed = GetTickCount64() - began;
+    Check(elapsed < 500, "watcher shutdown does not join blocked filesystem I/O");
+    SetEvent(fixture.entryGate);
+    SetEvent(fixture.release);
+    const bool completed = WaitForSingleObject(observer, 3000) == WAIT_OBJECT_0;
+    Check(completed, "stopped watcher completes when its I/O is released");
+    CloseHandle(observer);
+    if (!completed) std::exit(1); // Bound failure without a fixture use-after-free.
+    Check(completed && fixture.stopObserved,
+        "worker keeps a valid signaled event after caller handles are closed");
+    DWORD after = 0;
+    Check(GetProcessHandleCount(GetCurrentProcess(), &after) != FALSE && after == baseline,
+        "watcher releases caller and worker handles after completion");
+}
 
 void TestManagerFrameScheduler()
 {
@@ -1310,6 +1393,8 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
 
 int wmain(int argc, wchar_t** argv)
 {
+    TestSteamWorkshopWatchThreadShutdown(false);
+    TestSteamWorkshopWatchThreadShutdown(true);
     TestJson();
     TestSteamIdentity();
     TestSteamChildEnvironment();

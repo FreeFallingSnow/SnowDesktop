@@ -2,6 +2,7 @@
 
 #include "steam_app_identity.h"
 #include "steam_workshop_cache.h"
+#include "steam_workshop_watch_thread.h"
 
 namespace
 {
@@ -113,52 +114,32 @@ void DesktopApp::StartSteamWorkshopWatcher()
     // recovery path.
     PollSteamWorkshopSubscriptions(true);
 
-    steamWorkshopWatcherStopEvent_ =
-        CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!steamWorkshopWatcherStopEvent_)
-    {
-        steamWorkshopWatcherActive_ = false;
-        return;
-    }
-    steamWorkshopWatcherThread_ = CreateThread(nullptr, 0,
-        &DesktopApp::SteamWorkshopWatcherThreadProc, this, 0, nullptr);
-    if (!steamWorkshopWatcherThread_)
-    {
-        CloseHandle(steamWorkshopWatcherStopEvent_);
-        steamWorkshopWatcherStopEvent_ = nullptr;
-        steamWorkshopWatcherActive_ = false;
-    }
+    const auto handles = snowdesktop::workshop_watch::StartThread(
+        hwnd_, &DesktopApp::SteamWorkshopWatcherThreadProc);
+    steamWorkshopWatcherStopEvent_ = handles.stopEvent;
+    steamWorkshopWatcherThread_ = handles.thread;
+    if (!handles.thread) steamWorkshopWatcherActive_ = false;
 }
 
 void DesktopApp::StopSteamWorkshopWatcher()
 {
     steamWorkshopWatcherActive_ = false;
-    HANDLE thread = steamWorkshopWatcherThread_;
-    HANDLE stopEvent = steamWorkshopWatcherStopEvent_;
+    const HANDLE thread = steamWorkshopWatcherThread_;
+    const HANDLE stopEvent = steamWorkshopWatcherStopEvent_;
     steamWorkshopWatcherThread_ = nullptr;
     steamWorkshopWatcherStopEvent_ = nullptr;
-    if (stopEvent) SetEvent(stopEvent);
-    bool stopped = thread == nullptr;
-    if (thread)
-    {
-        if (WaitForSingleObject(thread, 5000) == WAIT_OBJECT_0)
-        {
-            CloseHandle(thread);
-            stopped = true;
-        }
-        // On timeout, leave the thread handle to the OS. The worker copied all
-        // state it needs before entering its wait loop and never dereferences
-        // DesktopApp again, so shutdown cannot create a use-after-free.
-    }
-    if (stopEvent && stopped) CloseHandle(stopEvent);
+    snowdesktop::workshop_watch::StopThread(thread, stopEvent);
 }
 
 DWORD WINAPI DesktopApp::SteamWorkshopWatcherThreadProc(LPVOID parameter)
 {
-    auto* self = static_cast<DesktopApp*>(parameter);
-    const HANDLE stopEvent = self->steamWorkshopWatcherStopEvent_;
-    const HWND notifyWindow = self->hwnd_;
-    if (!stopEvent || !notifyWindow) return 0;
+    // Capture before CreateThread, rather than dereferencing DesktopApp on the
+    // new thread. A delayed worker may start after the desktop has been reset.
+    std::unique_ptr<snowdesktop::workshop_watch::ThreadContext> context(
+        static_cast<snowdesktop::workshop_watch::ThreadContext*>(parameter));
+    if (!context || !context->stopEvent || !context->notifyWindow) return 0;
+    const HANDLE stopEvent = context->stopEvent;
+    const HWND notifyWindow = context->notifyWindow;
 
     for (;;)
     {
@@ -167,13 +148,15 @@ DWORD WINAPI DesktopApp::SteamWorkshopWatcherThreadProc(LPVOID parameter)
         std::string discoveryError;
         const auto libraries = snowdesktop::widget::DiscoverSteamLibraryRoots(
             snowdesktop::kSnowDesktopSteamAppId, discoveryError);
+        if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) break;
         // ReadDirectoryChangesW retains the OVERLAPPED and buffer addresses.
         // Heap-own each entry so vector growth never moves armed storage.
         std::vector<std::unique_ptr<WorkshopWatchEntry>> watches;
         watches.reserve(libraries.size());
         for (const auto& library : libraries)
         {
-            if (watches.size() >= MAXIMUM_WAIT_OBJECTS - 1) break;
+            if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0 ||
+                watches.size() >= MAXIMUM_WAIT_OBJECTS - 1) break;
             const auto workshop = library / L"steamapps" / L"workshop";
             auto watch = std::make_unique<WorkshopWatchEntry>();
             watch->directory = CreateFileW(workshop.c_str(),
@@ -184,6 +167,11 @@ DWORD WINAPI DesktopApp::SteamWorkshopWatcherThreadProc(LPVOID parameter)
             if (!watch->directory ||
                 watch->directory == INVALID_HANDLE_VALUE)
                 continue;
+            if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0)
+            {
+                CloseWorkshopWatch(*watch);
+                break;
+            }
             watch->event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
             watch->buffer.resize(64 * 1024);
             if (!watch->event || !ArmWorkshopWatch(*watch))
@@ -228,12 +216,14 @@ DWORD WINAPI DesktopApp::SteamWorkshopWatcherThreadProc(LPVOID parameter)
             const bool relevant = completed
                 ? ContainsRelevantWorkshopChange(watch.buffer.data(), bytes)
                 : completionError == ERROR_NOTIFY_ENUM_DIR;
+            if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) break;
             if (!ArmWorkshopWatch(watch))
             {
                 rebuildWatches = true;
                 break;
             }
-            if (relevant && IsWindow(notifyWindow))
+            if (relevant && WaitForSingleObject(stopEvent, 0) != WAIT_OBJECT_0 &&
+                IsWindow(notifyWindow))
                 PostMessageW(notifyWindow,
                     kSteamWorkshopSubscriptionChangedMessage, 0, 0);
         }
