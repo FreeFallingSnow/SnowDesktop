@@ -2,7 +2,7 @@ local M={}
 local function trim(value) return value:match("^%s*(.-)%s*$") end
 local function baseName(value)
     value=value:gsub("，",",")
-    return trim(value:match("^[^,]+") or value):lower():gsub("市$","")
+    return trim(value:match("^[^,]+") or value):lower():gsub("市$","") -- l10n-allow: Chinese administrative suffix is city lookup data.
 end
 function M.queries(query)
     query=trim(query):gsub("，",",")
@@ -17,9 +17,9 @@ function M.queries(query)
         if code<0x3400 or code>0x9FFF then return out end
         count=count+1
     end
-    if count>=2 and not base:match("市$") and not base:match("县$") and not base:match("縣$")
-        and not base:match("区$") and not base:match("區$") and not base:match("州$") and not base:match("旗$") then
-        out[2]=base.."市"..(separator and query:sub(separator) or "")
+    if count>=2 and not base:match("市$") and not base:match("县$") and not base:match("縣$") -- l10n-allow: Chinese administrative suffixes are city lookup data.
+        and not base:match("区$") and not base:match("區$") and not base:match("州$") and not base:match("旗$") then -- l10n-allow: Chinese administrative suffixes are city lookup data.
+        out[2]=base.."市"..(separator and query:sub(separator) or "") -- l10n-allow: Chinese administrative suffix is city lookup data.
     end
     return out
 end
