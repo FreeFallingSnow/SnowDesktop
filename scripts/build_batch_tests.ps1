@@ -14,11 +14,13 @@ if ($plan.mode -eq 'skipped') {
     exit 0
 }
 # Keep the existing test entry usable on machines without an installed Python.
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Output 'Python unavailable: one standard planned test run, automatic retries unavailable.'
+. (Join-Path $PSScriptRoot 'build_runtime.ps1')
+$python=Get-BuildPython
+if (-not $python.available) {
+    Write-Output ('Python enhancement unavailable: '+$python.reason+' One planned run; retries unavailable. Required tests remain declared and blocked.')
     & (Join-Path $PSScriptRoot 'test_manager.ps1') -Mode plan -PlanBatch $Batch
     exit $LASTEXITCODE
 }
 # Exactly one initial test pipeline; Python retries only reviewed isolated resource failures.
-& python (Join-Path $PSScriptRoot 'build_test_retry.py') --batch $Batch
+& $python.path (Join-Path $PSScriptRoot 'build_test_retry.py') --batch $Batch
 exit $LASTEXITCODE

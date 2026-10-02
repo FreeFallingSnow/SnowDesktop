@@ -4,12 +4,13 @@ const names = {verified:"完成 · 共享验证通过",exempt:"完成 · 宿主�
 Object.assign(names,{eligible:"可恢复操作",completed:"等待结束","timed-out":"等待超时",retrying:"有限重试中","passed-after-retry":"重试后通过 / flaky","exhausted-failed":"重试耗尽","environment-blocked":"环境阻断",window:"编辑窗口",files:"文件归属",peers:"其他编辑者",result:"共同结果"});
 // Only view preferences are stored; build state remains read-only server data.
 const viewKey = "SnowDesktop.build-monitor.ui.v1";
-const view = {paused:false, folds:Object.create(null), logs:Object.create(null), previews:Object.create(null)};
+const view = {paused:false, folds:Object.create(null), logs:Object.create(null), previews:Object.create(null), waits:{open:true,top:0}};
 try {
  const raw = localStorage.getItem(viewKey);
  const saved = raw && raw.length <= 65536 ? JSON.parse(raw) : null;
  if(saved && saved.schema===1){
   view.paused=saved.paused===true;
+  if(saved.waits){view.waits.open=saved.waits.open!==false;view.waits.top=Number.isFinite(saved.waits.top)&&saved.waits.top>=0?saved.waits.top:0;}
   for(const [name,limit] of [["folds",250],["logs",50],["previews",50]]){
    const entries=saved[name];
    if(entries && typeof entries==="object" && !Array.isArray(entries)){
@@ -53,7 +54,9 @@ function renderTask(task,batchId){
  if(task.withdrawalReason)more.append(element("p","退出原因："+task.withdrawalReason));row.append(more);return row;
 }
 function render(snapshot,batch){
+ text("waitCount",(snapshot.waits||[]).length+" 条 · "+(view.waits.open?"点击收起":"点击展开"));
  $("waits").replaceChildren(...(snapshot.waits||[]).map(wait=>{const box=element("article",null,"task-row");detail(box,wait.participant+" / "+label(wait.condition),label(wait.status),tone(wait.status));detail(box,"票据",wait.id);detail(box,"原因",wait.reason);detail(box,"恢复入口",wait.next);detail(box,"截止",time(wait.deadlineUtc));return box;}));
+ $("waits").scrollTop=view.waits.top;
  $("fixture").hidden=!snapshot.fixture;text("updated","更新时间 "+time(snapshot.updatedUtc));
  $("history").replaceChildren(...snapshot.history.map(item=>{const row=element("div",null,"history-row"),btn=element("button",item.batchId+" / 第 "+(item.attempt||1)+" 次");btn.type="button";btn.addEventListener("click",()=>{selectBatch(item.batchId);});row.append(btn,element("span",label(item.outcome),"badge "+tone(item.outcome)),element("time",time(item.completedUtc)));return row;}));
  if(!batch){text("headline","暂无活动批次");text("description","开始修改前调用 begin。历史结果可在下方查看。只读查询不会创建编辑登记。");text("batch","—");text("stamp","—");text("taskCount",0);text("readyCount","暂无登记");text("stage","未知");text("stageNote","尚无本批日志");text("testCount","未知");text("coverage","没有冻结计划");text("freshness","未冻结");text("inputNote","尚无输入记录");text("owner","—");text("logHint","暂无日志");text("log","尚无本批日志。");$("tasks").replaceChildren();$("evidence").replaceChildren();return;}
@@ -85,4 +88,7 @@ $("log").addEventListener("scroll",()=>{if(paused&&logView)remember("logs",logVi
 $("pause").addEventListener("click",()=>{paused=!paused;view.paused=paused;saveView();text("pause",paused?"恢复跟随":"暂停跟随");if(paused&&logView)remember("logs",logView,$("log").scrollTop,50);if(!paused)$("log").scrollTop=$("log").scrollHeight;});
 $("current").addEventListener("click",()=>selectBatch(null));
 window.addEventListener("hashchange",()=>{selected=historyBatch();poll();});
+$("waitPanel").open=view.waits.open;
+$("waitPanel").addEventListener("toggle",()=>{view.waits.open=$("waitPanel").open;saveView();text("waitCount",$("waits").children.length+" 条 · "+(view.waits.open?"点击收起":"点击展开"));if(view.waits.open)$("waits").scrollTop=view.waits.top;});
+$("waits").addEventListener("scroll",()=>{if(view.waits.open){view.waits.top=$("waits").scrollTop;saveView();}});
 poll();setInterval(poll,2500);

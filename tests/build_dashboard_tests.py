@@ -21,7 +21,7 @@ class IsolatedPortRace(Exception):
 def free_port():
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));return sock.getsockname()[1]
 
-def main(repo,browser):
+def main(repo,browser,wait_list_only=False):
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-dashboard-'));state=root/'.build/collaboration';state.mkdir(parents=True)
     port=free_port();url='http://127.0.0.1:'+str(port)
     server=subprocess.Popen([sys.executable,str(repo/'tools/build-dashboard/server.py'),'--fixture-root',str(root),'--port',str(port)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -79,10 +79,16 @@ def main(repo,browser):
             def debug_ready():
                 with opener.open('http://127.0.0.1:'+str(debug)+'/json/version',timeout=2) as response:return response.status==200
             until(debug_ready)
-            def render(name,expected,view_state=False):
+            def render(name,expected,view_state=False,wait_list=False):
                 time.sleep(2.1)
-                p=subprocess.run(['node',str(repo/'tools/build-dashboard/browser_check.js'),str(debug),url+'/',expected,str(root/(name+'.png'))]+(['--view-state'] if view_state else []),capture_output=True,text=True,encoding="utf-8",timeout=60 if view_state else 25)
+                p=subprocess.run(['node',str(repo/'tools/build-dashboard/browser_check.js'),str(debug),url+'/',expected,str(root/(name+'.png'))]+(['--view-state'] if view_state else ['--wait-list',str(root)] if wait_list else []),capture_output=True,text=True,encoding="utf-8",timeout=60 if view_state or wait_list else 25)
                 assert p.returncode==0,(name,p.stderr,p.stdout);print('BROWSER '+name+' '+p.stdout.strip())
+            if wait_list_only:
+                ticket='f'*32
+                write(ticket+'.wait.json',{'id':ticket,'participant':'await-owner','condition':'files','status':'eligible','attempt':1,'reason':'fixture','next':'begin / claim','deadlineUtc':'2026-10-03T00:00:00Z'})
+                render('long-local-waits','编辑中',wait_list=True)
+                print('WAIT LIST BROWSER PASSED; screenshots/evidence: '+str(root))
+                return
             render('waiting','编辑中')
             write('state.json',current(participants=[task(check={'status':'pending','source':'builtin-basic','editRevision':1}),dict(task('task-b'),state='editing')]))
             render('checking','编辑中')
@@ -109,6 +115,7 @@ def main(repo,browser):
         assert get('/api/retries/'+child+'/Other/2/log')[0]==404 and get('/api/retries/'+child+'/build_dashboard/4/log')[0]==404
         (state/(child+'.log')).write_text('\n'.join('view-state fixture line '+str(n) for n in range(220))+'\n')
         if browser:render('repair-and-retry','构建 / 测试中',view_state=True)
+        if browser:render('long-local-waits','构建 / 测试中',wait_list=True)
         print('PASS durable wait, linked repair attempt, original retry denominator, first/final causes, fixed log route and redaction')
         # Stop only this fixture's verified nonce; build state is independent.
         info=json.loads((root/'.build/dashboard'/('server-'+str(port)+'.json')).read_text())
@@ -122,9 +129,9 @@ def main(repo,browser):
         if server.poll() is None:server.terminate();server.wait(timeout=8)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--repo',type=Path,default=Path(__file__).resolve().parents[1]);parser.add_argument('--browser',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--repo',type=Path,default=Path(__file__).resolve().parents[1]);parser.add_argument('--browser',action='store_true');parser.add_argument('--wait-list-only',action='store_true');args=parser.parse_args()
     try:
-        main(args.repo,args.browser)
+        main(args.repo,args.browser,args.wait_list_only)
     except IsolatedPortRace as error:
         # main's finally has released its server/browser. No assertion/timeout is reclassified.
         sys.path.insert(0,str(args.repo/'scripts'))

@@ -16,19 +16,12 @@ param(
     [switch]$AutoCheck
 )
 
-# Keep one foreground tool process alive; the shared ready worker is reused.
+# Foreground execution needs neither Python nor a hidden worker launch. It uses
+# the same finish/check/freeze/lease path and returns the original batch code.
 if($Command -eq 'ready-and-wait') {
     if(-not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=1800}
     if($Revision -lt 0){throw 'ready-and-wait requires the latest -Revision.'}
-    & $PSCommandPath ready $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -ReloadShell:$ReloadShell | Out-Null
-    if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
-    $python=Get-Command python.exe -ErrorAction SilentlyContinue
-    if($python){
-        & $python.Source (Join-Path $PSScriptRoot 'build_wait_tasks.py') watch wait $Participant --condition result --batch $Batch --revision $Revision --timeout $WaitSeconds
-    }else{
-        # Base collaboration remains usable without installing Python.
-        & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck
-    }
+    & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck -ReloadShell:$ReloadShell
     exit $LASTEXITCODE
 }
 Set-StrictMode -Version Latest
@@ -41,6 +34,7 @@ $lastNotice = -30
 $hasFinishedCurrentBatch = $false
 $finishedRevision = $null
 $utf8 = New-Object Text.UTF8Encoding($false)
+. (Join-Path $PSScriptRoot 'build_entry.ps1')
 . (Join-Path $PSScriptRoot 'build_inputs.ps1')
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_ownership.ps1')
@@ -94,7 +88,7 @@ function Read-State {
     if (-not [IO.File]::Exists($statePath)) {
         return [pscustomobject]@{ schemaVersion = 1; repositoryRoot = $repositoryRoot; current = $null }
     }
-    $state = [IO.File]::ReadAllText($statePath, $utf8) | ConvertFrom-Json
+    $state = Read-EntryJson $statePath
     if ($state.schemaVersion -ne 1 -or $state.repositoryRoot -ne $repositoryRoot) {
         throw 'Collaboration state version/root mismatch. Preserve the state and diagnose it; do not delete registrations.'
     }
@@ -118,7 +112,7 @@ function Participant-Revision($Entry) {
 function Read-Result([string]$Id) {
     $path = Result-Path $Id
     if (-not [IO.File]::Exists($path)) { return $null }
-    $result = [IO.File]::ReadAllText($path, $utf8) | ConvertFrom-Json
+    $result = Read-EntryJson $path
     if ($result.schemaVersion -ne 1 -or $result.batchId -ne $Id -or $result.repositoryRoot -ne $repositoryRoot) {
         throw 'Invalid batch result; preserve it for diagnosis.'
     }
@@ -158,14 +152,19 @@ function Publish-Result($State, $Result) {
 }
 function Start-ReadyWorker($Current, $Entry) {
     $existing = Get-Field $Entry 'waiter'
-    if ($existing -and (Get-Field $existing 'editRevision' -1) -eq (Get-EditRevision $Entry) -and (Owner-State $existing) -eq 'alive') { return $existing }
+    if ($existing -and (Get-Field $existing 'pid') -and (Get-Field $existing 'editRevision' -1) -eq (Get-EditRevision $Entry) -and (Owner-State $existing) -eq 'alive') { return $existing }
     $revision = Get-EditRevision $Entry
     $waiterScript=Join-Path $PSScriptRoot 'build_waiter.ps1'
     $arguments='-NoProfile -ExecutionPolicy Bypass -File "'+$waiterScript+'" -Participant '+$Entry.id+' -Batch '+$Current.id+' -Revision '+$revision
     $info=New-Object Diagnostics.ProcessStartInfo
-    $info.FileName=Join-Path $PSHOME 'powershell.exe';$info.Arguments=$arguments
+    $info.FileName=Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe';$info.Arguments=$arguments
     $info.UseShellExecute=$true;$info.WindowStyle='Hidden';$info.WorkingDirectory=$repositoryRoot
-    $worker=[Diagnostics.Process]::Start($info)
+    try {$worker=[Diagnostics.Process]::Start($info)} catch {
+        $unavailable=[pscustomobject]@{status='unavailable';editRevision=$revision;reason=$_.Exception.Message;
+            next=('scripts/build.bat ready-and-wait '+$Entry.id+' -Batch '+$Current.id+' -Revision '+$revision)}
+        Set-Field $Entry 'waiter' $unavailable
+        return $unavailable
+    }
     try {
         $null = $worker.Handle
         $owner = [pscustomobject]@{ pid=$worker.Id; startTicks=$worker.StartTime.ToUniversalTime().Ticks.ToString(); editRevision=$revision }
@@ -223,6 +222,15 @@ try {
         throw 'Recovery requires -ConfirmStopped and -Reason after inspecting status and confirming the editor/build is stopped.'
     }
     if ($Command -in 'ready','check','plan','claim','commit','repair' -and $Revision -lt 0) { throw "$Command requires -Revision from begin; stale commands must not finish a new edit round." }
+    if($Command -eq 'status') {
+        $state=Read-State;$current=$state.current;$result=if($Batch){Read-Result $Batch}else{$null}
+        if($result){$result|ConvertTo-Json -Depth 20;exit 0}
+        if($Batch -and (-not $current -or $current.id -ne $Batch)){throw 'Unknown batch.'}
+        $diagnostic=if($current){[pscustomobject]@{batch=$current;ownerState=(Owner-State $current.owner);persistedResult=(Read-Result $current.id);
+            registrationAgesSeconds=@($current.participants|ForEach-Object {[pscustomobject]@{participant=$_.id;state=$_.state;ageSeconds=[int]([DateTime]::UtcNow-[DateTime]::Parse($_.registeredUtc).ToUniversalTime()).TotalSeconds}})}}else{$null}
+        [pscustomobject]@{schemaVersion=1;stateRoot=$stateRoot;current=$diagnostic;execution=(Read-EntryJson (Join-Path $stateRoot 'execution.json'));observation='Atomic read-only snapshot; execution record may be historical.'}|ConvertTo-Json -Depth 20
+        exit 0
+    }
     [void][IO.Directory]::CreateDirectory($stateRoot)
     while ($true) {
         $metadata = Lock-State
@@ -233,26 +241,15 @@ try {
         try {
             $state = Read-State
             $current = $state.current
+            if(-not $current -and $Command -in 'begin','repair') {
+                $outputProbe=Try-Lease 'build.lock'
+                if(-not $outputProbe){throw 'A standalone shared-output entry owns build.lock. No editor registered; read status and retry after execution finishes.'}
+                $outputProbe.Dispose()
+            }
             if($Command -in 'begin','ready','finish','plan','claim','recover','repair','repair-abandon') {
                 $gitProbe=Try-Lease 'git.lock';if(-not $gitProbe){throw 'A Git transaction is running; retry after its receipt is durable.'};$gitProbe.Dispose()
             }
             $result = if ($Batch) { Read-Result $Batch } else { $null }
-            if ($Command -eq 'status') {
-                if ($null -ne $result) { ConvertTo-Json -InputObject $result -Depth 20; exit 0 }
-                if ($Batch -and ($null -eq $current -or $current.id -ne $Batch)) { throw 'Unknown batch.' }
-                $diagnostic = if ($null -ne $current) {
-                    [pscustomobject]@{
-                        batch = $current; ownerState = Owner-State $current.owner
-                        registrationAgesSeconds = @($current.participants | ForEach-Object {
-                            [pscustomobject]@{ participant = $_.id; state = $_.state
-                                ageSeconds = [int]([DateTime]::UtcNow - [DateTime]::Parse($_.registeredUtc).ToUniversalTime()).TotalSeconds }
-                        })
-                        persistedResult = Read-Result $current.id
-                    }
-                } else { $null }
-                ConvertTo-Json -InputObject ([pscustomobject]@{ schemaVersion = 1; stateRoot = $stateRoot; current = $diagnostic }) -Depth 20
-                exit 0
-            }
             if ($Command -in 'finish','wait' -and $null -ne $result) {
                 if ($null -ne $current -and $current.id -ne $Batch -and
                     @($current.participants | Where-Object id -eq $Participant).Count -gt 0) {
@@ -296,15 +293,17 @@ try {
                 $chain=if([IO.File]::Exists($chainPath)){[IO.File]::ReadAllText($chainPath)|ConvertFrom-Json}else{$null}
                 if($chain -and (Get-Field $chain 'abandoned' $false)){throw 'This repair was explicitly abandoned. Its evidence remains; begin an independent task if authorized.'}
                 if($chain -and $chain.childBatchId -and (Read-Result $chain.childBatchId)){throw ('Repair attempt already ended. Read status for '+$chain.childBatchId+'; a further repair must name that unsuccessful child, preserving every attempt.')}
-                if($current -and (Get-Field $current 'repairOf') -ne $Batch){throw 'Another batch is active. Use one local watch window wait, then retry repair; no registration was displaced.'}
+                if($current -and (Get-Field $current 'repairOf') -ne $Batch){throw ('Another batch is active: '+$current.id+' / '+$current.phase+' / '+(($current.participants|ForEach-Object {$_.id+':'+$_.state}) -join ', ')+'. Read scripts/build.bat status; use one window wait before repair. No registration displaced.')}
                 if(-not $current){
                     if($chain -and $chain.childBatchId){throw 'Repair mapping exists without active state/result. Preserve metadata and diagnose; no duplicate attempt created.'}
                     $members=@()
                     foreach($old in @($result.participants|Where-Object state -ne 'withdrawn')){
                         $entry=[pscustomobject]@{id=$old.id;state='finished';editRevision=((Get-EditRevision $old)+1);registeredUtc=[DateTime]::UtcNow.ToString('o');finishedUtc=[DateTime]::UtcNow.ToString('o');withdrawalReason=$null;carriedFrom=$Batch;repairRequested=$false}
                         $previous=Get-Field $old 'testPlan';if(-not $previous){$previous=Default-TaskPlan $old}
-                        $plan=Default-TaskPlan $entry;$plan.source='repair-carried';$plan.reason='Repair carries prior requirements and conservatively reruns full automatic coverage.'
-                        $plan.tests=@(Get-Field $previous 'tests' @()) # Explicit manual requests must survive the full automatic escalation.
+                        $plan=$previous|ConvertTo-Json -Depth 20|ConvertFrom-Json
+                        $plan.source='repair-carried';$plan.editRevision=$entry.editRevision;$plan.inputIdentity=$null
+                        # Preserve reviewed requirements, including none/manual. Unknown,
+                        # public and infrastructure still escalate by their real scope.
                         Set-Field $plan 'originalRequirement' (Get-Field $previous 'originalRequirement' $previous);Set-Field $entry 'testPlan' $plan
                         Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$entry.editRevision;reason='Prior ready evidence is not reused for repaired inputs.'})
                         $members += $entry
@@ -404,6 +403,7 @@ try {
                     $waiter=Start-ReadyWorker $current $entry
                     Write-AtomicJson $state $statePath
                     ConvertTo-Json -InputObject ([pscustomobject]@{participant=$Participant;batchId=$Batch;editRevision=$Revision;state='ready';checkStatus=(Get-Field (Get-Field $entry 'check') 'status');waiter=$waiter}) -Depth 8
+                    if((Get-Field $waiter 'status') -eq 'unavailable'){[Console]::Error.WriteLine('Background launch unavailable; pending registration retained. Continue with '+$waiter.next);exit 2}
                     exit 0
                 }
                 }
@@ -490,6 +490,12 @@ try {
                         Write-AtomicJson $state $statePath
                     }
                     if ($entries[0].state -eq 'editing') {
+                        if($AutoCheck){
+                            $plan=Get-Field $entries[0] 'testPlan';if(-not $plan){$plan=Default-TaskPlan $entries[0]}
+                            if($plan.editRevision -ne $currentRevision){throw 'Plan is stale; reopen/update before waiting.'}
+                            $plan.inputIdentity=Get-TaskIdentity $plan;Set-Field $entries[0] 'testPlan' $plan
+                            Set-Field $entries[0] 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$currentRevision;reason='Foreground lightweight check queued.'})
+                        }
                         $entries[0].state = 'finished'
                         $entries[0].finishedUtc = [DateTime]::UtcNow.ToString('o')
                         Write-AtomicJson $state $statePath
@@ -499,6 +505,10 @@ try {
                     if ($AutoCheck -and $check -and $check.status -eq 'pending' -and ((Get-Field (Get-Field $entries[0] 'testPlan') 'source') -ne 'repair-carried' -or @($current.participants | Where-Object state -eq 'editing').Count -eq 0)) {
                         $checkSelected=Start-CheckRecord $current $entries[0]
                         Write-AtomicJson $state $statePath
+                    }
+                    if($AutoCheck -and -not $checkSelected -and @($current.participants|Where-Object state -eq 'editing').Count -eq 0){
+                        $pending=@($current.participants|Where-Object {$_.state -eq 'finished' -and (Get-Field (Get-Field $_ 'check') 'status') -eq 'pending'})|Select-Object -First 1
+                        if($pending){$checkSelected=Start-CheckRecord $current $pending;Write-AtomicJson $state $statePath}
                     }
                     $badChecks=@($current.participants | Where-Object {$_.state -eq 'finished' -and (Get-Field (Get-Field $_ 'check') 'status') -in 'failed','invalidated','interrupted'})
                     if($AutoCheck -and $badChecks.Count -gt 0){
@@ -558,6 +568,7 @@ try {
             try {
                 $code = 1; $errorText = ''; $outcome = 'failed'
                 $oldNodeReuse = [Environment]::GetEnvironmentVariable('MSBUILDDISABLENODEREUSE', 'Process')
+                $oldEntryToken=Start-EntryCredential $repositoryRoot $selected.id
                 try {
                     # Reused MSBuild workers from a prior, unrelated build are
                     # outside our job. Use fresh workers in this batch only.
@@ -569,7 +580,7 @@ try {
                     else { $errorText = "Build/test pipeline exited with code $code. See the batch log." }
                 }
                 catch { $errorText = $_.Exception.ToString() }
-                finally { [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE', $oldNodeReuse, 'Process') }
+                finally { [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE', $oldNodeReuse, 'Process');[Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$oldEntryToken,'Process') }
                 $pipelineCode = $code
                 $endInputs = $null; $inputCheck = 'changed'
                 try {

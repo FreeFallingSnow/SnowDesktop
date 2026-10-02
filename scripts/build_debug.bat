@@ -1,5 +1,6 @@
 @echo off
 setlocal
+set "SNOWDESKTOP_ENTRY_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 cd /d "%~dp0.."
 
 set "RELOAD_SHELL="
@@ -11,6 +12,16 @@ if not "%~1"=="" (
     echo Usage: scripts\build_debug.bat [--reload-shell]
     exit /b 2
 )
+
+set "RELOAD_SHELL_ARG="
+if defined RELOAD_SHELL set "RELOAD_SHELL_ARG=-ReloadShell"
+rem Acquire execution authority before any preflight/process action or output write.
+if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_entry.ps1 -Action debug %RELOAD_SHELL_ARG%
+exit /b %ERRORLEVEL%
+:leased
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_entry.ps1 -Action verify
+if %ERRORLEVEL% NEQ 0 exit /b 2
 
 if defined RELOAD_SHELL (
     echo WARNING: --reload-shell stops SnowDesktop and restarts Explorer.
@@ -30,7 +41,7 @@ if not errorlevel 1 (
     echo Exit SnowDesktop normally before building.
     exit /b 3
 )
-powershell -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
 if not errorlevel 1 (
     echo Build preflight stopped: Explorer still has the Debug build's SnowDesktopTaskbarHook.dll loaded.
     echo Run scripts\build_debug.bat --reload-shell only when an Explorer restart is acceptable.
@@ -71,7 +82,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Arranging private runtime directory (Debug) ===
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build_debug\Debug"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build_debug\Debug"
 if %ERRORLEVEL% NEQ 0 (
     echo Debug build output arrangement FAILED
     exit /b 1

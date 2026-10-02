@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.SharedBuildGuard.cmake")
+snowdesktop_check_shared_output()
+
 project(SnowDesktop LANGUAGES C CXX)
 
 # WinUI 3 XAML compilation and NuGet PackageReference integration are MSBuild
@@ -2521,30 +2524,6 @@ if (BUILD_TESTING)
 endif()
 
 
-# Local collaboration tool regression. Existing runtimes only; no installation.
-if(BUILD_TESTING AND WIN32)
-    find_program(SNOWDESKTOP_PYTHON_EXECUTABLE NAMES python.exe python)
-    if(SNOWDESKTOP_PYTHON_EXECUTABLE)
-        add_test(NAME build_workflow COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_workflow_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-        set_tests_properties(build_workflow PROPERTIES LABELS "integration;tools" TIMEOUT 180)
-        add_test(NAME build_plan_execution COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_plan_execution_tests.py")
-        set_tests_properties(build_plan_execution PROPERTIES LABELS "tools;core" TIMEOUT 120)
-        add_test(NAME build_dashboard COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_dashboard_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-        set_tests_properties(build_dashboard PROPERTIES LABELS "tools;core;retry-isolated-resource" TIMEOUT 60)
-        add_test(NAME build_dashboard_browser COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_dashboard_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}" --browser)
-        set_tests_properties(build_dashboard_browser PROPERTIES LABELS "manual;integration;tools;retry-isolated-resource" TIMEOUT 180)
-        add_test(NAME build_wait_retry COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_wait_retry_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-        set_tests_properties(build_wait_retry PROPERTIES LABELS "integration;tools" TIMEOUT 240)
-        add_test(NAME build_shared_resources COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_shared_resources_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-        set_tests_properties(build_shared_resources PROPERTIES LABELS "tools;core" TIMEOUT 90)
-        add_test(NAME build_foreground_wait COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_foreground_wait_tests.py" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-        set_tests_properties(build_foreground_wait PROPERTIES LABELS "tools;integration" TIMEOUT 90)
-    endif()
-endif()
+# Existing runtimes only; missing required regressions stay in the inventory.
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
+snowdesktop_install_shared_guard()

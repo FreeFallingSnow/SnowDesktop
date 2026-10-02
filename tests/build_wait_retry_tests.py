@@ -60,7 +60,7 @@ def cleanup_fixtures():
 def process_fixture(repo):
     root=new_fixture('SnowDesktop-retry-process-')
     (root/'scripts').mkdir();(root/'tools/build-dashboard').mkdir(parents=True);(root/'bin').mkdir()
-    for name in ('build_wait_tasks.py','build_test_retry.py','build_inputs.ps1','build_batch_tests.ps1'):
+    for name in ('build_wait_tasks.py','build_test_retry.py','build_inputs.ps1','build_batch_tests.ps1','build_runtime.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
     shutil.copyfile(repo/'tools/build-dashboard/server.py',root/'tools/build-dashboard/server.py')
     (root/'.gitignore').write_text('.build/\nbin/\n')
@@ -131,7 +131,7 @@ def real_selection_fixture(repo):
     import datetime as dt
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-real-ctest-selection-'))
     (root/'scripts').mkdir();state=root/'.build/collaboration';state.mkdir(parents=True)
-    for name in ('test_manager.ps1','build_protocol.ps1'):
+    for name in ('build_job.cs','build_entry.ps1','test_manager.ps1','build_protocol.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
     (root/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.20)
     project(RealSelection NONE)
@@ -192,7 +192,7 @@ def real_selection_fixture(repo):
 def main(repo):
     root=new_fixture('SnowDesktop-wait-retry-')
     (root/'scripts').mkdir();(root/'tools/build-dashboard').mkdir(parents=True)
-    for name in ('build_wait_tasks.py','build_test_retry.py','build_manager.ps1','build_protocol.ps1',
+    for name in ('build_wait_tasks.py','build_test_retry.py','build_entry.ps1','build_runtime.ps1','build_manager.ps1','build_protocol.ps1',
                  'build_inputs.ps1','build_ownership.ps1','build_preflight.ps1','build_job.cs','build_waiter.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
     shutil.copyfile(repo/'tools/build-dashboard/server.py',root/'tools/build-dashboard/server.py')
@@ -345,7 +345,7 @@ os._exit(19)
 
     # Real coordinator continuation on a separate Git fixture; build/test subprocess boundary only is fake.
     repairroot=root/'repair';(repairroot/'scripts').mkdir(parents=True);(repairroot/'src').mkdir()
-    for name in ('build_manager.ps1','build_protocol.ps1','build_inputs.ps1','build_ownership.ps1','build_preflight.ps1','build_job.cs','build_waiter.ps1'):
+    for name in ('build_entry.ps1','build_runtime.ps1','build_manager.ps1','build_protocol.ps1','build_inputs.ps1','build_ownership.ps1','build_preflight.ps1','build_job.cs','build_waiter.ps1'):
         shutil.copyfile(repo/'scripts'/name,repairroot/'scripts'/name)
     (repairroot/'src/a.txt').write_text('original')
     (repairroot/'.gitignore').write_text('.build/\n*.count\nfail-build\n')

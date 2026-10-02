@@ -112,7 +112,7 @@ function Checks-BlockFreeze($Current) {
     }).Count -gt 0
 }
 function New-FrozenPlan($Current) {
-    $tasks=@(); $full=[bool](Get-Field $Current 'repairOf'); $build=$full
+    $tasks=@(); $full=$false; $build=$false
     foreach ($entry in $Current.participants) {
         if ($entry.state -eq 'withdrawn') { continue }
         $plan=Get-Field $entry 'testPlan'

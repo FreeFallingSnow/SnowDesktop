@@ -289,8 +289,9 @@
   `scripts\build.bat begin <任务ID>`，保存返回的 `batchId`。任务 ID 在该批次内唯一，重复调用使用同一个 ID。
 - 只读代码审计、性能评估、阅读日志、写外置报告，以及无需编译的定向补测不调用 `begin`/`finish`，不触发构建，也不阻塞
   开发参与者。可调用 `status` 只读查询；性能测量须避开正在运行的构建/测试，以免结果受资源竞争影响。
-- 本对话改动全部完成后调用 `scripts\build.bat finish <任务ID> -Batch <batchId>` 并等待退出。
-  先完成者等待仍在编辑的对话；全部完成后脚本统一运行一次标准 Release 构建和一次完整测试。
+- 本对话改动全部完成后调用 `scripts\build.bat ready-and-wait <任务ID> -Batch <batchId> -Revision <editRevision>` 并等待退出。
+  先声明真实测试/影响范围和豁免依据；先完成者等待，全部完成后合并冻结各成员要求，按需要统一标准 Release 构建和对应测试集合。
+  未知、公共 API、基础设施仍要求全量；旧 v1 保留原 finish 合同，新 v2 finish/wait 必须带修订号。
   同批所有参与者读取同一份绑定批次和输入摘要的结果；失败或 `invalidated` 也共享结果，
   不独自重复构建。不得把 `status -Batch` 的历史结果或旧批成功作为当前新修改的验证；起止摘要
   只检测端点差异，不保证发现中途改后又恢复的绕过登记修改，详情见 `scripts/README.md`。
@@ -584,10 +585,10 @@
 
 ## 协作构建调用补充
 
-- 新批次保存 `begin` 返回的 `batchId/editRevision`；推荐 `plan` 声明本任务按现有规则所需的测试、影响范围及豁免依据，`ready-and-wait ID -Batch B -Revision R` 非阻塞就绪，`status/wait` 观察共同结果。新协议 `finish/wait` 必须带修订号。
+- 新批次保存 `begin` 返回的 `batchId/editRevision`；推荐 `plan` 声明本任务按现有规则所需的测试、影响范围及豁免依据，`ready-and-wait ID -Batch B -Revision R` 阻塞就绪、检查并等待共同结果，`status/wait` 观察共同结果。新协议 `finish/wait` 必须带修订号。
 - 就绪后继续只读走查；若发现需改文件，先用同 ID `begin` 原子重开并使用新的修订号重报计划。检查失败或中断必须显式处理，不能当作完成。
 - 写文件前 `claim` 声明范围并协调冲突；有既存改动先审查，必要时显式 `-AdoptExistingChanges`。提交使用 `commit ... -Files ... -MessageFile ...`，保留其他暂存内容。失败交接使用 `issue`，不得自动归责或清除其他活动登记。
-- 看板随协作入口自动启动，直接查看 `http://127.0.0.1:8765/`；不会因为页面关闭而停止构建。活动旧协议批次不强制迁移。准确参数与恢复约定见 `scripts/README.md` 和 `tools/build-dashboard/README.md`；协调实现留在脚本中。
+- 看板随写/执行协作入口自动确保，status 只读且不启动服务；直接查看 `http://127.0.0.1:8765/`；不会因为页面关闭而停止构建。活动旧协议批次不强制迁移。准确参数与恢复约定见 `scripts/README.md` 和 `tools/build-dashboard/README.md`；协调实现留在脚本中。
 
 
 - Agent 默认用 `ready-and-wait ID -Batch B -Revision R` 保持原对话阻塞在同一工具进程：本地等待和执行已声明轻量检查，条件变化后继续工作。工具 yield 只表示进程仍在运行，继续等待同一 session，禁止重新启动 status 轮询；减少模型往返不保证零往返。`ready/watch start` 仅用于明确选择的无人值守模式，不默认结束对话。
@@ -596,3 +597,8 @@
 - 失败续修用 `repair ID -Batch FAILED -Revision R -Reason ...`，保存新批次/修订并重新 claim；旧需求和失败证据保留，旧就绪结论重新验证。进一步失败引用最新子尝试；无活动续修时可显式 `repair-abandon`，不得清其他登记。
 
 - 文件声明约束当前活动编辑，完成记录保留来源并可由后续授权任务 `claim` 接手，不要求原对话返工。明确共享清单见 `scripts/shared_resources.json`：语言文件独立条目通过 `resource prepare/apply` 串行重读并逐键比较写入，免整文件长期独占；相同条目冲突拒绝。禁止绕过事务整文件写回；重排/格式转换先独占 `claim -Files lang` 排队串行。所有写入仍绑定当前编辑轮次，冻结后等待下一批。调用范例见脚本说明。
+
+- 普通受支持 Release/Debug/test 和 IDE 包装入口同样先取得本地执行权，再进行预检/配置/编译/整理。活动登记、冻结或独占产物租约存在时明确 busy；不能设置环境变量绕过，未获执行权不关闭用户应用。共享 CMake 配置和新生成目标检查存活凭据，旧生成项目与旧进程不追溯升级。独立诊断输出不能冒充标准构建。
+- 基础协调不依赖 Codex 会话 ID、消息工具或 Python；默认 ready-and-wait 直接前台运行，后台启动失败保留 pending 登记并给出前台接管。Python 增强做有界可执行/版本探测；只在尚未开始执行时回退一次原计划。六项必需工具回归不会因依赖缺失从清单消失，阻断/未执行必须进入覆盖，零选中/零执行不能 pass；不自动安装。
+- 关联续修保留并合并各成员真实测试需求，repairOf 不机械强制全量；未知/公共/基础设施和明确 full 需求仍全量。新输入重新检查，旧通过不自动继承，失败逻辑轮次与每次不可变 attempt 保留。有效局部补测依 AGENTS 的失败/影响范围规则重新声明。
+- 状态统一读协调器，减少可省状态问答、重复政策提醒和不变状态确认；只在具体文件冲突、依赖改变、失败交接或需决策时进行必要通信并关联 batch/revision/issue。无通信工具只持久化可读交接，不声称已通知。该约定不禁止 Agent 自由发言；现有样本未证明消息风暴。

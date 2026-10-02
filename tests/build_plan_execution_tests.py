@@ -8,20 +8,21 @@ import tempfile
 
 def main(repo):
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-plan-execution-'));scripts=root/'scripts';scripts.mkdir();binroot=root/'fake-bin';binroot.mkdir()
-    for file in ('test_manager.ps1','build_protocol.ps1'):shutil.copyfile(repo/'scripts'/file,scripts/file)
+    for file in ('build_job.cs','build_entry.ps1','test_manager.ps1','build_protocol.ps1'):shutil.copyfile(repo/'scripts'/file,scripts/file)
     source=root/'standin.cs'
     source.write_text(r'''using System;using System.IO;using System.Linq;
 class StandIn {
 static int Main(string[] args){
  string root=Directory.GetCurrentDirectory(), exe=Path.GetFileNameWithoutExtension(Environment.GetCommandLineArgs()[0]);
  string dir=Path.Combine(root,".build","Release","tests");Directory.CreateDirectory(dir);
- if(exe=="cmake") { foreach(string n in new[]{"Alpha","Beta"})File.WriteAllText(Path.Combine(dir,"SnowDesktop"+n+"Tests.exe"),"fixture binary "+n);Console.WriteLine("mock configure/build");return 0; }
+ if(exe=="cmake") { if(args.Contains("--build"))File.AppendAllText(Path.Combine(root,"build.count"),"build\n");foreach(string n in new[]{"Alpha","Beta"})File.WriteAllText(Path.Combine(dir,"SnowDesktop"+n+"Tests.exe"),"fixture binary "+n);Console.WriteLine("mock configure/build");return 0; }
  if(args.Contains("--show-only=json-v1")){
  string json="{\"tests\":[";bool first=true;
  foreach(string n in new[]{"Alpha","Beta"}){
    int r=Array.IndexOf(args,"-R");if(r>=0&&!System.Text.RegularExpressions.Regex.IsMatch(n,args[r+1]))continue;
    if(!first)json+=",";first=false;string path=Path.Combine(dir,"SnowDesktop"+n+"Tests.exe").Replace("\\","\\\\");
-   json+="{\"name\":\""+n+"\",\"command\":[\""+path+"\"],\"properties\":[{\"name\":\"LABELS\",\"value\":[\"core\"]}]}";
+   bool blocked=n=="Beta"&&File.Exists("behavior")&&File.ReadAllText("behavior")=="environment";
+   json+="{\"name\":\""+n+"\",\"command\":[\""+path+"\"],\"properties\":[{\"name\":\"LABELS\",\"value\":[\"core\""+(blocked?",\"environment-blocked\"":"")+"]}]}";
  }Console.WriteLine(json+"]}");return 0; }
  int output=Array.IndexOf(args,"--output-junit");if(output<0)return 8;
  string pattern=args[Array.IndexOf(args,"-R")+1];string xml="<testsuites><testsuite>";
@@ -46,10 +47,12 @@ static int Main(string[] args){
     assert len(coverage['testExecutablesBeforeRun'])==2 and all(len(x['sha256'])==64 for x in coverage['testExecutablesBeforeRun'])
     coverage=run('failed',False);assert coverage['status']=='failed' and coverage['tasks'][1]['failed']==['Beta'] and coverage['tasks'][0]['status']=='passed'
     coverage=run('skipped',False);assert coverage['status']=='failed' and all(x['status']=='not-run' for x in coverage['tasks'])
+    before=(root/'build.count').read_bytes()
+    coverage=run('environment',False);assert coverage['status']=='environment-blocked' and coverage['selected']==['Alpha','Beta'] and coverage['blocked']==['Beta'] and coverage['completed']==[]
+    assert coverage['tasks'][1]['status']=='environment-blocked' and before==(root/'build.count').read_bytes(),'Unavailable required tests must block before target compilation'
     plan['tests']=['Missing'];p=None
-    try:run('pass',False)
-    except FileNotFoundError:pass # selection rejects before a new run receipt
-    print('PASS real test manager: selection, target build, binary hashes, per-task coverage, failures, skipped-not-pass and unknown-test rejection')
+    coverage=run('pass',False);assert coverage['status']=='not-run' and coverage['selectionStatus']=='pending' and coverage['selected']==[] and coverage['completed']==[]
+    print('PASS real test manager: selection, target build, binary hashes, per-task coverage, failures, skipped-not-pass, explicit environment block and zero-selection not-run receipt')
     print('PLAN EXECUTION evidence: '+str(root))
 
 if __name__=='__main__':main(Path(__file__).resolve().parents[1])

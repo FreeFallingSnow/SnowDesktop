@@ -69,7 +69,7 @@ namespace SnowDesktop.Build
             if (batch == null || batch.Length != 32 || !System.Text.RegularExpressions.Regex.IsMatch(batch, "^[a-f0-9]{32}$"))
                 throw new ArgumentException("Invalid batch identity");
             string command = (build ? "call scripts\\build.bat && " : "") +
-                "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
+                PowerShell() + " -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
             return RunCommand(directory, logPath, command);
         }
 
@@ -81,9 +81,15 @@ namespace SnowDesktop.Build
             if (batch == null || !System.Text.RegularExpressions.Regex.IsMatch(batch, "^[a-f0-9]{32}$"))
                 throw new ArgumentException("Invalid batch identity");
             string command = (build ? "call scripts\\build.bat" + (reloadShell ? " --reload-shell" : "") + " && " : "") +
-                "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
+                PowerShell() + " -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
             return RunCommand(directory, logPath, command);
         }
+
+        public static int RunLeasedCommand(string directory, string logPath, string pipeline)
+        { return RunCommand(directory, logPath, pipeline); }
+
+        static string PowerShell()
+        { return "\"" + Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe") + "\""; }
 
         static int RunCommand(string directory, string logPath, string pipeline)
         {

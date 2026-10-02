@@ -156,6 +156,7 @@ function Compare-Results($First, $Second) {
 
 try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\scripts\build_manager.ps1'),
+        (Join-Path $PSScriptRoot '..\scripts\build_entry.ps1'),
         (Join-Path $PSScriptRoot '..\scripts\build_inputs.ps1'),
         (Join-Path $PSScriptRoot '..\scripts\build_job.cs'),
         (Join-Path $PSScriptRoot '..\scripts\build_protocol.ps1'),

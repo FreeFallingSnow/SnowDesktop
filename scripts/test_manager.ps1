@@ -12,6 +12,15 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 Set-Location -LiteralPath $repositoryRoot
 
+# Direct PowerShell, batch, IDE and CI callers all enter the same private Job.
+# A coordinator child already has live delegated authority and does not recurse.
+if(-not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')) {
+    $entryOptions=@{Action='tests';Mode=$Mode;Filter=$Filter}
+    if($PlanBatch){$entryOptions.PlanBatch=$PlanBatch}
+    & (Join-Path $PSScriptRoot 'build_entry.ps1') @entryOptions
+    exit $LASTEXITCODE
+}
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)]
@@ -116,6 +125,8 @@ function Invoke-FilteredTests {
         throw "The requested filter did not match any configured tests."
     }
 
+    $blocked=@($selection.Tests|Where-Object {@($_.properties|Where-Object name -eq 'LABELS'|ForEach-Object {$_.value}) -contains 'environment-blocked'}|ForEach-Object {$_.name})
+    if($blocked.Count){throw ('Environment blocked; required tests not executed: '+($blocked -join ', '))}
     $needsHostRuntime = $selection.Targets -contains "SnowDesktopWidgetAuthorPreviewCliTests"
     if ($needsHostRuntime -or $BuildPreset -eq "tests") {
         Assert-HostRuntimeAvailable
@@ -234,8 +245,25 @@ function Test-IsolatedOutput {
     }
 }
 
+. (Join-Path $PSScriptRoot 'build_entry.ps1')
+$entryLease=$null
+try {
+    try {$entryLease=Enter-BuildEntry $repositoryRoot}
+    catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 $script:lastReportPath=$null
+if($Mode -eq 'plan') {
+    if(-not $PlanBatch){throw 'Plan mode requires a frozen batch ID.'}
+    $initialPlanRoot=Join-Path $repositoryRoot '.build/collaboration'
+    $initialPlan=Read-EntryJson (Join-Path $initialPlanRoot ($PlanBatch+'.plan.json'))
+    if(-not $initialPlan -or $initialPlan.schemaVersion -ne 1 -or $initialPlan.batchId -ne $PlanBatch -or $initialPlan.configuration -ne 'Release'){throw 'Invalid frozen testing plan.'}
+    # Publish a new not-run receipt before configure/selection. A failure there
+    # cannot leave an earlier passing coverage record masquerading as this run.
+    [pscustomobject]@{schemaVersion=1;batchId=$PlanBatch;mode=$initialPlan.mode;status='not-run';selectionStatus='pending';
+        selected=@();completed=@();report=$null;error='Configuration/selection has not completed.';
+        tasks=@($initialPlan.tasks|ForEach-Object {[pscustomobject]@{participant=$_.participant;requested=@($_.requirement.tests);suites=@($_.requirement.suites);status='not-run';reason=$_.requirement.reason;failed=@()}})} |
+        ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $initialPlanRoot ($PlanBatch+'.coverage.json')) -Encoding UTF8
+}
 Write-Host "=== Configuring tests ==="
 Invoke-Checked -FilePath "cmake" -Arguments @("--preset", "tests")
 
@@ -255,13 +283,20 @@ if ($Mode -eq "plan") {
     $coveragePath=Join-Path $planRoot ($PlanBatch+'.coverage.json')
     $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
     try {
+        $blocked=@($inventory.Tests|Where-Object {$names -contains $_.name -and @($_.properties|Where-Object name -eq 'LABELS'|ForEach-Object {$_.value}) -contains 'environment-blocked'}|ForEach-Object {$_.name})
+        if($blocked.Count){
+            $coverage.status='environment-blocked'
+            Set-Field $coverage 'blocked' $blocked
+            foreach($task in $coverage.tasks){if(@($task.requested|Where-Object {$_ -in $blocked}).Count){$task.status='environment-blocked'}}
+            throw ('Required tests not executed: '+($blocked -join ', ')+'. Install/repair Python separately; no automatic installation.')
+        }
         # CTest uses the CMake regex engine, which does not support (?:...).
         $pattern='^('+ (($names | ForEach-Object {[regex]::Escape($_)}) -join '|') +')$'
         $arguments=@('-R',$pattern)
         if ($plan.mode -eq 'full') { Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset 'tests' -TestPreset 'all-tests'; Test-IsolatedOutput }
         else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' }
         $coverage.status='passed'
-    } catch { $coverage.status='failed';$coverage.error=$_.Exception.Message; throw }
+    } catch { if($coverage.status -ne 'environment-blocked'){$coverage.status='failed'};$coverage.error=$_.Exception.Message; throw }
     finally {
         $coverage.report=$script:lastReportPath
         if ($script:lastReportPath -and [IO.File]::Exists($script:lastReportPath)) {
@@ -315,3 +350,5 @@ else {
 
 Write-Host ""
 Write-Host "=== Tests complete ($Mode) ==="
+
+} finally {Exit-BuildEntry $entryLease}
