@@ -740,7 +740,7 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                         anchor.row + entry.originalCell.row - top};
                     DesktopWidget geometry; geometry.gridCell = cell;
                     geometry.bounds = GetGridRect(app_->gridPages_, cell, entry.originalSpan);
-                    geometry.cellScale = app_->GetGridPageCuScale(*page);
+                    geometry.cellScale = GetGridPageCuScale(*page);
                     if (!entry.fromDock && entry.desktopIndex < app_->items_.size() &&
                         app_->items_[entry.desktopIndex].largeIcon)
                     {

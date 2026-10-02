@@ -457,7 +457,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Choice(size, "largeIcon.flagDirection", &LargeIconConfig::flagDirection,
             {{0,"largeIcon.flagDirection.right"},{1,"largeIcon.flagDirection.left"},
              {2,"largeIcon.flagDirection.up"},{3,"largeIcon.flagDirection.down"}}, Field::FlagDirection);
-        Toggle(size, "largeIcon.regularHexagon", &LargeIconConfig::regularHexagon, Field::RegularHexagon);
+        Toggle(size, "largeIcon.regularHexagon", &LargeIconConfig::regularHexagon, Field::RegularHexagon, 0);
         Slider(size, "largeIcon.columns", &LargeIconConfig::columns, 1, std::max(1, snapshot.maxColumns));
         Slider(size, "largeIcon.rows", &LargeIconConfig::rows, 1, std::max(1, snapshot.maxRows));
         Toggle(size, "largeIcon.followComponentRadius", &LargeIconConfig::followComponentRadius, Field::RadiusFollow, 0);
