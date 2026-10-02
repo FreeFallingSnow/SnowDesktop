@@ -273,6 +273,10 @@ def main(repo):
     assert waits.condition(request,{'current':None},observed)[0]=='attention'
     observed['participants'][0]['editRevision']=3
     assert waits.condition(request,{'current':None},observed)[0]=='completed'
+    blocked={'id':bid,'phase':'editing','participants':[{'id':'wait-editor','editRevision':3,'state':'finished','check':{'status':'failed'}}]}
+    assert waits.condition(request,{'current':blocked},None)[0]=='attention'
+    blocked['participants'][0]['check']['status']='passed';blocked.update(planStatus='blocked',planError='stale plan')
+    assert waits.condition(request,{'current':blocked},None)[0]=='attention'
     print('PASS saved wait result remains bound to participant and edit revision')
 
     # Real retry policy, scheduler and immutable evidence; substitute only CTest process outcomes.
