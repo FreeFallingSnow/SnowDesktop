@@ -142,7 +142,7 @@ void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
                 const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
                     EffectiveLargeIconConfig(items_[source->desktopIndex]), CurrentPersonalization().cornerRadius);
                 snowdesktop::large_icon_renderer::DrawPlacementPreview(ctx, config, GetStandaloneWidgetFrameRect(geometry),
-                    GetItemLayoutScale(targetRect));
+                    GetItemLayoutScale(targetRect), true, &targetRect);
                 continue;
             }
         }

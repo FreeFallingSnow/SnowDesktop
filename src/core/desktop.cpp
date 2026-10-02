@@ -748,7 +748,7 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                             app_->EffectiveLargeIconConfig(app_->items_[entry.desktopIndex]),
                             app_->CurrentPersonalization().cornerRadius);
                         snowdesktop::large_icon_renderer::DrawPlacementPreview(ctx, config,
-                            app_->GetStandaloneWidgetFrameRect(geometry), app_->GetItemLayoutScale(geometry.bounds), false);
+                            app_->GetStandaloneWidgetFrameRect(geometry), app_->GetItemLayoutScale(geometry.bounds), false, &geometry.bounds);
                         continue;
                     }
                     app_->DrawD2DRoundedRectangle(ctx, app_->GetStandaloneWidgetFrameRect(geometry), 8.f,

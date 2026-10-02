@@ -34,9 +34,9 @@ struct CardResources
 // These are the production desktop draw paths, also usable with a WIC render
 // target for deterministic visual checks without creating a desktop window.
 void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& config, const View& view);
-// Creation, resize and desktop landing previews share the visible card contour.
+// Special shapes show both their occupied grid bounds and visible card contour.
 void DrawPlacementPreview(ID2D1RenderTarget* target, const LargeIconConfig& config,
-    RECT allocation, float scale, bool valid = true);
+    RECT allocation, float scale, bool valid = true, const RECT* gridAllocation = nullptr);
 void DrawResizeHandle(ID2D1RenderTarget* target, POINT center, int diameter, float radius,
     bool light, bool selected);
 // Record the complete card independently of the display context's clip stack.

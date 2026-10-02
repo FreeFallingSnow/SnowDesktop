@@ -41,40 +41,6 @@ inline RECT Frame(const LargeIconConfig& config, RECT frame)
     return frame;
 }
 
-// Choose a usable lower-right edge. The diamond dot sits outside its contour;
-// the other shapes keep the dot inside, with flags/hexagons near the bottom.
-inline POINT ResizeHandleCenter(const LargeIconConfig& config, RECT allocation, float radius, float inset)
-{
-    const RECT frame = Frame(config, allocation);
-    const float w = static_cast<float>(frame.right - frame.left), h = static_cast<float>(frame.bottom - frame.top);
-    inset = std::clamp(inset, 0.f, std::max(0.f, std::min(w, h) * .2f));
-    const auto point = [&](float x, float y) { return D2D1::Point2F(frame.left + x * w, frame.top + y * h); };
-    const auto edgePoint = [&](D2D1_POINT_2F a, D2D1_POINT_2F b, float t, float distance) {
-        const float dx = b.x - a.x, dy = b.y - a.y, length = std::hypot(dx, dy);
-        return D2D1::Point2F(a.x + dx * t - (length > 0 ? dy * distance / length : 0),
-            a.y + dy * t + (length > 0 ? dx * distance / length : 0));
-    };
-    D2D1_POINT_2F center;
-    if (config.shape == 2)
-    {
-        const float offset = std::max(0.f, std::min(w, h) / 2 - inset) * .70710678f;
-        center = D2D1::Point2F((frame.left + frame.right) / 2.f + offset, (frame.top + frame.bottom) / 2.f + offset);
-    }
-    else if (config.shape == 4) center = edgePoint(point(1, .5f), point(.5f, 1), .5f, -inset);
-    else if (config.shape == 5) center = edgePoint(point(1, .5f), point(.75f, 1), .85f, inset);
-    else if (config.shape == 3 && config.flagDirection == 0)
-        center = edgePoint(point(.78f, .5f), point(1, 1), .85f, inset);
-    else if (config.shape == 3 && config.flagDirection == 3)
-        center = edgePoint(point(1, 1), point(.5f, .78f), .15f, inset);
-    else
-    {
-        const float innerRadius = config.shape <= 1 ? std::max(0.f, std::min(radius, std::min(w, h) / 2) - inset) : 0;
-        center = D2D1::Point2F(frame.right - inset - innerRadius * .29289322f,
-            frame.bottom - inset - innerRadius * .29289322f);
-    }
-    return {static_cast<LONG>(std::lround(center.x)), static_cast<LONG>(std::lround(center.y))};
-}
-
 inline POINT ResizePointerOffset(RECT allocation, POINT grab)
 { return {allocation.right - 1 - grab.x, allocation.bottom - 1 - grab.y}; }
 inline POINT ResizeExtent(POINT pointer, POINT offset)

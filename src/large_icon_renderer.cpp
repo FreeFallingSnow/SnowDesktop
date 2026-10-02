@@ -82,7 +82,7 @@ void DrawEdgeGlow(ID2D1RenderTarget* target, const LargeIconConfig& c, const Vie
 }
 }
 void DrawPlacementPreview(ID2D1RenderTarget* target, const LargeIconConfig& c,
-    RECT allocation, float scale, bool valid)
+    RECT allocation, float scale, bool valid, const RECT* gridAllocation)
 {
     if (!target) return;
     const auto frame = Rect(large_icon_shape::Frame(c, allocation));
@@ -93,6 +93,22 @@ void DrawPlacementPreview(ID2D1RenderTarget* target, const LargeIconConfig& c,
     ComPtr<ID2D1SolidColorBrush> brush;
     const unsigned color = valid ? 0x68b5ff : 0xf16d70;
     if (!outline || FAILED(target->CreateSolidColorBrush(D2D1::ColorF(color, .2f), &brush))) return;
+    if (c.shape != 0)
+    {
+        // Four corner brackets mark the occupied grid area, including card
+        // padding, without filling the transparent silhouette margins.
+        const auto grid = Rect(gridAllocation ? *gridAllocation : allocation);
+        const float length = std::min(16.f * std::max(1.f, scale),
+            std::min(grid.right - grid.left, grid.bottom - grid.top) * .25f);
+        brush->SetColor(D2D1::ColorF(color, .65f));
+        for (const float x : {grid.left, grid.right}) for (const float y : {grid.top, grid.bottom})
+        {
+            const auto corner = D2D1::Point2F(x, y);
+            target->DrawLine(corner, D2D1::Point2F(x + (x == grid.left ? length : -length), y), brush.Get(), 2.f);
+            target->DrawLine(corner, D2D1::Point2F(x, y + (y == grid.top ? length : -length)), brush.Get(), 2.f);
+        }
+        brush->SetColor(D2D1::ColorF(color, .2f));
+    }
     target->FillGeometry(outline.Get(), brush.Get());
     brush->SetColor(D2D1::ColorF(color, .95f));
     target->DrawGeometry(outline.Get(), brush.Get(), 2.f);

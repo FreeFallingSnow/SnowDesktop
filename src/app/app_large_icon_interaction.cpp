@@ -8,22 +8,12 @@
 
 RECT DesktopApp::GetLargeIconResizeHandleRect(const DesktopItem& item, POINT* center) const
 {
-    const auto allocation = GetLargeIconFrameRect(item);
-    const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
-        EffectiveLargeIconConfig(item), CurrentPersonalization().cornerRadius);
-    const auto frame = snowdesktop::large_icon_shape::Frame(config, allocation);
-    const float radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
-        frame.right - frame.left, frame.bottom - frame.top, GetItemLayoutScale(item.bounds)));
-    const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
-    const float cellScale = page ? GetGridPageCuScale(*page) : 1.f;
-    const float barHeight = CurrentPersonalization().barHeight;
-    const int dot = ScaleWidgetCu(barHeight * .333f, cellScale);
-    const int size = std::max(1, ScaleWidgetCu(barHeight, cellScale));
-    const auto position = snowdesktop::large_icon_shape::ResizeHandleCenter(config, allocation, radius,
-        static_cast<float>(dot) / 2 + ScaleWidgetCu(2.f, cellScale));
-    if (center) *center = position;
-    return {std::max(allocation.left, position.x - size / 2), std::max(allocation.top, position.y - size / 2),
-        std::min(allocation.right, position.x + (size + 1) / 2), std::min(allocation.bottom, position.y + (size + 1) / 2)};
+    DesktopWidget geometry;
+    geometry.bounds = item.bounds; geometry.gridCell = item.gridCell; geometry.showTitle = false;
+    if (const auto* page = FindGridPage(gridPages_, item.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
+    const auto handle = GetStandaloneWidgetResizeHandleRect(geometry);
+    if (center) *center = {handle.left + (handle.right - handle.left) / 2, handle.top + (handle.bottom - handle.top) / 2};
+    return handle;
 }
 
 DesktopApp::LargeIconMenuScope::LargeIconMenuScope(DesktopApp& app, std::wstring key)
@@ -152,7 +142,7 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
             gesture.config, CurrentPersonalization().cornerRadius);
         snowdesktop::large_icon_renderer::DrawPlacementPreview(context, config, rect,
-            GetItemLayoutScale(geometry.bounds), gesture.valid);
+            GetItemLayoutScale(geometry.bounds), gesture.valid, &geometry.bounds);
         if (gesture.creating)
         {
             ComPtr<IDWriteTextFormat> format;
