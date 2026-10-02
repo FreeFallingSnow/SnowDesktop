@@ -17,6 +17,7 @@ $statePath = Join-Path $stateRoot 'state.json'
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $lastNotice = -30
 $hasFinishedCurrentBatch = $false
+$finishedRevision = $null
 $utf8 = New-Object Text.UTF8Encoding($false)
 . (Join-Path $PSScriptRoot 'build_inputs.ps1')
 
@@ -84,6 +85,10 @@ function Read-State {
 }
 
 function Result-Path([string]$Id) { return Join-Path $stateRoot ($Id + '.json') }
+function Participant-Revision($Entry) {
+    if ($Entry.PSObject.Properties['editRevision']) { return [long]$Entry.editRevision }
+    return [long]0 # Registrations made before reopen support remain readable.
+}
 function Read-Result([string]$Id) {
     $path = Result-Path $Id
     if (-not [IO.File]::Exists($path)) { return $null }
@@ -167,6 +172,10 @@ try {
                     throw 'This participant has a newer active batch. Its old result cannot verify new edits; use the batch ID from the latest begin.'
                 }
                 if (@($result.participants | Where-Object id -eq $Participant).Count -ne 1) { throw 'Participant does not belong to this result.' }
+                $completedEntry = @($result.participants | Where-Object id -eq $Participant)[0]
+                if ($null -ne $finishedRevision -and (Participant-Revision $completedEntry) -ne $finishedRevision) {
+                    throw 'This finish was superseded by a reopened registration. Use finish for the current edit revision.'
+                }
                 if (-not $hasFinishedCurrentBatch -and $result.outcome -eq 'passed') {
                     if (-not $result.PSObject.Properties['inputEnd'] -or $null -eq $result.inputEnd) {
                         throw 'This historical result has no input identity. Read it with status; begin a new batch to verify edits.'
@@ -198,7 +207,13 @@ try {
                         })
                         Write-AtomicJson $state $statePath
                     }
-                    elseif ($entry[0].state -ne 'editing') { throw 'This participant already finished/withdrew. Read its result before editing again.' }
+                    elseif ($entry[0].state -eq 'finished') {
+                        $entry[0] | Add-Member -NotePropertyName editRevision -NotePropertyValue ((Participant-Revision $entry[0]) + 1) -Force
+                        $entry[0].state = 'editing'
+                        $entry[0].finishedUtc = $null
+                        Write-AtomicJson $state $statePath
+                    }
+                    elseif ($entry[0].state -ne 'editing') { throw 'This participant was withdrawn. Use a different task ID or wait for the batch result.' }
                     ConvertTo-Json -InputObject ([pscustomobject]@{ participant = $Participant; batchId = $current.id; state = 'editing' })
                     exit 0
                 }
@@ -246,6 +261,11 @@ try {
                 if ($null -eq $current -or $current.id -ne $Batch) { throw 'Unknown current batch; registration was not changed.' }
                 $entries = @($current.participants | Where-Object id -eq $Participant)
                 if ($entries.Count -ne 1 -or $entries[0].state -eq 'withdrawn') { throw 'Participant is not registered or was withdrawn.' }
+                $revision = Participant-Revision $entries[0]
+                if ($null -ne $finishedRevision -and $finishedRevision -ne $revision) {
+                    throw 'This finish was superseded by a reopened registration. The task remains editing until its new finish.'
+                }
+                $finishedRevision = $revision
                 $hasFinishedCurrentBatch = $true
                 if ($current.phase -eq 'editing') {
                     if ($entries[0].state -eq 'editing') {

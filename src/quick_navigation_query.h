@@ -32,9 +32,9 @@ inline std::optional<Scope> ResolvePrefix(const NavigationSettings& settings, st
 {
     const auto prefix = Prefix(input);
     if (prefix.empty()) return {};
-    for (size_t i = 0; i < settings.prefixes.size(); ++i)
-        if (settings.prefixes[i] == prefix)
-            return Scope{static_cast<QuickNavigationSearchType>(i + 1), {}};
+    for (const auto type : kQuickNavigationSearchTypes)
+        if (type != QuickNavigationSearchType::All && settings.prefixes[static_cast<size_t>(type) - 1] == prefix)
+            return Scope{type, {}};
     for (const auto& engine : settings.engines)
         if (engine.prefix == prefix) return Scope{QuickNavigationSearchType::Web, engine.id};
     return {};

@@ -2360,7 +2360,8 @@
     "quickNav.color.emptyText": "空の状態 · 文字",
     "quickNav.opening": "起動と表示",
     "quickNav.engines.manage": "検索エンジンを管理",
-    "quickNav.search.shortcutHint": "接頭辞 + Enter で種類を選択 · Ctrl+E で展開",
+    "quickNav.search.shortcutHint": "↑↓ 選択 · Enter 確定 · Ctrl+E 展開",
     "quickNav.search.scopedHint": "キーワードまたは数式を入力して Enter · Backspace で総合検索に戻る",
-    "quickNav.search.scopedPlaceholder": "検索内容を入力…"
+    "quickNav.search.scopedPlaceholder": "検索内容を入力…",
+    "quickNav.search.actions": "クイック操作"
 }

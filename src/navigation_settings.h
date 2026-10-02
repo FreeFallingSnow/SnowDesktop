@@ -57,7 +57,12 @@ inline bool QuickNavigationDesktopViewModeFromJson(
  * @brief 快捷导航设置
  * @details 存储快捷导航面板的启用状态和热键组合（修饰键+虚拟键码）
  */
+// File retains its stored value for compatibility; composite search includes files.
 enum class QuickNavigationSearchType { All, App, File, Web, Settings, Run, Calculator };
+inline constexpr std::array kQuickNavigationSearchTypes{
+    QuickNavigationSearchType::All, QuickNavigationSearchType::App,
+    QuickNavigationSearchType::Web, QuickNavigationSearchType::Settings,
+    QuickNavigationSearchType::Run, QuickNavigationSearchType::Calculator};
 
 struct QuickNavigationSearchEngine
 {
@@ -140,7 +145,8 @@ inline bool ValidateNavigationSearchConfiguration(const NavigationSettings& sett
         for (unsigned char c : prefix) if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
         return prefixes.insert(prefix).second;
     };
-    for (const auto& prefix : settings.prefixes) if (!validPrefix(prefix)) return false;
+    for (const auto type : kQuickNavigationSearchTypes)
+        if (type != QuickNavigationSearchType::All && !validPrefix(settings.prefixes[static_cast<size_t>(type) - 1])) return false;
     if (settings.engines.empty() || settings.engines.size() > 32) return false;
     for (const auto& e : settings.engines)
     {

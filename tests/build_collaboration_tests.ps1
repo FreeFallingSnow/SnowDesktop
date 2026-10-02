@@ -206,6 +206,26 @@ exit 0
     Call ('finish task-a -Batch ' + $a.batchId + ' -WaitSeconds 1') 2 | Out-Null
     Check ((State).current.participants.Count -eq 2) 'Wait timeout must retain both registrations'
     $duplicate = Start-Command ('finish task-a -Batch ' + $a.batchId)
+    Wait-Until { [IO.File]::Exists($duplicate.errorFile) -and (Read-SharedText $duplicate.errorFile) -match 'Waiting for this batch' } 'duplicate finish waits'
+    $originalRegistration = (State).current.participants[0].registeredUtc
+    $reopened = Call 'begin task-a'
+    $reopenedState = State
+    Check ($reopened.batchId -eq $a.batchId -and $reopened.state -eq 'editing' -and
+        $reopenedState.current.participants.Count -eq 2 -and
+        $reopenedState.current.participants[0].state -eq 'editing' -and
+        $null -eq $reopenedState.current.participants[0].finishedUtc -and
+        $reopenedState.current.participants[0].registeredUtc -eq $originalRegistration) 'Reopening must preserve the batch and membership while clearing completion'
+    Wait-Until { ($first.process.HasExited -and $duplicate.process.HasExited) -or
+        (State).current.participants[0].state -ne 'editing' } 'superseded finish waiters retire'
+    Check ((State).current.participants[0].state -eq 'editing') 'Reopened task must remain editing while old finish waiters retire'
+    Complete $first 2 | Out-Null
+    Complete $duplicate 2 | Out-Null
+    Check ((State).current.participants[0].state -eq 'editing' -and (Counts).Count -eq 0) 'Superseded finish waiters must not finish the reopened editor or start a build'
+    $repeatedReopen = Call 'begin task-a'
+    Check ($repeatedReopen.batchId -eq $a.batchId -and (State).current.participants[0].editRevision -eq 1) 'Repeated begin must keep the reopened edit revision stable'
+    $first = Start-Command ('finish task-a -Batch ' + $a.batchId)
+    Wait-Until { (State).current.participants[0].state -eq 'finished' } 'reopened A finishes'
+    $duplicate = Start-Command ('finish task-a -Batch ' + $a.batchId)
     $last = Start-Command ('finish task-b -Batch ' + $b.batchId)
     Wait-Until {
         if ($last.process.HasExited) { Complete $last | Out-Null }
@@ -232,7 +252,7 @@ exit 0
     Check ((State).current.participants.Count -eq 1 -and (State).current.participants[0].id -eq 'task-c') 'Publishing the old result must preserve the new registration'
     Call ('finish task-c -Batch ' + $c.batchId) | Out-Null
     Check ((Counts).Count -eq 4) 'The next batch must independently build and test once'
-    Write-Output 'PASS overlapping editors, duplicate calls, fixed batch, common result, begin/build race, next-batch isolation'
+    Write-Output 'PASS overlapping editors, reopen before build, superseded finish isolation, duplicate calls, fixed batch, common result, begin/build race, next-batch isolation'
 
     Stage 'race-and-failure'
     # Simultaneous last finish calls contend for the same atomic transition.

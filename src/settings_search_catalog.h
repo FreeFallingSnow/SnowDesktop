@@ -30,7 +30,6 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::QuickNavigation,"quickNav.layout.resultRowHeight","quickNav.layout.resultRowHeight","quickNav.description"},
     {SettingsPage::QuickNavigation,"quickNav.layout.labelLines","quickNav.layout.labelLines","quickNav.description"},
     {SettingsPage::QuickNavigation,"quickNav.layout.cornerRadius","quickNav.layout.cornerRadius","quickNav.description"},
-    {SettingsPage::QuickNavigation,"quickNav.layout.searchRadius","quickNav.layout.searchRadius","quickNav.description"},
     {SettingsPage::QuickNavigation,"quickNav.layout.tabRadius","quickNav.layout.tabRadius","quickNav.description"},
     {SettingsPage::QuickNavigation,"quickNav.layout.itemRadius","quickNav.layout.itemRadius","quickNav.description"},
     {SettingsPage::QuickNavigation,"quickNav.colors.search","quickNav.colors.search","quickNav.description"},

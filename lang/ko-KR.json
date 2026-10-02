@@ -2360,7 +2360,8 @@
     "quickNav.color.emptyText": "빈 상태 · 텍스트",
     "quickNav.opening": "열기 및 표시",
     "quickNav.engines.manage": "검색 엔진 관리",
-    "quickNav.search.shortcutHint": "접두어 + Enter로 유형 선택 · Ctrl+E로 펼치기",
+    "quickNav.search.shortcutHint": "↑↓ 선택 · Enter 확인 · Ctrl+E 펼치기",
     "quickNav.search.scopedHint": "검색어나 수식을 입력한 뒤 Enter · Backspace로 통합 검색으로 돌아가기",
-    "quickNav.search.scopedPlaceholder": "검색 내용 입력…"
+    "quickNav.search.scopedPlaceholder": "검색 내용 입력…",
+    "quickNav.search.actions": "빠른 작업"
 }

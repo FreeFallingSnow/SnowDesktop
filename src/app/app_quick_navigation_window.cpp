@@ -548,7 +548,7 @@ void DesktopApp::ApplyQuickNavigationEverythingSearchResult(
     quickNavigationEverythingIconRows_.Clear();
     quickNavigationEverythingSearchPending_ = false;
     quickNavigationEverythingResultsQuery_ = result.query;
-    everythingSearchAvailable_ = result.error != 2;
+    everythingSearchAvailable_ = result.error == ERROR_SUCCESS;
     quickNavigationEverythingHasMore_ =
         everythingSearchAvailable_ &&
         result.results.size() >=
@@ -805,7 +805,7 @@ void DesktopApp::UpdateQuickNavTabWidths()
         layout->GetMetrics(&metrics);
         quickNavTabWidths_[i] = static_cast<int>(std::clamp(
             static_cast<LONG>(static_cast<long>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(20)),
-            static_cast<LONG>(QuickNavScale(72)), static_cast<LONG>(QuickNavScale(200))));
+            static_cast<LONG>(QuickNavScale(56)), static_cast<LONG>(QuickNavScale(200))));
     }
 }
 

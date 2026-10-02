@@ -174,6 +174,12 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost)
 {
+    POINT cursor{};
+    if (quickNavigationOpen_ && GetCursorPos(&cursor))
+    {
+        const POINT point{cursor.x - virtualLeft_, cursor.y - virtualTop_};
+        if (!PtInRect(&quickNavigationRect_, point)) CloseQuickNavigation(false);
+    }
     CancelPopupHover(true);
     CancelRenameClick();
     if (renameController_.IsActive())

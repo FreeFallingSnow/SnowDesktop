@@ -596,7 +596,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
     snowdesktop::text_input::Draw(quickNavigationSearchEdit_, ctx.Get(),
         ToD2DRect(searchInput), 1.f, false);
     if (!quickNavigationSearchEdit_)
-        DrawD2DTextEllipsis(ctx.Get(), GetQuickNavigationEffectiveSearchText().empty() ?
+        DrawQuickNavigationCenteredText(ctx.Get(), GetQuickNavigationEffectiveSearchText().empty() ?
             _LW(quickNavigationSearchType_ == QuickNavigationSearchType::All ? "app.nav.search_hint" : "quickNav.search.scopedPlaceholder") : GetQuickNavigationEffectiveSearchText(),
             searchInput, quickNavSearchTextFormat_.Get(), ToD2DColor(GetQuickNavigationEffectiveSearchText().empty() ? t.searchPlaceholder : t.searchText));
 
@@ -812,21 +812,28 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             if (hovered || quickNavigationMenu_ == QuickNavigationMenu::Views)
                 DrawD2DRoundedRectangle(ctx.Get(), modeButton, static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)),
                     ToD2DColor(t.tabHoverFill, .72f), ToD2DColor(t.tabHoverStroke, 0.f));
-            RECT labelRect = modeButton; labelRect.left += QuickNavScale(8); labelRect.right -= QuickNavScale(22);
-            RECT chevronRect = modeButton; chevronRect.left = chevronRect.right - QuickNavScale(22);
-            DrawD2DText(ctx.Get(), L"\uF2A4", chevronRect, quickNavFluentTextFormat_.Get(), ToD2DColor(t.appTypeText));
-            DrawD2DTextEllipsis(ctx.Get(), QuickNavigationViewLabel(), labelRect, quickNavPathTextFormat_.Get(), ToD2DColor(t.tabText));
+            RECT labelRect = modeButton; labelRect.left += QuickNavScale(8); labelRect.right -= QuickNavScale(20);
+            RECT chevronRect = modeButton; chevronRect.left = chevronRect.right - QuickNavScale(20);
+            DrawQuickNavigationCenteredText(ctx.Get(), L"\uF2A4", chevronRect, quickNavFluentTextFormat_.Get(),
+                ToD2DColor(t.appTypeText), static_cast<float>(QuickNavScale(12)));
+            DrawQuickNavigationCenteredText(ctx.Get(), QuickNavigationViewLabel(), labelRect,
+                quickNavPathTextFormat_.Get(), ToD2DColor(t.tabText));
         }
     }
 
     RECT contentApp = GetQuickNavigationContentRect(overlay);
+    const POINT contentMousePoint = quickNavigationMenu_ == QuickNavigationMenu::None &&
+        PtInRect(&contentApp, quickNavigationLastMousePoint_) ? quickNavigationLastMousePoint_ : POINT{LONG_MIN, LONG_MIN};
     if (contentApp.bottom <= contentApp.top)
     {
         DrawQuickNavigationMenus(ctx.Get());
         if (windowClipPushed) ctx->PopLayer();
         return;
     }
-    ctx->PushAxisAlignedClip(ToD2DRect(contentApp), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    {
+    const snowdesktop::ScrollContentClip contentClip(ctx.Get(), quickNavScrollFadeCache_, contentApp,
+        quickNavigationScrollOffset_, quickNavigationInitialJumpOpen_ || quickNavigationMenu_ != QuickNavigationMenu::None ? 0 :
+            GetQuickNavigationContentHeight(overlay, contentModel), static_cast<float>(QuickNavScale(16)));
     if (quickNavigationMenu_ == QuickNavigationMenu::Types)
     {
         // Menu drawing and keyboard selection use the same row geometry.
@@ -857,7 +864,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             QuickNavigationPointerTargetKind::InitialBack);
         const bool backHovered =
             PtInRect(&backRect,
-                quickNavigationLastMousePoint_) != FALSE;
+                contentMousePoint) != FALSE;
         if (backHovered)
             DrawD2DRoundedRectangle(
                 ctx.Get(), backRect,
@@ -904,7 +911,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             const bool hovered =
                 PtInRect(
                     &cell,
-                    quickNavigationLastMousePoint_) != FALSE;
+                    contentMousePoint) != FALSE;
             const bool selected =
                 bucketIndex ==
                     quickNavigationInitialJumpSelection_;
@@ -1009,7 +1016,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 if (initialJumpHeader &&
                     PtInRect(
                         &header,
-                        quickNavigationLastMousePoint_) != FALSE)
+                        contentMousePoint) != FALSE)
                     DrawD2DRoundedRectangle(
                         ctx.Get(), header,
                         static_cast<float>(
@@ -1058,7 +1065,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
 
             const QuickNavigationEntry& entry = entries[i];
             const bool selected = IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::Item, i);
-            const bool hovered = PtInRect(&itemRectApp, quickNavigationLastMousePoint_) != FALSE;
+            const bool hovered = PtInRect(&itemRectApp, contentMousePoint) != FALSE;
             if (selected || hovered || navigationSettings_.colors.contains("resultFill") || navigationSettings_.colors.contains("resultBorder"))
                 DrawD2DRoundedRectangle(ctx.Get(), itemRectApp,
                     static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
@@ -1148,7 +1155,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         i);
 
                     const bool selected = IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::App, i);
-                    const bool hovered = PtInRect(&rowRectApp, quickNavigationLastMousePoint_) != FALSE;
+                    const bool hovered = PtInRect(&rowRectApp, contentMousePoint) != FALSE;
                     DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
                         ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.22f),
@@ -1214,7 +1221,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                             QuickNavigationPointerTargetKind::ExpandApps);
                         const bool hovered = PtInRect(
                                 &buttonRectApp,
-                                quickNavigationLastMousePoint_) != FALSE ||
+                                contentMousePoint) != FALSE ||
                             IsQuickNavigationKeyboardTarget(
                                 QuickNavigationKeyboardTargetKind::ExpandApps, 0);
                         std::wstring expandLabel = _LFW("app.interact.expand_apps_fmt",
@@ -1277,7 +1284,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         i);
 
                     const bool selected = IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::Everything, i);
-                    const bool hovered = PtInRect(&rowRectApp, quickNavigationLastMousePoint_) != FALSE;
+                    const bool hovered = PtInRect(&rowRectApp, contentMousePoint) != FALSE;
                     DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
                         ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.22f),
@@ -1355,7 +1362,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                             QuickNavigationPointerTargetKind::LoadMoreEverything);
                         const bool hovered = PtInRect(
                                 &buttonRectApp,
-                                quickNavigationLastMousePoint_) != FALSE ||
+                                contentMousePoint) != FALSE ||
                             IsQuickNavigationKeyboardTarget(
                                 QuickNavigationKeyboardTargetKind::LoadMoreEverything, 0);
                         DrawD2DTextEllipsis(ctx.Get(), _LW("app.nav.load_more_everything"), buttonRectApp,
@@ -1367,7 +1374,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             }
         }
     }
-    ctx->PopAxisAlignedClip();
+    }
 
     RECT track{}, thumb{};
     int maxScroll = 0, contentHeight = 0;

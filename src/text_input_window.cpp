@@ -631,7 +631,12 @@ LRESULT CALLBACK Procedure(HWND window,UINT message,WPARAM wp,LPARAM lp)
     case EM_SETMARGINS:
         if(wp&EC_LEFTMARGIN)state->leftMargin=LOWORD(lp);if(wp&EC_RIGHTMARGIN)state->rightMargin=HIWORD(lp);state->Dirty();return 0;
     case EM_GETRECT:if(lp)*reinterpret_cast<RECT*>(lp)={static_cast<LONG>(state->leftMargin),static_cast<LONG>(state->verticalMargin),state->width-static_cast<LONG>(state->rightMargin),state->height-static_cast<LONG>(state->verticalMargin)};return 0;
-    case EM_SETCUEBANNER:state->cue=lp?reinterpret_cast<const wchar_t*>(lp):L"";state->Dirty();return TRUE;
+    case EM_SETCUEBANNER:
+    {
+        const std::wstring_view cue=lp?reinterpret_cast<const wchar_t*>(lp):L"";
+        if(state->cue!=cue){state->cue=cue;state->Dirty();}
+        return TRUE;
+    }
     case EM_EMPTYUNDOBUFFER:state->history.Clear();return 0;
     case EM_CANUNDO:return !state->password&&state->history.CanUndo();
     case EM_GETPASSWORDCHAR:return state->password?0x2022:0;
@@ -778,7 +783,16 @@ const wchar_t* WindowClass()
     return kClass;
 }
 void SetColors(HWND window,const Colors& colors,float radius)
-{if(const auto state=Get(window)){state->colors=colors;state->explicitColors=true;state->radius=radius;state->UpdateWindowClip();state->Dirty();}}
+{
+    if(const auto state=Get(window))
+    {
+        if(state->explicitColors&&state->colors==colors&&state->radius==radius)return;
+        const bool clipChanged=state->radius!=radius;
+        state->colors=colors;state->explicitColors=true;state->radius=radius;
+        if(clipChanged)state->UpdateWindowClip();
+        state->Dirty();
+    }
+}
 bool IsComposing(HWND window) {const auto state=Get(window);return state&&state->composing;}
 void SetLogicalSingleLine(HWND window,bool value) {if(const auto state=Get(window))state->singleLine=value;}
 void SetEmbeddedPose(HWND window,RECT frame,RECT clip,bool shown,bool interactive)
@@ -845,7 +859,14 @@ void CompleteComposition(HWND window,bool cancel)
     if(const auto context=ImmGetContext(window)){ImmNotifyIME(context,NI_COMPOSITIONSTR,cancel?CPS_CANCEL:CPS_COMPLETE,0);ImmReleaseContext(window,context);}
 }
 void SetCaretHeight(HWND window,float height)
-{if(const auto state=Get(window)){state->caretHeight=std::max(0.f,height);state->Dirty();}}
+{if(const auto state=Get(window)){height=std::max(0.f,height);if(state->caretHeight!=height){state->caretHeight=height;state->Dirty();}}}
 void SetPadding(HWND window,float horizontal,float vertical)
-{if(const auto state=Get(window)){state->leftMargin=state->rightMargin=std::max(0.f,horizontal);state->verticalMargin=std::max(0.f,vertical);state->Dirty();}}
+{
+    if(const auto state=Get(window))
+    {
+        horizontal=std::max(0.f,horizontal);vertical=std::max(0.f,vertical);
+        if(state->leftMargin==horizontal&&state->rightMargin==horizontal&&state->verticalMargin==vertical)return;
+        state->leftMargin=state->rightMargin=horizontal;state->verticalMargin=vertical;state->Dirty();
+    }
+}
 }

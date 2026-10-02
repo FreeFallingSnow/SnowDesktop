@@ -2360,7 +2360,8 @@
     "quickNav.color.emptyText": "Leerer Zustand · Text",
     "quickNav.opening": "Öffnen und Anzeige",
     "quickNav.engines.manage": "Suchmaschinen verwalten",
-    "quickNav.search.shortcutHint": "Präfix + Enter wählt den Typ · Ctrl+E klappt auf",
+    "quickNav.search.shortcutHint": "↑↓ Auswählen · Enter Bestätigen · Ctrl+E Aufklappen",
     "quickNav.search.scopedHint": "Suchbegriff oder Ausdruck eingeben, dann Enter · Backspace kehrt zur Gesamtsuche zurück",
-    "quickNav.search.scopedPlaceholder": "Suchtext eingeben…"
+    "quickNav.search.scopedPlaceholder": "Suchtext eingeben…",
+    "quickNav.search.actions": "Schnellaktionen"
 }

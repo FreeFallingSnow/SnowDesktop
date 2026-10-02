@@ -784,18 +784,26 @@ void TestExtendedSearchAndConfiguration()
         "legacy and new settings default to the expanded panel dimensions");
     const wchar_t* prefixes[] = {L"app",L"file",L"web",L"set",L"run",L"calc"};
     for (size_t i = 0; i < std::size(prefixes); ++i)
-    { const auto scope = query::ResolvePrefix(settings,prefixes[i]); Check(scope && scope->type == static_cast<QuickNavigationSearchType>(i + 1),"each exact prefix resolves to the configured type"); }
+    {
+        const auto scope = query::ResolvePrefix(settings,prefixes[i]);
+        Check(i == 1 ? !scope : scope && scope->type == static_cast<QuickNavigationSearchType>(i + 1),"active prefixes select their type and file stays a composite keyword");
+    }
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"file",false,false) == query::SubmitIntent::ActivateResult,"file never creates a separate search chip");
+    auto legacy = settings; legacy.prefixes[1] = "web";
+    Check(ValidateNavigationSearchConfiguration(legacy),"the retained file-prefix slot does not conflict with active types");
+    legacy.engines.front().prefix = "file";
+    Check(query::ResolvePrefix(legacy,L"file")->engine == "bing","a custom engine may reuse the retired file prefix");
     Check(query::ResolvePrefix(settings,L" APP ")->type == QuickNavigationSearchType::App,"prefix input tolerates surrounding whitespace and case");
     Check(!query::ResolvePrefix(settings,L"app editor") && !query::ResolvePrefix(settings,L"unknown") && !query::ResolvePrefix(settings,L"application"),"ordinary queries never implicitly select a search type");
     const auto google = query::ResolvePrefix(settings,L"google");
     Check(google && google->type == QuickNavigationSearchType::Web && google->engine == "google","engine prefixes retain the chosen engine");
     Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",true,false) == query::SubmitIntent::Composition,"IME confirmation outranks both prefix locking and activation");
     Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,false) == query::SubmitIntent::ConfirmPrefix,"Enter confirms only an exact unscoped prefix");
-    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::File,L"app",false,false) == query::SubmitIntent::ActivateResult && query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,true) == query::SubmitIntent::ActivateResult,"typed queries and open menus never relock their query as a prefix");
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::App,L"app",false,false) == query::SubmitIntent::ActivateResult && query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,true) == query::SubmitIntent::ActivateResult,"typed queries and open menus never relock their query as a prefix");
     Check(query::EncodeQuery(L"中文 &+#/\U0001F600") == "%E4%B8%AD%E6%96%87%20%26%2B%23%2F%F0%9F%98%80","web queries are encoded as UTF-8 bytes including CJK, punctuation and supplementary characters");
     Check(query::SearchUrl(settings.engines.front(),L"a&b") == "https://www.bing.com/search?q=a%26b","engine substitution cannot turn a keyword into extra URL parameters");
     auto invalid = settings; invalid.engines[0].prefix = "app"; Check(!ValidateNavigationSearchConfiguration(invalid),"engine and type prefixes cannot collide");
-    invalid = settings; invalid.prefixes[0] = invalid.prefixes[1]; Check(!ValidateNavigationSearchConfiguration(invalid),"type prefixes must be unique");
+    invalid = settings; invalid.prefixes[0] = invalid.prefixes[2]; Check(!ValidateNavigationSearchConfiguration(invalid),"type prefixes must be unique");
     for (const auto* url : {"file:///a/{query}","https://example.com/search", "http://{query}","https:///search?q={query}","https://example.com/a b?q={query}"})
     { invalid = settings; invalid.engines[0].url = url; Check(!ValidateNavigationSearchConfiguration(invalid),"invalid search templates are rejected before persistence"); }
     settings.defaultCollapsed = true; settings.layout.iconSize = 64; settings.layout.collapsedWidth = 720;
@@ -816,7 +824,7 @@ void TestExtendedSearchAndConfiguration()
     Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && loaded.layout.cornerRadius == 16 && loaded.layout.iconSize == 48,
         "explicit radii in the current layout version survive persistence");
     DeleteFileW(path.c_str());
-    invalid = settings; invalid.prefixes[0] = "file"; invalid.layout.iconSize = 999; NormalizeNavigationSettings(invalid);
+    invalid = settings; invalid.prefixes[0] = "web"; invalid.layout.iconSize = 999; NormalizeNavigationSettings(invalid);
     Check(invalid.prefixes == NavigationSettings{}.prefixes && invalid.layout.iconSize == 96 && invalid.colors == settings.colors,"invalid search config is reset without losing independent appearance overrides");
     const auto command = query::ParseCommand(L"\"C:\\Program Files\\Example\\app.exe\" --flag \"two words\"");
     Check(command && command->target == L"C:\\Program Files\\Example\\app.exe" && command->parameters == L"--flag \"two words\"","Run preserves quoted full paths and exact argument quoting");

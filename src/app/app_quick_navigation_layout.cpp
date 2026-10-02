@@ -50,17 +50,17 @@ RECT DesktopApp::GetQuickNavigationRect() const
     const int base = QuickNavScale(layout.searchHeight);
     int height = QuickNavScale(layout.maximumHeight);
     if (quickNavigationMenu_ == QuickNavigationMenu::Types)
-        height = base + QuickNavScale(12 + layout.padding + 7 * layout.resultRowHeight);
+        height = base + QuickNavScale(12 + layout.padding + static_cast<int>(kQuickNavigationSearchTypes.size()) * layout.resultRowHeight);
     else if (quickNavigationCollapsed_)
     {
         height = base + QuickNavScale(48);
-        if (!GetQuickNavigationEffectiveSearchText().empty())
+        const auto rows = BuildQuickNavigationListRows();
+        if (!rows.empty())
         {
-            const auto rows = BuildQuickNavigationListRows();
             int contentHeight = 0;
             for (const auto& row : rows)
-                contentHeight += QuickNavScale(row.kind == QuickNavigationListRow::Kind::Header ? 28 : layout.resultRowHeight);
-            height = base + QuickNavScale(12 + layout.padding) + std::min(contentHeight,
+                contentHeight += QuickNavigationListRowHeight(row);
+            height = base + QuickNavScale(12 + layout.padding + (GetQuickNavigationEffectiveSearchText().empty() ? 32 : 0)) + std::min(contentHeight,
                 QuickNavScale(layout.visibleRows * layout.resultRowHeight));
         }
     }
@@ -182,8 +182,9 @@ RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
     const RECT search = GetQuickNavigationSearchRect(overlay);
     const bool browsing = !UseQuickNavigationList() && GetQuickNavigationEffectiveSearchText().empty() && quickNavigationMenu_ != QuickNavigationMenu::Types;
     const int padding = QuickNavScale(navigationSettings_.layout.padding);
+    const bool idleHints = quickNavigationCollapsed_ && GetQuickNavigationEffectiveSearchText().empty() && quickNavigationMenu_ == QuickNavigationMenu::None;
     return MakeRect(search.left + padding, search.bottom + QuickNavScale(browsing ? 56 : 12),
-        search.right - padding, overlay.bottom - padding);
+        search.right - std::max(padding, QuickNavScale(12)), overlay.bottom - padding - QuickNavScale(idleHints ? 32 : 0));
 }
 
 int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& /*overlay*/) const
@@ -1292,10 +1293,10 @@ int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay,
     if (UseQuickNavigationList() || quickNavigationMenu_ == QuickNavigationMenu::Types)
     {
         if (quickNavigationMenu_ == QuickNavigationMenu::Types)
-            return QuickNavScale(7 * navigationSettings_.layout.resultRowHeight);
+            return QuickNavScale(static_cast<int>(kQuickNavigationSearchTypes.size()) * navigationSettings_.layout.resultRowHeight);
         int height = 0;
         for (const auto& row : BuildQuickNavigationListRows())
-            height += QuickNavScale(row.kind == QuickNavigationListRow::Kind::Header ? 28 : navigationSettings_.layout.resultRowHeight);
+            height += QuickNavigationListRowHeight(row);
         return height;
     }
     RECT content = GetQuickNavigationContentRect(overlay);
@@ -1391,8 +1392,8 @@ bool DesktopApp::GetQuickNavigationScrollbarGeometry(
         return false;
     }
     const int trackW = QuickNavScale(5);
-    outTrack = MakeRect(content.right - trackW - QuickNavScale(2), content.top + QuickNavScale(4),
-        content.right - QuickNavScale(2), content.bottom - QuickNavScale(4));
+    outTrack = MakeRect(overlay.right - trackW - QuickNavScale(4), content.top + QuickNavScale(4),
+        overlay.right - QuickNavScale(4), content.bottom - QuickNavScale(4));
     const int trackH = std::max<LONG>(1, outTrack.bottom - outTrack.top);
     const int thumbH = std::clamp(visibleHeight * trackH / outContentHeight, QuickNavScale(20), trackH);
     outMaxScroll = std::max(1, outContentHeight - visibleHeight);

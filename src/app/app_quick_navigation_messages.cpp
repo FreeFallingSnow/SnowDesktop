@@ -142,19 +142,15 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
 
         {
             RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
-            const int trackW = QuickNavScale(5);
-            RECT scrollCol = MakeRect(content.right - trackW - QuickNavScale(4), content.top,
-                content.right, content.bottom);
+            RECT track{}, thumb{};
+            int maxScroll = 0, contentHeight = 0;
             if (!quickNavigationInitialJumpOpen_ &&
-                PtInRect(&scrollCol, appPoint))
+                GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+                    track, thumb, maxScroll, contentHeight) && PtInRect(&track, appPoint))
             {
                 if (renameController_.BlocksScrolling())
                     return 0;
 
-                RECT track{}, thumb{};
-                int maxScroll = 0, contentHeight = 0;
-                if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
-                    track, thumb, maxScroll, contentHeight))
                 {
                     if (PtInRect(&thumb, appPoint))
                     {
@@ -333,25 +329,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         bool wasHovered = quickNavScrollbarHovered_;
         quickNavScrollbarHovered_ = false;
         {
-            RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
-            const int trackW = QuickNavScale(5);
-            RECT scrollCol = MakeRect(content.right - trackW - QuickNavScale(4), content.top,
-                content.right, content.bottom);
+            RECT track{}, thumb{};
+            int maxScroll = 0, contentHeight = 0;
             if (!quickNavigationInitialJumpOpen_ &&
-                PtInRect(&scrollCol, appPoint))
-            {
-                if (GetQuickNavigationContentHeight(quickNavigationRect_) >
-                    static_cast<int>(content.bottom - content.top))
-                {
-                    RECT track{}, thumb{};
-                    int ms = 0, ch = 0;
-                    if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
-                        track, thumb, ms, ch) && PtInRect(&thumb, appPoint))
-                    {
-                        quickNavScrollbarHovered_ = true;
-                    }
-                }
-            }
+                GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+                    track, thumb, maxScroll, contentHeight))
+                quickNavScrollbarHovered_ = PtInRect(&thumb, appPoint) != FALSE;
         }
         const QuickNavigationPointerTarget pointerTarget =
             HitTestQuickNavigationPointerTarget(
@@ -499,7 +482,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 IsWindowOwnedBy(
                     activatedWindow,
                     quickNavigationHwnd_) ||
-                IsCurrentProcessWindow(activatedWindow);
+                (IsCurrentProcessWindow(activatedWindow) &&
+                    !IsSettingsApplicationWindow(activatedWindow));
             if (!snowdesktop::quick_navigation_rules::
                     ShouldCloseOnDeactivate(
                         retainedInteraction))
@@ -586,7 +570,8 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             IsWindowOwnedBy(
                 activatedWindow,
                 app->quickNavigationHwnd_) ||
-            IsCurrentProcessWindow(activatedWindow);
+            (IsCurrentProcessWindow(activatedWindow) &&
+                !app->IsSettingsApplicationWindow(activatedWindow));
         if (snowdesktop::quick_navigation_rules::
                 ShouldCloseOnDeactivate(
                     retainedInteraction))

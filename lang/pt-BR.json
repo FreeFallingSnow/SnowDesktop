@@ -2360,7 +2360,8 @@
     "quickNav.color.emptyText": "Estado vazio · Texto",
     "quickNav.opening": "Abertura e exibição",
     "quickNav.engines.manage": "Gerenciar mecanismos de pesquisa",
-    "quickNav.search.shortcutHint": "Prefixo + Enter para escolher o tipo · Ctrl+E para expandir",
+    "quickNav.search.shortcutHint": "↑↓ Selecionar · Enter Confirmar · Ctrl+E Expandir",
     "quickNav.search.scopedHint": "Digite uma consulta ou expressão e pressione Enter · Backspace volta à busca geral",
-    "quickNav.search.scopedPlaceholder": "Digite uma consulta…"
+    "quickNav.search.scopedPlaceholder": "Digite uma consulta…",
+    "quickNav.search.actions": "Ações rápidas"
 }

@@ -95,7 +95,7 @@ void DesktopApp::ToggleQuickNavigationCollapsed()
 void DesktopApp::SetQuickNavigationSearchScope(QuickNavigationSearchType type, std::string engine)
 {
     if (IsLuaLogicalSlotPickerOpen()) return;
-    quickNavigationSearchType_ = type;
+    quickNavigationSearchType_ = type == QuickNavigationSearchType::File ? QuickNavigationSearchType::All : type;
     quickNavigationSearchEngine_ = std::move(engine);
     quickNavigationMenu_ = QuickNavigationMenu::None;
     quickNavigationListSelection_ = -1;
@@ -121,7 +121,18 @@ std::vector<DesktopApp::QuickNavigationListRow> DesktopApp::BuildQuickNavigation
     namespace query = snowdesktop::quick_navigation_query;
     std::vector<QuickNavigationListRow> rows;
     const auto text = query::Trim(GetQuickNavigationEffectiveSearchText());
-    if (text.empty()) return rows;
+    if (text.empty())
+    {
+        if (quickNavigationCollapsed_ && quickNavigationSearchType_ == QuickNavigationSearchType::All)
+        {
+            rows.push_back({Kind::Header, 0, _LW("quickNav.search.actions"), {}, {}, false});
+            for (const auto type : kQuickNavigationSearchTypes)
+                if (type != QuickNavigationSearchType::All)
+                    rows.push_back({Kind::Scope, static_cast<size_t>(type), ScopeLabel(type),
+                        Utf8ToWide(navigationSettings_.prefixes[static_cast<size_t>(type) - 1]), {}, true});
+        }
+        return rows;
+    }
     const auto header = [&](std::wstring title) { rows.push_back({Kind::Header, 0, std::move(title), {}, {}, false}); };
     const auto notice = [&](std::wstring title) { rows.push_back({Kind::Notice, 0, std::move(title), {}, {}, false}); };
     if (quickNavigationSearchType_ == QuickNavigationSearchType::Settings)
@@ -198,6 +209,11 @@ std::vector<DesktopApp::QuickNavigationListRow> DesktopApp::BuildQuickNavigation
     if (!quickNavigationActionNotice_.empty()) notice(quickNavigationActionNotice_);
     return rows;
 }
+int DesktopApp::QuickNavigationListRowHeight(const QuickNavigationListRow& row) const
+{
+    return QuickNavScale(row.kind == QuickNavigationListRow::Kind::Header ? 28 :
+        row.kind == QuickNavigationListRow::Kind::Scope ? 48 : navigationSettings_.layout.resultRowHeight);
+}
 RECT DesktopApp::GetQuickNavigationListRowRect(size_t index) const
 {
     const RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
@@ -216,7 +232,7 @@ RECT DesktopApp::GetQuickNavigationListRowRect(size_t index) const
     const auto rows = BuildQuickNavigationListRows();
     for (size_t i = 0; i < rows.size(); ++i)
     {
-        const int height = QuickNavScale(rows[i].kind == QuickNavigationListRow::Kind::Header ? 28 : navigationSettings_.layout.resultRowHeight);
+        const int height = QuickNavigationListRowHeight(rows[i]);
         if (i == index) return MakeRect(content.left, top, content.right, top + height);
         top += height;
     }
@@ -228,13 +244,18 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
     const auto theme = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_);
     const auto rows = BuildQuickNavigationListRows();
     const auto model = BuildQuickNavigationContentModel();
+    const RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
+    int top = content.top - quickNavigationScrollOffset_;
     for (size_t i = 0; i < rows.size(); ++i)
     {
         const auto& row = rows[i];
-        RECT bounds = GetQuickNavigationListRowRect(i);
-        if (bounds.bottom <= quickNavigationRect_.top || bounds.top >= quickNavigationRect_.bottom) continue;
-        const bool selected = quickNavigationListSelection_ == static_cast<int>(i);
-        const bool hovered = row.enabled && PtInRect(&bounds, quickNavigationLastMousePoint_);
+        RECT bounds = MakeRect(content.left, top, content.right, top + QuickNavigationListRowHeight(row));
+        top = bounds.bottom;
+        if (bounds.bottom <= content.top || bounds.top >= content.bottom) continue;
+        const bool selected = quickNavigationListSelection_ == static_cast<int>(i) ||
+            (quickNavigationListSelection_ < 0 && row.kind == Kind::Scope && i == 1);
+        const bool hovered = row.enabled && PtInRect(&content, quickNavigationLastMousePoint_) &&
+            PtInRect(&bounds, quickNavigationLastMousePoint_);
         if (row.kind == Kind::Header)
         {
             bounds.left += QuickNavScale(10);
@@ -270,11 +291,28 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
                 else DrawQuickNavSysIcon(context,item.sysIconIndex,icon);
             }
         }
+        else if (row.kind == Kind::Scope)
+            DrawQuickNavigationCenteredText(context, kScopeGlyphs[row.index], icon, quickNavFluentTextFormat_.Get(),
+                ToD2DColor(theme.typeText), static_cast<float>(QuickNavScale(24)));
         else if (row.kind != Kind::Notice)
             DrawD2DText(context, kScopeGlyphs[static_cast<size_t>(quickNavigationSearchType_)], icon, quickNavFluentTextFormat_.Get(), ToD2DColor(theme.typeText));
         RECT title = bounds;
         title.left = row.kind == Kind::Notice ? bounds.left + QuickNavScale(12) : icon.right + QuickNavScale(12);
         title.right -= QuickNavScale(12);
+        if (row.kind == Kind::Scope)
+        {
+            const int width = QuickNavScale(std::clamp(static_cast<int>(row.detail.size()) * 7 + 16, 40, 160));
+            const int height = QuickNavScale(24);
+            const RECT prefix = MakeRect(title.right - width, (bounds.top + bounds.bottom - height) / 2,
+                title.right, (bounds.top + bounds.bottom + height) / 2);
+            DrawD2DRoundedRectangle(context, prefix, static_cast<float>(QuickNavScale(4)),
+                ToD2DColor(theme.searchBg, .3f), ToD2DColor(theme.searchBorder, .32f));
+            RECT prefixText = prefix; prefixText.left += QuickNavScale(6); prefixText.right -= QuickNavScale(6);
+            DrawQuickNavigationCenteredText(context, row.detail, prefixText, quickNavPathTextFormat_.Get(), ToD2DColor(theme.appTypeText));
+            title.right = prefix.left - QuickNavScale(12);
+            DrawQuickNavigationCenteredText(context, row.title, title, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? theme.selectedText : theme.appNameText));
+            continue;
+        }
         if (!row.detail.empty()) title.bottom = bounds.top + (bounds.bottom - bounds.top) / 2 + QuickNavScale(2);
         DrawD2DTextEllipsis(context, row.title, title, quickNavItemTextFormat_.Get(), ToD2DColor(row.enabled ? (selected ? theme.selectedText : theme.appNameText) : theme.emptyText));
         if (!row.detail.empty())
@@ -283,6 +321,32 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             DrawD2DTextEllipsis(context, row.detail, detail, quickNavPathTextFormat_.Get(), ToD2DColor(theme.appTypeText));
         }
     }
+}
+void DesktopApp::DrawQuickNavigationCenteredText(ID2D1DeviceContext* context, const std::wstring& text,
+    RECT bounds, IDWriteTextFormat* format, const D2D1_COLOR_F& color, float fontSize)
+{
+    if (!context || !dwriteFactory_ || !format || text.empty() || IsRectEmpty(&bounds)) return;
+    ComPtr<IDWriteTextLayout> layout;
+    const float width = static_cast<float>(bounds.right - bounds.left);
+    const float height = static_cast<float>(bounds.bottom - bounds.top);
+    if (FAILED(dwriteFactory_->CreateTextLayout(text.data(), static_cast<UINT32>(text.size()),
+            format, width, height, &layout))) return;
+    if (fontSize > 0.f) layout->SetFontSize(fontSize, {0, static_cast<UINT32>(text.size())});
+    else
+    {
+        DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        ComPtr<IDWriteInlineObject> sign;
+        if (SUCCEEDED(dwriteFactory_->CreateEllipsisTrimmingSign(format, &sign))) layout->SetTrimming(&trimming, sign.Get());
+    }
+    layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    DWRITE_OVERHANG_METRICS ink{};
+    const float offsetY = SUCCEEDED(layout->GetOverhangMetrics(&ink)) ? (ink.top - ink.bottom) / 2.f : 0.f;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(context->CreateSolidColorBrush(color, &brush))) return;
+    context->PushAxisAlignedClip(ToD2DRect(bounds), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    context->DrawTextLayout(D2D1::Point2F(static_cast<float>(bounds.left),
+        static_cast<float>(bounds.top) + offsetY), layout.Get(), brush.Get());
+    context->PopAxisAlignedClip();
 }
 void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
 {
@@ -297,38 +361,30 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
             ToD2DColor(chip ? theme.typeFill : theme.tabHoverFill), ToD2DColor(theme.searchBorder, 0.f));
         const wchar_t* glyph = button == 0 ? kScopeGlyphs[static_cast<size_t>(quickNavigationSearchType_)] : button == 1 ? L"\uF6AA" : (quickNavigationCollapsed_ ? L"\uF2A4" : L"\uF2B7");
         RECT symbol = bounds; if (chip) symbol.right = symbol.left + QuickNavScale(28);
-        DrawD2DText(context, glyph, symbol, format, ToD2DColor(chip ? theme.typeText : theme.searchPlaceholder));
+        DrawQuickNavigationCenteredText(context, glyph, symbol, format,
+            ToD2DColor(chip ? theme.typeText : theme.searchPlaceholder),
+            static_cast<float>(QuickNavScale(button == 2 ? 16 : chip ? 18 : 20)));
         if (chip)
         {
             RECT label = bounds; label.left += QuickNavScale(30); label.right -= QuickNavScale(24);
-            DrawD2DTextEllipsis(context, QuickNavigationTypeLabel(), label, quickNavPathTextFormat_.Get(), ToD2DColor(theme.typeText));
+            DrawQuickNavigationCenteredText(context, QuickNavigationTypeLabel(), label, quickNavPathTextFormat_.Get(), ToD2DColor(theme.typeText));
             RECT dismiss = bounds; dismiss.left = dismiss.right - QuickNavScale(24);
-            DrawD2DText(context, L"\uF36A", dismiss, format, ToD2DColor(theme.typeText));
+            DrawQuickNavigationCenteredText(context, L"\uF36A", dismiss, format, ToD2DColor(theme.typeText), static_cast<float>(QuickNavScale(14)));
         }
     }
     if (quickNavigationMenu_ == QuickNavigationMenu::None)
     {
         if (quickNavigationCollapsed_ && GetQuickNavigationEffectiveSearchText().empty())
         {
-            const RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
             const int padding = QuickNavScale(navigationSettings_.layout.padding);
-            RECT hint = MakeRect(search.left + padding, search.bottom + QuickNavScale(4), search.right - padding, search.bottom + QuickNavScale(24));
-            std::wstring examples;
-            if (quickNavigationSearchType_ == QuickNavigationSearchType::All)
-                for (size_t i = 0; i < navigationSettings_.prefixes.size(); ++i)
-                {
-                    if (!examples.empty()) examples += L"   ·   ";
-                    examples += Utf8ToWide(navigationSettings_.prefixes[i]) + L" " + ScopeLabel(static_cast<QuickNavigationSearchType>(i + 1));
-                }
-            else examples = QuickNavigationTypeLabel();
-            DrawD2DTextEllipsis(context, examples, hint, quickNavPathTextFormat_.Get(), ToD2DColor(theme.appTypeText));
-            hint.top += QuickNavScale(20); hint.bottom += QuickNavScale(20);
+            RECT hint = MakeRect(quickNavigationRect_.left + padding, quickNavigationRect_.bottom - QuickNavScale(32),
+                quickNavigationRect_.right - padding, quickNavigationRect_.bottom - QuickNavScale(8));
             DrawD2DTextEllipsis(context, _LW(quickNavigationSearchType_ == QuickNavigationSearchType::All ? "quickNav.search.shortcutHint" : "quickNav.search.scopedHint"),
                 hint, quickNavPathTextFormat_.Get(), ToD2DColor(theme.appTypeText));
         }
         return;
     }
-    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Types ? 7 : 3;
+    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Types ? static_cast<int>(kQuickNavigationSearchTypes.size()) : 3;
     const RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
     context->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (quickNavigationMenu_ == QuickNavigationMenu::Views)
@@ -342,21 +398,23 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
     {
         RECT bounds = GetQuickNavigationListRowRect(i);
         const bool selected = quickNavigationMenuSelection_ == static_cast<int>(i);
-        const bool hover = PtInRect(&bounds, quickNavigationLastMousePoint_) != FALSE;
+        const bool hover = PtInRect(&content, quickNavigationLastMousePoint_) &&
+            PtInRect(&bounds, quickNavigationLastMousePoint_);
         if (selected || hover) DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
             ToD2DColor(selected ? theme.selectedFill : theme.appRowHoverFill), ToD2DColor(theme.selectedBorder, selected ? 1.f : 0.f));
+        const auto type = kQuickNavigationSearchTypes[i];
         RECT icon = bounds; icon.right = icon.left + QuickNavScale(44);
         if (quickNavigationMenu_ == QuickNavigationMenu::Types)
-            DrawD2DText(context, kScopeGlyphs[i], icon, format, ToD2DColor(theme.typeText));
+            DrawD2DText(context, kScopeGlyphs[static_cast<size_t>(type)], icon, format, ToD2DColor(theme.typeText));
         RECT label = bounds;
         label.left = quickNavigationMenu_ == QuickNavigationMenu::Types ? icon.right + QuickNavScale(8) : bounds.left + QuickNavScale(10);
         label.right -= QuickNavScale(quickNavigationMenu_ == QuickNavigationMenu::Types ? 90 : 10);
         constexpr const char* views[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"};
-        DrawD2DTextEllipsis(context, quickNavigationMenu_ == QuickNavigationMenu::Types ? ScopeLabel(static_cast<QuickNavigationSearchType>(i)) : _LW(views[i]), label, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? theme.selectedText : theme.appNameText));
+        DrawD2DTextEllipsis(context, quickNavigationMenu_ == QuickNavigationMenu::Types ? ScopeLabel(type) : _LW(views[i]), label, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? theme.selectedText : theme.appNameText));
         if (quickNavigationMenu_ == QuickNavigationMenu::Types && i > 0)
         {
             RECT prefix = bounds; prefix.left = prefix.right - QuickNavScale(80); prefix.right -= QuickNavScale(12);
-            DrawD2DText(context, Utf8ToWide(navigationSettings_.prefixes[i - 1]), prefix, quickNavPathTextFormat_.Get(), ToD2DColor(theme.appTypeText));
+            DrawD2DText(context, Utf8ToWide(navigationSettings_.prefixes[static_cast<size_t>(type) - 1]), prefix, quickNavPathTextFormat_.Get(), ToD2DColor(theme.appTypeText));
         }
     }
     context->PopAxisAlignedClip();
@@ -373,7 +431,7 @@ bool DesktopApp::HandleQuickNavigationToolbarClick(POINT point)
         else
         {
             quickNavigationMenu_ = quickNavigationMenu_ == QuickNavigationMenu::Types ? QuickNavigationMenu::None : QuickNavigationMenu::Types;
-            quickNavigationMenuSelection_ = static_cast<int>(quickNavigationSearchType_);
+            quickNavigationMenuSelection_ = static_cast<int>(std::distance(kQuickNavigationSearchTypes.begin(), std::find(kQuickNavigationSearchTypes.begin(), kQuickNavigationSearchTypes.end(), quickNavigationSearchType_)));
             quickNavigationScrollOffset_ = 0;
             PositionQuickNavigationWindow();
             InvalidateQuickNavigationWindow();
@@ -388,14 +446,14 @@ bool DesktopApp::HandleQuickNavigationListClick(POINT point, bool contextMenu, P
     const RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
     if (!PtInRect(&content, point)) return true;
     const auto rows = BuildQuickNavigationListRows();
-    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Types ? 7 : quickNavigationMenu_ == QuickNavigationMenu::Views ? 3 : rows.size();
+    const size_t count = quickNavigationMenu_ == QuickNavigationMenu::Types ? kQuickNavigationSearchTypes.size() : quickNavigationMenu_ == QuickNavigationMenu::Views ? 3 : rows.size();
     for (size_t i = 0; i < count; ++i)
     {
         const RECT bounds = GetQuickNavigationListRowRect(i);
         if (!PtInRect(&bounds, point)) continue;
         if (quickNavigationMenu_ != QuickNavigationMenu::None)
         {
-            if (quickNavigationMenu_ == QuickNavigationMenu::Types) SetQuickNavigationSearchScope(static_cast<QuickNavigationSearchType>(i));
+            if (quickNavigationMenu_ == QuickNavigationMenu::Types) SetQuickNavigationSearchScope(kQuickNavigationSearchTypes[i]);
             else { quickNavigationMenu_ = QuickNavigationMenu::None; SetQuickNavigationDesktopViewMode(static_cast<QuickNavigationDesktopViewMode>(i)); PositionQuickNavigationWindow(); }
         }
         else if (!contextMenu) { quickNavigationListSelection_ = static_cast<int>(i); ActivateQuickNavigationListRow(i); }
@@ -421,7 +479,9 @@ bool DesktopApp::ActivateQuickNavigationListRow(size_t index)
     const auto rows = BuildQuickNavigationListRows();
     if (index >= rows.size() || !rows[index].enabled) return false;
     const auto row = rows[index];
-    if (row.kind == Kind::Calculator)
+    if (row.kind == Kind::Scope)
+        SetQuickNavigationSearchScope(static_cast<QuickNavigationSearchType>(row.index));
+    else if (row.kind == Kind::Calculator)
     {
         quickNavigationActionNotice_ = _LW(CopyTextToClipboard(row.value) ? "quickNav.copied" : "quickNav.copyFailed");
         if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
@@ -484,10 +544,10 @@ bool DesktopApp::HandleQuickNavigationSearchKey(WPARAM key)
     if (key != VK_UP && key != VK_DOWN && key != VK_RETURN) return false;
     if (quickNavigationMenu_ != QuickNavigationMenu::None)
     {
-        const int count = quickNavigationMenu_ == QuickNavigationMenu::Types ? 7 : 3;
+        const int count = quickNavigationMenu_ == QuickNavigationMenu::Types ? static_cast<int>(kQuickNavigationSearchTypes.size()) : 3;
         if (key == VK_RETURN)
         {
-            if (quickNavigationMenu_ == QuickNavigationMenu::Types) SetQuickNavigationSearchScope(static_cast<QuickNavigationSearchType>(quickNavigationMenuSelection_));
+            if (quickNavigationMenu_ == QuickNavigationMenu::Types) SetQuickNavigationSearchScope(kQuickNavigationSearchTypes[static_cast<size_t>(quickNavigationMenuSelection_)]);
             else { quickNavigationMenu_ = QuickNavigationMenu::None; SetQuickNavigationDesktopViewMode(static_cast<QuickNavigationDesktopViewMode>(quickNavigationMenuSelection_)); PositionQuickNavigationWindow(); }
         }
         else quickNavigationMenuSelection_ = (quickNavigationMenuSelection_ + (key == VK_DOWN ? 1 : count - 1)) % count;
@@ -504,6 +564,7 @@ bool DesktopApp::HandleQuickNavigationSearchKey(WPARAM key)
     if (rows.empty()) return true;
     const int count = static_cast<int>(rows.size());
     int next = quickNavigationListSelection_;
+    if (next < 0 && rows.size() > 1 && rows[1].kind == QuickNavigationListRow::Kind::Scope) next = 1;
     for (int attempts = 0; attempts < count; ++attempts)
     {
         next = key == VK_DOWN ? (next + 1) % count : (next <= 0 ? count - 1 : next - 1);

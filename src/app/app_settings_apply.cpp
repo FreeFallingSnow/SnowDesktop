@@ -1728,6 +1728,7 @@ void DesktopApp::TryShowPendingSettingsWindow()
 
     const snowdesktop::SettingsRoute route =
         settingsWindowOpenRequest_.Route();
+    CloseQuickNavigation(false);
     const bool shown = settingsWindow_ && settingsWindow_->Open(route);
     if (shown)
     {

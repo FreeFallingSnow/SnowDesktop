@@ -32,6 +32,7 @@ public:
         view_.SelectionChanged([this](auto&&, auto&&) {if (!sync_ && view_.SelectedIndex() >= 0) commit_([mode = static_cast<QuickNavigationDesktopViewMode>(view_.SelectedIndex())](auto& value) {value.desktopViewMode = mode;});});
         AddRow(opening, "quickNav.view", view_, [](auto& value) {value.desktopViewMode = QuickNavigationDesktopViewMode::Tile;});
         auto layout = Group("quickNav.layout", [this] {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
+        focus_.emplace("quickNav.layout.searchRadius", layout);
         AddNumber(layout, "expandedWidth", &QuickNavigationLayout::expandedWidth, 400, 1800);
         AddNumber(layout, "collapsedWidth", &QuickNavigationLayout::collapsedWidth, 360, 1400);
         AddNumber(layout, "maximumHeight", &QuickNavigationLayout::maximumHeight, 220, 1400);
@@ -47,13 +48,13 @@ public:
         AddNumber(layout, "resultRowHeight", &QuickNavigationLayout::resultRowHeight, 40, 96);
         AddNumber(layout, "labelLines", &QuickNavigationLayout::labelLines, 1, 3);
         AddNumber(layout, "cornerRadius", &QuickNavigationLayout::cornerRadius, 0, 32);
-        AddNumber(layout, "searchRadius", &QuickNavigationLayout::searchRadius, 0, 24);
         AddNumber(layout, "tabRadius", &QuickNavigationLayout::tabRadius, 0, 20);
         AddNumber(layout, "itemRadius", &QuickNavigationLayout::itemRadius, 0, 24);
         auto prefixes = Section("quickNav.prefixes", "quickNav.prefixes.hint", [this] {commit_([](auto& value) {value.prefixes = NavigationSettings{}.prefixes;});});
         constexpr const char* typeKeys[] = {"quickNav.type.app", "quickNav.type.file", "quickNav.type.web", "quickNav.type.settings", "quickNav.type.run", "quickNav.type.calculator"};
         for (size_t i = 0; i < prefixes_.size(); ++i)
         {
+            if (i == static_cast<size_t>(QuickNavigationSearchType::File) - 1) continue;
             prefixes_[i].MaxLength(32);
             prefixes_[i].LostFocus([this, i](auto&&, auto&&) {
                 if (sync_) return;
@@ -171,9 +172,11 @@ private:
     template<class Control> void AddRow(Panel panel, std::string key, Control control, Edit reset)
     {
         auto row = std::make_unique<presenter_controls::SettingRow>();
+        control.VerticalAlignment(winrt::Microsoft::UI::Xaml::VerticalAlignment::Center);
+        const bool compact = control.template try_as<winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch>() != nullptr;
+        control.HorizontalAlignment(compact ? winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right : winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
         row->Initialize(control); row->SetText(L(key));
-        if (control.template try_as<winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch>())
-            row->SetControlAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
+        if (compact) row->SetControlAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
         presenter_controls::AddRestoreDefaultAction(*row, L("app.settings.restore_default"), [this, reset] {commit_(reset);});
         panel.Children().Append(row->root); focus_.emplace(key, control);
         rows_.emplace_back(key, row.get()); rowStorage_.push_back(std::move(row));
@@ -235,6 +238,8 @@ private:
             for (int field = 0; field < 3; ++field)
             {
                 winrt::Microsoft::UI::Xaml::Controls::TextBox input;
+                input.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+                input.VerticalAlignment(winrt::Microsoft::UI::Xaml::VerticalAlignment::Center);
                 input.Text(winrt::to_hstring(field == 0 ? engine.name : field == 1 ? engine.prefix : engine.url));
                 input.MaxLength(field == 2 ? 4096 : field == 0 ? 128 : 32);
                 input.LostFocus([this,id,field,input](auto&&, auto&&) {
@@ -259,6 +264,7 @@ private:
             expander.Content(card); expander.IsExpanded(expanded[id] || expandedEngine_ == id);
             engineExpanders_.emplace_back(id,expander); engineRows_.Children().Append(expander);
         }
+        expandedEngine_.clear();
     }
     Localize localize_; std::function<void(Edit)> commit_; winrt::Microsoft::UI::Xaml::Style cardStyle_{nullptr}; NavigationSettings values_;
     bool sync_ = false, hasValues_ = false, light_ = false;

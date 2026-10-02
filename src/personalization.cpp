@@ -282,8 +282,8 @@ PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId)
     {
     case kAppearancePresetLight:
         s = PersonalizationSettings::LightPreset();
-        s.widgetBgR = 0.970f; s.widgetBgG = 0.970f; s.widgetBgB = 0.975f;
-        s.widgetBorderR = 0.706f; s.widgetBorderG = 0.745f; s.widgetBorderB = 0.784f;
+        s.widgetBgR = 0.970f; s.widgetBgG = 0.970f; s.widgetBgB = 0.965f;
+        s.widgetBorderR = 0.710f; s.widgetBorderG = 0.705f; s.widgetBorderB = 0.695f;
         s.widgetAlpha = 1.0f; s.widgetBorderAlpha = 0.34f;
         s.glassEnabled = false;
         break;
@@ -296,9 +296,9 @@ PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId)
         break;
     case kAppearancePresetAcrylicLight:
         s = PersonalizationSettings::AcrylicLightPreset();
-        s.widgetBgR = 0.955f; s.widgetBgG = 0.960f; s.widgetBgB = 0.970f;
-        s.widgetBorderR = 0.72f; s.widgetBorderG = 0.77f; s.widgetBorderB = 0.86f;
-        s.widgetAlpha = 0.86f; s.widgetBorderAlpha = 0.34f;
+        s.widgetBgR = 0.970f; s.widgetBgG = 0.970f; s.widgetBgB = 0.965f;
+        s.widgetBorderR = 0.71f; s.widgetBorderG = 0.705f; s.widgetBorderB = 0.695f;
+        s.widgetAlpha = 0.94f; s.widgetBorderAlpha = 0.34f;
         s.glassBlurRadius = 28.0f;
         break;
     case kAppearancePresetCustom:

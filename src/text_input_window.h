@@ -19,6 +19,7 @@ struct Colors
     COLORREF accent = RGB(0,95,184);
     COLORREF selectionText = RGB(255,255,255);
     COLORREF secondary = RGB(100,105,115);
+    bool operator==(const Colors&) const = default;
 };
 void SetColors(HWND, const Colors&, float radius = 6.f);
 bool IsComposing(HWND);

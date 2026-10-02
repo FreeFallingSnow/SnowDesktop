@@ -18,6 +18,7 @@
 #pragma once
 #include "../text_input_window.h"
 #include "../layout_scroll_save.h"
+#include "../scroll_content_clip.h"
 #include "../operation_feedback.h"
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
@@ -1654,16 +1655,19 @@ private:
     void RefreshQuickNavigationTypedResults();
     struct QuickNavigationListRow
     {
-        enum class Kind { Header, Item, App, Everything, ExpandApps, LoadMore, Settings, Web, Run, Calculator, Notice };
+        enum class Kind { Header, Item, App, Everything, ExpandApps, LoadMore, Settings, Web, Run, Calculator, Notice, Scope };
         Kind kind = Kind::Notice;
         size_t index = 0;
         std::wstring title, detail, value;
         bool enabled = true;
     };
     std::vector<QuickNavigationListRow> BuildQuickNavigationListRows() const;
+    int QuickNavigationListRowHeight(const QuickNavigationListRow& row) const;
     RECT GetQuickNavigationListRowRect(size_t index) const;
     void DrawQuickNavigationList(ID2D1DeviceContext* context);
     void DrawQuickNavigationMenus(ID2D1DeviceContext* context);
+    void DrawQuickNavigationCenteredText(ID2D1DeviceContext* context, const std::wstring& text,
+        RECT bounds, IDWriteTextFormat* format, const D2D1_COLOR_F& color, float fontSize = 0.f);
     bool HandleQuickNavigationListClick(POINT point, bool contextMenu = false, POINT screenPoint = {});
     bool ActivateQuickNavigationListRow(size_t index);
     /** @brief 确保快速导航搜索编辑框已创建。 */
@@ -4027,6 +4031,7 @@ private:
     ComPtr<IDWriteTextFormat> quickNavSearchTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavFluentTextFormat_;
+    snowdesktop::ScrollContentFadeCache quickNavScrollFadeCache_;
     /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按索引和源尺寸）。 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
     /** @brief 应用图标快照的 D2D 缓存；键为 AppsFolder 稳定解析身份。 */
