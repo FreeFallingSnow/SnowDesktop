@@ -1,0 +1,52 @@
+# 晴空天气 / Sky Weather
+
+独立社区组件，UUID `f05e5ddc-1b1c-48ce-a797-4697a1cf0507`。默认 4×3，支持 2×2 紧凑尺寸和 6×2 横向布局。
+卡片显示所选地点的当前气温、体感温度与五日高低温。摄氏/华氏、刷新间隔与天空背景可在组件设置中调整。
+
+点击城市名打开选择面板：支持全球城市搜索、行政区与国家区分、八个预置推荐城市和最近六个选择。
+推荐城市是快捷入口，不根据用户习惯统计；最近选择才来自该实例的实际选择。
+面板使用浅色或深色内部表面、两列推荐城市、独立定位卡片和可滚动的搜索结果，并支持键盘导航。
+搜索使用 Open-Meteo Geocoding API（GeoNames 地名数据）；天气使用 Open-Meteo Forecast API。
+接口使用所选地点的 `timezone=auto` 和 `current.is_day`，不按电脑所在城市推断昼夜。
+
+“使用当前位置”调用 Windows Geolocator，需组件 `location.read` 可选权限和 Windows 系统位置授权，
+只在前台面板的直接用户操作中调用。显示卫星、Wi-Fi 或蜂窝网络来源及系统报告的精度。
+Windows 返回 IP、默认、模糊或未知来源时不会自动采用该坐标，保留城市选择并提示粗略位置。
+组件不调用第三方 IP 定位服务，不在定时刷新中反复定位。成功选择的坐标和最近城市保存在该实例的本地存储；
+获取天气时需将所选坐标发送到 Open-Meteo。关闭面板、切换城市、撤销权限或移除实例会取消相应请求。
+
+背景按官方 WMO WW 表覆盖全部 29 个已文档化代码：晴空 0，多云/阴天 1–3，雾 45/48，
+毛毛雨/冻毛毛雨 51/53/55/56/57，雨/冻雨 61/63/65/66/67，降雪/雪粒 71/73/75/77，
+阵雨 80/81/82，阵雪 85/86，雷暴/冰雹 95/96/97/99。归为晴空、多云、雨、雪、雾与雷暴场景，
+按 `is_day` 调整夜间效果。晴夜使用独立星空资源；雷暴使用雨云和闪电形状；未知代码使用中性背景。
+背景静态渲染，不增加持续动画定时器。更新失败保留同地点的成功缓存，切换城市不会显示另一城市的缓存。
+
+本组件需要 API v2、宿主 1.0.8.0 及 `task.location.current`、`widget.backgroundLayer` 等清单所列能力。
+旧宿主和同版本早期构建不认识 `location.read` 权限，即使其为可选权限也不能加载此包。
+组件只能在包含新定位接口的宿主发布后正式发布；新宿主上不授权定位仍可使用城市搜索。
+Windows 授权、实际定位精度和桌面面板交互需要用户实机验收；离屏预览不访问网络或系统定位。
+
+## 开发与检查
+
+```bat
+.build\Release\snowwidget.exe lint developer_assets\workshop_widgets\sky-weather
+.build\Release\snowwidget.exe test developer_assets\workshop_widgets\sky-weather
+.build\Release\snowwidget.exe quality developer_assets\workshop_widgets\sky-weather
+.build\Release\snowwidget.exe preview developer_assets\workshop_widgets\sky-weather developer_assets\workshop_widgets\sky-weather\workshop-preview.png --columns 4 --rows 3 --locale zh-CN --appearance glass-light --background developer_assets\workshop_widgets\community-preview-background.png --canvas-size 512 --padding 48
+scripts\widget-dev.bat developer_assets\workshop_widgets\sky-weather -Configuration Release -Once
+```
+
+确定性预览可通过 `--storage previewCode=97`、`--storage previewNight=true`、`--storage unit=f`、
+`--storage previewTemperature=-24` 和 `--storage previewState=empty|loading|error|permission|stale` 检查状态。
+预览温度与天气不是真实当前天气。纯模块测试覆盖 JSON 空值、异常响应、城市切换、迟到完成、
+缓存身份、拒权、取消、有限重试、全球重名城市与全部天气码的昼夜背景归类。
+
+## 来源与使用条件
+
+- 代码采用 GPL-3.0-only，见 LICENSE。实现为新写的独立组件，未复制已安装天气组件的源码。
+- 天气数据：[Open-Meteo](https://open-meteo.com/)，数据采用 CC BY 4.0；地名来源：[GeoNames](https://www.geonames.org/)。界面保留来源署名。
+- API 文档：[天气码与变量](https://open-meteo.com/en/docs#weathervariables)、[全球地名搜索](https://open-meteo.com/en/docs/geocoding-api)。
+- 当前无密钥端点按 [Open-Meteo 服务条款](https://open-meteo.com/en/terms) 用于个人、非商用验证。官方商业产品整合或正式商业发布前需安排商业 API 授权或许可合适的服务；数据 CC BY 许可不等于免费 API 商用许可。
+- 系统定位：[Microsoft Geolocator](https://learn.microsoft.com/en-us/uwp/api/windows.devices.geolocation.geolocator)。
+- `assets/*.png` 是本任务用 Codex 内置 imagegen 生成的原创天空素材，未使用 Bing 截图中的位图；天气图标由组件绘制。
+- 工坊封面由真实组件渲染和仓库统一 `community-preview-background.png` 合成，不是设计稿拼贴。
