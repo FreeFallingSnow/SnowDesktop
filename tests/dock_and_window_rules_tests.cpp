@@ -76,6 +76,7 @@ int RunTaskbarSymbolResolverTests();
 std::optional<int> TryRunTaskbarSymbolTestHelper();
 
 #include <dwrite.h>
+#include <imm.h>
 #include <windowsx.h>
 #include <wrl/client.h>
 
@@ -1588,6 +1589,14 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    // Focus/geometry fixtures, including WinComp's background windows, run on
+    // isolated desktops. This executable never tests IME composition and must
+    // not connect those desktops to the user's input-desktop CTF monitor.
+    if (!ImmDisableIME(static_cast<DWORD>(-1)))
+    {
+        std::cerr << "FAILED: isolate all fixture threads from the system IME monitor\n";
+        return 1;
+    }
     {
         // Protect scroll durability deadlines and stale deadline cancellation
         // used by load/explicit save. A continuously active wheel cannot keep
