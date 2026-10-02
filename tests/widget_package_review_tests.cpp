@@ -69,17 +69,22 @@ void RunReviewedPackageInstallationCases()
         Require(lock.MatchesPathIdentity(), "ordinary package review lock is available");
         identity = lock.Identity();
     }
-    // Real Windows sharing conflict on an ancestor: the previous review gate
+    // Real Windows sharing conflict on the package: the previous review gate
     // fails although reading the archive and installing it remain possible.
-    HeldHandle occupied{CreateFileW(temporary.path.c_str(), DELETE | FILE_READ_ATTRIBUTES,
+    HeldHandle occupied{CreateFileW(archive.c_str(), GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
-    Require(occupied.value != INVALID_HANDLE_VALUE, "ancestor sharing-conflict fixture opens");
+        FILE_ATTRIBUTE_NORMAL, nullptr)};
+    Require(occupied.value != INVALID_HANDLE_VALUE, "package sharing-conflict fixture opens");
+    Require(WidgetPackageManager::Sha256File(archive).empty() &&
+        snowdesktop::widget::detail::HashPackageFile(archive, true) == hash,
+        "the occupied package still supports real content reads");
     {
         ScopedPackageIdentityLock strict(archive, paths.staging);
+        if (strict.Acquired() || strict.ErrorCode() != ERROR_SHARING_VIOLATION || strict.ErrorPath() != archive)
+            std::wcerr << strict.Details() << L'\n';
         Require(!strict.Acquired() && strict.ErrorCode() == ERROR_SHARING_VIOLATION &&
-            strict.ErrorPath() == temporary.path,
-            "strict review reproduces the ancestor sharing failure with its real path and code");
+            strict.ErrorPath() == archive,
+            "strict review reproduces the package sharing failure with its real path and code");
     }
     unsigned calls = 0;
     InstalledPackage installed;
@@ -116,7 +121,7 @@ void RunReviewedPackageInstallationCases()
     Require(result.status == Status::Changed && calls == 2,
         "recovery cannot install content that differs from the reviewed package");
     result = InstallReviewedPackage(archive, paths, identity,
-        WidgetPackageManager::Sha256File(archive), manifest, true, install);
+        snowdesktop::widget::detail::HashPackageFile(archive, true), manifest, true, install);
     Require(result.status == Status::Invalid && calls == 2 && !result.validationDetails.empty(),
         "recovery retains actual format failures and their diagnostics");
     std::filesystem::remove(archive);

@@ -1,4 +1,5 @@
 #include "widget_package.h"
+#include "widget_package_read.h"
 
 #include "json_value.h"
 #include "language_fallback.h"
@@ -3757,7 +3758,15 @@ bool WidgetPackageManager::Uninstall(const std::string& packageId,
 std::string WidgetPackageManager::Sha256File(
     const std::filesystem::path& path)
 {
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+    return detail::HashPackageFile(path, false);
+}
+
+std::string detail::HashPackageFile(
+    const std::filesystem::path& path, bool allowConcurrentAccess)
+{
+    const DWORD sharing = allowConcurrentAccess
+        ? FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE : FILE_SHARE_READ;
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, sharing,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return {};
     BCRYPT_ALG_HANDLE algorithm = nullptr;

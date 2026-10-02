@@ -3,6 +3,7 @@
 #include "windows_compat.h"
 #include "widgets_page_backend_state.h"
 #include "../widget_package.h"
+#include "../widget_package_read.h"
 
 #include <algorithm>
 #include <cstring>
@@ -205,7 +206,7 @@ ReviewedPackageInstallResult InstallReviewedPackage(
     const auto needsConfirmation = [&]() {
         return !lock.MatchesPathIdentity() && !allowUnlockedReview;
     };
-    const auto actualHash = widget::WidgetPackageManager::Sha256File(path);
+    const auto actualHash = widget::detail::HashPackageFile(path, true);
     if (actualHash.empty()) return {Status::Unreadable, {}, {}};
     if (actualHash != sha256) return {Status::Changed, {}, {}};
     widget::WidgetPackageManager validator(paths);
@@ -214,7 +215,7 @@ ReviewedPackageInstallResult InstallReviewedPackage(
     if (!report.Ok()) return {Status::Invalid, report.ToJson(), {}};
     if (current.id != manifest.id || current.version != manifest.version)
         return {Status::Changed, {}, {}};
-    const auto verifiedHash = widget::WidgetPackageManager::Sha256File(path);
+    const auto verifiedHash = widget::detail::HashPackageFile(path, true);
     if (verifiedHash.empty()) return {Status::Unreadable, {}, {}};
     if (verifiedHash != sha256) return {Status::Changed, {}, {}};
     if (needsConfirmation())

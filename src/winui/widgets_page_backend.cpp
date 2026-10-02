@@ -2062,7 +2062,7 @@ struct WidgetsPageBackend::Impl final
             const auto diagnostic = L"Component package review lock unavailable: " + packageLock.Details();
             WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Warning);
         }
-        const auto hashBefore = snowdesktop::widget::WidgetPackageManager::Sha256File(snapshot.path);
+        const auto hashBefore = snowdesktop::widget::detail::HashPackageFile(snapshot.path, true);
         if (hashBefore.empty())
         {
             error = L("settings.widgets.install.readFailed",
@@ -2077,7 +2077,7 @@ struct WidgetsPageBackend::Impl final
             error = Utf8ToWide(report.ToJson());
             return false;
         }
-        snapshot.sha256 = snowdesktop::widget::WidgetPackageManager::Sha256File(snapshot.path);
+        snapshot.sha256 = snowdesktop::widget::detail::HashPackageFile(snapshot.path, true);
         if (snapshot.sha256.empty())
         {
             error = L("settings.widgets.install.readFailed",
