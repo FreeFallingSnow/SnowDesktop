@@ -79,9 +79,9 @@ def main(repo,browser):
             def debug_ready():
                 with opener.open('http://127.0.0.1:'+str(debug)+'/json/version',timeout=2) as response:return response.status==200
             until(debug_ready)
-            def render(name,expected):
+            def render(name,expected,view_state=False):
                 time.sleep(2.1)
-                p=subprocess.run(['node',str(repo/'tools/build-dashboard/browser_check.js'),str(debug),url+'/',expected,str(root/(name+'.png'))],capture_output=True,text=True,encoding="utf-8",timeout=25)
+                p=subprocess.run(['node',str(repo/'tools/build-dashboard/browser_check.js'),str(debug),url+'/',expected,str(root/(name+'.png'))]+(['--view-state'] if view_state else []),capture_output=True,text=True,encoding="utf-8",timeout=60 if view_state else 25)
                 assert p.returncode==0,(name,p.stderr,p.stdout);print('BROWSER '+name+' '+p.stdout.strip())
             render('waiting','编辑中')
             write('state.json',current(participants=[task(check={'status':'pending','source':'builtin-basic','editRevision':1}),dict(task('task-b'),state='editing')]))
@@ -107,7 +107,8 @@ def main(repo,browser):
         assert view['current']['retry']['tests'][0]['failureCount']==1 and view['current']['coverage']['selected']==['build_dashboard']
         code,body,_=get('/api/retries/'+child+'/build_dashboard/2/log');assert code==200 and b'fixture-secret' not in body
         assert get('/api/retries/'+child+'/Other/2/log')[0]==404 and get('/api/retries/'+child+'/build_dashboard/4/log')[0]==404
-        if browser:render('repair-and-retry','构建 / 测试中')
+        (state/(child+'.log')).write_text('\n'.join('view-state fixture line '+str(n) for n in range(220))+'\n')
+        if browser:render('repair-and-retry','构建 / 测试中',view_state=True)
         print('PASS durable wait, linked repair attempt, original retry denominator, first/final causes, fixed log route and redaction')
         # Stop only this fixture's verified nonce; build state is independent.
         info=json.loads((root/'.build/dashboard'/('server-'+str(port)+'.json')).read_text())
