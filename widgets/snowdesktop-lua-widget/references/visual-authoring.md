@@ -144,7 +144,10 @@ different state:
 2. Open the PNG at native size.
 3. Check that the purpose and hierarchy are immediately recognizable.
 4. Check text, icons, strokes, controls, disabled content and focus states for
-   contrast and clipping.
+   contrast and clipping. Inspect label and icon placement inside each changed
+   control: horizontal and vertical alignment, baseline, padding and balance
+   must match the design intent. Do not assume framework defaults match that
+   intent or treat centering as a universal rule.
 5. Check that the host outer surface remains visible and is not duplicated by a
    widget-drawn full-size card.
 6. For a proportional visual component, compare small and large previews with
@@ -180,6 +183,15 @@ Do not treat CLI success as visual acceptance. Preview time is deterministic;
 use manifest preview data and `--data-state` rather than waiting for real
 schedules. Exercise ready, empty, loading, error, stale and permission-denied
 only when those states apply to the widget.
+
+Review each changed surface, including panels and other auxiliary interfaces;
+a desktop or catalog preview does not verify a different surface. If the preview
+CLI cannot render the required surface directly, an isolated temporary package
+may route its actual view callback to a previewable surface to inspect parsing
+and layout. Record that adaptation and its limits: it does not verify native
+surface routing, focus, keyboard interaction or runtime permission prompts.
+Keep temporary inspection changes out of the delivered package, fix visible
+defects, and inspect the new render before claiming visual acceptance.
 
 Generate the final package preview before packing. Save it inside the package,
 set the manifest `preview` field to that relative file, validate, and then pack.
