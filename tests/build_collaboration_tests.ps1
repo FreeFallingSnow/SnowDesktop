@@ -260,6 +260,9 @@ exit 0
     Check ((State).current.participants[0].state -eq 'editing' -and (Counts).Count -eq 0) 'Superseded finish waiters must not finish the reopened editor or start a build'
     $repeatedReopen = Call 'begin task-a'
     Check ($repeatedReopen.batchId -eq $a.batchId -and (State).current.participants[0].editRevision -eq 1) 'Repeated begin must keep the reopened edit revision stable'
+    # The explicit full plan used above belongs to the old edit revision.
+    # Re-declare it before completing the reopened fixture participant.
+    Call ('plan task-a -Batch ' + $a.batchId + ' -Revision ' + $reopened.editRevision + ' -Scope unknown -Suites full') | Out-Null
     $first = Start-Command ('finish task-a -Batch ' + $a.batchId + ' -ReloadShell')
     Wait-Until { (State).current.participants[0].state -eq 'finished' } 'reopened A finishes'
     Check ((Counts).Count -eq 0 -and -not [IO.File]::Exists((Join-Path $fixture 'build-arguments.txt'))) 'Requesting Shell reload must not start cleanup while another participant edits'
