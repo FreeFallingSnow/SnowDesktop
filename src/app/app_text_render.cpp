@@ -390,7 +390,9 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             static_cast<LONG>(std::ceil(th));
     }
     bool isSingleLine = (metrics.lineCount == 1);
-    if (!isSingleLine)
+    // The full-width measurement only positions an expanded selected title.
+    // Collapsed titles already have their cached layout and do not use it.
+    if (selected && !isSingleLine)
     {
         ComPtr<IDWriteTextLayout> measureLayout;
         if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
