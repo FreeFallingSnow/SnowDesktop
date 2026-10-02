@@ -17,10 +17,17 @@ local function config()
         interval=math.max(600,math.min(21600,tonumber(storage.get("interval")) or 1800)),
         unit=storage.get("unit")=="f" and "f" or "c"}
 end
+local function skyBackgroundEnabled()
+    local value=storage.get("skyBackground")
+    return value~="0" and value~=false
+end
 local function palette()
-    local dark=widget.theme().contentTheme==1
-    return {primary=dark and 0x142D50 or 0xFFFFFF,secondary=dark and 0x375779 or 0xDCEAFF,
-        card=dark and 0xFFFFFF or 0x7DA8E4,cardAlpha=dark and 0.32 or 0.16,outline=dark and 0x4F76A1 or 0xE3EFFF,dark=dark}
+    if skyBackgroundEnabled() then
+        return {primary=0xFFFFFF,secondary=0xDCEAFF,card=0x7DA8E4,cardAlpha=0.16}
+    end
+    local light=widget.theme().contentTheme==1
+    return {primary=light and 0x161616 or 0xFFFFFF,secondary=light and 0x565656 or 0xD0D0D0,
+        card=light and 0x161616 or 0xFFFFFF,cardAlpha=light and 0.05 or 0.08}
 end
 local function text(x,y,value,size,color,width,bold,height)
     draw.text(x,y,tostring(value),size,color,width,bold or false,true,height or size*1.5)
@@ -105,16 +112,14 @@ local function glyph(kind,x,y,s)
     end
 end
 local function background(_context,m)
-    if storage.get("skyBackground")==false then return end
+    if not skyBackgroundEnabled() then return end
     local w,h=layout.contentWidth(),layout.contentHeight()
-    local colors=palette()
     local data=m.weather.weather
     local scene=weather.background(data and data.code,nil)
     if data then scene=weather.background(data.code,data.night) end
     local bitmap=skies[scene.asset]
     if bitmap then draw.imageFit(bitmap,0,0,w,h,"cover","center",1) end
-    if colors.dark then draw.gradientRect(0,0,w,h,0xD8EAFD,0xBCD7F5,"vertical",0,0.91)
-    elseif scene.night then
+    if scene.night then
         draw.gradientRect(0,0,w,h,0x101C4D,0x223D71,"vertical",0,0.85)
     elseif scene.asset=="rain" then draw.gradientRect(0,0,w,h,0x243B59,0x182D50,"vertical",0,scene.heavy and 0.64 or 0.47)
     elseif scene.asset=="fog" or scene.asset=="snow" then draw.gradientRect(0,0,w,h,0x536F90,0x345572,"vertical",0,0.61)
@@ -126,7 +131,7 @@ local function background(_context,m)
         local bolt={{op="move",x=x+s*0.12,y=y},{op="line",x=x-s*0.17,y=y+s*0.52},
             {op="line",x=x,y=y+s*0.52},{op="line",x=x-s*0.08,y=y+s},
             {op="line",x=x+s*0.29,y=y+s*0.35},{op="line",x=x+s*0.10,y=y+s*0.35},{op="close"}}
-        draw.path(bolt,{fillColor=colors.dark and 0x5F7794 or 0xDAE9FF,alpha=0.4})
+        draw.path(bolt,{fillColor=0xDAE9FF,alpha=0.4})
     end
 end
 local function region(id,x,y,w,h,label)
@@ -156,12 +161,13 @@ local function render(_context,m)
     local titleSize=header*0.68
     local measuredTitle=draw.measureText(title,titleSize,0,true)
     local titleInk=measuredTitle.ink
-    region("cities",p,headerTop,w-p*2-header*2.6,headerHeight,l10n.tr("lua_widget.sky_weather.choose_city"))
+    local titleDisplayWidth=math.min(measuredTitle.width,titleWidth-header*0.8)
+    region("cities",p-header*0.22,headerTop,header*1.90+titleDisplayWidth,headerHeight,l10n.tr("lua_widget.sky_weather.choose_city"))
     draw.path({{op="move",x=p+header*0.05,y=headerCenter-header*0.09},{op="line",x=p+header*0.62,y=headerCenter-header*0.32},
         {op="line",x=p+header*0.4,y=headerCenter+header*0.32},{op="line",x=p+header*0.3,y=headerCenter+header*0.03},{op="close"}},
         {fillColor=colors.primary,alpha=1})
     text(p+header*0.9,headerCenter-titleInk.top-titleInk.height*0.5,title,titleSize,colors.primary,titleWidth-header*0.8,true,measuredTitle.height)
-    local cx=p+header*1.2+math.min(measuredTitle.width,titleWidth-header*0.8)
+    local cx=p+header*1.2+titleDisplayWidth
     draw.line(cx,headerCenter-header*0.075,cx+header*0.15,headerCenter+header*0.075,header*0.04,colors.primary,1)
     draw.line(cx+header*0.15,headerCenter+header*0.075,cx+header*0.30,headerCenter-header*0.075,header*0.04,colors.primary,1)
     local rx=w-p-header*2.25
@@ -173,9 +179,12 @@ local function render(_context,m)
     local wide=w/h>1.8;local tall=w/h<0.7
     local heroX,heroY,heroW,heroH=p,headerTop+headerHeight+short*0.045,w-p*2,h*0.235
     local fx,fy,fw,fh=p,h*0.49,w-p*2,h*0.37
+    local wideCenter
     if wide then
-        fx=w*0.44;fy=headerTop+headerHeight+short*0.07;fw=w-fx-p;fh=h-short*0.14-fy
-        heroY=fy+short*0.015;heroW=fx-p-short*0.06;heroH=h*0.34
+        local bodyTop=headerTop+headerHeight+short*0.07;local bodyBottom=h-short*0.14
+        wideCenter=(bodyTop+bodyBottom)*0.5
+        fx=w*0.44;fw=w-fx-p;fh=bodyBottom-bodyTop;fy=wideCenter-fh*0.5
+        heroW=fx-p-short*0.06;heroH=h*0.34
     end
     if tall then heroH=h*0.19;fy=h*0.40;fh=h*0.46 end
     if not data then
@@ -197,6 +206,15 @@ local function render(_context,m)
         local measure=draw.measureText(value,size,heroW,false)
         local numberInk=measure.ink
         local heroVisibleHeight=math.max(numberInk.height,icon*0.9)
+        local infoSize=short*(wide and 0.054 or 0.037)
+        local today=data.days[1]
+        local range=weather.temperature(today.high,cfg.unit).." / "..weather.temperature(today.low,cfg.unit)
+        local feels=l10n.tr("lua_widget.sky_weather.feels",weather.temperature(data.feels,cfg.unit))
+        if wide then
+            local rangeInk=draw.measureText(range,infoSize,0,false).ink
+            local blockHeight=heroVisibleHeight+short*0.065+infoSize*1.75+rangeInk.height
+            heroY=wideCenter-blockHeight*0.5
+        end
         local numberTop=heroY+(heroVisibleHeight-numberInk.height)*0.5
         local numberY=numberTop-numberInk.top
         glyph(kind,heroX+icon*0.5,heroY+heroVisibleHeight*0.5,icon)
@@ -206,13 +224,8 @@ local function render(_context,m)
         local unitMeasure=draw.measureText(unit,unitSize,0,false)
         local unitInk=unitMeasure.ink
         text(tx+measure.width+size*0.02,numberTop-unitInk.top,unit,unitSize,colors.primary,size,false,unitMeasure.height)
-        local infoSize=short*0.037
-        local today=data.days[1]
-        local range=weather.temperature(today.high,cfg.unit).." / "..weather.temperature(today.low,cfg.unit)
-        local feels=l10n.tr("lua_widget.sky_weather.feels",weather.temperature(data.feels,cfg.unit))
         local weatherBottom=heroY+heroVisibleHeight
         if wide then
-            infoSize=short*0.054
             local infoTop=weatherBottom+short*0.065
             local conditionWidth=math.min(draw.measureText(l10n.tr(condition),infoSize,0,true).width,heroW*0.5)
             textAtInkTop(p,infoTop,l10n.tr(condition),infoSize,colors.primary,conditionWidth,true)
@@ -330,7 +343,8 @@ local function panel(_context,m)
                     style={foreground=enabled and colors.accent or "textDisabled",background=colors.field,
                         borderColor=colors.border,borderWidth=1,cornerRadius=row*0.18},hoverStyle={background=colors.selected}})
             }}),
-        view.scroll({key="city.scroll",width="fill",height="fill",children={view.column({key="city.items",width="fill",height="auto",gap=row*0.22,children=items})}}),
+        view.scroll({key="city.scroll",width="fill",height="fill",children={view.column({key="city.items",width="fill",height="auto",
+            padding={left=row*0.14,right=row*0.36,top=row*0.14,bottom=row*0.14},gap=row*0.22,children=items})}}),
         view.row({key="picker.footer",width="fill",height=row*1.2,flexShrink=0,gap=row*0.2,alignItems="center",children={
             label("picker.source","Open-Meteo · GeoNames",row*0.43,row*1.2,true),
             view.button({key="panel.settings",label=l10n.tr("lua_widget.sky_weather.settings"),width="auto",height=row*1.2,flexShrink=0,
@@ -439,8 +453,7 @@ local function dispose(_context,m)
     if m.locationTask then task.cancel(m.locationTask) end
     schedule.cancel("weather.tick");schedule.cancel("city.search")
 end
-return widget.define({name=l10n.tr("lua_widget.sky_weather.name"),useCustomStyle=true,followPersonalizationDefault=true,
-    showTitle=false,bg=0x214C86,border=0xD8E8FF,alpha=0.85,borderAlpha=0.15,gradientEndA=0.75,
+return widget.define({name=l10n.tr("lua_widget.sky_weather.name"),useCustomStyle=false,showTitle=false,
     backgroundLayer={render=background,blurRadius=0},render=render,panel=panel,setup=setup,event=event,dispose=dispose,
     menu=function() return ui.menu({{id="cities",label=l10n.tr("lua_widget.sky_weather.choose_city")},
         {id="refresh",label=l10n.tr("lua_widget.sky_weather.refresh")},{id="settings",label=l10n.tr("lua_widget.sky_weather.settings")}}) end,

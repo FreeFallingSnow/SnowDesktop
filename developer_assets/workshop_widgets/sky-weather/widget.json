@@ -773,6 +773,7 @@
     "view.actionControls",
     "view.flex.layout",
     "view.flex.sizing",
+    "view.layout.edgeInsets",
     "view.scroll",
     "view.theme.tokens",
     "ui.semanticMetrics.rowUnit",
