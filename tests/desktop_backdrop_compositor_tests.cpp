@@ -146,7 +146,7 @@ int CheckHiddenPopupKeyboardFocus()
         if (!check(glass.AddPanel({0, 0, 320, 240}, 12, 24, 1),
                 "register the focus fixture's real backdrop panel")) return;
         glass.EndFrame();
-        const HWND helper = GetWindow(content.handle, GW_HWNDNEXT);
+        const HWND helper = FindOwnedBackdrop(glass);
         if (!check(glass.IsBackdropWindow(helper),
                 "focus checks address only this compositor's helper")) return;
 
@@ -441,7 +441,10 @@ int RunDesktopBackdropCompositorTests()
                 !hidden.backdropRegistered && !opaque.backdropRegistered &&
                 startupGlass.PanelCount() == 2,
             "partial paint must restore both monitors' cached glass without repainting widgets");
-        const HWND helper = GetWindow(startupContent.handle, GW_HWNDNEXT);
+        const HWND helper = FindOwnedBackdrop(startupGlass);
+        if (!check(startupGlass.IsBackdropWindow(helper),
+                "region fixture locates its exact owned helper before inspecting pixels"))
+            return failures;
         HRGN region = CreateRectRgn(0, 0, 0, 0);
         check(startupGlass.IsBackdropWindow(helper) && region &&
                 GetWindowRgn(helper, region) != ERROR &&
@@ -524,7 +527,7 @@ int RunDesktopBackdropCompositorTests()
             "popup geometry and pose can share one transaction");
         glass.CommitVisualChanges();
 
-        HWND helper = GetWindow(content.handle, GW_HWNDNEXT);
+        HWND helper = FindOwnedBackdrop(glass);
         RECT actual{};
         check(glass.IsBackdropWindow(helper) &&
                 GetWindowRect(helper, &actual) &&
@@ -549,7 +552,10 @@ int RunDesktopBackdropCompositorTests()
 
     // A guide above an independent Dock must remove the glass HWND's pixels
     // in the overlap, then restore them when the guide moves or closes.
-    const HWND guideHelper = GetWindow(content.handle, GW_HWNDNEXT);
+    const HWND guideHelper = FindOwnedBackdrop(glass);
+    if (!check(glass.IsBackdropWindow(guideHelper),
+            "guide overlap checks locate only their exact owned helper"))
+        return failures;
     const auto contains = [&](int x, int y) {
         HRGN region = CreateRectRgn(0, 0, 0, 0);
         const bool result = region && GetWindowRgn(guideHelper, region) != ERROR &&
