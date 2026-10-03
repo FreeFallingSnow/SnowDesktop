@@ -724,8 +724,11 @@ int main(int argc, char** argv)
         DockSettings restoredMaterials;
         for (auto* appearance : TaskbarMaterials(restoredMaterials)) appearance->backgroundPreset = kAppearancePresetCustom;
         Check(ReadTaskbarMaterials(materialDocument, restoredMaterials), "reload all taskbar material fields");
+        auto taskbarMaterialExpected = material;
+        // The legacy widget bottom-bar gradient is not part of a taskbar panel.
+        taskbarMaterialExpected.gradientEndA = PersonalizationSettings{}.gradientEndA;
         for (auto* appearance : TaskbarMaterials(restoredMaterials))
-            Check(*appearance == material, "taskbar border, highlights, gradient and foreground survive a round trip in every scene");
+            Check(*appearance == taskbarMaterialExpected, "taskbar border, highlights, gradient and foreground survive a round trip in every scene");
         const auto beforeMaterials = restoredMaterials;
         materialDocument.object[kTaskbarMaterialKeys[3]].object["borderWidth"].number = 99;
         Check(!ReadTaskbarMaterials(materialDocument, restoredMaterials), "reject a damaged taskbar material");
