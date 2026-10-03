@@ -113,13 +113,7 @@ struct StatusBarPagePresenter::Impl
             Emit([member, index, global](auto& settings) {
                 auto& theme = Theme(settings, member);
                 const int mode = StatusBarThemeModes[static_cast<std::size_t>(index)];
-                if (mode == 4 && !theme.customized)
-                {
-                    theme.appearance = ResolveStatusBarAppearance(theme, global);
-                    theme.appearance.backgroundPreset = kAppearancePresetCustom;
-                    theme.customized = true;
-                }
-                theme.mode = mode;
+                SelectSurfaceThemeMode(theme, mode, ResolveStatusBarAppearance(theme, global));
             });
         });
         revoke.push_back([combo, token] { combo.SelectionChanged(token); });

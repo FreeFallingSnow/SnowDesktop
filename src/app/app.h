@@ -63,6 +63,7 @@ namespace snowdesktop::tray { struct Icon; }
 #include "shell_extension_menu.h"
 #include "display_topology_refresh.h"
 #include "dock_settings.h"
+#include "taskbar_appearance.h"
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
 #include "dock_collection_icon_rules.h"
@@ -1532,18 +1533,7 @@ private:
     PersonalizationSettings ResolveSystemTaskbarAppearance(
         const DockSettings& settings) const
     {
-        PersonalizationSettings result = settings.systemTaskbarFollowPersonalization
-            ? CurrentPersonalization()
-            : settings.systemTaskbarAppearance;
-        if (settings.systemTaskbarContentTheme >= 0)
-            result.contentTheme = settings.systemTaskbarContentTheme;
-        else if (!settings.systemTaskbarFollowPersonalization &&
-                 settings.systemTaskbarAppearance.backgroundPreset !=
-                     kAppearancePresetCustom)
-            result.contentTheme = MakeAppearancePreset(
-                settings.systemTaskbarAppearance.backgroundPreset)
-                .contentTheme;
-        return result;
+        return snowdesktop::ResolveTaskbarAppearance(settings, CurrentPersonalization());
     }
     /** @brief 当前文字颜色是否为深色(黑字)。contentTheme==1 时为 true。 */
     bool IsLightContentTheme() const

@@ -814,12 +814,13 @@ struct PersonalizationPagePresenter::Impl
             [this](auto const&, auto const&) { SelectSurfaceTheme(false, collectionPopupThemeCombo.SelectedIndex()); });
         dockAppearanceToken = dockAppearanceCombo.SelectionChanged([this](auto const&, auto const&) {
             if (!CanEmit()) return;
-            dockAppearanceEditor->Flush();
             const int index = dockAppearanceCombo.SelectedIndex();
             if (index < 0 || index > static_cast<int>(kPresetIds.size())) return;
-            EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [index](auto& settings) {
-                settings.followComponentAppearance = index == 0;
-                if (index > 0) settings.appearancePreset = kPresetIds[index - 1];
+            dockAppearanceEditor->Flush();
+            const auto global = currentGlobalAppearance;
+            EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [index, global](auto& settings) {
+                SelectDockAppearance(settings, index == 0,
+                    index > 0 ? kPresetIds[index - 1] : settings.appearancePreset, global);
             });
         });
         statusBarLinkToken = statusBarLink.Click([this](const auto&, const auto&) {
@@ -1199,12 +1200,8 @@ struct PersonalizationPagePresenter::Impl
         const auto global = currentGlobalAppearance;
         EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [quick, index, global](auto& settings) {
             auto& theme = quick ? settings.quickNavigationAppearance : settings.collectionPopupAppearance;
-            if (index == 5 && (quick || !theme.customized))
-            {
-                theme.appearance = ResolveSurfaceTheme(theme, global, quick ? settings.quickNavTheme : settings.collectionPopupTheme, quick);
-                theme.customized = true;
-            }
-            theme.mode = index - 1;
+            SelectSurfaceThemeMode(theme, index - 1,
+                ResolveSurfaceTheme(theme, global, quick ? settings.quickNavTheme : settings.collectionPopupTheme, quick));
         });
     }
 

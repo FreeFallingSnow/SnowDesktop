@@ -1,6 +1,7 @@
 #include "general_settings.h"
 #include "personalization.h"
 #include "dock_gradient_storage.h"
+#include "taskbar_appearance.h"
 #include "status_bar_appearance.h"
 #include "widget_appearance_presets.h"
 #include "item_title_layout.h"
@@ -660,6 +661,85 @@ int main(int argc, char** argv)
         "independent surface custom appearance and fixed preset survive save and reload");
     {
         using namespace snowdesktop;
+        // Re-entering Custom must sample the previous selection, even when an
+        // unrelated custom snapshot already exists. Exercise the production
+        // selection functions rather than duplicating presenter conditions.
+        auto material = MakeAppearancePreset(kAppearancePresetGlassLight);
+        material.backgroundPreset = kAppearancePresetCustom;
+        material.widgetBorderWidth = 3.25f;
+        material.widgetEdgeHighlightWidth = 2.75f;
+        material.edgeLight.direction = 137.f;
+        material.panelGradient.enabled = true;
+        material.panelGradient.angle = 32;
+        for (bool quick : {false, true})
+        {
+            SurfaceTheme value;
+            value.customized = true; value.appearance.widgetAlpha = .13f;
+            for (int mode : {-2, -1, 0, 1, 2, 3})
+            {
+                value.mode = mode;
+                auto expected = ResolveSurfaceTheme(value, material, 2, quick);
+                expected.backgroundPreset = kAppearancePresetCustom;
+                SelectSurfaceThemeMode(value, 4, ResolveSurfaceTheme(value, material, 2, quick));
+                Check(value.appearance == expected && value.customized,
+                    "popup and quick themes copy the active material on every transition to custom");
+            }
+        }
+        for (int mode : {-1, 0, 1, 2, 3, 5, 6, 7, 8})
+        {
+            SurfaceTheme value; value.mode = mode; value.customized = true;
+            auto expected = ResolveStatusBarAppearance(value, material);
+            expected.backgroundPreset = kAppearancePresetCustom;
+            SelectSurfaceThemeMode(value, 4, ResolveStatusBarAppearance(value, material));
+            Check(value.appearance == expected, "all status bar scenes retain the previous effective material entering custom");
+        }
+        DockSettings transition;
+        transition.customAppearance.widgetAlpha = .13f;
+        SelectDockAppearance(transition, false, kAppearancePresetCustom, material);
+        Check(transition.customAppearance == material, "Dock copies all global material values when leaving inheritance for custom");
+        SelectDockAppearance(transition, false, kAppearancePresetLight, material);
+        auto dockExpected = ResolveDockAppearance(transition, material);
+        dockExpected.backgroundPreset = kAppearancePresetCustom;
+        SelectDockAppearance(transition, false, kAppearancePresetCustom, material);
+        Check(transition.customAppearance == dockExpected, "Dock re-entry replaces a stale custom snapshot with the selected preset");
+        transition.systemTaskbarContentTheme = 0;
+        auto taskbarExpected = material; taskbarExpected.contentTheme = 0;
+        SelectTaskbarCustomAppearance(transition, material);
+        Check(transition.systemTaskbarAppearance == taskbarExpected && !transition.systemTaskbarFollowPersonalization,
+            "taskbar captures global material with its current foreground override entering custom");
+        for (int mode : {1, 2, 3, 4, 5, 6, 7, 9})
+        {
+            SystemTaskbarDynamicRule rule; rule.themeMode = static_cast<SystemTaskbarThemeMode>(mode);
+            rule.appearance.widgetAlpha = .13f;
+            auto expected = ResolveTaskbarRuleAppearance(rule, material);
+            expected.backgroundPreset = kAppearancePresetCustom;
+            SelectTaskbarRuleTheme(rule, SystemTaskbarThemeMode::Custom, material);
+            Check(rule.appearance == expected, "each taskbar scene captures follow, fixed or transparent material entering custom");
+        }
+        for (auto* appearance : TaskbarMaterials(transition)) *appearance = material;
+        std::ostringstream storedMaterials;
+        Check(WriteTaskbarMaterials(storedMaterials, transition), "serialize every taskbar material");
+        JsonValue materialDocument;
+        Check(ParseJson("{" + storedMaterials.str() + "\"schema\":1}", materialDocument), "complete taskbar materials form valid JSON");
+        DockSettings restoredMaterials;
+        for (auto* appearance : TaskbarMaterials(restoredMaterials)) appearance->backgroundPreset = kAppearancePresetCustom;
+        Check(ReadTaskbarMaterials(materialDocument, restoredMaterials), "reload all taskbar material fields");
+        for (auto* appearance : TaskbarMaterials(restoredMaterials))
+            Check(*appearance == material, "taskbar border, highlights, gradient and foreground survive a round trip in every scene");
+        const auto beforeMaterials = restoredMaterials;
+        materialDocument.object[kTaskbarMaterialKeys[3]].object["borderWidth"].number = 99;
+        Check(!ReadTaskbarMaterials(materialDocument, restoredMaterials), "reject a damaged taskbar material");
+        const auto previousMaterials = TaskbarMaterials(beforeMaterials);
+        const auto unchangedMaterials = TaskbarMaterials(restoredMaterials);
+        for (std::size_t i = 0; i < previousMaterials.size(); ++i)
+            Check(*previousMaterials[i] == *unchangedMaterials[i],
+                "one damaged taskbar material cannot partially overwrite the other scenes");
+        ParseJson("{}", materialDocument);
+        Check(ReadTaskbarMaterials(materialDocument, restoredMaterials), "old taskbar settings remain readable");
+        for (auto* appearance : TaskbarMaterials(restoredMaterials))
+            Check(!appearance->widgetEdgeHighlightEnabled && appearance->widgetBorderWidth == 1.f,
+                "old custom taskbar materials retain their original one-DIP border without an added highlight");
+
         SurfaceTheme theme;
         auto global = PersonalizationSettings::LightPreset();
         Check(ResolveSurfaceTheme(theme, global, 0, true).contentTheme == 1,

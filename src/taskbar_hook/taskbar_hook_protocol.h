@@ -5,21 +5,22 @@
 #include <cstddef>
 #include <cstdint>
 #include "../panel_gradient.h"
+#include "../edge_light_settings.h"
 #include "taskbar_autohide_trace.h"
 #include "taskbar_autohide_adapter.h"
 
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 12;
+inline constexpr std::uint32_t kSharedStateVersion = 13;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v12";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v13";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v12";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v13";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v12";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v13";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -78,6 +79,16 @@ inline PanelGradient DecodeGradient(const Gradient& value)
     return result.enabled ? result : PanelGradient{};
 }
 
+struct EdgeAppearance
+{
+    float borderWidth = 1.f;
+    LONG highlightEnabled = FALSE;
+    float highlightWidth = 1.5f;
+    float highlightStrength = .5f;
+    EdgeLightSettings light;
+    friend bool operator==(const EdgeAppearance&, const EdgeAppearance&) = default;
+};
+
 struct TargetAppearance
 {
     friend bool operator==(const TargetAppearance&, const TargetAppearance&) = default;
@@ -95,6 +106,7 @@ struct TargetAppearance
     float borderBlue = 1.0f;
     float borderAlpha = 0.40f;
     Gradient gradient;
+    EdgeAppearance edge;
     LONG protectAutoHideActivation = FALSE;
     LONG shellPanelVisible = FALSE;
     LONG suppressTaskbar = FALSE;
@@ -132,6 +144,7 @@ struct SharedState
     float borderBlue = 1.0f;
     float borderAlpha = 0.40f;
     Gradient gradient;
+    EdgeAppearance edge;
     volatile LONG targetCount = 0;
     TargetAppearance targets[kMaximumTaskbarTargets]{};
     volatile LONG status = kStatusIdle;
@@ -180,6 +193,7 @@ struct Snapshot
     float borderBlue = 1.0f;
     float borderAlpha = 0.40f;
     Gradient gradient;
+    EdgeAppearance edge;
     LONG targetCount = 0;
     TargetAppearance targets[kMaximumTaskbarTargets]{};
     AutoHideAdapter autoHideAdapter;
@@ -230,6 +244,7 @@ inline bool ReadSharedSnapshot(const SharedState* state, Snapshot& snapshot)
         snapshot.borderBlue = state->borderBlue;
         snapshot.borderAlpha = state->borderAlpha;
         snapshot.gradient = state->gradient;
+        snapshot.edge = state->edge;
         snapshot.targetCount = std::clamp<LONG>(
             static_cast<LONG>(state->targetCount), 0,
             static_cast<LONG>(kMaximumTaskbarTargets));

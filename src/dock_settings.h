@@ -131,6 +131,19 @@ inline PersonalizationSettings ResolveDockAppearance(const DockSettings& setting
     return value;
 }
 
+inline void SelectDockAppearance(DockSettings& settings, bool followGlobal,
+    int preset, const PersonalizationSettings& global)
+{
+    if (!followGlobal && preset == kAppearancePresetCustom &&
+        (settings.followComponentAppearance || settings.appearancePreset != kAppearancePresetCustom))
+    {
+        settings.customAppearance = ResolveDockAppearance(settings, global);
+        settings.customAppearance.backgroundPreset = kAppearancePresetCustom;
+    }
+    settings.followComponentAppearance = followGlobal;
+    if (!followGlobal) settings.appearancePreset = preset;
+}
+
 inline void NormalizeDockSettings(DockSettings& settings) noexcept
 {
     switch (settings.appearancePreset)
@@ -160,7 +173,17 @@ bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();
 bool RequestWindowsSystemLightThemeEnabled(bool enabled);
 bool RestartWindowsExplorer();
-PersonalizationSettings MakeTransparentTaskbarAppearance();
+inline PersonalizationSettings MakeTransparentTaskbarAppearance()
+{
+    auto appearance = PersonalizationSettings::DarkPreset();
+    appearance.widgetBgR = appearance.widgetBgG = appearance.widgetBgB = 0.f;
+    appearance.widgetBorderR = appearance.widgetBorderG = appearance.widgetBorderB = 0.f;
+    appearance.widgetAlpha = appearance.widgetBorderAlpha = appearance.gradientEndA = 0.f;
+    appearance.widgetEdgeHighlightEnabled = false;
+    appearance.backgroundPreset = kAppearancePresetTaskbarTransparent;
+    appearance.glassEnabled = appearance.acrylicEnabled = false;
+    return appearance;
+}
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState();
 bool IsClassicSystemTaskbar();

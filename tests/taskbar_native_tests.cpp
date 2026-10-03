@@ -1,6 +1,7 @@
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_classic_surface.h"
 #include "taskbar_hook/taskbar_classic_appearance.h"
+#include "taskbar_hook/taskbar_material_render.h"
 #include "taskbar_hook/taskbar_connection.h"
 #include "dock_settings.h"
 #include "taskbar_monitor.h"
@@ -104,6 +105,40 @@ int RunNativeTaskbarTests()
         return bytes;
     };
     const auto originalDwmEntry = dwmEntry();
+    {
+        TargetAppearance material;
+        material.borderAlpha = 1.f; material.edge.borderWidth = 1.f;
+        const auto thin = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        material.edge.borderWidth = 4.f;
+        const auto thick = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        const auto scaled = MakeTaskbarEdgePixels(240, 96, 2.f, material);
+        const auto alphaAt = [](const auto& image, std::size_t width, std::size_t x, std::size_t y) {
+            return image[(y * width + x) * 4 + 3];
+        };
+        check(alphaAt(thin, 120, 60, 2) == 0 && alphaAt(thick, 120, 60, 2) == 255,
+            "production taskbar raster obeys configurable border width");
+        check(alphaAt(scaled, 240, 120, 7) == 255 && alphaAt(scaled, 240, 120, 8) == 0,
+            "taskbar border width scales from DIPs to physical pixels");
+        material.borderAlpha = 0.f;
+        material.edge.highlightEnabled = TRUE; material.edge.highlightStrength = 1.f;
+        const auto lit = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        material.edge.light.direction += 180.f;
+        const auto rotated = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        check(lit != rotated && alphaAt(lit, 120, 60, 0) > 0 && alphaAt(lit, 120, 60, 24) == 0,
+            "highlight-only taskbars render a directional rim while keeping their center clear");
+        check(native::NeedsClassicSurface(material), "a highlight alone requires the classic composited surface");
+        material.edge.highlightEnabled = FALSE;
+        const auto clear = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        check(std::all_of(clear.begin(), clear.end(), [](auto byte) { return byte == 0; }),
+            "disabling both border and highlight removes all edge pixels");
+        SharedState state; state.edge.highlightEnabled = TRUE; state.edge.borderWidth = 3.25f;
+        state.edge.light.direction = 137.f;
+        Snapshot snapshot;
+        check(ReadSharedSnapshot(&state, snapshot) && snapshot.edge == state.edge,
+            "shared snapshots retain complete edge material");
+        state.version = 12;
+        check(!ReadSharedSnapshot(&state, snapshot), "an old Hook protocol is rejected before reading changed material layout");
+    }
     // Win10 user regression: blur/acrylic switched but every solid tint was
     // clear. Exercise the production policy with independent ABGR constants;
     // DirectComposition HRESULTs alone cannot prove a native tint was sent.

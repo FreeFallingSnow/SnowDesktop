@@ -410,6 +410,7 @@ TargetAppearance Resolve(HWND window, const Snapshot& snapshot)
     result.alpha = snapshot.alpha; result.borderRed = snapshot.borderRed;
     result.borderGreen = snapshot.borderGreen; result.borderBlue = snapshot.borderBlue;
     result.borderAlpha = snapshot.borderAlpha; result.gradient = snapshot.gradient;
+    result.edge = snapshot.edge;
     return result;
 }
 

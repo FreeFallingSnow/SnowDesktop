@@ -891,9 +891,10 @@ struct WidgetSettingsPresenter::Impl
                     static_cast<std::size_t>(index) >=
                         appearanceThemeChoices.size())
                     return;
-                edgeLightEditor->Flush();
                 const auto choice = appearanceThemeChoices[
                     static_cast<std::size_t>(index)];
+                CommitOpenColorEditors();
+                if (!FlushPendingEdits().Succeeded()) return;
                 if (choice.kind == AppearanceThemeKind::Component)
                 {
                     if (choice.componentPresetIndex >= cachedPresets.size())

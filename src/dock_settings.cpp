@@ -1,4 +1,5 @@
 #include "dock_settings.h"
+#include "taskbar_appearance.h"
 #include "dock_gradient_storage.h"
 #include "surface_theme.h"
 
@@ -517,6 +518,11 @@ public:
         state_->borderBlue = std::clamp(appearance.widgetBorderB, 0.0f, 1.0f);
         state_->borderAlpha = std::clamp(appearance.widgetBorderAlpha, 0.0f, 1.0f);
         state_->gradient = snowdesktop::taskbar_hook::EncodeGradient(appearance.panelGradient);
+        state_->edge.borderWidth = appearance.widgetBorderWidth;
+        state_->edge.highlightEnabled = appearance.widgetEdgeHighlightEnabled;
+        state_->edge.highlightWidth = appearance.widgetEdgeHighlightWidth;
+        state_->edge.highlightStrength = appearance.widgetEdgeHighlightStrength;
+        state_->edge.light = appearance.edgeLight;
         const LONG targetCount = static_cast<LONG>(std::min<std::size_t>(
             targets.size(),
             snowdesktop::taskbar_hook::kMaximumTaskbarTargets));
@@ -561,6 +567,11 @@ public:
             destination.borderAlpha = std::clamp(
                 source.appearance.widgetBorderAlpha, 0.0f, 1.0f);
             destination.gradient = snowdesktop::taskbar_hook::EncodeGradient(source.appearance.panelGradient);
+            destination.edge.borderWidth = source.appearance.widgetBorderWidth;
+            destination.edge.highlightEnabled = source.appearance.widgetEdgeHighlightEnabled;
+            destination.edge.highlightWidth = source.appearance.widgetEdgeHighlightWidth;
+            destination.edge.highlightStrength = source.appearance.widgetEdgeHighlightStrength;
+            destination.edge.light = source.appearance.edgeLight;
         }
         for (std::size_t index = static_cast<std::size_t>(targetCount);
              index < snowdesktop::taskbar_hook::kMaximumTaskbarTargets;
@@ -1043,25 +1054,6 @@ bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
         appearance, targets, appearanceEnabled, suppressTaskbar);
 }
 
-PersonalizationSettings MakeTransparentTaskbarAppearance()
-{
-    PersonalizationSettings appearance =
-        PersonalizationSettings::DarkPreset();
-    appearance.widgetBgR = 0.0f;
-    appearance.widgetBgG = 0.0f;
-    appearance.widgetBgB = 0.0f;
-    appearance.widgetAlpha = 0.0f;
-    appearance.widgetBorderR = 0.0f;
-    appearance.widgetBorderG = 0.0f;
-    appearance.widgetBorderB = 0.0f;
-    appearance.widgetBorderAlpha = 0.0f;
-    appearance.gradientEndA = 0.0f;
-    appearance.backgroundPreset = kAppearancePresetTaskbarTransparent;
-    appearance.glassEnabled = false;
-    appearance.acrylicEnabled = false;
-    return appearance;
-}
-
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
 {
     NormalizeDockSettings(settings);
@@ -1202,6 +1194,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     JsonValue gradientDocument;
     if (!ParseJson(text, gradientDocument) ||
         !snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
+    if (!snowdesktop::ReadTaskbarMaterials(gradientDocument, settings)) return false;
     if (taskbarStyle.backgroundPreset == kAppearancePresetTaskbarTransparent)
         taskbarStyle = MakeTransparentTaskbarAppearance();
     else if (taskbarStyle.backgroundPreset != kAppearancePresetCustom)
@@ -1220,7 +1213,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     std::ostringstream gradientFields;
     if (!snowdesktop::WriteTaskbarGradients(gradientFields, settings)) return false;
     const auto customAppearance = snowdesktop::EncodePanelAppearance(settings.customAppearance);
-    if (customAppearance.empty()) return false;
+    std::ostringstream materialFields;
+    if (customAppearance.empty() || !snowdesktop::WriteTaskbarMaterials(materialFields, settings)) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
 
@@ -1303,6 +1297,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     WriteDynamicRule(file, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
+    file << materialFields.str();
     file << gradientFields.str();
     file << "  \"followComponentAppearance\": " << (settings.followComponentAppearance ? "true" : "false") << ",\n";
     file << "  \"dockAppearancePreset\": " << settings.appearancePreset << ",\n";

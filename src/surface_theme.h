@@ -17,6 +17,18 @@ struct SurfaceTheme
     friend bool operator==(const SurfaceTheme&, const SurfaceTheme&) = default;
 };
 
+inline void SelectSurfaceThemeMode(SurfaceTheme& theme, int mode,
+    const PersonalizationSettings& effectiveAppearance)
+{
+    if (mode == 4 && theme.mode != 4)
+    {
+        theme.appearance = effectiveAppearance;
+        theme.appearance.backgroundPreset = kAppearancePresetCustom;
+        theme.customized = true;
+    }
+    theme.mode = mode;
+}
+
 inline int GlobalSurfaceThemeSelection(const PersonalizationSettings& global)
 {
     if (global.backgroundPreset != kAppearancePresetCustom)

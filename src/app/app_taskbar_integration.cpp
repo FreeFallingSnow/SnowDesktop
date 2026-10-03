@@ -204,44 +204,7 @@ bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
     const SystemTaskbarDynamicRule& rule) const
 {
-    PersonalizationSettings result;
-    switch (rule.themeMode)
-    {
-    case SystemTaskbarThemeMode::FollowGlobal:
-        result = CurrentPersonalization();
-        break;
-    case SystemTaskbarThemeMode::Dark:
-        result = MakeAppearancePreset(kAppearancePresetDark);
-        break;
-    case SystemTaskbarThemeMode::Light:
-        result = MakeAppearancePreset(kAppearancePresetLight);
-        break;
-    case SystemTaskbarThemeMode::GlassDark:
-        result = MakeAppearancePreset(kAppearancePresetGlassDark);
-        break;
-    case SystemTaskbarThemeMode::GlassLight:
-        result = MakeAppearancePreset(kAppearancePresetGlassLight);
-        break;
-    case SystemTaskbarThemeMode::AcrylicDark:
-        result = MakeAppearancePreset(kAppearancePresetAcrylicDark);
-        break;
-    case SystemTaskbarThemeMode::AcrylicLight:
-        result = MakeAppearancePreset(kAppearancePresetAcrylicLight);
-        break;
-    case SystemTaskbarThemeMode::Transparent:
-        result = MakeTransparentTaskbarAppearance();
-        break;
-    case SystemTaskbarThemeMode::Custom:
-        result = rule.appearance;
-        break;
-    case SystemTaskbarThemeMode::Native:
-    default:
-        result = PersonalizationSettings::DarkPreset();
-        break;
-    }
-    if (rule.contentTheme >= 0)
-        result.contentTheme = rule.contentTheme;
-    return result;
+    return snowdesktop::ResolveTaskbarRuleAppearance(rule, CurrentPersonalization());
 }
 
 bool IsSystemTaskbarCandidateWindow(HWND window,

@@ -4,9 +4,11 @@
 #include "settings_presenter_controls.h"
 #include "appearance_sections.h"
 #include "panel_gradient_editor.h"
+#include "panel_appearance_editor.h"
 #include "merged_bar_height_editor.h"
 
 #include "../dock_settings.h"
+#include "../taskbar_appearance.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -117,6 +119,7 @@ struct TaskbarGradientControl
     AppearanceSections sections;
     std::shared_ptr<PanelGradientEditor> editor;
     bool enabled = false;
+    std::shared_ptr<PanelAppearanceEditor> borderEditor;
 };
 
 struct DynamicRuleControl
@@ -253,7 +256,7 @@ int PresetForTaskbarMode(SystemTaskbarThemeMode mode) noexcept
     }
 }
 
-void ApplyMainTaskbarTheme(DockSettings& settings, int selectedIndex)
+void ApplyMainTaskbarTheme(DockSettings& settings, int selectedIndex, const PersonalizationSettings& global)
 {
     const auto mode = static_cast<SystemTaskbarThemeMode>(std::clamp(
         selectedIndex,
@@ -282,15 +285,7 @@ void ApplyMainTaskbarTheme(DockSettings& settings, int selectedIndex)
             PresetForTaskbarMode(mode));
         break;
     case SystemTaskbarThemeMode::Custom:
-        settings.systemTaskbarBackdropEnabled = true;
-        settings.systemTaskbarFollowPersonalization = false;
-        settings.systemTaskbarAppearance.backgroundPreset =
-            kAppearancePresetCustom;
-        if (settings.systemTaskbarContentTheme < 0)
-        {
-            settings.systemTaskbarContentTheme = std::clamp(
-                settings.systemTaskbarAppearance.contentTheme, 0, 1);
-        }
+        SelectTaskbarCustomAppearance(settings, global);
         break;
     case SystemTaskbarThemeMode::Transparent:
         settings.systemTaskbarBackdropEnabled = true;
@@ -302,20 +297,6 @@ void ApplyMainTaskbarTheme(DockSettings& settings, int selectedIndex)
     }
 }
 
-void PrepareDynamicRuleTheme(
-    SystemTaskbarDynamicRule& rule,
-    SystemTaskbarThemeMode mode)
-{
-    const SystemTaskbarThemeMode previous = rule.themeMode;
-    rule.themeMode = mode;
-    if (mode != SystemTaskbarThemeMode::Custom)
-        return;
-
-    const int preset = PresetForTaskbarMode(previous);
-    if (preset >= 0)
-        rule.appearance = MakeAppearancePreset(preset);
-    rule.appearance.backgroundPreset = kAppearancePresetCustom;
-}
 
 } // namespace
 
@@ -449,6 +430,7 @@ struct DockPagePresenter::Impl
     std::uint64_t generation = 0;
     std::uint64_t generalRevision = 0;
     std::uint64_t dockRevision = 0;
+    PersonalizationSettings globalAppearance;
     bool hasSnapshot = false;
     bool updatingControls = false;
     bool synchronizingPair = false;
@@ -717,9 +699,7 @@ struct DockPagePresenter::Impl
         taskbarAcrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         InitializeTaskbarGradient(taskbarGradient, taskbarCustomAppearance);
         taskbarGradient.sections.colors.Children().Append(taskbarBackgroundColor.root);
-        taskbarGradient.sections.border.Children().Append(taskbarBorderColor.root);
         taskbarGradient.sections.colors.Children().Append(taskbarBackgroundAlpha.root);
-        taskbarGradient.sections.border.Children().Append(taskbarBorderAlpha.root);
         taskbarGradient.sections.material.Children().Append(taskbarGlassRow.root);
         taskbarGradient.sections.material.Children().Append(taskbarBlurRadius.root);
         taskbarGradient.sections.material.Children().Append(taskbarAcrylicRow.root);
@@ -902,7 +882,25 @@ struct DockPagePresenter::Impl
         const muxc::StackPanel& parent,
         SystemTaskbarDynamicRule DockSettings::* member = nullptr)
     {
-        control.sections.Initialize(parent, false, false, false);
+        control.sections.Initialize(parent, true, false, false);
+        control.borderEditor = PanelAppearanceEditor::Create(
+            [this](auto key) { return L(key, L""); },
+            [this, member](const PersonalizationSettings& value, bool commit) {
+                EmitDock(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [member, value](DockSettings& settings) {
+                        auto& appearance = member ? (settings.*member).appearance : settings.systemTaskbarAppearance;
+                        appearance.widgetBorderR = value.widgetBorderR;
+                        appearance.widgetBorderG = value.widgetBorderG;
+                        appearance.widgetBorderB = value.widgetBorderB;
+                        appearance.widgetBorderAlpha = value.widgetBorderAlpha;
+                        appearance.widgetBorderWidth = value.widgetBorderWidth;
+                        appearance.widgetEdgeHighlightEnabled = value.widgetEdgeHighlightEnabled;
+                        appearance.widgetEdgeHighlightWidth = value.widgetEdgeHighlightWidth;
+                        appearance.widgetEdgeHighlightStrength = value.widgetEdgeHighlightStrength;
+                        appearance.edgeLight = value.edgeLight;
+                    });
+            }, true);
+        control.sections.border.Children().Append(control.borderEditor->Content());
         control.editor = PanelGradientEditor::Create(
             [this](auto key) { return L(key, L""); },
             [this, &control, member](const PanelGradient& gradient, bool commit) {
@@ -992,9 +990,7 @@ struct DockPagePresenter::Impl
         control.acrylicRow.Initialize(control.acrylic);
         control.acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         control.gradient.sections.colors.Children().Append(control.backgroundColor.root);
-        control.gradient.sections.border.Children().Append(control.borderColor.root);
         control.gradient.sections.colors.Children().Append(control.backgroundAlpha.root);
-        control.gradient.sections.border.Children().Append(control.borderAlpha.root);
         control.gradient.sections.material.Children().Append(control.glassRow.root);
         control.gradient.sections.material.Children().Append(control.blurRadius.root);
         control.gradient.sections.material.Children().Append(control.acrylicRow.root);
@@ -1254,8 +1250,11 @@ struct DockPagePresenter::Impl
             });
         taskbarThemeToken = taskbarThemeCombo.SelectionChanged(
             [this](const auto&, const auto&) {
+                if (updatingControls) return;
                 const int value = taskbarThemeCombo.SelectedIndex();
                 if (value < 0) return;
+                CommitContinuousEdits();
+                CommitOpenColorEditors();
                 const bool custom = value ==
                     static_cast<int>(SystemTaskbarThemeMode::Custom);
                 if (!updatingControls &&
@@ -1269,8 +1268,8 @@ struct DockPagePresenter::Impl
                 }
                 UpdateDependentStates();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
-                    [value](DockSettings& settings) {
-                        ApplyMainTaskbarTheme(settings, value);
+                    [value, global = globalAppearance](DockSettings& settings) {
+                        ApplyMainTaskbarTheme(settings, value, global);
                     });
             });
         taskbarContentThemeToken = taskbarContentThemeCombo.SelectionChanged(
@@ -1416,14 +1415,17 @@ struct DockPagePresenter::Impl
         control.themeToken = control.theme.SelectionChanged(
             [this, &control](const auto&, const auto&) {
                 UpdateDependentStates();
+                if (updatingControls) return;
                 const int value = control.theme.SelectedIndex();
                 if (value < 0) return;
+                CommitContinuousEdits();
+                CommitOpenColorEditors();
                 const auto member = control.member;
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
-                    [member, value](DockSettings& settings) {
-                        PrepareDynamicRuleTheme(settings.*member,
+                    [member, value, global = globalAppearance](DockSettings& settings) {
+                        SelectTaskbarRuleTheme(settings.*member,
                             static_cast<SystemTaskbarThemeMode>(std::clamp(
-                                value, 0, 9)));
+                                value, 0, 9)), global);
                     });
             });
         control.contentThemeToken = control.contentTheme.SelectionChanged(
@@ -1730,6 +1732,7 @@ struct DockPagePresenter::Impl
     {
         const auto& rule = settings.*control.member;
         PatchGradient(control.gradient, rule.appearance.panelGradient);
+        control.gradient.borderEditor->SetValue(rule.appearance);
         control.enabled.IsOn(rule.enabled);
         control.theme.SelectedIndex(std::clamp(
             static_cast<int>(rule.themeMode), 0, 9));
@@ -1747,6 +1750,7 @@ struct DockPagePresenter::Impl
     void PatchDock(const DockSettings& settings)
     {
         PatchGradient(taskbarGradient, settings.systemTaskbarAppearance.panelGradient);
+        taskbarGradient.borderEditor->SetValue(settings.systemTaskbarAppearance);
         positionCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.position), 0, 3));
         layoutCombo.SelectedIndex(settings.edgeAttached ? 1 : 0);
@@ -2323,6 +2327,7 @@ struct DockPagePresenter::Impl
     void RefreshLocalizedText()
     {
         const auto refresh = [this](TaskbarGradientControl& gradient) {
+            gradient.borderEditor->RefreshLocalizedText();
             gradient.sections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
             gradient.editor->RefreshLocalizedText();
         };
@@ -2614,6 +2619,7 @@ struct DockPagePresenter::Impl
             std::memory_order_release);
         const bool previousUpdating = updatingControls;
         updatingControls = true;
+        globalAppearance = snapshot.values.personalization;
         const auto& dock = snapshot.values.dock;
         const auto& bar = snapshot.values.general.statusBar;
         // Disable only when every Dock copy is merged. With an all-monitor
@@ -2626,8 +2632,12 @@ struct DockPagePresenter::Impl
         {
             confirmationGate->confirmationPending = false;
             PatchGradient(taskbarGradient, snapshot.values.dock.systemTaskbarAppearance.panelGradient, true);
+            taskbarGradient.borderEditor->SetValue(snapshot.values.dock.systemTaskbarAppearance, true);
             for (auto* control : dynamicRules)
+            {
                 PatchGradient(control->gradient, (snapshot.values.dock.*control->member).appearance.panelGradient, true);
+                control->gradient.borderEditor->SetValue((snapshot.values.dock.*control->member).appearance, true);
+            }
         }
 
         if (newGeneration ||
@@ -2705,11 +2715,11 @@ struct DockPagePresenter::Impl
         if (id == "taskbar.backgroundColor")
             return taskbarBackgroundColor.editor.button;
         if (id == "taskbar.borderColor")
-            return taskbarBorderColor.editor.button;
+            return taskbarGradient.borderEditor->FocusTarget("app.settings.border_color");
         if (id == "taskbar.backgroundOpacity")
             return taskbarBackgroundAlpha.slider;
         if (id == "taskbar.borderOpacity")
-            return taskbarBorderAlpha.slider;
+            return taskbarGradient.borderEditor->FocusTarget("largeIcon.borderOpacity");
         if (id == "taskbar.glass") return taskbarGlassToggle;
         if (id == "taskbar.blurRadius") return taskbarBlurRadius.slider;
         if (id == "taskbar.acrylic") return taskbarAcrylicToggle;
@@ -2730,6 +2740,8 @@ struct DockPagePresenter::Impl
     {
         try
         {
+            taskbarGradient.borderEditor->Flush();
+            for (auto* rule : dynamicRules) rule->gradient.borderEditor->Flush();
             taskbarGradient.editor->Flush();
             for (auto* rule : dynamicRules) rule->gradient.editor->Flush();
             for (ContinuousControl* control : continuousControls)
@@ -2812,6 +2824,8 @@ struct DockPagePresenter::Impl
         active = false;
         closed = true;
         StopCardHighlights();
+        taskbarGradient.borderEditor->Close();
+        for (auto* rule : dynamicRules) rule->gradient.borderEditor->Close();
         taskbarGradient.editor->Close();
         for (auto* rule : dynamicRules) rule->gradient.editor->Close();
         confirmationGate->alive.store(false, std::memory_order_release);
