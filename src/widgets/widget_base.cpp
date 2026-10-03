@@ -26,6 +26,7 @@
 #include "../widget_item_layout.h"
 #include "../widget_scroll_rules.h"
 #include "../category_collection_rules.h"
+#include "../desktop_category_item_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
@@ -702,9 +703,27 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
         bool sourceHasShortcut = sourceItems.empty() && app_ &&
             app_->dragDropController_.IsExternalDragActive() &&
             app_->dragDropController_.ExternalSummary().hasShortcut;
+        bool sourceHasNamespaceProgram = false;
         for (auto* item : sourceItems)
         {
             if (!item) continue;
+            const DesktopItem* desktopItem = nullptr;
+            if (auto* icon = dynamic_cast<DesktopIcon*>(item))
+                desktopItem = icon->GetDesktopItem();
+            else if (app_)
+            {
+                size_t index = static_cast<size_t>(-1);
+                if (auto* dockItem = dynamic_cast<DockEntryItem*>(item);
+                    dockItem && dockItem->GetEntryType() == DockEntryType::DesktopItem)
+                    index = app_->FindItemIndexByKey(dockItem->GetReference());
+                else if (auto* frequent = dynamic_cast<DockFrequentItem*>(item))
+                    index = frequent->GetItemIndex();
+                if (index < app_->GetDesktopItems().size())
+                    desktopItem = &app_->GetDesktopItems()[index];
+            }
+            if (desktopItem && snowdesktop::category_collection_rules::
+                    IsDesktopNamespaceProgram(*desktopItem))
+                sourceHasNamespaceProgram = true;
             std::wstring path = item->GetPath();
             if (!path.empty() && isShortcutPath(path))
             {
@@ -714,7 +733,7 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
         }
 
         if (app_ && !app_->GetCategorySettings().collectProgramsEnabled &&
-            (sourceHasShortcut || action == DropAction::Link))
+            (sourceHasNamespaceProgram || sourceHasShortcut || action == DropAction::Link))
             return _LW("app.settings.collect_programs_confirm_title");
 
         if (data_->dateHeaders &&

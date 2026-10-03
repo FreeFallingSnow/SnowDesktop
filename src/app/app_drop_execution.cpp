@@ -4,6 +4,7 @@
 #include "../folder_self_drop_rules.h"
 #include "../item_location.h"
 #include "../category_collection_rules.h"
+#include "../desktop_category_item_rules.h"
 #include "../empty_group_drop_rules.h"
 #include "../shortcut_category_target.h"
 
@@ -69,6 +70,9 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         return std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
                 [&](const DragSourceEntry& entry) {
                     const size_t index = FindItemIndexByKey(entry.desktopKey);
+                    if (index < items_.size() &&
+                        snowdesktop::category_collection_rules::IsDesktopNamespaceProgram(items_[index]))
+                        return true;
                     const bool application = index < items_.size() && items_[index].isApplicationShortcut;
                     const auto& path = entry.filePath.empty() ? entry.displayName : entry.filePath;
                     const DWORD attributes = path.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());

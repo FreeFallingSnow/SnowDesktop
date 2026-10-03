@@ -20,6 +20,7 @@
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
 #include "../category_collection_rules.h"
+#include "../desktop_category_item_rules.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
@@ -65,6 +66,9 @@ static bool IsFilesystemFolder(const DesktopItem& item)
  */
 static std::wstring FileCategoryIdForItem(const DesktopItem& item, const CategorySettings& settings)
 {
+    const auto namespaceCategory = snowdesktop::category_collection_rules::
+        DesktopNamespaceCategory(item, IsCategoryRuleEnabled(settings, L"programs"));
+    if (!namespaceCategory.empty()) return namespaceCategory;
     const std::wstring ext = DesktopItemExtensionUpper(item);
     if (IsFilesystemFolder(item))
         return IsCategoryRuleEnabled(settings, L"folders") ? L"folders" : L"others";
@@ -175,27 +179,16 @@ static std::wstring FileCategoryIdForItemByDate(const DesktopItem& item)
 
 /**
  * @brief 判断桌面项目是否应收录到分类面板中。
- *        排除受保护的系统图标；程序和快捷方式遵循默认关闭的收纳开关。
- * @param app DesktopApp 实例指针。
+ *        系统命名空间图标和程序遵循默认关闭的程序收纳开关。
+ * @param settings 文件分类设置。
  * @param item 待判断的桌面项目。
- * @return true 如果项目应被收录；false 如果受保护或程序收纳尚未开启。
+ * @return true 如果项目应被收录；false 如果缺少布局键或程序收纳尚未开启。
  */
 static bool IsCollectable(const CategorySettings& settings, const DesktopItem& item)
 {
-    std::wstring clsid = !item.desktopIconClsid.empty()
-        ? item.desktopIconClsid
-        : ExtractClsidText(item.parsingName);
-    bool protectedIcon = clsid == kDesktopIconClsidThisPC ||
-        clsid == kDesktopIconClsidUserFiles ||
-        clsid == kDesktopIconClsidNetwork ||
-        clsid == kDesktopIconClsidControlPanel ||
-        clsid == kDesktopIconClsidRecycleBin;
-    if (protectedIcon || item.layoutKey.empty()) return false;
-    const auto extension = DesktopItemExtensionUpper(item);
-    return IsFilesystemFolder(item) || settings.collectProgramsEnabled ||
-        !snowdesktop::category_collection_rules::IsProgramItem(
-            extension, item.isApplicationShortcut,
-            GetProgramCategoryExtensions(settings), item.shortcutTarget);
+    return snowdesktop::category_collection_rules::IsCollectableDesktopItem(
+        item, settings.collectProgramsEnabled, IsFilesystemFolder(item),
+        DesktopItemExtensionUpper(item), GetProgramCategoryExtensions(settings));
 }
 
 void FileCategories::EnsureCategorySnapshot() const

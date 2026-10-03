@@ -1,5 +1,6 @@
 #include "shortcut_application_rules.h"
 #include "category_collection_rules.h"
+#include "desktop_category_item_rules.h"
 #include "shortcut_category_target.h"
 #include "empty_group_drop_rules.h"
 #include "shortcut_icon_resource.h"
@@ -262,6 +263,49 @@ int wmain(int argc, wchar_t** argv)
     Check(!collection::IsProgramItem(L".URL", false, {L".URL:STEAM"}), "ordinary web links remain collectable with programs disabled");
     Check(collection::IsProgramItem(L".PY", false, {L".PY"}), "custom program suffixes require the same opt-in");
     Check(!collection::IsProgramItem(L".PDF", false, {L".PY"}), "ordinary documents stay collectable while programs are disabled");
+    // These are the production predicates used by FileCategories admission,
+    // category snapshots and the commit-time program opt-in. No Shell/UI is
+    // simulated here; actual drop execution still needs desktop validation.
+    for (const auto* clsid : {kDesktopIconClsidThisPC, kDesktopIconClsidUserFiles,
+            kDesktopIconClsidNetwork, kDesktopIconClsidControlPanel, kDesktopIconClsidRecycleBin})
+    {
+        DesktopItem item;
+        item.layoutKey = L"SYSTEM-ICON";
+        item.desktopIconClsid = clsid;
+        item.parsingName = L"C:\\Users\\Example";
+        Check(collection::IsDesktopNamespaceProgram(item),
+            "each standard desktop namespace icon requires program collection");
+        Check(collection::DesktopNamespaceCategory(item, true) == L"programs" &&
+            collection::DesktopNamespaceCategory(item, false) == L"others",
+            "namespace icons use Programs, falling back to Others when that category is disabled");
+        for (const bool folder : {false, true})
+        {
+            Check(!collection::IsCollectableDesktopItem(item, false, folder, L"", {}),
+                "namespace icons cannot bypass the program opt-in through a directory-backed PIDL");
+            Check(collection::IsCollectableDesktopItem(item, true, folder, L"", {}),
+                "enabling program collection admits system icons with or without filesystem paths");
+        }
+        item.desktopIconClsid.clear();
+        item.parsingName = L"::" + std::wstring(clsid);
+        Check(collection::IsDesktopNamespaceProgram(item) &&
+            collection::IsCollectableDesktopItem(item, true, false, L"", {}) &&
+            !collection::IsCollectableDesktopItem(item, false, false, L"", {}),
+            "a Shell parsing identity retains the same opt-in before CLSID enrichment");
+        item.layoutKey.clear();
+        Check(!collection::IsCollectableDesktopItem(item, true, false, L"", {}),
+            "even an enabled system icon needs a persistent layout key");
+    }
+    DesktopItem ordinary;
+    ordinary.layoutKey = L"ordinary";
+    ordinary.parsingName = L"C:\\Docs\\{20D04FE0-3AEA-1069-A2D8-08002B30309D}.pdf";
+    Check(!collection::IsDesktopNamespaceProgram(ordinary) &&
+        collection::DesktopNamespaceCategory(ordinary, true).empty() &&
+        collection::IsCollectableDesktopItem(ordinary, false, false, L".PDF", {}),
+        "a document whose filename contains a CLSID remains an ordinary collectable document");
+    Check(collection::IsCollectableDesktopItem(ordinary, false, true, L"", {}) &&
+        !collection::IsCollectableDesktopItem(ordinary, false, false, L".EXE", {}) &&
+        collection::IsCollectableDesktopItem(ordinary, true, false, L".EXE", {}),
+        "ordinary folders retain their admission and executables still require the opt-in");
     const std::vector<std::wstring> defaults{L"all", L"folders", L"programs", L"images", L"others"};
     auto order = collection::ResolveTabOrder(defaults, {L"images", L"all", L"images", L"removed"});
     Check(order == std::vector<std::wstring>({L"images", L"all", L"folders", L"programs", L"others"}),
