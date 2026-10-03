@@ -1,5 +1,6 @@
 """Real local wait/repair runners; only native build and transient CTest boundaries are fixtures."""
 import argparse
+import ctypes
 import importlib.util
 import json
 import os
@@ -152,9 +153,14 @@ def real_selection_fixture(repo):
     ps=str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
     log=[]
     def invoke(*args,expected):
-        p=subprocess.run([ps,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(root/'scripts/test_manager.ps1'),*args],cwd=str(root),capture_output=True,text=True,encoding='utf-8',timeout=30)
-        log.append({'args':list(args),'exitCode':p.returncode,'stdout':p.stdout,'stderr':p.stderr})
-        assert (p.returncode==0)==(expected==0),(args,p.returncode,p.stdout,p.stderr)
+        p=subprocess.run([ps,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(root/'scripts/test_manager.ps1'),*args],cwd=str(root),capture_output=True,timeout=30)
+        # Windows PowerShell can mix UTF-8 script output with localized native
+        # error bytes. Keep both original streams; decoding diagnostic text
+        # must not crash subprocess reader threads or lose the actual exit.
+        stdout=p.stdout.decode('utf-8',errors='replace');stderr=p.stderr.decode('utf-8',errors='replace')
+        log.append({'args':list(args),'exitCode':p.returncode,'stdout':stdout,'stderr':stderr,
+                    'stdoutRawHex':p.stdout.hex(),'stderrRawHex':p.stderr.hex()})
+        assert (p.returncode==0)==(expected==0),(args,p.returncode,stdout,stderr)
         return p
     def plan(batch):
         requirement={'tests':['Alpha','Beta'],'suites':['selected'],'requiredFull':False,'reason':'real CTest literal selection fixture'}
@@ -189,6 +195,67 @@ def real_selection_fixture(repo):
         assert str(resolved).lower().startswith(str(temp).lower()+os.sep) and resolved.name.startswith('SnowDesktop-real-ctest-selection-')
         subprocess.run([ps,'-NoProfile','-Command',"Remove-Item -LiteralPath '"+str(resolved).replace("'","''")+"' -Recurse -Force -ErrorAction Stop"],check=True,capture_output=True,timeout=10)
 
+def crash_fixture_worker(root, ticket):
+    """Crash only the recorded live worker, using one validated native handle."""
+    assert root in CREATED, 'Crash injection requires this test\'s named fixture'
+    identifier=ticket['id']
+    assert len(identifier)==32 and all(c in '0123456789abcdef' for c in identifier)
+    saved=json.loads((root/'.build/collaboration'/(identifier+'.wait.json')).read_bytes())
+    owner=ticket['owner']
+    assert saved['owner']==owner and saved['participant']==ticket['participant'], 'Worker receipt changed before crash injection'
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.OpenProcess.argtypes=[ctypes.c_ulong,ctypes.c_int,ctypes.c_ulong]
+    kernel.OpenProcess.restype=ctypes.c_void_p
+    kernel.GetProcessTimes.argtypes=[ctypes.c_void_p]+[ctypes.POINTER(ctypes.c_ulonglong)]*4
+    kernel.QueryFullProcessImageNameW.argtypes=[ctypes.c_void_p,ctypes.c_ulong,ctypes.c_wchar_p,ctypes.POINTER(ctypes.c_ulong)]
+    kernel.WaitForSingleObject.argtypes=[ctypes.c_void_p,ctypes.c_ulong]
+    kernel.WaitForSingleObject.restype=ctypes.c_ulong
+    kernel.TerminateProcess.argtypes=[ctypes.c_void_p,ctypes.c_uint]
+    kernel.CloseHandle.argtypes=[ctypes.c_void_p]
+    handle=kernel.OpenProcess(0x1000|0x100000|0x1,False,int(owner['pid']))
+    assert handle, 'Owned worker unavailable before crash injection: '+str(ctypes.get_last_error())
+    try:
+        values=[ctypes.c_ulonglong() for _ in range(4)]
+        assert kernel.GetProcessTimes(handle,*[ctypes.byref(x) for x in values]), 'Cannot verify worker birth time'
+        assert str(values[0].value+504911232000000000)==str(owner['startTicks']), 'Worker birth time differs; crash refused'
+        assert kernel.WaitForSingleObject(handle,0)==258, 'Owned worker already exited before crash injection; original budget was not extended'
+        size=ctypes.c_ulong(32768);image=ctypes.create_unicode_buffer(size.value)
+        assert kernel.QueryFullProcessImageNameW(handle,0,image,ctypes.byref(size)), 'Cannot verify worker executable'
+        assert os.path.normcase(str(Path(image.value).resolve()))==os.path.normcase(str(Path(sys.executable).resolve())), 'Worker executable differs; crash refused'
+        assert kernel.WaitForSingleObject(handle,0)==258, 'Owned worker exited during identity checks; crash injection missed'
+        assert kernel.TerminateProcess(handle,1), 'Owned worker crash failed: '+str(ctypes.get_last_error())
+        assert kernel.WaitForSingleObject(handle,5000)==0, 'Owned worker did not exit after crash injection'
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def crash_fixture_worker_regression(root, waits):
+    child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],cwd=str(root),
+        stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW)
+    path=root/'.build/collaboration'/('c'*32+'.wait.json')
+    try:
+        owner=waits.process_owner(child.pid)
+        ticket={'id':'c'*32,'participant':'native-crash-regression','owner':dict(owner,startTicks=str(int(owner['startTicks'])+1))}
+        waits.atomic(path,ticket)
+        try:crash_fixture_worker(root,ticket)
+        except AssertionError as error:assert 'birth time differs' in str(error),error
+        else:raise AssertionError('Mismatched birth time must refuse crash injection')
+        assert child.poll() is None, 'Mismatched identity terminated the child'
+        ticket['owner']=owner;waits.atomic(path,ticket)
+        crash_fixture_worker(root,ticket)
+        assert child.wait(timeout=5)==1
+        # Popen deliberately retains its native handle: an exited worker is
+        # still queryable but must never count as a successful crash injection.
+        try:crash_fixture_worker(root,ticket)
+        except AssertionError as error:assert 'already exited' in str(error),error
+        else:raise AssertionError('Exited worker must report a missed crash, not pass')
+        print('PASS native fixture crash: mismatched birth refused without termination, exact live handle exited 1, retained exited handle rejected',flush=True)
+    finally:
+        if child.poll() is None:child.kill();child.wait(timeout=5)
+        path.unlink(missing_ok=True)
+
+
 def main(repo):
     # Copied coordinator fixtures need their own credentials rather than the
     # enclosing shared build's credential for a different repository root.
@@ -204,6 +271,7 @@ def main(repo):
     import build_test_retry as retry
     reader=waits.reader(root)
     state_root=root/'.build/collaboration';state_root.mkdir(parents=True)
+    crash_fixture_worker_regression(root,waits)
     owned=[]
     def read(name):return reader.read_json(state_root,name)
     def until(fn,seconds=12):
@@ -254,7 +322,7 @@ def main(repo):
     # Crash waits are only resumed explicitly. Kill only a fixture-owned worker by exact process identity.
     (state_root/(bid+'.json')).unlink()
     crashed=cli('start','crash-editor','--condition','window','--timeout',10);owned.append(crashed['owner'])
-    subprocess.run([PS,'-NoProfile','-Command','Stop-Process -Id '+str(crashed['owner']['pid'])],check=True,capture_output=True)
+    crash_fixture_worker(root,crashed)
     until(lambda:reader.owner_state(crashed['owner'])=='exited')
     assert cli('status','--ticket',crashed['id'])['status']=='interrupted'
     restarted=cli('resume','--ticket',crashed['id'],'--timeout',10,'--reason','fixture worker exited; safe readonly restart');owned.append(restarted['owner'])
