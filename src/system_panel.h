@@ -6,6 +6,7 @@
 namespace snowdesktop
 {
 struct SystemCalendarActions;
+struct SystemPanelInputMethodActions;
 class SystemPanel
 {
 public:
@@ -16,6 +17,8 @@ public:
     ~SystemPanel();
     void Show(StatusBarAction,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
         std::shared_ptr<tray::Service>,std::shared_ptr<widget_runtime::WidgetSystemDataProvider>, bool clockAtRight=false);
+    void ShowInputMethod(SystemPanelInputMethodActions,HWND,RECT,const PersonalizationSettings&,
+        const StatusBarSettings&,std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
     // Standalone system-menu confirmation: cancel/success dismisses this panel.
     void ShowPowerConfirmation(std::string task,HWND,RECT,const PersonalizationSettings&,const StatusBarSettings&,
         std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);

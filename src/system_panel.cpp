@@ -49,6 +49,7 @@ struct SystemPanel::Impl
     struct Request
     {
         StatusBarAction action;HWND owner;RECT anchor;PersonalizationSettings appearance;StatusBarSettings settings;std::shared_ptr<tray::Service> tray;std::shared_ptr<wr::WidgetSystemDataProvider> data;std::string confirmPower;bool clockAtRight=false;
+        SystemPanelInputMethodActions inputMethod;
         bool SameTarget(const Request& other) const
         {return action==other.action&&owner==other.owner&&confirmPower==other.confirmPower;}
         HMONITOR Monitor() const {return MonitorFromRect(&anchor,MONITOR_DEFAULTTONEAREST);}
@@ -248,6 +249,8 @@ struct SystemPanel::Impl
         if(modal||transition.Releasing()){transition.Defer(std::move(request));return;}
         if(!Ensure())return;current=std::move(request);const auto& r=*current;monitor=MonitorFromRect(&r.anchor,MONITOR_DEFAULTTONEAREST);scale=GetDpiForWindow(r.owner)/96.f;
         auto source=LiveSystemPanelSource(r.data);source.calendar=calendar;source.tray=[service=r.tray]{return service?service->Current():tray::Snapshot{};};
+        source.inputMethod=r.inputMethod;
+        if(r.inputMethod.settings)source.settings=r.inputMethod.settings;
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
         tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;paintDirty=true;
@@ -285,7 +288,7 @@ struct SystemPanel::Impl
         // render target while retaining the outside half around the corners.
         const int w=static_cast<int>(std::ceil(scene.width*scale))+kSurfacePadding*2,h=static_cast<int>(std::ceil(scene.height*scale))+kSurfacePadding*2;
         const bool calendarPanel=current->action==StatusBarAction::Calendar;
-        const bool controls=current->action!=StatusBarAction::Tray&&!calendarPanel&&!IsSystemResourceAction(current->action)&&current->confirmPower.empty();
+        const bool controls=current->action!=StatusBarAction::Tray&&current->action!=StatusBarAction::InputMethodPanel&&!calendarPanel&&!IsSystemResourceAction(current->action)&&current->confirmPower.empty();
         const auto alignment=controls||(calendarPanel&&current->clockAtRight)?SystemPanelAlignment::ScreenRight:
             calendarPanel?SystemPanelAlignment::IconCenter:SystemPanelAlignment::IconRight;
         const auto placement=PlaceSystemPanel(current->anchor,{w,h},info.rcWork,current->settings.position,scale,alignment);
@@ -688,6 +691,8 @@ SystemPanel::SystemPanel(SettingsChanged c,SystemCalendarActions d,std::function
 SystemPanel::~SystemPanel()=default;
 void SystemPanel::Show(StatusBarAction a,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<tray::Service> tray,std::shared_ptr<wr::WidgetSystemDataProvider> data,bool clockAtRight)
 {impl_->Queue({a,owner,anchor,appearance,settings,std::move(tray),std::move(data),{},clockAtRight});}
+void SystemPanel::ShowInputMethod(SystemPanelInputMethodActions actions,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<wr::WidgetSystemDataProvider> data)
+{impl_->Queue({StatusBarAction::InputMethodPanel,owner,anchor,appearance,settings,{},std::move(data),{},false,std::move(actions)});}
 void SystemPanel::ShowPowerConfirmation(std::string task,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<wr::WidgetSystemDataProvider> data)
 {
     if(task!="system.power.sleep"&&task!="system.power.restart"&&task!="system.power.shutdown")return;

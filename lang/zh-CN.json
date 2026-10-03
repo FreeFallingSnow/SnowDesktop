@@ -2398,5 +2398,10 @@
   "start.statusBarEnable.instructions": "1. 在状态栏设置中开启状态栏。\n2. 选择顶部或底部，以及要显示的显示器。\n3. 调整缩放，让栏内文字和图标适合当前屏幕；不需要时可关闭状态栏。",
   "start.statusBarContents.title": "选择状态栏内容",
   "start.statusBarContents.description": "选择常用入口和性能信息，并调整点击行为。",
-  "start.statusBarContents.instructions": "在“左侧”选择系统菜单、快捷搜索和任务视图，在“信息区”选择输入法、CPU、内存、GPU 和网速。时间、托盘及系统控制按设备能力显示。在“点击行为”中选择点击时间或控制中心时打开的面板；可用选项因 Windows 版本而异。"
+  "start.statusBarContents.instructions": "在“左侧”选择系统菜单、快捷搜索和任务视图，在“信息区”选择输入法、CPU、内存、GPU 和网速。时间、托盘及系统控制按设备能力显示。在“点击行为”中选择点击时间或控制中心时打开的面板；可用选项因 Windows 版本而异。",
+  "statusBar.inputMethodMenu": "输入法菜单",
+  "statusBar.inputLanguageSettings": "语言设置",
+  "statusBar.inputKeyboardSettings": "键盘设置",
+  "statusBar.inputMethodEmpty": "没有可用的输入法",
+  "statusBar.inputMethodFailed": "无法切换输入法。请重新打开面板后再试。"
 }

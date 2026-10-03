@@ -2398,5 +2398,10 @@
   "start.statusBarEnable.instructions": "1. Enable the status bar in its settings.\n2. Choose the top or bottom edge and which displays to use.\n3. Adjust scaling to suit the text and icons to your screen. Disable the status bar when you no longer need it.",
   "start.statusBarContents.title": "Choose status bar contents",
   "start.statusBarContents.description": "Choose shortcuts and performance information, and adjust click behavior.",
-  "start.statusBarContents.instructions": "Under Left, choose the system menu, quick search and task view. Under Information area, choose the input method, CPU, memory, GPU and network speed. Time, tray and system controls appear according to device capabilities. Under Click behavior, choose which panel opens when you click the time or control center; available options vary by Windows version."
+  "start.statusBarContents.instructions": "Under Left, choose the system menu, quick search and task view. Under Information area, choose the input method, CPU, memory, GPU and network speed. Time, tray and system controls appear according to device capabilities. Under Click behavior, choose which panel opens when you click the time or control center; available options vary by Windows version.",
+  "statusBar.inputMethodMenu": "Input method menu",
+  "statusBar.inputLanguageSettings": "Language settings",
+  "statusBar.inputKeyboardSettings": "Keyboard settings",
+  "statusBar.inputMethodEmpty": "No input methods available",
+  "statusBar.inputMethodFailed": "Unable to switch input methods. Reopen the panel and try again."
 }

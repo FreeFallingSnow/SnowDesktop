@@ -101,7 +101,7 @@ void SystemPanelModel::SyncSubscriptions()
 {
     std::set<std::string> needed;
     if(IsSystemResourceAction(action_))needed.insert(Topic(action_));
-    else if(action_!=StatusBarAction::Tray&&action_!=StatusBarAction::Calendar)
+    else if(action_!=StatusBarAction::Tray&&action_!=StatusBarAction::Calendar&&action_!=StatusBarAction::InputMethodPanel)
     {
         if(settings_.mediaControls){needed.insert("media.sessions");needed.insert("media.artwork");}
         if(settings_.wifiControls&&(page_.empty()||page_.starts_with("wifi")))needed.insert("network.wifi");
@@ -901,6 +901,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
             if(!busy){BindAction("wifi.scan","wifi.scan:"+interface_,interface_,{},"wifi.radio:"+interface_);Start("network.wifi.scan",{{"interfaceId",interface_}},"wifi.scan");}
         }
     }
+    if(action_==StatusBarAction::InputMethodPanel){InputMethod();return;}
     if(action_==StatusBarAction::Tray){Tray();return;}if(action_==StatusBarAction::Calendar){Calendar();return;}if(IsSystemResourceAction(action_)){Resources();return;}
     scene_.width=384;
     // The old offline "media" preset still selects the overview; media has no detail page.
@@ -965,6 +966,37 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         if(const auto control=valueControls_.find(node.id);control!=valueControls_.end())
             if(const auto found=pendingValues_.find(control->second);found!=pendingValues_.end())node.text=Percent(found->second.value*100);
     }
+}
+void SystemPanelModel::InputMethod()
+{
+    scene_.width=(std::min)(360.f,availableWidth_);
+    auto& title=Add("input.title",ui::Role::Text,Rect(16,10,scene_.width-32,32),_LW("statusBar.inputMethod"));
+    title.bold=true;title.fontSize=16;bodyStart_=48;
+    float y=bodyStart_;
+    for(std::size_t index=0;index<source_.inputMethod.choices.size();++index)
+    {
+        const auto choice=source_.inputMethod.choices[index];
+        auto& row=Add("input.profile:"+std::to_string(index),ui::Role::ListItem,Rect(12,y,scene_.width-24,52),choice.name,L"\uE765");
+        row.selected=choice.selected;row.detail=choice.language;row.enabled=static_cast<bool>(source_.inputMethod.select);
+        row.tooltip=row.accessibilityLabel=choice.name+L" · "+choice.language;
+        Command(row.id,[this,choice]{const auto select=source_.inputMethod.select;if(select)select(choice);});
+        y+=56;
+    }
+    if(source_.inputMethod.choices.empty())
+    {auto& empty=Add("input.empty",ui::Role::Text,Rect(16,y,scene_.width-32,44),_LW("statusBar.inputMethodEmpty"));empty.wrap=true;y+=48;}
+    // Keep actions visible while only the input-program list scrolls.
+    Finish(y,false,0,(std::min)(380.f,(std::max)(32.f,available_-144)));
+    y=scene_.height+4;
+    const auto button=[&](const char* id,const char* label,const wchar_t* glyph,std::function<void()> action,bool enabled=true)
+    {
+        auto& node=Add(id,ui::Role::Button,Rect(12,y,scene_.width-24,36),_LW(label),glyph);node.enabled=enabled;
+        Command(id,std::move(action));y+=44;
+    };
+    button("input.menu","statusBar.inputMethodMenu",L"\uE712",[this]{const auto menu=source_.inputMethod.menu;if(menu)menu();},
+        source_.inputMethod.menuAvailable&&static_cast<bool>(source_.inputMethod.menu));
+    button("input.languageSettings","statusBar.inputLanguageSettings",L"\uE774",[this]{OpenSettings(L"ms-settings:regionlanguage");});
+    button("input.keyboardSettings","statusBar.inputKeyboardSettings",L"\uE765",[this]{OpenSettings(L"ms-settings:typing");});
+    scene_.height=y+4;scene_.cards.front().bottom=scene_.height;
 }
 void SystemPanelModel::Tray()
 {

@@ -499,13 +499,13 @@ void CheckStatusBarKeyboardMessages()
     ime.bounds = {32, 0, 64, 32};
     probe.items.push_back(ime); probe.input.focused = 2;
     // Real DefWindowProc turns a mouse right release into WM_CONTEXTMENU;
-    // only the foreign IME call is replaced by invocation recording.
+    // only the panel opening is replaced by invocation recording.
     SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), MAKELPARAM(-1, -1));
     Expect(probe.invoked.size() == 6 &&
-        probe.invoked[4].action == StatusBarAction::InputMethodMenu &&
-        probe.invoked[5].action == StatusBarAction::InputMethodMenu && probe.invoked[4].bounds.left == 32,
-        "mouse and keyboard IME context requests target its native menu rather than the bar menu");
+        probe.invoked[4].action == StatusBarAction::InputMethodPanel &&
+        probe.invoked[5].action == StatusBarAction::InputMethodPanel && probe.invoked[4].bounds.left == 32,
+        "mouse and keyboard IME context requests open the picker panel without invoking the native menu");
     SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
     Expect(probe.invoked.size() == 7 && probe.invoked.back().action == StatusBarAction::InputMethod,
         "normal IME activation remains distinct from the context menu request");

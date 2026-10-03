@@ -2398,5 +2398,10 @@
   "start.statusBarEnable.instructions": "1. 상태 표시줄 설정에서 상태 표시줄을 켭니다.\n2. 위쪽 또는 아래쪽 가장자리와 표시할 모니터를 선택합니다.\n3. 화면에 맞게 글자와 아이콘의 배율을 조정합니다. 필요하지 않으면 상태 표시줄을 끌 수 있습니다.",
   "start.statusBarContents.title": "상태 표시줄 내용 선택",
   "start.statusBarContents.description": "바로가기와 성능 정보를 고르고 클릭 동작을 조정합니다.",
-  "start.statusBarContents.instructions": "왼쪽에서 시스템 메뉴, 빠른 검색과 작업 보기를 선택합니다. 정보 영역에서 입력 방식, CPU, 메모리, GPU와 네트워크 속도를 선택합니다. 시간, 트레이와 시스템 제어는 장치 기능에 따라 표시됩니다. 클릭 동작에서 시간이나 제어 센터를 누를 때 열리는 패널을 선택합니다. 사용 가능한 옵션은 Windows 버전에 따라 다릅니다."
+  "start.statusBarContents.instructions": "왼쪽에서 시스템 메뉴, 빠른 검색과 작업 보기를 선택합니다. 정보 영역에서 입력 방식, CPU, 메모리, GPU와 네트워크 속도를 선택합니다. 시간, 트레이와 시스템 제어는 장치 기능에 따라 표시됩니다. 클릭 동작에서 시간이나 제어 센터를 누를 때 열리는 패널을 선택합니다. 사용 가능한 옵션은 Windows 버전에 따라 다릅니다.",
+  "statusBar.inputMethodMenu": "입력기 메뉴",
+  "statusBar.inputLanguageSettings": "언어 설정",
+  "statusBar.inputKeyboardSettings": "키보드 설정",
+  "statusBar.inputMethodEmpty": "사용 가능한 입력기가 없습니다",
+  "statusBar.inputMethodFailed": "입력기를 전환할 수 없습니다. 패널을 다시 열고 시도해 주세요."
 }

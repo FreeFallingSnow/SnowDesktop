@@ -133,7 +133,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     statusBarActivationMonitor_ = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     const double shortcutStarted = action == Action::Notifications || action == Action::SystemControlCenter ||
         action == Action::TaskView || action == Action::SystemCalendar ||
-        action == Action::InputMethod || action == Action::InputMethodMenu
+        action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel
         ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
     const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
@@ -365,7 +365,53 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     }
     const auto chord = snowdesktop::ResolveStatusBarShellChord(action,
         snowdesktop::StatusBarSupportsSystemQuickSettings(), IsClassicSystemTaskbar());
-    if (action == Action::InputMethod || action == Action::InputMethodMenu)
+    if (action == Action::InputMethodPanel)
+    {
+        ensureSystemPanel();
+        namespace input = snowdesktop::status_bar_input_method;
+        const auto selection = input::CaptureSelection();
+        snowdesktop::SystemPanelInputMethodActions actions;
+        actions.choices = selection.choices;
+        actions.menuAvailable = std::any_of(selection.choices.begin(), selection.choices.end(), [](const auto& choice) {
+            return choice.selected && choice.profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR;
+        }) || (selection.target.layout && ImmIsIME(selection.target.layout));
+        actions.select = [this, selection](const input::Choice& choice) {
+            if (exitRequested_ || !systemPanel_) return;
+            systemPanel_->CloseThen([this, selection, choice] {
+                if (exitRequested_) return;
+                const HRESULT result = input::Select(selection, choice);
+                wchar_t message[128]{};
+                swprintf_s(message, L"StatusBar input method profile selection hr=0x%08lX", static_cast<unsigned long>(result));
+                WriteDiagnosticLogEntry(message);
+                if (result != S_OK)
+                    MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+            }, selection.target.foreground);
+        };
+        actions.menu = [this, selection, anchor] {
+            if (exitRequested_ || !systemPanel_) return;
+            systemPanel_->CloseThen([this, selection, anchor] {
+                if (exitRequested_ || !statusBar_ || !input::RestoreTarget(selection.target)) return;
+                const HRESULT result = statusBar_->ShowInputMethod(anchor, true);
+                wchar_t message[128]{};
+                swprintf_s(message, L"StatusBar input method panel menu hr=0x%08lX", static_cast<unsigned long>(result));
+                WriteDiagnosticLogEntry(message);
+            }, selection.target.foreground);
+        };
+        actions.settings = [this, owner](const wchar_t* uri) {
+            if (exitRequested_ || !systemPanel_) return;
+            const std::wstring target(uri);
+            systemPanel_->CloseThen([this, owner, target] {
+                if (!exitRequested_) ShellExecuteW(owner, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }, owner);
+        };
+        systemPanel_->ShowInputMethod(std::move(actions), owner, anchor,
+            statusBar_->AppearanceForMonitor(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)),
+            generalSettings_.statusBar, systemDataProvider_);
+        hold->shortcutFinished = true;
+        TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds, L"panel-requested");
+        statusBarActivationMonitor_ = nullptr;
+    }
+    else if (action == Action::InputMethod || action == Action::InputMethodMenu)
     {
         const HRESULT result = statusBar_->ShowInputMethod(anchor, action == Action::InputMethodMenu);
         wchar_t message[192]{};

@@ -2398,5 +2398,10 @@
   "start.statusBarEnable.instructions": "1. Activa la barra de estado en su configuración.\n2. Elige el borde superior o inferior y las pantallas donde se mostrará.\n3. Ajusta la escala del texto y los iconos para tu pantalla. Puedes desactivarla cuando no la necesites.",
   "start.statusBarContents.title": "Elegir el contenido de la barra de estado",
   "start.statusBarContents.description": "Elige accesos e información de rendimiento y ajusta la acción al hacer clic.",
-  "start.statusBarContents.instructions": "En Izquierda, elige el menú del sistema, la búsqueda rápida y la vista de tareas. En Área de información, elige el método de entrada, CPU, memoria, GPU y velocidad de red. La hora, la bandeja y los controles del sistema aparecen según las capacidades del dispositivo. En Acción al hacer clic, elige qué panel se abre al pulsar la hora o el centro de control; las opciones dependen de la versión de Windows."
+  "start.statusBarContents.instructions": "En Izquierda, elige el menú del sistema, la búsqueda rápida y la vista de tareas. En Área de información, elige el método de entrada, CPU, memoria, GPU y velocidad de red. La hora, la bandeja y los controles del sistema aparecen según las capacidades del dispositivo. En Acción al hacer clic, elige qué panel se abre al pulsar la hora o el centro de control; las opciones dependen de la versión de Windows.",
+  "statusBar.inputMethodMenu": "Menú del método de entrada",
+  "statusBar.inputLanguageSettings": "Configuración de idioma",
+  "statusBar.inputKeyboardSettings": "Configuración del teclado",
+  "statusBar.inputMethodEmpty": "No hay métodos de entrada disponibles",
+  "statusBar.inputMethodFailed": "No se pudo cambiar el método de entrada. Vuelve a abrir el panel e inténtalo de nuevo."
 }

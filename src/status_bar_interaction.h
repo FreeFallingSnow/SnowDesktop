@@ -159,7 +159,7 @@ inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
     const auto& item = items[*index];
     if (item.action == StatusBarAction::None || IsRectEmpty(&item.bounds)) return {};
     const auto action = context ? (item.action == StatusBarAction::InputMethod ?
-        StatusBarAction::InputMethodMenu : StatusBarAction::Menu) : item.action;
+        StatusBarAction::InputMethodPanel : StatusBarAction::Menu) : item.action;
     return StatusBarInvocation{action,
         item.icon.has_value(), item.icon ? item.icon->key : std::string{},
         context ? tray::Activation::ContextKeyboard : tray::Activation::Keyboard, item.bounds};

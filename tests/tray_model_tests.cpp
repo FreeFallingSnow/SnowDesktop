@@ -17,6 +17,12 @@ int RunTrayModelTests()
     };
     {
         namespace input = snowdesktop::status_bar_input_method;
+        TF_INPUTPROCESSORPROFILE first{}, second{};
+        first.dwProfileType=second.dwProfileType=TF_PROFILETYPE_INPUTPROCESSOR;
+        first.langid=second.langid=0x0804;
+        first.guidProfile.Data1=1;second.guidProfile.Data1=2;
+        check(!input::SameProfile(first,second)&&input::SameProfile(first,first),
+            "input programs sharing a language are identified by their TSF profile rather than language alone");
         check(input::native_menu::MatchesModeButton(L"Input indicator English mode", L"Input indicator") &&
             input::native_menu::MatchesModeButton(L"Input indicator", L"Input indicator") &&
             !input::native_menu::MatchesModeButton(L"Input indicator settings", L"") &&

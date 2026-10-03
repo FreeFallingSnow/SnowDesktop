@@ -1,9 +1,11 @@
 #pragma once
 #include <windows.h>
 #include <imm.h>
+#include <msctf.h>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace snowdesktop::status_bar_input_method
 {
@@ -17,6 +19,29 @@ struct Snapshot
     std::wstring label, description;
     friend bool operator==(const Snapshot&, const Snapshot&) = default;
 };
+
+// Host-private picker data. TSF profiles distinguish input programs sharing
+// the same language/HKL; keyboard layout handles alone do not identify them.
+struct Choice
+{
+    TF_INPUTPROCESSORPROFILE profile{};
+    std::wstring name, language;
+    bool selected = false;
+};
+struct Selection
+{
+    Snapshot target;
+    std::vector<Choice> choices;
+};
+Selection CaptureSelection();
+bool RestoreTarget(const Snapshot& target);
+HRESULT Select(const Selection&, const Choice&);
+
+inline bool SameProfile(const TF_INPUTPROCESSORPROFILE& a, const TF_INPUTPROCESSORPROFILE& b)
+{
+    return a.dwProfileType == b.dwProfileType && a.langid == b.langid &&
+        a.clsid == b.clsid && a.guidProfile == b.guidProfile && a.hkl == b.hkl;
+}
 
 namespace detail
 {

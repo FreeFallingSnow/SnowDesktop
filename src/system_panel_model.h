@@ -1,6 +1,7 @@
 #pragma once
 #include "native_ui_scene.h"
 #include "status_bar.h"
+#include "status_bar_input_method.h"
 #include "tray_service.h"
 #include "calendar_service.h"
 #include "calendar_display.h"
@@ -42,6 +43,14 @@ struct SystemCalendarInputField
     int limit=0;
     bool password=false;
 };
+struct SystemPanelInputMethodActions
+{
+    std::vector<status_bar_input_method::Choice> choices;
+    std::function<void(const status_bar_input_method::Choice&)> select;
+    std::function<void()> menu;
+    std::function<void(const wchar_t*)> settings;
+    bool menuAvailable = false;
+};
 // All live effects live at this boundary; offline rendering supplies fixtures.
 struct SystemPanelSource
 {
@@ -67,6 +76,7 @@ struct SystemPanelSource
     SystemCalendarActions calendar;
     // Internal task boundary; optional for deterministic offline sources.
     std::function<bool(std::uint64_t)> cancel;
+    SystemPanelInputMethodActions inputMethod;
 };
 SystemPanelSource LiveSystemPanelSource(std::shared_ptr<widget_runtime::WidgetSystemDataProvider>);
 native_ui::Palette SystemPanelPalette(const PersonalizationSettings&, bool highContrast = false);
@@ -218,6 +228,7 @@ private:
     void LeaveCalendarEditor(bool followSavedDate);
     void Resources();
     void Tray();
+    void InputMethod();
     struct TrayDropTarget { StatusBarSettings settings; D2D1_RECT_F indicator{}; };
     std::optional<TrayDropTarget> ResolveTrayDrop(std::string_view, D2D1_POINT_2F) const;
     void Radio(std::string_view, D2D1_RECT_F, bool compact);

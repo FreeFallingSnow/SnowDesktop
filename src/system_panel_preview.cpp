@@ -2260,6 +2260,60 @@ void CheckChartAndSwitchPixels(ID2D1Device* device,IDWriteFactory* text,
 }
 }
 
+namespace
+{
+void CheckInputMethodPanel(ID2D1Device* device,IDWriteFactory* text,const native_component_preview::Request& request,
+    native_component_preview::Result& result,const PersonalizationSettings& appearance,const SystemPanel::Background& background,
+    const widget_preview::Wallpaper& stage)
+{
+    SystemPanelSource source;
+    unsigned selections=0,menus=0,subscriptions=0;
+    std::wstring uri;
+    status_bar_input_method::Choice chinese,english;
+    chinese.name=L"Microsoft Pinyin";chinese.language=L"Chinese (Simplified)";chinese.selected=true;
+    chinese.profile.dwProfileType=TF_PROFILETYPE_INPUTPROCESSOR;chinese.profile.langid=0x0804;
+    english.name=L"US";english.language=L"English (United States)";
+    english.profile.dwProfileType=TF_PROFILETYPE_KEYBOARDLAYOUT;english.profile.langid=0x0409;
+    source.inputMethod.choices={chinese,english};source.inputMethod.menuAvailable=true;
+    source.inputMethod.select=[&](const auto& choice){Require(choice.profile.langid==0x0409,"picker dispatched a different input profile");++selections;};
+    source.inputMethod.menu=[&]{++menus;};source.settings=[&](const wchar_t* value){uri=value;};
+    source.subscribe=[&](auto,auto){++subscriptions;};
+    SystemPanelModel model(source,{},StatusBarAction::InputMethodPanel);
+    Require(subscriptions==0&&menus==0&&selections==0,"opening the picker performed an input action or started unrelated device sampling");
+    Require(Node(model.View(),"input.profile:0").selected&&!Node(model.View(),"input.profile:1").selected,
+        "picker did not mark the actual active input program");
+    CheckLayout(model.View());
+    ui::Input input;const auto point=VisibleCenter(model.View(),"input.profile:1");
+    Require(input.Press(model.View(),point),"input profile cannot receive a pointer press");
+    const auto selected=input.Release(model.View(),point);
+    Require(selected.kind==ui::InputResult::Kind::Invoke&&model.Invoke(selected.id)&&selections==1&&menus==0,
+        "profile selection unexpectedly opened the native menu");
+    Require(model.Invoke("input.menu")&&menus==1,"the separate menu action was not dispatched");
+    Require(model.Invoke("input.languageSettings")&&uri==L"ms-settings:regionlanguage","language settings routed to the wrong system page");
+    Require(model.Invoke("input.keyboardSettings")&&uri==L"ms-settings:typing","keyboard settings routed to the wrong system page");
+    const auto scene=model.View();const float scale=request.dpi/96.f;
+    const int width=static_cast<int>(std::ceil(scene.width*scale)),height=static_cast<int>(std::ceil(scene.height*scale));
+    const int left=(request.canvasWidth-width)/2,top=(request.canvasHeight-height)/2;
+    const auto pixels=Render(device,text,request,scene,appearance,background,stage,left,top);
+    const auto path=request.outputDirectory/"control-panel-input-method.png";
+    if(!preview_png::Save(path,request.canvasWidth,request.canvasHeight,pixels,result.error))throw std::runtime_error(result.error);
+    result.outputs.push_back({request.component,"input-method",path,false,false,false,false,false,false,
+        static_cast<int>(std::lround(appearance.cornerRadius*scale)),width,height,left,top});
+    model.Close();Require(!model.Invoke("input.profile:1")&&selections==1,"closed picker retained an input callback");
+    source.inputMethod.menuAvailable=false;
+    for(int index=0;index<20;++index)source.inputMethod.choices.push_back(english);
+    SystemPanelModel many(source,{},StatusBarAction::InputMethodPanel);many.Refresh(360,300);
+    Require(many.MaximumScroll()>0&&!Node(many.View(),"input.menu").enabled&&!many.Invoke("input.menu"),
+        "plain keyboard offered an executable IME menu or long profile lists failed to scroll");
+    const auto footer=Node(many.View(),"input.keyboardSettings").bounds;
+    many.Scroll(400);Require(Node(many.View(),"input.keyboardSettings").bounds.top==footer.top&&
+        many.View().VisibleBounds(Node(many.View(),"input.keyboardSettings")).bottom<=many.View().height,
+        "scrolling input programs moved the settings actions out of view");
+    source.inputMethod.choices.clear();SystemPanelModel empty(source,{},StatusBarAction::InputMethodPanel);
+    Require(empty.View().Find("input.empty")&&empty.Invoke("input.languageSettings"),"unavailable profiles hid the system settings route");
+}
+}
+
 native_component_preview::Result ExportSystemPanelPreview(const native_component_preview::Request& request,
     ID2D1Device* device, IDWriteFactory* text, const PersonalizationSettings& appearance,
     const SystemPanel::Background& background)
@@ -2423,6 +2477,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (controls && preset == "overview")
             {
                 CheckClosedCallbacks();
+                CheckInputMethodPanel(device,text,request,result,appearance,background,stage);
                 CheckControlPromptVisuals(request,result,appearance);
                 CheckInlineControlForms(device,text,request,result,appearance,background,stage);
                 CheckLogicalFocus();

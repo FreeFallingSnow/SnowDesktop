@@ -2398,5 +2398,10 @@
   "start.statusBarEnable.instructions": "1. Aktiviere die Statusleiste in ihren Einstellungen.\n2. Wähle den oberen oder unteren Rand und die gewünschten Bildschirme.\n3. Passe die Skalierung von Text und Symbolen an deinen Bildschirm an. Bei Bedarf kannst du die Statusleiste wieder deaktivieren.",
   "start.statusBarContents.title": "Inhalte der Statusleiste auswählen",
   "start.statusBarContents.description": "Schnellzugriffe und Leistungsdaten auswählen und das Klickverhalten anpassen.",
-  "start.statusBarContents.instructions": "Wähle unter Links das Systemmenü, die Schnellsuche und die Aufgabenansicht. Wähle im Informationsbereich Eingabemethode, CPU, Arbeitsspeicher, GPU und Netzwerkgeschwindigkeit. Uhrzeit, Infobereich und Systemsteuerungen erscheinen je nach Gerätefunktionen. Unter Klickverhalten wählst du das Fenster, das ein Klick auf Uhrzeit oder Kontrollzentrum öffnet; die Optionen hängen von der Windows-Version ab."
+  "start.statusBarContents.instructions": "Wähle unter Links das Systemmenü, die Schnellsuche und die Aufgabenansicht. Wähle im Informationsbereich Eingabemethode, CPU, Arbeitsspeicher, GPU und Netzwerkgeschwindigkeit. Uhrzeit, Infobereich und Systemsteuerungen erscheinen je nach Gerätefunktionen. Unter Klickverhalten wählst du das Fenster, das ein Klick auf Uhrzeit oder Kontrollzentrum öffnet; die Optionen hängen von der Windows-Version ab.",
+  "statusBar.inputMethodMenu": "Eingabemethodenmenü",
+  "statusBar.inputLanguageSettings": "Spracheinstellungen",
+  "statusBar.inputKeyboardSettings": "Tastatureinstellungen",
+  "statusBar.inputMethodEmpty": "Keine Eingabemethoden verfügbar",
+  "statusBar.inputMethodFailed": "Die Eingabemethode konnte nicht gewechselt werden. Öffnen Sie das Panel erneut und versuchen Sie es noch einmal."
 }

@@ -2398,5 +2398,10 @@
   "start.statusBarEnable.instructions": "1. Activez la barre d’état dans ses paramètres.\n2. Choisissez le bord supérieur ou inférieur et les écrans à utiliser.\n3. Ajustez l’échelle du texte et des icônes à votre écran. Désactivez la barre lorsque vous n’en avez plus besoin.",
   "start.statusBarContents.title": "Choisir le contenu de la barre d’état",
   "start.statusBarContents.description": "Choisissez des raccourcis et des informations de performances, puis ajustez l’action au clic.",
-  "start.statusBarContents.instructions": "Dans Gauche, choisissez le menu système, la recherche rapide et l’affichage des tâches. Dans Zone d’informations, choisissez la méthode de saisie, le processeur, la mémoire, le GPU et le débit réseau. L’heure, la zone de notification et les commandes système apparaissent selon les capacités de l’appareil. Dans Action au clic, choisissez le panneau ouvert par un clic sur l’heure ou le centre de contrôle ; les options dépendent de la version de Windows."
+  "start.statusBarContents.instructions": "Dans Gauche, choisissez le menu système, la recherche rapide et l’affichage des tâches. Dans Zone d’informations, choisissez la méthode de saisie, le processeur, la mémoire, le GPU et le débit réseau. L’heure, la zone de notification et les commandes système apparaissent selon les capacités de l’appareil. Dans Action au clic, choisissez le panneau ouvert par un clic sur l’heure ou le centre de contrôle ; les options dépendent de la version de Windows.",
+  "statusBar.inputMethodMenu": "Menu de la méthode de saisie",
+  "statusBar.inputLanguageSettings": "Paramètres de langue",
+  "statusBar.inputKeyboardSettings": "Paramètres du clavier",
+  "statusBar.inputMethodEmpty": "Aucune méthode de saisie disponible",
+  "statusBar.inputMethodFailed": "Impossible de changer de méthode de saisie. Rouvrez le panneau et réessayez."
 }

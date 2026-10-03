@@ -114,6 +114,144 @@ Snapshot Read()
     return result;
 }
 }
+
+namespace
+{
+std::wstring LanguageName(LANGID language)
+{
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH]{}, name[256]{};
+    if (LCIDToLocaleName(MAKELCID(language, SORT_DEFAULT), locale, LOCALE_NAME_MAX_LENGTH, 0))
+        GetLocaleInfoEx(locale, LOCALE_SLOCALIZEDDISPLAYNAME, name, static_cast<int>(std::size(name)));
+    return name;
+}
+std::wstring KeyboardName(HKL layout)
+{
+    wchar_t name[256]{};
+    if (ImmGetDescriptionW(layout, name, static_cast<UINT>(std::size(name)))) return name;
+    // Ordinary layouts use their high word as KLID. Unknown/substituted
+    // layouts fall back to their localized language; never activate one just
+    // to call GetKeyboardLayoutName on our own thread.
+    const auto device = HIWORD(reinterpret_cast<ULONG_PTR>(layout));
+    wchar_t keyName[16]{};
+    swprintf_s(keyName, L"%08X", static_cast<unsigned>(device));
+    const std::wstring root = L"SYSTEM\\CurrentControlSet\\Control\\Keyboard Layouts\\";
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, (root + keyName).c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS)
+        return {};
+    DWORD size = sizeof(name);
+    if (RegLoadMUIStringW(key, L"Layout Display Name", name, sizeof(name), nullptr, 0, nullptr) != ERROR_SUCCESS)
+        RegGetValueW(key, nullptr, L"Layout Text", RRF_RT_REG_SZ, nullptr, name, &size);
+    RegCloseKey(key);
+    return name;
+}
+}
+Selection CaptureSelection()
+{
+    Selection result;
+    result.target = Target();
+    Apartment apartment;
+    if (FAILED(apartment.result)) return result;
+    Microsoft::WRL::ComPtr<ITfInputProcessorProfiles> profiles;
+    if (FAILED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&profiles)))) return result;
+    Microsoft::WRL::ComPtr<ITfInputProcessorProfileMgr> manager;
+    if (FAILED(profiles.As(&manager))) return result;
+    TF_INPUTPROCESSORPROFILE active{};
+    const bool known = SUCCEEDED(manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &active));
+    Microsoft::WRL::ComPtr<IEnumTfInputProcessorProfiles> entries;
+    if (FAILED(manager->EnumProfiles(0, &entries))) return result;
+    TF_INPUTPROCESSORPROFILE profile{};
+    ULONG fetched = 0;
+    for (unsigned index = 0; index < 1024 && result.choices.size() < 256 &&
+        entries->Next(1, &profile, &fetched) == S_OK && fetched == 1; ++index)
+    {
+        if (!(profile.dwFlags & TF_IPP_FLAG_ENABLED) ||
+            (profile.dwFlags & TF_IPP_FLAG_SUBSTITUTEDBYINPUTPROCESSOR) ||
+            (profile.dwProfileType != TF_PROFILETYPE_KEYBOARDLAYOUT &&
+                (profile.dwProfileType != TF_PROFILETYPE_INPUTPROCESSOR || profile.catid != GUID_TFCAT_TIP_KEYBOARD))) continue;
+        Choice choice;
+        choice.profile = profile;
+        choice.language = LanguageName(profile.langid);
+        if (profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+        {
+            BSTR description = nullptr;
+            if (SUCCEEDED(profiles->GetLanguageProfileDescription(profile.clsid, profile.langid, profile.guidProfile, &description)) && description)
+                choice.name.assign(description, SysStringLen(description));
+            SysFreeString(description);
+        }
+        else choice.name = KeyboardName(profile.hkl);
+        if (choice.name.empty()) choice.name = choice.language;
+        if (choice.name.empty()) continue;
+        choice.selected = known ? SameProfile(profile, active) :
+            profile.dwProfileType == TF_PROFILETYPE_KEYBOARDLAYOUT && profile.hkl == result.target.layout;
+        if (std::none_of(result.choices.begin(), result.choices.end(), [&](const auto& item) { return SameProfile(item.profile, profile); }))
+            result.choices.push_back(std::move(choice));
+    }
+    return result;
+}
+bool RestoreTarget(const Snapshot& target)
+{
+    if (!target.foreground || !target.thread || !IsWindow(target.foreground)) return false;
+    const HWND input = target.focus ? target.focus : target.foreground;
+    if (!IsWindow(input) || GetWindowThreadProcessId(input, nullptr) != target.thread) return false;
+    if (GetForegroundWindow() != target.foreground && !SetForegroundWindow(target.foreground)) return false;
+    const auto current = Target();
+    return current.foreground == target.foreground && current.thread == target.thread && current.focus == target.focus;
+}
+HRESULT Select(const Selection& selection, const Choice& choice)
+{
+    if (std::none_of(selection.choices.begin(), selection.choices.end(), [&](const auto& item) {
+        return SameProfile(item.profile, choice.profile);
+    })) return E_INVALIDARG;
+    if (!RestoreTarget(selection.target)) return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    Apartment apartment;
+    if (FAILED(apartment.result)) return apartment.result;
+    Microsoft::WRL::ComPtr<ITfInputProcessorProfileMgr> manager;
+    const HRESULT created = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&manager));
+    if (FAILED(created)) return created;
+    TF_INPUTPROCESSORPROFILE live{};
+    const auto& profile = choice.profile;
+    const HRESULT found = manager->GetProfile(profile.dwProfileType, profile.langid, profile.clsid,
+        profile.guidProfile, profile.hkl, &live);
+    if (FAILED(found)) return found;
+    if (!(live.dwFlags & TF_IPP_FLAG_ENABLED)) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    if (profile.dwProfileType == TF_PROFILETYPE_KEYBOARDLAYOUT)
+    {
+        // Windows posts this request to the original focused input window.
+        // The recipient may reject it; queuing is not acceptance/readback.
+        const HWND input = selection.target.focus ? selection.target.focus : selection.target.foreground;
+        if (PostMessageW(input, WM_INPUTLANGCHANGEREQUEST, 0, reinterpret_cast<LPARAM>(profile.hkl))) return S_OK;
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+    HKL languageLayout = profile.hklSubstitute;
+    if (LOWORD(reinterpret_cast<ULONG_PTR>(selection.target.layout)) != profile.langid && !languageLayout)
+    {
+        const int count = GetKeyboardLayoutList(0, nullptr);
+        std::vector<HKL> layouts(static_cast<std::size_t>((std::max)(0, count)));
+        const int received = count > 0 ? GetKeyboardLayoutList(count, layouts.data()) : 0;
+        for (int index = 0; index < received; ++index)
+            if (LOWORD(reinterpret_cast<ULONG_PTR>(layouts[static_cast<std::size_t>(index)])) == profile.langid)
+            { languageLayout = layouts[static_cast<std::size_t>(index)]; break; }
+        if (!languageLayout) return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+    }
+    // A TIP can share its language/HKL with other programs. The documented
+    // session activation reaches the restored external application; changing
+    // only our own thread would select the panel's IME instead. This is an
+    // explicit user selection, not a registry/default-profile change.
+    const HRESULT activated = manager->ActivateProfile(profile.dwProfileType, profile.langid, profile.clsid,
+        profile.guidProfile, profile.hkl, TF_IPPMF_FORSESSION | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE);
+    if (activated != S_OK) return activated;
+    // DONTCARECURRENTINPUTLANGUAGE defers a cross-language TIP until its input
+    // locale is selected. Post that selection to the restored typing window.
+    if (LOWORD(reinterpret_cast<ULONG_PTR>(selection.target.layout)) != profile.langid)
+    {
+        const HWND input = selection.target.focus ? selection.target.focus : selection.target.foreground;
+        if (!PostMessageW(input, WM_INPUTLANGCHANGEREQUEST, 0, reinterpret_cast<LPARAM>(languageLayout)))
+            return HRESULT_FROM_WIN32(GetLastError());
+    }
+    return S_OK;
+}
+
 struct Service::Impl
 {
     mutable std::mutex mutex;
