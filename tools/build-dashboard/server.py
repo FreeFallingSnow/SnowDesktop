@@ -18,6 +18,9 @@ HEX = re.compile(r"^[a-f0-9]{32}$")
 SECRET = re.compile(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization)(\s*[:=]\s*)[^\s,;]+")
 ASSETS = {"/app-icon.png": "app-icon.png", "/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
 MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png"}
+# Full-test results include coverage and retry evidence that can exceed 256 KiB.
+# Keep a finite read bound without rejecting ordinary coordinator records.
+MAX_METADATA_BYTES = 8 * 1024 * 1024
 
 def redact(text):
     return SECRET.sub(r"\1\2[redacted]", str(text))[:4000]
@@ -54,9 +57,9 @@ def shared_open(path):
 def read_json(root, name):
     try:
         with shared_open(safe_path(root, name)) as stream:
-            data = stream.read(262145)
-        if len(data) > 262144:
-            raise ValueError("Metadata exceeds 256 KiB")
+            data = stream.read(MAX_METADATA_BYTES + 1)
+        if len(data) > MAX_METADATA_BYTES:
+            raise ValueError("Metadata exceeds 8 MiB")
         return json.loads(data.decode("utf-8-sig"))
     except FileNotFoundError:
         return None

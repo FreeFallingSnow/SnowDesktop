@@ -66,6 +66,28 @@ def main(repo,browser,wait_list_only=False):
         print('PASS readonly HTTP, loopback, Host/Origin/CORS, traversal, verbs, CSP, occupied-port refusal')
         spec=importlib.util.spec_from_file_location('server_unit',repo/'tools/build-dashboard/server.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         assert module.redact('token=fixture-secret password:abc')=='token=[redacted] password:[redacted]'
+        # Full-test coverage/retry evidence in a historical result must not
+        # make the live status route unavailable (production HTTP 503).
+        large_bid='a'*32
+        large_result={'schemaVersion':1,'batchId':large_bid,'outcome':'passed','exitCode':0,
+                      'participants':[task()],
+                      'testRetry':{'tests':{'fixture-'+str(i):{'status':'passed','attempts':[{'attempt':1,'reason':'fixture evidence '*40}]} for i in range(600)}}}
+        write(large_bid+'.json',large_result)
+        large_before=(state/(large_bid+'.json')).read_bytes()
+        assert len(large_before)>256*1024,'fixture must exceed the former metadata limit'
+        time.sleep(2.1)
+        code,body,_=get();assert code==200,('large historical result broke current status',code,body)
+        assert json.loads(body)['current']['id']==bid and any(x['batchId']==large_bid for x in json.loads(body)['history'])
+        code,body,_=get('/api/batches/'+large_bid);assert code==200 and json.loads(body)['outcome']=='passed'
+        assert (state/(large_bid+'.json')).read_bytes()==large_before,'large result must remain unchanged'
+        oversized=state/'oversized.json';oversized.write_bytes(b' '*(module.MAX_METADATA_BYTES+1))
+        try:
+            module.read_json(state,oversized.name)
+        except ValueError as error:
+            assert 'Metadata exceeds' in str(error)
+        else:
+            raise AssertionError('metadata reads must remain bounded')
+        print('PASS large historical result through live status and batch HTTP, unchanged evidence and finite metadata bound')
         lines=['compile.cpp']*25000+['1/2 Test #1: Alpha .... Passed','2/2 Test #2: Beta .... Failed','token=secret-value','<script>window.dashboardXss=1</script>']
         (state/(bid+'.log')).write_text('\n'.join(lines)+'\n')
         time.sleep(2.1);data=json.loads(get()[1])['current']['log'];assert len(data['lines'])<=180 and data['testCompleted']==2 and data['testTotal']==2
