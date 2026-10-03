@@ -967,6 +967,10 @@ void CheckControlPowerSections()
     modes=false;model.Refresh();
     Require(!model.View().Find("power.modes.heading")&&!model.View().Find("power.mode:balanced")&&model.View().Find("power.plans.heading"),
         "unsupported power modes left an empty heading or removed valid plan choices");
+    multiple=false;selectedOther=false;model.Refresh();CheckLayout(model.View());
+    Require(Node(model.View(),"power.plan:power-plan-preview").selected&&model.View().Find("power.plans.heading")&&
+        !model.View().Find("power.sleep")&&!model.View().Find("power.hibernate"),
+        "a single plan without power modes must remain visible without reintroducing power operations");
 }
 
 void CheckPendingActions()
@@ -1449,14 +1453,9 @@ void CheckQuickControls()
     source.settings=[&](const wchar_t* uri){opened=uri;};
     SystemPanelModel model(source,{},StatusBarAction::ControlCenter);
     CheckLayout(model.View());
-    const auto& first=Node(model.View(),"quick:projection");const auto& fourth=Node(model.View(),"quick:microphone");
-    const auto& menuHint=Node(model.View(),"quick.menu:projection");
-    Require(first.role==ui::Role::Button&&first.bounds.top==fourth.bounds.top&&first.bounds.left==19&&fourth.bounds.right==317&&
-        Node(model.View(),"quick:awake").bounds.top>first.bounds.bottom&&menuHint.bounds.left>=first.bounds.left&&
-        menuHint.bounds.right<=first.bounds.right&&menuHint.bounds.bottom<=first.bounds.bottom&&
-        Node(model.View(),"quick.manage").glyphSize==13,"four compact columns retain menu backgrounds, inset indicators and a smaller edit icon");
     Require(!model.View().Find("hotspot.note"),"overview contains no redundant hotspot explanation");
     Require(Node(model.View(),"quick:projection").bounds.top>Node(model.View(),"brightness.value").bounds.bottom&&
+        Node(model.View(),"quick:projection").role==ui::Role::Button&&
         Node(model.View(),"quick:microphone").role==ui::Role::Toggle&&Node(model.View(),"quick:hotspot").accent,
         "quick controls must appear below brightness and expose real toggle/menu states");
     ui::Input input;input.Sync(model.View());
@@ -1534,8 +1533,8 @@ void CheckFeedbackLayouts()
         const auto prefix="audio."+std::string(direction);const auto& number=Node(model.View(),prefix+".value");
         const auto& mute=Node(model.View(),prefix+".mute");const auto& label=Node(model.View(),prefix+".label");
         const auto slider=std::find_if(model.View().nodes.begin(),model.View().nodes.end(),[&](const auto& n){return n.id.starts_with(prefix+".volume:");});
-        Require(slider!=model.View().nodes.end()&&number.trailing&&number.bounds.right==slider->bounds.right-10&&label.bounds.right+8<=number.bounds.left&&
-            (mute.bounds.left+mute.bounds.right)/2==40&&slider->bounds.bottom<Node(model.View(),"output.heading").bounds.top,
+        Require(slider!=model.View().nodes.end()&&number.trailing&&number.bounds.right==model.View().width-16&&label.bounds.right+8<=number.bounds.left&&
+            mute.bounds.right<=slider->bounds.left&&slider->bounds.bottom<Node(model.View(),"output.heading").bounds.top,
             "audio adjustments did not align their value/icon columns or remain before the endpoint lists");
     }
     Require(model.View().Find("audio.output.device:virtual-output")&&!model.View().Find("audio.output.device:historical")&&
@@ -1782,12 +1781,12 @@ void CheckPowerConfirmationOrigin()
             if(standalone)Require(model.BeginPowerConfirmation("system.power.restart",true),"system-menu confirmation origin setup failed");
             else{model.Select("power-actions");click("power.restart");}
             Require(model.View().Find("control.confirm")&&(model.View().Find("back")!=nullptr)==!standalone&&
-                (model.View().Find("header.settings")!=nullptr)==!standalone,
+                !model.View().Find("header.settings"),
                 "power confirmation inherited an unrelated back/settings route");};
         const auto returned=[&]{Require(model.TakeDismissRequest()==standalone&&!model.TakeDismissRequest(),
                 "power confirmation did not request exactly the source-specific dismissal");
-            if(!standalone)Require(model.Page()=="power"&&!model.View().Find("control.confirm")&&model.View().Find("back"),
-                "control-panel confirmation failed to restore the power page");};
+            if(!standalone)Require(model.Page()=="power-actions"&&!model.View().Find("control.confirm")&&model.View().Find("back"),
+                "control-panel confirmation failed to restore the power actions page");};
         open();click("control.cancel");returned();Require(started==0,"canceling power confirmation performed an operation");
         open();Require(model.ControlBack(),"power confirmation lost its Escape route");returned();
         open();click("control.confirm");

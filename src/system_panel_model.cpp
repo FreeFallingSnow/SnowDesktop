@@ -114,7 +114,6 @@ void SystemPanelModel::SyncSubscriptions()
         for(const auto& control:SystemQuickControls)
             if((page_.empty()&&QuickControlVisible(control.id))||page_==control.id)
                 needed.insert(control.topic);
-        if(page_=="awake")needed.insert("system.power.plans");
         if(page_=="power-actions")needed.insert("host.power.actions");
     }
     for(const auto& topic:subscriptions_)if(!needed.contains(topic)&&source_.unsubscribe)source_.unsubscribe(topic);
@@ -590,19 +589,19 @@ void SystemPanelModel::Volume(std::string_view direction,float& y)
         UnavailableControl(prefix,label,direction=="input"?L"\uE720":L"\uE992",_LW("controlCenter.unavailable"),y);
         return;
     }
-    const float sliderRight=scene_.width-(page_.empty()?58.f:16.f),valueRight=sliderRight-10;
+    const float sliderRight=scene_.width-(page_.empty()?50.f:16.f),valueRight=scene_.width-16;
     Add(prefix+".label",ui::Role::Text,Rect(16,y,valueRight-76,22),label).fontSize=12;
     auto& number=Add(prefix+".value",ui::Role::Text,Rect(valueRight-52,y,52,22),valid?Percent(volume*100):L"—");number.fontSize=12;number.trailing=true;y+=22;
     const wchar_t* speaker=muted?L"\uE74F":volume<=0?L"\uE992":volume<.34f?L"\uE993":volume<.67f?L"\uE994":L"\uE995";
-    auto& mute=Add(prefix+".mute",ui::Role::Icon,Rect(20,y,40,40),L"",direction=="input"?(muted?L"\uF781":L"\uE720"):speaker);
+    auto& mute=Add(prefix+".mute",ui::Role::Icon,Rect(8,y,40,40),L"",direction=="input"?(muted?L"\uF781":L"\uE720"):speaker);
     mute.enabled=valid;mute.tooltip=label+L" · "+_LW(muted?"controlCenter.unmute":"controlCenter.mute");
     if(valid)BindAction(prefix+".mute",prefix+".mute:"+endpoint,endpoint,prefix+".label");
     Command(prefix+".mute",[this,prefix,endpoint]{const auto s=source_.current?source_.current(prefix+".volume"):std::nullopt;if(s&&s->available&&j::String(s->value,"endpointId")==endpoint&&InRange(Number(s->value,"volume")))Start(prefix+".setMute",{{"muted",j::Flag(s->value,"muted")?"0":"1"}});});
     const auto sliderId=prefix+".volume:"+endpoint;
-    auto& slider=Add(sliderId,ui::Role::Slider,Rect(68,y,sliderRight-68,40));slider.enabled=valid;slider.value=volume;slider.tooltip=slider.accessibilityLabel=label;
+    auto& slider=Add(sliderId,ui::Role::Slider,Rect(56,y,sliderRight-56,40));slider.enabled=valid;slider.value=volume;slider.tooltip=slider.accessibilityLabel=label;
     sliderTargets_[sliderId]=valid?endpoint:std::string{};valueControls_[prefix+".value"]=sliderId;
     actions_[sliderId]=[this,prefix,endpoint](auto value){const auto s=source_.current?source_.current(prefix+".volume"):std::nullopt;if(value&&s&&s->available&&j::String(s->value,"endpointId")==endpoint&&InRange(Number(s->value,"volume")))Start(prefix+".setVolume",{{"volume",std::to_string(*value)}});};
-    if(page_.empty()){Add("audio.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.audioControls");Command("audio.more",[this]{Select("audio");});}y+=46;
+    if(page_.empty()){Add("audio.more",ui::Role::Icon,Rect(scene_.width-44,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.audioControls");Command("audio.more",[this]{Select("audio");});}y+=46;
 }
 void SystemPanelModel::Overview(float& y)
 {
@@ -644,13 +643,13 @@ void SystemPanelModel::Overview(float& y)
     {
     const float level=valid?static_cast<float>(j::Numeric(*m,"brightness")):0;
     Add("brightness.label",ui::Role::Text,Rect(16,y,scene_.width-144,22),_LW("statusBar.brightnessControls")).fontSize=12;
-    auto& number=Add("brightness.value",ui::Role::Text,Rect(scene_.width-120,y,52,22),valid?Percent(level):L"—");number.fontSize=12;number.trailing=true;y+=22;
-    Add("brightness.icon",ui::Role::Text,Rect(20,y,40,40),L"",L"\uE706");
+    auto& number=Add("brightness.value",ui::Role::Text,Rect(scene_.width-68,y,52,22),valid?Percent(level):L"—");number.fontSize=12;number.trailing=true;y+=22;
+    Add("brightness.icon",ui::Role::Text,Rect(8,y,40,40),L"",L"\uE706");
     const auto sliderId="brightness.level:"+id;
-    auto& slider=Add(sliderId,ui::Role::Slider,Rect(68,y,scene_.width-126,40));slider.enabled=valid;slider.value=level/100;slider.tooltip=slider.accessibilityLabel=_LW("statusBar.brightnessControls");
+    auto& slider=Add(sliderId,ui::Role::Slider,Rect(56,y,scene_.width-106,40));slider.enabled=valid;slider.value=level/100;slider.tooltip=slider.accessibilityLabel=_LW("statusBar.brightnessControls");
     sliderTargets_[sliderId]=valid?id:std::string{};valueControls_["brightness.value"]=sliderId;
     actions_[sliderId]=[this,id](auto v){const auto current=Current("system.display.brightness");const auto& displays=Items(current,"monitors");if(v&&std::any_of(displays.begin(),displays.end(),[&](const auto& d){return j::String(d,"id")==id&&j::Flag(d,"available");}))Start("system.display.setBrightness",{{"monitorId",id},{"brightness",std::to_string(*v*100)}});};
-    Add("brightness.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.brightnessControls");Command("brightness.more",[this]{Select("brightness");});y+=48;
+    Add("brightness.more",ui::Role::Icon,Rect(scene_.width-44,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.brightnessControls");Command("brightness.more",[this]{Select("brightness");});y+=48;
     }
     }
     QuickControls(y);
@@ -747,16 +746,8 @@ void SystemPanelModel::QuickControls(float& y)
             });
         }
         else Command(nodeId,[this,id]{Select(id);});
-        const auto buttonBounds=button.bounds;
         auto& caption=Add("quick.label:"+id,ui::Role::Text,Rect(8+(index%columns)*slot,top+46,slot,22),name);
         caption.fontSize=11;caption.centered=true;caption.tooltip=name+L" · "+status;
-        if(control.menu)
-        {
-            // Keep the menu affordance inside the button, vertically aligned
-            // with the icon; never let it float beside the caption.
-            auto& hint=Add("quick.menu:"+id,ui::Role::Text,Rect(buttonBounds.right-13,top+16,10,12),L"",L"\uE70D");
-            hint.glyphSize=8;hint.centered=true;hint.accent=enabled;hint.secondary=!enabled;
-        }
         ++index;
     }
     if(!index){Add("quick.empty",ui::Role::Text,Rect(16,y,scene_.width-32,30),_LW("controlCenter.allButtonsHidden")).fontSize=12;y+=36;}
@@ -796,11 +787,9 @@ void SystemPanelModel::QuickControlMenu(float& y)
     else if(page_=="awake"&&available)
     {
         const auto currentMode=j::String(state,"mode");
-        const auto powerPlans=Current("system.power.plans");
         const auto choice=[&](std::string id,const char* label,const char* mode,unsigned seconds) {
             auto& item=Add("awake:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(label),L"\uE708");
             item.selected=currentMode==mode&&(std::string_view(mode)!="timed"||j::Numeric(state,"durationSeconds")==seconds);
-            if(std::string_view(mode)=="plan")for(const auto& plan:Items(powerPlans,"plans"))if(j::Flag(plan,"active")){item.detail=Wide(j::String(plan,"name"));break;}
             BindAction(item.id,"quick.awake",id);
             Command(item.id,[this,mode,seconds]{const auto actual=source_.current?source_.current("host.awake"):std::nullopt;if(!actual||!actual->available)return;
                 system_control::Arguments arguments{{"mode",mode},{"keepScreenOn",j::Flag(actual->value,"keepScreenOn")?"1":"0"},{"reason",_L("controlCenter.keepAwake")}};
@@ -888,7 +877,7 @@ void SystemPanelModel::Brightness(float& y)
             continue;
         }
         Add("display:"+id,ui::Role::Text,Rect(16,y,scene_.width-102,30),Wide(j::String(m,"name")),L"\uE7F4");
-        Add("display.value:"+id,ui::Role::Text,Rect(scene_.width-78,y,52,30),valid?Percent(Number(m,"brightness")):L"—").trailing=true;y+=32;
+        Add("display.value:"+id,ui::Role::Text,Rect(scene_.width-68,y,52,30),valid?Percent(Number(m,"brightness")):L"—").trailing=true;y+=32;
         const auto sliderId="display.level:"+id;
         auto& slider=Add(sliderId,ui::Role::Slider,Rect(16,y,scene_.width-32,40));slider.enabled=valid;slider.value=valid?static_cast<float>(Number(m,"brightness")/100):0;slider.tooltip=slider.accessibilityLabel=Wide(j::String(m,"name"))+L" · "+_LW("statusBar.brightnessControls");
         sliderTargets_[sliderId]=valid?id:std::string{};valueControls_["display.value:"+id]=sliderId;
@@ -995,7 +984,7 @@ void SystemPanelModel::Power(float& y)
 {
     const auto value=Current("system.power.plans");
     const auto& plans=Items(value,"plans");
-    if(plans.size()>1)
+    if(!plans.empty()&&(plans.size()>1||!j::Flag(value,"modeSupported")))
     {
         Add("power.plans.heading",ui::Role::Text,Rect(16,y,scene_.width-32,28),_LW("controlCenter.powerPlan")).bold=true;y+=34;
         for(const auto& p:plans){const auto id=j::String(p,"id");auto& n=Add("power.plan:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),Wide(j::String(p,"name")),L"\uE945");n.selected=j::Flag(p,"active");BindAction(n.id,"power.plan",id);Command(n.id,[this,id]{Start("system.power.setPlan",{{"planId",id}});});y+=48;}
@@ -1007,6 +996,8 @@ void SystemPanelModel::Power(float& y)
         for(const auto* mode:{"efficiency","balanced","performance"})
         {auto& n=Add(std::string("power.mode:")+mode,ui::Role::ListItem,Rect(16,y,scene_.width-32,42),_LW((std::string("controlCenter.")+mode).c_str()));n.selected=j::String(value,j::Flag(value,"onAC")?"acMode":"dcMode")==mode;BindAction(n.id,"power.mode",mode);Command(n.id,[this,mode]{Start("system.power.setMode",{{"mode",mode}});});y+=46;}
     }
+    else if(plans.empty())
+    {Add("power.unavailable",ui::Role::Text,Rect(16,y,scene_.width-32,32),_LW("controlCenter.unavailable"));y+=40;}
 }
 void SystemPanelModel::PowerActions(float& y)
 {
