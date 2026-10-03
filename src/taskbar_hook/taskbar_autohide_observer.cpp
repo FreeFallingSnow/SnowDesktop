@@ -1,5 +1,6 @@
 #include "taskbar_autohide_observer.h"
 #include "taskbar_autohide_rules.h"
+#include "taskbar_hook_lifecycle.h"
 #include <MinHook.h>
 #include <commctrl.h>
 #include <intrin.h>
@@ -24,13 +25,14 @@ Hotkey hotkeyOriginal = nullptr;
 FocusMessage focusMessageOriginal = nullptr;
 std::atomic<unsigned> explicitFocusCalls{0};
 std::atomic<bool> adapterReady{false};
-constexpr wchar_t kProtectedTaskbar[] = L"SnowDesktop.Taskbar.AutoHideActivation.v8";
 std::atomic<std::uintptr_t> moduleBase{0};
 std::atomic<DWORD> moduleSize{0};
 std::atomic<AutoHideTraceBuffer*> output{nullptr};
 std::mutex adapterMutex;
 AutoHideAdapter installedAdapter;
 bool adapterAttempted = false;
+ULONGLONG lastAdapterAttempt = 0;
+RetainedHookSet<6> revealHooks;
 LONG adapterStatus = 0;
 DWORD reportedResolutionError = ERROR_IO_PENDING;
 thread_local ULONGLONG rateWindow = 0;
@@ -96,7 +98,7 @@ ActivationRevealContext ReadRevealContext(HWND taskbar, bool queryGeometry)
 {
     ActivationRevealContext context;
     context.protectedTaskbar = output.load(std::memory_order_acquire) && adapterReady.load() &&
-        taskbar && GetPropW(taskbar, kProtectedTaskbar);
+        taskbar && GetPropW(taskbar, kActivationProtectionProperty);
     context.explicitFocus = explicitFocusCalls.load(std::memory_order_acquire) != 0;
     if (context.protectedTaskbar && queryGeometry)
     {
@@ -206,6 +208,12 @@ void WINAPI Secondary(void* self, int flags, int request)
     Reveal(self, flags, request, true, _ReturnAddress());
 }
 
+bool ChangeHook(void* target, bool enable) noexcept
+{
+    const MH_STATUS result = enable ? MH_EnableHook(target) : MH_DisableHook(target);
+    return result == MH_OK || result == (enable ? MH_ERROR_ENABLED : MH_ERROR_DISABLED);
+}
+
 LONG InstallAdapter(const AutoHideAdapter& adapter) noexcept
 {
     const HMODULE taskbarModule = GetModuleHandleW(L"Taskbar.dll");
@@ -226,79 +234,89 @@ LONG InstallAdapter(const AutoHideAdapter& adapter) noexcept
         {AutoHideSymbol::Hotkey, reinterpret_cast<void*>(&HandleTaskbarHotkey), reinterpret_cast<void**>(&hotkeyOriginal)},
         {AutoHideSymbol::FocusMessage, reinterpret_cast<void*>(&OnFocusMessage), reinterpret_cast<void**>(&focusMessageOriginal)},
     };
-    size_t created = 0;
     for (const auto& entry : entries)
     {
-        if (MH_CreateHook(base + adapter.Get(entry.symbol).begin, entry.callback, entry.original) != MH_OK)
-        {
-            // Nothing has been enabled yet, so removing these is safe.
-            for (size_t i = 0; i < created; ++i) MH_RemoveHook(base + adapter.Get(entries[i].symbol).begin);
-            return -4;
-        }
-        ++created;
+        void* target = base + adapter.Get(entry.symbol).begin;
+        if (revealHooks.Contains(target)) continue;
+        if (MH_CreateHook(target, entry.callback, entry.original) != MH_OK ||
+            !revealHooks.Remember(target)) return -4;
     }
-    bool queued = true;
-    for (const auto& entry : entries)
-        queued = (MH_QueueEnableHook(base + adapter.Get(entry.symbol).begin) == MH_OK) && queued;
-    if (!queued || MH_ApplyQueued() != MH_OK)
-    {
-        // Keep trampolines alive for calls already in flight. Filtering stays
-        // disabled unless every focus and reveal hook was enabled together.
-        for (const auto& entry : entries) MH_DisableHook(base + adapter.Get(entry.symbol).begin);
-        return -6;
-    }
+    if (!revealHooks.Enable(ChangeHook)) return -6;
     adapterReady.store(true, std::memory_order_release);
     return 1;
 }
-}
 
-void Disable() noexcept
+bool DisableLocked() noexcept
 {
     output.store(nullptr, std::memory_order_release);
+    adapterReady.store(false, std::memory_order_release);
+    adapterAttempted = false;
+    lastAdapterAttempt = 0;
+    return revealHooks.Disable(ChangeHook);
+}
+}
+
+bool Disable() noexcept
+{
+    try
+    {
+        std::lock_guard lock(adapterMutex);
+        return DisableLocked();
+    }
+    catch (...) { output.store(nullptr, std::memory_order_release); return false; }
 }
 
 void Configure(AutoHideTraceBuffer* buffer, HWND taskbar, bool observe, bool protectActivation,
     const AutoHideAdapter& adapter, DWORD resolutionError) noexcept
 {
-    if (!observe)
-    {
-        if (taskbar && RemovePropW(taskbar, kProtectedTaskbar))
-            Record(AutoHideTraceKind::Protection, 0, 0, nullptr, taskbar);
-        Disable();
-        return;
-    }
     try
     {
         // The TAP keeps an explicit module reference for Explorer's lifetime.
         // Its shared mapping also stays mapped until process detach. Retained
         // trampolines can therefore always call the original after shutdown.
         std::lock_guard lock(adapterMutex);
+        // A queued Apply from before retirement must neither re-enable the
+        // old detours nor clear protection properties owned by its successor.
+        if (hookInstanceRetired.load()) { DisableLocked(); return; }
+        if (!observe)
+        {
+            if (taskbar && RemovePropW(taskbar, kActivationProtectionProperty))
+                Record(AutoHideTraceKind::Protection, 0, 0, nullptr, taskbar);
+            DisableLocked();
+            return;
+        }
         const bool firstObservation = !output.exchange(buffer, std::memory_order_acq_rel);
         bool attemptedNow = false;
         // Pending symbols or a not-yet-loaded Taskbar.dll must not consume the
         // installation attempt. The host publishes and posts Apply after resolve.
-        if (!adapterAttempted && resolutionError == ERROR_SUCCESS && GetModuleHandleW(L"Taskbar.dll"))
+        const ULONGLONG now = GetTickCount64();
+        const LONG previousStatus = adapterStatus;
+        if (!adapterReady.load(std::memory_order_acquire) &&
+            (!adapterAttempted || now - lastAdapterAttempt >= 1000) &&
+            resolutionError == ERROR_SUCCESS && GetModuleHandleW(L"Taskbar.dll"))
         {
             adapterAttempted = true;
+            lastAdapterAttempt = now;
             attemptedNow = true;
             adapterStatus = InstallAdapter(adapter);
         }
-        if (firstObservation || attemptedNow || reportedResolutionError != resolutionError)
+        if (firstObservation || (attemptedNow && previousStatus != adapterStatus) ||
+            reportedResolutionError != resolutionError)
             Record(AutoHideTraceKind::Adapter, adapterStatus, static_cast<int>(resolutionError));
         reportedResolutionError = resolutionError;
         if (taskbar)
         {
-            const bool protectedBefore = GetPropW(taskbar, kProtectedTaskbar) != nullptr;
+            const bool protectedBefore = GetPropW(taskbar, kActivationProtectionProperty) != nullptr;
             const bool requestedProtection = protectActivation && adapterReady.load();
             if (requestedProtection)
             {
-                if (!GetPropW(taskbar, kProtectedTaskbar))
-                    SetPropW(taskbar, kProtectedTaskbar, reinterpret_cast<HANDLE>(1));
+                if (!GetPropW(taskbar, kActivationProtectionProperty))
+                    SetPropW(taskbar, kActivationProtectionProperty, reinterpret_cast<HANDLE>(1));
             }
-            else RemovePropW(taskbar, kProtectedTaskbar);
+            else RemovePropW(taskbar, kActivationProtectionProperty);
             if (protectedBefore != requestedProtection)
                 Record(AutoHideTraceKind::Protection,
-                    GetPropW(taskbar, kProtectedTaskbar) ? 1 : 0,
+                    GetPropW(taskbar, kActivationProtectionProperty) ? 1 : 0,
                     requestedProtection ? 1 : 0, nullptr, taskbar);
         }
     }

@@ -116,7 +116,11 @@ inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
 {
     // floatingShortcutMode enables a summon hotkey; it does not replace the
     // ordinary bottom Dock. Appearance preferences are independent as well.
-    return dockEnabled && settings.position == DockPosition::Bottom && autoHideEnabled;
+    // Permanent hiding temporarily enables Shell auto-hide while preserving
+    // the user's original preference for restoration. Protect that override
+    // too, including taskbars on monitors without a Dock.
+    return dockEnabled && settings.position == DockPosition::Bottom &&
+        (autoHideEnabled || settings.suppressSystemTaskbar);
 }
 
 inline PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)

@@ -5,7 +5,9 @@
 #include "dock_settings.h"
 #include "taskbar_monitor.h"
 #include <dwmapi.h>
+#include <array>
 #include <iostream>
+#include <cstring>
 #include <string>
 
 namespace
@@ -96,6 +98,12 @@ int RunNativeTaskbarTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
     };
+    const auto dwmEntry = [] {
+        std::array<BYTE, 16> bytes{};
+        std::memcpy(bytes.data(), reinterpret_cast<const void*>(&DwmSetWindowAttribute), bytes.size());
+        return bytes;
+    };
+    const auto originalDwmEntry = dwmEntry();
     // Win10 user regression: blur/acrylic switched but every solid tint was
     // clear. Exercise the production policy with independent ABGR constants;
     // DirectComposition HRESULTs alone cannot prove a native tint was sent.
@@ -191,6 +199,7 @@ int RunNativeTaskbarTests()
         "the native controller must refuse non-taskbar windows");
     check(native::Attach(window, &shared, false, TestAppBarMessage) && cloaked(),
         "production suppression must cloak its target immediately");
+    check(dwmEntry() != originalDwmEntry, "native suppression installs its actual DWM entry patch");
     check((appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == FALSE,
         "suppression temporarily enables auto-hide to release the work-area reservation");
     const BOOL reveal = FALSE;
@@ -406,6 +415,8 @@ int RunNativeTaskbarTests()
         "turning the setting off releases the cloak and subclass");
     check(!(appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == -1,
         "turning suppression off restores the original non-auto-hide preference");
+    check(dwmEntry() == originalDwmEntry,
+        "the last released taskbar restores the native entry instead of leaving the old detour installed");
 
     // Preserve pre-existing app cloaking when no native uncloak is requested.
     const BOOL conceal = TRUE;
@@ -712,6 +723,22 @@ int RunNativeTaskbarTests()
     SendMessageW(window, apply, 0, 0);
     check(!(appBarState & ABS_AUTOHIDE) && !GetPropW(window, native::kAttachedProperty),
         "pending auto-hide restoration completes without leaving a watcher");
+    check(dwmEntry() == originalDwmEntry, "owner shutdown restores the entry after all taskbars detach");
+    shared.enabled = TRUE;
+    check(native::Attach(window, &shared, false, TestAppBarMessage) && dwmEntry() != originalDwmEntry,
+        "a later attachment re-enables retained native hooks after a complete stop");
+    rejectAppBarChange = true;
+    check(!native::Retire(window) && GetPropW(window, native::kAttachedProperty),
+        "replacement cannot acknowledge handoff while the original preference cannot be restored");
+    rejectAppBarChange = false;
+    check(native::Retire(window) && !GetPropW(window, native::kAttachedProperty) &&
+        !(appBarState & ABS_AUTOHIDE) && dwmEntry() == originalDwmEntry,
+        "successful replacement handoff restores preference, cloak, subclass and native entry");
+    check(native::Attach(window, &shared, false, TestAppBarMessage) && cloaked(),
+        "the retained hook records remain usable after a replacement-style stop");
+    shared.enabled = FALSE;
+    SendMessageW(window, apply, 0, 0);
+    check(dwmEntry() == originalDwmEntry, "final shutdown leaves no owned DWM entry patch");
     DestroyWindow(window);
     registration.lpszClassName = L"Shell_TrayWnd";
     UnregisterClassW(registration.lpszClassName, instance);

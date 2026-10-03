@@ -619,7 +619,11 @@ public:
         const bool resolveSymbols = protectActivation &&
             (symbolAttemptProcessId_ != explorerProcessId ||
                 (state_->autoHideResolutionError != ERROR_SUCCESS && now - lastSymbolAttemptTick_ >= 60000));
-        const bool alreadyInjected = !nativeMissing && state_->explorerProcessId == explorerProcessId &&
+        // A retained mapping/TAP from an earlier host is not this launch's
+        // connection. Inject once per host/Explorer pair to retire that DLL
+        // and bind activation observation and native entry points together.
+        const bool ownsConnection = injectedExplorerProcessId_ == explorerProcessId;
+        const bool alreadyInjected = ownsConnection && !nativeMissing && state_->explorerProcessId == explorerProcessId &&
             state_->status >= snowdesktop::taskbar_hook::kStatusInjecting;
         if (alreadyInjected && !resolveSymbols)
             return true;
@@ -630,7 +634,7 @@ public:
             now - lastInjectionAttemptTick_ < kFailedInjectionRetryDelayMs)
             return false;
 
-        const bool appearanceConnected = state_->explorerProcessId == explorerProcessId &&
+        const bool appearanceConnected = ownsConnection && state_->explorerProcessId == explorerProcessId &&
             state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
         state_->explorerProcessId = explorerProcessId;
         lastInjectionAttemptTick_ = now;
@@ -818,9 +822,11 @@ private:
         if (error != ERROR_SUCCESS) return Fail(expectedExplorerProcessId, error);
 
         std::lock_guard lock(mutex_);
-        return state_ &&
+        const bool connected = state_ &&
             state_->explorerProcessId == expectedExplorerProcessId &&
             state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
+        if (connected) injectedExplorerProcessId_ = expectedExplorerProcessId;
+        return connected;
     }
 
     bool Fail(DWORD expectedExplorerProcessId, DWORD error)
@@ -843,6 +849,7 @@ private:
     std::atomic<bool> injectionInFlight_{ false };
     ULONGLONG lastInjectionAttemptTick_ = 0;
     DWORD symbolAttemptProcessId_ = 0;
+    DWORD injectedExplorerProcessId_ = 0;
     ULONGLONG lastSymbolAttemptTick_ = 0;
 };
 

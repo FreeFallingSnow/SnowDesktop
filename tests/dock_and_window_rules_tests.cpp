@@ -70,6 +70,7 @@
 #include "app/layout_reload.h"
 #include "taskbar_hook/taskbar_autohide_trace.h"
 #include "taskbar_hook/taskbar_autohide_rules.h"
+#include "taskbar_hook/taskbar_hook_lifecycle.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 
 int RunTaskbarSymbolResolverTests();
@@ -442,6 +443,52 @@ void CheckTaskbarAutoHideTraceTransport()
         "the trace buffer must accept new samples after draining");
 }
 
+void CheckTaskbarHookLifecycle()
+{
+    using namespace snowdesktop::taskbar_hook;
+    RetainedHookSet<6> hooks;
+    std::array<int, 7> entries{};
+    std::array<bool, 7> active{};
+    active.back() = true; // Unrelated hook in the same MinHook instance.
+    int calls = 0, failEnable = -1, failDisable = -1;
+    const auto change = [&](void* target, bool enable) noexcept {
+        ++calls;
+        for (std::size_t i = 0; i < entries.size(); ++i)
+        {
+            if (target != &entries[i]) continue;
+            if (static_cast<int>(i) == (enable ? failEnable : failDisable)) return false;
+            active[i] = enable;
+            return true;
+        }
+        return false;
+    };
+    for (std::size_t i = 0; i < 6; ++i)
+        Check(hooks.Remember(&entries[i]), "retain each owned native hook target");
+    Check(hooks.Enable(change) && calls == 6,
+        "a complete reveal/focus hook set must enable before protection is published");
+    Check(hooks.Disable(change) && calls == 12 && active.back(),
+        "exit restores only owned native entries and leaves unrelated hooks active");
+    Check(std::none_of(active.begin(), active.end() - 1, [](bool value) { return value; }),
+        "no owned entry can keep routing into the stopped instance");
+    Check(hooks.Disable(change) && calls == 12,
+        "repeated window/owner shutdown must not disable the entries a second time");
+    Check(hooks.Contains(&entries[0]) && hooks.Enable(change) && calls == 18,
+        "a retained trampoline set supports reconnect without recreating hooks");
+    failDisable = 2;
+    Check(!hooks.Disable(change) && active[2] && active.back(),
+        "a failed stop cannot acknowledge safe handoff to the replacement instance");
+    failDisable = -1;
+    Check(hooks.Disable(change) && !active[2],
+        "retry stops the still-active entry before handoff is acknowledged");
+    failEnable = 2;
+    Check(!hooks.Enable(change) &&
+        std::none_of(active.begin(), active.end() - 1, [](bool value) { return value; }) && active.back(),
+        "partial installation rolls back only its own enabled hooks");
+    failEnable = -1;
+    Check(hooks.Enable(change) && hooks.Disable(change),
+        "a failed installation must not permanently consume future reconnect attempts");
+}
+
 void CheckTaskbarActivationRevealDispatch()
 {
     using namespace snowdesktop::taskbar_hook;
@@ -514,6 +561,11 @@ void CheckTaskbarActivationRevealDispatch()
     // Production target policy feeds the Explorer Unhide dispatch. A Dock
     // placed on either monitor must protect both taskbars; the native Unhide
     // call is the only substitute. This catches the old hasDock activation gate.
+    settings.suppressSystemTaskbar = true;
+    Check(ShouldProtectAutoHideTaskbar(settings, true, false),
+        "permanent hiding must protect its auto-hide override even when the original preference was off");
+    Check(!ShouldProtectAutoHideTaskbar(settings, false, false),
+        "an inactive Dock cannot enable protection through its persisted hiding preference");
     for (const bool dockOnPrimary : {false, true})
     {
         for (const bool secondary : {false, true})
@@ -521,7 +573,7 @@ void CheckTaskbarActivationRevealDispatch()
             const bool hasDock = secondary ? !dockOnPrimary : dockOnPrimary;
             SystemTaskbarTargetAppearance target{.appearance = PersonalizationSettings{}};
             ConfigureSystemTaskbarTargetProtection(target, true,
-                ShouldProtectAutoHideTaskbar(settings, true, true), hasDock);
+                ShouldProtectAutoHideTaskbar(settings, true, false), hasDock);
             Check(target.suppressTaskbar == hasDock,
                 "permanent taskbar hiding must remain limited to Dock screens");
             alternate = hidden;
@@ -561,10 +613,12 @@ void CheckTaskbarActivationRevealDispatch()
         }
     }
 
+    settings.suppressSystemTaskbar = false;
     Check(!ShouldProtectAutoHideTaskbar(settings, false, true) &&
         !ShouldProtectAutoHideTaskbar(settings, true, false),
         "disabled Dock or native auto-hide must relinquish protection");
     settings.position = DockPosition::Left;
+    settings.suppressSystemTaskbar = true;
     Check(!ShouldProtectAutoHideTaskbar(settings, true, true),
         "a side Dock must not control bottom-taskbar activation");
 
@@ -1907,6 +1961,7 @@ int main(int argc, char** argv)
     CheckClipboardPasteEffects();
     CheckClipboardShellDropKeys();
     CheckTaskbarAutoHideTraceTransport();
+    CheckTaskbarHookLifecycle();
     CheckTaskbarActivationRevealDispatch();
     failures += RunTaskbarSymbolResolverTests();
     CheckNativeDesktopCaptureReadiness();

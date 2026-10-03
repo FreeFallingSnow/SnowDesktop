@@ -1,6 +1,7 @@
 #include "taskbar_native.h"
 #include "taskbar_classic_surface.h"
 #include "taskbar_classic_appearance.h"
+#include "taskbar_hook_lifecycle.h"
 #include "../taskbar_monitor.h"
 
 #include <commctrl.h>
@@ -25,6 +26,8 @@ using SetDwm = HRESULT(WINAPI*)(HWND, DWORD, const void*, DWORD);
 SetComposition originalComposition = nullptr;
 SetDwm originalDwm = nullptr;
 GetComposition getComposition = nullptr;
+std::mutex hooksMutex;
+RetainedHookSet<2> nativeHooks;
 constexpr UINT_PTR kSubclass = 0x5344544e;
 constexpr UINT_PTR kTimer = 0x5344544e;
 
@@ -313,12 +316,14 @@ HRESULT WINAPI SetDwmHook(HWND window, DWORD attribute, const void* data, DWORD 
                     // Observe a newly opened panel before the posted apply
                     // message arrives, so Explorer's own reveal is not blocked.
                     enforce = (ReadSharedSnapshot(state->mapping, snapshot)
-                            ? ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window))
-                            : state->mapping->enabled && state->mapping->suppressTaskbar) &&
+                            ? snapshot.ownerProcessId == state->ownerId &&
+                                ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window))
+                            : state->mapping->ownerProcessId == state->ownerId &&
+                                state->mapping->enabled && state->mapping->suppressTaskbar) &&
                         WaitForSingleObject(state->owner, 0) == WAIT_TIMEOUT && !contextMenu;
                 }
             }
-            if (enforce)
+            if (enforce && !hookInstanceRetired.load())
             {
                 const BOOL cloak = TRUE;
                 return originalDwm(window, attribute, &cloak, sizeof(cloak));
@@ -341,11 +346,12 @@ BOOL WINAPI SetCompositionHook(HWND window, CompositionData* data)
                     state->restoreAccent = *static_cast<const AccentPolicy*>(data->data);
                     state->haveRestoreAccent = true;
                     policy = state->accent;
-                    enforce = state->mapping->enabled && state->mapping->appearanceEnabled &&
+                    enforce = state->mapping->ownerProcessId == state->ownerId &&
+                        state->mapping->enabled && state->mapping->appearanceEnabled &&
                         WaitForSingleObject(state->owner, 0) == WAIT_TIMEOUT;
                 }
             }
-            if (enforce)
+            if (enforce && !hookInstanceRetired.load())
             {
                 CompositionData replacement{19, &policy, sizeof(policy)};
                 return originalComposition(window, &replacement);
@@ -356,28 +362,40 @@ BOOL WINAPI SetCompositionHook(HWND window, CompositionData* data)
 
 bool InstallHooks(bool classic)
 {
-    // Hook/trampoline code remains mapped for Explorer's lifetime, including
-    // calls already in flight when the host dies. Never disable other hooks.
-    static std::once_flag dwmOnce, compositionOnce;
-    static bool dwmReady = false, compositionReady = false;
-    std::call_once(dwmOnce, [] {
-        const auto init = MH_Initialize();
-        if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return;
-        void* entry = reinterpret_cast<void*>(&DwmSetWindowAttribute);
+    std::lock_guard lock(hooksMutex);
+    const auto init = MH_Initialize();
+    if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return false;
+    void* entry = reinterpret_cast<void*>(&DwmSetWindowAttribute);
+    if (!nativeHooks.Contains(entry))
+    {
         if (MH_CreateHook(entry, reinterpret_cast<void*>(&SetDwmHook),
-                reinterpret_cast<void**>(&originalDwm)) != MH_OK) return;
-        dwmReady = MH_EnableHook(entry) == MH_OK;
-    });
-    if (!dwmReady) return false;
-    if (classic) std::call_once(compositionOnce, [] {
+                reinterpret_cast<void**>(&originalDwm)) != MH_OK ||
+            !nativeHooks.Remember(entry)) return false;
+    }
+    if (classic)
+    {
         const auto user = GetModuleHandleW(L"user32.dll");
-        void* entry = reinterpret_cast<void*>(GetProcAddress(user, "SetWindowCompositionAttribute"));
+        entry = reinterpret_cast<void*>(GetProcAddress(user, "SetWindowCompositionAttribute"));
         getComposition = reinterpret_cast<GetComposition>(GetProcAddress(user, "GetWindowCompositionAttribute"));
-        if (!entry || MH_CreateHook(entry, reinterpret_cast<void*>(&SetCompositionHook),
-                reinterpret_cast<void**>(&originalComposition)) != MH_OK) return;
-        compositionReady = MH_EnableHook(entry) == MH_OK;
+        if (!entry) return false;
+        if (!nativeHooks.Contains(entry) &&
+            (MH_CreateHook(entry, reinterpret_cast<void*>(&SetCompositionHook),
+                reinterpret_cast<void**>(&originalComposition)) != MH_OK ||
+             !nativeHooks.Remember(entry))) return false;
+    }
+    return nativeHooks.Enable([](void* target, bool enable) noexcept {
+        const auto result = enable ? MH_EnableHook(target) : MH_DisableHook(target);
+        return result == MH_OK || result == (enable ? MH_ERROR_ENABLED : MH_ERROR_DISABLED);
     });
-    return !classic || compositionReady;
+}
+
+bool StopHooks()
+{
+    std::lock_guard lock(hooksMutex);
+    return nativeHooks.Disable([](void* target, bool) noexcept {
+        const auto result = MH_DisableHook(target);
+        return result == MH_OK || result == MH_ERROR_DISABLED;
+    });
 }
 
 TargetAppearance Resolve(HWND window, const Snapshot& snapshot)
@@ -470,18 +488,19 @@ bool UpdateAutoHide(HWND window, const std::shared_ptr<WindowState>& state, bool
 
 LRESULT CALLBACK Subclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
-void Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroying = false)
+bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroying = false)
 {
     Restore(window, state);
     // If Shell has not accepted the restore yet, retain the owner-thread timer
     // to retry after normal shutdown or owner death. Never retain a dead HWND.
-    if (!UpdateAutoHide(window, state, false) && !destroying) return;
+    if (!UpdateAutoHide(window, state, false) && !destroying) return false;
     KillTimer(window, kTimer);
     RemoveWindowSubclass(window, Subclass, kSubclass);
     RemovePropW(window, kAttachedProperty);
     RemovePropW(window, kContextMenuProperty);
     std::lock_guard lock(windowsMutex);
     windows.erase(window);
+    return !windows.empty() || StopHooks();
 }
 
 bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
@@ -690,6 +709,16 @@ bool IsClassicTaskbarPlatform() noexcept
     return getVersion && getVersion(&version) == 0 && version.dwMajorVersion == 10 && version.dwBuildNumber < 22000;
 }
 
+bool Retire(HWND window) noexcept try
+{
+    if (auto state = Find(window)) return Detach(window, state);
+    // A prior stop may have restored windows but failed to patch one entry.
+    // Retry that stop before acknowledging the replacement instance.
+    std::lock_guard lock(windowsMutex);
+    return !windows.empty() || StopHooks();
+}
+catch (...) { return false; }
+
 void ObserveMenuMessage(HWND source, UINT message) noexcept try
 {
     if (message != WM_ENTERMENULOOP && message != WM_EXITMENULOOP && message != WM_CONTEXTMENU)
@@ -733,12 +762,25 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     if (!state->owner || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) return false;
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-            reinterpret_cast<LPCWSTR>(&Attach), &pinned) || !InstallHooks(classic)) return false;
+            reinterpret_cast<LPCWSTR>(&Attach), &pinned)) return false;
     if (!SetWindowSubclass(window, Subclass, kSubclass, 0)) return false;
-    { std::lock_guard lock(windowsMutex); windows.emplace(window, state); }
+    bool installed;
+    {
+        // Match the last-window stop's lock order: no attachment can enable
+        // hooks just before the previous last window disables them again.
+        std::lock_guard lock(windowsMutex);
+        installed = InstallHooks(classic);
+        if (installed) windows.emplace(window, state);
+    }
+    if (!installed)
+    {
+        RemoveWindowSubclass(window, Subclass, kSubclass);
+        return false;
+    }
     state->menuMouseHook = SetWindowsHookExW(WH_MOUSE, MenuMouseProc, nullptr, GetCurrentThreadId());
     state->menuMessageHook = SetWindowsHookExW(WH_CALLWNDPROC, MenuMessageProc, nullptr, GetCurrentThreadId());
     if (!state->menuMouseHook || !state->menuMessageHook ||
+        !SetPropW(window, kHookOwnerProperty, pinned) ||
         !SetPropW(window, kAttachedProperty, reinterpret_cast<HANDLE>(1)) ||
         !SetTimer(window, kTimer, 250, nullptr))
     { Detach(window, state); return false; }
