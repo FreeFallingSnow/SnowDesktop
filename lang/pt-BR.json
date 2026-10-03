@@ -1834,7 +1834,7 @@
     "start.title": "Guia de uso",
     "start.description": "Consulte uma operação ou encontre configurações para seus hábitos de uso.",
     "start.section.files": "Organizadores integrados",
-    "start.section.dock": "Dock e navegação rápida",
+    "start.section.dock": "Barras da área de trabalho e navegação rápida",
     "start.choose": "Escolher um tutorial",
     "start.openSettings": "Abrir configurações relacionadas",
     "start.returnSettings": "Voltar ao guia",
@@ -2386,5 +2386,17 @@
   "widget.group.convert_continue": "Converter e continuar",
   "widget.group.convert_files_message": "Este grupo ainda não tem origens. Convertê-lo em Arquivos da área de trabalho e continuar soltando os arquivos? A posição e o tamanho atuais serão preservados.",
   "widget.group.convert_programs_message": "Este grupo ainda não tem fontes. Converter em uma coleção e continuar arrastando os programas ou atalhos de aplicativos? A posição e o tamanho atuais serão preservados.",
-  "largeIcon.regularHexagon": "Usar um hexágono regular"
+  "largeIcon.regularHexagon": "Usar um hexágono regular",
+  "start.desktopStyle.title": "Escolher um estilo da área de trabalho",
+  "start.desktopStyle.description": "Escolha o layout geral e depois ajuste o Dock e as barras de tarefas e de status.",
+  "start.desktopStyle.instructions": "1. Abra Estilo da área de trabalho e escolha um layout predefinido.\n2. Confira O que será alterado e selecione Aplicar layout.\n3. Você pode aplicar as animações sugeridas separadamente. As opções abaixo ajustam a área de trabalho atual sem alterar a predefinição.",
+  "start.taskbar.title": "Ajustar a barra de tarefas do Windows",
+  "start.taskbar.description": "Escolha como ela aparece e ajuste seu tema e materiais.",
+  "start.taskbar.instructions": "1. Nas configurações da barra de tarefas, escolha sempre visível, ocultar automaticamente ou ocultar sempre.\n2. Ocultar sempre exige que o Dock esteja ativado e afeta apenas suas telas; a barra aparece temporariamente ao abrir painéis do sistema.\n3. Ajuste sua aparência. Para outras opções do Windows, abra aqui as configurações da barra de tarefas do Windows.",
+  "start.statusBarEnable.title": "Ativar e posicionar a barra de status",
+  "start.statusBarEnable.description": "Veja a hora, a bandeja do sistema e o status do sistema na parte superior ou inferior da tela.",
+  "start.statusBarEnable.instructions": "1. Ative a barra de status nas suas configurações.\n2. Escolha a borda superior ou inferior e as telas em que ela aparecerá.\n3. Ajuste a escala do texto e dos ícones para sua tela. Desative a barra quando não precisar dela.",
+  "start.statusBarContents.title": "Escolher o conteúdo da barra de status",
+  "start.statusBarContents.description": "Escolha atalhos e informações de desempenho e ajuste a ação ao clicar.",
+  "start.statusBarContents.instructions": "Em Esquerda, escolha o menu do sistema, a busca rápida e a visão de tarefas. Em Área de informações, escolha o método de entrada, CPU, memória, GPU e velocidade da rede. Hora, bandeja e controles do sistema aparecem conforme os recursos do dispositivo. Em Ação ao clicar, escolha o painel aberto ao clicar na hora ou na central de controle; as opções dependem da versão do Windows."
 }

@@ -1834,7 +1834,7 @@
     "start.title": "Guía de uso",
     "start.description": "Consulta una operación o encuentra ajustes que se adapten a tus hábitos.",
     "start.section.files": "Organizadores integrados",
-    "start.section.dock": "Dock y navegación rápida",
+    "start.section.dock": "Barras del escritorio y navegación rápida",
     "start.choose": "Elegir una guía",
     "start.openSettings": "Abrir ajustes relacionados",
     "start.returnSettings": "Volver a la guía",
@@ -2386,5 +2386,17 @@
   "widget.group.convert_continue": "Convertir y continuar",
   "widget.group.convert_files_message": "Este grupo aún no tiene fuentes. ¿Convertirlo en Archivos del escritorio y continuar soltando los archivos? Se conservarán su posición y tamaño actuales.",
   "widget.group.convert_programs_message": "Este grupo aún no tiene fuentes. ¿Convertirlo en una colección y continuar soltando los programas o accesos directos a aplicaciones? Se conservarán la posición y el tamaño.",
-  "largeIcon.regularHexagon": "Usar un hexágono regular"
+  "largeIcon.regularHexagon": "Usar un hexágono regular",
+  "start.desktopStyle.title": "Elegir un estilo del escritorio",
+  "start.desktopStyle.description": "Elige primero la distribución y después ajusta el Dock y las barras de tareas y de estado.",
+  "start.desktopStyle.instructions": "1. Abre Estilo del escritorio y elige una distribución predefinida.\n2. Revisa Qué cambiará y selecciona Aplicar distribución.\n3. Puedes aplicar las animaciones sugeridas por separado. Las opciones de abajo ajustan el escritorio actual sin cambiar la distribución predefinida.",
+  "start.taskbar.title": "Ajustar la barra de tareas de Windows",
+  "start.taskbar.description": "Elige cómo se muestra y ajusta su tema y materiales.",
+  "start.taskbar.instructions": "1. En la configuración de la barra de tareas, elige siempre visible, ocultar automáticamente u ocultar siempre.\n2. Ocultar siempre requiere activar el Dock y solo afecta a sus pantallas; la barra aparece temporalmente al abrir paneles del sistema.\n3. Ajusta su apariencia. Para otras opciones de Windows, abre desde aquí la configuración de la barra de tareas de Windows.",
+  "start.statusBarEnable.title": "Activar y colocar la barra de estado",
+  "start.statusBarEnable.description": "Consulta la hora, la bandeja del sistema y el estado del sistema arriba o abajo de la pantalla.",
+  "start.statusBarEnable.instructions": "1. Activa la barra de estado en su configuración.\n2. Elige el borde superior o inferior y las pantallas donde se mostrará.\n3. Ajusta la escala del texto y los iconos a tu pantalla. Puedes desactivarla cuando no la necesites.",
+  "start.statusBarContents.title": "Elegir el contenido de la barra de estado",
+  "start.statusBarContents.description": "Elige accesos e información de rendimiento y ajusta la acción al hacer clic.",
+  "start.statusBarContents.instructions": "En Izquierda, elige el menú del sistema, la búsqueda rápida y la vista de tareas. En Área de información, elige el método de entrada, CPU, memoria, GPU y velocidad de red. La hora, la bandeja y los controles del sistema aparecen según las capacidades del dispositivo. En Acción al hacer clic, elige qué panel se abre al pulsar la hora o el centro de control; las opciones dependen de la versión de Windows."
 }

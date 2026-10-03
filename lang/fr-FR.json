@@ -1834,7 +1834,7 @@
     "start.title": "Guide d’utilisation",
     "start.description": "Consultez une opération ou trouvez les réglages adaptés à vos habitudes.",
     "start.section.files": "Rangement intégré",
-    "start.section.dock": "Dock et navigation rapide",
+    "start.section.dock": "Barres du bureau et navigation rapide",
     "start.choose": "Choisir un guide",
     "start.openSettings": "Ouvrir les paramètres associés",
     "start.returnSettings": "Revenir au guide",
@@ -2386,5 +2386,17 @@
   "widget.group.convert_continue": "Convertir et continuer",
   "widget.group.convert_files_message": "Ce groupe ne contient encore aucune source. Le convertir en Fichiers du bureau et poursuivre le dépôt ? Sa position et sa taille actuelles seront conservées.",
   "widget.group.convert_programs_message": "Ce groupe n’a pas encore de sources. Le convertir en collection et poursuivre le dépôt des programmes ou raccourcis d’application ? Sa position et sa taille seront conservées.",
-  "largeIcon.regularHexagon": "Utiliser un hexagone régulier"
+  "largeIcon.regularHexagon": "Utiliser un hexagone régulier",
+  "start.desktopStyle.title": "Choisir un style de bureau",
+  "start.desktopStyle.description": "Choisissez une disposition, puis ajustez le Dock, la barre des tâches et la barre d’état.",
+  "start.desktopStyle.instructions": "1. Ouvrez Style du bureau et choisissez une disposition prédéfinie.\n2. Consultez Modifications prévues, puis choisissez Appliquer la disposition.\n3. Vous pouvez appliquer séparément les animations proposées. Les options en dessous ajustent le bureau actuel sans modifier le préréglage.",
+  "start.taskbar.title": "Ajuster la barre des tâches Windows",
+  "start.taskbar.description": "Choisissez sa visibilité et ajustez son thème et ses matériaux.",
+  "start.taskbar.instructions": "1. Dans les paramètres de la barre des tâches, choisissez de toujours l’afficher, de la masquer automatiquement ou de toujours la masquer.\n2. Le masquage permanent nécessite le Dock et ne concerne que ses écrans ; la barre réapparaît temporairement à l’ouverture de panneaux système.\n3. Ajustez son apparence. Pour les autres options Windows, ouvrez ici les paramètres de la barre des tâches Windows.",
+  "start.statusBarEnable.title": "Activer et placer la barre d’état",
+  "start.statusBarEnable.description": "Affichez l’heure, la zone de notification et l’état du système en haut ou en bas de l’écran.",
+  "start.statusBarEnable.instructions": "1. Activez la barre d’état dans ses paramètres.\n2. Choisissez le bord supérieur ou inférieur et les écrans à utiliser.\n3. Ajustez l’échelle du texte et des icônes à votre écran. Désactivez la barre lorsque vous n’en avez plus besoin.",
+  "start.statusBarContents.title": "Choisir le contenu de la barre d’état",
+  "start.statusBarContents.description": "Choisissez des raccourcis et des informations de performances, puis ajustez l’action au clic.",
+  "start.statusBarContents.instructions": "Dans Gauche, choisissez le menu système, la recherche rapide et l’affichage des tâches. Dans Zone d’informations, choisissez la méthode de saisie, le processeur, la mémoire, le GPU et le débit réseau. L’heure, la zone de notification et les commandes système apparaissent selon les capacités de l’appareil. Dans Action au clic, choisissez le panneau ouvert par un clic sur l’heure ou le centre de contrôle ; les options dépendent de la version de Windows."
 }

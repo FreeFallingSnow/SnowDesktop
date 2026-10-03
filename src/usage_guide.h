@@ -48,7 +48,11 @@ enum class Topic
     PagesDrag,
     PagesKeys,
     WidgetLayout,
-    ContextMenu
+    ContextMenu,
+    DesktopStyle,
+    Taskbar,
+    StatusBarEnable,
+    StatusBarContents
 };
 struct Lesson
 {
@@ -66,10 +70,13 @@ struct Lesson
     const char* secondaryFocus = "";
     const char* secondaryLabel = "";
 };
-inline constexpr std::array<Lesson, 33> kLessons{{
+inline constexpr std::array<Lesson, 37> kLessons{{
     {Topic::Startup, "startup", Section::Basics, L10N_KEY("start.startup.title"),
      L10N_KEY("start.startup.description"), L10N_KEY("start.startup.instructions"), SettingsPage::General,
      "general.autoStart", false, false},
+    {Topic::DesktopStyle, "desktopStyle", Section::Basics, L10N_KEY("start.desktopStyle.title"),
+     L10N_KEY("start.desktopStyle.description"), L10N_KEY("start.desktopStyle.instructions"),
+     SettingsPage::DesktopStyle, "desktopStyle", false},
     {Topic::Move, "move", Section::Basics, L10N_KEY("start.move.title"), L10N_KEY("start.move.description"),
      L10N_KEY("start.move.instructions"), SettingsPage::General, "", true, false},
     {Topic::Grid, "grid", Section::Basics, L10N_KEY("start.grid.title"), L10N_KEY("start.grid.description"),
@@ -141,6 +148,15 @@ inline constexpr std::array<Lesson, 33> kLessons{{
     {Topic::Navigation, "navigation", Section::Dock, L10N_KEY("start.navigation.title"),
      L10N_KEY("start.navigation.description"), L10N_KEY("start.navigation.instructions"),
      SettingsPage::General, "general.quickNavigation", false, false},
+    {Topic::Taskbar, "taskbar", Section::Dock, L10N_KEY("start.taskbar.title"),
+     L10N_KEY("start.taskbar.description"), L10N_KEY("start.taskbar.instructions"),
+     SettingsPage::Taskbar, "taskbar.displayMode", false},
+    {Topic::StatusBarEnable, "statusBarEnable", Section::Dock, L10N_KEY("start.statusBarEnable.title"),
+     L10N_KEY("start.statusBarEnable.description"), L10N_KEY("start.statusBarEnable.instructions"),
+     SettingsPage::StatusBar, "statusBar.enable", false},
+    {Topic::StatusBarContents, "statusBarContents", Section::Dock, L10N_KEY("start.statusBarContents.title"),
+     L10N_KEY("start.statusBarContents.description"), L10N_KEY("start.statusBarContents.instructions"),
+     SettingsPage::StatusBar, "statusBar.menu", false},
     {Topic::LuaWidget, "luaWidget", Section::More, L10N_KEY("start.luaWidget.title"),
      L10N_KEY("start.luaWidget.description"), L10N_KEY("start.luaWidget.instructions"), SettingsPage::Widgets,
      "widgets.included", true, false},

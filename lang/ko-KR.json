@@ -1834,7 +1834,7 @@
     "start.title": "사용 안내",
     "start.description": "작업 방법을 찾아보거나 사용 습관에 맞는 설정을 기능별로 찾으세요.",
     "start.section.files": "기본 정리 구성 요소",
-    "start.section.dock": "Dock 및 빠른 탐색",
+    "start.section.dock": "바탕 화면 막대와 빠른 탐색",
     "start.choose": "안내 선택",
     "start.openSettings": "관련 설정 열기",
     "start.returnSettings": "안내로 돌아가기",
@@ -2386,5 +2386,17 @@
   "widget.group.convert_continue": "변환하고 계속",
   "widget.group.convert_files_message": "이 그룹에는 아직 원본이 없습니다. 데스크톱 파일로 변환하고 끌어놓기를 계속할까요? 현재 위치와 크기는 유지됩니다.",
   "widget.group.convert_programs_message": "이 그룹에는 아직 원본이 없습니다. 컬렉션으로 변환하고 프로그램 또는 앱 바로 가기의 끌어 놓기를 계속할까요? 현재 위치와 크기는 유지됩니다.",
-  "largeIcon.regularHexagon": "정육각형 사용"
+  "largeIcon.regularHexagon": "정육각형 사용",
+  "start.desktopStyle.title": "바탕 화면 스타일 선택",
+  "start.desktopStyle.description": "전체 레이아웃을 고른 뒤 Dock, 작업 표시줄과 상태 표시줄을 조정합니다.",
+  "start.desktopStyle.instructions": "1. 바탕 화면 스타일에서 레이아웃 프리셋을 선택합니다.\n2. 변경될 항목을 확인하고 레이아웃 적용을 선택합니다.\n3. 추천 애니메이션은 별도로 적용할지 선택할 수 있습니다. 아래 옵션으로 프리셋을 바꾸지 않고 현재 바탕 화면을 조정할 수 있습니다.",
+  "start.taskbar.title": "Windows 작업 표시줄 조정",
+  "start.taskbar.description": "표시 방식을 고르고 테마와 재질을 조정합니다.",
+  "start.taskbar.instructions": "1. 작업 표시줄 설정에서 항상 표시, 자동 숨기기 또는 항상 숨기기를 선택합니다.\n2. 항상 숨기려면 Dock을 켜야 하며 Dock이 있는 화면에만 적용됩니다. 시스템 패널을 열면 일시적으로 표시됩니다.\n3. 모양을 조정합니다. 다른 Windows 옵션은 여기에서 Windows 작업 표시줄 설정을 열어 변경할 수 있습니다.",
+  "start.statusBarEnable.title": "상태 표시줄 켜기 및 배치",
+  "start.statusBarEnable.description": "화면 위나 아래에서 시간, 시스템 트레이와 시스템 상태를 확인합니다.",
+  "start.statusBarEnable.instructions": "1. 상태 표시줄 설정에서 상태 표시줄을 켭니다.\n2. 위쪽 또는 아래쪽 가장자리와 표시할 모니터를 선택합니다.\n3. 화면에 맞게 글자와 아이콘의 배율을 조정합니다. 필요하지 않으면 상태 표시줄을 끌 수 있습니다.",
+  "start.statusBarContents.title": "상태 표시줄 내용 선택",
+  "start.statusBarContents.description": "바로가기와 성능 정보를 고르고 클릭 동작을 조정합니다.",
+  "start.statusBarContents.instructions": "왼쪽에서 시스템 메뉴, 빠른 검색과 작업 보기를 선택합니다. 정보 영역에서 입력 방식, CPU, 메모리, GPU와 네트워크 속도를 선택합니다. 시간, 트레이와 시스템 제어는 장치 기능에 따라 표시됩니다. 클릭 동작에서 시간이나 제어 센터를 누를 때 열리는 패널을 선택합니다. 사용 가능한 옵션은 Windows 버전에 따라 다릅니다."
 }

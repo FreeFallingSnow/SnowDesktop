@@ -1834,7 +1834,7 @@
     "start.title": "使用指南",
     "start.description": "查閱操作方式，或依功能尋找適合自己習慣的設定。",
     "start.section.files": "內建收納元件",
-    "start.section.dock": "Dock 與快速導覽",
+    "start.section.dock": "桌面列與快速導覽",
     "start.choose": "選擇教學",
     "start.openSettings": "開啟相關設定",
     "start.returnSettings": "返回指南",
@@ -2386,5 +2386,17 @@
   "widget.group.convert_continue": "轉換並繼續",
   "widget.group.convert_files_message": "這個群組還沒有來源。是否轉換為桌面檔案並繼續拖入？轉換將保留目前的位置和大小。",
   "widget.group.convert_programs_message": "此群組尚無來源。是否轉換為集合並繼續拖入程式或應用程式捷徑？轉換會保留目前位置與大小。",
-  "largeIcon.regularHexagon": "使用正六邊形"
+  "largeIcon.regularHexagon": "使用正六邊形",
+  "start.desktopStyle.title": "選擇桌面風格",
+  "start.desktopStyle.description": "先選整體配置，再微調 Dock、工作列和狀態列。",
+  "start.desktopStyle.instructions": "1. 開啟「桌面風格」，選擇一種配置預設。\n2. 查看「將變更的項目」，確認後點擊「套用配置」。\n3. 建議動畫可另行選擇是否套用；下方選項可繼續微調目前桌面，不會改寫預設。",
+  "start.taskbar.title": "調整 Windows 工作列",
+  "start.taskbar.description": "選擇顯示方式，並調整工作列主題與材質。",
+  "start.taskbar.instructions": "1. 在工作列設定中選擇一律顯示、自動隱藏或一律隱藏系統工作列。\n2. 一律隱藏需要啟用 Dock，只影響 Dock 所在螢幕；系統面板開啟時會暫時顯示。\n3. 依需要調整工作列外觀；其他 Windows 選項可從這裡開啟系統工作列設定。",
+  "start.statusBarEnable.title": "啟用和擺放狀態列",
+  "start.statusBarEnable.description": "在螢幕頂端或底端查看時間、系統匣和系統狀態。",
+  "start.statusBarEnable.instructions": "1. 在狀態列設定中啟用狀態列。\n2. 選擇頂端或底端，以及要顯示的螢幕。\n3. 調整縮放，讓列內文字和圖示適合目前螢幕；不需要時可關閉狀態列。",
+  "start.statusBarContents.title": "選擇狀態列內容",
+  "start.statusBarContents.description": "選擇常用入口和效能資訊，並調整點擊行為。",
+  "start.statusBarContents.instructions": "在「左側」選擇系統選單、快速搜尋和工作檢視，在「資訊區」選擇輸入法、CPU、記憶體、GPU 和網路速度。時間、系統匣及系統控制依裝置能力顯示。在「點擊行為」中選擇點擊時間或控制中心時開啟的面板；可用選項因 Windows 版本而異。"
 }

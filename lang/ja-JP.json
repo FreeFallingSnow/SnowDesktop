@@ -1834,7 +1834,7 @@
     "start.title": "使い方ガイド",
     "start.description": "操作方法を調べたり、自分の使い方に合う設定を機能別に探せます。",
     "start.section.files": "内蔵の整理コンポーネント",
-    "start.section.dock": "Dock とクイックナビゲーション",
+    "start.section.dock": "デスクトップバーとクイックナビゲーション",
     "start.choose": "ガイドを選択",
     "start.openSettings": "関連設定を開く",
     "start.returnSettings": "ガイドに戻る",
@@ -2386,5 +2386,17 @@
   "widget.group.convert_continue": "変換して続行",
   "widget.group.convert_files_message": "このグループにはまだ参照元がありません。デスクトップファイルに変換してドロップを続行しますか？現在の位置とサイズは保持されます。",
   "widget.group.convert_programs_message": "このグループにはまだ参照元がありません。コレクションに変換してプログラムまたはアプリのショートカットのドロップを続けますか？位置とサイズは維持されます。",
-  "largeIcon.regularHexagon": "正六角形を使用"
+  "largeIcon.regularHexagon": "正六角形を使用",
+  "start.desktopStyle.title": "デスクトップスタイルを選ぶ",
+  "start.desktopStyle.description": "全体のレイアウトを選び、Dock、タスクバー、ステータスバーを調整します。",
+  "start.desktopStyle.instructions": "1. 「デスクトップスタイル」でレイアウトのプリセットを選びます。\n2. 「変更される項目」を確認して「レイアウトを適用」を選びます。\n3. 推奨アニメーションは別途適用するか選べます。下の項目ではプリセットを変更せず、現在のデスクトップを微調整できます。",
+  "start.taskbar.title": "Windows タスクバーを調整する",
+  "start.taskbar.description": "表示方法を選び、テーマやマテリアルを調整します。",
+  "start.taskbar.instructions": "1. タスクバー設定で、常に表示、自動的に隠す、常に非表示のいずれかを選びます。\n2. 常に非表示にするには Dock の有効化が必要です。Dock がある画面だけに適用され、システムパネルを開くと一時的に表示されます。\n3. 外観を調整します。その他の Windows の項目は、ここから Windows のタスクバー設定を開いて変更できます。",
+  "start.statusBarEnable.title": "ステータスバーを有効にして配置する",
+  "start.statusBarEnable.description": "画面の上部または下部で時刻、システムトレイ、システムの状態を確認します。",
+  "start.statusBarEnable.instructions": "1. ステータスバー設定でステータスバーを有効にします。\n2. 上端または下端と、表示するモニターを選びます。\n3. 文字やアイコンが画面に合うように倍率を調整します。不要になったら無効にできます。",
+  "start.statusBarContents.title": "ステータスバーの内容を選ぶ",
+  "start.statusBarContents.description": "ショートカットやパフォーマンス情報を選び、クリック時の動作を調整します。",
+  "start.statusBarContents.instructions": "「左側」でシステムメニュー、クイック検索、タスクビューを選びます。「情報エリア」で入力方式、CPU、メモリ、GPU、通信速度を選びます。時刻、トレイ、システム操作はデバイスの機能に応じて表示されます。「クリック時の動作」で時刻やコントロールセンターをクリックしたときに開くパネルを選びます。選択肢は Windows のバージョンによって異なります。"
 }

@@ -1834,7 +1834,7 @@
     "start.title": "Nutzungsanleitung",
     "start.description": "Bedienung nachschlagen oder passende Einstellungen nach Funktion finden.",
     "start.section.files": "Integrierte Ablagen",
-    "start.section.dock": "Dock & Schnellnavigation",
+    "start.section.dock": "Desktop-Leisten und Schnellnavigation",
     "start.choose": "Anleitung auswählen",
     "start.openSettings": "Zugehörige Einstellungen",
     "start.returnSettings": "Zur Anleitung",
@@ -2386,5 +2386,17 @@
   "widget.group.convert_continue": "Umwandeln und fortfahren",
   "widget.group.convert_files_message": "Diese Gruppe hat noch keine Quellen. Soll sie in Desktop-Dateien umgewandelt und der Ablegevorgang fortgesetzt werden? Ihre aktuelle Position und Größe bleiben erhalten.",
   "widget.group.convert_programs_message": "Diese Gruppe hat noch keine Quellen. In eine Sammlung umwandeln und die Programme oder Anwendungsverknüpfungen weiter ablegen? Position und Größe bleiben erhalten.",
-  "largeIcon.regularHexagon": "Regelmäßiges Sechseck verwenden"
+  "largeIcon.regularHexagon": "Regelmäßiges Sechseck verwenden",
+  "start.desktopStyle.title": "Desktop-Stil auswählen",
+  "start.desktopStyle.description": "Zuerst das Layout wählen, dann Dock, Taskleiste und Statusleiste anpassen.",
+  "start.desktopStyle.instructions": "1. Öffne Desktop-Stil und wähle eine Layout-Vorlage.\n2. Prüfe Diese Einstellungen ändern sich und wähle dann Layout anwenden.\n3. Die empfohlenen Animationen kannst du separat übernehmen. Mit den Optionen darunter passt du den aktuellen Desktop an, ohne die Vorlage zu ändern.",
+  "start.taskbar.title": "Windows-Taskleiste anpassen",
+  "start.taskbar.description": "Sichtbarkeit wählen und Design sowie Materialien der Taskleiste anpassen.",
+  "start.taskbar.instructions": "1. Wähle in den Taskleisteneinstellungen zwischen immer sichtbar, automatisch ausblenden und immer ausblenden.\n2. Immer ausblenden erfordert ein aktiviertes Dock und gilt nur auf dessen Bildschirmen; beim Öffnen von Systemfenstern erscheint die Taskleiste vorübergehend.\n3. Passe das Aussehen an. Für weitere Windows-Optionen öffnest du hier die Windows-Taskleisteneinstellungen.",
+  "start.statusBarEnable.title": "Statusleiste aktivieren und platzieren",
+  "start.statusBarEnable.description": "Uhrzeit, Infobereich und Systemstatus am oberen oder unteren Bildschirmrand anzeigen.",
+  "start.statusBarEnable.instructions": "1. Aktiviere die Statusleiste in ihren Einstellungen.\n2. Wähle den oberen oder unteren Rand und die gewünschten Bildschirme.\n3. Passe die Skalierung von Text und Symbolen an deinen Bildschirm an. Bei Bedarf kannst du die Statusleiste wieder deaktivieren.",
+  "start.statusBarContents.title": "Inhalte der Statusleiste auswählen",
+  "start.statusBarContents.description": "Schnellzugriffe und Leistungsdaten auswählen und das Klickverhalten anpassen.",
+  "start.statusBarContents.instructions": "Wähle unter Links das Systemmenü, die Schnellsuche und die Aufgabenansicht. Wähle im Informationsbereich Eingabemethode, CPU, Arbeitsspeicher, GPU und Netzwerkgeschwindigkeit. Uhrzeit, Infobereich und Systemsteuerungen erscheinen je nach Gerätefunktionen. Unter Klickverhalten wählst du das Fenster, das ein Klick auf Uhrzeit oder Kontrollzentrum öffnet; die Optionen hängen von der Windows-Version ab."
 }
