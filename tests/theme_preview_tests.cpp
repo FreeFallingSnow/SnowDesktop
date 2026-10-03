@@ -2,8 +2,10 @@
 #include "theme_workshop.h"
 #include <windows.h>
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iostream>
+#include <thread>
 
 namespace
 {
@@ -37,7 +39,11 @@ int wmain(int argc, wchar_t** argv)
     using namespace snowdesktop;
     using namespace themes;
     // One-shot mock children exercise the actual bounded process runner.
-    if (argc >= 2 && std::wstring_view(argv[1]) == L"--child-wait") { Sleep(5000); return 0; }
+    if (argc >= 2 && std::wstring_view(argv[1]) == L"--child-wait")
+    {
+        if (argc > 2) { std::ofstream marker{std::filesystem::path(argv[2])}; marker << "ready"; }
+        Sleep(5000); return 0;
+    }
     if (argc >= 2 && std::wstring_view(argv[1]) == L"configuration")
     { std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\"]}\n"; return 0; }
     const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -76,6 +82,27 @@ int wmain(int argc, wchar_t** argv)
     check(!preview::Run(argv[0], {L"--child-wait"}, output, 30, error) && error == "processTimeout", "request timeout terminates only its child");
     std::atomic_bool cancel{true};
     check(!preview::Run(argv[0], {L"--child-wait"}, output, 3000, error, &cancel) && error == "cancelled", "pre-cancel never starts a child");
+    std::atomic_bool inFlightCancel{false}, childReady{false};
+    const auto marker = directory / L"child-ready";
+    DWORD cancellationHandlesBefore = 0, cancellationHandlesAfter = 0;
+    GetProcessHandleCount(GetCurrentProcess(), &cancellationHandlesBefore);
+    const auto cancellationStarted = std::chrono::steady_clock::now();
+    std::thread cancelRunning([&] {
+        while (std::chrono::steady_clock::now() - cancellationStarted < std::chrono::seconds(5))
+        {
+            std::error_code ec;
+            if (std::filesystem::exists(marker, ec))
+            { childReady = true; inFlightCancel = true; return; }
+            Sleep(1);
+        }
+    });
+    const bool cancelledChild = !preview::Run(argv[0], {L"--child-wait", marker.wstring()}, output, 3000, error, &inFlightCancel);
+    cancelRunning.join();
+    GetProcessHandleCount(GetCurrentProcess(), &cancellationHandlesAfter);
+    check(childReady && cancelledChild && error == "cancelled" &&
+        std::chrono::steady_clock::now() - cancellationStarted < std::chrono::seconds(3) &&
+        cancellationHandlesAfter <= cancellationHandlesBefore,
+        "in-flight cancellation stops the ready private child and releases all process/file handles");
     std::filesystem::path cover = directory / L"noise.png";
     if (argc == 2)
     {
