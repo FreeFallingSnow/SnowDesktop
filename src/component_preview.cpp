@@ -208,6 +208,14 @@ void BlendRgb(std::uint32_t& pixel, COLORREF color, float coverage)
 {
     coverage = std::clamp(coverage, 0.0f, 1.0f);
     if (coverage <= 0.0f) return;
+    if (coverage >= 1.0f)
+    {
+        pixel = (pixel & 0xff000000u) |
+            (static_cast<std::uint32_t>(GetRValue(color)) << 16) |
+            (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
+            static_cast<std::uint32_t>(GetBValue(color));
+        return;
+    }
     const float inverse = 1.0f - coverage;
     const auto mix = [&](unsigned destination, unsigned source) {
         return static_cast<std::uint32_t>(std::clamp(
@@ -274,10 +282,32 @@ void RoundedOutline(std::uint32_t* pixels, int width, int height,
     const int bottom = std::clamp(static_cast<int>(rect.bottom), 0, height);
     const float outerRadius = static_cast<float>(std::max(0, radius));
     const float innerRadius = std::max(0.0f, outerRadius - 1.0f);
+    const int innerLeft = rect.left + 1;
+    const int innerTop = rect.top + 1;
+    const int innerRight = rect.right - 1;
+    const int innerBottom = rect.bottom - 1;
+    const int cornerSpan = static_cast<int>(std::ceil(std::clamp(
+        innerRadius, 0.0f, std::min(
+            std::max(0.0f, static_cast<float>(innerRight - innerLeft) * 0.5f),
+            std::max(0.0f, static_cast<float>(innerBottom - innerTop) * 0.5f)))));
     for (int y = top; y < bottom; ++y)
     {
+        // Pixel centers in either straight inner strip have full inner
+        // coverage, so the outline contributes exactly zero there.
+        const bool insideInner = y >= innerTop && y < innerBottom;
+        const bool straightRow = insideInner &&
+            y >= innerTop + cornerSpan && y < innerBottom - cornerSpan;
+        const int skipLeft = straightRow
+            ? innerLeft : innerLeft + cornerSpan;
+        const int skipRight = straightRow
+            ? innerRight : innerRight - cornerSpan;
         for (int x = left; x < right; ++x)
         {
+            if (insideInner && x >= skipLeft && x < skipRight)
+            {
+                x = skipRight - 1;
+                continue;
+            }
             const float sampleX = static_cast<float>(x) + 0.5f;
             const float sampleY = static_cast<float>(y) + 0.5f;
             const float outerCoverage = detail::RoundedRectangleCoverage(
@@ -446,6 +476,12 @@ void DrawBitmap(HDC destination, const Bitmap& image, const RECT& bounds)
 void ApplyPremultipliedCoverage(std::uint32_t& pixel, float coverage)
 {
     coverage = std::clamp(coverage, 0.0f, 1.0f);
+    if (coverage >= 1.0f) return;
+    if (coverage <= 0.0f)
+    {
+        pixel = 0;
+        return;
+    }
     const auto scale = [&](unsigned channel) {
         return static_cast<std::uint32_t>(std::clamp(
             std::lround(channel * coverage), 0L, 255L));
@@ -1518,8 +1554,9 @@ bool Window::RenderCurrent()
             }
             const unsigned baseAlpha = SameRgb(pixel, palette.background)
                 ? materialAlpha : contentAlpha;
-            const unsigned alpha = static_cast<unsigned>(std::clamp(
-                std::lround(baseAlpha * coverage), 0L, 255L));
+            const unsigned alpha = coverage >= 1.0f ? baseAlpha :
+                static_cast<unsigned>(std::clamp(
+                    std::lround(baseAlpha * coverage), 0L, 255L));
             const unsigned blue = (pixel & 0xFFu) * alpha / 255u;
             const unsigned green = ((pixel >> 8) & 0xFFu) * alpha / 255u;
             const unsigned red = ((pixel >> 16) & 0xFFu) * alpha / 255u;
