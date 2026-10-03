@@ -71,7 +71,9 @@ are reported separately from successful theme saving.
 Deletion checks both saved-global bindings and object references. A bound
 child requires an explicit compatible replacement. Objects can keep their
 appearance as custom by clearing only the live reference. Scope reduction
-does the same for excluded objects and retains the original theme ID. No
+does the same for excluded objects and retains the original theme ID. Replacing
+a deleted child of the active global preserves its complete successful snapshot
+as custom; material-only objects keep their own references. No
 operation deletes user layout, widget data or resources. The writer takes a
 separate lock, rereads current state, validates the entire serialized result,
 flushes a private temporary file and atomically replaces the destination.

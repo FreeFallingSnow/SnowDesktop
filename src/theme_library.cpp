@@ -478,15 +478,25 @@ bool Remove(Library& library, std::string_view id, std::string_view replacement,
     const auto substitute = replacement.empty() ? std::optional<Theme>{} : Resolve(library.themes, replacement);
     if (!replacement.empty() && (!substitute || substitute->kind != old->kind || replacement == id)) return Fail(error, "invalidSelection");
     Library next = library;
+    std::set<std::string> changedBindings;
     for (auto& [key, theme] : next.themes)
     {
         (void)key;
         for (auto* binding : {&theme.quickPanel, &theme.popup})
             if (*binding == id)
-            { if (!substitute) return Fail(error, "themeInUse"); *binding = substitute->id; }
+            {
+                if (!substitute) return Fail(error, "themeInUse");
+                *binding = substitute->id;
+                if (theme.kind == Kind::Global) changedBindings.insert(key);
+            }
     }
     for (auto& [target, ref] : next.references)
     {
+        // Material-only objects do not consume child bindings. The active
+        // global object does; preserve its complete successful child snapshots
+        // as custom before the saved global's binding changes underneath it.
+        if (preserveObjects && target == "global" && changedBindings.contains(ref.id))
+        { ref.id.clear(); continue; }
         if (ref.id != id) continue;
         if (preserveObjects) ref.id.clear();
         else if (substitute)

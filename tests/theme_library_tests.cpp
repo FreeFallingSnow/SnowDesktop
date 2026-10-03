@@ -51,11 +51,16 @@ int RunThemeLibraryTests()
         EncodePackage(library.references.at("dock").snapshot, error) == savedSnapshot,
         "explicit scope reduction converts excluded object references to custom without changing their snapshots");
     check(References(library, quick.id).size() == 2, "binding references are enumerated separately from object use");
+    check(Select(library, "global", "theme/global-copy", Kind::Global, Components, error), "select a global with the bound custom child");
+    const auto boundGlobalSnapshot = EncodePackage(library.references.at("global").snapshot, error);
     const auto beforeDelete = EncodeLibrary(library, error);
     check(!Remove(library, quick.id, {}, true, error) && EncodeLibrary(library, error) == beforeDelete,
         "deleting a bound child is blocked atomically");
     check(Remove(library, quick.id, "builtin/quickpanel/light", true, error), "explicit replacement repairs every global binding");
     check(library.themes.at(global.id).quickPanel == "builtin/quickpanel/light", "saved global references are rewired by ID");
+    check(library.references.at("global").id.empty() &&
+        EncodePackage(library.references.at("global").snapshot, error) == boundGlobalSnapshot,
+        "deleting a bound child preserves the active global appearance as custom with complete dependencies");
     check(Remove(library, global.id, {}, true, error) && library.references.at("dock").id.empty() &&
         EncodePackage(library.references.at("dock").snapshot, error) == savedSnapshot,
         "deleting an object-used theme retains its successful snapshot as custom");
