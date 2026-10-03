@@ -1171,20 +1171,22 @@ void DesktopApp::OnMouseMoveAt(
             }
             else
             {
-                const auto* oldIcon = HitTestIcon(oldMouse);
-                const auto* newIcon = HitTestIcon(current);
-                if (oldIcon != newIcon)
+                // Background hover uses the complete layout cell, whereas
+                // input hit testing uses the tighter selection rectangle.
+                // Leaving the cell's padding must also erase its hover pixels.
+                for (const auto& entry : items_oo_)
                 {
-                    for (const auto* icon : { oldIcon, newIcon })
-                    {
-                        const auto* item = icon ? icon->GetDesktopItem() : nullptr;
-                        if (!item) continue;
-                        RECT dirty = item->largeIcon
-                            ? GetLargeIconFrameRect(*item) : item->bounds;
-                        if (IsRectEmptyRect(dirty)) continue;
-                        InflateRect(&dirty, 8, 8);
-                        InvalidateRect(hwnd_, &dirty, FALSE);
-                    }
+                    const auto* icon = dynamic_cast<const DesktopIcon*>(entry.get());
+                    const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+                    if (!item || IsRectEmptyRect(item->bounds) ||
+                        PtInRect(&item->bounds, oldMouse) ==
+                            PtInRect(&item->bounds, current))
+                        continue;
+                    RECT dirty = item->largeIcon
+                        ? GetLargeIconFrameRect(*item) : item->bounds;
+                    if (IsRectEmptyRect(dirty)) continue;
+                    InflateRect(&dirty, 8, 8);
+                    InvalidateRect(hwnd_, &dirty, FALSE);
                 }
             }
         }
