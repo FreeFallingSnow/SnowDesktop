@@ -1556,7 +1556,7 @@ if (BUILD_TESTING)
             src/preview_png_writer.cpp
             src/widget_preview_stage.cpp
         INCLUDE_DIRECTORIES src steam_bridge/src
-        LINK_LIBRARIES SnowDesktopWorkshopManagerSupport d2d1 d3d11 windowscodecs ole32 shlwapi
+        LINK_LIBRARIES SnowDesktopWorkshopManagerSupport d2d1 d3d11 dxguid windowscodecs ole32 shlwapi
         COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktop>"
         LABELS contract integration settings steam sdk-free)
     set_tests_properties(theme_workflow PROPERTIES TIMEOUT 180)

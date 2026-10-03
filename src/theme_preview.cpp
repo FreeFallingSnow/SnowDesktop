@@ -4,6 +4,9 @@
 #include "steam_child_environment.h"
 #include <fstream>
 #include <thread>
+#include <wincodec.h>
+#include <wrl/client.h>
+#include "../steam_bridge/src/theme_workshop_publish.h"
 
 namespace snowdesktop::themes::preview
 {
@@ -105,6 +108,41 @@ bool SaveCover(const std::filesystem::path& path, widget_preview::Wallpaper imag
         if (!ec && size > 0 && size < kCoverMaximumBytes) return true;
     }
     std::error_code ec; std::filesystem::remove(path, ec); return Fail(error, "previewTooLarge");
+}
+bool NormalizeCover(const std::filesystem::path& source, const std::filesystem::path& destination, std::string& error)
+{
+    std::error_code ec;
+    if (!steam_bridge::ThemeSafePath(source) || std::filesystem::file_size(source, ec) > 32 * 1024 * 1024 || ec)
+        return Fail(error, "previewFailed");
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    struct ComCleanup { HRESULT result; ~ComCleanup() { if (SUCCEEDED(result)) CoUninitialize(); } } cleanup{initialized};
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory; ComPtr<IWICBitmapDecoder> decoder; ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICBitmapClipper> clip; ComPtr<IWICBitmapScaler> scaler; ComPtr<IWICFormatConverter> convert;
+    UINT width = 0, height = 0;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateDecoderFromFilename(source.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)) || FAILED(frame->GetSize(&width, &height)) || !width || !height ||
+        width > 8192 || height > 8192 || static_cast<std::uint64_t>(width) * height > 16 * 1024 * 1024)
+        return Fail(error, "previewFailed");
+    const UINT side = std::min(width, height);
+    const WICRect crop{static_cast<INT>((width - side) / 2), static_cast<INT>((height - side) / 2), static_cast<INT>(side), static_cast<INT>(side)};
+    if (FAILED(factory->CreateBitmapClipper(&clip)) || FAILED(clip->Initialize(frame.Get(), &crop)) ||
+        FAILED(factory->CreateBitmapScaler(&scaler)) || FAILED(scaler->Initialize(clip.Get(), kCoverSize, kCoverSize, WICBitmapInterpolationModeFant)) ||
+        FAILED(factory->CreateFormatConverter(&convert)) || FAILED(convert->Initialize(scaler.Get(), GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) return Fail(error, "previewFailed");
+    std::vector<std::uint32_t> pixels(kCoverSize * kCoverSize);
+    if (FAILED(convert->CopyPixels(nullptr, kCoverSize * 4, static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE*>(pixels.data()))))
+        return Fail(error, "previewFailed");
+    auto image = widget_preview::GenerateWallpaper(kCoverSize, kCoverSize, false);
+    for (std::size_t i = 0; i < pixels.size(); ++i)
+    {
+        const unsigned alpha = pixels[i] >> 24; std::uint32_t pixel = 0xff000000;
+        for (unsigned shift : {0u, 8u, 16u}) pixel |= std::min(255u,
+            ((pixels[i] >> shift) & 255u) + (((image.pixels[i] >> shift) & 255u) * (255u - alpha) + 127u) / 255u) << shift;
+        image.pixels[i] = pixel;
+    }
+    return SaveCover(destination, std::move(image), error);
 }
 bool Render(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,

@@ -37,6 +37,13 @@ int wmain(int argc, wchar_t** argv)
     for (auto& pixel : noise.pixels) { seed = seed * 1664525u + 1013904223u; pixel = 0xff000000u | (seed & 0xffffffu); }
     check(preview::SaveCover(directory / L"noise.png", std::move(noise), error) &&
         std::filesystem::file_size(directory / L"noise.png") < preview::kCoverMaximumBytes, "worst-case custom cover is encoded below the strict bridge limit");
+    check(preview::NormalizeCover(directory / L"noise.png",directory / L"normalized.png",error) &&
+        widget_preview::LoadWallpaperImage(directory / L"normalized.png").pixels.size()==1024*1024,
+        "custom cover normalizes through a bounded 1024-square decoder");
+    { std::ofstream oversized(directory / L"oversized.png",std::ios::binary); oversized << "invalid"; }
+    std::filesystem::resize_file(directory / L"oversized.png",32 * 1024 * 1024 + 1);
+    check(!preview::NormalizeCover(directory / L"oversized.png",directory / L"invalid-cover.png",error) &&
+        !std::filesystem::exists(directory / L"invalid-cover.png"), "oversized or invalid custom source cannot allocate an unbounded image or produce a cover");
     std::string output;
     check(preview::Run(argv[0], {L"configuration"}, output, 3000, error) && workshop::Capabilities(output,"test"), "mock child exercises actual bounded runner and capability decoder");
     check(!preview::Run(argv[0], {L"--child-wait"}, output, 30, error) && error == "processTimeout", "request timeout terminates only its child");

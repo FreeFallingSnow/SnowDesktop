@@ -53,10 +53,15 @@ bool ValidCover(const std::filesystem::path& path)
     ComPtr<IWICImagingFactory> factory; ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
     GUID format{}; UINT width = 0, height = 0;
-    return SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+    const bool valid = SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
         SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) &&
         SUCCEEDED(decoder->GetContainerFormat(&format)) && format == GUID_ContainerFormatPng &&
         SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(frame->GetSize(&width, &height)) && width == 1024 && height == 1024;
+    if (!valid) return false;
+    ComPtr<IWICFormatConverter> convert; std::vector<BYTE> pixels(1024 * 1024 * 4);
+    return SUCCEEDED(factory->CreateFormatConverter(&convert)) && SUCCEEDED(convert->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+        WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)) &&
+        SUCCEEDED(convert->CopyPixels(nullptr, 1024 * 4, static_cast<UINT>(pixels.size()), pixels.data()));
 }
 }
 bool ThemeSafePath(const std::filesystem::path& path, bool directory)

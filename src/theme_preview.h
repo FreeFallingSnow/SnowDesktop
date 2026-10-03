@@ -14,6 +14,7 @@ bool Render(const std::filesystem::path& host, const Package&, std::string_view 
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel = nullptr);
 bool SaveCover(const std::filesystem::path&, widget_preview::Wallpaper, std::string& error);
+bool NormalizeCover(const std::filesystem::path& source, const std::filesystem::path& destination, std::string& error);
 std::wstring QuoteArgument(std::wstring_view);
 bool Run(const std::filesystem::path&, const std::vector<std::wstring>&, std::string& output,
     unsigned timeoutMs, std::string& error, const std::atomic_bool* cancel = nullptr);

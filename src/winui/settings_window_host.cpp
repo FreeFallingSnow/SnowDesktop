@@ -566,9 +566,7 @@ struct SettingsWindowHost::Impl
                         success = themes::preview::Render(host, task->snapshot, task->request.id, scope, task->directory, task->cover, detail, &task->cancel);
                         if (success && !task->customCover.empty())
                         {
-                            auto image = widget_preview::LoadWallpaperImage(task->customCover);
-                            success = !image.pixels.empty() && themes::preview::SaveCover(task->cover,
-                                widget_preview::GenerateWallpaper(image, themes::preview::kCoverSize, themes::preview::kCoverSize), detail);
+                            success = themes::preview::NormalizeCover(task->customCover, task->cover, detail);
                         }
                     }
                 }

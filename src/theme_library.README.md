@@ -99,7 +99,7 @@ Each request owns a fresh directory and child processes; completion/cancellation
 releases handles and images, with no retained bitmap cache. A 1024 x 1024 PNG is
 encoded below the strict 1 MiB bridge limit, reducing color depth if necessary.
 Failure returns no cover and removes that request's preparation. A chosen cover
-is normalized through the same encoder. Global previews show only supported
+is normalized through a bounded WIC crop/scale path and the same encoder (at most 32 MiB source, 8192 pixels per dimension and 16 megapixels; output pixels are bounded to 1024 squared). Global previews show only supported
 scopes and include bound quick/popup themes; Dock/taskbar target previews are
 available both from the saved-theme target selector and directly on their settings pages. Quick-panel options expose all
 18 saved layout fields including search-chip radius.

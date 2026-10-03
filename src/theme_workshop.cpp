@@ -149,11 +149,7 @@ bool Prepare(const Package& package, std::string_view root, unsigned scope, cons
     if (!ReadPackage(directory / L"package.snowtheme", rendered, error) || EncodePackage(rendered, error) != EncodePackage(package, error)) return Fail(error, "stalePreparation");
     if (!customCover.empty())
     {
-        if (!steam_bridge::ThemeSafePath(customCover)) return Fail(error, "previewFailed");
-        auto image = widget_preview::LoadWallpaperImage(customCover);
-        if (image.pixels.empty()) return Fail(error, "previewFailed");
-        image = widget_preview::GenerateWallpaper(image, preview::kCoverSize, preview::kCoverSize);
-        if (!preview::SaveCover(cover, std::move(image), error)) return false;
+        if (!preview::NormalizeCover(customCover, cover, error)) return false;
     }
     if (cancel && cancel->load()) return Fail(error, "cancelled");
     if (!steam_bridge::WriteThemePreparation(directory, root, theme->name, Now(), error) ||
