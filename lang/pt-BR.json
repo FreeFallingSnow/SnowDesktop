@@ -2425,5 +2425,15 @@
   "controlCenter.projection.internal": "Somente tela do computador",
   "controlCenter.projection.clone": "Duplicar",
   "controlCenter.projection.extend": "Estender",
-  "controlCenter.projection.external": "Somente segunda tela"
+  "controlCenter.projection.external": "Somente segunda tela",
+  "controlCenter.awake.plan": "Usar o plano de energia selecionado",
+  "controlCenter.awake.indefinite": "Manter ativo indefinidamente",
+  "controlCenter.awake.timed": "Manter ativo temporariamente",
+  "controlCenter.awake.30": "Manter ativo por 30 minutos",
+  "controlCenter.awake.60": "Manter ativo por 1 hora",
+  "controlCenter.awake.120": "Manter ativo por 2 horas",
+  "controlCenter.awake.screen": "Manter a tela ligada",
+  "controlCenter.awake.remaining": "Tempo restante",
+  "controlCenter.hibernate": "Hibernar",
+  "controlCenter.confirmHibernate": "Hibernar este computador?"
 }

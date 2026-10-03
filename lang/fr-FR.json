@@ -2425,5 +2425,15 @@
   "controlCenter.projection.internal": "Écran du PC uniquement",
   "controlCenter.projection.clone": "Dupliquer",
   "controlCenter.projection.extend": "Étendre",
-  "controlCenter.projection.external": "Deuxième écran uniquement"
+  "controlCenter.projection.external": "Deuxième écran uniquement",
+  "controlCenter.awake.plan": "Utiliser le mode d’alimentation actuel",
+  "controlCenter.awake.indefinite": "Rester éveillé indéfiniment",
+  "controlCenter.awake.timed": "Rester éveillé temporairement",
+  "controlCenter.awake.30": "Rester éveillé 30 minutes",
+  "controlCenter.awake.60": "Rester éveillé 1 heure",
+  "controlCenter.awake.120": "Rester éveillé 2 heures",
+  "controlCenter.awake.screen": "Garder l’écran allumé",
+  "controlCenter.awake.remaining": "Temps restant",
+  "controlCenter.hibernate": "Mettre en veille prolongée",
+  "controlCenter.confirmHibernate": "Mettre cet ordinateur en veille prolongée ?"
 }

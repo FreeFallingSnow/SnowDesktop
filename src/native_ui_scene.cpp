@@ -77,7 +77,7 @@ bool Scene::SameContent(const Scene& other)const
         const auto& a=nodes[i];const auto& b=other.nodes[i];
         if(a.id!=b.id||a.hoverGroup!=b.hoverGroup||a.role!=b.role||!SameRect(a.bounds,b.bounds)||!SameRect(a.clip,b.clip)||
             a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||a.accessibilityLabel!=b.accessibilityLabel||
-            a.fontSize!=b.fontSize||a.value!=b.value||a.enabled!=b.enabled||a.selected!=b.selected||
+            a.fontSize!=b.fontSize||a.value!=b.value||a.glyphSize!=b.glyphSize||a.enabled!=b.enabled||a.selected!=b.selected||
             a.accent!=b.accent||a.centered!=b.centered||a.trailing!=b.trailing||a.bold!=b.bold||a.outlined!=b.outlined||
             a.secondary!=b.secondary||a.charging!=b.charging||a.pluggedIn!=b.pluggedIn||a.positiveGlyph!=b.positiveGlyph||a.marked!=b.marked||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
             a.switchStyle!=b.switchStyle||a.busy!=b.busy||a.batteryStyle!=b.batteryStyle||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
@@ -391,7 +391,8 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 // Navigation is a secondary affordance. Keep its visual weight
                 // below device/action icons without shrinking the hit target.
                 const bool chevron=n.glyph==L"\uE76B"||n.glyph==L"\uE76C"||n.glyph==L"\uE70D"||n.glyph==L"\uE70E";
-                text(n.glyph,glyphRect,chevron?12.f:18.f,n.positiveGlyph&&!p.highContrast?D2D1::ColorF(0x34c759):ink,false,true,true);
+                const float glyphSize=std::isfinite(n.glyphSize)&&n.glyphSize>0?std::clamp(n.glyphSize,6.f,48.f):chevron?12.f:18.f;
+                text(n.glyph,glyphRect,glyphSize,n.positiveGlyph&&!p.highContrast?D2D1::ColorF(0x34c759):ink,false,true,true);
                 if (!iconOnly) label.left += 44;
             }
             else if (n.role != Role::Text && !n.centered) label.left += 12;

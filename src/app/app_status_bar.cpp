@@ -9,6 +9,7 @@
 #include "../taskbar_monitor.h"
 #include "../taskbar_hook/taskbar_native.h"
 #include <shellscalingapi.h>
+#include <powrprof.h>
 
 namespace
 {
@@ -485,13 +486,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (!menu) return;
         PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
         const char* labels[]{"statusBar.taskManager", "statusBar.terminal", "statusBar.systemSettings",
-            "controlCenter.lock", "controlCenter.sleep", "controlCenter.restart", "controlCenter.shutdown"};
+            "controlCenter.lock", "controlCenter.sleep", "controlCenter.hibernate", "controlCenter.restart", "controlCenter.shutdown"};
         // Fluent Regular 20 glyphs from the same embedded, pinned font as Dock.
-        const wchar_t* icons[]{L"\uE49D",L"\uEE6F",L"\uF6A9",L"\uE78F",L"\uEB2D",L"\uF13D",L"\uF60E"};
+        const wchar_t* icons[]{L"\uE49D",L"\uEE6F",L"\uF6A9",L"\uE78F",L"\uEB2D",L"\uEB2D",L"\uF13D",L"\uF60E"};
         for (UINT index = 0; index < std::size(labels); ++index)
         {
             if (index == 3) AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(menu, MF_STRING, index + 1, _LW(labels[index]));
+            AppendMenuW(menu, MF_STRING|(index==5&&!IsPwrHibernateAllowed()?MF_GRAYED:0), index + 1, _LW(labels[index]));
             SetMenuItemIcon(menu,index+1,icons[index],MenuIconFont::FluentRegular);
         }
         statusBarMenuMonitor_ = monitor;
@@ -512,9 +513,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 opened = reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", L"powershell.exe", nullptr, nullptr, SW_SHOWNORMAL));
             if (opened <= 32) MessageBeep(MB_ICONWARNING);
         }
-        else if (command >= 4 && command <= 7)
+        else if (command >= 4 && command <= 8)
         {
-            const char* tasks[]{"system.power.lock", "system.power.sleep", "system.power.restart", "system.power.shutdown"};
+            const char* tasks[]{"system.power.lock", "system.power.sleep", "host.power.hibernate", "system.power.restart", "system.power.shutdown"};
             if (command >= 5)
             {
                 ensureSystemPanel();

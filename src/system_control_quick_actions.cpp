@@ -1,5 +1,6 @@
 #include "system_control_windows.h"
 #include "system_control_feedback.h"
+#include "system_awake_session.h"
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Networking.Connectivity.h>
 #include <winrt/Windows.Networking.NetworkOperators.h>
@@ -202,27 +203,37 @@ public:
 class Awake final : public Backend
 {
     HANDLE request_ = INVALID_HANDLE_VALUE;
+    AwakeSession session_{
+        [this](bool keepScreenOn,const std::string& text)->Result {
+            auto reason=Wide(text);if(reason.empty())reason=L"SnowDesktop";
+            REASON_CONTEXT context{};context.Version=POWER_REQUEST_CONTEXT_VERSION;
+            context.Flags=POWER_REQUEST_CONTEXT_SIMPLE_STRING;context.Reason.SimpleReasonString=reason.data();
+            const HANDLE handle=PowerCreateRequest(&context);if(handle==INVALID_HANDLE_VALUE)return Error(GetLastError());
+            if(!PowerSetRequest(handle,PowerRequestSystemRequired)||(keepScreenOn&&!PowerSetRequest(handle,PowerRequestDisplayRequired)))
+            {const DWORD status=GetLastError();CloseHandle(handle);return Error(status);}
+            if(request_!=INVALID_HANDLE_VALUE)CloseHandle(request_);
+            request_=handle;return {true,{},0};
+        },
+        [this]{if(request_!=INVALID_HANDLE_VALUE){CloseHandle(request_);request_=INVALID_HANDLE_VALUE;}}};
 public:
-    ~Awake() override { if (request_ != INVALID_HANDLE_VALUE) CloseHandle(request_); }
     std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation&) override
     {
-        auto value = json::Object(); value.object["enabled"] = json::Boolean(request_ != INVALID_HANDLE_VALUE);
+        const auto state=session_.Read();auto value=json::Object();
+        value.object["enabled"]=json::Boolean(state.mode!=AwakeMode::Plan);
+        value.object["mode"]=json::Text(state.mode==AwakeMode::Timed?"timed":state.mode==AwakeMode::Indefinite?"indefinite":"plan");
+        value.object["keepScreenOn"]=json::Boolean(state.keepScreenOn);
+        value.object["durationSeconds"]=json::Number(static_cast<double>(state.duration.count()));
+        value.object["remainingSeconds"]=json::Number(static_cast<double>(state.remaining.count()));
         return {{"host.awake", Value(std::move(value))}};
     }
     Result Execute(const Request& request, const Cancellation& cancel) override
     {
         if (cancel.Stop()) return cancel.Failure();
-        if (Argument(request, "enabled") == "0")
-        { if (request_ != INVALID_HANDLE_VALUE) { CloseHandle(request_); request_ = INVALID_HANDLE_VALUE; } return {true, {}, 0}; }
-        if (request_ != INVALID_HANDLE_VALUE) return {true, {}, 0};
-        auto reason = Wide(Argument(request, "reason")); if (reason.empty()) reason = L"SnowDesktop";
-        REASON_CONTEXT context{}; context.Version = POWER_REQUEST_CONTEXT_VERSION;
-        context.Flags = POWER_REQUEST_CONTEXT_SIMPLE_STRING; context.Reason.SimpleReasonString = reason.data();
-        const HANDLE handle = PowerCreateRequest(&context);
-        if (handle == INVALID_HANDLE_VALUE) return Error(GetLastError());
-        if (!PowerSetRequest(handle, PowerRequestSystemRequired) || !PowerSetRequest(handle, PowerRequestDisplayRequired))
-        { const DWORD status = GetLastError(); CloseHandle(handle); return Error(status); }
-        request_ = handle; return {true, {}, 0};
+        if(request.name=="host.awake.setScreen")return session_.SetScreen(Argument(request,"enabled")=="1");
+        const auto mode=Argument(request,"mode");
+        const auto duration=std::chrono::seconds{static_cast<std::int64_t>(Numeric(request,"durationSeconds"))};
+        return session_.Set(mode=="timed"?AwakeMode::Timed:mode=="indefinite"?AwakeMode::Indefinite:AwakeMode::Plan,
+            duration,Argument(request,"keepScreenOn")=="1",Argument(request,"reason"));
     }
     // Closing the panel must not undo an explicitly enabled session switch.
     // The request ends when switched off or when the application exits.

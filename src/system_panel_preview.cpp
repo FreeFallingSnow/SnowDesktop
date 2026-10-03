@@ -67,7 +67,7 @@ void CheckControlPromptVisuals(const native_component_preview::Request& request,
 // to the user's data. Unexpected external commands fail the export immediately.
 struct PreviewState
 {
-    bool unavailable = false, bluetoothOn = true, emptyMedia = false, agenda = false;
+    bool unavailable = false, bluetoothOn = true, emptyMedia = false, agenda = false, awakeTimed = false;
     bool allowMute = false, outputMuted = false, inputMuted = false;
     std::string manySection, requestedDate, outputEndpoint = "audio-output-preview";
     std::vector<system_control::Completion> completions;
@@ -171,7 +171,9 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
         auto value = wr::PreviewSystemControlData(topic, state->unavailable);
         if(topic=="host.projection")ParseJson(R"({"mode":"extend","modes":[{"id":"internal","available":true},{"id":"clone","available":true},{"id":"extend","available":true},{"id":"external","available":true}]})",value);
         if(topic=="host.hotspot")ParseJson(R"({"enabled":true,"canToggle":true,"busy":false,"ssid":"Snow Hotspot","clients":2})",value);
-        if(topic=="host.airplane"||topic=="host.awake")ParseJson(R"({"enabled":false})",value);
+        if(topic=="host.airplane")ParseJson(R"({"enabled":false})",value);
+        if(topic=="host.awake")ParseJson(state->awakeTimed?R"({"enabled":true,"mode":"timed","keepScreenOn":false,"durationSeconds":3600,"remainingSeconds":3540})":R"({"enabled":false,"mode":"plan","keepScreenOn":false,"durationSeconds":0,"remainingSeconds":0})",value);
+        if(topic=="host.power.actions")ParseJson(R"({"hibernateSupported":true})",value);
         if (topic == "bluetooth.devices" && !state->unavailable && !state->bluetoothOn)
         {
             value.object["radios"].array.front().object["enabled"] = j::Boolean(false);
@@ -419,7 +421,7 @@ void CheckClosedCallbacks()
     source.start = [&](system_control::Request) { ++starts; return std::uint64_t{1}; };
     source.prompt = [&](system_control::Request&) { ++prompts; active->Close(); return true; };
     SystemPanelModel model(std::move(source), {}, StatusBarAction::ControlCenter);
-    active = &model; model.Select("power");
+    active = &model; model.Select("power-actions");
     Require(model.Invoke("power.shutdown")&&model.View().Find("control.confirm")&&prompts==0&&starts==0,
         "native confirmation escaped its panel or submitted before explicit confirmation");
     model.Close();
@@ -1426,6 +1428,7 @@ void CheckQuickControls()
     auto fixture=std::make_shared<PreviewState>();fixture->emptyMedia=true;
     auto source=FixtureSource(fixture);const auto read=source.current;
     bool airplane=false,awake=false,hotspot=true,missing=false;
+    std::string awakeMode="plan";bool screenOn=false;unsigned awakeDuration=0;
     std::vector<std::pair<std::string,system_control::Arguments>> requests;
     std::vector<system_control::Completion> completions;
     StatusBarSettings saved;unsigned saves=0;std::wstring opened;
@@ -1433,6 +1436,8 @@ void CheckQuickControls()
         auto value=read(topic);
         if(value&&(topic=="host.airplane"||topic=="host.awake"||topic=="host.hotspot"))
         {value->available=!missing;value->value.object["enabled"]=j::Boolean(topic=="host.airplane"?airplane:topic=="host.awake"?awake:hotspot);}
+        if(value&&topic=="host.awake")
+        {value->value.object["mode"]=j::Text(awakeMode);value->value.object["keepScreenOn"]=j::Boolean(screenOn);value->value.object["durationSeconds"]=j::Number(awakeDuration);value->value.object["remainingSeconds"]=j::Number(awakeDuration);}
         return value;
     };
     source.start=[&](system_control::Request request) {
@@ -1444,6 +1449,13 @@ void CheckQuickControls()
     source.settings=[&](const wchar_t* uri){opened=uri;};
     SystemPanelModel model(source,{},StatusBarAction::ControlCenter);
     CheckLayout(model.View());
+    const auto& first=Node(model.View(),"quick:projection");const auto& fourth=Node(model.View(),"quick:microphone");
+    const auto& menuHint=Node(model.View(),"quick.menu:projection");
+    Require(first.role==ui::Role::Button&&first.bounds.top==fourth.bounds.top&&first.bounds.left==19&&fourth.bounds.right==317&&
+        Node(model.View(),"quick:awake").bounds.top>first.bounds.bottom&&menuHint.bounds.left>=first.bounds.left&&
+        menuHint.bounds.right<=first.bounds.right&&menuHint.bounds.bottom<=first.bounds.bottom&&
+        Node(model.View(),"quick.manage").glyphSize==13,"four compact columns retain menu backgrounds, inset indicators and a smaller edit icon");
+    Require(!model.View().Find("hotspot.note"),"overview contains no redundant hotspot explanation");
     Require(Node(model.View(),"quick:projection").bounds.top>Node(model.View(),"brightness.value").bounds.bottom&&
         Node(model.View(),"quick:microphone").role==ui::Role::Toggle&&Node(model.View(),"quick:hotspot").accent,
         "quick controls must appear below brightness and expose real toggle/menu states");
@@ -1467,9 +1479,15 @@ void CheckQuickControls()
         requests.back().first=="host.projection.set"&&requests.back().second.at("mode")=="clone"&&!model.Invoke("projection:external"),
         "projection selection must submit the selected topology and serialize competing choices");
     done.id=requests.size();completions.push_back(done);model.Refresh();model.Select("");
-    Require(model.Invoke("quick:awake")&&requests.back().first=="host.awake.set"&&!requests.back().second.at("reason").empty(),
-        "keep-awake submits a localized native power-request reason");
-    awake=true;done.id=requests.size();completions.push_back(done);model.Refresh();
+    const auto awakeBefore=requests.size();Require(model.Invoke("quick:awake")&&model.Page()=="awake"&&requests.size()==awakeBefore&&
+        Node(model.View(),"awake:plan").selected&&!Node(model.View(),"awake.screen").enabled,"awake icon opens mode selection and passive mode does not request power changes");
+    Require(model.Invoke("awake:60")&&requests.back().first=="host.awake.set"&&requests.back().second.at("mode")=="timed"&&
+        requests.back().second.at("durationSeconds")=="3600"&&!requests.back().second.at("reason").empty()&&!model.Invoke("awake:indefinite"),
+        "awake presets submit bounded native sessions and serialize competing modes");
+    awake=true;awakeMode="timed";awakeDuration=3600;done.id=requests.size();completions.push_back(done);model.Refresh();
+    Require(Node(model.View(),"awake:60").selected&&model.View().Find("awake.remaining")&&model.Invoke("awake.screen")&&
+        requests.back().first=="host.awake.setScreen"&&requests.back().second.at("enabled")=="1","timed sessions display countdown and independently control the display");
+    screenOn=true;done.id=requests.size();completions.push_back(done);model.Refresh();model.Select("");
     Require(model.Invoke("quick.manage")&&model.Invoke("quick.manage:awake.up")&&saves==1&&saved.quickControlOrder[3]=="awake",
         "management moves buttons and saves their order immediately");
     const auto mutationCount=requests.size();
@@ -1482,7 +1500,11 @@ void CheckQuickControls()
     Require(model.Invoke("quick.manage")&&model.Invoke("quick.restore"),"management restores default order and visibility");
     model.Select("");Require(Node(model.View(),"quick:awake").selected&&saved.hiddenQuickControls.empty()&&saved.quickControlOrder.front()=="projection",
         "restoring visibility retains the active session switch");
-    missing=true;model.Refresh();Require(Node(model.View(),"quick:airplane").role==ui::Role::Icon&&model.Invoke("quick:airplane")&&
+    model.Select("power");Require(!model.View().Find("power.sleep")&&!model.View().Find("power.hibernate"),"power mode menu excludes system power operations");
+    model.Select("");Require(model.Invoke("power.more")&&model.Page()=="power-actions"&&model.Invoke("power.hibernate")&&
+        model.View().Find("control.confirm")&&requests.size()==mutationCount,"power actions include hibernate and require explicit confirmation before executing");
+    Require(model.Invoke("control.cancel"),"hibernate confirmation can be canceled");model.Select("");
+    missing=true;model.Refresh();Require(Node(model.View(),"quick:airplane").role==ui::Role::Button&&model.Invoke("quick:airplane")&&
         model.Page()=="airplane"&&requests.size()==mutationCount&&model.Invoke("quick.settings")&&opened==L"ms-settings:network-airplanemode",
         "an unavailable system switch routes to settings without inferring radio state or submitting a write");
     model.Close();
@@ -1758,7 +1780,7 @@ void CheckPowerConfirmationOrigin()
             Require(result.kind==ui::InputResult::Kind::Invoke&&result.id==id&&model.Invoke(result.id),"power confirmation pointer action was lost");};
         const auto open=[&]{
             if(standalone)Require(model.BeginPowerConfirmation("system.power.restart",true),"system-menu confirmation origin setup failed");
-            else{model.Select("power");click("power.restart");}
+            else{model.Select("power-actions");click("power.restart");}
             Require(model.View().Find("control.confirm")&&(model.View().Find("back")!=nullptr)==!standalone&&
                 (model.View().Find("header.settings")!=nullptr)==!standalone,
                 "power confirmation inherited an unrelated back/settings route");};
@@ -2416,7 +2438,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width)*stage.height); }
         Require(!stage.pixels.empty(), "cannot create system panel preview background");
         const std::vector<std::string> presets = controls ?
-            std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","unavailable","projection","hotspot","quick-manage",
+            std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","power-actions","unavailable","projection","hotspot","awake","quick-manage",
                 "audio-many","wifi-many","bluetooth-many","media-empty"} :
             trayPanel ? std::vector<std::string>{"grid","updated","manage","empty","connecting","unavailable"} :
             resources ? std::vector<std::string>{"cpu","memory","gpu","traffic","idle","warming","unavailable","gap","gpu-partial"} :
@@ -2429,6 +2451,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             state->unavailable = controls && preset == "unavailable";
             state->bluetoothOn = preset != "bluetooth-off"; state->emptyMedia = preset == "media-empty";
             state->agenda = calendarPanel && preset == "agenda";
+            state->awakeTimed=preset=="awake";
             state->manySection = preset.ends_with("-many") ? preset.substr(0,preset.size()-5) : "";
             if (resources) FillResourceFixture(*state,preset);
             if (trayPanel)

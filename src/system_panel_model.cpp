@@ -114,6 +114,8 @@ void SystemPanelModel::SyncSubscriptions()
         for(const auto& control:SystemQuickControls)
             if((page_.empty()&&QuickControlVisible(control.id))||page_==control.id)
                 needed.insert(control.topic);
+        if(page_=="awake")needed.insert("system.power.plans");
+        if(page_=="power-actions")needed.insert("host.power.actions");
     }
     for(const auto& topic:subscriptions_)if(!needed.contains(topic)&&source_.unsubscribe)source_.unsubscribe(topic);
     for(const auto& topic:needed)if(!subscriptions_.contains(topic)&&source_.subscribe)
@@ -317,8 +319,8 @@ void SystemPanelModel::CancelControlInput()
 }
 bool SystemPanelModel::BeginPowerConfirmation(std::string_view task,bool dismissOnCancel)
 {
-    if(closed_||(task!="system.power.sleep"&&task!="system.power.restart"&&task!="system.power.shutdown"))return false;
-    CancelControlInput();dismissRequested_=false;page_="power";scroll_=0;
+    if(closed_||(task!="system.power.sleep"&&task!="host.power.hibernate"&&task!="system.power.restart"&&task!="system.power.shutdown"))return false;
+    CancelControlInput();dismissRequested_=false;page_="power-actions";scroll_=0;
     Start(std::string(task),{},"power.confirmation");
     if(controlDraft_)controlDraft_->returnRoute=dismissOnCancel?ControlDraft::ReturnRoute::ClosePanel:ControlDraft::ReturnRoute::PreviousPage;
     Refresh(available_);return controlDraft_.has_value();
@@ -433,7 +435,7 @@ void SystemPanelModel::ControlForm(float& y,bool inCard)
     if(!connect)
     {
         if(draft.request.name=="network.wifi.forget"){Add("control.target",ui::Role::Text,Rect(left,y,width,28),Wide(draft.request.arguments["profileName"]));y+=32;}
-        const auto* key=draft.request.name=="network.wifi.forget"?"controlCenter.confirmForget":draft.request.name=="system.power.sleep"?"controlCenter.confirmSleep":draft.request.name=="system.power.restart"?"controlCenter.confirmRestart":"controlCenter.confirmShutdown";
+        const auto* key=draft.request.name=="network.wifi.forget"?"controlCenter.confirmForget":draft.request.name=="system.power.sleep"?"controlCenter.confirmSleep":draft.request.name=="host.power.hibernate"?"controlCenter.confirmHibernate":draft.request.name=="system.power.restart"?"controlCenter.confirmRestart":"controlCenter.confirmShutdown";
         auto& text=Add("control.confirmation",ui::Role::Text,Rect(left,y,width,68),_LW(key));text.wrap=true;y+=76;
     }
     if(!draft.error.empty()){auto& error=Add("control.error",ui::Role::Text,Rect(left,y,width,52),draft.error);error.wrap=true;error.fontSize=12;y+=60;}
@@ -669,7 +671,8 @@ void SystemPanelModel::Overview(float& y)
     batteryNode.positiveGlyph=visual.tone==StatusBarBatteryTone::FullyCharged;
     batteryNode.tooltip=batteryNode.accessibilityLabel=std::wstring(_LW(visual.label))+L" · "+batteryNode.text;
     }
-    Add("power.more",ui::Role::Icon,Rect(scene_.width-(source_.nativeControls?100.f:52.f),y,36,36),L"",L"\uE7E8").tooltip=_LW("statusBar.powerControls");Command("power.more",[this]{Select("power");});
+    Add("power.more",ui::Role::Icon,Rect(scene_.width-(source_.nativeControls?100.f:52.f),y,36,36),L"",L"\uE7E8").tooltip=_LW("statusBar.powerControls");
+    Command("power.more",[this]{const auto menu=source_.powerMenu;if(menu)menu();else Select("power-actions");});
     }
     if(source_.nativeControls)
     {
@@ -691,10 +694,11 @@ void SystemPanelModel::SaveQuickControls()
 }
 void SystemPanelModel::QuickControls(float& y)
 {
-    Add("quick.heading",ui::Role::Text,Rect(16,y,scene_.width-76,32),_LW("controlCenter.quickControls")).fontSize=12;
-    auto& manage=Add("quick.manage",ui::Role::Icon,Rect(scene_.width-48,y,32,32),L"",L"\uE70F");
-    manage.tooltip=manage.accessibilityLabel=_LW("controlCenter.manageButtons");Command(manage.id,[this]{Select("quick-manage");});y+=38;
-    constexpr int columns=3;const float slot=(scene_.width-32)/columns;int index=0;
+    Add("quick.heading",ui::Role::Text,Rect(16,y,scene_.width-60,28),_LW("controlCenter.quickControls")).fontSize=12;
+    auto& manage=Add("quick.manage",ui::Role::Icon,Rect(scene_.width-40,y+2,24,24),L"",L"\uE70F");
+    manage.glyphSize=13;
+    manage.tooltip=manage.accessibilityLabel=_LW("controlCenter.manageButtons");Command(manage.id,[this]{Select("quick-manage");});y+=32;
+    constexpr int columns=4;const float slot=(scene_.width-16)/columns;int index=0;
     for(const auto& id:settings_.quickControlOrder)
     {
         if(!QuickControlVisible(id))continue;
@@ -707,16 +711,17 @@ void SystemPanelModel::QuickControls(float& y)
         const bool usable=available&&(control.menu||(checked&&checked->IsBoolean()))&&(!microphone||(!j::String(state,"endpointId").empty()&&InRange(Number(state,"volume"))));
         const bool enabled=usable&&j::Flag(state,microphone?"muted":"enabled");
         const bool busy=j::Flag(state,"busy");
-        const float left=16+(index%columns)*slot,top=y+(index/columns)*76.f;
+        const float top=y+(index/columns)*76.f;
         const auto name=std::wstring(_LW(control.label));
         std::wstring status=_LW(!snapshot?"controlCenter.loading":!usable?"controlCenter.unavailable":busy?"controlCenter.working":enabled?"controlCenter.on":"controlCenter.off");
         if(id=="projection"&&available)status=_LW(("controlCenter.projection."+j::String(state,"mode")).c_str());
         if(id=="power"&&available)status=_LW("controlCenter.openMenu");
+        if(id=="awake"&&available)status=_LW(j::String(state,"mode")=="timed"?"controlCenter.awake.timed":enabled?"controlCenter.awake.indefinite":"controlCenter.awake.plan");
         const auto nodeId="quick:"+id;
         // Unsupported switches remain navigable to an explanatory settings
         // route; they never acquire a fake checked/off state or submit writes.
         const bool direct=!control.menu&&usable;
-        auto& button=Add(nodeId,direct?ui::Role::Toggle:ui::Role::Icon,Rect(left+(slot-54)/2,top,54,44),L"",control.glyph);
+        auto& button=Add(nodeId,direct?ui::Role::Toggle:ui::Role::Button,Rect(8+(index%columns)*slot+(slot-58)/2,top,58,44),L"",control.glyph);
         button.selected=enabled;button.accent=enabled;button.busy=busy;button.enabled=!busy;
         button.tooltip=button.accessibilityLabel=name+L" · "+status;
         if(control.menu||!usable)button.tooltip+=L" · "+std::wstring(_LW("controlCenter.openMenu"));
@@ -737,18 +742,20 @@ void SystemPanelModel::QuickControls(float& y)
                 else
                 {
                     system_control::Arguments arguments{{"enabled",j::Flag(actual->value,"enabled")?"0":"1"}};
-                    if(id=="awake")arguments["reason"]=_L("controlCenter.keepAwake");
                     Start(currentControl.task,std::move(arguments));
                 }
             });
         }
         else Command(nodeId,[this,id]{Select(id);});
-        auto& caption=Add("quick.label:"+id,ui::Role::Text,Rect(left+2,top+46,slot-4,22),name);
+        const auto buttonBounds=button.bounds;
+        auto& caption=Add("quick.label:"+id,ui::Role::Text,Rect(8+(index%columns)*slot,top+46,slot,22),name);
         caption.fontSize=11;caption.centered=true;caption.tooltip=name+L" · "+status;
         if(control.menu)
         {
-            auto& hint=Add("quick.menu:"+id,ui::Role::Text,Rect(left+(slot+54)/2-12,top+30,12,12),L"",L"\uE70D");
-            hint.secondary=true;
+            // Keep the menu affordance inside the button, vertically aligned
+            // with the icon; never let it float beside the caption.
+            auto& hint=Add("quick.menu:"+id,ui::Role::Text,Rect(buttonBounds.right-13,top+16,10,12),L"",L"\uE70D");
+            hint.glyphSize=8;hint.centered=true;hint.accent=enabled;hint.secondary=!enabled;
         }
         ++index;
     }
@@ -786,19 +793,46 @@ void SystemPanelModel::QuickControlMenu(float& y)
         const auto clients=std::to_wstring(static_cast<unsigned>(j::Numeric(state,"clients")));
         Add("hotspot.clients",ui::Role::Text,Rect(16,y,scene_.width-32,30),std::wstring(_LW("controlCenter.connectedDevices"))+L": "+clients).fontSize=12;y+=36;
     }
+    else if(page_=="awake"&&available)
+    {
+        const auto currentMode=j::String(state,"mode");
+        const auto powerPlans=Current("system.power.plans");
+        const auto choice=[&](std::string id,const char* label,const char* mode,unsigned seconds) {
+            auto& item=Add("awake:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(label),L"\uE708");
+            item.selected=currentMode==mode&&(std::string_view(mode)!="timed"||j::Numeric(state,"durationSeconds")==seconds);
+            if(std::string_view(mode)=="plan")for(const auto& plan:Items(powerPlans,"plans"))if(j::Flag(plan,"active")){item.detail=Wide(j::String(plan,"name"));break;}
+            BindAction(item.id,"quick.awake",id);
+            Command(item.id,[this,mode,seconds]{const auto actual=source_.current?source_.current("host.awake"):std::nullopt;if(!actual||!actual->available)return;
+                system_control::Arguments arguments{{"mode",mode},{"keepScreenOn",j::Flag(actual->value,"keepScreenOn")?"1":"0"},{"reason",_L("controlCenter.keepAwake")}};
+                if(seconds)arguments["durationSeconds"]=std::to_string(seconds);Start("host.awake.set",std::move(arguments));});y+=48;
+        };
+        choice("plan","controlCenter.awake.plan","plan",0);
+        choice("indefinite","controlCenter.awake.indefinite","indefinite",0);
+        choice("30","controlCenter.awake.30","timed",1800);
+        choice("60","controlCenter.awake.60","timed",3600);
+        choice("120","controlCenter.awake.120","timed",7200);
+        y+=8;auto& screen=Add("awake.screen",ui::Role::Toggle,Rect(16,y,scene_.width-32,44),_LW("controlCenter.awake.screen"));
+        screen.switchStyle=true;screen.selected=j::Flag(state,"keepScreenOn");screen.enabled=j::Flag(state,"enabled");
+        BindAction(screen.id,"quick.awake","screen");Command(screen.id,[this]{const auto actual=source_.current?source_.current("host.awake"):std::nullopt;
+            if(actual&&actual->available&&j::Flag(actual->value,"enabled"))Start("host.awake.setScreen",{{"enabled",j::Flag(actual->value,"keepScreenOn")?"0":"1"}});});y+=52;
+        if(currentMode=="timed")
+        {
+            const unsigned remaining=static_cast<unsigned>(std::clamp(j::Numeric(state,"remainingSeconds"),0.,86400.));
+            const auto two=[](unsigned n){return (n<10?L"0":L"")+std::to_wstring(n);};
+            Add("awake.remaining",ui::Role::Text,Rect(16,y,scene_.width-32,30),std::wstring(_LW("controlCenter.awake.remaining"))+L": "+two(remaining/3600)+L":"+two(remaining/60%60)+L":"+two(remaining%60)).fontSize=12;y+=36;
+        }
+    }
     else
     {
         auto& reason=Add("quick.unavailable",ui::Role::Text,Rect(16,y,scene_.width-32,64),_LW("controlCenter.systemControlUnavailable"));
         reason.wrap=true;reason.fontSize=12;y+=72;
         if(snapshot&&snapshot->error=="accessDenied"){auto& denied=Add("quick.denied",ui::Role::Text,Rect(16,y,scene_.width-32,54),_LW("controlCenter.accessDenied"));denied.wrap=true;denied.fontSize=12;y+=62;}
     }
-    if(page_=="hotspot"){auto& note=Add("hotspot.note",ui::Role::Text,Rect(16,y,scene_.width-32,54),_LW("controlCenter.hotspotSettingsHint"));note.wrap=true;note.fontSize=12;y+=62;}
     Add("quick.settings",ui::Role::Button,Rect(16,y,scene_.width-32,40),_LW("settings.taskbar.systemSettings.open"),L"\uE713");
     const std::wstring uri=control->settings;Command("quick.settings",[this,uri]{OpenSettings(uri.c_str());});y+=48;
 }
 void SystemPanelModel::ManageQuickControls(float& y)
 {
-    auto& hint=Add("quick.manageHint",ui::Role::Text,Rect(16,y,scene_.width-32,50),_LW("controlCenter.manageButtonsHint"));hint.wrap=true;hint.fontSize=12;y+=58;
     for(std::size_t index=0;index<settings_.quickControlOrder.size();++index)
     {
         const auto id=settings_.quickControlOrder[index];const auto* control=FindSystemQuickControl(id);if(!control)continue;
@@ -973,8 +1007,18 @@ void SystemPanelModel::Power(float& y)
         for(const auto* mode:{"efficiency","balanced","performance"})
         {auto& n=Add(std::string("power.mode:")+mode,ui::Role::ListItem,Rect(16,y,scene_.width-32,42),_LW((std::string("controlCenter.")+mode).c_str()));n.selected=j::String(value,j::Flag(value,"onAC")?"acMode":"dcMode")==mode;BindAction(n.id,"power.mode",mode);Command(n.id,[this,mode]{Start("system.power.setMode",{{"mode",mode}});});y+=46;}
     }
-    y+=8;int index=0;const float w=(scene_.width-40)/2;
-    for(const auto* action:{"lock","sleep","restart","shutdown"}){const std::string id=std::string("power.")+action;Add(id,ui::Role::Button,Rect(16+(index%2)*(w+8),y+(index/2)*48,w,40),_LW((std::string("controlCenter.")+action).c_str()));BindAction(id,"power.action",action);Command(id,[this,action]{Start(std::string("system.power.")+action);});++index;}y+=96;
+}
+void SystemPanelModel::PowerActions(float& y)
+{
+    const auto capabilities=Current("host.power.actions");
+    for(const auto& action:SystemPowerActions)
+    {
+        const std::string id="power."+std::string(action.id);
+        auto& item=Add(id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(action.label));
+        item.enabled=std::string_view(action.id)!="hibernate"||j::Flag(capabilities,"hibernateSupported");
+        BindAction(id,"power.action",action.id);const std::string task=action.task;
+        Command(id,[this,task]{Start(task);});y+=48;
+    }
 }
 void SystemPanelModel::PrepareMedia()
 {
@@ -1081,7 +1125,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     }
     else if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
     if(controlDraft_&&controlDraft_->request.name!="network.wifi.connect")ControlForm(y);
-    else if(page_.empty())Overview(y);else if(page_=="quick-manage")ManageQuickControls(y);else if(quick&&page_!="power")QuickControlMenu(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);
+    else if(page_.empty())Overview(y);else if(page_=="quick-manage")ManageQuickControls(y);else if(quick&&page_!="power")QuickControlMenu(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);else if(page_=="power-actions")PowerActions(y);
     PrunePendingActions();
     for(const auto& completion:completions)
     {

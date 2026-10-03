@@ -2425,5 +2425,15 @@
   "controlCenter.projection.internal": "仅电脑屏幕",
   "controlCenter.projection.clone": "复制",
   "controlCenter.projection.extend": "扩展",
-  "controlCenter.projection.external": "仅第二屏幕"
+  "controlCenter.projection.external": "仅第二屏幕",
+  "controlCenter.awake.plan": "遵循当前电源计划",
+  "controlCenter.awake.indefinite": "一直保持唤醒",
+  "controlCenter.awake.timed": "定时保持唤醒",
+  "controlCenter.awake.30": "保持 30 分钟",
+  "controlCenter.awake.60": "保持 1 小时",
+  "controlCenter.awake.120": "保持 2 小时",
+  "controlCenter.awake.screen": "保持屏幕亮起",
+  "controlCenter.awake.remaining": "剩余时间",
+  "controlCenter.hibernate": "休眠",
+  "controlCenter.confirmHibernate": "确定要休眠吗？"
 }

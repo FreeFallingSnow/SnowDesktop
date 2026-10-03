@@ -396,7 +396,10 @@ int main(int argc, char** argv)
             Check(quick.quickControlOrder==std::vector<std::string>{"awake","projection","hotspot","airplane","microphone","power"}&&
                 quick.hiddenQuickControls==std::vector<std::string>{"airplane","awake"},"quick-control normalization retains order and hidden choices without stale or duplicate IDs");
             JsonValue encoded;StatusBarSettings restored;
-            Check(ParseJson(EncodeStatusBarSettings(quick),encoded)&&DecodeStatusBarSettings(encoded,restored)&&restored==quick,
+            // Theme decoding canonicalizes its derived preset ID. Compare the
+            // persisted quick preferences rather than unrelated derived state.
+            Check(ParseJson(EncodeStatusBarSettings(quick),encoded)&&DecodeStatusBarSettings(encoded,restored)&&
+                restored.quickControlOrder==quick.quickControlOrder&&restored.hiddenQuickControls==quick.hiddenQuickControls,
                 "quick-control order and visibility survive a settings reload");
         }
         ParseJson("{\"theme\":{\"mode\":4,\"customized\":true,\"appearance\":{\"backgroundR\":0.125,\"opacity\":0.42}},"

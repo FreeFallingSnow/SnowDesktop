@@ -62,6 +62,7 @@ struct SystemPanelSource
     std::function<void()> close;
     std::function<void(const wchar_t*)> settings;
     std::function<void()> nativeControls;
+    std::function<void()> powerMenu;
     std::function<bool(system_control::Request&)> prompt;
     std::function<std::optional<widget_runtime::WidgetMediaSessionsDataSnapshot>()> media;
     std::function<std::optional<widget_runtime::WidgetMediaArtworkDataSnapshot>()> artwork;
@@ -219,6 +220,7 @@ private:
     void WifiPage(float&);
     void Bluetooth(float&);
     void Power(float&);
+    void PowerActions(float&);
     void Media(float&);
     void Calendar();
     void FinishStackedCalendar(float monthEnd,float agendaTop,float agendaStart,float agendaEnd,bool empty);

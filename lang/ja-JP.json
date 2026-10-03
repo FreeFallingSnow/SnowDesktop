@@ -2425,5 +2425,15 @@
   "controlCenter.projection.internal": "PC 画面のみ",
   "controlCenter.projection.clone": "複製",
   "controlCenter.projection.extend": "拡張",
-  "controlCenter.projection.external": "セカンド スクリーンのみ"
+  "controlCenter.projection.external": "セカンド スクリーンのみ",
+  "controlCenter.awake.plan": "現在の電源プランを使用",
+  "controlCenter.awake.indefinite": "常にスリープを防ぐ",
+  "controlCenter.awake.timed": "一時的にスリープを防ぐ",
+  "controlCenter.awake.30": "30 分間スリープを防ぐ",
+  "controlCenter.awake.60": "1 時間スリープを防ぐ",
+  "controlCenter.awake.120": "2 時間スリープを防ぐ",
+  "controlCenter.awake.screen": "画面をオンに保つ",
+  "controlCenter.awake.remaining": "残り時間",
+  "controlCenter.hibernate": "休止状態",
+  "controlCenter.confirmHibernate": "このコンピューターを休止状態にしますか？"
 }

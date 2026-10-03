@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <powrprof.h>
 
 namespace snowdesktop
 {
@@ -31,6 +32,7 @@ namespace
 constexpr UINT kOpenPending=WM_APP+211;
 constexpr UINT kFormInputChanged=WM_APP+212;
 constexpr UINT kPointerChanged=WM_APP+213;
+constexpr UINT kPowerMenu=WM_APP+214;
 constexpr UINT_PTR kTrayMenuTimer=2;
 bool HighContrast(){HIGHCONTRASTW h{sizeof(h)};SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(h),&h,0);return(h.dwFlags&HCF_HIGHCONTRASTON)!=0;}
 D2D1_COLOR_F SystemColor(int index){const auto c=GetSysColor(index);return D2D1::ColorF(GetRValue(c)/255.f,GetGValue(c)/255.f,GetBValue(c)/255.f);}
@@ -252,6 +254,7 @@ struct SystemPanel::Impl
         source.inputMethod=r.inputMethod;
         if(r.inputMethod.settings)source.settings=r.inputMethod.settings;
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
+        source.powerMenu=[this]{if(window)PostMessageW(window,kPowerMenu,0,0);};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
         tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;paintDirty=true;
         model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action,r.clockAtRight);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}
@@ -460,6 +463,36 @@ struct SystemPanel::Impl
         if(failed||!calendarInputs||!calendarInputs->Focus(input.Focused(),true))SetFocus(window);
         Paint();if(accessibility)accessibility->RefreshEvents();
     }
+    void PowerMenu()
+    {
+        if(!model||!current||!showing||closing||modal)return;
+        const auto* node=model->View().Find("power.more");if(!node)return;
+        const auto bounds=model->View().VisibleBounds(*node);
+        RECT anchor{static_cast<LONG>(bounds.left*scale)+kSurfacePadding,static_cast<LONG>(bounds.top*scale)+kSurfacePadding,
+            static_cast<LONG>(bounds.right*scale)+kSurfacePadding,static_cast<LONG>(bounds.bottom*scale)+kSurfacePadding};
+        MapWindowPoints(window,nullptr,reinterpret_cast<POINT*>(&anchor),2);
+        std::vector<modern_menu::Item> items;
+        for(std::size_t index=0;index<SystemPowerActions.size();++index)
+        {
+            const auto& action=SystemPowerActions[index];modern_menu::Item item;
+            item.command=static_cast<UINT>(index+1);item.label=_LW(action.label);item.glyph=action.glyph;
+            item.enabled=std::string_view(action.id)!="hibernate"||IsPwrHibernateAllowed()!=FALSE;items.push_back(std::move(item));
+        }
+        modern_menu::Options options;options.owner=window;options.topmost=true;options.dpi=static_cast<UINT>(scale*96);
+        options.anchor={anchor.left,anchor.top};options.anchorRect=anchor;options.rootPlacement=modern_menu::RootPlacement::AboveAnchorRect;
+        const auto life=lifetime;auto active=model;StopPointerHover();input.Cancel();modal=calendarMenu=true;
+        modern_menu::Result result;
+        try{result=modern_menu::Show(items,options);}catch(...){if(life->alive)modal=calendarMenu=false;throw;}
+        if(!life->alive)return;modal=calendarMenu=false;PostPendingOpen();
+        if(!current||!model||model!=active||!showing||closing)return;
+        if(result.reason==modern_menu::ExitReason::ExternalActivation){Animate(false);return;}
+        if(result.command<1||result.command>SystemPowerActions.size())return;
+        const auto& action=SystemPowerActions[result.command-1];
+        if(std::string_view(action.id)=="lock")
+        {system_control::Request request;request.name=action.task;if(current->data)current->data->Controls()->Start("statusBarVolume",std::move(request));}
+        else if(active->BeginPowerConfirmation(action.task,true))
+        {Arrange();FocusControlPage(false);Paint();}
+    }
     void CalendarContext(const std::string& id,POINT anchor)
     {
         if(!model||!current||!calendarMenuHandler||!id.starts_with("event:")||model->CalendarEditing()||!model->View().Find(id))return;
@@ -564,6 +597,7 @@ struct SystemPanel::Impl
         try
         {
             if(m==kPointerChanged){self->pointerRefreshPending=false;self->RefreshPointer();return 0;}
+            if(m==kPowerMenu){self->PowerMenu();return 0;}
             if(m==kFormInputChanged)
             {
                 self->controlInputRefreshPending=false;
@@ -691,7 +725,7 @@ void SystemPanel::ShowInputMethod(SystemPanelInputMethodActions actions,HWND own
 {impl_->Queue({StatusBarAction::InputMethodPanel,owner,anchor,appearance,settings,{},std::move(data),{},false,std::move(actions)});}
 void SystemPanel::ShowPowerConfirmation(std::string task,HWND owner,RECT anchor,const PersonalizationSettings& appearance,const StatusBarSettings& settings,std::shared_ptr<wr::WidgetSystemDataProvider> data)
 {
-    if(task!="system.power.sleep"&&task!="system.power.restart"&&task!="system.power.shutdown")return;
+    if(task!="system.power.sleep"&&task!="host.power.hibernate"&&task!="system.power.restart"&&task!="system.power.shutdown")return;
     impl_->Queue({StatusBarAction::ControlCenter,owner,anchor,appearance,settings,{},std::move(data),std::move(task)});
 }
 void SystemPanel::Hide(){impl_->transition.Cancel();impl_->afterClose={};++impl_->closeGeneration;if(impl_->showing)impl_->Animate(false);}

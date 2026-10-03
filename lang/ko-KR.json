@@ -2425,5 +2425,15 @@
   "controlCenter.projection.internal": "PC 화면만",
   "controlCenter.projection.clone": "복제",
   "controlCenter.projection.extend": "확장",
-  "controlCenter.projection.external": "두 번째 화면만"
+  "controlCenter.projection.external": "두 번째 화면만",
+  "controlCenter.awake.plan": "선택한 전원 관리 옵션 사용",
+  "controlCenter.awake.indefinite": "계속 절전 모드 방지",
+  "controlCenter.awake.timed": "일시적으로 절전 모드 방지",
+  "controlCenter.awake.30": "30분 동안 절전 모드 방지",
+  "controlCenter.awake.60": "1시간 동안 절전 모드 방지",
+  "controlCenter.awake.120": "2시간 동안 절전 모드 방지",
+  "controlCenter.awake.screen": "화면 켜짐 유지",
+  "controlCenter.awake.remaining": "남은 시간",
+  "controlCenter.hibernate": "최대 절전 모드",
+  "controlCenter.confirmHibernate": "이 컴퓨터를 최대 절전 모드로 전환할까요?"
 }

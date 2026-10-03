@@ -2425,5 +2425,15 @@
   "controlCenter.projection.internal": "PC screen only",
   "controlCenter.projection.clone": "Duplicate",
   "controlCenter.projection.extend": "Extend",
-  "controlCenter.projection.external": "Second screen only"
+  "controlCenter.projection.external": "Second screen only",
+  "controlCenter.awake.plan": "Use the selected power plan",
+  "controlCenter.awake.indefinite": "Keep awake indefinitely",
+  "controlCenter.awake.timed": "Keep awake temporarily",
+  "controlCenter.awake.30": "Keep awake for 30 minutes",
+  "controlCenter.awake.60": "Keep awake for 1 hour",
+  "controlCenter.awake.120": "Keep awake for 2 hours",
+  "controlCenter.awake.screen": "Keep screen on",
+  "controlCenter.awake.remaining": "Time remaining",
+  "controlCenter.hibernate": "Hibernate",
+  "controlCenter.confirmHibernate": "Hibernate this computer?"
 }

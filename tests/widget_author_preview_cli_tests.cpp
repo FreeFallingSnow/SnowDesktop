@@ -1668,7 +1668,7 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
         LONG overviewHeight = 0;
         std::vector<std::uint8_t> overviewPixels;
         for (const auto* page : {L"overview", L"bluetooth-off", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable",
-            L"audio-many", L"wifi-many", L"bluetooth-many", L"media-empty", L"projection", L"hotspot", L"quick-manage"})
+            L"audio-many", L"wifi-many", L"bluetooth-many", L"media-empty", L"projection", L"hotspot", L"awake", L"power-actions", L"quick-manage"})
         {
             const auto bitmap = ReadPng(output / (std::wstring(L"control-panel-") + page + L".png"));
             const auto bounds = PanelPixels(bitmap); const double scale = dark ? 1.5 : 1.;

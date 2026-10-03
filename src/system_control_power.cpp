@@ -53,10 +53,12 @@ public:
     std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation& cancel) override
     {
         std::lock_guard guard(mutex_);
+        auto actions=json::Object();actions.object["hibernateSupported"]=json::Boolean(IsPwrHibernateAllowed()!=FALSE);
+        std::map<std::string,Snapshot> result{{"host.power.actions",Value(std::move(actions))}};
         auto value = json::Object(); auto plans = json::Array();
         GUID* allocated = nullptr;
         const DWORD status = PowerGetActiveScheme(nullptr, &allocated);
-        if (status != ERROR_SUCCESS || !allocated) return {{"system.power.plans", Missing("unavailable")}};
+        if (status != ERROR_SUCCESS || !allocated){result["system.power.plans"]=Missing("unavailable");return result;}
         const GUID current = *allocated; LocalFree(allocated);
         for (DWORD index = 0; index < 256 && !cancel.Stop(); ++index)
         {
@@ -89,7 +91,7 @@ public:
             if (state.onAC) value.object["onAC"] = json::Boolean(*state.onAC);
             if (state.batteryPercent) value.object["batteryPercent"] = json::Number(*state.batteryPercent);
         }
-        return {{"system.power.plans", Value(std::move(value))}};
+        result["system.power.plans"]=Value(std::move(value));return result;
     }
     Result Execute(const Request& request, const Cancellation& cancel) override
     {
@@ -123,6 +125,11 @@ public:
         ShutdownPrivilege privilege;
         if (!privilege.enabled) return Error(ERROR_PRIVILEGE_NOT_HELD);
         if (request.name == "system.power.sleep") return SetSuspendState(FALSE, FALSE, FALSE) ? Result{true, {}, 0} : Error(GetLastError());
+        if(request.name=="host.power.hibernate")
+        {
+            if(!IsPwrHibernateAllowed())return Error(ERROR_NOT_SUPPORTED,"actionUnsupported");
+            return SetSuspendState(TRUE,FALSE,FALSE)?Result{true,{},0}:Error(GetLastError());
+        }
         if (request.name == "system.power.shutdown" || request.name == "system.power.restart")
         {
             const UINT flags = request.name == "system.power.shutdown" ? EWX_POWEROFF : EWX_REBOOT;

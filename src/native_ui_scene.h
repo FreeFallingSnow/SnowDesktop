@@ -29,7 +29,7 @@ struct Node
     Role role = Role::Text;
     D2D1_RECT_F bounds{}, clip{};
     std::wstring text, detail, glyph, tooltip, accessibilityLabel;
-    float fontSize = 14, value = 0;
+    float fontSize = 14, value = 0, glyphSize = 0;
     bool enabled = true, selected = false, accent = false, centered = false, trailing = false, bold = false;
     bool outlined = false, secondary = false, charging = false, positiveGlyph = false, marked = false, pluggedIn = false;
     bool wrap = false, joinLeft = false, joinRight = false, switchStyle = false, busy = false, batteryStyle = false;

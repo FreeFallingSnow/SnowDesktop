@@ -6,6 +6,7 @@
 #include "system_control_audio_presentation.h"
 #include "system_control_brightness_identity.h"
 #include "system_control_windows.h"
+#include "system_awake_session.h"
 #include "widget_system_control_tasks.h"
 #include <algorithm>
 #include <chrono>
@@ -934,10 +935,44 @@ void TestSystemControls()
         Require(SupportsTopic(topic)&&!Source(topic).empty(),"host quick-control topics have a physical backend");
         const auto task=std::string(topic)+".set";
         Require(!snowdesktop::widget_runtime::IsSystemControlTask(task),"host quick controls must not expand the public widget task contract");
-        Request request;request.name=task;request.arguments[std::string_view(topic)=="host.projection"?"mode":"enabled"]=std::string_view(topic)=="host.projection"?"extend":"1";
+        Request request;request.name=task;
+        if(std::string_view(topic)=="host.projection")request.arguments["mode"]="extend";
+        else if(std::string_view(topic)=="host.awake")request.arguments["mode"]="indefinite";
+        else request.arguments["enabled"]="1";
         Require(ValidateRequest(request),"known host quick-control arguments are accepted");
         request.arguments.begin()->second="invalid";
         Require(!ValidateRequest(request),"invalid host quick-control arguments cannot reach native setters");
+    }
+    {
+        Request timed;timed.name="host.awake.set";timed.arguments={{"mode","timed"},{"durationSeconds","1800"},{"keepScreenOn","0"}};
+        Require(ValidateRequest(timed),"timed awake accepts bounded whole-second intervals");
+        for(const auto* invalid:{"0","-1","1.5","86401","bad"})
+        {timed.arguments["durationSeconds"]=invalid;Require(!ValidateRequest(timed),"invalid awake duration rejected before platform calls");}
+        timed.arguments={{"mode","timed"}};Require(!ValidateRequest(timed),"timed awake requires an interval");
+        timed.arguments={{"mode","plan"},{"durationSeconds","60"}};Require(!ValidateRequest(timed),"passive mode cannot carry a timer");
+        Require(Source("host.awake.setScreen")=="awake"&&Source("host.power.hibernate")=="power"&&
+            SupportsTopic("host.power.actions")&&RequiresConfirmation("host.power.hibernate")&&
+            !snowdesktop::widget_runtime::IsSystemControlTask("host.power.hibernate"),"host-only screen and hibernate operations retain physical routing and confirmation");
+        std::atomic<unsigned> starts{0},stops{0};std::atomic<bool> screen{false},fail{false};
+        std::mutex expiredMutex;std::condition_variable expired;
+        {
+            AwakeSession session([&](bool on,const std::string&)->Result {if(fail.load())return {false,"accessDenied",0};screen=on;++starts;return {true,{},0};},
+                [&]{++stops;expired.notify_all();});
+            Require(session.Set(AwakeMode::Indefinite,0s,false,"test").ok&&session.Read().mode==AwakeMode::Indefinite&&!screen,
+                "indefinite awake requests system wake without forcing the display on");
+            Require(session.SetScreen(true).ok&&screen&&session.Read().keepScreenOn,"screen policy updates independently");
+            fail=true;Require(!session.Set(AwakeMode::Timed,1s,false,"test").ok&&session.Read().mode==AwakeMode::Indefinite&&screen,
+                "failed power requests preserve the active session");fail=false;
+            Require(session.Set(AwakeMode::Plan,0s,false,"test").ok&&session.Read().mode==AwakeMode::Plan&&stops==1,
+                "selected-plan mode releases the override without editing a power plan");
+            Require(session.Set(AwakeMode::Timed,1s,false,"test").ok&&session.Read().remaining>0s,"timed awake publishes a real remaining interval");
+            // No panel reads or subscriptions drive the timer during this wait.
+            std::unique_lock guard(expiredMutex);
+            Require(expired.wait_for(guard,3s,[&]{return stops.load()==2;}),"hidden/closed panels cannot prevent timed awake expiry");
+            guard.unlock();Require(session.Read().mode==AwakeMode::Plan,"expiry restores the selected plan");
+            Require(session.Set(AwakeMode::Indefinite,0s,true,"test").ok,"session can restart after expiry");
+        }
+        Require(stops==3&&starts==4,"application teardown releases the final session request");
     }
     {
         auto adapter = json::Object(), networks = json::Array();

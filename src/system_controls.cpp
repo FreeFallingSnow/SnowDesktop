@@ -28,11 +28,13 @@ using Clock = std::chrono::steady_clock;
 const std::set<std::string_view> topics{
     "audio.devices", "audio.output.default", "audio.output.volume", "audio.input.volume",
     "system.display.brightness", "network.wifi", "bluetooth.devices", "system.power.plans",
-    "host.projection", "host.hotspot", "host.airplane", "host.awake"};
+    "host.projection", "host.hotspot", "host.airplane", "host.awake", "host.power.actions"};
 struct TaskRule { const char* name; std::vector<std::string_view> required, optional; };
 const std::vector<TaskRule> rules{
     {"host.projection.set", {"mode"}, {}}, {"host.hotspot.set", {"enabled"}, {}},
-    {"host.airplane.set", {"enabled"}, {}}, {"host.awake.set", {"enabled"}, {"reason"}},
+    {"host.airplane.set", {"enabled"}, {}}, {"host.awake.set", {"mode"}, {"durationSeconds","keepScreenOn","reason"}},
+    {"host.awake.setScreen", {"enabled"}, {}},
+    {"host.power.hibernate", {}, {}},
     {"audio.output.setVolume", {"volume"}, {}}, {"audio.output.setMute", {"muted"}, {}},
     {"audio.output.selectDevice", {"endpointId"}, {}}, {"audio.input.selectDevice", {"endpointId"}, {}},
     {"audio.input.setVolume", {"volume"}, {}}, {"audio.input.setMute", {"muted"}, {}},
@@ -68,6 +70,8 @@ bool SupportsTask(std::string_view task)
 { return std::any_of(rules.begin(), rules.end(), [&](const auto& rule) { return rule.name == task; }); }
 std::string_view Source(std::string_view name)
 {
+    if(name=="host.awake.setScreen")return "awake";
+    if(name=="host.power.actions"||name=="host.power.hibernate")return "power";
     for (const auto* source : {"projection", "hotspot", "airplane", "awake"})
         if (name == "host." + std::string(source) || name == "host." + std::string(source) + ".set") return source;
     if (name.starts_with("audio.")) return "audio";
@@ -79,11 +83,24 @@ std::string_view Source(std::string_view name)
     return {};
 }
 bool RequiresConfirmation(std::string_view name)
-{ return name == "network.wifi.forget" || name == "system.power.sleep" || name == "system.power.restart" || name == "system.power.shutdown"; }
+{ return name == "network.wifi.forget" || name == "system.power.sleep" || name == "host.power.hibernate" || name == "system.power.restart" || name == "system.power.shutdown"; }
 bool RequiresPasswordPrompt(const Request& request)
 { return request.name == "network.wifi.connect" && !request.arguments.contains("profileName"); }
 bool ValidateRequest(const Request& request)
 {
+    if(request.name=="host.awake.set")
+    {
+        const auto mode=request.arguments.find("mode");
+        if(mode==request.arguments.end()||(mode->second!="plan"&&mode->second!="indefinite"&&mode->second!="timed"))return false;
+        const auto duration=request.arguments.find("durationSeconds");
+        if(mode->second=="timed")
+        {
+            if(duration==request.arguments.end())return false;
+            unsigned seconds=0;const auto& text=duration->second;const auto parsed=std::from_chars(text.data(),text.data()+text.size(),seconds);
+            if(parsed.ec!=std::errc{}||parsed.ptr!=text.data()+text.size()||seconds==0||seconds>86400)return false;
+        }
+        else if(duration!=request.arguments.end())return false;
+    }
     if (request.name == "host.projection.set")
     {
         const auto mode = request.arguments.find("mode");
@@ -102,7 +119,7 @@ bool ValidateRequest(const Request& request)
         if (std::find(rule->required.begin(), rule->required.end(), key) == rule->required.end() &&
             std::find(rule->optional.begin(), rule->optional.end(), key) == rule->optional.end()) return false;
         if (value.size() > 4096 || value.find('\0') != std::string::npos) return false;
-        if (key == "enabled" || key == "muted" || key == "hidden")
+        if (key == "enabled" || key == "muted" || key == "hidden" || key == "keepScreenOn")
         { if (value != "0" && value != "1") return false; }
         if (key == "volume" || key == "brightness" || key == "positionMs" || key == "rate")
         {

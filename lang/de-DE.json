@@ -2425,5 +2425,15 @@
   "controlCenter.projection.internal": "Nur PC-Bildschirm",
   "controlCenter.projection.clone": "Duplizieren",
   "controlCenter.projection.extend": "Erweitern",
-  "controlCenter.projection.external": "Nur zweiter Bildschirm"
+  "controlCenter.projection.external": "Nur zweiter Bildschirm",
+  "controlCenter.awake.plan": "Ausgewählten Energiesparplan verwenden",
+  "controlCenter.awake.indefinite": "Unbegrenzt wach halten",
+  "controlCenter.awake.timed": "Vorübergehend wach halten",
+  "controlCenter.awake.30": "30 Minuten wach halten",
+  "controlCenter.awake.60": "1 Stunde wach halten",
+  "controlCenter.awake.120": "2 Stunden wach halten",
+  "controlCenter.awake.screen": "Bildschirm eingeschaltet lassen",
+  "controlCenter.awake.remaining": "Verbleibende Zeit",
+  "controlCenter.hibernate": "Ruhezustand",
+  "controlCenter.confirmHibernate": "Computer in den Ruhezustand versetzen?"
 }
