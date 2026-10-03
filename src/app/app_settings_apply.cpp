@@ -973,6 +973,8 @@ public:
             app_.generalSettings_.animationOnBattery = general.animationOnBattery;
             app_.generalSettings_.quickNavigationAppearance = general.quickNavigationAppearance;
             app_.generalSettings_.collectionPopupAppearance = general.collectionPopupAppearance;
+            app_.generalSettings_.globalQuickNavigationAppearance = general.globalQuickNavigationAppearance;
+            app_.generalSettings_.globalCollectionPopupAppearance = general.globalCollectionPopupAppearance;
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyAnimationPreferences();
@@ -2020,7 +2022,7 @@ void DesktopApp::ApplyQuickNavigationAppearance()
     const PersonalizationSettings globalAppearance = CurrentPersonalization();
     const PersonalizationSettings appearance = snowdesktop::ResolveSurfaceTheme(
         generalSettings_.quickNavigationAppearance, globalAppearance,
-        generalSettings_.quickNavTheme, true);
+        generalSettings_.quickNavTheme, true, &generalSettings_.globalQuickNavigationAppearance);
     quickNavLightTheme_ = appearance.contentTheme == 1;
     quickNavGlassTheme_ = appearance.glassEnabled;
     quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
@@ -2035,7 +2037,7 @@ void DesktopApp::ApplyCollectionPopupAppearance()
 
     collectionPopupAppearance_ = snowdesktop::ResolveSurfaceTheme(
         generalSettings_.collectionPopupAppearance, globalAppearance,
-        generalSettings_.collectionPopupTheme, false);
+        generalSettings_.collectionPopupTheme, false, &generalSettings_.globalCollectionPopupAppearance);
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =

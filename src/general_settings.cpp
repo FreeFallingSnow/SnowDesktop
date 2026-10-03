@@ -144,6 +144,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     // of the independent surface themes. New installations default to follow.
     settings.quickNavigationAppearance = {};
     settings.collectionPopupAppearance = {};
+    settings.globalQuickNavigationAppearance = {};
+    settings.globalCollectionPopupAppearance = {};
     settings.quickNavigationAppearance.mode = -2;
     settings.collectionPopupAppearance.mode = -2;
     JsonValue appearanceDocument;
@@ -152,6 +154,10 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.quickNavigationAppearance)) return false;
     if (const auto* value = appearanceDocument.Find("collectionPopupAppearance"))
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.collectionPopupAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("globalQuickNavigationAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalQuickNavigationAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("globalCollectionPopupAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalCollectionPopupAppearance)) return false;
     if (const auto* value = appearanceDocument.Find("statusBar"))
         if (!snowdesktop::DecodeStatusBarSettings(*value, settings.statusBar)) return false;
     if (const auto* font = appearanceDocument.Find("font"))
@@ -181,8 +187,11 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
 {
     const auto quickAppearance = snowdesktop::EncodeSurfaceTheme(settings.quickNavigationAppearance);
     const auto popupAppearance = snowdesktop::EncodeSurfaceTheme(settings.collectionPopupAppearance);
+    const auto globalQuickAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalQuickNavigationAppearance);
+    const auto globalPopupAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalCollectionPopupAppearance);
     const auto statusBar = snowdesktop::EncodeStatusBarSettings(settings.statusBar);
-    if (quickAppearance.empty() || popupAppearance.empty() || statusBar.empty()) return false;
+    if (quickAppearance.empty() || popupAppearance.empty() || globalQuickAppearance.empty() ||
+        globalPopupAppearance.empty() || statusBar.empty()) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     auto calendar = settings.calendarDisplay;
@@ -207,6 +216,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
     file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";
     file << "  \"collectionPopupAppearance\": " << popupAppearance << ",\n";
+    file << "  \"globalQuickNavigationAppearance\": " << globalQuickAppearance << ",\n";
+    file << "  \"globalCollectionPopupAppearance\": " << globalPopupAppearance << ",\n";
     file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
     file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
     file << "  \"animationSpeed\": " << snowdesktop::animation::NormalizeSpeed(settings.animationSpeed) << ",\n";

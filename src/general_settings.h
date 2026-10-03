@@ -43,6 +43,10 @@ struct GeneralSettings
     int collectionPopupTheme = 0;
     snowdesktop::SurfaceTheme quickNavigationAppearance;
     snowdesktop::SurfaceTheme collectionPopupAppearance;
+    // Last successfully applied bindings; independent surfaces keep their own
+    // snapshots. Missing fields preserve the legacy global-preset resolver.
+    snowdesktop::SurfaceTheme globalQuickNavigationAppearance;
+    snowdesktop::SurfaceTheme globalCollectionPopupAppearance;
     bool dockEnabled = kDefaultDockEnabled;
     snowdesktop::StatusBarSettings statusBar;
     bool widgetDeveloperToolsEnabled = false;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "../theme_library.h"
 #include "../shell_extension_service.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -13,6 +14,20 @@
 
 namespace snowdesktop::winui
 {
+enum class ThemeLibraryCommand { Refresh, SaveAs, Update, Apply, Remove, Export };
+struct ThemeLibraryRequest
+{
+    ThemeLibraryCommand command = ThemeLibraryCommand::Refresh;
+    std::string target = "global", id, name, quickPanel, popup, replacement;
+    unsigned scopes = themes::All;
+};
+struct ThemeLibraryResult
+{
+    bool succeeded = false;
+    themes::Library library;
+    std::string savedId;
+    std::wstring message;
+};
 
 /** Commands emitted by the cached Personalization settings presenter. */
 struct PersonalizationPageActions
@@ -43,6 +58,7 @@ struct PersonalizationPageActions
     std::function<app_fonts::Selection()> appliedFont;
     std::function<std::vector<app_fonts::Choice>(bool folder, std::string& error)> importFonts;
     std::function<void(std::uint64_t generation)> restartApplication;
+    std::function<ThemeLibraryResult(std::uint64_t, const ThemeLibraryRequest&)> themeLibrary;
 };
 
 /**

@@ -5,6 +5,7 @@
 #include "widget_package_review.h"
 #include "../diagnostic_log.h"
 #include "source_search_worker.h"
+#include "../theme_library_settings.h"
 
 #include "../utils.h"
 #include "../widget_engine.h"
@@ -2351,6 +2352,31 @@ struct WidgetsPageBackend::Impl final
                             owner->awaitingPicker = false;
                             owner->pickerRequestId = 0;
                             if (!selected) return;
+                            const auto type = themes::Classify(*selected);
+                            if (type == themes::PackageType::Theme)
+                            {
+                                owner->BeginTask(WidgetsPageTaskKind::Installing);
+                                themes::Package package;
+                                themes::Library library;
+                                std::map<std::string, std::string> mapping;
+                                std::string error;
+                                // Parsing owns the selected bytes before the single library
+                                // transaction. Installation never applies a theme.
+                                const bool installed = themes::ReadPackage(*selected, package, error) &&
+                                    themes::Transact(themes::LibraryPath(), [&](auto& current, auto& detail) {
+                                        return themes::Import(current, package, mapping, detail);
+                                    }, library, error);
+                                auto message = owner->L(installed ? "themeLibrary.installed" : "themeLibrary.error." + error);
+                                owner->FinishTask(installed ? WidgetsPageHostOperationResult::Success(false, std::move(message)) :
+                                    WidgetsPageHostOperationResult::Failure(std::move(message)));
+                                return;
+                            }
+                            if (type != themes::PackageType::Widget)
+                            {
+                                owner->SetFeedback(WidgetsPageFeedbackSeverity::Error,
+                                    owner->L("themeLibrary.error.unsupportedExtension"), "settings.status.error");
+                                owner->Publish(); return;
+                            }
                             PendingInstall install;
                             install.kind = PendingInstall::Kind::LocalPath;
                             std::wstring error;

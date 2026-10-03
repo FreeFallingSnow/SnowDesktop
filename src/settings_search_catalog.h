@@ -213,6 +213,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
+    {SettingsPage::AppearanceTheme, "personalization.savedThemes",
+        "themeLibrary.title", "settings.personalization.theme.description"},
     {SettingsPage::AppearanceTheme, "personalization.backgroundColor",
         "settings.personalization.colors",
         "settings.personalization.colors.description"},

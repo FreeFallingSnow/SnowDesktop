@@ -440,6 +440,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/xaml_type_info_impl_bridge.cpp
     src/ui_animation_scheduler.cpp
     src/personalization.cpp
+    src/theme_library.cpp
     src/dock_settings.cpp
     src/taskbar_hook/taskbar_symbol_resolver.cpp
     src/navigation_settings.cpp
@@ -1530,6 +1531,8 @@ if (BUILD_TESTING)
         general_settings
         SOURCES
             tests/general_settings_tests.cpp
+            tests/theme_library_tests.cpp
+            src/theme_library.cpp
             src/general_settings.cpp
             src/app_font.cpp
             src/personalization.cpp

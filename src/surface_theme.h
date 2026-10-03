@@ -42,8 +42,11 @@ inline bool IsCustomSurfaceTheme(const SurfaceTheme& theme, const Personalizatio
 }
 
 inline PersonalizationSettings ResolveSurfaceTheme(const SurfaceTheme& theme,
-    const PersonalizationSettings& global, int legacySelection, bool quickNavigation)
+    const PersonalizationSettings& global, int legacySelection, bool quickNavigation,
+    const SurfaceTheme* globalBinding = nullptr)
 {
+    if (theme.mode == -1 && globalBinding && globalBinding->customized)
+        return globalBinding->appearance;
     if (theme.mode == 4) return theme.appearance;
     if (IsCustomSurfaceTheme(theme, global))
         return global;

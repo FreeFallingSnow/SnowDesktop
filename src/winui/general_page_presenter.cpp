@@ -938,7 +938,7 @@ struct GeneralPagePresenter::Impl
     {
         if (closed) return;
         onboarding->ApplySnapshot(snapshot);
-        quickOptions->Apply(snapshot.values.navigation, ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, snapshot.values.personalization, snapshot.values.general.quickNavTheme, true).contentTheme == 1);
+        quickOptions->Apply(snapshot.values.navigation, ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, snapshot.values.personalization, snapshot.values.general.quickNavTheme, true, &snapshot.values.general.globalQuickNavigationAppearance).contentTheme == 1);
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
         const bool generalChanged = newGeneration ||

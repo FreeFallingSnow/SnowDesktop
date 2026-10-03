@@ -69,7 +69,8 @@ SD_IPC_FIELDS(GeneralSettings,
     v.quickNavTheme, v.collectionPopupTheme, v.dockEnabled, v.widgetDeveloperToolsEnabled,
     v.calendarDisplay, v.language, v.font, v.animationMode, v.popupAnimationEffect, v.animationSpeed,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
-    v.quickNavigationAppearance, v.collectionPopupAppearance, v.shellExtensions, v.statusBar);
+    v.quickNavigationAppearance, v.collectionPopupAppearance, v.globalQuickNavigationAppearance,
+    v.globalCollectionPopupAppearance, v.shellExtensions, v.statusBar);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions, v.enabled);
 SD_IPC_FIELDS(CategorySettings,

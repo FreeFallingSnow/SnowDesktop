@@ -6,6 +6,7 @@
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
 #include "appearance_sections.h"
+#include "../theme_library_settings.h"
 #include "edge_light_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -330,6 +331,7 @@ struct TransientPreviewHint
 
 enum class AppearanceThemeKind
 {
+    Saved,
     BuiltIn,
     Custom,
     Component,
@@ -895,6 +897,30 @@ struct WidgetSettingsPresenter::Impl
                     static_cast<std::size_t>(index)];
                 CommitOpenColorEditors();
                 if (!FlushPendingEdits().Succeeded()) return;
+                if (choice.kind == AppearanceThemeKind::Saved)
+                {
+                    themes::Library library;
+                    std::string error;
+                    if (!themes::Load(themes::LibraryPath(), library, error)) return;
+                    const auto theme = themes::Resolve(library.themes, choice.id);
+                    if (!theme || theme->kind != themes::Kind::Global || !(theme->scopes & themes::Components)) return;
+                    const std::string target = "widget/" + winrt::to_string(widgetId);
+                    const auto previous = library.references;
+                    if (!themes::Transact(themes::LibraryPath(), [&](auto& current, auto& detail) {
+                        return themes::Select(current, target, choice.id, themes::Kind::Global, themes::Components, detail);
+                    }, library, error)) return;
+                    const auto patch = themes::WidgetPatch(*theme);
+                    const auto result = RunMutation("__appearance", [this, patch](const auto& guard) {
+                        return service.UpdateHostAppearance(guard, patch);
+                    });
+                    if (!result.Succeeded())
+                        (void)themes::Transact(themes::LibraryPath(), [&](auto& current, auto&) {
+                            if (const auto found = previous.find(target); found != previous.end()) current.references[target] = found->second;
+                            else current.references.erase(target);
+                            return true;
+                        }, library, error);
+                    return;
+                }
                 if (choice.kind == AppearanceThemeKind::Component)
                 {
                     if (choice.componentPresetIndex >= cachedPresets.size())
@@ -1791,6 +1817,15 @@ struct WidgetSettingsPresenter::Impl
         appearanceThemeChoices.push_back({
             AppearanceThemeKind::Custom, "__custom",
             kAppearancePresetCustom, 0});
+        themes::Library library;
+        std::string libraryError;
+        if (themes::Load(themes::LibraryPath(), library, libraryError))
+            for (const auto& theme : themes::Choices(library, themes::Kind::Global, themes::Components))
+            {
+                if (themes::Builtin(theme.id)) continue;
+                appearanceTheme.Items().Append(winrt::box_value(ToText(theme.name)));
+                appearanceThemeChoices.push_back({AppearanceThemeKind::Saved, theme.id, kAppearancePresetCustom, 0});
+            }
         for (std::size_t index = 0; index < cachedPresets.size(); ++index)
         {
             const auto& preset = cachedPresets[index];
@@ -1934,6 +1969,22 @@ struct WidgetSettingsPresenter::Impl
             }
         }
         const auto customChoice = std::find_if(appearanceThemeChoices.begin(), appearanceThemeChoices.end(), [](auto const& choice) { return choice.kind == AppearanceThemeKind::Custom; });
+        themes::Library library;
+        std::string libraryError;
+        const std::string target = "widget/" + winrt::to_string(widgetId);
+        if (themes::Load(themes::LibraryPath(), library, libraryError))
+            if (const auto reference = library.references.find(target); reference != library.references.end() && !reference->second.id.empty())
+            {
+                const auto theme = themes::Resolve(reference->second.snapshot, reference->second.id);
+                if (theme && themes::WidgetMatches(snapshot.hostAppearance, *theme))
+                {
+                    for (std::size_t i = 0; i < appearanceThemeChoices.size(); ++i)
+                        if (appearanceThemeChoices[i].kind == AppearanceThemeKind::Saved && appearanceThemeChoices[i].id == reference->second.id)
+                            selectedTheme = static_cast<int>(i);
+                }
+                else
+                    (void)themes::Transact(themes::LibraryPath(), [&](auto& current, auto&) { themes::Detach(current, target); return true; }, library, libraryError);
+            }
         const int customThemeIndex = static_cast<int>(std::distance(appearanceThemeChoices.begin(), customChoice));
         if (selectedTheme < 0 && snapshot.customStyle)
             selectedTheme = customThemeIndex;

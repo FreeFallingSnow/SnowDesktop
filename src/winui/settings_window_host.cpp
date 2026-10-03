@@ -9,6 +9,7 @@
 #include "../diagnostic_log.h"
 #include "../shell_launch_worker.h"
 #include "../status_bar_shell_shortcut.h"
+#include "../theme_library_settings.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -1134,7 +1135,7 @@ struct SettingsWindowHost::Impl
             auto selected = ShowOpenPathDialog(state->owner->window,
                 state->owner->L("app.settings.widgets_install_package"),
                 {{state->owner->L("app.settings.widgets_install_package"),
-                    L"*.snowwidget"}}, false);
+                    L"*.snowwidget;*.snowtheme"}}, false);
             if (completed)
                 completed(std::move(selected));
         };
@@ -1796,6 +1797,11 @@ struct SettingsWindowHost::Impl
         });
 
         PersonalizationPageActions personalization;
+        personalization.themeLibrary = [weak](std::uint64_t generation, const ThemeLibraryRequest& request) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner) return ThemeLibraryResult{};
+            return state->owner->ThemeOperation(generation, request);
+        };
         personalization.contextMenu = options.contextMenu;
         personalization.appliedFont = options.appliedFont;
         personalization.restartApplication = [weak](std::uint64_t generation) {
@@ -2225,6 +2231,15 @@ struct SettingsWindowHost::Impl
             return;
         GeneralSettings value = snapshot->values.general;
         edit(value);
+        if (value.quickNavigationAppearance.mode == -1 && snapshot->values.general.quickNavigationAppearance.mode != -1 &&
+            value.globalQuickNavigationAppearance.customized)
+        {
+            themes::Library library;
+            std::string error;
+            auto navigation = snapshot->values.navigation;
+            if (themes::Load(themes::LibraryPath(), library, error) && themes::FollowQuickBinding(library, navigation))
+                controller->UpdateNavigation(std::move(navigation), mode);
+        }
         controller->UpdateGeneral(std::move(value), mode);
     }
 
@@ -2254,6 +2269,143 @@ struct SettingsWindowHost::Impl
         controller->UpdateDock(std::move(value), mode);
     }
 
+    ThemeLibraryResult ThemeOperation(std::uint64_t generation, const ThemeLibraryRequest& request)
+    {
+        ThemeLibraryResult result;
+        if (!controller || !controller->IsGenerationCurrent(generation)) return result;
+        const auto current = controller->Snapshot();
+        if (!current || current->externalReplacementPending) return result;
+        std::string error;
+        const auto feedback = [&]() {
+            result.message = result.succeeded ? L("themeLibrary.success") : L("themeLibrary.error." + error);
+            if (result.message.empty()) result.message = L("themeLibrary.error.invalidPackage");
+        };
+        if (request.command == ThemeLibraryCommand::Refresh)
+        {
+            result.succeeded = themes::Load(themes::LibraryPath(), result.library, error);
+            if (!result.succeeded) feedback();
+            return result;
+        }
+        if (!controller->FlushAll().Succeeded())
+        { error = "writeFailed"; feedback(); return result; }
+        if (!themes::Load(themes::LibraryPath(), result.library, error)) { feedback(); return result; }
+        themes::ReconcileReferences(result.library, current->values);
+        if (request.command == ThemeLibraryCommand::Export)
+        {
+            themes::Package package;
+            if (!themes::Export(result.library, request.id, package, error)) { feedback(); return result; }
+            const auto path = ShowSavePathDialog(window, L("themeLibrary.export"), L"theme.snowtheme",
+                {{L("themeLibrary.title"), L"*.snowtheme"}}, L"snowtheme");
+            if (!path) { result.succeeded = true; return result; }
+            if (!controller->IsGenerationCurrent(generation)) return result;
+            result.succeeded = themes::WritePackage(*path, package, error); feedback(); return result;
+        }
+        if (request.command == ThemeLibraryCommand::Apply)
+        {
+            const auto apply = [&](const SettingsValues& values) {
+                controller->UpdatePersonalization(values.personalization, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateDock(values.dock, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateNavigation(values.navigation, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateGeneral(values.general, SettingsUpdateMode::PreviewAndCommit);
+                return controller->FlushAll();
+            };
+            bool settingsTouched = false;
+            // Keep the file's last successful reference untouched until settings
+            // persist. The lock also binds application and snapshot to the same
+            // library values; a failed write never needs a second library rollback.
+            result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
+                themes::ReconcileReferences(library, current->values);
+                auto next = current->values;
+                if (!themes::ApplyTarget(library, request.target, request.id, next, detail) ||
+                    !themes::Select(library, request.target, request.id, themes::TargetKind(request.target),
+                        themes::TargetScope(request.target), detail)) return false;
+                settingsTouched = true;
+                if (apply(next).Succeeded()) return true;
+                detail = "writeFailed";
+                return false;
+            }, result.library, error);
+            if (!result.succeeded && settingsTouched) (void)apply(current->values);
+            feedback(); return result;
+        }
+        result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
+            themes::ReconcileReferences(library, current->values);
+            if (request.command == ThemeLibraryCommand::Remove)
+                return themes::Remove(library, request.id, request.replacement, true, detail);
+            auto theme = themes::CaptureTarget(request.target, current->values);
+            theme.id = request.id; theme.name = request.name; theme.scopes = request.scopes;
+            themes::Package dependencies;
+            if (theme.kind == themes::Kind::Global)
+            {
+                const auto dependency = [&](themes::Kind kind, const std::string& selected) {
+                    if (!selected.empty()) return selected;
+                    auto child = themes::CaptureTarget(kind == themes::Kind::QuickPanel ? "quickPanel" : "popup", current->values);
+                    child.id = themes::CreateId(); child.name = request.name + (kind == themes::Kind::QuickPanel ? " / " + winrt::to_string(L("themeLibrary.quickPanel")) : " / " + winrt::to_string(L("themeLibrary.popup")));
+                    dependencies.emplace(child.id, child); return child.id;
+                };
+                theme.quickPanel = dependency(themes::Kind::QuickPanel, request.quickPanel);
+                theme.popup = dependency(themes::Kind::Popup, request.popup);
+            }
+            return themes::Save(library, std::move(theme), dependencies,
+                request.command == ThemeLibraryCommand::Update, result.savedId, detail, themes::CreateId, true);
+        }, result.library, error);
+        if (result.succeeded && request.command == ThemeLibraryCommand::Update)
+        {
+            auto next = current->values;
+            const auto targets = themes::ApplySavedUpdate(result.library, result.savedId, next, error);
+            bool applied = true;
+            if (!targets.empty())
+            {
+                controller->UpdatePersonalization(next.personalization, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateDock(next.dock, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateNavigation(next.navigation, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateGeneral(next.general, SettingsUpdateMode::PreviewAndCommit);
+                applied = controller->FlushAll().Succeeded();
+                if (!applied)
+                {
+                    controller->UpdatePersonalization(current->values.personalization, SettingsUpdateMode::PreviewAndCommit);
+                    controller->UpdateDock(current->values.dock, SettingsUpdateMode::PreviewAndCommit);
+                    controller->UpdateNavigation(current->values.navigation, SettingsUpdateMode::PreviewAndCommit);
+                    controller->UpdateGeneral(current->values.general, SettingsUpdateMode::PreviewAndCommit);
+                    (void)controller->FlushAll();
+                }
+            }
+            std::vector<std::string> completed = applied ? targets : std::vector<std::string>{};
+            for (const auto& [target, reference] : result.library.references)
+            {
+                if (!target.starts_with("widget/") || reference.id != result.savedId) continue;
+                if (!widgetSettingsService) { applied = false; continue; }
+                const auto previous = themes::Resolve(reference.snapshot, reference.id);
+                const auto theme = themes::Resolve(result.library.themes, reference.id);
+                const auto loaded = widgetSettingsService->Load(Utf8ToWide(target.substr(7)));
+                if (!loaded.Succeeded() || !loaded.snapshot || !previous || !theme ||
+                    !themes::WidgetMatches(loaded.snapshot->hostAppearance, *previous))
+                { applied = false; continue; }
+                const auto changed = widgetSettingsService->UpdateHostAppearance(
+                    widget_runtime::WidgetSettingMutationGuard::FromSnapshot(*loaded.snapshot), themes::WidgetPatch(*theme));
+                if (changed.Succeeded()) completed.push_back(target);
+                else applied = false;
+            }
+            if (!completed.empty())
+            {
+                themes::Library refreshed;
+                const bool recorded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
+                    for (const auto& target : completed)
+                    {
+                        const auto found = library.references.find(target);
+                        if (found == library.references.end() || found->second.id.empty()) continue;
+                        const auto reference = found->second;
+                        if (!themes::Select(library, target, reference.id, reference.kind, reference.scope, detail)) return false;
+                    }
+                    return true;
+                }, refreshed, error);
+                if (recorded) result.library = std::move(refreshed);
+                else applied = false;
+            }
+            if (!applied) { result.message = L("themeLibrary.savedPending"); return result; }
+        }
+        feedback(); return result;
+    }
+
     void EditPersonalization(std::uint64_t generation,
         SettingsUpdateMode mode, PersonalizationPageActions::Edit edit)
     {
@@ -2264,6 +2416,13 @@ struct SettingsWindowHost::Impl
             return;
         PersonalizationSettings value = snapshot->values.personalization;
         edit(value);
+        if (value.backgroundPreset != kAppearancePresetCustom && value.backgroundPreset != snapshot->values.personalization.backgroundPreset)
+        {
+            auto general = snapshot->values.general;
+            general.globalQuickNavigationAppearance = {};
+            general.globalCollectionPopupAppearance = {};
+            controller->UpdateGeneral(std::move(general), mode);
+        }
         controller->UpdatePersonalization(std::move(value), mode);
     }
 

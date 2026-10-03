@@ -231,8 +231,10 @@ HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
 }
 }
 
+int RunThemeLibraryTests();
 int main(int argc, char** argv)
 {
+    failures += RunThemeLibraryTests();
     using namespace snowdesktop;
     {
         // The picker must find a middle-of-name query (native ComboBox type

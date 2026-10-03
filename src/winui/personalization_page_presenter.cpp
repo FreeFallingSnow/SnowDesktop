@@ -8,6 +8,7 @@
 #include "panel_appearance_editor.h"
 #include "font_picker_search.h"
 #include "quick_navigation_options.h"
+#include "../theme_library_settings.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -153,6 +154,20 @@ struct PersonalizationPagePresenter::Impl
     muxc::StackPanel widgetBehaviorRoot;
 
     SettingsCard themeCard;
+    SettingsCard libraryCard;
+    muxc::ComboBox libraryTarget, libraryChoice, libraryQuick, libraryPopup, libraryReplacement;
+    muxc::TextBox libraryName;
+    muxc::StackPanel libraryScopes;
+    std::array<muxc::CheckBox, 4> libraryScopeChecks;
+    muxc::InfoBar libraryFeedback;
+    muxc::CommandBar libraryCommands;
+    std::array<muxc::AppBarButton, 5> libraryButtons;
+    std::array<winrt::event_token, 5> libraryButtonTokens{};
+    winrt::event_token libraryTargetToken{}, libraryChoiceToken{};
+    themes::Library savedThemes;
+    std::vector<themes::Theme> libraryChoices, libraryQuickChoices, libraryPopupChoices;
+    bool updatingLibrary = false;
+    static constexpr std::array<const char*, 6> libraryTargets = {"global", "dock", "statusBar", "taskbar", "quickPanel", "popup"};
     SettingsCard fontCard;
     SettingRow fontRow;
     muxc::DropDownButton fontPicker;
@@ -337,6 +352,25 @@ struct PersonalizationPagePresenter::Impl
         presetCombo.MaxWidth(520.0);
         presetRow.Initialize(presetCombo);
         themeCard.content.Children().Append(presetRow.root);
+        InitializeCard(libraryCard, cardStyle, themeRoot);
+        libraryTarget.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        libraryChoice.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        libraryCard.content.Children().Append(libraryTarget);
+        libraryCard.content.Children().Append(libraryChoice);
+        libraryName.MaxLength(128);
+        libraryCard.content.Children().Append(libraryName);
+        libraryScopes.Orientation(muxc::Orientation::Horizontal);
+        libraryScopes.Spacing(8);
+        for (auto& scope : libraryScopeChecks) { scope.IsChecked(true); libraryScopes.Children().Append(scope); }
+        libraryCard.content.Children().Append(libraryScopes);
+        libraryCard.content.Children().Append(libraryQuick);
+        libraryCard.content.Children().Append(libraryPopup);
+        libraryCard.content.Children().Append(libraryReplacement);
+        libraryCommands.DefaultLabelPosition(muxc::CommandBarDefaultLabelPosition::Right);
+        for (auto& button : libraryButtons) libraryCommands.PrimaryCommands().Append(button);
+        libraryCard.content.Children().Append(libraryCommands);
+        libraryFeedback.IsOpen(false);
+        libraryCard.content.Children().Append(libraryFeedback);
 
         InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
         appearanceSections.Initialize(widgetAppearanceCard.content, true, true);
@@ -730,8 +764,115 @@ struct PersonalizationPagePresenter::Impl
                 : mux::Visibility::Visible);
     }
 
+    std::string LibraryTarget() const
+    {
+        const int index = libraryTarget.SelectedIndex();
+        return libraryTargets[index >= 0 && index < 6 ? index : 0];
+    }
+
+    std::wstring ThemeLabel(const themes::Theme& theme) const
+    {
+        if (!themes::Builtin(theme.id)) return winrt::to_hstring(theme.name).c_str();
+        const std::map<std::string, std::string> keys = {{"dark", "app.settings.dark"}, {"light", "app.settings.light"},
+            {"glass-dark", "app.settings.dark_glass"}, {"glass-light", "app.settings.light_glass"},
+            {"glass-transparent", "app.settings.transparent_glass"}, {"acrylic-dark", "app.settings.dark_acrylic"},
+            {"acrylic-light", "app.settings.light_acrylic"}};
+        const auto found = keys.find(theme.name);
+        return found == keys.end() ? winrt::to_hstring(theme.name).c_str() : L(found->second, winrt::to_hstring(theme.name).c_str());
+    }
+
+    void RefreshLibraryChoices(std::string preferred = {})
+    {
+        updatingLibrary = true;
+        const auto target = LibraryTarget();
+        libraryChoices = themes::Choices(savedThemes, themes::TargetKind(target), themes::TargetScope(target));
+        libraryQuickChoices = themes::Choices(savedThemes, themes::Kind::QuickPanel);
+        libraryPopupChoices = themes::Choices(savedThemes, themes::Kind::Popup);
+        libraryChoice.Items().Clear(); libraryReplacement.Items().Clear();
+        libraryReplacement.Items().Append(winrt::box_value(L("themeLibrary.preserve", L"Keep current appearance as custom")));
+        int selected = -1;
+        if (preferred.empty())
+            if (const auto found = savedThemes.references.find(target); found != savedThemes.references.end()) preferred = found->second.id;
+        for (std::size_t i = 0; i < libraryChoices.size(); ++i)
+        {
+            libraryChoice.Items().Append(winrt::box_value(ThemeLabel(libraryChoices[i])));
+            libraryReplacement.Items().Append(winrt::box_value(ThemeLabel(libraryChoices[i])));
+            if (libraryChoices[i].id == preferred) selected = static_cast<int>(i);
+        }
+        libraryChoice.SelectedIndex(selected);
+        libraryReplacement.SelectedIndex(0);
+        libraryQuick.Items().Clear(); libraryPopup.Items().Clear();
+        libraryQuick.Items().Append(winrt::box_value(L("themeLibrary.currentQuick", L"Save current quick panel appearance")));
+        libraryPopup.Items().Append(winrt::box_value(L("themeLibrary.currentPopup", L"Save current popup appearance")));
+        for (const auto& theme : libraryQuickChoices) libraryQuick.Items().Append(winrt::box_value(ThemeLabel(theme)));
+        for (const auto& theme : libraryPopupChoices) libraryPopup.Items().Append(winrt::box_value(ThemeLabel(theme)));
+        libraryQuick.SelectedIndex(0); libraryPopup.SelectedIndex(0);
+        const auto visibility = themes::TargetKind(target) == themes::Kind::Global ? mux::Visibility::Visible : mux::Visibility::Collapsed;
+        libraryScopes.Visibility(visibility); libraryQuick.Visibility(visibility); libraryPopup.Visibility(visibility);
+        updatingLibrary = false;
+        PatchLibraryChoice();
+    }
+
+    void PatchLibraryChoice()
+    {
+        if (updatingLibrary) return;
+        const int index = libraryChoice.SelectedIndex();
+        const themes::Theme* selected = index >= 0 && static_cast<std::size_t>(index) < libraryChoices.size() ? &libraryChoices[index] : nullptr;
+        libraryName.Text(selected ? ThemeLabel(*selected) : L"");
+        for (std::size_t i = 0; i < libraryScopeChecks.size(); ++i)
+            libraryScopeChecks[i].IsChecked(!selected || (selected->scopes & (1u << i)) != 0);
+        const auto selectBinding = [](auto& combo, const auto& choices, const std::string& id) {
+            int chosen = 0;
+            for (std::size_t i = 0; i < choices.size(); ++i) if (choices[i].id == id) chosen = static_cast<int>(i + 1);
+            combo.SelectedIndex(chosen);
+        };
+        if (selected && selected->kind == themes::Kind::Global)
+        { selectBinding(libraryQuick, libraryQuickChoices, selected->quickPanel); selectBinding(libraryPopup, libraryPopupChoices, selected->popup); }
+        libraryButtons[1].IsEnabled(selected && !themes::Builtin(selected->id));
+        libraryButtons[2].IsEnabled(selected != nullptr);
+        libraryButtons[3].IsEnabled(selected && !themes::Builtin(selected->id));
+        libraryButtons[4].IsEnabled(selected != nullptr);
+    }
+
+    void LibraryAction(ThemeLibraryCommand command)
+    {
+        if (!CanEmit() || !actions.themeLibrary) return;
+        CommitContinuousEdits(); CommitOpenColorEditors();
+        quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush();
+        ThemeLibraryRequest request; request.command = command; request.target = LibraryTarget();
+        const int index = libraryChoice.SelectedIndex();
+        if (index >= 0 && static_cast<std::size_t>(index) < libraryChoices.size()) request.id = libraryChoices[index].id;
+        request.name = winrt::to_string(libraryName.Text()); request.scopes = 0;
+        for (std::size_t i = 0; i < libraryScopeChecks.size(); ++i)
+        {
+            const auto checked = libraryScopeChecks[i].IsChecked();
+            if (checked && checked.Value()) request.scopes |= 1u << i;
+        }
+        const auto binding = [](auto& combo, const auto& choices) -> std::string {
+            const int selected = combo.SelectedIndex();
+            return selected > 0 && static_cast<std::size_t>(selected) <= choices.size() ? choices[selected - 1].id : std::string{};
+        };
+        request.quickPanel = binding(libraryQuick, libraryQuickChoices); request.popup = binding(libraryPopup, libraryPopupChoices);
+        request.replacement = binding(libraryReplacement, libraryChoices);
+        const auto result = actions.themeLibrary(generation, request);
+        if (result.succeeded)
+        {
+            savedThemes = result.library;
+            if (!result.savedId.empty()) request.id = result.savedId;
+            RefreshLibraryChoices(command == ThemeLibraryCommand::Remove ? std::string{} : request.id);
+        }
+        libraryFeedback.Severity(result.succeeded ? muxc::InfoBarSeverity::Success : muxc::InfoBarSeverity::Error);
+        libraryFeedback.Message(result.message); libraryFeedback.IsOpen(!result.message.empty());
+    }
+
     void HookEvents()
     {
+        libraryTargetToken = libraryTarget.SelectionChanged([this](const auto&, const auto&) { if (!updatingLibrary) RefreshLibraryChoices(); });
+        libraryChoiceToken = libraryChoice.SelectionChanged([this](const auto&, const auto&) { PatchLibraryChoice(); });
+        constexpr ThemeLibraryCommand commands[] = {ThemeLibraryCommand::SaveAs, ThemeLibraryCommand::Update,
+            ThemeLibraryCommand::Apply, ThemeLibraryCommand::Remove, ThemeLibraryCommand::Export};
+        for (std::size_t i = 0; i < libraryButtons.size(); ++i)
+            libraryButtonTokens[i] = libraryButtons[i].Click([this, command = commands[i]](const auto&, const auto&) { LibraryAction(command); });
         fontOpenToken = fontFlyout.Opened([this](const auto&, const auto&) {
             if (!CanEmit()) return;
             // Rescan newly installed fonts, but never commit a search query or
@@ -1201,7 +1342,8 @@ struct PersonalizationPagePresenter::Impl
         EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [quick, index, global](auto& settings) {
             auto& theme = quick ? settings.quickNavigationAppearance : settings.collectionPopupAppearance;
             SelectSurfaceThemeMode(theme, index - 1,
-                ResolveSurfaceTheme(theme, global, quick ? settings.quickNavTheme : settings.collectionPopupTheme, quick));
+                ResolveSurfaceTheme(theme, global, quick ? settings.quickNavTheme : settings.collectionPopupTheme, quick,
+                    quick ? &settings.globalQuickNavigationAppearance : &settings.globalCollectionPopupAppearance));
         });
     }
 
@@ -1303,6 +1445,24 @@ struct PersonalizationPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        const bool previousLibrary = updatingLibrary;
+        updatingLibrary = true;
+        const int target = libraryTarget.SelectedIndex();
+        libraryCard.title.Text(L("themeLibrary.title", L"Saved themes"));
+        libraryTarget.Items().Clear();
+        for (const auto name : libraryTargets) libraryTarget.Items().Append(winrt::box_value(L("themeLibrary." + std::string(name))));
+        libraryTarget.SelectedIndex(target < 0 ? 0 : target);
+        libraryName.Header(winrt::box_value(L("themeLibrary.name")));
+        libraryChoice.Header(winrt::box_value(L("themeLibrary.choose")));
+        libraryQuick.Header(winrt::box_value(L("themeLibrary.quickPanel")));
+        libraryPopup.Header(winrt::box_value(L("themeLibrary.popup")));
+        libraryReplacement.Header(winrt::box_value(L("themeLibrary.replacement")));
+        constexpr const char* labels[] = {"saveAs", "update", "apply", "remove", "export"};
+        for (std::size_t i = 0; i < libraryButtons.size(); ++i) libraryButtons[i].Label(L("themeLibrary." + std::string(labels[i])));
+        constexpr const char* scopes[] = {"components", "dock", "statusBar", "taskbar"};
+        for (std::size_t i = 0; i < libraryScopeChecks.size(); ++i) libraryScopeChecks[i].Content(winrt::box_value(L("themeLibrary." + std::string(scopes[i]))));
+        updatingLibrary = previousLibrary;
+        RefreshLibraryChoices();
         edgeLightEditor->RefreshLocalizedText();
         appearanceSections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
         if (panelGradientEditor) panelGradientEditor->RefreshLocalizedText();
@@ -1534,8 +1694,8 @@ struct PersonalizationPagePresenter::Impl
         }
         if (generalChanged || personalizationChanged)
         {
-            quickAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, currentGlobalAppearance, snapshot.values.general.quickNavTheme, true), newGeneration);
-            popupAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.collectionPopupAppearance, currentGlobalAppearance, snapshot.values.general.collectionPopupTheme, false), newGeneration);
+            quickAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, currentGlobalAppearance, snapshot.values.general.quickNavTheme, true, &snapshot.values.general.globalQuickNavigationAppearance), newGeneration);
+            popupAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.collectionPopupAppearance, currentGlobalAppearance, snapshot.values.general.collectionPopupTheme, false, &snapshot.values.general.globalCollectionPopupAppearance), newGeneration);
             PatchGeneral(snapshot.values.general);
             generalRevision = snapshot.domainRevisions.general;
         }
@@ -1552,16 +1712,23 @@ struct PersonalizationPagePresenter::Impl
         if (navigationChanged || generalChanged || personalizationChanged)
         {
             const auto appearance = ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance,
-                currentGlobalAppearance, snapshot.values.general.quickNavTheme, true);
+                currentGlobalAppearance, snapshot.values.general.quickNavTheme, true, &snapshot.values.general.globalQuickNavigationAppearance);
             quickAppearanceOptions->Apply(snapshot.values.navigation, appearance.contentTheme == 1);
             navigationRevision = snapshot.domainRevisions.navigation;
         }
         hasSnapshot = true;
         updatingControls = previousUpdating;
+        if (newGeneration && actions.themeLibrary)
+        {
+            const auto result = actions.themeLibrary(generation, {});
+            if (result.succeeded) { savedThemes = result.library; RefreshLibraryChoices(); }
+            else { libraryFeedback.Severity(muxc::InfoBarSeverity::Error); libraryFeedback.Message(result.message); libraryFeedback.IsOpen(true); }
+        }
     }
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
+        if (id == "personalization.savedThemes") return libraryChoice;
         if (id == "quickNav.layout" || id.starts_with("quickNav.layout.") ||
             id.starts_with("quickNav.color.") || id.starts_with("quickNav.colors."))
         {
@@ -1702,6 +1869,9 @@ struct PersonalizationPagePresenter::Impl
     {
         if (closed)
             return;
+        libraryTarget.SelectionChanged(libraryTargetToken);
+        libraryChoice.SelectionChanged(libraryChoiceToken);
+        for (std::size_t i = 0; i < libraryButtons.size(); ++i) libraryButtons[i].Click(libraryButtonTokens[i]);
         CommitOpenColorEditors();
         if (active)
             CommitContinuousEdits();
@@ -1821,7 +1991,19 @@ void PersonalizationPagePresenter::RefreshLocalizedText()
 void PersonalizationPagePresenter::Activate() noexcept
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->active = true;
+        try
+        {
+            if (impl_->hasSnapshot && impl_->actions.themeLibrary)
+            {
+                const auto result = impl_->actions.themeLibrary(impl_->generation, {});
+                if (result.succeeded) { impl_->savedThemes = result.library; impl_->RefreshLibraryChoices(); }
+                else { impl_->libraryFeedback.Message(result.message); impl_->libraryFeedback.Severity(muxc::InfoBarSeverity::Error); impl_->libraryFeedback.IsOpen(true); }
+            }
+        }
+        catch (...) { }
+    }
 }
 
 void PersonalizationPagePresenter::Deactivate() noexcept
