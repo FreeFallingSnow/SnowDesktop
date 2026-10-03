@@ -1191,7 +1191,8 @@ private:
         context->SetDpi(96.f, 96.f);
         context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
         context->Clear(D2D1::ColorF(0, 0));
-        const HRESULT drawResult = DrawTaskbarEdges(context.get(), width, height, scale, control.edgeStyle);
+        const HRESULT drawResult = DrawTaskbarEdges(context.get(), width, height, scale, control.edgeStyle,
+            ResolveTaskbarMaterialEdge(control.edgeTaskbar));
         const HRESULT endResult = interop->EndDraw();
         winrt::check_hresult(drawResult); winrt::check_hresult(endResult);
         control.edgeVisual.Brush(compositor.CreateSurfaceBrush(surface));

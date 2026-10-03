@@ -108,10 +108,10 @@ int RunNativeTaskbarTests()
     {
         TargetAppearance material;
         material.borderAlpha = 1.f; material.edge.borderWidth = 1.f;
-        const auto thin = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        const auto thin = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
         material.edge.borderWidth = 4.f;
-        const auto thick = MakeTaskbarEdgePixels(120, 48, 1.f, material);
-        const auto scaled = MakeTaskbarEdgePixels(240, 96, 2.f, material);
+        const auto thick = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
+        const auto scaled = MakeTaskbarEdgePixels(240, 96, 2.f, material, TaskbarMaterialEdge::Top);
         const auto alphaAt = [](const auto& image, std::size_t width, std::size_t x, std::size_t y) {
             return image[(y * width + x) * 4 + 3];
         };
@@ -121,14 +121,53 @@ int RunNativeTaskbarTests()
             "taskbar border width scales from DIPs to physical pixels");
         material.borderAlpha = 0.f;
         material.edge.highlightEnabled = TRUE; material.edge.highlightStrength = 1.f;
-        const auto lit = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        const auto lit = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
         material.edge.light.direction += 180.f;
-        const auto rotated = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        const auto rotated = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
         check(lit != rotated && alphaAt(lit, 120, 60, 0) > 0 && alphaAt(lit, 120, 60, 24) == 0,
             "highlight-only taskbars render a directional rim while keeping their center clear");
         check(native::NeedsClassicSurface(material), "a highlight alone requires the classic composited surface");
+        const RECT monitor{-1920, -1080, 0, 0};
+        struct EdgeCase { RECT taskbar; TaskbarMaterialEdge edge; UINT width; UINT height; };
+        const std::array<EdgeCase, 8> edges{{
+            {{-1920, -48, 0, 0}, TaskbarMaterialEdge::Top, 120, 48},
+            {{-1920, -1080, 0, -1032}, TaskbarMaterialEdge::Bottom, 120, 48},
+            {{-1920, -1080, -1872, 0}, TaskbarMaterialEdge::Right, 48, 120},
+            {{-48, -1080, 0, 0}, TaskbarMaterialEdge::Left, 48, 120},
+            // Auto-hide moves almost the entire taskbar beyond its monitor.
+            {{-1920, -1, 0, 47}, TaskbarMaterialEdge::Top, 120, 48},
+            {{-1920, -1127, 0, -1079}, TaskbarMaterialEdge::Bottom, 120, 48},
+            {{-1967, -1080, -1919, 0}, TaskbarMaterialEdge::Right, 48, 120},
+            {{-1, -1080, 47, 0}, TaskbarMaterialEdge::Left, 48, 120}
+        }};
+        for (const auto& item : edges)
+        {
+            check(ResolveTaskbarMaterialEdge(item.taskbar, monitor) == item.edge,
+                "normal and auto-hidden taskbars select their desktop-facing edge on a negative-origin monitor");
+            for (const bool highlighted : {false, true})
+            {
+                material.borderAlpha = highlighted ? 0.f : 1.f;
+                material.edge.highlightEnabled = highlighted;
+                const auto pixels = MakeTaskbarEdgePixels(item.width, item.height, 1.f, material, item.edge);
+                const auto centerX = item.width / 2, centerY = item.height / 2;
+                const std::array<std::uint8_t, 4> sides{
+                    alphaAt(pixels, item.width, centerX, 0),
+                    alphaAt(pixels, item.width, centerX, item.height - 1),
+                    alphaAt(pixels, item.width, 0, centerY),
+                    alphaAt(pixels, item.width, item.width - 1, centerY)
+                };
+                const auto expected = item.edge == TaskbarMaterialEdge::Top ? 0u :
+                    item.edge == TaskbarMaterialEdge::Bottom ? 1u : item.edge == TaskbarMaterialEdge::Left ? 2u : 3u;
+                check(sides[expected] > 0 && alphaAt(pixels, item.width, centerX, centerY) == 0,
+                    "border-only and highlight-only taskbars draw their selected edge and keep their center clear");
+                for (std::size_t side = 0; side < sides.size(); ++side)
+                    if (side != expected) check(sides[side] == 0,
+                        "taskbar materials leave the other three sides clear, like status bars");
+            }
+        }
+        material.borderAlpha = 0.f;
         material.edge.highlightEnabled = FALSE;
-        const auto clear = MakeTaskbarEdgePixels(120, 48, 1.f, material);
+        const auto clear = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
         check(std::all_of(clear.begin(), clear.end(), [](auto byte) { return byte == 0; }),
             "disabling both border and highlight removes all edge pixels");
         SharedState state; state.edge.highlightEnabled = TRUE; state.edge.borderWidth = 3.25f;

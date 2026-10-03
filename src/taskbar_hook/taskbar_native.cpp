@@ -1,6 +1,7 @@
 #include "taskbar_native.h"
 #include "taskbar_classic_surface.h"
 #include "taskbar_classic_appearance.h"
+#include "taskbar_material_render.h"
 #include "taskbar_hook_lifecycle.h"
 #include "../taskbar_monitor.h"
 
@@ -47,6 +48,7 @@ struct WindowState
     TargetAppearance applied;
     ULONGLONG appearanceRetryTick = 0;
     RECT bounds{};
+    TaskbarMaterialEdge edge = TaskbarMaterialEdge::Top;
     ClassicSurface surface;
     HHOOK menuMouseHook = nullptr;
     HHOOK menuMessageHook = nullptr;
@@ -576,7 +578,9 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     {
         RECT bounds{};
         GetClientRect(window, &bounds);
-        if (force || !wasStyled || !(style == state->applied) || !EqualRect(&bounds, &state->bounds))
+        const auto edge = ResolveTaskbarMaterialEdge(window);
+        if (force || !wasStyled || !(style == state->applied) || !EqualRect(&bounds, &state->bounds) ||
+            edge != state->edge)
         {
             AccentPolicy policy = MakeClassicTaskbarPolicy(style);
             if (!wasStyled && getComposition)
@@ -599,6 +603,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
             const HRESULT result = materialApplied ? state->surface.Draw(window, style) : E_FAIL;
             state->applied = style;
             state->bounds = bounds;
+            state->edge = edge;
             InterlockedExchange(&state->mapping->status, FAILED(result) ? kStatusFailed : kStatusApplied);
             if (FAILED(result))
             {

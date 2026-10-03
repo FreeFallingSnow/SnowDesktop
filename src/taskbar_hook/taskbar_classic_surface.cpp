@@ -193,7 +193,8 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
         }
         else if (SUCCEEDED(hr)) render->FillRectangle(rectangle, solid.Get());
         if (SUCCEEDED(hr)) hr = DrawTaskbarEdges(render.Get(), static_cast<UINT>(width),
-            static_cast<UINT>(height), static_cast<float>(GetDpiForWindow(window)) / 96.f, style);
+            static_cast<UINT>(height), static_cast<float>(GetDpiForWindow(window)) / 96.f, style,
+            ResolveTaskbarMaterialEdge(window));
         render->PopAxisAlignedClip();
         const HRESULT drawResult = render->EndDraw();
         if (SUCCEEDED(hr)) hr = drawResult;
