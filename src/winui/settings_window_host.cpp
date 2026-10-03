@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 
 #include "settings_window_host.h"
 #include "../settings_search_catalog.h"
@@ -2112,6 +2112,14 @@ struct SettingsWindowHost::Impl
         shell->SetDesktopPageActions(std::move(desktop));
 
         DockPageActions dock;
+        dock.themeLibrary = [weak](std::uint64_t generation, const ThemeLibraryRequest& request) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner ? state->owner->ThemeOperation(generation, request) : ThemeLibraryResult{};
+        };
+        dock.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->BeginThemeTask(generation, std::move(request), std::move(completed));
+        };
         dock.previewAppearance = [weak](std::uint64_t generation, std::string target) {
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
             {
@@ -2496,6 +2504,19 @@ struct SettingsWindowHost::Impl
             if (!result.succeeded) feedback();
             return result;
         }
+        if (request.command == ThemeLibraryCommand::Import)
+        {
+            const auto path = ShowOpenPathDialog(window, L("themeLibrary.import"), {{L("themeLibrary.title"), L"*.snowtheme"}}, false);
+            if (!path) { result.succeeded = themes::Load(themes::LibraryPath(), result.library, error); return result; }
+            if (!controller->IsGenerationCurrent(generation)) return result;
+            themes::Package package;
+            if (!themes::ReadPackage(*path, package, error)) { feedback(); return result; }
+            std::map<std::string, std::string> mapping;
+            result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
+                return themes::Import(library, package, mapping, detail);
+            }, result.library, error);
+            feedback(); return result;
+        }
         if (!controller->FlushAll().Succeeded())
         { error = "writeFailed"; feedback(); return result; }
         if (!themes::Load(themes::LibraryPath(), result.library, error)) { feedback(); return result; }
@@ -2528,7 +2549,7 @@ struct SettingsWindowHost::Impl
                 auto next = current->values;
                 if (!themes::ApplyTarget(library, request.target, request.id, next, detail) ||
                     !themes::Select(library, request.target, request.id, themes::TargetKind(request.target),
-                        themes::TargetScope(request.target), detail)) return false;
+                        request.target == "global" ? themes::Resolve(library.themes, request.id)->scopes : themes::TargetScope(request.target), detail)) return false;
                 settingsTouched = true;
                 if (apply(next).Succeeded()) return true;
                 detail = "writeFailed";

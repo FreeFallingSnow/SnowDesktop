@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "미리 보기는 고정된 데모 데이터를 사용합니다. 데스크톱과 개인 콘텐츠는 포함되지 않습니다.",
   "themeLibrary.confirmShare": "이 테마와 연결된 하위 테마를 하나의 워크숍 항목으로 게시할까요?",
   "themeLibrary.publishUpdate": "항목 업데이트",
-  "themeLibrary.publish": "게시"
+  "themeLibrary.publish": "게시",
+  "themeLibrary.import": "가져오기",
+  "themeLibrary.save": "테마 저장",
+  "themeLibrary.type": "테마 유형",
+  "themeLibrary.selectionHint": "테마를 선택한 후 “적용”을 누르세요.",
+  "themeLibrary.transferHint": "저장된 테마를 가져오거나 내보냅니다.",
+  "themeLibrary.nameHint": "같은 이름으로 저장하면 별도의 테마가 생성됩니다. 업데이트하면 기존 식별자가 유지됩니다.",
+  "themeLibrary.appliesTo": "적용 대상",
+  "themeLibrary.legacyComponents": "업데이트 시 기존 위젯 적용 범위가 유지됩니다. 새로 저장하는 테마는 아래 세 막대에만 적용됩니다.",
+  "themeLibrary.cancel": "취소",
+  "themeLibrary.removeHint": "연결을 대체할 테마를 선택하세요. 기존 객체의 모양은 사용자 지정으로 유지됩니다.",
+  "themeLibrary.nameRequired": "테마 이름을 입력하세요.",
+  "themeLibrary.scopesRequired": "적용 대상을 하나 이상 선택하세요.",
+  "themeLibrary.bindingRequired": "연결할 빠른 패널 및 팝업 테마를 선택하거나 현재 모양을 함께 저장하세요.",
+  "appearance.openDock": "Dock 재질 설정 열기"
 }

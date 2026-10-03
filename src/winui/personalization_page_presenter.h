@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
-#include "../theme_library.h"
+#include "theme_library_actions.h"
 #include "../shell_extension_service.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -14,22 +14,6 @@
 
 namespace snowdesktop::winui
 {
-enum class ThemeLibraryCommand { Refresh, SaveAs, Update, Apply, Remove, Export, Preview, Share, ChooseCover, Regenerate, SyncSubscriptions };
-struct ThemeLibraryRequest
-{
-    ThemeLibraryCommand command = ThemeLibraryCommand::Refresh;
-    std::string target = "global", id, name, quickPanel, popup, replacement;
-    unsigned scopes = themes::All;
-};
-struct ThemeLibraryResult
-{
-    bool succeeded = false;
-    themes::Library library;
-    std::string savedId;
-    std::wstring message;
-    bool sharingAvailable = false;
-};
-
 /** Commands emitted by the cached Personalization settings presenter. */
 struct PersonalizationPageActions
 {

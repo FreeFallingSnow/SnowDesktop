@@ -3,6 +3,7 @@
 #include "settings_presenter_controls.h"
 #include "../status_bar_shell_shortcut.h"
 #include "panel_appearance_editor.h"
+#include "theme_library_controls.h"
 #include "../status_bar_appearance.h"
 #include "merged_bar_height_editor.h"
 
@@ -39,6 +40,7 @@ struct StatusBarPagePresenter::Impl
         muxc::ComboBox combo;
         SettingRow row;
         std::shared_ptr<PanelAppearanceEditor> editor;
+        std::unique_ptr<ThemeLibraryControls> themes;
     };
     struct RuleControl
     {
@@ -100,7 +102,12 @@ struct StatusBarPagePresenter::Impl
                     theme.customized = true;
                 }, commit);
             });
+        const std::string target = member == &StatusBarSettings::noWindow ? "statusBar/noWindow" :
+            member == &StatusBarSettings::maximizedWindow ? "statusBar/maximizedWindow" : "statusBar";
+        control.themes = std::make_unique<ThemeLibraryControls>(localize, target);
+        control.root.Children().Append(control.themes->Content());
         control.root.Children().Append(control.editor->Content());
+        control.root.Children().Append(control.themes->SaveContent());
         parent.Children().Append(control.root);
         const auto combo = control.combo;
         const auto editor = control.editor;
@@ -253,6 +260,7 @@ struct StatusBarPagePresenter::Impl
         auto appearance = independentBody;
         Title(defaultThemeTitle); appearance.Children().Append(defaultThemeTitle);
         InitializeTheme(defaultTheme, appearance);
+
         auto scenarios = independentBody;
         Title(rulesTitle); scenarios.Children().Append(rulesTitle);
         rulesHint.TextWrapping(mux::TextWrapping::Wrap); rulesHint.Opacity(.72);
@@ -303,6 +311,7 @@ struct StatusBarPagePresenter::Impl
         control.combo.SelectedIndex(StatusBarThemeSelection(theme.mode));
         control.editor->SetValue(ResolveStatusBarAppearance(theme, globalAppearance), force);
         control.editor->Content().Visibility(theme.mode == 4 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        control.themes->SaveContent().Visibility(control.editor->Content().Visibility());
     }
     void Sync(bool force = false)
     {
@@ -399,6 +408,8 @@ struct StatusBarPagePresenter::Impl
         mergedHeight->Flush(); mergedHeight->Close();
         Flush(); closed = true;
         scalePreview.Close();
+        defaultTheme.themes->Close();
+        for (auto& rule : rules) rule->theme.themes->Close();
         defaultTheme.editor->Close();
         for (auto& rule : rules) rule->theme.editor->Close();
         for (auto& remove : revoke) remove(); revoke.clear();
@@ -409,7 +420,20 @@ StatusBarPagePresenter::StatusBarPagePresenter(DockPagePresenter::LocalizeCallba
     std::function<void(SettingsRoute)> navigate)
     : impl_(std::make_unique<Impl>(std::move(localize), style, std::move(navigate))) {}
 StatusBarPagePresenter::~StatusBarPagePresenter() { Close(); }
-void StatusBarPagePresenter::SetActions(DockPageActions actions) { impl_->mergedHeight->SetActions(actions); impl_->actions = std::move(actions); }
+void StatusBarPagePresenter::SetActions(DockPageActions actions)
+{
+    impl_->mergedHeight->SetActions(actions); impl_->actions = std::move(actions);
+    const auto configure = [state = impl_.get()](ThemeLibraryControls& themes) {
+        themes.SetActions(state->actions.themeLibrary, state->actions.themeAsync, [state] {
+            if (!state->active || state->closed || !state->hasSnapshot) return false;
+            state->Flush(); state->defaultTheme.editor->Flush();
+            for (auto& rule : state->rules) rule->theme.editor->Flush();
+            return true;
+        });
+    };
+    configure(*impl_->defaultTheme.themes);
+    for (auto& rule : impl_->rules) configure(*rule->theme.themes);
+}
 mux::UIElement StatusBarPagePresenter::Content() const { return impl_->root; }
 void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 {
@@ -422,6 +446,8 @@ void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     if (replaceSession)
     { impl_->scalePreview.Cancel(); impl_->scaleDirty = false; }
     impl_->generation = snapshot.generation;
+    impl_->defaultTheme.themes->SetGeneration(snapshot.generation);
+    for (auto& rule : impl_->rules) rule->theme.themes->SetGeneration(snapshot.generation);
     impl_->value = snapshot.values.general.statusBar;
     impl_->availability = ResolveBarSettingsAvailability(snapshot.values.general.dockEnabled, snapshot.values.dock,
         snapshot.values.general.statusBar, monitorCount);
@@ -434,10 +460,16 @@ void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     impl_->personalizationRevision = snapshot.domainRevisions.personalization;
     impl_->hasSnapshot = true;
 }
-void StatusBarPagePresenter::RefreshLocalizedText() { impl_->Localize(); }
+void StatusBarPagePresenter::RefreshLocalizedText()
+{
+    impl_->Localize(); impl_->defaultTheme.themes->LocalizeText();
+    for (auto& rule : impl_->rules) rule->theme.themes->LocalizeText();
+}
 void StatusBarPagePresenter::Activate(std::string_view focusId)
 {
     impl_->active = true;
+    impl_->defaultTheme.themes->Refresh();
+    for (auto& rule : impl_->rules) rule->theme.themes->Refresh();
     if (focusId == "statusBar.theme" || focusId == "statusBar.fullscreen" || focusId == "statusBar.maximizedWindow")
         impl_->independentAppearance.IsExpanded(true);
 }

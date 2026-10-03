@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "Die Vorschau verwendet feste Beispieldaten. Dein Desktop und persönliche Inhalte werden ausgeschlossen.",
   "themeLibrary.confirmShare": "Dieses Design und seine verknüpften Designs als einen Workshop-Inhalt veröffentlichen?",
   "themeLibrary.publishUpdate": "Inhalt aktualisieren",
-  "themeLibrary.publish": "Veröffentlichen"
+  "themeLibrary.publish": "Veröffentlichen",
+  "themeLibrary.import": "Importieren",
+  "themeLibrary.save": "Design speichern",
+  "themeLibrary.type": "Designtyp",
+  "themeLibrary.selectionHint": "Wählen Sie ein Design und dann „Anwenden“.",
+  "themeLibrary.transferHint": "Gespeicherte Designs importieren oder exportieren.",
+  "themeLibrary.nameHint": "Speichern unter gleichem Namen erstellt ein eigenes Design. Beim Aktualisieren bleibt die Kennung erhalten.",
+  "themeLibrary.appliesTo": "Gilt für",
+  "themeLibrary.legacyComponents": "Beim Aktualisieren bleibt der bisherige Widget-Bereich erhalten. Neue Designs verwenden nur die drei Leistenbereiche unten.",
+  "themeLibrary.cancel": "Abbrechen",
+  "themeLibrary.removeHint": "Wählen Sie einen Ersatz für Verknüpfungen. Vorhandene Objekte behalten ihr Aussehen als benutzerdefiniert.",
+  "themeLibrary.nameRequired": "Geben Sie einen Designnamen ein.",
+  "themeLibrary.scopesRequired": "Wählen Sie mindestens einen Bereich.",
+  "themeLibrary.bindingRequired": "Wählen Sie die verknüpften Schnellzugriffs- und Popup-Designs oder speichern Sie deren aktuelles Aussehen.",
+  "appearance.openDock": "Dock-Materialeinstellungen öffnen"
 }

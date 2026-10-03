@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "Preview uses fixed demonstration data. Your desktop and personal content are excluded.",
   "themeLibrary.confirmShare": "Publish this theme and its bound themes as one Workshop item?",
   "themeLibrary.publishUpdate": "Update item",
-  "themeLibrary.publish": "Publish"
+  "themeLibrary.publish": "Publish",
+  "themeLibrary.import": "Import",
+  "themeLibrary.save": "Save theme",
+  "themeLibrary.type": "Theme type",
+  "themeLibrary.selectionHint": "Choose a theme, then select Apply.",
+  "themeLibrary.transferHint": "Import or export saved themes.",
+  "themeLibrary.nameHint": "Saving the same name creates a separate theme. Updating keeps its existing identity.",
+  "themeLibrary.appliesTo": "Applies to",
+  "themeLibrary.legacyComponents": "Updating keeps this theme’s existing component scope. Saving a new theme uses only the three bar scopes below.",
+  "themeLibrary.cancel": "Cancel",
+  "themeLibrary.removeHint": "Choose a replacement for bindings. Existing objects keep their appearance as custom.",
+  "themeLibrary.nameRequired": "Enter a theme name.",
+  "themeLibrary.scopesRequired": "Select at least one scope.",
+  "themeLibrary.bindingRequired": "Choose the bound quick panel and popup themes, or choose to save their current appearances.",
+  "appearance.openDock": "Open Dock material settings"
 }

@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "预览使用固定演示数据，不包含你的桌面和个人内容。",
   "themeLibrary.confirmShare": "将此主题及其绑定的子主题作为一个工坊作品发布？",
   "themeLibrary.publishUpdate": "更新作品",
-  "themeLibrary.publish": "发布"
+  "themeLibrary.publish": "发布",
+  "themeLibrary.import": "导入",
+  "themeLibrary.save": "保存主题",
+  "themeLibrary.type": "主题类型",
+  "themeLibrary.selectionHint": "选择主题后点击“应用”。",
+  "themeLibrary.transferHint": "导入或导出已保存的主题。",
+  "themeLibrary.nameHint": "同名另存会创建独立主题，更新会保留原主题标识。",
+  "themeLibrary.appliesTo": "适用于",
+  "themeLibrary.legacyComponents": "更新此主题时保留已有的组件适用范围；另存为新主题只使用下方三栏范围。",
+  "themeLibrary.cancel": "取消",
+  "themeLibrary.removeHint": "请选择绑定替代主题。已有对象的外观会保留为自定义。",
+  "themeLibrary.nameRequired": "请输入主题名称。",
+  "themeLibrary.scopesRequired": "请至少选择一个适用范围。",
+  "themeLibrary.bindingRequired": "请选择绑定的快捷面板和弹窗主题，也可选择同时保存当前外观。",
+  "appearance.openDock": "打开 Dock 材质设置"
 }

@@ -1,6 +1,7 @@
 #include "theme_library_settings.h"
 #include "json_value.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -129,8 +130,76 @@ int RunThemeLibraryTests()
             &settings.general.globalQuickNavigationAppearance).contentTheme == 1,
         "only follow-global surfaces resolve global bindings");
     const auto existingGlobal = settings.personalization;
+    {
+        auto bars = global;
+        bars.id = "theme/three-bars"; bars.scopes = Dock | StatusBar | Taskbar;
+        auto scoped = integration; scoped.themes.emplace(bars.id, bars);
+        auto values = settings;
+        check(ApplyTarget(scoped, "global", bars.id, values, error) &&
+            Select(scoped, "global", bars.id, Kind::Global, bars.scopes, error),
+            "a three-bar global is selectable as the global source without a legacy component scope");
+        const auto globalChoices = Choices(scoped, Kind::Global, 0);
+        const auto componentChoices = Choices(scoped, Kind::Global, Components);
+        check(std::any_of(globalChoices.begin(), globalChoices.end(), [&](const auto& theme) { return theme.id == bars.id; }) &&
+            std::none_of(componentChoices.begin(), componentChoices.end(),
+                [&](const auto& theme) { return theme.id == bars.id; }),
+            "global source choices include new bar themes while component choices remain scoped");
+        for (auto target : {"dock", "statusBar", "taskbar"})
+            check(ApplyTarget(scoped, target, bars.id, values, error), "each of the three saved bar scopes accepts its global theme");
+        const auto bytes = EncodeLibrary(scoped, error); Library roundTrip;
+        check(DecodeLibrary(bytes, roundTrip, error) && EncodeLibrary(roundTrip, error) == bytes,
+            "three-bar global selection uses the unchanged nonzero reference schema");
+        auto dockOnly = bars; dockOnly.scopes = Dock;
+        scoped.themes.at(bars.id) = dockOnly;
+        const auto original = values.dock;
+        check(!ApplyTarget(scoped, "taskbar", bars.id, values, error) && values.dock == original,
+            "bar entry rejects a theme outside its scope without changing personal data");
+    }
     check(ApplyTarget(integration, "dock", global.id, settings, error) && settings.personalization == existingGlobal &&
         !settings.dock.followComponentAppearance, "selecting a theme for one object affects only that object");
+    {
+        SettingsValues scenarios = settings;
+        scenarios.general.statusBar.noWindow.theme = {4, true, MakeAppearancePreset(kAppearancePresetCustom)};
+        scenarios.general.statusBar.maximizedWindow.theme = scenarios.general.statusBar.noWindow.theme;
+        scenarios.general.statusBar.noWindow.theme.appearance.widgetAlpha = .11f;
+        scenarios.general.statusBar.maximizedWindow.theme.appearance.widgetAlpha = .22f;
+        scenarios.dock.systemTaskbarShellUi.themeMode = SystemTaskbarThemeMode::Custom;
+        scenarios.dock.systemTaskbarMaximizedWindow.themeMode = SystemTaskbarThemeMode::Custom;
+        scenarios.dock.systemTaskbarVisibleWindow.themeMode = SystemTaskbarThemeMode::Custom;
+        scenarios.dock.systemTaskbarShellUi.appearance.widgetAlpha = .33f;
+        scenarios.dock.systemTaskbarMaximizedWindow.appearance.widgetAlpha = .44f;
+        scenarios.dock.systemTaskbarVisibleWindow.appearance.widgetAlpha = .55f;
+        constexpr std::array<const char*, 5> sources{"statusBar/noWindow", "statusBar/maximizedWindow",
+            "taskbar/shellUi", "taskbar/maximizedWindow", "taskbar/visibleWindow"};
+        constexpr std::array<float, 5> expected{.11f,.22f,.33f,.44f,.55f};
+        for (std::size_t i = 0; i < sources.size(); ++i)
+        {
+            auto captured = CaptureTarget(sources[i], scenarios);
+            check(captured.kind == Kind::Global && captured.scopes == (i < 2 ? StatusBar : Taskbar) &&
+                std::abs(captured.appearance.widgetAlpha - expected[i]) < .0001f,
+                "scenario save captures its own resolved appearance rather than the default bar");
+            auto local = integration; auto theme = global; theme.id = "theme/scenario";
+            theme.appearance.widgetAlpha = .83f; theme.scopes = Dock | StatusBar | Taskbar;
+            local.themes.emplace(theme.id, theme);
+            auto applied = scenarios;
+            check(ApplyTarget(local, sources[i], theme.id, applied, error) &&
+                Select(local, sources[i], theme.id, Kind::Global, TargetScope(sources[i]), error),
+                "scenario selection uses the existing global kind and bar scope");
+            check(CaptureTarget(sources[i], applied).appearance.widgetAlpha == .83f &&
+                applied.personalization == scenarios.personalization && applied.navigation == scenarios.navigation &&
+                applied.general.statusBar.noWindow.enabled == scenarios.general.statusBar.noWindow.enabled &&
+                applied.dock.systemTaskbarVisibleWindow.enabled == scenarios.dock.systemTaskbarVisibleWindow.enabled,
+                "scenario application preserves global appearance, personal navigation and rule enablement");
+            for (std::size_t j = 0; j < sources.size(); ++j) if (i != j)
+                check(CaptureTarget(sources[j], applied).appearance.widgetAlpha == expected[j], "scenario application leaves other overrides unchanged");
+            local.themes.at(theme.id).appearance.widgetAlpha = .91f;
+            const auto updated = ApplySavedUpdate(local, theme.id, applied, error);
+            check(updated.size() == 1 && updated.front() == sources[i] && CaptureTarget(sources[i], applied).appearance.widgetAlpha == .91f,
+                "explicit saved-theme update follows the selected scenario reference");
+            ReconcileReferences(local, scenarios);
+            check(local.references.at(sources[i]).id.empty(), "editing a scenario detaches only its saved selection");
+        }
+    }
     const auto patch = WidgetPatch(global);
     check(patch.presetId == "__custom" && patch.followPersonalization == false && patch.backgroundOpacity == global.appearance.widgetAlpha,
         "widget selection uses host appearance patch instead of applying author functional presets");

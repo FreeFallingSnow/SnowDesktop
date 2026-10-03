@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "A prévia usa dados fixos de demonstração. Sua área de trabalho e seu conteúdo pessoal não são incluídos.",
   "themeLibrary.confirmShare": "Publicar este tema e seus temas vinculados como um único item do Workshop?",
   "themeLibrary.publishUpdate": "Atualizar item",
-  "themeLibrary.publish": "Publicar"
+  "themeLibrary.publish": "Publicar",
+  "themeLibrary.import": "Importar",
+  "themeLibrary.save": "Salvar tema",
+  "themeLibrary.type": "Tipo de tema",
+  "themeLibrary.selectionHint": "Escolha um tema e selecione “Aplicar”.",
+  "themeLibrary.transferHint": "Importe ou exporte temas salvos.",
+  "themeLibrary.nameHint": "Salvar com o mesmo nome cria um tema separado. Atualizar mantém seu identificador.",
+  "themeLibrary.appliesTo": "Aplicar a",
+  "themeLibrary.legacyComponents": "A atualização mantém o escopo existente dos widgets. Um novo tema usa apenas as três barras abaixo.",
+  "themeLibrary.cancel": "Cancelar",
+  "themeLibrary.removeHint": "Escolha um tema substituto para os vínculos. Os objetos existentes mantêm sua aparência personalizada.",
+  "themeLibrary.nameRequired": "Digite um nome para o tema.",
+  "themeLibrary.scopesRequired": "Selecione pelo menos um escopo.",
+  "themeLibrary.bindingRequired": "Escolha os temas vinculados do painel rápido e das janelas pop-up ou salve suas aparências atuais.",
+  "appearance.openDock": "Abrir as configurações de material do Dock"
 }

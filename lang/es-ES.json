@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "La vista previa utiliza datos de demostración fijos. No incluye tu escritorio ni contenido personal.",
   "themeLibrary.confirmShare": "¿Publicar este tema y sus temas vinculados como un único elemento de Workshop?",
   "themeLibrary.publishUpdate": "Actualizar elemento",
-  "themeLibrary.publish": "Publicar"
+  "themeLibrary.publish": "Publicar",
+  "themeLibrary.import": "Importar",
+  "themeLibrary.save": "Guardar tema",
+  "themeLibrary.type": "Tipo de tema",
+  "themeLibrary.selectionHint": "Elige un tema y pulsa «Aplicar».",
+  "themeLibrary.transferHint": "Importa o exporta temas guardados.",
+  "themeLibrary.nameHint": "Guardar con el mismo nombre crea un tema independiente. Actualizar conserva su identificador.",
+  "themeLibrary.appliesTo": "Aplicar a",
+  "themeLibrary.legacyComponents": "Al actualizar se conserva el ámbito de los widgets existentes. Un tema nuevo solo usa las tres barras siguientes.",
+  "themeLibrary.cancel": "Cancelar",
+  "themeLibrary.removeHint": "Elige un tema de sustitución para los vínculos. Los objetos existentes conservan su apariencia personalizada.",
+  "themeLibrary.nameRequired": "Introduce un nombre para el tema.",
+  "themeLibrary.scopesRequired": "Selecciona al menos un ámbito.",
+  "themeLibrary.bindingRequired": "Elige los temas vinculados del panel rápido y las ventanas emergentes, o guarda su apariencia actual.",
+  "appearance.openDock": "Abrir los ajustes de material del Dock"
 }

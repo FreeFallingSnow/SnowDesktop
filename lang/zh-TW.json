@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "預覽使用固定示範資料，不包含你的桌面和個人內容。",
   "themeLibrary.confirmShare": "將此主題及其綁定的子主題作為一個工作坊作品發佈？",
   "themeLibrary.publishUpdate": "更新作品",
-  "themeLibrary.publish": "發佈"
+  "themeLibrary.publish": "發佈",
+  "themeLibrary.import": "匯入",
+  "themeLibrary.save": "儲存主題",
+  "themeLibrary.type": "主題類型",
+  "themeLibrary.selectionHint": "選擇主題後按一下「套用」。",
+  "themeLibrary.transferHint": "匯入或匯出已儲存的主題。",
+  "themeLibrary.nameHint": "同名另存會建立獨立主題，更新會保留原主題識別碼。",
+  "themeLibrary.appliesTo": "適用於",
+  "themeLibrary.legacyComponents": "更新此主題時保留既有的元件適用範圍；另存新主題僅使用下方三欄範圍。",
+  "themeLibrary.cancel": "取消",
+  "themeLibrary.removeHint": "請選擇繫結替代主題。現有物件的外觀會保留為自訂。",
+  "themeLibrary.nameRequired": "請輸入主題名稱。",
+  "themeLibrary.scopesRequired": "請至少選擇一個適用範圍。",
+  "themeLibrary.bindingRequired": "請選擇繫結的快捷面板與彈出視窗主題，也可選擇同時儲存目前外觀。",
+  "appearance.openDock": "開啟 Dock 材質設定"
 }

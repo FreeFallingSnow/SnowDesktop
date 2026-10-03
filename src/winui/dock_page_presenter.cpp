@@ -9,6 +9,7 @@
 
 #include "../dock_settings.h"
 #include "../taskbar_appearance.h"
+#include "theme_library_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -146,6 +147,7 @@ struct DynamicRuleControl
     ContinuousControl blurRadius;
     muxc::ToggleSwitch acrylic{nullptr};
     SettingRow acrylicRow;
+    std::unique_ptr<ThemeLibraryControls> savedThemes;
     SystemTaskbarDynamicRule DockSettings::* member = nullptr;
 
     winrt::event_token enabledToken{};
@@ -345,6 +347,7 @@ struct DockPagePresenter::Impl
     SettingsCard behaviorCard;
     SettingsCard taskbarCard;
     SettingsCard taskbarAppearanceCard;
+    std::unique_ptr<ThemeLibraryControls> taskbarThemes;
     SettingsCard taskbarRulesCard;
     SettingsCard taskbarSystemPanelCard;
     muxc::Button dockPreview, taskbarPreview;
@@ -663,6 +666,7 @@ struct DockPagePresenter::Impl
         taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
         InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot);
+        taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar");
         taskbarAppearanceCard.content.Children().Append(taskbarPreview);
         taskbarThemeCombo = NewCombo();
         taskbarContentThemeCombo = NewCombo();
@@ -672,6 +676,7 @@ struct DockPagePresenter::Impl
         taskbarRuntimeStatus.IsClosable(false);
         taskbarRuntimeStatus.IsOpen(false);
         taskbarAppearanceCard.content.Children().Append(taskbarThemeRow.root);
+        taskbarAppearanceCard.content.Children().Append(taskbarThemes->Content());
         taskbarAppearanceCard.content.Children().Append(
             taskbarContentThemeRow.root);
         taskbarAppearanceCard.content.Children().Append(taskbarRuntimeStatus);
@@ -707,6 +712,7 @@ struct DockPagePresenter::Impl
         taskbarGradient.sections.material.Children().Append(taskbarGlassRow.root);
         taskbarGradient.sections.material.Children().Append(taskbarBlurRadius.root);
         taskbarGradient.sections.material.Children().Append(taskbarAcrylicRow.root);
+        taskbarCustomAppearance.Children().Append(taskbarThemes->SaveContent());
         taskbarAppearanceCard.content.Children().Append(
             taskbarCustomAppearance);
 
@@ -966,6 +972,10 @@ struct DockPagePresenter::Impl
         control.appearanceDetails.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         control.appearanceDetails.Children().Append(control.themeRow.root);
+        const std::string target = member == &DockSettings::systemTaskbarShellUi ? "taskbar/shellUi" :
+            member == &DockSettings::systemTaskbarMaximizedWindow ? "taskbar/maximizedWindow" : "taskbar/visibleWindow";
+        control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target);
+        control.appearanceDetails.Children().Append(control.savedThemes->Content());
         control.appearanceDetails.Children().Append(
             control.contentThemeRow.root);
 
@@ -998,6 +1008,7 @@ struct DockPagePresenter::Impl
         control.gradient.sections.material.Children().Append(control.glassRow.root);
         control.gradient.sections.material.Children().Append(control.blurRadius.root);
         control.gradient.sections.material.Children().Append(control.acrylicRow.root);
+        control.customAppearance.Children().Append(control.savedThemes->SaveContent());
         control.appearanceDetails.Children().Append(control.customAppearance);
         control.details.Children().Append(control.appearanceDetails);
         control.root.Children().Append(control.details);
@@ -2337,6 +2348,8 @@ struct DockPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        taskbarThemes->LocalizeText();
+        for (auto* rule : dynamicRules) rule->savedThemes->LocalizeText();
         dockPreview.Content(winrt::box_value(L("themeLibrary.preview", L"")));
         taskbarPreview.Content(winrt::box_value(L("themeLibrary.preview", L"")));
         const auto refresh = [this](TaskbarGradientControl& gradient) {
@@ -2628,6 +2641,8 @@ struct DockPagePresenter::Impl
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
         generation = snapshot.generation;
+        taskbarThemes->SetGeneration(generation);
+        for (auto* rule : dynamicRules) rule->savedThemes->SetGeneration(generation);
         confirmationGate->generation.store(generation,
             std::memory_order_release);
         const bool previousUpdating = updatingControls;
@@ -2837,6 +2852,8 @@ struct DockPagePresenter::Impl
         active = false;
         closed = true;
         StopCardHighlights();
+        taskbarThemes->Close();
+        for (auto* rule : dynamicRules) rule->savedThemes->Close();
         taskbarGradient.borderEditor->Close();
         for (auto* rule : dynamicRules) rule->gradient.borderEditor->Close();
         taskbarGradient.editor->Close();
@@ -2919,6 +2936,17 @@ void DockPagePresenter::SetActions(DockPageActions actions)
     {
         impl_->mergedHeight->SetActions(actions);
         impl_->actions = std::move(actions);
+        const auto configure = [state = impl_.get()](ThemeLibraryControls& themes) {
+            themes.SetActions(state->actions.themeLibrary, state->actions.themeAsync, [state] {
+                if (!state->active || state->closed || !state->hasSnapshot) return false;
+                state->CommitOpenColorEditors(); state->CommitContinuousEdits();
+                state->taskbarGradient.borderEditor->Flush(); state->taskbarGradient.editor->Flush();
+                for (auto* rule : state->dynamicRules) { rule->gradient.borderEditor->Flush(); rule->gradient.editor->Flush(); }
+                return true;
+            });
+        };
+        configure(*impl_->taskbarThemes);
+        for (auto* rule : impl_->dynamicRules) configure(*rule->savedThemes);
     }
 }
 
@@ -2970,6 +2998,10 @@ void DockPagePresenter::ActivateTaskbar() noexcept
         return;
     impl_->taskbarInputReady = false;
     impl_->active = true;
+    try {
+        impl_->taskbarThemes->Refresh();
+        for (auto* rule : impl_->dynamicRules) rule->savedThemes->Refresh();
+    } catch (...) {}
     impl_->confirmationGate->active = false;
     try { impl_->runtimeTimer.Start(); impl_->RefreshTaskbarRuntimeState(); } catch (...) {}
 }

@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "L’aperçu utilise des données de démonstration fixes. Votre bureau et vos contenus personnels sont exclus.",
   "themeLibrary.confirmShare": "Publier ce thème et ses thèmes associés dans un seul élément du Workshop ?",
   "themeLibrary.publishUpdate": "Mettre à jour",
-  "themeLibrary.publish": "Publier"
+  "themeLibrary.publish": "Publier",
+  "themeLibrary.import": "Importer",
+  "themeLibrary.save": "Enregistrer le thème",
+  "themeLibrary.type": "Type de thème",
+  "themeLibrary.selectionHint": "Choisissez un thème, puis cliquez sur « Appliquer ».",
+  "themeLibrary.transferHint": "Importer ou exporter les thèmes enregistrés.",
+  "themeLibrary.nameHint": "Enregistrer sous le même nom crée un thème distinct. La mise à jour conserve son identifiant.",
+  "themeLibrary.appliesTo": "Appliquer à",
+  "themeLibrary.legacyComponents": "La mise à jour conserve la portée existante des widgets. Un nouveau thème utilise uniquement les trois barres ci-dessous.",
+  "themeLibrary.cancel": "Annuler",
+  "themeLibrary.removeHint": "Choisissez un thème de remplacement pour les associations. Les objets existants conservent leur apparence personnalisée.",
+  "themeLibrary.nameRequired": "Saisissez un nom de thème.",
+  "themeLibrary.scopesRequired": "Sélectionnez au moins une portée.",
+  "themeLibrary.bindingRequired": "Choisissez les thèmes associés du panneau rapide et des fenêtres contextuelles, ou enregistrez leur apparence actuelle.",
+  "appearance.openDock": "Ouvrir les réglages du matériau du Dock"
 }

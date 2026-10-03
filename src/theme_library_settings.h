@@ -5,6 +5,7 @@
 #include "widget_settings_model.h"
 #include "status_bar_appearance.h"
 #include "taskbar_appearance.h"
+#include <array>
 
 namespace snowdesktop::themes
 {
@@ -41,13 +42,30 @@ inline bool WidgetMatches(const widget_runtime::WidgetHostAppearanceState& state
 inline Kind TargetKind(std::string_view target)
 { return target == "quickPanel" ? Kind::QuickPanel : target == "popup" ? Kind::Popup : Kind::Global; }
 inline unsigned TargetScope(std::string_view target)
-{ return target == "dock" ? Dock : target == "statusBar" ? StatusBar : target == "taskbar" ? Taskbar : Components; }
+{ return target == "dock" ? Dock : target == "statusBar" || target.starts_with("statusBar/") ? StatusBar : target == "taskbar" || target.starts_with("taskbar/") ? Taskbar : Components; }
+// Private settings source identities. Packages still contain only three kinds.
+inline constexpr std::array<std::string_view, 11> AppearanceTargets{
+    "global", "dock", "statusBar", "taskbar", "quickPanel", "popup",
+    "statusBar/noWindow", "statusBar/maximizedWindow", "taskbar/shellUi", "taskbar/maximizedWindow", "taskbar/visibleWindow"};
+inline StatusBarAppearanceRule StatusBarSettings::* StatusRule(std::string_view target)
+{
+    return target == "statusBar/noWindow" ? &StatusBarSettings::noWindow :
+        target == "statusBar/maximizedWindow" ? &StatusBarSettings::maximizedWindow : nullptr;
+}
+inline SystemTaskbarDynamicRule DockSettings::* TaskbarRule(std::string_view target)
+{
+    return target == "taskbar/shellUi" ? &DockSettings::systemTaskbarShellUi :
+        target == "taskbar/maximizedWindow" ? &DockSettings::systemTaskbarMaximizedWindow :
+        target == "taskbar/visibleWindow" ? &DockSettings::systemTaskbarVisibleWindow : nullptr;
+}
 inline Theme CaptureTarget(std::string_view target, const SettingsValues& values)
 {
     auto appearance = values.personalization;
     if (target == "dock") appearance = ResolveDockAppearance(values.dock, values.personalization);
     if (target == "taskbar") appearance = ResolveTaskbarAppearance(values.dock, values.personalization);
     if (target == "statusBar") appearance = ResolveStatusBarAppearance(values.general.statusBar.theme, values.personalization);
+    if (const auto member = StatusRule(target)) appearance = ResolveStatusBarAppearance((values.general.statusBar.*member).theme, values.personalization);
+    if (const auto member = TaskbarRule(target)) appearance = ResolveTaskbarRuleAppearance(values.dock.*member, values.personalization);
     if (target == "quickPanel") appearance = ResolveSurfaceTheme(values.general.quickNavigationAppearance,
         values.personalization, values.general.quickNavTheme, true, &values.general.globalQuickNavigationAppearance);
     if (target == "popup") appearance = ResolveSurfaceTheme(values.general.collectionPopupAppearance,
@@ -58,9 +76,9 @@ inline Theme CaptureTarget(std::string_view target, const SettingsValues& values
 }
 inline void ReconcileReferences(Library& library, const SettingsValues& values)
 {
-    for (const auto target : {"global", "dock", "statusBar", "taskbar", "quickPanel", "popup"})
+    for (const auto target : AppearanceTargets)
     {
-        auto found = library.references.find(target);
+        auto found = library.references.find(std::string(target));
         if (found == library.references.end() || found->second.id.empty()) continue;
         const auto saved = Resolve(found->second.snapshot, found->second.id);
         auto current = CaptureTarget(target, values);
@@ -90,7 +108,7 @@ inline bool ApplyTarget(const Library& library, std::string_view target, std::st
 {
     const auto theme = Resolve(library.themes, id);
     if (!theme || theme->kind != TargetKind(target) || (theme->kind == Kind::Global &&
-        !(theme->scopes & TargetScope(target)))) { error = "invalidSelection"; return false; }
+        (target != "global" && !(theme->scopes & TargetScope(target))))) { error = "invalidSelection"; return false; }
     const SurfaceTheme snapshot{4, true, Capture(theme->kind, theme->appearance).appearance};
     if (target == "global")
     {
@@ -109,6 +127,13 @@ inline bool ApplyTarget(const Library& library, std::string_view target, std::st
     { ApplyAppearance(values.dock.customAppearance, theme->appearance); values.dock.appearancePreset = kAppearancePresetCustom; values.dock.followComponentAppearance = false; }
     else if (target == "taskbar")
     { ApplyAppearance(values.dock.systemTaskbarAppearance, theme->appearance); values.dock.systemTaskbarFollowPersonalization = false; values.dock.systemTaskbarContentTheme = theme->appearance.contentTheme; }
+    else if (const auto member = StatusRule(target)) (values.general.statusBar.*member).theme = snapshot;
+    else if (const auto member = TaskbarRule(target))
+    {
+        auto& rule = values.dock.*member;
+        ApplyAppearance(rule.appearance, theme->appearance);
+        rule.themeMode = SystemTaskbarThemeMode::Custom; rule.contentTheme = theme->appearance.contentTheme;
+    }
     else { error = "invalidSelection"; return false; }
     return true;
 }
@@ -116,9 +141,9 @@ inline std::vector<std::string> ApplySavedUpdate(const Library& library, std::st
     SettingsValues& values, std::string& error)
 {
     std::vector<std::string> targets;
-    for (const auto target : {"global", "dock", "statusBar", "taskbar", "quickPanel", "popup"})
+    for (const auto target : AppearanceTargets)
     {
-        const auto reference = library.references.find(target);
+        const auto reference = library.references.find(std::string(target));
         if (reference == library.references.end() || reference->second.id.empty()) continue;
         const auto theme = Resolve(library.themes, reference->second.id);
         if (!theme) continue;

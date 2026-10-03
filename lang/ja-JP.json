@@ -2486,5 +2486,19 @@
   "themeLibrary.fixedPreview": "プレビューには固定のデモデータを使用します。デスクトップや個人の内容は含まれません。",
   "themeLibrary.confirmShare": "このテーマと関連する子テーマを一つのワークショップ作品として公開しますか？",
   "themeLibrary.publishUpdate": "作品を更新",
-  "themeLibrary.publish": "公開"
+  "themeLibrary.publish": "公開",
+  "themeLibrary.import": "インポート",
+  "themeLibrary.save": "テーマを保存",
+  "themeLibrary.type": "テーマの種類",
+  "themeLibrary.selectionHint": "テーマを選択して「適用」を押してください。",
+  "themeLibrary.transferHint": "保存済みテーマをインポートまたはエクスポートします。",
+  "themeLibrary.nameHint": "同じ名前で保存すると別のテーマが作成されます。更新では識別子が維持されます。",
+  "themeLibrary.appliesTo": "適用先",
+  "themeLibrary.legacyComponents": "更新時は既存のウィジェット適用範囲を維持します。新規保存では下の3つのバーのみが対象です。",
+  "themeLibrary.cancel": "キャンセル",
+  "themeLibrary.removeHint": "関連付けの代替テーマを選択してください。既存のオブジェクトの外観はカスタムとして維持されます。",
+  "themeLibrary.nameRequired": "テーマ名を入力してください。",
+  "themeLibrary.scopesRequired": "適用先を1つ以上選択してください。",
+  "themeLibrary.bindingRequired": "関連付けるクイックパネルとポップアップのテーマを選択するか、現在の外観を同時に保存してください。",
+  "appearance.openDock": "Dockのマテリアル設定を開く"
 }
