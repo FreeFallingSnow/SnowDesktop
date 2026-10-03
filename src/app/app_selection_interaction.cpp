@@ -4,6 +4,202 @@
 
 // Selection projection, keyboard focus sync and marquee selection.
 
+namespace
+{
+std::wstring DesktopSelectionKey(const DesktopItem& item)
+{
+    return L"item:" + ToUpperInvariant(item.layoutKey);
+}
+
+std::wstring FolderSelectionKey(
+    const DesktopWidget& owner, const FolderEntry& entry)
+{
+    return L"folder:" + owner.id + L":" + ToUpperInvariant(entry.fullPath);
+}
+}
+
+std::vector<SelectionController::Target>
+DesktopApp::GetDesktopSelectionTargets(const std::wstring& pageId)
+{
+    std::vector<DesktopItem*> ordered;
+    for (auto& item : items_)
+    {
+        if (item.name.empty() || IsRectEmptyRect(item.bounds) ||
+            IsItemInAnyWidget(item) ||
+            (desktopIconsHidden_ && !IsRetainedLargeIcon(item)) ||
+            (!pageId.empty() && item.gridCell.pageId != pageId))
+            continue;
+        if (!gridPages_.empty() && std::none_of(
+                gridPages_.begin(), gridPages_.end(),
+                [&](const GridPage& page) {
+                    return page.id == item.gridCell.pageId;
+                }))
+            continue;
+        ordered.push_back(&item);
+    }
+    // Match desktop keyboard traversal: top to bottom, then the next column.
+    std::sort(ordered.begin(), ordered.end(), [](const auto* a, const auto* b) {
+        if (a->gridCell.pageId != b->gridCell.pageId)
+            return a->gridCell.pageId < b->gridCell.pageId;
+        if (a->gridCell.column != b->gridCell.column)
+            return a->gridCell.column < b->gridCell.column;
+        if (a->gridCell.row != b->gridCell.row)
+            return a->gridCell.row < b->gridCell.row;
+        return a->layoutKey < b->layoutKey;
+    });
+    std::vector<SelectionController::Target> targets;
+    for (auto* item : ordered)
+        targets.push_back({ DesktopSelectionKey(*item), &item->selected });
+    return targets;
+}
+
+std::vector<SelectionController::Target>
+DesktopApp::GetWidgetSelectionTargets(size_t widgetIndex)
+{
+    std::vector<SelectionController::Target> targets;
+    if (widgetIndex >= widgets_.size()) return targets;
+    auto& widget = widgets_[widgetIndex];
+    const auto appendKeys = [&](const auto& keys) {
+        for (const auto& key : keys)
+        {
+            const size_t index = FindItemIndexByKey(key);
+            if (index < items_.size())
+                targets.push_back({ DesktopSelectionKey(items_[index]),
+                    &items_[index].selected });
+        }
+    };
+    const auto appendFolders = [&](DesktopWidget& owner, const auto& indices) {
+        for (const size_t index : indices)
+            if (index < owner.folderEntries.size())
+            {
+                auto& entry = owner.folderEntries[index];
+                targets.push_back({ FolderSelectionKey(owner, entry),
+                    &entry.selected });
+            }
+    };
+    for (auto& container : containers_)
+    {
+        auto* view = dynamic_cast<WidgetContainer*>(container.get());
+        if (!view || view->GetWidgetData() != &widget) continue;
+        if (auto* fileGroup = dynamic_cast<FileGroup*>(view))
+        {
+            if (fileGroup->IsGroupSearchActive())
+            {
+                for (const auto& result : fileGroup->GetGroupSearchResults())
+                {
+                    if (!result.folderMapping)
+                        appendKeys(std::vector<std::wstring>{ result.desktopKey });
+                    else
+                    {
+                        const size_t source = FindWidgetIndexById(result.sourceId);
+                        if (source < widgets_.size())
+                            appendFolders(widgets_[source],
+                                std::vector<size_t>{ result.folderEntryIndex });
+                    }
+                }
+            }
+            else
+            {
+                appendKeys(fileGroup->GetHostedVisibleItemKeys());
+                if (auto* source = fileGroup->GetActiveSourceContainer();
+                    source && source->GetWidgetData())
+                    appendFolders(*source->GetWidgetData(),
+                        fileGroup->GetHostedVisibleFolderIndices());
+            }
+        }
+        else if (auto* collectionGroup = dynamic_cast<CollectionGroup*>(view))
+            appendKeys(collectionGroup->GetVisibleItemKeys());
+        else if (auto* categories = dynamic_cast<FileCategories*>(view))
+            appendKeys(categories->GetSearchResultKeys());
+        else if (auto* mapping = dynamic_cast<FolderMapping*>(view))
+            appendFolders(widget, mapping->GetVisibleEntryIndices());
+        else if (widget.type == DesktopWidgetType::Collection)
+            appendKeys(widget.itemKeys);
+        break;
+    }
+    return targets;
+}
+
+std::vector<SelectionController::Target> DesktopApp::GetPopupSelectionTargets()
+{
+    std::vector<SelectionController::Target> targets;
+    auto* popup = GetOpenPopupWidget();
+    if (!popup) return targets;
+    if (dockFolderPopupOpen_)
+    {
+        for (size_t i = 0; i < GetPopupItemCount(*popup); ++i)
+        {
+            const size_t index = GetPopupFolderEntryIndex(*popup, i);
+            if (index >= popup->folderEntries.size()) continue;
+            auto& entry = popup->folderEntries[index];
+            targets.push_back({ FolderSelectionKey(*popup, entry), &entry.selected });
+        }
+    }
+    else
+        for (const auto& key : GetPopupItemKeys(*popup))
+        {
+            const size_t index = FindItemIndexByKey(key);
+            if (index < items_.size())
+                targets.push_back({ DesktopSelectionKey(items_[index]),
+                    &items_[index].selected });
+        }
+    return targets;
+}
+
+std::wstring DesktopApp::GetItemSelectionKey(Item* item) const
+{
+    if (auto* icon = dynamic_cast<DesktopIcon*>(item);
+        icon && icon->GetDesktopItem())
+        return DesktopSelectionKey(*icon->GetDesktopItem());
+    if (auto* icon = dynamic_cast<FolderEntryIcon*>(item);
+        icon && icon->GetFolderEntry())
+    {
+        auto* owner = dynamic_cast<WidgetContainer*>(icon->GetContainer());
+        if (auto* group = dynamic_cast<FileGroup*>(owner))
+            owner = group->GetSourceContainerForItem(item);
+        if (owner && owner->GetWidgetData())
+            return FolderSelectionKey(*owner->GetWidgetData(), *icon->GetFolderEntry());
+    }
+    return L"";
+}
+
+std::wstring DesktopApp::GetWidgetSelectionScope(size_t widgetIndex) const
+{
+    return widgetIndex < widgets_.size()
+        ? L"widget:" + widgets_[widgetIndex].id : L"";
+}
+
+std::wstring DesktopApp::GetPopupSelectionScope() const
+{
+    return dockFolderPopupOpen_
+        ? L"dock-popup:" + dockFolderPopupWidget_.id
+        : L"popup:" + GetWidgetSelectionScope(popupWidgetIndex_);
+}
+
+size_t DesktopApp::GetSelectionWidgetIndex() const
+{
+    if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size())
+        return keyboardNavWidgetIndex_;
+    for (size_t index = 0; index < widgets_.size(); ++index)
+        if (!IsGroupedWidget(widgets_[index]) &&
+            (widgets_[index].selected || HasSelectedFilesInWidget(index)))
+            return index;
+    return static_cast<size_t>(-1);
+}
+
+bool DesktopApp::ExtendPointerSelection(const std::wstring& scope,
+    const std::vector<SelectionController::Target>& targets,
+    const std::wstring& key, bool additive)
+{
+    return selectionController_.SelectRange(scope, targets, key, additive, [&]() {
+        ClearSelection();
+        // Dock folder entries live outside the desktop model ranges.
+        if (dockFolderPopupOpen_)
+            for (auto& entry : dockFolderPopupWidget_.folderEntries)
+                entry.selected = false;
+    });
+}
+
 bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
 {
     const bool hasMarqueeTarget =

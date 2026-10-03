@@ -959,6 +959,10 @@ private:
         size_t folderEntryIndex = static_cast<size_t>(-1);
     };
 
+    // Desktop selection uses the complete filtered list, including rows that
+    // have no materialized Slot while outside the scrolling viewport.
+    friend class DesktopApp;
+
     const std::vector<SearchResultRef>&
         GetGroupSearchResults() const;
     Item* CreateGroupSearchItem(

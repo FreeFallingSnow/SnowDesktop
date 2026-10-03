@@ -1962,6 +1962,18 @@ private:
     void SelectWidgetOnly(size_t index);
     /** @brief 切换指定桌面项的选择状态。 @param index 桌面项索引 */
     void ToggleSelection(int index);
+    std::vector<SelectionController::Target> GetDesktopSelectionTargets(
+        const std::wstring& pageId = L"");
+    std::vector<SelectionController::Target> GetWidgetSelectionTargets(
+        size_t widgetIndex);
+    std::vector<SelectionController::Target> GetPopupSelectionTargets();
+    std::wstring GetItemSelectionKey(Item* item) const;
+    std::wstring GetWidgetSelectionScope(size_t widgetIndex) const;
+    std::wstring GetPopupSelectionScope() const;
+    size_t GetSelectionWidgetIndex() const;
+    bool ExtendPointerSelection(const std::wstring& scope,
+        const std::vector<SelectionController::Target>& targets,
+        const std::wstring& key, bool additive);
     /** @brief 获取当前框选目标使用的滚动偏移。 */
     int GetMarqueeScrollOffset() const;
     /** @brief 获取当前框选目标的内容视口。 */

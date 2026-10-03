@@ -669,36 +669,30 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (auto* popup = GetOpenPopupWidget();
             IsCollectionPopupInteractive() && popup)
         {
+            const auto targets = GetPopupSelectionTargets();
             ClearSelection();
             if (dockFolderPopupOpen_)
-            {
                 for (auto& entry : popup->folderEntries) entry.selected = false;
-                for (size_t i = 0; i < GetPopupItemCount(*popup); ++i)
-                    popup->folderEntries[GetPopupFolderEntryIndex(*popup, i)].selected = true;
-            }
-            else
-            {
-                for (const auto& itemKey : GetPopupItemKeys(*popup))
-                {
-                    const size_t index = FindItemIndexByKey(itemKey);
-                    if (index < items_.size())
-                        items_[index].selected = true;
-                }
-            }
+            selectionController_.SelectAll(targets);
             InvalidateRect(
                 hwnd_, nullptr, FALSE);
             break;
         }
-        ClearSelection();
-        for (auto& oo : items_oo_)
+        const size_t widgetIndex = GetSelectionWidgetIndex();
+        if (widgetIndex < widgets_.size())
         {
-            auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
-            if (!icon) continue;
-            DesktopItem* di = icon->GetDesktopItem();
-            if (!di || di->name.empty()) continue;
-            if (desktopIconsHidden_ && !IsRetainedLargeIcon(*di)) continue;
-            di->selected = true;
+            const auto targets = GetWidgetSelectionTargets(widgetIndex);
+            ClearSelection();
+            selectionController_.SelectAll(targets);
+            if (targets.empty())
+                widgets_[widgetIndex].selected = true;
+            SyncKeyboardNavFromSelection();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            break;
         }
+        const auto targets = GetDesktopSelectionTargets();
+        ClearSelection();
+        selectionController_.SelectAll(targets);
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
     break;
