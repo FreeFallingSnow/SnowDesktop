@@ -106,6 +106,77 @@ int main()
                 !hover.Consume(100 + delay + 1, delay),
             "a configured hover delay opens exactly once at its threshold");
     }
+
+    // Drag dwell uses the same production close dispatcher, but must retain
+    // its candidate/timer until publishing. Model/GPU callbacks are replaced;
+    // the real timing and animation states remain under test. A queued B must
+    // never open after the pointer has moved to C or the drag has ended.
+    for (const bool fadeMode : {false, true})
+    {
+        State visual;
+        visual.Configure(fadeMode, 2.0);
+        visual.ShowImmediately();
+        PopupDwellController dwell;
+        std::size_t source = 0;
+        int closes = 0, opens = 0;
+        const auto poll = [&](DWORD now, bool dragging) {
+            if (!dragging || !dwell.IsReady(now, 600)) return false;
+            const auto candidate = dwell.Candidate();
+            return OpenAfterClose(visual, source != PopupDwellController::NoCandidate,
+                [&] { ++closes; visual.Close(now); },
+                [&] {
+                    Check(visual.IsHidden(), "drag replacement preserves outgoing content until hidden");
+                    source = candidate;
+                    dwell.Reset();
+                    visual.Open(now);
+                    ++opens;
+                });
+        };
+        const auto finishClose = [&](DWORD now) {
+            visual.Advance(now);
+            Check(visual.IsHidden(), "outgoing drag popup reaches its real close endpoint");
+            source = PopupDwellController::NoCandidate;
+        };
+
+        dwell.Track(1, 100);
+        Check(!poll(700, true) && source == 0 && closes == 1 && opens == 0 &&
+                dwell.Candidate() == 1 && visual.IsClosing(),
+            "drag A to B starts close without replacing A or discarding B's dwell");
+        visual.Advance(760);
+        Check(!poll(760, true) && source == 0 && closes == 1 && visual.GetVisual().visible,
+            "drag polling cannot retire the outgoing scale/fade frame early");
+        dwell.Track(2, 760);
+        finishClose(880);
+        Check(!poll(880, true) && !poll(1359, true) && opens == 0,
+            "A to B to C does not open stale B or bypass C's dwell");
+        Check(poll(1360, true) && source == 2 && opens == 1,
+            "A to B to C publishes only C after both close and dwell finish");
+        visual.Advance(1540);
+        dwell.Track(0, 1540);
+        Check(!poll(2140, true) && source == 2 && closes == 2,
+            "returning to A first closes the current C popup");
+        finishClose(2320);
+        Check(poll(2320, true) && source == 0 && opens == 2,
+            "returning to A cannot be closed by C's completed timeline");
+        visual.Advance(2500);
+        dwell.Track(1, 2500);
+        Check(!poll(3100, true) && closes == 3, "next drag replacement starts close");
+        dwell.Reset(); // Escape, release, lost capture or destroyed candidate.
+        finishClose(3280);
+        Check(!poll(3280, false) && !poll(4000, true) && opens == 2,
+            "ending/cancelling the drag during close leaves no deferred open");
+    }
+    {
+        State visual;
+        visual.ShowImmediately();
+        PopupDwellController dwell;
+        dwell.Track(1, 100);
+        int opens = 0;
+        Check(dwell.IsReady(700, 600) && OpenAfterClose(visual, true,
+                [&] { visual.ResetHidden(); }, [&] { dwell.Reset(); ++opens; }) &&
+                opens == 1 && dwell.IsIdle(),
+            "drag replacement with effects disabled publishes synchronously and retires dwell");
+    }
     {
         PopupHoverController hover;
         hover.Track(L"collection:updated-delay", 100);

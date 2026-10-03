@@ -702,16 +702,24 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 IsFolderDockEntry(dockEntries_[entryIndex]) &&
                 !IsLogicalDockEntryType(dockEntries_[entryIndex].type))
             {
-                ResetDockHandoffDwell();
-                OpenDockFolderPopupAt(
-                    entryIndex, dwellPoint);
-                RefreshDwellDragTarget(dwellPoint);
-                InvalidateRect(
-                    hwnd_, nullptr, FALSE);
-                PresentPointerInteractionFrame();
-                PresentDesktopPointerUpdate();
-                InvalidateFloatingDockWindow(
-                    true);
+                // Do not reset the old popup's cache/timeline by publishing
+                // another folder during its close. Keep polling the live drag
+                // target, so leaving, cancellation or a third folder wins.
+                snowdesktop::popup_animation_rules::OpenAfterClose(
+                    popupAnimation_, GetOpenPopupWidget() != nullptr,
+                    [this] {
+                        pendingCollectionPopupOpen_.reset();
+                        BeginCollectionPopupClose(false);
+                    },
+                    [this, entryIndex, dwellPoint] {
+                        ResetDockHandoffDwell();
+                        OpenDockFolderPopupAt(entryIndex, dwellPoint);
+                        RefreshDwellDragTarget(dwellPoint);
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                        PresentPointerInteractionFrame();
+                        PresentDesktopPointerUpdate();
+                        InvalidateFloatingDockWindow(true);
+                    });
                 return;
             }
 
