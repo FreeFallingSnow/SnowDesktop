@@ -197,6 +197,10 @@ public:
     {
         return waitingForWallpaperEngineFrame_;
     }
+    std::size_t CardFrameCacheBytesForTesting() const
+    {
+        return cardFrameCacheBytes_;
+    }
 
 private:
     enum class WallpaperBackdropLoadResult
@@ -262,7 +266,14 @@ private:
     modern_menu::Appearance pendingAppearance_ =
         modern_menu::Appearance::FollowSystem;
     ApplyHandler pendingOnApply_;
-    std::unordered_map<std::wstring, Bitmap> cardFrameCache_;
+    struct CachedCardFrame
+    {
+        Bitmap bitmap;
+        std::uint64_t lastUse = 0;
+    };
+    std::unordered_map<std::wstring, CachedCardFrame> cardFrameCache_;
+    std::size_t cardFrameCacheBytes_ = 0;
+    std::uint64_t cardFrameUseSerial_ = 0;
     widget_preview::Wallpaper desktopWallpaper_;
     RECT desktopWallpaperBounds_{};
     struct WallpaperEngineCaptureState

@@ -127,6 +127,46 @@ bool PumpMessagesUntil(
     return predicate();
 }
 
+void TestPreviewFrameMemoryBudget()
+{
+    using namespace snowdesktop::component_preview;
+    Window window;
+    int renders = 0;
+    const RECT anchor{120, 100, 280, 420};
+    const auto show = [&](int id) {
+        Model model;
+        model.title = L"Memory budget preview";
+        Card card;
+        card.title = L"Budgeted component";
+        card.previewWidth = 640;
+        card.previewHeight = 480;
+        card.cacheKey = L"budget-" + std::to_wstring(id);
+        card.render = [&](int width, int height, UINT,
+                const StagePlacement&, const ApplySettings&, bool) {
+            ++renders;
+            return SolidBitmap(width, height, 0xff204080u);
+        };
+        model.cards.push_back(std::move(card));
+        Expect(window.Show(model, anchor, nullptr, 96, false,
+                {}, {}, snowdesktop::modern_menu::Appearance::OpaqueDark),
+            "budgeted preview renders through the production window");
+        Expect(window.CardFrameCacheBytesForTesting() <= 32ull * 1024 * 1024,
+            "full-resolution preview history stays within 32 MiB");
+    };
+    for (int id = 0; id < 40; ++id) show(id);
+    const int coldRenders = renders;
+    show(39);
+    show(38);
+    Expect(renders == coldRenders,
+        "recent full-resolution previews remain warm after budget eviction");
+    show(0);
+    Expect(renders == coldRenders + 1,
+        "an evicted old preview is regenerated on demand");
+    window.Close();
+    Expect(window.CardFrameCacheBytesForTesting() == 0,
+        "closing a reusable preview releases all cached frame pixels");
+}
+
 } // namespace
 
 void RunWidgetBackgroundCacheTests();
@@ -135,6 +175,7 @@ void RunScrollContentClipTests();
 
 int wmain()
 {
+    TestPreviewFrameMemoryBudget();
     TestWidgetClipFactoryReplacement();
     RunWidgetBackgroundCacheTests();
     RunWidgetTextLayoutCacheTests();

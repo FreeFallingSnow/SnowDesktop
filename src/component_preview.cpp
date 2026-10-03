@@ -762,6 +762,9 @@ void Window::Close()
     onApply_ = {};
     pendingModel_ = {};
     pendingOnApply_ = {};
+    cardFrameCache_.clear();
+    cardFrameCacheBytes_ = 0;
+    cardFrameUseSerial_ = 0;
     desktopWallpaper_ = {};
     desktopWallpaperBounds_ = {};
     wallpaperEngineCache_.reset();
@@ -1314,7 +1317,10 @@ bool Window::RenderCurrent()
     {
         const auto cached = cardFrameCache_.find(frameCacheKey);
         if (cached != cardFrameCache_.end())
-            rendered = cached->second;
+        {
+            cached->second.lastUse = ++cardFrameUseSerial_;
+            rendered = cached->second.bitmap;
+        }
     }
     if (rendered.pixels.empty() && card.render)
     {
@@ -1322,9 +1328,29 @@ bool Window::RenderCurrent()
             stagePlacement, card.applySettings, componentHovered_);
         if (!frameCacheKey.empty() && !rendered.pixels.empty())
         {
-            if (cardFrameCache_.size() >= 128)
-                cardFrameCache_.clear();
-            cardFrameCache_[frameCacheKey] = rendered;
+            // Full-resolution frames vary with grid span and monitor DPI.
+            // Keep recent previews warm without retaining 128 large rasters.
+            constexpr std::size_t maximumBytes = 32ull * 1024 * 1024;
+            const auto frameBytes = rendered.pixels.size() * sizeof(std::uint32_t);
+            while (!cardFrameCache_.empty() &&
+                (cardFrameCache_.size() >= 128 ||
+                    cardFrameCacheBytes_ > maximumBytes ||
+                    frameBytes > maximumBytes - cardFrameCacheBytes_))
+            {
+                const auto oldest = std::min_element(
+                    cardFrameCache_.begin(), cardFrameCache_.end(),
+                    [](const auto& a, const auto& b) {
+                        return a.second.lastUse < b.second.lastUse;
+                    });
+                cardFrameCacheBytes_ -= oldest->second.bitmap.pixels.size() *
+                    sizeof(std::uint32_t);
+                cardFrameCache_.erase(oldest);
+            }
+            // A single unusually large active frame stays warm; the next
+            // distinct frame evicts it before any other raster is retained.
+            cardFrameCache_.emplace(frameCacheKey,
+                CachedCardFrame{rendered, ++cardFrameUseSerial_});
+            cardFrameCacheBytes_ += frameBytes;
         }
     }
     DrawBitmap(dc, rendered, previewRect_);
