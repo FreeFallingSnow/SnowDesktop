@@ -1450,17 +1450,19 @@ struct PersonalizationPagePresenter::Impl
         const int target = libraryTarget.SelectedIndex();
         libraryCard.title.Text(L("themeLibrary.title", L"Saved themes"));
         libraryTarget.Items().Clear();
-        for (const auto name : libraryTargets) libraryTarget.Items().Append(winrt::box_value(L("themeLibrary." + std::string(name))));
+        constexpr const char* targetKeys[] = {"themeLibrary.global", "themeLibrary.dock", "themeLibrary.statusBar",
+            "themeLibrary.taskbar", "themeLibrary.quickPanel", "themeLibrary.popup"};
+        for (const auto key : targetKeys) libraryTarget.Items().Append(winrt::box_value(L(key)));
         libraryTarget.SelectedIndex(target < 0 ? 0 : target);
         libraryName.Header(winrt::box_value(L("themeLibrary.name")));
         libraryChoice.Header(winrt::box_value(L("themeLibrary.choose")));
         libraryQuick.Header(winrt::box_value(L("themeLibrary.quickPanel")));
         libraryPopup.Header(winrt::box_value(L("themeLibrary.popup")));
         libraryReplacement.Header(winrt::box_value(L("themeLibrary.replacement")));
-        constexpr const char* labels[] = {"saveAs", "update", "apply", "remove", "export"};
-        for (std::size_t i = 0; i < libraryButtons.size(); ++i) libraryButtons[i].Label(L("themeLibrary." + std::string(labels[i])));
-        constexpr const char* scopes[] = {"components", "dock", "statusBar", "taskbar"};
-        for (std::size_t i = 0; i < libraryScopeChecks.size(); ++i) libraryScopeChecks[i].Content(winrt::box_value(L("themeLibrary." + std::string(scopes[i]))));
+        constexpr const char* labels[] = {"themeLibrary.saveAs", "themeLibrary.update", "themeLibrary.apply", "themeLibrary.remove", "themeLibrary.export"};
+        for (std::size_t i = 0; i < libraryButtons.size(); ++i) libraryButtons[i].Label(L(labels[i]));
+        constexpr const char* scopes[] = {"themeLibrary.components", "themeLibrary.dock", "themeLibrary.statusBar", "themeLibrary.taskbar"};
+        for (std::size_t i = 0; i < libraryScopeChecks.size(); ++i) libraryScopeChecks[i].Content(winrt::box_value(L(scopes[i])));
         updatingLibrary = previousLibrary;
         RefreshLibraryChoices();
         edgeLightEditor->RefreshLocalizedText();

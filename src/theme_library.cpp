@@ -105,7 +105,7 @@ bool Colors(const std::map<std::string, std::string>& colors)
 std::string EncodeTheme(const Theme& theme)
 {
     if (Builtin(theme.id)) return "{\"id\":" + Quote(theme.id) + '}';
-    const auto appearance = EncodePanelAppearance(theme.appearance);
+    const auto appearance = EncodePanelAppearance(theme.appearance, true);
     if (appearance.empty()) return {};
     std::string out = "{\"id\":" + Quote(theme.id) + ",\"name\":" + Quote(theme.name) +
         ",\"appearance\":" + appearance;
@@ -149,7 +149,7 @@ bool DecodeTheme(const JsonValue& json, Kind kind, Theme& theme)
     if (!appearance || !Keys(*appearance, {"backgroundR", "backgroundG", "backgroundB", "opacity", "borderR",
         "borderG", "borderB", "borderOpacity", "borderWidth", "highlightWidth", "highlightStrength", "blurRadius",
         "cornerRadius", "glass", "acrylic", "highlight", "edgeLight", "contentTheme", "gradient", "gradientEndOpacity"}) ||
-        !DecodePanelAppearance(*appearance, out.appearance)) return false;
+        !DecodePanelAppearance(*appearance, out.appearance, true)) return false;
     if (kind == Kind::Global)
     {
         const auto* scopes = json.Find("scopes");

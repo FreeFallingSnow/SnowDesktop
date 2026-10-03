@@ -182,10 +182,10 @@ int RunThemeLibraryTests()
         general.globalCollectionPopupAppearance.appearance.gradientEndA == .81f, "bound snapshots survive settings reload");
     JsonValue legacyPanel, badPanel;
     PersonalizationSettings panel;
-    check(ParseJson("{}", legacyPanel) && DecodePanelAppearance(legacyPanel, panel) && panel.gradientEndA == .65f,
+    check(ParseJson("{}", legacyPanel) && DecodePanelAppearance(legacyPanel, panel, true) && panel.gradientEndA == .65f,
         "legacy surface snapshots without end opacity keep their original default");
     const auto beforeBadPanel = panel;
-    check(ParseJson("{\"gradientEndOpacity\":2}", badPanel) && !DecodePanelAppearance(badPanel, panel) && panel == beforeBadPanel,
+    check(ParseJson("{\"gradientEndOpacity\":2}", badPanel) && !DecodePanelAppearance(badPanel, panel, true) && panel == beforeBadPanel,
         "invalid surface end opacity cannot partially replace a successful snapshot");
     { std::ofstream old(generalPath); old << "{}"; }
     general = {};

@@ -80,7 +80,10 @@ template<class Visit> void VisitPanelAppearanceFlags(Visit visit)
     visit("highlight", &PersonalizationSettings::widgetEdgeHighlightEnabled);
 }
 
-inline bool DecodePanelAppearance(const JsonValue& input, PersonalizationSettings& output)
+// Taskbar material storage deliberately excludes the legacy widget bottom-bar
+// opacity. Complete theme and surface snapshots explicitly opt into that field.
+inline bool DecodePanelAppearance(const JsonValue& input, PersonalizationSettings& output,
+    bool includeBottomBarOpacity = false)
 {
     if (!input.IsObject()) return false;
     PersonalizationSettings value;
@@ -105,7 +108,7 @@ inline bool DecodePanelAppearance(const JsonValue& input, PersonalizationSetting
         if (!theme->IsNumber() || (theme->number != 0 && theme->number != 1)) valid = false;
         else value.contentTheme = static_cast<int>(theme->number);
     }
-    if (const auto* opacity = input.Find("gradientEndOpacity"))
+    if (const auto* opacity = includeBottomBarOpacity ? input.Find("gradientEndOpacity") : nullptr)
     {
         if (!opacity->IsNumber() || !std::isfinite(opacity->number) || opacity->number < 0 || opacity->number > 1) valid = false;
         else value.gradientEndA = static_cast<float>(opacity->number);
@@ -117,12 +120,13 @@ inline bool DecodePanelAppearance(const JsonValue& input, PersonalizationSetting
     return valid;
 }
 
-inline std::string EncodePanelAppearance(const PersonalizationSettings& value)
+inline std::string EncodePanelAppearance(const PersonalizationSettings& value,
+    bool includeBottomBarOpacity = false)
 {
     std::ostringstream output; output.imbue(std::locale::classic()); output.precision(9);
     output << '{';
     bool valid = (value.contentTheme == 0 || value.contentTheme == 1) &&
-        std::isfinite(value.gradientEndA) && value.gradientEndA >= 0 && value.gradientEndA <= 1;
+        (!includeBottomBarOpacity || (std::isfinite(value.gradientEndA) && value.gradientEndA >= 0 && value.gradientEndA <= 1));
     VisitPanelAppearanceFields([&](auto key, auto field, double minimum, double maximum) {
         const double number = value.*field;
         if (!std::isfinite(number) || number < minimum || number > maximum) valid = false;
@@ -132,7 +136,7 @@ inline std::string EncodePanelAppearance(const PersonalizationSettings& value)
     const auto gradient = EncodePanelGradient(value.panelGradient);
     const auto light = EncodeEdgeLight(value.edgeLight);
     if (!valid || gradient.empty() || light.empty()) return {};
-    output << "\"gradientEndOpacity\":" << value.gradientEndA << ',';
+    if (includeBottomBarOpacity) output << "\"gradientEndOpacity\":" << value.gradientEndA << ',';
     output << "\"edgeLight\":" << light << ',';
     output << "\"contentTheme\":" << value.contentTheme << ",\"gradient\":" << gradient << '}';
     return output.str();
@@ -153,14 +157,14 @@ inline bool DecodeSurfaceTheme(const JsonValue& input, SurfaceTheme& output, boo
         value.customized = customized->boolean;
     }
     if (const auto* appearance = input.Find("appearance"))
-        if (!DecodePanelAppearance(*appearance, value.appearance)) return false;
+        if (!DecodePanelAppearance(*appearance, value.appearance, true)) return false;
     output = value;
     return true;
 }
 
 inline std::string EncodeSurfaceTheme(const SurfaceTheme& value, bool includeStatusBarPresets = false)
 {
-    const auto appearance = EncodePanelAppearance(value.appearance);
+    const auto appearance = EncodePanelAppearance(value.appearance, true);
     if (value.mode < -2 || value.mode > (includeStatusBarPresets ? 8 : 4) || appearance.empty()) return {};
     return "{\"mode\":" + std::to_string(value.mode) + ",\"customized\":" + (value.customized ? "true" : "false") + ",\"appearance\":" + appearance + '}';
 }
