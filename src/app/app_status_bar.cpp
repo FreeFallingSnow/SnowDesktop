@@ -405,7 +405,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             }, owner);
         };
         systemPanel_->ShowInputMethod(std::move(actions), owner, anchor,
-            statusBar_->AppearanceForMonitor(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)),
+            collectionPopupAppearance_,
             generalSettings_.statusBar, systemDataProvider_);
         hold->shortcutFinished = true;
         TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds, L"panel-requested");
