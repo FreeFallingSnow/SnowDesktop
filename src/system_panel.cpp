@@ -287,11 +287,7 @@ struct SystemPanel::Impl
         // Merely enlarging the GDI region still clips straight edges at the
         // render target while retaining the outside half around the corners.
         const int w=static_cast<int>(std::ceil(scene.width*scale))+kSurfacePadding*2,h=static_cast<int>(std::ceil(scene.height*scale))+kSurfacePadding*2;
-        const bool calendarPanel=current->action==StatusBarAction::Calendar;
-        const bool controls=current->action!=StatusBarAction::Tray&&current->action!=StatusBarAction::InputMethodPanel&&!calendarPanel&&!IsSystemResourceAction(current->action)&&current->confirmPower.empty();
-        const auto alignment=controls||(calendarPanel&&current->clockAtRight)?SystemPanelAlignment::ScreenRight:
-            calendarPanel?SystemPanelAlignment::IconCenter:SystemPanelAlignment::IconRight;
-        const auto placement=PlaceSystemPanel(current->anchor,{w,h},info.rcWork,current->settings.position,scale,alignment);
+        const auto placement=PlaceSystemPanel(current->anchor,{w,h},info.rcWork,current->settings.position,scale,SystemPanelAlignment::IconCenter);
         const int left=placement.left,top=placement.top;
         std::vector<RECT> next;for(const auto& c:scene.cards)next.push_back({static_cast<LONG>(std::lround(c.left*scale)),static_cast<LONG>(std::lround(c.top*scale)),static_cast<LONG>(std::lround(c.right*scale)),static_cast<LONG>(std::lround(c.bottom*scale))});
         for(auto& card:next)OffsetRect(&card,kSurfacePadding,kSurfacePadding);
