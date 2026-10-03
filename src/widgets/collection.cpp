@@ -981,8 +981,8 @@ void Collection::ReorderMembers(const std::vector<size_t>& indices, size_t inser
 /**
  * @brief 获取集合中所有选中项的 Item 指针（用于拖拽操作）
  *
- * 遍历集合的全部项，为每个选中项创建 DesktopIcon 并计算其可见边界，
- * 缓存在 dragSourceCache_ 中。调用时清空之前的拖拽缓存。
+ * 遍历集合的全部项，为每个选中项创建 DesktopIcon。当前没有可见边界的
+ * 成员仍属于拖拽载荷，其空边界仅用于预览几何。调用时清空之前的拖拽缓存。
  * @return 选中项的 Item 指针列表
  */
 std::vector<Item*> Collection::GetSelectedItems() const
@@ -998,7 +998,6 @@ std::vector<Item*> Collection::GetSelectedItems() const
         DesktopItem& di = app_->GetDesktopItems()[idx];
         if (!di.selected) continue;
         RECT bounds = app_->GetVisibleCollectionItemBounds(idx);
-        if (IsRectEmptyRect(bounds)) continue;
 
         auto icon = std::make_unique<DesktopIcon>(&app_->GetDesktopItems()[idx], const_cast<Collection*>(this), app_);
         icon->SetBounds(bounds);
