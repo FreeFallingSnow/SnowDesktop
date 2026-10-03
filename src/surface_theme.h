@@ -105,6 +105,11 @@ inline bool DecodePanelAppearance(const JsonValue& input, PersonalizationSetting
         if (!theme->IsNumber() || (theme->number != 0 && theme->number != 1)) valid = false;
         else value.contentTheme = static_cast<int>(theme->number);
     }
+    if (const auto* opacity = input.Find("gradientEndOpacity"))
+    {
+        if (!opacity->IsNumber() || !std::isfinite(opacity->number) || opacity->number < 0 || opacity->number > 1) valid = false;
+        else value.gradientEndA = static_cast<float>(opacity->number);
+    }
     if (const auto* gradient = input.Find("gradient"))
         valid = DecodePanelGradient(*gradient, value.panelGradient) && valid;
     if (const auto* light = input.Find("edgeLight")) valid = DecodeEdgeLight(*light, value.edgeLight) && valid;
@@ -116,7 +121,8 @@ inline std::string EncodePanelAppearance(const PersonalizationSettings& value)
 {
     std::ostringstream output; output.imbue(std::locale::classic()); output.precision(9);
     output << '{';
-    bool valid = value.contentTheme == 0 || value.contentTheme == 1;
+    bool valid = (value.contentTheme == 0 || value.contentTheme == 1) &&
+        std::isfinite(value.gradientEndA) && value.gradientEndA >= 0 && value.gradientEndA <= 1;
     VisitPanelAppearanceFields([&](auto key, auto field, double minimum, double maximum) {
         const double number = value.*field;
         if (!std::isfinite(number) || number < minimum || number > maximum) valid = false;
@@ -126,6 +132,7 @@ inline std::string EncodePanelAppearance(const PersonalizationSettings& value)
     const auto gradient = EncodePanelGradient(value.panelGradient);
     const auto light = EncodeEdgeLight(value.edgeLight);
     if (!valid || gradient.empty() || light.empty()) return {};
+    output << "\"gradientEndOpacity\":" << value.gradientEndA << ',';
     output << "\"edgeLight\":" << light << ',';
     output << "\"contentTheme\":" << value.contentTheme << ",\"gradient\":" << gradient << '}';
     return output.str();

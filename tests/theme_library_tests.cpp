@@ -21,6 +21,9 @@ int RunThemeLibraryTests()
         if (!passed) { ++failures; std::cerr << "FAIL theme library: " << message << '\n'; }
     };
     std::string error, savedId;
+    check(ErrorLocalizationKey("writeFailed") == "themeLibrary.error.writeFailed" &&
+        ErrorLocalizationKey("unexpected") == "themeLibrary.error.invalidPackage",
+        "known and unexpected failures resolve complete localized feedback keys");
     Library library;
     Theme quick = Capture(Kind::QuickPanel, MakeQuickNavigationAppearancePreset(kAppearancePresetLight));
     quick.id = "theme/quick"; quick.name = "Panel"; quick.layout.fontSize = 19; quick.colors["searchText"] = "#123456";
@@ -169,10 +172,21 @@ int RunThemeLibraryTests()
     const auto directoryPath = root / "blocked.snowtheme"; std::filesystem::create_directory(directoryPath);
     check(!WritePackage(directoryPath, package, error) && std::filesystem::is_directory(directoryPath), "failed atomic replacement leaves its destination intact");
     const auto generalPath = root / "general.json";
+    settings.general.globalQuickNavigationAppearance.appearance.gradientEndA = .37f;
+    settings.general.globalCollectionPopupAppearance.appearance.gradientEndA = .81f;
     check(SaveGeneralSettings(generalPath.c_str(), settings.general), "persist bound surface snapshots");
     GeneralSettings general;
     check(LoadGeneralSettings(generalPath.c_str(), general) && general.globalQuickNavigationAppearance == settings.general.globalQuickNavigationAppearance &&
-        general.globalCollectionPopupAppearance == settings.general.globalCollectionPopupAppearance, "bound snapshots survive settings reload");
+        general.globalCollectionPopupAppearance == settings.general.globalCollectionPopupAppearance &&
+        general.globalQuickNavigationAppearance.appearance.gradientEndA == .37f &&
+        general.globalCollectionPopupAppearance.appearance.gradientEndA == .81f, "bound snapshots survive settings reload");
+    JsonValue legacyPanel, badPanel;
+    PersonalizationSettings panel;
+    check(ParseJson("{}", legacyPanel) && DecodePanelAppearance(legacyPanel, panel) && panel.gradientEndA == .65f,
+        "legacy surface snapshots without end opacity keep their original default");
+    const auto beforeBadPanel = panel;
+    check(ParseJson("{\"gradientEndOpacity\":2}", badPanel) && !DecodePanelAppearance(badPanel, panel) && panel == beforeBadPanel,
+        "invalid surface end opacity cannot partially replace a successful snapshot");
     { std::ofstream old(generalPath); old << "{}"; }
     general = {};
     check(LoadGeneralSettings(generalPath.c_str(), general) && !general.globalQuickNavigationAppearance.customized &&

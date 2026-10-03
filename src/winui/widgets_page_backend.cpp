@@ -2366,7 +2366,7 @@ struct WidgetsPageBackend::Impl final
                                     themes::Transact(themes::LibraryPath(), [&](auto& current, auto& detail) {
                                         return themes::Import(current, package, mapping, detail);
                                     }, library, error);
-                                auto message = owner->L(installed ? "themeLibrary.installed" : "themeLibrary.error." + error);
+                                auto message = owner->L(installed ? "themeLibrary.installed" : themes::ErrorLocalizationKey(error));
                                 owner->FinishTask(installed ? WidgetsPageHostOperationResult::Success(false, std::move(message)) :
                                     WidgetsPageHostOperationResult::Failure(std::move(message)));
                                 return;

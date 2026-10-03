@@ -48,6 +48,7 @@ using NewId = std::function<std::string()>;
 
 std::string CreateId();
 std::string KindName(Kind kind);
+std::string ErrorLocalizationKey(std::string_view error);
 std::optional<Theme> Builtin(std::string_view id);
 std::vector<Theme> Choices(const Library& library, Kind kind, unsigned scope = All);
 const Theme* Find(const Package& package, std::string_view id);

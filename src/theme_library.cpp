@@ -105,13 +105,8 @@ bool Colors(const std::map<std::string, std::string>& colors)
 std::string EncodeTheme(const Theme& theme)
 {
     if (Builtin(theme.id)) return "{\"id\":" + Quote(theme.id) + '}';
-    auto appearance = EncodePanelAppearance(theme.appearance);
-    if (appearance.empty() || !std::isfinite(theme.appearance.gradientEndA) ||
-        theme.appearance.gradientEndA < 0 || theme.appearance.gradientEndA > 1) return {};
-    appearance.pop_back();
-    std::ostringstream gradient; gradient.imbue(std::locale::classic()); gradient.precision(9);
-    gradient << theme.appearance.gradientEndA;
-    appearance += ",\"gradientEndOpacity\":" + gradient.str() + '}';
+    const auto appearance = EncodePanelAppearance(theme.appearance);
+    if (appearance.empty()) return {};
     std::string out = "{\"id\":" + Quote(theme.id) + ",\"name\":" + Quote(theme.name) +
         ",\"appearance\":" + appearance;
     if (theme.kind == Kind::Global)
@@ -155,11 +150,6 @@ bool DecodeTheme(const JsonValue& json, Kind kind, Theme& theme)
         "borderG", "borderB", "borderOpacity", "borderWidth", "highlightWidth", "highlightStrength", "blurRadius",
         "cornerRadius", "glass", "acrylic", "highlight", "edgeLight", "contentTheme", "gradient", "gradientEndOpacity"}) ||
         !DecodePanelAppearance(*appearance, out.appearance)) return false;
-    if (const auto* end = appearance->Find("gradientEndOpacity"))
-    {
-        if (!end->IsNumber() || !std::isfinite(end->number) || end->number < 0 || end->number > 1) return false;
-        out.appearance.gradientEndA = static_cast<float>(end->number);
-    }
     if (kind == Kind::Global)
     {
         const auto* scopes = json.Find("scopes");
@@ -277,6 +267,25 @@ std::string CreateId()
 std::string KindName(Kind kind)
 {
     switch (kind) { case Kind::Global: return "global"; case Kind::QuickPanel: return "quickPanel"; default: return "popup"; }
+}
+std::string ErrorLocalizationKey(std::string_view error)
+{
+    constexpr std::pair<std::string_view, std::string_view> keys[] = {
+        {"invalidUtf8", "themeLibrary.error.invalidUtf8"},
+        {"invalidPackage", "themeLibrary.error.invalidPackage"},
+        {"missingDependency", "themeLibrary.error.missingDependency"},
+        {"unsupportedVersion", "themeLibrary.error.unsupportedVersion"},
+        {"emptyPackage", "themeLibrary.error.emptyPackage"},
+        {"themeNotFound", "themeLibrary.error.themeNotFound"},
+        {"invalidSelection", "themeLibrary.error.invalidSelection"},
+        {"idConflict", "themeLibrary.error.idConflict"},
+        {"themeInUse", "themeLibrary.error.themeInUse"},
+        {"readFailed", "themeLibrary.error.readFailed"},
+        {"writeFailed", "themeLibrary.error.writeFailed"},
+        {"libraryBusy", "themeLibrary.error.libraryBusy"},
+        {"unsupportedExtension", "themeLibrary.error.unsupportedExtension"}};
+    for (const auto& [reason, key] : keys) if (reason == error) return std::string(key);
+    return "themeLibrary.error.invalidPackage";
 }
 std::optional<Theme> Builtin(std::string_view id)
 {

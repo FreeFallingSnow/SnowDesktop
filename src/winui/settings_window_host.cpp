@@ -2277,7 +2277,7 @@ struct SettingsWindowHost::Impl
         if (!current || current->externalReplacementPending) return result;
         std::string error;
         const auto feedback = [&]() {
-            result.message = result.succeeded ? L("themeLibrary.success") : L("themeLibrary.error." + error);
+            result.message = result.succeeded ? L("themeLibrary.success") : L(themes::ErrorLocalizationKey(error));
             if (result.message.empty()) result.message = L("themeLibrary.error.invalidPackage");
         };
         if (request.command == ThemeLibraryCommand::Refresh)
