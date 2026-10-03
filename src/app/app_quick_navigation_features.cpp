@@ -29,7 +29,9 @@ int DesktopApp::QuickNavigationGridCellWidth() const
 int DesktopApp::QuickNavigationGridCellHeight() const
 {
     const auto& layout = navigationSettings_.layout;
-    return layout.iconSize + 12 + (layout.fontSize + 4) * layout.labelLines + 8;
+    // Fixed trailing space keeps the next row outside the opening viewport
+    // with the shared defaults of all four quick-navigation themes.
+    return layout.iconSize + 12 + (layout.fontSize + 4) * layout.labelLines + 16;
 }
 RECT DesktopApp::GetQuickNavigationToolbarRect(const RECT& overlay, int button) const
 {

@@ -456,6 +456,11 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         quickNavItemTextFormat_.Get(), &trimmingSign)) && trimmingSign)
         layout->SetTrimming(&trimming, trimmingSign.Get());
 
+    // Match desktop titles: a short label is centered in the reserved title
+    // band while wrapped labels retain their first-line position.
+    DWRITE_TEXT_METRICS metrics{};
+    if (SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.lineCount == 1)
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
     {

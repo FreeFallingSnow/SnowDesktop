@@ -191,8 +191,9 @@ RECT DesktopApp::GetQuickNavigationContentRect(const RECT& overlay) const
     const int padding = QuickNavScale(UseQuickNavigationList() || quickNavigationMenu_ == QuickNavigationMenu::Types ?
         std::max(4, navigationSettings_.layout.padding - 8) : navigationSettings_.layout.padding);
     const bool idleHints = quickNavigationCollapsed_ && GetQuickNavigationEffectiveSearchText().empty() && quickNavigationMenu_ == QuickNavigationMenu::None;
+    const int bottomInset = idleHints ? padding + QuickNavScale(32) : QuickNavScale(2);
     return MakeRect(search.left + padding, search.bottom + QuickNavScale(browsing ? 56 : 12),
-        search.right - padding, overlay.bottom - padding - QuickNavScale(idleHints ? 32 : 0));
+        search.right - padding, overlay.bottom - bottomInset);
 }
 
 int DesktopApp::GetQuickNavigationTabStripContentWidth(const RECT& /*overlay*/) const
