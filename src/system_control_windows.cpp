@@ -9,7 +9,9 @@ class WindowsBackend final : public Backend
     std::map<std::string, std::shared_ptr<Backend>, std::less<>> sources_{
         {"audio", windows::CreateAudioBackend()}, {"power", windows::CreatePowerBackend()},
         {"brightness", windows::CreateBrightnessBackend()}, {"wifi", windows::CreateWifiBackend()},
-        {"bluetooth", windows::CreateBluetoothBackend()}, {"media", windows::CreateMediaBackend()}};
+        {"bluetooth", windows::CreateBluetoothBackend()}, {"media", windows::CreateMediaBackend()},
+        {"projection", windows::CreateProjectionBackend()}, {"hotspot", windows::CreateHotspotBackend()},
+        {"airplane", windows::CreateAirplaneBackend()}, {"awake", windows::CreateAwakeBackend()}};
 public:
     std::map<std::string, Snapshot> Sample(std::string_view source, const Cancellation& cancel) override
     { const auto found = sources_.find(source); return found == sources_.end() ? std::map<std::string, Snapshot>{} : found->second->Sample(source, cancel); }

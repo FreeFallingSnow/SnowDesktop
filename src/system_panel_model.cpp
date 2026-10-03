@@ -82,6 +82,7 @@ SystemPanelSource LiveSystemPanelSource(std::shared_ptr<wr::WidgetSystemDataProv
 SystemPanelModel::SystemPanelModel(SystemPanelSource source,StatusBarSettings settings,StatusBarAction action,bool calendarStacked)
     :source_(std::move(source)),settings_(std::move(settings)),action_(action),calendarStacked_(calendarStacked)
 {
+    NormalizeStatusBarSettings(settings_);
     date_=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
     if(!calendar::CalendarService::GetDateInfo(date_))date_=calendar::CalendarService::CurrentLocalNow().date;
     month_=date_.substr(0,7)+"-01";
@@ -110,6 +111,9 @@ void SystemPanelModel::SyncSubscriptions()
         if(settings_.audioControls&&page_=="audio"){needed.insert("audio.devices");needed.insert("audio.input.volume");}
         if(settings_.brightnessControls&&(page_.empty()||page_=="brightness"))needed.insert("system.display.brightness");
         if(settings_.powerControls&&(page_.empty()||page_=="power"))needed.insert("system.power.plans");
+        for(const auto& control:SystemQuickControls)
+            if((page_.empty()&&QuickControlVisible(control.id))||page_==control.id)
+                needed.insert(control.topic);
     }
     for(const auto& topic:subscriptions_)if(!needed.contains(topic)&&source_.unsubscribe)source_.unsubscribe(topic);
     for(const auto& topic:needed)if(!subscriptions_.contains(topic)&&source_.subscribe)
@@ -519,14 +523,18 @@ void SystemPanelModel::DragScrollbar(int startOffset,int pointerDelta)
 }
 void SystemPanelModel::UpdateSettings(const StatusBarSettings& settings)
 {
-    if(closed_||(settings_.trayOrder==settings.trayOrder&&settings_.pinnedTrayItems==settings.pinnedTrayItems))return;
+    if(closed_||(settings_.trayOrder==settings.trayOrder&&settings_.pinnedTrayItems==settings.pinnedTrayItems&&
+        settings_.quickControlOrder==settings.quickControlOrder&&settings_.hiddenQuickControls==settings.hiddenQuickControls))return;
     settings_.trayOrder=settings.trayOrder;settings_.pinnedTrayItems=settings.pinnedTrayItems;
+    settings_.quickControlOrder=settings.quickControlOrder;settings_.hiddenQuickControls=settings.hiddenQuickControls;
+    NormalizeStatusBarSettings(settings_);
     Refresh(available_);
 }
 void SystemPanelModel::Header(std::wstring title)
 {
     Add("back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("controlCenter.overview");Command("back",[this]{if(!ControlBack())Select(page_=="wifi-adapters"?"wifi":"");});
-    const wchar_t* uri=page_=="audio"?L"ms-settings:sound":page_=="brightness"?L"ms-settings:display":page_.starts_with("wifi")?L"ms-settings:network-wifi":page_=="bluetooth"?L"ms-settings:bluetooth":page_=="power"?L"ms-settings:powersleep":nullptr;
+    const auto* quick=FindSystemQuickControl(page_);
+    const wchar_t* uri=quick?quick->settings:page_=="audio"?L"ms-settings:sound":page_=="brightness"?L"ms-settings:display":page_.starts_with("wifi")?L"ms-settings:network-wifi":page_=="bluetooth"?L"ms-settings:bluetooth":page_=="power"?L"ms-settings:powersleep":nullptr;
     const float settingsLeft=scene_.width-(page_=="wifi"||page_=="bluetooth"?112.f:52.f);
     auto& node=Add("title",ui::Role::Text,Rect(58,10,uri?settingsLeft-(page_=="wifi"?110.f:70.f):scene_.width-126,36),std::move(title));node.bold=true;node.fontSize=16;
     if(uri)
@@ -643,6 +651,7 @@ void SystemPanelModel::Overview(float& y)
     Add("brightness.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.brightnessControls");Command("brightness.more",[this]{Select("brightness");});y+=48;
     }
     }
+    QuickControls(y);
     if(settings_.powerControls||source_.nativeControls)
     {Add("divider",ui::Role::Separator,Rect(16,y,scene_.width-32,1));y+=8;}
     if(settings_.powerControls)
@@ -668,6 +677,148 @@ void SystemPanelModel::Overview(float& y)
         Command("system.settings",[this]{const auto open=source_.nativeControls;if(open)open();});
     }
     if(settings_.powerControls||source_.nativeControls)y+=40;
+}
+bool SystemPanelModel::QuickControlVisible(std::string_view id) const
+{
+    return FindSystemQuickControl(id)&&std::find(settings_.hiddenQuickControls.begin(),settings_.hiddenQuickControls.end(),id)==settings_.hiddenQuickControls.end();
+}
+void SystemPanelModel::SaveQuickControls()
+{
+    NormalizeStatusBarSettings(settings_);
+    // The callback merges only the popup-owned preferences into the current
+    // settings snapshot; it never replaces a settings-page edit wholesale.
+    const auto save=source_.trayChanged;if(save)save(settings_);
+}
+void SystemPanelModel::QuickControls(float& y)
+{
+    Add("quick.heading",ui::Role::Text,Rect(16,y,scene_.width-76,32),_LW("controlCenter.quickControls")).fontSize=12;
+    auto& manage=Add("quick.manage",ui::Role::Icon,Rect(scene_.width-48,y,32,32),L"",L"\uE70F");
+    manage.tooltip=manage.accessibilityLabel=_LW("controlCenter.manageButtons");Command(manage.id,[this]{Select("quick-manage");});y+=38;
+    constexpr int columns=3;const float slot=(scene_.width-32)/columns;int index=0;
+    for(const auto& id:settings_.quickControlOrder)
+    {
+        if(!QuickControlVisible(id))continue;
+        const auto& control=*FindSystemQuickControl(id);
+        const auto snapshot=source_.current?source_.current(control.topic):std::nullopt;
+        const auto state=snapshot&&snapshot->available?snapshot->value:j::Object();
+        const bool available=snapshot&&snapshot->available;
+        const bool microphone=id=="microphone";
+        const auto* checked=state.Find(microphone?"muted":"enabled");
+        const bool usable=available&&(control.menu||(checked&&checked->IsBoolean()))&&(!microphone||(!j::String(state,"endpointId").empty()&&InRange(Number(state,"volume"))));
+        const bool enabled=usable&&j::Flag(state,microphone?"muted":"enabled");
+        const bool busy=j::Flag(state,"busy");
+        const float left=16+(index%columns)*slot,top=y+(index/columns)*76.f;
+        const auto name=std::wstring(_LW(control.label));
+        std::wstring status=_LW(!snapshot?"controlCenter.loading":!usable?"controlCenter.unavailable":busy?"controlCenter.working":enabled?"controlCenter.on":"controlCenter.off");
+        if(id=="projection"&&available)status=_LW(("controlCenter.projection."+j::String(state,"mode")).c_str());
+        if(id=="power"&&available)status=_LW("controlCenter.openMenu");
+        const auto nodeId="quick:"+id;
+        // Unsupported switches remain navigable to an explanatory settings
+        // route; they never acquire a fake checked/off state or submit writes.
+        const bool direct=!control.menu&&usable;
+        auto& button=Add(nodeId,direct?ui::Role::Toggle:ui::Role::Icon,Rect(left+(slot-54)/2,top,54,44),L"",control.glyph);
+        button.selected=enabled;button.accent=enabled;button.busy=busy;button.enabled=!busy;
+        button.tooltip=button.accessibilityLabel=name+L" · "+status;
+        if(control.menu||!usable)button.tooltip+=L" · "+std::wstring(_LW("controlCenter.openMenu"));
+        if(direct)
+        {
+            const auto target=microphone?j::String(state,"endpointId"):id;
+            BindAction(nodeId,"quick."+id,target);
+            Command(nodeId,[this,id,target]{
+                const auto& currentControl=*FindSystemQuickControl(id);
+                const auto actual=source_.current?source_.current(currentControl.topic):std::nullopt;
+                if(!actual||!actual->available||j::Flag(actual->value,"busy"))return;
+                const auto* checked=actual->value.Find(id=="microphone"?"muted":"enabled");if(!checked||!checked->IsBoolean())return;
+                if(id=="microphone")
+                {
+                    if(j::String(actual->value,"endpointId")!=target||!InRange(Number(actual->value,"volume")))return;
+                    Start(currentControl.task,{{"muted",j::Flag(actual->value,"muted")?"0":"1"}});
+                }
+                else
+                {
+                    system_control::Arguments arguments{{"enabled",j::Flag(actual->value,"enabled")?"0":"1"}};
+                    if(id=="awake")arguments["reason"]=_L("controlCenter.keepAwake");
+                    Start(currentControl.task,std::move(arguments));
+                }
+            });
+        }
+        else Command(nodeId,[this,id]{Select(id);});
+        auto& caption=Add("quick.label:"+id,ui::Role::Text,Rect(left+2,top+46,slot-4,22),name);
+        caption.fontSize=11;caption.centered=true;caption.tooltip=name+L" · "+status;
+        if(control.menu)
+        {
+            auto& hint=Add("quick.menu:"+id,ui::Role::Text,Rect(left+(slot+54)/2-12,top+30,12,12),L"",L"\uE70D");
+            hint.secondary=true;
+        }
+        ++index;
+    }
+    if(!index){Add("quick.empty",ui::Role::Text,Rect(16,y,scene_.width-32,30),_LW("controlCenter.allButtonsHidden")).fontSize=12;y+=36;}
+    else y+=static_cast<float>((index+columns-1)/columns)*76;
+}
+void SystemPanelModel::QuickControlMenu(float& y)
+{
+    const auto* control=FindSystemQuickControl(page_);if(!control)return;
+    const auto snapshot=source_.current?source_.current(control->topic):std::nullopt;
+    const auto state=snapshot&&snapshot->available?snapshot->value:j::Object();
+    const bool available=snapshot&&snapshot->available;
+    if(page_=="projection"&&available)
+    {
+        for(const auto& mode:Items(state,"modes"))
+        {
+            const auto id=j::String(mode,"id");if(id!="internal"&&id!="clone"&&id!="extend"&&id!="external")continue;
+            const auto nodeId="projection:"+id;
+            auto& item=Add(nodeId,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),_LW(("controlCenter.projection."+id).c_str()),L"\uE7F4");
+            item.selected=j::String(state,"mode")==id;item.enabled=j::Flag(mode,"available");
+            BindAction(nodeId,"quick.projection",id);
+            Command(nodeId,[this,id]{const auto current=Current("host.projection");for(const auto& mode:Items(current,"modes"))if(j::String(mode,"id")==id&&j::Flag(mode,"available")){Start("host.projection.set",{{"mode",id}});break;}});
+            y+=50;
+        }
+    }
+    else if(page_=="hotspot"&&available)
+    {
+        const bool on=j::Flag(state,"enabled");
+        auto& toggle=Add("hotspot.toggle",ui::Role::Toggle,Rect(16,y,scene_.width-32,44),_LW(control->label));
+        toggle.selected=on;toggle.switchStyle=true;toggle.enabled=j::Flag(state,"canToggle")&&!j::Flag(state,"busy");toggle.busy=j::Flag(state,"busy");
+        BindAction(toggle.id,"quick.hotspot","hotspot");
+        Command(toggle.id,[this]{const auto actual=source_.current?source_.current("host.hotspot"):std::nullopt;if(actual&&actual->available&&j::Flag(actual->value,"canToggle")&&!j::Flag(actual->value,"busy"))Start("host.hotspot.set",{{"enabled",j::Flag(actual->value,"enabled")?"0":"1"}});});y+=54;
+        const auto ssid=j::String(state,"ssid");
+        if(!ssid.empty()){Add("hotspot.ssid",ui::Role::Text,Rect(16,y,scene_.width-32,32),Wide(ssid),L"\uE701");y+=38;}
+        const auto clients=std::to_wstring(static_cast<unsigned>(j::Numeric(state,"clients")));
+        Add("hotspot.clients",ui::Role::Text,Rect(16,y,scene_.width-32,30),std::wstring(_LW("controlCenter.connectedDevices"))+L": "+clients).fontSize=12;y+=36;
+    }
+    else
+    {
+        auto& reason=Add("quick.unavailable",ui::Role::Text,Rect(16,y,scene_.width-32,64),_LW("controlCenter.systemControlUnavailable"));
+        reason.wrap=true;reason.fontSize=12;y+=72;
+        if(snapshot&&snapshot->error=="accessDenied"){auto& denied=Add("quick.denied",ui::Role::Text,Rect(16,y,scene_.width-32,54),_LW("controlCenter.accessDenied"));denied.wrap=true;denied.fontSize=12;y+=62;}
+    }
+    if(page_=="hotspot"){auto& note=Add("hotspot.note",ui::Role::Text,Rect(16,y,scene_.width-32,54),_LW("controlCenter.hotspotSettingsHint"));note.wrap=true;note.fontSize=12;y+=62;}
+    Add("quick.settings",ui::Role::Button,Rect(16,y,scene_.width-32,40),_LW("settings.taskbar.systemSettings.open"),L"\uE713");
+    const std::wstring uri=control->settings;Command("quick.settings",[this,uri]{OpenSettings(uri.c_str());});y+=48;
+}
+void SystemPanelModel::ManageQuickControls(float& y)
+{
+    auto& hint=Add("quick.manageHint",ui::Role::Text,Rect(16,y,scene_.width-32,50),_LW("controlCenter.manageButtonsHint"));hint.wrap=true;hint.fontSize=12;y+=58;
+    for(std::size_t index=0;index<settings_.quickControlOrder.size();++index)
+    {
+        const auto id=settings_.quickControlOrder[index];const auto* control=FindSystemQuickControl(id);if(!control)continue;
+        const auto name=std::wstring(_LW(control->label));const auto prefix="quick.manage:"+id;
+        const float right=scene_.width-16;
+        auto& label=Add(prefix+".label",ui::Role::Text,Rect(16,y,scene_.width-136,40),name,control->glyph);label.fontSize=12;
+        for(const int delta:{-1,1})
+        {
+            const auto nodeId=prefix+(delta<0?".up":".down");
+            auto& move=Add(nodeId,ui::Role::Icon,Rect(right-(delta<0?100.f:68.f),y+4,28,32),L"",delta<0?L"\uE70E":L"\uE70D");
+            move.enabled=delta<0?index>0:index+1<settings_.quickControlOrder.size();
+            move.tooltip=move.accessibilityLabel=name+L" · "+_LW(delta<0?"controlCenter.moveUp":"controlCenter.moveDown");
+            Command(nodeId,[this,id,delta]{auto& order=settings_.quickControlOrder;const auto found=std::find(order.begin(),order.end(),id);if(found==order.end())return;const auto at=found-order.begin();const auto next=at+delta;if(next<0||next>=static_cast<std::ptrdiff_t>(order.size()))return;std::swap(order[static_cast<std::size_t>(at)],order[static_cast<std::size_t>(next)]);SaveQuickControls();});
+        }
+        auto& show=Add(prefix+".visible",ui::Role::Toggle,Rect(right-36,y+4,36,32),L"",QuickControlVisible(id)?L"\uE73E":L"\uE739");
+        show.selected=QuickControlVisible(id);show.tooltip=show.accessibilityLabel=name+L" · "+_LW(show.selected?"controlCenter.hideButton":"controlCenter.showButton");
+        Command(show.id,[this,id]{auto& hidden=settings_.hiddenQuickControls;const auto found=std::find(hidden.begin(),hidden.end(),id);if(found==hidden.end())hidden.push_back(id);else hidden.erase(found);SaveQuickControls();});y+=48;
+    }
+    y+=8;Add("quick.restore",ui::Role::Button,Rect(16,y,scene_.width-32,38),_LW("controlCenter.restoreButtons"));
+    Command("quick.restore",[this]{const StatusBarSettings defaults;settings_.quickControlOrder=defaults.quickControlOrder;settings_.hiddenQuickControls.clear();SaveQuickControls();});y+=46;
 }
 void SystemPanelModel::Audio(float& y)
 {
@@ -877,7 +1028,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     const auto completions=source_.completions?source_.completions():std::vector<system_control::Completion>{};
     for(const auto& completion:completions)std::erase_if(pendingValues_,[&](const auto& item){return item.second.task==completion.id;});
     if(page_=="media"||(page_=="audio"&&!settings_.audioControls)||(page_=="brightness"&&!settings_.brightnessControls)||
-        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls&&!controlDraft_)){CancelControlInput();++navigation_;page_.clear();ClearError();}
+        (page_.starts_with("wifi")&&!settings_.wifiControls)||(page_=="bluetooth"&&!settings_.bluetoothControls)||(page_=="power"&&!settings_.powerControls&&!QuickControlVisible("power")&&!controlDraft_)){CancelControlInput();++navigation_;page_.clear();ClearError();}
     SyncSubscriptions();
     if(subscriptions_.contains("network.wifi"))
     {
@@ -903,11 +1054,12 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     }
     if(action_==StatusBarAction::InputMethodPanel){InputMethod();return;}
     if(action_==StatusBarAction::Tray){Tray();return;}if(action_==StatusBarAction::Calendar){Calendar();return;}if(IsSystemResourceAction(action_)){Resources();return;}
-    scene_.width=384;
+    scene_.width=336;
     // The old offline "media" preset still selects the overview; media has no detail page.
     if(page_=="media")page_.clear();
     PrepareMedia();
-    const char* title=page_=="audio"?"statusBar.audioControls":page_=="brightness"?"statusBar.brightnessControls":page_.starts_with("wifi")?"statusBar.wifiControls":page_=="bluetooth"?"statusBar.bluetoothControls":"statusBar.powerControls";
+    const auto* quick=FindSystemQuickControl(page_);
+    const char* title=page_=="quick-manage"?"controlCenter.manageButtons":quick?quick->label:page_=="audio"?"statusBar.audioControls":page_=="brightness"?"statusBar.brightnessControls":page_.starts_with("wifi")?"statusBar.wifiControls":page_=="bluetooth"?"statusBar.bluetoothControls":"statusBar.powerControls";
     std::uint64_t inlineCompletion=0;
     for(const auto& completion:completions)if(controlDraft_&&controlDraft_->task&&completion.id==controlDraft_->task)
     {
@@ -929,7 +1081,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     }
     else if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
     if(controlDraft_&&controlDraft_->request.name!="network.wifi.connect")ControlForm(y);
-    else if(page_.empty())Overview(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);
+    else if(page_.empty())Overview(y);else if(page_=="quick-manage")ManageQuickControls(y);else if(quick&&page_!="power")QuickControlMenu(y);else if(page_=="audio")Audio(y);else if(page_=="brightness")Brightness(y);else if(page_.starts_with("wifi"))WifiPage(y);else if(page_=="bluetooth")Bluetooth(y);else if(page_=="power")Power(y);
     PrunePendingActions();
     for(const auto& completion:completions)
     {

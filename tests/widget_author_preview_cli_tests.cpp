@@ -1635,10 +1635,10 @@ void CheckControlRadioPixels(const std::filesystem::path& overviewPath,
     // Sample empty interiors of both top radio tiles, away from labels and
     // edges. A lost checked-state fill can leave white text on a neutral light
     // tile. Compare the two rendered states without hard-coding system accent.
-    for (const double offset : {32., 212.})
+    for (const double offset : {32., 188.})
     {
         const auto sample = [offset](const RgbaBitmap& bitmap, const RECT& bounds) {
-            const double scale = (bounds.right - bounds.left) / 384.;
+            const double scale = (bounds.right - bounds.left) / 336.;
             return PixelAt(bitmap, static_cast<UINT>(std::lround(bounds.left + offset * scale)),
                 static_cast<UINT>(std::lround(bounds.top + 32 * scale)));
         };
@@ -1668,13 +1668,13 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
         LONG overviewHeight = 0;
         std::vector<std::uint8_t> overviewPixels;
         for (const auto* page : {L"overview", L"bluetooth-off", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable",
-            L"audio-many", L"wifi-many", L"bluetooth-many", L"media-empty"})
+            L"audio-many", L"wifi-many", L"bluetooth-many", L"media-empty", L"projection", L"hotspot", L"quick-manage"})
         {
             const auto bitmap = ReadPng(output / (std::wstring(L"control-panel-") + page + L".png"));
             const auto bounds = PanelPixels(bitmap); const double scale = dark ? 1.5 : 1.;
             const bool longList = std::wstring_view(page).ends_with(L"-many");
             Check(FitsNativePanelCanvas(bitmap, bounds), "control pages stay centered in the independent padded canvas");
-            Check(HasNativePanelSize(bounds, scale, 384, 128, longList ? 952 / scale : (std::min)(740., 952 / scale)),
+            Check(HasNativePanelSize(bounds, scale, 336, 128, longList ? 952 / scale : (std::min)(740., 952 / scale)),
                 "control pages retain shared width and size their content within the popup viewport");
             Check(HasFourRoundedCorners(bitmap, bounds), "all control subpages preserve the bottom corners");
             std::vector<RECT> cards;

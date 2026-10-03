@@ -142,7 +142,8 @@ set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
     src/system_control_brightness.cpp
     src/system_control_wifi.cpp
     src/system_control_bluetooth.cpp
-    src/system_control_media.cpp)
+    src/system_control_media.cpp
+    src/system_control_quick_actions.cpp)
 set(SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES
     dxva2 wlanapi powrprof setupapi oleaut32 wbemuuid)
 

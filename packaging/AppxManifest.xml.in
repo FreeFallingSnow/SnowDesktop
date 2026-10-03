@@ -64,5 +64,6 @@
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
     <DeviceCapability Name="location" />
+    <DeviceCapability Name="wiFiControl" />
   </Capabilities>
 </Package>

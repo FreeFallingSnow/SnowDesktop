@@ -169,6 +169,9 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
     source.current = [state](std::string_view topic) -> std::optional<system_control::Snapshot> {
         ++state->reads;
         auto value = wr::PreviewSystemControlData(topic, state->unavailable);
+        if(topic=="host.projection")ParseJson(R"({"mode":"extend","modes":[{"id":"internal","available":true},{"id":"clone","available":true},{"id":"extend","available":true},{"id":"external","available":true}]})",value);
+        if(topic=="host.hotspot")ParseJson(R"({"enabled":true,"canToggle":true,"busy":false,"ssid":"Snow Hotspot","clients":2})",value);
+        if(topic=="host.airplane"||topic=="host.awake")ParseJson(R"({"enabled":false})",value);
         if (topic == "bluetooth.devices" && !state->unavailable && !state->bluetoothOn)
         {
             value.object["radios"].array.front().object["enabled"] = j::Boolean(false);
@@ -1416,6 +1419,74 @@ void CheckCalendarSeriesManagement()
         "whole-series context removal did not delete the definition");
     std::filesystem::remove_all(path.parent_path(),error);
 }
+void CheckQuickControls()
+{
+    // Replace only the OS boundary: exercise the production model, input guards,
+    // subscriptions and settings callback without touching real radios/displays.
+    auto fixture=std::make_shared<PreviewState>();fixture->emptyMedia=true;
+    auto source=FixtureSource(fixture);const auto read=source.current;
+    bool airplane=false,awake=false,hotspot=true,missing=false;
+    std::vector<std::pair<std::string,system_control::Arguments>> requests;
+    std::vector<system_control::Completion> completions;
+    StatusBarSettings saved;unsigned saves=0;std::wstring opened;
+    source.current=[&](std::string_view topic) {
+        auto value=read(topic);
+        if(value&&(topic=="host.airplane"||topic=="host.awake"||topic=="host.hotspot"))
+        {value->available=!missing;value->value.object["enabled"]=j::Boolean(topic=="host.airplane"?airplane:topic=="host.awake"?awake:hotspot);}
+        return value;
+    };
+    source.start=[&](system_control::Request request) {
+        Require(system_control::ValidateRequest(request),"quick controls submitted an invalid native request");
+        requests.emplace_back(request.name,request.arguments);return static_cast<std::uint64_t>(requests.size());
+    };
+    source.completions=[&]{return std::exchange(completions,{});};
+    source.trayChanged=[&](const StatusBarSettings& settings){saved=settings;++saves;};
+    source.settings=[&](const wchar_t* uri){opened=uri;};
+    SystemPanelModel model(source,{},StatusBarAction::ControlCenter);
+    CheckLayout(model.View());
+    Require(Node(model.View(),"quick:projection").bounds.top>Node(model.View(),"brightness.value").bounds.bottom&&
+        Node(model.View(),"quick:microphone").role==ui::Role::Toggle&&Node(model.View(),"quick:hotspot").accent,
+        "quick controls must appear below brightness and expose real toggle/menu states");
+    ui::Input input;input.Sync(model.View());
+    Require(input.Focus("quick:airplane")&&input.Key(model.View(),VK_SPACE,false).id=="quick:airplane",
+        "quick switches must support the native keyboard toggle route");
+    Require(model.Invoke("quick:airplane")&&requests.back().first=="host.airplane.set"&&requests.back().second.at("enabled")=="1"&&
+        !Node(model.View(),"quick:airplane").selected&&!model.Invoke("quick:airplane"),
+        "airplane toggles cannot optimistically change state or submit duplicate pending writes");
+    airplane=true;system_control::Completion done;done.id=1;done.ok=true;completions.push_back(done);model.Refresh();
+    Require(Node(model.View(),"quick:airplane").selected&&Node(model.View(),"quick:airplane").enabled,
+        "completed quick switches must display the observed state and release their pending guard");
+    const auto before=requests.size();Require(model.Invoke("quick:hotspot")&&model.Page()=="hotspot"&&requests.size()==before,
+        "the hotspot icon must open its menu without switching the network");
+    Require(model.Invoke("hotspot.toggle")&&requests.back().first=="host.hotspot.set"&&requests.back().second.at("enabled")=="0",
+        "hotspot menu submits the inverse observed state");
+    hotspot=false;done.id=requests.size();completions.push_back(done);model.Refresh();
+    Require(!Node(model.View(),"hotspot.toggle").selected,"hotspot menu reflects completed OS readback");
+    model.Select("");Require(model.Invoke("quick:projection")&&model.Page()=="projection","projection opens native choices");
+    Require(Node(model.View(),"projection:extend").selected&&model.Invoke("projection:clone")&&
+        requests.back().first=="host.projection.set"&&requests.back().second.at("mode")=="clone"&&!model.Invoke("projection:external"),
+        "projection selection must submit the selected topology and serialize competing choices");
+    done.id=requests.size();completions.push_back(done);model.Refresh();model.Select("");
+    Require(model.Invoke("quick:awake")&&requests.back().first=="host.awake.set"&&!requests.back().second.at("reason").empty(),
+        "keep-awake submits a localized native power-request reason");
+    awake=true;done.id=requests.size();completions.push_back(done);model.Refresh();
+    Require(model.Invoke("quick.manage")&&model.Invoke("quick.manage:awake.up")&&saves==1&&saved.quickControlOrder[3]=="awake",
+        "management moves buttons and saves their order immediately");
+    const auto mutationCount=requests.size();
+    for(const auto& control:SystemQuickControls)Require(model.Invoke("quick.manage:"+std::string(control.id)+".visible"),"management can hide every quick button");
+    model.Select("");Require(model.View().Find("quick.manage")&&model.View().Find("quick.empty")&&!model.View().Find("quick:awake")&&
+        requests.size()==mutationCount&&!fixture->subscriptions.contains("host.awake"),
+        "hiding all buttons retains management, drops unused demand and does not disable active features");
+    SystemPanelModel reloaded(source,saved,StatusBarAction::ControlCenter);
+    Require(!reloaded.View().Find("quick:airplane")&&reloaded.View().Find("quick.manage"),"saved visibility survives reopening the panel");reloaded.Close();
+    Require(model.Invoke("quick.manage")&&model.Invoke("quick.restore"),"management restores default order and visibility");
+    model.Select("");Require(Node(model.View(),"quick:awake").selected&&saved.hiddenQuickControls.empty()&&saved.quickControlOrder.front()=="projection",
+        "restoring visibility retains the active session switch");
+    missing=true;model.Refresh();Require(Node(model.View(),"quick:airplane").role==ui::Role::Icon&&model.Invoke("quick:airplane")&&
+        model.Page()=="airplane"&&requests.size()==mutationCount&&model.Invoke("quick.settings")&&opened==L"ms-settings:network-airplanemode",
+        "an unavailable system switch routes to settings without inferring radio state or submitting a write");
+    model.Close();
+}
 void CheckFeedbackLayouts()
 {
     auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
@@ -2345,7 +2416,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width)*stage.height); }
         Require(!stage.pixels.empty(), "cannot create system panel preview background");
         const std::vector<std::string> presets = controls ?
-            std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","unavailable",
+            std::vector<std::string>{"overview","bluetooth-off","audio","brightness","wifi","bluetooth","media","power","unavailable","projection","hotspot","quick-manage",
                 "audio-many","wifi-many","bluetooth-many","media-empty"} :
             trayPanel ? std::vector<std::string>{"grid","updated","manage","empty","connecting","unavailable"} :
             resources ? std::vector<std::string>{"cpu","memory","gpu","traffic","idle","warming","unavailable","gap","gpu-partial"} :
@@ -2476,6 +2547,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (controls && (preset == "overview" || preset == "audio")) CheckMute(model,state,preset == "overview");
             if (controls && preset == "overview")
             {
+                CheckQuickControls();
                 CheckClosedCallbacks();
                 CheckInputMethodPanel(device,text,request,result,appearance,background,stage);
                 CheckControlPromptVisuals(request,result,appearance);

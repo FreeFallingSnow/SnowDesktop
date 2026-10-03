@@ -388,6 +388,17 @@ int main(int argc, char** argv)
                 !restored.inputMethod, "hiding the input indicator persists across settings reloads");
         }
         JsonValue legacyJson; StatusBarSettings legacy;
+        {
+            StatusBarSettings quick;
+            quick.quickControlOrder={"awake","projection","awake","unknown"};
+            quick.hiddenQuickControls={"airplane","airplane","unknown","awake"};
+            NormalizeStatusBarSettings(quick);
+            Check(quick.quickControlOrder==std::vector<std::string>{"awake","projection","hotspot","airplane","microphone","power"}&&
+                quick.hiddenQuickControls==std::vector<std::string>{"airplane","awake"},"quick-control normalization retains order and hidden choices without stale or duplicate IDs");
+            JsonValue encoded;StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(quick),encoded)&&DecodeStatusBarSettings(encoded,restored)&&restored==quick,
+                "quick-control order and visibility survive a settings reload");
+        }
         ParseJson("{\"theme\":{\"mode\":4,\"customized\":true,\"appearance\":{\"backgroundR\":0.125,\"opacity\":0.42}},"
             "\"pinnedTrayItems\":[\"guid:legacy\"]}", legacyJson);
         Check(DecodeStatusBarSettings(legacyJson, legacy) && legacy.theme.mode == 4 && legacy.theme.customized &&

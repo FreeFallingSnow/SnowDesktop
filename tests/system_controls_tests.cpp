@@ -929,6 +929,16 @@ void BluetoothPowerAndDeviceReadFailures()
 }
 void TestSystemControls()
 {
+    for(const auto* topic:{"host.projection","host.hotspot","host.airplane","host.awake"})
+    {
+        Require(SupportsTopic(topic)&&!Source(topic).empty(),"host quick-control topics have a physical backend");
+        const auto task=std::string(topic)+".set";
+        Require(!snowdesktop::widget_runtime::IsSystemControlTask(task),"host quick controls must not expand the public widget task contract");
+        Request request;request.name=task;request.arguments[std::string_view(topic)=="host.projection"?"mode":"enabled"]=std::string_view(topic)=="host.projection"?"extend":"1";
+        Require(ValidateRequest(request),"known host quick-control arguments are accepted");
+        request.arguments.begin()->second="invalid";
+        Require(!ValidateRequest(request),"invalid host quick-control arguments cannot reach native setters");
+    }
     {
         auto adapter = json::Object(), networks = json::Array();
         const auto network = [](const char* id, const char* name, bool connected, double signal) {

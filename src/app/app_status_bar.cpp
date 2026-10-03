@@ -198,10 +198,12 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             systemPanel_ = std::make_unique<snowdesktop::SystemPanel>([this](const auto& changed) {
                 if (!settingsController_) return;
                 auto settings = settingsController_->Snapshot()->values.general;
-                // The popup owns only tray preferences. Do not overwrite
+                // The popup owns tray and quick-control preferences. Do not overwrite
                 // a concurrent settings-page edit with its old snapshot.
                 settings.statusBar.pinnedTrayItems = changed.pinnedTrayItems;
                 settings.statusBar.trayOrder = changed.trayOrder;
+                settings.statusBar.quickControlOrder = changed.quickControlOrder;
+                settings.statusBar.hiddenQuickControls = changed.hiddenQuickControls;
                 settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
                 uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
                     if (settingsController_) (void)settingsController_->FlushPending();

@@ -27,9 +27,12 @@ namespace
 using Clock = std::chrono::steady_clock;
 const std::set<std::string_view> topics{
     "audio.devices", "audio.output.default", "audio.output.volume", "audio.input.volume",
-    "system.display.brightness", "network.wifi", "bluetooth.devices", "system.power.plans"};
+    "system.display.brightness", "network.wifi", "bluetooth.devices", "system.power.plans",
+    "host.projection", "host.hotspot", "host.airplane", "host.awake"};
 struct TaskRule { const char* name; std::vector<std::string_view> required, optional; };
 const std::vector<TaskRule> rules{
+    {"host.projection.set", {"mode"}, {}}, {"host.hotspot.set", {"enabled"}, {}},
+    {"host.airplane.set", {"enabled"}, {}}, {"host.awake.set", {"enabled"}, {"reason"}},
     {"audio.output.setVolume", {"volume"}, {}}, {"audio.output.setMute", {"muted"}, {}},
     {"audio.output.selectDevice", {"endpointId"}, {}}, {"audio.input.selectDevice", {"endpointId"}, {}},
     {"audio.input.setVolume", {"volume"}, {}}, {"audio.input.setMute", {"muted"}, {}},
@@ -65,6 +68,8 @@ bool SupportsTask(std::string_view task)
 { return std::any_of(rules.begin(), rules.end(), [&](const auto& rule) { return rule.name == task; }); }
 std::string_view Source(std::string_view name)
 {
+    for (const auto* source : {"projection", "hotspot", "airplane", "awake"})
+        if (name == "host." + std::string(source) || name == "host." + std::string(source) + ".set") return source;
     if (name.starts_with("audio.")) return "audio";
     if (name.starts_with("system.display.")) return "brightness";
     if (name.starts_with("network.wifi")) return "wifi";
@@ -79,6 +84,12 @@ bool RequiresPasswordPrompt(const Request& request)
 { return request.name == "network.wifi.connect" && !request.arguments.contains("profileName"); }
 bool ValidateRequest(const Request& request)
 {
+    if (request.name == "host.projection.set")
+    {
+        const auto mode = request.arguments.find("mode");
+        if (mode == request.arguments.end() || (mode->second != "internal" && mode->second != "clone" &&
+            mode->second != "extend" && mode->second != "external")) return false;
+    }
     const auto rule = std::find_if(rules.begin(), rules.end(), [&](const auto& value) { return value.name == request.name; });
     if (rule == rules.end()) return false;
     for (const auto key : rule->required)

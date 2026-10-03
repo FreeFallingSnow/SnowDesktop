@@ -2,6 +2,7 @@
 
 #include "dock_layout_settings.h"
 #include "surface_theme.h"
+#include "system_quick_controls.h"
 
 #include <algorithm>
 #include <cmath>
@@ -43,6 +44,8 @@ struct StatusBarSettings
     bool bluetoothControls = true, mediaControls = true, powerControls = true;
     std::vector<std::string> pinnedTrayItems;
     std::vector<std::string> trayOrder;
+    std::vector<std::string> quickControlOrder = {"projection", "hotspot", "airplane", "microphone", "awake", "power"};
+    std::vector<std::string> hiddenQuickControls;
     std::vector<std::string> leftOrder = {"menu", "quickSearch", "taskView"};
     std::vector<std::string> rightOrder = {"tray", "cpu", "memory", "gpu", "traffic", "network", "volume", "battery", "controlCenter"};
     friend bool operator==(const StatusBarSettings&, const StatusBarSettings&) = default;
@@ -108,6 +111,11 @@ inline void NormalizeStatusBarSettings(StatusBarSettings& value)
     };
     normalizeOrder(value.leftOrder, defaults.leftOrder);
     normalizeOrder(value.rightOrder, defaults.rightOrder);
+    normalizeOrder(value.quickControlOrder, defaults.quickControlOrder);
+    std::vector<std::string> hidden;
+    for (const auto& id : value.hiddenQuickControls)
+        if (FindSystemQuickControl(id) && std::find(hidden.begin(), hidden.end(), id) == hidden.end()) hidden.push_back(id);
+    value.hiddenQuickControls = std::move(hidden);
     for (auto* items : { &value.pinnedTrayItems, &value.trayOrder })
     {
         std::vector<std::string> normalized;
@@ -180,6 +188,8 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
     };
     readList("pinnedTrayItems", value.pinnedTrayItems);
     readList("trayOrder", value.trayOrder);
+    readList("quickControlOrder", value.quickControlOrder);
+    readList("hiddenQuickControls", value.hiddenQuickControls);
     readList("leftOrder", value.leftOrder);
     readList("rightOrder", value.rightOrder);
     NormalizeStatusBarSettings(value);
@@ -233,6 +243,8 @@ inline std::string EncodeStatusBarSettings(StatusBarSettings value)
     };
     writeList("pinnedTrayItems", value.pinnedTrayItems);
     writeList("trayOrder", value.trayOrder);
+    writeList("quickControlOrder", value.quickControlOrder);
+    writeList("hiddenQuickControls", value.hiddenQuickControls);
     writeList("leftOrder", value.leftOrder);
     writeList("rightOrder", value.rightOrder);
     text << '}';
