@@ -119,7 +119,9 @@ void DesktopApp::PresentPointerInteractionFrame(
         (feedbackRevision !=
              presentedDragFeedbackRevision_ ||
          navHoverSide_ !=
-             presentedDragNavHoverSide_);
+              presentedDragNavHoverSide_);
+    const bool firstItemDragFeedback =
+        itemDragActive && presentedDragFeedbackRevision_ == 0;
     if (itemDragActive)
     {
         presentedDragFeedbackRevision_ =
@@ -166,6 +168,25 @@ void DesktopApp::PresentPointerInteractionFrame(
                 itemDragFeedbackChanged,
                 widgetPreviewActive,
                 marqueeActive_);
+    bool itemInteractionPresented = false;
+    if (itemDragFeedbackChanged && !firstItemDragFeedback &&
+        !desktopBackdropFullCollectionPending_ && !desktopIconsHidden_ &&
+        !widgetPreviewActive && !marqueeActive_ && navHoverSide_ == 0 &&
+        dynamic_cast<DesktopGrid*>(dragSession_.Source()) &&
+        dynamic_cast<DesktopGrid*>(dragSession_.TargetContainer()) &&
+        !GetOpenPopupWidget() && !ShouldShowFloatingPopupWindow() &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        // Keep pending hover/model invalidations synchronous, then update the
+        // transparent drop-feedback layer without repainting every icon.
+        // Initial/source-state changes, popup/Dock handoffs and recovery retain
+        // the complete background path below. No pointer work is deferred.
+        PresentDesktopPointerUpdate();
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        itemInteractionPresented =
+            PresentDesktopForegroundComposition(client);
+    }
     bool widgetInteractionPresented = false;
     if (widgetPreviewActive && hwnd_ && IsWindow(hwnd_))
     {
@@ -199,6 +220,7 @@ void DesktopApp::PresentPointerInteractionFrame(
     }
     bool desktopFallbackPresented = false;
     if (immediateDesktopPresent &&
+        !itemInteractionPresented &&
         !marqueeInteractionPresented &&
         (!widgetPreviewActive || !widgetInteractionPresented) &&
         hwnd_ && IsWindow(hwnd_))
@@ -214,8 +236,9 @@ void DesktopApp::PresentPointerInteractionFrame(
     }
     bool pageNavDragHintPresented =
         pageNavDragHintChanged &&
-        ((widgetPreviewActive && widgetDragFeedbackChanged &&
-             widgetInteractionPresented) ||
+         ((widgetPreviewActive && widgetDragFeedbackChanged &&
+              widgetInteractionPresented) ||
+            itemInteractionPresented ||
             desktopFallbackPresented);
     if (pageNavDragHintChanged &&
         !pageNavDragHintPresented &&

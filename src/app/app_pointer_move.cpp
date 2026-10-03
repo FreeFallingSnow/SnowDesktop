@@ -881,7 +881,13 @@ void DesktopApp::OnMouseMoveAt(
         if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
         if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
         if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
-        dragSession_.UpdateActionFromMods(currentMods);
+        if (dragSession_.UpdateActionFromMods(currentMods))
+        {
+            // Move/copy changes whether the source icons belong to the
+            // retained background. Repaint that transition before using a
+            // foreground-only drop-feedback update.
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
 
         RevealSoftwareDesktopForDockDrag(current);
         SyncDragPreviewWindow();
@@ -1151,6 +1157,37 @@ void DesktopApp::OnMouseMoveAt(
             targetRegion = resolved.region;
         }
         dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+
+        if (dynamic_cast<DesktopGrid*>(dragSession_.Source()) &&
+            dynamic_cast<DesktopGrid*>(targetContainer))
+        {
+            // Drop feedback lives on the foreground surface, but icon hover
+            // pixels still belong to the background. Retire both hover states
+            // before presenting the new feedback, including large-icon bounds.
+            if (IsPointOverWidgetChrome(oldMouse) ||
+                IsPointOverWidgetChrome(current))
+            {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            else
+            {
+                const auto* oldIcon = HitTestIcon(oldMouse);
+                const auto* newIcon = HitTestIcon(current);
+                if (oldIcon != newIcon)
+                {
+                    for (const auto* icon : { oldIcon, newIcon })
+                    {
+                        const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+                        if (!item) continue;
+                        RECT dirty = item->largeIcon
+                            ? GetLargeIconFrameRect(*item) : item->bounds;
+                        if (IsRectEmptyRect(dirty)) continue;
+                        InflateRect(&dirty, 8, 8);
+                        InvalidateRect(hwnd_, &dirty, FALSE);
+                    }
+                }
+            }
+        }
 
         std::wstring hint;
         if (const std::wstring removalHint = GetDockDragOutRemovalHint(current);
