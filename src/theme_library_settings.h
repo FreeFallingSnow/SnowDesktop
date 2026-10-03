@@ -127,10 +127,10 @@ inline bool ApplyTarget(const Library& library, std::string_view target, std::st
     { ApplyAppearance(values.dock.customAppearance, theme->appearance); values.dock.appearancePreset = kAppearancePresetCustom; values.dock.followComponentAppearance = false; }
     else if (target == "taskbar")
     { ApplyAppearance(values.dock.systemTaskbarAppearance, theme->appearance); values.dock.systemTaskbarFollowPersonalization = false; values.dock.systemTaskbarContentTheme = theme->appearance.contentTheme; }
-    else if (const auto member = StatusRule(target)) (values.general.statusBar.*member).theme = snapshot;
-    else if (const auto member = TaskbarRule(target))
+    else if (const auto statusMember = StatusRule(target)) (values.general.statusBar.*statusMember).theme = snapshot;
+    else if (const auto taskbarMember = TaskbarRule(target))
     {
-        auto& rule = values.dock.*member;
+        auto& rule = values.dock.*taskbarMember;
         ApplyAppearance(rule.appearance, theme->appearance);
         rule.themeMode = SystemTaskbarThemeMode::Custom; rule.contentTheme = theme->appearance.contentTheme;
     }
