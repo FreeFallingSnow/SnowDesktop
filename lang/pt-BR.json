@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "Não foi possível salvar. O último registro válido do tema será mantido.",
   "themeLibrary.error.libraryBusy": "Outra operação está alterando a biblioteca de temas. Tente novamente.",
   "themeLibrary.error.unsupportedExtension": "Somente pacotes .snowwidget e .snowtheme são compatíveis.",
-  "themeLibrary.savedPending": "O tema foi salvo, mas alguns objetos não puderam ser atualizados. Sua última aparência válida será mantida."
+  "themeLibrary.savedPending": "O tema foi salvo, mas alguns objetos não puderam ser atualizados. Sua última aparência válida será mantida.",
+  "themeLibrary.preview": "Prévia",
+  "themeLibrary.share": "Compartilhar no Steam",
+  "themeLibrary.chooseCover": "Escolher capa",
+  "themeLibrary.regenerate": "Gerar capa novamente",
+  "themeLibrary.sync": "Atualizar inscrições",
+  "themeLibrary.cancelled": "Operação cancelada.",
+  "themeLibrary.agreementRequired": "Confira e aceite o acordo do Steam Workshop no Steam antes de publicar.",
+  "themeLibrary.authorMismatch": "Somente a conta do autor pode atualizar este item do Workshop.",
+  "themeLibrary.stalePreview": "O tema ou a capa mudou. Gere uma nova prévia e confirme novamente.",
+  "themeLibrary.creationUncertain": "Não foi possível confirmar a criação. Confira seus itens do Workshop antes de tentar novamente para evitar duplicatas.",
+  "themeLibrary.operationFailed": "A operação falhou. Os temas e as aparências existentes são preservados.",
+  "themeLibrary.preparing": "Preparando tema…",
+  "themeLibrary.fixedPreview": "A prévia usa dados fixos de demonstração. Sua área de trabalho e seu conteúdo pessoal não são incluídos.",
+  "themeLibrary.confirmShare": "Publicar este tema e seus temas vinculados como um único item do Workshop?",
+  "themeLibrary.publishUpdate": "Atualizar item",
+  "themeLibrary.publish": "Publicar"
 }

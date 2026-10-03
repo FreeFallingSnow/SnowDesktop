@@ -151,7 +151,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -253,7 +253,8 @@ DesktopApp::ExportNativeComponentPreviews(
 
     PersonalizationSettings appearance;
     bool lightStage = false;
-    if (!ResolveAppearance(request.appearance, appearance, lightStage))
+    if (request.theme) { appearance = request.theme->appearance; lightStage = appearance.contentTheme == 1; }
+    else if (!ResolveAppearance(request.appearance, appearance, lightStage))
     {
         result.stage = "request.appearance";
         result.error = "unsupported component preview appearance";
@@ -317,6 +318,7 @@ DesktopApp::ExportNativeComponentPreviews(
                 brushCache_.clear(); brushCacheContext_ = nullptr;
             });
 
+    if (request.component == "status-bar" && request.theme) return ExportThemeSurfacePreview(request);
     if (request.component == "status-bar")
         return ExportStatusBarPreview(request, d2dDevice_.Get(), dwriteFactory_.Get(), appearance,
             [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& style, float scale, DockPosition position) {
@@ -329,6 +331,8 @@ DesktopApp::ExportNativeComponentPreviews(
             });
 
     if (request.component == "quick-navigation") return ExportQuickNavigationPreviews(request);
+    if (request.component == "dock" || request.component == "taskbar" || request.component == "popup")
+        return ExportThemeSurfacePreview(request);
 
     const float scale = static_cast<float>(request.dpi) /
         static_cast<float>(USER_DEFAULT_SCREEN_DPI);
@@ -524,6 +528,7 @@ DesktopApp::ExportNativeComponentPreviews(
         }
         for (const Variant& variant : buildVariants(definition.id))
         {
+            if (request.theme && variant.id != "compact") continue;
             component_preview::Card& card = model.cards[variant.cardIndex];
             const int width = card.previewWidth;
             const int height = card.previewHeight;
@@ -615,7 +620,7 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     handled = true;
     Result result;
     std::filesystem::path resultPath;
-    if (argumentCount != 14)
+    if (argumentCount != 14 && argumentCount != 16)
     {
         result.stage = "request.arguments";
         result.error = "invalid native component preview host arguments";
@@ -650,6 +655,16 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     request.dpi = static_cast<unsigned>(dpi);
     request.transparent = std::wstring_view(arguments[11]) == L"1";
     request.contentOnly = std::wstring_view(arguments[12]) == L"1";
+    if (argumentCount == 16)
+    {
+        themes::Package package;
+        if (!themes::ReadPackage(arguments[14], package, result.error) ||
+            !(request.theme = themes::Resolve(package, WideToUtf8(arguments[15]))))
+        {
+            result.stage = "request.theme"; WriteResultFile(resultPath, result);
+            releaseArguments(); return 2;
+        }
+    }
     result.request = request;
     if (!IsSupportedComponent(request.component) || request.locale.empty() ||
         request.locale.size() > 35 ||

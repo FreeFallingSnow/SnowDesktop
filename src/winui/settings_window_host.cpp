@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 
 #include "settings_window_host.h"
 #include "../settings_search_catalog.h"
@@ -10,6 +10,8 @@
 #include "../shell_launch_worker.h"
 #include "../status_bar_shell_shortcut.h"
 #include "../theme_library_settings.h"
+#include "../theme_workshop.h"
+#include "../theme_preview.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -393,6 +395,196 @@ struct SettingsWindowHost::Impl
     bool integratedTitleBarInsetsUpdateQueued = false;
     bool externalStateRefreshQueued = false;
     std::wstring lastError;
+
+    struct ThemeTask
+    {
+        std::atomic_bool cancel{false};
+        std::uint64_t generation = 0;
+        ThemeLibraryRequest request;
+        unsigned previewScope = themes::All;
+        themes::Package snapshot;
+        steam_bridge::ThemePublishPlan plan;
+        std::filesystem::path directory, cover, customCover;
+        std::function<void(ThemeLibraryResult)> completed;
+        ~ThemeTask() { if (!directory.empty()) { std::error_code ec; std::filesystem::remove_all(directory, ec); } }
+    };
+    std::shared_ptr<ThemeTask> themeTask;
+    std::map<std::string, std::filesystem::path> themeCovers;
+
+    std::filesystem::path ThemeBridge() const { return std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe"; }
+    bool ThemeSharingAvailable() const { return themes::workshop::Available(ThemeBridge(), SNOWDESKTOP_VERSION); }
+    void CompleteThemeTask(const std::shared_ptr<ThemeTask>& task, bool success, std::string error)
+    {
+        if (themeTask != task) return;
+        ThemeLibraryResult result;
+        result.succeeded = success; result.sharingAvailable = ThemeSharingAvailable();
+        std::string ignored;
+        if (!themes::Load(themes::LibraryPath(), result.library, ignored)) result.succeeded = false;
+        result.message = L(success ? "themeLibrary.success" :
+            error == "cancelled" ? "themeLibrary.cancelled" :
+            error == "agreementRequired" ? "themeLibrary.agreementRequired" :
+            error == "authorMismatch" ? "themeLibrary.authorMismatch" :
+            error == "stalePreparation" ? "themeLibrary.stalePreview" :
+            error == "creationUncertain" ? "themeLibrary.creationUncertain" : "themeLibrary.operationFailed");
+        if (shell) shell->HideProgress(task->generation);
+        auto completed = std::move(task->completed);
+        themeTask.reset();
+        if (completed) completed(std::move(result));
+    }
+    bool CurrentThemeTask(const std::shared_ptr<ThemeTask>& task) const
+    {
+        if (themeTask != task || task->cancel.load() || !shell || !controller ||
+            !controller->IsGenerationCurrent(task->generation)) return false;
+        const auto snapshot = controller->Snapshot();
+        return snapshot && snapshot->sessionActive && !snapshot->externalReplacementPending;
+    }
+    void PublishThemeTask(const std::shared_ptr<ThemeTask>& task)
+    {
+        if (!CurrentThemeTask(task)) { CompleteThemeTask(task, false, "cancelled"); return; }
+        std::string error; themes::Library library; themes::Package latest;
+        if (!ThemeSharingAvailable() || !themes::Load(themes::LibraryPath(), library, error) ||
+            !themes::Export(library, task->request.id, latest, error) ||
+            themes::EncodePackage(latest, error) != themes::EncodePackage(task->snapshot, error))
+        { CompleteThemeTask(task, false, "stalePreparation"); return; }
+        (void)shell->ShowProgress({task->generation, L("themeLibrary.share"), L("themeLibrary.preparing"), true, 0, true});
+        const auto weak = std::weak_ptr<CallbackState>(callbacks);
+        const auto bridge = ThemeBridge(), data = std::filesystem::path(GetDataDirectoryPath());
+        std::thread([weak, task, bridge, data] {
+            std::string output, detail; bool success = false;
+            try { success = themes::workshop::Publish(bridge, task->plan, data, output, detail, &task->cancel); }
+            catch (...) { detail = "publishFailed"; }
+            if (const auto state = weak.lock(); state && state->alive.load())
+                (void)state->dispatcher.TryEnqueue([weak, task, success, detail] {
+                    if (const auto current = weak.lock(); current && current->alive.load() && current->owner)
+                        current->owner->CompleteThemeTask(task, success, detail);
+                });
+        }).detach();
+    }
+    void ShowThemeTask(const std::shared_ptr<ThemeTask>& task)
+    {
+        if (!CurrentThemeTask(task)) { CompleteThemeTask(task, false, "cancelled"); return; }
+        shell->HideProgress(task->generation);
+        const auto theme = themes::Resolve(task->snapshot, task->request.id);
+        if (!theme) { CompleteThemeTask(task, false, "stalePreparation"); return; }
+        shell_impl::SettingsShellDialogRequest dialog;
+        dialog.generation = task->generation; dialog.title = winrt::to_hstring(theme->name).c_str();
+        dialog.closeButtonText = L("settings.dialog.cancel"); dialog.previewImagePath = task->cover.wstring();
+        const bool share = task->request.command == ThemeLibraryCommand::Share;
+        dialog.defaultClose = share;
+        dialog.message = L("themeLibrary.fixedPreview");
+        if (theme->kind == themes::Kind::Global)
+        {
+            for (const auto& [bit, key] : std::vector<std::pair<unsigned, const char*>>{
+                {themes::Components,"themeLibrary.components"}, {themes::Dock,"themeLibrary.dock"},
+                {themes::StatusBar,"themeLibrary.statusBar"}, {themes::Taskbar,"themeLibrary.taskbar"}})
+                if (task->previewScope & bit) dialog.message += L"\n" + L(key);
+            for (const auto& [id, key] : std::vector<std::pair<std::string, const char*>>{
+                {theme->quickPanel,"themeLibrary.quickPanel"}, {theme->popup,"themeLibrary.popup"}})
+                if (const auto child = themes::Resolve(task->snapshot, id); child && task->previewScope == theme->scopes)
+                    dialog.message += L"\n" + L(key) + L": " + std::wstring(winrt::to_hstring(child->name));
+        }
+        if (share)
+        {
+            dialog.message += L"\n\n" + L("themeLibrary.confirmShare");
+            dialog.primaryButtonText = L(task->plan.publishedFileId ? "themeLibrary.publishUpdate" : "themeLibrary.publish");
+        }
+        const auto weak = std::weak_ptr<CallbackState>(callbacks);
+        shell->ShowConfirmation(std::move(dialog), [weak, task, share](bool confirmed) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+            {
+                if (share && confirmed) state->owner->PublishThemeTask(task);
+                else state->owner->CompleteThemeTask(task, !share, share ? "cancelled" : "");
+            }
+        });
+    }
+    void BeginThemeTask(std::uint64_t generation, ThemeLibraryRequest request,
+        std::function<void(ThemeLibraryResult)> completed)
+    {
+        if (themeTask || !controller || !controller->IsGenerationCurrent(generation) || !shell)
+        { if (completed) completed({}); return; }
+        auto task = std::make_shared<ThemeTask>(); task->generation = generation;
+        task->request = std::move(request); task->completed = std::move(completed); themeTask = task;
+        if (!CurrentThemeTask(task)) { CompleteThemeTask(task, false, "cancelled"); return; }
+        const bool sync = task->request.command == ThemeLibraryCommand::SyncSubscriptions;
+        const bool share = task->request.command == ThemeLibraryCommand::Share;
+        if ((share || sync) && !ThemeSharingAvailable()) { CompleteThemeTask(task, false, "missingCapability"); return; }
+        std::string error; themes::Library library;
+        if (!sync)
+        {
+            if (task->request.id.empty() && task->request.command == ThemeLibraryCommand::Preview &&
+                (task->request.target == "dock" || task->request.target == "taskbar"))
+            {
+                auto theme = themes::CaptureTarget(task->request.target, controller->Snapshot()->values);
+                theme.id = themes::CreateId(); theme.name = winrt::to_string(L("themeLibrary." + task->request.target));
+                theme.scopes = themes::All; theme.quickPanel = "builtin/quickpanel/dark"; theme.popup = "builtin/popup/dark";
+                task->request.id = theme.id; task->snapshot.emplace(theme.id, std::move(theme));
+            }
+            else if (!themes::Load(themes::LibraryPath(), library, error) ||
+                !themes::Export(library, task->request.id, task->snapshot, error))
+            { CompleteThemeTask(task, false, error); return; }
+        }
+        if (task->request.command == ThemeLibraryCommand::ChooseCover)
+        {
+            const auto selected = ShowOpenPathDialog(window, L("themeLibrary.chooseCover"),
+                {{L("themeLibrary.chooseCover"), L"*.png;*.jpg;*.jpeg;*.bmp"}}, false);
+            if (!selected) { CompleteThemeTask(task, false, "cancelled"); return; }
+            themeCovers[task->request.id] = *selected;
+            while (themeCovers.size() > 16) themeCovers.erase(themeCovers.begin());
+        }
+        if (task->request.command == ThemeLibraryCommand::Regenerate) themeCovers.erase(task->request.id);
+        if (const auto selected = themeCovers.find(task->request.id); selected != themeCovers.end()) task->customCover = selected->second;
+        wchar_t temporary[MAX_PATH + 1]{};
+        if (!GetTempPathW(MAX_PATH, temporary)) { CompleteThemeTask(task, false, "writeFailed"); return; }
+        task->directory = std::filesystem::path(temporary) / (L"SnowDesktop-theme-" + std::wstring(winrt::to_hstring(themes::CreateId())));
+        (void)shell->ShowProgress({generation, L(sync ? "themeLibrary.sync" : "themeLibrary.preview"), L("themeLibrary.preparing"), true, 0, true});
+        const auto weak = std::weak_ptr<CallbackState>(callbacks);
+        const auto host = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe", bridge = ThemeBridge(), data = std::filesystem::path(GetDataDirectoryPath());
+        const auto libraryPath = themes::LibraryPath();
+        std::thread([weak, task, sync, share, host, bridge, data, libraryPath] {
+            const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            bool success = false; std::string detail;
+            try
+            {
+                if (sync) { themes::Library result; success = themes::workshop::Sync(bridge, libraryPath, result, detail, &task->cancel); }
+                else
+                {
+                    const auto theme = themes::Resolve(task->snapshot, task->request.id);
+                    const auto scope = theme && theme->kind == themes::Kind::Global ?
+                        (share || task->request.target == "global" ? theme->scopes : themes::TargetScope(task->request.target)) : themes::All;
+                    task->previewScope = scope;
+                    if (share)
+                    {
+                        success = themes::workshop::Prepare(task->snapshot, task->request.id, scope, task->directory, data,
+                            task->customCover, [host](const auto& package, auto root, auto applicable, const auto& directory,
+                                auto& cover, auto& error, auto* cancel) {
+                                return themes::preview::Render(host, package, root, applicable, directory, cover, error, cancel);
+                            }, task->plan, detail, &task->cancel);
+                        task->cover = task->plan.preview;
+                    }
+                    else
+                    {
+                        success = themes::preview::Render(host, task->snapshot, task->request.id, scope, task->directory, task->cover, detail, &task->cancel);
+                        if (success && !task->customCover.empty())
+                        {
+                            auto image = widget_preview::LoadWallpaperImage(task->customCover);
+                            success = !image.pixels.empty() && themes::preview::SaveCover(task->cover,
+                                widget_preview::GenerateWallpaper(image, themes::preview::kCoverSize, themes::preview::kCoverSize), detail);
+                        }
+                    }
+                }
+            }
+            catch (...) { detail = "previewFailed"; }
+            if (SUCCEEDED(initialized)) CoUninitialize();
+            if (const auto state = weak.lock(); state && state->alive.load())
+                (void)state->dispatcher.TryEnqueue([weak, task, success, detail, sync] {
+                    if (const auto current = weak.lock(); current && current->alive.load() && current->owner)
+                    {
+                        if (!success || sync) current->owner->CompleteThemeTask(task, success, detail);
+                        else current->owner->ShowThemeTask(task);
+                    }
+                });
+        }).detach();
+    }
 
     [[nodiscard]] bool OnOwnerThread() const noexcept
     {
@@ -1485,6 +1677,11 @@ struct SettingsWindowHost::Impl
 
     void SynchronizePageBackends(const SettingsSnapshot& snapshot)
     {
+        if (themeTask && (!snapshot.sessionActive || snapshot.externalReplacementPending || snapshot.generation != themeTask->generation))
+        {
+            auto task = themeTask; task->cancel.store(true);
+            CompleteThemeTask(task, false, "cancelled");
+        }
         if (!snapshot.sessionActive || shuttingDown)
             return;
         EnsurePageBackends();
@@ -1803,6 +2000,12 @@ struct SettingsWindowHost::Impl
             return state->owner->ThemeOperation(generation, request);
         };
         personalization.contextMenu = options.contextMenu;
+        personalization.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
+            const auto state = weak.lock();
+            if (state && state->alive.load() && state->owner)
+                state->owner->BeginThemeTask(generation, std::move(request), std::move(completed));
+            else if (completed) completed({});
+        };
         personalization.appliedFont = options.appliedFont;
         personalization.restartApplication = [weak](std::uint64_t generation) {
             const auto state = weak.lock();
@@ -1910,6 +2113,13 @@ struct SettingsWindowHost::Impl
         shell->SetDesktopPageActions(std::move(desktop));
 
         DockPageActions dock;
+        dock.previewAppearance = [weak](std::uint64_t generation, std::string target) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+            {
+                ThemeLibraryRequest request; request.command = ThemeLibraryCommand::Preview; request.target = std::move(target);
+                state->owner->BeginThemeTask(generation, std::move(request), {});
+            }
+        };
         dock.updateGeneral = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,
@@ -2272,6 +2482,7 @@ struct SettingsWindowHost::Impl
     ThemeLibraryResult ThemeOperation(std::uint64_t generation, const ThemeLibraryRequest& request)
     {
         ThemeLibraryResult result;
+        result.sharingAvailable = ThemeSharingAvailable();
         if (!controller || !controller->IsGenerationCurrent(generation)) return result;
         const auto current = controller->Snapshot();
         if (!current || current->externalReplacementPending) return result;
@@ -2957,6 +3168,7 @@ struct SettingsWindowHost::Impl
 
     void ReleaseView() noexcept
     {
+        if (themeTask) { themeTask->cancel.store(true); themeTask->completed = {}; themeTask.reset(); }
         viewReleaseQueued = false;
         CancelWorkingSetTrim();
         settingsSessionWorkingSetBaseline.reset();
@@ -3178,7 +3390,10 @@ struct SettingsWindowHost::Impl
                             std::move(query), generation, requestId);
                     }
                 });
-            shell->SetCancelOperationCallback([](std::uint64_t) {});
+            shell->SetCancelOperationCallback([weak](std::uint64_t generation) {
+                if (const auto state = weak.lock(); state && state->alive.load() && state->owner && state->owner->themeTask &&
+                    state->owner->themeTask->generation == generation) state->owner->themeTask->cancel.store(true);
+            });
             shell->SetWidgetSettingsService(widgetSettingsService);
             ConfigurePageActions();
             RebuildSearchIndex();

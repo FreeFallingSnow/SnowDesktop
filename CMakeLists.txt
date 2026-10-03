@@ -280,6 +280,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_quick_navigation_interaction.cpp
     src/app/app_quick_navigation_features.cpp
     src/app/app_quick_navigation_preview.cpp
+    src/app/app_theme_preview.cpp
     src/app/app_quick_navigation_layout.cpp
     src/app/app_quick_navigation_messages.cpp
     src/app/app_quick_navigation_model.cpp
@@ -440,7 +441,10 @@ set(SNOWDESKTOP_SOURCES
     src/winui/xaml_type_info_impl_bridge.cpp
     src/ui_animation_scheduler.cpp
     src/personalization.cpp
+    src/personalization_path.cpp
     src/theme_library.cpp
+    src/theme_preview.cpp
+    src/theme_workshop.cpp
     src/dock_settings.cpp
     src/taskbar_hook/taskbar_symbol_resolver.cpp
     src/navigation_settings.cpp
@@ -1540,6 +1544,23 @@ if (BUILD_TESTING)
         LINK_LIBRARIES dwrite d2d1 windowscodecs gdi32 ole32
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract settings)
+
+    snowdesktop_add_test(
+        SnowDesktopThemeWorkflowTests
+        theme_workflow
+        SOURCES
+            tests/theme_preview_tests.cpp
+            tests/theme_workshop_tests.cpp
+            src/theme_preview.cpp
+            src/theme_workshop.cpp
+            src/preview_png_writer.cpp
+            src/widget_preview_stage.cpp
+        INCLUDE_DIRECTORIES src steam_bridge/src
+        LINK_LIBRARIES SnowDesktopWorkshopManagerSupport d2d1 d3d11 windowscodecs ole32 shlwapi
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktop>"
+        LABELS contract integration settings steam sdk-free)
+    set_tests_properties(theme_workflow PROPERTIES TIMEOUT 180)
+    add_dependencies(SnowDesktopThemeWorkflowTests SnowDesktop)
 
     snowdesktop_add_test(
         SnowDesktopDemoModeRulesTests

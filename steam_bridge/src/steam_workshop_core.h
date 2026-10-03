@@ -109,8 +109,13 @@ struct PublishProgress
     bool submitStarted = false;
 };
 
+enum class WorkshopContentKind { Widget, Theme };
 struct PublishRequest
 {
+    WorkshopContentKind contentKind = WorkshopContentKind::Widget;
+    // A newly allocated ID must be durably recorded before any upload starts.
+    std::function<bool(std::uint64_t)> persistCreatedItem;
+    std::function<bool(const std::filesystem::path&, const std::filesystem::path&)> validateStagedArtifacts;
     std::filesystem::path package;
     bool updateContent = true;
     std::optional<std::filesystem::path> preview;
@@ -147,6 +152,7 @@ public:
     SteamStatus Status() const;
     std::optional<PublishedPage> ListPublished(
         std::uint32_t page, CoreError& error);
+    std::optional<PublishedItem> FindItem(std::uint64_t id, CoreError& error);
     std::optional<WorkshopEulaStatus> GetEulaStatus(CoreError& error);
     bool SetSubscribed(std::uint64_t publishedFileId, bool subscribed,
         std::chrono::seconds timeout, CoreError& error);

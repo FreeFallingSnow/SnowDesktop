@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "저장하지 못했습니다. 마지막으로 저장에 성공한 테마 스냅샷을 유지합니다.",
   "themeLibrary.error.libraryBusy": "다른 작업에서 테마 라이브러리를 변경하고 있습니다. 다시 시도하세요.",
   "themeLibrary.error.unsupportedExtension": ".snowwidget 및 .snowtheme 패키지만 지원합니다.",
-  "themeLibrary.savedPending": "테마는 저장되었지만 일부 개체를 업데이트하지 못했습니다. 마지막으로 적용에 성공한 모양을 유지합니다."
+  "themeLibrary.savedPending": "테마는 저장되었지만 일부 개체를 업데이트하지 못했습니다. 마지막으로 적용에 성공한 모양을 유지합니다.",
+  "themeLibrary.preview": "미리 보기",
+  "themeLibrary.share": "Steam에서 공유",
+  "themeLibrary.chooseCover": "표지 선택",
+  "themeLibrary.regenerate": "표지 다시 생성",
+  "themeLibrary.sync": "구독 새로 고침",
+  "themeLibrary.cancelled": "작업이 취소되었습니다.",
+  "themeLibrary.agreementRequired": "게시하기 전에 Steam에서 워크숍 약관을 확인하고 동의하세요.",
+  "themeLibrary.authorMismatch": "이 워크숍 항목은 작성자 계정으로만 업데이트할 수 있습니다.",
+  "themeLibrary.stalePreview": "테마 또는 표지가 변경되었습니다. 미리 보기를 다시 생성하고 확인하세요.",
+  "themeLibrary.creationUncertain": "항목 생성 여부를 확인할 수 없습니다. 중복 생성을 피하려면 다시 시도하기 전에 자신의 워크숍 항목을 확인하세요.",
+  "themeLibrary.operationFailed": "작업이 실패했습니다. 기존 테마와 모양은 유지됩니다.",
+  "themeLibrary.preparing": "테마 준비 중…",
+  "themeLibrary.fixedPreview": "미리 보기는 고정된 데모 데이터를 사용합니다. 데스크톱과 개인 콘텐츠는 포함되지 않습니다.",
+  "themeLibrary.confirmShare": "이 테마와 연결된 하위 테마를 하나의 워크숍 항목으로 게시할까요?",
+  "themeLibrary.publishUpdate": "항목 업데이트",
+  "themeLibrary.publish": "게시"
 }

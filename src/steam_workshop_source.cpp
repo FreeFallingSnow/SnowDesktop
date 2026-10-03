@@ -653,6 +653,10 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
             SteamWorkshopSubscriptionSnapshot validated;
             for (const auto& item : items)
             {
+                std::error_code themeError;
+                if (std::filesystem::is_regular_file(item.contentDirectory / L"package.snowtheme", themeError) &&
+                    !std::filesystem::exists(item.contentDirectory / L"package.snowwidget", themeError) && !themeError)
+                    continue; // Theme artifacts belong to the host theme installer.
                 std::string itemError;
                 PackageManifest detectedManifest;
                 auto resolved = ResolveInstalledFolder(

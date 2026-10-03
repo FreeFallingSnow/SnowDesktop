@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "component_workshop_publish.h"
+#include "theme_workshop_publish.h"
 #include "package_tool.h"
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
@@ -173,6 +174,9 @@ void PrintUsage()
            " [--description TEXT] [--tag TAG] [--metadata JSON]"
            " [--language STEAM_LANGUAGE] [--visibility private|friends|public|unlisted]"
            " [--change-note TEXT] [--timeout-seconds N] [--open-page]\n"
+        << "  SnowDesktopSteamBridge.exe workshop theme-plan --prepared DIR --data-directory DIR\n"
+        << "  SnowDesktopSteamBridge.exe workshop theme-publish --prepared DIR --data-directory DIR"
+           " --package-sha256 HASH --cover-sha256 HASH (--confirm-create|--confirm-update)\n"
         << "  SnowDesktopSteamBridge.exe workshop component-plan --source DIR"
            " --data-directory DIR [--item ID]"
            " [--text-source package|steam|manual-english]"
@@ -197,6 +201,7 @@ int PrintConfiguration()
               << ",\"windowsDepotId\":" <<
         snowdesktop::steam_bridge::kSteamWindowsDepotId
               << ",\"componentWorkflowProtocolVersion\":1"
+              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.widget.v1\",\"workshop.theme.v1\"]"
               << ",\"steamworksCompiled\":"
               << (SNOWDESKTOP_HAS_STEAMWORKS ? "true" : "false")
               << "}\n";
@@ -637,6 +642,8 @@ int ListSubscribedWorkshopItems(const ParsedOptions& options)
     std::vector<PublishedFileId_t> itemIds(count);
     const std::uint32_t returned = itemIds.empty() ? 0 :
         ugc->GetSubscribedItems(itemIds.data(), count);
+    if (returned != count || ugc->GetNumSubscribedItems() != count)
+        return PrintError(kSteamOperationFailed, "subscriptions_incomplete", "Subscription enumeration changed; keep installed contents");
     itemIds.resize(returned);
 
     std::unordered_map<std::uint64_t, WorkshopDetails> details;
@@ -647,7 +654,8 @@ int ListSubscribedWorkshopItems(const ParsedOptions& options)
             "workshop_query_failed", error);
 
     std::cout << "{\"ok\":true,\"protocolVersion\":1,\"appId\":"
-              << utils->GetAppID() << ",\"items\":[";
+              << utils->GetAppID() << ",\"authoritative\":true,\"steamId\":\""
+              << static_cast<std::uint64_t>(SteamUser()->GetSteamID().ConvertToUint64()) << "\",\"items\":[";
     for (std::size_t index = 0; index < itemIds.size(); ++index)
     {
         if (index != 0) std::cout << ',';
@@ -1576,6 +1584,42 @@ int RunWorkshopCommand(const std::wstring&,
         "Configure SNOWDESKTOP_STEAMWORKS_SDK_ROOT with an external Steamworks SDK and rebuild");
 }
 #endif
+
+int RunThemeWorkshopCommand(const std::wstring& command, const std::vector<std::wstring>& arguments)
+{
+    using namespace snowdesktop::steam_bridge;
+    ParsedOptions options; std::string detail;
+    const bool execute = command == L"theme-publish";
+    if (!ParseOptions(arguments, {L"--prepared", L"--data-directory", L"--package-sha256", L"--cover-sha256"}, {},
+        execute ? std::set<std::wstring>{L"--confirm-create", L"--confirm-update"} : std::set<std::wstring>{}, options, detail) ||
+        !options.Value(L"--prepared") || !options.Value(L"--data-directory"))
+        return PrintError(64, "invalid_arguments", detail.empty() ? "--prepared and --data-directory are required" : detail);
+    ThemePublishPlan plan;
+    if (!BuildThemePublishPlan(std::filesystem::absolute(*options.Value(L"--prepared")),
+        std::filesystem::absolute(*options.Value(L"--data-directory")), plan, detail)) return PrintError(64, detail, detail);
+    if (!execute) { std::cout << ThemePublishPlanJson(plan) << '\n'; return 0; }
+    if (WideToUtf8(options.Value(L"--package-sha256").value_or(L"")) != plan.packageSha256 ||
+        WideToUtf8(options.Value(L"--cover-sha256").value_or(L"")) != plan.coverSha256) return PrintError(64, "stalePreparation", "Confirmed package or cover changed");
+    SteamWorkshopCore core(std::filesystem::absolute(*options.Value(L"--data-directory")) / L"ThemeWorkshop" / L"staging");
+    ThemePublishTransport transport;
+    transport.status = [&](CoreError& error) -> std::optional<SteamStatus> { if (!core.Initialize(error)) return {}; return core.Status(); };
+    transport.agreement = [&](CoreError& error) { return core.GetEulaStatus(error); };
+    transport.item = [&](std::uint64_t id, CoreError& error) { return core.FindItem(id, error); };
+    transport.publish = [&](const PublishRequest& request, const PublishProgressCallback& progress, CoreError& error) { return core.Publish(request, progress, error); };
+    PublishResult result; CoreError error;
+    const bool ok = ExecuteThemePublishPlan(plan, options.HasFlag(L"--confirm-create"), options.HasFlag(L"--confirm-update"), transport,
+        [](const PublishProgress& progress) {
+            std::cout << "{\"event\":\"theme-publish-progress\",\"publishedFileId\":\"" << progress.publishedFileId << "\",\"stage\":";
+            WriteJsonString(std::cout, PublishStageName(progress.stage)); std::cout << "}\n" << std::flush;
+        }, result, error, static_cast<std::int64_t>(std::time(nullptr)));
+    if (!ok)
+    {
+        std::cerr << "{\"ok\":false,\"publishedFileId\":\"" << result.publishedFileId << "\",\"error\":";
+        WriteJsonString(std::cerr, error.code); std::cerr << "}\n"; return error.exitCode;
+    }
+    std::cout << "{\"ok\":true,\"themeWorkflowProtocolVersion\":1,\"publishedFileId\":\"" << result.publishedFileId
+        << "\",\"needsLegalAgreement\":" << (result.needsLegalAgreement ? "true" : "false") << "}\n"; return 0;
+}
 }
 
 int wmain(int argc, wchar_t* argv[])
@@ -1610,6 +1654,8 @@ int wmain(int argc, wchar_t* argv[])
         arguments.reserve(static_cast<std::size_t>(argc - 3));
         for (int index = 3; index < argc; ++index)
             arguments.emplace_back(argv[index]);
+        if (std::wstring_view(argv[2]) == L"theme-plan" || std::wstring_view(argv[2]) == L"theme-publish")
+            return RunThemeWorkshopCommand(argv[2], arguments);
         return RunWorkshopCommand(argv[2], arguments);
     }
 

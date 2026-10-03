@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "儲存失敗，保留最後成功的主題快照。",
   "themeLibrary.error.libraryBusy": "其他操作正在修改主題庫，請稍後重試。",
   "themeLibrary.error.unsupportedExtension": "僅支援 .snowwidget 和 .snowtheme 套件。",
-  "themeLibrary.savedPending": "主題已儲存，但部分物件未能更新，保留其最後成功的外觀。"
+  "themeLibrary.savedPending": "主題已儲存，但部分物件未能更新，保留其最後成功的外觀。",
+  "themeLibrary.preview": "預覽",
+  "themeLibrary.share": "分享到 Steam",
+  "themeLibrary.chooseCover": "自備封面",
+  "themeLibrary.regenerate": "重新產生封面",
+  "themeLibrary.sync": "重新整理訂閱",
+  "themeLibrary.cancelled": "操作已取消。",
+  "themeLibrary.agreementRequired": "發佈前請在 Steam 中查看並接受工作坊協議。",
+  "themeLibrary.authorMismatch": "只有作品作者帳號可以更新此工作坊作品。",
+  "themeLibrary.stalePreview": "主題或封面已變更，請重新產生預覽並確認。",
+  "themeLibrary.creationUncertain": "無法確認作品是否建立，請先檢查自己的工作坊作品，避免重試產生重複作品。",
+  "themeLibrary.operationFailed": "操作失敗，既有主題和外觀保持不變。",
+  "themeLibrary.preparing": "正在準備主題…",
+  "themeLibrary.fixedPreview": "預覽使用固定示範資料，不包含你的桌面和個人內容。",
+  "themeLibrary.confirmShare": "將此主題及其綁定的子主題作為一個工作坊作品發佈？",
+  "themeLibrary.publishUpdate": "更新作品",
+  "themeLibrary.publish": "發佈"
 }

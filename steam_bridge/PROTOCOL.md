@@ -153,3 +153,57 @@ The Manager writes additive association fields into developer metadata:
 
 Association is accepted only when the current user owns the item, its Consumer
 App ID matches, and `packageId` matches the validated local manifest UUID.
+
+
+## Theme workflow protocol 1
+
+`configuration` adds `themeWorkflowProtocolVersion: 1` and capabilities
+`workshop.widget.v1` / `workshop.theme.v1`. Hosts require the theme capability,
+compatible bridge protocol/application version, matching App ID and compiled
+Steamworks support; the executable's existence is insufficient. Existing widget
+commands and bridge transport protocol 1 remain compatible. Theme package version
+1 and taskbar private protocol 13 have separate version boundaries.
+
+```
+workshop theme-plan --prepared ABSOLUTE_DIRECTORY --data-directory ABSOLUTE_DIRECTORY
+workshop theme-publish --prepared ABSOLUTE_DIRECTORY --data-directory ABSOLUTE_DIRECTORY --package-sha256 HASH --cover-sha256 HASH --confirm-create
+workshop theme-publish --prepared ABSOLUTE_DIRECTORY --data-directory ABSOLUTE_DIRECTORY --package-sha256 HASH --cover-sha256 HASH --confirm-update
+```
+
+`theme-plan` is offline, including SDK-free builds. The directory contains
+`package.snowtheme`, `cover.png` and `theme.json` (private preparation manifest
+`snowdesktop.theme-preparation`, version 1, rootId, title, packageSha256,
+coverSha256, preparedAt Unix seconds). Cover must be PNG, 1024 x 1024 and strictly
+below 1 MiB. Plan output binds both hashes and an existing authored item ID.
+Publication requires matching hashes and exactly one appropriate confirmation.
+Preparation expires after 15 minutes. Symlinks/reparse points are refused.
+
+All online calls are bridge-owned. Before updates the logged-on author and
+Consumer App ID are checked. Agreement-required states return an error without
+acceptance. A local exclusive association lock prevents concurrent clicks. The
+association under `ThemeWorkshop/SHA256(rootId).json` is atomically journaled
+immediately after creation and before upload, so failed uploads reuse the item.
+An ambiguous creation without a returned ID blocks automatic retry to avoid
+creating duplicates. Progress and terminal JSON report PublishedFileId as a
+string; errors are nonzero exits. Host cancellation terminates its one-shot
+bridge child; the journal remains durable.
+
+Uploaded content contains exactly `package.snowtheme`; cover is staged separately
+and neither preparation nor journal is uploaded. Theme metadata is:
+
+```json
+{"format":"snowdesktop-theme","artifact":"package.snowtheme","themeWorkflowProtocolVersion":1,"themeId":"theme/id","packageSha256":"SHA256"}
+```
+
+Global themes and their custom quick-panel/popup dependencies share one item.
+`list-subscribed --details` adds an authoritative flag and current steamId after
+complete enumeration. Changed enumeration/query failure is an error; partially
+cached/downloaded items retain their state flags. Themes use the existing
+subscribe/unsubscribe/download commands. The host validates and transactionally
+installs completed whole packages without applying them. Old widget callers
+continue to consume the existing additive response fields.
+
+This protocol does not authorize an unattended online publication, agreement
+acceptance or credential handling. Offline tests replace only Steam boundary
+calls; live ownership, creation, download and Settings UI behavior require a
+separate authorized runtime acceptance.

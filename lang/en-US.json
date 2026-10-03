@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "Saving failed. The last successful theme snapshot is retained.",
   "themeLibrary.error.libraryBusy": "Another operation is changing the theme library. Try again.",
   "themeLibrary.error.unsupportedExtension": "Only .snowwidget and .snowtheme packages are supported.",
-  "themeLibrary.savedPending": "The theme was saved, but some objects could not be updated. Their last successful appearances are retained."
+  "themeLibrary.savedPending": "The theme was saved, but some objects could not be updated. Their last successful appearances are retained.",
+  "themeLibrary.preview": "Preview",
+  "themeLibrary.share": "Share on Steam",
+  "themeLibrary.chooseCover": "Choose cover",
+  "themeLibrary.regenerate": "Regenerate cover",
+  "themeLibrary.sync": "Refresh subscriptions",
+  "themeLibrary.cancelled": "Operation cancelled.",
+  "themeLibrary.agreementRequired": "Review the Steam Workshop agreement in Steam before publishing.",
+  "themeLibrary.authorMismatch": "Only the author account can update this Workshop item.",
+  "themeLibrary.stalePreview": "The theme or cover changed. Generate a new preview and confirm again.",
+  "themeLibrary.creationUncertain": "Creation could not be confirmed. Check your Workshop items before retrying to avoid a duplicate.",
+  "themeLibrary.operationFailed": "The operation failed. Existing themes and appearances are retained.",
+  "themeLibrary.preparing": "Preparing theme…",
+  "themeLibrary.fixedPreview": "Preview uses fixed demonstration data. Your desktop and personal content are excluded.",
+  "themeLibrary.confirmShare": "Publish this theme and its bound themes as one Workshop item?",
+  "themeLibrary.publishUpdate": "Update item",
+  "themeLibrary.publish": "Publish"
 }

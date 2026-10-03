@@ -227,7 +227,8 @@ struct UploadDirectory
     {
         if (root.empty()) return;
         std::error_code ec;
-        std::filesystem::remove(root / L"package.snowwidget", ec);
+        for (const auto* name : {L"package.snowwidget", L"package.snowtheme", L"cover.png"})
+        { std::filesystem::remove(root / name, ec); ec.clear(); }
         ec.clear();
         std::filesystem::remove(root, ec);
     }
@@ -431,6 +432,30 @@ std::optional<PublishedPage> SteamWorkshopCore::ListPublished(
     return output;
 #else
     (void)page;
+    return std::nullopt;
+#endif
+}
+
+std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreError& error)
+{
+    if (!id || !Initialize(error)) return std::nullopt;
+#if SNOWDESKTOP_HAS_STEAMWORKS
+    if (!RequireLoggedOn(error)) return std::nullopt;
+    ISteamUGC* ugc = SteamUGC();
+    if (!ugc) { SetError(error, kSteamInitializationFailed, "steam_ugc_unavailable", "ISteamUGC is unavailable"); return std::nullopt; }
+    PublishedFileId_t itemId = id; QueryGuard guard; guard.ugc = ugc;
+    guard.handle = ugc->CreateQueryUGCDetailsRequest(&itemId, 1);
+    if (guard.handle == k_UGCQueryHandleInvalid) { SetError(error, kSteamOperationFailed, "query_failed", "invalid query"); return std::nullopt; }
+    ugc->SetReturnMetadata(guard.handle, true);
+    SteamUGCQueryCompleted_t completed{}; std::string message; SteamUGCDetails_t details{};
+    if (!WaitForCall(ugc->SendQueryUGCRequest(guard.handle), completed, std::chrono::seconds(30), message) ||
+        completed.m_eResult != k_EResultOK || completed.m_unNumResultsReturned != 1 ||
+        !ugc->GetQueryUGCResult(guard.handle, 0, &details) || details.m_eResult != k_EResultOK || details.m_nPublishedFileId != itemId)
+    { SetError(error, kSteamOperationFailed, "item_query_failed", message.empty() ? "Requested item is unavailable" : message); return std::nullopt; }
+    PublishedItem result; result.publishedFileId = id; result.ownerSteamId = details.m_ulSteamIDOwner;
+    result.consumerAppId = details.m_nConsumerAppID; result.creatorAppId = details.m_nCreatorAppID; result.banned = details.m_bBanned;
+    result.metadata = QueryText(*ugc, guard.handle, 0, &ISteamUGC::GetQueryUGCMetadata); return result;
+#else
     return std::nullopt;
 #endif
 }
@@ -653,6 +678,8 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     if (!RequireLoggedOn(error)) return std::nullopt;
     std::error_code ec;
     UploadDirectory upload;
+    UploadDirectory themePreview;
+    std::filesystem::path previewPath = request.preview.value_or(std::filesystem::path{});
     if (request.updateContent)
     {
         std::filesystem::create_directories(stagingRoot_, ec);
@@ -679,7 +706,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             return std::nullopt;
         }
         std::filesystem::copy_file(request.package,
-            upload.root / L"package.snowwidget",
+            upload.root / (request.contentKind == WorkshopContentKind::Theme ? L"package.snowtheme" : L"package.snowwidget"),
             std::filesystem::copy_options::none, ec);
         if (ec)
         {
@@ -687,6 +714,16 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
                 "cannot stage package.snowwidget");
             return std::nullopt;
         }
+    }
+    if (request.contentKind == WorkshopContentKind::Theme)
+    {
+        themePreview.root = upload.root; themePreview.root += L"-preview";
+        if (!request.preview || !request.validateStagedArtifacts || !std::filesystem::create_directory(themePreview.root, ec) || ec)
+        { SetError(error, kInvalidArguments, "stalePreparation", "Cannot freeze theme artifacts"); return std::nullopt; }
+        previewPath = themePreview.root / L"cover.png";
+        std::filesystem::copy_file(*request.preview, previewPath, std::filesystem::copy_options::none, ec);
+        if (ec || !request.validateStagedArtifacts(upload.root / L"package.snowtheme", previewPath))
+        { SetError(error, kInvalidArguments, "stalePreparation", "Theme artifacts changed before upload"); return std::nullopt; }
     }
     ISteamUGC* ugc = SteamUGC();
     ISteamUtils* utils = SteamUtils();
@@ -717,12 +754,20 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         }
         itemId = created.m_nPublishedFileId;
         lifecycle.ItemCreated(static_cast<std::uint64_t>(itemId));
+        if (request.persistCreatedItem && !request.persistCreatedItem(static_cast<std::uint64_t>(itemId)))
+        {
+            SetError(error, kSteamOperationFailed, "created_item_persistence_failed",
+                "The created Workshop ID could not be saved; upload was stopped");
+            return std::nullopt;
+        }
         needsAgreement = created.m_bUserNeedsToAcceptWorkshopLegalAgreement;
         if (progress)
             progress(PublishProgress{ PublishStage::Created,
                 static_cast<std::uint64_t>(itemId) });
     }
     else lifecycle.BindExisting(static_cast<std::uint64_t>(itemId));
+    if (request.contentKind == WorkshopContentKind::Theme && needsAgreement)
+        return PublishResult{creating, static_cast<std::uint64_t>(itemId), true, CommunityItemUrl(itemId)};
     const UGCUpdateHandle_t update = ugc->StartItemUpdate(appId, itemId);
     if (update == k_UGCUpdateHandleInvalid)
     {
@@ -742,7 +787,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     }
     if (request.preview)
     {
-        const std::string path = WideToUtf8(request.preview->wstring());
+        const std::string path = WideToUtf8(previewPath.wstring());
         if (!ugc->SetItemPreview(update, path.c_str()))
         {
             SetError(error, kSteamOperationFailed, "preview_rejected",

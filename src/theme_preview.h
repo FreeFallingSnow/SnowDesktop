@@ -1,0 +1,20 @@
+#pragma once
+#include "theme_library.h"
+#include "widget_preview_stage.h"
+#include <atomic>
+
+namespace snowdesktop::themes::preview
+{
+inline constexpr int kCoverSize = 1024;
+inline constexpr std::size_t kCoverMaximumBytes = 1024 * 1024;
+struct Part { std::string component, themeId; };
+std::vector<Part> Parts(const Package&, std::string_view root, unsigned scope, std::string& error);
+// No retained bitmap cache. Each request owns and releases its stage and child.
+bool Render(const std::filesystem::path& host, const Package&, std::string_view root,
+    unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
+    std::string& error, const std::atomic_bool* cancel = nullptr);
+bool SaveCover(const std::filesystem::path&, widget_preview::Wallpaper, std::string& error);
+std::wstring QuoteArgument(std::wstring_view);
+bool Run(const std::filesystem::path&, const std::vector<std::wstring>&, std::string& output,
+    unsigned timeoutMs, std::string& error, const std::atomic_bool* cancel = nullptr);
+}

@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "保存に失敗しました。最後に正常に保存したテーマのスナップショットを保持します。",
   "themeLibrary.error.libraryBusy": "別の操作がテーマライブラリを変更しています。しばらくしてから再試行してください。",
   "themeLibrary.error.unsupportedExtension": ".snowwidget と .snowtheme のパッケージのみ対応しています。",
-  "themeLibrary.savedPending": "テーマを保存しましたが、一部のオブジェクトを更新できませんでした。最後に正常に適用した外観を保持します。"
+  "themeLibrary.savedPending": "テーマを保存しましたが、一部のオブジェクトを更新できませんでした。最後に正常に適用した外観を保持します。",
+  "themeLibrary.preview": "プレビュー",
+  "themeLibrary.share": "Steam で共有",
+  "themeLibrary.chooseCover": "カバーを選択",
+  "themeLibrary.regenerate": "カバーを再生成",
+  "themeLibrary.sync": "サブスクリプションを更新",
+  "themeLibrary.cancelled": "操作をキャンセルしました。",
+  "themeLibrary.agreementRequired": "公開前に Steam でワークショップ利用規約を確認して同意してください。",
+  "themeLibrary.authorMismatch": "このワークショップ作品を更新できるのは作者のアカウントだけです。",
+  "themeLibrary.stalePreview": "テーマまたはカバーが変更されました。プレビューを再生成して確認してください。",
+  "themeLibrary.creationUncertain": "作品の作成を確認できませんでした。重複を避けるため、再試行前に自分のワークショップ作品を確認してください。",
+  "themeLibrary.operationFailed": "操作に失敗しました。既存のテーマと外観は保持されます。",
+  "themeLibrary.preparing": "テーマを準備しています…",
+  "themeLibrary.fixedPreview": "プレビューには固定のデモデータを使用します。デスクトップや個人の内容は含まれません。",
+  "themeLibrary.confirmShare": "このテーマと関連する子テーマを一つのワークショップ作品として公開しますか？",
+  "themeLibrary.publishUpdate": "作品を更新",
+  "themeLibrary.publish": "公開"
 }

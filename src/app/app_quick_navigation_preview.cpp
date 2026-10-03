@@ -22,6 +22,11 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
         const int preset = request.appearance == "light" ? kAppearancePresetLight : request.appearance == "acrylic-light" ? kAppearancePresetAcrylicLight :
             request.appearance == "acrylic-dark" ? kAppearancePresetAcrylicDark : kAppearancePresetDark;
         quickNavAppearance_ = MakeQuickNavigationAppearancePreset(preset);
+        if (request.theme)
+        {
+            quickNavAppearance_ = request.theme->appearance;
+            snowdesktop::themes::ApplyQuickPanel(navigationSettings_, *request.theme);
+        }
         if (request.contentOnly)
         {
             quickNavAppearance_.widgetAlpha = quickNavAppearance_.widgetBorderAlpha = quickNavAppearance_.gradientEndA = 0.f;
@@ -86,9 +91,10 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             "expanded-files-only", "expanded-apps-only"};
         for (const auto* scenario : scenarios)
         {
+            if (request.theme && std::string_view(scenario) != "expanded-tile") continue;
             const std::string name(scenario);
             const bool scrolled = name.find("scrolled") != std::string::npos;
-            navigationSettings_.layout.maximumHeight = scrolled && name.starts_with("expanded") ? 420 : NavigationSettings{}.layout.maximumHeight;
+            if (!request.theme) navigationSettings_.layout.maximumHeight = scrolled && name.starts_with("expanded") ? 420 : NavigationSettings{}.layout.maximumHeight;
             quickNavigationCollapsed_ = name.starts_with("collapsed") || name.starts_with("typed") || name == "calculator-error" || name == "everything-unavailable" || name == "index-loading" || name == "empty-results";
             quickNavigationSearchType_ = QuickNavigationSearchType::All; quickNavigationSearchEngine_.clear();
             quickNavigationSearchCompositionText_.clear();
@@ -264,6 +270,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             {"genie-pole-collapsed", 1, 0.55, true}};
         for (const auto& fixture : genieFixtures)
         {
+            if (request.theme) break;
             ComPtr<ID2D1DeviceContext> context;
             require(d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context));
             const auto size = D2D1::SizeU(static_cast<UINT>(request.canvasWidth),

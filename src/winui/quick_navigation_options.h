@@ -38,7 +38,6 @@ public:
         if (appearanceOnly_)
         {
             auto layout = Group("quickNav.layout", [this] {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
-            focus_.emplace("quickNav.layout.searchRadius", layout);
             AddNumber(layout, "expandedWidth", &QuickNavigationLayout::expandedWidth, 400, 1800);
             AddNumber(layout, "collapsedWidth", &QuickNavigationLayout::collapsedWidth, 360, 1400);
             AddNumber(layout, "maximumHeight", &QuickNavigationLayout::maximumHeight, 220, 1400);
@@ -54,6 +53,7 @@ public:
             AddNumber(layout, "resultRowHeight", &QuickNavigationLayout::resultRowHeight, 40, 96);
             AddNumber(layout, "labelLines", &QuickNavigationLayout::labelLines, 1, 3);
             AddNumber(layout, "cornerRadius", &QuickNavigationLayout::cornerRadius, 0, 32);
+            AddNumber(layout, "searchRadius", &QuickNavigationLayout::searchRadius, 0, 24);
             AddNumber(layout, "tabRadius", &QuickNavigationLayout::tabRadius, 0, 20);
             AddNumber(layout, "itemRadius", &QuickNavigationLayout::itemRadius, 0, 24);
         }

@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -161,8 +162,10 @@ struct PersonalizationPagePresenter::Impl
     std::array<muxc::CheckBox, 4> libraryScopeChecks;
     muxc::InfoBar libraryFeedback;
     muxc::CommandBar libraryCommands;
-    std::array<muxc::AppBarButton, 5> libraryButtons;
-    std::array<winrt::event_token, 5> libraryButtonTokens{};
+    std::array<muxc::AppBarButton, 10> libraryButtons;
+    std::array<winrt::event_token, 10> libraryButtonTokens{};
+    bool themeBusy = false, sharingAvailable = false;
+    std::shared_ptr<std::atomic_bool> themeAlive = std::make_shared<std::atomic_bool>(true);
     winrt::event_token libraryTargetToken{}, libraryChoiceToken{};
     themes::Library savedThemes;
     std::vector<themes::Theme> libraryChoices, libraryQuickChoices, libraryPopupChoices;
@@ -832,6 +835,9 @@ struct PersonalizationPagePresenter::Impl
         libraryButtons[2].IsEnabled(selected != nullptr);
         libraryButtons[3].IsEnabled(selected && !themes::Builtin(selected->id));
         libraryButtons[4].IsEnabled(selected != nullptr);
+        for (std::size_t i = 5; i < 9; ++i) libraryButtons[i].IsEnabled(selected != nullptr);
+        for (std::size_t i : {std::size_t{6}, std::size_t{9}})
+            libraryButtons[i].Visibility(sharingAvailable ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     }
 
     void LibraryAction(ThemeLibraryCommand command)
@@ -854,7 +860,26 @@ struct PersonalizationPagePresenter::Impl
         };
         request.quickPanel = binding(libraryQuick, libraryQuickChoices); request.popup = binding(libraryPopup, libraryPopupChoices);
         request.replacement = binding(libraryReplacement, libraryChoices);
+        if (command == ThemeLibraryCommand::Preview || command == ThemeLibraryCommand::Share ||
+            command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::SyncSubscriptions)
+        {
+            if (themeBusy || !actions.themeAsync) return;
+            themeBusy = true; libraryCommands.IsEnabled(false);
+            const auto expectedGeneration = generation; auto alive = themeAlive; const auto preferred = request.id;
+            actions.themeAsync(generation, request, [this, alive, expectedGeneration, preferred](ThemeLibraryResult result) {
+                if (!alive->load()) return;
+                themeBusy = false; libraryCommands.IsEnabled(true);
+                if (generation != expectedGeneration) return;
+                sharingAvailable = result.sharingAvailable;
+                if (result.succeeded) savedThemes = result.library;
+                RefreshLibraryChoices(preferred);
+                libraryFeedback.Severity(result.succeeded ? muxc::InfoBarSeverity::Success : muxc::InfoBarSeverity::Error);
+                libraryFeedback.Message(result.message); libraryFeedback.IsOpen(!result.message.empty());
+            });
+            return;
+        }
         const auto result = actions.themeLibrary(generation, request);
+        sharingAvailable = result.sharingAvailable;
         if (result.succeeded)
         {
             savedThemes = result.library;
@@ -870,7 +895,8 @@ struct PersonalizationPagePresenter::Impl
         libraryTargetToken = libraryTarget.SelectionChanged([this](const auto&, const auto&) { if (!updatingLibrary) RefreshLibraryChoices(); });
         libraryChoiceToken = libraryChoice.SelectionChanged([this](const auto&, const auto&) { PatchLibraryChoice(); });
         constexpr ThemeLibraryCommand commands[] = {ThemeLibraryCommand::SaveAs, ThemeLibraryCommand::Update,
-            ThemeLibraryCommand::Apply, ThemeLibraryCommand::Remove, ThemeLibraryCommand::Export};
+            ThemeLibraryCommand::Apply, ThemeLibraryCommand::Remove, ThemeLibraryCommand::Export, ThemeLibraryCommand::Preview,
+            ThemeLibraryCommand::Share, ThemeLibraryCommand::ChooseCover, ThemeLibraryCommand::Regenerate, ThemeLibraryCommand::SyncSubscriptions};
         for (std::size_t i = 0; i < libraryButtons.size(); ++i)
             libraryButtonTokens[i] = libraryButtons[i].Click([this, command = commands[i]](const auto&, const auto&) { LibraryAction(command); });
         fontOpenToken = fontFlyout.Opened([this](const auto&, const auto&) {
@@ -1459,7 +1485,8 @@ struct PersonalizationPagePresenter::Impl
         libraryQuick.Header(winrt::box_value(L("themeLibrary.quickPanel")));
         libraryPopup.Header(winrt::box_value(L("themeLibrary.popup")));
         libraryReplacement.Header(winrt::box_value(L("themeLibrary.replacement")));
-        constexpr const char* labels[] = {"themeLibrary.saveAs", "themeLibrary.update", "themeLibrary.apply", "themeLibrary.remove", "themeLibrary.export"};
+        constexpr const char* labels[] = {"themeLibrary.saveAs", "themeLibrary.update", "themeLibrary.apply", "themeLibrary.remove", "themeLibrary.export",
+            "themeLibrary.preview", "themeLibrary.share", "themeLibrary.chooseCover", "themeLibrary.regenerate", "themeLibrary.sync"};
         for (std::size_t i = 0; i < libraryButtons.size(); ++i) libraryButtons[i].Label(L(labels[i]));
         constexpr const char* scopes[] = {"themeLibrary.components", "themeLibrary.dock", "themeLibrary.statusBar", "themeLibrary.taskbar"};
         for (std::size_t i = 0; i < libraryScopeChecks.size(); ++i) libraryScopeChecks[i].Content(winrt::box_value(L(scopes[i])));
@@ -1869,6 +1896,7 @@ struct PersonalizationPagePresenter::Impl
 
     void Close() noexcept
     {
+        themeAlive->store(false);
         if (closed)
             return;
         libraryTarget.SelectionChanged(libraryTargetToken);
@@ -2000,7 +2028,7 @@ void PersonalizationPagePresenter::Activate() noexcept
             if (impl_->hasSnapshot && impl_->actions.themeLibrary)
             {
                 const auto result = impl_->actions.themeLibrary(impl_->generation, {});
-                if (result.succeeded) { impl_->savedThemes = result.library; impl_->RefreshLibraryChoices(); }
+                if (result.succeeded) { impl_->sharingAvailable = result.sharingAvailable; impl_->savedThemes = result.library; impl_->RefreshLibraryChoices(); }
                 else { impl_->libraryFeedback.Message(result.message); impl_->libraryFeedback.Severity(muxc::InfoBarSeverity::Error); impl_->libraryFeedback.IsOpen(true); }
             }
         }

@@ -421,6 +421,11 @@ bool Save(Library& library, Theme theme, const Package& dependencies, bool updat
     std::string& savedId, std::string& error, const NewId& newId, bool preserveObjects)
 {
     Library next = library;
+    // Editing subscription content always creates a local copy. Never mutate
+    // the subscribed identity or its complete dependency closure.
+    if (update)
+        for (const auto& [item, origin] : next.workshop)
+        { (void)item; if (origin.ids.contains(theme.id)) { update = false; break; } }
     if (update)
     {
         const auto* old = Find(next.themes, theme.id);
@@ -506,6 +511,11 @@ bool Remove(Library& library, std::string_view id, std::string_view replacement,
         else return Fail(error, "themeInUse");
     }
     next.themes.erase(std::string(id));
+    for (auto it = next.workshop.begin(); it != next.workshop.end();)
+    {
+        it->second.ids.erase(std::string(id));
+        if (it->second.ids.empty()) it = next.workshop.erase(it); else ++it;
+    }
     if (!Validate(next.themes, error)) return false;
     library = std::move(next);
     return true;
@@ -541,12 +551,32 @@ std::string EncodeLibrary(const Library& library, std::string& error)
         out += Quote(target) + ":{\"id\":" + Quote(ref.id) + ",\"kind\":" + Quote(KindName(ref.kind)) +
             ",\"scope\":" + std::to_string(ref.scope) + ",\"snapshot\":" + snapshot + '}';
     }
+    out += "},\"workshop\":{"; first = true;
+    for (const auto& [item, origin] : library.workshop)
+    {
+        if (!Text(item, 32) || !Text(origin.owner, 32) || origin.sha256.size() != 64) return {};
+        if (!first) out += ','; first = false;
+        out += Quote(item) + ":{\"owner\":" + Quote(origin.owner) + ",\"sha256\":" + Quote(origin.sha256) + ",\"accounts\":[";
+        bool comma = false;
+        for (const auto& account : origin.accounts) { if (comma) out += ','; comma = true; out += Quote(account); }
+        out += "],\"ids\":["; comma = false;
+        for (const auto& id : origin.ids) { if (comma) out += ','; comma = true; out += Quote(id); }
+        out += "]}";
+    }
+    out += "},\"subscriptionAccounts\":{"; first = true;
+    for (const auto& [account, items] : library.subscriptionAccounts)
+    {
+        if (!first) out += ','; first = false;
+        out += Quote(account) + ":["; bool comma = false;
+        for (const auto& item : items) { if (comma) out += ','; comma = true; out += Quote(item); }
+        out += ']';
+    }
     return out + "}}";
 }
 bool DecodeLibrary(std::string_view text, Library& library, std::string& error)
 {
     JsonValue json;
-    if (!Document(text, json, error) || !Keys(json, {"format", "version", "global", "quickPanel", "popup", "references"})) return Fail(error, "invalidPackage");
+    if (!Document(text, json, error) || !Keys(json, {"format", "version", "global", "quickPanel", "popup", "references", "workshop", "subscriptionAccounts"})) return Fail(error, "invalidPackage");
     std::string format; const auto* version = json.Find("version");
     if (!String(json, "format", format) || format != "snowdesktop.theme-library" ||
         !version || !version->IsNumber() || version->number != 1) return Fail(error, "unsupportedVersion");
@@ -584,6 +614,35 @@ bool DecodeLibrary(std::string_view text, Library& library, std::string& error)
                 (resolved->scopes & ref.scope) != ref.scope)) return Fail(error, "invalidSelection");
         }
         out.references.emplace(target, std::move(ref));
+    }
+    const auto digit = [](std::string_view text) { return !text.empty() && text.size() <= 32 && text != "0" &&
+        std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; }); };
+    const auto readSet = [&](const JsonValue* values, std::set<std::string>& into, bool identities) {
+        if (!values || !values->IsArray() || values->array.size() > 4096) return false;
+        for (const auto& value : values->array)
+            if (!value.IsString() || (identities ? !Id(value.string) : !digit(value.string)) || !into.insert(value.string).second) return false;
+        return true;
+    };
+    if (const auto* origins = json.Find("workshop"))
+    {
+        if (!origins->IsObject() || origins->object.size() > 4096) return Fail(error, "invalidPackage");
+        for (const auto& [item, value] : origins->object)
+        {
+            Library::WorkshopOrigin origin;
+            if (!digit(item) || !String(value, "owner", origin.owner) || !digit(origin.owner) ||
+                !String(value, "sha256", origin.sha256) || origin.sha256.size() != 64 ||
+                !std::all_of(origin.sha256.begin(), origin.sha256.end(), [](unsigned char c) { return std::isxdigit(c) != 0; }) ||
+                !readSet(value.Find("accounts"), origin.accounts, false) || !readSet(value.Find("ids"), origin.ids, true))
+                return Fail(error, "invalidPackage");
+            for (const auto& id : origin.ids) if (!Resolve(out.themes, id)) return Fail(error, "invalidPackage");
+            out.workshop.emplace(item, std::move(origin));
+        }
+    }
+    if (const auto* accounts = json.Find("subscriptionAccounts"))
+    {
+        if (!accounts->IsObject() || accounts->object.size() > 64) return Fail(error, "invalidPackage");
+        for (const auto& [account, values] : accounts->object)
+            if (!digit(account) || !readSet(&values, out.subscriptionAccounts[account], false)) return Fail(error, "invalidPackage");
     }
     library = std::move(out);
     return true;

@@ -12,6 +12,9 @@
 #include <chrono>
 #include <cmath>
 #include <utility>
+#include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 
 namespace winrt::SnowDesktop::implementation
 {
@@ -3297,10 +3300,31 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
         dialog.XamlRoot(XamlRoot());
         dialog.Title(winrt::box_value(request.title));
         dialog.Content(winrt::box_value(request.message));
+        if (!request.previewImagePath.empty())
+        {
+            const auto file = co_await winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(request.previewImagePath);
+            const auto stream = co_await file.OpenReadAsync();
+            winrt::Microsoft::UI::Xaml::Media::Imaging::BitmapImage bitmap;
+            co_await bitmap.SetSourceAsync(stream);
+            if (closed_ || request.generation != navigation_.Generation())
+            {
+                if (completed) completed(false);
+                co_return;
+            }
+            muxc::StackPanel content;
+            muxc::Image image;
+            image.Source(bitmap); image.MaxWidth(440); image.MaxHeight(440);
+            image.Stretch(winrt::Microsoft::UI::Xaml::Media::Stretch::Uniform);
+            content.Children().Append(image);
+            muxc::TextBlock caption; caption.Text(request.message);
+            caption.TextWrapping(mux::TextWrapping::Wrap);
+            content.Children().Append(caption);
+            dialog.Content(content);
+        }
         dialog.PrimaryButtonText(request.primaryButtonText);
         dialog.CloseButtonText(request.closeButtonText);
         dialog.DefaultButton(
-            request.destructive ? muxc::ContentDialogButton::Close
+            (request.destructive || request.defaultClose) ? muxc::ContentDialogButton::Close
                                 : muxc::ContentDialogButton::Primary);
         const auto result = co_await dialog.ShowAsync();
         if (activeDialog_ == dialog)

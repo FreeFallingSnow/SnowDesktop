@@ -347,6 +347,8 @@ struct DockPagePresenter::Impl
     SettingsCard taskbarAppearanceCard;
     SettingsCard taskbarRulesCard;
     SettingsCard taskbarSystemPanelCard;
+    muxc::Button dockPreview, taskbarPreview;
+    winrt::event_token dockPreviewToken{}, taskbarPreviewToken{};
 
     muxc::ToggleSwitch dockEnabledToggle{nullptr};
     muxc::ComboBox positionCombo{nullptr};
@@ -532,6 +534,7 @@ struct DockPagePresenter::Impl
         InitializeCard(layoutCard, cardStyle, dockRoot);
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
         InitializeCard(behaviorCard, cardStyle, dockRoot);
+        layoutCard.content.Children().Append(dockPreview);
         positionCombo = NewCombo();
         layoutCombo = NewCombo();
         monitorScopeCombo = NewCombo();
@@ -660,6 +663,7 @@ struct DockPagePresenter::Impl
         taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
         InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot);
+        taskbarAppearanceCard.content.Children().Append(taskbarPreview);
         taskbarThemeCombo = NewCombo();
         taskbarContentThemeCombo = NewCombo();
         taskbarThemeRow.Initialize(taskbarThemeCombo);
@@ -1065,6 +1069,13 @@ struct DockPagePresenter::Impl
 
     void HookEvents()
     {
+        const auto preview = [this](std::string target) {
+            if (!CanEmitDock() || !actions.previewAppearance) return;
+            CommitContinuousEdits(); CommitOpenColorEditors(); mergedHeight->Flush();
+            actions.previewAppearance(generation, std::move(target));
+        };
+        dockPreviewToken = dockPreview.Click([preview](const auto&, const auto&) { preview("dock"); });
+        taskbarPreviewToken = taskbarPreview.Click([preview](const auto&, const auto&) { preview("taskbar"); });
         taskbarRootLoadedToken = taskbarRoot.Loaded(
             [this](const auto&, const auto&) {
                 if (closed)
@@ -2326,6 +2337,8 @@ struct DockPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        dockPreview.Content(winrt::box_value(L("themeLibrary.preview", L"")));
+        taskbarPreview.Content(winrt::box_value(L("themeLibrary.preview", L"")));
         const auto refresh = [this](TaskbarGradientControl& gradient) {
             gradient.borderEditor->RefreshLocalizedText();
             gradient.sections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
@@ -2845,6 +2858,7 @@ struct DockPagePresenter::Impl
             windowPreviews.Toggled(windowPreviewsToken);
             fullscreenSwipeToggle.Toggled(fullscreenSwipeToken);
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
+            dockPreview.Click(dockPreviewToken); taskbarPreview.Click(taskbarPreviewToken);
             mergedHeight->Close();
             homeSize.Toggled(homeSizeToken);
             taskbarMode.SelectionChanged(taskbarModeToken);

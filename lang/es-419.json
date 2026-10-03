@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "No se pudo guardar. Se conserva la última instantánea válida del tema.",
   "themeLibrary.error.libraryBusy": "Otra operación está modificando la biblioteca de temas. Inténtalo de nuevo.",
   "themeLibrary.error.unsupportedExtension": "Solo se admiten paquetes .snowwidget y .snowtheme.",
-  "themeLibrary.savedPending": "El tema se guardó, pero algunos objetos no se pudieron actualizar. Se conserva su última apariencia válida."
+  "themeLibrary.savedPending": "El tema se guardó, pero algunos objetos no se pudieron actualizar. Se conserva su última apariencia válida.",
+  "themeLibrary.preview": "Vista previa",
+  "themeLibrary.share": "Compartir en Steam",
+  "themeLibrary.chooseCover": "Elegir portada",
+  "themeLibrary.regenerate": "Regenerar portada",
+  "themeLibrary.sync": "Actualizar suscripciones",
+  "themeLibrary.cancelled": "Operación cancelada.",
+  "themeLibrary.agreementRequired": "Revisa y acepta el acuerdo de Steam Workshop en Steam antes de publicar.",
+  "themeLibrary.authorMismatch": "Solo la cuenta del autor puede actualizar este elemento de Workshop.",
+  "themeLibrary.stalePreview": "El tema o la portada cambió. Genera una nueva vista previa y vuelve a confirmar.",
+  "themeLibrary.creationUncertain": "No se pudo confirmar la creación. Revisa tus elementos de Workshop antes de reintentar para evitar duplicados.",
+  "themeLibrary.operationFailed": "La operación falló. Se conservan los temas y las apariencias existentes.",
+  "themeLibrary.preparing": "Preparando tema…",
+  "themeLibrary.fixedPreview": "La vista previa utiliza datos de demostración fijos. No incluye tu escritorio ni contenido personal.",
+  "themeLibrary.confirmShare": "¿Publicar este tema y sus temas vinculados como un solo elemento de Workshop?",
+  "themeLibrary.publishUpdate": "Actualizar elemento",
+  "themeLibrary.publish": "Publicar"
 }

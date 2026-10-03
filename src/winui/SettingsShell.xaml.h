@@ -61,6 +61,8 @@ struct SettingsShellDialogRequest
     std::wstring primaryButtonText;
     std::wstring closeButtonText;
     bool destructive = false;
+    bool defaultClose = false;
+    std::wstring previewImagePath;
 };
 
 /**

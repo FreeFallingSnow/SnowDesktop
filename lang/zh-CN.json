@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "保存失败，保留最后成功的主题快照。",
   "themeLibrary.error.libraryBusy": "其他操作正在修改主题库，请稍后重试。",
   "themeLibrary.error.unsupportedExtension": "仅支持 .snowwidget 和 .snowtheme 包。",
-  "themeLibrary.savedPending": "主题已保存，但部分对象未能更新，保留其最后成功的外观。"
+  "themeLibrary.savedPending": "主题已保存，但部分对象未能更新，保留其最后成功的外观。",
+  "themeLibrary.preview": "预览",
+  "themeLibrary.share": "分享到 Steam",
+  "themeLibrary.chooseCover": "自备封面",
+  "themeLibrary.regenerate": "重新生成封面",
+  "themeLibrary.sync": "刷新订阅",
+  "themeLibrary.cancelled": "操作已取消。",
+  "themeLibrary.agreementRequired": "发布前请在 Steam 中查看并接受工坊协议。",
+  "themeLibrary.authorMismatch": "只有作品作者账号可以更新此工坊作品。",
+  "themeLibrary.stalePreview": "主题或封面已变化，请重新生成预览并确认。",
+  "themeLibrary.creationUncertain": "无法确认作品是否创建，请先检查自己的工坊作品，避免重试产生重复作品。",
+  "themeLibrary.operationFailed": "操作失败，已有主题和外观保持不变。",
+  "themeLibrary.preparing": "正在准备主题…",
+  "themeLibrary.fixedPreview": "预览使用固定演示数据，不包含你的桌面和个人内容。",
+  "themeLibrary.confirmShare": "将此主题及其绑定的子主题作为一个工坊作品发布？",
+  "themeLibrary.publishUpdate": "更新作品",
+  "themeLibrary.publish": "发布"
 }

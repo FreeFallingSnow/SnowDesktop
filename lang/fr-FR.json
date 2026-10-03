@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "Échec de l’enregistrement. Le dernier instantané valide du thème est conservé.",
   "themeLibrary.error.libraryBusy": "Une autre opération modifie la bibliothèque de thèmes. Réessayez.",
   "themeLibrary.error.unsupportedExtension": "Seuls les paquets .snowwidget et .snowtheme sont pris en charge.",
-  "themeLibrary.savedPending": "Le thème a été enregistré, mais certains objets n’ont pas pu être mis à jour. Leur dernière apparence valide est conservée."
+  "themeLibrary.savedPending": "Le thème a été enregistré, mais certains objets n’ont pas pu être mis à jour. Leur dernière apparence valide est conservée.",
+  "themeLibrary.preview": "Aperçu",
+  "themeLibrary.share": "Partager sur Steam",
+  "themeLibrary.chooseCover": "Choisir une couverture",
+  "themeLibrary.regenerate": "Régénérer la couverture",
+  "themeLibrary.sync": "Actualiser les abonnements",
+  "themeLibrary.cancelled": "Opération annulée.",
+  "themeLibrary.agreementRequired": "Consultez et acceptez le contrat Steam Workshop dans Steam avant de publier.",
+  "themeLibrary.authorMismatch": "Seul le compte de l’auteur peut mettre à jour cet élément du Workshop.",
+  "themeLibrary.stalePreview": "Le thème ou la couverture a changé. Générez un nouvel aperçu et confirmez à nouveau.",
+  "themeLibrary.creationUncertain": "La création n’a pas pu être confirmée. Vérifiez vos éléments du Workshop avant de réessayer pour éviter un doublon.",
+  "themeLibrary.operationFailed": "L’opération a échoué. Les thèmes et apparences existants sont conservés.",
+  "themeLibrary.preparing": "Préparation du thème…",
+  "themeLibrary.fixedPreview": "L’aperçu utilise des données de démonstration fixes. Votre bureau et vos contenus personnels sont exclus.",
+  "themeLibrary.confirmShare": "Publier ce thème et ses thèmes associés dans un seul élément du Workshop ?",
+  "themeLibrary.publishUpdate": "Mettre à jour",
+  "themeLibrary.publish": "Publier"
 }

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file app.h
  * @brief SnowDesktop 主应用程序类的声明头文件。
  *
@@ -1629,6 +1629,8 @@ private:
     /** @brief 绘制快捷导航窗口内容。 @param hwnd 窗口句柄 */
     void PaintQuickNavigationWindow(HWND hwnd);
     void DrawQuickNavigationSurface(ID2D1DeviceContext* context);
+    snowdesktop::native_component_preview::Result ExportThemeSurfacePreview(
+        const snowdesktop::native_component_preview::Request& request);
     snowdesktop::native_component_preview::Result ExportQuickNavigationPreviews(
         const snowdesktop::native_component_preview::Request& request);
     snowdesktop::SettingsSearchIndexInput BuildSettingsSearchInput();

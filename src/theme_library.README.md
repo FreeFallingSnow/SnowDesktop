@@ -85,21 +85,53 @@ surface-theme behavior. Only explicit follow-global objects use these child
 bindings, and returning a quick panel to follow-global restores the bound
 layout without changing personal search settings.
 
-## Follow-up work
+## Production previews and Steam themes
 
-`Export` returns the immutable `Package` used for serialization. Step 5 should
-render the production controls from that same snapshot using a fixed
-background and demo data, producing a 1024 × 1024 image below 1 MiB. It must
-exclude live desktop, notification and search data; preview failure must not
-reuse an old upload image. Global previews should show applicable scopes and
-bound child examples.
+`theme_preview::Render` freezes the complete exported `Package`, writes it once,
+and passes that file to the host's private offscreen renderer. Component cards,
+quick panel, popup, Dock and status bar call their production renderers; taskbar
+material uses the production panel fill and taskbar physical-edge rasterizer.
+Taskbar buttons are fixed stock fixtures because Explorer owns real buttons.
+No desktop enumeration, notifications, search history or personal shortcuts are
+loaded. The fixed background and demonstration data are repeatable.
 
-Step 6 should use explicit Steam bridge capability discovery, preserve old
-widget commands, and keep its public CLI version independent of package
-version 1. The host continues to own theme packages, rendering and installation.
-Sharing requires explicit publication confirmation; successful creation must
-persist the Workshop item ID for retries, updates must verify authorship, and
-downloads must validate whole packages before installation. Editing subscribed
-themes creates local copies. Unsubscription, removal and scope changes must
-preserve referenced snapshots; incomplete downloads and failed queries cannot
-remove existing contents. No online publication is implemented by this batch.
+Each request owns a fresh directory and child processes; completion/cancellation
+releases handles and images, with no retained bitmap cache. A 1024 x 1024 PNG is
+encoded below the strict 1 MiB bridge limit, reducing color depth if necessary.
+Failure returns no cover and removes that request's preparation. A chosen cover
+is normalized through the same encoder. Global previews show only supported
+scopes and include bound quick/popup themes; Dock/taskbar target previews are
+available both from the saved-theme target selector and directly on their settings pages. Quick-panel options expose all
+18 saved layout fields including search-chip radius.
+
+Sharing prepares the same immutable package and cover, displays a confirmation,
+and rechecks the saved snapshot before invoking the bridge. Closing the session,
+cancelling or receiving a stale generation prevents a later confirmation from
+publishing. Every operation has a single active request. Steam capability
+`workshop.theme.v1` and workflow protocol 1 are required independently of bridge
+presence and the application version. Old component commands and package format
+`snowdesktop.theme` version 1 are unchanged; taskbar protocol remains version 13.
+
+The bridge journals a created ID before starting its upload. Retrying an upload
+uses that ID and verifies current authorship. A lost create response without an
+ID blocks automatic creation until the user checks their authored items. Neither
+the bridge nor the host accepts a Workshop agreement on the user's behalf.
+
+Subscriptions are queried through the capable bridge. Only a complete ready
+folder containing exactly `package.snowtheme`, matching metadata/hash and the
+full dependency closure, can install. A transaction imports without applying.
+Changed versions get new identities, leaving active references and saved bindings
+on their previous immutable contents. Editing a subscribed theme saves a local
+copy. Confirmed unsubscription/deletion removes provenance, preserving theme
+values. Account-specific subscription history prevents another account or an
+incomplete query from deleting managed content. Widget source routing ignores
+standalone theme artifacts.
+
+The private library adds optional `workshop` and `subscriptionAccounts` fields;
+new readers accept old libraries. Old strict readers reject libraries with these
+fields, so downgrading requires exporting packages or retaining the previous
+private-library backup. External `.snowtheme` compatibility is unchanged.
+
+`theme_workflow` tests cover codecs, retry journals, authorship, agreement state,
+locks, cancellation, stale preparations and real offscreen rendering. Passing
+these tests does not claim live Settings UI, Explorer or online Steam acceptance.

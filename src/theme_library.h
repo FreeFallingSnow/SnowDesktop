@@ -43,6 +43,13 @@ struct Library
 {
     Package themes;
     std::map<std::string, Reference> references;
+    struct WorkshopOrigin
+    {
+        std::string owner, sha256;
+        std::set<std::string> accounts, ids;
+    };
+    std::map<std::string, WorkshopOrigin> workshop;
+    std::map<std::string, std::set<std::string>> subscriptionAccounts;
 };
 using NewId = std::function<std::string()>;
 

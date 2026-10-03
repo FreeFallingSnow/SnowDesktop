@@ -364,10 +364,6 @@ PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId)
  *
  * @return std::wstring 配置文件的绝对路径
  */
-std::wstring GetPersonalizationPath()
-{
-    return GetDataFilePath(L"SnowDesktop.personalization.json");
-}
 
 /**
  * @brief 从 JSON 文件加载个性化设置

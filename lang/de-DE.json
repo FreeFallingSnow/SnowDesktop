@@ -2470,5 +2470,21 @@
   "themeLibrary.error.writeFailed": "Speichern fehlgeschlagen. Der letzte erfolgreich gespeicherte Designstand bleibt erhalten.",
   "themeLibrary.error.libraryBusy": "Ein anderer Vorgang ändert die Designbibliothek. Versuchen Sie es erneut.",
   "themeLibrary.error.unsupportedExtension": "Nur Pakete mit .snowwidget oder .snowtheme werden unterstützt.",
-  "themeLibrary.savedPending": "Das Design wurde gespeichert, aber einige Objekte konnten nicht aktualisiert werden. Ihr letztes erfolgreich angewendetes Erscheinungsbild bleibt erhalten."
+  "themeLibrary.savedPending": "Das Design wurde gespeichert, aber einige Objekte konnten nicht aktualisiert werden. Ihr letztes erfolgreich angewendetes Erscheinungsbild bleibt erhalten.",
+  "themeLibrary.preview": "Vorschau",
+  "themeLibrary.share": "Auf Steam teilen",
+  "themeLibrary.chooseCover": "Titelbild wählen",
+  "themeLibrary.regenerate": "Titelbild neu erstellen",
+  "themeLibrary.sync": "Abonnements aktualisieren",
+  "themeLibrary.cancelled": "Vorgang abgebrochen.",
+  "themeLibrary.agreementRequired": "Prüfe und akzeptiere vor der Veröffentlichung die Workshop-Vereinbarung in Steam.",
+  "themeLibrary.authorMismatch": "Nur das Autorenkonto kann diesen Workshop-Inhalt aktualisieren.",
+  "themeLibrary.stalePreview": "Design oder Titelbild wurde geändert. Erstelle eine neue Vorschau und bestätige erneut.",
+  "themeLibrary.creationUncertain": "Die Erstellung konnte nicht bestätigt werden. Prüfe vor einem erneuten Versuch deine Workshop-Inhalte, um Duplikate zu vermeiden.",
+  "themeLibrary.operationFailed": "Der Vorgang ist fehlgeschlagen. Vorhandene Designs und Darstellungen bleiben erhalten.",
+  "themeLibrary.preparing": "Design wird vorbereitet…",
+  "themeLibrary.fixedPreview": "Die Vorschau verwendet feste Beispieldaten. Dein Desktop und persönliche Inhalte werden ausgeschlossen.",
+  "themeLibrary.confirmShare": "Dieses Design und seine verknüpften Designs als einen Workshop-Inhalt veröffentlichen?",
+  "themeLibrary.publishUpdate": "Inhalt aktualisieren",
+  "themeLibrary.publish": "Veröffentlichen"
 }

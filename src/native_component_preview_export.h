@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "theme_library.h"
 
 namespace snowdesktop::native_component_preview
 {
@@ -22,6 +23,8 @@ struct Request
     int padding = 72;
     bool transparent = false;
     bool contentOnly = false;
+    // Private offscreen input. It never loads host settings or live providers.
+    std::optional<themes::Theme> theme;
 };
 
 struct Output

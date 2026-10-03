@@ -14,7 +14,7 @@
 
 namespace snowdesktop::winui
 {
-enum class ThemeLibraryCommand { Refresh, SaveAs, Update, Apply, Remove, Export };
+enum class ThemeLibraryCommand { Refresh, SaveAs, Update, Apply, Remove, Export, Preview, Share, ChooseCover, Regenerate, SyncSubscriptions };
 struct ThemeLibraryRequest
 {
     ThemeLibraryCommand command = ThemeLibraryCommand::Refresh;
@@ -27,6 +27,7 @@ struct ThemeLibraryResult
     themes::Library library;
     std::string savedId;
     std::wstring message;
+    bool sharingAvailable = false;
 };
 
 /** Commands emitted by the cached Personalization settings presenter. */
@@ -59,6 +60,7 @@ struct PersonalizationPageActions
     std::function<std::vector<app_fonts::Choice>(bool folder, std::string& error)> importFonts;
     std::function<void(std::uint64_t generation)> restartApplication;
     std::function<ThemeLibraryResult(std::uint64_t, const ThemeLibraryRequest&)> themeLibrary;
+    std::function<void(std::uint64_t, ThemeLibraryRequest, std::function<void(ThemeLibraryResult)>)> themeAsync;
 };
 
 /**

@@ -1,4 +1,8 @@
 #include "app.h"
+#include "../theme_workshop.h"
+#include "../theme_library_settings.h"
+#include "../steam_workshop_cache.h"
+#include "../steam_app_identity.h"
 #include "../dock_snapshot_warmup_rules.h"
 #include "../layout_scroll_save_rules.h"
 #include "dock_taskbar_diagnostics.h"
@@ -241,6 +245,25 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     std::thread([state, locale, notifyWindow, queryId,
         installedPackages, subscriptionHistory, packageStaging]
     {
+        // Local cache inspection decides whether theme work is relevant. All
+        // online theme requests still go through the independently capable bridge.
+        try
+        {
+            using namespace snowdesktop;
+            themes::Library library; std::string error;
+            bool relevant = themes::Load(themes::LibraryPath(), library, error) && !library.workshop.empty();
+            const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
+            const auto cache = widget::ReadSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
+            for (const auto& item : cache.readyItems)
+            {
+                std::error_code ec;
+                relevant = relevant || std::filesystem::is_regular_file(item.contentDirectory / L"package.snowtheme", ec);
+            }
+            const auto bridge = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe";
+            if (relevant && themes::workshop::Available(bridge, SNOWDESKTOP_VERSION))
+                (void)themes::workshop::Sync(bridge, themes::LibraryPath(), library, error);
+        }
+        catch (...) { /* Failed/partial queries never remove installed themes. */ }
         auto snapshot =
             WidgetEngine::QuerySteamWorkshopSubscriptions(locale);
         snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
