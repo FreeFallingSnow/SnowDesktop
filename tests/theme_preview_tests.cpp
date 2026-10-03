@@ -110,6 +110,18 @@ int wmain(int argc, wchar_t** argv)
         const auto changedImage = Compare(firstImage, changedOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{});
         check(changedOk && changedImage.material > 10000 && changedImage.maximum > 128,
             "bound child layout and color cause substantial changes in the real renderer");
+        const bool taskbarOk = preview::Render(argv[1],package,global.id,Taskbar,directory / L"taskbar",cover,error);
+        const auto taskbarImage = taskbarOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+        auto material = package;
+        auto& surface = material.at(global.id).appearance;
+        surface.glassEnabled = surface.acrylicEnabled = surface.panelGradient.enabled = false;
+        surface.widgetAlpha = 1; surface.widgetBgR = .9f; surface.widgetBgG = .15f; surface.widgetBgB = .2f;
+        surface.widgetBorderAlpha = 1; surface.widgetBorderWidth = 3;
+        surface.widgetBorderR = .1f; surface.widgetBorderG = surface.widgetBorderB = 1;
+        const bool materialOk = preview::Render(argv[1],material,global.id,Taskbar,directory / L"taskbar-material",cover,error);
+        const auto materialImage = Compare(taskbarImage, materialOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{});
+        check(taskbarOk && materialOk && materialImage.material > 10000 && materialImage.maximum > 128,
+            "direct taskbar preview uses global material and physical-edge production rendering");
         check(!preview::Render(argv[1],package,global.id,All,directory / L"first",cover,error) && cover.empty(), "duplicate directory never returns an old cover");
         cover = directory / L"noise.png";
         check(!preview::Render(argv[1],package,global.id,All,directory / L"cancelled",cover,error,&cancel) && cover.empty() &&

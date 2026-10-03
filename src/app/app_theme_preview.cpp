@@ -84,7 +84,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             material(bounds, appearance, 0);
             context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(bounds.left), static_cast<float>(bounds.top)));
             const UINT width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
-            auto fill = appearance; fill.widgetBorderAlpha = 0; fill.widgetEdgeHighlightEnabled = false;
+            const auto fill = StatusBarFillAppearance(appearance);
             DrawWidgetPanelBackground(context.Get(), {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)}, 0,
                 D2D1::ColorF(fill.widgetBgR, fill.widgetBgG, fill.widgetBgB, fill.widgetAlpha), D2D1::ColorF(0, 0.f),
                 false, 0, &fill, false, 0, 1);
