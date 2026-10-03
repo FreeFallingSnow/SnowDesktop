@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -16,14 +17,46 @@ PS = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.
 
 
 CREATED = []
+FIXTURE_PREFIXES = ('SnowDesktop-wait-retry-','SnowDesktop-retry-process-','SnowDesktop-real-ctest-selection-')
 def new_fixture(prefix):
     root=Path(tempfile.mkdtemp(prefix=prefix));CREATED.append(root);return root
+
+def remove_fixture_tree(root):
+    """Remove this test's checked temporary tree without a shell subprocess."""
+    resolved=root.resolve();temp=Path(tempfile.gettempdir()).resolve()
+    assert root in CREATED and resolved.parent==temp and root.name.startswith(FIXTURE_PREFIXES), 'Refusing removal outside this test\'s named temporary fixture'
+    if not root.exists():return
+    pending=[root]
+    while pending:
+        directory=pending.pop()
+        assert not directory.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT, 'Refusing fixture reparse point'
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                info=entry.stat(follow_symlinks=False)
+                assert not info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT, 'Refusing fixture reparse point'
+                if stat.S_ISDIR(info.st_mode):pending.append(Path(entry.path))
+    def clear_readonly(function,path,exception):
+        target=Path(path).resolve();error=exception[1]
+        assert target==resolved or resolved in target.parents, 'Refusing attribute changes outside the fixture'
+        info=Path(path).lstat()
+        if not isinstance(error,PermissionError) or info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT or not info.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+            raise error
+        os.chmod(path,stat.S_IWRITE)
+        function(path)
+    deadline=time.monotonic()+2
+    while True:
+        try:
+            shutil.rmtree(str(root),onerror=clear_readonly)
+            return
+        except PermissionError:
+            if time.monotonic()>=deadline:raise
+            time.sleep(.05)
 
 def cleanup_fixtures():
     temp=Path(tempfile.gettempdir()).resolve()
     for root in reversed(CREATED):
         resolved=root.resolve()
-        if not str(resolved).lower().startswith(str(temp).lower()+os.sep) or not root.name.startswith(('SnowDesktop-wait-retry-','SnowDesktop-retry-process-')):
+        if not str(resolved).lower().startswith(str(temp).lower()+os.sep) or not root.name.startswith(FIXTURE_PREFIXES):
             raise AssertionError('Refusing cleanup outside the named temporary fixture')
         records=[]
         for state in (root/'.build/collaboration',root/'repair/.build/collaboration'):
@@ -43,19 +76,7 @@ def cleanup_fixtures():
             script="$p=Get-Process -Id "+str(pid)+" -ErrorAction SilentlyContinue;if($p -and $p.StartTime.ToUniversalTime().Ticks.ToString() -eq '"+ticks+"'){$c=(Get-CimInstance Win32_Process -Filter 'ProcessId="+str(pid)+"').CommandLine;if($c -and ($c.Contains('"+patterns[0]+"') -or $c.Contains('"+patterns[1]+"'))){Stop-Process -Id "+str(pid)+";Start-Sleep -Milliseconds 100}}"
             result=subprocess.run([PS,'-NoProfile','-Command',script+';exit 0'],capture_output=True,timeout=10)
             if result.returncode:raise AssertionError('Fixture process cleanup failed; user processes were not targeted')
-        deadline=time.monotonic()+2
-        while True:
-            try:
-                if os.name=='nt':
-                    # Native Force removes readonly Git objects in this already verified fixture tree.
-                    command="Remove-Item -LiteralPath '"+str(resolved).replace("'","''")+"' -Recurse -Force -ErrorAction Stop"
-                    removed=subprocess.run([PS,'-NoProfile','-Command',command],capture_output=True,timeout=10)
-                    if removed.returncode:raise PermissionError(removed.stderr.decode('utf-8',errors='replace'))
-                else:shutil.rmtree(str(resolved))
-                break
-            except PermissionError:
-                if time.monotonic()>=deadline:raise
-                time.sleep(.05)
+        remove_fixture_tree(root)
     print('PASS named temporary fixtures cleaned; only exact fixture process identities were targeted')
 
 def process_fixture(repo):
@@ -130,7 +151,7 @@ def process_fixture(repo):
 
 def real_selection_fixture(repo):
     import datetime as dt
-    root=Path(tempfile.mkdtemp(prefix='SnowDesktop-real-ctest-selection-'))
+    root=new_fixture('SnowDesktop-real-ctest-selection-')
     (root/'scripts').mkdir();state=root/'.build/collaboration';state.mkdir(parents=True)
     for name in ('build_job.cs','build_entry.ps1','test_manager.ps1','build_protocol.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
@@ -193,7 +214,7 @@ def real_selection_fixture(repo):
     finally:
         resolved=root.resolve();temp=Path(tempfile.gettempdir()).resolve()
         assert str(resolved).lower().startswith(str(temp).lower()+os.sep) and resolved.name.startswith('SnowDesktop-real-ctest-selection-')
-        subprocess.run([ps,'-NoProfile','-Command',"Remove-Item -LiteralPath '"+str(resolved).replace("'","''")+"' -Recurse -Force -ErrorAction Stop"],check=True,capture_output=True,timeout=10)
+        remove_fixture_tree(root)
 
 def crash_fixture_worker(root, ticket):
     """Crash only the recorded live worker, using one validated native handle."""
