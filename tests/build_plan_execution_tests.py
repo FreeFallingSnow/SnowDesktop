@@ -7,6 +7,9 @@ import subprocess
 import tempfile
 
 def main(repo):
+    # Temporary repositories must obtain their own lease; the outer build's
+    # credential is valid only for the real repository and its owner tree.
+    os.environ.pop('SNOWDESKTOP_EXECUTION_TOKEN',None)
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-plan-execution-'));scripts=root/'scripts';scripts.mkdir();binroot=root/'fake-bin';binroot.mkdir()
     for file in ('build_job.cs','build_entry.ps1','test_manager.ps1','build_protocol.ps1'):shutil.copyfile(repo/'scripts'/file,scripts/file)
     source=root/'standin.cs'
@@ -40,7 +43,7 @@ static int Main(string[] args){
     def run(mode,expected):
         (root/'behavior').write_text(mode);(state/(bid+'.plan.json')).write_text(json.dumps(plan))
         env=dict(os.environ,PATH=str(binroot)+os.pathsep+os.environ['PATH'])
-        p=subprocess.run(['powershell.exe','-NoProfile','-File',str(scripts/'test_manager.ps1'),'-Mode','plan','-PlanBatch',bid],cwd=str(root),env=env,capture_output=True,text=True,timeout=20)
+        p=subprocess.run(['powershell.exe','-NoProfile','-File',str(scripts/'test_manager.ps1'),'-Mode','plan','-PlanBatch',bid],cwd=str(root),env=env,capture_output=True,text=True,encoding='utf-8',timeout=20)
         assert (p.returncode==0)==expected,(mode,p.stdout,p.stderr)
         return json.loads((state/(bid+'.coverage.json')).read_text(encoding='utf-8-sig'))
     coverage=run('pass',True);assert coverage['status']=='passed' and [x['status'] for x in coverage['tasks']]==['passed','passed']

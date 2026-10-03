@@ -37,10 +37,12 @@ def run_entry_tests(repo):
              [PS,'-NoProfile','-File',str(scripts/'test_manager.ps1'),'-Mode','name','-Filter','Alpha'],
              [PS,'-NoProfile','-File',str(scripts/'build_entry.ps1'),'-Action','ide']]
     original=(directory/'state.json').read_bytes()
-    # Negative control: the pre-change batch reaches preflight during editing.
-    # Restore it only in this fixture; the real working tree is never touched.
+    # Disable the lease guard only in this fixture for a negative control.
+    # HEAD can already contain the guard, so it is not a stable old baseline.
     current_batch=(scripts/'build.bat').read_bytes()
-    previous=subprocess.check_output(['git','show','HEAD:scripts/build.bat'],cwd=str(repo))
+    guard_start=current_batch.index(b'rem Acquire execution authority before any preflight/process action or output write.')
+    guard_end=current_batch.index(b'if defined RELOAD_SHELL (',guard_start)
+    previous=current_batch[:guard_start]+current_batch[guard_end:]
     (scripts/'build.bat').write_bytes(previous)
     run(entries[0],code=3)
     assert (root/'preflight.marker').exists(),'negative control did not reach the original unguarded entry'

@@ -56,6 +56,9 @@ exit /b 19
     print('PASS real build entry preserves preflight path after SHIFT and stops on positive/negative failures')
 
 def run_tests(repo,entry=True):
+    # Every repository created below is independent of the enclosing build.
+    # Explicit forged-credential probes still provide their own environment.
+    os.environ.pop('SNOWDESKTOP_EXECUTION_TOKEN',None)
     if entry:
         check_build_entry_preflight(repo)
         from build_entry_tests import run_entry_tests

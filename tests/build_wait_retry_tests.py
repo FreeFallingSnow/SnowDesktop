@@ -152,7 +152,7 @@ def real_selection_fixture(repo):
     ps=str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
     log=[]
     def invoke(*args,expected):
-        p=subprocess.run([ps,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(root/'scripts/test_manager.ps1'),*args],cwd=str(root),capture_output=True,text=True,timeout=30)
+        p=subprocess.run([ps,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(root/'scripts/test_manager.ps1'),*args],cwd=str(root),capture_output=True,text=True,encoding='utf-8',timeout=30)
         log.append({'args':list(args),'exitCode':p.returncode,'stdout':p.stdout,'stderr':p.stderr})
         assert (p.returncode==0)==(expected==0),(args,p.returncode,p.stdout,p.stderr)
         return p
@@ -190,6 +190,9 @@ def real_selection_fixture(repo):
         subprocess.run([ps,'-NoProfile','-Command',"Remove-Item -LiteralPath '"+str(resolved).replace("'","''")+"' -Recurse -Force -ErrorAction Stop"],check=True,capture_output=True,timeout=10)
 
 def main(repo):
+    # Copied coordinator fixtures need their own credentials rather than the
+    # enclosing shared build's credential for a different repository root.
+    os.environ.pop('SNOWDESKTOP_EXECUTION_TOKEN',None)
     root=new_fixture('SnowDesktop-wait-retry-')
     (root/'scripts').mkdir();(root/'tools/build-dashboard').mkdir(parents=True)
     for name in ('build_wait_tasks.py','build_test_retry.py','build_entry.ps1','build_runtime.ps1','build_manager.ps1','build_protocol.ps1',
