@@ -17,6 +17,9 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     check(bridge::ThemeSha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "production package hash matches known SHA256 vector");
     const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\"]}";
     check(workshop::Capabilities(current,"1") && !workshop::Capabilities(current,"2"), "bridge capability and compatible version are independent requirements");
+    check(workshop::Capabilities("{\"progress\":\"starting\"}\n" + current + "\n","1") &&
+        !workshop::Capabilities(current + "\n{\"ok\":false}\n","1"),
+        "JSON Lines retains the last result and rejects a terminal failure");
     auto old = current; old.replace(old.find("workshop.theme.v1"),17,"workshop.widget.v1");
     check(!workshop::Capabilities(old,"1") && !workshop::Capabilities("{\"ok\":true,\"version\":\"1\"}","1"), "old and missing-capability bridges do not enable sharing");
     Theme root = Capture(Kind::Global,MakeAppearancePreset(kAppearancePresetDark)); root.id = "theme/workshop-root"; root.name = "Demo";

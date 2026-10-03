@@ -515,7 +515,8 @@ struct SettingsWindowHost::Impl
                 (task->request.target == "dock" || task->request.target == "taskbar"))
             {
                 auto theme = themes::CaptureTarget(task->request.target, controller->Snapshot()->values);
-                theme.id = themes::CreateId(); theme.name = winrt::to_string(L("themeLibrary." + task->request.target));
+                theme.id = themes::CreateId();
+                theme.name = winrt::to_string(L(task->request.target == "dock" ? "themeLibrary.dock" : "themeLibrary.taskbar"));
                 theme.scopes = themes::All; theme.quickPanel = "builtin/quickpanel/dark"; theme.popup = "builtin/popup/dark";
                 task->request.id = theme.id; task->snapshot.emplace(theme.id, std::move(theme));
             }

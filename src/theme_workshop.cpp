@@ -21,6 +21,11 @@ bool Digits(std::string_view value)
 std::int64_t Now() { return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 bool Final(std::string_view output, JsonValue& value)
 {
+    // A single response may contain JSON whitespace; progress streams retain
+    // their existing last-result JSON Lines handling.
+    JsonValue complete;
+    if (ParseJson(output, complete) && complete.Find("ok"))
+    { value = std::move(complete); return true; }
     bool found = false;
     while (!output.empty())
     {

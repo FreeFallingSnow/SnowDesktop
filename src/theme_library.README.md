@@ -94,6 +94,11 @@ material uses the production panel fill and taskbar physical-edge rasterizer.
 Taskbar buttons are fixed stock fixtures because Explorer owns real buttons.
 No desktop enumeration, notifications, search history or personal shortcuts are
 loaded. The fixed background and demonstration data are repeatable.
+Automated comparisons require identical frozen package hashes and bound repeated
+1024-square renders to at most 1024 differing pixels, with a maximum channel
+difference of two and identical alpha. This allows observed sparse production
+edge rounding; changed quick-panel layout/color must still affect more than
+10000 pixels beyond that tolerance. PNG byte identity is not required.
 
 Each request owns a fresh directory and child processes; completion/cancellation
 releases handles and images, with no retained bitmap cache. A 1024 x 1024 PNG is

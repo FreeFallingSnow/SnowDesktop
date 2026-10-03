@@ -1,8 +1,35 @@
 #include "theme_preview.h"
 #include "theme_workshop.h"
 #include <windows.h>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
+
+namespace
+{
+struct Difference { unsigned maximum = 0; std::size_t pixels = 0, material = 0; bool alpha = true; };
+Difference Compare(const snowdesktop::widget_preview::Wallpaper& a, const snowdesktop::widget_preview::Wallpaper& b)
+{
+    Difference result;
+    if (a.width != 1024 || a.height != 1024 || b.width != a.width || b.height != a.height ||
+        a.pixels.size() != 1024 * 1024 || b.pixels.size() != a.pixels.size())
+    { result.alpha = false; result.maximum = 255; return result; }
+    for (std::size_t i = 0; i < a.pixels.size(); ++i)
+    {
+        unsigned maximum = 0;
+        for (unsigned shift : {0u, 8u, 16u})
+        {
+            const auto x = (a.pixels[i] >> shift) & 255u, y = (b.pixels[i] >> shift) & 255u;
+            maximum = std::max(maximum, x > y ? x - y : y - x);
+        }
+        result.maximum = std::max(result.maximum, maximum);
+        if (maximum) ++result.pixels;
+        if (maximum > 2) ++result.material;
+        result.alpha &= (a.pixels[i] >> 24) == (b.pixels[i] >> 24);
+    }
+    return result;
+}
+}
 
 int RunThemeWorkshopTests(const std::filesystem::path&);
 int wmain(int argc, wchar_t** argv)
@@ -65,15 +92,24 @@ int wmain(int argc, wchar_t** argv)
         DWORD handlesBefore = 0, handlesAfter = 0; GetProcessHandleCount(GetCurrentProcess(), &handlesBefore);
         const bool first = preview::Render(argv[1],package,global.id,All,directory / L"first",cover,error);
         check(first, ("actual immutable production render: " + error).c_str());
-        const auto firstHash = first ? steam_bridge::ThemeFileSha256(cover) : "";
+        const auto firstImage = first ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+        const auto frozenHash = steam_bridge::ThemeFileSha256(directory / L"first" / L"package.snowtheme");
         const bool second = preview::Render(argv[1],package,global.id,All,directory / L"second",cover,error);
-        check(second && steam_bridge::ThemeFileSha256(cover) == firstHash, "same package produces repeatable production cover");
+        const auto repeated = Compare(firstImage, second ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{});
+        std::cout << "Repeated production cover: differing pixels=" << repeated.pixels << ", maximum channel difference=" << repeated.maximum << '\n';
+        // Independent production D2D runs can differ by sparse 8-bit edge
+        // rounding. This narrow bound still rejects changed data or materials.
+        check(second && repeated.alpha && repeated.maximum <= 2 && repeated.pixels <= 1024 &&
+            steam_bridge::ThemeFileSha256(directory / L"second" / L"package.snowtheme") == frozenHash,
+            "same frozen package repeats within sparse two-channel-value edge rounding");
         GetProcessHandleCount(GetCurrentProcess(), &handlesAfter);
         check(handlesAfter <= handlesBefore + 4, "completed requests release child and file handles without a retained bitmap cache");
         auto changed = package;
         changed.at(quick.id).layout.expandedWidth += 160; changed.at(quick.id).colors["searchText"] = "#ff0000";
         const bool changedOk = preview::Render(argv[1],changed,global.id,All,directory / L"changed",cover,error);
-        check(changedOk && steam_bridge::ThemeFileSha256(cover) != firstHash, "bound child layout and color reach the real renderer");
+        const auto changedImage = Compare(firstImage, changedOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{});
+        check(changedOk && changedImage.material > 10000 && changedImage.maximum > 128,
+            "bound child layout and color cause substantial changes in the real renderer");
         check(!preview::Render(argv[1],package,global.id,All,directory / L"first",cover,error) && cover.empty(), "duplicate directory never returns an old cover");
         cover = directory / L"noise.png";
         check(!preview::Render(argv[1],package,global.id,All,directory / L"cancelled",cover,error,&cancel) && cover.empty() &&

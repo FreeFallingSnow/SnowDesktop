@@ -77,7 +77,10 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
         }
         else
         {
-            bounds = {64, request.canvasHeight / 2 - 24, request.canvasWidth - 64, request.canvasHeight / 2 + 24};
+            // A fixed segment keeps text and physical edges legible in the
+            // six-surface cover without altering production drawing metrics.
+            bounds = {64, request.canvasHeight / 2 - 24,
+                64 + std::min<LONG>(768, request.canvasWidth - 128), request.canvasHeight / 2 + 24};
             material(bounds, appearance, 0);
             context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(bounds.left), static_cast<float>(bounds.top)));
             const UINT width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
