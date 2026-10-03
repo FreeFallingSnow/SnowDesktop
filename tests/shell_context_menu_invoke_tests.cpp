@@ -1243,6 +1243,71 @@ void PumpUntil(Condition condition, const char *message)
     Expect(condition(),message);
 }
 
+void TestUnchangedCataloguePersistence()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    const auto cachePath = directory.path / L"cache";
+    std::filesystem::create_directory(cachePath);
+    const auto cataloguePath = cachePath / L"catalogue.bin";
+    ext::Catalogue original; original.revision = 17;
+    ext::Registration row; row.id = "reg:unchanged"; row.revision = 17;
+    row.contexts = ext::ContextBit(ext::Context::File); row.types = {L"*"};
+    row.verbs = {"unchanged"}; row.display.label = L"Original";
+    row.linked = true; original.rows = {row};
+    original.associations.push_back({"verb:unchanged", row.id, ext::Context::File});
+    const auto bytes = snowdesktop::settings_ipc::Pack(std::uint32_t(4), original);
+    {
+        std::ofstream out(cataloguePath, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+    const auto savedTime = std::filesystem::last_write_time(cataloguePath) - std::chrono::hours(1);
+    std::filesystem::last_write_time(cataloguePath, savedTime);
+    std::atomic<unsigned> scans = 0, queries = 0;
+    std::atomic<std::uint64_t> revision = 17;
+    ext::MenuService service(cachePath, [&](const auto &) {
+        ++queries;
+        return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+    }, [&] {
+        auto value = original;
+        value.associations.clear(); value.rows[0].linked = false;
+        value.revision = value.rows[0].revision = revision.load();
+        if (value.revision != 17) value.rows[0].display.label = L"Changed";
+        ++scans; return value;
+    });
+    service.Inspect();
+    PumpUntil([&] { return scans.load() != 0 && !service.Inspect().scanning; },
+        "initial unchanged catalogue scan and discovery complete");
+    Expect(std::filesystem::last_write_time(cataloguePath) == savedTime,
+        "unchanged registry inventory does not rewrite the durable catalogue");
+    const auto initialQueries = queries.load();
+    const auto initialScans = scans.load();
+    service.Inspect({}, true);
+    PumpUntil([&] { return scans.load() > initialScans && !service.Inspect().scanning; },
+        "explicit unchanged refresh still completes its scan");
+    Expect(queries.load() > initialQueries,
+        "unchanged catalogue fast path retains forced command discovery");
+    Expect(std::filesystem::last_write_time(cataloguePath) == savedTime,
+        "explicit unchanged refresh avoids redundant catalogue serialization");
+    revision = 18;
+    const auto previousScans = scans.load();
+    service.Inspect({}, true);
+    PumpUntil([&] { return scans.load() > previousScans && !service.Inspect().scanning &&
+        std::filesystem::last_write_time(cataloguePath) != savedTime; },
+        "changed registration revision replaces the durable catalogue");
+    service.Shutdown();
+    std::ifstream input(cataloguePath, std::ios::binary | std::ios::ate);
+    const auto length = input.tellg(); input.seekg(0);
+    snowdesktop::settings_ipc::Bytes updated(static_cast<size_t>(length));
+    Expect(static_cast<bool>(input.read(reinterpret_cast<char*>(updated.data()), updated.size())),
+        "read refreshed catalogue");
+    const auto [schema, value] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, ext::Catalogue>>(updated);
+    Expect(schema == 4 && value.revision == 18 && value.rows[0].display.label == L"Changed",
+        "changed catalogue preserves schema and publishes new registration metadata");
+    Expect(value.rows[0].linked && value.associations.size() == 1,
+        "unchanged scans retain associations for subsequent changed registration scans");
+}
+
 void TestCatalogueShutdown()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -2231,6 +2296,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
+            TestUnchangedCataloguePersistence();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
@@ -2239,6 +2305,7 @@ int wmain(int argc, wchar_t **argv)
         }
         else
         {
+            TestUnchangedCataloguePersistence();
             TestCatalogueShutdown();
             RunTests();
             TestDeferredPopups();
