@@ -1081,15 +1081,24 @@ void DesktopApp::OpenQuickNavigation(
         MessageBeep(MB_ICONWARNING);
         return;
     }
+    const RECT contentRectBeforePosition = quickNavigationRect_;
     PositionQuickNavigationWindow();
-    if (quickNavigationSearchEdit_)
+    const bool searchNeedsClearing = quickNavigationSearchEdit_ &&
+        GetWindowTextLengthW(quickNavigationSearchEdit_) != 0;
+    if (searchNeedsClearing)
         SetWindowTextW(quickNavigationSearchEdit_, L"");
     // Positioning deliberately leaves every quick-navigation visual at zero
     // opacity. Build and present the first content surface while it is still
     // hidden; attaching an empty DComp surface after the open animation has
     // started otherwise exposes a transparent frame when opened from the
     // floating Dock.
-    InvalidateQuickNavigationWindow(true);
+    // Positioning already paints synchronously when the content bounds change.
+    // Reuse that first surface unless the edit changed its contents, positioning
+    // did not paint, or the first draw requested graphics recovery.
+    if (searchNeedsClearing ||
+        EqualRect(&contentRectBeforePosition, &quickNavigationRect_) ||
+        quickNavCompositionRenderRecoveryPending_)
+        InvalidateQuickNavigationWindow(true);
     if (quickNavigationSearchEdit_ &&
         IsWindow(quickNavigationSearchEdit_))
     {
