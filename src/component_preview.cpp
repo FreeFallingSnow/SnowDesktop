@@ -40,9 +40,12 @@ float detail::RoundedRectangleCoverage(float sampleX, float sampleY,
         (halfWidth - resolvedRadius);
     const float qy = std::fabs(sampleY - centerY) -
         (halfHeight - resolvedRadius);
-    const float signedDistance =
-        std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) +
-        std::min(std::max(qx, qy), 0.0f) - resolvedRadius;
+    // Only the corner region has two positive distance components. On
+    // straight edges and inside the rectangle, the same signed distance
+    // reduces to max(qx, qy), avoiding hypot for most raster samples.
+    const float signedDistance = qx > 0.0f && qy > 0.0f
+        ? std::hypot(qx, qy) - resolvedRadius
+        : std::max(qx, qy) - resolvedRadius;
     return std::clamp(0.5f - signedDistance, 0.0f, 1.0f);
 }
 

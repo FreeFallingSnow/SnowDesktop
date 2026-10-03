@@ -6,7 +6,9 @@
 #include <windows.h>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -127,6 +129,46 @@ bool PumpMessagesUntil(
     return predicate();
 }
 
+void TestRoundedCoverageEquivalence()
+{
+    // Keep the original signed-distance expression as a numerical reference.
+    // Exact equality protects partial alpha at corners, straight edges and
+    // inset outlines when skipping the two-dimensional norm elsewhere.
+    const auto reference = [](float x, float y, float left, float top,
+        float right, float bottom, float radius) {
+        const float halfWidth = std::max(0.0f, (right - left) * 0.5f);
+        const float halfHeight = std::max(0.0f, (bottom - top) * 0.5f);
+        if (halfWidth <= 0.0f || halfHeight <= 0.0f) return 0.0f;
+        const float r = std::clamp(radius, 0.0f,
+            std::min(halfWidth, halfHeight));
+        const float qx = std::fabs(x - (left + right) * 0.5f) -
+            (halfWidth - r);
+        const float qy = std::fabs(y - (top + bottom) * 0.5f) -
+            (halfHeight - r);
+        const float distance =
+            std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) +
+            std::min(std::max(qx, qy), 0.0f) - r;
+        return std::clamp(0.5f - distance, 0.0f, 1.0f);
+    };
+    for (float left : {-10.25f, 0.0f, 12.5f})
+    for (float width : {-1.0f, 0.0f, 0.25f, 1.0f, 20.0f, 680.0f})
+    for (float height : {0.0f, 0.75f, 20.0f, 550.0f})
+    for (float radius : {-1.0f, 0.0f, 0.25f, 6.0f, 1000.0f})
+    for (int yi = -8; yi <= 80; ++yi)
+    for (int xi = -8; xi <= 80; ++xi)
+    {
+        const float top = -3.75f;
+        const float right = left + width;
+        const float bottom = top + height;
+        const float x = left + width * xi / 72.0f;
+        const float y = top + height * yi / 72.0f;
+        Expect(snowdesktop::component_preview::detail::RoundedRectangleCoverage(
+            x, y, left, top, right, bottom, radius) ==
+            reference(x, y, left, top, right, bottom, radius),
+            "optimized coverage exactly retains rounded surface alpha");
+    }
+}
+
 void TestPreviewFrameMemoryBudget()
 {
     using namespace snowdesktop::component_preview;
@@ -175,6 +217,7 @@ void RunScrollContentClipTests();
 
 int wmain()
 {
+    TestRoundedCoverageEquivalence();
     TestPreviewFrameMemoryBudget();
     TestWidgetClipFactoryReplacement();
     RunWidgetBackgroundCacheTests();
