@@ -1160,9 +1160,14 @@ struct WidgetSettingsPresenter::Impl
         field.editorRow.ColumnSpacing(8.0);
         field.editorRow.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
+        const bool compactEditor =
+            field.schema.Kind() == wr::WidgetSettingKind::Boolean ||
+            field.schema.Kind() == wr::WidgetSettingKind::Color;
         muxc::ColumnDefinition editorColumn{};
-        editorColumn.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
+        editorColumn.Width(compactEditor
+                ? mux::GridLengthHelper::Auto()
+                : mux::GridLengthHelper::FromValueAndType(
+                      1.0, mux::GridUnitType::Star));
         field.editorRow.ColumnDefinitions().Append(editorColumn);
         field.editorHost = muxc::StackPanel{};
         field.editorHost.Spacing(7.0);
@@ -1187,6 +1192,8 @@ struct WidgetSettingsPresenter::Impl
                 });
         }
         field.row.Initialize(field.editorRow);
+        if (compactEditor)
+            field.row.SetControlAlignment(mux::HorizontalAlignment::Right);
         field.row.SetText(
             ToWide(field.schema.label),
             ToWide(field.schema.description));
@@ -1295,6 +1302,7 @@ struct WidgetSettingsPresenter::Impl
     void BuildBooleanEditor(WidgetFieldControl& field)
     {
         field.toggle = muxc::ToggleSwitch{};
+        field.toggle.MinWidth(0.0);
         field.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         field.toggled = field.toggle.Toggled(
             [this, &field](const auto&, const auto&) {

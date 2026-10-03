@@ -544,6 +544,7 @@ struct PersonalizationPagePresenter::Impl
         fontRestart.IsClosable(false);
         fontRestart.IsOpen(false);
         fontRestart.Severity(muxc::InfoBarSeverity::Informational);
+        fontRestartButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         fontRestart.ActionButton(fontRestartButton);
         fontCard.content.Children().Append(fontRestart);
         fontError.TextWrapping(mux::TextWrapping::Wrap);

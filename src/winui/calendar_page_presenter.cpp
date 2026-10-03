@@ -84,12 +84,15 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (const auto& row : {calendarEnabledRow.root, calendarRow.root})
             preferences.Children().Append(row);
         auto schedules = Card(style);
-        listHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        schedules.Children().Append(listHeading);
         muxc::StackPanel toolbar;
         toolbar.Orientation(muxc::Orientation::Horizontal); toolbar.Spacing(8);
         toolbar.Children().Append(add); toolbar.Children().Append(refresh);
-        schedules.Children().Append(toolbar);
+        SettingRow schedulesHeader;
+        schedulesHeader.Initialize(toolbar, 0.0);
+        schedulesHeader.SetControlAlignment(mux::HorizontalAlignment::Right);
+        listHeading = schedulesHeader.label;
+        listHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        schedules.Children().Append(schedulesHeader.root);
         list.MaxHeight(320);
         list.SelectionMode(muxc::ListViewSelectionMode::Single);
         schedules.Children().Append(list);
