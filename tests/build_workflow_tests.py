@@ -235,9 +235,16 @@ $p.tests=@('Missing');try{Resolve-PlanTests $p $inv|Out-Null;throw 'empty pass'}
         # freeze; a later explicit recheck has no semantic repair authority.
         (root/'src/a.txt').write_text('trailing whitespace   \n')
         failcheck=begin('check-failure');fid=failcheck['batchId'];peer=begin('checking-peer')
+        prior_builds=(root/'build.count').read_bytes()
         plan('check-failure',fid,0);out=ready('check-failure',fid,0)
-        until(lambda: state()['current']['participants'][0].get('check',{}).get('status')=='failed')
+        def failed_check_ready():
+            current=state().get('current')
+            if current is None:return False
+            assert current['id']==fid,'failed-check wait must remain bound to its batch'
+            return current['participants'][0].get('check',{}).get('status')=='failed'
+        until(failed_check_ready)
         assert state()['current']['phase']=='editing'
+        assert (root/'build.count').read_bytes()==prior_builds,'failed check must not authorize a build'
         reopened=begin('check-failure');assert reopened['editRevision']==1
         (root/'src/a.txt').write_text('repaired input\n');plan('check-failure',fid,1);ready('check-failure',fid,1)
         call('finish','checking-peer','-Batch',fid,'-Revision',0)

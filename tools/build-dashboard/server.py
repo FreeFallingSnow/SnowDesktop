@@ -77,6 +77,11 @@ def owner_state(owner):
             return "exited" if ctypes.get_last_error() in (87, 1168) else "unknown"
         values = [ctypes.c_ulonglong() for _ in range(4)]
         try:
+            exit_code = ctypes.c_ulong()
+            if not kernel.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(exit_code)):
+                return "unknown"
+            if exit_code.value != 259:  # STILL_ACTIVE; a retained handle keeps an exited PID queryable.
+                return "exited"
             if not kernel.GetProcessTimes(ctypes.c_void_p(handle), *[ctypes.byref(v) for v in values]):
                 return "unknown"
             ticks = values[0].value + 504911232000000000

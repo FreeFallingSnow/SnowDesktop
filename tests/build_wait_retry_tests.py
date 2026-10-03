@@ -335,7 +335,11 @@ atomic(w.parent/(batch+'.retry.json'),{'batchId':batch,'status':'retrying','owne
 atomic(w/'build_dashboard.attempt2.json',{'attempt':2,'status':'passed','exitCode':0})
 os._exit(19)
 """
-    crashed=subprocess.run([sys.executable,'-c',code,str(root/'scripts'),str(work),crashbatch]);assert crashed.returncode==19
+    # Keep the owned process handle open after exit: its PID and birth time
+    # remain queryable, so identity alone cannot establish that it is running.
+    crashed=subprocess.Popen([sys.executable,'-c',code,str(root/'scripts'),str(work),crashbatch])
+    assert crashed.wait(timeout=12)==19
+    assert reader.owner_state(waits.process_owner(os.getpid()))=='alive'
     status=subprocess.run([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',crashbatch,'--status'],capture_output=True,text=True)
     assert json.loads(status.stdout)['status']=='interrupted'
     replay=subprocess.run([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',crashbatch],capture_output=True,text=True)
