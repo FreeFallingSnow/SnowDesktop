@@ -2504,6 +2504,14 @@ struct SettingsWindowHost::Impl
             if (!result.succeeded) feedback();
             return result;
         }
+        if (request.command == ThemeLibraryCommand::Detach)
+        {
+            result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto&) {
+                themes::Detach(library, request.target); return true;
+            }, result.library, error);
+            if (!result.succeeded) feedback();
+            return result;
+        }
         if (request.command == ThemeLibraryCommand::Import)
         {
             const auto path = ShowOpenPathDialog(window, L("themeLibrary.import"), {{L("themeLibrary.title"), L"*.snowtheme"}}, false);
@@ -2525,7 +2533,10 @@ struct SettingsWindowHost::Impl
         {
             themes::Package package;
             if (!themes::Export(result.library, request.id, package, error)) { feedback(); return result; }
-            const auto path = ShowSavePathDialog(window, L("themeLibrary.export"), L"theme.snowtheme",
+            const auto exported = themes::Resolve(result.library.themes, request.id);
+            if (!exported) { error = "themeNotFound"; feedback(); return result; }
+            const auto suggestedName = themes::ExportFileName(Utf8ToWide(exported->name));
+            const auto path = ShowSavePathDialog(window, L("themeLibrary.export"), suggestedName,
                 {{L("themeLibrary.title"), L"*.snowtheme"}}, L"snowtheme");
             if (!path) { result.succeeded = true; return result; }
             if (!controller->IsGenerationCurrent(generation)) return result;
@@ -2547,9 +2558,15 @@ struct SettingsWindowHost::Impl
             result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
                 themes::ReconcileReferences(library, current->values);
                 auto next = current->values;
-                if (!themes::ApplyTarget(library, request.target, request.id, next, detail) ||
-                    !themes::Select(library, request.target, request.id, themes::TargetKind(request.target),
-                        request.target == "global" ? themes::Resolve(library.themes, request.id)->scopes : themes::TargetScope(request.target), detail)) return false;
+                if (!themes::ApplyTarget(library, request.target, request.id, next, detail)) return false;
+                const auto theme = themes::Resolve(library.themes, request.id);
+                if (request.target == "global" && !themes::FullScope(theme->scopes))
+                {
+                    for (const auto& [scope, target] : {std::pair{themes::Dock, "dock"}, {themes::StatusBar, "statusBar"}, {themes::Taskbar, "taskbar"}})
+                        if ((theme->scopes & scope) && !themes::Select(library, target, request.id, themes::Kind::Global, scope, detail)) return false;
+                }
+                else if (!themes::Select(library, request.target, request.id, themes::TargetKind(request.target),
+                    request.target == "global" ? theme->scopes : themes::TargetScope(request.target), detail)) return false;
                 settingsTouched = true;
                 if (apply(next).Succeeded()) return true;
                 detail = "writeFailed";
@@ -2565,7 +2582,7 @@ struct SettingsWindowHost::Impl
             auto theme = themes::CaptureTarget(request.target, current->values);
             theme.id = request.id; theme.name = request.name; theme.scopes = request.scopes;
             themes::Package dependencies;
-            if (theme.kind == themes::Kind::Global)
+            if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
             {
                 const auto dependency = [&](themes::Kind kind, const std::string& selected) {
                     if (!selected.empty()) return selected;

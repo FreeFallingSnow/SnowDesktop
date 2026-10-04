@@ -31,10 +31,14 @@ Custom themes contain an opaque stable `id`, a display-only `name` and an
 `appearance` object encoded by the panel material codec plus
 `gradientEndOpacity`. Global themes additionally contain an integer `scopes`
 bitmask (components=1, Dock=2, status bar=4, taskbar=8), `quickPanel` and `popup`
-IDs. The mask must contain at least one supported bit. Both child IDs must
-resolve to the appropriate kind; a follow-global binding cannot be serialized.
-There is no separate taskbar theme kind. Scopes filter theme choices and do
-not carry object positions, enablement or dynamic rules.
+IDs. The mask must contain at least one supported bit. Selecting all three
+bars defines a full global theme and requires both child IDs to resolve to
+the appropriate kind. Partial bar themes may use empty child IDs and do not
+apply quick-panel or popup settings. Nonempty child IDs must still resolve.
+There is no separate taskbar theme kind. The manager derives its displayed
+type and exact combination filter from the bar scopes, while each original
+appearance selector adds the applicable saved themes to its native choices.
+Scopes do not carry object positions, enablement or dynamic rules.
 
 Quick-panel themes additionally contain the complete `QuickNavigationLayout`
 object and a `colors` map of supported renderer palette keys to `#RRGGBB`.

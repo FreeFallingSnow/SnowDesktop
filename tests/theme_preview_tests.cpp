@@ -63,6 +63,11 @@ int wmain(int argc, wchar_t** argv)
     std::string error;
     check(preview::Parts(package, global.id, All, error).size() == 6, "full scope uses all production surfaces and bound themes");
     check(preview::Parts(package, global.id, Dock, error).size() == 1, "Dock entry respects target scope");
+    auto partial = global; partial.scopes = Dock | StatusBar; partial.quickPanel.clear(); partial.popup.clear();
+    Package partialPackage{{partial.id, partial}};
+    const auto partialParts = preview::Parts(partialPackage, partial.id, partial.scopes, error);
+    check(partialParts.size() == 2 && partialParts[0].component == "dock" && partialParts[1].component == "status-bar",
+        "partial global previews require only their selected bars and no child bindings");
     auto missing = package; missing.erase(quick.id);
     check(preview::Parts(missing, global.id, All, error).empty(), "missing dependency rejects complete preview");
     auto noise = widget_preview::GenerateWallpaper(1024,1024,false);

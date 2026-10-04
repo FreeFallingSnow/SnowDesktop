@@ -666,9 +666,9 @@ struct DockPagePresenter::Impl
         taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
         InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot);
-        taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar");
         taskbarAppearanceCard.content.Children().Append(taskbarPreview);
         taskbarThemeCombo = NewCombo();
+        taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar", false, taskbarThemeCombo, 10, 8);
         taskbarContentThemeCombo = NewCombo();
         taskbarThemeRow.Initialize(taskbarThemeCombo);
         taskbarContentThemeRow.Initialize(taskbarContentThemeCombo);
@@ -974,7 +974,7 @@ struct DockPagePresenter::Impl
         control.appearanceDetails.Children().Append(control.themeRow.root);
         const std::string target = member == &DockSettings::systemTaskbarShellUi ? "taskbar/shellUi" :
             member == &DockSettings::systemTaskbarMaximizedWindow ? "taskbar/maximizedWindow" : "taskbar/visibleWindow";
-        control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target);
+        control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.theme, 10, 8);
         control.appearanceDetails.Children().Append(control.savedThemes->Content());
         control.appearanceDetails.Children().Append(
             control.contentThemeRow.root);
@@ -1273,6 +1273,7 @@ struct DockPagePresenter::Impl
         taskbarThemeToken = taskbarThemeCombo.SelectionChanged(
             [this](const auto&, const auto&) {
                 if (updatingControls) return;
+                if (taskbarThemes->ApplySelection()) return;
                 const int value = taskbarThemeCombo.SelectedIndex();
                 if (value < 0) return;
                 CommitContinuousEdits();
@@ -1305,7 +1306,7 @@ struct DockPagePresenter::Impl
                     SetClassicSystemTheme(value);
                     return;
                 }
-                const bool custom = taskbarThemeCombo.SelectedIndex() ==
+                const bool custom = taskbarThemes->NativeSelection() ==
                     static_cast<int>(SystemTaskbarThemeMode::Custom);
                 const int logicalValue = custom
                     ? std::clamp(value, 0, 1)
@@ -1438,6 +1439,7 @@ struct DockPagePresenter::Impl
             [this, &control](const auto&, const auto&) {
                 UpdateDependentStates();
                 if (updatingControls) return;
+                if (control.savedThemes->ApplySelection()) return;
                 const int value = control.theme.SelectedIndex();
                 if (value < 0) return;
                 CommitContinuousEdits();
@@ -1884,7 +1886,7 @@ struct DockPagePresenter::Impl
         frequentItemCount.row.SetEnabled(
             dockEnabled && showFrequentItemsToggle.IsOn());
 
-        const int selectedTheme = taskbarThemeCombo.SelectedIndex();
+        const int selectedTheme = taskbarThemes->NativeSelection();
         const bool taskbarStyled = selectedTheme !=
             static_cast<int>(SystemTaskbarThemeMode::Native);
         const bool taskbarCustom = selectedTheme ==
@@ -1914,9 +1916,9 @@ struct DockPagePresenter::Impl
         for (DynamicRuleControl* control : dynamicRules)
         {
             const bool enabled = control->enabled.IsOn();
-            const bool native = control->theme.SelectedIndex() ==
+            const bool native = control->savedThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Native);
-            const bool custom = control->theme.SelectedIndex() ==
+            const bool custom = control->savedThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Custom);
             control->appearanceDetails.Visibility(enabled
                     ? mux::Visibility::Visible
@@ -2224,7 +2226,7 @@ struct DockPagePresenter::Impl
     void RefreshDynamicRuleSummary(DynamicRuleControl& control)
     {
         const std::wstring summary = control.enabled.IsOn()
-            ? TaskbarThemeText(control.theme.SelectedIndex())
+            ? (control.theme.SelectedItem() ? std::wstring(winrt::unbox_value<winrt::hstring>(control.theme.SelectedItem()).c_str()) : L"")
             : L("app.settings.hotkey_status_disabled", L"Disabled");
         control.summary.Text(summary);
 
@@ -2560,7 +2562,7 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             taskbarContentThemeCombo, taskbarContentThemeRow.label.Text());
         ReplaceMainContentThemeItems(
-            taskbarThemeCombo.SelectedIndex() ==
+            taskbarThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Custom),
             taskbarContentThemeCustomItems &&
                     taskbarContentThemeValue < 0
@@ -2690,6 +2692,9 @@ struct DockPagePresenter::Impl
             }
         }
         hasSnapshot = true;
+        taskbarThemes->SyncSelection(MainTaskbarThemeMode(dock), snapshot.values);
+        for (auto* control : dynamicRules)
+            control->savedThemes->SyncSelection(static_cast<int>((dock.*control->member).themeMode), snapshot.values);
         UpdateDependentStates();
         updatingControls = previousUpdating;
     }
@@ -2937,6 +2942,10 @@ void DockPagePresenter::SetActions(DockPageActions actions)
         impl_->mergedHeight->SetActions(actions);
         impl_->actions = std::move(actions);
         const auto configure = [state = impl_.get()](ThemeLibraryControls& themes) {
+            themes.SetChanged([state] {
+                state->taskbarThemes->Refresh();
+                for (auto* rule : state->dynamicRules) rule->savedThemes->Refresh();
+            });
             themes.SetActions(state->actions.themeLibrary, state->actions.themeAsync, [state] {
                 if (!state->active || state->closed || !state->hasSnapshot) return false;
                 state->CommitOpenColorEditors(); state->CommitContinuousEdits();

@@ -6,9 +6,44 @@
 #include "status_bar_appearance.h"
 #include "taskbar_appearance.h"
 #include <array>
+#include <cwctype>
 
 namespace snowdesktop::themes
 {
+inline std::wstring ExportFileName(std::wstring name)
+{
+    for (auto& character : name)
+        if (character < 32 || std::wstring_view(L"<>:\"/\\|?*").find(character) != std::wstring_view::npos) character = L'_';
+    const auto trim = [&] {
+        while (!name.empty() && (name.back() == L'.' || std::iswspace(name.back()))) name.pop_back();
+        while (!name.empty() && std::iswspace(name.front())) name.erase(0, 1);
+    };
+    trim();
+    constexpr std::wstring_view extension = L".snowtheme";
+    while (name.size() >= extension.size())
+    {
+        std::wstring suffix = name.substr(name.size() - extension.size());
+        for (auto& character : suffix) character = static_cast<wchar_t>(std::towlower(character));
+        if (suffix != extension) break;
+        name.resize(name.size() - extension.size()); trim();
+    }
+    if (name.size() > 120)
+    {
+        name.resize(120);
+        if (name.back() >= 0xd800 && name.back() <= 0xdbff) name.pop_back();
+        trim();
+    }
+    if (name.empty()) name = L"theme";
+    auto device = name.substr(0, name.find(L'.'));
+    while (!device.empty() && device.back() == L' ') device.pop_back();
+    for (auto& character : device) character = static_cast<wchar_t>(std::towupper(character));
+    if (device == L"CON" || device == L"PRN" || device == L"AUX" || device == L"NUL" ||
+        device == L"CONIN$" || device == L"CONOUT$" || (device.size() == 4 &&
+        (device.starts_with(L"COM") || device.starts_with(L"LPT")) &&
+        ((device[3] >= L'1' && device[3] <= L'9') || device[3] == L'\u00b9' || device[3] == L'\u00b2' || device[3] == L'\u00b3')))
+        name.insert(0, L"_");
+    return name + std::wstring(extension);
+}
 inline std::filesystem::path LibraryPath() { return GetDataFilePath(L"SnowDesktop.themes.json"); }
 inline widget_runtime::WidgetHostAppearancePatch WidgetPatch(const Theme& theme)
 {
@@ -95,7 +130,7 @@ inline bool FollowQuickBinding(const Library& library, NavigationSettings& navig
     for (const auto& [id, theme] : reference->second.snapshot)
     {
         (void)id;
-        if (theme.kind != Kind::Global) continue;
+        if (theme.kind != Kind::Global || !FullScope(theme.scopes)) continue;
         const auto quick = Resolve(reference->second.snapshot, theme.quickPanel);
         if (!quick || quick->kind != Kind::QuickPanel) return false;
         ApplyQuickPanel(navigation, *quick);
@@ -112,6 +147,14 @@ inline bool ApplyTarget(const Library& library, std::string_view target, std::st
     const SurfaceTheme snapshot{4, true, Capture(theme->kind, theme->appearance).appearance};
     if (target == "global")
     {
+        if (!FullScope(theme->scopes))
+        {
+            // Partial bar themes are never a new global appearance source.
+            // Apply only their explicit objects, preserving unrelated surfaces.
+            for (const auto& [scope, source] : {std::pair{Dock, "dock"}, {StatusBar, "statusBar"}, {Taskbar, "taskbar"}})
+                if ((theme->scopes & scope) && !ApplyTarget(library, source, id, values, error)) return false;
+            return true;
+        }
         const auto quick = Resolve(library.themes, theme->quickPanel), popup = Resolve(library.themes, theme->popup);
         if (!quick || !popup) { error = "missingDependency"; return false; }
         ApplyAppearance(values.personalization, theme->appearance);
@@ -147,7 +190,7 @@ inline std::vector<std::string> ApplySavedUpdate(const Library& library, std::st
         if (reference == library.references.end() || reference->second.id.empty()) continue;
         const auto theme = Resolve(library.themes, reference->second.id);
         if (!theme) continue;
-        const bool bindingChanged = std::string_view(target) == "global" &&
+        const bool bindingChanged = std::string_view(target) == "global" && FullScope(theme->scopes) &&
             (theme->quickPanel == changedId || theme->popup == changedId);
         if ((theme->id == changedId || bindingChanged) && ApplyTarget(library, target, theme->id, values, error))
             targets.emplace_back(target);

@@ -88,7 +88,7 @@ std::vector<Part> Parts(const Package& package, std::string_view root, unsigned 
     for (const auto& [bit, component] : std::vector<std::pair<unsigned, std::string>>{
         {Components, "collection"}, {Dock, "dock"}, {StatusBar, "status-bar"}, {Taskbar, "taskbar"}})
         if (scope & bit) out.push_back({component, std::string(root)});
-    if (scope == theme->scopes)
+    if (scope == theme->scopes && FullScope(theme->scopes))
     {
         out.push_back({"quick-navigation", theme->quickPanel}); out.push_back({"popup", theme->popup});
     }

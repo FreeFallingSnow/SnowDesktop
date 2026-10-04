@@ -344,8 +344,10 @@ bool Validate(const Package& package, std::string& error)
         if (theme.kind == Kind::Global)
         {
             auto quick = Resolve(package, theme.quickPanel), popup = Resolve(package, theme.popup);
-            if (theme.scopes < 1 || theme.scopes > All || !quick || quick->kind != Kind::QuickPanel ||
-                !popup || popup->kind != Kind::Popup) return Fail(error, "missingDependency");
+            if (theme.scopes < 1 || theme.scopes > All ||
+                (FullScope(theme.scopes) && (!quick || !popup)) ||
+                (!theme.quickPanel.empty() && (!quick || quick->kind != Kind::QuickPanel)) ||
+                (!theme.popup.empty() && (!popup || popup->kind != Kind::Popup))) return Fail(error, "missingDependency");
         }
         if (theme.kind == Kind::QuickPanel)
         {
@@ -378,6 +380,7 @@ bool Export(const Library& library, std::string_view id, Package& package, std::
     if (theme->kind == Kind::Global)
         for (const auto& dependency : {theme->quickPanel, theme->popup})
         {
+            if (dependency.empty() && !FullScope(theme->scopes)) continue;
             const auto resolved = Resolve(library.themes, dependency);
             if (!resolved) return Fail(error, "missingDependency");
             if (!Builtin(dependency)) out.emplace(dependency, *resolved);

@@ -18,6 +18,17 @@ int RunThemeLibraryTests()
     using namespace snowdesktop;
     using namespace themes;
     int failures = 0;
+    const auto fileNameCheck = [&](bool passed, const char* message) {
+        if (!passed) { ++failures; std::cerr << "FAIL filename: " << message << '\n'; }
+    };
+    fileNameCheck(ExportFileName(L"雪夜主题") == L"雪夜主题.snowtheme", "Unicode names remain intact");
+    fileNameCheck(ExportFileName(L"天气:<夜>/\\|?*\".") == L"天气__夜_______.snowtheme", "reserved filename characters are sanitized");
+    fileNameCheck(ExportFileName(L" \t. ") == L"_.snowtheme", "control characters are sanitized before trailing whitespace is removed");
+    fileNameCheck(ExportFileName(L" . ") == L"theme.snowtheme", "only an empty sanitized name uses the fallback");
+    fileNameCheck(ExportFileName(L"NUL.txt") == L"_NUL.txt.snowtheme" && ExportFileName(L"com¹") == L"_com¹.snowtheme",
+        "reserved devices remain safe even with extensions and superscript digits");
+    fileNameCheck(ExportFileName(L"测试.SNOWTHEME.snowtheme. ") == L"测试.snowtheme", "the extension is not repeated");
+    fileNameCheck(ExportFileName(std::wstring(150, L'雪')).size() == 130, "suggested names have a bounded Unicode length");
     const auto check = [&](bool passed, const char* message) {
         if (!passed) { ++failures; std::cerr << "FAIL theme library: " << message << '\n'; }
     };
@@ -130,6 +141,48 @@ int RunThemeLibraryTests()
             &settings.general.globalQuickNavigationAppearance).contentTheme == 1,
         "only follow-global surfaces resolve global bindings");
     const auto existingGlobal = settings.personalization;
+    {
+        for (unsigned scopes : {unsigned(Dock), unsigned(StatusBar), unsigned(Taskbar), unsigned(Dock | StatusBar),
+            unsigned(Dock | Taskbar), unsigned(StatusBar | Taskbar)})
+        {
+            auto partial = Capture(Kind::Global, MakeAppearancePreset(kAppearancePresetAcrylicLight));
+            partial.id = "theme/partial-" + std::to_string(scopes); partial.name = "雪夜主题"; partial.scopes = scopes;
+            Library scoped; scoped.themes.emplace(partial.id, partial);
+            auto values = settings;
+            const auto before = values;
+            check(!FullScope(scopes) && Validate(scoped.themes, error), "every partial bar combination saves without child bindings");
+            check(ApplyTarget(scoped, "global", partial.id, values, error), "partial selection applies its explicit bar scopes");
+            check(values.personalization == before.personalization && values.navigation == before.navigation &&
+                values.general.quickNavigationAppearance == before.general.quickNavigationAppearance &&
+                values.general.collectionPopupAppearance == before.general.collectionPopupAppearance &&
+                values.general.globalQuickNavigationAppearance == before.general.globalQuickNavigationAppearance &&
+                values.general.globalCollectionPopupAppearance == before.general.globalCollectionPopupAppearance,
+                "partial selection preserves the global source and all unrelated surface themes");
+            check((scopes & Dock) || (values.dock.followComponentAppearance == before.dock.followComponentAppearance &&
+                values.dock.customAppearance == before.dock.customAppearance), "excluded Dock remains unchanged");
+            check((scopes & StatusBar) || values.general.statusBar == before.general.statusBar, "excluded status bar remains unchanged");
+            check((scopes & Taskbar) || (values.dock.systemTaskbarAppearance == before.dock.systemTaskbarAppearance &&
+                values.dock.systemTaskbarFollowPersonalization == before.dock.systemTaskbarFollowPersonalization &&
+                values.dock.systemTaskbarContentTheme == before.dock.systemTaskbarContentTheme), "excluded taskbar remains unchanged");
+            check(values.dock.position == before.dock.position && values.dock.systemTaskbarBackdropEnabled == before.dock.systemTaskbarBackdropEnabled &&
+                values.dock.systemTaskbarVisibleWindow == before.dock.systemTaskbarVisibleWindow,
+                "partial selection preserves placement, enablement and dynamic rules");
+            Package exported, reloaded; Library installed;
+            check(Export(scoped, partial.id, exported, error) && exported.size() == 1 &&
+                DecodePackage(EncodePackage(exported, error), reloaded, error) &&
+                Import(installed, reloaded, mapping, error) && installed.themes.at(partial.id).name == partial.name &&
+                installed.themes.at(partial.id).scopes == scopes && installed.themes.at(partial.id).quickPanel.empty() &&
+                installed.themes.at(partial.id).popup.empty(), "partial package round-trip preserves the name, scopes and empty bindings");
+            check(DecodeLibrary(EncodeLibrary(scoped, error), installed, error), "partial library reload succeeds");
+            partial.scopes = Bars; scoped.themes.at(partial.id) = partial;
+            check(FullScope(partial.scopes) && !Validate(scoped.themes, error), "switching back to full applicability requires both bindings");
+            partial.quickPanel = "builtin/quickpanel/dark"; partial.popup = "builtin/popup/dark";
+            scoped.themes.at(partial.id) = partial;
+            check(Validate(scoped.themes, error), "full applicability accepts explicit bindings");
+            partial.scopes = scopes; partial.quickPanel = "theme/missing"; scoped.themes.at(partial.id) = partial;
+            check(!Validate(scoped.themes, error), "nonempty invalid bindings cannot be smuggled into a partial package");
+        }
+    }
     {
         auto bars = global;
         bars.id = "theme/three-bars"; bars.scopes = Dock | StatusBar | Taskbar;

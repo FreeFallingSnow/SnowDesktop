@@ -161,6 +161,7 @@ struct PersonalizationPagePresenter::Impl
     muxc::StackPanel transferBody;
     std::vector<muxc::Expander> transferDisclosures;
     SettingsCard fontCard;
+    SettingsCard themeManagementCard;
     SettingRow fontRow;
     muxc::DropDownButton fontPicker;
     muxc::TextBlock fontPickerLabel;
@@ -345,7 +346,7 @@ struct PersonalizationPagePresenter::Impl
         presetCombo.MaxWidth(520.0);
         presetRow.Initialize(presetCombo);
         themeCard.content.Children().Append(presetRow.root);
-        globalThemes = std::make_unique<ThemeLibraryControls>(localize, "global");
+        globalThemes = std::make_unique<ThemeLibraryControls>(localize, "global", false, presetCombo, 8, 7);
         themeCard.content.Children().Append(globalThemes->Content());
 
         InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
@@ -482,7 +483,7 @@ struct PersonalizationPagePresenter::Impl
             quickNavigationThemeRow.root);
 
 
-        quickThemes = std::make_unique<ThemeLibraryControls>(localize, "quickPanel");
+        quickThemes = std::make_unique<ThemeLibraryControls>(localize, "quickPanel", false, quickNavigationThemeCombo, 6, 5);
         themeTargetsCard.content.Children().Append(quickThemes->Content());
         quickAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
@@ -501,7 +502,7 @@ struct PersonalizationPagePresenter::Impl
         themeTargetsCard.content.Children().Append(quickAppearanceContent);
         InitializeCard(popupThemeCard, cardStyle, themeRoot);
         popupThemeCard.content.Children().Append(collectionPopupThemeRow.root);
-        popupThemes = std::make_unique<ThemeLibraryControls>(localize, "popup");
+        popupThemes = std::make_unique<ThemeLibraryControls>(localize, "popup", false, collectionPopupThemeCombo, 6, 5);
         popupThemeCard.content.Children().Append(popupThemes->Content());
         popupAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
@@ -521,7 +522,7 @@ struct PersonalizationPagePresenter::Impl
         dockAppearanceCombo.MaxWidth(520.0);
         dockAppearanceRow.Initialize(dockAppearanceCombo);
         dockThemeCard.content.Children().Append(dockAppearanceRow.root);
-        dockThemes = std::make_unique<ThemeLibraryControls>(localize, "dock");
+        dockThemes = std::make_unique<ThemeLibraryControls>(localize, "dock", false, dockAppearanceCombo, 9, 8);
         dockThemeCard.content.Children().Append(dockThemes->Content());
         dockAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
@@ -571,7 +572,9 @@ struct PersonalizationPagePresenter::Impl
         fontError.TextWrapping(mux::TextWrapping::Wrap);
         fontError.Visibility(mux::Visibility::Collapsed);
         fontCard.content.Children().Append(fontError);
-        transferBody = AppearanceSections::Section(fontCard.content, transferTitle, &transferDisclosures);
+        InitializeCard(themeManagementCard, cardStyle, themeRoot);
+        themeManagementCard.content.Children().RemoveAt(0);
+        transferBody = AppearanceSections::Section(themeManagementCard.content, transferTitle, &transferDisclosures);
         themeTransfers = std::make_unique<ThemeLibraryControls>(localize, "global", true);
         transferBody.Children().Append(themeTransfers->Content());
 
@@ -757,12 +760,15 @@ struct PersonalizationPagePresenter::Impl
     void ConfigureThemes()
     {
         for (auto* form : {globalThemes.get(), quickThemes.get(), popupThemes.get(), dockThemes.get(), themeTransfers.get()})
+        {
+            form->SetChanged([this] { RefreshThemes(); });
             form->SetActions(actions.themeLibrary, actions.themeAsync, [this] {
                 if (!CanEmit()) return false;
                 CommitContinuousEdits(); CommitOpenColorEditors();
                 quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush(); dockAppearanceEditor->Flush();
                 return true;
             });
+        }
     }
     void RefreshThemes()
     {
@@ -829,6 +835,7 @@ struct PersonalizationPagePresenter::Impl
                 UpdateDependentStates();
                 if (!CanEmit())
                     return;
+                if (globalThemes->ApplySelection()) return;
                 edgeLightEditor->Cancel();
                 const int index = presetCombo.SelectedIndex();
                 if (index < 0 ||
@@ -854,6 +861,7 @@ struct PersonalizationPagePresenter::Impl
             [this](auto const&, auto const&) { SelectSurfaceTheme(false, collectionPopupThemeCombo.SelectedIndex()); });
         dockAppearanceToken = dockAppearanceCombo.SelectionChanged([this](auto const&, auto const&) {
             if (!CanEmit()) return;
+            if (dockThemes->ApplySelection()) return;
             const int index = dockAppearanceCombo.SelectedIndex();
             if (index < 0 || index > static_cast<int>(kPresetIds.size())) return;
             dockAppearanceEditor->Flush();
@@ -1239,7 +1247,9 @@ struct PersonalizationPagePresenter::Impl
 
     void SelectSurfaceTheme(bool quick, int index)
     {
-        if (!CanEmit() || index < 0 || index > 5) return;
+        if (!CanEmit()) return;
+        if ((quick ? quickThemes : popupThemes)->ApplySelection()) return;
+        if (index < 0 || index > 5) return;
         (quick ? quickAppearanceEditor : popupAppearanceEditor)->Flush();
         const auto global = currentGlobalAppearance;
         EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [quick, index, global](auto& settings) {
@@ -1608,6 +1618,12 @@ struct PersonalizationPagePresenter::Impl
             navigationRevision = snapshot.domainRevisions.navigation;
         }
         hasSnapshot = true;
+        globalThemes->SetGeneration(generation); quickThemes->SetGeneration(generation);
+        popupThemes->SetGeneration(generation); dockThemes->SetGeneration(generation);
+        globalThemes->SyncSelection(globalThemes->NativeSelection(), snapshot.values);
+        quickThemes->SyncSelection(quickThemes->NativeSelection(), snapshot.values);
+        popupThemes->SyncSelection(popupThemes->NativeSelection(), snapshot.values);
+        dockThemes->SyncSelection(dockThemes->NativeSelection(), snapshot.values);
         updatingControls = previousUpdating;
         if (newGeneration)
         {
@@ -1620,7 +1636,7 @@ struct PersonalizationPagePresenter::Impl
     {
         if (id == "personalization.savedThemes")
         {
-            try { AppearanceSections::RevealWithin(fontCard.root, themeTransfers->Choice()); } catch (...) {}
+            try { AppearanceSections::RevealWithin(themeManagementCard.root, themeTransfers->Choice()); } catch (...) {}
             return themeTransfers->Choice();
         }
         if (id == "quickNav.layout" || id.starts_with("quickNav.layout.") ||

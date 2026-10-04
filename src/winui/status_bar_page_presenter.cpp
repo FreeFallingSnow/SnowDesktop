@@ -104,15 +104,16 @@ struct StatusBarPagePresenter::Impl
             });
         const std::string target = member == &StatusBarSettings::noWindow ? "statusBar/noWindow" :
             member == &StatusBarSettings::maximizedWindow ? "statusBar/maximizedWindow" : "statusBar";
-        control.themes = std::make_unique<ThemeLibraryControls>(localize, target);
+        control.themes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.combo, 10, 9);
         control.root.Children().Append(control.themes->Content());
         control.root.Children().Append(control.editor->Content());
         control.root.Children().Append(control.themes->SaveContent());
         parent.Children().Append(control.root);
         const auto combo = control.combo;
         const auto editor = control.editor;
-        const auto token = combo.SelectionChanged([this, member, combo, editor](const auto&, const auto&) {
+        const auto token = combo.SelectionChanged([this, member, combo, editor, themes = control.themes.get()](const auto&, const auto&) {
             if (syncing || closed || !active) return;
+            if (themes->ApplySelection()) return;
             const int index = combo.SelectedIndex();
             if (index < 0 || index >= static_cast<int>(StatusBarThemeModes.size())) return;
             editor->Flush();
@@ -424,6 +425,10 @@ void StatusBarPagePresenter::SetActions(DockPageActions actions)
 {
     impl_->mergedHeight->SetActions(actions); impl_->actions = std::move(actions);
     const auto configure = [state = impl_.get()](ThemeLibraryControls& themes) {
+        themes.SetChanged([state] {
+            state->defaultTheme.themes->Refresh();
+            for (auto& rule : state->rules) rule->theme.themes->Refresh();
+        });
         themes.SetActions(state->actions.themeLibrary, state->actions.themeAsync, [state] {
             if (!state->active || state->closed || !state->hasSnapshot) return false;
             state->Flush(); state->defaultTheme.editor->Flush();
@@ -456,6 +461,11 @@ void StatusBarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     impl_->dockRevision = snapshot.domainRevisions.dock;
     impl_->globalAppearance = snapshot.values.personalization;
     impl_->Sync(replaceSession);
+    impl_->syncing = true;
+    impl_->defaultTheme.themes->SyncSelection(StatusBarThemeSelection(impl_->value.theme.mode), snapshot.values);
+    for (auto& rule : impl_->rules)
+        rule->theme.themes->SyncSelection(StatusBarThemeSelection((impl_->value.*rule->member).theme.mode), snapshot.values);
+    impl_->syncing = false;
     impl_->generalRevision = snapshot.domainRevisions.general;
     impl_->personalizationRevision = snapshot.domainRevisions.personalization;
     impl_->hasSnapshot = true;

@@ -17,6 +17,8 @@ inline constexpr int kPackageVersion = 1;
 inline constexpr std::size_t kMaximumPackageBytes = 4 * 1024 * 1024;
 enum class Kind { Global, QuickPanel, Popup };
 enum Scope : unsigned { Components = 1, Dock = 2, StatusBar = 4, Taskbar = 8, All = 15 };
+inline constexpr unsigned Bars = Dock | StatusBar | Taskbar;
+inline bool FullScope(unsigned scopes) { return (scopes & Bars) == Bars; }
 
 struct Theme
 {
