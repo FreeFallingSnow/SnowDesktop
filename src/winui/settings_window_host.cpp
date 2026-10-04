@@ -406,6 +406,7 @@ struct SettingsWindowHost::Impl
         unsigned previewScope = themes::All;
         themes::Package snapshot;
         steam_bridge::ThemePublishPlan plan;
+        std::vector<themes::preview::Image> images;
         std::filesystem::path directory, cover, customCover;
         std::function<void(ThemeLibraryResult)> completed;
         ~ThemeTask() { if (!directory.empty()) { std::error_code ec; std::filesystem::remove_all(directory, ec); } }
@@ -476,6 +477,15 @@ struct SettingsWindowHost::Impl
         shell_impl::SettingsShellDialogRequest dialog;
         dialog.generation = task->generation; dialog.title = winrt::to_hstring(theme->name).c_str();
         dialog.closeButtonText = L("settings.dialog.cancel"); dialog.previewImagePath = task->cover.wstring();
+        if (!task->customCover.empty()) dialog.previewImages.push_back({L("themeLibrary.chooseCover"), task->cover.wstring()});
+        for (const auto& image : task->images)
+        {
+            const char* key = image.component == "folder-mapping" ? "app.menu.folder_mapping" :
+                image.component == "dock" ? "themeLibrary.dock" : image.component == "status-bar" ? "themeLibrary.statusBar" :
+                image.component == "taskbar" ? "themeLibrary.taskbar" : image.component == "quick-navigation" ? "themeLibrary.quickPanel" :
+                image.component == "control-panel" ? "statusBar.controlCenter" : "themeLibrary.popup";
+            dialog.previewImages.push_back({L(key), image.path.wstring()});
+        }
         const bool share = task->request.command == ThemeLibraryCommand::Share;
         dialog.defaultClose = share;
         dialog.message = L("themeLibrary.fixedPreview");
@@ -576,15 +586,15 @@ struct SettingsWindowHost::Impl
                     if (share)
                     {
                         success = themes::workshop::Prepare(task->snapshot, task->request.id, scope, task->directory, data,
-                            task->customCover, [host](const auto& package, auto root, auto applicable, const auto& directory,
+                            task->customCover, [host, task](const auto& package, auto root, auto applicable, const auto& directory,
                                 auto& cover, auto& error, auto* cancel) {
-                                return themes::preview::Render(host, package, root, applicable, directory, cover, error, cancel);
+                                return themes::preview::RenderGallery(host, package, root, applicable, directory, task->images, cover, error, cancel);
                             }, task->plan, detail, &task->cancel, task->request.tags);
                         task->cover = task->plan.preview;
                     }
                     else
                     {
-                        success = themes::preview::Render(host, task->snapshot, task->request.id, scope, task->directory, task->cover, detail, &task->cancel);
+                        success = themes::preview::RenderGallery(host, task->snapshot, task->request.id, scope, task->directory, task->images, task->cover, detail, &task->cancel);
                         if (success && !task->customCover.empty())
                         {
                             success = themes::preview::NormalizeCover(task->customCover, task->cover, detail);

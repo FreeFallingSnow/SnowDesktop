@@ -55,6 +55,7 @@ struct SettingsShellProgress
 
 struct SettingsShellDialogRequest
 {
+    struct PreviewImage { std::wstring title, path; };
     std::uint64_t generation = 0;
     std::wstring title;
     std::wstring message;
@@ -63,6 +64,7 @@ struct SettingsShellDialogRequest
     bool destructive = false;
     bool defaultClose = false;
     std::wstring previewImagePath;
+    std::vector<PreviewImage> previewImages;
 };
 
 /**

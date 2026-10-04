@@ -3314,22 +3314,33 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
         dialog.XamlRoot(XamlRoot());
         dialog.Title(winrt::box_value(request.title));
         dialog.Content(winrt::box_value(request.message));
-        if (!request.previewImagePath.empty())
+        if (!request.previewImages.empty() || !request.previewImagePath.empty())
         {
-            const auto file = co_await winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(request.previewImagePath);
-            const auto stream = co_await file.OpenReadAsync();
-            winrt::Microsoft::UI::Xaml::Media::Imaging::BitmapImage bitmap;
-            co_await bitmap.SetSourceAsync(stream);
-            if (closed_ || request.generation != navigation_.Generation())
+            muxc::StackPanel content; content.Spacing(8);
+            muxc::FlipView gallery; gallery.MaxWidth(400); gallery.Height(270);
+            if (request.previewImages.empty()) request.previewImages.push_back({L"", request.previewImagePath});
+            for (std::size_t index = 0; index < request.previewImages.size(); ++index)
             {
-                if (completed) completed(false);
-                co_return;
+                const auto& item = request.previewImages[index];
+                const auto file = co_await winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(item.path);
+                const auto stream = co_await file.OpenReadAsync();
+                winrt::Microsoft::UI::Xaml::Media::Imaging::BitmapImage bitmap;
+                co_await bitmap.SetSourceAsync(stream);
+                if (closed_ || request.generation != navigation_.Generation())
+                {
+                    if (completed) completed(false);
+                    co_return;
+                }
+                muxc::StackPanel slide; slide.Spacing(4);
+                muxc::Image image; image.Source(bitmap); image.Height(236);
+                image.Stretch(winrt::Microsoft::UI::Xaml::Media::Stretch::Uniform);
+                muxc::TextBlock label;
+                label.Text(item.title + L"  " + std::to_wstring(index + 1) + L" / " + std::to_wstring(request.previewImages.size()));
+                label.HorizontalAlignment(mux::HorizontalAlignment::Center);
+                slide.Children().Append(image); slide.Children().Append(label);
+                gallery.Items().Append(slide);
             }
-            muxc::StackPanel content;
-            muxc::Image image;
-            image.Source(bitmap); image.MaxWidth(440); image.MaxHeight(440);
-            image.Stretch(winrt::Microsoft::UI::Xaml::Media::Stretch::Uniform);
-            content.Children().Append(image);
+            content.Children().Append(gallery);
             muxc::TextBlock caption; caption.Text(request.message);
             caption.TextWrapping(mux::TextWrapping::Wrap);
             content.Children().Append(caption);

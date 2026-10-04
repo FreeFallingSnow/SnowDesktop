@@ -3,6 +3,7 @@
 #include "steam_app_identity.h"
 #include "../../src/theme_library.h"
 #include "../../src/theme_workshop_tags.h"
+#include "../../src/theme_preview_parts.h"
 #include "../../src/atomic_file.h"
 #include <windows.h>
 #include <bcrypt.h>
@@ -113,6 +114,22 @@ bool WriteThemePreparation(const std::filesystem::path& directory, std::string_v
     value.object["preparedAt"] = JsonValue::Number(static_cast<double>(now));
     auto selected = JsonValue::Array(); for (const auto& tag : tags) selected.array.push_back(JsonValue::String(tag));
     value.object["tags"] = selected; value.object["tagsSha256"] = JsonValue::String(ThemeSha256(WriteJson(selected, -1)));
+    auto gallery = JsonValue::Array();
+    const auto parts = themes::preview::Parts(snapshot, rootId, theme->kind == themes::Kind::Global ? theme->scopes : themes::All, error);
+    if (parts.empty()) return false;
+    for (const auto& part : parts)
+    {
+        const auto filename = themes::preview::GalleryFilename(ThemeSha256(rootId), part.component);
+        const auto path = directory / filename;
+        std::error_code ec;
+        const auto hash = ThemeFileSha256(path);
+        if (!ThemeSafePath(path) || hash.empty() || !ValidCover(path) || std::filesystem::file_size(path, ec) >= 1024 * 1024 || ec)
+            return Fail(error, "previewFailed");
+        auto image = JsonValue::Object(); image.object["component"] = JsonValue::String(part.component);
+        image.object["file"] = JsonValue::String(filename); image.object["sha256"] = JsonValue::String(hash);
+        gallery.array.push_back(std::move(image));
+    }
+    value.object["gallery"] = gallery; value.object["gallerySha256"] = JsonValue::String(ThemeSha256(WriteJson(gallery, -1)));
     return atomic_file::WriteAll(directory / L"theme.json", WriteJson(value), {}, &error);
 }
 bool BuildThemePublishPlan(const std::filesystem::path& directory, const std::filesystem::path& dataDirectory,
@@ -120,7 +137,7 @@ bool BuildThemePublishPlan(const std::filesystem::path& directory, const std::fi
 {
     if (!ThemeSafePath(directory, true) || !ThemeSafePath(dataDirectory, true)) return Fail(error, "unsafePath");
     JsonValue value;
-    if (!ParseJson(Read(directory / L"theme.json", 4096), value, error) ||
+    if (!ParseJson(Read(directory / L"theme.json", 8192), value, error) ||
         JsonString(value, "format") != "snowdesktop.theme-preparation" || JsonUnsigned(value, "version") != kThemeWorkflowProtocolVersion)
         return Fail(error, "invalidPreparation");
     ThemePublishPlan next; next.directory = directory; next.package = directory / L"package.snowtheme"; next.preview = directory / L"cover.png";
@@ -138,6 +155,24 @@ bool BuildThemePublishPlan(const std::filesystem::path& directory, const std::fi
         ThemeFileSha256(next.package) != next.packageSha256 || ThemeFileSha256(next.preview) != next.coverSha256 ||
         next.packageSha256.empty() || next.coverSha256.empty()) return Fail(error, "stalePreparation");
     if (!themes::tags::Valid(*themes::Resolve(package, next.rootId), next.tags)) return Fail(error, "tagsRequired");
+    const auto gallery = value.Find("gallery");
+    const auto root = themes::Resolve(package, next.rootId);
+    const auto parts = themes::preview::Parts(package, next.rootId, root->kind == themes::Kind::Global ? root->scopes : themes::All, error);
+    next.gallerySha256 = JsonString(value, "gallerySha256").value_or("");
+    if (!gallery || !gallery->IsArray() || parts.empty() || gallery->array.size() != parts.size() ||
+        next.gallerySha256 != ThemeSha256(WriteJson(*gallery, -1))) return Fail(error, "stalePreparation");
+    for (std::size_t index = 0; index < parts.size(); ++index)
+    {
+        const auto& image = gallery->array[index];
+        const auto filename = themes::preview::GalleryFilename(ThemeSha256(next.rootId), parts[index].component);
+        const auto path = directory / filename;
+        const auto hash = JsonString(image, "sha256").value_or("");
+        std::error_code ec;
+        if (JsonString(image, "component") != parts[index].component || JsonString(image, "file") != filename ||
+            !ThemeSafePath(path) || hash.empty() || ThemeFileSha256(path) != hash || !ValidCover(path) ||
+            std::filesystem::file_size(path, ec) >= 1024 * 1024 || ec) return Fail(error, "stalePreparation");
+        next.gallery.push_back({parts[index].component, hash, path});
+    }
     std::error_code ec;
     if (std::filesystem::file_size(next.preview, ec) >= 1024 * 1024 || ec || !ValidCover(next.preview)) return Fail(error, "previewTooLarge");
     const auto store = dataDirectory / L"ThemeWorkshop";
@@ -162,6 +197,7 @@ std::string ThemePublishPlanJson(const ThemePublishPlan& plan)
     value.object["rootId"] = JsonValue::String(plan.rootId); value.object["title"] = JsonValue::String(plan.title);
     value.object["packageSha256"] = JsonValue::String(plan.packageSha256); value.object["coverSha256"] = JsonValue::String(plan.coverSha256);
     value.object["tagsSha256"] = JsonValue::String(plan.tagsSha256);
+    value.object["gallerySha256"] = JsonValue::String(plan.gallerySha256);
     value.object["tags"] = JsonValue::Array(); for (const auto& tag : plan.tags) value.object["tags"].array.push_back(JsonValue::String(tag));
     value.object["publishedFileId"] = JsonValue::String(std::to_string(plan.publishedFileId));
     value.object["requiredConfirmation"] = JsonValue::String(plan.publishedFileId ? "--confirm-update" : "--confirm-create");
@@ -181,7 +217,11 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
         return Failure(error, "stalePreparation");
     ThemePublishPlan current; std::string preparationError;
     if (!BuildThemePublishPlan(plan.directory, plan.association.parent_path().parent_path(), current, preparationError) ||
-        current.tags != plan.tags || current.tagsSha256 != plan.tagsSha256) return Failure(error, "stalePreparation");
+        current.tags != plan.tags || current.tagsSha256 != plan.tagsSha256 || current.gallerySha256 != plan.gallerySha256 ||
+        current.gallery.size() != plan.gallery.size()) return Failure(error, "stalePreparation");
+    for (std::size_t index = 0; index < current.gallery.size(); ++index)
+        if (current.gallery[index].component != plan.gallery[index].component || current.gallery[index].path != plan.gallery[index].path ||
+            current.gallery[index].sha256 != plan.gallery[index].sha256) return Failure(error, "stalePreparation");
     std::string owner; std::uint64_t id = 0; bool pending = false;
     if (!ReadAssociation(plan.association, owner, id, pending)) return Failure(error, "invalidAssociation");
     if (pending && !id) return Failure(error, "creationUncertain");
@@ -191,7 +231,9 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
     const auto status = transport.status(error);
     if (!status || !status->loggedOn || status->appId != kSteamAppId || status->steamId.empty()) return Failure(error, "steamUnavailable");
     const auto agreement = transport.agreement(error);
-    if (!agreement || !agreement->available || !agreement->accepted || agreement->needsAction) return Failure(error, "agreementRequired");
+    // Apps without an app-specific EULA report unavailable. Create/Submit
+    // callbacks remain authoritative for Steam's Workshop legal agreement.
+    if (!agreement || (agreement->available && (!agreement->accepted || agreement->needsAction))) return Failure(error, "agreementRequired");
     if (id)
     {
         const auto item = transport.item(id, error);
@@ -209,6 +251,8 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
     if (cancel && cancel->load()) return Failure(error, "cancelled");
     PublishRequest request; request.package = plan.package; request.preview = plan.preview;
     request.contentKind = WorkshopContentKind::Theme; request.title = plan.title;
+    for (const auto& image : plan.gallery) request.additionalPreviews.push_back(image.path);
+    request.managedPreviewPrefix = themes::preview::GalleryPrefix(ThemeSha256(plan.rootId));
     request.tags = plan.tags; request.tags->emplace_back(themes::tags::Content);
     auto metadata = JsonValue::Object(); metadata.object["format"] = JsonValue::String("snowdesktop-theme");
     metadata.object["artifact"] = JsonValue::String("package.snowtheme"); metadata.object["themeWorkflowProtocolVersion"] = JsonValue::Number(1);
@@ -222,6 +266,13 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
     };
     request.validateStagedArtifacts = [&](const std::filesystem::path& package, const std::filesystem::path& cover) {
         return ThemeFileSha256(package) == plan.packageSha256 && ThemeFileSha256(cover) == plan.coverSha256;
+    };
+    request.validateStagedPreviews = [&](const std::vector<std::filesystem::path>& paths) {
+        if (paths.size() != plan.gallery.size()) return false;
+        for (std::size_t index = 0; index < paths.size(); ++index)
+            if (paths[index].filename() != plan.gallery[index].path.filename() ||
+                ThemeFileSha256(paths[index]) != plan.gallery[index].sha256) return false;
+        return true;
     };
     const auto published = transport.publish(request, progress, error);
     if (!published) return false;

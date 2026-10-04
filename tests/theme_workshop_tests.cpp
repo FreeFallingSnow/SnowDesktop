@@ -16,7 +16,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL theme Workshop: " << message << '\n'; } };
     std::string error;
     check(bridge::ThemeSha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "production package hash matches known SHA256 vector");
-    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\"]}";
+    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\"]}";
     check(workshop::Capabilities(current,"1") && !workshop::Capabilities(current,"2"), "bridge capability and compatible version are independent requirements");
     check(workshop::Capabilities("{\"progress\":\"starting\"}\n" + current + "\n","1") &&
         !workshop::Capabilities(current + "\n{\"ok\":false}\n","1"),
@@ -26,6 +26,10 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     auto missingTagsCapability = current;
     missingTagsCapability.erase(missingTagsCapability.find(",\"workshop.theme.tags.v1\""), 25);
     check(!workshop::Capabilities(missingTagsCapability,"1"), "a theme bridge without required classification support cannot silently drop tags");
+    auto missingGalleryCapability = current;
+    const std::string galleryCapability = ",\"workshop.theme.gallery.v1\"";
+    missingGalleryCapability.erase(missingGalleryCapability.find(galleryCapability), galleryCapability.size());
+    check(!workshop::Capabilities(missingGalleryCapability,"1"), "old single-cover bridges cannot silently drop the gallery");
     Theme root = Capture(Kind::Global,MakeAppearancePreset(kAppearancePresetDark)); root.id = "theme/workshop-root"; root.name = "Demo";
     root.quickPanel = "builtin/quickpanel/dark"; root.popup = "builtin/popup/dark";
     Package package{{root.id,root}};
@@ -33,6 +37,8 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     std::filesystem::create_directory(prepared); std::filesystem::create_directory(data);
     check(WritePackage(prepared / L"package.snowtheme",package,error), "immutable theme snapshot writes through production atomic codec");
     check(preview::SaveCover(prepared / L"cover.png",widget_preview::GenerateWallpaper(1024,1024,false),error), "bridge preview is a real encoded cover");
+    for (const auto& part : preview::Parts(package, root.id, root.scopes, error))
+        std::filesystem::copy_file(prepared / L"cover.png", prepared / preview::GalleryFilename(bridge::ThemeSha256(root.id), part.component));
     constexpr std::int64_t now = 1700000000;
     const auto classification = tags::Applicable(root);
     check(classification == std::vector<std::string>{"Global Theme", "Dock Theme", "Status Bar Theme", "Taskbar Theme"}, "global classification uses fixed Steamworks names for every applicable base scope");
@@ -42,7 +48,13 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     check(!tags::Valid(root,{"Global Theme"}) && !tags::Valid(root,{"Utilities"}) && !tags::Valid(partial,{"Dock Theme","Dock Theme","Taskbar Theme"}), "missing scopes, widget tags and duplicates cannot bypass theme classification");
     check(bridge::WriteThemePreparation(prepared,root.id,root.name,now,error,classification), "preparation binds package, cover and classification hashes");
     bridge::ThemePublishPlan plan;
-    check(bridge::BuildThemePublishPlan(prepared,data,plan,error) && plan.publishedFileId == 0, "offline theme-plan validates complete preparation without Steam");
+    check(bridge::BuildThemePublishPlan(prepared,data,plan,error) && plan.publishedFileId == 0 && plan.gallery.size() == 7, "offline theme-plan validates complete seven-image preparation without Steam");
+    const auto galleryManifest = plan.gallery.front().path;
+    const auto savedGallery = prepared / L"saved-gallery.png";
+    std::filesystem::rename(galleryManifest, savedGallery);
+    bridge::ThemePublishPlan rejectedGallery;
+    check(!bridge::BuildThemePublishPlan(prepared,data,rejectedGallery,error) && error == "stalePreparation", "missing gallery image cannot prepare a publish");
+    std::filesystem::rename(savedGallery, galleryManifest);
     bridge::ThemePublishTransport transport;
     transport.status = [](auto&) -> std::optional<bridge::SteamStatus> { bridge::SteamStatus s; s.loggedOn=true; s.appId=5080330; s.steamId="321"; return s; };
     transport.agreement = [](auto&) -> std::optional<bridge::WorkshopEulaStatus> { bridge::WorkshopEulaStatus s; s.available=s.accepted=true; return s; };
@@ -52,6 +64,9 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
         std::uint64_t id = request.publishedFileId.value_or(0);
         if (!id) { ++created; id=123; if (!request.persistCreatedItem(id)) return {}; }
         check(request.contentKind == bridge::WorkshopContentKind::Theme && request.validateStagedArtifacts(request.package,*request.preview), "theme transport validates exact upload snapshot");
+        check(request.additionalPreviews.size() == 7 && request.validateStagedPreviews(request.additionalPreviews), "upload receives seven immutable separately hashed images");
+        auto reordered = request.additionalPreviews; std::swap(reordered[0], reordered[1]);
+        check(!request.validateStagedPreviews(reordered), "staged gallery identity and order cannot be substituted");
         auto expectedTags = classification; expectedTags.emplace_back("Theme");
         check(request.tags && *request.tags == expectedTags, "upload receives canonical classification, never localized labels or an unapproved source category");
         ++uploaded;
@@ -62,6 +77,13 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     auto changedTags = plan; changedTags.tags.pop_back();
     check(!bridge::ExecuteThemePublishPlan(changedTags,true,false,transport,{},result,detail,now) && detail.code=="stalePreparation" && created==0,
         "classification changed after confirmation cannot reach Steam");
+    auto changedGallery = plan; changedGallery.gallery.front().sha256 = "changed";
+    check(!bridge::ExecuteThemePublishPlan(changedGallery,true,false,transport,{},result,detail,now) && detail.code=="stalePreparation" && created==0,
+        "gallery changed after confirmation cannot reach Steam");
+    check(atomic_file::WriteAll(galleryManifest,"tampered") &&
+        !bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now) && detail.code=="stalePreparation" && created==0,
+        "tampered gallery file is rejected before the Steam boundary");
+    std::filesystem::copy_file(prepared / L"cover.png", galleryManifest, std::filesystem::copy_options::overwrite_existing);
     check(!bridge::ExecuteThemePublishPlan(plan,false,false,transport,{},result,detail,now) && created==0, "confirmation is required before any remote create");
     check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now+901) && created==0, "expired preparation never reaches Steam");
     std::atomic_bool cancel{true};
@@ -76,6 +98,18 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
         bridge::ThemePublishedUrl(data,"theme/new-id").empty(), "published address binds to local ID, including a failed upload retry, and never leaks to another theme");
     failUpload=false;
     check(bridge::ExecuteThemePublishPlan(plan,false,true,transport,{},result,detail,now) && created==1 && uploaded==2, "retry updates existing ID without duplicate creation");
+    auto noAppAgreement = transport;
+    noAppAgreement.agreement = [](auto&) -> std::optional<bridge::WorkshopEulaStatus> { return bridge::WorkshopEulaStatus{}; };
+    bool noAgreementReached = false;
+    noAppAgreement.publish = [&](const auto&,const auto&,auto&) -> std::optional<bridge::PublishResult> { noAgreementReached = true; return bridge::PublishResult{false,123,false,{}}; };
+    check(bridge::ExecuteThemePublishPlan(plan,false,true,noAppAgreement,{},result,detail,now) && noAgreementReached,
+        "apps without a custom Workshop EULA reach publish and rely on authoritative Steam callbacks");
+    const auto managedPrefix = preview::GalleryPrefix(bridge::ThemeSha256(root.id));
+    check(preview::ManagedGalleryFilename(managedPrefix + "popup.png", managedPrefix) &&
+        !preview::ManagedGalleryFilename("manual-preview.png", managedPrefix) &&
+        !preview::ManagedGalleryFilename(preview::GalleryFilename(bridge::ThemeSha256("other"),"popup"),managedPrefix) &&
+        !preview::ManagedGalleryFilename(managedPrefix + "unrecognized.png", managedPrefix),
+        "gallery replacement preserves manual files and other theme identities");
     const auto owner = transport.item;
     transport.item = [](auto id,auto&) -> std::optional<bridge::PublishedItem> { bridge::PublishedItem i; i.publishedFileId=id; i.ownerSteamId=999; i.consumerAppId=5080330; return i; };
     check(!bridge::ExecuteThemePublishPlan(plan,false,true,transport,{},result,detail,now) && detail.code=="authorMismatch" && uploaded==2, "another account cannot update the authored item");

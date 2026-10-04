@@ -2445,6 +2445,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         const auto trayFixture = trayPanel ? TrayFixture() : tray::Snapshot{};
         for (const auto& preset : presets)
         {
+            if (request.theme && controls && preset != "overview") continue;
             result.stage = "panel.model."+preset;
             auto state = std::make_shared<PreviewState>(); StatusBarSettings settings;
             state->unavailable = controls && preset == "unavailable";

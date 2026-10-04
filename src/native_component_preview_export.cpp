@@ -528,7 +528,7 @@ DesktopApp::ExportNativeComponentPreviews(
         }
         for (const Variant& variant : buildVariants(definition.id))
         {
-            if (request.theme && variant.id != "compact") continue;
+            if (request.theme && variant.id != (request.component == "folder-mapping" ? "grid" : "compact")) continue;
             component_preview::Card& card = model.cards[variant.cardIndex];
             const int width = card.previewWidth;
             const int height = card.previewHeight;

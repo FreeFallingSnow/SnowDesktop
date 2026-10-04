@@ -8,6 +8,7 @@
 
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
+#include "../../src/theme_preview_parts.h"
 #include "publish_lifecycle.h"
 
 #include <algorithm>
@@ -447,6 +448,7 @@ std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreE
     guard.handle = ugc->CreateQueryUGCDetailsRequest(&itemId, 1);
     if (guard.handle == k_UGCQueryHandleInvalid) { SetError(error, kSteamOperationFailed, "query_failed", "invalid query"); return std::nullopt; }
     ugc->SetReturnMetadata(guard.handle, true);
+    ugc->SetReturnAdditionalPreviews(guard.handle, true);
     SteamUGCQueryCompleted_t completed{}; std::string message; SteamUGCDetails_t details{};
     if (!WaitForCall(ugc->SendQueryUGCRequest(guard.handle), completed, std::chrono::seconds(30), message) ||
         completed.m_eResult != k_EResultOK || completed.m_unNumResultsReturned != 1 ||
@@ -454,7 +456,17 @@ std::optional<PublishedItem> SteamWorkshopCore::FindItem(std::uint64_t id, CoreE
     { SetError(error, kSteamOperationFailed, "item_query_failed", message.empty() ? "Requested item is unavailable" : message); return std::nullopt; }
     PublishedItem result; result.publishedFileId = id; result.ownerSteamId = details.m_ulSteamIDOwner;
     result.consumerAppId = details.m_nConsumerAppID; result.creatorAppId = details.m_nCreatorAppID; result.banned = details.m_bBanned;
-    result.metadata = QueryText(*ugc, guard.handle, 0, &ISteamUGC::GetQueryUGCMetadata); return result;
+    result.metadata = QueryText(*ugc, guard.handle, 0, &ISteamUGC::GetQueryUGCMetadata);
+    const auto count = ugc->GetQueryUGCNumAdditionalPreviews(guard.handle, 0);
+    if (count > 256) { SetError(error, kSteamOperationFailed, "preview_query_failed", "Too many additional previews"); return std::nullopt; }
+    for (uint32 index = 0; index < count; ++index)
+    {
+        std::array<char, 4096> url{}; std::array<char, 1024> name{}; EItemPreviewType type{};
+        if (!ugc->GetQueryUGCAdditionalPreview(guard.handle, 0, index, url.data(), static_cast<uint32>(url.size()), name.data(), static_cast<uint32>(name.size()), &type))
+        { SetError(error, kSteamOperationFailed, "preview_query_failed", "Cannot resolve additional previews"); return std::nullopt; }
+        result.additionalPreviewFilenames.emplace_back(type == k_EItemPreviewType_Image ? name.data() : "");
+    }
+    return result;
 #else
     return std::nullopt;
 #endif
@@ -680,6 +692,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     UploadDirectory upload;
     UploadDirectory themePreview;
     std::filesystem::path previewPath = request.preview.value_or(std::filesystem::path{});
+    std::vector<std::filesystem::path> additionalPreviews;
     if (request.updateContent)
     {
         std::filesystem::create_directories(stagingRoot_, ec);
@@ -724,6 +737,19 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         std::filesystem::copy_file(*request.preview, previewPath, std::filesystem::copy_options::none, ec);
         if (ec || !request.validateStagedArtifacts(upload.root / L"package.snowtheme", previewPath))
         { SetError(error, kInvalidArguments, "stalePreparation", "Theme artifacts changed before upload"); return std::nullopt; }
+        if (request.additionalPreviews.empty() || request.additionalPreviews.size() > 7 || !request.validateStagedPreviews)
+        { SetError(error, kInvalidArguments, "stalePreparation", "Missing theme gallery"); return std::nullopt; }
+        for (const auto& image : request.additionalPreviews)
+        {
+            if (!themes::preview::ManagedGalleryFilename(WideToUtf8(image.filename().wstring()), request.managedPreviewPrefix))
+            { SetError(error, kInvalidArguments, "stalePreparation", "Invalid theme gallery name"); return std::nullopt; }
+            const auto staged = themePreview.root / image.filename();
+            std::filesystem::copy_file(image, staged, std::filesystem::copy_options::none, ec);
+            if (ec) { SetError(error, kInvalidArguments, "stalePreparation", "Cannot freeze theme gallery"); return std::nullopt; }
+            additionalPreviews.push_back(staged);
+        }
+        if (!request.validateStagedPreviews(additionalPreviews))
+        { SetError(error, kInvalidArguments, "stalePreparation", "Theme gallery changed before upload"); return std::nullopt; }
     }
     ISteamUGC* ugc = SteamUGC();
     ISteamUtils* utils = SteamUtils();
@@ -768,6 +794,14 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     else lifecycle.BindExisting(static_cast<std::uint64_t>(itemId));
     if (request.contentKind == WorkshopContentKind::Theme && needsAgreement)
         return PublishResult{creating, static_cast<std::uint64_t>(itemId), true, CommunityItemUrl(itemId)};
+    std::vector<std::string> previousPreviews;
+    if (!creating && request.contentKind == WorkshopContentKind::Theme)
+    {
+        const auto item = FindItem(itemId, error);
+        if (!item || item->ownerSteamId != SteamUser()->GetSteamID().ConvertToUint64() || item->consumerAppId != appId || item->banned)
+        { SetError(error, kSteamOperationFailed, "authorMismatch", "Theme gallery owner changed"); return std::nullopt; }
+        previousPreviews = item->additionalPreviewFilenames;
+    }
     const UGCUpdateHandle_t update = ugc->StartItemUpdate(appId, itemId);
     if (update == k_UGCUpdateHandleInvalid)
     {
@@ -795,6 +829,13 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             return std::nullopt;
         }
     }
+    for (std::size_t index = previousPreviews.size(); index > 0; --index)
+        if (themes::preview::ManagedGalleryFilename(previousPreviews[index - 1], request.managedPreviewPrefix) &&
+            !ugc->RemoveItemPreview(update, static_cast<uint32>(index - 1)))
+        { SetError(error, kSteamOperationFailed, "preview_rejected", "Cannot replace generated theme gallery"); return std::nullopt; }
+    for (const auto& image : additionalPreviews)
+        if (!ugc->AddItemPreviewFile(update, WideToUtf8(image.wstring()).c_str(), k_EItemPreviewType_Image))
+        { SetError(error, kSteamOperationFailed, "preview_rejected", "Steam rejected a theme gallery image"); return std::nullopt; }
     if (request.language && !ugc->SetItemUpdateLanguage(update,
             request.language->c_str()))
     {

@@ -5,11 +5,17 @@
 namespace snowdesktop::steam_bridge
 {
 inline constexpr unsigned kThemeWorkflowProtocolVersion = 1;
+struct ThemeGalleryImage
+{
+    std::string component, sha256;
+    std::filesystem::path path;
+};
 struct ThemePublishPlan
 {
     std::filesystem::path directory, package, preview, association;
-    std::string rootId, title, packageSha256, coverSha256, tagsSha256;
+    std::string rootId, title, packageSha256, coverSha256, tagsSha256, gallerySha256;
     std::vector<std::string> tags;
+    std::vector<ThemeGalleryImage> gallery;
     std::uint64_t publishedFileId = 0;
     std::int64_t preparedAt = 0;
 };

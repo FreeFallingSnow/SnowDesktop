@@ -73,6 +73,7 @@ struct PublishedItem
     std::string metadata;
     std::string previewUrl;
     std::vector<std::string> tags;
+    std::vector<std::string> additionalPreviewFilenames;
     std::uint64_t subscriptions = 0;
     std::uint64_t favorites = 0;
     std::uint64_t views = 0;
@@ -116,6 +117,10 @@ struct PublishRequest
     // A newly allocated ID must be durably recorded before any upload starts.
     std::function<bool(std::uint64_t)> persistCreatedItem;
     std::function<bool(const std::filesystem::path&, const std::filesystem::path&)> validateStagedArtifacts;
+    std::function<bool(const std::vector<std::filesystem::path>&)> validateStagedPreviews;
+    std::vector<std::filesystem::path> additionalPreviews;
+    // Only this theme's generated images may be replaced on an update.
+    std::string managedPreviewPrefix;
     std::filesystem::path package;
     bool updateContent = true;
     std::optional<std::filesystem::path> preview;

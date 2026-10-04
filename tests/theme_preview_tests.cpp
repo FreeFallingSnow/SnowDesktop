@@ -47,7 +47,7 @@ int wmain(int argc, wchar_t** argv)
         Sleep(5000); return 0;
     }
     if (argc >= 2 && std::wstring_view(argv[1]) == L"configuration")
-    { std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\"]}\n"; return 0; }
+    { std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\"]}\n"; return 0; }
     const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     int failures = 0;
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL preview: " << message << '\n'; } };
@@ -63,7 +63,14 @@ int wmain(int argc, wchar_t** argv)
     global.id = "theme/global"; global.name = "Global"; global.quickPanel = quick.id; global.popup = popup.id;
     Package package{{global.id,global},{quick.id,quick},{popup.id,popup}};
     std::string error;
-    check(preview::Parts(package, global.id, All, error).size() == 6, "full scope uses all production surfaces and bound themes");
+    check(preview::Parts(package, global.id, All, error).size() == 7, "full scope uses mapped-folder, bars and bound quick/popup/control-center production surfaces");
+    auto bars = package; bars.at(global.id).scopes = Bars;
+    const auto barsParts = preview::Parts(bars, global.id, Bars, error);
+    check(barsParts.size() == 7 && barsParts.front().component == "folder-mapping" && bars.at(global.id).scopes == Bars,
+        "full global mapped-folder appearance sample does not expand the applied bar scope");
+    const auto popupParts = preview::Parts(package, popup.id, All, error);
+    check(popupParts.size() == 2 && popupParts[0].component == "popup" && popupParts[1].component == "control-panel" && popupParts[1].themeId == popup.id,
+        "popup themes also preview the actual control center with the same popup appearance");
     check(preview::Parts(package, global.id, Dock, error).size() == 1, "Dock entry respects target scope");
     auto partial = global; partial.scopes = Dock | StatusBar; partial.quickPanel.clear(); partial.popup.clear();
     Package partialPackage{{partial.id, partial}};
@@ -116,7 +123,10 @@ int wmain(int argc, wchar_t** argv)
         const auto cli = directory / L"cli"; std::filesystem::create_directory(cli);
         const auto bridge = std::filesystem::path(argv[1]).parent_path() / L"SnowDesktopSteamBridge.exe";
         check(WritePackage(cli / L"package.snowtheme",package,error) &&
-            preview::SaveCover(cli / L"cover.png",widget_preview::GenerateWallpaper(1024,1024,false),error) &&
+            preview::SaveCover(cli / L"cover.png",widget_preview::GenerateWallpaper(1024,1024,false),error), "CLI fixture package and cover");
+        for (const auto& part : preview::Parts(package,global.id,global.scopes,error))
+            std::filesystem::copy_file(cli / L"cover.png",cli / preview::GalleryFilename(steam_bridge::ThemeSha256(global.id),part.component));
+        check(
             steam_bridge::WriteThemePreparation(cli,global.id,global.name,1700000000,error,tags::Applicable(global)), "CLI fixture preparation");
         check(preview::Run(bridge,{L"workshop",L"theme-plan",L"--prepared",cli.wstring(),L"--data-directory",directory.wstring()},output,3000,error) &&
             output.find("themeWorkflowProtocolVersion")!=std::string::npos, "actual bridge theme-plan validates offline prepared artifacts");
@@ -163,6 +173,23 @@ int wmain(int argc, wchar_t** argv)
             !std::filesystem::exists(directory / L"cancelled"), "cancelled rendering discards package and cover together");
         check(!preview::Render(directory / L"missing.exe",package,global.id,All,directory / L"failed",cover,error) && cover.empty() &&
             !std::filesystem::exists(directory / L"failed"), "renderer failure cannot publish stale output");
+        std::vector<preview::Image> gallery;
+        const auto galleryDirectory = directory / L"gallery";
+        const bool galleryOk = preview::RenderGallery(argv[1],package,global.id,All,galleryDirectory,gallery,cover,error);
+        check(galleryOk && gallery.size() == 7 && gallery.front().component == "folder-mapping" &&
+            gallery.back().component == "control-panel", "production gallery reuses actual mapped-folder and control-center renderers");
+        if (galleryOk)
+        {
+            for (const auto& image : gallery)
+                check(widget_preview::LoadWallpaperImage(image.path).pixels.size() == 1024*1024 &&
+                    std::filesystem::file_size(image.path) < preview::kCoverMaximumBytes, "each independent gallery image is complete and fits Steam's limit");
+            check(steam_bridge::ThemeFileSha256(cover) == steam_bridge::ThemeFileSha256(gallery.front().path), "default cover is one gallery image, never a composite");
+            const auto folder = widget_preview::LoadWallpaperImage(gallery.front().path);
+            const auto control = widget_preview::LoadWallpaperImage(gallery.back().path);
+            check(Compare(folder,control).material > 10000, "component and popup control-center previews are distinct rendered images");
+        }
+        check(!preview::RenderGallery(argv[1],package,global.id,All,directory / L"gallery-cancel",gallery,cover,error,&cancel) &&
+            gallery.empty() && cover.empty() && !std::filesystem::exists(directory / L"gallery-cancel"), "cancelled gallery releases every image and draft artifact");
     }
     else check(false,"host executable argument is required");
     if (SUCCEEDED(initialized)) CoUninitialize();

@@ -47,7 +47,7 @@ bool Capabilities(std::string_view configuration, std::string_view hostVersion)
     const auto has = [&](std::string_view key) { return capabilities && capabilities->IsArray() &&
         std::any_of(capabilities->array.begin(), capabilities->array.end(),
             [key](const auto& value) { return value.IsString() && value.string == key; }); };
-    return has("workshop.theme.v1") && has("workshop.theme.tags.v1");
+    return has("workshop.theme.v1") && has("workshop.theme.tags.v1") && has("workshop.theme.gallery.v1");
 }
 bool Available(const std::filesystem::path& bridge, std::string_view hostVersion)
 {
@@ -172,6 +172,7 @@ bool Publish(const std::filesystem::path& bridge, const steam_bridge::ThemePubli
         L"--data-directory", data.wstring(), L"--package-sha256", std::wstring(plan.packageSha256.begin(), plan.packageSha256.end()),
         L"--cover-sha256", std::wstring(plan.coverSha256.begin(), plan.coverSha256.end()),
         L"--tags-sha256", std::wstring(plan.tagsSha256.begin(), plan.tagsSha256.end()),
+        L"--gallery-sha256", std::wstring(plan.gallerySha256.begin(), plan.gallerySha256.end()),
         plan.publishedFileId ? L"--confirm-update" : L"--confirm-create"}, output, 31 * 60 * 1000, error, cancel))
     { JsonValue failed; if (Final(output, failed) && !String(failed, "error").empty()) error = String(failed, "error"); return false; }
     JsonValue json; return (Final(output, json) && Boolean(json, "ok") && !Boolean(json, "needsLegalAgreement")) || Fail(error, "publishFailed");

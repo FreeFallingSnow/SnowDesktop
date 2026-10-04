@@ -176,7 +176,7 @@ void PrintUsage()
            " [--change-note TEXT] [--timeout-seconds N] [--open-page]\n"
         << "  SnowDesktopSteamBridge.exe workshop theme-plan --prepared DIR --data-directory DIR\n"
         << "  SnowDesktopSteamBridge.exe workshop theme-publish --prepared DIR --data-directory DIR"
-           " --package-sha256 HASH --cover-sha256 HASH --tags-sha256 HASH (--confirm-create|--confirm-update)\n"
+           " --package-sha256 HASH --cover-sha256 HASH --tags-sha256 HASH --gallery-sha256 HASH (--confirm-create|--confirm-update)\n"
         << "  SnowDesktopSteamBridge.exe workshop component-plan --source DIR"
            " --data-directory DIR [--item ID]"
            " [--text-source package|steam|manual-english]"
@@ -201,7 +201,7 @@ int PrintConfiguration()
               << ",\"windowsDepotId\":" <<
         snowdesktop::steam_bridge::kSteamWindowsDepotId
               << ",\"componentWorkflowProtocolVersion\":1"
-              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\"]"
+              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\"]"
               << ",\"steamworksCompiled\":"
               << (SNOWDESKTOP_HAS_STEAMWORKS ? "true" : "false")
               << "}\n";
@@ -1590,7 +1590,7 @@ int RunThemeWorkshopCommand(const std::wstring& command, const std::vector<std::
     using namespace snowdesktop::steam_bridge;
     ParsedOptions options; std::string detail;
     const bool execute = command == L"theme-publish";
-    if (!ParseOptions(arguments, {L"--prepared", L"--data-directory", L"--package-sha256", L"--cover-sha256", L"--tags-sha256"}, {},
+    if (!ParseOptions(arguments, {L"--prepared", L"--data-directory", L"--package-sha256", L"--cover-sha256", L"--tags-sha256", L"--gallery-sha256"}, {},
         execute ? std::set<std::wstring>{L"--confirm-create", L"--confirm-update"} : std::set<std::wstring>{}, options, detail) ||
         !options.Value(L"--prepared") || !options.Value(L"--data-directory"))
         return PrintError(64, "invalid_arguments", detail.empty() ? "--prepared and --data-directory are required" : detail);
@@ -1600,7 +1600,8 @@ int RunThemeWorkshopCommand(const std::wstring& command, const std::vector<std::
     if (!execute) { std::cout << ThemePublishPlanJson(plan) << '\n'; return 0; }
     if (WideToUtf8(options.Value(L"--package-sha256").value_or(L"")) != plan.packageSha256 ||
         WideToUtf8(options.Value(L"--cover-sha256").value_or(L"")) != plan.coverSha256 ||
-        WideToUtf8(options.Value(L"--tags-sha256").value_or(L"")) != plan.tagsSha256) return PrintError(64, "stalePreparation", "Confirmed package, cover or tags changed");
+        WideToUtf8(options.Value(L"--tags-sha256").value_or(L"")) != plan.tagsSha256 ||
+        WideToUtf8(options.Value(L"--gallery-sha256").value_or(L"")) != plan.gallerySha256) return PrintError(64, "stalePreparation", "Confirmed package, cover, tags or gallery changed");
     SteamWorkshopCore core(std::filesystem::absolute(*options.Value(L"--data-directory")) / L"ThemeWorkshop" / L"staging");
     ThemePublishTransport transport;
     transport.status = [&](CoreError& error) -> std::optional<SteamStatus> { if (!core.Initialize(error)) return {}; return core.Status(); };

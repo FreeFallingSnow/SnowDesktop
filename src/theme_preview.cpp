@@ -77,23 +77,6 @@ bool Run(const std::filesystem::path& executable, const std::vector<std::wstring
     // Only this request's one-shot child is terminated; no application tree.
     TerminateProcess(process.value, 6); WaitForSingleObject(process.value, 5000); return false;
 }
-std::vector<Part> Parts(const Package& package, std::string_view root, unsigned scope, std::string& error)
-{
-    if (!Validate(package, error)) return {};
-    const auto theme = Resolve(package, root);
-    if (!theme) { error = "themeNotFound"; return {}; }
-    if (theme->kind != Kind::Global) return {{theme->kind == Kind::QuickPanel ? "quick-navigation" : "popup", std::string(root)}};
-    if (!scope || (scope & ~All) || (theme->scopes & scope) != scope) { error = "invalidSelection"; return {}; }
-    std::vector<Part> out;
-    for (const auto& [bit, component] : std::vector<std::pair<unsigned, std::string>>{
-        {Components, "collection"}, {Dock, "dock"}, {StatusBar, "status-bar"}, {Taskbar, "taskbar"}})
-        if (scope & bit) out.push_back({component, std::string(root)});
-    if (scope == theme->scopes && FullScope(theme->scopes))
-    {
-        out.push_back({"quick-navigation", theme->quickPanel}); out.push_back({"popup", theme->popup});
-    }
-    return out;
-}
 bool SaveCover(const std::filesystem::path& path, widget_preview::Wallpaper image, std::string& error)
 {
     if (image.width != kCoverSize || image.height != kCoverSize || image.pixels.size() != kCoverSize * kCoverSize)
@@ -144,10 +127,11 @@ bool NormalizeCover(const std::filesystem::path& source, const std::filesystem::
     }
     return SaveCover(destination, std::move(image), error);
 }
-bool Render(const std::filesystem::path& host, const Package& package, std::string_view root,
+static bool RenderImages(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
-    std::string& error, const std::atomic_bool* cancel)
+    std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images)
 {
+    if (images) images->clear();
     cover.clear(); const auto parts = Parts(package, root, scope, error); if (parts.empty()) return false;
     std::error_code ec;
     // A new directory is mandatory. A failed request can never reuse an older cover.
@@ -156,7 +140,7 @@ bool Render(const std::filesystem::path& host, const Package& package, std::stri
     const auto snapshot = directory / L"package.snowtheme";
     if (!WritePackage(snapshot, package, error)) return false;
     auto canvas = widget_preview::GenerateWallpaper(kCoverSize, kCoverSize, false);
-    const int columns = parts.size() > 1 ? 2 : 1, rows = static_cast<int>((parts.size() + columns - 1) / columns);
+    const int columns = images ? 1 : (parts.size() > 1 ? 2 : 1), rows = images ? 1 : static_cast<int>((parts.size() + columns - 1) / columns);
     for (std::size_t index = 0; index < parts.size(); ++index)
     {
         if (cancel && cancel->load()) return Fail(error, "cancelled");
@@ -182,15 +166,38 @@ bool Render(const std::filesystem::path& host, const Package& package, std::stri
         const int cellWidth = kCoverSize / columns - 40, cellHeight = kCoverSize / rows - 40;
         const double scale = std::min(static_cast<double>(cellWidth) / width, static_cast<double>(cellHeight) / height);
         const int w = std::max(1, static_cast<int>(width * scale)), h = std::max(1, static_cast<int>(height * scale));
-        const int x = static_cast<int>(index % columns) * kCoverSize / columns + (kCoverSize / columns - w) / 2;
-        const int y = static_cast<int>(index / columns) * kCoverSize / rows + (kCoverSize / rows - h) / 2;
+        const auto cell = images ? 0 : index;
+        const int x = static_cast<int>(cell % columns) * kCoverSize / columns + (kCoverSize / columns - w) / 2;
+        const int y = static_cast<int>(cell / columns) * kCoverSize / rows + (kCoverSize / rows - h) / 2;
         for (int dy = 0; dy < h; ++dy) for (int dx = 0; dx < w; ++dx)
             canvas.pixels[static_cast<std::size_t>(y + dy) * kCoverSize + x + dx] =
                 image.pixels[static_cast<std::size_t>(top + static_cast<int>(dy / scale)) * image.width + left + static_cast<int>(dx / scale)];
+        if (images)
+        {
+            const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), part.component);
+            if (!SaveCover(imagePath, canvas, error)) { images->clear(); return false; }
+            images->push_back({part.component, imagePath});
+            canvas = widget_preview::GenerateWallpaper(kCoverSize, kCoverSize, false);
+        }
         std::filesystem::remove_all(partDir, ec); std::filesystem::remove(resultPath, ec);
     }
     const auto destination = directory / L"cover.png";
-    if (!SaveCover(destination, std::move(canvas), error)) return false;
+    if (images)
+    {
+        std::filesystem::copy_file(images->front().path, destination, std::filesystem::copy_options::none, ec);
+        if (ec) { images->clear(); return Fail(error, "writeFailed"); }
+    }
+    else if (!SaveCover(destination, std::move(canvas), error)) return false;
     cover = destination; cleanup.keep = true; return true;
 }
-}
+bool Render(const std::filesystem::path& host, const Package& package, std::string_view root,
+    unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
+    std::string& error, const std::atomic_bool* cancel)
+{ return RenderImages(host, package, root, scope, directory, cover, error, cancel, nullptr); }
+bool RenderGallery(const std::filesystem::path& host, const Package& package, std::string_view root,
+    unsigned scope, const std::filesystem::path& directory, std::vector<Image>& images,
+    std::filesystem::path& cover, std::string& error, const std::atomic_bool* cancel)
+{
+    if (RenderImages(host, package, root, scope, directory, cover, error, cancel, &images)) return true;
+    images.clear(); cover.clear(); return false;
+}}
