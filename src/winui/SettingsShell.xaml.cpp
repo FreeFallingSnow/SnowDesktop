@@ -3314,10 +3314,13 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
         dialog.XamlRoot(XamlRoot());
         dialog.Title(winrt::box_value(request.title));
         dialog.Content(winrt::box_value(request.message));
+        muxc::FlipView gallery{nullptr};
+        std::vector<muxmi::BitmapImage> previewBitmaps;
+        const auto enlargeRequested = std::make_shared<bool>(false);
         if (!request.previewImages.empty() || !request.previewImagePath.empty())
         {
             muxc::StackPanel content; content.Spacing(8);
-            muxc::FlipView gallery; gallery.MaxWidth(400); gallery.Height(270);
+            gallery = muxc::FlipView{}; gallery.MaxWidth(400); gallery.Height(270);
             if (request.previewImages.empty()) request.previewImages.push_back({L"", request.previewImagePath});
             for (std::size_t index = 0; index < request.previewImages.size(); ++index)
             {
@@ -3333,6 +3336,7 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
                 }
                 muxc::StackPanel slide; slide.Spacing(4);
                 muxc::Image image; image.Source(bitmap); image.Height(236);
+                previewBitmaps.push_back(bitmap);
                 image.Stretch(winrt::Microsoft::UI::Xaml::Media::Stretch::Uniform);
                 muxc::TextBlock label;
                 label.Text(item.title + L"  " + std::to_wstring(index + 1) + L" / " + std::to_wstring(request.previewImages.size()));
@@ -3341,6 +3345,15 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
                 gallery.Items().Append(slide);
             }
             content.Children().Append(gallery);
+            muxc::Button enlarge;
+            enlarge.Content(winrt::box_value(Localize("themeLibrary.enlargePreview")));
+            enlarge.HorizontalAlignment(mux::HorizontalAlignment::Center);
+            muxa::AutomationProperties::SetAutomationId(enlarge, L"PreviewEnlargeButton");
+            enlarge.Click([enlargeRequested, weak = winrt::make_weak(dialog)](const auto&, const auto&) {
+                *enlargeRequested = true;
+                if (auto current = weak.get()) current.Hide();
+            });
+            content.Children().Append(enlarge);
             muxc::TextBlock caption; caption.Text(request.message);
             caption.TextWrapping(mux::TextWrapping::Wrap);
             content.Children().Append(caption);
@@ -3351,7 +3364,81 @@ winrt::fire_and_forget SettingsShell::ShowConfirmationAsync(
         dialog.DefaultButton(
             (request.destructive || request.defaultClose) ? muxc::ContentDialogButton::Close
                                 : muxc::ContentDialogButton::Primary);
-        const auto result = co_await dialog.ShowAsync();
+        muxc::ContentDialogResult result = muxc::ContentDialogResult::None;
+        for (;;)
+        {
+            if (closed_ || request.generation != navigation_.Generation()) break;
+            *enlargeRequested = false;
+            activeDialog_ = dialog;
+            result = co_await dialog.ShowAsync();
+            if (!*enlargeRequested || closed_ || request.generation != navigation_.Generation()) break;
+            const auto index = gallery.SelectedIndex();
+            if (index < 0 || static_cast<std::size_t>(index) >= previewBitmaps.size()) break;
+
+            // Finish the original modal before opening the larger viewer. The
+            // viewer has no confirmation action; returning resumes the same
+            // frozen gallery and selected image without publishing anything.
+            muxc::ContentDialog viewerDialog;
+            activeDialog_ = viewerDialog;
+            viewerDialog.XamlRoot(XamlRoot());
+            viewerDialog.Title(winrt::box_value(request.previewImages[index].title.empty() ? request.title : request.previewImages[index].title));
+            viewerDialog.CloseButtonText(Localize("themeLibrary.closePreview"));
+            viewerDialog.DefaultButton(muxc::ContentDialogButton::Close);
+            const auto size = XamlRoot().Size();
+            const double width = std::max(240., std::min(1280., static_cast<double>(size.Width) - 128.));
+            const double height = std::max(160., std::min(900., static_cast<double>(size.Height) - 240.));
+            viewerDialog.Resources().Insert(winrt::box_value(L"ContentDialogMaxWidth"), winrt::box_value(width + 48.));
+            viewerDialog.MaxWidth(width + 48.); viewerDialog.MaxHeight(std::max(320., static_cast<double>(size.Height) - 32.));
+            muxc::StackPanel body; body.Spacing(8);
+            muxc::StackPanel toolbar; toolbar.Orientation(muxc::Orientation::Horizontal); toolbar.Spacing(8);
+            muxc::ScrollViewer viewer; viewer.Width(width); viewer.Height(height);
+            viewer.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
+            viewer.VerticalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
+            viewer.HorizontalScrollMode(muxc::ScrollMode::Enabled); viewer.VerticalScrollMode(muxc::ScrollMode::Enabled);
+            viewer.ZoomMode(muxc::ZoomMode::Enabled); viewer.MinZoomFactor(.1f); viewer.MaxZoomFactor(8.f);
+            viewer.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+            viewer.VerticalContentAlignment(mux::VerticalAlignment::Center);
+            muxa::AutomationProperties::SetAutomationId(viewer, L"PreviewZoomScrollViewer");
+            muxa::AutomationProperties::SetName(viewer, Localize("themeLibrary.enlargePreview"));
+            const auto bitmap = previewBitmaps[index];
+            muxc::Image image; image.Source(bitmap); image.Width(bitmap.PixelWidth()); image.Height(bitmap.PixelHeight());
+            viewer.Content(image);
+            muxc::TextBlock percentage; percentage.VerticalAlignment(mux::VerticalAlignment::Center);
+            muxa::AutomationProperties::SetAutomationId(percentage, L"PreviewZoomPercent");
+            const auto zoom = [viewer](float factor) {
+                factor = std::clamp(factor, viewer.MinZoomFactor(), viewer.MaxZoomFactor());
+                const auto previous = viewer.ZoomFactor();
+                const double x = (viewer.HorizontalOffset() + viewer.ViewportWidth()/2) * factor/previous - viewer.ViewportWidth()/2;
+                const double y = (viewer.VerticalOffset() + viewer.ViewportHeight()/2) * factor/previous - viewer.ViewportHeight()/2;
+                viewer.ChangeView(std::max(0., x), std::max(0., y), factor, true);
+            };
+            const auto fit = [viewer, bitmap] {
+                const auto viewportWidth = viewer.ViewportWidth() > 0 ? viewer.ViewportWidth() : viewer.Width();
+                const auto viewportHeight = viewer.ViewportHeight() > 0 ? viewer.ViewportHeight() : viewer.Height();
+                const auto factor = static_cast<float>(std::min({1., viewportWidth/bitmap.PixelWidth(), viewportHeight/bitmap.PixelHeight()}));
+                viewer.ChangeView(0., 0., std::clamp(factor, viewer.MinZoomFactor(), viewer.MaxZoomFactor()), true);
+            };
+            muxc::Button minus, plus, fitButton;
+            minus.Content(muxc::SymbolIcon{muxc::Symbol::ZoomOut}); plus.Content(muxc::SymbolIcon{muxc::Symbol::ZoomIn});
+            fitButton.Content(winrt::box_value(Localize("themeLibrary.fitPreview")));
+            muxa::AutomationProperties::SetName(minus, Localize("themeLibrary.zoomOut"));
+            muxa::AutomationProperties::SetName(plus, Localize("themeLibrary.zoomIn"));
+            muxa::AutomationProperties::SetAutomationId(minus, L"PreviewZoomOut");
+            muxa::AutomationProperties::SetAutomationId(plus, L"PreviewZoomIn");
+            muxa::AutomationProperties::SetAutomationId(fitButton, L"PreviewZoomFit");
+            [[maybe_unused]] const auto minusRevoker = minus.Click(winrt::auto_revoke, [zoom, viewer](const auto&, const auto&) { zoom(viewer.ZoomFactor()/1.25f); });
+            [[maybe_unused]] const auto plusRevoker = plus.Click(winrt::auto_revoke, [zoom, viewer](const auto&, const auto&) { zoom(viewer.ZoomFactor()*1.25f); });
+            [[maybe_unused]] const auto fitRevoker = fitButton.Click(winrt::auto_revoke, [fit](const auto&, const auto&) { fit(); });
+            [[maybe_unused]] const auto loadedRevoker = viewer.Loaded(winrt::auto_revoke, [fit](const auto&, const auto&) { fit(); });
+            [[maybe_unused]] const auto viewRevoker = viewer.ViewChanged(winrt::auto_revoke, [viewer, percentage](const auto&, const auto&) {
+                percentage.Text(std::to_wstring(std::lround(viewer.ZoomFactor()*100)) + L"%");
+            });
+            toolbar.Children().Append(minus); toolbar.Children().Append(percentage); toolbar.Children().Append(plus); toolbar.Children().Append(fitButton);
+            body.Children().Append(toolbar); body.Children().Append(viewer); viewerDialog.Content(body);
+            co_await viewerDialog.ShowAsync();
+            if (activeDialog_ == viewerDialog) activeDialog_ = nullptr;
+            gallery.SelectedIndex(index);
+        }
         if (activeDialog_ == dialog)
             activeDialog_ = nullptr;
         if (!closed_ && request.generation == navigation_.Generation() &&

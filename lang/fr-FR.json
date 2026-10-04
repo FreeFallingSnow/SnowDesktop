@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "Voir la page du Workshop",
   "themeLibrary.backgroundSource": "Arrière-plan de l’aperçu",
   "themeLibrary.generateBackground": "Générer automatiquement l’arrière-plan",
-  "themeLibrary.chooseBackground": "Importer une image d’arrière-plan"
+  "themeLibrary.chooseBackground": "Importer une image d’arrière-plan",
+  "themeLibrary.enlargePreview": "Agrandir l’aperçu",
+  "themeLibrary.closePreview": "Revenir à l’aperçu",
+  "themeLibrary.fitPreview": "Adapter à la fenêtre",
+  "themeLibrary.zoomIn": "Zoom avant",
+  "themeLibrary.zoomOut": "Zoom arrière"
 }

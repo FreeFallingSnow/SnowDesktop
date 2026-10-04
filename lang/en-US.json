@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "View Workshop page",
   "themeLibrary.backgroundSource": "Preview background",
   "themeLibrary.generateBackground": "Generate background automatically",
-  "themeLibrary.chooseBackground": "Import background image"
+  "themeLibrary.chooseBackground": "Import background image",
+  "themeLibrary.enlargePreview": "Enlarge preview",
+  "themeLibrary.closePreview": "Back to preview",
+  "themeLibrary.fitPreview": "Fit to window",
+  "themeLibrary.zoomIn": "Zoom in",
+  "themeLibrary.zoomOut": "Zoom out"
 }

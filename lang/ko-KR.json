@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "창작마당 페이지 보기",
   "themeLibrary.backgroundSource": "미리 보기 배경",
   "themeLibrary.generateBackground": "배경 자동 생성",
-  "themeLibrary.chooseBackground": "배경 이미지 가져오기"
+  "themeLibrary.chooseBackground": "배경 이미지 가져오기",
+  "themeLibrary.enlargePreview": "미리 보기 확대",
+  "themeLibrary.closePreview": "미리 보기로 돌아가기",
+  "themeLibrary.fitPreview": "창에 맞추기",
+  "themeLibrary.zoomIn": "확대",
+  "themeLibrary.zoomOut": "축소"
 }

@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "Ver página da Oficina",
   "themeLibrary.backgroundSource": "Fundo da prévia",
   "themeLibrary.generateBackground": "Gerar fundo automaticamente",
-  "themeLibrary.chooseBackground": "Importar imagem de fundo"
+  "themeLibrary.chooseBackground": "Importar imagem de fundo",
+  "themeLibrary.enlargePreview": "Ampliar prévia",
+  "themeLibrary.closePreview": "Voltar à prévia",
+  "themeLibrary.fitPreview": "Ajustar à janela",
+  "themeLibrary.zoomIn": "Aumentar zoom",
+  "themeLibrary.zoomOut": "Diminuir zoom"
 }

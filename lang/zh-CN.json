@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "查看创意工坊页面",
   "themeLibrary.backgroundSource": "预览背景",
   "themeLibrary.generateBackground": "自动生成背景",
-  "themeLibrary.chooseBackground": "导入背景图片"
+  "themeLibrary.chooseBackground": "导入背景图片",
+  "themeLibrary.enlargePreview": "放大预览",
+  "themeLibrary.closePreview": "返回预览",
+  "themeLibrary.fitPreview": "适合窗口",
+  "themeLibrary.zoomIn": "放大",
+  "themeLibrary.zoomOut": "缩小"
 }

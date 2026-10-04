@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "查看工作坊頁面",
   "themeLibrary.backgroundSource": "預覽背景",
   "themeLibrary.generateBackground": "自動產生背景",
-  "themeLibrary.chooseBackground": "匯入背景圖片"
+  "themeLibrary.chooseBackground": "匯入背景圖片",
+  "themeLibrary.enlargePreview": "放大預覽",
+  "themeLibrary.closePreview": "返回預覽",
+  "themeLibrary.fitPreview": "符合視窗",
+  "themeLibrary.zoomIn": "放大",
+  "themeLibrary.zoomOut": "縮小"
 }

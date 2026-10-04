@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "Ver página de Workshop",
   "themeLibrary.backgroundSource": "Fondo de la vista previa",
   "themeLibrary.generateBackground": "Generar el fondo automáticamente",
-  "themeLibrary.chooseBackground": "Importar imagen de fondo"
+  "themeLibrary.chooseBackground": "Importar imagen de fondo",
+  "themeLibrary.enlargePreview": "Ampliar vista previa",
+  "themeLibrary.closePreview": "Volver a la vista previa",
+  "themeLibrary.fitPreview": "Ajustar a la ventana",
+  "themeLibrary.zoomIn": "Acercar",
+  "themeLibrary.zoomOut": "Alejar"
 }

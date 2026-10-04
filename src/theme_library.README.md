@@ -188,6 +188,9 @@ Regenerating resets both custom cover and background to their compiled defaults.
 The automatic backdrop is frozen in the same way. The production renderer
 computes the glass against that backdrop and exports a complete square frame;
 gallery generation never pastes a cropped background into a second wallpaper.
+The in-app gallery can open its current immutable image in a larger viewer with
+zoom, fit-to-window and panning. Returning retains the selected gallery image;
+the image viewer has no publication action and never confirms the parent dialog.
 
 Preparation and confirmation bind every image's component, deterministic filename
 and SHA256 plus a whole-gallery hash. Missing, reordered, substituted or modified

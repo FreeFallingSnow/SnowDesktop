@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "ワークショップページを表示",
   "themeLibrary.backgroundSource": "プレビューの背景",
   "themeLibrary.generateBackground": "背景を自動生成",
-  "themeLibrary.chooseBackground": "背景画像をインポート"
+  "themeLibrary.chooseBackground": "背景画像をインポート",
+  "themeLibrary.enlargePreview": "プレビューを拡大",
+  "themeLibrary.closePreview": "プレビューに戻る",
+  "themeLibrary.fitPreview": "ウィンドウに合わせる",
+  "themeLibrary.zoomIn": "拡大",
+  "themeLibrary.zoomOut": "縮小"
 }

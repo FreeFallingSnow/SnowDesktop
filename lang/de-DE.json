@@ -2517,5 +2517,10 @@
   "themeLibrary.workshopPage": "Workshop-Seite öffnen",
   "themeLibrary.backgroundSource": "Vorschauhintergrund",
   "themeLibrary.generateBackground": "Hintergrund automatisch erzeugen",
-  "themeLibrary.chooseBackground": "Hintergrundbild importieren"
+  "themeLibrary.chooseBackground": "Hintergrundbild importieren",
+  "themeLibrary.enlargePreview": "Vorschau vergrößern",
+  "themeLibrary.closePreview": "Zurück zur Vorschau",
+  "themeLibrary.fitPreview": "An Fenster anpassen",
+  "themeLibrary.zoomIn": "Vergrößern",
+  "themeLibrary.zoomOut": "Verkleinern"
 }
