@@ -93,6 +93,7 @@ struct State
     SecureBuffer secret;
     History history;
     std::optional<std::pair<std::size_t, std::size_t>> deferredSelection;
+    ComPtr<ID2D1DCRenderTarget> dcTarget;
     ComPtr<IDWriteFactory> factory;
     ComPtr<IDWriteTextLayout> layout;
     std::wstring display;
@@ -542,14 +543,25 @@ void Paint(State& state, HDC dc)
         {state.colors.foreground=GetTextColor(dc);state.colors.background=GetBkColor(dc);}
         if(!state.window)return;
     }
-    ComPtr<ID2D1Factory> factory;
-    if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf()))) return;
-    ComPtr<ID2D1DCRenderTarget> target;
-    auto properties = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_IGNORE),96,96);
-    if (FAILED(factory->CreateDCRenderTarget(&properties,&target))) return;
-    RECT bounds{0,0,state.width,state.height}; if (FAILED(target->BindDC(dc,&bounds))) return;
-    target->BeginDraw(); target->Clear(Color(state.colors.background)); Render(state,target.Get(),D2D1::RectF(0,0,static_cast<float>(state.width),static_cast<float>(state.height)),1,true); target->EndDraw();
+    // A factory retains its rendering backend. Recreating it for every paint
+    // repeatedly initializes D3D/the driver, including for WM_PRINTCLIENT.
+    // HWND dispatch owns the thread; targets belong to the individual control
+    // and disappear with its State instead of keeping destroyed inputs alive.
+    static thread_local ComPtr<ID2D1Factory> factory;
+    if (!factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf()))) return;
+    if (!state.dcTarget)
+    {
+        const auto properties = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_IGNORE),96,96);
+        if (FAILED(factory->CreateDCRenderTarget(&properties,&state.dcTarget))) return;
+    }
+    const auto target = state.dcTarget;
+    // Each print can use a different HDC and size. Always rebind the current
+    // surface rather than retaining the previous caller's DC or dimensions.
+    RECT bounds{0,0,state.width,state.height};
+    if (FAILED(target->BindDC(dc,&bounds))) { state.dcTarget.Reset(); return; }
+    target->BeginDraw(); target->Clear(Color(state.colors.background)); Render(state,target.Get(),D2D1::RectF(0,0,static_cast<float>(state.width),static_cast<float>(state.height)),1,true);
+    if (FAILED(target->EndDraw())) state.dcTarget.Reset();
 }
 void Copy(State& state)
 {
