@@ -2514,5 +2514,8 @@
   "themeLibrary.tagsRequired": "Catégories obligatoires : conservez toutes les étiquettes correspondant à la portée réelle du thème.",
   "themeLibrary.coverSource": "Source de la couverture",
   "themeLibrary.generateCover": "Générer une couverture à partir du thème",
-  "themeLibrary.workshopPage": "Voir la page du Workshop"
+  "themeLibrary.workshopPage": "Voir la page du Workshop",
+  "themeLibrary.backgroundSource": "Arrière-plan de l’aperçu",
+  "themeLibrary.generateBackground": "Générer automatiquement l’arrière-plan",
+  "themeLibrary.chooseBackground": "Importer une image d’arrière-plan"
 }

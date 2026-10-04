@@ -2514,5 +2514,8 @@
   "themeLibrary.tagsRequired": "Categorías obligatorias: conserva todas las etiquetas correspondientes al alcance real del tema.",
   "themeLibrary.coverSource": "Origen de la portada",
   "themeLibrary.generateCover": "Generar una portada del tema",
-  "themeLibrary.workshopPage": "Ver página de Workshop"
+  "themeLibrary.workshopPage": "Ver página de Workshop",
+  "themeLibrary.backgroundSource": "Fondo de la vista previa",
+  "themeLibrary.generateBackground": "Generar el fondo automáticamente",
+  "themeLibrary.chooseBackground": "Importar imagen de fondo"
 }

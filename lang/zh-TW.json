@@ -2514,5 +2514,8 @@
   "themeLibrary.tagsRequired": "適用分類（必選）：請保留主題實際適用範圍的所有標籤。",
   "themeLibrary.coverSource": "封面來源",
   "themeLibrary.generateCover": "依主題產生封面",
-  "themeLibrary.workshopPage": "查看工作坊頁面"
+  "themeLibrary.workshopPage": "查看工作坊頁面",
+  "themeLibrary.backgroundSource": "預覽背景",
+  "themeLibrary.generateBackground": "自動產生背景",
+  "themeLibrary.chooseBackground": "匯入背景圖片"
 }

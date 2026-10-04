@@ -2514,5 +2514,8 @@
   "themeLibrary.tagsRequired": "适用分类（必选）：请保留主题实际适用范围的全部标签。",
   "themeLibrary.coverSource": "封面来源",
   "themeLibrary.generateCover": "根据主题生成封面",
-  "themeLibrary.workshopPage": "查看创意工坊页面"
+  "themeLibrary.workshopPage": "查看创意工坊页面",
+  "themeLibrary.backgroundSource": "预览背景",
+  "themeLibrary.generateBackground": "自动生成背景",
+  "themeLibrary.chooseBackground": "导入背景图片"
 }

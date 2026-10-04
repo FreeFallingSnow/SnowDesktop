@@ -457,11 +457,13 @@ private:
         c::CommandBar actions; actions.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
         for (auto [command, key] : {std::pair{ThemeLibraryCommand::Preview, "themeLibrary.preview"},
             {ThemeLibraryCommand::Export, "themeLibrary.export"}, {ThemeLibraryCommand::Share, "themeLibrary.share"},
-            {ThemeLibraryCommand::ChooseCover, "themeLibrary.chooseCover"}, {ThemeLibraryCommand::Regenerate, "themeLibrary.regenerate"},
+            {ThemeLibraryCommand::ChooseCover, "themeLibrary.chooseCover"}, {ThemeLibraryCommand::ChooseBackground, "themeLibrary.chooseBackground"},
+            {ThemeLibraryCommand::Regenerate, "themeLibrary.regenerate"},
             {ThemeLibraryCommand::Remove, "themeLibrary.remove"}})
         {
             c::AppBarButton button; button.Label(L(key));
-            (command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::Remove ?
+            (command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::ChooseBackground ||
+                command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::Remove ?
                 actions.SecondaryCommands() : actions.PrimaryCommands()).Append(button);
             const auto id = theme.id;
             const auto token = button.Click([this, command, id](const auto&, const auto&) {
@@ -558,6 +560,11 @@ private:
         cover.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         cover.Items().Append(winrt::box_value(L("themeLibrary.generateCover")));
         cover.Items().Append(winrt::box_value(L("themeLibrary.chooseCover"))); cover.SelectedIndex(0); body.Children().Append(cover);
+        c::ComboBox background; background.Header(winrt::box_value(L("themeLibrary.backgroundSource")));
+        background.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        background.Items().Append(winrt::box_value(L("themeLibrary.generateBackground")));
+        background.Items().Append(winrt::box_value(L("themeLibrary.chooseBackground")));
+        background.SelectedIndex(0); body.Children().Append(background);
         if (const auto found = publishedUrls_.find(id); found != publishedUrls_.end()) text(L("themeLibrary.publishUpdate") + L"\n" + std::wstring(winrt::to_hstring(found->second)));
         dialog.Content(body); validate(); busy_ = true; PatchButtons();
         c::ContentDialogResult result = c::ContentDialogResult::None;
@@ -567,16 +574,16 @@ private:
         if (!alive->load()) co_return;
         busy_ = false; PatchButtons();
         if (generation != generation_ || result != c::ContentDialogResult::Primary) co_return;
-        Run(ThemeLibraryCommand::Share, id, {}, required, cover.SelectedIndex() == 1);
+        Run(ThemeLibraryCommand::Share, id, {}, required, cover.SelectedIndex() == 1, background.SelectedIndex() == 1);
     }
     void Run(ThemeLibraryCommand command, std::string id = {}, std::string replacement = {},
-        std::vector<std::string> tags = {}, bool chooseCover = false)
+        std::vector<std::string> tags = {}, bool chooseCover = false, bool chooseBackground = false)
     {
         if (closed_ || busy_ || !action_ || !generation_ || !flush_ || !flush_())
         { if (!closed_ && command == ThemeLibraryCommand::Apply) RefreshChoices(); return; }
         const bool save = command == ThemeLibraryCommand::SaveAs || command == ThemeLibraryCommand::Update;
         ThemeLibraryRequest request; request.command = command; request.target = target_; request.replacement = std::move(replacement);
-        request.tags = std::move(tags); request.chooseCover = chooseCover;
+        request.tags = std::move(tags); request.chooseCover = chooseCover; request.chooseBackground = chooseBackground;
         const auto selected = Selected(); request.id = id.empty() && selected ? selected->id : std::move(id);
         if (save)
         {
@@ -602,7 +609,8 @@ private:
                 { request.quickPanel = Binding(quick_, quickChoices_); request.popup = Binding(popup_, popupChoices_); }
             }
         }
-        const bool async = command == ThemeLibraryCommand::Preview || command == ThemeLibraryCommand::Share || command == ThemeLibraryCommand::ChooseCover ||
+        const bool async = command == ThemeLibraryCommand::Preview || command == ThemeLibraryCommand::Share ||
+            command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::ChooseBackground ||
             command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::SyncSubscriptions;
         if (async)
         {

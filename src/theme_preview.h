@@ -11,7 +11,8 @@ inline constexpr std::size_t kCoverMaximumBytes = 1024 * 1024;
 struct Image { std::string component; std::filesystem::path path; };
 bool RenderGallery(const std::filesystem::path& host, const Package&, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::vector<Image>& images,
-    std::filesystem::path& cover, std::string& error, const std::atomic_bool* cancel = nullptr);
+    std::filesystem::path& cover, std::string& error, const std::atomic_bool* cancel = nullptr,
+    const std::filesystem::path& background = {});
 // No retained bitmap cache. Each request owns and releases its stage and child.
 bool Render(const std::filesystem::path& host, const Package&, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,

@@ -129,7 +129,8 @@ bool NormalizeCover(const std::filesystem::path& source, const std::filesystem::
 }
 static bool RenderImages(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
-    std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images)
+    std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images,
+    const std::filesystem::path& background)
 {
     if (images) images->clear();
     cover.clear(); const auto parts = Parts(package, root, scope, error); if (parts.empty()) return false;
@@ -139,7 +140,16 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
     struct Cleanup { std::filesystem::path path; bool keep = false; ~Cleanup() { if (!keep) { std::error_code ec; std::filesystem::remove_all(path, ec); } } } cleanup{directory};
     const auto snapshot = directory / L"package.snowtheme";
     if (!WritePackage(snapshot, package, error)) return false;
-    auto canvas = widget_preview::GenerateWallpaper(kCoverSize, kCoverSize, false);
+    std::filesystem::path stagedBackground;
+    auto backdrop = widget_preview::GenerateWallpaper(kCoverSize, kCoverSize, false);
+    if (!background.empty())
+    {
+        stagedBackground = directory / L"background.png";
+        if (!NormalizeCover(background, stagedBackground, error)) return false;
+        backdrop = widget_preview::LoadWallpaperImage(stagedBackground);
+        if (backdrop.pixels.size() != kCoverSize * kCoverSize) return Fail(error, "previewFailed");
+    }
+    auto canvas = backdrop;
     const int columns = images ? 1 : (parts.size() > 1 ? 2 : 1), rows = images ? 1 : static_cast<int>((parts.size() + columns - 1) / columns);
     for (std::size_t index = 0; index < parts.size(); ++index)
     {
@@ -148,7 +158,7 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         std::string output;
         const auto& part = parts[index];
         if (!Run(host, {L"--native-component-preview", std::wstring(part.component.begin(), part.component.end()), partDir.wstring(),
-            L"96", L"en-US", L"dark", L"", L"2048", L"1536", L"32", L"0", L"0", resultPath.wstring(), snapshot.wstring(),
+            L"96", L"en-US", L"dark", stagedBackground.wstring(), L"2048", L"1536", L"32", L"0", L"0", resultPath.wstring(), snapshot.wstring(),
             std::wstring(part.themeId.begin(), part.themeId.end())}, output, 60000, error, cancel)) return false;
         std::ifstream file(resultPath, std::ios::binary); std::string text(std::istreambuf_iterator<char>(file), {}); JsonValue result;
         if (!ParseJson(text, result)) return Fail(error, "previewFailed");
@@ -177,7 +187,7 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
             const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), part.component);
             if (!SaveCover(imagePath, canvas, error)) { images->clear(); return false; }
             images->push_back({part.component, imagePath});
-            canvas = widget_preview::GenerateWallpaper(kCoverSize, kCoverSize, false);
+            canvas = backdrop;
         }
         std::filesystem::remove_all(partDir, ec); std::filesystem::remove(resultPath, ec);
     }
@@ -193,11 +203,12 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
 bool Render(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel)
-{ return RenderImages(host, package, root, scope, directory, cover, error, cancel, nullptr); }
+{ return RenderImages(host, package, root, scope, directory, cover, error, cancel, nullptr, {}); }
 bool RenderGallery(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::vector<Image>& images,
-    std::filesystem::path& cover, std::string& error, const std::atomic_bool* cancel)
+    std::filesystem::path& cover, std::string& error, const std::atomic_bool* cancel,
+    const std::filesystem::path& background)
 {
-    if (RenderImages(host, package, root, scope, directory, cover, error, cancel, &images)) return true;
+    if (RenderImages(host, package, root, scope, directory, cover, error, cancel, &images, background)) return true;
     images.clear(); cover.clear(); return false;
 }}

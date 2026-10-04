@@ -407,12 +407,13 @@ struct SettingsWindowHost::Impl
         themes::Package snapshot;
         steam_bridge::ThemePublishPlan plan;
         std::vector<themes::preview::Image> images;
-        std::filesystem::path directory, cover, customCover;
+        std::filesystem::path directory, cover, customCover, customBackground;
         std::function<void(ThemeLibraryResult)> completed;
         ~ThemeTask() { if (!directory.empty()) { std::error_code ec; std::filesystem::remove_all(directory, ec); } }
     };
     std::shared_ptr<ThemeTask> themeTask;
     std::map<std::string, std::filesystem::path> themeCovers;
+    std::map<std::string, std::filesystem::path> themeBackgrounds;
 
     std::filesystem::path ThemeBridge() const { return std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe"; }
     bool ThemeSharingAvailable() const { return themes::workshop::Available(ThemeBridge(), SNOWDESKTOP_VERSION); }
@@ -552,6 +553,15 @@ struct SettingsWindowHost::Impl
             const auto selected = themes::Resolve(task->snapshot, task->request.id);
             if (!selected || !themes::tags::Valid(*selected, task->request.tags)) { CompleteThemeTask(task, false, "tagsRequired"); return; }
             if (!task->request.chooseCover) themeCovers.erase(task->request.id);
+            if (!task->request.chooseBackground) themeBackgrounds.erase(task->request.id);
+        }
+        if (task->request.command == ThemeLibraryCommand::ChooseBackground || (share && task->request.chooseBackground))
+        {
+            const auto selected = ShowOpenPathDialog(window, L("themeLibrary.chooseBackground"),
+                {{L("themeLibrary.chooseBackground"), L"*.png;*.jpg;*.jpeg;*.bmp"}}, false);
+            if (!selected) { CompleteThemeTask(task, false, "cancelled"); return; }
+            themeBackgrounds[task->request.id] = *selected;
+            while (themeBackgrounds.size() > 16) themeBackgrounds.erase(themeBackgrounds.begin());
         }
         if (task->request.command == ThemeLibraryCommand::ChooseCover || (share && task->request.chooseCover))
         {
@@ -561,8 +571,10 @@ struct SettingsWindowHost::Impl
             themeCovers[task->request.id] = *selected;
             while (themeCovers.size() > 16) themeCovers.erase(themeCovers.begin());
         }
-        if (task->request.command == ThemeLibraryCommand::Regenerate) themeCovers.erase(task->request.id);
+        if (task->request.command == ThemeLibraryCommand::Regenerate)
+        { themeCovers.erase(task->request.id); themeBackgrounds.erase(task->request.id); }
         if (const auto selected = themeCovers.find(task->request.id); selected != themeCovers.end()) task->customCover = selected->second;
+        if (const auto selected = themeBackgrounds.find(task->request.id); selected != themeBackgrounds.end()) task->customBackground = selected->second;
         wchar_t temporary[MAX_PATH + 1]{};
         if (!GetTempPathW(MAX_PATH, temporary)) { CompleteThemeTask(task, false, "writeFailed"); return; }
         task->directory = theme_controls::TaskDirectory(std::filesystem::path(temporary), themes::CreateId());
@@ -588,13 +600,13 @@ struct SettingsWindowHost::Impl
                         success = themes::workshop::Prepare(task->snapshot, task->request.id, scope, task->directory, data,
                             task->customCover, [host, task](const auto& package, auto root, auto applicable, const auto& directory,
                                 auto& cover, auto& error, auto* cancel) {
-                                return themes::preview::RenderGallery(host, package, root, applicable, directory, task->images, cover, error, cancel);
+                                return themes::preview::RenderGallery(host, package, root, applicable, directory, task->images, cover, error, cancel, task->customBackground);
                             }, task->plan, detail, &task->cancel, task->request.tags);
                         task->cover = task->plan.preview;
                     }
                     else
                     {
-                        success = themes::preview::RenderGallery(host, task->snapshot, task->request.id, scope, task->directory, task->images, task->cover, detail, &task->cancel);
+                        success = themes::preview::RenderGallery(host, task->snapshot, task->request.id, scope, task->directory, task->images, task->cover, detail, &task->cancel, task->customBackground);
                         if (success && !task->customCover.empty())
                         {
                             success = themes::preview::NormalizeCover(task->customCover, task->cover, detail);

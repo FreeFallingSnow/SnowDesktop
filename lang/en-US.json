@@ -2514,5 +2514,8 @@
   "themeLibrary.tagsRequired": "Required categories: retain every tag that matches the theme's actual scope.",
   "themeLibrary.coverSource": "Cover source",
   "themeLibrary.generateCover": "Generate a cover from the theme",
-  "themeLibrary.workshopPage": "View Workshop page"
+  "themeLibrary.workshopPage": "View Workshop page",
+  "themeLibrary.backgroundSource": "Preview background",
+  "themeLibrary.generateBackground": "Generate background automatically",
+  "themeLibrary.chooseBackground": "Import background image"
 }

@@ -2514,5 +2514,8 @@
   "themeLibrary.tagsRequired": "Categorias obrigatórias: mantenha todas as etiquetas correspondentes ao escopo real do tema.",
   "themeLibrary.coverSource": "Origem da capa",
   "themeLibrary.generateCover": "Gerar uma capa a partir do tema",
-  "themeLibrary.workshopPage": "Ver página da Oficina"
+  "themeLibrary.workshopPage": "Ver página da Oficina",
+  "themeLibrary.backgroundSource": "Fundo da prévia",
+  "themeLibrary.generateBackground": "Gerar fundo automaticamente",
+  "themeLibrary.chooseBackground": "Importar imagem de fundo"
 }

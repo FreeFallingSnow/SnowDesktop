@@ -2514,5 +2514,8 @@
   "themeLibrary.tagsRequired": "Erforderliche Kategorien: Behalten Sie alle Tags für den tatsächlichen Geltungsbereich des Designs bei.",
   "themeLibrary.coverSource": "Titelbildquelle",
   "themeLibrary.generateCover": "Titelbild aus dem Design erstellen",
-  "themeLibrary.workshopPage": "Workshop-Seite öffnen"
+  "themeLibrary.workshopPage": "Workshop-Seite öffnen",
+  "themeLibrary.backgroundSource": "Vorschauhintergrund",
+  "themeLibrary.generateBackground": "Hintergrund automatisch erzeugen",
+  "themeLibrary.chooseBackground": "Hintergrundbild importieren"
 }

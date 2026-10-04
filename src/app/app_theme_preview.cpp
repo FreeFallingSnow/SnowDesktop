@@ -45,7 +45,9 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
         const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
         ComPtr<ID2D1Bitmap1> target; require(context->CreateBitmap(size, nullptr, 0,
             D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, format, 96, 96), &target));
-        auto stage = widget_preview::GenerateWallpaper(request.canvasWidth, request.canvasHeight, false);
+        auto stage = request.backgroundImage.empty() ?
+            widget_preview::GenerateWallpaper(request.canvasWidth, request.canvasHeight, false) :
+            widget_preview::GenerateWallpaper(widget_preview::LoadWallpaperImage(request.backgroundImage), request.canvasWidth, request.canvasHeight);
         ComPtr<ID2D1Bitmap> backdrop; require(context->CreateBitmap(size, stage.pixels.data(), request.canvasWidth * 4,
             D2D1::BitmapProperties(format), &backdrop));
         context->SetTarget(target.Get()); context->SetDpi(96, 96);

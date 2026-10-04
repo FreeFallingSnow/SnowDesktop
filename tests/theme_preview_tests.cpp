@@ -188,6 +188,38 @@ int wmain(int argc, wchar_t** argv)
             const auto control = widget_preview::LoadWallpaperImage(gallery.back().path);
             check(Compare(folder,control).material > 10000, "component and popup control-center previews are distinct rendered images");
         }
+        auto backdrop = widget_preview::GenerateWallpaper(1024,1024,false);
+        std::fill(backdrop.pixels.begin(),backdrop.pixels.end(),0xff306090u);
+        const auto importedBackground = directory / L"imported-background.png";
+        check(preview::SaveCover(importedBackground,std::move(backdrop),error), "imported background fixture");
+        const auto backgroundHash = steam_bridge::ThemeFileSha256(importedBackground);
+        const auto importedDirectory = directory / L"gallery-imported-background";
+        std::vector<preview::Image> importedGallery;
+        const bool importedOk = preview::RenderGallery(argv[1],package,global.id,All,importedDirectory,
+            importedGallery,cover,error,nullptr,importedBackground);
+        check(importedOk && importedGallery.size() == 7 &&
+            steam_bridge::ThemeFileSha256(importedBackground) == backgroundHash &&
+            steam_bridge::ThemeFileSha256(importedDirectory / L"package.snowtheme") == frozenHash,
+            "imported background renders all surfaces without writing the source image or changing theme scope/data");
+        if (importedOk)
+        {
+            for (const auto& image : importedGallery)
+            {
+                const auto rendered = widget_preview::LoadWallpaperImage(image.path);
+                check(rendered.pixels.size() == 1024*1024 && rendered.pixels.front() == 0xff306090u &&
+                    rendered.pixels.back() == 0xff306090u && std::filesystem::file_size(image.path) < preview::kCoverMaximumBytes,
+                    "every independent preview shares the selected imported backdrop and respects Steam's image limit");
+            }
+            check(Compare(widget_preview::LoadWallpaperImage(gallery.front().path),
+                widget_preview::LoadWallpaperImage(importedGallery.front().path)).material > 10000,
+                "imported background changes the actual mapped-folder production preview");
+            check(steam_bridge::ThemeFileSha256(cover) == steam_bridge::ThemeFileSha256(importedGallery.front().path),
+                "imported backdrop still uses a single gallery image as the main cover");
+        }
+        check(!preview::RenderGallery(argv[1],package,global.id,All,directory / L"gallery-invalid-background",
+            importedGallery,cover,error,nullptr,directory / L"oversized.png") && importedGallery.empty() &&
+            cover.empty() && !std::filesystem::exists(directory / L"gallery-invalid-background"),
+            "invalid imported background fails atomically and cannot reuse an older preview");
         check(!preview::RenderGallery(argv[1],package,global.id,All,directory / L"gallery-cancel",gallery,cover,error,&cancel) &&
             gallery.empty() && cover.empty() && !std::filesystem::exists(directory / L"gallery-cancel"), "cancelled gallery releases every image and draft artifact");
     }

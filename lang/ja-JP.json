@@ -2514,5 +2514,8 @@
   "themeLibrary.tagsRequired": "必須カテゴリ：テーマの実際の適用範囲に対応するタグをすべて残してください。",
   "themeLibrary.coverSource": "カバーの作成方法",
   "themeLibrary.generateCover": "テーマからカバーを生成",
-  "themeLibrary.workshopPage": "ワークショップページを表示"
+  "themeLibrary.workshopPage": "ワークショップページを表示",
+  "themeLibrary.backgroundSource": "プレビューの背景",
+  "themeLibrary.generateBackground": "背景を自動生成",
+  "themeLibrary.chooseBackground": "背景画像をインポート"
 }
