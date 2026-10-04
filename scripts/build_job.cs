@@ -77,10 +77,14 @@ namespace SnowDesktop.Build
         { return RunCommand(directory, logPath, "call scripts\\build.bat" + (reloadShell ? " --reload-shell" : "") + " && call scripts\\test.bat"); }
 
         public static int RunBatch(string directory, string logPath, string batch, bool build, bool reloadShell)
+        { return RunBatch(directory, logPath, batch, build, reloadShell, false); }
+
+        public static int RunBatch(string directory, string logPath, string batch, bool build, bool reloadShell, bool closeApplication)
         {
+            if (reloadShell && closeApplication) throw new ArgumentException("Choose only one output-owner action");
             if (batch == null || !System.Text.RegularExpressions.Regex.IsMatch(batch, "^[a-f0-9]{32}$"))
                 throw new ArgumentException("Invalid batch identity");
-            string command = (build ? "call scripts\\build.bat" + (reloadShell ? " --reload-shell" : "") + " && " : "") +
+            string command = (build ? "call scripts\\build.bat" + (closeApplication ? " --close-application" : reloadShell ? " --reload-shell" : "") + " && " : "") +
                 PowerShell() + " -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
             return RunCommand(directory, logPath, command);
         }

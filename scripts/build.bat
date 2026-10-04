@@ -27,18 +27,25 @@ if /i "%~1"=="commit" goto collaboration
 if /i "%~1"=="issue" goto collaboration
 
 set "RELOAD_SHELL="
+set "CLOSE_APPLICATION="
 if /i "%~1"=="--reload-shell" (
     set "RELOAD_SHELL=1"
     shift
 )
+if /i "%~1"=="--close-application" (
+    set "CLOSE_APPLICATION=1"
+    shift
+)
+if defined RELOAD_SHELL if defined CLOSE_APPLICATION exit /b 2
 if not "%~1"=="" (
-    echo Usage: scripts\build.bat [--reload-shell]
+    echo Usage: scripts\build.bat [--reload-shell ^| --close-application]
     echo Collaboration: scripts\build.bat begin ID ^| finish ID -Batch BATCH ^| status ^| recover -Batch BATCH
     exit /b 2
 )
 
 set "RELOAD_SHELL_ARG="
 if defined RELOAD_SHELL set "RELOAD_SHELL_ARG=-ReloadShell"
+if defined CLOSE_APPLICATION set "RELOAD_SHELL_ARG=-CloseApplication"
 rem Acquire execution authority before any preflight/process action or output write.
 if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_entry.ps1 -Action release %RELOAD_SHELL_ARG%
@@ -50,7 +57,11 @@ if %ERRORLEVEL% NEQ 0 exit /b 2
 if defined RELOAD_SHELL (
     "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -ReloadShell
 ) else (
+  if defined CLOSE_APPLICATION (
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -CloseApplication
+  ) else (
     "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1"
+  )
 )
 rem PowerShell startup failures can return a negative exit code.
 if %ERRORLEVEL% NEQ 0 exit /b 3

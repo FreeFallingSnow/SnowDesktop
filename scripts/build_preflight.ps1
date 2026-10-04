@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([Alias('ReloadShell')][switch]$ExecuteReloadShell)
+param([Alias('ReloadShell')][switch]$ExecuteReloadShell, [Alias('CloseApplication')][switch]$ExecuteCloseApplication)
 function Get-ReadOnlyPreflight([string]$Root) {
     $release=[IO.Path]::GetFullPath((Join-Path $Root '.build\Release'))
     $owners=@();$unknown=@()
@@ -20,8 +20,10 @@ if($MyInvocation.InvocationName -ne '.'){
     $ErrorActionPreference='Stop'
     $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     $state=Get-ReadOnlyPreflight $root
-    if(-not $ExecuteReloadShell){$state | ConvertTo-Json -Depth 6;exit $(if($state.status -eq 'clear'){0}else{3})}
+    if($ExecuteReloadShell -and $ExecuteCloseApplication){throw 'Choose only one output-owner action.'}
+    if(-not $ExecuteReloadShell -and -not $ExecuteCloseApplication){$state | ConvertTo-Json -Depth 6;exit $(if($state.status -eq 'clear'){0}else{3})}
     if($state.status -eq 'unknown'){throw 'Output owner cannot be identified; explicit reload does not authorize terminating unknown processes.'}
+    if($ExecuteCloseApplication -and @($state.owners | Where-Object kind -eq 'hook').Count){throw 'Explorer hook is occupied; close-application never terminates or restarts Explorer.'}
     foreach($owner in $state.owners | Where-Object kind -eq 'application'){
         $process=Get-Process -Id $owner.pid -ErrorAction SilentlyContinue
         if($process){[void]$process.CloseMainWindow()}
@@ -30,12 +32,13 @@ if($MyInvocation.InvocationName -ne '.'){
     while([DateTime]::UtcNow -lt $deadline -and @((Get-ReadOnlyPreflight $root).owners | Where-Object kind -eq 'application').Count){Start-Sleep -Milliseconds 100}
     $remaining=Get-ReadOnlyPreflight $root
     if($remaining.status -eq 'unknown'){throw 'Owner identity became unknown; reload stopped.'}
-    foreach($owner in $remaining.owners){
+    if($ExecuteCloseApplication -and @($remaining.owners | Where-Object kind -eq 'hook').Count){throw 'Explorer hook became occupied; close-application stopped.'}
+    foreach($owner in @($remaining.owners | Where-Object { $_.kind -eq 'application' -or $ExecuteReloadShell })){
         $process=Get-Process -Id $owner.pid -ErrorAction SilentlyContinue
         if($process){
             if($process.StartTime.ToUniversalTime().Ticks.ToString() -ne $owner.startTicks){throw 'PID identity changed; process termination refused.'}
             Stop-Process -InputObject $process -ErrorAction Stop
         }
     }
-    if(@($remaining.owners | Where-Object kind -eq 'hook').Count){Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -WindowStyle Hidden}
+    if($ExecuteReloadShell -and @($remaining.owners | Where-Object kind -eq 'hook').Count){Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -WindowStyle Hidden}
 }

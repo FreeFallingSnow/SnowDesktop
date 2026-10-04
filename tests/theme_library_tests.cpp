@@ -408,6 +408,7 @@ int RunThemeLibraryTests()
         const auto boundQuick = general.globalQuickNavigationAppearance;
         const auto boundPopup = general.globalCollectionPopupAppearance;
         const auto independentQuick = general.quickNavigationAppearance;
+        general.collectionPopupAppearance.mode = 4;
         auto componentAppearance = global.appearance;
         componentAppearance.widgetAlpha = .42f;
         componentAppearance.gradientEndA = .19f;
@@ -426,6 +427,72 @@ int RunThemeLibraryTests()
         general.collectionPopupAppearance.appearance.widgetAlpha = .28f;
         check(componentAppearance.widgetAlpha == .91f && general.collectionPopupAppearance.appearance.widgetAlpha == .28f,
             "copied popup remains independently editable without modifying its source");
+    }
+    {
+        Library sourceLibrary;
+        sourceLibrary.themes = children; sourceLibrary.themes.emplace(global.id,global);
+        check(Select(sourceLibrary,"global",global.id,Kind::Global,All,error), "bound editing source starts from an applied global theme");
+        winui::theme_controls::EditSource parent; parent.Begin(sourceLibrary,"global");
+        const auto quickSource = parent.Bound(Kind::QuickPanel);
+        const auto popupSource = parent.Bound(Kind::Popup);
+        Detach(sourceLibrary,"global");
+        check(quickSource.theme && popupSource.theme && quickSource.theme->id == quick.id && popupSource.theme->id == popup.id &&
+            quickSource.CanUpdate(sourceLibrary) && popupSource.CanUpdate(sourceLibrary),
+            "a global custom draft retains both actual bound source IDs after detachment for update or save-as");
+        SettingsValues draft;
+        draft.personalization = global.appearance;
+        draft.general.globalQuickNavigationAppearance = {4,true,quick.appearance};
+        draft.general.globalCollectionPopupAppearance = {4,true,popup.appearance};
+        const auto stored = EncodeLibrary(sourceLibrary,error);
+        const auto globalMaterial = draft.personalization;
+        auto quickEdit = quick.appearance; quickEdit.widgetAlpha = .27f;
+        auto popupEdit = popup.appearance; popupEdit.widgetAlpha = .73f;
+        EditSurfaceAppearance(draft.general,true,quickEdit,draft.personalization);
+        EditSurfaceAppearance(draft.general,false,popupEdit,draft.personalization);
+        check(draft.general.quickNavigationAppearance.mode == -1 && draft.general.collectionPopupAppearance.mode == -1 &&
+            CaptureTarget("quickPanel",draft).appearance.widgetAlpha == .27f && CaptureTarget("popup",draft).appearance.widgetAlpha == .73f &&
+            draft.personalization == globalMaterial && EncodeLibrary(sourceLibrary,error) == stored,
+            "editing either bound draft keeps follow-global selected, edits the correct binding and does not rewrite the library or global material");
+        CopyComponentAppearanceToPopup(draft.general,draft.personalization);
+        check(draft.general.collectionPopupAppearance.mode == -1 &&
+            EncodePanelAppearance(draft.general.globalCollectionPopupAppearance.appearance,true) == EncodePanelAppearance(draft.personalization,true),
+            "copying component appearance into a bound popup also preserves follow-global mode");
+        auto changed = CaptureTarget("quickPanel",draft); changed.id = quickSource.theme->id; changed.name = quickSource.theme->name;
+        check(Save(sourceLibrary,changed,{},true,savedId,error) && savedId == quick.id && draft.general.quickNavigationAppearance.mode == -1,
+            "explicitly updating a bound local theme keeps its source ID without switching the draft selector");
+        changed.id.clear(); changed.name = "Bound draft copy";
+        check(Save(sourceLibrary,changed,{},false,savedId,error,[] {return "theme/bound-copy";}) && savedId == "theme/bound-copy" &&
+            sourceLibrary.themes.at(quick.id).appearance == changed.appearance && draft.general.quickNavigationAppearance.mode == -1,
+            "saving a bound draft as a new theme assigns a new ID and retains follow-global mode");
+        EditSurfaceAppearance(draft.general,false,popupSource.theme->appearance,draft.personalization);
+        check(draft.general.collectionPopupAppearance.mode == -1 && CaptureTarget("popup",draft).appearance == popupSource.theme->appearance,
+            "cancelling a bound popup restores its saved material without turning it into an independent custom theme");
+        sourceLibrary.workshop["321"].ids.insert(popup.id);
+        check(!popupSource.CanUpdate(sourceLibrary), "bound subscribed sources retain the same overwrite restriction as independent sources");
+        sourceLibrary.themes.erase(quick.id);
+        check(!quickSource.CanUpdate(sourceLibrary) && quickSource.theme->id == quick.id,
+            "deleting a bound source preserves its draft identity but blocks overwrite");
+        parent.Reset();
+        check(!parent.Bound(Kind::Popup).theme && !parent.Bound(Kind::QuickPanel).theme,
+            "switching out of a global edit clears both bound source identities");
+        Library versions;
+        auto localVersion = popup, subscriptionVersion = popup;
+        localVersion.id = "theme/local-version"; subscriptionVersion.id = "theme/subscribed-version";
+        versions.themes.emplace(localVersion.id, localVersion); versions.themes.emplace(subscriptionVersion.id, subscriptionVersion);
+        versions.workshop["456"].ids.insert(subscriptionVersion.id);
+        std::map<std::string, std::string> urls{{localVersion.id,"https://steamcommunity.com/sharedfiles/filedetails/?id=456"}};
+        check(winui::theme_controls::VersionCounterpart(versions, urls, localVersion) == subscriptionVersion.id &&
+            winui::theme_controls::VersionCounterpart(versions, urls, subscriptionVersion) == localVersion.id,
+            "local and subscription versions pair in both directions by their Workshop item identity");
+        urls[localVersion.id] = "https://steamcommunity.com/sharedfiles/filedetails/?id=999";
+        check(winui::theme_controls::VersionCounterpart(versions, urls, localVersion).empty() &&
+            winui::theme_controls::VersionCounterpart(versions, urls, subscriptionVersion).empty(),
+            "same-name versions from unrelated Workshop items never pair");
+        urls[localVersion.id] = "https://steamcommunity.com/sharedfiles/filedetails/?id=456";
+        auto ambiguous = localVersion; ambiguous.id = "theme/ambiguous-version";
+        versions.themes.emplace(ambiguous.id, ambiguous); urls[ambiguous.id] = urls[localVersion.id];
+        check(winui::theme_controls::VersionCounterpart(versions, urls, subscriptionVersion).empty(),
+            "multiple editable copies of one item require explicit selection rather than guessing a version");
     }
     {
         auto rgbaPackage = children;

@@ -2524,10 +2524,19 @@
   "themeLibrary.zoomIn": "Vergrößern",
   "themeLibrary.zoomOut": "Verkleinern",
   "quickNav.colorHint.transparent": "Standardmäßig transparent. Stellen Sie die Deckkraft ein, um diese Farbe anzuzeigen; Rahmen und Füllungen sind unabhängig.",
-  "quickNav.colorHint.opacity": "Farbe und Deckkraft dieses Elements: 0 % ist transparent, 100 % ist deckend. Hover- und Auswahlzustände werden separat eingestellt.",
+  "quickNav.colorHint.opacity": "Farbe und Deckkraft dieses Elements von vollständig transparent bis vollständig deckend einstellen. Hover- und Auswahlzustände werden separat eingestellt.",
   "quickNav.layout.rowsHint": "Maximal sichtbare Ergebniszeilen; weitere Zeilen sind durch Scrollen erreichbar.",
   "quickNav.layout.linesHint": "Maximale Anzahl der Textzeilen unter jedem Rastersymbol.",
   "quickNav.layout.pixelHint": "Logische Pixel, entsprechend der Bildschirmskalierung. Die Panelgröße passt sich auch dem verfügbaren Bildschirmbereich an.",
   "appearance.copyComponent": "Aktuelles Komponenten-Aussehen kopieren",
-  "appearance.copyComponentHint": "Das aktuelle Komponenten-Aussehen einmal aus dem globalen Design kopieren und danach unabhängig bearbeiten."
+  "appearance.copyComponentHint": "Das aktuelle Komponenten-Aussehen einmal aus dem globalen Design kopieren und danach unabhängig bearbeiten.",
+  "themeLibrary.globalBinding": "{0} | Globale Bindung",
+  "themeLibrary.copyRequired": "Kopieren Sie dieses abonnierte Workshop-Design vor dem Bearbeiten als lokales Design.",
+  "themeLibrary.copyLocal": "Als lokales Design kopieren",
+  "themeLibrary.bindWorkshop": "Eigenen Workshop-Eintrag verknüpfen",
+  "themeLibrary.bindHint": "Geben Sie den Link oder die ID eines selbst veröffentlichten Designs ein. Nach Prüfung des Eigentümers wird es verknüpft; erneutes Teilen aktualisiert diesen Eintrag.",
+  "themeLibrary.useLocal": "Zur lokalen Version wechseln",
+  "themeLibrary.useSubscribed": "Zur abonnierten Version wechseln",
+  "themeLibrary.localVersion": "Lokale Version",
+  "themeLibrary.subscribedVersion": "Abonnierte Version"
 }

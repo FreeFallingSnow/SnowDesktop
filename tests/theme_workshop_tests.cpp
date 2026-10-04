@@ -179,6 +179,36 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     auto details = bridge::JsonValue::Object(); details.object["result"] = bridge::JsonValue::Number(1);
     details.object["consumerAppId"] = bridge::JsonValue::Number(5080330); details.object["banned"] = bridge::JsonValue::Boolean(false);
     details.object["ownerSteamId"] = bridge::JsonValue::String("321"); details.object["metadata"] = bridge::JsonValue::String(bridge::WriteJson(metadata));
+    std::string remoteTags = "Theme"; for (const auto& tag : classification) remoteTags += "," + tag;
+    details.object["tags"] = bridge::JsonValue::String(remoteTags);
+    auto bindingStatus = bridge::JsonValue::Object(); bindingStatus.object["ok"] = bridge::JsonValue::Boolean(true);
+    bindingStatus.object["loggedOn"] = bridge::JsonValue::Boolean(true); bindingStatus.object["appId"] = bridge::JsonValue::Number(5080330);
+    bindingStatus.object["steamId"] = bridge::JsonValue::String("321");
+    auto bindingItem = bridge::JsonValue::Object(); bindingItem.object["ok"] = bridge::JsonValue::Boolean(true);
+    bindingItem.object["publishedFileId"] = bridge::JsonValue::String("123"); bindingItem.object["details"] = details;
+    const auto bindingData = directory / L"binding-data"; std::filesystem::create_directory(bindingData);
+    auto localRoot = root; localRoot.id = "theme/local-binding";
+    check(workshop::BindResponses(bindingData, localRoot, "123", bridge::WriteJson(bindingStatus), bridge::WriteJson(bindingItem), error) &&
+        bridge::ThemePublishedUrl(bindingData, localRoot.id) == "https://steamcommunity.com/sharedfiles/filedetails/?id=123",
+        "nested production item-details response verifies ownership and binds an existing authored theme to a different local UUID without publishing");
+    const auto bindingFile = bindingData / L"ThemeWorkshop" / (bridge::ThemeSha256(localRoot.id) + ".json");
+    std::string beforeBinding; atomic_file::ReadAll(bindingFile, beforeBinding);
+    auto wrongBinding = bindingItem; wrongBinding.object["details"].object["ownerSteamId"] = bridge::JsonValue::String("999");
+    check(!workshop::BindResponses(bindingData, localRoot, "123", bridge::WriteJson(bindingStatus), bridge::WriteJson(wrongBinding), error) &&
+        error == "authorMismatch", "another owner's item cannot establish or replace a local publication binding");
+    wrongBinding = bindingItem; wrongBinding.object["details"].object["tags"] = bridge::JsonValue::String("Theme,Popup Theme");
+    check(!workshop::BindResponses(bindingData, localRoot, "123", bridge::WriteJson(bindingStatus), bridge::WriteJson(wrongBinding), error) &&
+        error == "itemMismatch", "an authored item of another theme category cannot be bound for overwrite");
+    std::atomic_bool bindCancelled{true};
+    check(!workshop::BindResponses(bindingData, localRoot, "123", bridge::WriteJson(bindingStatus), bridge::WriteJson(bindingItem), error, &bindCancelled) &&
+        error == "cancelled", "cancelled ownership verification leaves the existing binding unchanged");
+    auto bindingLock = bindingFile; bindingLock += L".lock";
+    const auto heldBindingLock = CreateFileW(bindingLock.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(heldBindingLock != INVALID_HANDLE_VALUE && !workshop::BindResponses(bindingData, localRoot, "123", bridge::WriteJson(bindingStatus), bridge::WriteJson(bindingItem), error) &&
+        error == "publicationBusy", "binding and uploading share the same exclusive journal lock");
+    if (heldBindingLock != INVALID_HANDLE_VALUE) CloseHandle(heldBindingLock);
+    std::string afterBinding; atomic_file::ReadAll(bindingFile, afterBinding);
+    check(beforeBinding == afterBinding, "wrong owner, wrong category, cancellation and lock failure do not rewrite the prior binding");
     entry.object["details"] = details;
     const auto downloaded = directory / L"downloaded"; std::filesystem::create_directory(downloaded);
     check(WritePackage(downloaded / L"package.snowtheme",package,error), "download fixture contains only the published artifact");
@@ -196,8 +226,25 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     Library library; workshop::SubscriptionSnapshot snapshot; snapshot.authoritative=true; snapshot.account="321"; snapshot.subscribed={"123"};
     snapshot.downloads.push_back({"123","321",bridge::ThemeFileSha256(plan.package),package});
     check(workshop::Reconcile(library,snapshot,error), "validated subscription installs without applying a theme");
-    const auto installed=library.themes.begin()->first;
+    const auto installed=std::find_if(library.themes.begin(), library.themes.end(), [](const auto& pair) { return pair.second.kind == Kind::Global; })->first;
     check(library.references.empty() && Select(library,"global",installed,Kind::Global,All,error), "subscription import preserves explicit apply boundary");
+    const auto subscribedBytes = EncodeLibrary(library, error);
+    Library copyLibrary = library; std::string copied;
+    check(workshop::CopyLocal(copyLibrary, installed, copied, error) && copied != installed &&
+        copyLibrary.themes.at(copied).quickPanel != copyLibrary.themes.at(installed).quickPanel &&
+        copyLibrary.themes.at(copied).popup != copyLibrary.themes.at(installed).popup &&
+        copyLibrary.workshop.at("123").ids == library.workshop.at("123").ids && EncodeLibrary(library, error) == subscribedBytes,
+        "copy-to-local duplicates the complete dependency closure with new IDs without editing the subscribed source");
+    auto copiedTheme = copyLibrary.themes.at(copied); copiedTheme.appearance.widgetAlpha = .17f;
+    std::string updatedCopy;
+    check(Save(copyLibrary, copiedTheme, {}, true, updatedCopy, error) && updatedCopy == copied &&
+        copyLibrary.themes.at(installed).appearance.widgetAlpha != .17f,
+        "a newly created local copy can subsequently update its own ID without changing the Workshop subscription");
+    Library sameLocal; sameLocal.themes = package;
+    check(workshop::Reconcile(sameLocal, snapshot, error) && sameLocal.themes.at(root.id).quickPanel == root.quickPanel &&
+        !sameLocal.workshop.at("123").ids.contains(root.id) && !sameLocal.workshop.at("123").ids.contains(root.quickPanel) &&
+        !sameLocal.workshop.at("123").ids.contains(root.popup),
+        "subscribing to an identical authored package never turns the editable local root or children into subscriptions");
     const auto originalSnapshot=EncodePackage(library.references.at("global").snapshot,error);
     auto edited=library.themes.at(installed); edited.appearance.widgetAlpha=.3f; std::string local;
     check(Save(library,edited,{},true,local,error,[]{return "theme/local-copy";}) && local!=installed && library.themes.at(installed).appearance.widgetAlpha!=.3f, "editing subscribed theme saves a local copy");

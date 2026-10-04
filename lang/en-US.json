@@ -2524,10 +2524,19 @@
   "themeLibrary.zoomIn": "Zoom in",
   "themeLibrary.zoomOut": "Zoom out",
   "quickNav.colorHint.transparent": "Transparent by default. Set opacity to show this color; borders and fills are independent.",
-  "quickNav.colorHint.opacity": "Set this part's color and opacity: 0% is transparent and 100% is opaque. Hover and selected states are configured separately.",
+  "quickNav.colorHint.opacity": "Set this part's color and opacity, from fully transparent to fully opaque. Hover and selected states are configured separately.",
   "quickNav.layout.rowsHint": "Maximum visible result rows; scroll to see additional rows.",
   "quickNav.layout.linesHint": "Maximum lines of text below each grid icon.",
   "quickNav.layout.pixelHint": "Logical pixels, scaled for your screen. Panel dimensions also fit the available screen area.",
   "appearance.copyComponent": "Copy current component appearance",
-  "appearance.copyComponentHint": "Copy the current component appearance from the global theme once, then edit independently."
+  "appearance.copyComponentHint": "Copy the current component appearance from the global theme once, then edit independently.",
+  "themeLibrary.globalBinding": "{0} | Global binding",
+  "themeLibrary.copyRequired": "Copy this subscribed Workshop theme to a local theme before editing.",
+  "themeLibrary.copyLocal": "Copy to local theme",
+  "themeLibrary.bindWorkshop": "Link my Workshop item",
+  "themeLibrary.bindHint": "Enter the link or ID of a theme you published. Ownership is verified before linking; sharing again updates that item.",
+  "themeLibrary.useLocal": "Switch to local version",
+  "themeLibrary.useSubscribed": "Switch to subscribed version",
+  "themeLibrary.localVersion": "Local version",
+  "themeLibrary.subscribedVersion": "Subscribed version"
 }

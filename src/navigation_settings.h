@@ -97,7 +97,8 @@ struct NavigationSettings
         {"google", "Google", "google", "https://www.google.com/search?q={query}"},
         {"baidu", "Baidu", "baidu", "https://www.baidu.com/s?wd={query}"},
         {"duckduckgo", "DuckDuckGo", "ddg", "https://duckduckgo.com/?q={query}"}};
-    // Missing entries follow the resolved theme. Colors are #RRGGBB.
+    // Missing entries follow the resolved theme. #RRGGBB is opaque;
+    // #RRGGBBAA stores explicit opacity in the final byte.
     std::map<std::string, std::string> colors;
     bool operator==(const NavigationSettings&) const = default;
 };
@@ -180,7 +181,7 @@ inline void NormalizeNavigationSettings(NavigationSettings& settings)
     { const NavigationSettings defaults; settings.prefixes = defaults.prefixes; settings.engines = defaults.engines; settings.defaultEngine = defaults.defaultEngine; }
     for (auto it = settings.colors.begin(); it != settings.colors.end();)
     {
-        bool valid = it->second.size() == 7 && it->second[0] == '#';
+        bool valid = (it->second.size() == 7 || it->second.size() == 9) && it->second[0] == '#';
         for (size_t i = 1; valid && i < it->second.size(); ++i) valid = std::isxdigit(static_cast<unsigned char>(it->second[i])) != 0;
         if (!valid) it = settings.colors.erase(it); else ++it;
     }

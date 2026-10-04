@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param([Alias('Action')][ValidateSet('release','debug','ide','tests','verify')][string]$EntryAction='verify', [Alias('ReloadShell')][switch]$EntryReloadShell,
+    [Alias('CloseApplication')][switch]$EntryCloseApplication,
     [Alias('Configuration')][ValidateSet('Release','Debug')][string]$EntryConfiguration='Release', [Alias('Targets')][string[]]$EntryTargets=@(),
     [Alias('Mode')][ValidateSet('full','fast','core','label','name','list','plan')][string]$EntryMode='full', [Alias('Filter')][string]$EntryFilter='',
     [Alias('PlanBatch')][ValidatePattern('^[a-f0-9]{32}$')][string]$EntryPlanBatch)
@@ -130,6 +131,10 @@ if($MyInvocation.InvocationName -ne '.') {
                 $scriptName=if($EntryAction -eq 'debug'){'build_debug.bat'}else{'build.bat'}
                 $pipeline='call scripts\'+$scriptName
                 if($EntryReloadShell){$pipeline+=' --reload-shell'}
+                if($EntryCloseApplication){
+                    if($EntryAction -ne 'release' -or $EntryReloadShell){throw 'CloseApplication requires a Release build without ReloadShell.'}
+                    $pipeline+=' --close-application'
+                }
             }
             [Console]::Error.WriteLine('Shared entry log: '+$log)
             $code=[SnowDesktop.Build.Job]::RunLeasedCommand($root,$log,$pipeline)

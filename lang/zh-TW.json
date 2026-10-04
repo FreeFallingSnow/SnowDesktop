@@ -2524,10 +2524,19 @@
   "themeLibrary.zoomIn": "放大",
   "themeLibrary.zoomOut": "縮小",
   "quickNav.colorHint.transparent": "預設透明。設定不透明度後顯示；邊框和底色各自生效。",
-  "quickNav.colorHint.opacity": "設定此項目的顏色與不透明度：0% 為透明，100% 為不透明。懸停和選取狀態分別設定。",
+  "quickNav.colorHint.opacity": "設定此項目的顏色與不透明度，可從完全透明調整到完全不透明。懸停和選取狀態分別設定。",
   "quickNav.layout.rowsHint": "最多顯示的結果列數，超出後可捲動查看。",
   "quickNav.layout.linesHint": "網格圖示下文字的最大行數。",
   "quickNav.layout.pixelHint": "以邏輯像素設定，隨螢幕縮放；面板尺寸也會配合可用螢幕範圍。",
   "appearance.copyComponent": "複製目前元件外觀",
-  "appearance.copyComponentHint": "從全域主題複製目前元件的外觀，複製後可獨立調整。"
+  "appearance.copyComponentHint": "從全域主題複製目前元件的外觀，複製後可獨立調整。",
+  "themeLibrary.globalBinding": "{0} | 全域綁定",
+  "themeLibrary.copyRequired": "請先複製為本機主題，再編輯此工作坊訂閱主題。",
+  "themeLibrary.copyLocal": "複製為本機主題",
+  "themeLibrary.bindWorkshop": "綁定自己的工作坊項目",
+  "themeLibrary.bindHint": "輸入自己發布的主題連結或項目 ID。驗證帳號所有權後建立綁定，再次分享將更新該項目。",
+  "themeLibrary.useLocal": "切換至本機版本",
+  "themeLibrary.useSubscribed": "切換至工作坊訂閱版本",
+  "themeLibrary.localVersion": "本機版本",
+  "themeLibrary.subscribedVersion": "工作坊訂閱版本"
 }

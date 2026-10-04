@@ -2524,10 +2524,19 @@
   "themeLibrary.zoomIn": "확대",
   "themeLibrary.zoomOut": "축소",
   "quickNav.colorHint.transparent": "기본값은 투명입니다. 불투명도를 설정하면 표시되며 테두리와 배경색은 독립적으로 적용됩니다.",
-  "quickNav.colorHint.opacity": "이 항목의 색과 불투명도를 설정합니다. 0%는 투명, 100%는 불투명입니다. 마우스를 올렸을 때와 선택했을 때는 따로 설정합니다.",
+  "quickNav.colorHint.opacity": "이 항목의 색과 불투명도를 완전히 투명한 상태부터 완전히 불투명한 상태까지 조정합니다. 마우스를 올렸을 때와 선택했을 때는 따로 설정합니다.",
   "quickNav.layout.rowsHint": "표시할 결과의 최대 행 수입니다. 나머지는 스크롤하여 볼 수 있습니다.",
   "quickNav.layout.linesHint": "격자 아이콘 아래에 표시할 텍스트의 최대 줄 수입니다.",
   "quickNav.layout.pixelHint": "논리 픽셀 단위로 설정하며 화면 배율에 맞춰 조정됩니다. 패널 크기도 사용 가능한 화면 영역에 맞춰집니다.",
   "appearance.copyComponent": "현재 구성 요소 모양 복사",
-  "appearance.copyComponentHint": "전역 테마에서 현재 구성 요소 모양을 한 번 복사한 다음 독립적으로 조정합니다."
+  "appearance.copyComponentHint": "전역 테마에서 현재 구성 요소 모양을 한 번 복사한 다음 독립적으로 조정합니다.",
+  "themeLibrary.globalBinding": "{0} | 전역 연결",
+  "themeLibrary.copyRequired": "편집하기 전에 이 구독한 창작마당 테마를 로컬 테마로 복사하세요.",
+  "themeLibrary.copyLocal": "로컬 테마로 복사",
+  "themeLibrary.bindWorkshop": "내 창작마당 항목 연결",
+  "themeLibrary.bindHint": "직접 게시한 테마의 링크 또는 ID를 입력하세요. 소유권을 확인한 후 연결하며, 다시 공유하면 해당 항목이 업데이트됩니다.",
+  "themeLibrary.useLocal": "로컬 버전으로 전환",
+  "themeLibrary.useSubscribed": "구독 버전으로 전환",
+  "themeLibrary.localVersion": "로컬 버전",
+  "themeLibrary.subscribedVersion": "구독 버전"
 }

@@ -5,6 +5,7 @@
 #include "json_value.h"
 #include <fstream>
 #include <chrono>
+#include <charconv>
 
 namespace snowdesktop::themes::workshop
 {
@@ -54,6 +55,73 @@ bool Available(const std::filesystem::path& bridge, std::string_view hostVersion
 {
     std::string output, error;
     return steam_bridge::ThemeSafePath(bridge) && preview::Run(bridge, {L"configuration"}, output, 3000, error) && Capabilities(output, hostVersion);
+}
+bool CopyLocal(Library& library, std::string_view id, std::string& savedId, std::string& error, const NewId& newId)
+{
+    Package package; if (!Export(library, id, package, error)) return false;
+    std::map<std::string, std::string> ids;
+    for (const auto& [key, theme] : package)
+    {
+        (void)theme; if (Builtin(key)) continue;
+        const auto fresh = newId();
+        if (fresh.empty() || library.themes.contains(fresh) || package.contains(fresh) ||
+            std::any_of(ids.begin(), ids.end(), [&](const auto& pair) { return pair.second == fresh; })) return Fail(error, "idConflict");
+        ids.emplace(key, fresh);
+    }
+    if (!ids.contains(std::string(id))) return Fail(error, "invalidSelection");
+    Package copied;
+    for (auto [key, theme] : package)
+    {
+        if (Builtin(key)) continue;
+        theme.id = ids.at(key);
+        if (ids.contains(theme.quickPanel)) theme.quickPanel = ids.at(theme.quickPanel);
+        if (ids.contains(theme.popup)) theme.popup = ids.at(theme.popup);
+        copied.emplace(theme.id, std::move(theme));
+    }
+    Library next = library; std::map<std::string, std::string> mapping;
+    if (!Import(next, copied, mapping, error, newId)) return false;
+    savedId = ids.at(std::string(id)); library = std::move(next); return true;
+}
+bool Bind(const std::filesystem::path& bridge, const std::filesystem::path& data, const Theme& theme,
+    std::string_view itemId, std::string& error, const std::atomic_bool* cancel)
+{
+    std::uint64_t id = 0;
+    const auto converted = std::from_chars(itemId.data(), itemId.data() + itemId.size(), id);
+    if (!Digits(itemId) || converted.ec != std::errc{} || converted.ptr != itemId.data() + itemId.size() || !id)
+        return Fail(error, "invalidSelection");
+    std::string statusText, itemText;
+    if (!preview::Run(bridge, {L"status"}, statusText, 30000, error, cancel) ||
+        !preview::Run(bridge, {L"workshop", L"item-details", L"--item", std::wstring(itemId.begin(), itemId.end())}, itemText, 60000, error, cancel)) return false;
+    return BindResponses(data, theme, itemId, statusText, itemText, error, cancel);
+}
+bool BindResponses(const std::filesystem::path& data, const Theme& theme, std::string_view itemId,
+    std::string_view statusText, std::string_view itemText, std::string& error, const std::atomic_bool* cancel)
+{
+    std::uint64_t id = 0;
+    const auto converted = std::from_chars(itemId.data(), itemId.data() + itemId.size(), id);
+    if (!Digits(itemId) || converted.ec != std::errc{} || converted.ptr != itemId.data() + itemId.size() || !id)
+        return Fail(error, "invalidSelection");
+    JsonValue statusJson, itemJson;
+    if (!Final(statusText, statusJson) || !Boolean(statusJson, "ok") || !Final(itemText, itemJson) ||
+        !Boolean(itemJson, "ok") || String(itemJson, "publishedFileId") != itemId)
+        return Fail(error, "authorMismatch");
+    const auto details = itemJson.Find("details");
+    if (!details || !details->IsObject() || Number(*details, "result") != 1 ||
+        Number(statusJson, "appId") != kSnowDesktopSteamAppId || Number(*details, "consumerAppId") != kSnowDesktopSteamAppId)
+        return Fail(error, "authorMismatch");
+    steam_bridge::SteamStatus status; status.loggedOn = Boolean(statusJson, "loggedOn");
+    status.appId = kSnowDesktopSteamAppId; status.steamId = String(statusJson, "steamId");
+    steam_bridge::PublishedItem item; item.publishedFileId = id; const auto owner = String(*details, "ownerSteamId");
+    const auto parsed = std::from_chars(owner.data(), owner.data() + owner.size(), item.ownerSteamId);
+    if (!Digits(owner) || parsed.ec != std::errc{} || parsed.ptr != owner.data() + owner.size()) return Fail(error, "authorMismatch");
+    item.consumerAppId = kSnowDesktopSteamAppId; item.banned = Boolean(*details, "banned", true);
+    item.metadata = String(*details, "metadata");
+    const auto tagText = String(*details, "tags"); std::set<std::string> classifications;
+    for (std::size_t start = 0; start < tagText.size();)
+    { const auto end = tagText.find(',', start); classifications.insert(tagText.substr(start, end - start)); if (end == std::string::npos) break; start = end + 1; }
+    for (const auto& tag : tags::Applicable(theme)) if (!classifications.contains(tag)) return Fail(error, "itemMismatch");
+    if (cancel && cancel->load()) return Fail(error, "cancelled");
+    return steam_bridge::BindThemePublication(data, theme.id, status, item, error);
 }
 bool DecodeSubscriptions(std::string_view text, SubscriptionSnapshot& snapshot, std::string& error)
 {
@@ -111,8 +179,28 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
         if (previous != next.workshop.end() && previous->second.owner != download.owner) return Fail(error, "authorMismatch");
         if (previous != next.workshop.end() && previous->second.sha256 == download.sha256)
         { previous->second.accounts.insert(snapshot.account); continue; }
+        // Subscription identities must never alias editable local publications,
+        // even when their downloaded package is byte-for-byte identical.
+        Package isolated;
+        std::map<std::string, std::string> remap;
+        for (const auto& [id, theme] : download.package)
+        {
+            (void)theme; if (Builtin(id)) continue;
+            const auto fresh = newId();
+            if (fresh.empty() || next.themes.contains(fresh) || download.package.contains(fresh) ||
+                std::any_of(remap.begin(), remap.end(), [&](const auto& pair) { return pair.second == fresh; })) return Fail(error, "idConflict");
+            remap.emplace(id, fresh);
+        }
+        for (auto [id, theme] : download.package)
+        {
+            if (Builtin(id)) continue;
+            theme.id = remap.at(id);
+            if (remap.contains(theme.quickPanel)) theme.quickPanel = remap.at(theme.quickPanel);
+            if (remap.contains(theme.popup)) theme.popup = remap.at(theme.popup);
+            isolated.emplace(theme.id, std::move(theme));
+        }
         std::map<std::string, std::string> mapping;
-        if (!Import(next, download.package, mapping, error, newId)) return false;
+        if (!Import(next, isolated, mapping, error, newId)) return false;
         auto& origin = next.workshop[download.item]; origin.owner = download.owner; origin.sha256 = download.sha256;
         origin.accounts.insert(snapshot.account); origin.ids.clear();
         for (const auto& [from, to] : mapping) { (void)from; if (!Builtin(to)) origin.ids.insert(to); }
@@ -140,6 +228,15 @@ bool Sync(const std::filesystem::path& bridge, const std::filesystem::path& libr
     if (cancel && cancel->load()) return Fail(error, "cancelled");
     return Transact(library, [&](Library& into, std::string& detail) {
         if (cancel && cancel->load()) return Fail(detail, "cancelled");
+        for (const auto& download : snapshot.downloads)
+        {
+            const auto origin = into.workshop.find(download.item);
+            if (origin == into.workshop.end()) continue;
+            for (const auto& id : origin->second.ids)
+                if (steam_bridge::ThemePublishedUrl(library.parent_path(), id) ==
+                    "https://steamcommunity.com/sharedfiles/filedetails/?id=" + download.item)
+                { origin->second.sha256 = std::string(64, '0'); break; }
+        }
         return Reconcile(into, snapshot, detail);
     }, output, error);
 }

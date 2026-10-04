@@ -7,6 +7,11 @@ namespace snowdesktop::themes::workshop
 {
 bool Capabilities(std::string_view configuration, std::string_view hostVersion);
 bool Available(const std::filesystem::path& bridge, std::string_view hostVersion);
+bool CopyLocal(Library&, std::string_view id, std::string& savedId, std::string& error, const NewId& = CreateId);
+bool Bind(const std::filesystem::path& bridge, const std::filesystem::path& data, const Theme&,
+    std::string_view item, std::string& error, const std::atomic_bool* cancel = nullptr);
+bool BindResponses(const std::filesystem::path& data, const Theme&, std::string_view item,
+    std::string_view statusJson, std::string_view itemJson, std::string& error, const std::atomic_bool* cancel = nullptr);
 struct Download
 {
     std::string item, owner, sha256;

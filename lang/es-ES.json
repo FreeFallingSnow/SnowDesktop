@@ -2524,10 +2524,19 @@
   "themeLibrary.zoomIn": "Acercar",
   "themeLibrary.zoomOut": "Alejar",
   "quickNav.colorHint.transparent": "Transparente por defecto. Ajusta la opacidad para mostrar este color; los bordes y los fondos son independientes.",
-  "quickNav.colorHint.opacity": "Configura el color y la opacidad de esta parte: 0 % es transparente y 100 % es opaco. Los estados al pasar el cursor y de selección se configuran por separado.",
+  "quickNav.colorHint.opacity": "Configura el color y la opacidad de esta parte, desde totalmente transparente hasta totalmente opaca. Los estados al pasar el cursor y de selección se configuran por separado.",
   "quickNav.layout.rowsHint": "Máximo de filas de resultados visibles; desplázate para ver las demás.",
   "quickNav.layout.linesHint": "Máximo de líneas de texto debajo de cada icono de la cuadrícula.",
   "quickNav.layout.pixelHint": "Píxeles lógicos, ajustados a la escala de tu pantalla. El tamaño del panel también se adapta al área de pantalla disponible.",
   "appearance.copyComponent": "Copiar apariencia actual del componente",
-  "appearance.copyComponentHint": "Copia la apariencia actual del componente del tema global y luego ajústala de forma independiente."
+  "appearance.copyComponentHint": "Copia la apariencia actual del componente del tema global y luego ajústala de forma independiente.",
+  "themeLibrary.globalBinding": "{0} | Vinculación global",
+  "themeLibrary.copyRequired": "Copia este tema de Workshop suscrito como tema local antes de editarlo.",
+  "themeLibrary.copyLocal": "Copiar como tema local",
+  "themeLibrary.bindWorkshop": "Vincular mi elemento de Workshop",
+  "themeLibrary.bindHint": "Introduce el enlace o ID de un tema que hayas publicado. Se verifica la propiedad antes de vincularlo; al compartir de nuevo se actualizará ese elemento.",
+  "themeLibrary.useLocal": "Cambiar a la versión local",
+  "themeLibrary.useSubscribed": "Cambiar a la versión suscrita",
+  "themeLibrary.localVersion": "Versión local",
+  "themeLibrary.subscribedVersion": "Versión suscrita"
 }

@@ -27,7 +27,7 @@ std::string Read(const std::filesystem::path& path, std::size_t maximum)
     if (ec || size == 0 || size > maximum) return {};
     std::ifstream file(path, std::ios::binary); return std::string(std::istreambuf_iterator<char>(file), {});
 }
-bool ReadAssociation(const std::filesystem::path& path, std::string& owner, std::uint64_t& id, bool& pending)
+bool ReadAssociation(const std::filesystem::path& path, std::string& owner, std::uint64_t& id, bool& pending, std::string* remoteRoot = nullptr)
 {
     std::error_code ec;
     if (!std::filesystem::exists(path, ec)) return !ec;
@@ -38,13 +38,15 @@ bool ReadAssociation(const std::filesystem::path& path, std::string& owner, std:
     const auto converted = std::from_chars(item.data(), item.data() + item.size(), id);
     const auto p = JsonBoolean(value, "creationPending");
     if (converted.ec != std::errc{} || converted.ptr != item.data() + item.size() || !p) return false;
+    if (remoteRoot) *remoteRoot = JsonString(value, "boundThemeId").value_or("");
     pending = *p; return true;
 }
-bool WriteAssociation(const std::filesystem::path& path, const std::string& owner, std::uint64_t id, bool pending)
+bool WriteAssociation(const std::filesystem::path& path, const std::string& owner, std::uint64_t id, bool pending, std::string_view remoteRoot = {})
 {
     auto value = JsonValue::Object(); value.object["version"] = JsonValue::Number(1);
     value.object["owner"] = JsonValue::String(owner); value.object["publishedFileId"] = JsonValue::String(std::to_string(id));
     value.object["creationPending"] = JsonValue::Boolean(pending);
+    if (!remoteRoot.empty()) value.object["boundThemeId"] = JsonValue::String(std::string(remoteRoot));
     return atomic_file::WriteAll(path, WriteJson(value));
 }
 bool ValidCover(const std::filesystem::path& path)
@@ -190,6 +192,31 @@ std::string ThemePublishedUrl(const std::filesystem::path& dataDirectory, std::s
     if (!ThemeSafePath(path) || !ReadAssociation(path, owner, id, pending) || !id) return {};
     return "https://steamcommunity.com/sharedfiles/filedetails/?id=" + std::to_string(id);
 }
+bool BindThemePublication(const std::filesystem::path& dataDirectory, std::string_view rootId,
+    const SteamStatus& status, const PublishedItem& item, std::string& error)
+{
+    if (!status.loggedOn || status.appId != kSteamAppId || status.steamId.empty() ||
+        std::to_string(item.ownerSteamId) != status.steamId || item.consumerAppId != kSteamAppId ||
+        !item.publishedFileId || item.banned) return Fail(error, "authorMismatch");
+    JsonValue identity;
+    if (rootId.empty() || !ParseJson(item.metadata, identity, error) ||
+        JsonString(identity, "format") != "snowdesktop-theme" || JsonUnsigned(identity, "themeWorkflowProtocolVersion") != 1 ||
+        JsonString(identity, "themeId").value_or("").empty()) return Fail(error, "itemMismatch");
+    if (!ThemeSafePath(dataDirectory, true)) return Fail(error, "unsafePath");
+    const auto store = dataDirectory / L"ThemeWorkshop"; std::error_code ec;
+    std::filesystem::create_directories(store, ec);
+    if (ec || !ThemeSafePath(store, true)) return Fail(error, "writeFailed");
+    const auto path = store / (ThemeSha256(rootId) + ".json");
+    auto lockPath = path; lockPath += L".lock";
+    HANDLE lock = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (lock == INVALID_HANDLE_VALUE) return Fail(error, "publicationBusy");
+    struct Cleanup { HANDLE h; ~Cleanup() { CloseHandle(h); } } cleanup{lock};
+    std::string owner; std::uint64_t id = 0; bool pending = false;
+    if (!ReadAssociation(path, owner, id, pending)) return Fail(error, "invalidAssociation");
+    if (id && (id != item.publishedFileId || owner != status.steamId)) return Fail(error, "itemMismatch");
+    return WriteAssociation(path, status.steamId, item.publishedFileId, false,
+        JsonString(identity, "themeId").value_or("")) || Fail(error, "writeFailed");
+}
 std::string ThemePublishPlanJson(const ThemePublishPlan& plan)
 {
     auto value = JsonValue::Object(); value.object["ok"] = JsonValue::Boolean(true);
@@ -223,7 +250,8 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
         if (current.gallery[index].component != plan.gallery[index].component || current.gallery[index].path != plan.gallery[index].path ||
             current.gallery[index].sha256 != plan.gallery[index].sha256) return Failure(error, "stalePreparation");
     std::string owner; std::uint64_t id = 0; bool pending = false;
-    if (!ReadAssociation(plan.association, owner, id, pending)) return Failure(error, "invalidAssociation");
+    std::string remoteRoot;
+    if (!ReadAssociation(plan.association, owner, id, pending, &remoteRoot)) return Failure(error, "invalidAssociation");
     if (pending && !id) return Failure(error, "creationUncertain");
     if (id != plan.publishedFileId || confirmCreate == confirmUpdate || (id ? !confirmUpdate : !confirmCreate))
         return Failure(error, "confirmationRequired");
@@ -244,7 +272,8 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
         {
             JsonValue identity; std::string detail;
             if (!ParseJson(item->metadata, identity, detail) || JsonString(identity, "format") != "snowdesktop-theme" ||
-                JsonString(identity, "themeId") != plan.rootId || JsonUnsigned(identity, "themeWorkflowProtocolVersion") != 1)
+                (JsonString(identity, "themeId") != plan.rootId && (remoteRoot.empty() || JsonString(identity, "themeId") != remoteRoot)) ||
+                JsonUnsigned(identity, "themeWorkflowProtocolVersion") != 1)
                 return Failure(error, "itemMismatch");
         }
     }

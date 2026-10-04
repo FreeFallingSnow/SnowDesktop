@@ -149,6 +149,24 @@ and shown on that theme's card. Renaming or updating the theme keeps the binding
 saving a new ID starts a separate publication. Preview/save/cancel successes are
 silent; failures and a saved-but-not-applied warning remain visible.
 
+Local themes can explicitly link an existing authored Workshop theme. The host
+uses the existing read-only status and item-details commands to verify current
+ownership, app, theme metadata and category before atomically recording the local
+association. This never uploads. The journal optionally retains the verified
+remote theme ID for the first update, which still rechecks ownership and metadata.
+Existing different publication bindings cannot be silently replaced.
+
+Subscriptions always import a distinct identity closure even when an authored
+local package is identical. Refresh repairs an old local/subscription alias only
+when its durable publication journal proves that local identity belongs to the
+same item. Copy-to-local assigns new IDs to the whole dependency closure; it
+preserves subscription provenance and settings until explicit application.
+Subscribed selections do not offer direct editing or sharing. An editable local
+copy can update its own ID. Paired local and subscribed cards provide a version
+switch when the item, kind and scope identify one unambiguous counterpart. Selector
+labels distinguish their sources, and follow options show the child's concrete name
+with the localized global-binding suffix.
+
 The production upload preflight selects `.snowtheme` with the 4 MiB theme format
 limit or `.snowwidget` with the unchanged 20 MiB component limit. Primary previews
 must still be strictly smaller than 1 MiB. The pending-creation journal is written
@@ -222,11 +240,16 @@ draft. Entering the global custom draft captures each current effective surface
 once into its separate global binding; later global-material edits preserve those
 bindings. Existing saved-global child bindings are retained. Explicitly choosing
 custom for an individual surface copies its currently effective bound appearance
-into an independent draft. Their save/edit menus remain tied to explicitly selected custom
-drafts; independently selected saved themes keep their parameters hidden.
+into an independent draft, retaining an editable local source for explicit update.
+Editing a bound draft keeps follow-global selected and provides that child's update
+or save-as menu. Saving adopts the saved child binding without turning the surface
+into an independent selection; independent saves select their saved result.
+All custom disclosures collapse when entering custom. Independently selected saved
+themes keep their parameters hidden and editable local selections provide an Edit button.
 The popup custom editor can also copy the current component material from the
 global theme once, including border, gradient, blur and opacity. It remains an
-independent popup draft and does not modify its source or the global bindings.
+popup draft, or the global popup binding draft when following a custom global.
+It does not modify the saved source or the global component material.
 Clicking a gallery image opens a window-sized lightbox over the existing dialog.
 Mouse-wheel zoom, drag panning, fit-to-window, arrow navigation and Escape/close
 return are available without opening another dialog or process. The selected

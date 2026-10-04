@@ -2524,10 +2524,19 @@
   "themeLibrary.zoomIn": "Aumentar zoom",
   "themeLibrary.zoomOut": "Diminuir zoom",
   "quickNav.colorHint.transparent": "Transparente por padrão. Defina a opacidade para mostrar esta cor; bordas e fundos são independentes.",
-  "quickNav.colorHint.opacity": "Defina a cor e a opacidade desta parte: 0% é transparente e 100% é opaco. Os estados de foco do mouse e de seleção são configurados separadamente.",
+  "quickNav.colorHint.opacity": "Defina a cor e a opacidade desta parte, de totalmente transparente a totalmente opaca. Os estados de foco do mouse e de seleção são configurados separadamente.",
   "quickNav.layout.rowsHint": "Máximo de linhas de resultados visíveis; role para ver as demais.",
   "quickNav.layout.linesHint": "Máximo de linhas de texto abaixo de cada ícone da grade.",
   "quickNav.layout.pixelHint": "Pixels lógicos, ajustados à escala da tela. As dimensões do painel também se adaptam à área de tela disponível.",
   "appearance.copyComponent": "Copiar aparência atual do componente",
-  "appearance.copyComponentHint": "Copie a aparência atual do componente do tema global uma vez e depois ajuste-a independentemente."
+  "appearance.copyComponentHint": "Copie a aparência atual do componente do tema global uma vez e depois ajuste-a independentemente.",
+  "themeLibrary.globalBinding": "{0} | Vínculo global",
+  "themeLibrary.copyRequired": "Copie este tema assinado da Oficina como tema local antes de editá-lo.",
+  "themeLibrary.copyLocal": "Copiar como tema local",
+  "themeLibrary.bindWorkshop": "Vincular meu item da Oficina",
+  "themeLibrary.bindHint": "Insira o link ou ID de um tema que você publicou. A propriedade é verificada antes do vínculo; compartilhar novamente atualizará esse item.",
+  "themeLibrary.useLocal": "Mudar para a versão local",
+  "themeLibrary.useSubscribed": "Mudar para a versão assinada",
+  "themeLibrary.localVersion": "Versão local",
+  "themeLibrary.subscribedVersion": "Versão assinada"
 }

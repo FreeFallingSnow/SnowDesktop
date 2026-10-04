@@ -448,6 +448,8 @@ struct SettingsWindowHost::Impl
         {
             (void)theme;
             auto url = steam_bridge::ThemePublishedUrl(GetDataDirectoryPath(), id);
+            if (url.empty()) for (const auto& [item, origin] : result.library.workshop)
+                if (origin.ids.contains(id)) { url = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item; break; }
             if (!url.empty()) result.publishedUrls.emplace(id, std::move(url));
         }
         if (shell) shell->HideProgress(task->generation);
@@ -548,6 +550,30 @@ struct SettingsWindowHost::Impl
         const bool share = task->request.command == ThemeLibraryCommand::Share;
         if ((share || sync) && !ThemeSharingAvailable()) { CompleteThemeTask(task, false, "missingCapability"); return; }
         std::string error; themes::Library library;
+        if (task->request.command == ThemeLibraryCommand::BindWorkshop)
+        {
+            if (!ThemeSharingAvailable() || !themes::Load(themes::LibraryPath(), library, error))
+            { CompleteThemeTask(task, false, error.empty() ? "missingCapability" : error); return; }
+            const auto theme = themes::Resolve(library.themes, task->request.id);
+            bool subscribed = false;
+            for (const auto& [item, origin] : library.workshop) { (void)item; if (origin.ids.contains(task->request.id)) subscribed = true; }
+            if (!theme || subscribed || themes::Builtin(theme->id)) { CompleteThemeTask(task, false, "invalidSelection"); return; }
+            const auto weak = std::weak_ptr<CallbackState>(callbacks);
+            const auto bridge = ThemeBridge(), data = std::filesystem::path(GetDataDirectoryPath());
+            (void)shell->ShowProgress({generation, L("themeLibrary.bindWorkshop"), L("themeLibrary.preparing"), true, 0, true});
+            std::thread([weak, task, bridge, data, theme = *theme] {
+                std::string detail;
+                bool success = false;
+                try { success = themes::workshop::Bind(bridge, data, theme, task->request.replacement, detail, &task->cancel); }
+                catch (...) { detail = "writeFailed"; }
+                if (const auto state = weak.lock(); state && state->alive.load())
+                    (void)state->dispatcher.TryEnqueue([weak, task, success, detail] {
+                        if (const auto active = weak.lock(); active && active->alive.load() && active->owner)
+                            active->owner->CompleteThemeTask(task, success, detail);
+                    });
+            }).detach();
+            return;
+        }
         if (!sync)
         {
             if (task->request.id.empty() && task->request.command == ThemeLibraryCommand::Preview &&
@@ -2561,6 +2587,8 @@ struct SettingsWindowHost::Impl
             if (result.succeeded) for (const auto& [id, theme] : result.library.themes)
             {
                 (void)theme; auto url = steam_bridge::ThemePublishedUrl(GetDataDirectoryPath(), id);
+                if (url.empty()) for (const auto& [item, origin] : result.library.workshop)
+                    if (origin.ids.contains(id)) { url = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item; break; }
                 if (!url.empty()) result.publishedUrls.emplace(id, std::move(url));
             }
             if (!result.succeeded) feedback();
@@ -2641,6 +2669,8 @@ struct SettingsWindowHost::Impl
             themes::ReconcileReferences(library, current->values);
             if (request.command == ThemeLibraryCommand::Remove)
                 return themes::Remove(library, request.id, request.replacement, true, detail);
+            if (request.command == ThemeLibraryCommand::CopyLocal)
+                return themes::workshop::CopyLocal(library, request.id, result.savedId, detail);
             auto theme = themes::CaptureTarget(request.target, current->values);
             theme.id = request.id; theme.name = request.name; theme.scopes = request.scopes;
             themes::Package dependencies;

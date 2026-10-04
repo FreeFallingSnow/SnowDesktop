@@ -2524,10 +2524,19 @@
   "themeLibrary.zoomIn": "Zoom avant",
   "themeLibrary.zoomOut": "Zoom arrière",
   "quickNav.colorHint.transparent": "Transparent par défaut. Réglez l’opacité pour afficher cette couleur ; les bordures et les fonds sont indépendants.",
-  "quickNav.colorHint.opacity": "Réglez la couleur et l’opacité de cet élément : 0 % est transparent et 100 % est opaque. Les états de survol et de sélection se règlent séparément.",
+  "quickNav.colorHint.opacity": "Réglez la couleur et l’opacité de cet élément, de totalement transparent à totalement opaque. Les états de survol et de sélection se règlent séparément.",
   "quickNav.layout.rowsHint": "Nombre maximal de lignes de résultats visibles ; faites défiler pour voir les autres.",
   "quickNav.layout.linesHint": "Nombre maximal de lignes de texte sous chaque icône de la grille.",
   "quickNav.layout.pixelHint": "Pixels logiques, adaptés à l’échelle de votre écran. Les dimensions du panneau s’adaptent aussi à la zone d’écran disponible.",
   "appearance.copyComponent": "Copier l’apparence actuelle du composant",
-  "appearance.copyComponentHint": "Copiez une fois l’apparence actuelle du composant depuis le thème global, puis modifiez-la indépendamment."
+  "appearance.copyComponentHint": "Copiez une fois l’apparence actuelle du composant depuis le thème global, puis modifiez-la indépendamment.",
+  "themeLibrary.globalBinding": "{0} | Liaison globale",
+  "themeLibrary.copyRequired": "Copiez ce thème Workshop abonné en thème local avant de le modifier.",
+  "themeLibrary.copyLocal": "Copier en thème local",
+  "themeLibrary.bindWorkshop": "Lier mon élément Workshop",
+  "themeLibrary.bindHint": "Saisissez le lien ou l’ID d’un thème que vous avez publié. La propriété est vérifiée avant la liaison ; un nouveau partage mettra cet élément à jour.",
+  "themeLibrary.useLocal": "Passer à la version locale",
+  "themeLibrary.useSubscribed": "Passer à la version abonnée",
+  "themeLibrary.localVersion": "Version locale",
+  "themeLibrary.subscribedVersion": "Version abonnée"
 }

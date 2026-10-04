@@ -145,11 +145,18 @@ inline bool PrepareGlobalCustomEdit(GeneralSettings& settings,
     return quickBefore != settings.globalQuickNavigationAppearance ||
         popupBefore != settings.globalCollectionPopupAppearance;
 }
+inline void EditSurfaceAppearance(GeneralSettings& settings, bool quick,
+    const PersonalizationSettings& appearance, const PersonalizationSettings& global)
+{
+    auto& local = quick ? settings.quickNavigationAppearance : settings.collectionPopupAppearance;
+    auto& binding = quick ? settings.globalQuickNavigationAppearance : settings.globalCollectionPopupAppearance;
+    auto& draft = local.mode == -1 && global.backgroundPreset == kAppearancePresetCustom ? binding : local;
+    draft = {4, true, Capture(quick ? Kind::QuickPanel : Kind::Popup, appearance).appearance};
+}
 inline void CopyComponentAppearanceToPopup(GeneralSettings& settings,
     const PersonalizationSettings& componentAppearance)
 {
-    settings.collectionPopupAppearance = {4, true,
-        Capture(Kind::Popup, componentAppearance).appearance};
+    EditSurfaceAppearance(settings, false, componentAppearance, componentAppearance);
 }
 inline bool AppliedAppearanceMatches(const PersonalizationSettings& saved,
     const PersonalizationSettings& current)

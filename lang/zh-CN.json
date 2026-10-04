@@ -2524,10 +2524,19 @@
   "themeLibrary.zoomIn": "放大",
   "themeLibrary.zoomOut": "缩小",
   "quickNav.colorHint.transparent": "默认透明。设置不透明度后显示；边框和底色独立生效。",
-  "quickNav.colorHint.opacity": "设置此项目的颜色和不透明度：0% 为透明，100% 为不透明。悬停和选中状态分别设置。",
+  "quickNav.colorHint.opacity": "设置此项目的颜色和不透明度，可从完全透明调整到完全不透明。悬停和选中状态分别设置。",
   "quickNav.layout.rowsHint": "最多显示的结果行数，超出后可滚动查看。",
   "quickNav.layout.linesHint": "网格图标下文字的最大行数。",
   "quickNav.layout.pixelHint": "按逻辑像素设置，随屏幕缩放；面板尺寸还会适配可用屏幕范围。",
   "appearance.copyComponent": "复制当前组件外观",
-  "appearance.copyComponentHint": "从全局主题复制当前组件的外观，复制后可独立调整。"
+  "appearance.copyComponentHint": "从全局主题复制当前组件的外观，复制后可独立调整。",
+  "themeLibrary.globalBinding": "{0} | 全局绑定",
+  "themeLibrary.copyRequired": "请先复制为本地主题，再编辑此工坊订阅主题。",
+  "themeLibrary.copyLocal": "复制为本地主题",
+  "themeLibrary.bindWorkshop": "绑定本人工坊条目",
+  "themeLibrary.bindHint": "输入自己发布的主题链接或条目 ID。验证账号所有权后建立绑定，再次分享将更新该条目。",
+  "themeLibrary.useLocal": "切换到本地版",
+  "themeLibrary.useSubscribed": "切换到工坊订阅版",
+  "themeLibrary.localVersion": "本地版",
+  "themeLibrary.subscribedVersion": "工坊订阅版"
 }

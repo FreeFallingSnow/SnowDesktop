@@ -7,6 +7,7 @@ param(
     [ValidateRange(1, 86400)][int]$WaitSeconds = 86400,
     [switch]$ConfirmStopped,
     [switch]$ReloadShell,
+    [switch]$CloseApplication,
     [string]$Reason,
     [long]$Revision = -1,
     [ValidateSet('unknown','module','docs','component','tool','public','infrastructure')][string]$Scope = 'unknown',
@@ -21,7 +22,7 @@ param(
 if($Command -eq 'ready-and-wait') {
     if(-not $PSBoundParameters.ContainsKey('WaitSeconds')){$WaitSeconds=1800}
     if($Revision -lt 0){throw 'ready-and-wait requires the latest -Revision.'}
-    & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck -ReloadShell:$ReloadShell
+    & $PSCommandPath finish $Participant -Batch $Batch -Revision $Revision -WaitSeconds $WaitSeconds -AutoCheck -ReloadShell:$ReloadShell -CloseApplication:$CloseApplication
     exit $LASTEXITCODE
 }
 Set-StrictMode -Version Latest
@@ -215,6 +216,8 @@ function Emit-Result($Result) {
 
 try {
     if ($ReloadShell -and $Command -notin 'ready','finish') { throw '-ReloadShell is only valid with finish.' }
+    if ($CloseApplication -and $Command -notin 'ready','finish') { throw '-CloseApplication is only valid with ready/finish.' }
+    if ($ReloadShell -and $CloseApplication) { throw 'Choose only one output-owner action.' }
     if ($Command -in 'begin', 'ready', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'repair' -and -not $Participant) { throw "$Command requires a participant ID." }
     if ($Command -in 'ready', 'finish', 'wait', 'check', 'plan', 'claim', 'commit', 'issue', 'recover', 'repair', 'repair-abandon' -and -not $Batch) { throw "$Command requires -Batch from begin; this prevents mixing batches." }
     if ($Command -eq 'begin' -and $Batch) { throw 'begin allocates its batch ID; do not supply -Batch.' }
@@ -400,6 +403,7 @@ try {
                     $check=Get-Field $entry 'check'
                     if ($check -and $check.status -in 'failed','invalidated','interrupted') { throw 'Check requires attention. Use begin/reopen for repairs, or check for a bounded read-only reassessment.' }
                     if($ReloadShell){Set-Field $current 'reloadShellRequested' $true}
+                    if($CloseApplication){Set-Field $current 'closeApplicationRequested' $true}
                     $waiter=Start-ReadyWorker $current $entry
                     Write-AtomicJson $state $statePath
                     ConvertTo-Json -InputObject ([pscustomobject]@{participant=$Participant;batchId=$Batch;editRevision=$Revision;state='ready';checkStatus=(Get-Field (Get-Field $entry 'check') 'status');waiter=$waiter}) -Depth 8
@@ -482,6 +486,7 @@ try {
                 if($observedRevision -lt 0){$observedRevision=Get-EditRevision $entries[0]}
                 $hasFinishedCurrentBatch = $true
                 if ($current.phase -eq 'editing') {
+                    if($CloseApplication){Set-Field $current 'closeApplicationRequested' $true; Write-AtomicJson $state $statePath}
                     # Remember an explicit request for this batch, even when
                     # another participant eventually owns the build. Shell
                     # cleanup remains inside that owner's build process.
@@ -527,7 +532,7 @@ try {
                         $preflight=Get-Field $current 'preflight'
                         if(-not $preflight -or ([DateTime]::UtcNow-[DateTime]::Parse($preflight.observedUtc).ToUniversalTime()).TotalSeconds -gt 10){$preflight=Get-ReadOnlyPreflight $repositoryRoot}
                         Set-Field $current 'preflight' $preflight
-                        if($frozenPlan.buildRequired -and $preflight.status -ne 'clear' -and -not (Get-Field $current 'reloadShellRequested' $false)) {
+                        if($frozenPlan.buildRequired -and $preflight.status -ne 'clear' -and -not (Get-Field $current 'reloadShellRequested' $false) -and -not (Get-Field $current 'closeApplicationRequested' $false)) {
                             Set-Field $current 'planStatus' 'waiting-output-owner';Write-AtomicJson $state $statePath
                             $buildLease.Dispose();$buildLease=$null
                         } else {
@@ -575,7 +580,7 @@ try {
                     [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE', '1', 'Process')
                     Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')
                     [Console]::Error.WriteLine("Building batch $($selected.id). Log: $($selected.logPath)")
-                    $code = [SnowDesktop.Build.Job]::RunBatch($repositoryRoot, $selected.logPath, $selected.id, $selected.testingPlan.buildRequired, [bool](Get-Field $selected 'reloadShellRequested' $false))
+                    $code = [SnowDesktop.Build.Job]::RunBatch($repositoryRoot, $selected.logPath, $selected.id, $selected.testingPlan.buildRequired, [bool](Get-Field $selected 'reloadShellRequested' $false), [bool](Get-Field $selected 'closeApplicationRequested' $false))
                     if ($code -eq 0) { $outcome = if($selected.testingPlan.mode -eq 'skipped'){'skipped'}else{'passed'} }
                     else { $errorText = "Build/test pipeline exited with code $code. See the batch log." }
                 }

@@ -170,6 +170,12 @@ scripts\build.bat status -Batch <batchId>
 scripts\build.bat wait task-a -Batch <batchId> -Revision <editRevision>
 ```
 
+When only closing SnowDesktop is authorized, use `scripts\build.bat --close-application`
+or append `-CloseApplication` to `ready-and-wait`. The execution owner closes only
+identified application processes. Existing or newly observed Explorer Hook owners,
+and unknown owners, stop the build; this option never terminates or restarts Explorer.
+It is mutually exclusive with `--reload-shell` / `-ReloadShell`.
+
 示例测试名必须替换为 `scripts\test.bat list` 的实际名称。`ready-and-wait` 默认在原工具进程中标记就绪、执行计划中的轻量检查、等待屏障和共同结果；不依赖 Python 或隐藏后台启动。工具 yield 后续等同一 session。`wait` 仅观察；兼容 `finish -AutoCheck` 使用同一执行路径。`ready` 仅为明确选择的后台模式：同修订存活 worker 复用，启动失败保留 pending 登记、报告 unavailable 和前台接管命令，不假报已运行。Windows PowerShell 路径按系统目录解析，pwsh 调用可用。
 
 等待阶段可只读审查接口、签名、夹具、测试名称、静态语法及已有可复用证据。内置 `check` 只做差异空白、变化的 PowerShell 和指定构建 JSON 语法及输出占用观察，不声称完成原生编译、接口语义审查或宿主 UI 验收。

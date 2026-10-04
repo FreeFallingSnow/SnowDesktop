@@ -22,9 +22,9 @@ def check_build_entry_preflight(repo):
     shutil.copyfile(repo / 'scripts/build.bat', scripts / 'build.bat')
     shutil.copyfile(repo / 'scripts/build_entry.ps1', scripts / 'build_entry.ps1')
     shutil.copyfile(repo / 'scripts/build_job.cs', scripts / 'build_job.cs')
-    (scripts / 'build_preflight.ps1').write_text('''param([switch]$ReloadShell)
+    (scripts / 'build_preflight.ps1').write_text('''param([switch]$ReloadShell,[switch]$CloseApplication)
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot '../preflight.json'),
-    (ConvertTo-Json @{reload=[bool]$ReloadShell;directory=$PSScriptRoot}))
+    (ConvertTo-Json @{reload=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;directory=$PSScriptRoot}))
 exit ([int]$env:SNOWDESKTOP_PREFLIGHT_FIXTURE_EXIT)
 ''')
     fake_bin = root / 'bin'
@@ -33,7 +33,7 @@ exit ([int]$env:SNOWDESKTOP_PREFLIGHT_FIXTURE_EXIT)
 echo unexpected configure>"%SNOWDESKTOP_PREFLIGHT_FIXTURE_ROOT%\\cmake.txt"
 exit /b 19
 ''')
-    for reload, exit_code in ((False, 7), (True, 7), (True, -1), (True, 0)):
+    for reload, close_application, exit_code in ((False,False,7), (True,False,7), (True,False,-1), (True,False,0), (False,True,7), (False,True,0)):
         for marker in (root / 'preflight.json', root / 'cmake.txt'):
             if marker.exists():
                 marker.unlink()
@@ -44,18 +44,52 @@ exit /b 19
         command = 'call "' + str(scripts / 'build.bat') + '"'
         if reload:
             command += ' --reload-shell'
+        if close_application:
+            command += ' --close-application'
         result = subprocess.run('"' + os.environ['COMSPEC'] + '" /d /c ' + command,
             cwd=root, env=env, capture_output=True, text=True, timeout=15)
         marker = root / 'preflight.json'
         assert marker.exists(), (reload, exit_code, result.stdout, result.stderr)
         observed = json.loads(marker.read_text(encoding='utf-8-sig'))
-        assert observed['reload'] == reload and Path(observed['directory']).samefile(scripts), observed
+        assert observed['reload'] == reload and observed['closeApplication'] == close_application and Path(observed['directory']).samefile(scripts), observed
         # The fake .cmd deliberately ends the batch at configure, with code 19.
         assert result.returncode == (19 if exit_code == 0 else 3), result
         assert (root / 'cmake.txt').exists() == (exit_code == 0), result
     print('PASS real build entry preserves preflight path after SHIFT and stops on positive/negative failures')
 
 def run_tests(repo,entry=True):
+    # Use the actual preflight with fake process observations. Any shell action
+    # is a hard failure, including a hook which appears after application close.
+    close_root = Path(tempfile.mkdtemp(prefix='SnowDesktop application-only preflight '))
+    (close_root / 'scripts').mkdir()
+    (close_root / '.build/Release').mkdir(parents=True)
+    shutil.copyfile(repo / 'scripts/build_preflight.ps1', close_root / 'scripts/build_preflight.ps1')
+    (close_root / '.build/Release/SnowDesktopTaskbarHook.dll').write_bytes(b'fixture')
+    close_probe = close_root / 'probe.ps1'
+    close_probe.write_text(r'''param([bool]$InitiallyOccupied)
+$global:Closed=$false
+$global:InitiallyOccupied=$InitiallyOccupied
+$global:ProbeRoot=$PSScriptRoot
+function Get-Process { param($Name,$Id)
+ if($Name -contains 'explorer') {
+  if($global:InitiallyOccupied -or $global:Closed) {
+   return [pscustomobject]@{Id=13579;ProcessName='explorer';StartTime=[datetime]::UtcNow;Modules=@([pscustomobject]@{FileName=(Join-Path $global:ProbeRoot '.build/Release/SnowDesktopTaskbarHook.dll')})}
+  }
+ } elseif(-not $global:InitiallyOccupied -and -not $global:Closed) {
+  $app=[pscustomobject]@{Id=24680;ProcessName='SnowDesktop';Path=(Join-Path $global:ProbeRoot '.build/Release/SnowDesktop.exe');StartTime=[datetime]::UtcNow}
+  $app | Add-Member -MemberType ScriptMethod -Name CloseMainWindow -Value {$global:Closed=$true;return $true}
+  return $app
+ }
+}
+function Stop-Process { [IO.File]::WriteAllText((Join-Path $global:ProbeRoot 'shell-action'),'stop');throw 'Unexpected process termination' }
+function Start-Process { [IO.File]::WriteAllText((Join-Path $global:ProbeRoot 'shell-action'),'start');throw 'Unexpected shell restart' }
+& (Join-Path $PSScriptRoot 'scripts/build_preflight.ps1') -CloseApplication
+''', encoding='utf-8')
+    for initially in (True, False):
+        command = '& "' + str(close_probe) + '" -InitiallyOccupied $' + str(initially).lower()
+        observed = subprocess.run([PS, '-NoProfile', '-Command', command], cwd=close_root, capture_output=True, text=True, timeout=15)
+        assert observed.returncode != 0 and 'Explorer hook' in observed.stderr and not (close_root / 'shell-action').exists(), observed
+    print('PASS application-only preflight refuses existing and newly observed Explorer hooks without any shell action')
     # Every repository created below is independent of the enclosing build.
     # Explicit forged-credential probes still provide their own environment.
     os.environ.pop('SNOWDESKTOP_EXECUTION_TOKEN',None)

@@ -348,6 +348,7 @@ struct PersonalizationPagePresenter::Impl
         presetRow.Initialize(presetCombo);
         themeCard.content.Children().Append(presetRow.root);
         globalThemes = std::make_unique<ThemeLibraryControls>(localize, "global", false, presetCombo, 8, 7);
+        presetRow.controlHost.Content(nullptr); presetRow.controlHost.Content(globalThemes->SelectionContent());
         themeCard.content.Children().Append(globalThemes->Content());
 
         InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
@@ -485,16 +486,20 @@ struct PersonalizationPagePresenter::Impl
 
 
         quickThemes = std::make_unique<ThemeLibraryControls>(localize, "quickPanel", false, quickNavigationThemeCombo, 6, 5);
+        quickNavigationThemeRow.controlHost.Content(nullptr); quickNavigationThemeRow.controlHost.Content(quickThemes->SelectionContent());
         themeTargetsCard.content.Children().Append(quickThemes->Content());
         quickAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
+                if (quickFollowsGlobal && globalThemes->CustomSelected()) globalThemes->UseCurrentBinding(themes::Kind::QuickPanel);
+                const auto global = currentGlobalAppearance;
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.quickNavigationAppearance.appearance = value; settings.quickNavigationAppearance.customized = true; settings.quickNavigationAppearance.mode = 4; });
+                    [value, global](auto& settings) { themes::EditSurfaceAppearance(settings, true, value, global); });
             });
         quickAppearanceContent.Spacing(8);
         quickAppearanceContent.Children().Append(quickAppearanceEditor->Content());
         quickAppearanceOptions = std::make_unique<QuickNavigationOptions>(localize,
             [this](QuickNavigationOptions::Edit edit) {
+                if (quickFollowsGlobal && globalThemes->CustomSelected()) globalThemes->UseCurrentBinding(themes::Kind::QuickPanel);
                 if (CanEmit() && actions.updateNavigation)
                     actions.updateNavigation(generation, SettingsUpdateMode::PreviewAndCommit, std::move(edit));
             }, cardStyle, true);
@@ -504,17 +509,22 @@ struct PersonalizationPagePresenter::Impl
         InitializeCard(popupThemeCard, cardStyle, themeRoot);
         popupThemeCard.content.Children().Append(collectionPopupThemeRow.root);
         popupThemes = std::make_unique<ThemeLibraryControls>(localize, "popup", false, collectionPopupThemeCombo, 6, 5);
+        collectionPopupThemeRow.controlHost.Content(nullptr); collectionPopupThemeRow.controlHost.Content(popupThemes->SelectionContent());
         popupThemeCard.content.Children().Append(popupThemes->Content());
         popupAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
+                if (popupFollowsGlobal && globalThemes->CustomSelected()) globalThemes->UseCurrentBinding(themes::Kind::Popup);
+                const auto global = currentGlobalAppearance;
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.collectionPopupAppearance.appearance = value; settings.collectionPopupAppearance.customized = true; settings.collectionPopupAppearance.mode = 4; });
+                    [value, global](auto& settings) { themes::EditSurfaceAppearance(settings, false, value, global); });
             });
         popupAppearanceContent.Spacing(8);
         popupCopyComponentRow.Initialize(popupCopyComponent);
+        popupCopyComponentRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         popupCopyComponentToken = popupCopyComponent.Click([this](const auto&, const auto&) {
             if (!CanEmit()) return;
             popupAppearanceEditor->Flush();
+            if (popupFollowsGlobal && globalThemes->CustomSelected()) globalThemes->UseCurrentBinding(themes::Kind::Popup);
             const auto componentAppearance = currentGlobalAppearance;
             EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [componentAppearance](auto& settings) {
                 themes::CopyComponentAppearanceToPopup(settings, componentAppearance);
@@ -536,6 +546,7 @@ struct PersonalizationPagePresenter::Impl
         dockAppearanceRow.Initialize(dockAppearanceCombo);
         dockThemeCard.content.Children().Append(dockAppearanceRow.root);
         dockThemes = std::make_unique<ThemeLibraryControls>(localize, "dock", false, dockAppearanceCombo, 9, 8);
+        dockAppearanceRow.controlHost.Content(nullptr); dockAppearanceRow.controlHost.Content(dockThemes->SelectionContent());
         dockThemeCard.content.Children().Append(dockThemes->Content());
         dockAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
@@ -784,13 +795,34 @@ struct PersonalizationPagePresenter::Impl
                 return true;
             });
         }
+        globalThemes->SetBindingChanged([this](const themes::Theme& theme) { ApplyBoundDraft(theme); });
+        for (auto* form : {quickThemes.get(), popupThemes.get()})
+        {
+            form->SetBoundActions([this](const themes::Theme& theme) {
+                globalThemes->AdoptBinding(theme.kind, theme); PatchInheritedCustom();
+            }, [this](const themes::Theme& theme) {
+                ApplyBoundDraft(theme); globalThemes->AdoptBinding(theme.kind, theme); PatchInheritedCustom();
+            });
+        }
+    }
+    void ApplyBoundDraft(const themes::Theme& theme)
+    {
+        if (!CanEmit() || !globalThemes->CustomSelected()) return;
+        const bool quick = theme.kind == themes::Kind::QuickPanel;
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [quick, appearance = theme.appearance](auto& settings) {
+            auto& binding = quick ? settings.globalQuickNavigationAppearance : settings.globalCollectionPopupAppearance;
+            binding = {4, true, appearance};
+        });
+        if (quick && quickFollowsGlobal && actions.updateNavigation)
+            actions.updateNavigation(generation, SettingsUpdateMode::PreviewAndCommit,
+                [theme](auto& navigation) { themes::ApplyQuickPanel(navigation, theme); });
     }
     bool quickFollowsGlobal = false, popupFollowsGlobal = false;
     void PatchInheritedCustom()
     {
         const bool custom = currentBackgroundPreset == kAppearancePresetCustom && globalThemes->CustomSelected();
-        quickThemes->SetInheritedCustom(custom && quickFollowsGlobal);
-        popupThemes->SetInheritedCustom(custom && popupFollowsGlobal);
+        quickThemes->SetInheritedCustom(custom && quickFollowsGlobal, globalThemes->BoundSource(themes::Kind::QuickPanel));
+        popupThemes->SetInheritedCustom(custom && popupFollowsGlobal, globalThemes->BoundSource(themes::Kind::Popup));
     }
     void RefreshThemes()
     {

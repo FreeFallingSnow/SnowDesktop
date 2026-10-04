@@ -14,6 +14,18 @@ struct AppearanceSections
     bool highlights = true;
     std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander> disclosures;
     void CollapseAll() const { for (auto const& disclosure : disclosures) disclosure.IsExpanded(false); }
+    static void CollapseWithin(const winrt::Microsoft::UI::Xaml::UIElement& element)
+    {
+        namespace c = winrt::Microsoft::UI::Xaml::Controls;
+        if (!element) return;
+        if (auto disclosure = element.try_as<c::Expander>())
+        { disclosure.IsExpanded(false); CollapseWithin(disclosure.Content().try_as<winrt::Microsoft::UI::Xaml::UIElement>()); }
+        else if (auto panel = element.try_as<c::Panel>())
+        { for (auto const& child : panel.Children()) CollapseWithin(child); }
+        else if (auto border = element.try_as<c::Border>()) CollapseWithin(border.Child());
+        else if (auto host = element.try_as<c::ContentControl>())
+            CollapseWithin(host.Content().try_as<winrt::Microsoft::UI::Xaml::UIElement>());
+    }
 
     // Search navigation reveals only the path to its target. Inspect logical
     // content because collapsed Expanders have no realized visual descendants.
