@@ -230,10 +230,10 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
         const auto localPrefix = preview::GalleryPrefix(bridge::ThemeSha256(localRoot.id));
         replacedBothIdentities = request.publishedFileId == 123 && request.managedPreviewPrefix == localPrefix &&
             request.previousManagedPreviewPrefix == managedPrefix &&
-            bridge::ReplaceableThemePreview(request, managedPrefix + "control-panel.png") &&
-            bridge::ReplaceableThemePreview(request, localPrefix + "popup.png") &&
-            !bridge::ReplaceableThemePreview(request, "manual-preview.png") &&
-            !bridge::ReplaceableThemePreview(request, preview::GalleryFilename(bridge::ThemeSha256("unrelated"), "popup")) &&
+            preview::ReplaceableGalleryFilename(managedPrefix + "control-panel.png", request.managedPreviewPrefix, request.previousManagedPreviewPrefix) &&
+            preview::ReplaceableGalleryFilename(localPrefix + "popup.png", request.managedPreviewPrefix, request.previousManagedPreviewPrefix) &&
+            !preview::ReplaceableGalleryFilename("manual-preview.png", request.managedPreviewPrefix, request.previousManagedPreviewPrefix) &&
+            !preview::ReplaceableGalleryFilename(preview::GalleryFilename(bridge::ThemeSha256("unrelated"), "popup"), request.managedPreviewPrefix, request.previousManagedPreviewPrefix) &&
             request.validateStagedPreviews(request.additionalPreviews);
         return bridge::PublishResult{false, 123, false, {}};
     };

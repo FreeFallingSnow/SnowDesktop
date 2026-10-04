@@ -25,13 +25,6 @@
 
 namespace snowdesktop::steam_bridge
 {
-bool ReplaceableThemePreview(const PublishRequest& request, std::string_view filename)
-{
-    return request.contentKind == WorkshopContentKind::Theme &&
-        (themes::preview::ManagedGalleryFilename(filename, request.managedPreviewPrefix) ||
-            (!request.previousManagedPreviewPrefix.empty() &&
-                themes::preview::ManagedGalleryFilename(filename, request.previousManagedPreviewPrefix)));
-}
 namespace
 {
 std::filesystem::path ExecutableDirectory()
@@ -790,7 +783,8 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         }
     }
     for (std::size_t index = previousPreviews.size(); index > 0; --index)
-        if (ReplaceableThemePreview(request, previousPreviews[index - 1]) &&
+        if (themes::preview::ReplaceableGalleryFilename(previousPreviews[index - 1],
+                request.managedPreviewPrefix, request.previousManagedPreviewPrefix) &&
             !ugc->RemoveItemPreview(update, static_cast<uint32>(index - 1)))
         { SetError(error, kSteamOperationFailed, "preview_rejected", "Cannot replace generated theme gallery"); return std::nullopt; }
     for (const auto& image : additionalPreviews)

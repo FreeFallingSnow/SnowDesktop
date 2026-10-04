@@ -37,4 +37,9 @@ inline bool ManagedGalleryFilename(std::string_view name, std::string_view prefi
         if (name == component) return true;
     return false;
 }
+inline bool ReplaceableGalleryFilename(std::string_view name, std::string_view currentPrefix, std::string_view previousPrefix)
+{
+    return ManagedGalleryFilename(name, currentPrefix) ||
+        (!previousPrefix.empty() && ManagedGalleryFilename(name, previousPrefix));
+}
 }

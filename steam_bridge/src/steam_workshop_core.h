@@ -148,7 +148,6 @@ struct PublishResult
 };
 
 using PublishProgressCallback = std::function<void(const PublishProgress&)>;
-bool ReplaceableThemePreview(const PublishRequest& request, std::string_view filename);
 
 class SteamWorkshopCore
 {
