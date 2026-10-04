@@ -264,3 +264,17 @@ whose filenames belong to this local theme ID, preserving unrelated manual
 previews. Temporary old preparations are rejected and regenerated; external theme
 packages retain version 1. Apps without a custom Workshop EULA can continue,
 while Steam's authoritative legal-agreement callbacks still stop submission.
+
+Management groups a local theme and its subscribed version by authored UUID or a
+unique verified publication association. Storage IDs, snapshots and edit permissions
+remain separate. Each merged card offers local/subscribed version selection, which
+applies the chosen version only after the normal appearance transaction succeeds.
+Filtering considers either version's base applicability tags; equal names alone and
+ambiguous counterparts never merge. Subscription provenance stores the original
+package IDs alongside isolated installed IDs. Existing origins missing this mapping
+are enriched on explicit subscription refresh only when a verified matching package
+reconstructs a unique complete material/dependency graph. External package version 1
+is unchanged. A compatible Steam bridge also exposes Open Workshop before Import;
+browsing is independent of upload capabilities and opens the Theme-filtered page.
+Replacing the localized global-binding label preserves the selector's selected index
+so the initial popup/quick-panel choice does not become blank.

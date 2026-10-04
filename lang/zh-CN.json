@@ -2538,5 +2538,9 @@
   "themeLibrary.useLocal": "切换到本地版",
   "themeLibrary.useSubscribed": "切换到工坊订阅版",
   "themeLibrary.localVersion": "本地版",
-  "themeLibrary.subscribedVersion": "工坊订阅版"
+  "themeLibrary.subscribedVersion": "工坊订阅版",
+  "themeLibrary.openWorkshop": "打开创意工坊",
+  "app.dock.pin_current_folder_to_files": "固定当前文件夹到文件区",
+  "app.dock.pin_explorer_to_fixed": "固定文件资源管理器到固定区",
+  "app.dock.explorer_name": "文件资源管理器"
 }

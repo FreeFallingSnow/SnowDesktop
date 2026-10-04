@@ -517,6 +517,7 @@ bool Remove(Library& library, std::string_view id, std::string_view replacement,
     for (auto it = next.workshop.begin(); it != next.workshop.end();)
     {
         it->second.ids.erase(std::string(id));
+        it->second.sourceIds.erase(std::string(id));
         if (it->second.ids.empty()) it = next.workshop.erase(it); else ++it;
     }
     if (!Validate(next.themes, error)) return false;
@@ -564,7 +565,15 @@ std::string EncodeLibrary(const Library& library, std::string& error)
         for (const auto& account : origin.accounts) { if (comma) out += ','; comma = true; out += Quote(account); }
         out += "],\"ids\":["; comma = false;
         for (const auto& id : origin.ids) { if (comma) out += ','; comma = true; out += Quote(id); }
-        out += "]}";
+        out += "],\"sourceIds\":{"; comma = false;
+        std::set<std::string> authoredIds;
+        for (const auto& [installed, authored] : origin.sourceIds)
+        {
+            if (!origin.ids.contains(installed) || !Id(authored) || authored.starts_with("builtin/") ||
+                !authoredIds.insert(authored).second) return {};
+            if (comma) out += ','; comma = true; out += Quote(installed) + ':' + Quote(authored);
+        }
+        out += "}}";
     }
     out += "},\"subscriptionAccounts\":{"; first = true;
     for (const auto& [account, items] : library.subscriptionAccounts)
@@ -638,6 +647,18 @@ bool DecodeLibrary(std::string_view text, Library& library, std::string& error)
                 !readSet(value.Find("accounts"), origin.accounts, false) || !readSet(value.Find("ids"), origin.ids, true))
                 return Fail(error, "invalidPackage");
             for (const auto& id : origin.ids) if (!Resolve(out.themes, id)) return Fail(error, "invalidPackage");
+            if (const auto* sources = value.Find("sourceIds"))
+            {
+                if (!sources->IsObject() || sources->object.size() > origin.ids.size()) return Fail(error, "invalidPackage");
+                std::set<std::string> authoredIds;
+                for (const auto& [installed, authored] : sources->object)
+                {
+                    if (!origin.ids.contains(installed) || !authored.IsString() || !Id(authored.string) ||
+                        authored.string.starts_with("builtin/") || !authoredIds.insert(authored.string).second)
+                        return Fail(error, "invalidPackage");
+                    origin.sourceIds.emplace(installed, authored.string);
+                }
+            }
             out.workshop.emplace(item, std::move(origin));
         }
     }

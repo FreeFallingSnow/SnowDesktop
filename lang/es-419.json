@@ -2538,5 +2538,9 @@
   "themeLibrary.useLocal": "Cambiar a la versión local",
   "themeLibrary.useSubscribed": "Cambiar a la versión suscrita",
   "themeLibrary.localVersion": "Versión local",
-  "themeLibrary.subscribedVersion": "Versión suscrita"
+  "themeLibrary.subscribedVersion": "Versión suscrita",
+  "themeLibrary.openWorkshop": "Abrir Workshop",
+  "app.dock.pin_current_folder_to_files": "Fijar carpeta actual en el área de archivos",
+  "app.dock.pin_explorer_to_fixed": "Fijar el Explorador de archivos en el área de elementos fijados",
+  "app.dock.explorer_name": "Explorador de archivos"
 }

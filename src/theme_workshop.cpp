@@ -37,13 +37,54 @@ bool Final(std::string_view output, JsonValue& value)
     }
     return found;
 }
+std::map<std::string, std::string> RecoverSourceIds(const Library& library,
+    const Library::WorkshopOrigin& origin, const Package& source)
+{
+    // A matching verified package hash is required by the caller. Reconstruct
+    // only a unique, complete graph with identical material and dependency edges.
+    std::map<std::string, std::string> installed;
+    std::set<std::string> used;
+    for (const auto kind : {Kind::QuickPanel, Kind::Popup, Kind::Global})
+        for (const auto& [authoredId, authored] : source)
+        {
+            if (Builtin(authoredId) || authored.kind != kind) continue;
+            std::string match;
+            for (const auto& id : origin.ids)
+            {
+                const auto saved = Find(library.themes, id);
+                if (!saved || used.contains(id) || saved->kind != authored.kind || saved->scopes != authored.scopes ||
+                    saved->name != authored.name || saved->appearance != authored.appearance ||
+                    saved->layout != authored.layout || saved->colors != authored.colors) continue;
+                const auto binding = [&](const std::string& key) {
+                    if (key.empty() || Builtin(key)) return key;
+                    const auto found = installed.find(key);
+                    return found == installed.end() ? std::string{} : found->second;
+                };
+                if (saved->quickPanel != binding(authored.quickPanel) || saved->popup != binding(authored.popup)) continue;
+                if (!match.empty()) return {};
+                match = id;
+            }
+            if (match.empty()) return {};
+            installed.emplace(authoredId, match); used.insert(match);
+        }
+    if (used != origin.ids) return {};
+    std::map<std::string, std::string> result;
+    for (const auto& [authored, id] : installed) result.emplace(id, authored);
+    return result;
+}
+}
+bool BridgeCapabilities(std::string_view configuration, std::string_view hostVersion)
+{
+    JsonValue json;
+    return Final(configuration, json) && Boolean(json, "ok") && Boolean(json, "steamworksCompiled") &&
+        Number(json, "protocolVersion") == 1 && Number(json, "expectedAppId") == kSnowDesktopSteamAppId &&
+        String(json, "version") == hostVersion;
 }
 bool Capabilities(std::string_view configuration, std::string_view hostVersion)
 {
     JsonValue json;
-    if (!Final(configuration, json) || !Boolean(json, "ok") || !Boolean(json, "steamworksCompiled") ||
-        Number(json, "protocolVersion") != 1 || Number(json, "expectedAppId") != kSnowDesktopSteamAppId ||
-        Number(json, "themeWorkflowProtocolVersion") != 1 || String(json, "version") != hostVersion) return false;
+    if (!BridgeCapabilities(configuration, hostVersion) || !Final(configuration, json) ||
+        Number(json, "themeWorkflowProtocolVersion") != 1) return false;
     const auto* capabilities = json.Find("capabilities");
     const auto has = [&](std::string_view key) { return capabilities && capabilities->IsArray() &&
         std::any_of(capabilities->array.begin(), capabilities->array.end(),
@@ -53,8 +94,14 @@ bool Capabilities(std::string_view configuration, std::string_view hostVersion)
 }
 bool Available(const std::filesystem::path& bridge, std::string_view hostVersion)
 {
+    bool sharing = false; (void)Availability(bridge, hostVersion, sharing); return sharing;
+}
+bool Availability(const std::filesystem::path& bridge, std::string_view hostVersion, bool& sharing)
+{
+    sharing = false;
     std::string output, error;
-    return steam_bridge::ThemeSafePath(bridge) && preview::Run(bridge, {L"configuration"}, output, 3000, error) && Capabilities(output, hostVersion);
+    if (!steam_bridge::ThemeSafePath(bridge) || !preview::Run(bridge, {L"configuration"}, output, 3000, error)) return false;
+    sharing = Capabilities(output, hostVersion); return BridgeCapabilities(output, hostVersion);
 }
 bool CopyLocal(Library& library, std::string_view id, std::string& savedId, std::string& error, const NewId& newId)
 {
@@ -178,7 +225,10 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
         const auto previous = next.workshop.find(download.item);
         if (previous != next.workshop.end() && previous->second.owner != download.owner) return Fail(error, "authorMismatch");
         if (previous != next.workshop.end() && previous->second.sha256 == download.sha256)
-        { previous->second.accounts.insert(snapshot.account); continue; }
+        {
+            if (previous->second.sourceIds.empty()) previous->second.sourceIds = RecoverSourceIds(next, previous->second, download.package);
+            previous->second.accounts.insert(snapshot.account); continue;
+        }
         // Subscription identities must never alias editable local publications,
         // even when their downloaded package is byte-for-byte identical.
         Package isolated;
@@ -202,8 +252,9 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
         std::map<std::string, std::string> mapping;
         if (!Import(next, isolated, mapping, error, newId)) return false;
         auto& origin = next.workshop[download.item]; origin.owner = download.owner; origin.sha256 = download.sha256;
-        origin.accounts.insert(snapshot.account); origin.ids.clear();
+        origin.accounts.insert(snapshot.account); origin.ids.clear(); origin.sourceIds.clear();
         for (const auto& [from, to] : mapping) { (void)from; if (!Builtin(to)) origin.ids.insert(to); }
+        for (const auto& [authored, isolatedId] : remap) origin.sourceIds.emplace(mapping.at(isolatedId), authored);
         // Changed content receives new identities. Already bound/active old
         // identities remain local with their immutable last-success snapshots.
     }

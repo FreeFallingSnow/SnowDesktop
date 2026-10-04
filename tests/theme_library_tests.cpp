@@ -495,6 +495,47 @@ int RunThemeLibraryTests()
             "multiple editable copies of one item require explicit selection rather than guessing a version");
     }
     {
+        using namespace winui::theme_controls;
+        Library paired; Package authored = children; authored.emplace(global.id,global);
+        paired.themes = authored;
+        std::map<std::string,std::string> remoteIds;
+        for (const auto& [id,theme] : authored) { (void)theme; remoteIds[id] = id + "-subscription"; }
+        for (auto [id,theme] : authored)
+        {
+            theme.id = remoteIds.at(id); theme.name += " Updated";
+            if (remoteIds.contains(theme.quickPanel)) theme.quickPanel = remoteIds.at(theme.quickPanel);
+            if (remoteIds.contains(theme.popup)) theme.popup = remoteIds.at(theme.popup);
+            paired.themes.emplace(theme.id,theme);
+            paired.workshop["456"].ids.insert(theme.id); paired.workshop["456"].sourceIds.emplace(theme.id,id);
+        }
+        const auto grouped = ManagementEntries(paired,{}, {},FilterTab::All);
+        check(paired.themes.size() == 6 && grouped.size() == 3 &&
+            std::all_of(grouped.begin(),grouped.end(),[&](const auto& theme){return authored.contains(theme.id);}),
+            "six local and subscribed nodes become three management cards using authored UUID, even when remote names differ");
+        check(Select(paired,"popup",remoteIds.at(popup.id),Kind::Popup,All,error),"subscription version can be explicitly selected");
+        const auto activePopup = ManagementEntries(paired,{}, {},FilterTab::Popup);
+        check(activePopup.size() == 1 && activePopup.front().id == remoteIds.at(popup.id),
+            "merged card initially shows the currently applied subscribed version");
+        const auto localPopup = ManagementEntries(paired,{}, {{popup.id,popup.id}},FilterTab::Popup);
+        check(localPopup.size() == 1 && localPopup.front().id == popup.id && paired.references.at("popup").id == remoteIds.at(popup.id),
+            "viewing a preferred local card never rewrites the active library reference");
+        auto& updatedRemote = paired.themes.at(remoteIds.at(global.id)); updatedRemote.scopes = Dock;
+        updatedRemote.quickPanel.clear(); updatedRemote.popup.clear();
+        const auto globalCard = ManagementEntries(paired,{}, {{global.id,updatedRemote.id}},FilterTab::Global);
+        check(globalCard.size() == 1 && globalCard.front().id == updatedRemote.id &&
+            ManagementEntries(paired,{}, {},FilterTab::StatusBar).size() == 1,
+            "scope changes do not split the UUID pair, and base-tag filtering finds either version's applicability");
+        auto unrelated = popup; unrelated.id = "theme/same-name-unrelated";
+        paired.themes.emplace(unrelated.id,unrelated);
+        check(ManagementEntries(paired,{}, {},FilterTab::Popup).size() == 2,
+            "same-name independent themes remain separate management cards");
+        auto duplicate = paired.themes.at(remoteIds.at(popup.id)); duplicate.id = "theme/second-subscription";
+        paired.themes.emplace(duplicate.id,duplicate); paired.workshop["789"].ids.insert(duplicate.id);
+        paired.workshop["789"].sourceIds.emplace(duplicate.id,popup.id);
+        check(VersionCounterpart(paired,{},popup).empty() && ManagementEntries(paired,{}, {},FilterTab::Popup).size() == 4,
+            "ambiguous multiple subscription counterparts stay separate instead of choosing an editing target");
+    }
+    {
         auto rgbaPackage = children;
         rgbaPackage.emplace(global.id, global);
         rgbaPackage.at(quick.id).colors["resultBorder"] = "#FF000080";

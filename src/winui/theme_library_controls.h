@@ -53,6 +53,7 @@ public:
         if (transfer_) root_.Children().InsertAt(1, commands_);
         if (transfer_)
         {
+            AddCommand(ThemeLibraryCommand::OpenWorkshop, "themeLibrary.openWorkshop");
             AddCommand(ThemeLibraryCommand::Import, "themeLibrary.import");
             AddCommand(ThemeLibraryCommand::SyncSubscriptions, "themeLibrary.sync");
         }
@@ -153,7 +154,15 @@ public:
             auto label = L("themeLibrary.globalBinding"); const auto at = label.find(L"{0}");
             if (at != std::wstring::npos) label.replace(at, 3, name);
             const bool syncing = syncing_; syncing_ = true;
-            choice_.Items().SetAt(0, winrt::box_value(label)); syncing_ = syncing;
+            auto selected = choice_.SelectedIndex();
+            if (selected < 0 && nativeIndex_ >= 0 && nativeIndex_ < modeCount_) selected = nativeIndex_;
+            if (winrt::unbox_value_or<winrt::hstring>(choice_.Items().GetAt(0), winrt::hstring{}) != winrt::hstring(label))
+            {
+                choice_.Items().SetAt(0, winrt::box_value(label));
+            }
+            // Replacing the selected WinUI item clears the selection.
+            choice_.SelectedIndex(selected);
+            syncing_ = syncing;
         }
         const bool before = inheritedCustom_;
         inheritedCustom_ = value;
@@ -259,7 +268,7 @@ public:
     {
         if (!action_ || !generation_ || closed_) return;
         const auto result = action_(generation_, {});
-        if (result.succeeded) { library_ = result.library; sharing_ = result.sharingAvailable; publishedUrls_ = result.publishedUrls; RefreshChoices(); }
+        if (result.succeeded) { library_ = result.library; sharing_ = result.sharingAvailable; workshop_ = result.workshopAvailable; publishedUrls_ = result.publishedUrls; RefreshChoices(); }
         else Feedback(result);
     }
     void Reveal() const { if (transfer_) return; AppearanceSections::RevealWithin(saveRoot_, name_); }
@@ -302,7 +311,7 @@ public:
 private:
     Localize localize_;
     std::string target_;
-    bool transfer_ = false, syncing_ = false, busy_ = false, sharing_ = false, closed_ = false;
+    bool transfer_ = false, syncing_ = false, busy_ = false, sharing_ = false, workshop_ = false, closed_ = false;
     int modeCount_ = 0, customIndex_ = -1, nativeIndex_ = -1;
     std::optional<themes::Theme> current_;
     std::uint64_t generation_ = 0;
@@ -314,6 +323,7 @@ private:
     std::shared_ptr<std::atomic_bool> alive_ = std::make_shared<std::atomic_bool>(true);
     themes::Library library_;
     std::map<std::string, std::string> publishedUrls_;
+    std::map<std::string, std::string> managementVersions_;
     std::vector<themes::Theme> choices_, quickChoices_, popupChoices_;
     c::StackPanel root_, saveRoot_, saveBody_{nullptr};
     c::TextBlock saveTitle_{nullptr};
@@ -415,9 +425,7 @@ private:
         choices_.clear();
         if (transfer_)
         {
-            for (const auto& [id, theme] : library_.themes)
-                if (!themes::Builtin(id) && MatchesFilter(theme, filter_)) choices_.push_back(theme);
-            std::stable_sort(choices_.begin(), choices_.end(), [](auto const& a, auto const& b) { return a.name < b.name; });
+            choices_ = ManagementEntries(library_, publishedUrls_, managementVersions_, filter_);
         }
         else
         {
@@ -507,11 +515,16 @@ private:
         editButton_.IsEnabled(!busy_);
         for (auto& button : buttons_)
         {
-            const bool independent = button.command == ThemeLibraryCommand::Import || button.command == ThemeLibraryCommand::SyncSubscriptions ||
+            const bool independent = button.command == ThemeLibraryCommand::OpenWorkshop || button.command == ThemeLibraryCommand::Import || button.command == ThemeLibraryCommand::SyncSubscriptions ||
                 (button.command == ThemeLibraryCommand::Preview && (target_ == "dock" || target_ == "taskbar"));
             button.control.IsEnabled(!busy_ && (independent || (button.command == ThemeLibraryCommand::Remove ? custom : selected != nullptr)));
             if (button.command == ThemeLibraryCommand::Share || button.command == ThemeLibraryCommand::SyncSubscriptions)
                 button.control.Visibility(sharing_ ? x::Visibility::Visible : x::Visibility::Collapsed);
+            if (button.command == ThemeLibraryCommand::OpenWorkshop)
+            {
+                button.control.Visibility(workshop_ ? x::Visibility::Visible : x::Visibility::Collapsed);
+                button.control.IsEnabled(!busy_ && workshop_);
+            }
         }
         for (auto& button : cardCommands_)
         {
@@ -571,18 +584,29 @@ private:
         line(tags);
         bool installed = false;
         for (const auto& [item, origin] : library_.workshop) { (void)item; if (origin.ids.contains(theme.id)) installed = true; }
+        if (const auto other = OtherVersion(theme); !other.empty())
+        {
+            const auto counterpart = themes::Find(library_.themes, other);
+            if (counterpart && OtherVersion(*counterpart) == theme.id)
+            {
+                c::ComboBox version; version.HorizontalAlignment(x::HorizontalAlignment::Left);
+                version.Items().Append(winrt::box_value(L("themeLibrary.localVersion")));
+                version.Items().Append(winrt::box_value(L("themeLibrary.subscribedVersion")));
+                version.SelectedIndex(installed ? 1 : 0);
+                const auto local = installed ? other : theme.id, remote = installed ? theme.id : other;
+                const auto token = version.SelectionChanged([this, version, local, remote](const auto&, const auto&) {
+                    if (syncing_ || busy_ || closed_) return;
+                    const auto index = version.SelectedIndex();
+                    if (index >= 0) Run(ThemeLibraryCommand::Apply, index == 0 ? local : remote);
+                });
+                entry.Children().Append(version);
+                cardRevoke_.push_back([version, token] { version.SelectionChanged(token); });
+            }
+        }
         line(L(installed ? "themeLibrary.installedSource" : "themeLibrary.localSource"));
         for (auto [id, key] : {std::pair{theme.quickPanel, "themeLibrary.quickPanel"}, {theme.popup, "themeLibrary.popup"}})
             if (!id.empty()) if (auto child = themes::Resolve(library_.themes, id)) line(L(key) + L"：" + std::wstring(winrt::to_hstring(child->name).c_str()));
         c::CommandBar actions; actions.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
-        if (const auto other = OtherVersion(theme); !other.empty())
-        {
-            c::AppBarButton version; version.Label(L(installed ? "themeLibrary.useLocal" : "themeLibrary.useSubscribed"));
-            const auto token = version.Click([this, other](const auto&, const auto&) { Run(ThemeLibraryCommand::Apply, other); });
-            actions.SecondaryCommands().Append(version);
-            cardRevoke_.push_back([version, token] { version.Click(token); });
-            cardCommands_.push_back({ThemeLibraryCommand::Apply, other, version});
-        }
         if (const auto found = publishedUrls_.find(theme.id); found != publishedUrls_.end())
         {
             c::AppBarButton link; link.Label(L("themeLibrary.workshopPage"));
@@ -635,6 +659,13 @@ private:
         c::AppBarButton button; button.Label(L(key));
         (secondary ? commands_.SecondaryCommands() : commands_.PrimaryCommands()).Append(button);
         const auto token = button.Click([this, command](const auto&, const auto&) {
+            if (command == ThemeLibraryCommand::OpenWorkshop)
+            {
+                if (!closed_ && !busy_ && workshop_)
+                    (void)winrt::Windows::System::Launcher::LaunchUriAsync(winrt::Windows::Foundation::Uri(
+                        L"https://steamcommunity.com/workshop/browse/?appid=5080330&browsesort=trend&section=readytouseitems&requiredtags%5B0%5D=Theme"));
+                return;
+            }
             Run(command);
         });
         revoke_.push_back([button, token] { button.Click(token); }); buttons_.push_back({command, key, button});
@@ -790,7 +821,7 @@ private:
                 if (!alive->load()) return;
                 busy_ = false; PatchButtons();
                 if (generation != generation_) return;
-                if (result.succeeded) { library_ = result.library; sharing_ = result.sharingAvailable; publishedUrls_ = result.publishedUrls; RefreshChoices(); if (changed_) changed_(); }
+                if (result.succeeded) { library_ = result.library; sharing_ = result.sharingAvailable; workshop_ = result.workshopAvailable; publishedUrls_ = result.publishedUrls; RefreshChoices(); if (changed_) changed_(); }
                 Feedback(result);
             });
             return;
@@ -798,10 +829,15 @@ private:
         const auto result = action_(generation_, request);
         if (result.succeeded)
         {
-            library_ = result.library; sharing_ = result.sharingAvailable;
+            library_ = result.library; sharing_ = result.sharingAvailable; workshop_ = result.workshopAvailable; publishedUrls_ = result.publishedUrls;
             if (command == ThemeLibraryCommand::Apply)
             {
-                if (auto applied = themes::Resolve(library_.themes, request.id)) current_ = *applied;
+                if (auto applied = themes::Resolve(library_.themes, request.id))
+                {
+                    current_ = *applied;
+                    if (transfer_) if (const auto other = OtherVersion(*applied); !other.empty())
+                        managementVersions_[Subscribed(applied->id) ? other : applied->id] = applied->id;
+                }
                 nativeIndex_ = customIndex_; edit_.Reset(); boundSources_.clear(); editing_ = false;
             }
             RefreshChoices();

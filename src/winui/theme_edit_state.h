@@ -1,5 +1,6 @@
 #pragma once
 #include "../theme_library.h"
+#include <algorithm>
 
 namespace snowdesktop::winui::theme_controls
 {
@@ -35,30 +36,68 @@ inline std::string VersionCounterpart(const themes::Library& library,
         for (const auto& [item, origin] : library.workshop) { (void)item; if (origin.ids.contains(id)) return true; }
         return false;
     };
-    std::string item;
-    for (const auto& [key, origin] : library.workshop) if (origin.ids.contains(theme.id)) item = key;
-    const bool installed = !item.empty();
-    if (item.empty())
+    std::set<std::string> matches;
+    const auto add = [&](const std::string& id) {
+        const auto candidate = themes::Find(library.themes, id);
+        if (id != theme.id && candidate && candidate->kind == theme.kind) matches.insert(id);
+    };
+    for (const auto& [item, origin] : library.workshop)
     {
-        const auto url = urls.find(theme.id); if (url == urls.end()) return {};
-        constexpr std::string_view prefix = "https://steamcommunity.com/sharedfiles/filedetails/?id=";
-        if (!url->second.starts_with(prefix)) return {};
-        item = url->second.substr(prefix.size());
-    }
-    const auto origin = library.workshop.find(item); if (origin == library.workshop.end()) return {};
-    std::string match;
-    for (const auto& [id, candidate] : library.themes)
-    {
-        if (id == theme.id || candidate.kind != theme.kind || candidate.scopes != theme.scopes) continue;
-        bool pair = !installed && origin->second.ids.contains(id);
-        if (installed && !subscribed(id))
+        const auto url = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item;
+        if (origin.ids.contains(theme.id))
         {
-            const auto url = urls.find(id);
-            pair = url != urls.end() && url->second == "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item;
+            if (const auto source = origin.sourceIds.find(theme.id); source != origin.sourceIds.end() && !subscribed(source->second)) add(source->second);
+            for (const auto& [id, address] : urls) if (!subscribed(id) && address == url) add(id);
         }
-        if (pair) { if (!match.empty()) return {}; match = id; }
+        else if (!subscribed(theme.id))
+        {
+            for (const auto& [id, authored] : origin.sourceIds) if (authored == theme.id) add(id);
+            if (const auto address = urls.find(theme.id); address != urls.end() && address->second == url)
+                for (const auto& id : origin.ids) add(id);
+        }
     }
-    return match;
+    return matches.size() == 1 ? *matches.begin() : std::string{};
+}
+inline std::vector<themes::Theme> ManagementEntries(const themes::Library& library,
+    const std::map<std::string, std::string>& urls, const std::map<std::string, std::string>& versions, FilterTab filter)
+{
+    const auto subscribed = [&](const std::string& id) {
+        for (const auto& [item, origin] : library.workshop) { (void)item; if (origin.ids.contains(id)) return true; }
+        return false;
+    };
+    const auto active = [&](const std::string& id) {
+        for (const auto& [target, reference] : library.references)
+        {
+            (void)target;
+            if (reference.id == id) return true;
+            if (const auto root = themes::Find(reference.snapshot, reference.id); root && (root->quickPanel == id || root->popup == id)) return true;
+        }
+        return false;
+    };
+    std::set<std::string> seen;
+    std::vector<themes::Theme> entries;
+    for (const auto& [id, theme] : library.themes)
+    {
+        if (themes::Builtin(id) || seen.contains(id)) continue;
+        const auto otherId = VersionCounterpart(library, urls, theme);
+        const auto other = themes::Find(library.themes, otherId);
+        const bool paired = other && VersionCounterpart(library, urls, *other) == id;
+        seen.insert(id); if (paired) seen.insert(otherId);
+        if (!MatchesFilter(theme, filter) && (!paired || !MatchesFilter(*other, filter))) continue;
+        const themes::Theme* chosen = &theme;
+        if (paired)
+        {
+            const auto local = subscribed(id) ? other : &theme;
+            const auto remote = subscribed(id) ? &theme : other;
+            chosen = local;
+            if (const auto preferred = versions.find(local->id); preferred != versions.end())
+            { if (preferred->second == remote->id) chosen = remote; }
+            else if (active(remote->id) && !active(local->id)) chosen = remote;
+        }
+        entries.push_back(*chosen);
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+    return entries;
 }
 
 struct EditSource

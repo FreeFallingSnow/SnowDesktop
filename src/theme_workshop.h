@@ -6,7 +6,9 @@
 namespace snowdesktop::themes::workshop
 {
 bool Capabilities(std::string_view configuration, std::string_view hostVersion);
+bool BridgeCapabilities(std::string_view configuration, std::string_view hostVersion);
 bool Available(const std::filesystem::path& bridge, std::string_view hostVersion);
+bool Availability(const std::filesystem::path& bridge, std::string_view hostVersion, bool& sharing);
 bool CopyLocal(Library&, std::string_view id, std::string& savedId, std::string& error, const NewId& = CreateId);
 bool Bind(const std::filesystem::path& bridge, const std::filesystem::path& data, const Theme&,
     std::string_view item, std::string& error, const std::atomic_bool* cancel = nullptr);

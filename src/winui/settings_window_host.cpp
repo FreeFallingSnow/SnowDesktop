@@ -421,7 +421,8 @@ struct SettingsWindowHost::Impl
     {
         if (themeTask != task) return;
         ThemeLibraryResult result;
-        result.succeeded = success; result.sharingAvailable = ThemeSharingAvailable();
+        result.succeeded = success;
+        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), SNOWDESKTOP_VERSION, result.sharingAvailable);
         std::string ignored;
         if (!themes::Load(themes::LibraryPath(), result.library, ignored))
         { result.succeeded = false; if (error.empty()) error = ignored; }
@@ -2572,7 +2573,7 @@ struct SettingsWindowHost::Impl
     ThemeLibraryResult ThemeOperation(std::uint64_t generation, const ThemeLibraryRequest& request)
     {
         ThemeLibraryResult result;
-        result.sharingAvailable = ThemeSharingAvailable();
+        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), SNOWDESKTOP_VERSION, result.sharingAvailable);
         if (!controller || !controller->IsGenerationCurrent(generation)) return result;
         const auto current = controller->Snapshot();
         if (!current || current->externalReplacementPending) return result;

@@ -2538,5 +2538,9 @@
   "themeLibrary.useLocal": "Switch to local version",
   "themeLibrary.useSubscribed": "Switch to subscribed version",
   "themeLibrary.localVersion": "Local version",
-  "themeLibrary.subscribedVersion": "Subscribed version"
+  "themeLibrary.subscribedVersion": "Subscribed version",
+  "themeLibrary.openWorkshop": "Open Workshop",
+  "app.dock.pin_current_folder_to_files": "Pin Current Folder to File Area",
+  "app.dock.pin_explorer_to_fixed": "Pin File Explorer to Pinned Area",
+  "app.dock.explorer_name": "File Explorer"
 }

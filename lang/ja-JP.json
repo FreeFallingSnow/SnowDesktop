@@ -2538,5 +2538,9 @@
   "themeLibrary.useLocal": "ローカル版に切り替え",
   "themeLibrary.useSubscribed": "サブスクライブ版に切り替え",
   "themeLibrary.localVersion": "ローカル版",
-  "themeLibrary.subscribedVersion": "サブスクライブ版"
+  "themeLibrary.subscribedVersion": "サブスクライブ版",
+  "themeLibrary.openWorkshop": "ワークショップを開く",
+  "app.dock.pin_current_folder_to_files": "現在のフォルダーをファイル領域に固定",
+  "app.dock.pin_explorer_to_fixed": "エクスプローラーを固定領域に固定",
+  "app.dock.explorer_name": "エクスプローラー"
 }

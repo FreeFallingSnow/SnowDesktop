@@ -2538,5 +2538,9 @@
   "themeLibrary.useLocal": "切換至本機版本",
   "themeLibrary.useSubscribed": "切換至工作坊訂閱版本",
   "themeLibrary.localVersion": "本機版本",
-  "themeLibrary.subscribedVersion": "工作坊訂閱版本"
+  "themeLibrary.subscribedVersion": "工作坊訂閱版本",
+  "themeLibrary.openWorkshop": "開啟工作坊",
+  "app.dock.pin_current_folder_to_files": "將目前資料夾釘選至檔案區",
+  "app.dock.pin_explorer_to_fixed": "將檔案總管釘選至固定區",
+  "app.dock.explorer_name": "檔案總管"
 }

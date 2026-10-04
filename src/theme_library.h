@@ -49,6 +49,8 @@ struct Library
     {
         std::string owner, sha256;
         std::set<std::string> accounts, ids;
+        // Installed snapshot ID -> authored package ID. Storage IDs remain isolated.
+        std::map<std::string, std::string> sourceIds;
     };
     std::map<std::string, WorkshopOrigin> workshop;
     std::map<std::string, std::set<std::string>> subscriptionAccounts;

@@ -2538,5 +2538,9 @@
   "themeLibrary.useLocal": "Passer à la version locale",
   "themeLibrary.useSubscribed": "Passer à la version abonnée",
   "themeLibrary.localVersion": "Version locale",
-  "themeLibrary.subscribedVersion": "Version abonnée"
+  "themeLibrary.subscribedVersion": "Version abonnée",
+  "themeLibrary.openWorkshop": "Ouvrir le Workshop",
+  "app.dock.pin_current_folder_to_files": "Épingler le dossier actuel dans la zone de fichiers",
+  "app.dock.pin_explorer_to_fixed": "Épingler l’Explorateur de fichiers dans la zone des éléments épinglés",
+  "app.dock.explorer_name": "Explorateur de fichiers"
 }

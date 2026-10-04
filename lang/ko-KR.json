@@ -2538,5 +2538,9 @@
   "themeLibrary.useLocal": "로컬 버전으로 전환",
   "themeLibrary.useSubscribed": "구독 버전으로 전환",
   "themeLibrary.localVersion": "로컬 버전",
-  "themeLibrary.subscribedVersion": "구독 버전"
+  "themeLibrary.subscribedVersion": "구독 버전",
+  "themeLibrary.openWorkshop": "창작마당 열기",
+  "app.dock.pin_current_folder_to_files": "현재 폴더를 파일 영역에 고정",
+  "app.dock.pin_explorer_to_fixed": "파일 탐색기를 고정 영역에 고정",
+  "app.dock.explorer_name": "파일 탐색기"
 }

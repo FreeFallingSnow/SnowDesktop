@@ -34,6 +34,13 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     const std::string alphaCapability = ",\"workshop.theme.color-alpha.v1\"";
     missingAlphaCapability.erase(missingAlphaCapability.find(alphaCapability), alphaCapability.size());
     check(!workshop::Capabilities(missingAlphaCapability,"1"), "bridges without RGBA parsing cannot offer incompatible theme sharing");
+    check(workshop::BridgeCapabilities(missingAlphaCapability,"1") && !workshop::BridgeCapabilities(current,"2"),
+        "opening Workshop needs a compatible Steam bridge independently of theme upload capabilities");
+    const std::string compiledField = "\"steamworksCompiled\":true";
+    auto portableBridge = current; portableBridge.replace(portableBridge.find(compiledField), compiledField.size(), "\"steamworksCompiled\":false");
+    check(!workshop::BridgeCapabilities(portableBridge,"1") && !workshop::BridgeCapabilities("{}","1") &&
+        !workshop::BridgeCapabilities(current + "\n{\"ok\":false}\n","1"),
+        "unavailable, SDK-free and terminally failed bridges do not expose the Workshop entry");
     Theme root = Capture(Kind::Global,MakeAppearancePreset(kAppearancePresetDark)); root.id = "theme/workshop-root"; root.name = "Demo";
     root.quickPanel = "builtin/quickpanel/dark"; root.popup = "builtin/popup/dark";
     Package package{{root.id,root}};
@@ -294,6 +301,44 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
         !sameLocal.workshop.at("123").ids.contains(root.id) && !sameLocal.workshop.at("123").ids.contains(root.quickPanel) &&
         !sameLocal.workshop.at("123").ids.contains(root.popup),
         "subscribing to an identical authored package never turns the editable local root or children into subscriptions");
+    const auto isolatedId = *sameLocal.workshop.at("123").ids.begin();
+    check(sameLocal.workshop.at("123").sourceIds.at(isolatedId) == root.id,
+        "isolated subscription retains authored UUID for management grouping without aliasing local data");
+    Library groupedReload;
+    check(DecodeLibrary(EncodeLibrary(sameLocal,error),groupedReload,error) &&
+        groupedReload.workshop.at("123").sourceIds == sameLocal.workshop.at("123").sourceIds,
+        "authored UUID mapping round-trips through the production local library codec");
+    bridge::JsonValue legacyOrigins; check(bridge::ParseJson(EncodeLibrary(sameLocal,error),legacyOrigins), "origin fixture is valid JSON");
+    legacyOrigins.object["workshop"].object["123"].object.erase("sourceIds");
+    Library legacyLibrary;
+    check(DecodeLibrary(bridge::WriteJson(legacyOrigins),legacyLibrary,error) && legacyLibrary.workshop.at("123").sourceIds.empty(),
+        "existing libraries without original identity mapping remain readable without changing theme package format");
+    const auto legacyThemes = EncodePackage(legacyLibrary.themes,error);
+    check(workshop::Reconcile(legacyLibrary,snapshot,error) && legacyLibrary.workshop.at("123").sourceIds.at(isolatedId) == root.id &&
+        EncodePackage(legacyLibrary.themes,error) == legacyThemes,
+        "refresh restores missing origin mapping from a matching verified package without rewriting any theme values or IDs");
+    auto incompatibleLegacy = sameLocal; incompatibleLegacy.workshop.at("123").sourceIds.clear();
+    incompatibleLegacy.themes.at(isolatedId).appearance.widgetAlpha = .321f;
+    check(workshop::Reconcile(incompatibleLegacy,snapshot,error) && incompatibleLegacy.workshop.at("123").sourceIds.empty(),
+        "legacy provenance is not guessed when the installed material differs from the verified source");
+    auto malformedOrigin = legacyOrigins;
+    auto identityMap = bridge::JsonValue::Object(); identityMap.object[isolatedId] = bridge::JsonValue::String("builtin/popup/dark");
+    malformedOrigin.object["workshop"].object["123"].object["sourceIds"] = identityMap;
+    const auto beforeMalformedOrigin = EncodeLibrary(groupedReload,error);
+    check(!DecodeLibrary(bridge::WriteJson(malformedOrigin),groupedReload,error) && EncodeLibrary(groupedReload,error) == beforeMalformedOrigin,
+        "malformed original identity cannot replace a valid library");
+    auto graphRoot = root; graphRoot.quickPanel = customQuick.id; graphRoot.popup = customPopup.id;
+    Package authoredGraph{{graphRoot.id,graphRoot},{customQuick.id,customQuick},{customPopup.id,customPopup}};
+    auto graphSnapshot = snapshot; graphSnapshot.downloads.front().package = authoredGraph;
+    graphSnapshot.downloads.front().sha256 = bridge::ThemeSha256(EncodePackage(authoredGraph,error));
+    Library graphLibrary; graphLibrary.themes = authoredGraph;
+    check(workshop::Reconcile(graphLibrary,graphSnapshot,error) && graphLibrary.workshop.at("123").sourceIds.size() == 3,
+        "a global package retains all three authored identities while isolating every subscribed node");
+    const auto graphIds = graphLibrary.workshop.at("123").sourceIds;
+    graphLibrary.workshop.at("123").sourceIds.clear(); const auto beforeGraphRecovery = EncodePackage(graphLibrary.themes,error);
+    check(workshop::Reconcile(graphLibrary,graphSnapshot,error) && graphLibrary.workshop.at("123").sourceIds == graphIds &&
+        EncodePackage(graphLibrary.themes,error) == beforeGraphRecovery,
+        "legacy graph recovery verifies child edges and restores the complete global, popup and quick-panel identity map atomically");
     const auto originalSnapshot=EncodePackage(library.references.at("global").snapshot,error);
     auto edited=library.themes.at(installed); edited.appearance.widgetAlpha=.3f; std::string local;
     check(Save(library,edited,{},true,local,error,[]{return "theme/local-copy";}) && local!=installed && library.themes.at(installed).appearance.widgetAlpha!=.3f, "editing subscribed theme saves a local copy");
