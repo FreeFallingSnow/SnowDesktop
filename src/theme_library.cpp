@@ -1,4 +1,5 @@
 #include "theme_library.h"
+#include "rgba_color.h"
 
 #include <objbase.h>
 #include <fstream>
@@ -96,9 +97,8 @@ bool Colors(const std::map<std::string, std::string>& colors)
         "selectedBorder", "selectedText", "itemText", "itemHoverFill", "itemHoverStroke", "emptyText"};
     for (const auto& [key, value] : colors)
     {
-        if (!allowed.contains(key) || value.size() != 7 || value[0] != '#') return false;
-        for (std::size_t i = 1; i < value.size(); ++i)
-            if (!std::isxdigit(static_cast<unsigned char>(value[i]))) return false;
+        RgbaColor color;
+        if (!allowed.contains(key) || !DecodeRgbaColor(value, color)) return false;
     }
     return true;
 }

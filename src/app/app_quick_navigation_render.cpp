@@ -500,7 +500,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
 void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
 {
     ComPtr<ID2D1DeviceContext> ctx = context;
-    const QuickNavTheme t = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_);
+    const QuickNavTheme t = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_, quickNavGlassTheme_);
     const RECT& overlay = quickNavigationRect_;
     const float windowCornerRadius =
         static_cast<float>(
@@ -544,10 +544,10 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
     }
     const RECT searchRect = GetQuickNavigationSearchRect(overlay);
     DrawD2DFilledRectangle(ctx.Get(), searchRect,
-        ToD2DColor(t.searchBg, quickNavGlassTheme_ ? .52f : 1.f), D2D1::ColorF(0,0,0,0.f));
+        ToD2DColor(t.searchBg), D2D1::ColorF(0,0,0,0.f));
     if (overlay.bottom > searchRect.bottom)
         DrawD2DSeparator(ctx.Get(), MakeRect(searchRect.left, searchRect.bottom - QuickNavScale(1), searchRect.right, searchRect.bottom),
-            ToD2DColor(t.searchBorder, navigationSettings_.colors.contains("searchBorder") ? 1.f : .4f));
+            ToD2DColor(t.searchBorder));
     const float windowBorderStrokeWidth = std::clamp(quickNavAppearance_.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
     const float windowBorderInset =
         windowBorderStrokeWidth * 0.5f;
@@ -712,11 +712,11 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             }
             else
             {
-                fill = active ? ToD2DColor(t.tabActiveFill, 0.82f)
-                    : (hovered ? ToD2DColor(t.tabHoverFill, 0.72f)
-                               : ToD2DColor(t.tabDefaultFill, navigationSettings_.colors.contains("tabDefaultFill") ? 1.f : 0.f));
-                stroke = active ? ToD2DColor(t.tabActiveStroke, navigationSettings_.colors.contains("tabActiveStroke") ? 1.f : 0.f)
-                                : ToD2DColor(hovered ? t.tabHoverStroke : t.tabDefaultStroke, navigationSettings_.colors.contains(hovered ? "tabHoverStroke" : "tabDefaultStroke") ? 1.f : 0.f);
+                fill = active ? ToD2DColor(t.tabActiveFill)
+                    : (hovered ? ToD2DColor(t.tabHoverFill)
+                               : ToD2DColor(t.tabDefaultFill));
+                stroke = active ? ToD2DColor(t.tabActiveStroke)
+                                : ToD2DColor(hovered ? t.tabHoverStroke : t.tabDefaultStroke);
             }
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)), fill, stroke);
@@ -831,7 +831,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     quickNavigationLastMousePoint_) != FALSE;
             if (hovered || quickNavigationMenu_ == QuickNavigationMenu::Views)
                 DrawD2DRoundedRectangle(ctx.Get(), modeButton, static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)),
-                    ToD2DColor(t.tabHoverFill, .72f), ToD2DColor(t.tabHoverStroke, 0.f));
+                    ToD2DColor(t.tabHoverFill), ToD2DColor(t.tabHoverStroke));
             RECT labelRect = modeButton; labelRect.left += QuickNavScale(8); labelRect.right -= QuickNavScale(20);
             RECT chevronRect = modeButton; chevronRect.left = chevronRect.right - QuickNavScale(20);
             DrawQuickNavigationCenteredText(ctx.Get(), L"\uF2A4", chevronRect, quickNavFluentTextFormat_.Get(),
@@ -1003,7 +1003,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             RECT desktopSep = MakeRect(desktopHeader.left,
                 desktopHeader.bottom - QuickNavScale(1),
                 desktopHeader.right, desktopHeader.bottom);
-            DrawD2DSeparator(ctx.Get(), desktopSep, ToD2DColor(t.headerSeparator, navigationSettings_.colors.contains("headerSeparator") ? 1.f : .45f));
+            DrawD2DSeparator(ctx.Get(), desktopSep, ToD2DColor(t.headerSeparator));
         }
         else if (!searching && contentModel.IsSectioned())
         {
@@ -1086,17 +1086,14 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             const QuickNavigationEntry& entry = entries[i];
             const bool selected = IsQuickNavigationKeyboardTarget(QuickNavigationKeyboardTargetKind::Item, i);
             const bool hovered = PtInRect(&itemRectApp, contentMousePoint) != FALSE;
-            if (selected || hovered || navigationSettings_.colors.contains("resultFill") || navigationSettings_.colors.contains("resultBorder"))
-                DrawD2DRoundedRectangle(ctx.Get(), itemRectApp,
-                    static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                    ToD2DColor(selected ? t.selectedFill : hovered ? t.itemHoverFill : t.resultFill),
-                    ToD2DColor(selected ? t.selectedBorder : hovered ? t.itemHoverStroke : t.resultBorder,
-                        selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
-            if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
-                DrawD2DRoundedRectangle(ctx.Get(), GetQuickNavItemIconRect(itemRectApp),
-                    static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                    ToD2DColor(t.iconPlateFill, navigationSettings_.colors.contains("iconPlateFill") ? 1.f : 0.f),
-                    ToD2DColor(t.iconPlateBorder, navigationSettings_.colors.contains("iconPlateBorder") ? 1.f : 0.f));
+            DrawD2DRoundedRectangle(ctx.Get(), itemRectApp,
+                static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                ToD2DColor(selected ? t.selectedFill : hovered ? t.itemHoverFill : t.resultFill),
+                ToD2DColor(selected ? t.selectedBorder : hovered ? t.itemHoverStroke : t.resultBorder));
+            DrawD2DRoundedRectangle(ctx.Get(), GetQuickNavItemIconRect(itemRectApp),
+                static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                ToD2DColor(t.iconPlateFill),
+                ToD2DColor(t.iconPlateBorder));
             // 图标本体复用桌面绘制，标题由快捷导航自绘，避免桌面标题布局和字重互相影响。
             if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
                 entry.itemIndex < items_.size())
@@ -1178,8 +1175,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     const bool hovered = PtInRect(&rowRectApp, contentMousePoint) != FALSE;
                     DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.f),
-                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
+                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill),
+                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder));
 
                     const QuickNavigationAppEntry& entry = quickNavigationAppEntries_[appIndex];
                     const int iconSz = QuickNavScale(28);
@@ -1187,11 +1184,10 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         (rowRectApp.top + rowRectApp.bottom - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         (rowRectApp.top + rowRectApp.bottom + iconSz) / 2);
-                    if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
-                        DrawD2DRoundedRectangle(ctx.Get(), iconRect,
-                            static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                            ToD2DColor(t.iconPlateFill, navigationSettings_.colors.contains("iconPlateFill") ? 1.f : 0.f),
-                            ToD2DColor(t.iconPlateBorder, navigationSettings_.colors.contains("iconPlateBorder") ? 1.f : 0.f));
+                    DrawD2DRoundedRectangle(ctx.Get(), iconRect,
+                        static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                        ToD2DColor(t.iconPlateFill),
+                        ToD2DColor(t.iconPlateBorder));
                     if (!IsLuaLogicalSlotPickerOpen() &&
                         generalSettings_.demoModeEnabled &&
                         demoIdentityAssetsAvailable_)
@@ -1307,8 +1303,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     const bool hovered = PtInRect(&rowRectApp, contentMousePoint) != FALSE;
                     DrawD2DRoundedRectangle(ctx.Get(), rowRectApp,
                         static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.f),
-                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
+                        ToD2DColor(selected ? t.selectedFill : hovered ? t.appRowHoverFill : t.resultFill),
+                        ToD2DColor(selected ? t.selectedBorder : hovered ? t.appRowHoverStroke : t.resultBorder));
 
                     const QuickNavigationEverythingEntry& entry = quickNavigationEverythingResults_[i];
                     const int iconSz = QuickNavScale(28);
@@ -1316,11 +1312,10 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                         (rowRectApp.top + rowRectApp.bottom - iconSz) / 2,
                         rowRectApp.left + QuickNavScale(12) + iconSz,
                         (rowRectApp.top + rowRectApp.bottom + iconSz) / 2);
-                    if (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder"))
-                        DrawD2DRoundedRectangle(ctx.Get(), iconRect,
-                            static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                            ToD2DColor(t.iconPlateFill, navigationSettings_.colors.contains("iconPlateFill") ? 1.f : 0.f),
-                            ToD2DColor(t.iconPlateBorder, navigationSettings_.colors.contains("iconPlateBorder") ? 1.f : 0.f));
+                    DrawD2DRoundedRectangle(ctx.Get(), iconRect,
+                        static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
+                        ToD2DColor(t.iconPlateFill),
+                        ToD2DColor(t.iconPlateBorder));
                     DrawQuickNavSysIcon(ctx.Get(), entry.systemIconIndex, iconRect);
 
                     const int textLeft = iconRect.right + QuickNavScale(10);
@@ -1408,7 +1403,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
         const int trackW = QuickNavScale(5);
         DrawD2DRoundedRectangle(ctx.Get(), track, static_cast<float>(trackW) / 2.0f,
             ToD2DColor(t.scrollTrack), ToD2DColor(t.scrollTrack));
-        const COLORREF thumbColor = (quickNavScrollbarDragging_ || quickNavScrollbarHovered_)
+        const auto thumbColor = (quickNavScrollbarDragging_ || quickNavScrollbarHovered_)
             ? t.scrollThumbHover : t.scrollThumbDefault;
         DrawD2DRoundedRectangle(ctx.Get(), thumb, static_cast<float>(trackW) / 2.0f,
             ToD2DColor(thumbColor), ToD2DColor(thumbColor));

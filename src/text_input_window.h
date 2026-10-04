@@ -5,6 +5,7 @@
 #include <string_view>
 #include <functional>
 #include "text_input_accessibility.h"
+#include "rgba_color.h"
 
 namespace snowdesktop::text_input
 {
@@ -13,12 +14,12 @@ namespace snowdesktop::text_input
 const wchar_t* WindowClass();
 struct Colors
 {
-    COLORREF background = RGB(255,255,255);
-    COLORREF foreground = RGB(28,34,44);
-    COLORREF border = RGB(170,175,185);
-    COLORREF accent = RGB(0,95,184);
-    COLORREF selectionText = RGB(255,255,255);
-    COLORREF secondary = RGB(100,105,115);
+    RgbaColor background = RGB(255,255,255);
+    RgbaColor foreground = RGB(28,34,44);
+    RgbaColor border = RGB(170,175,185);
+    RgbaColor accent = RGB(0,95,184);
+    RgbaColor selectionText = RGB(255,255,255);
+    RgbaColor secondary = RGB(100,105,115);
     bool operator==(const Colors&) const = default;
 };
 void SetColors(HWND, const Colors&, float radius = 6.f);

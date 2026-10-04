@@ -3,6 +3,7 @@
 #include "quick_navigation_animation_rules.h"
 #include "quick_navigation_genie_rules.h"
 #include "quick_navigation_rules.h"
+#include "app/quick_navigation_theme.h"
 
 #include <cmath>
 #include <fstream>
@@ -947,7 +948,8 @@ void TestExtendedSearchAndConfiguration()
     for (const auto* url : {"file:///a/{query}","https://example.com/search", "http://{query}","https:///search?q={query}","https://example.com/a b?q={query}"})
     { invalid = settings; invalid.engines[0].url = url; Check(!ValidateNavigationSearchConfiguration(invalid),"invalid search templates are rejected before persistence"); }
     settings.lastCollapsed = true; settings.layout.iconSize = 64; settings.layout.collapsedWidth = 720;
-    settings.colors["searchBg"] = "#123456"; settings.prefixes[0] = "apps";
+    settings.colors["searchBg"] = "#123456"; settings.colors["resultBorder"] = "#FF000080";
+    settings.colors["resultFill"] = "#FFFFFF00"; settings.prefixes[0] = "apps";
     settings.engines.push_back({"example","Example \"search\"","example","https://example.com/?q={query}"});
     const auto path = MakeTemporarySettingsPath(); NavigationSettings loaded;
     Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && settings == loaded,"layout, colors, scopes and custom engines round trip with escaped names");
@@ -999,8 +1001,49 @@ void TestExtendedSearchAndConfiguration()
     Check(calculator.Evaluate(std::wstring(140,L'-') + L"1").error == query::CalculationError::Invalid,"deep recursive expressions are bounded");
 }
 
+void TestResultColorOpacity()
+{
+    NavigationSettings settings;
+    for (bool light : {false,true})
+    {
+        const auto initial = ResolveQuickNavTheme(light,settings);
+        Check(initial.resultFill.alpha == 0.f && initial.resultBorder.alpha == 0.f &&
+            initial.iconPlateFill.alpha == 0.f && initial.iconPlateBorder.alpha == 0.f,
+            "unselected result and icon-plate colors default to transparency in both appearances");
+        auto borderOnly = settings; borderOnly.colors["resultBorder"] = "#FF000080";
+        const auto themed = ResolveQuickNavTheme(light,borderOnly);
+        const auto border = ToD2DColor(themed.resultBorder);
+        Check(border.r == 1.f && border.g == 0.f && border.b == 0.f && std::abs(border.a - 128.f / 255.f) < .00001f &&
+            ToD2DColor(themed.resultFill).a == 0.f && ToD2DColor(themed.iconPlateFill).a == 0.f,
+            "border-only RGBA changes draw a translucent red outline without introducing any result or icon background");
+        borderOnly.colors["resultFill"] = "#FFFFFF00";
+        borderOnly.colors["selectedFill"] = "#12345640";
+        borderOnly.colors["itemHoverFill"] = "#12345680";
+        const auto states = ResolveQuickNavTheme(light,borderOnly);
+        Check(states.resultFill.alpha == 0.f && states.selectedFill.alpha == 64.f / 255.f && states.itemHoverFill.alpha == 128.f / 255.f,
+            "normal, selected and hovered fills retain independent explicit alpha values");
+        for (const auto& [key, field] : kQuickNavColorFields)
+        {
+            NavigationSettings single; single.colors[key] = "#12345680";
+            const auto resolved = ResolveQuickNavTheme(light,single);
+            Check((resolved.*field).rgb == RGB(0x12,0x34,0x56) && (resolved.*field).alpha == 128.f / 255.f,
+                "every exposed palette role preserves its RGB and opacity");
+            for (const auto& [other, otherField] : kQuickNavColorFields)
+                if (std::string_view(other) != key) Check(resolved.*otherField == initial.*otherField,
+                    "changing one palette role cannot change another role");
+        }
+    }
+    snowdesktop::RgbaColor color;
+    Check(snowdesktop::DecodeRgbaColor("#123456",color) && color.alpha == 1.f,
+        "legacy RGB colors remain opaque");
+    Check(snowdesktop::EncodeRgbaColor(0x12,0x34,0x56,0x80) == "#12345680" &&
+        !snowdesktop::DecodeRgbaColor("#1234567",color) && !snowdesktop::DecodeRgbaColor("#123456GG",color) &&
+        !snowdesktop::DecodeRgbaColor("12345680",color), "RGBA codec has explicit channel order and rejects malformed values");
+}
+
 int main()
 {
+    TestResultColorOpacity();
     TestExtendedSearchAndConfiguration();
     TestViewModePersistenceValues();
     TestExtendedNavigationKeyNames();

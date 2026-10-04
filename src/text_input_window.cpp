@@ -440,8 +440,8 @@ std::shared_ptr<State> Get(HWND window)
     const auto* holder = reinterpret_cast<std::shared_ptr<State>*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     return holder ? *holder : std::shared_ptr<State>{};
 }
-D2D1_COLOR_F Color(COLORREF value)
-{ return D2D1::ColorF(GetRValue(value)/255.f, GetGValue(value)/255.f, GetBValue(value)/255.f); }
+D2D1_COLOR_F Color(RgbaColor value)
+{ return ToD2DColor(value); }
 void Render(State& state, ID2D1RenderTarget* target, D2D1_RECT_F frame, float scale, bool drawFrame)
 {
     if (!target || !state.shown) return;

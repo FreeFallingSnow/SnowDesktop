@@ -3,6 +3,7 @@
 #include <d2d1.h>
 #include <windows.h>
 #include "../navigation_settings.h"
+#include "../rgba_color.h"
 #include <array>
 #include <cstdlib>
 #include <utility>
@@ -10,35 +11,35 @@
 // Colors shared by quick-navigation rendering and desktop label rendering.
 
 struct QuickNavTheme {
-    COLORREF windowBg, windowBorder;
-    COLORREF searchBg, searchBorder, searchEditBg;
-    COLORREF tabActiveFill, tabActiveStroke;
-    COLORREF tabHoverFill, tabHoverStroke;
-    COLORREF tabDefaultFill, tabDefaultStroke;
-    COLORREF tabText, tabSeparator;
-    COLORREF tabDragFill, tabDragStroke;
-    COLORREF tabDragFloatFill, tabDragFloatStroke, tabDragFloatText;
-    COLORREF tabDragIndicator;
-    COLORREF itemHoverFill, itemHoverStroke;
-    COLORREF itemText;
-    COLORREF headerText, headerSeparator;
-    COLORREF appRowHoverFill, appRowHoverStroke;
-    COLORREF appNameText, appTypeText;
-    COLORREF expandHoverText, expandDefaultText;
-    COLORREF emptyText, emptyHeaderText;
-    COLORREF scrollTrack, scrollThumbDefault, scrollThumbHover;
+    snowdesktop::RgbaColor windowBg, windowBorder;
+    snowdesktop::RgbaColor searchBg, searchBorder, searchEditBg;
+    snowdesktop::RgbaColor tabActiveFill, tabActiveStroke;
+    snowdesktop::RgbaColor tabHoverFill, tabHoverStroke;
+    snowdesktop::RgbaColor tabDefaultFill, tabDefaultStroke;
+    snowdesktop::RgbaColor tabText, tabSeparator;
+    snowdesktop::RgbaColor tabDragFill, tabDragStroke;
+    snowdesktop::RgbaColor tabDragFloatFill, tabDragFloatStroke, tabDragFloatText;
+    snowdesktop::RgbaColor tabDragIndicator;
+    snowdesktop::RgbaColor itemHoverFill, itemHoverStroke;
+    snowdesktop::RgbaColor itemText;
+    snowdesktop::RgbaColor headerText, headerSeparator;
+    snowdesktop::RgbaColor appRowHoverFill, appRowHoverStroke;
+    snowdesktop::RgbaColor appNameText, appTypeText;
+    snowdesktop::RgbaColor expandHoverText, expandDefaultText;
+    snowdesktop::RgbaColor emptyText, emptyHeaderText;
+    snowdesktop::RgbaColor scrollTrack, scrollThumbDefault, scrollThumbHover;
 
     D2D1_COLOR_F popupBg, popupBorder, popupTitle;
     D2D1_COLOR_F iconHoverBgFill, iconHoverBgStroke;
     D2D1_COLOR_F iconSelectBgFill, iconSelectBgStroke;
     D2D1_COLOR_F iconTextColor;
     D2D1_COLOR_F iconShadowFallback;
-    COLORREF searchText = RGB(28,34,44), searchPlaceholder = RGB(100,105,115), searchFocus = RGB(75,120,205);
-    COLORREF typeFill = RGB(224,232,246), typeText = RGB(45,80,145);
-    COLORREF resultFill = RGB(246,248,252), resultBorder = RGB(246,248,252);
-    COLORREF tabActiveText = RGB(30,60,110), tabHoverText = RGB(28,34,44);
-    COLORREF iconPlateFill = RGB(255,255,255), iconPlateBorder = RGB(255,255,255);
-    COLORREF selectedFill = RGB(222,234,252), selectedBorder = RGB(185,210,246), selectedText = RGB(28,34,44);
+    snowdesktop::RgbaColor searchText = RGB(28,34,44), searchPlaceholder = RGB(100,105,115), searchFocus = RGB(75,120,205);
+    snowdesktop::RgbaColor typeFill = RGB(224,232,246), typeText = RGB(45,80,145);
+    snowdesktop::RgbaColor resultFill = RGB(246,248,252), resultBorder = RGB(246,248,252);
+    snowdesktop::RgbaColor tabActiveText = RGB(30,60,110), tabHoverText = RGB(28,34,44);
+    snowdesktop::RgbaColor iconPlateFill = RGB(255,255,255), iconPlateBorder = RGB(255,255,255);
+    snowdesktop::RgbaColor selectedFill = RGB(222,234,252), selectedBorder = RGB(185,210,246), selectedText = RGB(28,34,44);
 };
 
 inline const QuickNavTheme kQuickNavDark = {
@@ -140,7 +141,7 @@ inline const QuickNavTheme kQuickNavLight = {
 };
 
 // ── Graphics ─────────────────────────────────────────────────
-inline constexpr std::pair<const char*, COLORREF QuickNavTheme::*> kQuickNavColorFields[] = {
+inline constexpr std::pair<const char*, snowdesktop::RgbaColor QuickNavTheme::*> kQuickNavColorFields[] = {
     {"searchBg", &QuickNavTheme::searchBg}, {"searchBorder", &QuickNavTheme::searchBorder},
     {"searchText", &QuickNavTheme::searchText}, {"searchPlaceholder", &QuickNavTheme::searchPlaceholder},
     {"searchFocus", &QuickNavTheme::searchFocus}, {"typeFill", &QuickNavTheme::typeFill}, {"typeText", &QuickNavTheme::typeText},
@@ -159,7 +160,7 @@ inline constexpr std::pair<const char*, COLORREF QuickNavTheme::*> kQuickNavColo
     {"scrollThumbHover", &QuickNavTheme::scrollThumbHover}, {"emptyText", &QuickNavTheme::emptyText}
 };
 
-inline QuickNavTheme ResolveQuickNavTheme(bool light, const NavigationSettings& settings)
+inline QuickNavTheme ResolveQuickNavTheme(bool light, const NavigationSettings& settings, bool glass = false)
 {
     QuickNavTheme t = light ? kQuickNavLight : kQuickNavDark;
     t.searchBg = light ? RGB(250,250,250) : RGB(44,44,44);
@@ -190,12 +191,19 @@ inline QuickNavTheme ResolveQuickNavTheme(bool light, const NavigationSettings& 
     t.scrollThumbDefault = light ? RGB(148,148,148) : RGB(116,116,116);
     t.scrollThumbHover = light ? RGB(120,120,120) : RGB(160,160,160);
     t.appNameText = light ? RGB(36,36,36) : RGB(245,245,245);
+    // Transparent default colors replace the old presence-based paint gates.
+    t.resultFill.alpha = t.resultBorder.alpha = 0.f;
+    t.iconPlateFill.alpha = t.iconPlateBorder.alpha = 0.f;
+    t.tabDefaultFill.alpha = t.tabDefaultStroke.alpha = 0.f;
+    t.tabActiveStroke.alpha = t.tabHoverStroke.alpha = 0.f;
+    t.tabActiveFill.alpha = .82f; t.tabHoverFill.alpha = .72f;
+    t.searchBorder.alpha = .4f; t.headerSeparator.alpha = .45f;
+    t.searchBg.alpha = glass ? .52f : 1.f;
     for (const auto& [name, field] : kQuickNavColorFields)
     {
         auto it = settings.colors.find(name);
-        if (it == settings.colors.end() || it->second.size() != 7) continue;
-        char* end = nullptr; const auto rgb = std::strtoul(it->second.c_str() + 1, &end, 16);
-        if (end && *end == '\0') t.*field = RGB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+        snowdesktop::RgbaColor color;
+        if (it != settings.colors.end() && snowdesktop::DecodeRgbaColor(it->second, color)) t.*field = color;
     }
     t.searchEditBg = t.searchBg;
     return t;

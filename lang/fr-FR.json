@@ -2522,5 +2522,12 @@
   "themeLibrary.closePreview": "Revenir à l’aperçu",
   "themeLibrary.fitPreview": "Adapter à la fenêtre",
   "themeLibrary.zoomIn": "Zoom avant",
-  "themeLibrary.zoomOut": "Zoom arrière"
+  "themeLibrary.zoomOut": "Zoom arrière",
+  "quickNav.colorHint.transparent": "Transparent par défaut. Réglez l’opacité pour afficher cette couleur ; les bordures et les fonds sont indépendants.",
+  "quickNav.colorHint.opacity": "Réglez la couleur et l’opacité de cet élément : 0 % est transparent et 100 % est opaque. Les états de survol et de sélection se règlent séparément.",
+  "quickNav.layout.rowsHint": "Nombre maximal de lignes de résultats visibles ; faites défiler pour voir les autres.",
+  "quickNav.layout.linesHint": "Nombre maximal de lignes de texte sous chaque icône de la grille.",
+  "quickNav.layout.pixelHint": "Pixels logiques, adaptés à l’échelle de votre écran. Les dimensions du panneau s’adaptent aussi à la zone d’écran disponible.",
+  "appearance.copyComponent": "Copier l’apparence actuelle du composant",
+  "appearance.copyComponentHint": "Copiez une fois l’apparence actuelle du composant depuis le thème global, puis modifiez-la indépendamment."
 }

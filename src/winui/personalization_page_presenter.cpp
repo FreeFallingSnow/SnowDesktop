@@ -181,6 +181,10 @@ struct PersonalizationPagePresenter::Impl
     std::shared_ptr<PanelAppearanceEditor> quickAppearanceEditor, popupAppearanceEditor, dockAppearanceEditor;
     std::unique_ptr<QuickNavigationOptions> quickAppearanceOptions;
     muxc::StackPanel quickAppearanceContent;
+    muxc::StackPanel popupAppearanceContent;
+    muxc::Button popupCopyComponent;
+    SettingRow popupCopyComponentRow;
+    winrt::event_token popupCopyComponentToken{};
     std::uint64_t navigationRevision = 0;
     muxc::ComboBox dockAppearanceCombo{nullptr};
     muxc::Button taskbarLink{nullptr}, statusBarLink{nullptr}, dockLink{nullptr};
@@ -506,8 +510,20 @@ struct PersonalizationPagePresenter::Impl
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
                     [value](auto& settings) { settings.collectionPopupAppearance.appearance = value; settings.collectionPopupAppearance.customized = true; settings.collectionPopupAppearance.mode = 4; });
             });
-        popupThemeCard.content.Children().Append(popupAppearanceEditor->Content());
-        popupThemeCard.content.Children().Append(popupThemes->SaveContent());
+        popupAppearanceContent.Spacing(8);
+        popupCopyComponentRow.Initialize(popupCopyComponent);
+        popupCopyComponentToken = popupCopyComponent.Click([this](const auto&, const auto&) {
+            if (!CanEmit()) return;
+            popupAppearanceEditor->Flush();
+            const auto componentAppearance = currentGlobalAppearance;
+            EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [componentAppearance](auto& settings) {
+                themes::CopyComponentAppearanceToPopup(settings, componentAppearance);
+            });
+        });
+        popupAppearanceContent.Children().Append(popupCopyComponentRow.root);
+        popupAppearanceContent.Children().Append(popupAppearanceEditor->Content());
+        popupAppearanceContent.Children().Append(popupThemes->SaveContent());
+        popupThemeCard.content.Children().Append(popupAppearanceContent);
         dockThemeRoot = muxc::StackPanel{};
         muxc::StackPanel dockBody;
         InitializeCard(dockThemeCard, cardStyle, dockBody);
@@ -574,7 +590,7 @@ struct PersonalizationPagePresenter::Impl
         managementRoot.Children().Append(themeTransfers->Content());
         globalThemes->SetCustomContent({widgetAppearanceCard.root});
         quickThemes->SetCustomContent({quickAppearanceContent});
-        popupThemes->SetCustomContent({popupAppearanceEditor->Content()});
+        popupThemes->SetCustomContent({popupAppearanceContent});
         dockThemes->SetCustomContent({dockAppearanceEditor->Content()});
 
         InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
@@ -1248,8 +1264,8 @@ struct PersonalizationPagePresenter::Impl
         quickNavigationThemeCombo.SelectedIndex(index(settings.quickNavigationAppearance, settings.quickNavTheme));
         collectionPopupThemeCombo.SelectedIndex(index(settings.collectionPopupAppearance, settings.collectionPopupTheme));
         quickAppearanceContent.Visibility(IsCustomSurfaceTheme(settings.quickNavigationAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        popupAppearanceEditor->Content().Visibility(IsCustomSurfaceTheme(settings.collectionPopupAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        popupThemes->SaveContent().Visibility(popupAppearanceEditor->Content().Visibility());
+        popupAppearanceContent.Visibility(IsCustomSurfaceTheme(settings.collectionPopupAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        popupThemes->SaveContent().Visibility(popupAppearanceContent.Visibility());
     }
 
     void SelectSurfaceTheme(bool quick, int index)
@@ -1390,6 +1406,10 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.global_theme", L"Global Theme");
         SetCardText(themeTargetsCard, "appearance.quickPanelCard", L"Quick panel theme");
         SetCardText(popupThemeCard, "appearance.popupCard", L"Popup theme");
+        popupCopyComponent.Content(winrt::box_value(L("appearance.copyComponent", L"Copy current component appearance")));
+        popupCopyComponentRow.SetText(L("appearance.copyComponent", L"Copy current component appearance"),
+            L("appearance.copyComponentHint", L"Copy the component appearance from the global theme once, then edit independently."));
+        muxa::AutomationProperties::SetName(popupCopyComponent, popupCopyComponentRow.label.Text());
         SetCardText(dockThemeCard, "settings.dock.dock", L"Dock");
         statusBarLinkTitle.Text(L("settings.nav.statusBar", L"Status bar"));
         statusBarLinkDescription.Text(L("appearance.openStatusBar", L"Open status bar settings"));
@@ -1622,7 +1642,7 @@ struct PersonalizationPagePresenter::Impl
         {
             const auto appearance = ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance,
                 currentGlobalAppearance, snapshot.values.general.quickNavTheme, true, &snapshot.values.general.globalQuickNavigationAppearance);
-            quickAppearanceOptions->Apply(snapshot.values.navigation, appearance.contentTheme == 1);
+            quickAppearanceOptions->Apply(snapshot.values.navigation, appearance.contentTheme == 1, appearance.glassEnabled);
             navigationRevision = snapshot.domainRevisions.navigation;
         }
         hasSnapshot = true;
@@ -1796,6 +1816,7 @@ struct PersonalizationPagePresenter::Impl
         closed = true;
         quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close();
         quickAppearanceOptions->Close();
+        popupCopyComponent.Click(popupCopyComponentToken);
         dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken); dockLink.Click(dockLinkToken);
         try
         {

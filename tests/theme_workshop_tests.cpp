@@ -16,7 +16,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL theme Workshop: " << message << '\n'; } };
     std::string error;
     check(bridge::ThemeSha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "production package hash matches known SHA256 vector");
-    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\"]}";
+    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]}";
     check(workshop::Capabilities(current,"1") && !workshop::Capabilities(current,"2"), "bridge capability and compatible version are independent requirements");
     check(workshop::Capabilities("{\"progress\":\"starting\"}\n" + current + "\n","1") &&
         !workshop::Capabilities(current + "\n{\"ok\":false}\n","1"),
@@ -30,6 +30,10 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     const std::string galleryCapability = ",\"workshop.theme.gallery.v1\"";
     missingGalleryCapability.erase(missingGalleryCapability.find(galleryCapability), galleryCapability.size());
     check(!workshop::Capabilities(missingGalleryCapability,"1"), "old single-cover bridges cannot silently drop the gallery");
+    auto missingAlphaCapability = current;
+    const std::string alphaCapability = ",\"workshop.theme.color-alpha.v1\"";
+    missingAlphaCapability.erase(missingAlphaCapability.find(alphaCapability), alphaCapability.size());
+    check(!workshop::Capabilities(missingAlphaCapability,"1"), "bridges without RGBA parsing cannot offer incompatible theme sharing");
     Theme root = Capture(Kind::Global,MakeAppearancePreset(kAppearancePresetDark)); root.id = "theme/workshop-root"; root.name = "Demo";
     root.quickPanel = "builtin/quickpanel/dark"; root.popup = "builtin/popup/dark";
     Package package{{root.id,root}};
@@ -62,7 +66,11 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     bool failUpload = true;
     transport.publish = [&](const bridge::PublishRequest& request,const auto&,bridge::CoreError& detail) -> std::optional<bridge::PublishResult> {
         std::uint64_t id = request.publishedFileId.value_or(0);
-        if (!id) { ++created; id=123; if (!request.persistCreatedItem(id)) return {}; }
+        if (!id)
+        {
+            if (!request.prepareCreateItem || !request.prepareCreateItem()) { detail.code="writeFailed"; return {}; }
+            ++created; id=123; if (!request.persistCreatedItem(id)) return {};
+        }
         check(request.contentKind == bridge::WorkshopContentKind::Theme && request.validateStagedArtifacts(request.package,*request.preview), "theme transport validates exact upload snapshot");
         check(request.additionalPreviews.size() == 7 && request.validateStagedPreviews(request.additionalPreviews), "upload receives seven immutable separately hashed images");
         auto reordered = request.additionalPreviews; std::swap(reordered[0], reordered[1]);
@@ -92,6 +100,37 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     transport.agreement = [](auto&) -> std::optional<bridge::WorkshopEulaStatus> { bridge::WorkshopEulaStatus s; s.available=true; s.needsAction=true; return s; };
     check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now) && detail.code=="agreementRequired" && created==0, "unaccepted agreement is surfaced without accepting it");
     transport.agreement=accepted;
+    const auto normalPublish = transport.publish;
+    transport.publish = [](const auto&,const auto&,bridge::CoreError& failure) -> std::optional<bridge::PublishResult> {
+        failure.code="invalid_package"; return {};
+    };
+    check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now) &&
+        detail.code=="invalid_package" && !std::filesystem::exists(plan.association) &&
+        bridge::BuildThemePublishPlan(prepared,data,plan,error) && plan.publishedFileId==0,
+        "local core rejection before CreateItem writes no uncertain journal and leaves retry available");
+    transport.publish = normalPublish;
+    std::filesystem::create_directories(plan.association.parent_path());
+    std::filesystem::create_directory(plan.association);
+    check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now) &&
+        detail.code=="stalePreparation" && created==0, "an unreadable journal cannot create a remote item");
+    std::filesystem::remove(plan.association);
+    transport.publish = [&](const auto& request,const auto&,bridge::CoreError& failure) -> std::optional<bridge::PublishResult> {
+        std::filesystem::create_directory(plan.association);
+        check(request.prepareCreateItem && !request.prepareCreateItem(), "journal write failure is reported at the creation boundary");
+        failure.code="writeFailed"; return {};
+    };
+    check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now) && detail.code=="writeFailed" && created==0,
+        "a failed pending-journal write prevents remote creation");
+    std::filesystem::remove(plan.association);
+    transport.publish = [&](const auto& request,const auto&,bridge::CoreError& failure) -> std::optional<bridge::PublishResult> {
+        check(request.prepareCreateItem && request.prepareCreateItem(), "creation boundary durably records pending before the remote call");
+        failure.code="create_item_failed"; return {};
+    };
+    check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now) &&
+        !bridge::BuildThemePublishPlan(prepared,data,rejectedGallery,error) && error=="creationUncertain",
+        "a lost response after entering the remote creation boundary remains blocked against duplicate creation");
+    std::filesystem::remove(plan.association);
+    transport.publish = normalPublish;
     check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now) && result.publishedFileId==123 && created==1, "created ID is durable even if upload fails");
     check(bridge::BuildThemePublishPlan(prepared,data,plan,error) && plan.publishedFileId==123, "retry reloads durable association");
     check(bridge::ThemePublishedUrl(data, root.id) == "https://steamcommunity.com/sharedfiles/filedetails/?id=123" &&

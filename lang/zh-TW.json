@@ -2522,5 +2522,12 @@
   "themeLibrary.closePreview": "返回預覽",
   "themeLibrary.fitPreview": "符合視窗",
   "themeLibrary.zoomIn": "放大",
-  "themeLibrary.zoomOut": "縮小"
+  "themeLibrary.zoomOut": "縮小",
+  "quickNav.colorHint.transparent": "預設透明。設定不透明度後顯示；邊框和底色各自生效。",
+  "quickNav.colorHint.opacity": "設定此項目的顏色與不透明度：0% 為透明，100% 為不透明。懸停和選取狀態分別設定。",
+  "quickNav.layout.rowsHint": "最多顯示的結果列數，超出後可捲動查看。",
+  "quickNav.layout.linesHint": "網格圖示下文字的最大行數。",
+  "quickNav.layout.pixelHint": "以邏輯像素設定，隨螢幕縮放；面板尺寸也會配合可用螢幕範圍。",
+  "appearance.copyComponent": "複製目前元件外觀",
+  "appearance.copyComponentHint": "從全域主題複製目前元件的外觀，複製後可獨立調整。"
 }

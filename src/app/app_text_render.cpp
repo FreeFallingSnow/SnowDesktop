@@ -481,7 +481,8 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     };
 
     const QuickNavTheme theme = ResolveQuickNavTheme(lightTheme, navigationSettings_);
-    ID2D1SolidColorBrush* textBrush = getBrush(ToD2DColor(selected ? theme.selectedText : theme.itemText));
+    const auto textColor = selected ? theme.selectedText : theme.itemText;
+    ID2D1SolidColorBrush* textBrush = getBrush(ToD2DColor(textColor));
     if (!textBrush)
         return;
 
@@ -491,7 +492,7 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     if (!lightTheme)
     {
         if (ID2D1SolidColorBrush* shadowBrush =
-            getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.38f)))
+            getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.38f * textColor.alpha)))
         {
             ctx->DrawTextLayout(
                 D2D1::Point2F(origin.x + 1.0f, origin.y + 1.0f),

@@ -2522,5 +2522,12 @@
   "themeLibrary.closePreview": "返回预览",
   "themeLibrary.fitPreview": "适合窗口",
   "themeLibrary.zoomIn": "放大",
-  "themeLibrary.zoomOut": "缩小"
+  "themeLibrary.zoomOut": "缩小",
+  "quickNav.colorHint.transparent": "默认透明。设置不透明度后显示；边框和底色独立生效。",
+  "quickNav.colorHint.opacity": "设置此项目的颜色和不透明度：0% 为透明，100% 为不透明。悬停和选中状态分别设置。",
+  "quickNav.layout.rowsHint": "最多显示的结果行数，超出后可滚动查看。",
+  "quickNav.layout.linesHint": "网格图标下文字的最大行数。",
+  "quickNav.layout.pixelHint": "按逻辑像素设置，随屏幕缩放；面板尺寸还会适配可用屏幕范围。",
+  "appearance.copyComponent": "复制当前组件外观",
+  "appearance.copyComponentHint": "从全局主题复制当前组件的外观，复制后可独立调整。"
 }

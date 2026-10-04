@@ -2522,5 +2522,12 @@
   "themeLibrary.closePreview": "プレビューに戻る",
   "themeLibrary.fitPreview": "ウィンドウに合わせる",
   "themeLibrary.zoomIn": "拡大",
-  "themeLibrary.zoomOut": "縮小"
+  "themeLibrary.zoomOut": "縮小",
+  "quickNav.colorHint.transparent": "既定では透明です。不透明度を設定すると表示されます。枠線と背景色は独立しています。",
+  "quickNav.colorHint.opacity": "この項目の色と不透明度を設定します。0% は透明、100% は不透明です。ホバー時と選択時は個別に設定します。",
+  "quickNav.layout.rowsHint": "表示する結果の最大行数です。それ以降はスクロールして確認できます。",
+  "quickNav.layout.linesHint": "グリッドの各アイコンの下に表示するテキストの最大行数です。",
+  "quickNav.layout.pixelHint": "論理ピクセル単位で設定し、画面の拡大率に合わせます。パネルの寸法は使用可能な画面領域にも合わせます。",
+  "appearance.copyComponent": "現在のコンポーネントの外観をコピー",
+  "appearance.copyComponentHint": "グローバルテーマから現在のコンポーネントの外観を一度コピーし、その後は個別に調整します。"
 }

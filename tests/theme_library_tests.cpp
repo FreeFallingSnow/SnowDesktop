@@ -304,6 +304,142 @@ int RunThemeLibraryTests()
     const auto root = std::filesystem::temp_directory_path() / ("SnowDesktopThemeTests-" + unique.substr(6));
     struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); } } cleanup{root};
     std::filesystem::create_directories(root);
+    {
+        Library bound = integration; bound.references.clear();
+        auto source = global; source.appearance.widgetBorderR = 196.f / 255.f;
+        bound.themes[source.id] = source;
+        SettingsValues applied = settings;
+        check(ApplyTarget(bound,"global",source.id,applied,error) &&
+            Select(bound,"global",source.id,Kind::Global,source.scopes,error), "global binding fixture uses the real application and reference snapshot");
+        const auto expectedGlobal = applied.personalization;
+        const auto expectedSnapshot = EncodePackage(bound.references.at("global").snapshot,error);
+        const auto personalizationPath = root / L"personalization-round-trip.json";
+        PersonalizationSettings reloadedAppearance;
+        check(SavePersonalization(personalizationPath.c_str(), expectedGlobal) && LoadPersonalization(personalizationPath.c_str(),reloadedAppearance) &&
+            EncodePanelAppearance(reloadedAppearance,true) == EncodePanelAppearance(expectedGlobal,true),
+            "settings persistence must not round away applied theme appearance precision");
+        applied.personalization = reloadedAppearance;
+        ReconcileReferences(bound,applied);
+        check(bound.references.at("global").id == source.id, "saving and reloading the global appearance retains its named binding");
+        auto legacy = applied;
+        legacy.personalization.widgetBorderR = .768627f;
+        check(EncodePanelAppearance(source.appearance) != EncodePanelAppearance(legacy.personalization),
+            "negative control: the previous exact-text comparison rejects this real six-digit color round trip");
+        ReconcileReferences(bound,legacy);
+        check(bound.references.at("global").id == source.id, "existing six-significant-digit settings remain bound after child selection");
+        for (const auto target : {"quickPanel", "popup"})
+        {
+            const auto childId = std::string_view(target) == "quickPanel" ? quick.id : popup.id;
+            check(ApplyTarget(bound,target,childId,legacy,error) &&
+                Select(bound,target,childId,TargetKind(target),TargetScope(target),error), "independent child applies through the production source selector");
+            ReconcileReferences(bound,legacy);
+            check(bound.references.at("global").id == source.id &&
+                EncodePackage(bound.references.at("global").snapshot,error) == expectedSnapshot,
+                "independent quick-panel or popup selection cannot detach or rewrite the global binding");
+            Detach(bound,target);
+            auto& surface = std::string_view(target) == "quickPanel" ? legacy.general.quickNavigationAppearance : legacy.general.collectionPopupAppearance;
+            for (int mode : {0,4,-1})
+            {
+                SelectSurfaceThemeMode(surface,mode,source.appearance);
+                ReconcileReferences(bound,legacy);
+                check(bound.references.at("global").id == source.id,
+                    "switching a child to built-in, custom or follow-global retains the global source");
+            }
+        }
+        legacy.personalization.widgetBorderR = source.appearance.widgetBorderR + .000001f;
+        ReconcileReferences(bound,legacy);
+        check(bound.references.at("global").id.empty() && bound.themes.at(source.id).appearance.widgetBorderR == source.appearance.widgetBorderR,
+            "a genuine appearance edit outside the exact legacy round trip still detaches without changing the saved theme");
+    }
+    {
+        for (const int preset : {kAppearancePresetDark, kAppearancePresetLight,
+            kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight, kAppearancePresetCustom})
+        {
+            auto previous = MakeAppearancePreset(preset);
+            previous.widgetAlpha = .37f;
+            GeneralSettings general;
+            const auto quickEffective = ResolveSurfaceTheme(general.quickNavigationAppearance,
+                previous, general.quickNavTheme, true);
+            const auto popupEffective = ResolveSurfaceTheme(general.collectionPopupAppearance,
+                previous, general.collectionPopupTheme, false);
+            auto edited = previous;
+            edited.backgroundPreset = kAppearancePresetCustom;
+            edited.widgetAlpha = .81f;
+            check(ResolveSurfaceTheme(general.quickNavigationAppearance,edited,general.quickNavTheme,true).widgetAlpha != quickEffective.widgetAlpha,
+                "negative control: the former unbound follow resolver replaces the current surface with the edited global material");
+            check(PrepareGlobalCustomEdit(general,previous,edited) &&
+                EncodePanelAppearance(general.globalQuickNavigationAppearance.appearance,true) == EncodePanelAppearance(quickEffective,true) &&
+                EncodePanelAppearance(general.globalCollectionPopupAppearance.appearance,true) == EncodePanelAppearance(popupEffective,true),
+                "global custom draft copies each current effective surface before applying the global edit");
+            const auto frozenQuick = general.globalQuickNavigationAppearance;
+            const auto frozenPopup = general.globalCollectionPopupAppearance;
+            auto later = edited; later.widgetAlpha = .11f;
+            check(!PrepareGlobalCustomEdit(general,edited,later) &&
+                general.globalQuickNavigationAppearance == frozenQuick && general.globalCollectionPopupAppearance == frozenPopup &&
+                ResolveSurfaceTheme(general.quickNavigationAppearance,later,general.quickNavTheme,true,&frozenQuick) == frozenQuick.appearance &&
+                ResolveSurfaceTheme(general.collectionPopupAppearance,later,general.collectionPopupTheme,false,&frozenPopup) == frozenPopup.appearance,
+                "later global appearance changes cannot overwrite either bound surface draft");
+            SelectSurfaceThemeMode(general.quickNavigationAppearance,4,frozenQuick.appearance);
+            general.quickNavigationAppearance.appearance.widgetAlpha = .63f;
+            check(ResolveSurfaceTheme(general.quickNavigationAppearance,later,general.quickNavTheme,true,&frozenQuick).widgetAlpha == .63f &&
+                general.globalQuickNavigationAppearance == frozenQuick && general.globalCollectionPopupAppearance == frozenPopup,
+                "independent quick-panel editing copies its bound source and leaves both global bindings intact");
+            const auto builtin = MakeAppearancePreset(kAppearancePresetLight);
+            check(PrepareGlobalCustomEdit(general,later,builtin) &&
+                !general.globalQuickNavigationAppearance.customized && !general.globalCollectionPopupAppearance.customized &&
+                general.quickNavigationAppearance.mode == 4 && general.quickNavigationAppearance.appearance.widgetAlpha == .63f,
+                "switching global to a built-in releases its bindings without discarding an independent surface draft");
+        }
+        GeneralSettings bound;
+        bound.globalQuickNavigationAppearance = {4,true,quick.appearance};
+        bound.globalCollectionPopupAppearance = {4,true,popup.appearance};
+        const auto quickBinding = bound.globalQuickNavigationAppearance;
+        const auto popupBinding = bound.globalCollectionPopupAppearance;
+        auto edited = global.appearance; edited.backgroundPreset = kAppearancePresetCustom;
+        edited.widgetAlpha = .51f;
+        check(!PrepareGlobalCustomEdit(bound,global.appearance,edited) &&
+            bound.globalQuickNavigationAppearance == quickBinding && bound.globalCollectionPopupAppearance == popupBinding,
+            "a saved global theme entering custom keeps its actual child-theme bindings");
+    }
+    {
+        GeneralSettings general;
+        general.globalQuickNavigationAppearance = {4,true,quick.appearance};
+        general.globalCollectionPopupAppearance = {4,true,popup.appearance};
+        const auto boundQuick = general.globalQuickNavigationAppearance;
+        const auto boundPopup = general.globalCollectionPopupAppearance;
+        const auto independentQuick = general.quickNavigationAppearance;
+        auto componentAppearance = global.appearance;
+        componentAppearance.widgetAlpha = .42f;
+        componentAppearance.gradientEndA = .19f;
+        const auto componentBefore = componentAppearance;
+        CopyComponentAppearanceToPopup(general,componentAppearance);
+        const auto copied = general.collectionPopupAppearance;
+        check(copied.mode == 4 && copied.customized &&
+            EncodePanelAppearance(copied.appearance,true) == EncodePanelAppearance(componentAppearance,true) &&
+            componentAppearance == componentBefore,
+            "copying component appearance creates a complete independent popup draft including gradient opacity without modifying its source");
+        componentAppearance.widgetAlpha = .91f;
+        check(ResolveSurfaceTheme(copied,componentAppearance,general.collectionPopupTheme,false,&boundPopup) == copied.appearance &&
+            general.globalQuickNavigationAppearance == boundQuick && general.globalCollectionPopupAppearance == boundPopup &&
+            general.quickNavigationAppearance == independentQuick,
+            "component copy does not bind future global edits or replace the existing global child bindings");
+        general.collectionPopupAppearance.appearance.widgetAlpha = .28f;
+        check(componentAppearance.widgetAlpha == .91f && general.collectionPopupAppearance.appearance.widgetAlpha == .28f,
+            "copied popup remains independently editable without modifying its source");
+    }
+    {
+        auto rgbaPackage = children;
+        rgbaPackage.emplace(global.id, global);
+        rgbaPackage.at(quick.id).colors["resultBorder"] = "#FF000080";
+        rgbaPackage.at(quick.id).colors["resultFill"] = "#FFFFFF00";
+        Package restored;
+        const auto encoded = EncodePackage(rgbaPackage,error);
+        check(!encoded.empty() && DecodePackage(encoded,restored,error) &&
+            restored.at(quick.id).colors.at("resultBorder") == "#FF000080" && restored.at(quick.id).colors.at("resultFill") == "#FFFFFF00",
+            "theme package codecs preserve RGBA channel order, partial opacity and fully transparent fill");
+        rgbaPackage.at(quick.id).colors["resultBorder"] = "#FF0000GG";
+        check(!Validate(rgbaPackage,error), "invalid RGBA still rejects the whole theme package");
+    }
     const auto libraryPath = root / "library.json";
     Library persisted;
     check(Transact(libraryPath, [&](auto& value, auto&) { value = destination; return true; }, persisted, error), "atomic library write succeeds");

@@ -41,7 +41,16 @@ appearance selector adds the applicable saved themes to its native choices.
 Scopes do not carry object positions, enablement or dynamic rules.
 
 Quick-panel themes additionally contain the complete `QuickNavigationLayout`
-object and a `colors` map of supported renderer palette keys to `#RRGGBB`.
+object and a `colors` map of supported renderer palette keys to `#RRGGBB`
+(opaque legacy RGB) or `#RRGGBBAA` (explicit opacity in the last byte).
+Results, icon plates and inactive-tab backgrounds/borders are transparent by
+default. Every state is painted through the same RGBA palette; setting a border
+does not enable a background. Restoring a color removes its override and restores
+its actual default alpha. The editor exposes opacity for every detailed color.
+The search input and scrollbar retain alpha as well. Earlier strict readers
+reject RGBA entries rather than silently losing opacity; sharing therefore
+requires the additive `workshop.theme.color-alpha.v1` capability. Old RGB packages
+remain readable and no widget API version changes.
 Hotkeys, remembered collapse state, search engines and search prefixes are
 excluded. Theme application to a widget uses only a host appearance patch;
 author functional presets, ordinary settings and stored data are untouched.
@@ -140,6 +149,13 @@ and shown on that theme's card. Renaming or updating the theme keeps the binding
 saving a new ID starts a separate publication. Preview/save/cancel successes are
 silent; failures and a saved-but-not-applied warning remain visible.
 
+The production upload preflight selects `.snowtheme` with the 4 MiB theme format
+limit or `.snowwidget` with the unchanged 20 MiB component limit. Primary previews
+must still be strictly smaller than 1 MiB. The pending-creation journal is written
+only immediately before the remote CreateItem call, after local validation and
+staging; local rejection cannot leave a false uncertain-creation marker. Errors
+include a localized error-code label and are recorded in the diagnostic log.
+
 The bridge journals a created ID before starting its upload. Retrying an upload
 uses that ID and verifies current authorship. A lost create response without an
 ID blocks automatic creation until the user checks their authored items. Neither
@@ -154,6 +170,12 @@ copy. Confirmed unsubscription/deletion removes provenance, preserving theme
 values. Account-specific subscription history prevents another account or an
 incomplete query from deleting managed content. Widget source routing ignores
 standalone theme artifacts.
+
+Personalization persists enough digits to round-trip float appearance fields.
+Binding reconciliation and selector refresh share the same comparison: exact
+values, or the exact six-significant-digit round trip from older personalization
+files. Other edits still detach. Independent quick-panel/popup selection does not
+change the named global source or its immutable dependency snapshot.
 
 The private library adds optional `workshop` and `subscriptionAccounts` fields;
 new readers accept old libraries. Old strict readers reject libraries with these
@@ -196,8 +218,15 @@ forms on one continuous stage, using production Dock/merged-status content.
 The status-bar sample is at the top and supplies known network, audio, battery
 and notification data instead of showing unavailable-state question marks.
 Quick-panel and popup parameters are also visible while following a custom global
-appearance. Their save/edit menus remain tied to explicitly selected custom
+draft. Entering the global custom draft captures each current effective surface
+once into its separate global binding; later global-material edits preserve those
+bindings. Existing saved-global child bindings are retained. Explicitly choosing
+custom for an individual surface copies its currently effective bound appearance
+into an independent draft. Their save/edit menus remain tied to explicitly selected custom
 drafts; independently selected saved themes keep their parameters hidden.
+The popup custom editor can also copy the current component material from the
+global theme once, including border, gradient, blur and opacity. It remains an
+independent popup draft and does not modify its source or the global bindings.
 Clicking a gallery image opens a window-sized lightbox over the existing dialog.
 Mouse-wheel zoom, drag panning, fit-to-window, arrow navigation and Escape/close
 return are available without opening another dialog or process. The selected

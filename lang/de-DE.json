@@ -2522,5 +2522,12 @@
   "themeLibrary.closePreview": "Zurück zur Vorschau",
   "themeLibrary.fitPreview": "An Fenster anpassen",
   "themeLibrary.zoomIn": "Vergrößern",
-  "themeLibrary.zoomOut": "Verkleinern"
+  "themeLibrary.zoomOut": "Verkleinern",
+  "quickNav.colorHint.transparent": "Standardmäßig transparent. Stellen Sie die Deckkraft ein, um diese Farbe anzuzeigen; Rahmen und Füllungen sind unabhängig.",
+  "quickNav.colorHint.opacity": "Farbe und Deckkraft dieses Elements: 0 % ist transparent, 100 % ist deckend. Hover- und Auswahlzustände werden separat eingestellt.",
+  "quickNav.layout.rowsHint": "Maximal sichtbare Ergebniszeilen; weitere Zeilen sind durch Scrollen erreichbar.",
+  "quickNav.layout.linesHint": "Maximale Anzahl der Textzeilen unter jedem Rastersymbol.",
+  "quickNav.layout.pixelHint": "Logische Pixel, entsprechend der Bildschirmskalierung. Die Panelgröße passt sich auch dem verfügbaren Bildschirmbereich an.",
+  "appearance.copyComponent": "Aktuelles Komponenten-Aussehen kopieren",
+  "appearance.copyComponentHint": "Das aktuelle Komponenten-Aussehen einmal aus dem globalen Design kopieren und danach unabhängig bearbeiten."
 }

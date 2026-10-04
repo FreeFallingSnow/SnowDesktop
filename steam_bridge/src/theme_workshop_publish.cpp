@@ -259,7 +259,7 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
     metadata.object["themeId"] = JsonValue::String(plan.rootId); metadata.object["packageSha256"] = JsonValue::String(plan.packageSha256);
     request.metadata = WriteJson(metadata, -1);
     if (id) request.publishedFileId = id;
-    else if (!WriteAssociation(plan.association, status->steamId, 0, true)) return Failure(error, "writeFailed");
+    else request.prepareCreateItem = [&] { return WriteAssociation(plan.association, status->steamId, 0, true); };
     request.persistCreatedItem = [&](std::uint64_t created) {
         result.created = true; result.publishedFileId = created;
         return WriteAssociation(plan.association, status->steamId, created, false);

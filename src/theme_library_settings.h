@@ -7,6 +7,8 @@
 #include "taskbar_appearance.h"
 #include <array>
 #include <cwctype>
+#include <locale>
+#include <sstream>
 
 namespace snowdesktop::themes
 {
@@ -109,6 +111,69 @@ inline Theme CaptureTarget(std::string_view target, const SettingsValues& values
     theme.scopes = TargetScope(target);
     return theme;
 }
+inline bool PrepareGlobalCustomEdit(GeneralSettings& settings,
+    const PersonalizationSettings& previous, const PersonalizationSettings& edited)
+{
+    const auto quickBefore = settings.globalQuickNavigationAppearance;
+    const auto popupBefore = settings.globalCollectionPopupAppearance;
+    if (edited.backgroundPreset != kAppearancePresetCustom)
+    {
+        if (edited.backgroundPreset != previous.backgroundPreset)
+        {
+            settings.globalQuickNavigationAppearance = {};
+            settings.globalCollectionPopupAppearance = {};
+        }
+    }
+    else
+    {
+        // A global draft contains separate bound surface appearances. Capture
+        // each current effective appearance once; edits to the global material
+        // must not continuously rewrite those bound drafts.
+        if (!settings.globalQuickNavigationAppearance.customized)
+        {
+            const auto appearance = ResolveSurfaceTheme(settings.quickNavigationAppearance,
+                previous, settings.quickNavTheme, true, &settings.globalQuickNavigationAppearance);
+            settings.globalQuickNavigationAppearance = {4, true, Capture(Kind::QuickPanel, appearance).appearance};
+        }
+        if (!settings.globalCollectionPopupAppearance.customized)
+        {
+            const auto appearance = ResolveSurfaceTheme(settings.collectionPopupAppearance,
+                previous, settings.collectionPopupTheme, false, &settings.globalCollectionPopupAppearance);
+            settings.globalCollectionPopupAppearance = {4, true, Capture(Kind::Popup, appearance).appearance};
+        }
+    }
+    return quickBefore != settings.globalQuickNavigationAppearance ||
+        popupBefore != settings.globalCollectionPopupAppearance;
+}
+inline void CopyComponentAppearanceToPopup(GeneralSettings& settings,
+    const PersonalizationSettings& componentAppearance)
+{
+    settings.collectionPopupAppearance = {4, true,
+        Capture(Kind::Popup, componentAppearance).appearance};
+}
+inline bool AppliedAppearanceMatches(const PersonalizationSettings& saved,
+    const PersonalizationSettings& current)
+{
+    // Older personalization files wrote six significant digits. Accept only
+    // that exact serialization round trip, rather than a general tolerance
+    // which could conceal a real appearance edit.
+    const auto same = [](float original, float value) {
+        if (original == value) return true;
+        if (!std::isfinite(original) || !std::isfinite(value)) return false;
+        std::stringstream legacy; legacy.imbue(std::locale::classic());
+        legacy.precision(6); legacy << original;
+        float persisted = 0; legacy >> persisted;
+        return !legacy.fail() && persisted == value;
+    };
+    bool matches = saved.panelGradient == current.panelGradient &&
+        saved.edgeLight == current.edgeLight && saved.contentTheme == current.contentTheme &&
+        same(saved.gradientEndA, current.gradientEndA);
+    VisitPanelAppearanceFields([&](auto, auto field, double, double) {
+        matches = matches && same(saved.*field, current.*field);
+    });
+    VisitPanelAppearanceFlags([&](auto, auto field) { matches = matches && saved.*field == current.*field; });
+    return matches;
+}
 inline void ReconcileReferences(Library& library, const SettingsValues& values)
 {
     for (const auto target : AppearanceTargets)
@@ -117,8 +182,7 @@ inline void ReconcileReferences(Library& library, const SettingsValues& values)
         if (found == library.references.end() || found->second.id.empty()) continue;
         const auto saved = Resolve(found->second.snapshot, found->second.id);
         auto current = CaptureTarget(target, values);
-        if (!saved || EncodePanelAppearance(saved->appearance) != EncodePanelAppearance(current.appearance) ||
-            saved->appearance.gradientEndA != current.appearance.gradientEndA ||
+        if (!saved || !AppliedAppearanceMatches(saved->appearance, current.appearance) ||
             (current.kind == Kind::QuickPanel && (saved->layout != current.layout || saved->colors != current.colors)))
             Detach(library, target);
     }

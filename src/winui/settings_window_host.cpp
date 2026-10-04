@@ -423,12 +423,27 @@ struct SettingsWindowHost::Impl
         ThemeLibraryResult result;
         result.succeeded = success; result.sharingAvailable = ThemeSharingAvailable();
         std::string ignored;
-        if (!themes::Load(themes::LibraryPath(), result.library, ignored)) result.succeeded = false;
-        if (!result.succeeded && error != "cancelled") result.message = L(
-            error == "agreementRequired" ? "themeLibrary.agreementRequired" :
-            error == "authorMismatch" ? "themeLibrary.authorMismatch" :
-            error == "stalePreparation" ? "themeLibrary.stalePreview" :
-            error == "creationUncertain" ? "themeLibrary.creationUncertain" : "themeLibrary.operationFailed");
+        if (!themes::Load(themes::LibraryPath(), result.library, ignored))
+        { result.succeeded = false; if (error.empty()) error = ignored; }
+        if (!result.succeeded && error != "cancelled")
+        {
+            result.message = L(
+                error == "agreementRequired" ? "themeLibrary.agreementRequired" :
+                error == "authorMismatch" ? "themeLibrary.authorMismatch" :
+                error == "stalePreparation" ? "themeLibrary.stalePreview" :
+                error == "creationUncertain" ? "themeLibrary.creationUncertain" :
+                error == "tagsRequired" ? "themeLibrary.tagsRequired" : "themeLibrary.operationFailed");
+            if (!error.empty())
+            {
+                auto detail = L("app.operation.errorCode");
+                const auto placeholder = detail.find(L"{0}");
+                if (placeholder != std::wstring::npos) detail.replace(placeholder, 3, Utf8ToWide(error));
+                result.message += L"\n" + detail;
+            }
+            WriteDiagnosticLogEntry((L"SettingsUI theme operation=" +
+                std::to_wstring(static_cast<int>(task->request.command)) +
+                L" error=" + Utf8ToWide(error)).c_str(), DiagnosticLogLevel::Error);
+        }
         for (const auto& [id, theme] : result.library.themes)
         {
             (void)theme;
@@ -2711,11 +2726,9 @@ struct SettingsWindowHost::Impl
             return;
         PersonalizationSettings value = snapshot->values.personalization;
         edit(value);
-        if (value.backgroundPreset != kAppearancePresetCustom && value.backgroundPreset != snapshot->values.personalization.backgroundPreset)
+        auto general = snapshot->values.general;
+        if (themes::PrepareGlobalCustomEdit(general, snapshot->values.personalization, value))
         {
-            auto general = snapshot->values.general;
-            general.globalQuickNavigationAppearance = {};
-            general.globalCollectionPopupAppearance = {};
             controller->UpdateGeneral(std::move(general), mode);
         }
         controller->UpdatePersonalization(std::move(value), mode);

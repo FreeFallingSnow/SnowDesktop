@@ -114,6 +114,8 @@ enum class WorkshopContentKind { Widget, Theme };
 struct PublishRequest
 {
     WorkshopContentKind contentKind = WorkshopContentKind::Widget;
+    // Journal an uncertain creation only at the actual remote-create boundary.
+    std::function<bool()> prepareCreateItem;
     // A newly allocated ID must be durably recorded before any upload starts.
     std::function<bool(std::uint64_t)> persistCreatedItem;
     std::function<bool(const std::filesystem::path&, const std::filesystem::path&)> validateStagedArtifacts;

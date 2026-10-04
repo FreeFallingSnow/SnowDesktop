@@ -201,7 +201,7 @@ int PrintConfiguration()
               << ",\"windowsDepotId\":" <<
         snowdesktop::steam_bridge::kSteamWindowsDepotId
               << ",\"componentWorkflowProtocolVersion\":1"
-              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\"]"
+              << ",\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.widget.v1\",\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]"
               << ",\"steamworksCompiled\":"
               << (SNOWDESKTOP_HAS_STEAMWORKS ? "true" : "false")
               << "}\n";

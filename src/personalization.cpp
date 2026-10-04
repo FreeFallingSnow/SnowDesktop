@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -552,6 +553,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     if (!snowdesktop::ValidatePanelGradient(s.panelGradient)) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
+    // Applied theme snapshots must survive a settings save/reload exactly.
+    file.precision(std::numeric_limits<float>::max_digits10);
     file << "{\n";
     file << "  \"widgetBgR\": " << s.widgetBgR << ",\n";
     file << "  \"widgetBgG\": " << s.widgetBgG << ",\n";

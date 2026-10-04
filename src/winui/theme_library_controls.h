@@ -293,8 +293,7 @@ private:
             if (nativeIndex_ == customIndex_ && current_ && reference != library_.references.end() && !reference->second.id.empty())
             {
                 const auto saved = themes::Resolve(reference->second.snapshot, reference->second.id);
-                if (saved && EncodePanelAppearance(saved->appearance) == EncodePanelAppearance(current_->appearance) &&
-                    saved->appearance.gradientEndA == current_->appearance.gradientEndA &&
+                if (saved && themes::AppliedAppearanceMatches(saved->appearance, current_->appearance) &&
                     (saved->kind != themes::Kind::QuickPanel || (saved->layout == current_->layout && saved->colors == current_->colors)))
                     preferred = saved->id;
             }

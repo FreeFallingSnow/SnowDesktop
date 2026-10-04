@@ -269,7 +269,7 @@ RECT DesktopApp::GetQuickNavigationListRowRect(size_t index) const
 void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
 {
     using Kind = QuickNavigationListRow::Kind;
-    const auto theme = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_);
+    const auto theme = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_, quickNavGlassTheme_);
     const auto rows = BuildQuickNavigationListRows();
     const auto model = BuildQuickNavigationContentModel();
     const RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
@@ -293,14 +293,14 @@ void DesktopApp::DrawQuickNavigationList(ID2D1DeviceContext* context)
             continue;
         }
         DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-            ToD2DColor(selected ? theme.selectedFill : hovered ? theme.appRowHoverFill : theme.resultFill, selected || hovered || navigationSettings_.colors.contains("resultFill") ? 1.f : 0.f),
-            ToD2DColor(selected ? theme.selectedBorder : hovered ? theme.appRowHoverStroke : theme.resultBorder, selected || hovered || navigationSettings_.colors.contains("resultBorder") ? 1.f : 0.f));
+            ToD2DColor(selected ? theme.selectedFill : hovered ? theme.appRowHoverFill : theme.resultFill),
+            ToD2DColor(selected ? theme.selectedBorder : hovered ? theme.appRowHoverStroke : theme.resultBorder));
         const int size = QuickNavScale(36);
         RECT icon = MakeRect(bounds.left + QuickNavScale(8), (bounds.top + bounds.bottom - size) / 2, bounds.left + QuickNavScale(8) + size, (bounds.top + bounds.bottom + size) / 2);
-        if (row.kind != Kind::Notice && (navigationSettings_.colors.contains("iconPlateFill") || navigationSettings_.colors.contains("iconPlateBorder")))
+        if (row.kind != Kind::Notice)
             DrawD2DRoundedRectangle(context, icon, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-                ToD2DColor(theme.iconPlateFill, navigationSettings_.colors.contains("iconPlateFill") ? 1.f : 0.f),
-                ToD2DColor(theme.iconPlateBorder, navigationSettings_.colors.contains("iconPlateBorder") ? 1.f : 0.f));
+                ToD2DColor(theme.iconPlateFill),
+                ToD2DColor(theme.iconPlateBorder));
         if (row.kind == Kind::App && row.index < quickNavigationAppResultIndices_.size())
             DrawQuickNavAppIcon(context, quickNavigationAppEntries_[quickNavigationAppResultIndices_[row.index]], icon);
         else if (row.kind == Kind::Everything && row.index < quickNavigationEverythingResults_.size())
@@ -362,9 +362,9 @@ void DesktopApp::DrawQuickNavigationActionIcon(ID2D1DeviceContext* context, Quic
     const auto fallback = [&] {
         HIGHCONTRASTW contrast{sizeof(contrast)};
         const bool highContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) && (contrast.dwFlags & HCF_HIGHCONTRASTON);
-        const auto theme = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_);
+        const auto theme = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_, quickNavGlassTheme_);
         DrawQuickNavigationCenteredText(context, kScopeGlyphs[index], bounds, quickNavFluentTextFormat_.Get(),
-            ToD2DColor(highContrast ? GetSysColor(COLOR_WINDOWTEXT) : theme.typeText), static_cast<float>(size));
+            ToD2DColor(highContrast ? snowdesktop::RgbaColor{GetSysColor(COLOR_WINDOWTEXT)} : theme.typeText), static_cast<float>(size));
     };
     HIGHCONTRASTW contrast{sizeof(contrast)};
     if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) && (contrast.dwFlags & HCF_HIGHCONTRASTON)) { fallback(); return; }
@@ -472,7 +472,7 @@ void DesktopApp::DrawQuickNavigationCenteredText(ID2D1DeviceContext* context, co
 }
 void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
 {
-    const auto theme = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_);
+    const auto theme = ResolveQuickNavTheme(quickNavLightTheme_, navigationSettings_, quickNavGlassTheme_);
     const auto format = quickNavFluentTextFormat_.Get();
     for (int button = 0; button < 3; ++button)
     {
@@ -480,7 +480,7 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         const bool hovered = PtInRect(&bounds, quickNavigationLastMousePoint_) != FALSE;
         const bool chip = button == 0 && quickNavigationSearchType_ != QuickNavigationSearchType::All;
         if (hovered) DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.searchRadius)),
-            ToD2DColor(theme.tabHoverFill), ToD2DColor(theme.searchBorder, 0.f));
+            ToD2DColor(theme.tabHoverFill), D2D1::ColorF(0,0,0,0.f));
         const wchar_t* glyph = button == 0 ? kScopeGlyphs[static_cast<size_t>(quickNavigationSearchType_)] : button == 1 ? L"\uF6AA" : (quickNavigationCollapsed_ ? L"\uF2A4" : L"\uF2B7");
         RECT symbol = bounds;
         const RECT search = GetQuickNavigationSearchRect(quickNavigationRect_);
@@ -524,7 +524,7 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         const bool hover = PtInRect(&content, quickNavigationLastMousePoint_) &&
             PtInRect(&bounds, quickNavigationLastMousePoint_);
         if (selected || hover) DrawD2DRoundedRectangle(context, bounds, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-            ToD2DColor(selected ? theme.selectedFill : theme.appRowHoverFill), ToD2DColor(theme.selectedBorder, selected ? 1.f : 0.f));
+            ToD2DColor(selected ? theme.selectedFill : theme.appRowHoverFill), ToD2DColor(selected ? theme.selectedBorder : theme.appRowHoverStroke));
         const auto type = kQuickNavigationSearchTypes[i];
         RECT icon = bounds; icon.right = icon.left + QuickNavScale(44);
         if (quickNavigationMenu_ == QuickNavigationMenu::Types)

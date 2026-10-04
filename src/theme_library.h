@@ -2,6 +2,7 @@
 
 #include "surface_theme.h"
 #include "navigation_settings.h"
+#include "theme_package_limits.h"
 
 #include <filesystem>
 #include <functional>
@@ -14,7 +15,6 @@ namespace snowdesktop::themes
 {
 // The package version is independent of the widget API and Steam bridge CLI.
 inline constexpr int kPackageVersion = 1;
-inline constexpr std::size_t kMaximumPackageBytes = 4 * 1024 * 1024;
 enum class Kind { Global, QuickPanel, Popup };
 enum Scope : unsigned { Components = 1, Dock = 2, StatusBar = 4, Taskbar = 8, All = 15 };
 inline constexpr unsigned Bars = Dock | StatusBar | Taskbar;

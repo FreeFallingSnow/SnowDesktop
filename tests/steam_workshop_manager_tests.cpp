@@ -13,6 +13,7 @@
 #include "steam_workshop_watch_thread.h"
 #include "workshop_localization.h"
 #include "workshop_project.h"
+#include "workshop_upload_validation.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -64,6 +65,42 @@ struct TemporaryDirectory
         std::filesystem::remove_all(path, error);
     }
 };
+
+void TestWorkshopUploadFileKinds()
+{
+    TemporaryDirectory temporary;
+    const auto theme = temporary.path / L"package.SNOWTHEME";
+    const auto widget = temporary.path / L"package.snowwidget";
+    const auto preview = temporary.path / L"cover.png";
+    { std::ofstream file(theme); file << R"({"format":"snowdesktop.theme","version":1,"global":[{"id":"builtin/global/dark"}],"quickPanel":[],"popup":[]})"; }
+    { std::ofstream file(widget); file << "widget"; }
+    { std::ofstream file(preview); file << "preview"; }
+    CoreError error;
+    Check(ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error),
+        "production upload preflight accepts a theme artifact before any Steam call");
+    Check(!ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Widget, error) && error.code == "invalid_package" &&
+        !ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Theme, error),
+        "the old widget-only validation rejects this theme; opposite content kinds remain rejected");
+    Check(ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Widget, error), "widget upload preflight keeps its existing package kind");
+    std::filesystem::resize_file(theme, 4ull * 1024ull * 1024ull);
+    Check(ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error), "theme package accepts its format limit");
+    std::filesystem::resize_file(theme, 4ull * 1024ull * 1024ull + 1);
+    Check(!ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error), "theme package above 4 MiB is rejected");
+    std::filesystem::resize_file(widget, 20ull * 1024ull * 1024ull);
+    Check(ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Widget, error), "widget package retains its 20 MiB limit");
+    std::filesystem::resize_file(widget, 20ull * 1024ull * 1024ull + 1);
+    Check(!ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Widget, error), "oversized widget package remains rejected");
+    std::filesystem::resize_file(preview, 1024ull * 1024ull - 1);
+    Check(ValidateWorkshopUploadFile(preview, true, WorkshopContentKind::Theme, error), "preview accepts files strictly below 1 MiB");
+    std::filesystem::resize_file(preview, 1024ull * 1024ull);
+    Check(!ValidateWorkshopUploadFile(preview, true, WorkshopContentKind::Theme, error) && error.code == "invalid_preview",
+        "preview at 1 MiB is rejected");
+    std::filesystem::resize_file(theme, 0);
+    Check(!ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error) &&
+        !ValidateWorkshopUploadFile(temporary.path, false, WorkshopContentKind::Theme, error) &&
+        !ValidateWorkshopUploadFile(temporary.path / L"missing.snowtheme", false, WorkshopContentKind::Theme, error),
+        "empty, directory and missing upload paths never reach Steam");
+}
 
 struct ScopedEnvironmentVariable
 {
@@ -1409,6 +1446,7 @@ int wmain(int argc, wchar_t** argv)
     TestMetadataBinding();
     TestCommandLineQuoting();
     TestPublishLifecycle();
+    TestWorkshopUploadFileKinds();
     TestWorkshopLocalization();
     TestComponentPublishPlan();
     if (argc == 3)

@@ -2522,5 +2522,12 @@
   "themeLibrary.closePreview": "Voltar à prévia",
   "themeLibrary.fitPreview": "Ajustar à janela",
   "themeLibrary.zoomIn": "Aumentar zoom",
-  "themeLibrary.zoomOut": "Diminuir zoom"
+  "themeLibrary.zoomOut": "Diminuir zoom",
+  "quickNav.colorHint.transparent": "Transparente por padrão. Defina a opacidade para mostrar esta cor; bordas e fundos são independentes.",
+  "quickNav.colorHint.opacity": "Defina a cor e a opacidade desta parte: 0% é transparente e 100% é opaco. Os estados de foco do mouse e de seleção são configurados separadamente.",
+  "quickNav.layout.rowsHint": "Máximo de linhas de resultados visíveis; role para ver as demais.",
+  "quickNav.layout.linesHint": "Máximo de linhas de texto abaixo de cada ícone da grade.",
+  "quickNav.layout.pixelHint": "Pixels lógicos, ajustados à escala da tela. As dimensões do painel também se adaptam à área de tela disponível.",
+  "appearance.copyComponent": "Copiar aparência atual do componente",
+  "appearance.copyComponentHint": "Copie a aparência atual do componente do tema global uma vez e depois ajuste-a independentemente."
 }

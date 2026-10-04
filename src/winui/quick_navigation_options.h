@@ -6,6 +6,7 @@
 #include <memory>
 #include <map>
 #include <cstdio>
+#include <cstdint>
 
 namespace snowdesktop::winui
 {
@@ -121,10 +122,12 @@ public:
                 auto* current = color.get();
                 current->editor->Initialize([this, current](auto rgba, SettingsUpdateMode mode) {
                     if (sync_ || mode == SettingsUpdateMode::Preview) return;
-                    char hex[8]{}; std::snprintf(hex, sizeof(hex), "#%02X%02X%02X", rgba.R, rgba.G, rgba.B);
-                    commit_([key = current->key, value = std::string(hex)](auto& settings) {settings.colors[key] = value;});
+                    commit_([key = current->key, value = EncodeRgbaColor(rgba.R, rgba.G, rgba.B, rgba.A)](auto& settings) {settings.colors[key] = value;});
                 });
-                current->editor->SetText(L(std::string("quickNav.color.") + name), {}, L("app.settings.cancel"));
+                current->editor->picker.IsAlphaEnabled(true);
+                current->editor->picker.IsAlphaSliderVisible(true);
+                current->editor->picker.IsAlphaTextInputVisible(true);
+                current->editor->SetText(L(std::string("quickNav.color.") + name), L(ColorHint(name)), L("app.settings.cancel"));
                 presenter_controls::AddRestoreDefaultAction(current->editor->row, L("app.settings.restore_default"), [this, name] {commit_([name](auto& value) {value.colors.erase(name);});});
                 colorGroups.at(area).Children().Append(current->editor->row.root);
                 focus_.emplace("quickNav.color." + name,current->editor->row.root);
@@ -134,11 +137,11 @@ public:
         RefreshText();
     }
     auto Content() const {return root_;}
-    void Apply(const NavigationSettings& values, bool light)
+    void Apply(const NavigationSettings& values, bool light, bool glass = false)
     {
-        if (hasValues_ && values == values_ && light == light_) return;
+        if (hasValues_ && values == values_ && light == light_ && glass == glass_) return;
         const bool enginesChanged = !hasValues_ || values.engines != values_.engines;
-        sync_ = true; values_ = values; light_ = light; hasValues_ = true;
+        sync_ = true; values_ = values; light_ = light; glass_ = glass; hasValues_ = true;
         if (!appearanceOnly_)
         {
             view_.SelectedIndex(static_cast<int>(values.desktopViewMode));
@@ -148,12 +151,13 @@ public:
             for (size_t i = 0; i < values.engines.size(); ++i) if (values.engines[i].id == values.defaultEngine) defaultEngine_.SelectedIndex(static_cast<int>(i));
         }
         for (const auto& number : numbers_) presenter_controls::SyncNumberBoxValue(number->box, values.layout.*number->field);
-        const auto theme = ResolveQuickNavTheme(light, values);
+        const auto theme = ResolveQuickNavTheme(light, values, glass);
         for (const auto& color : colors_)
             for (const auto& [name, field] : kQuickNavColorFields) if (color->key == name)
             {
-                const COLORREF rgb = theme.*field;
-                color->editor->SetColor({255, GetRValue(rgb), GetGValue(rgb), GetBValue(rgb)});
+                const auto value = theme.*field;
+                color->editor->SetColor({static_cast<std::uint8_t>(std::lround(value.alpha * 255.f)),
+                    GetRValue(value.rgb), GetGValue(value.rgb), GetBValue(value.rgb)});
             }
         sync_ = false;
     }
@@ -161,7 +165,7 @@ public:
     {
         sync_ = true;
         for (const auto& [key, label] : labels_) label.Text(L(key));
-        for (const auto& [key, row] : rows_) row->SetText(L(key));
+        for (const auto& [key, row] : rows_) row->SetText(L(key), key.starts_with("quickNav.layout.") ? L(LayoutHint(key)) : std::wstring{});
         for (const auto& [key, group] : groups_) group.Header(winrt::box_value(L(key)));
         if (!appearanceOnly_)
         {
@@ -171,7 +175,7 @@ public:
             addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));
             if (hasValues_) BuildEngines();
         }
-        for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), {}, L("app.settings.cancel"));
+        for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), L(ColorHint(color->key)), L("app.settings.cancel"));
         sync_ = false;
     }
     void Register(const std::function<void(std::string, const winrt::Microsoft::UI::Xaml::FrameworkElement&)>& registrar) const
@@ -195,6 +199,19 @@ private:
     struct Number {std::string key; int QuickNavigationLayout::*field; NumberBox box;};
     struct Color {std::string key; std::unique_ptr<presenter_controls::ColorFlyoutEditor> editor;};
     std::wstring L(std::string_view key) const {return localize_(key);}
+    static const char* ColorHint(std::string_view key)
+    {
+        if (key == "resultFill" || key == "resultBorder" || key == "iconPlateFill" || key == "iconPlateBorder" ||
+            key == "tabDefaultFill" || key == "tabDefaultStroke" || key == "tabActiveStroke" || key == "tabHoverStroke")
+            return "quickNav.colorHint.transparent";
+        return "quickNav.colorHint.opacity";
+    }
+    static const char* LayoutHint(std::string_view key)
+    {
+        if (key.ends_with("visibleRows")) return "quickNav.layout.rowsHint";
+        if (key.ends_with("labelLines")) return "quickNav.layout.linesHint";
+        return "quickNav.layout.pixelHint";
+    }
     bool Accept(const NavigationSettings& candidate)
     {
         const bool valid = ValidateNavigationSearchConfiguration(candidate);
@@ -303,7 +320,7 @@ private:
         expandedEngine_.clear();
     }
     Localize localize_; std::function<void(Edit)> commit_; winrt::Microsoft::UI::Xaml::Style cardStyle_{nullptr}; NavigationSettings values_;
-    bool appearanceOnly_ = false, sync_ = false, hasValues_ = false, light_ = false;
+    bool appearanceOnly_ = false, sync_ = false, hasValues_ = false, light_ = false, glass_ = false;
     Panel root_, engineRows_;
     winrt::Microsoft::UI::Xaml::Controls::ComboBox view_, defaultEngine_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar notice_;

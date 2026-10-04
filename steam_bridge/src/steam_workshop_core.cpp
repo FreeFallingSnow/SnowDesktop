@@ -10,6 +10,7 @@
 #include "steam_workshop_core.h"
 #include "../../src/theme_preview_parts.h"
 #include "publish_lifecycle.h"
+#include "workshop_upload_validation.h"
 
 #include <algorithm>
 #include <array>
@@ -26,9 +27,6 @@ namespace snowdesktop::steam_bridge
 {
 namespace
 {
-constexpr std::uint64_t kMaximumPackageBytes = 20ull * 1024ull * 1024ull;
-constexpr std::uint64_t kMaximumPreviewBytes = 1024ull * 1024ull - 1ull;
-
 std::filesystem::path ExecutableDirectory()
 {
     std::wstring path(32768, L'\0');
@@ -61,57 +59,6 @@ void SetError(CoreError& error, int exitCode, std::string code,
     error.code = std::move(code);
     error.message = std::move(message);
     error.steamInitResult.reset();
-}
-
-bool ValidateFile(const std::filesystem::path& path, bool preview,
-    CoreError& error)
-{
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec) || ec)
-    {
-        SetError(error, kInvalidArguments,
-            preview ? "invalid_preview" : "invalid_package",
-            preview ? "preview file does not exist" :
-                "component package does not exist");
-        return false;
-    }
-    const std::uint64_t size = std::filesystem::file_size(path, ec);
-    if (ec || size == 0)
-    {
-        SetError(error, kInvalidArguments,
-            preview ? "invalid_preview" : "invalid_package",
-            preview ? "preview file is empty or unreadable" :
-                "component package is empty or unreadable");
-        return false;
-    }
-    std::wstring extension = path.extension().wstring();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-        towlower);
-    if (preview)
-    {
-        if (extension != L".png" && extension != L".jpg" &&
-            extension != L".jpeg" && extension != L".gif")
-        {
-            SetError(error, kInvalidArguments, "invalid_preview",
-                "Steam Workshop previews must be PNG, JPG, or GIF");
-            return false;
-        }
-        if (size > kMaximumPreviewBytes)
-        {
-            SetError(error, kInvalidArguments, "invalid_preview",
-                "Steam Workshop preview must be smaller than 1 MiB");
-            return false;
-        }
-    }
-    else if (extension != L".snowwidget" || size > kMaximumPackageBytes)
-    {
-        SetError(error, kInvalidArguments, "invalid_package",
-            extension != L".snowwidget" ?
-                "package must be a .snowwidget artifact" :
-                "component package exceeds the 20 MiB format limit");
-        return false;
-    }
-    return true;
 }
 
 #if SNOWDESKTOP_HAS_STEAMWORKS
@@ -651,9 +598,9 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     CoreError& error)
 {
     if (request.updateContent &&
-        !ValidateFile(request.package, false, error))
+        !ValidateWorkshopUploadFile(request.package, false, request.contentKind, error))
         return std::nullopt;
-    if (request.preview && !ValidateFile(*request.preview, true, error))
+    if (request.preview && !ValidateWorkshopUploadFile(*request.preview, true, request.contentKind, error))
         return std::nullopt;
     const bool creating = !request.publishedFileId.has_value();
     PublishLifecycle lifecycle;
@@ -765,6 +712,12 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     std::string message;
     if (creating)
     {
+        if (request.prepareCreateItem && !request.prepareCreateItem())
+        {
+            SetError(error, kSteamOperationFailed, "writeFailed",
+                "cannot persist the Workshop creation journal");
+            return std::nullopt;
+        }
         CreateItemResult_t created{};
         if (!WaitForCall(ugc->CreateItem(appId, k_EWorkshopFileTypeCommunity),
                 created, std::chrono::seconds(60), message))
