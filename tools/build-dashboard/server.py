@@ -55,14 +55,25 @@ def shared_open(path):
     return os.fdopen(fd, "rb")
 
 def read_json(root, name):
-    try:
-        with shared_open(safe_path(root, name)) as stream:
-            data = stream.read(MAX_METADATA_BYTES + 1)
-        if len(data) > MAX_METADATA_BYTES:
-            raise ValueError("Metadata exceeds 8 MiB")
-        return json.loads(data.decode("utf-8-sig"))
-    except FileNotFoundError:
-        return None
+    # Windows File.Replace can briefly remove the destination or hold a
+    # sharing lock while exchanging the old/new files. A missing live state
+    # during that exchange is not evidence that its editors have disappeared.
+    # Reopen the actual file; never substitute cached/backup registration data.
+    for attempt in range(4):
+        try:
+            with shared_open(safe_path(root, name)) as stream:
+                data = stream.read(MAX_METADATA_BYTES + 1)
+            if len(data) > MAX_METADATA_BYTES:
+                raise ValueError("Metadata exceeds 8 MiB")
+            return json.loads(data.decode("utf-8-sig"))
+        except OSError as error:
+            missing = isinstance(error, FileNotFoundError) or error.errno in (2, 3)
+            transient = missing and name == "state.json" or error.errno in (32, 33)
+            if attempt == 3 or not transient:
+                if missing:
+                    return None
+                raise
+            time.sleep(.005 * (attempt + 1))
 
 def owner_state(owner):
     if not owner:

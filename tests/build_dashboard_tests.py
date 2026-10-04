@@ -2,6 +2,7 @@
 import argparse
 import ctypes
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
+from unittest.mock import patch
 
 sys.dont_write_bytecode=True
 
@@ -20,6 +22,36 @@ class IsolatedPortRace(Exception):
 
 def free_port():
     with socket.socket() as sock:sock.bind(('127.0.0.1',0));return sock.getsockname()[1]
+
+def metadata_replacement_checks(module, state):
+    # A native ReplaceFileW reproducer exposed transient absent/shared live
+    # state. Force that order here so the original reader fails deterministically.
+    expected = {'current': {'id': 'replacement-registration', 'phase': 'editing'}}
+    encoded = json.dumps(expected).encode('utf-8')
+    with patch.object(module, 'shared_open', side_effect=[FileNotFoundError(2, 'replacement gap'),
+            OSError(32, 'replacement sharing'), io.BytesIO(encoded)]), patch.object(module.time, 'sleep'):
+        assert module.read_json(state, 'state.json') == expected, 'replacement must return the current file, not absent/cached state'
+    for error in (PermissionError(5, 'access denied'), OSError(32, 'persistent sharing')):
+        with patch.object(module, 'shared_open', side_effect=error) as opened, patch.object(module.time, 'sleep'):
+            try:
+                module.read_json(state, 'state.json')
+            except OSError as observed:
+                assert observed is error
+            else:
+                raise AssertionError('persistent sharing and permission errors must remain failures')
+            assert opened.call_count == (4 if error.errno == 32 else 1), 'only transient sharing has a finite read budget'
+    with patch.object(module, 'shared_open', side_effect=FileNotFoundError(2, 'absent')) as opened, patch.object(module.time, 'sleep'):
+        assert module.read_json(state, 'state.json') is None and opened.call_count == 4
+        opened.reset_mock()
+        assert module.read_json(state, 'not-created-result.json') is None and opened.call_count == 1
+    with patch.object(module, 'shared_open', return_value=io.BytesIO(b'{invalid')), patch.object(module.time, 'sleep'):
+        try:
+            module.read_json(state, 'state.json')
+        except json.JSONDecodeError:
+            pass
+        else:
+            raise AssertionError('invalid metadata must not become a missing/passing state')
+    print('PASS live metadata replacement gaps/sharing, fresh registration, bounded absence and persistent/permission/JSON failure signals')
 
 def main(repo,browser,wait_list_only=False):
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-dashboard-'));state=root/'.build/collaboration';state.mkdir(parents=True)
@@ -65,6 +97,7 @@ def main(repo,browser,wait_list_only=False):
         assert before=={x.name:x.read_bytes() for x in state.glob('*.json')},'HTTP must not mutate coordination state'
         print('PASS readonly HTTP, loopback, Host/Origin/CORS, traversal, verbs, CSP, occupied-port refusal')
         spec=importlib.util.spec_from_file_location('server_unit',repo/'tools/build-dashboard/server.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        metadata_replacement_checks(module, state)
         assert module.redact('token=fixture-secret password:abc')=='token=[redacted] password:[redacted]'
         # Full-test coverage/retry evidence in a historical result must not
         # make the live status route unavailable (production HTTP 503).
