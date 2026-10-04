@@ -670,7 +670,7 @@ struct DockPagePresenter::Impl
         taskbarThemeCombo = NewCombo();
         taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar", false, taskbarThemeCombo, 10, 8);
         taskbarContentThemeCombo = NewCombo();
-        taskbarThemeRow.Initialize(taskbarThemeCombo);
+        taskbarThemeRow.Initialize(taskbarThemes->SelectionContent());
         taskbarContentThemeRow.Initialize(taskbarContentThemeCombo);
         taskbarRuntimeStatus = muxc::InfoBar{};
         taskbarRuntimeStatus.IsClosable(false);
@@ -964,7 +964,6 @@ struct DockPagePresenter::Impl
         control.details.Spacing(12.0);
         control.details.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        control.themeRow.Initialize(control.theme);
         control.contentThemeRow.Initialize(control.contentTheme);
         // The always-visible scenario switch discloses its appearance editors.
         control.details.Children().Append(control.enabledRow.root);
@@ -972,10 +971,11 @@ struct DockPagePresenter::Impl
         control.appearanceDetails.Spacing(12.0);
         control.appearanceDetails.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        control.appearanceDetails.Children().Append(control.themeRow.root);
         const std::string target = member == &DockSettings::systemTaskbarShellUi ? "taskbar/shellUi" :
             member == &DockSettings::systemTaskbarMaximizedWindow ? "taskbar/maximizedWindow" : "taskbar/visibleWindow";
         control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.theme, 10, 8);
+        control.themeRow.Initialize(control.savedThemes->SelectionContent());
+        control.appearanceDetails.Children().Append(control.themeRow.root);
         control.appearanceDetails.Children().Append(control.savedThemes->Content());
         control.appearanceDetails.Children().Append(
             control.contentThemeRow.root);

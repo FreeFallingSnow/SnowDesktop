@@ -806,8 +806,6 @@ private:
             }
             RefreshChoices();
             if (changed_) changed_();
-            if (command == ThemeLibraryCommand::CopyLocal && !result.savedId.empty())
-            { Run(ThemeLibraryCommand::Apply, result.savedId); return; }
             if (save && !result.savedId.empty())
             {
                 const auto saved = themes::Resolve(library_.themes, result.savedId);

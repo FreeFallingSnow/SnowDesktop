@@ -457,12 +457,12 @@ int RunThemeLibraryTests()
         check(draft.general.collectionPopupAppearance.mode == -1 &&
             EncodePanelAppearance(draft.general.globalCollectionPopupAppearance.appearance,true) == EncodePanelAppearance(draft.personalization,true),
             "copying component appearance into a bound popup also preserves follow-global mode");
-        auto changed = CaptureTarget("quickPanel",draft); changed.id = quickSource.theme->id; changed.name = quickSource.theme->name;
-        check(Save(sourceLibrary,changed,{},true,savedId,error) && savedId == quick.id && draft.general.quickNavigationAppearance.mode == -1,
+        auto boundAppearance = CaptureTarget("quickPanel",draft); boundAppearance.id = quickSource.theme->id; boundAppearance.name = quickSource.theme->name;
+        check(Save(sourceLibrary,boundAppearance,{},true,savedId,error) && savedId == quick.id && draft.general.quickNavigationAppearance.mode == -1,
             "explicitly updating a bound local theme keeps its source ID without switching the draft selector");
-        changed.id.clear(); changed.name = "Bound draft copy";
-        check(Save(sourceLibrary,changed,{},false,savedId,error,[] {return "theme/bound-copy";}) && savedId == "theme/bound-copy" &&
-            sourceLibrary.themes.at(quick.id).appearance == changed.appearance && draft.general.quickNavigationAppearance.mode == -1,
+        boundAppearance.id.clear(); boundAppearance.name = "Bound draft copy";
+        check(Save(sourceLibrary,boundAppearance,{},false,savedId,error,[] {return "theme/bound-copy";}) && savedId == "theme/bound-copy" &&
+            sourceLibrary.themes.at(quick.id).appearance == boundAppearance.appearance && draft.general.quickNavigationAppearance.mode == -1,
             "saving a bound draft as a new theme assigns a new ID and retains follow-global mode");
         EditSurfaceAppearance(draft.general,false,popupSource.theme->appearance,draft.personalization);
         check(draft.general.collectionPopupAppearance.mode == -1 && CaptureTarget("popup",draft).appearance == popupSource.theme->appearance,

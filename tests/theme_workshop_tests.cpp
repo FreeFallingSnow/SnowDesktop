@@ -209,6 +209,36 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     if (heldBindingLock != INVALID_HANDLE_VALUE) CloseHandle(heldBindingLock);
     std::string afterBinding; atomic_file::ReadAll(bindingFile, afterBinding);
     check(beforeBinding == afterBinding, "wrong owner, wrong category, cancellation and lock failure do not rewrite the prior binding");
+    const auto localPreparation = directory / L"bound-prepared";
+    std::filesystem::create_directory(localPreparation);
+    Package boundPackage{{localRoot.id, localRoot}};
+    check(WritePackage(localPreparation / L"package.snowtheme", boundPackage, error), "bound local UUID has its own immutable package");
+    std::filesystem::copy_file(prepared / L"cover.png", localPreparation / L"cover.png");
+    for (const auto& part : preview::Parts(boundPackage, localRoot.id, localRoot.scopes, error))
+        std::filesystem::copy_file(prepared / L"cover.png", localPreparation / preview::GalleryFilename(bridge::ThemeSha256(localRoot.id), part.component));
+    bridge::ThemePublishPlan boundPlan;
+    check(bridge::WriteThemePreparation(localPreparation, localRoot.id, localRoot.name, now, error, classification) &&
+        bridge::BuildThemePublishPlan(localPreparation, bindingData, boundPlan, error) && boundPlan.publishedFileId == 123,
+        "a verified existing-item binding prepares an update rather than creating another Steam item");
+    auto boundTransport = transport;
+    boundTransport.item = [&](auto id, auto&) -> std::optional<bridge::PublishedItem> {
+        bridge::PublishedItem item; item.publishedFileId = id; item.ownerSteamId = 321; item.consumerAppId = 5080330;
+        item.metadata = bridge::WriteJson(metadata); return item;
+    };
+    bool replacedBothIdentities = false;
+    boundTransport.publish = [&](const bridge::PublishRequest& request, const auto&, auto&) -> std::optional<bridge::PublishResult> {
+        const auto localPrefix = preview::GalleryPrefix(bridge::ThemeSha256(localRoot.id));
+        replacedBothIdentities = request.publishedFileId == 123 && request.managedPreviewPrefix == localPrefix &&
+            request.previousManagedPreviewPrefix == managedPrefix &&
+            bridge::ReplaceableThemePreview(request, managedPrefix + "control-panel.png") &&
+            bridge::ReplaceableThemePreview(request, localPrefix + "popup.png") &&
+            !bridge::ReplaceableThemePreview(request, "manual-preview.png") &&
+            !bridge::ReplaceableThemePreview(request, preview::GalleryFilename(bridge::ThemeSha256("unrelated"), "popup")) &&
+            request.validateStagedPreviews(request.additionalPreviews);
+        return bridge::PublishResult{false, 123, false, {}};
+    };
+    check(bridge::ExecuteThemePublishPlan(boundPlan, false, true, boundTransport, {}, result, detail, now) && replacedBothIdentities,
+        "updating a different local UUID removes only current and verified previous generated galleries, preserving manual and unrelated images");
     entry.object["details"] = details;
     const auto downloaded = directory / L"downloaded"; std::filesystem::create_directory(downloaded);
     check(WritePackage(downloaded / L"package.snowtheme",package,error), "download fixture contains only the published artifact");
@@ -230,11 +260,30 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     check(library.references.empty() && Select(library,"global",installed,Kind::Global,All,error), "subscription import preserves explicit apply boundary");
     const auto subscribedBytes = EncodeLibrary(library, error);
     Library copyLibrary = library; std::string copied;
+    auto customQuick = Capture(Kind::QuickPanel, MakeAppearancePreset(kAppearancePresetDark));
+    customQuick.id = "theme/subscribed-quick"; customQuick.name = "Subscribed quick";
+    auto customPopup = Capture(Kind::Popup, MakeAppearancePreset(kAppearancePresetDark));
+    customPopup.id = "theme/subscribed-popup"; customPopup.name = "Subscribed popup";
+    copyLibrary.themes.emplace(customQuick.id, customQuick);
+    copyLibrary.themes.emplace(customPopup.id, customPopup);
+    copyLibrary.themes.at(installed).quickPanel = customQuick.id;
+    copyLibrary.themes.at(installed).popup = customPopup.id;
+    copyLibrary.workshop.at("123").ids.insert(customQuick.id);
+    copyLibrary.workshop.at("123").ids.insert(customPopup.id);
+    const auto sourceIds = copyLibrary.workshop.at("123").ids;
+    const auto originalCopySource = EncodePackage(copyLibrary.themes, error);
     check(workshop::CopyLocal(copyLibrary, installed, copied, error) && copied != installed &&
         copyLibrary.themes.at(copied).quickPanel != copyLibrary.themes.at(installed).quickPanel &&
         copyLibrary.themes.at(copied).popup != copyLibrary.themes.at(installed).popup &&
-        copyLibrary.workshop.at("123").ids == library.workshop.at("123").ids && EncodeLibrary(library, error) == subscribedBytes,
+        copyLibrary.themes.at(copyLibrary.themes.at(copied).quickPanel).appearance == customQuick.appearance &&
+        copyLibrary.themes.at(copyLibrary.themes.at(copied).popup).appearance == customPopup.appearance &&
+        copyLibrary.workshop.at("123").ids == sourceIds && EncodeLibrary(library, error) == subscribedBytes,
         "copy-to-local duplicates the complete dependency closure with new IDs without editing the subscribed source");
+    Package unchangedSource;
+    for (const auto& [id, theme] : copyLibrary.themes)
+        if (id == installed || id == customQuick.id || id == customPopup.id) unchangedSource.emplace(id, theme);
+    check(EncodePackage(unchangedSource, error) == originalCopySource,
+        "copying remaps only the new closure and leaves every original subscribed dependency byte-for-byte unchanged");
     auto copiedTheme = copyLibrary.themes.at(copied); copiedTheme.appearance.widgetAlpha = .17f;
     std::string updatedCopy;
     check(Save(copyLibrary, copiedTheme, {}, true, updatedCopy, error) && updatedCopy == copied &&

@@ -262,6 +262,7 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
     // Apps without an app-specific EULA report unavailable. Create/Submit
     // callbacks remain authoritative for Steam's Workshop legal agreement.
     if (!agreement || (agreement->available && (!agreement->accepted || agreement->needsAction))) return Failure(error, "agreementRequired");
+    std::string previousGalleryPrefix;
     if (id)
     {
         const auto item = transport.item(id, error);
@@ -275,6 +276,7 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
                 (JsonString(identity, "themeId") != plan.rootId && (remoteRoot.empty() || JsonString(identity, "themeId") != remoteRoot)) ||
                 JsonUnsigned(identity, "themeWorkflowProtocolVersion") != 1)
                 return Failure(error, "itemMismatch");
+            previousGalleryPrefix = themes::preview::GalleryPrefix(ThemeSha256(JsonString(identity, "themeId").value_or("")));
         }
     }
     if (cancel && cancel->load()) return Failure(error, "cancelled");
@@ -282,6 +284,7 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
     request.contentKind = WorkshopContentKind::Theme; request.title = plan.title;
     for (const auto& image : plan.gallery) request.additionalPreviews.push_back(image.path);
     request.managedPreviewPrefix = themes::preview::GalleryPrefix(ThemeSha256(plan.rootId));
+    request.previousManagedPreviewPrefix = std::move(previousGalleryPrefix);
     request.tags = plan.tags; request.tags->emplace_back(themes::tags::Content);
     auto metadata = JsonValue::Object(); metadata.object["format"] = JsonValue::String("snowdesktop-theme");
     metadata.object["artifact"] = JsonValue::String("package.snowtheme"); metadata.object["themeWorkflowProtocolVersion"] = JsonValue::Number(1);

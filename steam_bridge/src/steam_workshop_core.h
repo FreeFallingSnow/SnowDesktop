@@ -123,6 +123,8 @@ struct PublishRequest
     std::vector<std::filesystem::path> additionalPreviews;
     // Only this theme's generated images may be replaced on an update.
     std::string managedPreviewPrefix;
+    // Previous remote identity, verified from the owned item's metadata.
+    std::string previousManagedPreviewPrefix;
     std::filesystem::path package;
     bool updateContent = true;
     std::optional<std::filesystem::path> preview;
@@ -146,6 +148,7 @@ struct PublishResult
 };
 
 using PublishProgressCallback = std::function<void(const PublishProgress&)>;
+bool ReplaceableThemePreview(const PublishRequest& request, std::string_view filename);
 
 class SteamWorkshopCore
 {

@@ -92,8 +92,6 @@ struct StatusBarPagePresenter::Impl
         control.root.Spacing(12);
         control.combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         control.combo.MaxWidth(520);
-        control.row.Initialize(control.combo);
-        control.root.Children().Append(control.row.root);
         control.editor = PanelAppearanceEditor::Create(localize,
             [this, member](const auto& appearance, bool commit) {
                 Emit([member, appearance](auto& settings) {
@@ -105,6 +103,8 @@ struct StatusBarPagePresenter::Impl
         const std::string target = member == &StatusBarSettings::noWindow ? "statusBar/noWindow" :
             member == &StatusBarSettings::maximizedWindow ? "statusBar/maximizedWindow" : "statusBar";
         control.themes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.combo, 10, 9);
+        control.row.Initialize(control.themes->SelectionContent());
+        control.root.Children().Append(control.row.root);
         control.root.Children().Append(control.themes->Content());
         control.root.Children().Append(control.editor->Content());
         control.root.Children().Append(control.themes->SaveContent());
