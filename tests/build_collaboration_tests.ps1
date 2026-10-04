@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # The production coordinator runs in separate Windows PowerShell processes.
-# Only the expensive build.bat/test.bat boundary is replaced, with file gates
+# Native output ownership and the build.bat/test.bat boundary are replaced, with file gates
 # controlling overlap. Counts and durable results are independent expectations.
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $fixture = Join-Path $temporaryRoot ('SnowDesktop-collaboration-' + [Guid]::NewGuid().ToString('N'))
@@ -163,6 +163,20 @@ try {
         (Join-Path $PSScriptRoot '..\scripts\build_ownership.ps1'),
         (Join-Path $PSScriptRoot '..\scripts\build_preflight.ps1'),
         (Join-Path $PSScriptRoot '..\scripts\build_waiter.ps1') -Destination $scripts
+    # This fixture never builds an application or Hook DLL. Observing desktop
+    # applications here couples a fake build to unrelated (possibly protected)
+    # user processes. Keep coordinator guard coverage through explicit gates.
+    $preflight = @'
+param([switch]$ExecuteReloadShell)
+function Get-ReadOnlyPreflight([string]$Root) {
+    $unknown=[IO.File]::Exists((Join-Path $Root 'preflight-unknown'))
+    $blocked=[IO.File]::Exists((Join-Path $Root 'preflight-blocked'))
+    return [pscustomobject]@{status=$(if($unknown){'unknown'}elseif($blocked){'blocked'}else{'clear'});
+        owners=@();unknownPids=$(if($unknown){@($PID)}else{@()});observedUtc=[DateTime]::UtcNow.ToString('o')}
+}
+if($MyInvocation.InvocationName -ne '.'){throw 'Fake build must not execute desktop process control'}
+'@
+    [IO.File]::WriteAllText((Join-Path $scripts 'build_preflight.ps1'), $preflight, $utf8)
     [IO.File]::WriteAllText((Join-Path $scripts 'build_batch_tests.ps1'), 'param([string]$Batch)' + "`r`n" + '& (Join-Path $PSScriptRoot fake.ps1) -Phase test; exit $LASTEXITCODE', $utf8)
     $fake = @'
 param([string]$Phase, [string]$BuildArgument = '')
@@ -391,6 +405,21 @@ exit 0
     Call ('recover -Batch ' + $resultA.batchId + ' -ConfirmStopped -Reason published') | Out-Null
     Check ($null -eq (State).current -and (Counts).Count -eq $before) 'Published result recovery must retire only its own batch without rerunning'
     Write-Output 'PASS result-before-retirement crash recovery'
+
+    Stage 'output-preflight'
+    $before = (Counts).Count
+    Gate 'preflight-unknown'
+    $guarded = Call 'begin output-owner'
+    $waitingOwner = Start-Command ('finish output-owner -Batch ' + $guarded.batchId)
+    Wait-Until { $st=State; $st.current -and $st.current.PSObject.Properties['preflight'] -and $st.current.preflight.status -eq 'unknown' } 'unknown output owner blocks freeze' $waitingOwner
+    Check ((Counts).Count -eq $before -and -not $waitingOwner.process.HasExited) 'Unknown owner must not execute a build'
+    Gate 'preflight-blocked'; Remove-Gate 'preflight-unknown'
+    Wait-Until { $st=State; $st.current -and $st.current.PSObject.Properties['preflight'] -and $st.current.preflight.status -eq 'blocked' } 'known output owner blocks freeze' $waitingOwner
+    Check ((Counts).Count -eq $before -and -not $waitingOwner.process.HasExited) 'Known output owner must not execute a build without reload authorization'
+    Remove-Gate 'preflight-blocked'
+    $ownerResult = Complete $waitingOwner
+    Check ($ownerResult.outcome -eq 'passed' -and (Counts).Count -eq ($before + 2)) 'Clear output executes exactly one build/test pipeline'
+    Write-Output 'PASS controlled unknown/blocked output ownership prevents execution; clear ownership resumes once without desktop process control'
 
     Stage 'input-invalidation'
     # Unregistered edits cannot be physically stopped. Endpoint content checks

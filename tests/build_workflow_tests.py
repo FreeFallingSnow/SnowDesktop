@@ -67,6 +67,10 @@ def run_tests(repo,entry=True):
     scripts=root/'scripts';scripts.mkdir()
     for name in ('build_entry.ps1','build_runtime.ps1','build_manager.ps1','build_inputs.ps1','build_job.cs','build_protocol.ps1','build_ownership.ps1','build_preflight.ps1','build_waiter.ps1','build_wait_tasks.py'):
         shutil.copyfile(repo/'scripts'/name,scripts/name)
+    # No application/Hook is produced by this fake native boundary. Desktop
+    # ownership must not make an independent coordinator fixture wait for a
+    # protected application in another conversation's output directory.
+    (scripts/'build_preflight.ps1').write_text("function Get-ReadOnlyPreflight([string]$Root){return [pscustomobject]@{status='clear';owners=@();unknownPids=@();observedUtc=[DateTime]::UtcNow.ToString('o')}}\nif($MyInvocation.InvocationName -ne '.'){throw 'Fixture cannot control desktop processes'}\n")
     (root/'tools/build-dashboard').mkdir(parents=True)
     shutil.copyfile(repo/'tools/build-dashboard/server.py',root/'tools/build-dashboard/server.py')
     (root/'src').mkdir()

@@ -52,6 +52,62 @@ def remove_fixture_tree(root):
             if time.monotonic()>=deadline:raise
             time.sleep(.05)
 
+def stop_fixture_process(root, owner):
+    """Validate and stop one owned process through the same native handle.
+
+    Teardown must not start another PowerShell/WMI process for every stale
+    receipt: a PowerShell engine-start stall can otherwise fail a completed
+    regression and leave its private workers alive.
+    """
+    assert root in CREATED, 'Process cleanup requires this test\'s named fixture'
+    pid=int(owner['pid']);ticks=str(owner.get('startTicks',''))
+    assert ticks.isdigit(), 'Invalid fixture process identity'
+    if pid==os.getpid():return False
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.OpenProcess.argtypes=[ctypes.c_ulong,ctypes.c_int,ctypes.c_ulong]
+    kernel.OpenProcess.restype=ctypes.c_void_p
+    kernel.GetProcessTimes.argtypes=[ctypes.c_void_p]+[ctypes.POINTER(ctypes.c_ulonglong)]*4
+    kernel.QueryFullProcessImageNameW.argtypes=[ctypes.c_void_p,ctypes.c_ulong,ctypes.c_wchar_p,ctypes.POINTER(ctypes.c_ulong)]
+    kernel.WaitForSingleObject.argtypes=[ctypes.c_void_p,ctypes.c_ulong]
+    kernel.WaitForSingleObject.restype=ctypes.c_ulong
+    kernel.TerminateProcess.argtypes=[ctypes.c_void_p,ctypes.c_uint]
+    kernel.CloseHandle.argtypes=[ctypes.c_void_p]
+    handle=kernel.OpenProcess(0x1000|0x100000|0x1,False,pid)
+    if not handle:
+        error=ctypes.get_last_error()
+        if error==87:return False  # The receipt's process has already gone.
+        raise ctypes.WinError(error)
+    try:
+        values=[ctypes.c_ulonglong() for _ in range(4)]
+        assert kernel.GetProcessTimes(handle,*[ctypes.byref(x) for x in values]), 'Cannot verify cleanup birth time'
+        if str(values[0].value+504911232000000000)!=ticks or kernel.WaitForSingleObject(handle,0)==0:return False
+        size=ctypes.c_ulong(32768);image=ctypes.create_unicode_buffer(size.value)
+        assert kernel.QueryFullProcessImageNameW(handle,0,image,ctypes.byref(size)), 'Cannot verify cleanup executable'
+        allowed={os.path.normcase(str(Path(x).resolve())) for x in (sys.executable,PS)}
+        assert os.path.normcase(str(Path(image.value).resolve())) in allowed, 'Fixture cleanup executable differs; termination refused'
+        class UnicodeString(ctypes.Structure):
+            _fields_=[('length',ctypes.c_ushort),('capacity',ctypes.c_ushort),('buffer',ctypes.c_void_p)]
+        query=ctypes.WinDLL('ntdll').NtQueryInformationProcess
+        query.argtypes=[ctypes.c_void_p,ctypes.c_ulong,ctypes.c_void_p,ctypes.c_ulong,ctypes.POINTER(ctypes.c_ulong)]
+        query.restype=ctypes.c_long
+        length=ctypes.c_ulong()
+        query(handle,60,None,0,ctypes.byref(length))  # ProcessCommandLineInformation, Windows 10+
+        assert ctypes.sizeof(UnicodeString)<=length.value<=1024*1024, 'Cannot obtain bounded cleanup command line'
+        buffer=ctypes.create_string_buffer(length.value)
+        assert query(handle,60,buffer,length.value,ctypes.byref(length))==0, 'Cannot verify cleanup command line'
+        command=UnicodeString.from_buffer(buffer)
+        begin=ctypes.addressof(buffer);end=begin+len(buffer)
+        assert command.length%2==0 and begin<=command.buffer<=end-command.length, 'Invalid cleanup command line buffer'
+        text=ctypes.wstring_at(command.buffer,command.length//2)
+        # Both the original short Temp path and its resolved long form are valid.
+        assert any(str(path).casefold() in text.casefold() for path in (root,root.resolve())), 'Fixture directory differs; termination refused'
+        if kernel.WaitForSingleObject(handle,0)==0:return False
+        assert kernel.TerminateProcess(handle,4), 'Exact fixture process cleanup failed'
+        assert kernel.WaitForSingleObject(handle,5000)==0, 'Exact fixture process did not exit'
+        return True
+    finally:
+        kernel.CloseHandle(handle)
+
 def cleanup_fixtures():
     temp=Path(tempfile.gettempdir()).resolve()
     for root in reversed(CREATED):
@@ -67,15 +123,13 @@ def cleanup_fixtures():
                     current=value.get('current') or {};records.append(current.get('owner'))
                     records += [x.get('waiter') for x in current.get('participants',[])]
                 else:records.append(value.get('owner'))
+        seen=set()
         for owner in records:
             if not owner or owner.get('pid')==os.getpid():continue
-            pid=int(owner['pid']);ticks=str(owner.get('startTicks',''))
-            if not ticks.isdigit():raise AssertionError('Invalid fixture process identity')
-            # Only a fixture-owned PID with the same creation time AND script directory can be stopped.
-            patterns=[str(root).replace("'","''"),str(resolved).replace("'","''")]
-            script="$p=Get-Process -Id "+str(pid)+" -ErrorAction SilentlyContinue;if($p -and $p.StartTime.ToUniversalTime().Ticks.ToString() -eq '"+ticks+"'){$c=(Get-CimInstance Win32_Process -Filter 'ProcessId="+str(pid)+"').CommandLine;if($c -and ($c.Contains('"+patterns[0]+"') -or $c.Contains('"+patterns[1]+"'))){Stop-Process -Id "+str(pid)+";Start-Sleep -Milliseconds 100}}"
-            result=subprocess.run([PS,'-NoProfile','-Command',script+';exit 0'],capture_output=True,timeout=10)
-            if result.returncode:raise AssertionError('Fixture process cleanup failed; user processes were not targeted')
+            identity=(int(owner['pid']),str(owner.get('startTicks','')))
+            if identity in seen:continue
+            seen.add(identity)
+            stop_fixture_process(root,owner)
         remove_fixture_tree(root)
     print('PASS named temporary fixtures cleaned; only exact fixture process identities were targeted')
 
@@ -276,6 +330,28 @@ def crash_fixture_worker_regression(root, waits):
         if child.poll() is None:child.kill();child.wait(timeout=5)
         path.unlink(missing_ok=True)
 
+def cleanup_process_regression(root, waits):
+    for fixture_argument in ('unrelated-fixture',str(root)):
+        child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)',fixture_argument],
+            stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            owner=waits.process_owner(child.pid)
+            assert not stop_fixture_process(root,dict(owner,startTicks=str(int(owner['startTicks'])+1)))
+            assert child.poll() is None, 'Mismatched birth time terminated the child'
+            if fixture_argument=='unrelated-fixture':
+                try:stop_fixture_process(root,owner)
+                except AssertionError as error:assert 'Fixture directory differs' in str(error),error
+                else:raise AssertionError('A live process outside the fixture must be refused')
+                assert child.poll() is None, 'Foreign directory terminated the child'
+            else:
+                assert stop_fixture_process(root,owner)
+                assert child.wait(timeout=5)==4
+                assert not stop_fixture_process(root,owner), 'Already exited cleanup must be a no-op'
+        finally:
+            if child.poll() is None:child.kill();child.wait(timeout=5)
+    print('PASS native cleanup: mismatched birth and foreign directory preserved, exact handle terminated, exited receipt ignored',flush=True)
+
 
 def main(repo):
     # Copied coordinator fixtures need their own credentials rather than the
@@ -286,6 +362,10 @@ def main(repo):
     for name in ('build_wait_tasks.py','build_test_retry.py','build_entry.ps1','build_runtime.ps1','build_manager.ps1','build_protocol.ps1',
                  'build_inputs.ps1','build_ownership.ps1','build_preflight.ps1','build_job.cs','build_waiter.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
+    # Native compilation is a file-gated fixture, so desktop output ownership
+    # is outside this regression. Real coordinator ownership guards are covered
+    # by build_collaboration's controlled unknown/blocked/clear cases.
+    (root/'scripts/build_preflight.ps1').write_text("function Get-ReadOnlyPreflight([string]$Root){return [pscustomobject]@{status='clear';owners=@();unknownPids=@();observedUtc=[DateTime]::UtcNow.ToString('o')}}\nif($MyInvocation.InvocationName -ne '.'){throw 'Fixture cannot control desktop processes'}\n")
     shutil.copyfile(repo/'tools/build-dashboard/server.py',root/'tools/build-dashboard/server.py')
     sys.path.insert(0,str(root/'scripts'))
     import build_wait_tasks as waits
@@ -293,6 +373,7 @@ def main(repo):
     reader=waits.reader(root)
     state_root=root/'.build/collaboration';state_root.mkdir(parents=True)
     crash_fixture_worker_regression(root,waits)
+    cleanup_process_regression(root,waits)
     owned=[]
     def read(name):return reader.read_json(state_root,name)
     def until(fn,seconds=12):
