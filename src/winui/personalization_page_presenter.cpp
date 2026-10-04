@@ -1559,6 +1559,8 @@ struct PersonalizationPagePresenter::Impl
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
         generation = snapshot.generation;
+        themeTransfers->SetGeneration(generation);
+        themeTransfers->Refresh();
         const bool personalizationChanged = newGeneration ||
             snapshot.domainRevisions.personalization !=
                 personalizationRevision;
