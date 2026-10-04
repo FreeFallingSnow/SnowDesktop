@@ -3,8 +3,10 @@
 #include "theme_workshop_tags.h"
 #include "winui/theme_edit_state.h"
 #include "theme_workshop.h"
+#include "preview_png_writer.h"
 #include <windows.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -214,15 +216,63 @@ int wmain(int argc, wchar_t** argv)
                     if (const auto* path = outputs->array.front().Find("path"); path && path->IsString())
                     {
                         const auto directCover = directory / L"direct-control-cover.png";
-                        if (preview::SaveCover(directCover,widget_preview::LoadWallpaperImage(
-                            std::filesystem::path(std::u8string(path->string.begin(),path->string.end()))),error))
+                        const auto direct = widget_preview::LoadWallpaperImage(
+                            std::filesystem::path(std::u8string(path->string.begin(),path->string.end())));
+                        const auto& metadata = outputs->array.front();
+                        const auto value = [&](const char* key) {
+                            const auto* number = metadata.Find(key);
+                            return number && number->IsNumber() ? static_cast<int>(number->number) : 0;
+                        };
+                        const int width = value("componentWidth"), height = value("componentHeight");
+                        const int side = std::max(width,height) + 48;
+                        const int x = value("placementX") + width / 2 - side / 2;
+                        const int y = value("placementY") + height / 2 - side / 2;
+                        std::vector<std::uint32_t> scene;
+                        if (side > 0 && x >= 0 && y >= 0 && x + side <= direct.width && y + side <= direct.height)
+                            for (int row = y; row < y + side; ++row)
+                                scene.insert(scene.end(), direct.pixels.begin() + row * direct.width + x,
+                                    direct.pixels.begin() + row * direct.width + x + side);
+                        const auto rawScene = directory / L"direct-control-camera.png";
+                        if (!scene.empty() && preview_png::Save(rawScene,side,side,scene,error) &&
+                            preview::NormalizeCover(rawScene,directCover,error))
                         {
                             const auto comparison = Compare(control,widget_preview::LoadWallpaperImage(directCover));
                             sameStage = comparison.alpha && comparison.maximum <= 2 && comparison.pixels <= 1024;
                         }
                     }
             }
-            check(sameStage,"gallery preserves the complete production glass and background frame without cropped-stage seams");
+            check(sameStage,"tight gallery camera preserves the complete production glass and background scene pixel for pixel");
+            // The original offscreen control center ignored blur radius: both
+            // artifacts were identical because it drew tint without a backdrop.
+            auto patterned = widget_preview::GenerateWallpaper(1024,1024,false);
+            for (int y = 0; y < 1024; ++y) for (int x = 0; x < 1024; ++x)
+                patterned.pixels[y * 1024 + x] = ((x / 32 + y / 32) % 2) ? 0xffd0e0f0u : 0xff203050u;
+            const auto glassBackground = directory / L"glass-background.png";
+            check(preview::SaveCover(glassBackground,std::move(patterned),error), "known high-frequency glass backdrop");
+            std::array<widget_preview::Wallpaper,2> glassImages;
+            for (int sample = 0; sample < 2; ++sample)
+            {
+                auto glassPackage = package;
+                auto& glass = glassPackage.at(popup.id).appearance;
+                glass.glassEnabled = true; glass.acrylicEnabled = false; glass.widgetAlpha = .12f;
+                glass.glassBlurRadius = sample ? 48.f : 4.f;
+                const auto glassSnapshot = directory / (L"glass-" + std::to_wstring(sample) + L".snowtheme");
+                const auto glassDirectory = directory / (L"glass-" + std::to_wstring(sample));
+                const auto glassResult = directory / (L"glass-" + std::to_wstring(sample) + L".json");
+                const bool rendered = WritePackage(glassSnapshot,glassPackage,error) && preview::Run(argv[1],
+                    {L"--native-component-preview",L"control-panel",glassDirectory.wstring(),L"96",L"en-US",L"dark",
+                        glassBackground.wstring(),L"1024",L"1024",L"32",L"0",L"0",glassResult.wstring(),glassSnapshot.wstring(),
+                        std::wstring(popup.id.begin(),popup.id.end())},output,60000,error);
+                check(rendered,"production control-center glass sample renders without opening settings");
+                if (rendered) glassImages[sample] = widget_preview::LoadWallpaperImage(glassDirectory / L"control-panel-overview.png");
+            }
+            const auto blurred = Compare(glassImages[0],glassImages[1]);
+            check(blurred.alpha && blurred.material > 10000 && blurred.maximum > 32,
+                "control-center blur radius changes the actual frozen backdrop rather than just the tint");
+            check(!glassImages[0].pixels.empty() && !glassImages[1].pixels.empty() &&
+                glassImages[0].pixels.front() == glassImages[1].pixels.front() &&
+                glassImages[0].pixels.back() == glassImages[1].pixels.back(),
+                "control-center glass preserves the surrounding sharp wallpaper");
         }
         auto backdrop = widget_preview::GenerateWallpaper(1024,1024,false);
         std::fill(backdrop.pixels.begin(),backdrop.pixels.end(),0xff306090u);

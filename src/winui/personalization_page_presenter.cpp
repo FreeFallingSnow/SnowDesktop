@@ -769,10 +769,18 @@ struct PersonalizationPagePresenter::Impl
             });
         }
     }
+    bool quickFollowsGlobal = false, popupFollowsGlobal = false;
+    void PatchInheritedCustom()
+    {
+        const bool custom = currentBackgroundPreset == kAppearancePresetCustom && globalThemes->CustomSelected();
+        quickThemes->SetInheritedCustom(custom && quickFollowsGlobal);
+        popupThemes->SetInheritedCustom(custom && popupFollowsGlobal);
+    }
     void RefreshThemes()
     {
         for (auto* form : {globalThemes.get(), quickThemes.get(), popupThemes.get(), dockThemes.get(), themeTransfers.get()})
         { form->SetGeneration(generation); form->Refresh(); }
+        PatchInheritedCustom();
     }
 
     void HookEvents()
@@ -1624,6 +1632,9 @@ struct PersonalizationPagePresenter::Impl
         quickThemes->SyncSelection(quickThemes->NativeSelection(), snapshot.values);
         popupThemes->SyncSelection(popupThemes->NativeSelection(), snapshot.values);
         dockThemes->SyncSelection(dockThemes->NativeSelection(), snapshot.values);
+        quickFollowsGlobal = snapshot.values.general.quickNavigationAppearance.mode == -1;
+        popupFollowsGlobal = snapshot.values.general.collectionPopupAppearance.mode == -1;
+        PatchInheritedCustom();
         updatingControls = previousUpdating;
         if (newGeneration)
         {

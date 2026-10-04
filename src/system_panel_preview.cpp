@@ -1745,8 +1745,18 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
     context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(left),static_cast<float>(top)));
     if (!request.contentOnly)
         for (const auto& card : scene.cards)
-            background(context.Get(),{static_cast<LONG>(std::lround(card.left*scale)),static_cast<LONG>(std::lround(card.top*scale)),
-                static_cast<LONG>(std::lround(card.right*scale)),static_cast<LONG>(std::lround(card.bottom*scale))},appearance,scale);
+        {
+            const RECT frame{static_cast<LONG>(std::lround(card.left*scale)),static_cast<LONG>(std::lround(card.top*scale)),
+                static_cast<LONG>(std::lround(card.right*scale)),static_cast<LONG>(std::lround(card.bottom*scale))};
+            // The live panel gets its blur from Composition. Offscreen exports
+            // draw that layer explicitly from the same frozen screen-space stage.
+            if (appearance.glassEnabled && !request.transparent)
+                Require(widget_preview::DrawStage(context.Get(), frame,
+                    {appearance.contentTheme == 1, true, appearance.glassBlurRadius * scale, appearance.cornerRadius * scale},
+                    {request.canvasWidth, request.canvasHeight, left + frame.left, top + frame.top}, &stage),
+                    "cannot draw the system panel's frozen glass backdrop");
+            background(context.Get(), frame, appearance, scale);
+        }
     context->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*
         D2D1::Matrix3x2F::Translation(static_cast<float>(left),static_cast<float>(top)));
     const auto contentResult = ui::Draw(context.Get(),text,scene,palette?*palette:SystemPanelPalette(appearance),hovered,focused,pressed);
@@ -2419,7 +2429,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
         Require(device && text && background, "system panel preview requires initialized native graphics");
         CheckTooltipViewport();
         Require(request.appearance == "light" || request.appearance == "dark",
-            "native panel offline previews support light and dark; live compositor blur is not captured");
+            "native panel offline previews require a light or dark content theme");
         const float scale = static_cast<float>(request.dpi)/96.f;
         const float available = static_cast<float>(request.canvasHeight-2*request.padding)/scale;
         const float availableWidth = static_cast<float>(request.canvasWidth-2*request.padding)/scale;

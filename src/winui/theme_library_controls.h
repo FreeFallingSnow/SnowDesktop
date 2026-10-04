@@ -108,6 +108,7 @@ public:
     bool CustomSelected() const { return !transfer_ && !Selected() && choice_.SelectedIndex() == customIndex_; }
     bool HasSavedSelection() const { return Selected() != nullptr; }
     void SetCustomContent(std::initializer_list<x::UIElement> elements) { customContent_.assign(elements); PatchButtons(); }
+    void SetInheritedCustom(bool value) { inheritedCustom_ = value; PatchButtons(); }
     bool Synchronizing() const { return syncing_ || busy_; }
     int NativeSelection() const { return Selected() ? customIndex_ : choice_.SelectedIndex(); }
     // The controller values and last successful library reference are authoritative.
@@ -227,7 +228,7 @@ private:
     c::TextBlock empty_;
     c::Button cancel_;
     EditSource edit_;
-    bool editing_ = false;
+    bool editing_ = false, inheritedCustom_ = false;
     std::vector<x::UIElement> customContent_;
     c::TextBox name_;
     presenter_controls::SettingRow nameRow_, scopeRow_, quickRow_, popupRow_;
@@ -378,7 +379,10 @@ private:
         {
             const auto visibility = CustomSelected() ? x::Visibility::Visible : x::Visibility::Collapsed;
             saveRoot_.Visibility(visibility);
-            for (auto content : customContent_) content.Visibility(visibility);
+            const auto contentVisibility = CustomSelected() ||
+                (inheritedCustom_ && !Selected() && choice_.SelectedIndex() == 0)
+                ? x::Visibility::Visible : x::Visibility::Collapsed;
+            for (auto content : customContent_) content.Visibility(contentVisibility);
             saveTitle_.Text(L(edit_.theme ? "themeLibrary.edit" : "themeLibrary.save"));
             cancel_.Visibility(edit_.theme && themes::Find(library_.themes, edit_.theme->id) ? x::Visibility::Visible : x::Visibility::Collapsed);
             cancel_.IsEnabled(!busy_);

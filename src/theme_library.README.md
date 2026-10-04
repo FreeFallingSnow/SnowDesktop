@@ -187,7 +187,17 @@ It changes only preview images, never theme scope, theme data or desktop wallpap
 Regenerating resets both custom cover and background to their compiled defaults.
 The automatic backdrop is frozen in the same way. The production renderer
 computes the glass against that backdrop and exports a complete square frame;
-gallery generation never pastes a cropped background into a second wallpaper.
+gallery generation reframes the complete rendered scene around its native subject
+with a 24-pixel camera margin, then scales that entire square to Steam's 1024-pixel
+image size. It never pastes a foreground/background patch into a second wallpaper.
+The control center explicitly draws its frozen backdrop blur before native tint,
+acrylic noise and borders. Dock demonstrates floating, bottom-edge and merged
+forms on one continuous stage, using production Dock/merged-status content.
+The status-bar sample is at the top and supplies known network, audio, battery
+and notification data instead of showing unavailable-state question marks.
+Quick-panel and popup parameters are also visible while following a custom global
+appearance. Their save/edit menus remain tied to explicitly selected custom
+drafts; independently selected saved themes keep their parameters hidden.
 Clicking a gallery image opens a window-sized lightbox over the existing dialog.
 Mouse-wheel zoom, drag panning, fit-to-window, arrow navigation and Escape/close
 return are available without opening another dialog or process. The selected

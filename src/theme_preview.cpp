@@ -148,6 +148,23 @@ static bool StageBuiltinBackground(const std::filesystem::path& host,
     if (!file) return Fail(error, "writeFailed");
     return NormalizeCover(source, destination, error);
 }
+static bool SaveFramedCover(const std::filesystem::path& raw, const std::filesystem::path& destination,
+    const widget_preview::Wallpaper& stage, int left, int top, int width, int height, std::string& error)
+{
+    if (stage.pixels.size() != static_cast<std::size_t>(stage.width) * stage.height ||
+        width <= 0 || height <= 0 || left < 0 || top < 0 || left + width > stage.width || top + height > stage.height)
+        return Fail(error, "previewFailed");
+    // Reframe the complete production scene, including its glass and wallpaper.
+    // Never lift a foreground/backdrop patch onto a differently scaled wallpaper.
+    const int side = std::min(std::min(stage.width, stage.height), std::max(width, height) + 48);
+    const int x = std::clamp(left + width / 2 - side / 2, 0, stage.width - side);
+    const int y = std::clamp(top + height / 2 - side / 2, 0, stage.height - side);
+    std::vector<std::uint32_t> frame(static_cast<std::size_t>(side) * side);
+    for (int row = 0; row < side; ++row)
+        std::copy_n(stage.pixels.data() + static_cast<std::size_t>(y + row) * stage.width + x,
+            side, frame.data() + static_cast<std::size_t>(row) * side);
+    return preview_png::Save(raw, side, side, frame, error) && NormalizeCover(raw, destination, error);
+}
 static bool RenderImages(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images,
@@ -198,16 +215,17 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         const auto& item = outputs->array.front(); const auto* path = item.Find("path");
         if (!path || !path->IsString()) return Fail(error, "previewFailed");
         const auto image = widget_preview::LoadWallpaperImage(std::filesystem::path(std::u8string(path->string.begin(), path->string.end())));
+        const auto number = [&](const char* key) { const auto* value = item.Find(key); return value && value->IsNumber() ? static_cast<int>(value->number) : 0; };
+        int left = number("placementX"), top = number("placementY"), width = number("componentWidth"), height = number("componentHeight");
         if (images)
         {
             const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), part.component);
-            if (!SaveCover(imagePath, image, error)) { images->clear(); return false; }
+            if (!SaveFramedCover(partDir / L"gallery-frame.png", imagePath, image, left, top, width, height, error))
+            { images->clear(); return false; }
             images->push_back({part.component, imagePath});
             std::filesystem::remove_all(partDir, ec); std::filesystem::remove(resultPath, ec);
             continue;
         }
-        const auto number = [&](const char* key) { const auto* value = item.Find(key); return value && value->IsNumber() ? static_cast<int>(value->number) : 0; };
-        int left = number("placementX"), top = number("placementY"), width = number("componentWidth"), height = number("componentHeight");
         const int margin = 12;
         left = std::max(0, left - margin); top = std::max(0, top - margin);
         width = std::min(image.width - left, width + 2 * margin); height = std::min(image.height - top, height + 2 * margin);

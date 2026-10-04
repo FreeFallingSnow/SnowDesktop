@@ -1,7 +1,9 @@
 #include "app.h"
+#include "../app_font.h"
 #include "../preview_png_writer.h"
 #include "../widget_preview_stage.h"
 #include "../status_bar_view.h"
+#include "../status_bar_layout.h"
 #include "../panel_gradient_renderer.h"
 #include "../taskbar_hook/taskbar_material_render.h"
 #include <cstring>
@@ -60,6 +62,31 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 {light, true, p.glassBlurRadius, radius}, {request.canvasWidth, request.canvasHeight, r.left, r.top}, &stage))
                 throw std::runtime_error("offscreen material backdrop failed");
         };
+        const auto statusData = [] {
+            StatusBarSnapshot data; data.clock = L"2026/10/04   09:09"; data.inputMethod.label = L"EN";
+            data.notifications.quiet = false; data.notifications.unreadCount = 3; data.notifications.totalCount = 3;
+            widget_runtime::WidgetNetworkStatusDataSnapshot network;
+            network.available = true; network.connectivity = "internet"; network.transport = "ethernet"; data.network = network;
+            widget_runtime::WidgetAudioOutputVolumeDataSnapshot audio; audio.available = true; audio.volume = .42; data.audio = audio;
+            widget_runtime::WidgetPowerDataSnapshot power; power.available = true; power.batteryPercent = 73; data.power = power;
+            return data;
+        };
+        const auto statusContent = [&](RECT frame, bool merged) {
+            context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(frame.left), static_cast<float>(frame.top)));
+            StatusBarSettings settings; settings.position = merged ? DockPosition::Bottom : DockPosition::Top;
+            auto entries = BuildStatusBarItems(settings, statusData());
+            require(DrawStatusBarContent(context.Get(), dwriteFactory_.Get(), entries,
+                frame.right - frame.left, frame.bottom - frame.top, 1, appearance, {}, {}, false, 0, merged));
+            context->SetTransform(D2D1::Matrix3x2F::Identity());
+        };
+        const auto stripMaterial = [&](RECT frame, DockPosition position) {
+            material(frame, appearance, 0);
+            const auto fill = StatusBarFillAppearance(appearance);
+            DrawWidgetPanelBackground(context.Get(), frame, 0,
+                D2D1::ColorF(fill.widgetBgR, fill.widgetBgG, fill.widgetBgB, fill.widgetAlpha), D2D1::ColorF(0, 0.f),
+                false, 0, &fill, false, 0, 1);
+            DrawStatusBarEdge(context.Get(), frame, appearance, 1, position);
+        };
         if (request.component == "popup")
         {
             popupWidgetIndex_ = 0; popupHasAnchor_ = popupAnchoredToDock_ = false;
@@ -72,17 +99,46 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
         {
             dockSettings_ = {}; dockSettings_.followComponentAppearance = false;
             dockSettings_.appearancePreset = kAppearancePresetCustom; dockSettings_.customAppearance = appearance;
-            dockSettings_.position = DockPosition::Bottom;
-            DockContainer dock(this, &dockEntries_, {64, request.canvasHeight / 2, request.canvasWidth - 64, request.canvasHeight / 2 + 160});
-            bounds = dock.GetBounds(); material(bounds, appearance, appearance.cornerRadius);
-            dock.DrawChrome(context.Get(), lastMousePoint_); dock.DrawContents(context.Get());
+            dockSettings_.position = DockPosition::Bottom; dockSettings_.thicknessScale = .75f;
+            const LONG width = std::min(896, request.canvasWidth - 64), left = (request.canvasWidth - width) / 2;
+            const LONG top = std::max(32, (request.canvasHeight - 432) / 2);
+            bounds = {left, top, left + width, top + 432};
+            ComPtr<IDWriteTextFormat> labelFormat;
+            require(app_fonts::CreateTextFormat(dwriteFactory_.Get(), L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 18, L"en-US", &labelFormat));
+            const char* labels[]{"app.dock.island", "app.dock.edge", "settings.desktopStyle.merged.title"};
+            for (int row = 0; row < 3; ++row)
+            {
+                const LONG y = top + row * 144;
+                DrawD2DTextEllipsis(context.Get(), _LW(labels[row]), {left + 8, y, left + width, y + 28},
+                    labelFormat.Get(), light ? D2D1::ColorF(0x17202a) : D2D1::ColorF(0xf0f3f7));
+                dockSettings_.edgeAttached = row != 0;
+                RECT area{left, y + 40, left + width, y + 132};
+                if (row == 2)
+                {
+                    const RECT strip{left, y + 68, left + width, y + 132};
+                    stripMaterial(strip, DockPosition::Bottom); statusContent(strip, true);
+                    area = MergedStatusBarCenter(width, strip.bottom - strip.top, 1);
+                    OffsetRect(&area, left, strip.top);
+                    // The live merged strip paints chrome once. Reuse the
+                    // Dock's content renderer inside the same central reservation.
+                    DockContainer dock(this, &dockEntries_, area); dock.DrawContents(context.Get());
+                }
+                else
+                {
+                    DockContainer dock(this, &dockEntries_, area);
+                    const auto frame = dock.GetBounds(); material(frame, appearance, row ? 0.f : appearance.cornerRadius);
+                    dock.DrawChrome(context.Get(), lastMousePoint_); dock.DrawContents(context.Get());
+                }
+            }
         }
         else
         {
             // A fixed segment keeps text and physical edges legible in the
             // six-surface cover without altering production drawing metrics.
-            bounds = {64, request.canvasHeight / 2 - 24,
-                64 + std::min<LONG>(768, request.canvasWidth - 128), request.canvasHeight / 2 + 24};
+            bounds = request.component == "status-bar" ? RECT{32, 32, request.canvasWidth - 32, 80} :
+                RECT{64, request.canvasHeight / 2 - 24,
+                    64 + std::min<LONG>(768, request.canvasWidth - 128), request.canvasHeight / 2 + 24};
             material(bounds, appearance, 0);
             context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(bounds.left), static_cast<float>(bounds.top)));
             const UINT width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
@@ -106,11 +162,9 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             }
             else
             {
-                DrawStatusBarEdge(context.Get(), {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)}, appearance, 1, DockPosition::Bottom);
-                StatusBarSnapshot data; data.clock = L"2026/10/03   09:09"; data.inputMethod.label = L"EN";
-                StatusBarSettings settings; auto entries = BuildStatusBarItems(settings, data);
-                StatusBarPalette palette{};
-                require(DrawStatusBarContent(context.Get(), dwriteFactory_.Get(), entries, width, height, 1, appearance, palette));
+                DrawStatusBarEdge(context.Get(), {0, 0, static_cast<LONG>(width), static_cast<LONG>(height)}, appearance, 1, DockPosition::Top);
+                context->SetTransform(D2D1::Matrix3x2F::Identity());
+                statusContent(bounds, false);
             }
             context->SetTransform(D2D1::Matrix3x2F::Identity());
         }
