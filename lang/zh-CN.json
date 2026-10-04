@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "保存主题",
   "themeLibrary.type": "主题类型",
   "themeLibrary.selectionHint": "在主题框中选择后立即应用。",
-  "themeLibrary.transferHint": "管理、分享及导入导出已保存的主题，刷新 Steam 工坊订阅。",
+  "themeLibrary.transferHint": "管理本地保存和已安装的主题。选择条目后可预览、分享或导出；在外观设置中选择主题即可应用。",
   "themeLibrary.nameHint": "同名另存会创建独立主题，更新会保留原主题标识。",
   "themeLibrary.appliesTo": "适用于",
   "themeLibrary.legacyComponents": "更新此主题时保留已有的组件适用范围；另存为新主题只使用下方三栏范围。",
@@ -2500,5 +2500,14 @@
   "themeLibrary.nameRequired": "请输入主题名称。",
   "themeLibrary.scopesRequired": "请至少选择一个适用范围。",
   "themeLibrary.bindingRequired": "请选择绑定的快捷面板和弹窗主题，也可选择同时保存当前外观。",
-  "appearance.openDock": "打开 Dock 材质设置"
+  "appearance.openDock": "打开 Dock 材质设置",
+  "themeLibrary.manager": "主题管理",
+  "themeLibrary.all": "全部",
+  "themeLibrary.edit": "编辑主题",
+  "themeLibrary.saveTo": "保存到“{name}”",
+  "themeLibrary.create": "新建主题",
+  "themeLibrary.cancelEdit": "取消编辑",
+  "themeLibrary.empty": "没有符合此类型的主题。",
+  "themeLibrary.localSource": "本地主题（保存或导入）",
+  "themeLibrary.installedSource": "工坊主题（编辑时新建副本）"
 }

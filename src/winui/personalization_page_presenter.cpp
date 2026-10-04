@@ -157,11 +157,8 @@ struct PersonalizationPagePresenter::Impl
 
     SettingsCard themeCard;
     std::unique_ptr<ThemeLibraryControls> globalThemes, quickThemes, popupThemes, dockThemes, themeTransfers;
-    muxc::TextBlock transferTitle;
-    muxc::StackPanel transferBody;
-    std::vector<muxc::Expander> transferDisclosures;
+    muxc::StackPanel managementRoot;
     SettingsCard fontCard;
-    SettingsCard themeManagementCard;
     SettingRow fontRow;
     muxc::DropDownButton fontPicker;
     muxc::TextBlock fontPickerLabel;
@@ -572,11 +569,13 @@ struct PersonalizationPagePresenter::Impl
         fontError.TextWrapping(mux::TextWrapping::Wrap);
         fontError.Visibility(mux::Visibility::Collapsed);
         fontCard.content.Children().Append(fontError);
-        InitializeCard(themeManagementCard, cardStyle, themeRoot);
-        themeManagementCard.content.Children().RemoveAt(0);
-        transferBody = AppearanceSections::Section(themeManagementCard.content, transferTitle, &transferDisclosures);
+        managementRoot.Spacing(12);
         themeTransfers = std::make_unique<ThemeLibraryControls>(localize, "global", true);
-        transferBody.Children().Append(themeTransfers->Content());
+        managementRoot.Children().Append(themeTransfers->Content());
+        globalThemes->SetCustomContent({widgetAppearanceCard.root});
+        quickThemes->SetCustomContent({quickAppearanceContent});
+        popupThemes->SetCustomContent({popupAppearanceEditor->Content()});
+        dockThemes->SetCustomContent({dockAppearanceEditor->Content()});
 
         InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
         InitializeCard(behaviorCard, cardStyle, widgetBehaviorRoot);
@@ -1358,7 +1357,6 @@ struct PersonalizationPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
-        transferTitle.Text(L("themeLibrary.title"));
         for (auto* form : {globalThemes.get(), quickThemes.get(), popupThemes.get(), dockThemes.get(), themeTransfers.get()}) form->LocalizeText();
         edgeLightEditor->RefreshLocalizedText();
         appearanceSections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
@@ -1629,7 +1627,6 @@ struct PersonalizationPagePresenter::Impl
         updatingControls = previousUpdating;
         if (newGeneration)
         {
-            for (auto disclosure : transferDisclosures) disclosure.IsExpanded(false);
             RefreshThemes();
         }
     }
@@ -1638,7 +1635,6 @@ struct PersonalizationPagePresenter::Impl
     {
         if (id == "personalization.savedThemes")
         {
-            try { AppearanceSections::RevealWithin(themeManagementCard.root, themeTransfers->Choice()); } catch (...) {}
             return themeTransfers->Choice();
         }
         if (id == "quickNav.layout" || id.starts_with("quickNav.layout.") ||
@@ -1869,6 +1865,8 @@ mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept
 { return impl_ ? impl_->menuRoot : nullptr; }
 
 mux::UIElement PersonalizationPagePresenter::DockAppearanceContent() const noexcept { return impl_ ? impl_->dockThemeRoot : nullptr; }
+
+mux::UIElement PersonalizationPagePresenter::ThemeManagementContent() const noexcept { return impl_ ? impl_->managementRoot : nullptr; }
 
 mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
 {

@@ -1,7 +1,9 @@
 #pragma once
 #include "theme_library_actions.h"
+#include "theme_edit_state.h"
 #include "appearance_sections.h"
 #include "../theme_library_settings.h"
+#include <winrt/Windows.UI.Xaml.Interop.h>
 #include <atomic>
 #include <array>
 #include <cwctype>
@@ -24,14 +26,38 @@ public:
     {
         if (existing) choice_ = existing;
         root_.Spacing(8);
-        if (transfer_) { choiceRow_.Initialize(choice_); root_.Children().Append(choiceRow_.root); }
-        for (auto combo : {choice_, quick_, popup_}) combo.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        commands_.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
-        if (transfer_) root_.Children().Append(commands_);
         if (transfer_)
         {
-            typeRow_.Initialize(type_); root_.Children().InsertAt(0, typeRow_.root);
-            type_.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+            filters_.ColumnSpacing(8); filters_.RowSpacing(8);
+            root_.Children().Append(filters_);
+            for (std::size_t i = 0; i < tabs_.size(); ++i)
+            {
+                auto button = tabs_[i]; button.UseSystemFocusVisuals(true);
+                button.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+                filters_.Children().Append(button);
+                const auto token = button.Click([this, i](const auto&, const auto&) {
+                    if (syncing_) return;
+                    filter_ = static_cast<FilterTab>(i); PatchTabs(); RefreshChoices();
+                });
+                revoke_.push_back([button, token] { button.Click(token); });
+            }
+            const auto token = filters_.SizeChanged([this](const auto&, const auto&) { LayoutTabs(); });
+            revoke_.push_back([control = filters_, token] { control.SizeChanged(token); });
+            list_.SelectionMode(c::ListViewSelectionMode::Single);
+            list_.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+            x::Style itemStyle; itemStyle.TargetType(winrt::xaml_typename<c::ListViewItem>());
+            itemStyle.Setters().Append(x::Setter(c::Control::HorizontalContentAlignmentProperty(), winrt::box_value(x::HorizontalAlignment::Stretch)));
+            list_.ItemContainerStyle(itemStyle);
+            list_.MaxHeight(520); root_.Children().Append(list_);
+            empty_.TextWrapping(x::TextWrapping::Wrap); root_.Children().Append(empty_);
+            const auto selection = list_.SelectionChanged([this](const auto&, const auto&) { if (!syncing_) PatchButtons(); });
+            revoke_.push_back([control = list_, selection] { control.SelectionChanged(selection); });
+        }
+        for (auto combo : {choice_, quick_, popup_}) combo.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        commands_.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
+        if (transfer_) root_.Children().InsertAt(1, commands_);
+        if (transfer_)
+        {
             AddCommand(ThemeLibraryCommand::Import, "themeLibrary.import");
             AddCommand(ThemeLibraryCommand::Export, "themeLibrary.export");
             AddCommand(ThemeLibraryCommand::Preview, "themeLibrary.preview");
@@ -58,7 +84,7 @@ public:
                 quickRow_.Initialize(quick_); popupRow_.Initialize(popup_);
                 saveBody_.Children().Append(quickRow_.root); saveBody_.Children().Append(popupRow_.root);
             }
-            for (auto [command, key] : {std::pair{ThemeLibraryCommand::SaveAs, "themeLibrary.saveAs"}, {ThemeLibraryCommand::Update, "themeLibrary.update"}})
+            for (auto [command, key] : {std::pair{ThemeLibraryCommand::Update, "themeLibrary.saveTo"}, {ThemeLibraryCommand::SaveAs, "themeLibrary.create"}})
             {
                 c::Button button; button.HorizontalAlignment(x::HorizontalAlignment::Right);
                 button.Content(winrt::box_value(L(key))); saveBody_.Children().Append(button);
@@ -66,6 +92,11 @@ public:
                 revoke_.push_back([button, token] { button.Click(token); });
                 saveButtons_.push_back({command, key, button});
             }
+            cancel_.HorizontalAlignment(x::HorizontalAlignment::Right); saveBody_.Children().Append(cancel_);
+            const auto cancelToken = cancel_.Click([this](const auto&, const auto&) {
+                if (edit_.theme && themes::Find(library_.themes, edit_.theme->id)) Run(ThemeLibraryCommand::Apply, edit_.theme->id);
+            });
+            revoke_.push_back([control = cancel_, cancelToken] { control.Click(cancelToken); });
         }
         feedback_.IsOpen(false); root_.Children().Append(feedback_);
         saveFeedback_.IsOpen(false); if (!transfer_) saveBody_.Children().Append(saveFeedback_);
@@ -74,8 +105,6 @@ public:
             PatchButtons();
         });
         revoke_.push_back([control = choice_, choiceToken] { control.SelectionChanged(choiceToken); });
-        const auto typeToken = type_.SelectionChanged([this](const auto&, const auto&) { if (!syncing_) RefreshChoices(); });
-        revoke_.push_back([control = type_, typeToken] { control.SelectionChanged(typeToken); });
         for (auto control : {choice_, quick_, popup_})
         {
             const auto token = control.DropDownOpened([this](const auto&, const auto&) { Refresh(); });
@@ -86,17 +115,18 @@ public:
     ~ThemeLibraryControls() { Close(); }
     x::UIElement Content() const { return root_; }
     x::UIElement SaveContent() const { return saveRoot_; }
-    x::FrameworkElement Choice() const { return choice_; }
+    x::FrameworkElement Choice() const { return transfer_ ? x::FrameworkElement{list_} : x::FrameworkElement{choice_}; }
+    bool CustomSelected() const { return !transfer_ && !Selected() && choice_.SelectedIndex() == customIndex_; }
+    bool HasSavedSelection() const { return Selected() != nullptr; }
+    void SetCustomContent(std::initializer_list<x::UIElement> elements) { customContent_.assign(elements); PatchButtons(); }
     bool Synchronizing() const { return syncing_ || busy_; }
     int NativeSelection() const { return Selected() ? customIndex_ : choice_.SelectedIndex(); }
     // The controller values and last successful library reference are authoritative.
     void SyncSelection(int nativeIndex, const SettingsValues& values)
     {
-        const bool initial = !current_;
         nativeIndex_ = nativeIndex;
         current_ = themes::CaptureTarget(target_, values);
         Refresh();
-        if (initial && name_.Text().empty()) LoadDraft();
     }
     bool ApplySelection()
     {
@@ -104,6 +134,10 @@ public:
         const auto selected = Selected();
         if (!selected)
         {
+            const bool enteringCustom = choice_.SelectedIndex() == customIndex_;
+            auto source = edit_;
+            if (enteringCustom && !editing_) source.Begin(library_, target_);
+            else if (!enteringCustom) source.Reset();
             const auto reference = library_.references.find(target_);
             if (reference != library_.references.end() && !reference->second.id.empty() && action_)
             {
@@ -112,7 +146,10 @@ public:
                 if (!result.succeeded) { RefreshChoices(); Feedback(result); return true; }
                 library_ = result.library;
             }
-            nativeIndex_ = choice_.SelectedIndex(); return false;
+            if (enteringCustom && !editing_) { edit_ = std::move(source); LoadDraft(); }
+            else if (!enteringCustom) { edit_.Reset(); name_.Text(L""); }
+            editing_ = enteringCustom;
+            nativeIndex_ = choice_.SelectedIndex(); PatchButtons(); return false;
         }
         Run(ThemeLibraryCommand::Apply, selected->id);
         return true;
@@ -122,7 +159,11 @@ public:
     void SetChanged(std::function<void()> changed) { changed_ = std::move(changed); }
     void SetGeneration(std::uint64_t generation)
     {
-        if (generation_ != generation) for (auto disclosure : disclosures_) disclosure.IsExpanded(false);
+        if (generation_ != generation)
+        {
+            for (auto disclosure : disclosures_) disclosure.IsExpanded(false);
+            edit_.Reset(); editing_ = false;
+        }
         generation_ = generation;
     }
     void Refresh()
@@ -135,7 +176,19 @@ public:
     void Reveal() const { if (transfer_) return; AppearanceSections::RevealWithin(saveRoot_, name_); }
     void LocalizeText()
     {
-        if (transfer_) choiceRow_.SetText(L("themeLibrary.choose"), L("themeLibrary.transferHint"));
+        if (transfer_)
+        {
+            empty_.Text(L("themeLibrary.empty"));
+            constexpr const char* keys[]{"themeLibrary.all", "themeLibrary.global", "themeLibrary.dock", "themeLibrary.statusBar",
+                "themeLibrary.taskbar", "themeLibrary.quickPanel", "themeLibrary.popup"};
+            for (std::size_t i = 0; i < tabs_.size(); ++i)
+            {
+                c::TextBlock text; text.Text(L(keys[i])); text.TextWrapping(x::TextWrapping::Wrap);
+                tabs_[i].Content(text);
+            }
+            PatchTabs(); LayoutTabs();
+        }
+        cancel_.Content(winrt::box_value(L("themeLibrary.cancelEdit")));
         if (!transfer_) nameRow_.SetText(L("themeLibrary.name"), L("themeLibrary.nameHint"));
         if (saveTitle_) saveTitle_.Text(L("themeLibrary.save"));
         if (Global() && !transfer_)
@@ -147,16 +200,6 @@ public:
         }
         for (auto& button : buttons_) button.control.Label(L(button.key));
         for (auto& button : saveButtons_) button.control.Content(winrt::box_value(L(button.key)));
-        if (transfer_)
-        {
-            syncing_ = true; const int selected = type_.SelectedIndex(); type_.Items().Clear();
-            for (unsigned scope : {themes::Bars, unsigned(themes::Dock), unsigned(themes::StatusBar), unsigned(themes::Taskbar),
-                unsigned(themes::Dock | themes::StatusBar), unsigned(themes::Dock | themes::Taskbar), unsigned(themes::StatusBar | themes::Taskbar)})
-                type_.Items().Append(winrt::box_value(ScopeLabel(scope)));
-            for (auto key : {"themeLibrary.quickPanel", "themeLibrary.popup"}) type_.Items().Append(winrt::box_value(L(key)));
-            type_.SelectedIndex(std::max(selected, 0)); syncing_ = false;
-            typeRow_.SetText(L("themeLibrary.type"));
-        }
         RefreshChoices();
     }
     void Close()
@@ -182,9 +225,18 @@ private:
     std::vector<themes::Theme> choices_, quickChoices_, popupChoices_;
     c::StackPanel root_, saveRoot_, saveBody_{nullptr};
     c::TextBlock saveTitle_{nullptr};
-    c::ComboBox choice_, type_, quick_, popup_;
+    c::ComboBox choice_, quick_, popup_;
+    c::ListView list_;
+    c::Grid filters_;
+    std::array<c::Primitives::ToggleButton, 7> tabs_;
+    FilterTab filter_ = FilterTab::All;
+    c::TextBlock empty_;
+    c::Button cancel_;
+    EditSource edit_;
+    bool editing_ = false;
+    std::vector<x::UIElement> customContent_;
     c::TextBox name_;
-    presenter_controls::SettingRow choiceRow_, typeRow_, nameRow_, scopeRow_, quickRow_, popupRow_;
+    presenter_controls::SettingRow nameRow_, scopeRow_, quickRow_, popupRow_;
     std::array<c::CheckBox, 3> scopeChecks_;
     std::vector<c::Expander> disclosures_;
     c::CommandBar commands_;
@@ -199,7 +251,7 @@ private:
     std::wstring L(std::string_view key) const { return localize_ ? localize_(key) : std::wstring{}; }
     const themes::Theme* Selected() const
     {
-        const auto index = choice_.SelectedIndex() - (transfer_ ? 0 : modeCount_);
+        const auto index = transfer_ ? list_.SelectedIndex() : choice_.SelectedIndex() - modeCount_;
         return index >= 0 && static_cast<std::size_t>(index) < choices_.size() ? &choices_[index] : nullptr;
     }
     std::wstring ScopeLabel(unsigned scope) const
@@ -240,7 +292,7 @@ private:
     void RefreshChoices(std::string preferred = {})
     {
         if (transfer_ && preferred.empty() && Selected()) preferred = Selected()->id;
-        if (!transfer_)
+        if (!transfer_ && !editing_)
         {
             const auto reference = library_.references.find(target_);
             if (nativeIndex_ == customIndex_ && current_ && reference != library_.references.end() && !reference->second.id.empty())
@@ -254,28 +306,32 @@ private:
         }
         const auto quick = Binding(quick_, quickChoices_), popup = Binding(popup_, popupChoices_);
         const bool quickUnset = quick_.SelectedIndex() < 0, popupUnset = popup_.SelectedIndex() < 0;
-        const auto kind = transfer_ ? (type_.SelectedIndex() == 7 ? themes::Kind::QuickPanel : type_.SelectedIndex() == 8 ? themes::Kind::Popup : themes::Kind::Global) : themes::TargetKind(target_);
-        choices_ = themes::Choices(library_, kind, transfer_ || target_ == "global" ? 0 : themes::TargetScope(target_));
-        std::erase_if(choices_, [this](auto const& theme) {
-            if (themes::Builtin(theme.id)) return true;
-            if (theme.kind != themes::Kind::Global) return false;
-            if (!transfer_) return target_ == "global" && !themes::FullScope(theme.scopes);
-            constexpr std::array<unsigned, 7> scopes{themes::Bars, themes::Dock, themes::StatusBar, themes::Taskbar,
-                themes::Dock | themes::StatusBar, themes::Dock | themes::Taskbar, themes::StatusBar | themes::Taskbar};
-            const int index = type_.SelectedIndex();
-            return index == 0 ? !themes::FullScope(theme.scopes) : index < 0 || index >= 7 ||
-                themes::FullScope(theme.scopes) || (theme.scopes & themes::Bars) != scopes[static_cast<std::size_t>(index)];
-        });
+        choices_.clear();
+        if (transfer_)
+        {
+            for (const auto& [id, theme] : library_.themes)
+                if (!themes::Builtin(id) && MatchesFilter(theme, filter_)) choices_.push_back(theme);
+            std::stable_sort(choices_.begin(), choices_.end(), [](auto const& a, auto const& b) { return a.name < b.name; });
+        }
+        else
+        {
+            choices_ = themes::Choices(library_, themes::TargetKind(target_), target_ == "global" ? 0 : themes::TargetScope(target_));
+            std::erase_if(choices_, [this](auto const& theme) {
+                return themes::Builtin(theme.id) || (target_ == "global" && theme.kind == themes::Kind::Global && !themes::FullScope(theme.scopes));
+            });
+        }
         syncing_ = true;
-        if (transfer_) choice_.Items().Clear();
+        if (transfer_) list_.Items().Clear();
         else while (choice_.Items().Size() > static_cast<unsigned>(modeCount_)) choice_.Items().RemoveAtEnd();
-        int selected = transfer_ ? -1 : nativeIndex_;
+        int selected = transfer_ ? (choices_.empty() ? -1 : 0) : nativeIndex_;
         for (std::size_t i = 0; i < choices_.size(); ++i)
         {
-            choice_.Items().Append(winrt::box_value(Label(choices_[i])));
+            if (transfer_) list_.Items().Append(Entry(choices_[i]));
+            else choice_.Items().Append(winrt::box_value(Label(choices_[i])));
             if (choices_[i].id == preferred) selected = static_cast<int>(i) + (transfer_ ? 0 : modeCount_);
         }
-        choice_.SelectedIndex(selected);
+        if (transfer_) list_.SelectedIndex(selected); else choice_.SelectedIndex(selected);
+        if (transfer_) empty_.Visibility(choices_.empty() ? x::Visibility::Visible : x::Visibility::Collapsed);
         if (Global() && !transfer_)
         {
             quickChoices_ = themes::Choices(library_, themes::Kind::QuickPanel);
@@ -294,8 +350,13 @@ private:
     }
     void LoadDraft()
     {
-        const auto selected = Selected();
-        if (!selected) return;
+        const auto selected = edit_.theme ? &*edit_.theme : nullptr;
+        if (!selected)
+        {
+            name_.Text(L"");
+            for (auto check : scopeChecks_) check.IsChecked(true);
+            quick_.SelectedIndex(-1); popup_.SelectedIndex(-1); PatchBindings(); return;
+        }
         name_.Text(winrt::to_hstring(selected->name));
         if (!Global()) return;
         for (std::size_t i = 0; i < scopeChecks_.size(); ++i) scopeChecks_[i].IsChecked((selected->scopes & (themes::Dock << i)) != 0);
@@ -318,7 +379,16 @@ private:
     }
     void PatchButtons()
     {
-        if (transfer_) { choice_.IsEnabled(!busy_); type_.IsEnabled(!busy_); }
+        if (transfer_) { list_.IsEnabled(!busy_); for (auto tab : tabs_) tab.IsEnabled(!busy_); }
+        else
+        {
+            const auto visibility = CustomSelected() ? x::Visibility::Visible : x::Visibility::Collapsed;
+            saveRoot_.Visibility(visibility);
+            for (auto content : customContent_) content.Visibility(visibility);
+            saveTitle_.Text(L(edit_.theme ? "themeLibrary.edit" : "themeLibrary.save"));
+            cancel_.Visibility(edit_.theme && themes::Find(library_.themes, edit_.theme->id) ? x::Visibility::Visible : x::Visibility::Collapsed);
+            cancel_.IsEnabled(!busy_);
+        }
         const auto selected = Selected();
         const bool custom = selected && !themes::Builtin(selected->id);
         for (auto& button : buttons_)
@@ -329,7 +399,57 @@ private:
             if (button.command == ThemeLibraryCommand::Share || button.command == ThemeLibraryCommand::SyncSubscriptions)
                 button.control.Visibility(sharing_ ? x::Visibility::Visible : x::Visibility::Collapsed);
         }
-        for (auto& button : saveButtons_) button.control.IsEnabled(!busy_ && (button.command == ThemeLibraryCommand::SaveAs || custom));
+        for (auto& button : saveButtons_)
+        {
+            const bool update = button.command == ThemeLibraryCommand::Update;
+            button.control.Visibility(!update || edit_.CanUpdate(library_) ? x::Visibility::Visible : x::Visibility::Collapsed);
+            auto label = L(button.key);
+            if (update && edit_.theme)
+            {
+                const auto position = label.find(L"{name}");
+                if (position != std::wstring::npos) label.replace(position, 6, std::wstring(winrt::to_hstring(edit_.theme->name).c_str()));
+            }
+            c::TextBlock text; text.Text(label); text.TextWrapping(x::TextWrapping::Wrap); button.control.Content(text);
+            button.control.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+            button.control.IsEnabled(!busy_ && (!update || edit_.CanUpdate(library_)));
+        }
+    }
+    void PatchTabs()
+    {
+        for (std::size_t i = 0; i < tabs_.size(); ++i) tabs_[i].IsChecked(i == static_cast<std::size_t>(filter_));
+    }
+    void LayoutTabs()
+    {
+        const int count = std::clamp(static_cast<int>(filters_.ActualWidth() / 140), 1, 7);
+        if (filters_.ColumnDefinitions().Size() == static_cast<unsigned>(count)) return;
+        filters_.ColumnDefinitions().Clear(); filters_.RowDefinitions().Clear();
+        for (int i = 0; i < count; ++i) filters_.ColumnDefinitions().Append(c::ColumnDefinition{});
+        for (std::size_t i = 0; i < tabs_.size(); ++i)
+        {
+            if (i % count == 0) { c::RowDefinition row; row.Height(x::GridLengthHelper::Auto()); filters_.RowDefinitions().Append(row); }
+            c::Grid::SetRow(tabs_[i], static_cast<int>(i) / count); c::Grid::SetColumn(tabs_[i], static_cast<int>(i) % count);
+        }
+    }
+    x::UIElement Entry(const themes::Theme& theme) const
+    {
+        c::StackPanel entry; entry.Spacing(4); entry.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        const auto line = [&](std::wstring text, bool title = false) {
+            c::TextBlock label; label.Text(text); label.TextWrapping(x::TextWrapping::Wrap);
+            if (title) label.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); else { label.FontSize(12); label.Opacity(.8); }
+            entry.Children().Append(label);
+        };
+        line(std::wstring(winrt::to_hstring(theme.name).c_str()), true);
+        auto tags = theme.kind == themes::Kind::Global ? ScopeLabel(theme.scopes) :
+            L(theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup");
+        if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
+            tags += L" · " + L("themeLibrary.dock") + L" · " + L("themeLibrary.statusBar") + L" · " + L("themeLibrary.taskbar");
+        line(tags);
+        bool installed = false;
+        for (const auto& [item, origin] : library_.workshop) { (void)item; if (origin.ids.contains(theme.id)) installed = true; }
+        line(L(installed ? "themeLibrary.installedSource" : "themeLibrary.localSource"));
+        for (auto [id, key] : {std::pair{theme.quickPanel, "themeLibrary.quickPanel"}, {theme.popup, "themeLibrary.popup"}})
+            if (!id.empty()) if (auto child = themes::Resolve(library_.themes, id)) line(L(key) + L"：" + Label(*child));
+        return entry;
     }
     void AddCommand(ThemeLibraryCommand command, const char* key, bool secondary = false)
     {
@@ -383,6 +503,13 @@ private:
         const auto selected = Selected(); request.id = id.empty() && selected ? selected->id : std::move(id);
         if (save)
         {
+            if (!CustomSelected()) return;
+            if (command == ThemeLibraryCommand::Update)
+            {
+                if (!edit_.CanUpdate(library_)) return;
+                request.id = edit_.theme->id;
+            }
+            else request.id.clear();
             constexpr auto whitespace = L" \t\r\n\v\f\u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000";
             std::wstring name(name_.Text().c_str()); const auto first = name.find_first_not_of(whitespace);
             const auto last = name.find_last_not_of(whitespace);
@@ -418,9 +545,11 @@ private:
         {
             library_ = result.library; sharing_ = result.sharingAvailable;
             if (command == ThemeLibraryCommand::Apply)
-            { if (auto applied = themes::Resolve(library_.themes, request.id)) current_ = *applied; nativeIndex_ = customIndex_; }
+            {
+                if (auto applied = themes::Resolve(library_.themes, request.id)) current_ = *applied;
+                nativeIndex_ = customIndex_; edit_.Reset(); editing_ = false;
+            }
             RefreshChoices();
-            if (command == ThemeLibraryCommand::Apply) LoadDraft();
             if (changed_) changed_();
             if (save && !result.savedId.empty())
             {

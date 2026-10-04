@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Enregistrer le thème",
   "themeLibrary.type": "Type de thème",
   "themeLibrary.selectionHint": "Le thème est appliqué dès sa sélection.",
-  "themeLibrary.transferHint": "Gérez, partagez, importez et exportez les thèmes enregistrés, et actualisez les abonnements au Steam Workshop.",
+  "themeLibrary.transferHint": "Gérez les thèmes enregistrés et installés. Sélectionnez un thème pour le prévisualiser, le partager ou l'exporter. Appliquez-le en le sélectionnant dans les paramètres d'apparence.",
   "themeLibrary.nameHint": "Enregistrer sous le même nom crée un thème distinct. La mise à jour conserve son identifiant.",
   "themeLibrary.appliesTo": "Appliquer à",
   "themeLibrary.legacyComponents": "La mise à jour conserve la portée existante des widgets. Un nouveau thème utilise uniquement les trois barres ci-dessous.",
@@ -2500,5 +2500,14 @@
   "themeLibrary.nameRequired": "Saisissez un nom de thème.",
   "themeLibrary.scopesRequired": "Sélectionnez au moins une portée.",
   "themeLibrary.bindingRequired": "Choisissez les thèmes associés du panneau rapide et des fenêtres contextuelles, ou enregistrez leur apparence actuelle.",
-  "appearance.openDock": "Ouvrir les réglages du matériau du Dock"
+  "appearance.openDock": "Ouvrir les réglages du matériau du Dock",
+  "themeLibrary.manager": "Gestion des thèmes",
+  "themeLibrary.all": "Tous",
+  "themeLibrary.edit": "Modifier le thème",
+  "themeLibrary.saveTo": "Enregistrer dans « {name} »",
+  "themeLibrary.create": "Créer un thème",
+  "themeLibrary.cancelEdit": "Annuler les modifications",
+  "themeLibrary.empty": "Aucun thème ne correspond à ce type.",
+  "themeLibrary.localSource": "Thème local (enregistré ou importé)",
+  "themeLibrary.installedSource": "Thème du Workshop (modifier une nouvelle copie)"
 }

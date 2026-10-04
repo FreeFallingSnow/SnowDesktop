@@ -228,7 +228,10 @@ void TestRoutes()
             static_cast<unsigned>(SettingsPage::DesktopPages) == 18u,
         "new settings leaves append without changing existing route values");
 
+    Check(SettingsPageKey(SettingsPage::ThemeManager) == "theme-manager" &&
+        SettingsRoute::ForPage(SettingsPage::ThemeManager).IsValid(), "theme manager has an independent stable route");
     constexpr std::array appearanceLeaves{
+        SettingsPage::ThemeManager,
         SettingsPage::AppearanceTheme,
         SettingsPage::AppearanceWidgets,
         SettingsPage::AppearanceDesktopIcons,

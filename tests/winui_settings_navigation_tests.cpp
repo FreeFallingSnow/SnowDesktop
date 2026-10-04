@@ -41,6 +41,8 @@ void TestHistoryAndFocusRoutes()
         "old Dock theme links reach the Dock tab");
     Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::Dock, "dock.suppressSystemTaskbar")).page == SettingsPage::Taskbar,
         "old taskbar hiding links reach the taskbar visibility control");
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.savedThemes")).page == SettingsPage::ThemeManager,
+        "old saved-theme search opens the independent manager");
     SettingsShellNavigationState state;
     Check(state.Route().page == SettingsPage::General && !state.CanGoBack(),
         "navigation starts at the legacy General page without back history");

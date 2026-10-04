@@ -166,6 +166,7 @@
                     <NavigationViewItem.MenuItems>
                         <NavigationViewItem x:Name="AppearanceThemeItem"
                                             Tag="appearance-theme" />
+                        <NavigationViewItem x:Name="ThemeManagerItem" Tag="theme-manager" />
                         <NavigationViewItem x:Name="AppearanceWidgetsItem"
                                             Tag="appearance-widgets" />
                         <NavigationViewItem x:Name="AppearanceDesktopIconsItem"

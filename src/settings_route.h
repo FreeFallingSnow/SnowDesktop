@@ -42,6 +42,7 @@ enum class SettingsPage : std::uint8_t
     DesktopStyle,
     WidgetBehavior,
     QuickNavigation,
+    ThemeManager,
 };
 
 /**

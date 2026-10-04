@@ -108,6 +108,7 @@ struct StatusBarPagePresenter::Impl
         control.root.Children().Append(control.themes->Content());
         control.root.Children().Append(control.editor->Content());
         control.root.Children().Append(control.themes->SaveContent());
+        control.themes->SetCustomContent({control.editor->Content()});
         parent.Children().Append(control.root);
         const auto combo = control.combo;
         const auto editor = control.editor;

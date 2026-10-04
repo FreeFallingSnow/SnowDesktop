@@ -1,5 +1,6 @@
 #include "theme_library_settings.h"
 #include "json_value.h"
+#include "winui/theme_edit_state.h"
 
 #include <algorithm>
 #include <fstream>
@@ -32,6 +33,29 @@ int RunThemeLibraryTests()
     const auto check = [&](bool passed, const char* message) {
         if (!passed) { ++failures; std::cerr << "FAIL theme library: " << message << '\n'; }
     };
+    {
+        using namespace snowdesktop::winui::theme_controls;
+        Theme partial; partial.id = "theme/partial"; partial.name = "Two bars"; partial.scopes = Dock | Taskbar;
+        check(MatchesFilter(partial, FilterTab::All) && MatchesFilter(partial, FilterTab::Dock) &&
+            MatchesFilter(partial, FilterTab::Taskbar) && !MatchesFilter(partial, FilterTab::StatusBar) && !MatchesFilter(partial, FilterTab::Global),
+            "single tabs match each applicable base scope rather than exact scope combinations");
+        auto full = partial; full.scopes = Bars;
+        check(MatchesFilter(full, FilterTab::Global) && MatchesFilter(full, FilterTab::Dock), "full themes appear in global and each applicable bar tab");
+        auto child = partial; child.kind = Kind::QuickPanel;
+        check(MatchesFilter(child, FilterTab::QuickPanel) && !MatchesFilter(child, FilterTab::Dock), "child kind cannot inherit bar tags from scope bits");
+        Library sourceLibrary; sourceLibrary.themes.emplace(partial.id, partial);
+        sourceLibrary.references["dock"] = {partial.id, Kind::Global, Dock, {{partial.id, partial}}};
+        EditSource source; source.Begin(sourceLibrary, "dock");
+        check(source.CanUpdate(sourceLibrary) && source.theme->id == partial.id, "edit source retains the successful applied ID");
+        Detach(sourceLibrary, "dock");
+        check(source.CanUpdate(sourceLibrary) && source.theme->name == "Two bars", "detaching an edit draft does not lose its source");
+        sourceLibrary.workshop["123"].ids.insert(partial.id);
+        check(!source.CanUpdate(sourceLibrary), "installed workshop sources only permit new copies");
+        sourceLibrary.workshop.clear(); sourceLibrary.themes.clear();
+        check(!source.CanUpdate(sourceLibrary) && source.theme->name == "Two bars", "source removal preserves the draft but blocks overwrite");
+        source.Begin(sourceLibrary, "popup");
+        check(!source.theme, "switching to a different or unsaved source clears the old update target");
+    }
     std::string error, savedId;
     check(ErrorLocalizationKey("writeFailed") == "themeLibrary.error.writeFailed" &&
         ErrorLocalizationKey("unexpected") == "themeLibrary.error.invalidPackage",

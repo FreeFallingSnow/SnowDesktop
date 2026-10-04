@@ -483,6 +483,7 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
+    case SettingsPage::ThemeManager:
     case SettingsPage::WidgetBehavior:
         ensurePersonalization();
         break;
@@ -774,6 +775,7 @@ void SettingsShell::RefreshLocalizedText()
         winrt::box_value(Localize("app.settings.appearance")));
     AppearanceThemeItem().Content(
         winrt::box_value(Localize("settings.personalization.theme")));
+    ThemeManagerItem().Content(winrt::box_value(Localize("themeLibrary.manager")));
     AppearanceWidgetsItem().Content(
         winrt::box_value(Localize("settings.personalization.widgets")));
     AppearanceDesktopIconsItem().Content(
@@ -1843,7 +1845,7 @@ void SettingsShell::HookEvents()
             for (const SettingsPage page : {
                      SettingsPage::General,
                      SettingsPage::AnimationPerformance,
-                     SettingsPage::AppearanceTheme,
+                     SettingsPage::AppearanceTheme, SettingsPage::ThemeManager,
                      SettingsPage::AppearanceWidgets,
                      SettingsPage::AppearanceDesktopIcons,
                      SettingsPage::AppearanceIconBeautification,
@@ -2043,7 +2045,7 @@ void SettingsShell::RenderNavigationSelection()
         selectedPage = SettingsPage::AppearanceDesktopIcons;
     if (selectedPage == SettingsPage::Personalization)
         selectedPage = SettingsPage::AppearanceTheme;
-    if (selectedPage == SettingsPage::AppearanceTheme ||
+    if (selectedPage == SettingsPage::ThemeManager || selectedPage == SettingsPage::AppearanceTheme ||
         selectedPage == SettingsPage::AppearanceWidgets ||
         selectedPage == SettingsPage::AppearanceDesktopIcons ||
         selectedPage == SettingsPage::AppearanceIconBeautification)
@@ -2085,6 +2087,7 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/animation-performance.svg", L"\xE768"},
         IconDescriptor{PersonalizationItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance.svg", L"\xE771"},
+        IconDescriptor{ThemeManagerItem(), L"ms-appx:///Assets/Settings/Icons/appearance-theme.svg", L"\xE790"},
         IconDescriptor{AppearanceThemeItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance-theme.svg",
             L"\xE790"},
@@ -2295,7 +2298,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     };
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization ||
-            page == SettingsPage::AppearanceTheme ||
+            page == SettingsPage::ThemeManager || page == SettingsPage::AppearanceTheme ||
             page == SettingsPage::AppearanceWidgets || page == SettingsPage::WidgetBehavior ||
             page == SettingsPage::ContextMenu || page == SettingsPage::Dock;
     };
@@ -2495,6 +2498,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(generalPage_->QuickNavigationContent());
             generalPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& target) {RegisterFocusTarget(std::move(id),target);});
             generalPage_->Activate();
+        }
+        break;
+    case SettingsPage::ThemeManager:
+        if (personalizationPage_)
+        {
+            PageCards().Children().Append(personalizationPage_->ThemeManagementContent());
+            registerPersonalizationFocus({"personalization.savedThemes"});
+            personalizationPage_->Activate();
         }
         break;
     case SettingsPage::Personalization:
@@ -3107,6 +3118,7 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::General: return Localize("app.settings.general");
     case SettingsPage::Personalization:
         return Localize("app.settings.appearance");
+    case SettingsPage::ThemeManager: return Localize("themeLibrary.manager");
     case SettingsPage::AppearanceTheme:
         return Localize("settings.personalization.theme");
     case SettingsPage::AppearanceWidgets:
@@ -3157,6 +3169,7 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
         return Localize("settings.page.general.description");
     case SettingsPage::Personalization:
         return Localize("settings.page.personalization.description");
+    case SettingsPage::ThemeManager: return Localize("themeLibrary.transferHint");
     case SettingsPage::AppearanceTheme:
         return Localize("settings.personalization.theme.description");
     case SettingsPage::AppearanceWidgets:
@@ -3209,6 +3222,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::AnimationPerformance: return AnimationItem();
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme: return AppearanceThemeItem();
+    case SettingsPage::ThemeManager: return ThemeManagerItem();
     case SettingsPage::AppearanceWidgets: return AppearanceWidgetsItem();
     case SettingsPage::WidgetBehavior: return WidgetBehaviorItem();
     case SettingsPage::AppearanceDesktopIcons:

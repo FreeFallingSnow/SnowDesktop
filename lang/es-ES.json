@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Guardar tema",
   "themeLibrary.type": "Tipo de tema",
   "themeLibrary.selectionHint": "El tema se aplica al seleccionarlo.",
-  "themeLibrary.transferHint": "Gestiona, comparte, importa y exporta los temas guardados y actualiza las suscripciones de Steam Workshop.",
+  "themeLibrary.transferHint": "Gestiona temas guardados e instalados. Selecciona uno para previsualizarlo, compartirlo o exportarlo. Para aplicarlo, selecciónalo en los ajustes de apariencia.",
   "themeLibrary.nameHint": "Guardar con el mismo nombre crea un tema independiente. Actualizar conserva su identificador.",
   "themeLibrary.appliesTo": "Aplicar a",
   "themeLibrary.legacyComponents": "Al actualizar se conserva el ámbito de los widgets existentes. Un tema nuevo solo usa las tres barras siguientes.",
@@ -2500,5 +2500,14 @@
   "themeLibrary.nameRequired": "Introduce un nombre para el tema.",
   "themeLibrary.scopesRequired": "Selecciona al menos un ámbito.",
   "themeLibrary.bindingRequired": "Elige los temas vinculados del panel rápido y las ventanas emergentes, o guarda su apariencia actual.",
-  "appearance.openDock": "Abrir los ajustes de material del Dock"
+  "appearance.openDock": "Abrir los ajustes de material del Dock",
+  "themeLibrary.manager": "Gestión de temas",
+  "themeLibrary.all": "Todos",
+  "themeLibrary.edit": "Editar tema",
+  "themeLibrary.saveTo": "Guardar en «{name}»",
+  "themeLibrary.create": "Crear tema nuevo",
+  "themeLibrary.cancelEdit": "Cancelar edición",
+  "themeLibrary.empty": "No hay temas de este tipo.",
+  "themeLibrary.localSource": "Tema local (guardado o importado)",
+  "themeLibrary.installedSource": "Tema de Workshop (editar como copia nueva)"
 }

@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Save theme",
   "themeLibrary.type": "Theme type",
   "themeLibrary.selectionHint": "Selecting a theme applies it immediately.",
-  "themeLibrary.transferHint": "Manage, share, import and export saved themes, and refresh Steam Workshop subscriptions.",
+  "themeLibrary.transferHint": "Manage saved and installed themes. Select an item to preview, share or export it. Apply a theme by selecting it in appearance settings.",
   "themeLibrary.nameHint": "Saving the same name creates a separate theme. Updating keeps its existing identity.",
   "themeLibrary.appliesTo": "Applies to",
   "themeLibrary.legacyComponents": "Updating keeps this theme’s existing component scope. Saving a new theme uses only the three bar scopes below.",
@@ -2500,5 +2500,14 @@
   "themeLibrary.nameRequired": "Enter a theme name.",
   "themeLibrary.scopesRequired": "Select at least one scope.",
   "themeLibrary.bindingRequired": "Choose the bound quick panel and popup themes, or choose to save their current appearances.",
-  "appearance.openDock": "Open Dock material settings"
+  "appearance.openDock": "Open Dock material settings",
+  "themeLibrary.manager": "Theme manager",
+  "themeLibrary.all": "All",
+  "themeLibrary.edit": "Edit theme",
+  "themeLibrary.saveTo": "Save to “{name}”",
+  "themeLibrary.create": "Create new theme",
+  "themeLibrary.cancelEdit": "Cancel editing",
+  "themeLibrary.empty": "No themes match this type.",
+  "themeLibrary.localSource": "Local theme (saved or imported)",
+  "themeLibrary.installedSource": "Workshop theme (edit as a new copy)"
 }

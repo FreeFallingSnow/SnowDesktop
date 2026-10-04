@@ -213,8 +213,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
-    {SettingsPage::AppearanceTheme, "personalization.savedThemes",
-        "themeLibrary.title", "settings.personalization.theme.description"},
+    {SettingsPage::ThemeManager, "personalization.savedThemes",
+        "themeLibrary.manager", "themeLibrary.transferHint"},
     {SettingsPage::AppearanceTheme, "personalization.backgroundColor",
         "settings.personalization.colors",
         "settings.personalization.colors.description"},
@@ -599,6 +599,7 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                     return L("settings.nav.animation");
                 case SettingsPage::Personalization:
                     return L("app.settings.appearance");
+                case SettingsPage::ThemeManager: return L("themeLibrary.manager");
                 case SettingsPage::AppearanceTheme:
                     return L("settings.personalization.theme");
                 case SettingsPage::AppearanceWidgets:

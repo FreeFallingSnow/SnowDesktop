@@ -713,6 +713,7 @@ struct DockPagePresenter::Impl
         taskbarGradient.sections.material.Children().Append(taskbarBlurRadius.root);
         taskbarGradient.sections.material.Children().Append(taskbarAcrylicRow.root);
         taskbarCustomAppearance.Children().Append(taskbarThemes->SaveContent());
+        taskbarThemes->SetCustomContent({taskbarCustomAppearance});
         taskbarAppearanceCard.content.Children().Append(
             taskbarCustomAppearance);
 
@@ -1009,6 +1010,7 @@ struct DockPagePresenter::Impl
         control.gradient.sections.material.Children().Append(control.blurRadius.root);
         control.gradient.sections.material.Children().Append(control.acrylicRow.root);
         control.customAppearance.Children().Append(control.savedThemes->SaveContent());
+        control.savedThemes->SetCustomContent({control.customAppearance});
         control.appearanceDetails.Children().Append(control.customAppearance);
         control.details.Children().Append(control.appearanceDetails);
         control.root.Children().Append(control.details);
@@ -1889,9 +1891,9 @@ struct DockPagePresenter::Impl
         const int selectedTheme = taskbarThemes->NativeSelection();
         const bool taskbarStyled = selectedTheme !=
             static_cast<int>(SystemTaskbarThemeMode::Native);
-        const bool taskbarCustom = selectedTheme ==
+        const bool taskbarCustom = taskbarThemes->CustomSelected() && selectedTheme ==
             static_cast<int>(SystemTaskbarThemeMode::Custom);
-        taskbarContentThemeRow.root.Visibility(taskbarStyled || IsClassicSystemTaskbar()
+        taskbarContentThemeRow.root.Visibility(!taskbarThemes->HasSavedSelection() && (taskbarStyled || IsClassicSystemTaskbar())
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
         taskbarContentThemeRow.SetEnabled(taskbarStyled || IsClassicSystemTaskbar());
@@ -1918,13 +1920,13 @@ struct DockPagePresenter::Impl
             const bool enabled = control->enabled.IsOn();
             const bool native = control->savedThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Native);
-            const bool custom = control->savedThemes->NativeSelection() ==
+            const bool custom = control->savedThemes->CustomSelected() && control->savedThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Custom);
             control->appearanceDetails.Visibility(enabled
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);
             control->appearanceDetails.IsHitTestVisible(enabled);
-            control->contentThemeRow.root.Visibility(!native && !IsClassicSystemTaskbar()
+            control->contentThemeRow.root.Visibility(!control->savedThemes->HasSavedSelection() && !native && !IsClassicSystemTaskbar()
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);
             control->customAppearance.Visibility(custom

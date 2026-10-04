@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Salvar tema",
   "themeLibrary.type": "Tipo de tema",
   "themeLibrary.selectionHint": "O tema é aplicado assim que é selecionado.",
-  "themeLibrary.transferHint": "Gerencie, compartilhe, importe e exporte os temas salvos e atualize as assinaturas da Oficina Steam.",
+  "themeLibrary.transferHint": "Gerencie temas salvos e instalados. Selecione um tema para visualizar, compartilhar ou exportar. Para aplicá-lo, selecione-o nas configurações de aparência.",
   "themeLibrary.nameHint": "Salvar com o mesmo nome cria um tema separado. Atualizar mantém seu identificador.",
   "themeLibrary.appliesTo": "Aplicar a",
   "themeLibrary.legacyComponents": "A atualização mantém o escopo existente dos widgets. Um novo tema usa apenas as três barras abaixo.",
@@ -2500,5 +2500,14 @@
   "themeLibrary.nameRequired": "Digite um nome para o tema.",
   "themeLibrary.scopesRequired": "Selecione pelo menos um escopo.",
   "themeLibrary.bindingRequired": "Escolha os temas vinculados do painel rápido e das janelas pop-up ou salve suas aparências atuais.",
-  "appearance.openDock": "Abrir as configurações de material do Dock"
+  "appearance.openDock": "Abrir as configurações de material do Dock",
+  "themeLibrary.manager": "Gerenciador de temas",
+  "themeLibrary.all": "Todos",
+  "themeLibrary.edit": "Editar tema",
+  "themeLibrary.saveTo": "Salvar em “{name}”",
+  "themeLibrary.create": "Criar novo tema",
+  "themeLibrary.cancelEdit": "Cancelar edição",
+  "themeLibrary.empty": "Nenhum tema corresponde a este tipo.",
+  "themeLibrary.localSource": "Tema local (salvo ou importado)",
+  "themeLibrary.installedSource": "Tema da Oficina (editar como nova cópia)"
 }
