@@ -44,3 +44,6 @@
 #define IDR_QUICK_NAV_SETTINGS 51
 #define IDR_QUICK_NAV_RUN 52
 #define IDR_QUICK_NAV_CALCULATOR 53
+
+// Self-contained default wallpaper for theme previews.
+#define IDR_THEME_PREVIEW_BACKGROUND 54

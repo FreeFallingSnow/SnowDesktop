@@ -181,6 +181,15 @@ int wmain(int argc, wchar_t** argv)
             gallery.back().component == "control-panel", "production gallery reuses actual mapped-folder and control-center renderers");
         if (galleryOk)
         {
+            const auto builtinBackground = galleryDirectory / L"builtin-background.png";
+            check(std::filesystem::is_regular_file(builtinBackground) &&
+                steam_bridge::ThemeFileSha256(builtinBackground) ==
+                    steam_bridge::ThemeFileSha256(std::filesystem::path(__FILE__).parent_path().parent_path() /
+                        L"assets" / L"preview" / L"theme-background.png"),
+                "default wallpaper comes from the production executable's embedded approved asset");
+            check(Compare(widget_preview::LoadWallpaperImage(galleryDirectory / L"background.png"),
+                widget_preview::GenerateWallpaper(1024,1024,false)).material > 10000,
+                "approved default replaces the procedural wallpaper in the real production stage");
             for (const auto& image : gallery)
                 check(widget_preview::LoadWallpaperImage(image.path).pixels.size() == 1024*1024 &&
                     std::filesystem::file_size(image.path) < preview::kCoverMaximumBytes, "each independent gallery image is complete and fits Steam's limit");
@@ -204,9 +213,13 @@ int wmain(int argc, wchar_t** argv)
                 if (outputs && outputs->IsArray() && !outputs->array.empty())
                     if (const auto* path = outputs->array.front().Find("path"); path && path->IsString())
                     {
-                        const auto comparison = Compare(control,widget_preview::LoadWallpaperImage(
-                            std::filesystem::path(std::u8string(path->string.begin(),path->string.end()))));
-                        sameStage = comparison.alpha && comparison.maximum <= 2 && comparison.pixels <= 1024;
+                        const auto directCover = directory / L"direct-control-cover.png";
+                        if (preview::SaveCover(directCover,widget_preview::LoadWallpaperImage(
+                            std::filesystem::path(std::u8string(path->string.begin(),path->string.end()))),error))
+                        {
+                            const auto comparison = Compare(control,widget_preview::LoadWallpaperImage(directCover));
+                            sameStage = comparison.alpha && comparison.maximum <= 2 && comparison.pixels <= 1024;
+                        }
                     }
             }
             check(sameStage,"gallery preserves the complete production glass and background frame without cropped-stage seams");
@@ -245,6 +258,10 @@ int wmain(int argc, wchar_t** argv)
             "invalid imported background fails atomically and cannot reuse an older preview");
         check(!preview::RenderGallery(argv[1],package,global.id,All,directory / L"gallery-cancel",gallery,cover,error,&cancel) &&
             gallery.empty() && cover.empty() && !std::filesystem::exists(directory / L"gallery-cancel"), "cancelled gallery releases every image and draft artifact");
+        check(!preview::RenderGallery(directory / L"missing.exe",package,global.id,All,directory / L"gallery-missing-resource",
+            gallery,cover,error) && gallery.empty() && cover.empty() &&
+            !std::filesystem::exists(directory / L"gallery-missing-resource"),
+            "missing embedded wallpaper fails atomically without a developer-file fallback");
     }
     else check(false,"host executable argument is required");
     if (SUCCEEDED(initialized)) CoUninitialize();

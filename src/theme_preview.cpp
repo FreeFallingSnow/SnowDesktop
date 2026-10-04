@@ -2,6 +2,7 @@
 #include "preview_png_writer.h"
 #include "json_value.h"
 #include "steam_child_environment.h"
+#include "resource.h"
 #include <fstream>
 #include <thread>
 #include <wincodec.h>
@@ -127,6 +128,26 @@ bool NormalizeCover(const std::filesystem::path& source, const std::filesystem::
     }
     return SaveCover(destination, std::move(image), error);
 }
+static bool StageBuiltinBackground(const std::filesystem::path& host,
+    const std::filesystem::path& directory, const std::filesystem::path& destination, std::string& error)
+{
+    // Read the selected production host's resource, including when invoked by a
+    // test executable. No installed asset directory or developer mode is needed.
+    const auto module = LoadLibraryExW(host.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    if (!module) return Fail(error, "previewFailed");
+    struct ModuleCleanup { HMODULE value; ~ModuleCleanup() { FreeLibrary(value); } } cleanup{module};
+    const auto resource = FindResourceW(module, MAKEINTRESOURCEW(IDR_THEME_PREVIEW_BACKGROUND), RT_RCDATA);
+    const auto size = resource ? SizeofResource(module, resource) : 0;
+    const auto loaded = resource ? LoadResource(module, resource) : nullptr;
+    const auto bytes = loaded ? LockResource(loaded) : nullptr;
+    if (!bytes || !size || size > 32 * 1024 * 1024) return Fail(error, "previewFailed");
+    const auto source = directory / L"builtin-background.png";
+    std::ofstream file(source, std::ios::binary);
+    file.write(static_cast<const char*>(bytes), size);
+    file.close();
+    if (!file) return Fail(error, "writeFailed");
+    return NormalizeCover(source, destination, error);
+}
 static bool RenderImages(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images,
@@ -154,7 +175,9 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         // Freeze the built-in background too. Glass and all surrounding pixels
         // must come from one production render, never two differently scaled stages.
         stagedBackground = directory / L"background.png";
-        if (!SaveCover(stagedBackground, backdrop, error)) return false;
+        if (!StageBuiltinBackground(host, directory, stagedBackground, error)) return false;
+        backdrop = widget_preview::LoadWallpaperImage(stagedBackground);
+        if (backdrop.pixels.size() != kCoverSize * kCoverSize) return Fail(error, "previewFailed");
     }
     auto canvas = backdrop;
     const int columns = parts.size() > 1 ? 2 : 1, rows = static_cast<int>((parts.size() + columns - 1) / columns);

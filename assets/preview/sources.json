@@ -1,0 +1,13 @@
+{
+  "theme-background.png": {
+    "tool": "image_gen.imagegen",
+    "generatedUtc": "2026-10-04",
+    "usage": "User approved embedded default theme-preview wallpaper",
+    "dimensions": [
+      1254,
+      1254
+    ],
+    "sha256": "525b7a87c6f0b81b00002c431ab0f60838093382cda229960c69f37cd8992613",
+    "prompt": "Use case: stylized-concept. Asset type: neutral desktop wallpaper for demonstrating SnowDesktop UI themes and real frosted-glass transparency, square 1024x1024. Create a refined minimal abstract wallpaper with broad softly flowing layered curves, a restrained slate-blue, muted blue-gray and warm light-gray palette, medium overall brightness. Subtle soft directional lighting and smooth tonal gradients with a few clean gently curved transitions so blur can be demonstrated. The central area should have tasteful medium-scale variation rather than a flat color, while remaining calm enough for interface controls; no dominant focal object. Balanced composition that works behind both light and dark UI, polished contemporary desktop wallpaper, seamless edge-to-edge image. No UI panels, no glass rectangles, no frames, no border, no icons, no text, no logo, no watermark, no neon, no busy fine patterns."
+  }
+}
