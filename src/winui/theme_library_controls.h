@@ -474,8 +474,14 @@ private:
             cardRevoke_.push_back([button, token] { button.Click(token); });
             cardCommands_.push_back({command, id, button});
         }
-        entry.Children().Append(actions);
-        c::Border card; if (cardStyle_) card.Style(cardStyle_); card.Child(entry);
+        c::Grid row; row.ColumnSpacing(16);
+        c::ColumnDefinition information, operations; operations.Width(x::GridLengthHelper::Auto());
+        row.ColumnDefinitions().Append(information); row.ColumnDefinitions().Append(operations);
+        entry.VerticalAlignment(x::VerticalAlignment::Center);
+        actions.VerticalAlignment(x::VerticalAlignment::Center);
+        c::Grid::SetColumn(actions, 1);
+        row.Children().Append(entry); row.Children().Append(actions);
+        c::Border card; if (cardStyle_) card.Style(cardStyle_); card.Child(row);
         return card;
     }
     void ClearEntries()

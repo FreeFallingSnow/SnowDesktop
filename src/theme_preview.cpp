@@ -149,8 +149,15 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         backdrop = widget_preview::LoadWallpaperImage(stagedBackground);
         if (backdrop.pixels.size() != kCoverSize * kCoverSize) return Fail(error, "previewFailed");
     }
+    else if (images)
+    {
+        // Freeze the built-in background too. Glass and all surrounding pixels
+        // must come from one production render, never two differently scaled stages.
+        stagedBackground = directory / L"background.png";
+        if (!SaveCover(stagedBackground, backdrop, error)) return false;
+    }
     auto canvas = backdrop;
-    const int columns = images ? 1 : (parts.size() > 1 ? 2 : 1), rows = images ? 1 : static_cast<int>((parts.size() + columns - 1) / columns);
+    const int columns = parts.size() > 1 ? 2 : 1, rows = static_cast<int>((parts.size() + columns - 1) / columns);
     for (std::size_t index = 0; index < parts.size(); ++index)
     {
         if (cancel && cancel->load()) return Fail(error, "cancelled");
@@ -158,7 +165,8 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         std::string output;
         const auto& part = parts[index];
         if (!Run(host, {L"--native-component-preview", std::wstring(part.component.begin(), part.component.end()), partDir.wstring(),
-            L"96", L"en-US", L"dark", stagedBackground.wstring(), L"2048", L"1536", L"32", L"0", L"0", resultPath.wstring(), snapshot.wstring(),
+            L"96", L"en-US", L"dark", stagedBackground.wstring(), images ? L"1024" : L"2048", images ? L"1024" : L"1536",
+            L"32", L"0", L"0", resultPath.wstring(), snapshot.wstring(),
             std::wstring(part.themeId.begin(), part.themeId.end())}, output, 60000, error, cancel)) return false;
         std::ifstream file(resultPath, std::ios::binary); std::string text(std::istreambuf_iterator<char>(file), {}); JsonValue result;
         if (!ParseJson(text, result)) return Fail(error, "previewFailed");
@@ -167,6 +175,14 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         const auto& item = outputs->array.front(); const auto* path = item.Find("path");
         if (!path || !path->IsString()) return Fail(error, "previewFailed");
         const auto image = widget_preview::LoadWallpaperImage(std::filesystem::path(std::u8string(path->string.begin(), path->string.end())));
+        if (images)
+        {
+            const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), part.component);
+            if (!SaveCover(imagePath, image, error)) { images->clear(); return false; }
+            images->push_back({part.component, imagePath});
+            std::filesystem::remove_all(partDir, ec); std::filesystem::remove(resultPath, ec);
+            continue;
+        }
         const auto number = [&](const char* key) { const auto* value = item.Find(key); return value && value->IsNumber() ? static_cast<int>(value->number) : 0; };
         int left = number("placementX"), top = number("placementY"), width = number("componentWidth"), height = number("componentHeight");
         const int margin = 12;
@@ -176,19 +192,12 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         const int cellWidth = kCoverSize / columns - 40, cellHeight = kCoverSize / rows - 40;
         const double scale = std::min(static_cast<double>(cellWidth) / width, static_cast<double>(cellHeight) / height);
         const int w = std::max(1, static_cast<int>(width * scale)), h = std::max(1, static_cast<int>(height * scale));
-        const auto cell = images ? 0 : index;
+        const auto cell = index;
         const int x = static_cast<int>(cell % columns) * kCoverSize / columns + (kCoverSize / columns - w) / 2;
         const int y = static_cast<int>(cell / columns) * kCoverSize / rows + (kCoverSize / rows - h) / 2;
         for (int dy = 0; dy < h; ++dy) for (int dx = 0; dx < w; ++dx)
             canvas.pixels[static_cast<std::size_t>(y + dy) * kCoverSize + x + dx] =
                 image.pixels[static_cast<std::size_t>(top + static_cast<int>(dy / scale)) * image.width + left + static_cast<int>(dx / scale)];
-        if (images)
-        {
-            const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), part.component);
-            if (!SaveCover(imagePath, canvas, error)) { images->clear(); return false; }
-            images->push_back({part.component, imagePath});
-            canvas = backdrop;
-        }
         std::filesystem::remove_all(partDir, ec); std::filesystem::remove(resultPath, ec);
     }
     const auto destination = directory / L"cover.png";

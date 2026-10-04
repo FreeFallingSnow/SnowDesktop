@@ -1,4 +1,5 @@
 #include "theme_preview.h"
+#include "json_value.h"
 #include "theme_workshop_tags.h"
 #include "winui/theme_edit_state.h"
 #include "theme_workshop.h"
@@ -187,6 +188,28 @@ int wmain(int argc, wchar_t** argv)
             const auto folder = widget_preview::LoadWallpaperImage(gallery.front().path);
             const auto control = widget_preview::LoadWallpaperImage(gallery.back().path);
             check(Compare(folder,control).material > 10000, "component and popup control-center previews are distinct rendered images");
+            const auto directDirectory = directory / L"direct-control-center";
+            const auto directResult = directory / L"direct-control-center.json";
+            const bool directOk = preview::Run(argv[1],{L"--native-component-preview",L"control-panel",directDirectory.wstring(),
+                L"96",L"en-US",L"dark",(galleryDirectory / L"background.png").wstring(),L"1024",L"1024",L"32",L"0",L"0",
+                directResult.wstring(),(galleryDirectory / L"package.snowtheme").wstring(),
+                std::wstring(popup.id.begin(),popup.id.end())},output,60000,error);
+            std::ifstream directFile(directResult,std::ios::binary);
+            const std::string directText(std::istreambuf_iterator<char>(directFile),{});
+            JsonValue directJson;
+            bool sameStage = false;
+            if (directOk && ParseJson(directText,directJson))
+            {
+                const auto* outputs = directJson.Find("outputs");
+                if (outputs && outputs->IsArray() && !outputs->array.empty())
+                    if (const auto* path = outputs->array.front().Find("path"); path && path->IsString())
+                    {
+                        const auto comparison = Compare(control,widget_preview::LoadWallpaperImage(
+                            std::filesystem::path(std::u8string(path->string.begin(),path->string.end()))));
+                        sameStage = comparison.alpha && comparison.maximum <= 2 && comparison.pixels <= 1024;
+                    }
+            }
+            check(sameStage,"gallery preserves the complete production glass and background frame without cropped-stage seams");
         }
         auto backdrop = widget_preview::GenerateWallpaper(1024,1024,false);
         std::fill(backdrop.pixels.begin(),backdrop.pixels.end(),0xff306090u);
