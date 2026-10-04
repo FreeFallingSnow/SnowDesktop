@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Design speichern",
   "themeLibrary.type": "Designtyp",
   "themeLibrary.selectionHint": "Ein ausgewähltes Design wird sofort angewendet.",
-  "themeLibrary.transferHint": "Gespeicherte und installierte Designs verwalten. Wählen Sie ein Design zur Vorschau, zum Teilen oder Exportieren. Zum Anwenden wählen Sie es in den Darstellungseinstellungen.",
+  "themeLibrary.transferHint": "Gespeicherte und installierte Designs verwalten. Jede Designkarte bietet eigene Aktionen für Vorschau, Teilen und Export.",
   "themeLibrary.nameHint": "Speichern unter gleichem Namen erstellt ein eigenes Design. Beim Aktualisieren bleibt die Kennung erhalten.",
   "themeLibrary.appliesTo": "Gilt für",
   "themeLibrary.legacyComponents": "Beim Aktualisieren bleibt der bisherige Widget-Bereich erhalten. Neue Designs verwenden nur die drei Leistenbereiche unten.",
@@ -2509,5 +2509,10 @@
   "themeLibrary.cancelEdit": "Bearbeitung abbrechen",
   "themeLibrary.empty": "Keine Designs dieses Typs vorhanden.",
   "themeLibrary.localSource": "Lokales Design (gespeichert oder importiert)",
-  "themeLibrary.installedSource": "Workshop-Design (als neue Kopie bearbeiten)"
+  "themeLibrary.installedSource": "Workshop-Design (als neue Kopie bearbeiten)",
+  "themeLibrary.prepareShare": "Vorschau erstellen und fortfahren",
+  "themeLibrary.tagsRequired": "Erforderliche Kategorien: Behalten Sie alle Tags für den tatsächlichen Geltungsbereich des Designs bei.",
+  "themeLibrary.coverSource": "Titelbildquelle",
+  "themeLibrary.generateCover": "Titelbild aus dem Design erstellen",
+  "themeLibrary.workshopPage": "Workshop-Seite öffnen"
 }

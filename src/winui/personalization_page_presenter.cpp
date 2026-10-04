@@ -570,7 +570,7 @@ struct PersonalizationPagePresenter::Impl
         fontError.Visibility(mux::Visibility::Collapsed);
         fontCard.content.Children().Append(fontError);
         managementRoot.Spacing(12);
-        themeTransfers = std::make_unique<ThemeLibraryControls>(localize, "global", true);
+        themeTransfers = std::make_unique<ThemeLibraryControls>(localize, "global", true, nullptr, 0, -1, cardStyle);
         managementRoot.Children().Append(themeTransfers->Content());
         globalThemes->SetCustomContent({widgetAppearanceCard.root});
         quickThemes->SetCustomContent({quickAppearanceContent});

@@ -12,6 +12,8 @@
 #include "../theme_library_settings.h"
 #include "../theme_workshop.h"
 #include "../theme_preview.h"
+#include "../theme_workshop_tags.h"
+#include "theme_edit_state.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -420,12 +422,17 @@ struct SettingsWindowHost::Impl
         result.succeeded = success; result.sharingAvailable = ThemeSharingAvailable();
         std::string ignored;
         if (!themes::Load(themes::LibraryPath(), result.library, ignored)) result.succeeded = false;
-        result.message = L(success ? "themeLibrary.success" :
-            error == "cancelled" ? "themeLibrary.cancelled" :
+        if (!result.succeeded && error != "cancelled") result.message = L(
             error == "agreementRequired" ? "themeLibrary.agreementRequired" :
             error == "authorMismatch" ? "themeLibrary.authorMismatch" :
             error == "stalePreparation" ? "themeLibrary.stalePreview" :
             error == "creationUncertain" ? "themeLibrary.creationUncertain" : "themeLibrary.operationFailed");
+        for (const auto& [id, theme] : result.library.themes)
+        {
+            (void)theme;
+            auto url = steam_bridge::ThemePublishedUrl(GetDataDirectoryPath(), id);
+            if (!url.empty()) result.publishedUrls.emplace(id, std::move(url));
+        }
         if (shell) shell->HideProgress(task->generation);
         auto completed = std::move(task->completed);
         themeTask.reset();
@@ -485,6 +492,12 @@ struct SettingsWindowHost::Impl
         }
         if (share)
         {
+            dialog.message += L"\n" + L("themeLibrary.tagsRequired");
+            for (const auto& tag : task->plan.tags)
+                for (const auto& category : themes::tags::Categories)
+                    if (category.value == tag) dialog.message += L"\n" + L(category.label);
+            if (task->plan.publishedFileId) dialog.message += L"\n" + std::wstring(winrt::to_hstring(
+                "https://steamcommunity.com/sharedfiles/filedetails/?id=" + std::to_string(task->plan.publishedFileId)));
             dialog.message += L"\n\n" + L("themeLibrary.confirmShare");
             dialog.primaryButtonText = L(task->plan.publishedFileId ? "themeLibrary.publishUpdate" : "themeLibrary.publish");
         }
@@ -524,7 +537,13 @@ struct SettingsWindowHost::Impl
                 !themes::Export(library, task->request.id, task->snapshot, error))
             { CompleteThemeTask(task, false, error); return; }
         }
-        if (task->request.command == ThemeLibraryCommand::ChooseCover)
+        if (share)
+        {
+            const auto selected = themes::Resolve(task->snapshot, task->request.id);
+            if (!selected || !themes::tags::Valid(*selected, task->request.tags)) { CompleteThemeTask(task, false, "tagsRequired"); return; }
+            if (!task->request.chooseCover) themeCovers.erase(task->request.id);
+        }
+        if (task->request.command == ThemeLibraryCommand::ChooseCover || (share && task->request.chooseCover))
         {
             const auto selected = ShowOpenPathDialog(window, L("themeLibrary.chooseCover"),
                 {{L("themeLibrary.chooseCover"), L"*.png;*.jpg;*.jpeg;*.bmp"}}, false);
@@ -536,7 +555,8 @@ struct SettingsWindowHost::Impl
         if (const auto selected = themeCovers.find(task->request.id); selected != themeCovers.end()) task->customCover = selected->second;
         wchar_t temporary[MAX_PATH + 1]{};
         if (!GetTempPathW(MAX_PATH, temporary)) { CompleteThemeTask(task, false, "writeFailed"); return; }
-        task->directory = std::filesystem::path(temporary) / (L"SnowDesktop-theme-" + std::wstring(winrt::to_hstring(themes::CreateId())));
+        task->directory = theme_controls::TaskDirectory(std::filesystem::path(temporary), themes::CreateId());
+        if (task->directory.empty()) { CompleteThemeTask(task, false, "writeFailed"); return; }
         (void)shell->ShowProgress({generation, L(sync ? "themeLibrary.sync" : "themeLibrary.preview"), L("themeLibrary.preparing"), true, 0, true});
         const auto weak = std::weak_ptr<CallbackState>(callbacks);
         const auto host = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe", bridge = ThemeBridge(), data = std::filesystem::path(GetDataDirectoryPath());
@@ -559,7 +579,7 @@ struct SettingsWindowHost::Impl
                             task->customCover, [host](const auto& package, auto root, auto applicable, const auto& directory,
                                 auto& cover, auto& error, auto* cancel) {
                                 return themes::preview::Render(host, package, root, applicable, directory, cover, error, cancel);
-                            }, task->plan, detail, &task->cancel);
+                            }, task->plan, detail, &task->cancel, task->request.tags);
                         task->cover = task->plan.preview;
                     }
                     else
@@ -2495,12 +2515,17 @@ struct SettingsWindowHost::Impl
         if (!current || current->externalReplacementPending) return result;
         std::string error;
         const auto feedback = [&]() {
-            result.message = result.succeeded ? L("themeLibrary.success") : L(themes::ErrorLocalizationKey(error));
-            if (result.message.empty()) result.message = L("themeLibrary.error.invalidPackage");
+            result.message = result.succeeded ? std::wstring{} : L(themes::ErrorLocalizationKey(error));
+            if (!result.succeeded && result.message.empty()) result.message = L("themeLibrary.error.invalidPackage");
         };
         if (request.command == ThemeLibraryCommand::Refresh)
         {
             result.succeeded = themes::Load(themes::LibraryPath(), result.library, error);
+            if (result.succeeded) for (const auto& [id, theme] : result.library.themes)
+            {
+                (void)theme; auto url = steam_bridge::ThemePublishedUrl(GetDataDirectoryPath(), id);
+                if (!url.empty()) result.publishedUrls.emplace(id, std::move(url));
+            }
             if (!result.succeeded) feedback();
             return result;
         }

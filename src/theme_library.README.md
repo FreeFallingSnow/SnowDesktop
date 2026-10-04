@@ -117,9 +117,28 @@ Sharing prepares the same immutable package and cover, displays a confirmation,
 and rechecks the saved snapshot before invoking the bridge. Closing the session,
 cancelling or receiving a stale generation prevents a later confirmation from
 publishing. Every operation has a single active request. Steam capability
-`workshop.theme.v1` and workflow protocol 1 are required independently of bridge
+`workshop.theme.v1`, `workshop.theme.tags.v1` and workflow protocol 1 are required independently of bridge
 presence and the application version. Old component commands and package format
 `snowdesktop.theme` version 1 are unchanged; taskbar protocol remains version 13.
+
+Sharing first opens a classification/cover dialog, then generates an immutable
+preview and asks for explicit create/update confirmation. The six canonical
+Steamworks values live in `theme_workshop_tags.h`: `Global Theme`, `Dock Theme`,
+`Status Bar Theme`, `Taskbar Theme`, `Quick Panel Theme`, `Popup Theme`. Every
+actually applicable scope is required; full global themes carry the global tag
+and three bar tags, while partial multi-bar themes carry only their base tags.
+Localized names are never uploaded as tag values. The bridge adds `Theme` as a
+content marker. There is no official/community category in this change.
+Preparation records and CLI confirmation include a classification hash in
+addition to package/cover hashes. Old preparations without tags are rejected;
+these temporary development records are regenerated, never migrated. An older
+bridge lacking the additive tags capability cannot offer sharing. External
+theme packages and component APIs keep their existing compatibility.
+
+Publication URLs are read from the durable journal keyed by the local theme ID
+and shown on that theme's card. Renaming or updating the theme keeps the binding;
+saving a new ID starts a separate publication. Preview/save/cancel successes are
+silent; failures and a saved-but-not-applied warning remain visible.
 
 The bridge journals a created ID before starting its upload. Retrying an upload
 uses that ID and verifies current authorship. A lost create response without an

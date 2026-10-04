@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Guardar tema",
   "themeLibrary.type": "Tipo de tema",
   "themeLibrary.selectionHint": "El tema se aplica al seleccionarlo.",
-  "themeLibrary.transferHint": "Gestiona temas guardados e instalados. Selecciona uno para previsualizarlo, compartirlo o exportarlo. Para aplicarlo, selecciónalo en los ajustes de apariencia.",
+  "themeLibrary.transferHint": "Gestiona temas guardados e instalados. Cada tarjeta tiene sus propias acciones de vista previa, uso compartido y exportación.",
   "themeLibrary.nameHint": "Guardar con el mismo nombre crea un tema independiente. Actualizar conserva su identificador.",
   "themeLibrary.appliesTo": "Aplicar a",
   "themeLibrary.legacyComponents": "Al actualizar se conserva el ámbito de los widgets existentes. Un tema nuevo solo usa las tres barras siguientes.",
@@ -2509,5 +2509,10 @@
   "themeLibrary.cancelEdit": "Cancelar edición",
   "themeLibrary.empty": "No hay temas de este tipo.",
   "themeLibrary.localSource": "Tema local (guardado o importado)",
-  "themeLibrary.installedSource": "Tema de Workshop (editar como copia nueva)"
+  "themeLibrary.installedSource": "Tema de Workshop (editar como copia nueva)",
+  "themeLibrary.prepareShare": "Generar vista previa y continuar",
+  "themeLibrary.tagsRequired": "Categorías obligatorias: conserva todas las etiquetas correspondientes al ámbito real del tema.",
+  "themeLibrary.coverSource": "Origen de la portada",
+  "themeLibrary.generateCover": "Generar una portada del tema",
+  "themeLibrary.workshopPage": "Ver página de Workshop"
 }

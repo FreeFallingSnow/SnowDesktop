@@ -1,4 +1,6 @@
 #include "theme_preview.h"
+#include "theme_workshop_tags.h"
+#include "winui/theme_edit_state.h"
 #include "theme_workshop.h"
 #include <windows.h>
 #include <algorithm>
@@ -45,7 +47,7 @@ int wmain(int argc, wchar_t** argv)
         Sleep(5000); return 0;
     }
     if (argc >= 2 && std::wstring_view(argv[1]) == L"configuration")
-    { std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\"]}\n"; return 0; }
+    { std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\"]}\n"; return 0; }
     const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     int failures = 0;
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL preview: " << message << '\n'; } };
@@ -115,17 +117,18 @@ int wmain(int argc, wchar_t** argv)
         const auto bridge = std::filesystem::path(argv[1]).parent_path() / L"SnowDesktopSteamBridge.exe";
         check(WritePackage(cli / L"package.snowtheme",package,error) &&
             preview::SaveCover(cli / L"cover.png",widget_preview::GenerateWallpaper(1024,1024,false),error) &&
-            steam_bridge::WriteThemePreparation(cli,global.id,global.name,1700000000,error), "CLI fixture preparation");
+            steam_bridge::WriteThemePreparation(cli,global.id,global.name,1700000000,error,tags::Applicable(global)), "CLI fixture preparation");
         check(preview::Run(bridge,{L"workshop",L"theme-plan",L"--prepared",cli.wstring(),L"--data-directory",directory.wstring()},output,3000,error) &&
             output.find("themeWorkflowProtocolVersion")!=std::string::npos, "actual bridge theme-plan validates offline prepared artifacts");
         check(!preview::Run(bridge,{L"workshop",L"theme-publish",L"--prepared",cli.wstring(),L"--data-directory",directory.wstring(),
             L"--package-sha256",L"changed",L"--cover-sha256",L"changed",L"--confirm-create"},output,3000,error) &&
             output.find("stalePreparation")!=std::string::npos, "actual publish CLI rejects changed hashes before any Steam initialization");
         DWORD handlesBefore = 0, handlesAfter = 0; GetProcessHandleCount(GetCurrentProcess(), &handlesBefore);
-        const bool first = preview::Render(argv[1],package,global.id,All,directory / L"first",cover,error);
+        const auto productionUiDirectory = winui::theme_controls::TaskDirectory(directory, CreateId());
+        const bool first = preview::Render(argv[1],package,global.id,All,productionUiDirectory,cover,error);
         check(first, ("actual immutable production render: " + error).c_str());
         const auto firstImage = first ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
-        const auto frozenHash = steam_bridge::ThemeFileSha256(directory / L"first" / L"package.snowtheme");
+        const auto frozenHash = steam_bridge::ThemeFileSha256(productionUiDirectory / L"package.snowtheme");
         const bool second = preview::Render(argv[1],package,global.id,All,directory / L"second",cover,error);
         const auto repeated = Compare(firstImage, second ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{});
         std::cout << "Repeated production cover: differing pixels=" << repeated.pixels << ", maximum channel difference=" << repeated.maximum << '\n';

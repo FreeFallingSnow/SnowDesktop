@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Enregistrer le thème",
   "themeLibrary.type": "Type de thème",
   "themeLibrary.selectionHint": "Le thème est appliqué dès sa sélection.",
-  "themeLibrary.transferHint": "Gérez les thèmes enregistrés et installés. Sélectionnez un thème pour le prévisualiser, le partager ou l'exporter. Appliquez-le en le sélectionnant dans les paramètres d'apparence.",
+  "themeLibrary.transferHint": "Gérez les thèmes enregistrés et installés. Chaque carte propose ses propres actions d’aperçu, de partage et d’exportation.",
   "themeLibrary.nameHint": "Enregistrer sous le même nom crée un thème distinct. La mise à jour conserve son identifiant.",
   "themeLibrary.appliesTo": "Appliquer à",
   "themeLibrary.legacyComponents": "La mise à jour conserve la portée existante des widgets. Un nouveau thème utilise uniquement les trois barres ci-dessous.",
@@ -2509,5 +2509,10 @@
   "themeLibrary.cancelEdit": "Annuler les modifications",
   "themeLibrary.empty": "Aucun thème ne correspond à ce type.",
   "themeLibrary.localSource": "Thème local (enregistré ou importé)",
-  "themeLibrary.installedSource": "Thème du Workshop (modifier une nouvelle copie)"
+  "themeLibrary.installedSource": "Thème du Workshop (modifier une nouvelle copie)",
+  "themeLibrary.prepareShare": "Générer l’aperçu et continuer",
+  "themeLibrary.tagsRequired": "Catégories obligatoires : conservez toutes les étiquettes correspondant à la portée réelle du thème.",
+  "themeLibrary.coverSource": "Source de la couverture",
+  "themeLibrary.generateCover": "Générer une couverture à partir du thème",
+  "themeLibrary.workshopPage": "Voir la page du Workshop"
 }

@@ -5,6 +5,14 @@ namespace snowdesktop::winui::theme_controls
 {
 // Private settings state: no package format or component API changes.
 enum class FilterTab { All, Global, Dock, StatusBar, Taskbar, QuickPanel, Popup };
+inline std::filesystem::path TaskDirectory(const std::filesystem::path& temporary, std::string_view id)
+{
+    // IDs contain "theme/". Use only the leaf, so Render's single-directory
+    // isolation guard works without creating an unintended parent directory.
+    if (id.empty()) return {};
+    const auto leaf = std::filesystem::path(std::string(id)).filename();
+    return temporary / (L"SnowDesktop-theme-" + leaf.wstring());
+}
 inline bool MatchesFilter(const themes::Theme& theme, FilterTab tab)
 {
     using namespace themes;

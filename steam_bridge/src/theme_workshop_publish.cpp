@@ -2,6 +2,7 @@
 #include "bridge_json.h"
 #include "steam_app_identity.h"
 #include "../../src/theme_library.h"
+#include "../../src/theme_workshop_tags.h"
 #include "../../src/atomic_file.h"
 #include <windows.h>
 #include <bcrypt.h>
@@ -97,8 +98,12 @@ std::string ThemeFileSha256(const std::filesystem::path& path)
     const auto bytes = Read(path, 4 * 1024 * 1024); return bytes.empty() ? std::string{} : ThemeSha256(bytes);
 }
 bool WriteThemePreparation(const std::filesystem::path& directory, std::string_view rootId,
-    std::string_view title, std::int64_t now, std::string& error)
+    std::string_view title, std::int64_t now, std::string& error, const std::vector<std::string>& tags)
 {
+    themes::Package snapshot;
+    if (!themes::ReadPackage(directory / L"package.snowtheme", snapshot, error)) return false;
+    const auto theme = themes::Resolve(snapshot, rootId);
+    if (!theme || !themes::tags::Valid(*theme, tags)) return Fail(error, "tagsRequired");
     const auto package = ThemeFileSha256(directory / L"package.snowtheme"), cover = ThemeFileSha256(directory / L"cover.png");
     if (package.empty() || cover.empty()) return Fail(error, "previewFailed");
     auto value = JsonValue::Object(); value.object["format"] = JsonValue::String("snowdesktop.theme-preparation");
@@ -106,6 +111,8 @@ bool WriteThemePreparation(const std::filesystem::path& directory, std::string_v
     value.object["rootId"] = JsonValue::String(std::string(rootId)); value.object["title"] = JsonValue::String(std::string(title));
     value.object["packageSha256"] = JsonValue::String(package); value.object["coverSha256"] = JsonValue::String(cover);
     value.object["preparedAt"] = JsonValue::Number(static_cast<double>(now));
+    auto selected = JsonValue::Array(); for (const auto& tag : tags) selected.array.push_back(JsonValue::String(tag));
+    value.object["tags"] = selected; value.object["tagsSha256"] = JsonValue::String(ThemeSha256(WriteJson(selected, -1)));
     return atomic_file::WriteAll(directory / L"theme.json", WriteJson(value), {}, &error);
 }
 bool BuildThemePublishPlan(const std::filesystem::path& directory, const std::filesystem::path& dataDirectory,
@@ -120,11 +127,17 @@ bool BuildThemePublishPlan(const std::filesystem::path& directory, const std::fi
     next.rootId = JsonString(value, "rootId").value_or(""); next.title = JsonString(value, "title").value_or("");
     next.packageSha256 = JsonString(value, "packageSha256").value_or(""); next.coverSha256 = JsonString(value, "coverSha256").value_or("");
     next.preparedAt = static_cast<std::int64_t>(JsonUnsigned(value, "preparedAt").value_or(0));
+    const auto selected = value.Find("tags");
+    if (!selected || !selected->IsArray()) return Fail(error, "tagsRequired");
+    for (const auto& tag : selected->array) { if (!tag.IsString()) return Fail(error, "tagsRequired"); next.tags.push_back(tag.string); }
+    next.tagsSha256 = JsonString(value, "tagsSha256").value_or("");
+    if (next.tagsSha256 != ThemeSha256(WriteJson(*selected, -1))) return Fail(error, "stalePreparation");
     themes::Package package;
     if (next.title.empty() || next.title.size() >= 129 || !next.preparedAt ||
         !themes::ReadPackage(next.package, package, error) || !themes::Resolve(package, next.rootId) ||
         ThemeFileSha256(next.package) != next.packageSha256 || ThemeFileSha256(next.preview) != next.coverSha256 ||
         next.packageSha256.empty() || next.coverSha256.empty()) return Fail(error, "stalePreparation");
+    if (!themes::tags::Valid(*themes::Resolve(package, next.rootId), next.tags)) return Fail(error, "tagsRequired");
     std::error_code ec;
     if (std::filesystem::file_size(next.preview, ec) >= 1024 * 1024 || ec || !ValidCover(next.preview)) return Fail(error, "previewTooLarge");
     const auto store = dataDirectory / L"ThemeWorkshop";
@@ -135,12 +148,21 @@ bool BuildThemePublishPlan(const std::filesystem::path& directory, const std::fi
     if (pending && !next.publishedFileId) return Fail(error, "creationUncertain");
     plan = std::move(next); return true;
 }
+std::string ThemePublishedUrl(const std::filesystem::path& dataDirectory, std::string_view rootId)
+{
+    const auto path = dataDirectory / L"ThemeWorkshop" / (ThemeSha256(rootId) + ".json");
+    std::string owner; std::uint64_t id = 0; bool pending = false;
+    if (!ThemeSafePath(path) || !ReadAssociation(path, owner, id, pending) || !id) return {};
+    return "https://steamcommunity.com/sharedfiles/filedetails/?id=" + std::to_string(id);
+}
 std::string ThemePublishPlanJson(const ThemePublishPlan& plan)
 {
     auto value = JsonValue::Object(); value.object["ok"] = JsonValue::Boolean(true);
     value.object["themeWorkflowProtocolVersion"] = JsonValue::Number(kThemeWorkflowProtocolVersion);
     value.object["rootId"] = JsonValue::String(plan.rootId); value.object["title"] = JsonValue::String(plan.title);
     value.object["packageSha256"] = JsonValue::String(plan.packageSha256); value.object["coverSha256"] = JsonValue::String(plan.coverSha256);
+    value.object["tagsSha256"] = JsonValue::String(plan.tagsSha256);
+    value.object["tags"] = JsonValue::Array(); for (const auto& tag : plan.tags) value.object["tags"].array.push_back(JsonValue::String(tag));
     value.object["publishedFileId"] = JsonValue::String(std::to_string(plan.publishedFileId));
     value.object["requiredConfirmation"] = JsonValue::String(plan.publishedFileId ? "--confirm-update" : "--confirm-create");
     return WriteJson(value, -1);
@@ -157,6 +179,9 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
     if (now < plan.preparedAt || now - plan.preparedAt > 15 * 60 ||
         ThemeFileSha256(plan.package) != plan.packageSha256 || ThemeFileSha256(plan.preview) != plan.coverSha256)
         return Failure(error, "stalePreparation");
+    ThemePublishPlan current; std::string preparationError;
+    if (!BuildThemePublishPlan(plan.directory, plan.association.parent_path().parent_path(), current, preparationError) ||
+        current.tags != plan.tags || current.tagsSha256 != plan.tagsSha256) return Failure(error, "stalePreparation");
     std::string owner; std::uint64_t id = 0; bool pending = false;
     if (!ReadAssociation(plan.association, owner, id, pending)) return Failure(error, "invalidAssociation");
     if (pending && !id) return Failure(error, "creationUncertain");
@@ -184,7 +209,7 @@ bool ExecuteThemePublishPlan(const ThemePublishPlan& plan, bool confirmCreate, b
     if (cancel && cancel->load()) return Failure(error, "cancelled");
     PublishRequest request; request.package = plan.package; request.preview = plan.preview;
     request.contentKind = WorkshopContentKind::Theme; request.title = plan.title;
-    request.tags = std::vector<std::string>{"Theme"};
+    request.tags = plan.tags; request.tags->emplace_back(themes::tags::Content);
     auto metadata = JsonValue::Object(); metadata.object["format"] = JsonValue::String("snowdesktop-theme");
     metadata.object["artifact"] = JsonValue::String("package.snowtheme"); metadata.object["themeWorkflowProtocolVersion"] = JsonValue::Number(1);
     metadata.object["themeId"] = JsonValue::String(plan.rootId); metadata.object["packageSha256"] = JsonValue::String(plan.packageSha256);

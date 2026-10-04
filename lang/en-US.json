@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Save theme",
   "themeLibrary.type": "Theme type",
   "themeLibrary.selectionHint": "Selecting a theme applies it immediately.",
-  "themeLibrary.transferHint": "Manage saved and installed themes. Select an item to preview, share or export it. Apply a theme by selecting it in appearance settings.",
+  "themeLibrary.transferHint": "Manage saved and installed themes. Each theme card has its own preview, sharing and export actions.",
   "themeLibrary.nameHint": "Saving the same name creates a separate theme. Updating keeps its existing identity.",
   "themeLibrary.appliesTo": "Applies to",
   "themeLibrary.legacyComponents": "Updating keeps this theme’s existing component scope. Saving a new theme uses only the three bar scopes below.",
@@ -2509,5 +2509,10 @@
   "themeLibrary.cancelEdit": "Cancel editing",
   "themeLibrary.empty": "No themes match this type.",
   "themeLibrary.localSource": "Local theme (saved or imported)",
-  "themeLibrary.installedSource": "Workshop theme (edit as a new copy)"
+  "themeLibrary.installedSource": "Workshop theme (edit as a new copy)",
+  "themeLibrary.prepareShare": "Generate preview and continue",
+  "themeLibrary.tagsRequired": "Required categories: retain every tag that matches the theme's actual scope.",
+  "themeLibrary.coverSource": "Cover source",
+  "themeLibrary.generateCover": "Generate a cover from the theme",
+  "themeLibrary.workshopPage": "View Workshop page"
 }

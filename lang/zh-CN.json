@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "保存主题",
   "themeLibrary.type": "主题类型",
   "themeLibrary.selectionHint": "在主题框中选择后立即应用。",
-  "themeLibrary.transferHint": "管理本地保存和已安装的主题。选择条目后可预览、分享或导出；在外观设置中选择主题即可应用。",
+  "themeLibrary.transferHint": "管理已保存及已安装的主题。每张主题卡片都有独立的预览、分享和导出操作。",
   "themeLibrary.nameHint": "同名另存会创建独立主题，更新会保留原主题标识。",
   "themeLibrary.appliesTo": "适用于",
   "themeLibrary.legacyComponents": "更新此主题时保留已有的组件适用范围；另存为新主题只使用下方三栏范围。",
@@ -2509,5 +2509,10 @@
   "themeLibrary.cancelEdit": "取消编辑",
   "themeLibrary.empty": "没有符合此类型的主题。",
   "themeLibrary.localSource": "本地主题（保存或导入）",
-  "themeLibrary.installedSource": "工坊主题（编辑时新建副本）"
+  "themeLibrary.installedSource": "工坊主题（编辑时新建副本）",
+  "themeLibrary.prepareShare": "生成预览并继续",
+  "themeLibrary.tagsRequired": "适用分类（必选）：请保留主题实际适用范围的全部标签。",
+  "themeLibrary.coverSource": "封面来源",
+  "themeLibrary.generateCover": "根据主题生成封面",
+  "themeLibrary.workshopPage": "查看创意工坊页面"
 }

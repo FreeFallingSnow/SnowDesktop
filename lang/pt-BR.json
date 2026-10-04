@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "Salvar tema",
   "themeLibrary.type": "Tipo de tema",
   "themeLibrary.selectionHint": "O tema é aplicado assim que é selecionado.",
-  "themeLibrary.transferHint": "Gerencie temas salvos e instalados. Selecione um tema para visualizar, compartilhar ou exportar. Para aplicá-lo, selecione-o nas configurações de aparência.",
+  "themeLibrary.transferHint": "Gerencie temas salvos e instalados. Cada cartão de tema tem suas próprias ações de prévia, compartilhamento e exportação.",
   "themeLibrary.nameHint": "Salvar com o mesmo nome cria um tema separado. Atualizar mantém seu identificador.",
   "themeLibrary.appliesTo": "Aplicar a",
   "themeLibrary.legacyComponents": "A atualização mantém o escopo existente dos widgets. Um novo tema usa apenas as três barras abaixo.",
@@ -2509,5 +2509,10 @@
   "themeLibrary.cancelEdit": "Cancelar edição",
   "themeLibrary.empty": "Nenhum tema corresponde a este tipo.",
   "themeLibrary.localSource": "Tema local (salvo ou importado)",
-  "themeLibrary.installedSource": "Tema da Oficina (editar como nova cópia)"
+  "themeLibrary.installedSource": "Tema da Oficina (editar como nova cópia)",
+  "themeLibrary.prepareShare": "Gerar prévia e continuar",
+  "themeLibrary.tagsRequired": "Categorias obrigatórias: mantenha todas as etiquetas correspondentes ao escopo real do tema.",
+  "themeLibrary.coverSource": "Origem da capa",
+  "themeLibrary.generateCover": "Gerar uma capa a partir do tema",
+  "themeLibrary.workshopPage": "Ver página da Oficina"
 }

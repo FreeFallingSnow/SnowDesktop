@@ -3,6 +3,7 @@
 #include "theme_edit_state.h"
 #include "appearance_sections.h"
 #include "../theme_library_settings.h"
+#include "../theme_workshop_tags.h"
 #include <winrt/Windows.UI.Xaml.Interop.h>
 #include <atomic>
 #include <array>
@@ -20,9 +21,9 @@ class ThemeLibraryControls final
 public:
     using Localize = std::function<std::wstring(std::string_view)>;
     ThemeLibraryControls(Localize localize, std::string target, bool transfer = false,
-        c::ComboBox existing = nullptr, int modeCount = 0, int customIndex = -1)
+        c::ComboBox existing = nullptr, int modeCount = 0, int customIndex = -1, x::Style cardStyle = nullptr)
         : localize_(std::move(localize)), target_(std::move(target)), transfer_(transfer),
-          modeCount_(modeCount), customIndex_(customIndex)
+          modeCount_(modeCount), customIndex_(customIndex), cardStyle_(cardStyle)
     {
         if (existing) choice_ = existing;
         root_.Spacing(8);
@@ -43,15 +44,8 @@ public:
             }
             const auto token = filters_.SizeChanged([this](const auto&, const auto&) { LayoutTabs(); });
             revoke_.push_back([control = filters_, token] { control.SizeChanged(token); });
-            list_.SelectionMode(c::ListViewSelectionMode::Single);
-            list_.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-            x::Style itemStyle; itemStyle.TargetType(winrt::xaml_typename<c::ListViewItem>());
-            itemStyle.Setters().Append(x::Setter(c::Control::HorizontalContentAlignmentProperty(), winrt::box_value(x::HorizontalAlignment::Stretch)));
-            list_.ItemContainerStyle(itemStyle);
-            list_.MaxHeight(520); root_.Children().Append(list_);
+            entries_.Spacing(8); root_.Children().Append(entries_);
             empty_.TextWrapping(x::TextWrapping::Wrap); root_.Children().Append(empty_);
-            const auto selection = list_.SelectionChanged([this](const auto&, const auto&) { if (!syncing_) PatchButtons(); });
-            revoke_.push_back([control = list_, selection] { control.SelectionChanged(selection); });
         }
         for (auto combo : {choice_, quick_, popup_}) combo.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         commands_.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
@@ -59,12 +53,7 @@ public:
         if (transfer_)
         {
             AddCommand(ThemeLibraryCommand::Import, "themeLibrary.import");
-            AddCommand(ThemeLibraryCommand::Export, "themeLibrary.export");
-            AddCommand(ThemeLibraryCommand::Preview, "themeLibrary.preview");
-            for (auto [command, key] : {std::pair{ThemeLibraryCommand::Share, "themeLibrary.share"},
-                {ThemeLibraryCommand::ChooseCover, "themeLibrary.chooseCover"}, {ThemeLibraryCommand::Regenerate, "themeLibrary.regenerate"},
-                {ThemeLibraryCommand::SyncSubscriptions, "themeLibrary.sync"}, {ThemeLibraryCommand::Remove, "themeLibrary.remove"}})
-                AddCommand(command, key, true);
+            AddCommand(ThemeLibraryCommand::SyncSubscriptions, "themeLibrary.sync");
         }
         else
         {
@@ -115,7 +104,7 @@ public:
     ~ThemeLibraryControls() { Close(); }
     x::UIElement Content() const { return root_; }
     x::UIElement SaveContent() const { return saveRoot_; }
-    x::FrameworkElement Choice() const { return transfer_ ? x::FrameworkElement{list_} : x::FrameworkElement{choice_}; }
+    x::FrameworkElement Choice() const { return transfer_ ? x::FrameworkElement{entries_} : x::FrameworkElement{choice_}; }
     bool CustomSelected() const { return !transfer_ && !Selected() && choice_.SelectedIndex() == customIndex_; }
     bool HasSavedSelection() const { return Selected() != nullptr; }
     void SetCustomContent(std::initializer_list<x::UIElement> elements) { customContent_.assign(elements); PatchButtons(); }
@@ -170,7 +159,7 @@ public:
     {
         if (!action_ || !generation_ || closed_) return;
         const auto result = action_(generation_, {});
-        if (result.succeeded) { library_ = result.library; sharing_ = result.sharingAvailable; RefreshChoices(); }
+        if (result.succeeded) { library_ = result.library; sharing_ = result.sharingAvailable; publishedUrls_ = result.publishedUrls; RefreshChoices(); }
         else Feedback(result);
     }
     void Reveal() const { if (transfer_) return; AppearanceSections::RevealWithin(saveRoot_, name_); }
@@ -207,7 +196,7 @@ public:
         if (closed_) return;
         closed_ = true; alive_->store(false);
         for (auto& revoke : revoke_) revoke();
-        revoke_.clear(); action_ = {}; async_ = {}; flush_ = {}; changed_ = {};
+        ClearEntries(); revoke_.clear(); action_ = {}; async_ = {}; flush_ = {}; changed_ = {};
     }
 private:
     Localize localize_;
@@ -222,11 +211,16 @@ private:
     std::function<void()> changed_;
     std::shared_ptr<std::atomic_bool> alive_ = std::make_shared<std::atomic_bool>(true);
     themes::Library library_;
+    std::map<std::string, std::string> publishedUrls_;
     std::vector<themes::Theme> choices_, quickChoices_, popupChoices_;
     c::StackPanel root_, saveRoot_, saveBody_{nullptr};
     c::TextBlock saveTitle_{nullptr};
     c::ComboBox choice_, quick_, popup_;
-    c::ListView list_;
+    c::StackPanel entries_;
+    x::Style cardStyle_{nullptr};
+    struct CardCommand { ThemeLibraryCommand command; std::string id; c::AppBarButton control; };
+    std::vector<CardCommand> cardCommands_;
+    std::vector<std::function<void()>> cardRevoke_;
     c::Grid filters_;
     std::array<c::Primitives::ToggleButton, 7> tabs_;
     FilterTab filter_ = FilterTab::All;
@@ -251,7 +245,8 @@ private:
     std::wstring L(std::string_view key) const { return localize_ ? localize_(key) : std::wstring{}; }
     const themes::Theme* Selected() const
     {
-        const auto index = transfer_ ? list_.SelectedIndex() : choice_.SelectedIndex() - modeCount_;
+        if (transfer_) return nullptr;
+        const auto index = choice_.SelectedIndex() - modeCount_;
         return index >= 0 && static_cast<std::size_t>(index) < choices_.size() ? &choices_[index] : nullptr;
     }
     std::wstring ScopeLabel(unsigned scope) const
@@ -291,7 +286,6 @@ private:
     }
     void RefreshChoices(std::string preferred = {})
     {
-        if (transfer_ && preferred.empty() && Selected()) preferred = Selected()->id;
         if (!transfer_ && !editing_)
         {
             const auto reference = library_.references.find(target_);
@@ -321,16 +315,16 @@ private:
             });
         }
         syncing_ = true;
-        if (transfer_) list_.Items().Clear();
+        if (transfer_) ClearEntries();
         else while (choice_.Items().Size() > static_cast<unsigned>(modeCount_)) choice_.Items().RemoveAtEnd();
         int selected = transfer_ ? (choices_.empty() ? -1 : 0) : nativeIndex_;
         for (std::size_t i = 0; i < choices_.size(); ++i)
         {
-            if (transfer_) list_.Items().Append(Entry(choices_[i]));
+            if (transfer_) entries_.Children().Append(Entry(choices_[i]));
             else choice_.Items().Append(winrt::box_value(Label(choices_[i])));
             if (choices_[i].id == preferred) selected = static_cast<int>(i) + (transfer_ ? 0 : modeCount_);
         }
-        if (transfer_) list_.SelectedIndex(selected); else choice_.SelectedIndex(selected);
+        if (!transfer_) choice_.SelectedIndex(selected);
         if (transfer_) empty_.Visibility(choices_.empty() ? x::Visibility::Visible : x::Visibility::Collapsed);
         if (Global() && !transfer_)
         {
@@ -379,7 +373,7 @@ private:
     }
     void PatchButtons()
     {
-        if (transfer_) { list_.IsEnabled(!busy_); for (auto tab : tabs_) tab.IsEnabled(!busy_); }
+        if (transfer_) { for (auto tab : tabs_) tab.IsEnabled(!busy_); }
         else
         {
             const auto visibility = CustomSelected() ? x::Visibility::Visible : x::Visibility::Collapsed;
@@ -398,6 +392,11 @@ private:
             button.control.IsEnabled(!busy_ && (independent || (button.command == ThemeLibraryCommand::Remove ? custom : selected != nullptr)));
             if (button.command == ThemeLibraryCommand::Share || button.command == ThemeLibraryCommand::SyncSubscriptions)
                 button.control.Visibility(sharing_ ? x::Visibility::Visible : x::Visibility::Collapsed);
+        }
+        for (auto& button : cardCommands_)
+        {
+            button.control.IsEnabled(!busy_ && themes::Find(library_.themes, button.id));
+            if (button.command == ThemeLibraryCommand::Share) button.control.Visibility(sharing_ ? x::Visibility::Visible : x::Visibility::Collapsed);
         }
         for (auto& button : saveButtons_)
         {
@@ -430,7 +429,7 @@ private:
             c::Grid::SetRow(tabs_[i], static_cast<int>(i) / count); c::Grid::SetColumn(tabs_[i], static_cast<int>(i) % count);
         }
     }
-    x::UIElement Entry(const themes::Theme& theme) const
+    x::UIElement Entry(const themes::Theme& theme)
     {
         c::StackPanel entry; entry.Spacing(4); entry.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         const auto line = [&](std::wstring text, bool title = false) {
@@ -447,28 +446,60 @@ private:
         bool installed = false;
         for (const auto& [item, origin] : library_.workshop) { (void)item; if (origin.ids.contains(theme.id)) installed = true; }
         line(L(installed ? "themeLibrary.installedSource" : "themeLibrary.localSource"));
+        if (const auto found = publishedUrls_.find(theme.id); found != publishedUrls_.end())
+        {
+            c::HyperlinkButton link; link.Content(winrt::box_value(L("themeLibrary.workshopPage")));
+            link.NavigateUri(winrt::Windows::Foundation::Uri(winrt::to_hstring(found->second)));
+            link.HorizontalAlignment(x::HorizontalAlignment::Left); entry.Children().Append(link);
+        }
         for (auto [id, key] : {std::pair{theme.quickPanel, "themeLibrary.quickPanel"}, {theme.popup, "themeLibrary.popup"}})
             if (!id.empty()) if (auto child = themes::Resolve(library_.themes, id)) line(L(key) + L"：" + Label(*child));
-        return entry;
+        c::CommandBar actions; actions.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
+        for (auto [command, key] : {std::pair{ThemeLibraryCommand::Preview, "themeLibrary.preview"},
+            {ThemeLibraryCommand::Export, "themeLibrary.export"}, {ThemeLibraryCommand::Share, "themeLibrary.share"},
+            {ThemeLibraryCommand::ChooseCover, "themeLibrary.chooseCover"}, {ThemeLibraryCommand::Regenerate, "themeLibrary.regenerate"},
+            {ThemeLibraryCommand::Remove, "themeLibrary.remove"}})
+        {
+            c::AppBarButton button; button.Label(L(key));
+            (command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::Remove ?
+                actions.SecondaryCommands() : actions.PrimaryCommands()).Append(button);
+            const auto id = theme.id;
+            const auto token = button.Click([this, command, id](const auto&, const auto&) {
+                if (command == ThemeLibraryCommand::Remove) ConfirmRemove(id);
+                else if (command == ThemeLibraryCommand::Share) ConfirmShare(id);
+                else Run(command, id);
+            });
+            cardRevoke_.push_back([button, token] { button.Click(token); });
+            cardCommands_.push_back({command, id, button});
+        }
+        entry.Children().Append(actions);
+        c::Border card; if (cardStyle_) card.Style(cardStyle_); card.Child(entry);
+        return card;
+    }
+    void ClearEntries()
+    {
+        for (auto& revoke : cardRevoke_) revoke();
+        cardRevoke_.clear(); cardCommands_.clear(); entries_.Children().Clear();
     }
     void AddCommand(ThemeLibraryCommand command, const char* key, bool secondary = false)
     {
         c::AppBarButton button; button.Label(L(key));
         (secondary ? commands_.SecondaryCommands() : commands_.PrimaryCommands()).Append(button);
         const auto token = button.Click([this, command](const auto&, const auto&) {
-            if (command == ThemeLibraryCommand::Remove) ConfirmRemove(); else Run(command);
+            Run(command);
         });
         revoke_.push_back([button, token] { button.Click(token); }); buttons_.push_back({command, key, button});
     }
     void Feedback(const ThemeLibraryResult& result, bool save = false)
     {
         auto feedback = save ? saveFeedback_ : feedback_;
-        feedback.Severity(result.succeeded ? c::InfoBarSeverity::Success : c::InfoBarSeverity::Error);
+        if (result.succeeded && result.message.empty()) { feedback.IsOpen(false); return; }
+        feedback.Severity(result.succeeded ? c::InfoBarSeverity::Warning : c::InfoBarSeverity::Error);
         feedback.Message(result.message); feedback.IsOpen(!result.message.empty());
     }
-    winrt::fire_and_forget ConfirmRemove()
+    winrt::fire_and_forget ConfirmRemove(std::string themeId)
     {
-        const auto selected = Selected();
+        const auto selected = themes::Find(library_.themes, themeId);
         if (!selected || themes::Builtin(selected->id) || busy_ || !generation_ || !root_.XamlRoot()) co_return;
         const auto id = selected->id; const auto generation = generation_; auto alive = alive_;
         c::ContentDialog dialog; dialog.XamlRoot(root_.XamlRoot()); dialog.Title(winrt::box_value(L("themeLibrary.remove")));
@@ -494,12 +525,58 @@ private:
         if (!alive->load() || generation != generation_ || result != c::ContentDialogResult::Primary) co_return;
         Run(ThemeLibraryCommand::Remove, id, Binding(replacement, choices));
     }
-    void Run(ThemeLibraryCommand command, std::string id = {}, std::string replacement = {})
+    winrt::fire_and_forget ConfirmShare(std::string id)
+    {
+        const auto selected = themes::Resolve(library_.themes, id);
+        if (!selected || busy_ || !sharing_ || !generation_ || !root_.XamlRoot()) co_return;
+        const auto required = themes::tags::Applicable(*selected);
+        const auto generation = generation_; auto alive = alive_;
+        c::ContentDialog dialog; dialog.XamlRoot(root_.XamlRoot()); dialog.Title(winrt::box_value(L("themeLibrary.share")));
+        dialog.PrimaryButtonText(L("themeLibrary.prepareShare")); dialog.CloseButtonText(L("themeLibrary.cancel"));
+        dialog.DefaultButton(c::ContentDialogButton::Close);
+        c::StackPanel body; body.Spacing(12);
+        const auto text = [&](std::wstring value) { c::TextBlock label; label.Text(value); label.TextWrapping(x::TextWrapping::Wrap); body.Children().Append(label); };
+        text(Label(*selected)); text(L("themeLibrary.tagsRequired"));
+        std::vector<c::CheckBox> checks;
+        for (const auto& tag : required)
+        {
+            const auto category = std::find_if(themes::tags::Categories.begin(), themes::tags::Categories.end(),
+                [&](const auto& item) { return item.value == tag; });
+            c::CheckBox check; check.Content(winrt::box_value(L(category->label))); check.IsChecked(true);
+            body.Children().Append(check); checks.push_back(check);
+        }
+        const auto validate = [dialog, checks] { dialog.IsPrimaryButtonEnabled(!checks.empty() &&
+            std::all_of(checks.begin(), checks.end(), [](auto check) { const auto value = check.IsChecked(); return value && value.Value(); })); };
+        std::vector<std::function<void()>> revokers;
+        for (auto check : checks)
+        {
+            const auto checked = check.Checked([validate](const auto&, const auto&) { validate(); });
+            const auto unchecked = check.Unchecked([validate](const auto&, const auto&) { validate(); });
+            revokers.push_back([check, checked, unchecked] { check.Checked(checked); check.Unchecked(unchecked); });
+        }
+        c::ComboBox cover; cover.Header(winrt::box_value(L("themeLibrary.coverSource")));
+        cover.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        cover.Items().Append(winrt::box_value(L("themeLibrary.generateCover")));
+        cover.Items().Append(winrt::box_value(L("themeLibrary.chooseCover"))); cover.SelectedIndex(0); body.Children().Append(cover);
+        if (const auto found = publishedUrls_.find(id); found != publishedUrls_.end()) text(L("themeLibrary.publishUpdate") + L"\n" + std::wstring(winrt::to_hstring(found->second)));
+        dialog.Content(body); validate(); busy_ = true; PatchButtons();
+        c::ContentDialogResult result = c::ContentDialogResult::None;
+        try { result = co_await dialog.ShowAsync(); }
+        catch (const winrt::hresult_error&) { if (alive->load() && generation == generation_) Feedback({false, {}, {}, L("themeLibrary.operationFailed")}); }
+        for (auto& revoke : revokers) revoke();
+        if (!alive->load()) co_return;
+        busy_ = false; PatchButtons();
+        if (generation != generation_ || result != c::ContentDialogResult::Primary) co_return;
+        Run(ThemeLibraryCommand::Share, id, {}, required, cover.SelectedIndex() == 1);
+    }
+    void Run(ThemeLibraryCommand command, std::string id = {}, std::string replacement = {},
+        std::vector<std::string> tags = {}, bool chooseCover = false)
     {
         if (closed_ || busy_ || !action_ || !generation_ || !flush_ || !flush_())
         { if (!closed_ && command == ThemeLibraryCommand::Apply) RefreshChoices(); return; }
         const bool save = command == ThemeLibraryCommand::SaveAs || command == ThemeLibraryCommand::Update;
         ThemeLibraryRequest request; request.command = command; request.target = target_; request.replacement = std::move(replacement);
+        request.tags = std::move(tags); request.chooseCover = chooseCover;
         const auto selected = Selected(); request.id = id.empty() && selected ? selected->id : std::move(id);
         if (save)
         {
@@ -535,7 +612,7 @@ private:
                 if (!alive->load()) return;
                 busy_ = false; PatchButtons();
                 if (generation != generation_) return;
-                if (result.succeeded) { library_ = result.library; sharing_ = result.sharingAvailable; RefreshChoices(); if (changed_) changed_(); }
+                if (result.succeeded) { library_ = result.library; sharing_ = result.sharingAvailable; publishedUrls_ = result.publishedUrls; RefreshChoices(); if (changed_) changed_(); }
                 Feedback(result);
             });
             return;

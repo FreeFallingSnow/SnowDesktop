@@ -21,6 +21,7 @@ SnowDesktop's embedded Regular font:
 | `animation-performance.svg` | Filmstrip Play 24 Regular + Filled |
 | `appearance.svg` | Paint Brush 24 Regular + Filled |
 | `appearance-theme.svg` | Dark Theme 24 Regular + Filled |
+| `theme-manager.svg` | Color 24 Regular + Filled |
 | `appearance-widgets.svg` | Window Apps 24 Regular + Filled |
 | `appearance-desktop-icons.svg` | Icons 24 Regular + Filled |
 | `appearance-icon-beautification.svg` | Paint Brush Sparkle 24 Regular + Filled |

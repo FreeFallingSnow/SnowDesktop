@@ -2087,7 +2087,7 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/animation-performance.svg", L"\xE768"},
         IconDescriptor{PersonalizationItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance.svg", L"\xE771"},
-        IconDescriptor{ThemeManagerItem(), L"ms-appx:///Assets/Settings/Icons/appearance-theme.svg", L"\xE790"},
+        IconDescriptor{ThemeManagerItem(), L"ms-appx:///Assets/Settings/Icons/theme-manager.svg", L"\xE2B1"},
         IconDescriptor{AppearanceThemeItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance-theme.svg",
             L"\xE790"},

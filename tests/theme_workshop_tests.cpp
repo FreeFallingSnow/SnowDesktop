@@ -2,6 +2,7 @@
 #include "theme_preview.h"
 #include "bridge_json.h"
 #include "atomic_file.h"
+#include "theme_workshop_tags.h"
 #include <iostream>
 #include <thread>
 #include <future>
@@ -15,13 +16,16 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL theme Workshop: " << message << '\n'; } };
     std::string error;
     check(bridge::ThemeSha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "production package hash matches known SHA256 vector");
-    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\"]}";
+    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\"]}";
     check(workshop::Capabilities(current,"1") && !workshop::Capabilities(current,"2"), "bridge capability and compatible version are independent requirements");
     check(workshop::Capabilities("{\"progress\":\"starting\"}\n" + current + "\n","1") &&
         !workshop::Capabilities(current + "\n{\"ok\":false}\n","1"),
         "JSON Lines retains the last result and rejects a terminal failure");
     auto old = current; old.replace(old.find("workshop.theme.v1"),17,"workshop.widget.v1");
     check(!workshop::Capabilities(old,"1") && !workshop::Capabilities("{\"ok\":true,\"version\":\"1\"}","1"), "old and missing-capability bridges do not enable sharing");
+    auto missingTagsCapability = current;
+    missingTagsCapability.erase(missingTagsCapability.find(",\"workshop.theme.tags.v1\""), 25);
+    check(!workshop::Capabilities(missingTagsCapability,"1"), "a theme bridge without required classification support cannot silently drop tags");
     Theme root = Capture(Kind::Global,MakeAppearancePreset(kAppearancePresetDark)); root.id = "theme/workshop-root"; root.name = "Demo";
     root.quickPanel = "builtin/quickpanel/dark"; root.popup = "builtin/popup/dark";
     Package package{{root.id,root}};
@@ -30,7 +34,13 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     check(WritePackage(prepared / L"package.snowtheme",package,error), "immutable theme snapshot writes through production atomic codec");
     check(preview::SaveCover(prepared / L"cover.png",widget_preview::GenerateWallpaper(1024,1024,false),error), "bridge preview is a real encoded cover");
     constexpr std::int64_t now = 1700000000;
-    check(bridge::WriteThemePreparation(prepared,root.id,root.name,now,error), "preparation binds package and cover hashes");
+    const auto classification = tags::Applicable(root);
+    check(classification == std::vector<std::string>{"Global Theme", "Dock Theme", "Status Bar Theme", "Taskbar Theme"}, "global classification uses fixed Steamworks names for every applicable base scope");
+    auto partial = root; partial.scopes = Dock | Taskbar;
+    check(tags::Applicable(partial) == std::vector<std::string>{"Dock Theme", "Taskbar Theme"}, "partial multi-bar classification does not invent combination tags");
+    check(!bridge::WriteThemePreparation(prepared,root.id,root.name,now,error,{}) && error=="tagsRequired", "missing mandatory classification cannot prepare a publish");
+    check(!tags::Valid(root,{"Global Theme"}) && !tags::Valid(root,{"Utilities"}) && !tags::Valid(partial,{"Dock Theme","Dock Theme","Taskbar Theme"}), "missing scopes, widget tags and duplicates cannot bypass theme classification");
+    check(bridge::WriteThemePreparation(prepared,root.id,root.name,now,error,classification), "preparation binds package, cover and classification hashes");
     bridge::ThemePublishPlan plan;
     check(bridge::BuildThemePublishPlan(prepared,data,plan,error) && plan.publishedFileId == 0, "offline theme-plan validates complete preparation without Steam");
     bridge::ThemePublishTransport transport;
@@ -42,11 +52,16 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
         std::uint64_t id = request.publishedFileId.value_or(0);
         if (!id) { ++created; id=123; if (!request.persistCreatedItem(id)) return {}; }
         check(request.contentKind == bridge::WorkshopContentKind::Theme && request.validateStagedArtifacts(request.package,*request.preview), "theme transport validates exact upload snapshot");
+        auto expectedTags = classification; expectedTags.emplace_back("Theme");
+        check(request.tags && *request.tags == expectedTags, "upload receives canonical classification, never localized labels or an unapproved source category");
         ++uploaded;
         if (failUpload) { detail.code="simulated_upload_failed"; return {}; }
         return bridge::PublishResult{!request.publishedFileId,id,false,{}};
     };
     bridge::CoreError detail; bridge::PublishResult result;
+    auto changedTags = plan; changedTags.tags.pop_back();
+    check(!bridge::ExecuteThemePublishPlan(changedTags,true,false,transport,{},result,detail,now) && detail.code=="stalePreparation" && created==0,
+        "classification changed after confirmation cannot reach Steam");
     check(!bridge::ExecuteThemePublishPlan(plan,false,false,transport,{},result,detail,now) && created==0, "confirmation is required before any remote create");
     check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now+901) && created==0, "expired preparation never reaches Steam");
     std::atomic_bool cancel{true};
@@ -57,6 +72,8 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     transport.agreement=accepted;
     check(!bridge::ExecuteThemePublishPlan(plan,true,false,transport,{},result,detail,now) && result.publishedFileId==123 && created==1, "created ID is durable even if upload fails");
     check(bridge::BuildThemePublishPlan(prepared,data,plan,error) && plan.publishedFileId==123, "retry reloads durable association");
+    check(bridge::ThemePublishedUrl(data, root.id) == "https://steamcommunity.com/sharedfiles/filedetails/?id=123" &&
+        bridge::ThemePublishedUrl(data,"theme/new-id").empty(), "published address binds to local ID, including a failed upload retry, and never leaks to another theme");
     failUpload=false;
     check(bridge::ExecuteThemePublishPlan(plan,false,true,transport,{},result,detail,now) && created==1 && uploaded==2, "retry updates existing ID without duplicate creation");
     const auto owner = transport.item;
@@ -136,7 +153,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     check(!workshop::Prepare(package,root.id,All,directory / L"bad-render",data,{},
         [](const auto&,auto,unsigned,const auto& out,auto& cover,auto&,auto*) {
             std::filesystem::create_directory(out); cover=out / L"cover.png"; return false;
-        },rejected,error) && rejected.package.empty() && !std::filesystem::exists(directory / L"bad-render"),
+        },rejected,error,nullptr,classification) && rejected.package.empty() && !std::filesystem::exists(directory / L"bad-render"),
         "failed preparation releases its request directory and returns no reusable plan");
     const auto conflict = [](const Package& into, const std::filesystem::path& out, std::filesystem::path& cover, std::string& detail) {
         std::filesystem::create_directory(out); auto changed=into; changed.begin()->second.name="Other";
@@ -146,7 +163,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     };
     check(!workshop::Prepare(package,root.id,All,directory / L"mismatched-render",data,{},
         [&](const auto& into,auto,unsigned,const auto& out,auto& cover,auto& detail,auto*) { return conflict(into,out,cover,detail); },
-        rejected,error) && error=="stalePreparation" && rejected.package.empty(), "negative control rejects renderer/package snapshot mismatch");
+        rejected,error,nullptr,classification) && error=="stalePreparation" && rejected.package.empty(), "negative control rejects renderer/package snapshot mismatch");
     std::string association;
     check(atomic_file::ReadAll(plan.association,association), "durable journal can be read");
     check(atomic_file::WriteAll(plan.association,"{\"version\":1,\"owner\":\"321\",\"publishedFileId\":\"0\",\"creationPending\":true}") &&

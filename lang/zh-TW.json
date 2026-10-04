@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "儲存主題",
   "themeLibrary.type": "主題類型",
   "themeLibrary.selectionHint": "在主題框中選擇後立即套用。",
-  "themeLibrary.transferHint": "管理本機儲存及已安裝的主題。選取項目後可預覽、分享或匯出；在外觀設定中選取主題即可套用。",
+  "themeLibrary.transferHint": "管理已儲存及已安裝的主題。每張主題卡片都有獨立的預覽、分享及匯出操作。",
   "themeLibrary.nameHint": "同名另存會建立獨立主題，更新會保留原主題識別碼。",
   "themeLibrary.appliesTo": "適用於",
   "themeLibrary.legacyComponents": "更新此主題時保留既有的元件適用範圍；另存新主題僅使用下方三欄範圍。",
@@ -2509,5 +2509,10 @@
   "themeLibrary.cancelEdit": "取消編輯",
   "themeLibrary.empty": "沒有符合此類型的主題。",
   "themeLibrary.localSource": "本機主題（儲存或匯入）",
-  "themeLibrary.installedSource": "工作坊主題（編輯時建立副本）"
+  "themeLibrary.installedSource": "工作坊主題（編輯時建立副本）",
+  "themeLibrary.prepareShare": "產生預覽並繼續",
+  "themeLibrary.tagsRequired": "適用分類（必選）：請保留主題實際適用範圍的所有標籤。",
+  "themeLibrary.coverSource": "封面來源",
+  "themeLibrary.generateCover": "依主題產生封面",
+  "themeLibrary.workshopPage": "查看工作坊頁面"
 }

@@ -29,7 +29,7 @@ using Renderer = std::function<bool(const Package&, std::string_view, unsigned, 
 bool Prepare(const Package&, std::string_view root, unsigned scope,
     const std::filesystem::path& directory, const std::filesystem::path& data,
     const std::filesystem::path& customCover, const Renderer&, steam_bridge::ThemePublishPlan&, std::string& error,
-    const std::atomic_bool* cancel = nullptr);
+    const std::atomic_bool* cancel = nullptr, const std::vector<std::string>& tags = {});
 bool Publish(const std::filesystem::path& bridge, const steam_bridge::ThemePublishPlan&,
     const std::filesystem::path& data, std::string& output, std::string& error, const std::atomic_bool* cancel = nullptr);
 }

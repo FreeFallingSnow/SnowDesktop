@@ -166,13 +166,13 @@
                     <NavigationViewItem.MenuItems>
                         <NavigationViewItem x:Name="AppearanceThemeItem"
                                             Tag="appearance-theme" />
-                        <NavigationViewItem x:Name="ThemeManagerItem" Tag="theme-manager" />
                         <NavigationViewItem x:Name="AppearanceWidgetsItem"
                                             Tag="appearance-widgets" />
                         <NavigationViewItem x:Name="AppearanceDesktopIconsItem"
                                             Tag="appearance-desktop-icons" />
                         <NavigationViewItem x:Name="AppearanceIconBeautificationItem"
                                             Tag="appearance-icon-beautification" />
+                        <NavigationViewItem x:Name="ThemeManagerItem" Tag="theme-manager" />
                     </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="AnimationItem" Tag="animation-performance" />

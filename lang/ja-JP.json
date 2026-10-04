@@ -2491,7 +2491,7 @@
   "themeLibrary.save": "テーマを保存",
   "themeLibrary.type": "テーマの種類",
   "themeLibrary.selectionHint": "テーマを選択するとすぐに適用されます。",
-  "themeLibrary.transferHint": "保存済みとインストール済みのテーマを管理します。項目を選ぶとプレビュー、共有、エクスポートできます。外観設定でテーマを選ぶと適用されます。",
+  "themeLibrary.transferHint": "保存済み・インストール済みテーマを管理します。各テーマカードにプレビュー、共有、エクスポートの操作があります。",
   "themeLibrary.nameHint": "同じ名前で保存すると別のテーマが作成されます。更新では識別子が維持されます。",
   "themeLibrary.appliesTo": "適用先",
   "themeLibrary.legacyComponents": "更新時は既存のウィジェット適用範囲を維持します。新規保存では下の3つのバーのみが対象です。",
@@ -2509,5 +2509,10 @@
   "themeLibrary.cancelEdit": "編集をキャンセル",
   "themeLibrary.empty": "この種類のテーマはありません。",
   "themeLibrary.localSource": "ローカルテーマ（保存またはインポート）",
-  "themeLibrary.installedSource": "ワークショップのテーマ（新しいコピーとして編集）"
+  "themeLibrary.installedSource": "ワークショップのテーマ（新しいコピーとして編集）",
+  "themeLibrary.prepareShare": "プレビューを生成して続行",
+  "themeLibrary.tagsRequired": "必須カテゴリ：テーマの実際の適用範囲に対応するタグをすべて残してください。",
+  "themeLibrary.coverSource": "カバーの作成方法",
+  "themeLibrary.generateCover": "テーマからカバーを生成",
+  "themeLibrary.workshopPage": "ワークショップページを表示"
 }

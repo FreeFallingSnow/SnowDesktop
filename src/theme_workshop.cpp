@@ -1,5 +1,6 @@
 #include "theme_workshop.h"
 #include "theme_preview.h"
+#include "theme_workshop_tags.h"
 #include "steam_app_identity.h"
 #include "json_value.h"
 #include <fstream>
@@ -43,8 +44,10 @@ bool Capabilities(std::string_view configuration, std::string_view hostVersion)
         Number(json, "protocolVersion") != 1 || Number(json, "expectedAppId") != kSnowDesktopSteamAppId ||
         Number(json, "themeWorkflowProtocolVersion") != 1 || String(json, "version") != hostVersion) return false;
     const auto* capabilities = json.Find("capabilities");
-    return capabilities && capabilities->IsArray() && std::any_of(capabilities->array.begin(), capabilities->array.end(),
-        [](const auto& value) { return value.IsString() && value.string == "workshop.theme.v1"; });
+    const auto has = [&](std::string_view key) { return capabilities && capabilities->IsArray() &&
+        std::any_of(capabilities->array.begin(), capabilities->array.end(),
+            [key](const auto& value) { return value.IsString() && value.string == key; }); };
+    return has("workshop.theme.v1") && has("workshop.theme.tags.v1");
 }
 bool Available(const std::filesystem::path& bridge, std::string_view hostVersion)
 {
@@ -141,10 +144,11 @@ bool Sync(const std::filesystem::path& bridge, const std::filesystem::path& libr
 }
 bool Prepare(const Package& package, std::string_view root, unsigned scope, const std::filesystem::path& directory,
     const std::filesystem::path& data, const std::filesystem::path& customCover, const Renderer& renderer,
-    steam_bridge::ThemePublishPlan& plan, std::string& error, const std::atomic_bool* cancel)
+    steam_bridge::ThemePublishPlan& plan, std::string& error, const std::atomic_bool* cancel, const std::vector<std::string>& selected)
 {
     plan = {}; const auto theme = Resolve(package, root);
     if (!theme || !Validate(package, error) || !renderer) return Fail(error, "invalidPackage");
+    if (!tags::Valid(*theme, selected)) return Fail(error, "tagsRequired");
     std::error_code ec;
     if (std::filesystem::exists(directory, ec) || ec) return Fail(error, "writeFailed");
     struct Cleanup { std::filesystem::path directory; bool keep = false; ~Cleanup() { if (!keep) { std::error_code ec; std::filesystem::remove_all(directory, ec); } } } cleanup{directory};
@@ -157,7 +161,7 @@ bool Prepare(const Package& package, std::string_view root, unsigned scope, cons
         if (!preview::NormalizeCover(customCover, cover, error)) return false;
     }
     if (cancel && cancel->load()) return Fail(error, "cancelled");
-    if (!steam_bridge::WriteThemePreparation(directory, root, theme->name, Now(), error) ||
+    if (!steam_bridge::WriteThemePreparation(directory, root, theme->name, Now(), error, selected) ||
         !steam_bridge::BuildThemePublishPlan(directory, data, plan, error)) return false;
     cleanup.keep = true; return true;
 }
@@ -167,6 +171,7 @@ bool Publish(const std::filesystem::path& bridge, const steam_bridge::ThemePubli
     if (!preview::Run(bridge, {L"workshop", L"theme-publish", L"--prepared", plan.directory.wstring(),
         L"--data-directory", data.wstring(), L"--package-sha256", std::wstring(plan.packageSha256.begin(), plan.packageSha256.end()),
         L"--cover-sha256", std::wstring(plan.coverSha256.begin(), plan.coverSha256.end()),
+        L"--tags-sha256", std::wstring(plan.tagsSha256.begin(), plan.tagsSha256.end()),
         plan.publishedFileId ? L"--confirm-update" : L"--confirm-create"}, output, 31 * 60 * 1000, error, cancel))
     { JsonValue failed; if (Final(output, failed) && !String(failed, "error").empty()) error = String(failed, "error"); return false; }
     JsonValue json; return (Final(output, json) && Boolean(json, "ok") && !Boolean(json, "needsLegalAgreement")) || Fail(error, "publishFailed");
