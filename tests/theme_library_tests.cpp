@@ -37,7 +37,9 @@ int RunThemeLibraryTests()
         using namespace snowdesktop::winui::theme_controls;
         const auto temporary = std::filesystem::temp_directory_path();
         const auto requestDirectory = TaskDirectory(temporary, CreateId());
-        check(requestDirectory.parent_path() == temporary && requestDirectory.filename().wstring().find(L"/") == std::wstring::npos &&
+        check(std::filesystem::equivalent(requestDirectory.parent_path(), temporary) &&
+            std::filesystem::relative(requestDirectory, temporary) == requestDirectory.filename() &&
+            !std::filesystem::exists(requestDirectory) && requestDirectory.filename().wstring().find(L"/") == std::wstring::npos &&
             TaskDirectory(temporary, "").empty(), "production UI request directory uses one fresh leaf despite the slash in theme IDs");
         Theme partial; partial.id = "theme/partial"; partial.name = "Two bars"; partial.scopes = Dock | Taskbar;
         check(MatchesFilter(partial, FilterTab::All) && MatchesFilter(partial, FilterTab::Dock) &&

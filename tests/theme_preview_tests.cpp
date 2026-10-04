@@ -157,7 +157,7 @@ int wmain(int argc, wchar_t** argv)
         const auto materialImage = Compare(taskbarImage, materialOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{});
         check(taskbarOk && materialOk && materialImage.material > 10000 && materialImage.maximum > 128,
             "direct taskbar preview uses global material and physical-edge production rendering");
-        check(!preview::Render(argv[1],package,global.id,All,directory / L"first",cover,error) && cover.empty(), "duplicate directory never returns an old cover");
+        check(!preview::Render(argv[1],package,global.id,All,productionUiDirectory,cover,error) && cover.empty(), "duplicate directory never returns an old cover");
         cover = directory / L"noise.png";
         check(!preview::Render(argv[1],package,global.id,All,directory / L"cancelled",cover,error,&cancel) && cover.empty() &&
             !std::filesystem::exists(directory / L"cancelled"), "cancelled rendering discards package and cover together");
