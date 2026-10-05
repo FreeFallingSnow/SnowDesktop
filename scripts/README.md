@@ -331,10 +331,16 @@ Python 入口的总超时包含两次启动和目标执行，不通过扩大原�
 票据和语言逐键事务需要 Python；缺少时使用前台 finish/ready-and-wait 和串行整文件 claim，
 不能冒充增强功能可用或绕过同键/冻结保护。无自动安装。
 
-CMake 始终声明七项自动工具回归（含 PowerShell 运行时兼容和恢复回归）和一项 manual 浏览器回归。缺少或不可用 Python 时仍声明条目，
-标记 environment-blocked，实际执行返回 78；不从 inventory 静默消失。test_manager 冻结计划覆盖
-记录所需条目、阻断和未执行，在编译前阻断不完整的选择；独立原生选择仍可运行。
-恢复解释器后需新执行证据，旧 blocked 不能充当通过。显式 manual 才成为要求。
+测试驱动、流程和验收断言统一由 C++ 原生测试程序执行，清单由 CMake 的 `SnowDesktopTests` 聚合目标提供。
+`tests/` 不包含 Python 测试脚本，CMake 配置也不探测 Python 或因为解释器缺失省略测试。
+被测的看板、等待、重试和共享资源工具保留原实现语言；这些集成场景仍需要对应的生产工具运行时，
+缺少依赖会明确失败，不计为通过。PowerShell 协议夹具只传递参数和观测数据，断言留在 C++ 中。
+`manual` 浏览器诊断仅在显式选择时成为要求。
+
+`scripts/test.bat` 的 full、core、fast 和 name/label 选择使用共同 CTest 预设，默认最多四项并行执行，
+并行度统一配置在 `CMakePresets.json` 的 `all-tests.execution.jobs` 中。
+各测试使用独立临时目录、日志和端口；共享桌面、Explorer 或宿主运行资源的条目通过
+`RESOURCE_LOCK snowdesktop_desktop` 互斥。CTest 会在锁占用期间调度其他独立测试，无需串行运行整套测试。
 
 `ready-and-wait` 两种依赖环境下直接返回共同 batch.exitCode：通过/明确豁免 0，失败原码，
 用法/状态/检查 attention/等待超时 2，恢复出的取消/中断 4，输入失效 5。
