@@ -1821,7 +1821,7 @@ if (BUILD_TESTING)
             src/l10n.cpp
         INCLUDE_DIRECTORIES src src/core
         LINK_LIBRARIES advapi32 d2d1 ole32 shell32 user32 uuid
-        LABELS core contract interaction slot integration)
+        LABELS core contract interaction slot integration shell)
 
     snowdesktop_add_test(
         SnowDesktopWidgetInteractionRulesTests
