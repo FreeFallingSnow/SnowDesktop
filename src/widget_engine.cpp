@@ -15581,8 +15581,10 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
                 RuntimeInvalidateHost(widgetId);
             });
 
-    // Initialize the package registry before loading layouts or menus.
+    // Warm the validated package catalogue and this UI thread's menu metadata
+    // before loading layouts, so the first Add Widget popup only probes changes.
     (void)GetWidgetPackageManager();
+    (void)ListAvailableMenuEntries();
 
     // Init storage path
     g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
