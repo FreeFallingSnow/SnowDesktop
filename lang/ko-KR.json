@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "창작마당 열기",
   "app.dock.pin_current_folder_to_files": "현재 폴더를 파일 영역에 고정",
   "app.dock.pin_explorer_to_fixed": "파일 탐색기를 고정 영역에 고정",
-  "app.dock.explorer_name": "파일 탐색기"
+  "app.dock.explorer_name": "파일 탐색기",
+  "settings.contextMenu.expandQuickActions": "빠른 작업을 일반 메뉴 항목으로 표시",
+  "settings.contextMenu.expandQuickActions.description": "우클릭 메뉴 상단의 빠른 작업을 일반 메뉴 항목으로 표시합니다.",
+  "settings.contextMenu.hidePageManagement": "페이지 관리 메뉴 숨기기",
+  "settings.contextMenu.hidePageManagement.description": "페이지 추가, 이름 변경, 삭제, 전환, 특정 페이지로 이동 및 고정 메뉴를 숨깁니다."
 }

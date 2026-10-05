@@ -1821,7 +1821,8 @@ snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
         snowdesktop::PopulateSettingsSearchCatalog(input, [](std::string_view key) {return std::wstring(_LW(std::string(key).c_str()));},
             steamEntitlementService_ && ToGeneralAdvancedFeatureStatus(steamEntitlementService_->Current(),
                 snowdesktop::deployment::GetRuntimeDeploymentContext().kind).cardVisible,
-            snowdesktop::StatusBarSupportsSystemQuickSettings());
+            snowdesktop::StatusBarSupportsSystemQuickSettings(),
+            CurrentPersonalization().contextMenuStyle);
         if (!widgetSettingsBackend_)
             return input;
         // Indexing must not replace live WidgetSettingsService sessions or

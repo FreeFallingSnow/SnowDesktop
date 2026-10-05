@@ -1627,11 +1627,13 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     int maxOff = MaxPageOffset();
     const size_t monitorCount = gridPages_.size();
     // 单物理屏同时承担首屏和末屏，也应提供末屏的分页导航菜单。
-    const bool showPageNavigation = !isFirstPage || monitorCount == 1;
+    const bool showPageManagement = !generalSettings_.contextMenuHidePageManagement;
+    const bool showPageNavigation = showPageManagement &&
+        (!isFirstPage || monitorCount == 1);
 
     // ── 首屏/末屏锁定开关（持久化、互斥，仅多屏时显示） ──
     HMENU pinPageMenu = nullptr;
-    if (monitorCount >= 2)
+    if (showPageManagement && monitorCount >= 2)
     {
         pinPageMenu = CreatePopupMenu();
         if (pinPageMenu)
@@ -1707,7 +1709,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         &snowdesktop::PageLayoutEntry::id);
     std::wstring pageNameDraft = renamedPage != pageSnapshot.pages.end()
         ? renamedPage->name : std::wstring{};
-    HMENU pageMenu = CreatePopupMenu();
+    HMENU pageMenu = showPageManagement ? CreatePopupMenu() : nullptr;
     if (pageMenu)
     {
         AppendMenuW(pageMenu, MF_STRING, kContextPageAdd, _LW("app.menu.add_page"));
@@ -1740,7 +1742,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
         SetMenuItemIcon(pageMenu, kContextPageDelete, L"\uF2ED");
     }
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    if (showPageManagement)
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextSettingsCommand, _LW("app.menu.settings"));
 
     SetMenuItemIcon(menu, kContextNewMenu,

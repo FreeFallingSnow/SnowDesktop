@@ -372,6 +372,7 @@ struct SettingsWindowHost::Impl
     muw::AppWindow appWindow{nullptr};
     muw::AppWindowTitleBar appWindowTitleBar{nullptr};
     SettingsSearchIndex searchIndex;
+    int searchContextMenuStyle = -1;
     std::shared_ptr<CallbackState> callbacks;
     std::unique_ptr<IWidgetsPageBackend> widgetsPageBackend;
     std::unique_ptr<IBackupDataPageBackend> backupDataPageBackend;
@@ -1053,6 +1054,7 @@ struct SettingsWindowHost::Impl
     SettingsSearchIndexInput BuildSearchInput()
     {
         SettingsSearchIndexInput input;
+        const auto snapshot = controller ? controller->Snapshot() : nullptr;
         if (options.searchInput)
             input = options.searchInput();
 
@@ -1068,7 +1070,15 @@ struct SettingsWindowHost::Impl
         if (input.staticSettings.empty())
         {
             PopulateSettingsSearchCatalog(input, [this](std::string_view key) { return L(key); },
-                advancedFeaturesVisible, StatusBarSupportsSystemQuickSettings());
+                advancedFeaturesVisible, StatusBarSupportsSystemQuickSettings(),
+                snapshot ? snapshot->values.personalization.contextMenuStyle : 0);
+        }
+        if (snapshot && (snapshot->values.personalization.contextMenuStyle == 5 ||
+            snapshot->values.personalization.contextMenuStyle == 6))
+        {
+            std::erase_if(input.staticSettings, [](const auto& descriptor) {
+                return descriptor.focusId == "contextMenu.expandQuickActions";
+            });
         }
         if (!advancedFeaturesVisible)
         {
@@ -1093,6 +1103,8 @@ struct SettingsWindowHost::Impl
         {
             SettingsSearchIndexInput input = BuildSearchInput();
             searchIndex.Rebuild(input);
+            const auto snapshot = controller ? controller->Snapshot() : nullptr;
+            searchContextMenuStyle = snapshot ? snapshot->values.personalization.contextMenuStyle : 0;
             if (shell)
             {
                 shell->SetConditionalPagesVisible(
@@ -1173,6 +1185,8 @@ struct SettingsWindowHost::Impl
         {
             if (!shell->ApplySnapshot(*snapshot))
                 return;
+            if (searchContextMenuStyle != snapshot->values.personalization.contextMenuStyle)
+                RebuildSearchIndex();
             // Ordinary controller revisions must not touch the Island's window-
             // level backdrop. In particular, continuous Slider/ColorPicker
             // previews publish here while WinUI owns pointer capture or a Flyout.

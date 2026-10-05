@@ -91,6 +91,10 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.pageNavigationKeyboardEnabled = val;
     if (ReadBoolField(text, "widgetDeveloperToolsEnabled", val))
         settings.widgetDeveloperToolsEnabled = val;
+    if (ReadBoolField(text, "contextMenuExpandQuickActions", val))
+        settings.contextMenuExpandQuickActions = val;
+    if (ReadBoolField(text, "contextMenuHidePageManagement", val))
+        settings.contextMenuHidePageManagement = val;
     int hotkeyValue = 0;
     if (ReadIntField(text, "desktopPassthroughHotkeyModifiers",
         hotkeyValue))
@@ -212,6 +216,10 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << ",\"family\":" << quote(settings.font.family) << "},\n";
     file << "  \"statusBar\": " << statusBar << ",\n";
     file << "  \"shellExtensions\": " << snowdesktop::shell_extensions::WritePreferences(settings.shellExtensions) << ",\n";
+    file << "  \"contextMenuExpandQuickActions\": "
+         << (settings.contextMenuExpandQuickActions ? "true" : "false") << ",\n";
+    file << "  \"contextMenuHidePageManagement\": "
+         << (settings.contextMenuHidePageManagement ? "true" : "false") << ",\n";
     file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";
     file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
     file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";

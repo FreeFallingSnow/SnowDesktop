@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "開啟工作坊",
   "app.dock.pin_current_folder_to_files": "將目前資料夾釘選至檔案區",
   "app.dock.pin_explorer_to_fixed": "將檔案總管釘選至固定區",
-  "app.dock.explorer_name": "檔案總管"
+  "app.dock.explorer_name": "檔案總管",
+  "settings.contextMenu.expandQuickActions": "將快捷區展開為一般選單",
+  "settings.contextMenu.expandQuickActions.description": "將右鍵選單頂部的快捷操作展開為一般選單項目。",
+  "settings.contextMenu.hidePageManagement": "隱藏頁面管理相關選單",
+  "settings.contextMenu.hidePageManagement.description": "隱藏新增、重新命名、刪除頁面、翻頁、頁面跳轉及固定頁面選單。"
 }

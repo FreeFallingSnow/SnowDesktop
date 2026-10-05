@@ -151,6 +151,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.softwareDesktop",
         "settings.general.softwareDesktop.description"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description"},
+    {SettingsPage::ContextMenu, "contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions.description"},
+    {SettingsPage::ContextMenu, "contextMenu.hidePageManagement", "settings.contextMenu.hidePageManagement", "settings.contextMenu.hidePageManagement.description"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.objects", "settings.contextMenu.locations"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.background", "settings.contextMenu.locations"},
     {SettingsPage::ContextMenu, "contextMenu.items", "settings.contextMenu.inspect", "settings.contextMenu.hint"},
@@ -586,7 +588,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
 };
 inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
     const std::function<std::wstring(std::string_view)>& L,
-    bool advancedFeaturesVisible, bool supportsQuickSettings)
+    bool advancedFeaturesVisible, bool supportsQuickSettings,
+    int contextMenuStyle = 0)
 {
             const auto pageContext = [&L](SettingsPage page) {
                 switch (page)
@@ -644,6 +647,8 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
             {
                 if (std::string_view(definition.focusId) == "statusBar.controlCenterPanel" &&
                     !supportsQuickSettings) continue;
+                if (std::string_view(definition.focusId) == "contextMenu.expandQuickActions" &&
+                    (contextMenuStyle == 5 || contextMenuStyle == 6)) continue;
                 StaticSettingSearchDescriptor descriptor;
                 descriptor.page = CanonicalizeSettingsRoute(SettingsRoute::ForPage(definition.page, definition.focusId)).page;
                 descriptor.focusId = definition.focusId;

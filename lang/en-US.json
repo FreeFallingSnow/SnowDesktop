@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "Open Workshop",
   "app.dock.pin_current_folder_to_files": "Pin Current Folder to File Area",
   "app.dock.pin_explorer_to_fixed": "Pin File Explorer to Pinned Area",
-  "app.dock.explorer_name": "File Explorer"
+  "app.dock.explorer_name": "File Explorer",
+  "settings.contextMenu.expandQuickActions": "Expand quick actions into menu items",
+  "settings.contextMenu.expandQuickActions.description": "Show the quick actions at the top of the context menu as regular menu items.",
+  "settings.contextMenu.hidePageManagement": "Hide page management menus",
+  "settings.contextMenu.hidePageManagement.description": "Hide menus for adding, renaming, deleting, switching, jumping to, and pinning pages."
 }

@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "Ouvrir le Workshop",
   "app.dock.pin_current_folder_to_files": "Épingler le dossier actuel dans la zone de fichiers",
   "app.dock.pin_explorer_to_fixed": "Épingler l’Explorateur de fichiers dans la zone des éléments épinglés",
-  "app.dock.explorer_name": "Explorateur de fichiers"
+  "app.dock.explorer_name": "Explorateur de fichiers",
+  "settings.contextMenu.expandQuickActions": "Afficher les actions rapides comme des éléments de menu",
+  "settings.contextMenu.expandQuickActions.description": "Afficher les actions rapides en haut du menu contextuel comme des éléments de menu ordinaires.",
+  "settings.contextMenu.hidePageManagement": "Masquer les menus de gestion des pages",
+  "settings.contextMenu.hidePageManagement.description": "Masquer les menus permettant d'ajouter, de renommer, de supprimer, de changer de page, d'accéder à une page et d'épingler des pages."
 }

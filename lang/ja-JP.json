@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "ワークショップを開く",
   "app.dock.pin_current_folder_to_files": "現在のフォルダーをファイル領域に固定",
   "app.dock.pin_explorer_to_fixed": "エクスプローラーを固定領域に固定",
-  "app.dock.explorer_name": "エクスプローラー"
+  "app.dock.explorer_name": "エクスプローラー",
+  "settings.contextMenu.expandQuickActions": "クイック操作を通常のメニュー項目として表示",
+  "settings.contextMenu.expandQuickActions.description": "右クリックメニュー上部のクイック操作を通常のメニュー項目として表示します。",
+  "settings.contextMenu.hidePageManagement": "ページ管理メニューを非表示",
+  "settings.contextMenu.hidePageManagement.description": "ページの追加、名前変更、削除、切り替え、指定ページへの移動、固定のメニューを非表示にします。"
 }

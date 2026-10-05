@@ -60,6 +60,14 @@ int main()
     generalHotkey.pageNavigationPreviousVirtualKey = VK_LEFT;
     Check(IsGeneralShortcutOnlyCommit(general, generalHotkey),
         "a page-navigation chord is isolated from the full General refresh");
+    for (const bool expand : {false, true})
+    {
+        auto menuAndHotkey = generalHotkey;
+        menuAndHotkey.contextMenuExpandQuickActions = expand;
+        menuAndHotkey.contextMenuHidePageManagement = !expand;
+        Check(!IsGeneralShortcutOnlyCommit(general, menuAndHotkey),
+            "menu options combined with a hotkey edit retain the full settings commit");
+    }
     generalHotkey.demoModeEnabled = !general.demoModeEnabled;
     Check(!IsGeneralShortcutOnlyCommit(general, generalHotkey),
         "a visual General change still uses the full commit pipeline");

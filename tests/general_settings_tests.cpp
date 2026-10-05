@@ -630,6 +630,23 @@ int main(int argc, char** argv)
     std::filesystem::remove(path, error);
 
     GeneralSettings saved;
+    Check(!saved.contextMenuExpandQuickActions && !saved.contextMenuHidePageManagement,
+        "context-menu layout and page hiding are opt-in");
+    for (int flags = 0; flags < 4; ++flags)
+    {
+        GeneralSettings menuOptions, restored;
+        menuOptions.contextMenuExpandQuickActions = (flags & 1) != 0;
+        menuOptions.contextMenuHidePageManagement = (flags & 2) != 0;
+        restored.contextMenuExpandQuickActions = !menuOptions.contextMenuExpandQuickActions;
+        restored.contextMenuHidePageManagement = !menuOptions.contextMenuHidePageManagement;
+        Check(SaveGeneralSettings(path.c_str(), menuOptions) &&
+            LoadGeneralSettings(path.c_str(), restored) &&
+            restored.contextMenuExpandQuickActions == menuOptions.contextMenuExpandQuickActions &&
+            restored.contextMenuHidePageManagement == menuOptions.contextMenuHidePageManagement,
+            "each context-menu option can be enabled and disabled independently across restart");
+    }
+    saved.contextMenuExpandQuickActions = true;
+    saved.contextMenuHidePageManagement = true;
     saved.animationMode = 1;
     saved.popupAnimationEffect = 1;
     saved.animationSpeed = 2;
@@ -658,6 +675,8 @@ int main(int argc, char** argv)
     GeneralSettings loaded;
     Check(LoadGeneralSettings(path.c_str(), loaded),
         "general settings load succeeds");
+    Check(loaded.contextMenuExpandQuickActions && loaded.contextMenuHidePageManagement,
+        "context-menu options survive restart");
     Check(loaded.quickNavigationAppearance == saved.quickNavigationAppearance &&
         loaded.collectionPopupAppearance.mode == 2,
         "independent surface custom appearance and fixed preset survive save and reload");
@@ -922,6 +941,8 @@ int main(int argc, char** argv)
     GeneralSettings migrated;
     Check(LoadGeneralSettings(path.c_str(), migrated),
         "legacy general settings still load");
+    Check(!migrated.contextMenuExpandQuickActions && !migrated.contextMenuHidePageManagement,
+        "legacy settings preserve the quick strip and page menus");
     Check(migrated.animationMode == 0 && migrated.popupAnimationEffect == 2 &&
         migrated.animationSpeed == 1 && migrated.animationFrameLimit == 0 &&
         migrated.animationEnergySaver && !migrated.animationOnBattery,

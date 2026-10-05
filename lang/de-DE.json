@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "Steam Workshop öffnen",
   "app.dock.pin_current_folder_to_files": "Aktuellen Ordner im Dateibereich anheften",
   "app.dock.pin_explorer_to_fixed": "Datei-Explorer im angehefteten Bereich anheften",
-  "app.dock.explorer_name": "Datei-Explorer"
+  "app.dock.explorer_name": "Datei-Explorer",
+  "settings.contextMenu.expandQuickActions": "Schnellaktionen als Menüeinträge anzeigen",
+  "settings.contextMenu.expandQuickActions.description": "Die Schnellaktionen oben im Kontextmenü als normale Menüeinträge anzeigen.",
+  "settings.contextMenu.hidePageManagement": "Menüs zur Seitenverwaltung ausblenden",
+  "settings.contextMenu.hidePageManagement.description": "Menüs zum Hinzufügen, Umbenennen, Löschen, Wechseln und Anheften von Seiten sowie zum Springen zu einer Seite ausblenden."
 }

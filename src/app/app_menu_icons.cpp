@@ -629,7 +629,8 @@ UINT DesktopApp::ShowModernMenu(
                     item.iconFont = icon->fontAwesome
                         ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
                         : snowdesktop::modern_menu::IconFont::FluentRegular;
-                    item.quickAction = icon->quickAction;
+                    item.quickAction = icon->quickAction &&
+                        !generalSettings_.contextMenuExpandQuickActions;
                     item.inlineAction = icon->inlineAction;
                     item.inlineGroup = icon->inlineGroup;
                     item.compactInlineAction =

@@ -35,6 +35,8 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.softwareDesktopEnabled == after.softwareDesktopEnabled &&
         before.demoModeEnabled == after.demoModeEnabled &&
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
+        before.contextMenuExpandQuickActions == after.contextMenuExpandQuickActions &&
+        before.contextMenuHidePageManagement == after.contextMenuHidePageManagement &&
         before.quickNavTheme == after.quickNavTheme &&
         before.collectionPopupTheme == after.collectionPopupTheme &&
         before.quickNavigationAppearance == after.quickNavigationAppearance &&

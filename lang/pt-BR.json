@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "Abrir Oficina",
   "app.dock.pin_current_folder_to_files": "Fixar pasta atual na área de arquivos",
   "app.dock.pin_explorer_to_fixed": "Fixar o Explorador de Arquivos na área de itens fixados",
-  "app.dock.explorer_name": "Explorador de Arquivos"
+  "app.dock.explorer_name": "Explorador de Arquivos",
+  "settings.contextMenu.expandQuickActions": "Exibir ações rápidas como itens de menu",
+  "settings.contextMenu.expandQuickActions.description": "Exibir as ações rápidas na parte superior do menu de contexto como itens de menu comuns.",
+  "settings.contextMenu.hidePageManagement": "Ocultar menus de gerenciamento de páginas",
+  "settings.contextMenu.hidePageManagement.description": "Ocultar menus para adicionar, renomear, excluir, alternar, ir para uma página e fixar páginas."
 }

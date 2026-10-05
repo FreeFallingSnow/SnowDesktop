@@ -76,6 +76,16 @@ void TestCodec()
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
         "desktop style navigation retains its appended page identity across IPC");
     GeneralSettings extensions;
+    // Each option must independently reach the desktop host from settings.
+    for (int flags = 0; flags < 4; ++flags)
+    {
+        extensions.contextMenuExpandQuickActions = (flags & 1) != 0;
+        extensions.contextMenuHidePageManagement = (flags & 2) != 0;
+        const auto restored = Unpack<GeneralSettings>(Pack(extensions));
+        Check(restored.contextMenuExpandQuickActions == extensions.contextMenuExpandQuickActions &&
+            restored.contextMenuHidePageManagement == extensions.contextMenuHidePageManagement,
+            "independent context-menu options cross the settings-process boundary");
+    }
     extensions.statusBar.enabled = true;
     extensions.statusBar.position = DockPosition::Left;
     extensions.statusBar.monitorScope = DockMonitorScope::All;

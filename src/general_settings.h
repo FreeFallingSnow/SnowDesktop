@@ -58,6 +58,8 @@ struct GeneralSettings
     bool animationOnBattery = false;
     snowdesktop::calendar::DisplayPreferences calendarDisplay;
     snowdesktop::shell_extensions::Preferences shellExtensions;
+    bool contextMenuExpandQuickActions = false;
+    bool contextMenuHidePageManagement = false;
     snowdesktop::app_fonts::Selection font;
     char language[85] = "system";
 };

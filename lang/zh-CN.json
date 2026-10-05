@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "打开创意工坊",
   "app.dock.pin_current_folder_to_files": "固定当前文件夹到文件区",
   "app.dock.pin_explorer_to_fixed": "固定文件资源管理器到固定区",
-  "app.dock.explorer_name": "文件资源管理器"
+  "app.dock.explorer_name": "文件资源管理器",
+  "settings.contextMenu.expandQuickActions": "展开快捷区为普通菜单",
+  "settings.contextMenu.expandQuickActions.description": "将右键菜单顶部的快捷操作展开为普通菜单项。",
+  "settings.contextMenu.hidePageManagement": "隐藏页面管理相关菜单",
+  "settings.contextMenu.hidePageManagement.description": "隐藏新增、重命名、删除页面、翻页、页面跳转和固定页面菜单。"
 }

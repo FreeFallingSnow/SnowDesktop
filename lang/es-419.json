@@ -2542,5 +2542,9 @@
   "themeLibrary.openWorkshop": "Abrir Workshop",
   "app.dock.pin_current_folder_to_files": "Fijar carpeta actual en el área de archivos",
   "app.dock.pin_explorer_to_fixed": "Fijar el Explorador de archivos en el área de elementos fijados",
-  "app.dock.explorer_name": "Explorador de archivos"
+  "app.dock.explorer_name": "Explorador de archivos",
+  "settings.contextMenu.expandQuickActions": "Mostrar las acciones rápidas como opciones del menú",
+  "settings.contextMenu.expandQuickActions.description": "Mostrar las acciones rápidas de la parte superior del menú contextual como opciones normales del menú.",
+  "settings.contextMenu.hidePageManagement": "Ocultar los menús de administración de páginas",
+  "settings.contextMenu.hidePageManagement.description": "Ocultar los menús para agregar, renombrar, eliminar, cambiar, ir a una página y fijar páginas."
 }
