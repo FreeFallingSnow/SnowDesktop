@@ -62,6 +62,29 @@ void InitializeCard(
     page.Children().Append(card.root);
 }
 
+void UseInlineDisclosureStyle(const muxc::Expander& expander)
+{
+    // The surrounding SettingsCard owns the shared background and border.
+    // Keep the native disclosure and its focus/chevron states, without drawing
+    // another card or a differently colored content surface inside it.
+    mux::Media::SolidColorBrush transparent{winrt::Windows::UI::Color{0, 0, 0, 0}};
+    expander.Background(transparent);
+    expander.BorderBrush(transparent);
+    expander.BorderThickness({0.0, 0.0, 0.0, 0.0});
+    expander.Padding({0.0, 0.0, 0.0, 0.0});
+    expander.MinHeight(0.0);
+    for (const auto key : {L"ExpanderHeaderBackground", L"ExpanderHeaderBorderBrush",
+             L"ExpanderHeaderBorderPointerOverBrush", L"ExpanderHeaderBorderPressedBrush",
+             L"ExpanderHeaderDisabledBorderBrush"})
+        expander.Resources().Insert(winrt::box_value(key), transparent);
+    for (const auto key : {L"ExpanderHeaderBorderThickness", L"ExpanderHeaderPadding",
+             L"ExpanderContentDownBorderThickness", L"ExpanderContentUpBorderThickness"})
+        expander.Resources().Insert(winrt::box_value(key),
+            winrt::box_value(mux::Thickness{0.0, 0.0, 0.0, 0.0}));
+    expander.Resources().Insert(winrt::box_value(L"ExpanderChevronMargin"),
+        winrt::box_value(mux::Thickness{20.0, 0.0, 0.0, 0.0}));
+}
+
 struct HotkeySettingRow
 {
     SettingRow row;
@@ -102,7 +125,6 @@ struct GeneralPagePresenter::Impl
     mux::Style navigationCardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel quickRoot{nullptr};
-    muxc::Button quickLink;
     std::unique_ptr<QuickNavigationOptions> quickOptions;
     muxc::StackPanel desktopRoot{nullptr};
     muxc::StackPanel pageNavigationRoot{nullptr};
@@ -131,6 +153,7 @@ struct GeneralPagePresenter::Impl
     muxc::TextBlock advancedFeatureName{nullptr};
     muxc::TextBlock advancedFeatureDescription{nullptr};
     muxc::TextBlock advancedFeatureUsage{nullptr};
+    muxc::ContentControl advancedFeatureIconHost{nullptr};
     muxc::Button advancedFeatureUpdateButton{nullptr};
     muxc::Flyout advancedFeatureUpdateFlyout{nullptr};
     muxc::TextBlock advancedFeatureUpdateInstructions{nullptr};
@@ -189,6 +212,7 @@ struct GeneralPagePresenter::Impl
     winrt::event_token autoStartToken{};
     winrt::event_token registerAdvancedFeaturesToken{};
     winrt::event_token retryAdvancedFeaturesToken{};
+    winrt::event_token themeToken{};
     winrt::event_token softwareDesktopToken{};
     winrt::event_token doubleClickHideToken{};
     winrt::event_token languageSelectionToken{};
@@ -230,13 +254,11 @@ struct GeneralPagePresenter::Impl
         startupCard.content.Children().Append(startupOwnershipNotice);
 
         InitializeCard(advancedFeaturesCard, cardStyle, root);
-        advancedFeaturesCard.root.Padding({0.0, 0.0, 0.0, 0.0});
         advancedFeaturesCard.content.Children().Clear();
-        advancedFeaturesCard.content.Spacing(0.0);
         advancedFeatureExpander = muxc::Expander{};
         advancedFeatureExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         advancedFeatureExpander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        advancedFeatureExpander.BorderThickness({0.0, 0.0, 0.0, 0.0});
+        UseInlineDisclosureStyle(advancedFeatureExpander);
         advancedFeatureExpander.IsExpanded(false);
         advancedFeatureControls = muxc::StackPanel{};
         advancedFeatureControls.Orientation(muxc::Orientation::Horizontal);
@@ -259,6 +281,8 @@ struct GeneralPagePresenter::Impl
         advancedFeatureInfoButton.MinWidth(32.0);
         advancedFeatureInfoButton.MinHeight(32.0);
         advancedFeatureInfoButton.Padding({0.0, 0.0, 0.0, 0.0});
+        advancedFeatureInfoButton.Background(mux::Media::SolidColorBrush{winrt::Windows::UI::Color{0, 0, 0, 0}});
+        advancedFeatureInfoButton.BorderThickness({0.0, 0.0, 0.0, 0.0});
         advancedFeatureInfoButton.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
         advancedFeatureInfoButton.VerticalContentAlignment(mux::VerticalAlignment::Center);
         advancedFeatureInfoButton.UseSystemFocusVisuals(true);
@@ -313,29 +337,29 @@ struct GeneralPagePresenter::Impl
         featureColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
         featureRow.ColumnDefinitions().Append(iconColumn);
         featureRow.ColumnDefinitions().Append(featureColumn);
-        muxc::SymbolIcon featureIcon(muxc::Symbol::Pictures);
-        featureIcon.Width(24.0);
-        featureIcon.Height(24.0);
-        featureIcon.VerticalAlignment(mux::VerticalAlignment::Top);
-        featureIcon.Margin({0.0, 4.0, 0.0, 0.0});
+        advancedFeatureIconHost = muxc::ContentControl{};
+        advancedFeatureIconHost.Width(24.0);
+        advancedFeatureIconHost.Height(24.0);
+        advancedFeatureIconHost.VerticalAlignment(mux::VerticalAlignment::Top);
+        advancedFeatureIconHost.Margin({0.0, 4.0, 0.0, 0.0});
         muxc::Grid::SetColumn(featureBody, 1);
-        featureRow.Children().Append(featureIcon);
+        featureRow.Children().Append(advancedFeatureIconHost);
         featureRow.Children().Append(featureBody);
+        featureRow.Margin({0.0, 12.0, 0.0, 0.0});
         advancedFeatureExpander.Content(featureRow);
-        // The native template reserves header padding and the chevron on the
-        // right. Keep both localized header columns and the body full-width.
+        // Card padding is shared with adjacent cards. The native header only
+        // reserves the 32 DIP chevron and its 20 DIP leading space.
         const auto weakHeader = winrt::make_weak(advancedFeatureRow.root);
         const auto weakBody = winrt::make_weak(featureRow);
         advancedFeatureExpander.SizeChanged([weakHeader, weakBody](const auto&, const mux::SizeChangedEventArgs& args) {
             const double width = static_cast<double>(args.NewSize().Width);
-            if (const auto header = weakHeader.get()) header.Width(std::max(0.0, width - 76.0));
-            if (const auto body = weakBody.get()) body.Width(std::max(0.0, width - 32.0));
+            if (const auto header = weakHeader.get()) header.Width(std::max(0.0, width - 52.0));
+            if (const auto body = weakBody.get()) body.Width(std::max(0.0, width));
         });
         advancedFeaturesCard.content.Children().Append(advancedFeatureExpander);
         advancedFeatureNotice = muxc::InfoBar{};
         advancedFeatureNotice.IsClosable(false);
         advancedFeatureNotice.IsOpen(false);
-        advancedFeatureNotice.Margin({16.0, 0.0, 16.0, 16.0});
         retryAdvancedFeaturesButton = muxc::Button{};
         advancedFeatureNotice.ActionButton(retryAdvancedFeaturesButton);
         advancedFeatureUpdateButton = muxc::Button{};
@@ -350,7 +374,7 @@ struct GeneralPagePresenter::Impl
         advancedFeatureErrorExpander = muxc::Expander{};
         advancedFeatureErrorExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         advancedFeatureErrorExpander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        advancedFeatureErrorExpander.Margin({16.0, 0.0, 16.0, 16.0});
+        UseInlineDisclosureStyle(advancedFeatureErrorExpander);
         advancedFeatureErrorExpander.IsExpanded(false);
         advancedFeatureErrorDetail = muxc::TextBlock{};
         advancedFeatureErrorDetail.TextWrapping(mux::TextWrapping::Wrap);
@@ -359,7 +383,7 @@ struct GeneralPagePresenter::Impl
         const auto weakError = winrt::make_weak(advancedFeatureErrorDetail);
         advancedFeatureErrorExpander.SizeChanged([weakError](const auto&, const mux::SizeChangedEventArgs& args) {
             if (const auto detail = weakError.get())
-                detail.Width(std::max(0.0, static_cast<double>(args.NewSize().Width) - 34.0));
+                detail.Width(std::max(0.0, static_cast<double>(args.NewSize().Width)));
         });
         advancedFeaturesCard.content.Children().Append(advancedFeatureErrorExpander);
 
@@ -384,10 +408,14 @@ struct GeneralPagePresenter::Impl
         languageRow.Initialize(languageCombo);
         languageCard.content.Children().Append(languageRow.root);
 
+        uint32_t advancedFeaturesIndex = 0;
+        if (root.Children().IndexOf(advancedFeaturesCard.root, advancedFeaturesIndex))
+        {
+            root.Children().RemoveAt(advancedFeaturesIndex);
+            root.Children().Append(advancedFeaturesCard.root);
+        }
+
         quickRoot = muxc::StackPanel{}; quickRoot.Spacing(8);
-        quickLink.Style(navigationCardStyle);
-        quickLink.Click([this](auto&&, auto&&) {if (!closed && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::QuickNavigation));});
-        root.Children().Append(quickLink);
         InitializeCard(quickNavigationCard, cardStyle, quickRoot);
         quickNavigationToggle = muxc::ToggleSwitch{};
         quickNavigationToggle.HorizontalAlignment(
@@ -490,6 +518,9 @@ struct GeneralPagePresenter::Impl
 
     void HookEvents()
     {
+        themeToken = root.ActualThemeChanged([this](const auto&, const auto&) {
+            if (!closed) RefreshAdvancedFeatureIcon();
+        });
         autoStartToken = autoStartToggle.Toggled(
             [this](const auto&, const auto&) {
                 if (closed || updatingControls || !active || !hasSnapshot ||
@@ -814,6 +845,31 @@ struct GeneralPagePresenter::Impl
         muxa::AutomationProperties::SetName(card.root, card.title.Text());
     }
 
+    void RefreshAdvancedFeatureIcon()
+    {
+        HIGHCONTRASTW contrast{sizeof(contrast)};
+        const bool highContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST,
+            sizeof(contrast), &contrast, 0) && (contrast.dwFlags & HCF_HIGHCONTRASTON);
+        if (highContrast)
+        {
+            muxc::FontIcon icon;
+            icon.Glyph(L"\xE793");
+            icon.FontSize(24.0);
+            advancedFeatureIconHost.Content(icon);
+        }
+        else
+        {
+            mux::Media::Imaging::SvgImageSource source;
+            source.UriSource(winrt::Windows::Foundation::Uri{
+                L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg"});
+            muxc::ImageIcon icon;
+            icon.Source(source);
+            icon.Width(24.0);
+            icon.Height(24.0);
+            advancedFeatureIconHost.Content(icon);
+        }
+    }
+
     void RefreshLocalizedText()
     {
         if (closed) return;
@@ -821,7 +877,6 @@ struct GeneralPagePresenter::Impl
         updatingControls = true;
 
         onboarding->RefreshLocalizedText();
-        quickLink.Content(winrt::box_value(L("quickNav.title")));
         quickOptions->RefreshText();
         SetCardText(startupCard, "settings.general.startup");
         SetCardText(advancedFeaturesCard,
@@ -846,6 +901,7 @@ struct GeneralPagePresenter::Impl
             L("settings.general.advancedFeatures.description"));
         advancedFeatureName.Text(L("settings.general.advancedFeatures.largeIcons"));
         advancedFeatureDescription.Text(L("settings.general.advancedFeatures.largeIconsDescription"));
+        RefreshAdvancedFeatureIcon();
         advancedFeatureInfoTitle.Text(L("settings.general.advancedFeatures.infoTitle"));
         muxa::AutomationProperties::SetName(advancedFeatureInfoButton,
             advancedFeatureInfoTitle.Text());
@@ -1184,6 +1240,7 @@ struct GeneralPagePresenter::Impl
         try
         {
             onboarding->Close();
+            root.ActualThemeChanged(themeToken);
             autoStartToggle.Toggled(autoStartToken);
             registerAdvancedFeaturesButton.Click(
                 registerAdvancedFeaturesToken);
