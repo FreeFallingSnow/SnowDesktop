@@ -2008,7 +2008,7 @@
     "settings.calendar.reminder.60": "1 時間前",
     "settings.calendar.reminder.1440": "1 日前",
     "settings.dock.suppressTaskbar": "システムのタスクバーを常に非表示にする",
-    "settings.dock.suppressTaskbar.description": "Dock のある画面のタスクバーを隠し、システムパネル表示時は一時的に表示します。Dock の Windows ボタンは常に表示されます。",
+    "settings.dock.suppressTaskbar.description": "Dock のある画面のタスクバーを隠し、システムパネル表示時は一時的に表示します。",
     "settings.dock.suppressTaskbar.failed": "タスクバーを非表示にできませんでした。この設定をオフにしてタスクバーを元に戻し、もう一度お試しください。",
     "settings.taskbar.classic.description": "システムパネルと同期します。自動ではメインタスクバーの外観に合わせます。ぼかしの強さは Windows が制御します。",
     "settings.taskbar.classic.automatic": "自動",

@@ -2008,7 +2008,7 @@
     "settings.calendar.reminder.60": "1 hour before",
     "settings.calendar.reminder.1440": "1 day before",
     "settings.dock.suppressTaskbar": "Always hide the system taskbar",
-    "settings.dock.suppressTaskbar.description": "Hide the taskbar on Dock displays; show it for system panels. Keep the Windows button in Dock.",
+    "settings.dock.suppressTaskbar.description": "Hide the taskbar on Dock displays; show it for system panels.",
     "settings.dock.suppressTaskbar.failed": "The taskbar could not be hidden. Turn this option off to restore it, then try again.",
     "settings.taskbar.classic.description": "Shared with system panels. Automatic matches the primary taskbar appearance. Blur strength is controlled by Windows.",
     "settings.taskbar.classic.automatic": "Automatic",

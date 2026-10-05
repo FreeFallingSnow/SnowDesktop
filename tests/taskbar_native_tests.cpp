@@ -235,8 +235,8 @@ int RunNativeTaskbarTests()
     settings.showWindowsButton = false;
     check(!ShowDockWindowsButton(settings), "Windows button follows base preference outside suppression");
     settings.suppressSystemTaskbar = true;
-    check(ShowDockWindowsButton(settings) && !settings.showWindowsButton,
-        "taskbar suppression must provide Start without overwriting the saved preference");
+    check(!ShowDockWindowsButton(settings) && !settings.showWindowsButton,
+        "taskbar suppression must respect the saved Windows button preference");
     settings.suppressSystemTaskbar = false;
     check(!ShowDockWindowsButton(settings), "leaving suppression restores the original Windows button preference");
 

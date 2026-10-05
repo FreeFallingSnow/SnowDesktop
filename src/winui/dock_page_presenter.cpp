@@ -1208,7 +1208,6 @@ struct DockPagePresenter::Impl
             });
         showWindowsButtonToken = showWindowsButtonToggle.Toggled(
             [this](const auto&, const auto&) {
-                if (suppressTaskbarToggle.IsOn()) return;
                 const bool value = showWindowsButtonToggle.IsOn();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
@@ -1867,7 +1866,7 @@ struct DockPagePresenter::Impl
         homeSizeRow.SetEnabled(dockEnabled && barAvailability.dockOnLastMonitor && !barAvailability.allDockMerged);
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
-        showWindowsButtonRow.SetEnabled(dockEnabled && !suppressTaskbarToggle.IsOn());
+        showWindowsButtonRow.SetEnabled(dockEnabled);
         showFrequentItemsRow.SetEnabled(dockEnabled);
         allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
         floatingEdgeSwipeRow.SetEnabled(dockEnabled && !showOnlyWhenSummonedToggle.IsOn());
@@ -2471,7 +2470,7 @@ struct DockPagePresenter::Impl
                 L"Show the Dock by swiping along its screen edge or "
                   "dragging an item to that edge."));
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
-            L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels. Keep the Windows button in Dock."));
+            L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
         taskbarSuppressRow.SetText(L("settings.bars.taskbarMode", L"Taskbar visibility"));
         const int displayMode = taskbarMode.SelectedIndex();

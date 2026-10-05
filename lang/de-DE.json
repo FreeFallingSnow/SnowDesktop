@@ -2008,7 +2008,7 @@
     "settings.calendar.reminder.60": "1 Stunde vorher",
     "settings.calendar.reminder.1440": "1 Tag vorher",
     "settings.dock.suppressTaskbar": "Systemtaskleiste immer ausblenden",
-    "settings.dock.suppressTaskbar.description": "Taskleiste auf Bildschirmen mit Dock ausblenden; bei Systembereichen kurz einblenden. Die Windows-Schaltfläche bleibt im Dock.",
+    "settings.dock.suppressTaskbar.description": "Taskleiste auf Bildschirmen mit Dock ausblenden; bei Systembereichen kurz einblenden.",
     "settings.dock.suppressTaskbar.failed": "Die Taskleiste konnte nicht ausgeblendet werden. Deaktivieren Sie diese Option zur Wiederherstellung und versuchen Sie es erneut.",
     "settings.taskbar.classic.description": "Mit den Systembereichen synchronisiert. Automatisch folgt dem Aussehen der Haupttaskleiste. Windows steuert die Unschärfe.",
     "settings.taskbar.classic.automatic": "Automatisch",

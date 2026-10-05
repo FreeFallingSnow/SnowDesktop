@@ -2008,7 +2008,7 @@
     "settings.calendar.reminder.60": "1 hora antes",
     "settings.calendar.reminder.1440": "1 dia antes",
     "settings.dock.suppressTaskbar": "Sempre ocultar a barra de tarefas do sistema",
-    "settings.dock.suppressTaskbar.description": "Oculta a barra de tarefas nas telas com Dock e a exibe ao abrir painéis do sistema. Mantém o botão do Windows no Dock.",
+    "settings.dock.suppressTaskbar.description": "Oculta a barra de tarefas nas telas com Dock e a exibe ao abrir painéis do sistema.",
     "settings.dock.suppressTaskbar.failed": "Não foi possível ocultar a barra de tarefas. Desative esta opção para restaurá-la e tente novamente.",
     "settings.taskbar.classic.description": "Sincronizado com os painéis do sistema. Automático segue a aparência da barra principal. O Windows controla a intensidade do desfoque.",
     "settings.taskbar.classic.automatic": "Automático",

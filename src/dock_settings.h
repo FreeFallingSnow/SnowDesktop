@@ -108,7 +108,7 @@ struct DockSettings : DockLayoutSettings
 
 inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
 {
-    return settings.showWindowsButton || settings.suppressSystemTaskbar;
+    return settings.showWindowsButton;
 }
 
 inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,

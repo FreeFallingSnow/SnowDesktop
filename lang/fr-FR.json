@@ -2008,7 +2008,7 @@
     "settings.calendar.reminder.60": "1 heure avant",
     "settings.calendar.reminder.1440": "1 jour avant",
     "settings.dock.suppressTaskbar": "Toujours masquer la barre des tâches du système",
-    "settings.dock.suppressTaskbar.description": "Masque la barre des tâches sur les écrans avec le Dock ; l'affiche pour les panneaux système. Le bouton Windows reste dans le Dock.",
+    "settings.dock.suppressTaskbar.description": "Masque la barre des tâches sur les écrans avec le Dock ; l'affiche pour les panneaux système.",
     "settings.dock.suppressTaskbar.failed": "Impossible de masquer la barre des tâches. Désactivez cette option pour la restaurer, puis réessayez.",
     "settings.taskbar.classic.description": "Synchronisé avec les panneaux système. Automatique suit l’apparence de la barre principale. Windows contrôle l’intensité du flou.",
     "settings.taskbar.classic.automatic": "Automatique",
