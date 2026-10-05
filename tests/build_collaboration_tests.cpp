@@ -1,9 +1,20 @@
 #include "build_tool_test_support.h"
 #include <iostream>
+#include <regex>
 using namespace build_test;
 namespace {
 Json complete(Child& child,int code=0){auto result=child.wait(40);require(result.code==code,result.out+result.err);return result.out.empty()?Json{}:Json::parse(result.out);}
-void equal(const Json& a,const Json& b){require(a.dump()==b.dump(),"Waiters did not receive identical persisted results");}
+Json canonical_dates(Json value){
+    if(value.kind==Json::Kind::String&&std::regex_match(value.text,std::regex(R"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,7}Z)"))){
+        // PowerShell 7 deserializes ISO dates and omits insignificant zero ticks.
+        auto suffix=value.text.size()-1;while(suffix>0&&value.text[suffix-1]=='0')value.text.erase(--suffix,1);
+        if(suffix>0&&value.text[suffix-1]=='.')value.text.erase(suffix-1,1);
+    }
+    for(auto& item:value.items)item=canonical_dates(std::move(item));
+    for(auto& [key,item]:value.fields){(void)key;item=canonical_dates(std::move(item));}
+    return value;
+}
+void equal(const Json& a,const Json& b){require(canonical_dates(a).dump()==canonical_dates(b).dump(),"Waiters did not receive equivalent persisted results\n"+a.dump()+"\n"+b.dump());}
 void run_tests(const fs::path& repo){
     Coordinator c(repo,"collaboration");auto initial=c.call({"status"});require(initial.at("current").kind==Json::Kind::Null&&!fs::exists(c.stateRoot/L"state.json"),"status registered a batch");
     auto bid=c.begin("a").at("batchId").str();require(c.begin("b").at("batchId").str()==bid&&c.begin("a").at("batchId").str()==bid,"Overlapping/repeated begin split batch");
