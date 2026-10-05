@@ -341,6 +341,12 @@ DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
                     const wchar_t* targetExtension = PathFindExtensionW(target);
                     if (targetExtension && _wcsicmp(targetExtension, L".exe") == 0)
                     {
+                        wchar_t arguments[32768]{};
+                        if (snowdesktop::shortcut_application_rules::IsExplorerExecutable(target) &&
+                            (FAILED(shellLink->GetArguments(arguments,
+                                static_cast<int>(std::size(arguments)))) ||
+                             !snowdesktop::shortcut_application_rules::Trim(arguments).empty()))
+                            return identity;
                         identity.kind = DockAppIdentityKind::Executable;
                         identity.executablePath = NormalizeDockExecutablePath(target);
                     }
@@ -387,7 +393,10 @@ DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
                         // worker so the pin still tracks windows without IDs.
                         const auto application = snowdesktop::dock_running_app_pin::
                             ReadApplicationIdentity(targetPidl);
-                        if (!application.executablePath.empty())
+                        if (!application.executablePath.empty() &&
+                            !(snowdesktop::shortcut_application_rules::IsExplorerExecutable(
+                                application.executablePath) &&
+                              !snowdesktop::shortcut_application_rules::Trim(application.arguments).empty()))
                         {
                             identity.kind = DockAppIdentityKind::Executable;
                             identity.executablePath = NormalizeDockExecutablePath(

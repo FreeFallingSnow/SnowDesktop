@@ -233,6 +233,7 @@ constexpr UINT kContextLuaLogicalSlotRemove = 41815;
 constexpr UINT kContextWidgetOpenComponentPanel = 41816;
 constexpr UINT kContextDockPinMoveToDock = 41817;
 constexpr UINT kContextDockCreateMapping = 41818;
+constexpr UINT kContextDockPinCurrentFolder = 41819;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;

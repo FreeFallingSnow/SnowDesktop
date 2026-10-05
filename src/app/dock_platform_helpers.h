@@ -9,8 +9,10 @@
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
 {
+    if (path.empty()) return {};
     if (path.size() >= 2 && path.front() == L'"' && path.back() == L'"')
         path = path.substr(1, path.size() - 2);
+    if (path.empty()) return {};
 
     const DWORD expandedLength = ExpandEnvironmentStringsW(path.c_str(), nullptr, 0);
     if (expandedLength > 1)

@@ -2,6 +2,7 @@
 #include "../menu_fluent_glyphs.h"
 #include "dock_platform_helpers.h"
 #include "dock_running_app_pin_rules.h"
+#include "dock_explorer_pin.h"
 #include "shell_icon_request.h"
 #include "../desktop_source.h"
 #include "../logical_slot_picker_rules.h"
@@ -209,6 +210,9 @@ void DesktopApp::ShowDockRunningAppContextMenu(
 
     const DockRunningAppInfo running =
         dockUnpinnedRunningApps_[runningIndex];
+    const bool explorer = snowdesktop::shortcut_application_rules::
+        IsExplorerExecutable(running.executablePath) &&
+        snowdesktop::dock_explorer_pin::IsFolderWindow(running.window);
     DockAppIdentity identity;
     identity.executablePath =
         running.executablePath;
@@ -228,13 +232,16 @@ void DesktopApp::ShowDockRunningAppContextMenu(
     {
         QuickNavigationAppEntry entry;
         snowdesktop::dock_running_app_pin::ApplicationIdentity identity;
+        std::wstring folderPath;
+        std::shared_ptr<CatalogApplication> currentFolder;
     };
 
     // Own the target across the native menu loop: application indexing and
     // desktop refresh may replace their vectors while the menu is open.
-    auto showMenu = [this, running, identity, screenPoint](
+    auto showMenu = [this, running, identity, screenPoint, explorer](
         std::shared_ptr<CatalogApplication> application) {
         if (!hwnd_ || !IsWindow(hwnd_) ||
+            (explorer && !snowdesktop::dock_explorer_pin::IsFolderWindow(running.window)) ||
             std::none_of(dockUnpinnedRunningApps_.begin(),
                 dockUnpinnedRunningApps_.end(), [&](const auto& current) {
                     return current.identityKey == running.identityKey;
@@ -243,21 +250,44 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             return;
 
         std::wstring matchingDesktopKey;
-        if (const auto itemIndex = FindDesktopItemForDockRunningApp(running);
-            itemIndex && *itemIndex < items_.size())
-            matchingDesktopKey = items_[*itemIndex].layoutKey;
+        // Explorer folder launchers can share its EXE/AUMID. Always create
+        // the explicit default launcher rather than move an unrelated link.
+        if (!explorer)
+            if (const auto itemIndex = FindDesktopItemForDockRunningApp(running);
+                itemIndex && *itemIndex < items_.size())
+                matchingDesktopKey = items_[*itemIndex].layoutKey;
 
         PrepareMenuIconsForPoint(screenPoint);
 
         HMENU menu = CreatePopupMenu();
         if (!menu)
             return;
+        if (explorer)
+        {
+            const bool hasFolder = application && application->currentFolder;
+            std::wstring label = _LW("app.dock.pin_current_folder_to_files");
+            if (hasFolder)
+            {
+                std::wstring name;
+                for (const auto ch : application->currentFolder->entry.name)
+                {
+                    name += ch;
+                    if (ch == L'&') name += ch;
+                }
+                label += L" (" + name + L")";
+            }
+            AppendMenuW(menu, MF_STRING | (hasFolder ? 0 : MF_GRAYED),
+                kContextDockPinCurrentFolder, label.c_str());
+            SetMenuItemIcon(menu, kContextDockPinCurrentFolder,
+                snowdesktop::menu_fluent_glyphs::kPin, MenuIconFont::FluentRegular);
+        }
         if (!matchingDesktopKey.empty() || application)
         {
             AppendMenuW(
                 menu, MF_STRING,
                 kContextDockPinMoveToDock,
-                _LW("app.dock.pin_move_to_dock"));
+                explorer ? _LW("app.dock.pin_explorer_to_fixed")
+                         : _LW("app.dock.pin_move_to_dock"));
             if (!matchingDesktopKey.empty())
                 AppendMenuW(
                     menu, MF_STRING,
@@ -308,7 +338,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
 
         // The native menu pumps messages. Prefer a desktop source that appeared
         // while it was open, rather than creating a second shortcut for that app.
-        if (command == kContextDockPinMoveToDock)
+        if (command == kContextDockPinMoveToDock && !explorer)
             if (const auto itemIndex = FindDesktopItemForDockRunningApp(running);
                 itemIndex && *itemIndex < items_.size())
                 matchingDesktopKey = items_[*itemIndex].layoutKey;
@@ -350,7 +380,13 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             return;
         }
 
-        if (command == kContextDockPinMoveToDock && application)
+        if (command == kContextDockPinCurrentFolder)
+        {
+            if (!explorer || !application || !application->currentFolder) return;
+            application = application->currentFolder;
+        }
+        if ((command == kContextDockPinMoveToDock ||
+             command == kContextDockPinCurrentFolder) && application)
         {
             POINT clientPoint = screenPoint;
             if (!ScreenToClient(hwnd_, &clientPoint)) return;
@@ -367,7 +403,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
                 },
                 [&](const std::wstring& path) {
                     auto item = snowdesktop::dock_running_app_pin::ReadShortcutItem(
-                        path, application->entry.name);
+                        path, application->entry.name, application->folderPath.empty());
                     if (!item) return false;
                     item->layoutKey = ToUpperInvariant(path);
                     item->gridCell = { kDockPageId, 0, 0 };
@@ -377,17 +413,32 @@ void DesktopApp::ShowDockRunningAppContextMenu(
                     RefreshDesktopItemIndexCache();
                     const size_t itemIndex = items_.size() - 1;
                     const auto key = DockItemWindowKey(items_[itemIndex]);
-                    const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
                     const auto stamp = snowdesktop::shell_icon_request::Stamp(items_[itemIndex]);
-                    const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
-                    DockAppIdentity pinnedIdentity;
-                    pinnedIdentity.sourceParsingName = path;
-                    pinnedIdentity.executablePath = application->identity.executablePath;
-                    pinnedIdentity.appUserModelId = application->identity.appUserModelId;
-                    pinnedIdentity.kind = !pinnedIdentity.executablePath.empty()
-                        ? DockAppIdentityKind::Executable : DockAppIdentityKind::Applications;
-                    dockAppIdentityCache_.Publish(cacheKey, cached.ticket, std::move(pinnedIdentity));
-                    adoptRunning(itemIndex);
+                    if (!application->folderPath.empty())
+                    {
+                        const auto folderKey = L"I:" + ToUpperInvariant(
+                            snowdesktop::dock_refresh_cache::SourceKey(items_[itemIndex].layoutKey, path));
+                        const auto cached = dockFolderTargetCache_.Read(folderKey, stamp);
+                        dockFolderTargetCache_.Publish(folderKey, cached.ticket,
+                            snowdesktop::item_location::FolderTarget{application->folderPath,
+                                snowdesktop::item_location::FolderTargetKind::Shortcut, true});
+                        // A folder pin belongs to the file area and must leave
+                        // Explorer's running group and all its windows intact.
+                        NormalizeDockRecycleBinPosition();
+                    }
+                    else
+                    {
+                        const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
+                        const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
+                        DockAppIdentity pinnedIdentity;
+                        pinnedIdentity.sourceParsingName = path;
+                        pinnedIdentity.executablePath = application->identity.executablePath;
+                        pinnedIdentity.appUserModelId = application->identity.appUserModelId;
+                        pinnedIdentity.kind = !pinnedIdentity.executablePath.empty()
+                            ? DockAppIdentityKind::Executable : DockAppIdentityKind::Applications;
+                        dockAppIdentityCache_.Publish(cacheKey, cached.ticket, std::move(pinnedIdentity));
+                        adoptRunning(itemIndex);
+                    }
                     // Appending can relocate every DesktopItem. Rebind all
                     // wrappers before any layout, persistence or repaint.
                     RebuildContainersAndItems();
@@ -416,14 +467,14 @@ void DesktopApp::ShowDockRunningAppContextMenu(
 
     // Desktop sources retain both existing actions without waiting for Shell
     // providers. Catalog-only sources get one action that creates a new link.
-    if (FindDesktopItemForDockRunningApp(running))
+    if (!explorer && FindDesktopItemForDockRunningApp(running))
     {
         showMenu(nullptr);
         return;
     }
 
     auto applications = std::make_shared<std::vector<QuickNavigationAppEntry>>();
-    if (quickNavigationAppsIndexed_)
+    if (!explorer && quickNavigationAppsIndexed_)
     {
         for (const auto& entry : quickNavigationAppEntries_)
         {
@@ -435,9 +486,38 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         }
     }
     const bool indexed = quickNavigationAppsIndexed_;
+    const std::wstring explorerName = _LW("app.dock.explorer_name");
     const bool submitted = shellVisualWork_.Submit(
         L"dock-running-menu:" + running.identityKey,
-        [applications, indexed, running] {
+        [applications, indexed, running, explorer, explorerName] {
+            if (explorer)
+            {
+                auto application = std::make_shared<CatalogApplication>();
+                const auto path = snowdesktop::dock_explorer_pin::ExecutablePath();
+                PIDLIST_ABSOLUTE target = nullptr;
+                if (path.empty() || FAILED(SHParseDisplayName(path.c_str(), nullptr,
+                        &target, 0, nullptr)) || !target)
+                    return std::shared_ptr<CatalogApplication>{};
+                application->entry.absolutePidl.reset(target);
+                application->entry.name = explorerName;
+                application->entry.parsingName = path;
+                application->identity.executablePath = NormalizeDockExecutablePath(path);
+                if (const auto folder = snowdesktop::dock_explorer_pin::ReadCurrentFolder(running.window))
+                {
+                    target = nullptr;
+                    if (SUCCEEDED(SHParseDisplayName(folder->path.c_str(), nullptr,
+                            &target, 0, nullptr)) && target)
+                    {
+                        auto current = std::make_shared<CatalogApplication>();
+                        current->entry.absolutePidl.reset(target);
+                        current->entry.name = folder->name;
+                        current->entry.parsingName = folder->path;
+                        current->folderPath = folder->path;
+                        application->currentFolder = std::move(current);
+                    }
+                }
+                return application;
+            }
             if (!indexed)
             {
                 HIMAGELIST systemImageList = nullptr;

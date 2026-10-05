@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../dock_app_identity_rules.h"
+#include "../shortcut_application_rules.h"
 #include "../types.h"
 
 #include <windows.h>
@@ -21,6 +22,7 @@ struct ApplicationIdentity
 {
     std::wstring executablePath;
     std::wstring appUserModelId;
+    std::wstring arguments;
 };
 
 inline ApplicationIdentity ReadApplicationIdentity(PCIDLIST_ABSOLUTE target)
@@ -37,6 +39,7 @@ inline ApplicationIdentity ReadApplicationIdentity(PCIDLIST_ABSOLUTE target)
         return value;
     };
     identity.appUserModelId = readString(PKEY_AppUserModel_ID);
+    identity.arguments = readString(PKEY_Link_Arguments);
     const auto path = readString(PKEY_Link_TargetParsingPath);
     if (_wcsicmp(std::filesystem::path(path).extension().c_str(), L".exe") == 0)
         identity.executablePath = path;
@@ -56,6 +59,11 @@ inline std::optional<size_t> FindApplication(
     for (size_t i = 0; i < applications.size(); ++i)
     {
         const auto& app = applications[i];
+        // SDK and other folder entries launch Explorer with a directory
+        // argument. They are not the default File Explorer application.
+        if (shortcut_application_rules::IsExplorerExecutable(app.executablePath) &&
+            !shortcut_application_rules::Trim(app.arguments).empty())
+            continue;
         const bool exactId = !appUserModelId.empty() &&
             app.appUserModelId == appUserModelId;
         const bool conflictingId = !appUserModelId.empty() &&
@@ -130,7 +138,7 @@ inline std::wstring CreateShortcut(const std::filesystem::path& directory,
 // Materialize the file just created by this operation before publishing its
 // Dock entry. Waiting for desktop enumeration would expose an empty Dock slot.
 inline std::optional<DesktopItem> ReadShortcutItem(const std::wstring& path,
-    const std::wstring& name)
+    const std::wstring& name, bool applicationShortcut = true)
 {
     WIN32_FILE_ATTRIBUTE_DATA attributes{};
     if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes) ||
@@ -150,7 +158,8 @@ inline std::optional<DesktopItem> ReadShortcutItem(const std::wstring& path,
     item.fileSize = (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) |
         attributes.nFileSizeLow;
     item.isShortcut = true;
-    item.isApplicationShortcut = true;
+    item.isApplicationShortcut = applicationShortcut;
+    item.shortcutTarget = {true, !applicationShortcut, applicationShortcut, {}};
     item.slot = -1;
     return item;
 }
