@@ -115,7 +115,7 @@ void UseInlineDisclosureStyle(const muxc::Expander& expander)
     expander.Resources().Insert(winrt::box_value(L"ExpanderHeaderBorderThickness"),
         winrt::box_value(mux::Thickness{0.0, 0.0, 0.0, 0.0}));
     expander.Resources().Insert(winrt::box_value(L"ExpanderChevronMargin"),
-        winrt::box_value(mux::Thickness{20.0, 0.0, 0.0, 0.0}));
+        winrt::box_value(mux::Thickness{8.0, 0.0, 0.0, 0.0}));
     const auto weakExpander = winrt::make_weak(expander);
     expander.Loaded([weakExpander](const auto&, const auto&) {
         if (const auto disclosure = weakExpander.get()) AlignInlineDisclosure(disclosure);
@@ -277,6 +277,8 @@ struct GeneralPagePresenter::Impl
         onboarding = std::make_unique<StartPagePresenter>(localize, cardStyle, navigationCardStyle);
         root.Children().Append(onboarding->Content());
         InitializeCard(startupCard, cardStyle, root);
+        if (const auto guide = onboarding->Content().try_as<muxc::Expander>())
+            guide.CornerRadius(startupCard.root.CornerRadius());
         autoStartToggle = muxc::ToggleSwitch{};
         autoStartToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -299,9 +301,10 @@ struct GeneralPagePresenter::Impl
         advancedFeatureExpander.IsExpanded(false);
         advancedFeatureControls = muxc::StackPanel{};
         advancedFeatureControls.Orientation(muxc::Orientation::Horizontal);
-        advancedFeatureControls.Spacing(10.0);
+        advancedFeatureControls.Spacing(8.0);
         advancedFeatureControls.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
+        advancedFeatureControls.VerticalAlignment(mux::VerticalAlignment::Center);
         advancedFeatureStatus = muxc::TextBlock{};
         advancedFeatureStatus.TextWrapping(mux::TextWrapping::Wrap);
         advancedFeatureStatus.MaxWidth(220.0);
@@ -313,16 +316,29 @@ struct GeneralPagePresenter::Impl
         infoIcon.Glyph(L"\xE946");
         infoIcon.FontSize(16.0);
         infoIcon.IsTextScaleFactorEnabled(false);
+        infoIcon.VerticalAlignment(mux::VerticalAlignment::Center);
+        // Match the glyph's optical center to the adjacent text while keeping
+        // the button's full 32-DIP hit target centered in the native header.
+        infoIcon.Margin({0.0, 2.0, 0.0, 0.0});
         advancedFeatureInfoButton.Content(infoIcon);
         advancedFeatureInfoButton.Width(32.0);
         advancedFeatureInfoButton.Height(32.0);
         advancedFeatureInfoButton.MinWidth(32.0);
         advancedFeatureInfoButton.MinHeight(32.0);
         advancedFeatureInfoButton.Padding({0.0, 0.0, 0.0, 0.0});
-        advancedFeatureInfoButton.Background(mux::Media::SolidColorBrush{winrt::Windows::UI::Color{0, 0, 0, 0}});
+        mux::Media::SolidColorBrush transparent{winrt::Windows::UI::Color{0, 0, 0, 0}};
+        advancedFeatureInfoButton.Background(transparent);
+        // Native Button visual states replace Background on hover/press.
+        // Keep these surfaces transparent as well as the resting background.
+        for (const auto key : {L"ButtonBackground", L"ButtonBackgroundPointerOver",
+                 L"ButtonBackgroundPressed", L"ButtonBackgroundDisabled",
+                 L"ButtonBorderBrush", L"ButtonBorderBrushPointerOver",
+                 L"ButtonBorderBrushPressed", L"ButtonBorderBrushDisabled"})
+            advancedFeatureInfoButton.Resources().Insert(winrt::box_value(key), transparent);
         advancedFeatureInfoButton.BorderThickness({0.0, 0.0, 0.0, 0.0});
         advancedFeatureInfoButton.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
         advancedFeatureInfoButton.VerticalContentAlignment(mux::VerticalAlignment::Center);
+        advancedFeatureInfoButton.VerticalAlignment(mux::VerticalAlignment::Center);
         advancedFeatureInfoButton.UseSystemFocusVisuals(true);
         advancedFeatureInfoTitle = muxc::TextBlock{};
         advancedFeatureInfoTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
