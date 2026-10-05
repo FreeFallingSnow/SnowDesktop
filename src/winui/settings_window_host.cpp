@@ -552,9 +552,10 @@ struct SettingsWindowHost::Impl
         const bool share = task->request.command == ThemeLibraryCommand::Share;
         if ((share || sync) && !ThemeSharingAvailable()) { CompleteThemeTask(task, false, "missingCapability"); return; }
         std::string error; themes::Library library;
-        if (task->request.command == ThemeLibraryCommand::BindWorkshop)
+        if (task->request.command == ThemeLibraryCommand::BindWorkshop || task->request.command == ThemeLibraryCommand::UnbindWorkshop)
         {
-            if (!ThemeSharingAvailable() || !themes::Load(themes::LibraryPath(), library, error))
+            const bool unbind = task->request.command == ThemeLibraryCommand::UnbindWorkshop;
+            if ((!unbind && !ThemeSharingAvailable()) || !themes::Load(themes::LibraryPath(), library, error))
             { CompleteThemeTask(task, false, error.empty() ? "missingCapability" : error); return; }
             const auto theme = themes::Resolve(library.themes, task->request.id);
             bool subscribed = false;
@@ -562,11 +563,14 @@ struct SettingsWindowHost::Impl
             if (!theme || subscribed || themes::Builtin(theme->id)) { CompleteThemeTask(task, false, "invalidSelection"); return; }
             const auto weak = std::weak_ptr<CallbackState>(callbacks);
             const auto bridge = ThemeBridge(), data = std::filesystem::path(GetDataDirectoryPath());
-            (void)shell->ShowProgress({generation, L("themeLibrary.bindWorkshop"), L("themeLibrary.preparing"), true, 0, true});
-            std::thread([weak, task, bridge, data, theme = *theme] {
+            (void)shell->ShowProgress({generation, L(unbind ? "themeLibrary.unbindWorkshop" : "themeLibrary.bindWorkshop"), L("themeLibrary.preparing"), true, 0, !unbind});
+            std::thread([weak, task, bridge, data, theme = *theme, unbind] {
                 std::string detail;
                 bool success = false;
-                try { success = themes::workshop::Bind(bridge, data, theme, task->request.replacement, detail, &task->cancel); }
+                try {
+                    success = unbind ? steam_bridge::UnbindThemePublication(data, theme.id, detail) :
+                        themes::workshop::Bind(bridge, data, theme, task->request.replacement, detail, &task->cancel);
+                }
                 catch (...) { detail = "writeFailed"; }
                 if (const auto state = weak.lock(); state && state->alive.load())
                     (void)state->dispatcher.TryEnqueue([weak, task, success, detail] {

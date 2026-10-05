@@ -162,4 +162,18 @@ struct EditSource
         return true;
     }
 };
+inline EditSource SelectionEditSource(const themes::Library& library, const themes::Theme* selected,
+    const EditSource& inherited, bool followsGlobal)
+{
+    EditSource source;
+    if (selected)
+    {
+        source.theme = *selected;
+        std::string error;
+        if (!themes::Export(library, selected->id, source.snapshot, error)) source.Reset();
+    }
+    else if (followsGlobal) source = inherited;
+    if (!source.CanUpdate(library)) source.Reset();
+    return source;
+}
 }

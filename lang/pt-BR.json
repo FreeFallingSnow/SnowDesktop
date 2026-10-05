@@ -2546,5 +2546,7 @@
   "settings.contextMenu.expandQuickActions": "Exibir ações rápidas como itens de menu",
   "settings.contextMenu.expandQuickActions.description": "Exibir as ações rápidas na parte superior do menu de contexto como itens de menu comuns.",
   "settings.contextMenu.hidePageManagement": "Ocultar menus de gerenciamento de páginas",
-  "settings.contextMenu.hidePageManagement.description": "Ocultar menus para adicionar, renomear, excluir, alternar, ir para uma página e fixar páginas."
+  "settings.contextMenu.hidePageManagement.description": "Ocultar menus para adicionar, renomear, excluir, alternar, ir para uma página e fixar páginas.",
+  "themeLibrary.unbindWorkshop": "Desvincular da Oficina",
+  "themeLibrary.unbindHint": "O tema local e o item da Oficina serão mantidos. Compartilhar novamente criará um novo item; vincule o item original de novo para atualizá-lo."
 }

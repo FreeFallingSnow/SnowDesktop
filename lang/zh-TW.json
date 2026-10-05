@@ -2546,5 +2546,7 @@
   "settings.contextMenu.expandQuickActions": "將快捷區展開為一般選單",
   "settings.contextMenu.expandQuickActions.description": "將右鍵選單頂部的快捷操作展開為一般選單項目。",
   "settings.contextMenu.hidePageManagement": "隱藏頁面管理相關選單",
-  "settings.contextMenu.hidePageManagement.description": "隱藏新增、重新命名、刪除頁面、翻頁、頁面跳轉及固定頁面選單。"
+  "settings.contextMenu.hidePageManagement.description": "隱藏新增、重新命名、刪除頁面、翻頁、頁面跳轉及固定頁面選單。",
+  "themeLibrary.unbindWorkshop": "解除工作坊綁定",
+  "themeLibrary.unbindHint": "解除後保留本機主題和工作坊項目。再次分享將建立新項目；若要更新原項目，請重新綁定。"
 }

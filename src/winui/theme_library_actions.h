@@ -6,7 +6,7 @@
 namespace snowdesktop::winui
 {
 // Private settings UI commands; independent of package and bridge protocols.
-enum class ThemeLibraryCommand { Refresh, SaveAs, Update, Apply, Detach, Remove, Export, Preview, Share, ChooseCover, ChooseBackground, Regenerate, SyncSubscriptions, Import, CopyLocal, BindWorkshop, OpenWorkshop };
+enum class ThemeLibraryCommand { Refresh, SaveAs, Update, Apply, Detach, Remove, Export, Preview, Share, ChooseCover, ChooseBackground, Regenerate, SyncSubscriptions, Import, CopyLocal, BindWorkshop, OpenWorkshop, UnbindWorkshop };
 struct ThemeLibraryRequest
 {
     ThemeLibraryCommand command = ThemeLibraryCommand::Refresh;

@@ -2546,5 +2546,7 @@
   "settings.contextMenu.expandQuickActions": "Expand quick actions into menu items",
   "settings.contextMenu.expandQuickActions.description": "Show the quick actions at the top of the context menu as regular menu items.",
   "settings.contextMenu.hidePageManagement": "Hide page management menus",
-  "settings.contextMenu.hidePageManagement.description": "Hide menus for adding, renaming, deleting, switching, jumping to, and pinning pages."
+  "settings.contextMenu.hidePageManagement.description": "Hide menus for adding, renaming, deleting, switching, jumping to, and pinning pages.",
+  "themeLibrary.unbindWorkshop": "Unlink Workshop item",
+  "themeLibrary.unbindHint": "The local theme and Workshop item will be kept. Sharing again will create a new item; link the original item again to update it."
 }

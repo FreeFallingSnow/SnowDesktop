@@ -435,6 +435,11 @@ int RunThemeLibraryTests()
         winui::theme_controls::EditSource parent; parent.Begin(sourceLibrary,"global");
         const auto quickSource = parent.Bound(Kind::QuickPanel);
         const auto popupSource = parent.Bound(Kind::Popup);
+        const auto selectedQuick = winui::theme_controls::SelectionEditSource(sourceLibrary, nullptr, quickSource, true);
+        const auto selectedPopup = winui::theme_controls::SelectionEditSource(sourceLibrary, nullptr, popupSource, true);
+        check(selectedQuick.theme && selectedPopup.theme && selectedQuick.theme->id == quick.id && selectedPopup.theme->id == popup.id &&
+            !winui::theme_controls::SelectionEditSource(sourceLibrary, nullptr, quickSource, false).theme,
+            "follow-global edit selection resolves both saved local children and cannot leak into an independent native preset");
         Detach(sourceLibrary,"global");
         check(quickSource.theme && popupSource.theme && quickSource.theme->id == quick.id && popupSource.theme->id == popup.id &&
             quickSource.CanUpdate(sourceLibrary) && popupSource.CanUpdate(sourceLibrary),
@@ -468,8 +473,14 @@ int RunThemeLibraryTests()
         check(draft.general.collectionPopupAppearance.mode == -1 && CaptureTarget("popup",draft).appearance == popupSource.theme->appearance,
             "cancelling a bound popup restores its saved material without turning it into an independent custom theme");
         sourceLibrary.workshop["321"].ids.insert(popup.id);
+        check(!winui::theme_controls::SelectionEditSource(sourceLibrary, nullptr, popupSource, true).theme &&
+            winui::theme_controls::SelectionEditSource(sourceLibrary, &quick, {}, false).theme &&
+            !winui::theme_controls::SelectionEditSource(sourceLibrary, nullptr, parent.Bound(Kind::Popup), false).theme,
+            "selection editing rejects subscribed bindings while retaining direct local theme editing");
         check(!popupSource.CanUpdate(sourceLibrary), "bound subscribed sources retain the same overwrite restriction as independent sources");
         sourceLibrary.themes.erase(quick.id);
+        check(!winui::theme_controls::SelectionEditSource(sourceLibrary, nullptr, quickSource, true).theme,
+            "a removed inherited local theme cannot open an editor from a retained snapshot");
         check(!quickSource.CanUpdate(sourceLibrary) && quickSource.theme->id == quick.id,
             "deleting a bound source preserves its draft identity but blocks overwrite");
         parent.Reset();

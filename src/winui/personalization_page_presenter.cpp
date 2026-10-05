@@ -802,7 +802,7 @@ struct PersonalizationPagePresenter::Impl
                 globalThemes->AdoptBinding(theme.kind, theme); PatchInheritedCustom();
             }, [this](const themes::Theme& theme) {
                 ApplyBoundDraft(theme); globalThemes->AdoptBinding(theme.kind, theme); PatchInheritedCustom();
-            });
+            }, [this] { globalThemes->BeginEdit(); PatchInheritedCustom(); });
         }
     }
     void ApplyBoundDraft(const themes::Theme& theme)

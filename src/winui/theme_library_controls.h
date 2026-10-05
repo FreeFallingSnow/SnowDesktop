@@ -133,12 +133,18 @@ public:
         row.ColumnDefinitions().Append(selector); row.ColumnDefinitions().Append(action);
         c::Grid::SetColumn(editButton_, 1); row.Children().Append(choice_); row.Children().Append(editButton_);
         const auto token = editButton_.Click([this](const auto&, const auto&) {
-            const auto selected = Selected();
-            if (!selected || Subscribed(selected->id) || busy_) return;
-            choice_.SelectedIndex(customIndex_);
+            BeginEdit();
         });
         revoke_.push_back([button = editButton_, token] { button.Click(token); });
         editButton_.Content(winrt::box_value(L("themeLibrary.edit"))); PatchButtons(); return row;
+    }
+    void BeginEdit()
+    {
+        if (closed_ || busy_) return;
+        const auto source = SelectionEditSource(library_, Selected(), followSource_, choice_.SelectedIndex() == 0 && !Global());
+        if (!source.theme) return;
+        if (Selected()) choice_.SelectedIndex(customIndex_);
+        else if (boundBegin_) boundBegin_();
     }
     bool EditingBound() const { return inheritedCustom_ && !Selected() && choice_.SelectedIndex() == 0; }
     bool CustomSelected() const { return !transfer_ && !Selected() && (choice_.SelectedIndex() == customIndex_ || EditingBound()); }
@@ -202,8 +208,9 @@ public:
         SelectBinding(kind == themes::Kind::QuickPanel ? quick_ : popup_,
             kind == themes::Kind::QuickPanel ? quickChoices_ : popupChoices_, child.id);
     }
-    void SetBoundActions(std::function<void(const themes::Theme&)> saved, std::function<void(const themes::Theme&)> cancel)
-    { boundSaved_ = std::move(saved); boundCancel_ = std::move(cancel); }
+    void SetBoundActions(std::function<void(const themes::Theme&)> saved, std::function<void(const themes::Theme&)> cancel,
+        std::function<void()> begin)
+    { boundSaved_ = std::move(saved); boundCancel_ = std::move(cancel); boundBegin_ = std::move(begin); }
     void SetBindingChanged(std::function<void(const themes::Theme&)> changed) { bindingChanged_ = std::move(changed); }
     bool Synchronizing() const { return syncing_ || busy_; }
     int NativeSelection() const { return Selected() ? customIndex_ : choice_.SelectedIndex(); }
@@ -306,7 +313,7 @@ public:
         if (closed_) return;
         closed_ = true; alive_->store(false);
         for (auto& revoke : revoke_) revoke();
-        ClearEntries(); revoke_.clear(); action_ = {}; async_ = {}; flush_ = {}; changed_ = {}; boundSaved_ = {}; boundCancel_ = {}; bindingChanged_ = {};
+        ClearEntries(); revoke_.clear(); action_ = {}; async_ = {}; flush_ = {}; changed_ = {}; boundSaved_ = {}; boundCancel_ = {}; boundBegin_ = {}; bindingChanged_ = {};
     }
 private:
     Localize localize_;
@@ -319,6 +326,7 @@ private:
     ThemeLibraryAsyncAction async_;
     std::function<bool()> flush_;
     std::function<void()> changed_;
+    std::function<void()> boundBegin_;
     std::function<void(const themes::Theme&)> boundSaved_, boundCancel_, bindingChanged_;
     std::shared_ptr<std::atomic_bool> alive_ = std::make_shared<std::atomic_bool>(true);
     themes::Library library_;
@@ -514,7 +522,8 @@ private:
         }
         const auto selected = Selected();
         const bool custom = selected && !themes::Builtin(selected->id);
-        editButton_.Visibility(custom && !Subscribed(selected->id) ? x::Visibility::Visible : x::Visibility::Collapsed);
+        const auto editSource = SelectionEditSource(library_, selected, followSource_, choice_.SelectedIndex() == 0 && !Global());
+        editButton_.Visibility(editSource.theme ? x::Visibility::Visible : x::Visibility::Collapsed);
         editButton_.IsEnabled(!busy_);
         for (auto& button : buttons_)
         {
@@ -534,6 +543,8 @@ private:
             button.control.IsEnabled(!busy_ && themes::Find(library_.themes, button.id));
             if (button.command == ThemeLibraryCommand::Share || button.command == ThemeLibraryCommand::BindWorkshop)
                 button.control.Visibility(sharing_ && !Subscribed(button.id) ? x::Visibility::Visible : x::Visibility::Collapsed);
+            if (button.command == ThemeLibraryCommand::UnbindWorkshop)
+                button.control.Visibility(publishedUrls_.contains(button.id) && !Subscribed(button.id) ? x::Visibility::Visible : x::Visibility::Collapsed);
         }
         for (auto& button : saveButtons_)
         {
@@ -625,18 +636,20 @@ private:
             {ThemeLibraryCommand::ChooseCover, "themeLibrary.chooseCover"}, {ThemeLibraryCommand::ChooseBackground, "themeLibrary.chooseBackground"},
             {ThemeLibraryCommand::Regenerate, "themeLibrary.regenerate"},
             {ThemeLibraryCommand::CopyLocal, "themeLibrary.copyLocal"}, {ThemeLibraryCommand::BindWorkshop, "themeLibrary.bindWorkshop"},
+            {ThemeLibraryCommand::UnbindWorkshop, "themeLibrary.unbindWorkshop"},
             {ThemeLibraryCommand::Remove, "themeLibrary.remove"}})
         {
             c::AppBarButton button; button.Label(L(key));
             (command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::ChooseBackground ||
                 command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::Remove ||
-                command == ThemeLibraryCommand::CopyLocal || command == ThemeLibraryCommand::BindWorkshop ?
+                command == ThemeLibraryCommand::CopyLocal || command == ThemeLibraryCommand::BindWorkshop || command == ThemeLibraryCommand::UnbindWorkshop ?
                 actions.SecondaryCommands() : actions.PrimaryCommands()).Append(button);
             const auto id = theme.id;
             const auto token = button.Click([this, command, id](const auto&, const auto&) {
                 if (command == ThemeLibraryCommand::Remove) ConfirmRemove(id);
                 else if (command == ThemeLibraryCommand::Share) ConfirmShare(id);
                 else if (command == ThemeLibraryCommand::BindWorkshop) ConfirmBind(id);
+                else if (command == ThemeLibraryCommand::UnbindWorkshop) ConfirmUnbind(id);
                 else Run(command, id);
             });
             cardRevoke_.push_back([button, token] { button.Click(token); });
@@ -726,6 +739,21 @@ private:
         constexpr std::string_view prefix = "https://steamcommunity.com/sharedfiles/filedetails/?id=";
         if (item.starts_with(prefix)) item.erase(0, prefix.size());
         Run(ThemeLibraryCommand::BindWorkshop, id, item);
+    }
+    winrt::fire_and_forget ConfirmUnbind(std::string id)
+    {
+        if (closed_ || busy_ || Subscribed(id) || !publishedUrls_.contains(id) || !root_.XamlRoot()) co_return;
+        const auto alive = alive_; const auto generation = generation_;
+        c::ContentDialog dialog; dialog.XamlRoot(root_.XamlRoot()); dialog.Title(winrt::box_value(L("themeLibrary.unbindWorkshop")));
+        dialog.PrimaryButtonText(L("themeLibrary.unbindWorkshop")); dialog.CloseButtonText(L("settings.dialog.cancel"));
+        dialog.DefaultButton(c::ContentDialogButton::Close);
+        c::TextBlock hint; hint.Text(L("themeLibrary.unbindHint")); hint.TextWrapping(x::TextWrapping::Wrap); dialog.Content(hint);
+        busy_ = true; PatchButtons(); c::ContentDialogResult result = c::ContentDialogResult::None;
+        try { result = co_await dialog.ShowAsync(); }
+        catch (const winrt::hresult_error&) { if (alive->load() && generation == generation_) Feedback({false, {}, {}, L("themeLibrary.operationFailed")}); }
+        if (!alive->load()) co_return;
+        busy_ = false; PatchButtons();
+        if (generation == generation_ && result == c::ContentDialogResult::Primary) Run(ThemeLibraryCommand::UnbindWorkshop, id);
     }
     winrt::fire_and_forget ConfirmShare(std::string id)
     {
@@ -820,7 +848,8 @@ private:
         }
         const bool async = command == ThemeLibraryCommand::Preview || command == ThemeLibraryCommand::Share ||
             command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::ChooseBackground ||
-            command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::SyncSubscriptions || command == ThemeLibraryCommand::BindWorkshop;
+            command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::SyncSubscriptions ||
+            command == ThemeLibraryCommand::BindWorkshop || command == ThemeLibraryCommand::UnbindWorkshop;
         if (async)
         {
             if (!async_) return;

@@ -246,6 +246,29 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     };
     check(bridge::ExecuteThemePublishPlan(boundPlan, false, true, boundTransport, {}, result, detail, now) && replacedBothIdentities,
         "updating a different local UUID removes only current and verified previous generated galleries, preserving manual and unrelated images");
+    std::string publicationBefore; atomic_file::ReadAll(bindingFile, publicationBefore);
+    const auto unbindLock = CreateFileW(bindingLock.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(unbindLock != INVALID_HANDLE_VALUE && !bridge::UnbindThemePublication(bindingData, localRoot.id, error) && error == "publicationBusy",
+        "offline unbinding cannot race a binding or publication holding the same journal lock");
+    if (unbindLock != INVALID_HANDLE_VALUE) CloseHandle(unbindLock);
+    atomic_file::ReadAll(bindingFile, afterBinding);
+    check(afterBinding == publicationBefore, "a busy unbind leaves the authored association unchanged");
+    const auto boundPackageBefore = bridge::ThemeFileSha256(localPreparation / L"package.snowtheme");
+    const auto otherUrl = bridge::ThemePublishedUrl(data, root.id);
+    check(bridge::UnbindThemePublication(bindingData, localRoot.id, error) && bridge::ThemePublishedUrl(bindingData, localRoot.id).empty() &&
+        bridge::ThemeFileSha256(localPreparation / L"package.snowtheme") == boundPackageBefore && bridge::ThemePublishedUrl(data, root.id) == otherUrl,
+        "unbinding clears only the local publication link without changing the theme package or another association");
+    const auto uploadsBeforeUnbind = uploaded;
+    check(!bridge::ExecuteThemePublishPlan(boundPlan, false, true, boundTransport, {}, result, detail, now) && detail.code == "confirmationRequired" &&
+        uploaded == uploadsBeforeUnbind && bridge::BuildThemePublishPlan(localPreparation, bindingData, boundPlan, error) && boundPlan.publishedFileId == 0,
+        "an old update confirmation cannot publish after unbinding; the next plan requires creation confirmation");
+    check(bridge::UnbindThemePublication(bindingData, localRoot.id, error) &&
+        workshop::BindResponses(bindingData, localRoot, "123", bridge::WriteJson(bindingStatus), bridge::WriteJson(bindingItem), error) &&
+        bridge::ThemePublishedUrl(bindingData, localRoot.id) == "https://steamcommunity.com/sharedfiles/filedetails/?id=123",
+        "repeated unbinding is harmless and the authored item can be explicitly rebound");
+    check(!bridge::UnbindThemePublication(bindingData, "", error) && error == "invalidSelection" &&
+        !bridge::UnbindThemePublication(bindingData, "builtin/popup/dark", error) && error == "invalidSelection",
+        "empty and builtin identities cannot clear a publication journal");
     entry.object["details"] = details;
     const auto downloaded = directory / L"downloaded"; std::filesystem::create_directory(downloaded);
     check(WritePackage(downloaded / L"package.snowtheme",package,error), "download fixture contains only the published artifact");

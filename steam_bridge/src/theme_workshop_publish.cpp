@@ -217,6 +217,29 @@ bool BindThemePublication(const std::filesystem::path& dataDirectory, std::strin
     return WriteAssociation(path, status.steamId, item.publishedFileId, false,
         JsonString(identity, "themeId").value_or("")) || Fail(error, "writeFailed");
 }
+bool UnbindThemePublication(const std::filesystem::path& dataDirectory, std::string_view rootId, std::string& error)
+{
+    if (rootId.empty() || themes::Builtin(rootId)) return Fail(error, "invalidSelection");
+    if (!ThemeSafePath(dataDirectory, true)) return Fail(error, "unsafePath");
+    const auto hash = ThemeSha256(rootId);
+    if (hash.empty()) return Fail(error, "writeFailed");
+    const auto store = dataDirectory / L"ThemeWorkshop";
+    std::error_code ec;
+    if (!std::filesystem::exists(store, ec)) return !ec || Fail(error, "readFailed");
+    if (!ThemeSafePath(store, true)) return Fail(error, "unsafePath");
+    const auto path = store / (hash + ".json");
+    auto lockPath = path; lockPath += L".lock";
+    if (std::filesystem::exists(lockPath, ec) && !ThemeSafePath(lockPath)) return Fail(error, "unsafePath");
+    if (ec) return Fail(error, "readFailed");
+    HANDLE lock = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (lock == INVALID_HANDLE_VALUE) return Fail(error, "publicationBusy");
+    struct Cleanup { HANDLE h; ~Cleanup() { CloseHandle(h); } } cleanup{lock};
+    if (!std::filesystem::exists(path, ec)) return !ec || Fail(error, "readFailed");
+    if (!ThemeSafePath(path)) return Fail(error, "unsafePath");
+    // A neutral journal keeps the existing private format and permits a fresh
+    // confirmed publication or explicit rebind without touching any remote item.
+    return WriteAssociation(path, "", 0, false) || Fail(error, "writeFailed");
+}
 std::string ThemePublishPlanJson(const ThemePublishPlan& plan)
 {
     auto value = JsonValue::Object(); value.object["ok"] = JsonValue::Boolean(true);

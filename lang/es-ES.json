@@ -2546,5 +2546,7 @@
   "settings.contextMenu.expandQuickActions": "Mostrar las acciones rápidas como opciones del menú",
   "settings.contextMenu.expandQuickActions.description": "Mostrar las acciones rápidas de la parte superior del menú contextual como opciones normales del menú.",
   "settings.contextMenu.hidePageManagement": "Ocultar los menús de gestión de páginas",
-  "settings.contextMenu.hidePageManagement.description": "Ocultar los menús para añadir, renombrar, eliminar, cambiar, ir a una página y fijar páginas."
+  "settings.contextMenu.hidePageManagement.description": "Ocultar los menús para añadir, renombrar, eliminar, cambiar, ir a una página y fijar páginas.",
+  "themeLibrary.unbindWorkshop": "Desvincular del Workshop",
+  "themeLibrary.unbindHint": "Se conservarán el tema local y el artículo del Workshop. Al compartir de nuevo se creará un artículo nuevo; vuelve a vincular el original para actualizarlo."
 }

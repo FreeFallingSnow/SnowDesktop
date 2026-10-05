@@ -28,6 +28,8 @@ std::string ThemePublishedUrl(const std::filesystem::path& dataDirectory, std::s
 // A private local association, verified against current read-only Steam answers.
 bool BindThemePublication(const std::filesystem::path& dataDirectory, std::string_view rootId,
     const SteamStatus&, const PublishedItem&, std::string& error);
+// Private offline operation; clears only this theme's authored publication journal.
+bool UnbindThemePublication(const std::filesystem::path& dataDirectory, std::string_view rootId, std::string& error);
 bool BuildThemePublishPlan(const std::filesystem::path& directory, const std::filesystem::path& dataDirectory,
     ThemePublishPlan&, std::string& error);
 std::string ThemePublishPlanJson(const ThemePublishPlan&);
