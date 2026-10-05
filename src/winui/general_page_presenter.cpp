@@ -109,7 +109,8 @@ void UseInlineDisclosureStyle(const muxc::Expander& expander)
     expander.MinHeight(0.0);
     for (const auto key : {L"ExpanderHeaderBackground", L"ExpanderHeaderBorderBrush",
              L"ExpanderHeaderBorderPointerOverBrush", L"ExpanderHeaderBorderPressedBrush",
-             L"ExpanderHeaderDisabledBorderBrush"})
+             L"ExpanderHeaderDisabledBorderBrush", L"ExpanderChevronPointerOverBackground",
+             L"ExpanderChevronPressedBackground"})
         expander.Resources().Insert(winrt::box_value(key), transparent);
     expander.Resources().Insert(winrt::box_value(L"ExpanderHeaderBorderThickness"),
         winrt::box_value(mux::Thickness{0.0, 0.0, 0.0, 0.0}));
@@ -932,13 +933,9 @@ struct GeneralPagePresenter::Impl
             "settings.dock.floatingShortcut");
 
         autoStartRow.SetText(L("app.settings.auto_start"));
-        advancedFeatureRow.SetText(
-            L("settings.general.advancedFeatures"),
-            L("settings.general.advancedFeatures.description"));
+        advancedFeatureRow.SetText(L("settings.general.advancedFeatures"));
         muxa::AutomationProperties::SetName(advancedFeatureExpander,
             L("settings.general.advancedFeatures"));
-        muxa::AutomationProperties::SetHelpText(advancedFeatureExpander,
-            L("settings.general.advancedFeatures.description"));
         advancedFeatureName.Text(L("settings.general.advancedFeatures.largeIcons"));
         advancedFeatureDescription.Text(L("settings.general.advancedFeatures.largeIconsDescription"));
         RefreshAdvancedFeatureIcon();
