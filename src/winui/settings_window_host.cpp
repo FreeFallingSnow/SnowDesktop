@@ -2674,25 +2674,26 @@ struct SettingsWindowHost::Impl
                 return themes::workshop::CopyLocal(library, request.id, result.savedId, detail);
             auto theme = themes::CaptureTarget(request.target, current->values);
             theme.id = request.id; theme.name = request.name; theme.scopes = request.scopes;
-            themes::Package dependencies;
+            std::array<themes::BindingDraft, 2> bindings;
             if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
             {
-                const auto dependency = [&](themes::Kind kind, const std::string& selected) {
-                    if (!selected.empty()) return selected;
-                    auto child = themes::CaptureTarget(kind == themes::Kind::QuickPanel ? "quickPanel" : "popup", current->values);
-                    child.id = themes::CreateId(); child.name = request.name + (kind == themes::Kind::QuickPanel ? " / " + winrt::to_string(L("themeLibrary.quickPanel")) : " / " + winrt::to_string(L("themeLibrary.popup")));
-                    dependencies.emplace(child.id, child); return child.id;
-                };
-                theme.quickPanel = dependency(themes::Kind::QuickPanel, request.quickPanel);
-                theme.popup = dependency(themes::Kind::Popup, request.popup);
+                bindings[0] = {themes::CaptureGlobalBinding(themes::Kind::QuickPanel, current->values,
+                    themes::Resolve(library.themes, request.quickSourceId)), request.quickPanel, request.quickSourceId};
+                bindings[1] = {themes::CaptureGlobalBinding(themes::Kind::Popup, current->values,
+                    themes::Resolve(library.themes, request.popupSourceId)), request.popup, request.popupSourceId};
+                bindings[0].effective.name = request.name + " / " + winrt::to_string(L("themeLibrary.quickPanel"));
+                bindings[1].effective.name = request.name + " / " + winrt::to_string(L("themeLibrary.popup"));
             }
-            return themes::Save(library, std::move(theme), dependencies,
-                request.command == ThemeLibraryCommand::Update, result.savedId, detail, themes::CreateId, true);
+            return themes::SaveDraft(library, std::move(theme), bindings,
+                request.command == ThemeLibraryCommand::Update, result.savedId, result.updatedIds, detail);
         }, result.library, error);
         if (result.succeeded && request.command == ThemeLibraryCommand::Update)
         {
             auto next = current->values;
-            const auto targets = themes::ApplySavedUpdate(result.library, result.savedId, next, error);
+            std::vector<std::string> targets;
+            for (const auto& changedId : result.updatedIds)
+                for (const auto& target : themes::ApplySavedUpdate(result.library, changedId, next, error))
+                    if (std::find(targets.begin(), targets.end(), target) == targets.end()) targets.push_back(target);
             bool applied = true;
             if (!targets.empty())
             {

@@ -99,6 +99,30 @@ inline std::vector<themes::Theme> ManagementEntries(const themes::Library& libra
     std::stable_sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
     return entries;
 }
+inline std::vector<themes::Theme> CollapseVersionChoices(const themes::Library& library,
+    const std::map<std::string, std::string>& urls, const std::vector<themes::Theme>& choices,
+    std::string_view preferred)
+{
+    const auto subscribed = [&](const std::string& id) {
+        for (const auto& [item, origin] : library.workshop) { (void)item; if (origin.ids.contains(id)) return true; }
+        return false;
+    };
+    std::vector<themes::Theme> result; std::set<std::string> seen;
+    for (const auto& theme : choices)
+    {
+        if (seen.contains(theme.id)) continue;
+        const auto otherId = VersionCounterpart(library, urls, theme);
+        const auto other = std::find_if(choices.begin(), choices.end(), [&](const auto& entry) { return entry.id == otherId; });
+        const themes::Theme* selected = &theme; seen.insert(theme.id);
+        if (other != choices.end() && VersionCounterpart(library, urls, *other) == theme.id)
+        {
+            seen.insert(otherId);
+            if (preferred == otherId || (preferred != theme.id && subscribed(theme.id))) selected = &*other;
+        }
+        result.push_back(*selected);
+    }
+    return result;
+}
 
 struct EditSource
 {

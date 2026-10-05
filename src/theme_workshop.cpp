@@ -72,6 +72,42 @@ std::map<std::string, std::string> RecoverSourceIds(const Library& library,
     for (const auto& [authored, id] : installed) result.emplace(id, authored);
     return result;
 }
+bool RetireInstalled(Library& library, std::set<std::string> ids, std::string& error, const NewId& newId)
+{
+    // Storage identities belong to the subscription, never its editable local
+    // counterpart. Other accounts/items still owning an identity retain it.
+    for (const auto& [item, origin] : library.workshop)
+    { (void)item; for (const auto& id : origin.ids) ids.erase(id); }
+    std::map<std::string, std::string> retainedBindings;
+    std::set<std::string> needed;
+    for (const auto& [id, theme] : library.themes)
+        if (!ids.contains(id) && theme.kind == Kind::Global)
+            for (const auto* binding : {&theme.quickPanel, &theme.popup})
+                if (ids.contains(*binding)) needed.insert(*binding);
+    for (const auto& id : needed)
+    {
+        const auto child = Resolve(library.themes, id);
+        if (!child || child->kind == Kind::Global) return Fail(error, "missingDependency");
+        std::string saved;
+        if (!Save(library, *child, {}, false, saved, error, newId)) return false;
+        retainedBindings.emplace(id, saved);
+    }
+    std::set<std::string> reboundGlobals;
+    for (auto& [id, theme] : library.themes)
+    {
+        if (ids.contains(id) || theme.kind != Kind::Global) continue;
+        for (auto* binding : {&theme.quickPanel, &theme.popup})
+        {
+            if (!ids.contains(*binding)) continue;
+            *binding = retainedBindings.at(*binding); reboundGlobals.insert(id);
+        }
+    }
+    for (auto& [target, reference] : library.references)
+        if (ids.contains(reference.id) || (target == "global" && reboundGlobals.contains(reference.id)))
+            reference.id.clear(); // Complete last-success snapshot stays intact.
+    for (const auto& id : ids) library.themes.erase(id);
+    return true;
+}
 }
 bool BridgeCapabilities(std::string_view configuration, std::string_view hostVersion)
 {
@@ -235,7 +271,16 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
         std::map<std::string, std::string> remap;
         for (const auto& [id, theme] : download.package)
         {
-            (void)theme; if (Builtin(id)) continue;
+            if (Builtin(id)) continue;
+            if (previous != next.workshop.end())
+                for (const auto& [installed, authored] : previous->second.sourceIds)
+                    if (authored == id)
+                    {
+                        const auto old = Find(next.themes, installed);
+                        if (old && old->kind == theme.kind) remap.emplace(id, installed);
+                        break;
+                    }
+            if (remap.contains(id)) continue;
             const auto fresh = newId();
             if (fresh.empty() || next.themes.contains(fresh) || download.package.contains(fresh) ||
                 std::any_of(remap.begin(), remap.end(), [&](const auto& pair) { return pair.second == fresh; })) return Fail(error, "idConflict");
@@ -249,23 +294,34 @@ bool Reconcile(Library& library, const SubscriptionSnapshot& snapshot, std::stri
             if (remap.contains(theme.popup)) theme.popup = remap.at(theme.popup);
             isolated.emplace(theme.id, std::move(theme));
         }
-        std::map<std::string, std::string> mapping;
-        if (!Import(next, isolated, mapping, error, newId)) return false;
+        std::set<std::string> retired;
+        if (previous != next.workshop.end()) retired = previous->second.ids;
         auto& origin = next.workshop[download.item]; origin.owner = download.owner; origin.sha256 = download.sha256;
         origin.accounts.insert(snapshot.account); origin.ids.clear(); origin.sourceIds.clear();
-        for (const auto& [from, to] : mapping) { (void)from; if (!Builtin(to)) origin.ids.insert(to); }
-        for (const auto& [authored, isolatedId] : remap) origin.sourceIds.emplace(mapping.at(isolatedId), authored);
-        // Changed content receives new identities. Already bound/active old
-        // identities remain local with their immutable last-success snapshots.
+        for (const auto& [authored, installed] : remap)
+        { origin.ids.insert(installed); origin.sourceIds.emplace(installed, authored); retired.erase(installed); }
+        for (auto& [id, theme] : isolated) next.themes[id] = std::move(theme);
+        if (!RetireInstalled(next, std::move(retired), error, newId)) return false;
+        // Stable authored identities retain their isolated installed IDs. Active
+        // references still use their immutable snapshots until explicitly applied.
+        for (auto& [target, reference] : next.references)
+        {
+            (void)target;
+            if (const auto current = Find(next.themes, reference.id); current && current->kind == Kind::Global &&
+                (current->scopes & reference.scope) != reference.scope) reference.id.clear();
+        }
     }
+    std::set<std::string> removed;
     for (auto it = next.workshop.begin(); it != next.workshop.end();)
     {
-        if (snapshot.deleted.contains(it->first)) { it = next.workshop.erase(it); continue; }
         if (known && !snapshot.subscribed.contains(it->first)) it->second.accounts.erase(snapshot.account);
-        if (it->second.accounts.empty()) it = next.workshop.erase(it); else ++it;
-        // Removal converts provenance to local. It never removes theme values,
-        // saved global bindings, active references, or their complete snapshots.
+        if (snapshot.deleted.contains(it->first) || it->second.accounts.empty())
+        {
+            removed.insert(it->second.ids.begin(), it->second.ids.end()); it = next.workshop.erase(it);
+        }
+        else ++it;
     }
+    if (!RetireInstalled(next, std::move(removed), error, newId)) return false;
     if (!Validate(next.themes, error)) return false;
     library = std::move(next); return true;
 }
@@ -279,14 +335,19 @@ bool Sync(const std::filesystem::path& bridge, const std::filesystem::path& libr
     if (cancel && cancel->load()) return Fail(error, "cancelled");
     return Transact(library, [&](Library& into, std::string& detail) {
         if (cancel && cancel->load()) return Fail(detail, "cancelled");
-        for (const auto& download : snapshot.downloads)
+        for (auto& [item, origin] : into.workshop)
         {
-            const auto origin = into.workshop.find(download.item);
-            if (origin == into.workshop.end()) continue;
-            for (const auto& id : origin->second.ids)
+            std::set<std::string> local;
+            for (const auto& id : origin.ids)
                 if (steam_bridge::ThemePublishedUrl(library.parent_path(), id) ==
-                    "https://steamcommunity.com/sharedfiles/filedetails/?id=" + download.item)
-                { origin->second.sha256 = std::string(64, '0'); break; }
+                    "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item)
+                {
+                    Package closure;
+                    if (!Export(into, id, closure, detail)) return false;
+                    for (const auto& [key, theme] : closure) { (void)theme; local.insert(key); }
+                }
+            if (!local.empty()) origin.sha256 = std::string(64, '0');
+            for (const auto& id : local) { origin.ids.erase(id); origin.sourceIds.erase(id); }
         }
         return Reconcile(into, snapshot, detail);
     }, output, error);

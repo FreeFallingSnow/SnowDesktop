@@ -163,8 +163,9 @@ same item. Copy-to-local assigns new IDs to the whole dependency closure; it
 preserves subscription provenance and settings until explicit application.
 Subscribed selections do not offer direct editing or sharing. An editable local
 copy can update its own ID. Paired local and subscribed cards provide a version
-switch when the item, kind and scope identify one unambiguous counterpart. Selector
-labels distinguish their sources, and follow options show the child's concrete name
+switch when the item and kind identify one unambiguous counterpart. Ordinary
+selectors show one logical entry with only its name, retaining the currently selected
+version; version switching stays in the management/editor card. Follow options show the child's concrete name
 with the localized global-binding suffix.
 
 The production upload preflight selects `.snowtheme` with the 4 MiB theme format
@@ -182,12 +183,25 @@ the bridge nor the host accepts a Workshop agreement on the user's behalf.
 Subscriptions are queried through the capable bridge. Only a complete ready
 folder containing exactly `package.snowtheme`, matching metadata/hash and the
 full dependency closure, can install. A transaction imports without applying.
-Changed versions get new identities, leaving active references and saved bindings
-on their previous immutable contents. Editing a subscribed theme saves a local
-copy. Confirmed unsubscription/deletion removes provenance, preserving theme
-values. Account-specific subscription history prevents another account or an
+Refresh retains an installed ID for the same authored UUID and kind, while active
+references keep their previous immutable snapshots. Retired identities are removed.
+Editing a subscribed theme requires an explicit local copy. Confirmed
+unsubscription/deletion removes the installed dependency closure and provenance,
+preserving independently existing local projects and explicit local copies. Active
+references become custom with their last successful snapshots intact. If an existing
+local global theme explicitly binds a removed subscribed child, only that needed
+child is copied locally with a fresh ID and the local parent is rewired atomically.
+Account-specific subscription history prevents another account or an
 incomplete query from deleting managed content. Widget source routing ignores
 standalone theme artifacts.
+
+Saving back an editable global draft updates changed editable bound children by
+their retained source IDs in the same library transaction as the parent. Save-as
+clones changed children with new IDs; explicitly selected or unchanged bindings
+are reused. Missing/deleted sources and changed subscribed sources block the
+whole update rather than silently creating duplicates or overwriting subscriptions.
+Cancellation, validation and replacement failures leave the original library and
+the independent editing draft intact.
 
 Personalization persists enough digits to round-trip float appearance fields.
 Binding reconciliation and selector refresh share the same comparison: exact

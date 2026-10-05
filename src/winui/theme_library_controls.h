@@ -384,7 +384,6 @@ private:
         if (!themes::Builtin(theme.id))
         {
             std::wstring label(winrt::to_hstring(theme.name).c_str());
-            if (!transfer_) label += L" | " + L(Subscribed(theme.id) ? "themeLibrary.subscribedVersion" : "themeLibrary.localVersion");
             if (transfer_) label += L" · " + (theme.kind == themes::Kind::Global ? ScopeLabel(theme.scopes) :
                 L(theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup"));
             return label;
@@ -433,6 +432,7 @@ private:
             std::erase_if(choices_, [this](auto const& theme) {
                 return themes::Builtin(theme.id) || (target_ == "global" && theme.kind == themes::Kind::Global && !themes::FullScope(theme.scopes));
             });
+            choices_ = CollapseVersionChoices(library_, publishedUrls_, choices_, preferred);
         }
         syncing_ = true;
         if (transfer_) ClearEntries();
@@ -448,8 +448,11 @@ private:
         if (transfer_) empty_.Visibility(choices_.empty() ? x::Visibility::Visible : x::Visibility::Collapsed);
         if (Global() && !transfer_)
         {
-            quickChoices_ = themes::Choices(library_, themes::Kind::QuickPanel);
-            popupChoices_ = themes::Choices(library_, themes::Kind::Popup);
+            const auto quickSource = BoundSource(themes::Kind::QuickPanel), popupSource = BoundSource(themes::Kind::Popup);
+            quickChoices_ = CollapseVersionChoices(library_, publishedUrls_, themes::Choices(library_, themes::Kind::QuickPanel),
+                quick.empty() && quickSource.theme ? quickSource.theme->id : quick);
+            popupChoices_ = CollapseVersionChoices(library_, publishedUrls_, themes::Choices(library_, themes::Kind::Popup),
+                popup.empty() && popupSource.theme ? popupSource.theme->id : popup);
             const auto fill = [this](auto combo, auto const& choices, const char* key, const auto& binding) {
                 combo.Items().Clear(); combo.Items().Append(winrt::box_value(L(key)));
                 for (auto const& theme : choices) combo.Items().Append(winrt::box_value(Label(theme)));
@@ -807,7 +810,12 @@ private:
                 if (themes::FullScope(request.scopes) && (quick_.SelectedIndex() < 0 || popup_.SelectedIndex() < 0))
                 { Feedback({false, {}, {}, L("themeLibrary.bindingRequired")}, true); return; }
                 if (themes::FullScope(request.scopes))
-                { request.quickPanel = Binding(quick_, quickChoices_); request.popup = Binding(popup_, popupChoices_); }
+                {
+                    request.quickPanel = Binding(quick_, quickChoices_); request.popup = Binding(popup_, popupChoices_);
+                    const auto quickSource = BoundSource(themes::Kind::QuickPanel), popupSource = BoundSource(themes::Kind::Popup);
+                    if (quickSource.theme) request.quickSourceId = quickSource.theme->id;
+                    if (popupSource.theme) request.popupSourceId = popupSource.theme->id;
+                }
             }
         }
         const bool async = command == ThemeLibraryCommand::Preview || command == ThemeLibraryCommand::Share ||

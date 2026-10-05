@@ -308,7 +308,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     check(DecodeLibrary(EncodeLibrary(sameLocal,error),groupedReload,error) &&
         groupedReload.workshop.at("123").sourceIds == sameLocal.workshop.at("123").sourceIds,
         "authored UUID mapping round-trips through the production local library codec");
-    bridge::JsonValue legacyOrigins; check(bridge::ParseJson(EncodeLibrary(sameLocal,error),legacyOrigins), "origin fixture is valid JSON");
+    bridge::JsonValue legacyOrigins; check(bridge::ParseJson(EncodeLibrary(sameLocal,error),legacyOrigins,error), "origin fixture is valid JSON");
     legacyOrigins.object["workshop"].object["123"].object.erase("sourceIds");
     Library legacyLibrary;
     check(DecodeLibrary(bridge::WriteJson(legacyOrigins),legacyLibrary,error) && legacyLibrary.workshop.at("123").sourceIds.empty(),
@@ -344,7 +344,10 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     check(Save(library,edited,{},true,local,error,[]{return "theme/local-copy";}) && local!=installed && library.themes.at(installed).appearance.widgetAlpha!=.3f, "editing subscribed theme saves a local copy");
     auto update=snapshot; update.downloads.front().package.at(root.id).scopes=Dock;
     update.downloads.front().sha256=bridge::ThemeSha256(EncodePackage(update.downloads.front().package,error));
-    check(workshop::Reconcile(library,update,error) && EncodePackage(library.references.at("global").snapshot,error)==originalSnapshot && library.themes.contains(installed), "scope-changing update preserves applied snapshot and old bindings");
+    check(workshop::Reconcile(library,update,error) && EncodePackage(library.references.at("global").snapshot,error)==originalSnapshot &&
+        library.themes.contains(installed) && library.themes.at(installed).scopes == Dock && library.references.at("global").id.empty() &&
+        library.workshop.at("123").ids.size() == 1,
+        "scope-changing update retains one installed identity and detaches excluded active references with their original snapshot intact");
     const auto before=EncodeLibrary(library,error); auto failed=update; failed.authoritative=false; failed.subscribed.clear();
     check(!workshop::Reconcile(library,failed,error) && EncodeLibrary(library,error)==before, "query failure cannot remove installed contents");
     auto invalid=update; invalid.downloads.front().package.at(root.id).quickPanel="theme/missing";
@@ -356,13 +359,46 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     check(!workshop::Reconcile(conflictLibrary,snapshot,error,[&]{return root.id;}) && EncodeLibrary(conflictLibrary,error)==conflictBefore,
         "unresolvable identity conflict rolls back package and provenance together");
     auto removed=update; removed.subscribed.clear(); removed.downloads.clear();
-    check(workshop::Reconcile(library,removed,error) && library.workshop.empty() && library.themes.contains(installed) &&
-        EncodePackage(library.references.at("global").snapshot,error)==originalSnapshot, "unsubscribe converts managed themes to local without losing references");
+    check(workshop::Reconcile(library,removed,error) && library.workshop.empty() && !library.themes.contains(installed) &&
+        library.themes.size() == 1 && library.themes.contains(local) && library.references.at("global").id.empty() &&
+        EncodePackage(library.references.at("global").snapshot,error)==originalSnapshot,
+        "unsubscribe removes installed items while preserving the explicit local copy and complete active appearance snapshot");
     Library reload;
     check(DecodeLibrary(EncodeLibrary(library,error),reload,error), "new provenance codec round-trips old and local snapshots");
-    auto deleted = snapshot; deleted.deleted = {"123"};
-    check(workshop::Reconcile(library,deleted,error) && library.workshop.empty() && library.themes.contains(installed),
-        "author deletion retains local values and reference snapshots");
+    auto deleted = snapshot; deleted.deleted = {"123"}; deleted.downloads.clear();
+    auto deletedLibrary = sameLocal;
+    check(workshop::Reconcile(deletedLibrary,deleted,error) && deletedLibrary.workshop.empty() &&
+        EncodePackage(deletedLibrary.themes,error) == EncodePackage(package,error),
+        "author deletion removes the subscribed version while preserving the preinstallation local project");
+    auto preexisting = graphLibrary;
+    auto graphRemoved = graphSnapshot; graphRemoved.subscribed.clear(); graphRemoved.downloads.clear();
+    check(workshop::Reconcile(preexisting,graphRemoved,error) && preexisting.workshop.empty() &&
+        EncodePackage(preexisting.themes,error) == EncodePackage(authoredGraph,error),
+        "unsubscribe removes all three isolated nodes and retains the exact preinstallation local dependency graph");
+    auto multiAccount = graphLibrary; auto secondAccount = graphSnapshot; secondAccount.account = "654";
+    check(workshop::Reconcile(multiAccount,secondAccount,error) && workshop::Reconcile(multiAccount,graphRemoved,error) &&
+        multiAccount.workshop.at("123").accounts == std::set<std::string>{"654"} && multiAccount.themes.size() == 6,
+        "one account unsubscribing cannot delete a version still subscribed by another known account");
+    auto secondRemoved = graphRemoved; secondRemoved.account = "654";
+    check(workshop::Reconcile(multiAccount,secondRemoved,error) && multiAccount.workshop.empty() && multiAccount.themes.size() == 3,
+        "the final account unsubscribing removes the complete installed graph without leaving local residue");
+    auto boundLocal = graphLibrary;
+    auto localParent = graphRoot; localParent.id = "theme/local-dependent";
+    for (const auto& [id, authored] : graphIds)
+    { if (authored == customQuick.id) localParent.quickPanel = id; if (authored == customPopup.id) localParent.popup = id; }
+    boundLocal.themes.emplace(localParent.id,localParent);
+    check(Select(boundLocal,"global",localParent.id,Kind::Global,All,error),"local global can explicitly bind installed children");
+    const auto boundSnapshot = EncodePackage(boundLocal.references.at("global").snapshot,error);
+    const auto beforeRetirement = EncodeLibrary(boundLocal,error);
+    check(!workshop::Reconcile(boundLocal,graphRemoved,error,[&]{return graphRoot.id;}) &&
+        EncodeLibrary(boundLocal,error) == beforeRetirement,
+        "failure to preserve a local parent's needed child rolls back removal and provenance atomically");
+    check(workshop::Reconcile(boundLocal,graphRemoved,error) && boundLocal.workshop.empty() &&
+        boundLocal.themes.at(localParent.id).quickPanel != localParent.quickPanel &&
+        boundLocal.themes.at(boundLocal.themes.at(localParent.id).quickPanel).appearance == customQuick.appearance &&
+        boundLocal.references.at("global").id.empty() && EncodePackage(boundLocal.references.at("global").snapshot,error) == boundSnapshot &&
+        Validate(boundLocal.themes,error) && std::none_of(graphIds.begin(),graphIds.end(),[&](const auto& entry){return boundLocal.themes.contains(entry.first);}),
+        "unsubscribe deletes installed IDs, retains only dependencies needed by an existing local parent and preserves its active snapshot");
     bridge::ThemePublishPlan rejected;
     check(!workshop::Prepare(package,root.id,All,directory / L"bad-render",data,{},
         [](const auto&,auto,unsigned,const auto& out,auto& cover,auto&,auto*) {

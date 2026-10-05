@@ -495,6 +495,60 @@ int RunThemeLibraryTests()
             "multiple editable copies of one item require explicit selection rather than guessing a version");
     }
     {
+        Library source; source.themes = children; source.themes.emplace(global.id,global);
+        std::array<BindingDraft,2> drafts{{{quick,{},quick.id},{popup,{},popup.id}}};
+        drafts[0].effective.appearance.widgetAlpha = .27f;
+        drafts[0].effective.colors["resultBorder"] = "#FF000080";
+        drafts[1].effective.appearance.widgetAlpha = .73f;
+        auto parent = global; parent.name = "Edited parent";
+        const auto original = EncodeLibrary(source,error);
+        std::vector<std::string> updated;
+        SettingsValues independent;
+        independent.personalization = global.appearance;
+        independent.general.globalQuickNavigationAppearance = {4,true,quick.appearance};
+        independent.general.globalCollectionPopupAppearance = {4,true,popup.appearance};
+        independent.general.quickNavigationAppearance = {4,true,MakeQuickNavigationAppearancePreset(kAppearancePresetDark)};
+        independent.general.collectionPopupAppearance = {4,true,MakeCollectionPopupAppearancePreset(kAppearancePresetLight)};
+        independent.navigation.layout.fontSize = 27; independent.navigation.colors["searchText"] = "#ABCDEF";
+        const auto boundQuickDraft = CaptureGlobalBinding(Kind::QuickPanel,independent,quick);
+        const auto boundPopupDraft = CaptureGlobalBinding(Kind::Popup,independent,popup);
+        check(boundQuickDraft.appearance == quick.appearance && boundQuickDraft.layout == quick.layout && boundQuickDraft.colors == quick.colors &&
+            boundPopupDraft.appearance == popup.appearance && independent.general.quickNavigationAppearance.mode == 4 &&
+            independent.general.collectionPopupAppearance.mode == 4 && independent.navigation.layout.fontSize == 27,
+            "global save captures its own bound children without copying independently selected surface material or navigation into them");
+        check(SaveDraft(source,parent,drafts,true,savedId,updated,error) && savedId == global.id && source.themes.size() == 3 &&
+            source.themes.at(global.id).quickPanel == quick.id && source.themes.at(global.id).popup == popup.id &&
+            source.themes.at(quick.id).appearance.widgetAlpha == .27f && source.themes.at(popup.id).appearance.widgetAlpha == .73f &&
+            source.themes.at(quick.id).colors.at("resultBorder") == "#FF000080" && source.themes.at(quick.id).name == quick.name &&
+            updated == std::vector<std::string>{quick.id,popup.id,global.id},
+            "saving an edited global updates both bound local child IDs and values atomically without creating duplicate cards");
+        Library newSource; newSource.themes = children; newSource.themes.emplace(global.id,global);
+        int generated = 0;
+        check(SaveDraft(newSource,parent,drafts,false,savedId,updated,error,[&]{return "theme/draft-new-" + std::to_string(++generated);}) &&
+            savedId == "theme/draft-new-3" && newSource.themes.at(savedId).quickPanel == "theme/draft-new-1" &&
+            newSource.themes.at(savedId).popup == "theme/draft-new-2" &&
+            newSource.themes.at(quick.id).appearance == quick.appearance && newSource.themes.at(popup.id).appearance == popup.appearance && updated.empty(),
+            "new global draft clones edited children with new IDs while preserving every original source");
+        Library failedSource; check(DecodeLibrary(original,failedSource,error),"original draft fixture reloads");
+        const auto before = EncodeLibrary(failedSource,error);
+        auto invalidParent = parent; invalidParent.name.clear();
+        check(!SaveDraft(failedSource,invalidParent,drafts,true,savedId,updated,error) && EncodeLibrary(failedSource,error) == before,
+            "parent validation failure cannot prematurely write either edited child");
+        auto missing = drafts; missing[1].sourceId = "theme/deleted-source";
+        check(!SaveDraft(failedSource,parent,missing,true,savedId,updated,error) && error == "themeNotFound" &&
+            EncodeLibrary(failedSource,error) == before && drafts[1].effective.appearance.widgetAlpha == .73f,
+            "a deleted source stops the whole update and retains the independent editing draft");
+        failedSource.workshop["321"].ids.insert(popup.id);
+        const auto subscribedBefore = EncodeLibrary(failedSource,error);
+        check(!SaveDraft(failedSource,parent,drafts,true,savedId,updated,error) && error == "copyRequired" &&
+            EncodeLibrary(failedSource,error) == subscribedBefore,
+            "global save cannot implicitly overwrite or copy an edited subscribed child");
+        auto selected = drafts; selected[1].selectedId = popup.id;
+        check(SaveDraft(failedSource,parent,selected,true,savedId,updated,error) &&
+            failedSource.themes.at(popup.id).appearance == popup.appearance && failedSource.themes.at(global.id).popup == popup.id,
+            "an explicitly selected subscribed binding is reused unchanged instead of treating unrelated draft parameters as an edit");
+    }
+    {
         using namespace winui::theme_controls;
         Library paired; Package authored = children; authored.emplace(global.id,global);
         paired.themes = authored;
@@ -516,6 +570,14 @@ int RunThemeLibraryTests()
         const auto activePopup = ManagementEntries(paired,{}, {},FilterTab::Popup);
         check(activePopup.size() == 1 && activePopup.front().id == remoteIds.at(popup.id),
             "merged card initially shows the currently applied subscribed version");
+        const auto popupChoices = Choices(paired,Kind::Popup);
+        const auto regularChoices = CollapseVersionChoices(paired,{},popupChoices,{});
+        const auto selectedChoices = CollapseVersionChoices(paired,{},popupChoices,remoteIds.at(popup.id));
+        check(regularChoices.size() + 1 == popupChoices.size() && selectedChoices.size() == regularChoices.size() &&
+            std::any_of(regularChoices.begin(),regularChoices.end(),[&](const auto& entry){return entry.id == popup.id;}) &&
+            std::none_of(regularChoices.begin(),regularChoices.end(),[&](const auto& entry){return entry.id == remoteIds.at(popup.id);}) &&
+            std::any_of(selectedChoices.begin(),selectedChoices.end(),[&](const auto& entry){return entry.id == remoteIds.at(popup.id);}),
+            "ordinary choices contain one logical UUID entry and retain the currently selected version without a second indistinguishable name");
         const auto localPopup = ManagementEntries(paired,{}, {{popup.id,popup.id}},FilterTab::Popup);
         check(localPopup.size() == 1 && localPopup.front().id == popup.id && paired.references.at("popup").id == remoteIds.at(popup.id),
             "viewing a preferred local card never rewrites the active library reference");
@@ -525,6 +587,10 @@ int RunThemeLibraryTests()
         check(globalCard.size() == 1 && globalCard.front().id == updatedRemote.id &&
             ManagementEntries(paired,{}, {},FilterTab::StatusBar).size() == 1,
             "scope changes do not split the UUID pair, and base-tag filtering finds either version's applicability");
+        const auto statusChoices = CollapseVersionChoices(paired,{},Choices(paired,Kind::Global,StatusBar),updatedRemote.id);
+        check(std::any_of(statusChoices.begin(),statusChoices.end(),[&](const auto& entry){return entry.id == global.id;}) &&
+            std::none_of(statusChoices.begin(),statusChoices.end(),[&](const auto& entry){return entry.id == updatedRemote.id;}),
+            "a preferred version outside the target scope cannot hide the applicable local choice");
         auto unrelated = popup; unrelated.id = "theme/same-name-unrelated";
         paired.themes.emplace(unrelated.id,unrelated);
         check(ManagementEntries(paired,{}, {},FilterTab::Popup).size() == 2,
@@ -566,6 +632,31 @@ int RunThemeLibraryTests()
     check(lock != INVALID_HANDLE_VALUE && !Transact(libraryPath, [](auto&, auto&) { return true; }, persisted, error) &&
         error == "libraryBusy" && bytes(libraryPath) == original, "concurrent library writers fail without data loss");
     if (lock != INVALID_HANDLE_VALUE) CloseHandle(lock);
+    {
+        const auto draftPath = root / "draft.json";
+        Library draftLibrary; draftLibrary.themes = children; draftLibrary.themes.emplace(global.id,global);
+        check(Transact(draftPath,[&](auto& value,auto&){value = draftLibrary; return true;},draftLibrary,error),
+            "global edit transaction fixture persists the original three identities");
+        const auto draftOriginalBytes = bytes(draftPath);
+        const auto draftOriginalLibrary = EncodeLibrary(draftLibrary,error);
+        std::array<BindingDraft,2> draftBindings{{{quick,{},quick.id},{popup,{},popup.id}}};
+        draftBindings[0].effective.appearance.widgetAlpha = .27f;
+        std::vector<std::string> draftUpdatedIds; std::string draftSavedId;
+        check(!Transact(draftPath,[&](auto& value,auto& detail){
+            if (!SaveDraft(value,global,draftBindings,true,draftSavedId,draftUpdatedIds,detail)) return false;
+            detail = "cancelled"; return false;
+        },draftLibrary,error) && error == "cancelled" && bytes(draftPath) == draftOriginalBytes &&
+            EncodeLibrary(draftLibrary,error) == draftOriginalLibrary && draftBindings[0].effective.appearance.widgetAlpha == .27f,
+            "cancelled global save discards all staged child updates and preserves both persisted sources and the edit draft");
+        const HANDLE denyReplace = CreateFileW(draftPath.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+        bool stagedDraft = false;
+        check(denyReplace != INVALID_HANDLE_VALUE && !Transact(draftPath,[&](auto& value,auto& detail){
+            stagedDraft = SaveDraft(value,global,draftBindings,true,draftSavedId,draftUpdatedIds,detail); return stagedDraft;
+        },draftLibrary,error) && stagedDraft && error == "writeFailed" && bytes(draftPath) == draftOriginalBytes &&
+            EncodeLibrary(draftLibrary,error) == draftOriginalLibrary && draftBindings[0].effective.appearance.widgetAlpha == .27f,
+            "real atomic replacement failure after staging child updates preserves original IDs, file bytes and editable parameters");
+        if (denyReplace != INVALID_HANDLE_VALUE) CloseHandle(denyReplace);
+    }
     const auto packagePath = root / "export.snowtheme";
     check(WritePackage(packagePath, package, error) && ReadPackage(packagePath, decoded, error), "production file export and import parser round-trip");
     auto renamedPath = packagePath; renamedPath.replace_extension(L".json");

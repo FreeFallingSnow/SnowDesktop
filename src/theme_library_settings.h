@@ -111,6 +111,20 @@ inline Theme CaptureTarget(std::string_view target, const SettingsValues& values
     theme.scopes = TargetScope(target);
     return theme;
 }
+inline Theme CaptureGlobalBinding(Kind kind, const SettingsValues& values, const std::optional<Theme>& source)
+{
+    const bool quick = kind == Kind::QuickPanel;
+    SurfaceTheme follow; follow.mode = -1;
+    const auto appearance = ResolveSurfaceTheme(follow, values.personalization,
+        quick ? values.general.quickNavTheme : values.general.collectionPopupTheme, quick,
+        quick ? &values.general.globalQuickNavigationAppearance : &values.general.globalCollectionPopupAppearance);
+    auto theme = Capture(kind, appearance, values.navigation);
+    // An independent quick panel owns the current navigation values. Saving its
+    // global parent must keep the bound child's layout/colors instead.
+    if (quick && values.general.quickNavigationAppearance.mode != -1 && source && source->kind == kind)
+    { theme.layout = source->layout; theme.colors = source->colors; }
+    return theme;
+}
 inline bool PrepareGlobalCustomEdit(GeneralSettings& settings,
     const PersonalizationSettings& previous, const PersonalizationSettings& edited)
 {
@@ -180,6 +194,57 @@ inline bool AppliedAppearanceMatches(const PersonalizationSettings& saved,
     });
     VisitPanelAppearanceFlags([&](auto, auto field) { matches = matches && saved.*field == current.*field; });
     return matches;
+}
+// Private settings draft transaction. Existing child identities are updated only
+// when explicitly saving back to an editable global source.
+struct BindingDraft
+{
+    Theme effective;
+    std::string selectedId, sourceId;
+};
+inline bool SaveDraft(Library& library, Theme theme, const std::array<BindingDraft, 2>& bindings,
+    bool update, std::string& savedId, std::vector<std::string>& updatedIds, std::string& error,
+    const NewId& newId = CreateId)
+{
+    const auto subscribed = [&](const std::string& id) {
+        for (const auto& [item, origin] : library.workshop) { (void)item; if (origin.ids.contains(id)) return true; }
+        return false;
+    };
+    if (update && subscribed(theme.id)) { error = "copyRequired"; return false; }
+    Library next = library; std::vector<std::string> changed;
+    if (theme.kind == Kind::Global && FullScope(theme.scopes))
+    {
+        for (std::size_t i = 0; i < bindings.size(); ++i)
+        {
+            const auto kind = i == 0 ? Kind::QuickPanel : Kind::Popup;
+            const auto& draft = bindings[i]; auto& binding = i == 0 ? theme.quickPanel : theme.popup;
+            if (!draft.selectedId.empty())
+            {
+                const auto selected = Resolve(next.themes, draft.selectedId);
+                if (!selected || selected->kind != kind) { error = "missingDependency"; return false; }
+                binding = selected->id; continue;
+            }
+            if (draft.effective.kind != kind) { error = "invalidPackage"; return false; }
+            const auto source = Resolve(next.themes, draft.sourceId);
+            if (source && source->kind != kind) { error = "invalidSelection"; return false; }
+            const bool same = source && AppliedAppearanceMatches(source->appearance, draft.effective.appearance) &&
+                (kind != Kind::QuickPanel || (source->layout == draft.effective.layout && source->colors == draft.effective.colors));
+            if (same) { binding = source->id; continue; }
+            if (source && subscribed(source->id)) { error = "copyRequired"; return false; }
+            if (update && !draft.sourceId.empty() && !source) { error = "themeNotFound"; return false; }
+            auto child = draft.effective;
+            const bool updateChild = update && source && !Builtin(source->id);
+            child.id = updateChild ? source->id : std::string{};
+            if (updateChild) child.name = source->name;
+            std::string childId;
+            if (!Save(next, std::move(child), {}, updateChild, childId, error, newId, true)) return false;
+            binding = childId; if (updateChild) changed.push_back(childId);
+        }
+    }
+    std::string rootId;
+    if (!Save(next, std::move(theme), {}, update, rootId, error, newId, true)) return false;
+    if (update) changed.push_back(rootId);
+    library = std::move(next); savedId = std::move(rootId); updatedIds = std::move(changed); return true;
 }
 inline void ReconcileReferences(Library& library, const SettingsValues& values)
 {

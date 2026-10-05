@@ -282,6 +282,7 @@ std::string ErrorLocalizationKey(std::string_view error)
         {"themeInUse", "themeLibrary.error.themeInUse"},
         {"readFailed", "themeLibrary.error.readFailed"},
         {"writeFailed", "themeLibrary.error.writeFailed"},
+        {"copyRequired", "themeLibrary.copyRequired"},
         {"libraryBusy", "themeLibrary.error.libraryBusy"},
         {"unsupportedExtension", "themeLibrary.error.unsupportedExtension"}};
     for (const auto& [reason, key] : keys) if (reason == error) return std::string(key);
