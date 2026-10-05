@@ -35,6 +35,7 @@ struct Json {
     static Json object(std::initializer_list<std::pair<const std::string, Json>> value);
 };
 void require(bool condition, const std::string& message);
+bool equivalent_results(const Json& first, const Json& second);
 std::string read(const fs::path& path);
 void write(const fs::path& path, const std::string& text, bool bom = false);
 void atomic(const fs::path& path, const std::string& text);

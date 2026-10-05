@@ -4,6 +4,7 @@
 #include <atomic>
 #include <fstream>
 #include <iostream>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -29,6 +30,17 @@ std::string escaped(const std::string& value) {
     return out+'"';
 }
 struct CompareEnv { bool operator()(const std::wstring& a,const std::wstring& b) const {return _wcsicmp(a.c_str(),b.c_str())<0;} };
+Json canonical_dates(Json value){
+    static const std::regex timestamp(R"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,7}Z)");
+    if(value.kind==Json::Kind::String&&std::regex_match(value.text,timestamp)){
+        // PowerShell 7 deserializes ISO dates and omits insignificant zero ticks.
+        auto suffix=value.text.size()-1;while(suffix>0&&value.text[suffix-1]=='0')value.text.erase(--suffix,1);
+        if(suffix>0&&value.text[suffix-1]=='.')value.text.erase(suffix-1,1);
+    }
+    for(auto& item:value.items)item=canonical_dates(std::move(item));
+    for(auto& [key,item]:value.fields){(void)key;item=canonical_dates(std::move(item));}
+    return value;
+}
 std::vector<wchar_t> child_environment(const Env& patch) {
     std::map<std::wstring,std::wstring,CompareEnv> values;
     wchar_t* block=GetEnvironmentStringsW();
@@ -87,6 +99,7 @@ Json Json::parse(const std::string& value) {JsonValue parsed;std::string error;s
 Json Json::array(std::initializer_list<Json> value) {Json out;out.kind=Kind::Array;out.items=value;return out;}
 Json Json::object(std::initializer_list<std::pair<const std::string,Json>> value) {Json out;out.kind=Kind::Object;out.fields=value;return out;}
 void require(bool condition,const std::string& message) {if(!condition)throw std::runtime_error(message);}
+bool equivalent_results(const Json& first,const Json& second){return canonical_dates(first).dump()==canonical_dates(second).dump();}
 std::string read(const fs::path& path) {
     HANDLE handle=INVALID_HANDLE_VALUE;DWORD error=0;
     // File.Replace can briefly rename a concurrently observed metadata file.
