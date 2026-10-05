@@ -69,7 +69,7 @@ namespace SnowDesktop.Build
             if (batch == null || batch.Length != 32 || !System.Text.RegularExpressions.Regex.IsMatch(batch, "^[a-f0-9]{32}$"))
                 throw new ArgumentException("Invalid batch identity");
             string command = (build ? "call scripts\\build.bat && " : "") +
-                PowerShell() + " -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
+                PowerShell() + " -NoProfile -File scripts\\build_batch_tests.ps1 -Batch " + batch;
             return RunCommand(directory, logPath, command);
         }
 
@@ -85,7 +85,7 @@ namespace SnowDesktop.Build
             if (batch == null || !System.Text.RegularExpressions.Regex.IsMatch(batch, "^[a-f0-9]{32}$"))
                 throw new ArgumentException("Invalid batch identity");
             string command = (build ? "call scripts\\build.bat" + (closeApplication ? " --close-application" : reloadShell ? " --reload-shell" : "") + " && " : "") +
-                PowerShell() + " -NoProfile -ExecutionPolicy Bypass -File scripts\\build_batch_tests.ps1 -Batch " + batch;
+                PowerShell() + " -NoProfile -File scripts\\build_batch_tests.ps1 -Batch " + batch;
             return RunCommand(directory, logPath, command);
         }
 
@@ -93,7 +93,15 @@ namespace SnowDesktop.Build
         { return RunCommand(directory, logPath, pipeline); }
 
         static string PowerShell()
-        { return "\"" + Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe") + "\""; }
+        {
+            string selected = Environment.GetEnvironmentVariable("SNOWDESKTOP_ENTRY_POWERSHELL");
+            if (String.IsNullOrEmpty(selected) || !Path.IsPathRooted(selected) || !File.Exists(selected))
+            {
+                string core = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
+                selected = File.Exists(core) ? core : Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+            }
+            return "\"" + selected + "\"";
+        }
 
         static int RunCommand(string directory, string logPath, string pipeline)
         {

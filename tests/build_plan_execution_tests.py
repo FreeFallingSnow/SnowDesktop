@@ -5,6 +5,9 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from powershell_runtime import powershell_executable, run as run_process
 import tempfile
 
 def main(repo):
@@ -52,14 +55,14 @@ static int Main(string[] args){
 ''')
     csc=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe';assert csc.exists()
     for name in ('cmake','ctest'):
-        p=subprocess.run([str(csc),'/nologo','/target:exe','/out:'+str(binroot/(name+'.exe')),str(source)],capture_output=True,text=True);assert p.returncode==0,p.stdout+p.stderr
+        p=run_process([str(csc),'/nologo','/target:exe','/out:'+str(binroot/(name+'.exe')),str(source)],capture_output=True,text=True);assert p.returncode==0,p.stdout+p.stderr
     state=root/'.build/collaboration';state.mkdir(parents=True);bid='c'*32
     request={'suites':['selected'],'tests':['Alpha'],'requiredFull':False,'reason':'independent fixture'}
     plan={'schemaVersion':1,'batchId':bid,'configuration':'Release','mode':'selected','suites':['selected'],'tests':['Alpha','Beta'],'tasks':[{'participant':'a','requirement':request},{'participant':'b','requirement':dict(request,tests=['Beta'])}]}
     def run(mode,expected):
         (root/'behavior').write_text(mode);(state/(bid+'.plan.json')).write_text(json.dumps(plan))
         env=dict(os.environ,PATH=str(binroot)+os.pathsep+os.environ['PATH'])
-        p=subprocess.run(['powershell.exe','-NoProfile','-File',str(scripts/'test_manager.ps1'),'-Mode','plan','-PlanBatch',bid],cwd=str(root),env=env,capture_output=True,timeout=20)
+        p=run_process([powershell_executable(),'-NoProfile','-File',str(scripts/'test_manager.ps1'),'-Mode','plan','-PlanBatch',bid],cwd=str(root),env=env,capture_output=True,timeout=20)
         assert (p.returncode==0)==expected,(mode,p.stdout,p.stderr)
         return json.loads((state/(bid+'.coverage.json')).read_text(encoding='utf-8-sig'))
     coverage=run('pass',True);assert coverage['status']=='passed' and [x['status'] for x in coverage['tasks']]==['passed','passed']

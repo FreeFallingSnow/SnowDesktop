@@ -5,8 +5,147 @@ param([Alias('Action')][ValidateSet('release','debug','ide','tests','verify')][s
     [Alias('Mode')][ValidateSet('full','fast','core','label','name','list','plan')][string]$EntryMode='full', [Alias('Filter')][string]$EntryFilter='',
     [Alias('PlanBatch')][ValidatePattern('^[a-f0-9]{32}$')][string]$EntryPlanBatch)
 
+function Get-BuildPowerShell {
+    $env:PSExecutionPolicyPreference='Bypass'
+    # Pin a real executable, not a command alias. Selection never starts a probe
+    # shell and grants no build authority; the live lease is still required.
+    $selected=[Environment]::GetEnvironmentVariable('SNOWDESKTOP_ENTRY_POWERSHELL','Process')
+    if($selected -and [IO.Path]::IsPathRooted($selected) -and [IO.File]::Exists($selected)){return $selected}
+    $candidates=@((Join-Path $PSHOME 'pwsh.exe'))
+    foreach($variable in @('ProgramFiles','ProgramW6432')) {
+        $folder=[Environment]::GetEnvironmentVariable($variable,'Process')
+        if($folder){$candidates += Join-Path $folder 'PowerShell/7/pwsh.exe'}
+    }
+    foreach($candidate in $candidates) {
+        if([IO.File]::Exists($candidate)) {
+            $env:SNOWDESKTOP_ENTRY_POWERSHELL=[IO.Path]::GetFullPath($candidate)
+            return $env:SNOWDESKTOP_ENTRY_POWERSHELL
+        }
+    }
+    $command=Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $selected=if($command){$command.Source}else{Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell/v1.0/powershell.exe'}
+    if([IO.File]::Exists($selected)){$env:SNOWDESKTOP_ENTRY_POWERSHELL=$selected;return $selected}
+    throw 'Neither PowerShell 7 nor Windows PowerShell 5.1 is available.'
+}
+
+function Start-BuildPowerShellScript {
+    param([string]$Script,[string]$Arguments='',[string]$WorkingDirectory,
+        [string]$OutputPath,[string]$ErrorPath,[int]$StartupSeconds=6)
+    # A two-file handshake separates engine initialization from script execution.
+    # A child cannot execute the target until this parent grants permission. This
+    # makes a startup-only retry safe even if readiness races with the timeout.
+    $runtime=Get-BuildPowerShell
+    # A background waiter must not inherit its short-lived parent's pipe/lease
+    # handles. Redirect directly to files and whitelist only its three streams.
+    if(-not ('SnowDesktop.Entry.PowerShellChild' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Runtime.InteropServices;
+namespace SnowDesktop.Entry {
+ public static class PowerShellChild {
+  [StructLayout(LayoutKind.Sequential)] struct Security {public int size;public IntPtr descriptor;public int inherit;}
+  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct Startup {
+   public int size;public string reserved,desktop,title;public int x,y,width,height,charsX,charsY,fill,flags;
+   public short show,reservedSize;public IntPtr reservedData,input,output,error;
+  }
+  [StructLayout(LayoutKind.Sequential)] struct ExtendedStartup {public Startup startup;public IntPtr attributes;}
+  [StructLayout(LayoutKind.Sequential)] struct ProcessInfo {public IntPtr process,thread;public int pid,tid;}
+  [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern IntPtr CreateFile(string path,uint access,uint share,ref Security security,uint creation,uint flags,IntPtr template);
+  [DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)] static extern bool CreateProcess(string app,StringBuilder command,IntPtr ps,IntPtr ts,bool inherit,uint flags,IntPtr environment,string directory,ref ExtendedStartup startup,out ProcessInfo process);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr list,int count,int flags,ref IntPtr size);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr list,uint flags,IntPtr attribute,IntPtr value,IntPtr size,IntPtr previous,IntPtr returned);
+  [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("shell32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CommandLineToArgvW(string command,out int count);
+  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
+  public static string[] Arguments(string arguments) {
+   int count;IntPtr memory=CommandLineToArgvW("SnowDesktop.exe "+arguments,out count);
+   if(memory==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+   try {var result=new string[count-1];for(int i=1;i<count;i++)result[i-1]=Marshal.PtrToStringUni(Marshal.ReadIntPtr(memory,i*IntPtr.Size));return result;}
+   finally {LocalFree(memory);}
+  }
+  public static Process Start(string executable,string arguments,string directory,string output,string error) {
+   IntPtr input=IntPtr.Zero,stdout=IntPtr.Zero,stderr=IntPtr.Zero,attributes=IntPtr.Zero,handles=IntPtr.Zero;
+   bool initialized=false;ProcessInfo child=new ProcessInfo();
+   var security=new Security{size=Marshal.SizeOf(typeof(Security)),inherit=1};
+   try {
+    input=CreateFile("NUL",0x80000000,3,ref security,3,0x80,IntPtr.Zero);
+    stdout=CreateFile(output,0x40000000,3,ref security,2,0x80,IntPtr.Zero);
+    stderr=CreateFile(error,0x40000000,3,ref security,2,0x80,IntPtr.Zero);
+    if(input==new IntPtr(-1)||stdout==new IntPtr(-1)||stderr==new IntPtr(-1))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    IntPtr size=IntPtr.Zero;InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref size);
+    attributes=Marshal.AllocHGlobal(size);
+    if(!InitializeProcThreadAttributeList(attributes,1,0,ref size))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    initialized=true;handles=Marshal.AllocHGlobal(3*IntPtr.Size);
+    Marshal.WriteIntPtr(handles,0,input);Marshal.WriteIntPtr(handles,IntPtr.Size,stdout);Marshal.WriteIntPtr(handles,2*IntPtr.Size,stderr);
+    if(!UpdateProcThreadAttribute(attributes,0,new IntPtr(0x20002),handles,new IntPtr(3*IntPtr.Size),IntPtr.Zero,IntPtr.Zero))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    var startup=new ExtendedStartup();startup.startup.size=Marshal.SizeOf(typeof(ExtendedStartup));startup.startup.flags=0x100;
+    startup.startup.input=input;startup.startup.output=stdout;startup.startup.error=stderr;startup.attributes=attributes;
+    if(!CreateProcess(executable,new StringBuilder("\""+executable+"\" "+arguments),IntPtr.Zero,IntPtr.Zero,true,0x80000|0x8000000,IntPtr.Zero,directory,ref startup,out child))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    var process=Process.GetProcessById(child.pid);GC.KeepAlive(process.Handle);return process;
+   } finally {
+    foreach(var handle in new[]{input,stdout,stderr,child.process,child.thread})if(handle!=IntPtr.Zero&&handle!=new IntPtr(-1))CloseHandle(handle);
+    if(initialized)DeleteProcThreadAttributeList(attributes);
+    if(attributes!=IntPtr.Zero)Marshal.FreeHGlobal(attributes);if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);
+   }
+  }
+ }
+}
+'@
+    }
+    $fallback=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell/v1.0/powershell.exe'
+    for($attempt=0;$attempt -lt 2;$attempt++) {
+        $prefix=Join-Path ([IO.Path]::GetTempPath()) ('SnowDesktop-powershell-'+[Guid]::NewGuid().ToString('N'))
+        $ready=$prefix+'.ready';$permit=$prefix+'.permit'
+        $bootstrapPath=$prefix+'.ps1'
+        $quote={param($value) "'"+$value.Replace("'","''")+"'"}
+        $tokens=[SnowDesktop.Entry.PowerShellChild]::Arguments($Arguments)
+        $expression=(@($tokens | ForEach-Object {if($_ -match '^-[A-Za-z][A-Za-z0-9-]*(?::\$(?:true|false))?$'){$_}else{& $quote $_}}) -join ' ')
+        $bootstrap="[Console]::OutputEncoding=[Text.UTF8Encoding]::new(`$false); `$ProgressPreference='SilentlyContinue'; [IO.File]::WriteAllText($(& $quote $ready),'ready'); `$startupWait=[Diagnostics.Stopwatch]::StartNew(); while(-not [IO.File]::Exists($(& $quote $permit))){if(`$startupWait.Elapsed.TotalSeconds -gt 15){[IO.File]::Delete($(& $quote $ready)); [IO.File]::Delete($(& $quote $bootstrapPath)); exit 124}; [Threading.Thread]::Sleep(20)}; [IO.File]::Delete($(& $quote $ready)); [IO.File]::Delete($(& $quote $permit)); [IO.File]::Delete($(& $quote $bootstrapPath)); & $(& $quote $Script) $expression; if(-not `$? -and `$null -eq `$LASTEXITCODE){exit 1}; exit `$LASTEXITCODE"
+        [IO.File]::WriteAllText($bootstrapPath,$bootstrap,(New-Object Text.UTF8Encoding($true)))
+        $out=$OutputPath; $err=$ErrorPath
+        if($attempt -gt 0){$out=$OutputPath+'.retry';$err=$ErrorPath+'.retry'}
+        $process=$null;$granted=$false
+        $timer=[Diagnostics.Stopwatch]::StartNew()
+        try {
+            $env:SNOWDESKTOP_ENTRY_POWERSHELL=$runtime
+            $process=[SnowDesktop.Entry.PowerShellChild]::Start($runtime,('-NoProfile -NonInteractive -File "'+$bootstrapPath+'"'),$WorkingDirectory,$out,$err)
+            $null=$process.Handle
+            while(-not $process.HasExited -and -not [IO.File]::Exists($ready) -and $timer.Elapsed.TotalSeconds -lt $StartupSeconds){Start-Sleep -Milliseconds 20}
+            if([IO.File]::Exists($ready) -and -not $process.HasExited) {
+                [IO.File]::WriteAllText($permit,'execute');$granted=$true
+                # The caller owns the returned handle and original business timeout.
+                $process | Add-Member NoteProperty StartupOutput $out
+                $process | Add-Member NoteProperty StartupError $err
+                return $process
+            }
+            if(-not $process.HasExited){$process.Kill();$process.WaitForExit()}
+            $evidence=[pscustomobject]@{runtime=$runtime;pid=$process.Id;attempt=$attempt+1;target=$Script;arguments=$Arguments;elapsedSeconds=$timer.Elapsed.TotalSeconds;exitCode=$process.ExitCode;scriptStarted=$false;bootstrap=$bootstrap;stdout=$out;stderr=$err;utc=[DateTime]::UtcNow.ToString('o')}
+            $evidence | ConvertTo-Json | Set-Content -LiteralPath ($OutputPath+'.startup-'+($attempt+1)+'.json') -Encoding UTF8
+            [Console]::Error.WriteLine('PowerShell initialization failed before target execution; evidence: '+$OutputPath+'.startup-'+($attempt+1)+'.json')
+        } catch {
+            if($granted){throw}
+            if($process -and -not $process.HasExited){$process.Kill();$process.WaitForExit()}
+            [pscustomobject]@{runtime=$runtime;attempt=$attempt+1;target=$Script;scriptStarted=$false;error=$_.Exception.Message;utc=[DateTime]::UtcNow.ToString('o')} |
+                ConvertTo-Json | Set-Content -LiteralPath ($OutputPath+'.startup-'+($attempt+1)+'.json') -Encoding UTF8
+            [Console]::Error.WriteLine('PowerShell initialization failed before target execution; evidence: '+$OutputPath+'.startup-'+($attempt+1)+'.json')
+        } finally {
+            # Never remove the permit while the granted child is still reading it.
+            # The child removes both handshake files before entering the target.
+            if(-not $granted){if($process){$process.Dispose()};[IO.File]::Delete($ready);[IO.File]::Delete($permit);[IO.File]::Delete($bootstrapPath)}
+        }
+        if($attempt -eq 0 -and [IO.File]::Exists($fallback)){$runtime=$fallback}
+    }
+    throw 'PowerShell initialization failed twice; target script was not executed.'
+}
+
 # A credential is useful only in the live lease owner's process tree. Merely
 # setting an environment variable never grants execution or clears a batch.
+$null=Get-BuildPowerShell
+
 function Get-EntryHash([string]$Value) {
     $sha=[Security.Cryptography.SHA256]::Create()
     try { return [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Value))).Replace('-','').ToLowerInvariant() } finally {$sha.Dispose()}
@@ -168,7 +307,7 @@ if($MyInvocation.InvocationName -ne '.') {
                 $invoke='try { '+$invoke+'; if($null -ne $LASTEXITCODE){exit $LASTEXITCODE}else{exit 0} } catch {[Console]::Error.WriteLine($_.ScriptStackTrace);throw}'
                 $invokePath=[IO.Path]::ChangeExtension($log,'.ps1')
                 [IO.File]::WriteAllText($invokePath,"$"+"ErrorActionPreference='Stop'`n"+$invoke,(New-Object Text.UTF8Encoding($true)))
-                $pipeline='"'+(Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe')+'" -NoProfile -ExecutionPolicy Bypass -File "'+$invokePath+'"'
+                $pipeline='"'+(Get-BuildPowerShell)+'" -NoProfile -File "'+$invokePath+'"'
             } else {
                 $scriptName=if($EntryAction -eq 'debug'){'build_debug.bat'}else{'build.bat'}
                 $pipeline='call scripts\'+$scriptName

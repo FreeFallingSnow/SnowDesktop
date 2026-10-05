@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+from powershell_runtime import powershell_executable, run as run_process
 import sys
 import time
 
@@ -143,7 +144,7 @@ def refresh_ready(root, state, batch, actor, file):
         check.update(status='pending',reason='A later authorized task updated a shared resource; recheck current inputs after editors close.')
         entry['check'] = check
         if module.owner_state(entry.get('waiter')) != 'alive':
-            child=subprocess.Popen(['powershell.exe','-NoProfile','-File',str(root/'scripts/build_waiter.ps1'),'-Participant',entry['id'],'-Batch',batch['id'],'-Revision',str(entry['editRevision'])],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
+            child=subprocess.Popen([powershell_executable(),'-NoProfile','-File',str(root/'scripts/build_waiter.ps1'),'-Participant',entry['id'],'-Batch',batch['id'],'-Revision',str(entry['editRevision'])],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW)
             entry['waiter']={**process_owner(child.pid),'editRevision':entry['editRevision']}
     atomic(root/'.build/collaboration/state.json',state)
 

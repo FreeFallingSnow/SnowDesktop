@@ -316,13 +316,22 @@ prepare 默认有效十五分钟（`--timeout` 至多一小时）。apply 持有
 
 ### 缺少依赖与退出码
 
-基础 plan/claim/ready-and-wait/status/repair 只需 Windows PowerShell，不需要安装 Python。
+基础 plan/claim/ready-and-wait/status/repair 只需 PowerShell，不需要安装 Python。
+所有批处理入口、CMake 和构建子进程优先使用 PowerShell 7，未安装时回退系统 Windows PowerShell 5.1。
+`SNOWDESKTOP_ENTRY_POWERSHELL` 保存该次执行所选的绝对路径，子进程沿用它；可显式设为系统 5.1 路径做兼容检查。
+进程启动前传入 `PSExecutionPolicyPreference=Bypass`，替代重复的 `-ExecutionPolicy Bypass` 启动参数，
+保持原有进程级策略，不修改用户或计算机的持久化策略，也不改变组策略优先级。
+协调器与看板共用一个 PowerShell 进程；后台等待和工具回归的启动握手在目标脚本执行前确认就绪。
+后台等待只继承自己的输入与日志文件句柄，不继承父命令的输出管道或协作锁句柄；父命令返回后等待进程仍可继续。
+六秒内未就绪或启动失败时最多再尝试一次 5.1，保留首次输出、PID、运行时和 JSON 证据；
+未发放执行许可的子进程不能运行目标脚本。已开始的目标超时或非零退出不会重放；
+Python 入口的总超时包含两次启动和目标执行，不通过扩大原有测试预算掩盖失败。
 可选重试增强对 Python 做最多五秒的可执行/版本探测（3.8+）；不存在、别名损坏或版本不足时，
 在尚未开始执行前仅回退一次原测试计划。已经开始的执行失败不自动重放，旧失败/尝试与 flaky 标记保留。
 票据和语言逐键事务需要 Python；缺少时使用前台 finish/ready-and-wait 和串行整文件 claim，
 不能冒充增强功能可用或绕过同键/冻结保护。无自动安装。
 
-CMake 始终声明六项自动工具回归和一项 manual 浏览器回归。缺少或不可用 Python 时仍声明条目，
+CMake 始终声明七项自动工具回归（含 PowerShell 运行时兼容和恢复回归）和一项 manual 浏览器回归。缺少或不可用 Python 时仍声明条目，
 标记 environment-blocked，实际执行返回 78；不从 inventory 静默消失。test_manager 冻结计划覆盖
 记录所需条目、阻断和未执行，在编译前阻断不完整的选择；独立原生选择仍可运行。
 恢复解释器后需新执行证据，旧 blocked 不能充当通过。显式 manual 才成为要求。

@@ -1,6 +1,7 @@
 @echo off
 setlocal
-set "SNOWDESKTOP_ENTRY_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+call "%~dp0powershell_runtime.bat"
+if errorlevel 1 exit /b 2
 rem SHIFT also changes %%0; preserve the entry point before consuming arguments.
 set "SNOWDESKTOP_BUILD_SCRIPT_DIR=%~dp0"
 cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
@@ -48,19 +49,19 @@ if defined RELOAD_SHELL set "RELOAD_SHELL_ARG=-ReloadShell"
 if defined CLOSE_APPLICATION set "RELOAD_SHELL_ARG=-CloseApplication"
 rem Acquire execution authority before any preflight/process action or output write.
 if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_entry.ps1 -Action release %RELOAD_SHELL_ARG%
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action release %RELOAD_SHELL_ARG%
 exit /b %ERRORLEVEL%
 :leased
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_entry.ps1 -Action verify
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action verify
 if %ERRORLEVEL% NEQ 0 exit /b 2
 
 if defined RELOAD_SHELL (
-    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -ReloadShell
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -ReloadShell
 ) else (
   if defined CLOSE_APPLICATION (
-    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -CloseApplication
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -CloseApplication
   ) else (
-    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1"
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1"
   )
 )
 rem PowerShell startup failures can return a negative exit code.
@@ -100,7 +101,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Arranging private runtime directory ===
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build\Release"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build\Release"
 if %ERRORLEVEL% NEQ 0 (
     echo Build output arrangement FAILED
     exit /b 1
@@ -124,18 +125,13 @@ echo Agent and automation usage is available through scripts\release.bat COMMAND
 exit /b 0
 
 :localwait
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_runtime.ps1" dashboard >nul 2>&1
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_runtime.ps1" watch %*
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_runtime.ps1" watch %*
 exit /b %ERRORLEVEL%
 
 :collaboration
-if /i "%~1"=="status" goto collaboration_run
-rem Automatically ensure the read-only monitor; unavailable Python/port must not block builds.
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_runtime.ps1" dashboard >nul 2>&1
-:collaboration_run
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_manager.ps1 %*
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_manager.ps1 %*
 exit /b %ERRORLEVEL%
 
 :resource
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_runtime.ps1" resource %*
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_runtime.ps1" resource %*
 exit /b %ERRORLEVEL%

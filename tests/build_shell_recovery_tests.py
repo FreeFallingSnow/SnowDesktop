@@ -5,10 +5,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from powershell_runtime import powershell_executable, run as run_process
 import tempfile
 import time
 
-PS = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+PS = powershell_executable()
 
 
 def fixture_process(record, root, stop=False):
@@ -51,7 +54,7 @@ def run_shell_recovery_tests(repo):
         root = Path(tempfile.mkdtemp(prefix='SnowDesktop-shell-recovery-'))
         scripts = root/'scripts'; scripts.mkdir()
         (root/'bin').mkdir()
-        for name in ('build_entry.ps1', 'build_preflight.ps1', 'build_job.cs', 'build.bat'):
+        for name in ('powershell_runtime.bat', 'build_entry.ps1', 'build_preflight.ps1', 'build_job.cs', 'build.bat'):
             shutil.copyfile(repo/'scripts'/name, scripts/name)
         surrogate = root/'restored-shell.ps1'
         surrogate.write_text("[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'shell-token.txt'),[string]$env:SNOWDESKTOP_EXECUTION_TOKEN)\nStart-Sleep -Seconds 60\n")
@@ -73,7 +76,7 @@ function Stop-Process {param($InputObject,$ErrorAction)
 function Start-Process {param($FilePath,$WindowStyle)
  if([IO.Path]::GetFileName($FilePath) -ne 'explorer.exe'){throw 'Fixture refuses any real Shell action'}
  $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
- $child=Microsoft.PowerShell.Management\Start-Process -FilePath (Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe') -ArgumentList ('-NoProfile -File "'+(Join-Path $root 'restored-shell.ps1')+'"') -WindowStyle Hidden -PassThru
+ $child=Microsoft.PowerShell.Management\Start-Process -FilePath (Get-BuildPowerShell) -ArgumentList ('-NoProfile -File "'+(Join-Path $root 'restored-shell.ps1')+'"') -WindowStyle Hidden -PassThru
  [IO.File]::WriteAllText((Join-Path $root 'restored.json'),(ConvertTo-Json @{pid=$child.Id;startTicks=$child.StartTime.ToUniversalTime().Ticks.ToString()}))
 }
 '''
@@ -101,12 +104,12 @@ class Boundary {static int Main(string[] args){
 }}
 ''')
             csc = Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-            compiled = subprocess.run([str(csc), '/nologo', '/out:'+str(root/'bin/cmake.exe'), str(source)], capture_output=True)
+            compiled = run_process([str(csc), '/nologo', '/out:'+str(root/'bin/cmake.exe'), str(source)], capture_output=True)
             assert compiled.returncode == 0, compiled.stdout+compiled.stderr
             (scripts/'arrange_build_output.ps1').write_text('param($BuildOutput)\nexit 0\n')
         local_env = dict(env, PATH=str(root/'bin')+os.pathsep+env['PATH'])
         if mode == 'interrupted': (root/'hold-native').write_text('hold')
-        run = subprocess.Popen([PS, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(scripts/'build_entry.ps1'), '-Action', 'release', '-ReloadShell'], cwd=str(root), env=local_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        run = subprocess.Popen([PS, '-NoProfile', '-File', str(scripts/'build_entry.ps1'), '-Action', 'release', '-ReloadShell'], cwd=str(root), env=local_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             if mode == 'interrupted':
                 deadline = time.monotonic()+15
@@ -136,12 +139,12 @@ class Boundary {static int Main(string[] args){
 $entry=Enter-BuildEntry $PSScriptRoot
 try {
  Add-Type -Path (Join-Path $PSScriptRoot 'scripts/build_job.cs')
- $command='"'+(Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe')+'" -NoProfile -File "'+(Join-Path $PSScriptRoot 'scripts/build_preflight.ps1')+'" -ReloadShell'
+ $command='"'+(Get-BuildPowerShell)+'" -NoProfile -File "'+(Join-Path $PSScriptRoot 'scripts/build_preflight.ps1')+'" -ReloadShell'
  exit [SnowDesktop.Build.Job]::RunLeasedCommand($PSScriptRoot,(Join-Path $PSScriptRoot 'descendant-preflight.log'),$command)
 } finally {Exit-BuildEntry $entry}
 ''')
                 original = (root/'restored.json').read_bytes()
-                blocked = subprocess.run([PS, '-NoProfile', '-File', str(probe)], cwd=str(root), env=env, capture_output=True, timeout=15)
+                blocked = run_process([PS, '-NoProfile', '-File', str(probe)], cwd=str(root), env=env, capture_output=True, timeout=15)
                 assert blocked.returncode != 0 and (root/'restored.json').read_bytes() == original
                 assert b'live execution lease owner' in (root/'descendant-preflight.log').read_bytes()
             evidence.append({'scenario': mode, 'root': str(root), 'exitCode': run.returncode, 'restoredSurvived': True, 'nativeContained': mode != 'configure-failure'})

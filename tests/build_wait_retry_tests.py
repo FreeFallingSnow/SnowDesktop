@@ -9,11 +9,13 @@ import shutil
 import stat
 import subprocess
 import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from powershell_runtime import powershell_executable, run as run_process
 import tempfile
 import time
 
 sys.dont_write_bytecode = True
-PS = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+PS = powershell_executable()
 
 
 CREATED = []
@@ -136,7 +138,7 @@ def cleanup_fixtures():
 def process_fixture(repo):
     root=new_fixture('SnowDesktop-retry-process-')
     (root/'scripts').mkdir();(root/'tools/build-dashboard').mkdir(parents=True);(root/'bin').mkdir()
-    for name in ('build_wait_tasks.py','build_test_retry.py','test_output.ps1','build_inputs.ps1','build_batch_tests.ps1','build_runtime.ps1'):
+    for name in ('build_wait_tasks.py','powershell_runtime.py','build_test_retry.py','test_output.ps1','build_inputs.ps1','build_batch_tests.ps1','build_runtime.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
     shutil.copyfile(repo/'tools/build-dashboard/server.py',root/'tools/build-dashboard/server.py')
     (root/'.gitignore').write_text('.build/\nbin/\n')
@@ -182,11 +184,11 @@ def process_fixture(repo):
     }'''
     source=root/'bin/fixture.cs';source.write_text(csharp)
     csc=Path(os.environ['WINDIR'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-    subprocess.run([str(csc),'/nologo','/out:'+str(root/'bin/ctest.exe'),str(source)],check=True,capture_output=True)
+    run_process([str(csc),'/nologo','/out:'+str(root/'bin/ctest.exe'),str(source)],check=True,capture_output=True)
     for arguments in (['init','--quiet'],['add','.'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','fixture']):
-        subprocess.run(['git',*arguments],cwd=str(root),check=True,capture_output=True)
+        run_process(['git',*arguments],cwd=str(root),check=True,capture_output=True)
     state=root/'.build/collaboration';state.mkdir(parents=True)
-    ps=str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+    ps=powershell_executable()
     env=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'])
     for index,(mode,expected,attempts) in enumerate((('once',0,1),('always',1,2),('assertion',1,0),('change',5,1),('full-once',0,1),('full-bad-output',1,1),('full-failed-check',7,0),('full-legacy',0,1))):
         batch=format(index+1,'x')*32
@@ -200,7 +202,7 @@ def process_fixture(repo):
         if mode=='full-bad-output':violation.write_bytes(b'escaped fixture output')
         (root/'source.cpp').write_text('initial '+mode)
         old=(root/'.build/ctest.count').read_text().count('once') if (root/'.build/ctest.count').exists() else 0
-        run=subprocess.run([ps,'-NoProfile','-File',str(root/'scripts/build_batch_tests.ps1'),'-Batch',batch],cwd=str(root),env=env,capture_output=True,text=True,timeout=45)
+        run=run_process([ps,'-NoProfile','-File',str(root/'scripts/build_batch_tests.ps1'),'-Batch',batch],cwd=str(root),env=env,capture_output=True,text=True,timeout=45)
         assert run.returncode==expected,(mode,run.returncode,run.stdout,run.stderr)
         ledger=json.loads((state/(batch+'.retry.json')).read_text())
         assert len(ledger['selected'])==2 and ledger['initialExitCode']==1
@@ -222,7 +224,7 @@ def process_fixture(repo):
                 assert evidence.exists() and check['startedUtc'] and check['completedUtc']
             assert [x['name'] for x in coverage['completed']]==['build_dashboard','Deterministic'],coverage
         prior=(root/'.build/initial.count').read_text()
-        replay=subprocess.run([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',batch],cwd=str(root),env=env,capture_output=True,text=True,timeout=10)
+        replay=run_process([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',batch],cwd=str(root),env=env,capture_output=True,text=True,timeout=10)
         assert replay.returncode==expected and prior==(root/'.build/initial.count').read_text()
         print('PASS real retry entry '+mode+': initial once, retries '+str(attempts)+', exit '+str(expected),flush=True)
     print('RETRY PROCESS PASSED; evidence '+str(root),flush=True)
@@ -237,7 +239,7 @@ def real_selection_fixture(repo):
     project(RealSelection NONE)
     enable_testing()
     foreach(name Alpha Beta Gamma)
-     add_test(NAME ${name} COMMAND powershell.exe -NoProfile -File "${CMAKE_CURRENT_SOURCE_DIR}/probe.ps1" -Name ${name})
+     add_test(NAME ${name} COMMAND "$ENV{SNOWDESKTOP_ENTRY_POWERSHELL}" -NoProfile -File "${CMAKE_CURRENT_SOURCE_DIR}/probe.ps1" -Name ${name})
      set_tests_properties(${name} PROPERTIES LABELS "core" TIMEOUT 10)
     endforeach()
     ''')
@@ -249,10 +251,10 @@ def real_selection_fixture(repo):
     ''')
     (root/'CMakePresets.json').write_text(json.dumps({'version':3,'configurePresets':[{'name':'tests','binaryDir':'${sourceDir}/.build/ctest'}],
       'testPresets':[{'name':'all-tests','configurePreset':'tests','configuration':'Release','output':{'outputOnFailure':True}}]}))
-    ps=str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+    ps=powershell_executable()
     log=[]
     def invoke(*args,expected):
-        p=subprocess.run([ps,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(root/'scripts/test_manager.ps1'),*args],cwd=str(root),capture_output=True,timeout=30)
+        p=run_process([ps,'-NoProfile','-File',str(root/'scripts/test_manager.ps1'),*args],cwd=str(root),capture_output=True,timeout=30)
         # Windows PowerShell can mix UTF-8 script output with localized native
         # error bytes. Keep both original streams; decoding diagnostic text
         # must not crash subprocess reader threads or lose the actual exit.
@@ -383,7 +385,7 @@ def main(repo):
     os.environ.pop('SNOWDESKTOP_EXECUTION_TOKEN',None)
     root=new_fixture('SnowDesktop-wait-retry-')
     (root/'scripts').mkdir();(root/'tools/build-dashboard').mkdir(parents=True)
-    for name in ('build_wait_tasks.py','build_test_retry.py','build_entry.ps1','build_runtime.ps1','build_manager.ps1','build_protocol.ps1',
+    for name in ('build_wait_tasks.py','powershell_runtime.py','build_test_retry.py','build_entry.ps1','build_runtime.ps1','build_manager.ps1','build_protocol.ps1',
                  'build_inputs.ps1','build_ownership.ps1','build_preflight.ps1','build_job.cs','build_waiter.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
     # Native compilation is a file-gated fixture, so desktop output ownership
@@ -408,7 +410,7 @@ def main(repo):
             time.sleep(.05)
         raise AssertionError('Bounded fixture condition timed out: '+str(root))
     def cli(*args,code=0):
-        run=subprocess.run([sys.executable,str(root/'scripts/build_wait_tasks.py'),'watch',*map(str,args),'--root',str(root)],capture_output=True,text=True,encoding='utf-8',timeout=15)
+        run=run_process([sys.executable,str(root/'scripts/build_wait_tasks.py'),'watch',*map(str,args),'--root',str(root)],capture_output=True,text=True,encoding='utf-8',timeout=15)
         assert run.returncode==code,(args,run.returncode,run.stdout,run.stderr)
         return json.loads(run.stdout) if code==0 else run.stderr
     def ticket(**options):
@@ -534,9 +536,9 @@ os._exit(19)
     crashed=subprocess.Popen([sys.executable,'-c',code,str(root/'scripts'),str(work),crashbatch])
     assert crashed.wait(timeout=12)==19
     assert reader.owner_state(waits.process_owner(os.getpid()))=='alive'
-    status=subprocess.run([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',crashbatch,'--status'],capture_output=True,text=True)
+    status=run_process([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',crashbatch,'--status'],capture_output=True,text=True)
     assert json.loads(status.stdout)['status']=='interrupted'
-    replay=subprocess.run([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',crashbatch],capture_output=True,text=True)
+    replay=run_process([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',crashbatch],capture_output=True,text=True)
     assert replay.returncode==4 and (work/'side-effect.count').read_text()=='once'
     assert json.loads((work/'build_dashboard.attempt2.json').read_text())['status']=='passed'
     print('PASS crash evidence retained, completed side effect never replayed, explicit new repair required')
@@ -555,14 +557,14 @@ $root=Split-Path $PSScriptRoot -Parent
 [IO.File]::AppendAllText((Join-Path $root ($Phase+'.count')),"run`n")
 if($Phase -eq 'build' -and (Test-Path (Join-Path $root 'fail-build'))){exit 11};exit 0
 ''')
-    (repairroot/'scripts/build.bat').write_text('@echo off\npowershell.exe -NoProfile -File "%~dp0fake.ps1" -Phase build\nexit /b %ERRORLEVEL%\n')
+    (repairroot/'scripts/build.bat').write_text('@echo off\n"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%~dp0fake.ps1" -Phase build\nexit /b %ERRORLEVEL%\n')
     (repairroot/'scripts/build_batch_tests.ps1').write_text('param([string]$Batch)\n& (Join-Path $PSScriptRoot fake.ps1) -Phase test;exit $LASTEXITCODE\n')
     for arguments in (['init','--quiet'],['add','.'],['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','fixture']):
-        subprocess.run(['git',*arguments],cwd=str(repairroot),check=True,capture_output=True)
+        run_process(['git',*arguments],cwd=str(repairroot),check=True,capture_output=True)
     def manager(*args,expected=0,asynchronous=False):
-        argv=[PS,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(repairroot/'scripts/build_manager.ps1'),*map(str,args)]
+        argv=[PS,'-NoProfile','-File',str(repairroot/'scripts/build_manager.ps1'),*map(str,args)]
         if asynchronous:return subprocess.Popen(argv,cwd=str(repairroot),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        result=subprocess.run(argv,cwd=str(repairroot),capture_output=True,text=True,timeout=25)
+        result=run_process(argv,cwd=str(repairroot),capture_output=True,text=True,timeout=25)
         assert result.returncode==expected,(args,result.returncode,result.stderr,result.stdout)
         return json.loads(result.stdout) if result.stdout.strip().startswith('{') else result.stdout
     sr=repairroot/'.build/collaboration'

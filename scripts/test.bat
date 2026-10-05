@@ -1,6 +1,7 @@
 @echo off
 setlocal
-set "SNOWDESKTOP_ENTRY_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+call "%~dp0powershell_runtime.bat"
+if errorlevel 1 exit /b 2
 cd /d "%~dp0.."
 
 set "MODE=full"
@@ -33,7 +34,7 @@ goto run
 if not "%~3"=="" goto usage
 
 :run
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\test_manager.ps1 -Mode "%MODE%" -Filter "%FILTER%"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\test_manager.ps1 -Mode "%MODE%" -Filter "%FILTER%"
 exit /b %ERRORLEVEL%
 
 :usage

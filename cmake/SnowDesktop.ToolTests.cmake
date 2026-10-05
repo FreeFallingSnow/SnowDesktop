@@ -1,11 +1,12 @@
 # One unconditional declaration inventory, including explicit blocked commands
 # when Python is unavailable. The test runner can then account for every item.
+include("${CMAKE_CURRENT_LIST_DIR}/SnowDesktop.PowerShell.cmake")
 function(snowdesktop_add_tool_test name script labels timeout)
     if(SNOWDESKTOP_PYTHON_USABLE)
         add_test(NAME "${name}" COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/${script}" ${ARGN})
     else()
-        add_test(NAME "${name}" COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        add_test(NAME "${name}" COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
             -File "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_missing_dependency.ps1"
             -TestName "${name}" -Reason "${SNOWDESKTOP_PYTHON_REASON}")
         set_tests_properties("${name}" PROPERTIES LABELS "${labels};environment-blocked")
@@ -13,7 +14,8 @@ function(snowdesktop_add_tool_test name script labels timeout)
     if(SNOWDESKTOP_PYTHON_USABLE)
         set_tests_properties("${name}" PROPERTIES LABELS "${labels}")
     endif()
-    set_tests_properties("${name}" PROPERTIES TIMEOUT "${timeout}")
+    set_tests_properties("${name}" PROPERTIES TIMEOUT "${timeout}"
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass")
 endfunction()
 if(BUILD_TESTING AND WIN32)
     find_program(SNOWDESKTOP_PYTHON_EXECUTABLE NAMES python.exe python)
@@ -36,4 +38,5 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_tool_test(build_wait_retry build_wait_retry_tests.py "integration;tools" 240 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
     snowdesktop_add_tool_test(build_shared_resources build_shared_resources_tests.py "tools;core" 90 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
     snowdesktop_add_tool_test(build_foreground_wait build_foreground_wait_tests.py "tools;integration" 90 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+    snowdesktop_add_tool_test(powershell_runtime powershell_runtime_tests.py "tools;core" 90 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
 endif()

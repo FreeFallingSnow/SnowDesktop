@@ -40,6 +40,10 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 . (Join-Path $PSScriptRoot 'build_protocol.ps1')
 . (Join-Path $PSScriptRoot 'build_ownership.ps1')
 . (Join-Path $PSScriptRoot 'build_preflight.ps1')
+if($Command -ne 'status' -and [IO.File]::Exists((Join-Path $PSScriptRoot 'build_runtime.ps1'))) {
+    . (Join-Path $PSScriptRoot 'build_runtime.ps1')
+    Ensure-BuildDashboard
+}
 $observedRevision = $null
 
 function Write-AtomicJson($Value, [string]$Path) {
@@ -156,11 +160,9 @@ function Start-ReadyWorker($Current, $Entry) {
     if ($existing -and (Get-Field $existing 'pid') -and (Get-Field $existing 'editRevision' -1) -eq (Get-EditRevision $Entry) -and (Owner-State $existing) -eq 'alive') { return $existing }
     $revision = Get-EditRevision $Entry
     $waiterScript=Join-Path $PSScriptRoot 'build_waiter.ps1'
-    $arguments='-NoProfile -ExecutionPolicy Bypass -File "'+$waiterScript+'" -Participant '+$Entry.id+' -Batch '+$Current.id+' -Revision '+$revision
-    $info=New-Object Diagnostics.ProcessStartInfo
-    $info.FileName=Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe';$info.Arguments=$arguments
-    $info.UseShellExecute=$true;$info.WindowStyle='Hidden';$info.WorkingDirectory=$repositoryRoot
-    try {$worker=[Diagnostics.Process]::Start($info)} catch {
+    $arguments='-Participant '+$Entry.id+' -Batch '+$Current.id+' -Revision '+$revision
+    $output=Join-Path $stateRoot ('waiter-'+[Guid]::NewGuid().ToString('N'))
+    try {$worker=Start-BuildPowerShellScript -Script $waiterScript -Arguments $arguments -WorkingDirectory $repositoryRoot -OutputPath ($output+'.out') -ErrorPath ($output+'.err')} catch {
         $unavailable=[pscustomobject]@{status='unavailable';editRevision=$revision;reason=$_.Exception.Message;
             next=('scripts/build.bat ready-and-wait '+$Entry.id+' -Batch '+$Current.id+' -Revision '+$revision)}
         Set-Field $Entry 'waiter' $unavailable

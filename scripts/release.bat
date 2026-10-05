@@ -1,12 +1,14 @@
 @echo off
 setlocal
+call "%~dp0powershell_runtime.bat"
+if errorlevel 1 exit /b 2
 cd /d "%~dp0.."
 
 if "%~1"=="" (
-    powershell -NoProfile -ExecutionPolicy Bypass ^
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile ^
         -File "%~dp0release_manager.ps1" menu
 ) else (
-    powershell -NoProfile -ExecutionPolicy Bypass ^
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile ^
         -File "%~dp0release_manager.ps1" %*
 )
 set "RESULT=%ERRORLEVEL%"

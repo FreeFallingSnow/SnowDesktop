@@ -1,11 +1,12 @@
 # Native shared-output configure and IDE builds must use the same live lease as
 # the supported batch/PowerShell entries. Independent diagnostic trees remain
 # available; a preset or environment variable alone is not execution authority.
+include("${CMAKE_CURRENT_LIST_DIR}/SnowDesktop.PowerShell.cmake")
 function(snowdesktop_check_shared_output)
     cmake_path(NORMAL_PATH CMAKE_BINARY_DIR OUTPUT_VARIABLE output)
     cmake_path(NORMAL_PATH CMAKE_SOURCE_DIR OUTPUT_VARIABLE source)
     if(output STREQUAL "${source}/.build" OR output STREQUAL "${source}/.build_debug")
-        execute_process(COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        execute_process(COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
             -File "${CMAKE_SOURCE_DIR}/scripts/build_entry.ps1" -Action verify
             RESULT_VARIABLE code ERROR_VARIABLE error)
         if(NOT code EQUAL 0)
@@ -29,7 +30,7 @@ endfunction()
 function(snowdesktop_install_shared_guard)
     if(SNOWDESKTOP_SHARED_OUTPUT)
         add_custom_target(SnowDesktopSharedBuildGuard
-            COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
                 -File "${CMAKE_SOURCE_DIR}/scripts/build_entry.ps1" -Action verify
             COMMENT "Verify live shared-output execution lease" VERBATIM)
         snowdesktop_guard_directory("${CMAKE_SOURCE_DIR}")

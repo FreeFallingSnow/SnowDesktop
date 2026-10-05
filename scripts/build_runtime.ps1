@@ -17,24 +17,29 @@ function Get-BuildPython {
     finally {if($process){$process.Dispose()}}
 }
 
+function Ensure-BuildDashboard {
+    # Run inside the existing entry process instead of starting another shell.
+    $python=Get-BuildPython
+    if(-not $python.available){return}
+    $process=$null
+    try {
+        $info=New-Object Diagnostics.ProcessStartInfo
+        $info.FileName=$python.path;$info.Arguments='"'+(Join-Path $PSScriptRoot '../tools/build-dashboard/manage.py')+'" start'
+        $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+        $process=[Diagnostics.Process]::Start($info)
+        if(-not $process.WaitForExit(12000)){$process.Kill()}
+    } catch { [Console]::Error.WriteLine('Optional local dashboard unavailable: '+$_.Exception.Message) }
+    finally {if($process){$process.Dispose()}}
+}
+
 if($MyInvocation.InvocationName -ne '.') {
+    if($RuntimeCommand -eq 'dashboard'){Ensure-BuildDashboard;exit 0}
+    if($RuntimeCommand -eq 'watch'){Ensure-BuildDashboard}
     $python=Get-BuildPython
     if(-not $python.available){
         if($RuntimeCommand -eq 'dashboard'){exit 0}
         [Console]::Error.WriteLine('Python enhancement unavailable: '+$python.reason+' Use local PowerShell begin/claim/ready-and-wait/status; no dependency was installed.')
         exit 2
-    }
-    if($RuntimeCommand -eq 'dashboard') {
-        $process=$null
-        try {
-            $info=New-Object Diagnostics.ProcessStartInfo
-            $info.FileName=$python.path;$info.Arguments='"'+(Join-Path $PSScriptRoot '../tools/build-dashboard/manage.py')+'" start'
-            $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
-            $process=[Diagnostics.Process]::Start($info)
-            if(-not $process.WaitForExit(12000)){$process.Kill()}
-        } catch { [Console]::Error.WriteLine('Optional local dashboard unavailable: '+$_.Exception.Message) }
-        finally {if($process){$process.Dispose()}}
-        exit 0
     }
     $scriptName=if($RuntimeCommand -eq 'watch'){'build_wait_tasks.py'}else{'build_shared_resources.py'}
     & $python.path (Join-Path $PSScriptRoot $scriptName) @RuntimeArguments

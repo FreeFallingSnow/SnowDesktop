@@ -1,7 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# The production coordinator runs in separate Windows PowerShell processes.
+# The production coordinator runs in separate selected PowerShell processes.
 # Native output ownership and the build.bat/test.bat boundary are replaced, with file gates
 # controlling overlap. Counts and durable results are independent expectations.
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -11,7 +11,8 @@ $scripts = Join-Path $fixture 'scripts'
 $utf8 = New-Object Text.UTF8Encoding($false)
 $processes = New-Object 'System.Collections.Generic.List[System.Diagnostics.Process]'
 $manager = Join-Path $scripts 'build_manager.ps1'
-$powershell = Join-Path $PSHOME 'powershell.exe'
+. (Join-Path $PSScriptRoot '../scripts/build_entry.ps1')
+$powershell = Get-BuildPowerShell
 $runs = New-Object 'System.Collections.Generic.List[object]'
 $fixtureTimer = [Diagnostics.Stopwatch]::StartNew()
 $script:stage = 'setup'
@@ -94,9 +95,8 @@ function Start-Command([string]$Arguments) {
     $token = [Guid]::NewGuid().ToString('N')
     $output = Join-Path $fixture ($token + '.out')
     $errorFile = Join-Path $fixture ($token + '.err')
-    $process = Start-Process -FilePath $powershell -WindowStyle Hidden -PassThru -ArgumentList (
-        '-NoProfile -ExecutionPolicy Bypass -File "' + $manager + '" ' + $Arguments
-    ) -RedirectStandardOutput $output -RedirectStandardError $errorFile
+    $process = Start-BuildPowerShellScript -Script $manager -Arguments $Arguments -WorkingDirectory $fixture -OutputPath $output -ErrorPath $errorFile
+    $output=$process.StartupOutput;$errorFile=$process.StartupError
     # Keep the native handle before the short-lived process exits; PS 5.1
     # otherwise loses ExitCode when Start-Process only retains its PID.
     $null = $process.Handle
@@ -211,7 +211,7 @@ exit 0
     [IO.File]::WriteAllText((Join-Path $scripts 'fake.ps1'), $fake, $utf8)
     foreach ($phase in @('build', 'test')) {
         $batchScript = '@echo off' + "`r`n" +
-            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake.ps1" -Phase ' + $phase + ' -BuildArgument "%~1"' + "`r`n" +
+            '"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%~dp0fake.ps1" -Phase ' + $phase + ' -BuildArgument "%~1"' + "`r`n" +
             'exit /b %ERRORLEVEL%' + "`r`n"
         [IO.File]::WriteAllText((Join-Path $scripts ($phase + '.bat')), $batchScript, $utf8)
     }

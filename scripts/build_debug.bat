@@ -1,6 +1,7 @@
 @echo off
 setlocal
-set "SNOWDESKTOP_ENTRY_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+call "%~dp0powershell_runtime.bat"
+if errorlevel 1 exit /b 2
 cd /d "%~dp0.."
 
 set "RELOAD_SHELL="
@@ -17,15 +18,15 @@ set "RELOAD_SHELL_ARG="
 if defined RELOAD_SHELL set "RELOAD_SHELL_ARG=-ReloadShell"
 rem Acquire execution authority before any preflight/process action or output write.
 if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_entry.ps1 -Action debug %RELOAD_SHELL_ARG%
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action debug %RELOAD_SHELL_ARG%
 exit /b %ERRORLEVEL%
 :leased
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_entry.ps1 -Action verify
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action verify
 if %ERRORLEVEL% NEQ 0 exit /b 2
 
 rem The outer lease owner performs requested process actions before creating
 rem the private build Job; a delegated child performs read-only preflight.
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_preflight.ps1 -Configuration Debug %RELOAD_SHELL_ARG%
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_preflight.ps1 -Configuration Debug %RELOAD_SHELL_ARG%
 if %ERRORLEVEL% NEQ 0 (
     echo Build preflight stopped: Debug output ownership is blocked or unknown.
     exit /b 3
@@ -65,7 +66,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Arranging private runtime directory (Debug) ===
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build_debug\Debug"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build_debug\Debug"
 if %ERRORLEVEL% NEQ 0 (
     echo Debug build output arrangement FAILED
     exit /b 1

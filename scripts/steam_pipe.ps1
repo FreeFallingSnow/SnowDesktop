@@ -15,6 +15,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "build_entry.ps1")
 
 function ConvertTo-SteamVdfLiteral {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -240,13 +241,12 @@ if ($SkipPackage -and $ReloadShell) {
 if (-not $SkipPackage) {
     $packageArguments = @(
         "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $scriptDirectory "package_steam.ps1")
     )
     if ($ReloadShell) {
         $packageArguments += "-ReloadShell"
     }
-    & (Join-Path $PSHOME "powershell.exe") @packageArguments
+    & (Get-BuildPowerShell) @packageArguments
     if ($LASTEXITCODE -ne 0) {
         throw "Steam package generation failed with exit code $LASTEXITCODE."
     }

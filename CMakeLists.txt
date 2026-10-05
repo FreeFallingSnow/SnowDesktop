@@ -1647,7 +1647,7 @@ if (BUILD_TESTING)
     add_dependencies(SnowDesktopSteamRuntimeUpdateTests SnowDesktopLauncher)
     add_test(
         NAME steam_local_deploy_contract
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
             -File
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/steam_local_deploy_contract_tests.ps1")
     set_tests_properties(
@@ -1656,7 +1656,7 @@ if (BUILD_TESTING)
         LABELS "contract;deployment;integration;steam")
     add_test(
         NAME deployment_manifest_integration
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
             -File
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/deployment_manifest_integration.ps1"
             -RepositoryRoot "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -2522,15 +2522,17 @@ if (BUILD_TESTING)
         SnowDesktopCoreTests
         DEPENDS ${SNOWDESKTOP_CORE_TEST_TARGETS})
     add_test(NAME test_selection
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selection_tests.ps1")
     set_tests_properties(test_selection PROPERTIES
         TIMEOUT 30 LABELS "core;contract;build")
     add_test(NAME build_collaboration
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_collaboration_tests.ps1")
     set_tests_properties(build_collaboration PROPERTIES
         TIMEOUT 180 LABELS "core;contract;build")
+    set_tests_properties(test_selection build_collaboration PROPERTIES
+        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass")
     # Partial environment coverage must not be presented as a passing entry.
     # Failures take precedence over this distinct unavailable-environment code.
     set_tests_properties(application_data_lifecycle steam_runtime_update steam_workshop_manager
@@ -2541,7 +2543,7 @@ if (BUILD_TESTING)
         DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})
     add_custom_target(
         SnowDesktopTests
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
             -File "${CMAKE_SOURCE_DIR}/scripts/arrange_build_output.ps1"
             -BuildOutput "${CMAKE_BINARY_DIR}/$<CONFIG>"
             -AllowMissingFirstPartyRuntime

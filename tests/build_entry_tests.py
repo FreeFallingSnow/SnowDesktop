@@ -9,17 +9,19 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from powershell_runtime import powershell_executable, run as run_process
 import tempfile
 
 sys.dont_write_bytecode = True
-PS = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+PS = powershell_executable()
 
 def run_entry_tests(repo):
     fixture_env = os.environ.copy()
     fixture_env.pop('SNOWDESKTOP_EXECUTION_TOKEN', None)
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-entry-')).resolve()
     scripts=root/'scripts';scripts.mkdir()
-    for name in ('build.bat','build_debug.bat','build_entry.ps1','build_runtime.ps1',
+    for name in ('powershell_runtime.bat','build.bat','build_debug.bat','build_entry.ps1','build_runtime.ps1',
                  'build_job.cs','test_manager.ps1','test_output.ps1','build_protocol.ps1','build_manager.ps1',
                  'build_inputs.ps1','build_ownership.ps1','build_missing_dependency.ps1'):
         shutil.copyfile(repo/'scripts'/name,scripts/name)
@@ -31,7 +33,7 @@ def run_entry_tests(repo):
     def save():(directory/'state.json').write_text(json.dumps(state),encoding='utf-8')
     save()
     def run(argv,code=2,env=None):
-        p=subprocess.run(argv,cwd=str(root),env=fixture_env if env is None else env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=25)
+        p=run_process(argv,cwd=str(root),env=fixture_env if env is None else env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=25)
         assert p.returncode==code,(argv,p.returncode,p.stdout,p.stderr)
         return p
     entries=[['cmd.exe','/d','/c','call scripts\\build.bat --reload-shell'],
@@ -90,6 +92,7 @@ def run_entry_tests(repo):
     # without configuring a compiler or touching SnowDesktop build artifacts.
     (root/'cmake').mkdir()
     shutil.copyfile(repo/'cmake/SnowDesktop.SharedBuildGuard.cmake',root/'cmake/Guard.cmake')
+    shutil.copyfile(repo/'cmake/SnowDesktop.PowerShell.cmake',root/'cmake/SnowDesktop.PowerShell.cmake')
     (root/'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.24)\ninclude("${CMAKE_SOURCE_DIR}/cmake/Guard.cmake")\nsnowdesktop_check_shared_output()\nproject(Entry NONE)\nadd_custom_target(Native COMMAND "${CMAKE_COMMAND}" -E touch "${CMAKE_BINARY_DIR}/native.marker")\nsnowdesktop_install_shared_guard()\n')
     (root/'CMakePresets.json').write_text(json.dumps({'version':3,'configurePresets':[{'name':'release','binaryDir':'${sourceDir}/.build'}],'buildPresets':[{'name':'release','configurePreset':'release','configuration':'Release'}]}))
     cmake=shutil.which('cmake');ctest=shutil.which('ctest');assert cmake and ctest
@@ -104,14 +107,15 @@ def run_entry_tests(repo):
     assert (root/'independent/native.marker').exists()
     print('PASS raw shared CMake configure and regenerated IDE targets refuse missing/expired authority; leased IDE runs once; independent output available',flush=True)
 
-    # A clean CMake inventory still declares all six automatic regressions when
+    # A clean CMake inventory still declares all seven automatic regressions when
     # the Python executable is absent, unusable or too old. Native selection is
     # unaffected. No host compiler or project is configured here.
     source=root/'inventory';(source/'scripts').mkdir(parents=True)
     shutil.copyfile(scripts/'build_missing_dependency.ps1',source/'scripts/build_missing_dependency.ps1')
     shutil.copyfile(repo/'cmake/SnowDesktop.ToolTests.cmake',source/'ToolTests.cmake')
+    shutil.copyfile(repo/'cmake/SnowDesktop.PowerShell.cmake',source/'SnowDesktop.PowerShell.cmake')
     (source/'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.24)\nproject(Inventory NONE)\nenable_testing()\nset(BUILD_TESTING ON)\nadd_test(NAME Native COMMAND "${CMAKE_COMMAND}" -E true)\nif(NO_PYTHON_FIXTURE)\n set(CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH OFF)\n set(CMAKE_FIND_USE_CMAKE_SYSTEM_PATH OFF)\nendif()\ninclude("${CMAKE_CURRENT_SOURCE_DIR}/ToolTests.cmake")\n')
-    required={'build_workflow','build_plan_execution','build_dashboard','build_wait_retry','build_shared_resources','build_foreground_wait'}
+    required={'build_workflow','build_plan_execution','build_dashboard','build_wait_retry','build_shared_resources','build_foreground_wait','powershell_runtime'}
     for case,python in [('absent',None),('broken',str(source/'absent.exe')),('working',sys.executable)]:
         output=root/('inventory-'+case)
         options=['-DSNOWDESKTOP_PYTHON_EXECUTABLE='+python] if python else ['-DNO_PYTHON_FIXTURE=ON']
@@ -124,7 +128,7 @@ def run_entry_tests(repo):
             run([ctest,'--test-dir',str(output),'-C','Release','-R','^Native$','--no-tests=error'],code=0)
             p=run([ctest,'--test-dir',str(output),'-C','Release','-R','^build_foreground_wait$','--no-tests=error','--output-on-failure'],code=8)
             assert 'ENVIRONMENT-BLOCKED' in p.stdout and 'not executed' in p.stdout
-    print('PASS clean absent/broken/working-Python CMake inventories retain six automatic and one manual regression; native selection runs, missing dependency fails explicitly',flush=True)
+    print('PASS clean absent/broken/working-Python CMake inventories retain seven automatic and one manual regression; native selection runs, missing dependency fails explicitly',flush=True)
 
     # Exercise real executable probes and the one-run fallback, not a command
     # existence mock. Broken and old aliases cannot trigger an enhancement run.

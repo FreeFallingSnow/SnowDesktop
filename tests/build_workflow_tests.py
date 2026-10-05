@@ -6,12 +6,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from powershell_runtime import powershell_executable, run as run_process
 import tempfile
 import time
-import sys
 
 sys.dont_write_bytecode=True
-PS = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+PS = powershell_executable()
 
 def check_build_entry_preflight(repo):
     # Exercise the real batch entry, with no application shutdown or compilation.
@@ -20,6 +22,7 @@ def check_build_entry_preflight(repo):
     scripts = root / 'scripts'
     scripts.mkdir()
     shutil.copyfile(repo / 'scripts/build.bat', scripts / 'build.bat')
+    shutil.copyfile(repo / 'scripts/powershell_runtime.bat', scripts / 'powershell_runtime.bat')
     shutil.copyfile(repo / 'scripts/build_entry.ps1', scripts / 'build_entry.ps1')
     shutil.copyfile(repo / 'scripts/build_job.cs', scripts / 'build_job.cs')
     (scripts / 'build_preflight.ps1').write_text('''param([switch]$ReloadShell,[switch]$CloseApplication)
@@ -48,7 +51,7 @@ exit /b 19
             command += ' --reload-shell'
         if close_application:
             command += ' --close-application'
-        result = subprocess.run('"' + os.environ['COMSPEC'] + '" /d /c ' + command,
+        result = run_process('"' + os.environ['COMSPEC'] + '" /d /c ' + command,
             cwd=root, env=env, capture_output=True, text=True, timeout=15)
         marker = root / 'preflight.json'
         assert marker.exists(), (reload, exit_code, result.stdout, result.stderr)
@@ -108,7 +111,7 @@ finally {Exit-BuildEntry $entry}
 ''', encoding='utf-8')
     for initially in (True, False):
         command = '& "' + str(close_probe) + '" -InitiallyOccupied $' + str(initially).lower()
-        observed = subprocess.run([PS, '-NoProfile', '-Command', command], cwd=close_root, env=fixture_env, capture_output=True, text=True, timeout=15)
+        observed = run_process([PS, '-NoProfile', '-Command', command], cwd=close_root, env=fixture_env, capture_output=True, text=True, timeout=15)
         assert observed.returncode != 0 and 'Explorer hook' in observed.stderr and not (close_root / 'shell-action').exists(), observed
     print('PASS application-only preflight refuses existing and newly observed Explorer hooks without any shell action')
     # Explicit forged-credential probes still provide their own environment.
@@ -138,10 +141,10 @@ while(Test-Path (Join-Path $root 'hold-build')){Start-Sleep -Milliseconds 50}
 if($Phase -eq 'test' -and (Test-Path (Join-Path $root 'fail-test'))){Write-Output 'controlled failure';exit 17}
 Write-Output "controlled $Phase passed";exit 0
 ''')
-    (scripts/'build.bat').write_text('@echo off\npowershell.exe -NoProfile -File "%~dp0fake.ps1" -Phase build\nexit /b %ERRORLEVEL%\n')
+    (scripts/'build.bat').write_text('@echo off\n"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%~dp0fake.ps1" -Phase build\nexit /b %ERRORLEVEL%\n')
     (scripts/'build_batch_tests.ps1').write_text('param([string]$Batch)\n& (Join-Path $PSScriptRoot fake.ps1) -Phase test; exit $LASTEXITCODE\n')
     def git(*args):
-        p=subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.invalid',*args],cwd=str(root),env=fixture_env,capture_output=True,text=True)
+        p=run_process(['git','-c','user.name=Fixture','-c','user.email=fixture@example.invalid',*args],cwd=str(root),env=fixture_env,capture_output=True,text=True)
         assert p.returncode==0,p.stderr
         return p.stdout.strip()
     git('init','--quiet');git('add','.');git('commit','--quiet','-m','fixture')
@@ -149,7 +152,7 @@ Write-Output "controlled $Phase passed";exit 0
     owned=[]
     foreground=[]
     def call(*args,code=0):
-        p=subprocess.run([PS,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(scripts/'build_manager.ps1'),*map(str,args)],cwd=str(root),env=fixture_env,capture_output=True,text=True,timeout=20)
+        p=run_process([PS,'-NoProfile','-File',str(scripts/'build_manager.ps1'),*map(str,args)],cwd=str(root),env=fixture_env,capture_output=True,text=True,timeout=20)
         assert p.returncode==code,(args,p.returncode,p.stderr,p.stdout)
         return json.loads(p.stdout) if p.stdout.strip().startswith('{') else p.stdout
     def state():
@@ -228,7 +231,7 @@ Write-Output "controlled $Phase passed";exit 0
         # Hidden spawn denied: the pending registration is explicit and a
         # foreground caller takes over once through the same check/freeze path.
         original_manager=(scripts/'build_manager.ps1').read_text(encoding='utf-8-sig')
-        denied_manager=original_manager.replace('$worker=[Diagnostics.Process]::Start($info)',"throw 'fixture hidden launch denied'",1)
+        denied_manager=original_manager.replace("$worker=Start-BuildPowerShellScript -Script $waiterScript -Arguments $arguments -WorkingDirectory $repositoryRoot -OutputPath ($output+'.out') -ErrorPath ($output+'.err')","throw 'fixture hidden launch denied'",1)
         assert denied_manager!=original_manager
         (scripts/'build_manager.ps1').write_text(denied_manager,encoding='utf-8-sig')
         denied=begin('no-hidden');nid=denied['batchId'];plan('no-hidden',nid,0)
@@ -281,7 +284,7 @@ if(($names -join ',') -ne 'Alpha,Beta,Manual'){throw 'incorrect dedup/manual uni
 $p.tests=@('Missing');try{Resolve-PlanTests $p $inv|Out-Null;throw 'empty pass'}catch{if($_ -match 'empty pass'){throw}}
 'PASS literal plans, merged dedup, explicit manual and unknown test rejection'
 """)
-        p=subprocess.run([PS,'-NoProfile','-File',str(unit)],env=fixture_env,text=True,capture_output=True);assert p.returncode==0,p.stderr;print(p.stdout.strip())
+        p=run_process([PS,'-NoProfile','-File',str(unit)],env=fixture_env,text=True,capture_output=True);assert p.returncode==0,p.stderr;print(p.stdout.strip())
         # Legacy live batches cannot be upgraded underneath loaded callers.
         legacy=begin('legacy');legacy_id=legacy['batchId'];st=state();st['current'].pop('protocolVersion');(state_root/'state.json').write_bytes(json.dumps(st).encode())
         call('ready','legacy','-Batch',legacy_id,'-Revision',0,code=2)

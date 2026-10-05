@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from powershell_runtime import powershell_executable, run as run_process
 import tempfile
 import time
 
@@ -15,7 +17,7 @@ sys.dont_write_bytecode=True
 
 def main(repo):
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-shared-resource-'))
-    for name in ['scripts/build_shared_resources.py','scripts/shared_resources.json','scripts/build_wait_tasks.py','scripts/build_ownership.ps1','tools/build-dashboard/server.py']:
+    for name in ['scripts/powershell_runtime.py','scripts/build_shared_resources.py','scripts/shared_resources.json','scripts/build_wait_tasks.py','scripts/build_ownership.ps1','tools/build-dashboard/server.py']:
         target=root/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(repo/name,target)
     folder=root/'.build/collaboration';folder.mkdir(parents=True)
     (root/'lang').mkdir()
@@ -30,7 +32,7 @@ def main(repo):
         if action=='prepare':command+=['--file','lang/en-US.json','--keys',keys]
         if request:command+=['--request',request]
         if extra:command+=extra
-        result=subprocess.run(command,capture_output=True,text=True,encoding='utf-8',timeout=10)
+        result=run_process(command,capture_output=True,text=True,encoding='utf-8',timeout=10)
         assert result.returncode==code,(command,result.stdout,result.stderr)
         return json.loads(result.stdout) if code==0 else result.stderr
     def change(record,values):Path(record['patchFile']).write_text(json.dumps(values,ensure_ascii=False),encoding='utf-8')
@@ -43,7 +45,7 @@ def main(repo):
             def apply(actor,record):
                 deadline=time.monotonic()+5
                 while True:
-                    result=subprocess.run([sys.executable,str(root/'scripts/build_shared_resources.py'),'resource','apply',actor,'--root',str(root),'--batch',batch,'--revision','0','--request',record['requestId']],capture_output=True,text=True,encoding='utf-8')
+                    result=run_process([sys.executable,str(root/'scripts/build_shared_resources.py'),'resource','apply',actor,'--root',str(root),'--batch',batch,'--revision','0','--request',record['requestId']],capture_output=True,text=True,encoding='utf-8')
                     if result.returncode==0:return json.loads(result.stdout)
                     if 'lease is occupied' not in result.stderr or time.monotonic()>=deadline:raise AssertionError(result.stderr)
                     time.sleep(.05)
@@ -97,7 +99,7 @@ $a.ownedFiles=@('lang/en-US.json');Set-Ownership $current $b 'lang/en-US.json' $
 try{Set-Ownership $current $b 'lang' $true;throw 'Structural claim accepted'}catch{if($_.Exception.Message -eq 'Structural claim accepted'){throw}}
 Write-Output 'PASS finished owner handoff, provenance, deferred recheck, active code conflict, shared language exemption and structural claim exclusion'
 ''',encoding='utf-8-sig')
-        result=subprocess.run(['powershell.exe','-NoProfile','-File',str(fixture)],capture_output=True,text=True,timeout=15)
+        result=run_process([powershell_executable(),'-NoProfile','-File',str(fixture)],capture_output=True,text=True,timeout=15)
         assert result.returncode==0,(result.stdout,result.stderr);print(result.stdout.strip())
         print('SHARED RESOURCE PASSED; fixture: '+str(root))
     finally:

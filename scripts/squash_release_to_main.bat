@@ -1,18 +1,20 @@
 @echo off
 setlocal
+call "%~dp0powershell_runtime.bat"
+if errorlevel 1 exit /b 2
 if defined SNOWDESKTOP_REPOSITORY_ROOT (
     cd /d "%SNOWDESKTOP_REPOSITORY_ROOT%"
 ) else (
     cd /d "%~dp0.."
 )
 
-for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "(Get-Content version.json | ConvertFrom-Json).version"`) do set VERSION=%%v
+for /f "usebackq delims=" %%v in (`"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -Command "(Get-Content version.json | ConvertFrom-Json).version"`) do set VERSION=%%v
 if "%VERSION%"=="" (
     echo Failed to read version from version.json.
     exit /b 1
 )
 
-powershell -NoProfile -Command "$parts = $env:VERSION -split '\.'; if ($parts.Count -ne 4 -or $parts[0] -eq '0' -or $parts[3] -ne '0') { exit 1 }; foreach ($part in $parts) { if ($part -notmatch '^(0|[1-9][0-9]*)$' -or [uint64]$part -gt 65535) { exit 1 } }"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -Command "$parts = $env:VERSION -split '\.'; if ($parts.Count -ne 4 -or $parts[0] -eq '0' -or $parts[3] -ne '0') { exit 1 }; foreach ($part in $parts) { if ($part -notmatch '^(0|[1-9][0-9]*)$' -or [uint64]$part -gt 65535) { exit 1 } }"
 if errorlevel 1 (
     echo Refusing to squash: version.json must use Store-compatible A.B.C.0 format.
     echo Each component must be an integer from 0 to 65535, and A must be greater than zero.
@@ -64,7 +66,7 @@ if not defined COMMIT_MESSAGE (
 )
 if not defined COMMIT_MESSAGE set "COMMIT_MESSAGE=%TAG% - version update"
 
-powershell -NoProfile -Command "if (-not $env:COMMIT_MESSAGE.StartsWith($env:TAG)) { exit 1 }"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -Command "if (-not $env:COMMIT_MESSAGE.StartsWith($env:TAG)) { exit 1 }"
 if errorlevel 1 (
     echo Refusing to squash: the version commit message must start with %TAG%.
     echo Message: %COMMIT_MESSAGE%

@@ -8,6 +8,7 @@ import re
 import secrets
 import shutil
 import subprocess
+from powershell_runtime import powershell_executable, run as run_process
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -79,8 +80,8 @@ def source_identity(repo, work):
     script = work/'source-identity.ps1'
     if not script.exists():
         script.write_bytes(b"$ErrorActionPreference='Stop'\n$root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))\n. (Join-Path $root 'scripts/build_inputs.ps1')\nGet-BuildInputIdentity $root | ConvertTo-Json\n")
-    ps = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
-    run = subprocess.run([ps, '-NoProfile', '-File', str(script)], cwd=str(repo), capture_output=True, timeout=30)
+    ps = powershell_executable()
+    run = run_process([ps, '-NoProfile', '-File', str(script)], cwd=str(repo), capture_output=True, timeout=30)
     if run.returncode:
         raise ValueError('Cannot verify source identity; retries are blocked')
     return json.loads(run.stdout.decode('utf-8-sig'))['digest']
@@ -238,7 +239,7 @@ def run_output_checkpoint(repo, work, ps):
     atomic(work/'output-isolation.pending.json', pending)
     with open(str(log), 'xb') as stream:
         try:
-            run = subprocess.run([ps, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script),
+            run = run_process([ps, '-NoProfile', '-File', str(script),
                                   '-Root', str(repo), '-Receipt', str(receipt)], cwd=str(repo),
                                  stdout=stream, stderr=subprocess.STDOUT, timeout=30)
         except subprocess.TimeoutExpired:
@@ -294,9 +295,9 @@ def main():
                   'policy': {'maxAttempts': 3, 'retryBudgetSeconds': 300, 'backoffSeconds': [1, 3],
                              'eligibleTests': sorted(POLICY), 'failureClass': FAILURE_CLASS}}
         atomic(path, ledger)
-        ps = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
+        ps = powershell_executable()
         env = dict(os.environ, SNOWDESKTOP_RETRY_SIGNAL_DIR=str(signals), SNOWDESKTOP_RETRY_RUN_TOKEN=token)
-        code = subprocess.call([ps, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+        code = subprocess.call([ps, '-NoProfile', '-File',
                                 str(repo/'scripts/test_manager.ps1'), '-Mode', 'plan', '-PlanBatch', args.batch], cwd=str(repo), env=env)
         coverage_path = directory/(args.batch + '.coverage.json')
         coverage = module.read_json(directory, coverage_path.name) or {}

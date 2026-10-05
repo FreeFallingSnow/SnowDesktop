@@ -33,6 +33,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "build_entry.ps1")
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [System.IO.Path]::GetFullPath(
@@ -431,10 +432,9 @@ function Invoke-Package {
     Write-Host ""
     Write-Host "[2/2] 生成携带版、MSIX 和商店上传包" `
         -ForegroundColor Cyan
-    $powershell = Join-Path $PSHOME "powershell.exe"
+    $powershell = Get-BuildPowerShell
     $packageArguments = @(
         "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
         "-File", $packageScript,
         "-SkipBuild",
         "-OutputDirectory", $context.VersionDirectory

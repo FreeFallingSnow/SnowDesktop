@@ -157,8 +157,8 @@ function Invoke-FilteredTests {
 
     # The full aggregate already arranges its output in CMake.
     if ($needsHostRuntime -and $BuildPreset -ne "tests") {
-        Invoke-Checked -FilePath "powershell.exe" -Arguments @(
-            "-NoProfile", "-ExecutionPolicy", "Bypass",
+        Invoke-Checked -FilePath (Get-BuildPowerShell) -Arguments @(
+            "-NoProfile",
             "-File", (Join-Path $PSScriptRoot "arrange_build_output.ps1"),
             "-BuildOutput", (Join-Path $repositoryRoot ".build\Release"),
             "-AllowMissingFirstPartyRuntime"
