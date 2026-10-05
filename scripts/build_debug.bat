@@ -23,28 +23,11 @@ exit /b %ERRORLEVEL%
 "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_entry.ps1 -Action verify
 if %ERRORLEVEL% NEQ 0 exit /b 2
 
-if defined RELOAD_SHELL (
-    echo WARNING: --reload-shell stops SnowDesktop and restarts Explorer.
-    taskkill /f /im SnowDesktop.exe >nul 2>&1
-    tasklist /fi "IMAGENAME eq explorer.exe" /nh 2>nul | find /i "explorer.exe" >nul
-    if not errorlevel 1 (
-        taskkill /f /im explorer.exe >nul 2>&1
-        timeout /t 2 /nobreak >nul
-        start "" explorer.exe >nul 2>&1
-    )
-    goto configure
-)
-
-tasklist /fi "IMAGENAME eq SnowDesktop.exe" /nh 2>nul | find /i "SnowDesktop.exe" >nul
-if not errorlevel 1 (
-    echo Build preflight stopped: SnowDesktop.exe is running.
-    echo Exit SnowDesktop normally before building.
-    exit /b 3
-)
-"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build_debug\Debug\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
-if not errorlevel 1 (
-    echo Build preflight stopped: Explorer still has the Debug build's SnowDesktopTaskbarHook.dll loaded.
-    echo Run scripts\build_debug.bat --reload-shell only when an Explorer restart is acceptable.
+rem The outer lease owner performs requested process actions before creating
+rem the private build Job; a delegated child performs read-only preflight.
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File scripts\build_preflight.ps1 -Configuration Debug %RELOAD_SHELL_ARG%
+if %ERRORLEVEL% NEQ 0 (
+    echo Build preflight stopped: Debug output ownership is blocked or unknown.
     exit /b 3
 )
 

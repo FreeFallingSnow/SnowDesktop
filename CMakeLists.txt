@@ -1558,7 +1558,7 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src steam_bridge/src
         LINK_LIBRARIES SnowDesktopWorkshopManagerSupport d2d1 d3d11 dxguid windowscodecs ole32 shlwapi
         COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktop>"
-        LABELS contract integration settings steam sdk-free)
+        LABELS contract integration settings steam sdk-free host-runtime)
     set_tests_properties(theme_workflow PROPERTIES TIMEOUT 180)
     add_dependencies(SnowDesktopThemeWorkflowTests SnowDesktop)
 
@@ -1963,7 +1963,7 @@ if (BUILD_TESTING)
             "$<TARGET_FILE:snowwidget>"
             "$<TARGET_FILE:SnowDesktop>"
             "${CMAKE_CURRENT_SOURCE_DIR}" native
-        LABELS authoring integration lua preview render widget)
+        LABELS authoring integration lua preview render widget host-runtime)
     add_dependencies(SnowDesktopWidgetAuthorPreviewCliTests
         snowwidget SnowDesktop)
     # One executable, five independently bounded scenes. Every child deadline
@@ -1975,7 +1975,7 @@ if (BUILD_TESTING)
                 "$<TARGET_FILE:snowwidget>" "$<TARGET_FILE:SnowDesktop>"
                 "${CMAKE_CURRENT_SOURCE_DIR}" ${preview_suite})
         set_tests_properties(widget_author_preview_cli_${preview_suite} PROPERTIES
-            TIMEOUT 90 LABELS "authoring;integration;lua;preview;render;widget"
+            TIMEOUT 90 LABELS "authoring;integration;lua;preview;render;widget;host-runtime"
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetAuthorPreviewCliTests>")
     endforeach()
 

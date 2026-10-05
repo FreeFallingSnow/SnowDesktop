@@ -23,8 +23,9 @@ def check_build_entry_preflight(repo):
     shutil.copyfile(repo / 'scripts/build_entry.ps1', scripts / 'build_entry.ps1')
     shutil.copyfile(repo / 'scripts/build_job.cs', scripts / 'build_job.cs')
     (scripts / 'build_preflight.ps1').write_text('''param([switch]$ReloadShell,[switch]$CloseApplication)
-[IO.File]::WriteAllText((Join-Path $PSScriptRoot '../preflight.json'),
-    (ConvertTo-Json @{reload=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;directory=$PSScriptRoot}))
+[IO.File]::AppendAllText((Join-Path $PSScriptRoot '../preflight.json'),
+    ((ConvertTo-Json -Compress @{reload=[bool]$ReloadShell;closeApplication=[bool]$CloseApplication;directory=$PSScriptRoot})+"`n"))
+if($env:SNOWDESKTOP_PREFLIGHT_FIXTURE_EXIT -eq 'throw'){throw 'controlled preflight exception'}
 exit ([int]$env:SNOWDESKTOP_PREFLIGHT_FIXTURE_EXIT)
 ''')
     fake_bin = root / 'bin'
@@ -33,7 +34,7 @@ exit ([int]$env:SNOWDESKTOP_PREFLIGHT_FIXTURE_EXIT)
 echo unexpected configure>"%SNOWDESKTOP_PREFLIGHT_FIXTURE_ROOT%\\cmake.txt"
 exit /b 19
 ''')
-    for reload, close_application, exit_code in ((False,False,7), (True,False,7), (True,False,-1), (True,False,0), (False,True,7), (False,True,0)):
+    for reload, close_application, exit_code in ((False,False,7), (True,False,7), (True,False,-1), (True,False,'throw'), (True,False,0), (False,True,7), (False,True,'throw'), (False,True,0)):
         for marker in (root / 'preflight.json', root / 'cmake.txt'):
             if marker.exists():
                 marker.unlink()
@@ -50,11 +51,21 @@ exit /b 19
             cwd=root, env=env, capture_output=True, text=True, timeout=15)
         marker = root / 'preflight.json'
         assert marker.exists(), (reload, exit_code, result.stdout, result.stderr)
-        observed = json.loads(marker.read_text(encoding='utf-8-sig'))
-        assert observed['reload'] == reload and observed['closeApplication'] == close_application and Path(observed['directory']).samefile(scripts), observed
+        calls = [json.loads(line) for line in marker.read_text(encoding='utf-8-sig').splitlines()]
+        observed = calls[0]
+        assert observed['reload'] == reload and observed['closeApplication'] == close_application and Path(observed['directory']).samefile(scripts), calls
+        assert len(calls) == (2 if exit_code == 0 and (reload or close_application) else 1), calls
+        assert all(not item['reload'] and not item['closeApplication'] for item in calls[1:]), calls
         # The fake .cmd deliberately ends the batch at configure, with code 19.
         assert result.returncode == (19 if exit_code == 0 else 3), result
         assert (root / 'cmake.txt').exists() == (exit_code == 0), result
+        if reload or close_application:
+            receipt = max((root/'.build/collaboration').glob('*.preflight.json'), key=lambda path:path.stat().st_mtime_ns)
+            checkpoint = json.loads(receipt.read_text(encoding='utf-8-sig'))
+            assert checkpoint['exitCode'] == (3 if exit_code == 'throw' else exit_code), checkpoint
+            assert checkpoint['startedUtc'] and checkpoint['completedUtc']
+            if exit_code == 'throw':
+                assert 'controlled preflight exception' in checkpoint['error'] and b'controlled preflight exception' in receipt.with_name(receipt.name.replace('.preflight.json','.log')).read_bytes()
     print('PASS real build entry preserves preflight path after SHIFT and stops on positive/negative failures')
 
 def run_tests(repo,entry=True):
@@ -64,13 +75,15 @@ def run_tests(repo,entry=True):
     (close_root / 'scripts').mkdir()
     (close_root / '.build/Release').mkdir(parents=True)
     shutil.copyfile(repo / 'scripts/build_preflight.ps1', close_root / 'scripts/build_preflight.ps1')
+    shutil.copyfile(repo / 'scripts/build_entry.ps1', close_root / 'scripts/build_entry.ps1')
     (close_root / '.build/Release/SnowDesktopTaskbarHook.dll').write_bytes(b'fixture')
     close_probe = close_root / 'probe.ps1'
     close_probe.write_text(r'''param([bool]$InitiallyOccupied)
 $global:Closed=$false
 $global:InitiallyOccupied=$InitiallyOccupied
 $global:ProbeRoot=$PSScriptRoot
-function Get-Process { param($Name,$Id)
+function Get-Process { param($Name,$Id,$ErrorAction)
+ if($Id -eq $PID){return Microsoft.PowerShell.Management\Get-Process -Id $PID}
  if($Name -contains 'explorer') {
   if($global:InitiallyOccupied -or $global:Closed) {
    return [pscustomobject]@{Id=13579;ProcessName='explorer';StartTime=[datetime]::UtcNow;Modules=@([pscustomobject]@{FileName=(Join-Path $global:ProbeRoot '.build/Release/SnowDesktopTaskbarHook.dll')})}
@@ -83,7 +96,10 @@ function Get-Process { param($Name,$Id)
 }
 function Stop-Process { [IO.File]::WriteAllText((Join-Path $global:ProbeRoot 'shell-action'),'stop');throw 'Unexpected process termination' }
 function Start-Process { [IO.File]::WriteAllText((Join-Path $global:ProbeRoot 'shell-action'),'start');throw 'Unexpected shell restart' }
-& (Join-Path $PSScriptRoot 'scripts/build_preflight.ps1') -CloseApplication
+. (Join-Path $PSScriptRoot 'scripts/build_entry.ps1')
+$entry=Enter-BuildEntry $PSScriptRoot
+try {& (Join-Path $PSScriptRoot 'scripts/build_preflight.ps1') -CloseApplication}
+finally {Exit-BuildEntry $entry}
 ''', encoding='utf-8')
     for initially in (True, False):
         command = '& "' + str(close_probe) + '" -InitiallyOccupied $' + str(initially).lower()
@@ -97,6 +113,8 @@ function Start-Process { [IO.File]::WriteAllText((Join-Path $global:ProbeRoot 's
         check_build_entry_preflight(repo)
         from build_entry_tests import run_entry_tests
         run_entry_tests(repo)
+        from build_shell_recovery_tests import run_shell_recovery_tests
+        run_shell_recovery_tests(repo)
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-workflow-'))
     scripts=root/'scripts';scripts.mkdir()
     for name in ('build_entry.ps1','build_runtime.ps1','build_manager.ps1','build_inputs.ps1','build_job.cs','build_protocol.ps1','build_ownership.ps1','build_preflight.ps1','build_waiter.ps1','build_wait_tasks.py'):

@@ -18,7 +18,7 @@ def run_entry_tests(repo):
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-entry-')).resolve()
     scripts=root/'scripts';scripts.mkdir()
     for name in ('build.bat','build_debug.bat','build_entry.ps1','build_runtime.ps1',
-                 'build_job.cs','test_manager.ps1','build_protocol.ps1','build_manager.ps1',
+                 'build_job.cs','test_manager.ps1','test_output.ps1','build_protocol.ps1','build_manager.ps1',
                  'build_inputs.ps1','build_ownership.ps1','build_missing_dependency.ps1'):
         shutil.copyfile(repo/'scripts'/name,scripts/name)
     (scripts/'build_preflight.ps1').write_text("param([switch]$ReloadShell)\nfunction Get-ReadOnlyPreflight($Root){return @{status='clear';observedUtc=[DateTime]::UtcNow.ToString('o');owners=@()}}\nif($MyInvocation.InvocationName -ne '.') {[IO.File]::WriteAllText((Join-Path $PSScriptRoot '../preflight.marker'),'called');exit 3}\n")

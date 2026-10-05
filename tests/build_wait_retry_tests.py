@@ -136,7 +136,7 @@ def cleanup_fixtures():
 def process_fixture(repo):
     root=new_fixture('SnowDesktop-retry-process-')
     (root/'scripts').mkdir();(root/'tools/build-dashboard').mkdir(parents=True);(root/'bin').mkdir()
-    for name in ('build_wait_tasks.py','build_test_retry.py','build_inputs.ps1','build_batch_tests.ps1','build_runtime.ps1'):
+    for name in ('build_wait_tasks.py','build_test_retry.py','test_output.ps1','build_inputs.ps1','build_batch_tests.ps1','build_runtime.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
     shutil.copyfile(repo/'tools/build-dashboard/server.py',root/'tools/build-dashboard/server.py')
     (root/'.gitignore').write_text('.build/\nbin/\n')
@@ -145,10 +145,17 @@ def process_fixture(repo):
     $root=Split-Path $PSScriptRoot -Parent
     $dir=Join-Path $root '.build/collaboration'
     $work=Join-Path $dir ($PlanBatch+'.retry')
+    $control=[IO.File]::ReadAllText((Join-Path $root '.build/control'))
+    $full=$control.StartsWith('full-')
+    . (Join-Path $PSScriptRoot 'test_output.ps1')
+    $check=New-OutputIsolationCheck
+    if($control -eq 'full-failed-check'){$check.status='failed';$check.exitCode=7;$check.error='original output checkpoint failure';$check.startedUtc='2026-01-01T00:00:00Z';$check.completedUtc='2026-01-01T00:00:01Z'}
     [IO.File]::AppendAllText((Join-Path $root '.build/initial.count'),"once`n")
     $report=Join-Path $work 'initial.xml'
-    [IO.File]::WriteAllText($report,'<testsuite><testcase name="build_dashboard"><failure>structured resource fixture</failure></testcase><testcase name="Deterministic"/></testsuite>')
-    @{schemaVersion=1;batchId=$PlanBatch;mode='selected';status='failed';selected=@('build_dashboard','Deterministic');completed=@();tasks=@(@{participant='fixture';requested=@('build_dashboard','Deterministic');status='failed'});report=$report;error='initial fixture failed'}|ConvertTo-Json -Depth 10|Set-Content (Join-Path $dir ($PlanBatch+'.coverage.json')) -Encoding UTF8
+    [IO.File]::WriteAllText($report,('<testsuite><testcase name="build_dashboard">'+$(if($control -eq 'full-failed-check'){''}else{'<failure>structured resource fixture</failure>'})+'</testcase><testcase name="Deterministic"/></testsuite>'))
+    $coverage=@{schemaVersion=1;batchId=$PlanBatch;mode=$(if($full){'full'}else{'selected'});status='failed';selected=@('build_dashboard','Deterministic');completed=@();tasks=@(@{participant='fixture';requested=@('build_dashboard','Deterministic');status='failed';requiresOutputIsolation=$full});report=$report;error='initial fixture failed'}
+    if($full -and $control -ne 'full-legacy'){$coverage.postChecks=@{outputIsolation=$check}}
+    $coverage|ConvertTo-Json -Depth 10|Set-Content (Join-Path $dir ($PlanBatch+'.coverage.json')) -Encoding UTF8
     if([IO.File]::ReadAllText((Join-Path $root '.build/control')) -ne 'assertion'){
      @{test='build_dashboard';runToken=$env:SNOWDESKTOP_RETRY_RUN_TOKEN;exitCode=75;failureClass='isolated-port-race';cleanupComplete=$true;sideEffects='none';reason='controlled ephemeral port failure'}|ConvertTo-Json|Set-Content (Join-Path $env:SNOWDESKTOP_RETRY_SIGNAL_DIR 'build_dashboard.json') -Encoding UTF8
     }
@@ -181,10 +188,16 @@ def process_fixture(repo):
     state=root/'.build/collaboration';state.mkdir(parents=True)
     ps=str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
     env=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'])
-    for index,(mode,expected,attempts) in enumerate((('once',0,1),('always',1,2),('assertion',1,0),('change',5,1))):
-        batch=str(index+1)*32
-        (state/(batch+'.plan.json')).write_text(json.dumps({'schemaVersion':1,'batchId':batch,'configuration':'Release','mode':'selected','buildRequired':False}))
+    for index,(mode,expected,attempts) in enumerate((('once',0,1),('always',1,2),('assertion',1,0),('change',5,1),('full-once',0,1),('full-bad-output',1,1),('full-failed-check',7,0),('full-legacy',0,1))):
+        batch=format(index+1,'x')*32
+        full=mode.startswith('full-')
+        (state/(batch+'.plan.json')).write_text(json.dumps({'schemaVersion':1,'batchId':batch,'configuration':'Release','mode':'full' if full else 'selected','buildRequired':False}))
         (root/'.build/control').write_text(mode)
+        output=root/'.build/Release';(output/'tests').mkdir(parents=True,exist_ok=True);(output/'SnowDesktop.Runtime').mkdir(exist_ok=True)
+        (output/'tests/SnowDesktopFixtureTests.exe').write_bytes(b'isolated fixture')
+        violation=output/'escaped.dll'
+        if violation.exists():violation.unlink()
+        if mode=='full-bad-output':violation.write_bytes(b'escaped fixture output')
         (root/'source.cpp').write_text('initial '+mode)
         old=(root/'.build/ctest.count').read_text().count('once') if (root/'.build/ctest.count').exists() else 0
         run=subprocess.run([ps,'-NoProfile','-File',str(root/'scripts/build_batch_tests.ps1'),'-Batch',batch],cwd=str(root),env=env,capture_output=True,text=True,timeout=45)
@@ -197,6 +210,17 @@ def process_fixture(repo):
         if mode=='once':assert coverage['status']=='passed-after-retry' and coverage['flaky']==['build_dashboard'] and coverage['tasks'][0]['status']=='passed-after-retry'
         if mode=='always':assert ledger['tests']['build_dashboard']['failureCount']==3 and ledger['tests']['build_dashboard']['status']=='exhausted-failed'
         if mode=='change':assert ledger['status']=='invalidated'
+        if full:
+            check=coverage['postChecks']['outputIsolation']
+            assert check['status']==('failed' if expected else 'passed'),check
+            assert coverage['tasks'][0]['status']==('failed' if expected else 'passed-after-retry'),coverage
+            assert ledger['postChecks']==coverage['postChecks']
+            evidence=state/(batch+'.retry/output-isolation.json')
+            if mode=='full-failed-check':
+                assert not evidence.exists() and check['error']=='original output checkpoint failure' and check['exitCode']==7
+            else:
+                assert evidence.exists() and check['startedUtc'] and check['completedUtc']
+            assert [x['name'] for x in coverage['completed']]==['build_dashboard','Deterministic'],coverage
         prior=(root/'.build/initial.count').read_text()
         replay=subprocess.run([sys.executable,str(root/'scripts/build_test_retry.py'),'--root',str(root),'--batch',batch],cwd=str(root),env=env,capture_output=True,text=True,timeout=10)
         assert replay.returncode==expected and prior==(root/'.build/initial.count').read_text()
@@ -207,7 +231,7 @@ def real_selection_fixture(repo):
     import datetime as dt
     root=new_fixture('SnowDesktop-real-ctest-selection-')
     (root/'scripts').mkdir();state=root/'.build/collaboration';state.mkdir(parents=True)
-    for name in ('build_job.cs','build_entry.ps1','test_manager.ps1','build_protocol.ps1'):
+    for name in ('build_job.cs','build_entry.ps1','test_manager.ps1','test_output.ps1','build_protocol.ps1'):
         shutil.copyfile(repo/'scripts'/name,root/'scripts'/name)
     (root/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.20)
     project(RealSelection NONE)

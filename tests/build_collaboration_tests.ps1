@@ -167,14 +167,21 @@ try {
     # applications here couples a fake build to unrelated (possibly protected)
     # user processes. Keep coordinator guard coverage through explicit gates.
     $preflight = @'
-param([switch]$ExecuteReloadShell)
+param([Alias('ReloadShell')][switch]$ExecuteReloadShell,[Alias('CloseApplication')][switch]$ExecuteCloseApplication)
 function Get-ReadOnlyPreflight([string]$Root) {
     $unknown=[IO.File]::Exists((Join-Path $Root 'preflight-unknown'))
     $blocked=[IO.File]::Exists((Join-Path $Root 'preflight-blocked'))
     return [pscustomobject]@{status=$(if($unknown){'unknown'}elseif($blocked){'blocked'}else{'clear'});
         owners=@();unknownPids=$(if($unknown){@($PID)}else{@()});observedUtc=[DateTime]::UtcNow.ToString('o')}
 }
-if($MyInvocation.InvocationName -ne '.'){throw 'Fake build must not execute desktop process control'}
+if($MyInvocation.InvocationName -ne '.'){
+    . (Join-Path $PSScriptRoot 'build_entry.ps1')
+    $root=[IO.Directory]::GetParent($PSScriptRoot).FullName
+    Assert-EntryExecutionOwner $root
+    if([IO.File]::Exists((Join-Path $root 'preflight-throw'))){throw 'controlled owner preflight exception'}
+    [IO.File]::WriteAllText((Join-Path $root 'preflight-arguments.txt'),$(if($ExecuteReloadShell){'--reload-shell'}elseif($ExecuteCloseApplication){'--close-application'}else{''}))
+    exit 0
+}
 '@
     [IO.File]::WriteAllText((Join-Path $scripts 'build_preflight.ps1'), $preflight, $utf8)
     [IO.File]::WriteAllText((Join-Path $scripts 'build_batch_tests.ps1'), 'param([string]$Batch)' + "`r`n" + '& (Join-Path $PSScriptRoot fake.ps1) -Phase test; exit $LASTEXITCODE', $utf8)
@@ -280,7 +287,7 @@ exit 0
     Call ('plan task-a -Batch ' + $a.batchId + ' -Revision ' + $reopened.editRevision + ' -Scope unknown -Suites full') | Out-Null
     $first = Start-Command ('finish task-a -Batch ' + $a.batchId + ' -ReloadShell')
     Wait-Until { (State).current.participants[0].state -eq 'finished' } 'reopened A finishes'
-    Check ((Counts).Count -eq 0 -and -not [IO.File]::Exists((Join-Path $fixture 'build-arguments.txt'))) 'Requesting Shell reload must not start cleanup while another participant edits'
+    Check ((Counts).Count -eq 0 -and -not [IO.File]::Exists((Join-Path $fixture 'build-arguments.txt')) -and -not [IO.File]::Exists((Join-Path $fixture 'preflight-arguments.txt'))) 'Requesting Shell reload must not start cleanup while another participant edits'
     $duplicate = Start-Command ('finish task-a -Batch ' + $a.batchId)
     $last = Start-Command ('finish task-b -Batch ' + $b.batchId)
     Wait-Until {
@@ -288,7 +295,7 @@ exit 0
         Test-Path -LiteralPath (Join-Path $fixture 'build-started')
     } 'single build starts' $last
     Check ((Counts).Count -eq 1) 'Concurrent finish callers must trigger exactly one build'
-    Check ([IO.File]::ReadAllText((Join-Path $fixture 'build-arguments.txt')) -eq '--reload-shell') 'The actual owner must receive the waiting participant explicit reload request'
+    Check ([IO.File]::ReadAllText((Join-Path $fixture 'preflight-arguments.txt')) -eq '--reload-shell' -and [IO.File]::ReadAllText((Join-Path $fixture 'build-arguments.txt')) -eq '') 'The actual outer owner must handle the waiting participant request before the contained build starts'
     $pending = Start-Command 'begin task-c'
     Call 'begin task-d -WaitSeconds 1' 2 | Out-Null
     Check (-not $pending.process.HasExited -and (State).current.participants.Count -eq 2) 'New begin must wait without entering the frozen batch'
@@ -420,6 +427,17 @@ exit 0
     $ownerResult = Complete $waitingOwner
     Check ($ownerResult.outcome -eq 'passed' -and (Counts).Count -eq ($before + 2)) 'Clear output executes exactly one build/test pipeline'
     Write-Output 'PASS controlled unknown/blocked output ownership prevents execution; clear ownership resumes once without desktop process control'
+
+    $before=(Counts).Count
+    Gate 'preflight-throw'
+    $preflightFailure=Call 'begin owner-preflight-failure'
+    $failedPreflight=Call ('finish owner-preflight-failure -Batch '+$preflightFailure.batchId+' -ReloadShell') 3
+    Check ($failedPreflight.exitCode -eq 3 -and (Counts).Count -eq $before) 'Owner preflight exceptions preserve exit3 and never start native children'
+    $preflightReceipt=[IO.File]::ReadAllText((Join-Path $fixture ('.build/collaboration/'+$preflightFailure.batchId+'.preflight.json'))) | ConvertFrom-Json
+    Check ($preflightReceipt.exitCode -eq 3 -and $preflightReceipt.error.Contains('controlled owner preflight exception')) 'Owner preflight retains raw exception in independent receipt'
+    Check ([IO.File]::ReadAllText($failedPreflight.logPath).Contains('controlled owner preflight exception')) 'Pre-Job failure retains the associated batch log'
+    Remove-Gate 'preflight-throw'
+    Write-Output 'PASS outer owner preflight exception retains exit3, associated batch log and independent receipt without running native children'
 
     Stage 'input-invalidation'
     # Unregistered edits cannot be physically stopped. Endpoint content checks

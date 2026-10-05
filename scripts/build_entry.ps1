@@ -98,6 +98,42 @@ function Enter-BuildEntry([string]$Root) {
 function Exit-BuildEntry($Entry) {
     if($Entry){[Environment]::SetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN',$Entry.oldToken,'Process');$Entry.lease.Dispose()}
 }
+function Assert-EntryExecutionOwner([string]$Root) {
+    $record=Read-EntryJson (Join-Path $Root '.build/collaboration/execution.json')
+    if(-not (Test-EntryDelegation $Root) -or -not $record -or $record.owner.pid -ne $PID -or
+        $record.owner.startTicks -ne (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()) {
+        throw 'Process actions require the live execution lease owner, outside the private build Job.'
+    }
+}
+function Invoke-EntryPreflight([string]$Root,[bool]$ReloadShell,[bool]$CloseApplication,[string]$Configuration='Release',[string]$LogPath='') {
+    if(-not $ReloadShell -and -not $CloseApplication){return 0}
+    Assert-EntryExecutionOwner $Root
+    $options=@{}
+    if($ReloadShell){$options.ReloadShell=$true}
+    if($CloseApplication){$options.CloseApplication=$true}
+    if($Configuration -ne 'Release'){$options.Configuration=$Configuration}
+    # Run in the lease-owning PowerShell process. A restored user Shell must
+    # survive build success, failure and KILL_ON_JOB_CLOSE on interruption.
+    if(-not $LogPath){$LogPath=Join-Path $Root ('.build/collaboration/preflight-'+[Guid]::NewGuid().ToString('N')+'.log')}
+    $receipt=[pscustomobject]@{ownerPid=$PID;configuration=$Configuration;reloadShell=$ReloadShell;closeApplication=$CloseApplication;
+        startedUtc=[DateTime]::UtcNow.ToString('o');completedUtc=$null;exitCode=0;error=''}
+    $global:LASTEXITCODE=0
+    try {
+        & (Join-Path $Root 'scripts/build_preflight.ps1') @options | Out-Host
+        $receipt.exitCode=$global:LASTEXITCODE
+    } catch {
+        $receipt.error=$_.Exception.ToString()
+        $receipt.exitCode=3
+        [Console]::Error.WriteLine($receipt.error)
+    } finally {
+        $receipt.completedUtc=[DateTime]::UtcNow.ToString('o')
+        [IO.File]::WriteAllText([IO.Path]::ChangeExtension($LogPath,'.preflight.json'),($receipt|ConvertTo-Json -Depth 6),(New-Object Text.UTF8Encoding($false)))
+    }
+    if($receipt.exitCode -ne 0){
+        [IO.File]::WriteAllText($LogPath,('Output preflight exited with code '+$receipt.exitCode+'. '+$receipt.error),(New-Object Text.UTF8Encoding($false)))
+    }
+    return $receipt.exitCode
+}
 
 if($MyInvocation.InvocationName -ne '.') {
     $ErrorActionPreference='Stop';$root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'));$entry=$null
@@ -107,13 +143,19 @@ if($MyInvocation.InvocationName -ne '.') {
             exit 0
         }
         $entry=Enter-BuildEntry $root
+        $log=Join-Path $root ('.build/collaboration/entry-'+[Guid]::NewGuid().ToString('N')+'.log')
+        if($EntryCloseApplication -and ($EntryAction -ne 'release' -or $EntryReloadShell)){throw 'CloseApplication requires a Release build without ReloadShell.'}
+        if($EntryAction -in 'release','debug') {
+            $configuration=if($EntryAction -eq 'debug'){'Debug'}else{'Release'}
+            $preflightCode=Invoke-EntryPreflight $root ([bool]$EntryReloadShell) ([bool]$EntryCloseApplication) $configuration $log
+            if($preflightCode -ne 0){[Console]::Error.WriteLine('Preflight log: '+$log);exit 3}
+        }
         Push-Location $root
         try {
             # All leased subprocesses belong to this entry's private Job. An
             # interrupted entry cannot release the lease while its CMake child
             # keeps writing. No user process is attached to this Job.
             Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')
-            $log=Join-Path $root ('.build/collaboration/entry-'+[Guid]::NewGuid().ToString('N')+'.log')
             if($EntryAction -eq 'ide') {
                 $preset=if($EntryConfiguration -eq 'Debug'){'debug'}else{'release'}
                 foreach($target in $EntryTargets){if($target -notmatch '^[A-Za-z0-9_.-]+$'){throw 'IDE targets must be literal target names.'}}
@@ -130,11 +172,6 @@ if($MyInvocation.InvocationName -ne '.') {
             } else {
                 $scriptName=if($EntryAction -eq 'debug'){'build_debug.bat'}else{'build.bat'}
                 $pipeline='call scripts\'+$scriptName
-                if($EntryReloadShell){$pipeline+=' --reload-shell'}
-                if($EntryCloseApplication){
-                    if($EntryAction -ne 'release' -or $EntryReloadShell){throw 'CloseApplication requires a Release build without ReloadShell.'}
-                    $pipeline+=' --close-application'
-                }
             }
             [Console]::Error.WriteLine('Shared entry log: '+$log)
             $code=[SnowDesktop.Build.Job]::RunLeasedCommand($root,$log,$pipeline)

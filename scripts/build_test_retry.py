@@ -97,6 +97,8 @@ def export_coverage(path, coverage, ledger):
     coverage['flaky'] = [x['name'] for x in completed if x['status'] == 'passed-after-retry']
     coverage['status'] = ledger['status']
     coverage['error'] = ledger.get('reason', '')
+    if 'postChecks' in ledger:
+        coverage['postChecks'] = ledger['postChecks']
     for task in coverage.get('tasks', []):
         if task.get('status') == 'not-required':
             continue
@@ -104,6 +106,9 @@ def export_coverage(path, coverage, ledger):
         task['failed'] = [x['name'] for x in actual if x['status'] not in ('passed', 'passed-after-retry')]
         task['status'] = ('invalidated' if ledger['status']=='invalidated' else 'failed' if task['failed'] else 'not-run' if len(actual) != len(task['requested']) else
                           'passed-after-retry' if any(x['status'] == 'passed-after-retry' for x in actual) else 'passed')
+        check = coverage.get('postChecks', {}).get('outputIsolation', {})
+        if task.get('requiresOutputIsolation', coverage.get('mode') == 'full') and task['status'] in ('passed', 'passed-after-retry') and check.get('status') != 'passed':
+            task['status'] = 'failed' if check.get('status') == 'failed' else 'not-run'
     atomic(path, coverage)
 
 def retry_failed(ledger, coverage, metadata, baseline, identity, stable_artifacts, execute, work,
@@ -185,6 +190,65 @@ def retry_failed(ledger, coverage, metadata, baseline, identity, stable_artifact
     ledger['reason'] = 'Finite per-test retries preserve first failures; selected inventory is unchanged.'
     atomic(record, ledger)
     return 0 if ledger['status'] in ('passed', 'passed-after-retry') else 1
+
+def complete_postchecks(ledger, coverage, result, baseline, identity, stable_artifacts, execute):
+    """Resume only an unexecuted full-run checkpoint; never retry a failed one."""
+    if coverage.get('mode') != 'full':
+        return result
+    check = dict(coverage.get('postChecks', {}).get('outputIsolation') or
+                 {'status': 'not-run', 'startedUtc': None, 'completedUtc': None, 'exitCode': None, 'error': ''})
+    ledger['postChecks'] = dict(coverage.get('postChecks', {}), outputIsolation=check)
+    if check['status'] == 'failed':
+        ledger.update(status='failed', reason=check.get('error') or 'Full-test output isolation failed.')
+        return check.get('exitCode') or 1
+    if result:
+        return result
+    if check['status'] not in ('passed', 'not-run'):
+        ledger.update(status='environment-blocked', reason='Unknown full-test checkpoint state; no replay authorized.')
+        return 1
+    if identity() != baseline or not stable_artifacts():
+        ledger.update(status='invalidated', reason='Inputs changed before the full-test checkpoint.')
+        return 5
+    if check['status'] == 'not-run':
+        check = execute()
+        ledger['postChecks']['outputIsolation'] = check
+    observed = identity()
+    stable = stable_artifacts()
+    check.update(sourceStartDigest=baseline, sourceEndDigest=observed, artifactsStable=stable)
+    if observed != baseline or not stable:
+        ledger.update(status='invalidated', reason='Inputs changed during the full-test checkpoint.')
+        return 5
+    if check.get('status') != 'passed' or check.get('exitCode') != 0:
+        ledger.update(status='failed' if check.get('status') == 'failed' else 'environment-blocked',
+                      reason=check.get('error') or 'Full-test output isolation was not verified.')
+        return check.get('exitCode') or 1
+    return 0
+
+def run_output_checkpoint(repo, work, ps):
+    receipt, log, script = (work/'output-isolation.json', work/'output-isolation.log', work/'output-isolation.ps1')
+    # Fixed private script, parameterized paths, no shell interpolation. This
+    # child inherits the surrounding Job and cannot configure/build/run CTest.
+    script.write_bytes(b"param([string]$Root,[string]$Receipt)\n$ErrorActionPreference='Stop'\n"
+                       b". (Join-Path $Root 'scripts/test_output.ps1')\n$check=New-OutputIsolationCheck\n"
+                       b"try {Invoke-OutputIsolationCheck $Root $check} catch {[Console]::Error.WriteLine($_.Exception.Message)}\n"
+                       b"$check | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Receipt -Encoding UTF8\n"
+                       b"exit $check.exitCode\n")
+    pending = {'status': 'not-run', 'startedUtc': utc(), 'completedUtc': None, 'exitCode': None,
+               'error': 'Checkpoint has not returned execution evidence.', 'log': str(log)}
+    atomic(work/'output-isolation.pending.json', pending)
+    with open(str(log), 'xb') as stream:
+        try:
+            run = subprocess.run([ps, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script),
+                                  '-Root', str(repo), '-Receipt', str(receipt)], cwd=str(repo),
+                                 stdout=stream, stderr=subprocess.STDOUT, timeout=30)
+        except subprocess.TimeoutExpired:
+            return dict(pending, completedUtc=utc(), exitCode=1, error='Output isolation checkpoint timed out before completed evidence.')
+    if not receipt.is_file():
+        return dict(pending, completedUtc=utc(), exitCode=run.returncode or 1, error='Output isolation checkpoint produced no receipt.')
+    check = json.loads(receipt.read_text(encoding='utf-8-sig'))
+    if check.get('status') not in ('passed', 'failed') or check.get('exitCode') != run.returncode:
+        return dict(pending, completedUtc=utc(), exitCode=run.returncode or 1, error='Output isolation checkpoint receipt/exit mismatch.')
+    return dict(check, log=str(log), receipt=str(receipt))
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -270,9 +334,12 @@ def main():
                                         '--output-junit', str(report), '--timeout', str(timeout)], cwd=str(repo), env=retry_env,
                                        stdout=stream, stderr=subprocess.STDOUT)
         result = retry_failed(ledger, coverage, metadata, baseline, identity, stable_artifacts, execute, work)
-        if code and result == 0 and not any(x['status'] == 'passed-after-retry' for x in ledger['tests'].values()):
+        check = coverage.get('postChecks', {}).get('outputIsolation', {})
+        if code and result == 0 and not any(x['status'] == 'passed-after-retry' for x in ledger['tests'].values()) and check.get('status') != 'failed':
             ledger.update(status='environment-blocked', reason='Initial CTest pipeline failed without a retryable failing case.')
             result = 1
+        result = complete_postchecks(ledger, coverage, result, baseline, identity, stable_artifacts,
+                                     lambda: run_output_checkpoint(repo, work, ps))
         ledger.update(exitCode=result, completedUtc=utc())
         atomic(path, ledger)
         export_coverage(coverage_path, coverage, ledger)

@@ -580,7 +580,14 @@ try {
                     [Environment]::SetEnvironmentVariable('MSBUILDDISABLENODEREUSE', '1', 'Process')
                     Add-Type -Path (Join-Path $PSScriptRoot 'build_job.cs')
                     [Console]::Error.WriteLine("Building batch $($selected.id). Log: $($selected.logPath)")
-                    $code = [SnowDesktop.Build.Job]::RunBatch($repositoryRoot, $selected.logPath, $selected.id, $selected.testingPlan.buildRequired, [bool](Get-Field $selected 'reloadShellRequested' $false), [bool](Get-Field $selected 'closeApplicationRequested' $false))
+                    # Destructive preflight belongs to the outer execution owner;
+                    # all configure/build/test children retain strict Job containment.
+                    $code=0
+                    if($selected.testingPlan.buildRequired){
+                        $code=Invoke-EntryPreflight $repositoryRoot ([bool](Get-Field $selected 'reloadShellRequested' $false)) ([bool](Get-Field $selected 'closeApplicationRequested' $false)) 'Release' $selected.logPath
+                        if($code -ne 0){$code=3}
+                    }
+                    if($code -eq 0){$code = [SnowDesktop.Build.Job]::RunBatch($repositoryRoot, $selected.logPath, $selected.id, $selected.testingPlan.buildRequired, $false, $false)}
                     if ($code -eq 0) { $outcome = if($selected.testingPlan.mode -eq 'skipped'){'skipped'}else{'passed'} }
                     else { $errorText = "Build/test pipeline exited with code $code. See the batch log." }
                 }
