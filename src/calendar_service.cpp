@@ -682,7 +682,8 @@ MutationResult CalendarService::Update(
         {
             if (series.id != id.substr(0, separator)) continue;
             const std::string origin = id.substr(separator + 1);
-            if (!Occurrence(series, origin)) return {false, id, 0, "not_found"};
+            const auto current = Occurrence(series, origin);
+            if (!current) return {false, id, 0, "not_found"};
             if (series.revision != expectedRevision)
                 return {false, id, series.revision, "conflict"};
             std::string error;
@@ -690,6 +691,12 @@ MutationResult CalendarService::Update(
                 return {false, id, series.revision, error};
             if (!series.exceptions.contains(origin) && ExceptionLimitReached(series_))
                 return {false, id, series.revision, "event_limit"};
+            const bool scheduleChanged =
+                event.date != current->date ||
+                event.allDay != current->allDay ||
+                event.startMinutes != current->startMinutes ||
+                event.endMinutes != current->endMinutes ||
+                event.reminderMinutes != current->reminderMinutes;
             auto previous = series;
             event.id = id;
             event.seriesId = series.id;
@@ -698,7 +705,7 @@ MutationResult CalendarService::Update(
             event.revision = ++series.revision;
             event.notifiedTrigger.clear();
             series.exceptions[origin] = {false, std::move(event)};
-            series.notifiedTriggers.erase(origin);
+            if (scheduleChanged) series.notifiedTriggers.erase(origin);
             if (!SaveSeries()) { series = std::move(previous); return {false, id, 0, "save_failed"}; }
             if (changedCallback_) changedCallback_("events");
             return {true, id, series.revision, {}};

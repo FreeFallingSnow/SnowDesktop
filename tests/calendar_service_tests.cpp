@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 
 namespace
@@ -79,6 +80,89 @@ void CheckNativeCalendarEditor(const std::filesystem::path& root)
     Expect(!editor.Remove()&&writes==beforeDelete,"revocation during delete lookup is rechecked before mutation");
     authorized=true;editor.actions.current=[&](const CalendarEvent& event){return service.EventById(event.id);};
     Expect(editor.Remove()&&editor.deleted&&!service.EventById(external.id),"confirmed current revision can be deleted through the shared backend");
+}
+
+void CheckOccurrenceReminderEdits(const std::filesystem::path& root)
+{
+    using snowdesktop::calendar::CalendarSeries;
+    CalendarNow now{"2026-07-30", 9 * 60 + 45};
+    const auto path = root / L"occurrence-reminder-edits" / L"SnowDesktop.calendar.json";
+    auto service = std::make_unique<CalendarService>(path, [&] { return now; });
+    const bool loaded = service->Load();
+    Expect(loaded, "occurrence reminder edit store loads");
+    if (!loaded) return;
+
+    CalendarSeries alarm;
+    alarm.event.title = "Occurrence alarm";
+    alarm.event.startMinutes = 10 * 60;
+    alarm.event.endMinutes = 11 * 60;
+    alarm.event.reminderMinutes = 15;
+    alarm.rule.kind = "dates";
+    alarm.rule.dates = {"2026-07-30"};
+    const auto created = service->CreateSeries(alarm);
+    Expect(created.ok, "occurrence reminder edit series is created");
+    if (!created.ok) return;
+    const auto id = created.id + "/2026-07-30";
+    int delivered = 0;
+    const auto notified = [&](const CalendarEvent&) { ++delivered; };
+    service->SetNotificationCallback(notified);
+    const auto edit = [&](const auto& change) {
+        auto occurrence = service->EventById(id);
+        if (!occurrence) return false;
+        change(*occurrence);
+        return service->Update(id, occurrence->revision, *occurrence).ok;
+    };
+    const auto restart = [&] {
+        auto restored = std::make_unique<CalendarService>(path, [&] { return now; });
+        const bool restoredLoaded = restored->Load();
+        Expect(restoredLoaded, "occurrence reminder edit store reloads");
+        if (!restoredLoaded) return false;
+        restored->SetNotificationCallback(notified);
+        service = std::move(restored);
+        service->CheckReminders(now, true);
+        return true;
+    };
+
+    service->CheckReminders(now, true);
+    Expect(delivered == 1, "initial occurrence reminder is delivered at its trigger");
+    Expect(edit([](CalendarEvent& event) { event.title = "Renamed occurrence"; }),
+        "title-only occurrence edit succeeds");
+    now.minutes = 9 * 60 + 50;
+    Expect(restart() && delivered == 1,
+        "title-only occurrence edit cannot repeat a sent reminder after restart");
+    Expect(edit([](CalendarEvent& event) { event.notes = "Changed notes"; }),
+        "notes-only occurrence edit succeeds");
+    now.minutes = 9 * 60 + 55;
+    Expect(restart() && delivered == 1,
+        "notes-only occurrence edit cannot repeat a sent reminder after restart");
+
+    Expect(edit([](CalendarEvent& event) { event.reminderMinutes = -1; }),
+        "occurrence reminder can be disabled");
+    Expect(restart() && delivered == 1,
+        "disabled occurrence reminder remains silent after restart");
+    Expect(edit([](CalendarEvent& event) { event.reminderMinutes = 15; }),
+        "occurrence reminder can be re-enabled");
+    Expect(restart() && delivered == 2,
+        "re-enabling the same occurrence reminder allows a fresh startup delivery");
+
+    Expect(edit([](CalendarEvent& event) {
+        event.date = "2026-07-31";
+        event.startMinutes = 10 * 60 + 30;
+        event.endMinutes = 11 * 60 + 30;
+    }), "occurrence reminder date and time can be rescheduled");
+    Expect(restart() && delivered == 2,
+        "a moved occurrence does not notify on its former date");
+    now = {"2026-07-31", 10 * 60 + 14};
+    Expect(restart() && delivered == 2,
+        "a moved occurrence remains silent before its new trigger");
+    now.minutes = 10 * 60 + 15;
+    service->CheckReminders(now, false);
+    Expect(delivered == 3, "a moved occurrence notifies at its new date and time");
+    Expect(edit([](CalendarEvent& event) { event.notes = "Changed moved occurrence"; }),
+        "notes-only moved occurrence edit succeeds");
+    now.minutes = 10 * 60 + 20;
+    Expect(restart() && delivered == 3,
+        "editing a moved occurrence preserves its sent reminder across restart");
 }
 
 void CheckSeries(const std::filesystem::path& root)
@@ -321,6 +405,7 @@ int wmain(int argc, wchar_t* argv[])
     std::filesystem::create_directories(root);
     CheckNativeCalendarEditor(root);
     CheckSeries(root);
+    CheckOccurrenceReminderEdits(root);
 
     const auto leap =
         CalendarService::GetDateInfo("2024-02-29");
