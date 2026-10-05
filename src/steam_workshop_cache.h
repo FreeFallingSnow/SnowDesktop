@@ -21,8 +21,8 @@ struct SteamWorkshopCachedItem
 struct SteamWorkshopLocalCache
 {
     bool authoritative = false;
-    // Healthy libraries can supply positive results even when another root is
-    // unavailable. Partial results must never authorize inferred removals.
+    // Reports skipped roots separately from the successfully parsed local
+    // manifest's authority. An entirely unreadable scan is not authoritative.
     bool partial = false;
     std::vector<std::string> subscribedPublishedFileIds;
     std::vector<SteamWorkshopCachedItem> readyItems;

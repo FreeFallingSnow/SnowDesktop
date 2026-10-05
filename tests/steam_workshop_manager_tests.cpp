@@ -1237,20 +1237,20 @@ void TestSteamLibraryDiscovery()
     writeLibraries(false, false, true);
     checkSubscriptions("legacy library paths remain discoverable without apps maps");
 
-    // An inaccessible root must not be mistaken for an empty library and
-    // authorize removal of packages subscribed through that unavailable root.
+    // Skipped roots must not disable reconciliation of successfully read
+    // local subscriptions. An entirely unreadable scan stays unavailable.
     const auto invalidLibrary = temporaryRoot / L"not-a-directory";
     std::ofstream(invalidLibrary) << "file";
     const auto partial = ReadSteamWorkshopLocalCache(
         {secondaryRoot, invalidLibrary}, 5080330u);
-    Check(!partial.authoritative && partial.partial && partial.error.empty() &&
+    Check(partial.authoritative && partial.partial && partial.error.empty() &&
         !partial.skippedLibraries.empty() &&
         partial.subscribedPublishedFileIds == itemIds,
-        "partial library failures preserve healthy identities without failing the whole query");
+        "skipped library failures preserve usable local subscription authority");
 
     const auto disabled = temporaryRoot / L"disabled-library";
     const auto missing = ReadSteamWorkshopLocalCache({disabled, secondaryRoot}, 5080330u);
-    Check(missing.partial && !missing.authoritative && missing.error.empty() &&
+    Check(missing.partial && missing.authoritative && missing.error.empty() &&
         missing.readyItems.size() == itemIds.size() &&
         missing.skippedLibraries.size() == 1 &&
         missing.skippedLibraries[0].find("disabled-library") != std::string::npos,
@@ -1342,6 +1342,16 @@ void TestPartialWorkshopSourceAndPackageMutations()
             "WorkshopItemDetails" { "100" { "latest_manifest" "11" "subscribedby" "123" } } })";
     ScopedSteamRegistry registry(steam);
     if (!registry.redirected) return;
+    HKEY activeProcess = nullptr;
+    const DWORD accountId = 123;
+    const auto activeOpened = RegCreateKeyExW(registry.root, L"Software\\Valve\\Steam\\ActiveProcess",
+        0, nullptr, REG_OPTION_VOLATILE, KEY_ALL_ACCESS, nullptr, &activeProcess, nullptr);
+    Check(activeOpened == ERROR_SUCCESS, "create an isolated active Steam account");
+    if (activeOpened != ERROR_SUCCESS) return;
+    const auto activeWritten = RegSetValueExW(activeProcess, L"ActiveUser", 0, REG_DWORD,
+        reinterpret_cast<const BYTE*>(&accountId), static_cast<DWORD>(sizeof(accountId)));
+    RegCloseKey(activeProcess);
+    Check(activeWritten == ERROR_SUCCESS, "set the isolated subscription history account");
     const auto sourceDirectory = workshopTestDeployment / L"source-package";
     std::filesystem::create_directory(sourceDirectory);
     const std::string id = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23";
@@ -1372,7 +1382,7 @@ void TestPartialWorkshopSourceAndPackageMutations()
     Check(source.Status().available, "a skipped library does not disable the usable Workshop provider");
     PackageQuery query;
     auto snapshot = source.QuerySubscriptions(query, error);
-    Check(error.empty() && snapshot.error.empty() && snapshot.partial && !snapshot.authoritative &&
+    Check(error.empty() && snapshot.error.empty() && snapshot.partial && snapshot.authoritative &&
         snapshot.subscribedPublishedFileIds == std::vector<std::string>{"100"} &&
         snapshot.installable.size() == 1 && snapshot.localArtifacts.contains("100") &&
         snapshot.warning.find("disabled-library") != std::string::npos &&
@@ -1401,14 +1411,55 @@ void TestPartialWorkshopSourceAndPackageMutations()
         installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id) &&
         manager.Resolve(id)->manifest.version == "1.1.0" && manager.Resolve(unseenId).has_value(),
         "updating refreshes the warmed catalogue while the unavailable library's package survives");
-    snapshot.confirmedUnsubscribedPublishedFileIds = {"200"};
+    Check(manager.UpdateSteamSubscriptionHistory("123", {"100", "200"}, error),
+        "persist the real pre-unsubscribe history in the isolated package registry");
+    using PackageValidationQuery = snowdesktop::BoundedFileQuery<SteamWorkshopSubscriptionSnapshot>;
+    const auto validationKey = bridge.lexically_normal().native() + L"\n100:" +
+        archive.parent_path().lexically_normal().native();
+    std::promise<void> validationEntered, validationRelease;
+    auto validationEnteredFuture = validationEntered.get_future();
+    auto validationReleaseFuture = validationRelease.get_future().share();
+    const auto stalledValidation = PackageValidationQuery::ForProcess().Request(validationKey,
+        [&validationEntered, validationReleaseFuture] {
+            validationEntered.set_value();
+            validationReleaseFuture.wait();
+            return SteamWorkshopSubscriptionSnapshot{};
+        });
+    Check(validationEnteredFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "the controlled slow archive validation enters its read-only boundary");
+    auto slow = source.QuerySubscriptions(query, error);
+    validationRelease.set_value();
+    Check(PackageValidationQuery::Wait(stalledValidation,
+        std::chrono::steady_clock::now() + std::chrono::seconds(2)).has_value(),
+        "the held validation job exits before fixture cleanup");
+    ResolveSteamWorkshopSubscriptionRemovals(slow, manager.SteamSubscriptionHistory());
+    const auto slowPlan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), slow);
+    Check(error.empty() && slow.error.empty() && slow.authoritative && slow.installable.empty() &&
+        slow.warning.find("packages skipped") != std::string::npos &&
+        slowPlan.actions.size() == 1 && slowPlan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        slowPlan.actions[0].packageId == unseenId,
+        "a skipped slow archive does not erase local subscriptions or block their unsubscribe plan");
+    auto blocked = snapshot;
+    blocked.authoritative = false; // Negative control: the preceding try's whole-scan gate.
+    ResolveSteamWorkshopSubscriptionRemovals(blocked, manager.SteamSubscriptionHistory());
+    Check(BuildSteamWorkshopSyncPlan(manager.ListPackages(), blocked).actions.empty(),
+        "the former non-authoritative gate reproduces the reported unsubscribe residue");
+    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory());
     const auto removal = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
     Check(removal.actions.size() == 1 && removal.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
         removal.actions[0].packageId == unseenId && manager.Uninstall(unseenId, error) &&
         manager.RefreshCatalog(error) && !manager.ContainsPackage(unseenId) && manager.Resolve(id).has_value(),
-        "only the explicitly confirmed unsubscribe removes its package and refreshes the catalogue");
+        "a local manifest unsubscribe removes its managed package despite skipped roots and refreshes the catalogue");
     Check(manager.Uninstall(id, error) && manager.RefreshCatalog(error) && !manager.ContainsPackage(id),
         "local uninstall immediately removes cached Workshop package entries");
+    const auto resubscribed = source.QuerySubscriptions(query, error);
+    const auto reinstall = BuildSteamWorkshopSyncPlan(manager.ListPackages(), resubscribed);
+    Check(error.empty() && reinstall.actions.size() == 1 &&
+        reinstall.actions[0].kind == SteamWorkshopSyncActionKind::Install &&
+        reinstall.actions[0].packageId == id &&
+        manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,
+            installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id).has_value(),
+        "a newly present local subscription can reinstall its managed package after removal");
 }
 
 void TestSteamWorkshopLocalCache()

@@ -693,10 +693,11 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
         std::chrono::steady_clock::now() + std::chrono::milliseconds(500));
     if (!validated)
     {
-        snapshot.authoritative = false;
-        snapshot.partial = false;
-        error = "Steam Workshop package validation query timed out";
-        snapshot.error = error;
+        // Package readiness is independent of subscriptions already read
+        // from ACF. A slow archive must not block local unsubscribe sync.
+        if (!snapshot.warning.empty()) snapshot.warning += " | ";
+        snapshot.warning += "Steam Workshop package validation query timed out; packages skipped";
+        error.clear();
         return snapshot;
     }
     snapshot.localArtifacts = std::move(validated->localArtifacts);

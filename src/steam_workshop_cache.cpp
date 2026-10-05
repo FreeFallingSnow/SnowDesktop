@@ -616,10 +616,10 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
         for (const auto& item : cache->readyItems)
             ready[item.publishedFileId] = item.contentDirectory;
     }
-    // A partial scan is never an authoritative empty subscription set: the
-    // reconciler must preserve packages/layout when a library is unreachable.
+    // Successfully parsed local manifests remain the subscription authority.
+    // Skipping an unusable root must not permanently disable unsubscribe sync
+    // for the usable libraries. With no readable manifest, preserve packages.
     result.partial = result.authoritative && !complete;
-    result.authoritative = result.authoritative && complete;
     if (!result.authoritative && !result.partial)
     {
         for (const auto& skipped : result.skippedLibraries)
