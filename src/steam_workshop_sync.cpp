@@ -99,19 +99,44 @@ void ResolveSteamWorkshopSubscriptionRemovals(
         snapshot.explicitlyUnsubscribedPublishedFileIds.end());
 }
 
+std::vector<std::string> BuildSteamWorkshopSubscriptionHistory(
+    const SteamWorkshopSubscriptionSnapshot& snapshot,
+    const SteamWorkshopSubscriptionHistory& history)
+{
+    std::unordered_set<std::string> remembered;
+    if (!snapshot.authoritative)
+        if (const auto previous = history.find(snapshot.activeSteamAccountId);
+            previous != history.end())
+            remembered.insert(previous->second.begin(), previous->second.end());
+    remembered.insert(snapshot.subscribedPublishedFileIds.begin(),
+        snapshot.subscribedPublishedFileIds.end());
+    for (const auto& id : snapshot.confirmedUnsubscribedPublishedFileIds)
+        if (std::find(snapshot.subscribedPublishedFileIds.begin(),
+                snapshot.subscribedPublishedFileIds.end(), id) ==
+            snapshot.subscribedPublishedFileIds.end())
+            remembered.erase(id);
+    std::vector<std::string> result(remembered.begin(), remembered.end());
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
 SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
     const std::vector<InstalledPackage>& installed,
     const SteamWorkshopSubscriptionSnapshot& snapshot)
 {
     SteamWorkshopSyncPlan plan;
-    if (!snapshot.authoritative) return plan;
+    if (!snapshot.CanSynchronize()) return plan;
 
     const std::unordered_set<std::string> subscribed(
         snapshot.subscribedPublishedFileIds.begin(),
         snapshot.subscribedPublishedFileIds.end());
-    const std::unordered_set<std::string> explicitlyUnsubscribed(
-        snapshot.explicitlyUnsubscribedPublishedFileIds.begin(),
-        snapshot.explicitlyUnsubscribedPublishedFileIds.end());
+    std::unordered_set<std::string> explicitlyUnsubscribed(
+        snapshot.confirmedUnsubscribedPublishedFileIds.begin(),
+        snapshot.confirmedUnsubscribedPublishedFileIds.end());
+    if (snapshot.authoritative)
+        explicitlyUnsubscribed.insert(
+            snapshot.explicitlyUnsubscribedPublishedFileIds.begin(),
+            snapshot.explicitlyUnsubscribedPublishedFileIds.end());
     std::unordered_set<std::string> scheduledRemoval;
     for (const auto& package : installed)
     {
@@ -131,6 +156,7 @@ SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
         }
     }
 
+    if (!snapshot.authoritative && !snapshot.partial) return plan;
     std::unordered_set<std::string> plannedPackages;
     for (const auto& available : snapshot.installable)
     {

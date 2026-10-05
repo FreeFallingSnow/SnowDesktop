@@ -32093,7 +32093,7 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
     const std::vector<snowdesktop::widget::InstalledPackage>& installed,
     const std::filesystem::path& stagingRoot)
 {
-    if (!snapshot.authoritative) return;
+    if (!snapshot.CanSynchronize()) return;
     const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
         installed, snapshot);
     if (plan.actions.empty()) return;
@@ -32282,23 +32282,36 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         std::error_code cleanupError;
         std::filesystem::remove(artifact, cleanupError);
     }
-    if (snapshot.authoritative && result.errors.empty() &&
+    if (snapshot.CanSynchronize() && result.errors.empty() &&
         !snapshot.activeSteamAccountId.empty())
     {
         std::string historyError;
         if (!manager.UpdateSteamSubscriptionHistory(
                 snapshot.activeSteamAccountId,
-                snapshot.subscribedPublishedFileIds, historyError))
+                snowdesktop::widget::BuildSteamWorkshopSubscriptionHistory(
+                    snapshot, manager.SteamSubscriptionHistory()), historyError))
         {
             result.errors.push_back(
                 "cannot save Steam subscription history: " + historyError);
         }
     }
-    if (snapshot.authoritative)
+    if (snapshot.authoritative || snapshot.partial)
     {
         auto& cache = GetSteamWorkshopPackageAssociationCache();
         std::lock_guard lock(cache.mutex);
-        cache.installFailures = result.installFailures;
+        if (snapshot.authoritative)
+            cache.installFailures = result.installFailures;
+        else
+        {
+            std::erase_if(cache.installFailures, [&](const auto& failure) {
+                const auto id = snowdesktop::widget::SteamPublishedFileId(failure.externalItemId);
+                return std::find(snapshot.subscribedPublishedFileIds.begin(),
+                    snapshot.subscribedPublishedFileIds.end(), id) !=
+                    snapshot.subscribedPublishedFileIds.end();
+            });
+            cache.installFailures.insert(cache.installFailures.end(),
+                result.installFailures.begin(), result.installFailures.end());
+        }
     }
     return result;
 }

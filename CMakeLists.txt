@@ -2459,14 +2459,22 @@ if (BUILD_TESTING)
             tests/steam_workshop_manager_tests.cpp
             steam_bridge/src/preview_cache.cpp
             src/steam_workshop_cache.cpp
+            src/steam_workshop_source.cpp
             src/steam_workshop_sync.cpp
+            src/widget_package.cpp
+            src/widget_package_paths.cpp
+            src/widget_logical_slot.cpp
+            src/widget_permission_broker.cpp
+            src/widget_permission_state.cpp
         INCLUDE_DIRECTORIES steam_bridge/src src
         LINK_LIBRARIES
             SnowDesktopWorkshopManagerSupport
             SnowDesktopSteamAppIdentity
             advapi32
+            bcrypt
             d3d11
             dxgi
+            ole32
             user32
             windowscodecs
             winhttp

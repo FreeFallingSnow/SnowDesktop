@@ -66,7 +66,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         bool synchronizationSucceeded = false;
         bool hostReloaded = false;
         std::wstring synchronizationMessage;
-        if (ready->snapshot.authoritative)
+        if (ready->snapshot.CanSynchronize())
         {
             const auto result =
                 widgetEngine_->ApplySteamWorkshopSubscriptions(
@@ -78,7 +78,16 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             }
             if (result.errors.empty())
             {
-                steamWorkshopSubscriptionLastError_.clear();
+                if (ready->snapshot.warning != steamWorkshopSubscriptionLastError_)
+                {
+                    steamWorkshopSubscriptionLastError_ = ready->snapshot.warning;
+                    if (!ready->snapshot.warning.empty())
+                    {
+                        const std::wstring message = Utf8ToWide(
+                            "Steam Workshop skipped libraries: " + ready->snapshot.warning);
+                        WriteDiagnosticLogEntry(message.c_str());
+                    }
+                }
                 synchronizationSucceeded = true;
                 synchronizationMessage = _LW(
                     "settings.widgets.source.syncCompleted");
@@ -236,14 +245,21 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     const auto state = steamWorkshopSubscriptionPollState_;
     const HWND notifyWindow = hwnd_;
     std::uint64_t queryId = 0;
+    std::vector<std::string> confirmedUnsubscriptions;
     {
         std::lock_guard lock(state->mutex);
         queryId = state->nextQueryId++;
+        for (const auto& completion : state->settingsCompletions)
+            if (completion.queryId <= queryId &&
+                !completion.expectedUnsubscribedPublishedFileId.empty())
+                confirmedUnsubscriptions.push_back(
+                    completion.expectedUnsubscribedPublishedFileId);
         state->activeQueryId = queryId;
         state->queryInFlight.store(true);
     }
     std::thread([state, locale, notifyWindow, queryId,
-        installedPackages, subscriptionHistory, packageStaging]
+        installedPackages, subscriptionHistory, packageStaging,
+        confirmedUnsubscriptions = std::move(confirmedUnsubscriptions)]() mutable
     {
         // Local cache inspection decides whether theme work is relevant. All
         // online theme requests still go through the independently capable bridge.
@@ -266,6 +282,10 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         catch (...) { /* Failed/partial queries never remove installed themes. */ }
         auto snapshot =
             WidgetEngine::QuerySteamWorkshopSubscriptions(locale);
+        // Completions are queued only after the bridge accepts the user's
+        // unsubscribe, and this query began after that acknowledgement.
+        snapshot.confirmedUnsubscribedPublishedFileIds =
+            std::move(confirmedUnsubscriptions);
         snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
             snapshot, subscriptionHistory);
         WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,

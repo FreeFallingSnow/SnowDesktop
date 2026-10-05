@@ -21,8 +21,12 @@ struct SteamWorkshopCachedItem
 struct SteamWorkshopLocalCache
 {
     bool authoritative = false;
+    // Healthy libraries can supply positive results even when another root is
+    // unavailable. Partial results must never authorize inferred removals.
+    bool partial = false;
     std::vector<std::string> subscribedPublishedFileIds;
     std::vector<SteamWorkshopCachedItem> readyItems;
+    std::vector<std::string> skippedLibraries;
     std::string error;
 };
 

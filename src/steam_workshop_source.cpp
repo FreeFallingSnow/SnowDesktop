@@ -425,7 +425,7 @@ ProviderStatus SteamWorkshopSource::Status()
                 snowdesktop::kSnowDesktopSteamAppId, discoveryError);
             const auto cache = ReadSteamWorkshopLocalCache(
                 libraries, snowdesktop::kSnowDesktopSteamAppId);
-            if (cache.authoritative && discoveryError.empty())
+            if (cache.authoritative || cache.partial)
                 return {true, "Steam Workshop subscriptions are available"};
             if (discoveryError.empty()) discoveryError = cache.error;
             if (discoveryError.empty())
@@ -628,9 +628,21 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
     const auto cache = ReadSteamWorkshopLocalCache(
         libraries, snowdesktop::kSnowDesktopSteamAppId);
     snapshot.authoritative = cache.authoritative && discoveryError.empty();
+    snapshot.partial = cache.partial ||
+        (cache.authoritative && !discoveryError.empty());
+    for (const auto& skipped : cache.skippedLibraries)
+    {
+        if (!snapshot.warning.empty()) snapshot.warning += " | ";
+        snapshot.warning += skipped;
+    }
+    if (!discoveryError.empty())
+    {
+        if (!snapshot.warning.empty()) snapshot.warning += " | ";
+        snapshot.warning += discoveryError;
+    }
     snapshot.subscribedPublishedFileIds =
         cache.subscribedPublishedFileIds;
-    if (!snapshot.authoritative)
+    if (!snapshot.CanSynchronize())
     {
         error = discoveryError.empty() ? cache.error : discoveryError;
         if (error.empty()) error = "Steam Workshop cache is unavailable";
@@ -682,6 +694,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
     if (!validated)
     {
         snapshot.authoritative = false;
+        snapshot.partial = false;
         error = "Steam Workshop package validation query timed out";
         snapshot.error = error;
         return snapshot;

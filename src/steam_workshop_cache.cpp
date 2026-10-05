@@ -591,21 +591,26 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
     bool complete = true;
     std::set<std::string> subscribed;
     std::map<std::string, std::filesystem::path> ready;
-    for (const auto& job : jobs)
+    for (std::size_t index = 0; index < jobs.size(); ++index)
     {
-        const auto cache = queries.Wait(job, deadline);
+        const auto cache = queries.Wait(jobs[index], deadline);
+        const auto utf8 = libraryRoots[index].generic_u8string();
+        const std::string library(utf8.begin(), utf8.end());
         if (!cache)
         {
             complete = false;
-            AppendError(result.error, "Steam Workshop library query timed out");
+            result.skippedLibraries.push_back(library + ": library query timed out");
             continue;
         }
-        result.authoritative = result.authoritative || cache->authoritative;
         if (!cache->error.empty() && cache->error != "Steam Workshop cache is unavailable")
         {
             complete = false;
-            AppendError(result.error, cache->error);
+            result.skippedLibraries.push_back(library + ": " + cache->error);
         }
+        // Only a fully parsed individual library contributes identities and
+        // downloads. A corrupt manifest cannot contaminate healthy results.
+        if (!cache->authoritative) continue;
+        result.authoritative = true;
         subscribed.insert(cache->subscribedPublishedFileIds.begin(),
             cache->subscribedPublishedFileIds.end());
         for (const auto& item : cache->readyItems)
@@ -613,9 +618,14 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
     }
     // A partial scan is never an authoritative empty subscription set: the
     // reconciler must preserve packages/layout when a library is unreachable.
+    result.partial = result.authoritative && !complete;
     result.authoritative = result.authoritative && complete;
-    if (!result.authoritative && result.error.empty())
-        result.error = "Steam Workshop cache is unavailable";
+    if (!result.authoritative && !result.partial)
+    {
+        for (const auto& skipped : result.skippedLibraries)
+            AppendError(result.error, skipped);
+        if (result.error.empty()) result.error = "Steam Workshop cache is unavailable";
+    }
     result.subscribedPublishedFileIds.assign(subscribed.begin(), subscribed.end());
     for (auto& [id, directory] : ready)
         result.readyItems.push_back({std::move(id), std::move(directory)});

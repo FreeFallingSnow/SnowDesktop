@@ -32,6 +32,31 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <stdexcept>
+#include "data_paths.h"
+#include "steam_workshop_source.h"
+#include "bounded_file_query.h"
+#include <future>
+#include <cwctype>
+
+namespace
+{
+std::filesystem::path workshopTestDeployment;
+}
+
+// Only deployment path resolution is substituted. Source queries, archive
+// validation, reconciliation and package mutations use production code.
+std::wstring GetExecutableDirectoryPath()
+{
+    if (workshopTestDeployment.empty())
+        throw std::logic_error("Workshop source test deployment is not configured");
+    return workshopTestDeployment.wstring();
+}
+
+std::wstring GetDataDirectoryPath()
+{
+    return (std::filesystem::path(GetExecutableDirectoryPath()) / L"data").wstring();
+}
 
 using namespace snowdesktop::steam_bridge;
 using namespace snowdesktop::widget;
@@ -647,6 +672,32 @@ void TestSteamSubscriptionSyncPlan()
     Check(plan.actions.empty(),
         "a failed/non-authoritative Steam query never removes components");
 
+    auto partial = snapshot;
+    partial.authoritative = false;
+    partial.partial = true;
+    partial.activeSteamAccountId = "111";
+    const auto unseen = Installed("package-unseen", "1.0.0", "steam-workshop", "200@42");
+    ResolveSteamWorkshopSubscriptionRemovals(partial, {{"111", {"100", "200"}}});
+    plan = BuildSteamWorkshopSyncPlan({current, unseen}, partial);
+    Check(partial.explicitlyUnsubscribedPublishedFileIds.empty() &&
+        plan.actions.size() == 1 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Update,
+        "a skipped library permits healthy updates without inferring an unsubscribe");
+    Check(BuildSteamWorkshopSubscriptionHistory(partial, {{"111", {"200"}}}) ==
+        std::vector<std::string>({"100", "200"}),
+        "new subscriptions observed in a partial scan join history without dropping unreadable ones");
+    partial.confirmedUnsubscribedPublishedFileIds = {"200"};
+    plan = BuildSteamWorkshopSyncPlan({current, unseen}, partial);
+    Check(plan.actions.size() == 2 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        plan.actions[0].packageId == "package-unseen",
+        "an explicit unsubscribe accepted by Steam is not blocked by an unrelated skipped library");
+    Check(BuildSteamWorkshopSubscriptionHistory(partial, {{"111", {"100", "200"}}}) ==
+        std::vector<std::string>{"100"},
+        "only a confirmed unsubscribe can leave remembered history during a partial scan");
+    partial.confirmedUnsubscribedPublishedFileIds = {"100"};
+    plan = BuildSteamWorkshopSyncPlan({current, unseen}, partial);
+    Check(plan.actions.size() == 1 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Update,
+        "a still-subscribed cache entry prevents premature unsubscribe completion");
+
     auto local = Installed("package-a", "1.0.0", "local-import", "package-a");
     plan = BuildSteamWorkshopSyncPlan({ local }, snapshot);
     Check(plan.actions.empty() && plan.conflicts.size() == 1,
@@ -1192,9 +1243,58 @@ void TestSteamLibraryDiscovery()
     std::ofstream(invalidLibrary) << "file";
     const auto partial = ReadSteamWorkshopLocalCache(
         {secondaryRoot, invalidLibrary}, 5080330u);
-    Check(!partial.authoritative && !partial.error.empty() &&
+    Check(!partial.authoritative && partial.partial && partial.error.empty() &&
+        !partial.skippedLibraries.empty() &&
         partial.subscribedPublishedFileIds == itemIds,
-        "partial library failures preserve discovered identities but never authorize subscription removal");
+        "partial library failures preserve healthy identities without failing the whole query");
+
+    const auto disabled = temporaryRoot / L"disabled-library";
+    const auto missing = ReadSteamWorkshopLocalCache({disabled, secondaryRoot}, 5080330u);
+    Check(missing.partial && !missing.authoritative && missing.error.empty() &&
+        missing.readyItems.size() == itemIds.size() &&
+        missing.skippedLibraries.size() == 1 &&
+        missing.skippedLibraries[0].find("disabled-library") != std::string::npos,
+        "a missing first root is skipped with its path while a healthy library stays usable");
+    const auto unavailable = ReadSteamWorkshopLocalCache({disabled}, 5080330u);
+    Check(!unavailable.authoritative && !unavailable.partial && !unavailable.error.empty(),
+        "no readable cache remains unavailable rather than inventing an authoritative empty set");
+
+    // Hold only the unavailable root at the redirector boundary. The healthy
+    // root still runs its actual ACF reader and must finish within the budget.
+    using CacheQuery = snowdesktop::BoundedFileQuery<SteamWorkshopLocalCache>;
+    const auto offline = temporaryRoot / L"offline-library";
+    std::wstring offlineKey = offline.wstring();
+    std::transform(offlineKey.begin(), offlineKey.end(), offlineKey.begin(),
+        [](wchar_t value) { return static_cast<wchar_t>(std::towlower(value)); });
+    offlineKey += L":5080330";
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    const auto stalled = CacheQuery::ForProcess().Request(offlineKey,
+        [&entered, releaseFuture] {
+            entered.set_value();
+            releaseFuture.wait();
+            return SteamWorkshopLocalCache{};
+        });
+    Check(enteredFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "the controlled offline library starts its read-only job");
+    const auto began = std::chrono::steady_clock::now();
+    const auto timed = ReadSteamWorkshopLocalCache({offline, secondaryRoot}, 5080330u);
+    const auto elapsed = std::chrono::steady_clock::now() - began;
+    release.set_value();
+    Check(CacheQuery::Wait(stalled, std::chrono::steady_clock::now() + std::chrono::seconds(2)).has_value(),
+        "the controlled offline reader is released before fixture cleanup");
+    Check(timed.partial && timed.error.empty() && timed.readyItems.size() == itemIds.size() &&
+        timed.skippedLibraries.size() == 1 &&
+        elapsed < std::chrono::milliseconds(1500),
+        "a timed-out first library cannot disable or indefinitely delay healthy subscriptions");
+    std::filesystem::create_directories(offline / L"steamapps" / L"workshop");
+    std::ofstream(offline / L"steamapps" / L"workshop" / L"appworkshop_5080330.acf") <<
+        R"("AppWorkshop" { "appid" "5080330" "WorkshopItemsInstalled" {} "WorkshopItemDetails" {} })";
+    const auto recovered = ReadSteamWorkshopLocalCache({offline, secondaryRoot}, 5080330u);
+    Check(recovered.authoritative && !recovered.partial && recovered.skippedLibraries.empty() &&
+        recovered.readyItems.size() == itemIds.size(),
+        "a recovered library returns to a complete snapshot without restarting the process");
 
     std::filesystem::remove(libraryFile);
     std::string error;
@@ -1205,6 +1305,110 @@ void TestSteamLibraryDiscovery()
     libraries = DiscoverSteamLibraryRoots(5080330u, error);
     Check(!error.empty() && libraries == std::vector{steamRoot},
         "partially written library metadata reports an error and retains the fallback");
+}
+
+void TestPartialWorkshopSourceAndPackageMutations()
+{
+    TemporaryDirectory temporary;
+    struct DeploymentScope
+    {
+        ~DeploymentScope() { workshopTestDeployment.clear(); }
+    } deploymentScope;
+    workshopTestDeployment = std::filesystem::canonical(temporary.path);
+    const auto steam = workshopTestDeployment / L"SteamClient";
+    const auto disabled = workshopTestDeployment / L"disabled-library";
+    const auto corrupt = workshopTestDeployment / L"corrupt-library";
+    const auto workshop = steam / L"steamapps" / L"workshop";
+    const auto archive = workshop / L"content" / L"5080330" / L"100" / L"package.snowwidget";
+    std::filesystem::create_directories(archive.parent_path());
+    std::filesystem::create_directories(corrupt / L"steamapps" / L"workshop");
+    // A corrupt root must not leak identities that could authorize an update.
+    std::ofstream(corrupt / L"steamapps" / L"workshop" / L"appworkshop_5080330.acf") <<
+        R"("AppWorkshop" { "appid" "5080330" "WorkshopItemDetails" {
+            "900" { "latest_manifest" "99" } "invalid-item" { "latest_manifest" "88" } } })";
+    const auto pathText = [](const std::filesystem::path& path) {
+        const auto utf8 = path.generic_u8string();
+        return std::string(utf8.begin(), utf8.end());
+    };
+    {
+        std::ofstream file(steam / L"steamapps" / L"libraryfolders.vdf");
+        file << "\"libraryfolders\" { \"0\" { \"path\" " << std::quoted(pathText(disabled))
+            << " } \"1\" { \"path\" " << std::quoted(pathText(steam))
+            << " } \"2\" { \"path\" " << std::quoted(pathText(corrupt)) << " } }";
+    }
+    std::ofstream(workshop / L"appworkshop_5080330.acf") <<
+        R"("AppWorkshop" { "appid" "5080330"
+            "WorkshopItemsInstalled" { "100" { "manifest" "11" } }
+            "WorkshopItemDetails" { "100" { "latest_manifest" "11" "subscribedby" "123" } } })";
+    ScopedSteamRegistry registry(steam);
+    if (!registry.redirected) return;
+    const auto sourceDirectory = workshopTestDeployment / L"source-package";
+    std::filesystem::create_directory(sourceDirectory);
+    const std::string id = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23";
+    const std::string unseenId = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb24";
+    const auto writePackage = [&](const std::string& packageId, const char* version) {
+        std::ofstream file(sourceDirectory / L"widget.json", std::ios::binary | std::ios::trunc);
+        file << R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,"id":")" << packageId
+            << R"(","slug":"workshop-skip-test","version":")" << version
+            << R"(","entry":"main.lua","permissions":[],"name":"Workshop skip test"})";
+        std::ofstream(sourceDirectory / L"main.lua") << "return widget.define({})";
+    };
+    const auto paths = PackagePaths::ForCurrentDeployment();
+    std::filesystem::create_directories(paths.builtin);
+    WidgetPackageManager manager(paths);
+    std::string error;
+    Check(manager.Initialize(error), "isolated package registry initializes before the real source query");
+    PackageArtifact artifact;
+    ValidationReport report;
+    writePackage(id, "1.0.0");
+    if (!manager.ExportDirectory(sourceDirectory, archive, artifact, report, error))
+    {
+        Check(false, "the healthy Workshop library contains a valid production archive");
+        return;
+    }
+    const auto bridge = workshopTestDeployment / L"unused-bridge.exe";
+    std::ofstream(bridge) << "status only; never launched";
+    SteamWorkshopSource source(bridge);
+    Check(source.Status().available, "a skipped library does not disable the usable Workshop provider");
+    PackageQuery query;
+    auto snapshot = source.QuerySubscriptions(query, error);
+    Check(error.empty() && snapshot.error.empty() && snapshot.partial && !snapshot.authoritative &&
+        snapshot.subscribedPublishedFileIds == std::vector<std::string>{"100"} &&
+        snapshot.installable.size() == 1 && snapshot.localArtifacts.contains("100") &&
+        snapshot.warning.find("disabled-library") != std::string::npos &&
+        snapshot.warning.find("corrupt-library") != std::string::npos,
+        "the real provider returns healthy packages and logs skipped roots without a search error");
+    if (snapshot.installable.size() != 1) return;
+    InstalledPackage installed;
+    Check(manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,
+        installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id).has_value(),
+        "installation refreshes the warmed catalogue after a partial Workshop query");
+    Check(manager.SetEnabled(id, false, error) && manager.RefreshCatalog(error) && !manager.Resolve(id) &&
+        manager.SetEnabled(id, true, error) && manager.RefreshCatalog(error) && manager.Resolve(id).has_value(),
+        "disable and reenable remain visible through the catalogue cache");
+    writePackage(unseenId, "1.0.0");
+    Check(manager.InstallDirectory(sourceDirectory, {"steam-workshop", "200@42"}, false,
+        installed, report, error), "an unseen-library package exists before partial reconciliation");
+    writePackage(id, "1.1.0");
+    Check(manager.ExportDirectory(sourceDirectory, archive, artifact, report, error),
+        "a downloaded Workshop update replaces the test archive");
+    snapshot = source.QuerySubscriptions(query, error);
+    const auto plan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    Check(error.empty() && plan.actions.size() == 1 &&
+        plan.actions[0].kind == SteamWorkshopSyncActionKind::Update && plan.actions[0].packageId == id,
+        "partial discovery reaches a real update plan and preserves the unseen package");
+    Check(manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,
+        installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id) &&
+        manager.Resolve(id)->manifest.version == "1.1.0" && manager.Resolve(unseenId).has_value(),
+        "updating refreshes the warmed catalogue while the unavailable library's package survives");
+    snapshot.confirmedUnsubscribedPublishedFileIds = {"200"};
+    const auto removal = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    Check(removal.actions.size() == 1 && removal.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        removal.actions[0].packageId == unseenId && manager.Uninstall(unseenId, error) &&
+        manager.RefreshCatalog(error) && !manager.ContainsPackage(unseenId) && manager.Resolve(id).has_value(),
+        "only the explicitly confirmed unsubscribe removes its package and refreshes the catalogue");
+    Check(manager.Uninstall(id, error) && manager.RefreshCatalog(error) && !manager.ContainsPackage(id),
+        "local uninstall immediately removes cached Workshop package entries");
 }
 
 void TestSteamWorkshopLocalCache()
@@ -1440,6 +1644,7 @@ int wmain(int argc, wchar_t** argv)
     TestManagerLocalization();
     TestSteamSubscriptionSyncPlan();
     TestSteamLibraryDiscovery();
+    TestPartialWorkshopSourceAndPackageMutations();
     TestSteamWorkshopLocalCache();
     TestProjectStore();
     TestWorkshopManagerDataMigration();
