@@ -2364,7 +2364,7 @@ if (BUILD_TESTING)
             src/dock_window_transition.cpp
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 runtimeobject shell32 shcore user32 windowsapp winhttp
+        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 runtimeobject shell32 shcore shlwapi user32 windowsapp winhttp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)

@@ -503,18 +503,18 @@ int RunThemeLibraryTests()
         auto parent = global; parent.name = "Edited parent";
         const auto original = EncodeLibrary(source,error);
         std::vector<std::string> updated;
-        SettingsValues independent;
-        independent.personalization = global.appearance;
-        independent.general.globalQuickNavigationAppearance = {4,true,quick.appearance};
-        independent.general.globalCollectionPopupAppearance = {4,true,popup.appearance};
-        independent.general.quickNavigationAppearance = {4,true,MakeQuickNavigationAppearancePreset(kAppearancePresetDark)};
-        independent.general.collectionPopupAppearance = {4,true,MakeCollectionPopupAppearancePreset(kAppearancePresetLight)};
-        independent.navigation.layout.fontSize = 27; independent.navigation.colors["searchText"] = "#ABCDEF";
-        const auto boundQuickDraft = CaptureGlobalBinding(Kind::QuickPanel,independent,quick);
-        const auto boundPopupDraft = CaptureGlobalBinding(Kind::Popup,independent,popup);
+        SettingsValues independentPanels;
+        independentPanels.personalization = global.appearance;
+        independentPanels.general.globalQuickNavigationAppearance = {4,true,quick.appearance};
+        independentPanels.general.globalCollectionPopupAppearance = {4,true,popup.appearance};
+        independentPanels.general.quickNavigationAppearance = {4,true,MakeQuickNavigationAppearancePreset(kAppearancePresetDark)};
+        independentPanels.general.collectionPopupAppearance = {4,true,MakeCollectionPopupAppearancePreset(kAppearancePresetLight)};
+        independentPanels.navigation.layout.fontSize = 27; independentPanels.navigation.colors["searchText"] = "#ABCDEF";
+        const auto boundQuickDraft = CaptureGlobalBinding(Kind::QuickPanel,independentPanels,quick);
+        const auto boundPopupDraft = CaptureGlobalBinding(Kind::Popup,independentPanels,popup);
         check(boundQuickDraft.appearance == quick.appearance && boundQuickDraft.layout == quick.layout && boundQuickDraft.colors == quick.colors &&
-            boundPopupDraft.appearance == popup.appearance && independent.general.quickNavigationAppearance.mode == 4 &&
-            independent.general.collectionPopupAppearance.mode == 4 && independent.navigation.layout.fontSize == 27,
+            boundPopupDraft.appearance == popup.appearance && independentPanels.general.quickNavigationAppearance.mode == 4 &&
+            independentPanels.general.collectionPopupAppearance.mode == 4 && independentPanels.navigation.layout.fontSize == 27,
             "global save captures its own bound children without copying independently selected surface material or navigation into them");
         check(SaveDraft(source,parent,drafts,true,savedId,updated,error) && savedId == global.id && source.themes.size() == 3 &&
             source.themes.at(global.id).quickPanel == quick.id && source.themes.at(global.id).popup == popup.id &&
