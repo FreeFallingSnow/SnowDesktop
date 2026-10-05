@@ -13,9 +13,10 @@ foreach($import in @(@{path='scripts/test_manager.ps1';functions=@('Get-TestSele
 $request=Get-Content -Raw (Join-Path $PSScriptRoot 'request.json')|ConvertFrom-Json
 $script:fixture=$request.inventory|ConvertTo-Json -Depth 12 -Compress;$script:queryArguments=@();$script:invocations=@();$script:runtimeInspections=0;$script:runtimeLocks=@($request.locks);$Mode='name'
 function Get-HostRuntimeLocks {++$script:runtimeInspections;$script:runtimeLocks}
+function Write-Host {$script:messages+=@(($args -join ' '))}
 function ctest {$script:queryArguments=@($args);$global:LASTEXITCODE=0;$script:fixture}
 function Invoke-Checked {param([string]$FilePath,[string[]]$Arguments=@(),[string[]]$ExpectedTests=@());$script:invocations+=@{file=$FilePath;arguments=$Arguments;expected=$ExpectedTests}}
-$value=$null;$errorText=''
+$value=$null;$errorText='';$script:messages=@()
 try{
  switch($Operation){
  'selection' {$value=Get-TestSelection -CTestFilterArguments @($request.filter)}
@@ -25,7 +26,7 @@ try{
  'output' {Test-IsolatedOutput $PSScriptRoot}
  }
 }catch{$errorText=$_.Exception.Message}
-@{value=$value;error=$errorText;calls=$script:invocations;query=$script:queryArguments;inspections=$script:runtimeInspections}|ConvertTo-Json -Depth 18
+@{value=$value;error=$errorText;calls=$script:invocations;query=$script:queryArguments;inspections=$script:runtimeInspections;messages=$script:messages}|ConvertTo-Json -Depth 18
 )PS",true);
     Json request=Json::object({{"inventory",Json::object({{"tests",Json::array({})}})},{"locks",Json::array({})},{"filter",Json::array({})},{"aggregate",false}});
     auto probe=[&](const std::string& operation){write(root/L"request.json",request.dump());return bridge.call(script,{operation});};auto tests=[&](Json value){request["inventory"]["tests"]=value;};auto expectError=[&](const std::string& operation,const std::string& text){auto result=probe(operation);require(result.at("error").str().find(text)!=std::string::npos,"Expected error "+text+": "+result.dump());return result;};

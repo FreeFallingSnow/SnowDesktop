@@ -2,7 +2,7 @@
 #include <iostream>
 using namespace build_test;
 namespace {
-Json complete(Child& child,int code=0){auto result=child.wait(40);require(result.code==code,result.out+result.err);return Json::parse(result.out);}
+Json complete(Child& child,int code=0){auto result=child.wait(40);require(result.code==code,result.out+result.err);return result.out.empty()?Json{}:Json::parse(result.out);}
 void equal(const Json& a,const Json& b){require(a.dump()==b.dump(),"Waiters did not receive identical persisted results");}
 void run_tests(const fs::path& repo){
     Coordinator c(repo,"collaboration");auto initial=c.call({"status"});require(initial.at("current").kind==Json::Kind::Null&&!fs::exists(c.stateRoot/L"state.json"),"status registered a batch");
