@@ -37,7 +37,7 @@ Windows 授权、实际定位精度和桌面面板交互需要用户实机验收
 .build\Release\snowwidget.exe lint developer_assets\workshop_widgets\sky-weather
 .build\Release\snowwidget.exe test developer_assets\workshop_widgets\sky-weather
 .build\Release\snowwidget.exe quality developer_assets\workshop_widgets\sky-weather
-.build\Release\snowwidget.exe preview developer_assets\workshop_widgets\sky-weather developer_assets\workshop_widgets\sky-weather\workshop-preview.png --columns 4 --rows 3 --locale zh-CN --appearance glass-light --background developer_assets\workshop_widgets\community-preview-background.png --canvas-size 512 --padding 48
+.build\Release\snowwidget.exe preview developer_assets\workshop_widgets\sky-weather developer_assets\workshop_widgets\sky-weather\workshop-preview.png --columns 4 --rows 3 --locale en-US --appearance glass-light --background developer_assets\workshop_widgets\community-preview-background.png --canvas-size 512 --padding 48
 scripts\widget-dev.bat developer_assets\workshop_widgets\sky-weather -Configuration Release -Once
 ```
 
