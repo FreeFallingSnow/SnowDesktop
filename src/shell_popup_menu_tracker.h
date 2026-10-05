@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <atomic>
+#include "native_menu_theme.h"
 
 namespace snowdesktop::shell_popup_menu_tracker
 {
@@ -40,7 +41,7 @@ inline LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wp, LPARAM 
 // leaving an empty submenu. The caller supplies its nested-loop animation pump.
 inline UINT Track(HMENU menu, UINT flags, POINT screenPoint, HWND forwardingOwner,
     bool topmost, std::atomic<HWND>& activeOwner,
-    const std::atomic<bool>& cancelRequested, HWND nativeOwner = nullptr)
+    const std::atomic<bool>& cancelRequested, bool lightTheme, HWND nativeOwner = nullptr)
 {
     if (!menu || !IsWindow(forwardingOwner) ||
         GetWindowThreadProcessId(forwardingOwner, nullptr) != GetCurrentThreadId())
@@ -67,6 +68,7 @@ inline UINT Track(HMENU menu, UINT flags, POINT screenPoint, HWND forwardingOwne
     if (!RegisterClassW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         return 0;
 
+    native_menu_theme::ScopedTheme theme(lightTheme);
     detail::WindowContext context{ forwardingOwner };
     HWND tracker = CreateWindowExW(WS_EX_TOOLWINDOW | (topmost ? WS_EX_TOPMOST : 0),
         className, L"SnowDesktop Shell Menu Tracker", WS_POPUP,
@@ -74,6 +76,7 @@ inline UINT Track(HMENU menu, UINT flags, POINT screenPoint, HWND forwardingOwne
     if (!tracker)
         return 0;
 
+    theme.ApplyToWindow(tracker);
     const HWND previousOwner = activeOwner.exchange(tracker, std::memory_order_acq_rel);
     ShowWindow(tracker, SW_SHOWNA);
     SetForegroundWindow(tracker);

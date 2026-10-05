@@ -1575,9 +1575,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Display);
     }
 
-    const auto allLuaWidgets = BuildLuaWidgetMenuEntries();
-    const bool workshopAvailable =
-        WidgetEngine::IsSteamWorkshopBridgeAvailable();
+    // The root does not need the component catalogue. Refresh/validate it only
+    // when Add Widget opens, retaining one fresh snapshot for this menu session.
+    std::vector<LuaWidgetMenuEntry> allLuaWidgets;
+    bool luaWidgetCatalogueLoaded = false;
+    bool workshopAvailable = false;
     std::wstring luaSearch;
     LuaWidgetMenuFilter luaFilter = LuaWidgetMenuFilter::All;
     auto luaWidgets = FilterLuaWidgetMenuEntries(
@@ -2010,11 +2012,26 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     shellRequest.background = true;
     shellRequest.context = snowdesktop::shell_extensions::Context::Desktop;
     shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    auto prepareWidgetSubmenu = [&](UINT submenuCommand,
+        std::vector<snowdesktop::modern_menu::Item>& children) {
+        if (!widgetMenu || luaWidgetCatalogueLoaded ||
+            submenuCommand != static_cast<UINT>(
+                reinterpret_cast<UINT_PTR>(widgetMenu)))
+            return;
+        allLuaWidgets = BuildLuaWidgetMenuEntries();
+        workshopAvailable = WidgetEngine::IsSteamWorkshopBridgeAvailable();
+        luaWidgets = FilterLuaWidgetMenuEntries(
+            allLuaWidgets, luaSearch, luaFilter);
+        children = BuildAddWidgetMenuItems(allLuaWidgets, luaWidgets,
+            luaPage, luaSearch, luaFilter, workshopAvailable);
+        luaWidgetCatalogueLoaded = true;
+    };
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
         previewWidgetMenuItem, searchLuaWidgets, &shellRequest,
         [&]() { return previewWindow.Handle(); }, false,
-        kContextPageRename, kContextPageRenameCancel);
+        kContextPageRename, kContextPageRenameCancel,
+        prepareWidgetSubmenu);
     previewWindow.Close();
 
     if (sortMenu) DestroyMenu(sortMenu);

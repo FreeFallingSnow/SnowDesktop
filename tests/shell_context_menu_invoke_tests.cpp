@@ -9,6 +9,7 @@
 #include "menu_label.h"
 #include "shell_new_item_capture.h"
 #include "shell_popup_menu_tracker.h"
+#include "modern_menu_appearance_rules.h"
 #include "floating_dock_rules.h"
 
 #include <cstdlib>
@@ -22,6 +23,7 @@
 #include <string>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 #include <wrl/client.h>
 #include <wrl/implements.h>
 
@@ -34,6 +36,91 @@ void Expect(bool condition, const char* message)
     {
         throw std::runtime_error(message);
     }
+}
+
+void TestNativeMenuThemeScope()
+{
+    namespace theme = snowdesktop::native_menu_theme;
+    using Mode = theme::detail::PreferredAppMode;
+    using snowdesktop::modern_menu::Appearance;
+    struct State
+    {
+        Mode mode = Mode::AllowDark;
+        unsigned flushes = 0;
+        unsigned windowUpdates = 0;
+        bool windowDark = false;
+        bool highContrast = false;
+    };
+    static State state;
+    state = {};
+    const theme::detail::Api api{
+        [](Mode mode) -> Mode { const auto previous = state.mode; state.mode = mode; return previous; },
+        [](HWND, bool dark) -> bool { state.windowDark = dark; ++state.windowUpdates; return true; },
+        [] { ++state.flushes; },
+        [] { return state.highContrast; },
+    };
+    const HWND window = reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
+    Expect(!theme::detail::SupportsPreferredAppMode(10, 17763) &&
+        !theme::detail::SupportsPreferredAppMode(10, 18361) &&
+        theme::detail::SupportsPreferredAppMode(10, 18362) &&
+        theme::detail::SupportsPreferredAppMode(10, 26100) &&
+        !theme::detail::SupportsPreferredAppMode(6, 7601),
+        "native theme loading rejects the old ordinal-135 ABI and supports current Windows 10/11");
+
+    // The native API is the only substitute. Use the real menu color resolver
+    // with independent expectations, including software overrides opposite to
+    // Windows, so More cannot silently revert to the OS color or stay white.
+    for (const bool systemLight : {false, true})
+    {
+        const std::pair<Appearance, bool> cases[] = {
+            {Appearance::FollowSystem, systemLight},
+            {Appearance::SystemLightBlur, true}, {Appearance::SystemDarkBlur, false},
+            {Appearance::OpaqueLight, true}, {Appearance::OpaqueDark, false},
+            {Appearance::Win10Light, true}, {Appearance::Win10Dark, false},
+        };
+        for (const auto& [appearance, expectedLight] : cases)
+        {
+            const auto previousFlushes = state.flushes;
+            {
+                theme::ScopedTheme scope(
+                    snowdesktop::modern_menu::appearance_rules::IsLightTheme(appearance, systemLight), api);
+                scope.ApplyToWindow(window);
+                Expect(state.mode == (expectedLight ? Mode::ForceLight : Mode::ForceDark) &&
+                    state.windowDark == !expectedLight && state.flushes == previousFlushes + 1,
+                    "native menus apply and refresh the same explicit/system colors as software menus");
+            }
+            Expect(state.mode == Mode::AllowDark && state.flushes == previousFlushes + 2,
+                "closing a native menu restores and refreshes the previous process theme");
+        }
+    }
+    {
+        theme::ScopedTheme outer(false, api);
+        {
+            theme::ScopedTheme inner(true, api);
+            Expect(state.mode == Mode::ForceLight, "an inner native menu can use a light override");
+        }
+        Expect(state.mode == Mode::ForceDark, "an inner menu restores the outer dark menu mode");
+    }
+    Expect(state.mode == Mode::AllowDark, "the outer menu restores the original process mode");
+    state.highContrast = true;
+    {
+        theme::ScopedTheme scope(false, api);
+        scope.ApplyToWindow(window);
+        Expect(state.mode == Mode::Default && !state.windowDark,
+            "high contrast preserves native accessibility colors instead of forcing dark colors");
+    }
+    Expect(state.mode == Mode::AllowDark, "high-contrast menus also restore the original mode");
+    const auto previousFlushes = state.flushes;
+    const auto previousUpdates = state.windowUpdates;
+    auto unavailable = api;
+    unavailable.flushMenuThemes = nullptr;
+    {
+        theme::ScopedTheme scope(false, unavailable);
+        scope.ApplyToWindow(window);
+    }
+    Expect(state.mode == Mode::AllowDark && state.flushes == previousFlushes &&
+        state.windowUpdates == previousUpdates,
+        "missing native theme APIs leave the standard menu and process state untouched");
 }
 
 struct TemporaryDirectory
@@ -146,6 +233,8 @@ void TestNativeCascadeOnPrivateDesktop()
         bool sourceRetained = false;
         bool forwardingOwnerRetained = false;
         bool resetDuringClose = false;
+        bool lightTheme = true;
+        bool themeMatches = false;
         unsigned initializationCount = 0;
         ULONGLONG displayDeadline = 0;
         ~LazyCascade()
@@ -164,6 +253,22 @@ void TestNativeCascadeOnPrivateDesktop()
             }
             if (self && message == WM_INITMENUPOPUP && reinterpret_cast<HMENU>(wp) == self->menu)
             {
+                // Observe the actual process mode during the production menu
+                // loop. SetPreferredAppMode returns the previous mode; restore
+                // it immediately without changing the menu-theme cache.
+                namespace theme = snowdesktop::native_menu_theme;
+                const auto& api = theme::detail::SystemApi();
+                if (api.setPreferredAppMode && api.allowDarkModeForWindow && api.flushMenuThemes)
+                {
+                    using Mode = theme::detail::PreferredAppMode;
+                    const Mode expected = api.isHighContrast() ? Mode::Default :
+                        self->lightTheme ? Mode::ForceLight : Mode::ForceDark;
+                    const Mode actual = api.setPreferredAppMode(expected);
+                    api.setPreferredAppMode(actual);
+                    self->themeMatches = actual == expected;
+                }
+                else
+                    self->themeMatches = true; // Unsupported OS keeps the native fallback.
                 ++self->initializationCount;
                 DeleteMenu(self->menu, 0, MF_BYPOSITION);
                 self->initializedOnOwnerThread =
@@ -219,11 +324,23 @@ void TestNativeCascadeOnPrivateDesktop()
         WS_POPUP, -32000, -32000, 1, 1, cascade.window, nullptr, cls.hInstance, nullptr);
     Expect(cascade.dockOwner != nullptr, "create a distinct source Dock owner");
     ShowWindow(cascade.dockOwner, SW_SHOWNOACTIVATE);
-    cascade.displayDeadline = GetTickCount64() + 2000;
-    Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the native popup lifetime");
-    const auto selected = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
-        cascade.tracker, cascade.cancelled, cascade.dockOwner);
+    UINT selected = 0;
+    for (const bool lightTheme : {false, true, false})
+    {
+        while (GetMenuItemCount(cascade.menu) > 0)
+            DeleteMenu(cascade.menu, 0, MF_BYPOSITION);
+        AppendMenuW(cascade.menu, MF_STRING, 70, L"");
+        cascade.displayed = false;
+        cascade.lightTheme = lightTheme;
+        cascade.themeMatches = false;
+        cascade.displayDeadline = GetTickCount64() + 2000;
+        Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the native popup lifetime");
+        selected = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
+            cascade.tracker, cascade.cancelled, lightTheme, cascade.dockOwner);
+        Expect(cascade.themeMatches,
+            "the real native tracker applies the requested theme across dark/light/dark openings");
+    }
     Expect(cascade.initializedOnOwnerThread && GetMenuItemCount(cascade.menu) == 2,
         "deferred cascade initializes on the menu-tracking STA and keeps its commands");
     Expect(cascade.displayed, "initialized deferred commands have visible native menu bounds");
@@ -248,21 +365,21 @@ void TestNativeCascadeOnPrivateDesktop()
     Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the ownerless native popup lifetime");
     Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
         TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
-        cascade.tracker, cascade.cancelled) == 0 && cascade.displayed &&
+        cascade.tracker, cascade.cancelled, cascade.lightTheme) == 0 && cascade.displayed &&
         cascade.observedOwner == nullptr && !cascade.sourceRetained &&
         cascade.tracker.load() == nullptr,
         "a default native menu grants no Dock hold and an explicit session reset is not resurrected on exit");
     cascade.cancelled.store(true);
     const auto before = cascade.initializationCount;
     Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
-        TPM_RETURNCMD, {100, 100}, cascade.window, false, cascade.tracker, cascade.cancelled) == 0 &&
+        TPM_RETURNCMD, {100, 100}, cascade.window, false, cascade.tracker, cascade.cancelled, true) == 0 &&
         cascade.initializationCount == before && cascade.tracker.load() == nullptr,
         "early cancellation never opens or initializes the native menu");
 
     cascade.tracker.store(cascade.dockOwner);
     Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
         TPM_RETURNCMD, {100, 100}, cascade.window, false,
-        cascade.tracker, cascade.cancelled, cascade.dockOwner) == 0 &&
+        cascade.tracker, cascade.cancelled, true, cascade.dockOwner) == 0 &&
         cascade.tracker.load() == cascade.dockOwner,
         "a cancelled inner tracker restores its still-live outer session slot");
     cascade.tracker.store(nullptr);
@@ -282,7 +399,7 @@ void TestNativeCascadeOnPrivateDesktop()
         Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound an invalid-owner regression");
         const UINT command = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
             TPM_RETURNCMD, {100, 100}, cascade.window, false,
-            cascade.tracker, cascade.cancelled, invalid);
+            cascade.tracker, cascade.cancelled, true, invalid);
         KillTimer(cascade.window, 1);
         Expect(command == 0 &&
             cascade.initializationCount == before && cascade.tracker.load() == nullptr,
@@ -311,7 +428,7 @@ void TestNativeCascadeOnPrivateDesktop()
     const bool boundedForeign = SetTimer(cascade.window, 1, 30, nullptr) != 0;
     const bool rejectedForeign = boundedForeign && foreignOwner && snowdesktop::shell_popup_menu_tracker::Track(
         cascade.menu, TPM_RETURNCMD, {100, 100}, cascade.window, false,
-        cascade.tracker, cascade.cancelled, foreignOwner) == 0 &&
+        cascade.tracker, cascade.cancelled, true, foreignOwner) == 0 &&
         cascade.initializationCount == before && cascade.tracker.load() == nullptr;
     KillTimer(cascade.window, 1);
     foreignRelease.set_value();
@@ -345,6 +462,7 @@ void TestNativeCascadeOwnerThread()
 
 void RunTests()
 {
+    TestNativeMenuThemeScope();
     TestNativeCascadeOwnerThread();
     const std::wstring currentDirectory =
         std::filesystem::current_path().wstring();

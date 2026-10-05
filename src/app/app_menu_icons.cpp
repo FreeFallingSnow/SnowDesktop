@@ -101,18 +101,6 @@ snowdesktop::MenuQuickIcon ResolveQuickIcon(UINT_PTR command)
     return MenuQuickIcon::FontGlyph;
 }
 
-bool IsWindowsAppLightThemeEnabled()
-{
-    DWORD value = 1;
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-            L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr,
-            &value, &size) != ERROR_SUCCESS)
-        return true;
-    return value != 0;
-}
-
 bool TryGetTaskbarRectAtPoint(POINT screenPoint, RECT& taskbarRect)
 {
     HWND window = WindowFromPoint(screenPoint);
@@ -328,9 +316,8 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
     const PersonalizationSettings appearance = CurrentPersonalization();
     menuAppearanceStyle_ = std::clamp(
         appearance.contextMenuStyle, 0, 6);
-    menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightTheme(
-        static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_),
-        IsWindowsAppLightThemeEnabled());
+    menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
+        static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_));
 }
 
 void DesktopApp::SetMenuItemIcon(
@@ -575,7 +562,9 @@ UINT DesktopApp::ShowModernMenu(
     const snowdesktop::shell_extensions::Request* shellRequest,
     std::function<HWND()> zOrderCompanion,
     bool forceTopmost,
-    UINT textInputSubmitCommand, UINT textInputCancelCommand)
+    UINT textInputSubmitCommand, UINT textInputCancelCommand,
+    std::function<void(UINT,
+        std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu)
 {
     if (!rootMenu)
         return 0;
@@ -661,6 +650,7 @@ UINT DesktopApp::ShowModernMenu(
     options.onTextChanged = std::move(onTextChanged);
     options.textInputSubmitCommand = textInputSubmitCommand;
     options.textInputCancelCommand = textInputCancelCommand;
+    options.onPrepareSubmenu = std::move(onPrepareSubmenu);
     options.onHover = std::move(onHover);
     options.zOrderCompanion = std::move(zOrderCompanion);
     ConfigureModernMenuEventPump(options);

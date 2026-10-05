@@ -6,6 +6,7 @@
 #include "../shell_context_menu_site.h"
 #include "../shell_new_item_capture.h"
 #include "../shell_popup_menu_tracker.h"
+#include "../modern_menu_appearance_rules.h"
 
 // Shell New menu, desktop host restoration and protected-icon handling.
 
@@ -33,6 +34,12 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
 {
     if (!menu || !owner || !IsWindow(owner))
         return 0;
+
+    // Resolve from the same current preference as the custom menu. New/other
+    // Shell menus can also reach this entry without first preparing menu icons.
+    const bool lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
+        static_cast<snowdesktop::modern_menu::Appearance>(
+            std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
 
     HWND dockOwner = nullptr;
     for (const auto& host : persistentDockHosts_)
@@ -63,7 +70,7 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     const UINT command = snowdesktop::shell_popup_menu_tracker::Track(
         menu, flags, screenPoint, owner,
         ShouldKeepFloatingPopupTopmostForShellMenu(),
-        shellPopupTrackerOwnerHwnd_, shellPopupTrackerCancelRequested_, dockOwner);
+        shellPopupTrackerOwnerHwnd_, shellPopupTrackerCancelRequested_, lightTheme, dockOwner);
     shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
     return command;
 }

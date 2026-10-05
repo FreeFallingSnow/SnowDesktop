@@ -1440,6 +1440,15 @@ private:
             return;
         }
 
+        if (options_.onPrepareSubmenu)
+        {
+            // Tear down any child before its backing vector can be replaced.
+            CloseFromDepth(popup.depth + 1);
+            options_.onPrepareSubmenu(item.command, item.children);
+            if (done_ || item.children.empty())
+                return;
+        }
+
         RECT row = popup.itemRects[index];
         if (item.horizontalScrollAction)
             OffsetRect(&row, -popup.horizontalScrollOffset, 0);

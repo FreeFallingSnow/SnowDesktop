@@ -537,6 +537,217 @@ struct IsolatedMenuDesktop
     }
 };
 
+struct DockContextTransitionProbe
+{
+    HWND owner = nullptr;
+    bool dismissOnPress = true;
+    bool pressOwned = false;
+    bool deliveryBlocked = false;
+    bool delivered = false;
+    bool foregroundRejected = false;
+    bool timedOut = false;
+    HWND requestForeground = nullptr;
+    UINT command = 0;
+};
+
+constexpr UINT kDockMenuReadyMessage = WM_APP + 92;
+
+LRESULT CALLBACK DockContextTransitionWindowProc(
+    HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    auto* probe = reinterpret_cast<DockContextTransitionProbe*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (message == WM_NCCREATE)
+    {
+        probe = static_cast<DockContextTransitionProbe*>(
+            reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(probe));
+    }
+    if (!probe) return DefWindowProcW(hwnd, message, wParam, lParam);
+    if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    if (message == WM_RBUTTONDOWN)
+    {
+        // Same ordering as the host's right-button route: dismiss first,
+        // then retain the press surface for the matching release.
+        if (probe->dismissOnPress) snowdesktop::modern_menu::DismissActive();
+        probe->pressOwned = true;
+        return 0;
+    }
+    if (message == WM_RBUTTONUP)
+    {
+        Expect(snowdesktop::floating_dock_rules::ShouldDispatchDockContextMenu(
+            true, std::exchange(probe->pressOwned, false)),
+            "a menu transition retains ownership of the Dock right press");
+        // Windows reports no global foreground on a private test desktop.
+        // Its real thread-active HWND still exercises the same destruction
+        // and owner-activation transition as the production foreground guard.
+        probe->requestForeground = GetActiveWindow();
+        // Only the Shell result is replaced; actual HWND activation, the
+        // nested menu loop and the background-delivery fence are exercised.
+        PostMessageW(hwnd, kDockMenuReadyMessage, 0, 0);
+        return 0;
+    }
+    if (message == kDockMenuReadyMessage)
+    {
+        if (snowdesktop::modern_menu::IsActive())
+        {
+            probe->deliveryBlocked = true;
+            PostMessageW(snowdesktop::modern_menu::ActiveRootWindow(),
+                WM_KEYDOWN, VK_ESCAPE, 0);
+            PostMessageW(hwnd, kDockMenuReadyMessage, 0, 0);
+            return 0;
+        }
+        probe->foregroundRejected =
+            GetActiveWindow() != probe->requestForeground;
+        if (!probe->foregroundRejected)
+        {
+            gInputPosted = false;
+            SetTimer(probe->owner, kDriveTimer, 10, nullptr);
+            snowdesktop::modern_menu::Options options;
+            options.owner = probe->owner;
+            options.anchor = {80, 80};
+            probe->command = snowdesktop::modern_menu::Show(
+                {{93, L"Running app action", L"", true}}, options).command;
+        }
+        probe->delivered = true;
+        return 0;
+    }
+    if (message == WM_TIMER)
+    {
+        probe->timedOut = true;
+        probe->delivered = true;
+        snowdesktop::modern_menu::DismissActive();
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+void CheckDockRunningMenuTransition(HWND owner)
+{
+    constexpr wchar_t dockClass[] = L"SnowDesktop.MenuTests.NonactivatingDock";
+    WNDCLASSW definition{};
+    definition.lpfnWndProc = DockContextTransitionWindowProc;
+    definition.hInstance = GetModuleHandleW(nullptr);
+    definition.lpszClassName = dockClass;
+    Expect(RegisterClassW(&definition) != 0, "nonactivating Dock fixture is registered");
+    for (const bool dismissOnPress : {false, true})
+    {
+        DockContextTransitionProbe probe;
+        probe.owner = owner;
+        probe.dismissOnPress = dismissOnPress;
+        const HWND dock = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            dockClass, L"", WS_POPUP | WS_VISIBLE, 20, 20, 20, 20,
+            nullptr, nullptr, definition.hInstance, &probe);
+        Expect(dock != nullptr, "nonactivating Dock fixture exists");
+        bool pressed = false;
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gMenuScript = [&](HWND root) {
+            if (!pressed)
+            {
+                pressed = true;
+                SendMessageW(dock, WM_RBUTTONDOWN, 0, 0);
+                PostMessageW(dock, WM_RBUTTONUP, 0, 0);
+            }
+            else
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+        };
+        SetForegroundWindow(owner);
+        SetFocus(owner);
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(dock, kWatchdogTimer, 3000, nullptr);
+        snowdesktop::modern_menu::Options options;
+        options.owner = owner;
+        options.anchor = {80, 80};
+        const auto oldResult = snowdesktop::modern_menu::Show(
+            {{91, L"Existing menu", L"", true}}, options);
+        MSG message{};
+        while (!probe.delivered && GetMessageW(&message, nullptr, 0, 0) > 0)
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        KillTimer(dock, kWatchdogTimer);
+        DestroyWindow(dock);
+        gMenuScript = {};
+        Expect(pressed && !probe.timedOut && probe.delivered && oldResult.command == 0,
+            "the Dock transition completes without executing the old menu");
+        if (dismissOnPress)
+            Expect(!probe.deliveryBlocked && !probe.foregroundRejected && probe.command == 93,
+                "dismissing on press allows asynchronous running-menu delivery after release");
+        else
+            Expect(probe.deliveryBlocked && probe.foregroundRejected && probe.command == 0,
+                "an undismissed menu fences delivery then invalidates its captured foreground");
+    }
+    UnregisterClassW(dockClass, definition.hInstance);
+}
+
+void CheckLazySubmenuPreparation(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    Options options;
+    options.owner = owner;
+    options.anchor = {80, 80};
+    unsigned catalogueReads = 0;
+    unsigned preparations = 0;
+    bool loaded = false;
+    options.onPrepareSubmenu = [&](UINT command, std::vector<Item>& children) {
+        if (command != 71) return;
+        const auto root = ActiveRootWindow();
+        Expect(root && IsWindowVisible(root),
+            "component catalogue reads occur only after the root menu is visible");
+        ++preparations;
+        if (loaded) return;
+        ++catalogueReads;
+        children = {{72, L"Current component", L"", true}};
+        loaded = true;
+    };
+    const std::vector<Item> items{
+        {71, L"Add Widget", L"", true, false, false,
+            {{0, L"Builtin action", L"", true}}},
+        {73, L"Other action", L"", true},
+    };
+    for (const bool openComponents : {false, true, true})
+    {
+        // A new background-menu session gets a fresh catalogue; closing and
+        // reopening its cascade reuses the same search/paging snapshot.
+        loaded = false;
+        const auto readsBefore = catalogueReads;
+        const auto preparationsBefore = preparations;
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMenuScript = [&](HWND root) {
+            if (openComponents)
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_LEFT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+            else
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show(items, options);
+        KillTimer(owner, kWatchdogTimer);
+        gMenuScript = {};
+        Expect(!gWatchdogFired && gInputPosted && result.command == (openComponents ? 72U : 73U),
+            "lazy component entries remain selectable after closing and reopening their cascade");
+        Expect(catalogueReads - readsBefore == (openComponents ? 1U : 0U) &&
+            preparations - preparationsBefore == (openComponents ? 2U : 0U),
+            "ordinary root actions skip catalogue refresh while each component-menu session reads once");
+    }
+}
+
 void CheckCascadeWorkArea(HWND owner)
 {
     using namespace snowdesktop::modern_menu;
@@ -793,6 +1004,8 @@ int wmain()
 
     CheckCascadeWorkArea(owner);
     CheckPreviewCompanionOrder(owner);
+    CheckDockRunningMenuTransition(owner);
+    CheckLazySubmenuPreparation(owner);
     gDriveMode = DriveMode::Cascade;
     gInputPosted = false;
 

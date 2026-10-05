@@ -166,6 +166,9 @@ struct Options
      * Escape cancels the editor and returns to its parent menu. */
     UINT textInputSubmitCommand = 0;
     UINT textInputCancelCommand = 0;
+    /** Host-internal lazy submenu preparation. Runs after the root is visible,
+     * before the child popup retains its vector. May replace only children. */
+    std::function<void(UINT, std::vector<Item>&)> onPrepareSubmenu;
 };
 
 enum class ExitReason

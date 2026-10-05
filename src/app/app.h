@@ -2144,7 +2144,9 @@ private:
         std::function<HWND()> zOrderCompanion = {},
         bool forceTopmost = false,
         UINT textInputSubmitCommand = 0,
-        UINT textInputCancelCommand = 0);
+        UINT textInputCancelCommand = 0,
+        std::function<void(UINT,
+            std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu = {});
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
     BOOL InvokeShellMenuCommand(IContextMenu* menu,

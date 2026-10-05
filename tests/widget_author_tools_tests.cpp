@@ -1,5 +1,6 @@
 #include "widget_author_permissions.h"
 #include "widget_package.h"
+#include "widget_catalog_refresh.h"
 #include "widget_package_file_export.h"
 #include "widget_api_registry.h"
 #include "gpu_diagnostics.h"
@@ -174,6 +175,83 @@ void TestGpuDiagnostics()
     Check(kept == "keep existing evidence", "diagnostic capture never truncates existing output");
 }
 
+void TestCatalogueRefreshCache()
+{
+    using namespace snowdesktop::widget;
+    std::vector<std::pair<bool, const char*>> checks;
+    {
+        snowdesktop::test::TemporaryDirectory temporary;
+        PackagePaths paths;
+        paths.builtin = temporary.path / L"builtin";
+        paths.installed = temporary.path / L"installed";
+        paths.development = temporary.path / L"dev";
+        paths.staging = temporary.path / L"staging";
+        paths.quarantine = temporary.path / L"quarantine";
+        paths.migrations = temporary.path / L"migrations";
+        paths.registry = temporary.path / L"packages.json";
+        std::filesystem::create_directory(paths.builtin);
+        const auto package = paths.builtin / L"component";
+        std::filesystem::create_directory(package);
+        auto writeManifest = [&](const char* name) {
+            std::ofstream file(package / L"widget.json", std::ios::binary | std::ios::trunc);
+            file << R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,
+                "id":"3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23","slug":"cache-test",
+                "version":"1.0.0","entry":"main.lua","permissions":[],"name":")"
+                << name << R"("})";
+        };
+        writeManifest("Original");
+        { std::ofstream file(package / L"main.lua"); file << "return widget.define({})"; }
+        WidgetPackageManager manager(paths);
+        std::string error;
+        checks.push_back({manager.Initialize(error) && manager.ListPackages().size() == 1,
+            "startup validates and retains the initial component catalogue"});
+        detail::CatalogRefresh cache;
+        const auto revision = std::make_shared<const char>('\0');
+        const std::array roots{paths.builtin, paths.installed, paths.development};
+        cache.Begin(roots);
+        cache.Complete(revision);
+        checks.push_back({cache.CanReuse(revision),
+            "healthy local watches make the first menu reuse its startup validation"});
+        checks.push_back({!cache.CanReuse(std::make_shared<const char>('\0')),
+            "a copied manager with a different snapshot cannot reuse another revision"});
+        auto copied = manager;
+        writeManifest("Changed");
+        checks.push_back({!cache.CanReuse(revision),
+            "nested manifest changes invalidate the catalogue snapshot"});
+        checks.push_back({manager.RefreshCatalog(error) && manager.ListPackages().size() == 1 &&
+            manager.ListPackages().front().manifest.name == "Changed",
+            "refresh reads changed component metadata rather than a cached manifest"});
+        checks.push_back({copied.RefreshCatalog(error) && copied.ListPackages().size() == 1 &&
+            copied.ListPackages().front().manifest.name == "Changed",
+            "a manager copy refreshes its own stale package vector"});
+        cache.Begin(roots);
+        cache.Complete(revision);
+        { std::ofstream file(package / L"native.dll"); file << "forbidden"; }
+        checks.push_back({!cache.CanReuse(revision) &&
+            !WidgetPackageValidator{}.ValidateDirectory(package).Ok(),
+            "new unsafe files invalidate the menu cache and runtime validation remains independent"});
+        checks.push_back({manager.RefreshCatalog(error) && manager.ListPackages().empty() &&
+            manager.ListInvalidPackages().size() == 1,
+            "an invalidated component cannot remain in the available catalogue"});
+        std::filesystem::remove(package / L"native.dll");
+        checks.push_back({manager.RefreshCatalog(error) && manager.ListPackages().size() == 1,
+            "removing an unsafe file restores the validated component"});
+        cache.Begin(roots);
+        cache.Complete(revision);
+        std::filesystem::rename(paths.builtin, temporary.path / L"old-builtin");
+        std::filesystem::create_directory(paths.builtin);
+        checks.push_back({!cache.CanReuse(revision),
+            "replacing a watched root invalidates it through its parent watch"});
+        checks.push_back({manager.RefreshCatalog(error) && manager.ListPackages().empty(),
+            "replaced roots cannot retain components from the old directory"});
+        cache.Begin({temporary.path / L"missing", paths.installed, paths.development});
+        cache.Complete(revision);
+        checks.push_back({!cache.CanReuse(revision),
+            "unavailable watches conservatively fall back to full catalogue refresh"});
+    }
+    for (const auto& [passed, message] : checks) Check(passed, message);
+}
+
 // Exercise the exact file-export core used by the settings worker: real ZIP
 // validation, identity changes, and Windows replacement failures, without a UI picker.
 void TestStandalonePackageExport()
@@ -281,6 +359,7 @@ int main(int argc, char* argv[])
         return 0;
     }
     TestReviewedPackageInstallation();
+    TestCatalogueRefreshCache();
     TestPermissionReport();
     TestGpuDiagnostics();
     TestGpuLuaDetails();

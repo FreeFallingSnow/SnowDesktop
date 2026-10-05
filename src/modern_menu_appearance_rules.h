@@ -88,6 +88,18 @@ inline constexpr bool IsLightTheme(
     return followSystemLightTheme;
 }
 
+inline bool IsLightThemeForCurrentWindows(Appearance appearance)
+{
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr,
+            &value, &size) != ERROR_SUCCESS)
+        value = 1;
+    return IsLightTheme(appearance, value != 0);
+}
+
 inline constexpr bool UsesSystemBlur(Appearance appearance)
 {
     return appearance == Appearance::FollowSystem ||
