@@ -1,5 +1,6 @@
 #include "operation_feedback.h"
 #include "shell_launch_worker.h"
+#include "app/dock_explorer_pin.h"
 #include "shell_launch_process.h"
 #include "shell_open_command.h"
 #include "shell_launch_execution.h"
@@ -7,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -360,6 +362,17 @@ void TestIsolatedFolderActivation()
                 Check(visible, attempt == 0 ? "first folder activation must show Explorer" :
                     attempt == 1 ? "reopening an existing folder must keep Explorer visible" :
                     "reopening a minimized folder must restore visible Explorer");
+                bool currentFolderMatches = false;
+                visitFolderWindows([&](IWebBrowser2* browser) {
+                    SHANDLE_PTR handle = 0;
+                    if (SUCCEEDED(browser->get_HWND(&handle)))
+                        if (const auto current = snowdesktop::dock_explorer_pin::ReadCurrentFolder(
+                                reinterpret_cast<HWND>(handle)))
+                            currentFolderMatches |= SameFolder(folder, current->path) &&
+                                current->name == std::filesystem::path(folder).filename().wstring();
+                });
+                Check(currentFolderMatches,
+                    "Explorer pin discovery must read the exact visible fixture folder, including Unicode and spaces");
             }
             visitFolderWindows([](IWebBrowser2* browser) { browser->Quit(); });
             CoTaskMemFree(pidl); persist.Reset(); link.Reset();
