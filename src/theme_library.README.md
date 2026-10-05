@@ -231,7 +231,10 @@ All, Global, Dock, Status Bar, Taskbar, Quick Panel or Popup is active. All clea
 the filter; a partial multi-bar theme appears under each bar it includes. Global
 means a complete global surface, matching the Workshop Global Theme tag. There
 is no enumeration or conjunction of scope combinations. Each normal card places
-its information and its own operations in two vertically centered columns.
+its information and its own operations in two vertically centered columns. Version
+selection precedes Preview in the operations group. Below the standard setting-row
+width threshold, that group moves beneath the information and keeps the command
+bar bounded so its primary commands can move into overflow.
 
 Each theme card can import a preview background, and sharing offers a separate
 automatic/imported background choice. The selected image is bounded, decoded,
