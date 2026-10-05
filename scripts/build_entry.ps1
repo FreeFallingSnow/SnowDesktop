@@ -2,7 +2,7 @@
 param([Alias('Action')][ValidateSet('release','debug','ide','tests','verify')][string]$EntryAction='verify', [Alias('ReloadShell')][switch]$EntryReloadShell,
     [Alias('CloseApplication')][switch]$EntryCloseApplication,
     [Alias('Configuration')][ValidateSet('Release','Debug')][string]$EntryConfiguration='Release', [Alias('Targets')][string[]]$EntryTargets=@(),
-    [Alias('Mode')][ValidateSet('full','fast','core','label','name','list','plan')][string]$EntryMode='full', [Alias('Filter')][string]$EntryFilter='',
+    [Alias('Mode')][ValidateSet('full','fast','core','tools','label','name','list','plan')][string]$EntryMode='full', [Alias('Filter')][string]$EntryFilter='',
     [Alias('PlanBatch')][ValidatePattern('^[a-f0-9]{32}$')][string]$EntryPlanBatch)
 
 function Get-BuildPowerShell {

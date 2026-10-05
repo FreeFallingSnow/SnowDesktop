@@ -1074,6 +1074,8 @@ if (BUILD_TESTING)
     set(SNOWDESKTOP_TEST_TARGETS)
     set(SNOWDESKTOP_CORE_TEST_TARGETS)
     set(SNOWDESKTOP_FAST_TEST_TARGETS)
+    set(SNOWDESKTOP_APP_TEST_TARGETS)
+    set(SNOWDESKTOP_TOOL_TEST_TARGETS)
 
     function(snowdesktop_add_test TEST_TARGET TEST_NAME)
         set(multiValueArgs
@@ -1155,12 +1157,21 @@ if (BUILD_TESTING)
         list(APPEND SNOWDESKTOP_TEST_TARGETS ${TEST_TARGET})
         set(SNOWDESKTOP_TEST_TARGETS
             "${SNOWDESKTOP_TEST_TARGETS}" PARENT_SCOPE)
-        if ("core" IN_LIST SNOW_TEST_LABELS)
+        if ("tools" IN_LIST SNOW_TEST_LABELS)
+            list(APPEND SNOWDESKTOP_TOOL_TEST_TARGETS ${TEST_TARGET})
+            set(SNOWDESKTOP_TOOL_TEST_TARGETS
+                "${SNOWDESKTOP_TOOL_TEST_TARGETS}" PARENT_SCOPE)
+        else()
+            list(APPEND SNOWDESKTOP_APP_TEST_TARGETS ${TEST_TARGET})
+            set(SNOWDESKTOP_APP_TEST_TARGETS
+                "${SNOWDESKTOP_APP_TEST_TARGETS}" PARENT_SCOPE)
+        endif()
+        if ("core" IN_LIST SNOW_TEST_LABELS AND NOT "tools" IN_LIST SNOW_TEST_LABELS)
             list(APPEND SNOWDESKTOP_CORE_TEST_TARGETS ${TEST_TARGET})
             set(SNOWDESKTOP_CORE_TEST_TARGETS
                 "${SNOWDESKTOP_CORE_TEST_TARGETS}" PARENT_SCOPE)
         endif()
-        if (NOT "integration" IN_LIST SNOW_TEST_LABELS)
+        if (NOT "integration" IN_LIST SNOW_TEST_LABELS AND NOT "tools" IN_LIST SNOW_TEST_LABELS)
             list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS ${TEST_TARGET})
             set(SNOWDESKTOP_FAST_TEST_TARGETS
                 "${SNOWDESKTOP_FAST_TEST_TARGETS}" PARENT_SCOPE)
@@ -2522,6 +2533,16 @@ if (BUILD_TESTING)
     add_custom_target(
         SnowDesktopFastTests
         DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})
+    add_custom_target(
+        SnowDesktopBuildToolTests
+        DEPENDS ${SNOWDESKTOP_TOOL_TEST_TARGETS})
+    add_custom_target(
+        SnowDesktopAppTests
+        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
+            -File "${CMAKE_SOURCE_DIR}/scripts/arrange_build_output.ps1"
+            -BuildOutput "${CMAKE_BINARY_DIR}/$<CONFIG>"
+            -AllowMissingFirstPartyRuntime
+        DEPENDS ${SNOWDESKTOP_APP_TEST_TARGETS})
     add_custom_target(
         SnowDesktopTests
         COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile

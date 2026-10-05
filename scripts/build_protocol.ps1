@@ -23,7 +23,7 @@ function Reopen-Entry($Entry) {
 }
 function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [string]$Inputs, [string]$Reason) {
     $suiteList = @($Suites.Split(',') | Where-Object { $_ } | Sort-Object -Unique)
-    if ($suiteList.Count -eq 0 -or @($suiteList | Where-Object { $_ -notin 'full','core','fast','selected','none' }).Count) { throw 'Suites must be full/core/fast/selected/none.' }
+    if ($suiteList.Count -eq 0 -or @($suiteList | Where-Object { $_ -notin 'full','core','fast','tools','selected','none' }).Count) { throw 'Suites must be full/core/fast/tools/selected/none.' }
     $names = @($Tests.Split(',') | Where-Object { $_ } | Sort-Object -Unique)
     foreach ($name in $names) { if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$') { throw 'Tests must be literal CTest names; shell syntax and regex are not accepted.' } }
     $paths = @($Inputs.Split(',') | Where-Object { $_ } | ForEach-Object {$_.Replace('\','/').TrimEnd('/')} | Sort-Object -Unique)
@@ -140,6 +140,10 @@ function Resolve-PlanTests($Plan, $Inventory) {
     foreach ($test in $Inventory) {
         $labels=@($test.properties | Where-Object name -eq 'LABELS' | ForEach-Object { $_.value })
         if ($labels -contains 'manual') { continue } # explicit names above remain
+        if ($labels -contains 'tools') {
+            if ($Plan.suites -contains 'tools') { [void]$selected.Add($test.name) }
+            continue
+        }
         if ($Plan.mode -eq 'full' -or ($Plan.suites -contains 'core' -and $labels -contains 'core') -or ($Plan.suites -contains 'fast' -and $labels -notcontains 'integration')) { [void]$selected.Add($test.name) }
     }
     if ($Plan.mode -ne 'skipped' -and $selected.Count -eq 0) { throw 'Required test plan matched zero tests.' }

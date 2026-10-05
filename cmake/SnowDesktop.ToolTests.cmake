@@ -59,7 +59,7 @@ if(BUILD_TESTING AND WIN32)
     snowdesktop_add_native_tool_test(SnowDesktopPowerShellRuntimeTests powershell_runtime
         powershell_runtime_tests.cpp "tools;core" 90)
     snowdesktop_add_native_tool_test(SnowDesktopTestSelectionTests test_selection
-        test_selection_tests.cpp "core;contract;build" 30)
+        test_selection_tests.cpp "tools;core;contract;build" 30)
     snowdesktop_add_native_tool_test(SnowDesktopBuildCollaborationTests build_collaboration
-        build_collaboration_tests.cpp "core;contract;build" 180)
+        build_collaboration_tests.cpp "tools;core;contract;build" 180)
 endif()

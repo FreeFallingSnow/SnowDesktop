@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("full", "fast", "core", "label", "name", "list", "plan")]
+    [ValidateSet("full", "fast", "core", "tools", "label", "name", "list", "plan")]
     [string]$Mode = "full",
     [string]$Filter = "",
     [ValidatePattern("^[a-f0-9]{32}$")][string]$PlanBatch
@@ -138,7 +138,7 @@ function Invoke-FilteredTests {
                 [IO.Path]::GetFullPath([string]$_).Equals($hostExecutable,[StringComparison]::OrdinalIgnoreCase)
         }).Count -gt 0
     }).Count -gt 0
-    if ($needsHostRuntime -or $BuildPreset -eq "tests") {
+    if ($needsHostRuntime -or $BuildPreset -in "tests", "all-tests") {
         Assert-HostRuntimeAvailable
     }
 
@@ -156,7 +156,7 @@ function Invoke-FilteredTests {
     }
 
     # The full aggregate already arranges its output in CMake.
-    if ($needsHostRuntime -and $BuildPreset -ne "tests") {
+    if ($needsHostRuntime -and $BuildPreset -notin "tests", "all-tests") {
         Invoke-Checked -FilePath (Get-BuildPowerShell) -Arguments @(
             "-NoProfile",
             "-File", (Join-Path $PSScriptRoot "arrange_build_output.ps1"),
@@ -189,6 +189,7 @@ function Get-TestRunOptions {
         "full" { return @{ TestPreset = "tests"; BuildPreset = "tests"; CTestFilterArguments = @() } }
         "core" { return @{ TestPreset = "core-tests"; BuildPreset = "core-tests"; CTestFilterArguments = @() } }
         "fast" { return @{ TestPreset = "fast-tests"; BuildPreset = "fast-tests"; CTestFilterArguments = @() } }
+        "tools" { return @{ TestPreset = "tools-tests"; BuildPreset = "tools-tests"; CTestFilterArguments = @() } }
         { $_ -in "name", "label" } {
             if ([string]::IsNullOrWhiteSpace($Filter)) {
                 throw "$Mode mode requires a non-empty regular expression."
@@ -288,7 +289,12 @@ if ($Mode -eq "plan") {
         # CTest uses the CMake regex engine, which does not support (?:...).
         $pattern='^('+ (($names | ForEach-Object {[regex]::Escape($_)}) -join '|') +')$'
         $arguments=@('-R',$pattern)
-        if ($plan.mode -eq 'full') { Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset 'tests' -TestPreset 'all-tests'; Invoke-OutputIsolationCheck $repositoryRoot $coverage.postChecks.outputIsolation }
+        if ($plan.mode -eq 'full') {
+            $includesTools=@($inventory.Tests | Where-Object {$names -contains $_.name -and @($_.properties | Where-Object name -eq 'LABELS' | ForEach-Object {$_.value}) -contains 'tools'}).Count -gt 0
+            $fullBuildPreset=if($includesTools){'all-tests'}else{'tests'}
+            Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset $fullBuildPreset -TestPreset 'all-tests'
+            Invoke-OutputIsolationCheck $repositoryRoot $coverage.postChecks.outputIsolation
+        }
         else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' }
         $coverage.status='passed'
     } catch { if($coverage.status -ne 'environment-blocked'){$coverage.status='failed'};$coverage.error=$_.Exception.Message; throw }
@@ -336,7 +342,7 @@ elseif ($Mode -eq "list") {
 else {
     $options = Get-TestRunOptions -Mode $Mode -Filter $Filter
     if ($Mode -in "full", "core", "fast") {
-        Write-Host "Manual diagnostic tests are excluded; select them explicitly with name or label."
+        Write-Host "Build tool regressions and manual diagnostics are excluded; select tools, name or label explicitly."
     }
     Invoke-FilteredTests @options
     if ($Mode -eq "full") {

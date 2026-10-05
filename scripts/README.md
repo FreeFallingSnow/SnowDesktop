@@ -188,7 +188,7 @@ rem begin 成功返回后才能修复文件；使用新 editRevision 重报 plan
 
 检查输入、编辑修订及 operationId 一起持久化。失败、中断、待执行或失效的检查挡住冻结；异常退出不会当作通过。`check` 可显式重试已退出检查的只读评估；需要写入时先 `begin` 原子重开。旧进程或旧修订命令无权标记新编辑完成；重开后旧计划与证据失效。检查结束与冻结都核对输入，范围中的内容变化需要重开/更新计划；不自动把编辑者的异常退出变成完成。
 
-测试计划接受 `full/core/fast/selected/none` 与字面 CTest 名称，拒绝 shell/regex。未知影响、公共接口和基础设施 scope 按规则升级为全量自动测试；文件夹名称本身不是依赖分析；全量排除 manual，显式声明的 manual 仍执行。独立模块允许选定测试；文档、独立组件或工具可按现有规则 `-Suites none`，必须有输入范围与审查/豁免理由；这会报告 `skipped/not-required`，不声称宿主通过。空集合、未知名称、失败、跳过或未运行不算通过。源码依赖关系仍需要人/Agent 审阅，脚本不自动推导 C++ 依赖。
+测试计划接受 `full/core/fast/tools/selected/none` 与字面 CTest 名称，拒绝 shell/regex。未知影响、公共接口和基础设施 scope 按规则要求应用全量；文件夹名称本身不是依赖分析。`full/core/fast` 排除 tools 和 manual；工具回归用 `-Suites tools` 或显式测试名请求，显式声明的 manual 仍执行。独立模块允许选定测试；文档、独立组件或工具可按现有规则 `-Suites none`，必须有输入范围与审查/豁免理由；这会报告 `skipped/not-required`，不声称宿主通过。空集合、未知名称、失败、跳过或未运行不算通过。源码依赖关系仍需要人/Agent 审阅，脚本不自动推导 C++ 依赖。
 
 冻结时合并、去重并持久化 `<batch>.plan.json`，之后不可改写；`coverage.json` 记录每个任务请求、实际覆盖、失败和执行前测试二进制 SHA-256。覆盖关联不是缺陷责任认定。源码摘要 v2 按文件内容计算，HEAD 作为元数据，不因只改变提交身份而失效。结果另记实际构建阶段及可观测输出二进制身份。端点身份检查不能排除构建途中改动后恢复、外部 SDK 或未登记写入者。
 
@@ -337,10 +337,17 @@ Python 入口的总超时包含两次启动和目标执行，不通过扩大原�
 缺少依赖会明确失败，不计为通过。PowerShell 协议夹具只传递参数和观测数据，断言留在 C++ 中。
 `manual` 浏览器诊断仅在显式选择时成为要求。
 
-`scripts/test.bat` 的 full、core、fast 和 name/label 选择使用共同 CTest 预设，默认最多四项并行执行，
+`scripts/test.bat` 的 full、core、fast、tools 和 name/label 选择使用共同 CTest 预设，默认最多四项并行执行，
 并行度统一配置在 `CMakePresets.json` 的 `all-tests.execution.jobs` 中。
 各测试使用独立临时目录、日志和端口；共享桌面、Explorer 或宿主运行资源的条目通过
 `RESOURCE_LOCK snowdesktop_desktop` 互斥。CTest 会在锁占用期间调度其他独立测试，无需串行运行整套测试。
+
+日常无参数或 `full` 只运行应用产品测试；`core` 和 `fast` 也排除 `tools` 标签。
+协作构建、计划、筛选、PowerShell 启动、等待、重试、共享资源和看板通过 `scripts/test.bat tools`
+单独回归，默认排除工具的 manual 诊断。`name`/`label` 可显式选择任何组和手动条目。
+`SnowDesktopTests` 仍保存统一原生目标清单，应用、工具、核心和快速聚合从声明标签派生：
+常规测试使用 `SnowDesktopAppTests`，工具回归使用 `SnowDesktopBuildToolTests`；
+协作计划合并应用与显式工具需求时使用完整聚合，不让常规 full 隐式加入工具用例。
 
 `ready-and-wait` 两种依赖环境下直接返回共同 batch.exitCode：通过/明确豁免 0，失败原码，
 用法/状态/检查 attention/等待超时 2，恢复出的取消/中断 4，输入失效 5。
