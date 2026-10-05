@@ -83,13 +83,22 @@ std::string Json::dump() const {
     else for(const auto& [key,value]:fields){comma();out+=escaped(key)+":"+value.dump();}
     return out+(kind==Kind::Array?"]":"}");
 }
-Json Json::parse(const std::string& value) {JsonValue parsed;std::string error;std::string_view input(value);if(input.starts_with("\xef\xbb\xbf"))input.remove_prefix(3);require(ParseJson(input,parsed,&error),"Invalid JSON: "+error+"\n"+value);return convert(parsed);}
+Json Json::parse(const std::string& value) {JsonValue parsed;std::string error;std::string_view input(value);if(input.starts_with("\xef\xbb\xbf"))input.remove_prefix(3);const bool parsedOk=ParseJson(input,parsed,&error);require(parsedOk,"Invalid JSON: "+error+"\n"+value);return convert(parsed);}
 Json Json::array(std::initializer_list<Json> value) {Json out;out.kind=Kind::Array;out.items=value;return out;}
 Json Json::object(std::initializer_list<std::pair<const std::string,Json>> value) {Json out;out.kind=Kind::Object;out.fields=value;return out;}
 void require(bool condition,const std::string& message) {if(!condition)throw std::runtime_error(message);}
 std::string read(const fs::path& path) {
-    HANDLE handle=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);
-    require(handle!=INVALID_HANDLE_VALUE,"Cannot read "+utf8(path.wstring())+": "+std::to_string(GetLastError()));
+    HANDLE handle=INVALID_HANDLE_VALUE;DWORD error=0;
+    // File.Replace can briefly rename a concurrently observed metadata file.
+    // Retry only transient open failures; retain permanent errors and contents.
+    for(int attempt=0;attempt<4;++attempt){
+        handle=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);
+        if(handle!=INVALID_HANDLE_VALUE)break;
+        error=GetLastError();
+        if(attempt==3||(error!=ERROR_FILE_NOT_FOUND&&error!=ERROR_PATH_NOT_FOUND&&error!=ERROR_SHARING_VIOLATION&&error!=ERROR_LOCK_VIOLATION))break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5*(attempt+1)));
+    }
+    require(handle!=INVALID_HANDLE_VALUE,"Cannot read "+utf8(path.wstring())+": "+std::to_string(error));
     try {
         LARGE_INTEGER size{};require(GetFileSizeEx(handle,&size)!=0&&size.QuadPart>=0&&size.QuadPart<=64*1024*1024,"Invalid/oversized fixture file");
         std::string out(static_cast<size_t>(size.QuadPart),0);size_t offset=0;
@@ -156,6 +165,8 @@ Result Child::wait(int seconds) {DWORD status=WaitForSingleObject(process_,stati
 Result run(const std::vector<std::wstring>& args,const fs::path& root,int seconds,const Env& env) {Child child(args,root,env);return child.wait(seconds);}
 void init_git(const fs::path& root) {for(const auto& args:std::vector<std::vector<std::wstring>>{{L"git",L"init",L"--quiet"},{L"git",L"add",L"."},{L"git",L"-c",L"user.name=Fixture",L"-c",L"user.email=fixture@example.invalid",L"commit",L"--quiet",L"-m",L"fixture"}}){auto result=run(args,root);require(result.code==0,result.err);}}
 Bridge::Bridge(const fs::path& repo,const fs::path& root,bool legacy):root_(root),state_(root/L".build/native-test-bridge") {
+    static std::atomic<unsigned> sequence=0;
+    state_/=wide(std::to_string(GetCurrentProcessId())+"-"+std::to_string(sequence++));
     fs::create_directories(state_);fs::copy_file(repo/L"tests/build_tool_bridge.ps1",state_/L"bridge.ps1",fs::copy_options::overwrite_existing);
     for(int attempt=0;attempt<2;++attempt) {
         auto ready=state_/L"ready";fs::remove(ready);auto engine=powershell(legacy||attempt==1);

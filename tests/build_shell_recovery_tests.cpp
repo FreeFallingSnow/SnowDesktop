@@ -34,7 +34,7 @@ if($MyInvocation.InvocationName -ne '.')
         Json shell,native;
         try{
             if(mode=="interrupted"){until([&]{return fs::exists(root/L"native-started")||!process.running();});require(fs::exists(root/L"native-started"),"Native boundary did not start: "+process.err());process.stop();}
-            auto result=process.wait(25);require(mode=="interrupted"?result.code!=0:result.code==(mode=="configure-failure"?19:0),"Shell scenario exit mismatch "+mode+result.out+result.err);
+            auto result=process.wait(25);require(mode=="interrupted"?result.code!=0:result.code==(mode=="configure-failure"?1:0),"Shell scenario exit mismatch "+mode+" code "+std::to_string(result.code)+result.out+result.err);
             shell=Json::parse(read(root/L"restored.json"));require(owner_alive(shell),"Restored shell surrogate died with private job");until([&]{return fs::exists(root/L"shell-token.txt");});require(read(root/L"shell-token.txt").empty(),"Restored shell retained execution authority");
             if(mode!="configure-failure"){
                 require(read(root/L"native-token.txt").size()==64,"Native child lost delegated authority");native=Json::parse(read(root/L"native-child.json"));until([&]{return !owner_alive(native);},5);
