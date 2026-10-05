@@ -2548,5 +2548,6 @@
   "settings.contextMenu.hidePageManagement": "隱藏頁面管理相關選單",
   "settings.contextMenu.hidePageManagement.description": "隱藏新增、重新命名、刪除頁面、翻頁、頁面跳轉及固定頁面選單。",
   "themeLibrary.unbindWorkshop": "解除工作坊綁定",
-  "themeLibrary.unbindHint": "解除後保留本機主題和工作坊項目。再次分享將建立新項目；若要更新原項目，請重新綁定。"
+  "themeLibrary.unbindHint": "解除後保留本機主題和工作坊項目。再次分享將建立新項目；若要更新原項目，請重新綁定。",
+  "themeLibrary.error.widgetRollbackFailed": "主題選擇無法儲存，且先前外觀無法還原。請檢查元件外觀後重試。"
 }

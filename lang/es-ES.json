@@ -2548,5 +2548,6 @@
   "settings.contextMenu.hidePageManagement": "Ocultar los menús de gestión de páginas",
   "settings.contextMenu.hidePageManagement.description": "Ocultar los menús para añadir, renombrar, eliminar, cambiar, ir a una página y fijar páginas.",
   "themeLibrary.unbindWorkshop": "Desvincular del Workshop",
-  "themeLibrary.unbindHint": "Se conservarán el tema local y el artículo del Workshop. Al compartir de nuevo se creará un artículo nuevo; vuelve a vincular el original para actualizarlo."
+  "themeLibrary.unbindHint": "Se conservarán el tema local y el artículo del Workshop. Al compartir de nuevo se creará un artículo nuevo; vuelve a vincular el original para actualizarlo.",
+  "themeLibrary.error.widgetRollbackFailed": "No se pudo guardar la selección del tema ni restaurar la apariencia anterior. Revisa la apariencia del componente antes de volver a intentarlo."
 }

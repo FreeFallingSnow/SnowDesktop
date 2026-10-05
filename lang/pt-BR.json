@@ -2548,5 +2548,6 @@
   "settings.contextMenu.hidePageManagement": "Ocultar menus de gerenciamento de páginas",
   "settings.contextMenu.hidePageManagement.description": "Ocultar menus para adicionar, renomear, excluir, alternar, ir para uma página e fixar páginas.",
   "themeLibrary.unbindWorkshop": "Desvincular da Oficina",
-  "themeLibrary.unbindHint": "O tema local e o item da Oficina serão mantidos. Compartilhar novamente criará um novo item; vincule o item original de novo para atualizá-lo."
+  "themeLibrary.unbindHint": "O tema local e o item da Oficina serão mantidos. Compartilhar novamente criará um novo item; vincule o item original de novo para atualizá-lo.",
+  "themeLibrary.error.widgetRollbackFailed": "Não foi possível salvar a seleção do tema nem restaurar a aparência anterior. Verifique a aparência do componente antes de tentar novamente."
 }

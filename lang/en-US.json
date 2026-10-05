@@ -2548,5 +2548,6 @@
   "settings.contextMenu.hidePageManagement": "Hide page management menus",
   "settings.contextMenu.hidePageManagement.description": "Hide menus for adding, renaming, deleting, switching, jumping to, and pinning pages.",
   "themeLibrary.unbindWorkshop": "Unlink Workshop item",
-  "themeLibrary.unbindHint": "The local theme and Workshop item will be kept. Sharing again will create a new item; link the original item again to update it."
+  "themeLibrary.unbindHint": "The local theme and Workshop item will be kept. Sharing again will create a new item; link the original item again to update it.",
+  "themeLibrary.error.widgetRollbackFailed": "The theme selection could not be saved, and the previous appearance could not be restored. Check the component's appearance before trying again."
 }

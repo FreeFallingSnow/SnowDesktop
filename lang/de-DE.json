@@ -2548,5 +2548,6 @@
   "settings.contextMenu.hidePageManagement": "Menüs zur Seitenverwaltung ausblenden",
   "settings.contextMenu.hidePageManagement.description": "Menüs zum Hinzufügen, Umbenennen, Löschen, Wechseln und Anheften von Seiten sowie zum Springen zu einer Seite ausblenden.",
   "themeLibrary.unbindWorkshop": "Workshop-Verknüpfung aufheben",
-  "themeLibrary.unbindHint": "Das lokale Design und der Workshop-Eintrag bleiben erhalten. Erneutes Teilen erstellt einen neuen Eintrag. Verknüpfe den ursprünglichen Eintrag erneut, um ihn zu aktualisieren."
+  "themeLibrary.unbindHint": "Das lokale Design und der Workshop-Eintrag bleiben erhalten. Erneutes Teilen erstellt einen neuen Eintrag. Verknüpfe den ursprünglichen Eintrag erneut, um ihn zu aktualisieren.",
+  "themeLibrary.error.widgetRollbackFailed": "Die Themenauswahl konnte nicht gespeichert und das vorherige Aussehen nicht wiederhergestellt werden. Prüfen Sie das Aussehen der Komponente, bevor Sie es erneut versuchen."
 }

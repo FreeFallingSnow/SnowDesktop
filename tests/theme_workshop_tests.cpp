@@ -3,9 +3,169 @@
 #include "bridge_json.h"
 #include "atomic_file.h"
 #include "theme_workshop_tags.h"
+#include "theme_bridge_availability_cache.h"
+#include "widget_theme_selection.h"
 #include <iostream>
 #include <thread>
 #include <future>
+
+namespace
+{
+template<class Check>
+void CheckAvailabilityCache(const std::filesystem::path& directory, Check check)
+{
+    namespace detail = snowdesktop::themes::workshop::detail;
+    using Cache = detail::BridgeAvailabilityCache;
+    const auto path = directory / L"cache-bridge.exe";
+    check(snowdesktop::atomic_file::WriteAll(path, "offline bridge fixture"), "cache fixture is a safe regular file");
+    Cache cache;
+    detail::BridgeFileIdentity identity{1, 0, 1, 0, 22, 1, 1};
+    const auto read = [&](const auto&) { return std::optional{identity}; };
+    const auto now = Cache::Clock::time_point{};
+    int probes = 0;
+    const auto probe = [&] { ++probes; return detail::BridgeAvailability{true, true}; };
+    for (int snapshot = 0; snapshot != 20; ++snapshot)
+        check(cache.Query(path, "1", now, probe, read).sharing, "unchanged settings snapshots retain compatible sharing");
+    check(probes == 1, "repeated settings snapshots launch one capability probe");
+    check(cache.Query(path, "2", now, probe, read).workshop && probes == 2, "host version changes invalidate capability results");
+    ++identity.indexLow;
+    check(cache.Query(path, "2", now, probe, read).workshop && probes == 3, "replacement file identity invalidates cached capabilities");
+    ++identity.changed;
+    check(cache.Query(path, "2", now, probe, read).workshop && probes == 4, "same-size timestamp-preserved edits invalidate through change time");
+    ++identity.sizeLow;
+    check(cache.Query(path, "2", now, probe, read).workshop && probes == 5, "file size changes invalidate cached capabilities");
+    check(cache.Query(path, "2", now + std::chrono::seconds(31), probe, read).workshop && probes == 6,
+        "successful capabilities have a bounded refresh lifetime");
+    std::filesystem::remove(path);
+    check(!cache.Query(path, "2", now, probe, read).workshop && probes == 6, "each query rechecks the safe-path boundary even after a cache hit");
+    check(snowdesktop::atomic_file::WriteAll(path, "offline bridge fixture") &&
+        cache.Query(path, "2", now, probe, read).workshop && probes == 7, "delete and recreate cannot reuse an earlier cached result");
+
+    Cache failed;
+    int failures = 0;
+    bool recovered = false;
+    const auto retry = [&] { ++failures; return detail::BridgeAvailability{recovered, recovered}; };
+    check(!failed.Query(path, "1", now, retry, read).workshop, "failed capability probe stays unavailable");
+    recovered = true;
+    check(!failed.Query(path, "1", now, retry, read).workshop && failures == 1, "one failed snapshot does not probe again for every selector");
+    check(failed.Query(path, "1", now + std::chrono::seconds(2), retry, read).workshop && failures == 2,
+        "transient probe failure recovers after a bounded retry delay");
+
+    Cache unsupported;
+    int unsupportedProbes = 0;
+    const auto noIdentity = [](const auto&) -> std::optional<detail::BridgeFileIdentity> { return {}; };
+    const auto compatible = [&] { ++unsupportedProbes; return detail::BridgeAvailability{true, true}; };
+    check(unsupported.Query(path, "1", now, compatible, noIdentity).sharing &&
+        unsupported.Query(path, "1", now, compatible, noIdentity).sharing && unsupportedProbes == 2,
+        "filesystems without strong identity keep the original uncached compatible probe");
+
+    Cache changedDuringProbe;
+    check(!changedDuringProbe.Query(path, "1", now, [&] {
+        ++identity.indexLow; return detail::BridgeAvailability{true, true};
+    }, read).workshop && changedDuringProbe.Query(path, "1", now, probe, read).workshop,
+        "a replacement during probing is not cached and the next stable query recovers");
+    Cache concurrent;
+    std::atomic_int concurrentProbes = 0;
+    const auto concurrentProbe = [&] { ++concurrentProbes; return detail::BridgeAvailability{true, true}; };
+    auto first = std::async(std::launch::async, [&] { return concurrent.Query(path, "1", now, concurrentProbe, read); });
+    auto second = std::async(std::launch::async, [&] { return concurrent.Query(path, "1", now, concurrentProbe, read); });
+    check(first.get().sharing && second.get().sharing && concurrentProbes == 1, "concurrent snapshot readers share one capability probe");
+}
+
+template<class Check>
+void CheckWidgetThemeTransaction(const std::filesystem::path& directory,
+    snowdesktop::themes::Theme theme, Check check)
+{
+    using namespace snowdesktop;
+    using namespace themes;
+    const auto path = directory / L"widget-selection.json";
+    const std::string target = "widget/offline-instance";
+    Library library;
+    std::string error;
+    library.themes.emplace(theme.id, theme);
+    check(Select(library, target, "builtin/global/light", Kind::Global, Components, error) &&
+        atomic_file::WriteAll(path, EncodeLibrary(library, error)), "widget-selection fixture has a prior reference");
+    const auto oldTheme = Resolve(library.themes, theme.id);
+    check(Transact(path, [&](auto& current, auto&) {
+        current.themes.at(theme.id).appearance.widgetAlpha = .73f; return true;
+    }, library, error), "a subscribed update replaces the same theme ID before widget selection");
+    widget_runtime::WidgetHostAppearancePatch applied;
+    bool beforeCommit = false;
+    const auto selected = detail::SelectWidgetTheme(path, target, theme.id, [&](const auto& patch) {
+        Library disk; std::string readError;
+        beforeCommit = Load(path, disk, readError) && disk.references.at(target).id == "builtin/global/light";
+        Library competing; std::string competingError;
+        check(!Transact(path, [](auto&, auto&) { return true; }, competing, competingError) && competingError == "libraryBusy",
+            "the selected snapshot stays locked while its host patch is applied");
+        applied = patch; return detail::WidgetThemeMutation{true, true};
+    }, [] { return false; }, library, error);
+    const auto frozen = Resolve(library.references.at(target).snapshot, library.references.at(target).id);
+    check(selected.committed && beforeCommit && frozen && applied == WidgetPatch(*frozen),
+        "host patch and durable reference use the same latest snapshot and commit after mutation");
+    check(oldTheme && frozen && WidgetPatch(*oldTheme) != WidgetPatch(*frozen),
+        "negative control: applying the earlier separate read would detach the newly selected theme");
+
+    const auto durable = EncodeLibrary(library, error);
+    bool rollbackCalled = false;
+    const auto rejected = detail::SelectWidgetTheme(path, target, "builtin/global/light",
+        [](const auto&) { return detail::WidgetThemeMutation{}; }, [&] { rollbackCalled = true; return true; }, library, error);
+    Library disk;
+    check(!rejected.committed && !rejected.rollbackAttempted && !rollbackCalled &&
+        Load(path, disk, error) && EncodeLibrary(disk, error) == durable,
+        "failed guarded host mutation leaves the prior library bytes and reference untouched");
+
+    const auto backup = directory / L"widget-selection-backup.json";
+    const auto blockWrite = [&] {
+        std::filesystem::rename(path, backup);
+        std::filesystem::create_directory(path);
+    };
+    const auto restoreFile = [&] {
+        std::filesystem::remove(path);
+        std::filesystem::rename(backup, path);
+    };
+    auto host = applied;
+    const auto previous = host;
+    unsigned revision = 1, mutationRevision = 0;
+    const auto writeFailed = detail::SelectWidgetTheme(path, target, "builtin/global/light", [&](const auto& patch) {
+        host = patch; mutationRevision = ++revision; blockWrite();
+        return detail::WidgetThemeMutation{true, true};
+    }, [&] {
+        if (revision != mutationRevision) return false;
+        host = previous; ++revision; return true;
+    }, library, error);
+    check(!writeFailed.committed && writeFailed.rollbackAttempted && writeFailed.rollbackSucceeded && host == previous &&
+        Load(backup, disk, error) && EncodeLibrary(disk, error) == durable,
+        "library write failure restores only the successful guarded host revision and keeps the old reference");
+    restoreFile();
+
+    const auto concurrentUpdate = detail::SelectWidgetTheme(path, target, "builtin/global/light", [&](const auto& patch) {
+        host = patch; mutationRevision = ++revision;
+        host.backgroundOpacity = .19f; ++revision; blockWrite();
+        return detail::WidgetThemeMutation{true, true};
+    }, [&] {
+        if (revision != mutationRevision) return false;
+        host = previous; ++revision; return true;
+    }, library, error);
+    check(!concurrentUpdate.committed && concurrentUpdate.rollbackAttempted && !concurrentUpdate.rollbackSucceeded &&
+        host.backgroundOpacity == .19f, "failed rollback is explicit and never overwrites a later concurrent host appearance");
+    restoreFile();
+    rollbackCalled = false;
+    const auto unchanged = detail::SelectWidgetTheme(path, target, theme.id, [&](const auto&) {
+        blockWrite(); return detail::WidgetThemeMutation{true, false};
+    }, [&] { rollbackCalled = true; return true; }, library, error);
+    check(!unchanged.committed && !unchanged.rollbackAttempted && !rollbackCalled, "an unchanged host mutation needs no rollback after a library failure");
+    restoreFile();
+
+    widget_runtime::WidgetHostAppearanceState appearance;
+    appearance.followPersonalization = true; appearance.presetId = "prior";
+    appearance.backgroundOpacity = .27f; appearance.edgeLight.direction = 120.f;
+    const auto restore = detail::WidgetAppearanceSnapshotPatch(appearance);
+    check(restore.followPersonalization == appearance.followPersonalization && restore.presetId == appearance.presetId &&
+        restore.backgroundOpacity == appearance.backgroundOpacity && restore.edgeLight == appearance.edgeLight &&
+        restore.contentTheme == appearance.contentTheme && restore.panelGradient == appearance.panelGradient,
+        "rollback includes the previous source, independent foreground, edge light and gradient");
+}
+}
 
 int RunThemeWorkshopTests(const std::filesystem::path& directory)
 {
@@ -15,6 +175,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     int failures = 0, created = 0, uploaded = 0;
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL theme Workshop: " << message << '\n'; } };
     std::string error;
+    CheckAvailabilityCache(directory, check);
     check(bridge::ThemeSha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "production package hash matches known SHA256 vector");
     const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]}";
     check(workshop::Capabilities(current,"1") && !workshop::Capabilities(current,"2"), "bridge capability and compatible version are independent requirements");
@@ -43,6 +204,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
         "unavailable, SDK-free and terminally failed bridges do not expose the Workshop entry");
     Theme root = Capture(Kind::Global,MakeAppearancePreset(kAppearancePresetDark)); root.id = "theme/workshop-root"; root.name = "Demo";
     root.quickPanel = "builtin/quickpanel/dark"; root.popup = "builtin/popup/dark";
+    CheckWidgetThemeTransaction(directory, root, check);
     Package package{{root.id,root}};
     const auto prepared = directory / L"prepared", data = directory / L"data";
     std::filesystem::create_directory(prepared); std::filesystem::create_directory(data);

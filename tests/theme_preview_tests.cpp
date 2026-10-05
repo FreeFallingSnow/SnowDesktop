@@ -50,13 +50,60 @@ int wmain(int argc, wchar_t** argv)
         Sleep(5000); return 0;
     }
     if (argc >= 2 && std::wstring_view(argv[1]) == L"configuration")
-    { std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]}\n"; return 0; }
+    {
+        // Only the isolated copied fixture opts into counting configuration
+        // children; normal process-runner tests leave no sidecar files.
+        std::array<wchar_t, 32768> executable{};
+        if (GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())))
+        {
+            auto tracking = std::filesystem::path(executable.data()); tracking += L".track";
+            std::error_code ec;
+            if (std::filesystem::exists(tracking, ec))
+            {
+                auto count = std::filesystem::path(executable.data()); count += L".count";
+                std::ofstream marker(count, std::ios::binary | std::ios::app); marker << '1';
+            }
+        }
+        std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]}\n";
+        return 0;
+    }
     const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     int failures = 0;
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL preview: " << message << '\n'; } };
     const auto directory = std::filesystem::temp_directory_path() / (L"SnowDesktop-theme-tests-" + std::to_wstring(GetCurrentProcessId()));
     std::filesystem::create_directory(directory);
     struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); } } cleanup{directory};
+    {
+        std::array<wchar_t, 32768> executable{};
+        check(GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size())) != 0, "find the actual capability fixture executable");
+        const auto fixture = directory / L"availability-bridge.exe";
+        std::filesystem::copy_file(executable.data(), fixture);
+        auto tracking = fixture; tracking += L".track";
+        { std::ofstream marker(tracking); marker << "count configuration children"; }
+        auto count = fixture; count += L".count";
+        const auto probes = [&] {
+            std::error_code ec;
+            const auto size = std::filesystem::file_size(count, ec);
+            return ec ? 0 : size;
+        };
+        bool sharing = false;
+        for (int snapshot = 0; snapshot != 20; ++snapshot)
+            check(workshop::Availability(fixture, "test", sharing) && sharing, "production availability keeps repeated settings snapshots compatible");
+        check(probes() == 1, "production Availability launches one configuration child across repeated settings snapshots");
+        check(!workshop::Availability(fixture, "different-host", sharing) && !sharing && probes() == 2,
+            "production capability cache reprobes and rejects a changed host version");
+        auto replacement = fixture; replacement += L".replacement";
+        std::filesystem::copy_file(executable.data(), replacement);
+        std::filesystem::remove(fixture); std::filesystem::rename(replacement, fixture);
+        check(workshop::Availability(fixture, "test", sharing) && sharing && probes() == 3,
+            "production capability cache reprobes a replacement bridge file");
+        std::filesystem::remove(fixture);
+        check(!workshop::Availability(fixture, "test", sharing) && !sharing && probes() == 3,
+            "production availability rechecks missing files without launching a child");
+        std::filesystem::copy_file(executable.data(), fixture);
+        check(workshop::Availability(fixture, "test", sharing) && sharing && probes() == 4,
+            "production availability reprobes a bridge after deletion and recreation");
+    }
     failures += RunThemeWorkshopTests(directory);
     Theme quick = Capture(Kind::QuickPanel, MakeQuickNavigationAppearancePreset(kAppearancePresetAcrylicDark));
     quick.id = "theme/quick"; quick.name = "Quick";

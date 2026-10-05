@@ -2548,5 +2548,6 @@
   "settings.contextMenu.hidePageManagement": "隐藏页面管理相关菜单",
   "settings.contextMenu.hidePageManagement.description": "隐藏新增、重命名、删除页面、翻页、页面跳转和固定页面菜单。",
   "themeLibrary.unbindWorkshop": "解除工坊绑定",
-  "themeLibrary.unbindHint": "解除后保留本地主题和工坊条目。再次分享将创建新条目；如需更新原条目，请重新绑定。"
+  "themeLibrary.unbindHint": "解除后保留本地主题和工坊条目。再次分享将创建新条目；如需更新原条目，请重新绑定。",
+  "themeLibrary.error.widgetRollbackFailed": "主题选择未能保存，且先前外观无法恢复。请检查组件外观后重试。"
 }

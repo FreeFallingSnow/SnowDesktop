@@ -2548,5 +2548,6 @@
   "settings.contextMenu.hidePageManagement": "Masquer les menus de gestion des pages",
   "settings.contextMenu.hidePageManagement.description": "Masquer les menus permettant d'ajouter, de renommer, de supprimer, de changer de page, d'accéder à une page et d'épingler des pages.",
   "themeLibrary.unbindWorkshop": "Dissocier du Workshop",
-  "themeLibrary.unbindHint": "Le thème local et l’objet du Workshop seront conservés. Un nouveau partage créera un nouvel objet ; associez à nouveau l’objet d’origine pour le mettre à jour."
+  "themeLibrary.unbindHint": "Le thème local et l’objet du Workshop seront conservés. Un nouveau partage créera un nouvel objet ; associez à nouveau l’objet d’origine pour le mettre à jour.",
+  "themeLibrary.error.widgetRollbackFailed": "La sélection du thème n'a pas pu être enregistrée et l'apparence précédente n'a pas pu être restaurée. Vérifiez l'apparence du composant avant de réessayer."
 }

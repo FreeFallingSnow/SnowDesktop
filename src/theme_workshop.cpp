@@ -1,6 +1,7 @@
 #include "theme_workshop.h"
 #include "theme_preview.h"
 #include "theme_workshop_tags.h"
+#include "theme_bridge_availability_cache.h"
 #include "steam_app_identity.h"
 #include "json_value.h"
 #include <fstream>
@@ -134,10 +135,14 @@ bool Available(const std::filesystem::path& bridge, std::string_view hostVersion
 }
 bool Availability(const std::filesystem::path& bridge, std::string_view hostVersion, bool& sharing)
 {
-    sharing = false;
-    std::string output, error;
-    if (!steam_bridge::ThemeSafePath(bridge) || !preview::Run(bridge, {L"configuration"}, output, 3000, error)) return false;
-    sharing = Capabilities(output, hostVersion); return BridgeCapabilities(output, hostVersion);
+    static detail::BridgeAvailabilityCache cache;
+    const auto available = cache.Query(bridge, hostVersion, detail::BridgeAvailabilityCache::Clock::now(), [&] {
+        std::string output, error;
+        if (!preview::Run(bridge, {L"configuration"}, output, 3000, error)) return detail::BridgeAvailability{};
+        return detail::BridgeAvailability{BridgeCapabilities(output, hostVersion), Capabilities(output, hostVersion)};
+    });
+    sharing = available.sharing;
+    return available.workshop;
 }
 bool CopyLocal(Library& library, std::string_view id, std::string& savedId, std::string& error, const NewId& newId)
 {

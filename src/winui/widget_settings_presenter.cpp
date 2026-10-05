@@ -7,6 +7,7 @@
 #include "panel_gradient_editor.h"
 #include "appearance_sections.h"
 #include "../theme_library_settings.h"
+#include "../widget_theme_selection.h"
 #include "edge_light_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -899,26 +900,35 @@ struct WidgetSettingsPresenter::Impl
                 if (!FlushPendingEdits().Succeeded()) return;
                 if (choice.kind == AppearanceThemeKind::Saved)
                 {
-                    themes::Library library;
-                    std::string error;
-                    if (!themes::Load(themes::LibraryPath(), library, error)) return;
-                    const auto theme = themes::Resolve(library.themes, choice.id);
-                    if (!theme || theme->kind != themes::Kind::Global || !(theme->scopes & themes::Components)) return;
                     const std::string target = "widget/" + winrt::to_string(widgetId);
-                    const auto previous = library.references;
-                    if (!themes::Transact(themes::LibraryPath(), [&](auto& current, auto& detail) {
-                        return themes::Select(current, target, choice.id, themes::Kind::Global, themes::Components, detail);
-                    }, library, error)) return;
-                    const auto patch = themes::WidgetPatch(*theme);
-                    const auto result = RunMutation("__appearance", [this, patch](const auto& guard) {
-                        return service.UpdateHostAppearance(guard, patch);
+                    RunMutation("__appearance", [this, target, id = choice.id](const auto& guard) {
+                        const auto previous = currentHostAppearance;
+                        themes::Library library; std::string error;
+                        auto mutation = UnchangedResult();
+                        auto restored = UnchangedResult();
+                        const auto selected = themes::detail::SelectWidgetTheme(themes::LibraryPath(), target, id,
+                            [&](const auto& patch) {
+                                mutation = service.UpdateHostAppearance(guard, patch);
+                                return themes::detail::WidgetThemeMutation{mutation.Succeeded(), mutation.Changed()};
+                            }, [&] {
+                                restored = service.UpdateHostAppearance(
+                                    wr::WidgetSettingMutationGuard{widgetId, mutation.generation, mutation.revision},
+                                    themes::detail::WidgetAppearanceSnapshotPatch(previous));
+                                return restored.Succeeded();
+                            }, library, error);
+                        if (selected.committed) return mutation;
+                        // Refresh only after the transaction/rollback completes.
+                        // RunMutation's normal success refresh likewise sees the
+                        // new committed reference, never the old one mid-write.
+                        if (const auto current = service.Snapshot(widgetId)) (void)ApplySnapshot(*current);
+                        if (!selected.mutationSucceeded && error == "widgetApplyFailed") return mutation;
+                        const bool rollbackFailed = selected.rollbackAttempted && !selected.rollbackSucceeded;
+                        const auto final = selected.rollbackAttempted ? restored : mutation;
+                        return wr::WidgetSettingMutationResult{wr::WidgetSettingMutationStatus::PersistenceFailed,
+                            final.generation, final.revision,
+                            rollbackFailed ? "themeSelectionRollbackFailed" : error,
+                            winrt::to_string(L(rollbackFailed ? "themeLibrary.error.widgetRollbackFailed" : themes::ErrorLocalizationKey(error), L""))};
                     });
-                    if (!result.Succeeded())
-                        (void)themes::Transact(themes::LibraryPath(), [&](auto& current, auto&) {
-                            if (const auto found = previous.find(target); found != previous.end()) current.references[target] = found->second;
-                            else current.references.erase(target);
-                            return true;
-                        }, library, error);
                     return;
                 }
                 if (choice.kind == AppearanceThemeKind::Component)
