@@ -9,6 +9,8 @@
 #include <iterator>
 #include <utility>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 namespace snowdesktop::dock_explorer_pin
 {
@@ -17,6 +19,78 @@ struct Folder
     std::wstring path;
     std::wstring name;
 };
+
+// The source token binds a menu read to the current Dock entry and item stamp.
+// Sources include native shortcuts, direct folders and folder-mapping widgets.
+struct FolderPinSource
+{
+    std::wstring path;
+    std::wstring sourceToken;
+    bool operator==(const FolderPinSource&) const = default;
+};
+
+inline std::wstring NormalizeFolderPath(std::wstring path)
+{
+    if (path.empty()) return {};
+    std::replace(path.begin(), path.end(), L'/', L'\\');
+    if (path.starts_with(L"\\\\?\\UNC\\")) path = L"\\\\" + path.substr(8);
+    else if (path.starts_with(L"\\\\?\\")) path.erase(0, 4);
+    std::vector<wchar_t> expanded(32768);
+    const DWORD expandedSize = ExpandEnvironmentStringsW(path.c_str(), expanded.data(),
+        static_cast<DWORD>(expanded.size()));
+    if (expandedSize && expandedSize <= expanded.size()) path.assign(expanded.data());
+    std::vector<wchar_t> absolute(32768);
+    const DWORD size = GetFullPathNameW(path.c_str(), static_cast<DWORD>(absolute.size()),
+        absolute.data(), nullptr);
+    if (size && size < absolute.size()) path.assign(absolute.data(), size);
+    // Explorer may report long names while a saved link or TEMP uses 8.3
+    // aliases (for example GUOYUN~1). Compare the same directory spelling.
+    const DWORD longSize = GetLongPathNameW(path.c_str(), absolute.data(),
+        static_cast<DWORD>(absolute.size()));
+    if (longSize && longSize < absolute.size()) path.assign(absolute.data(), longSize);
+    while (path.size() > 3 && path.back() == L'\\') path.pop_back();
+    return path;
+}
+
+// COM/Shell worker only. Load the saved link target without Resolve/search,
+// so deduplication cannot launch a program or retarget an existing shortcut.
+inline bool AlreadyPinnedFolder(const std::wstring& folder,
+    const std::vector<FolderPinSource>& sources)
+{
+    using Microsoft::WRL::ComPtr;
+    const auto expected = NormalizeFolderPath(folder);
+    if (expected.empty()) return false;
+    for (const auto& source : sources)
+    {
+        auto target = source.path;
+        if (target.size() >= 4 && _wcsicmp(target.c_str() + target.size() - 4, L".lnk") == 0)
+        {
+            ComPtr<IShellLinkW> link;
+            ComPtr<IPersistFile> file;
+            if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                    IID_PPV_ARGS(&link))) || FAILED(link.As(&file)) ||
+                FAILED(file->Load(target.c_str(), STGM_READ))) continue;
+            wchar_t path[32768]{};
+            target.clear();
+            if (SUCCEEDED(link->GetPath(path, static_cast<int>(std::size(path)), nullptr,
+                    SLGP_RAWPATH)) && path[0]) target = path;
+            else
+            {
+                PIDLIST_ABSOLUTE pidl = nullptr;
+                PWSTR filesystem = nullptr;
+                if (SUCCEEDED(link->GetIDList(&pidl)) && pidl &&
+                    SUCCEEDED(SHGetNameFromIDList(pidl, SIGDN_FILESYSPATH, &filesystem)) && filesystem)
+                    target = filesystem;
+                CoTaskMemFree(filesystem);
+                CoTaskMemFree(pidl);
+            }
+        }
+        const auto normalized = NormalizeFolderPath(std::move(target));
+        if (!normalized.empty() && _wcsicmp(expected.c_str(), normalized.c_str()) == 0)
+            return true;
+    }
+    return false;
+}
 
 inline std::wstring ExecutablePath()
 {
