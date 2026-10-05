@@ -598,12 +598,14 @@ private:
         line(tags);
         bool installed = false;
         for (const auto& [item, origin] : library_.workshop) { (void)item; if (origin.ids.contains(theme.id)) installed = true; }
+        c::ComboBox version{nullptr};
         if (const auto other = OtherVersion(theme); !other.empty())
         {
             const auto counterpart = themes::Find(library_.themes, other);
             if (counterpart && OtherVersion(*counterpart) == theme.id)
             {
-                c::ComboBox version; version.HorizontalAlignment(x::HorizontalAlignment::Left);
+                version = c::ComboBox{};
+                version.VerticalAlignment(x::VerticalAlignment::Center);
                 version.Items().Append(winrt::box_value(L("themeLibrary.localVersion")));
                 version.Items().Append(winrt::box_value(L("themeLibrary.subscribedVersion")));
                 version.SelectedIndex(installed ? 1 : 0);
@@ -613,7 +615,6 @@ private:
                     const auto index = version.SelectedIndex();
                     if (index >= 0) Run(ThemeLibraryCommand::Apply, index == 0 ? local : remote);
                 });
-                entry.Children().Append(version);
                 cardRevoke_.push_back([version, token] { version.SelectionChanged(token); });
             }
         }
@@ -655,13 +656,39 @@ private:
             cardRevoke_.push_back([button, token] { button.Click(token); });
             cardCommands_.push_back({command, id, button});
         }
+        c::Grid operations; operations.ColumnSpacing(version ? 12 : 0);
+        c::ColumnDefinition versionColumn, commandColumn;
+        versionColumn.Width(x::GridLengthHelper::Auto());
+        operations.ColumnDefinitions().Append(versionColumn); operations.ColumnDefinitions().Append(commandColumn);
+        if (version) operations.Children().Append(version);
+        c::Grid::SetColumn(actions, 1); operations.Children().Append(actions);
         c::Grid row; row.ColumnSpacing(16);
-        c::ColumnDefinition information, operations; operations.Width(x::GridLengthHelper::Auto());
-        row.ColumnDefinitions().Append(information); row.ColumnDefinitions().Append(operations);
+        c::ColumnDefinition information, operationsColumn; operationsColumn.Width(x::GridLengthHelper::Auto());
+        row.ColumnDefinitions().Append(information); row.ColumnDefinitions().Append(operationsColumn);
+        for (int i = 0; i < 2; ++i)
+        {
+            c::RowDefinition definition; definition.Height(x::GridLengthHelper::Auto()); row.RowDefinitions().Append(definition);
+        }
         entry.VerticalAlignment(x::VerticalAlignment::Center);
         actions.VerticalAlignment(x::VerticalAlignment::Center);
-        c::Grid::SetColumn(actions, 1);
-        row.Children().Append(entry); row.Children().Append(actions);
+        operations.VerticalAlignment(x::VerticalAlignment::Center);
+        c::Grid::SetColumn(operations, 1);
+        row.Children().Append(entry); row.Children().Append(operations);
+        // Keep version selection with the commands; give that group a bounded
+        // full-width row on small windows so CommandBar can use its overflow.
+        const auto weakOperationsColumn = winrt::make_weak(operationsColumn);
+        const auto weakOperations = winrt::make_weak(operations);
+        const auto layoutToken = row.SizeChanged([weakOperationsColumn, weakOperations](const auto& sender, const x::SizeChangedEventArgs& args) {
+            const auto grid = sender.template try_as<c::Grid>();
+            const auto column = weakOperationsColumn.get();
+            const auto controls = weakOperations.get();
+            if (!grid || !column || !controls) return;
+            const bool stacked = args.NewSize().Width < presenter_controls::kSettingRowStackThreshold;
+            column.Width(stacked ? x::GridLengthHelper::FromValueAndType(0, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
+            grid.ColumnSpacing(stacked ? 0 : 16); grid.RowSpacing(stacked ? 12 : 0);
+            c::Grid::SetColumn(controls, stacked ? 0 : 1); c::Grid::SetRow(controls, stacked ? 1 : 0);
+        });
+        cardRevoke_.push_back([row, layoutToken] { row.SizeChanged(layoutToken); });
         c::Border card; if (cardStyle_) card.Style(cardStyle_); card.Child(row);
         return card;
     }
