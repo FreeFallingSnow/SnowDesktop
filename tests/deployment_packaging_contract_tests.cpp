@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "build_tool_test_support.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -337,11 +338,11 @@ void TestGitHubReleasePublication(const std::filesystem::path& root)
 {
     // Exercise the production publication plan so local Store packages and
     // their checksums cannot leak into the public GitHub attachment set.
-    const std::wstring command =
-        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" +
-        (root / "tests/release_publication_tests.ps1").wstring() + L"\"";
-    Check(_wsystem(command.c_str()) == 0,
-        "GitHub publication uses a version-only title and portable-only assets");
+    try { build_test::publication_tests(root); }
+    catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        Check(false, "GitHub publication uses a version-only title and portable-only assets");
+    }
 }
 
 void TestSteamPipeAutomation(const std::string& steamPipe,

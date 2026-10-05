@@ -1645,25 +1645,6 @@ if (BUILD_TESTING)
         LINK_LIBRARIES bcrypt shell32
         LABELS contract deployment integration steam update)
     add_dependencies(SnowDesktopSteamRuntimeUpdateTests SnowDesktopLauncher)
-    add_test(
-        NAME steam_local_deploy_contract
-        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
-            -File
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/steam_local_deploy_contract_tests.ps1")
-    set_tests_properties(
-        steam_local_deploy_contract PROPERTIES
-        TIMEOUT 60
-        LABELS "contract;deployment;integration;steam")
-    add_test(
-        NAME deployment_manifest_integration
-        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
-            -File
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/deployment_manifest_integration.ps1"
-            -RepositoryRoot "${CMAKE_CURRENT_SOURCE_DIR}")
-    set_tests_properties(
-        deployment_manifest_integration PROPERTIES
-        TIMEOUT 60
-        LABELS "build;integration;packaging;winui")
 
     snowdesktop_add_test(
         SnowDesktopSettingsControllerTests
@@ -2518,21 +2499,21 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LABELS rules animation)
 
+    include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
+    # Shared desktop/Explorer/host resources are serialized. Isolated fixtures
+    # and pure logic cases can execute alongside these tests.
+    get_property(SNOWDESKTOP_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
+    foreach(test_name IN LISTS SNOWDESKTOP_REGISTERED_TESTS)
+        get_test_property(${test_name} LABELS test_labels)
+        if(("shell" IN_LIST test_labels OR "window" IN_LIST test_labels OR
+            "ui" IN_LIST test_labels OR "host-runtime" IN_LIST test_labels)
+            AND NOT "tools" IN_LIST test_labels)
+            set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
+        endif()
+    endforeach()
     add_custom_target(
         SnowDesktopCoreTests
         DEPENDS ${SNOWDESKTOP_CORE_TEST_TARGETS})
-    add_test(NAME test_selection
-        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
-            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selection_tests.ps1")
-    set_tests_properties(test_selection PROPERTIES
-        TIMEOUT 30 LABELS "core;contract;build")
-    add_test(NAME build_collaboration
-        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
-            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_collaboration_tests.ps1")
-    set_tests_properties(build_collaboration PROPERTIES
-        TIMEOUT 180 LABELS "core;contract;build")
-    set_tests_properties(test_selection build_collaboration PROPERTIES
-        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass")
     # Partial environment coverage must not be presented as a passing entry.
     # Failures take precedence over this distinct unavailable-environment code.
     set_tests_properties(application_data_lifecycle steam_runtime_update steam_workshop_manager
@@ -2551,6 +2532,4 @@ if (BUILD_TESTING)
 endif()
 
 
-# Existing runtimes only; missing required regressions stay in the inventory.
-include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
 snowdesktop_install_shared_guard()

@@ -92,6 +92,9 @@
       "configuration": "Release",
       "output": {
         "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 4
       }
     },
     {

@@ -1,42 +1,65 @@
-# One unconditional declaration inventory, including explicit blocked commands
-# when Python is unavailable. The test runner can then account for every item.
+# Test drivers and assertions are native C++. External tools retain their
+# implementation languages; no Python discovery/driver enters CTest.
 include("${CMAKE_CURRENT_LIST_DIR}/SnowDesktop.PowerShell.cmake")
-function(snowdesktop_add_tool_test name script labels timeout)
-    if(SNOWDESKTOP_PYTHON_USABLE)
-        add_test(NAME "${name}" COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/${script}" ${ARGN})
-    else()
-        add_test(NAME "${name}" COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
-            -File "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_missing_dependency.ps1"
-            -TestName "${name}" -Reason "${SNOWDESKTOP_PYTHON_REASON}")
-        set_tests_properties("${name}" PROPERTIES LABELS "${labels};environment-blocked")
-    endif()
-    if(SNOWDESKTOP_PYTHON_USABLE)
-        set_tests_properties("${name}" PROPERTIES LABELS "${labels}")
-    endif()
-    set_tests_properties("${name}" PROPERTIES TIMEOUT "${timeout}"
-        ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass")
-endfunction()
 if(BUILD_TESTING AND WIN32)
-    find_program(SNOWDESKTOP_PYTHON_EXECUTABLE NAMES python.exe python)
-    set(SNOWDESKTOP_PYTHON_USABLE FALSE)
-    set(SNOWDESKTOP_PYTHON_REASON "Python 3.8+ unavailable; required regression not executed")
-    if(SNOWDESKTOP_PYTHON_EXECUTABLE)
-        execute_process(COMMAND "${SNOWDESKTOP_PYTHON_EXECUTABLE}" -c
-            "import sys;sys.exit(0 if sys.version_info >= (3,8) else 78)"
-            TIMEOUT 5 RESULT_VARIABLE python_code OUTPUT_QUIET ERROR_QUIET)
-        if(python_code STREQUAL "0")
-            set(SNOWDESKTOP_PYTHON_USABLE TRUE)
-        else()
-            set(SNOWDESKTOP_PYTHON_REASON "Python probe failed or version below 3.8; required regression not executed")
-        endif()
+    add_library(SnowDesktopBuildToolTestSupport STATIC tests/build_tool_test_support.cpp)
+    target_include_directories(SnowDesktopBuildToolTestSupport PUBLIC tests src)
+    target_compile_features(SnowDesktopBuildToolTestSupport PUBLIC cxx_std_20)
+    target_compile_definitions(SnowDesktopBuildToolTestSupport PUBLIC _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    set_target_properties(SnowDesktopBuildToolTestSupport PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+    if(MSVC)
+        set_property(TARGET SnowDesktopBuildToolTestSupport PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(SnowDesktopBuildToolTestSupport PRIVATE /W4 /permissive- /EHsc /utf-8)
     endif()
-    snowdesktop_add_tool_test(build_workflow build_workflow_tests.py "integration;tools" 300 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-    snowdesktop_add_tool_test(build_plan_execution build_plan_execution_tests.py "tools;core" 120)
-    snowdesktop_add_tool_test(build_dashboard build_dashboard_tests.py "tools;core;retry-isolated-resource" 60 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-    snowdesktop_add_tool_test(build_dashboard_browser build_dashboard_tests.py "manual;integration;tools;retry-isolated-resource" 180 --repo "${CMAKE_CURRENT_SOURCE_DIR}" --browser)
-    snowdesktop_add_tool_test(build_wait_retry build_wait_retry_tests.py "integration;tools" 240 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-    snowdesktop_add_tool_test(build_shared_resources build_shared_resources_tests.py "tools;core" 90 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-    snowdesktop_add_tool_test(build_foreground_wait build_foreground_wait_tests.py "tools;integration" 90 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
-    snowdesktop_add_tool_test(powershell_runtime powershell_runtime_tests.py "tools;core" 90 --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_executable(SnowDesktopBuildToolTestStandIn tests/build_tool_test_standin.cpp)
+    target_link_libraries(SnowDesktopBuildToolTestStandIn PRIVATE SnowDesktopBuildToolTestSupport)
+    if(MSVC)
+        set_property(TARGET SnowDesktopBuildToolTestStandIn PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(SnowDesktopBuildToolTestStandIn PRIVATE /W4 /permissive- /EHsc /utf-8)
+    endif()
+    set_target_properties(SnowDesktopBuildToolTestStandIn PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+    macro(snowdesktop_add_native_tool_test target name source labels timeout)
+        snowdesktop_add_test(${target} ${name}
+            SOURCES "tests/${source}" ${ARGN}
+            LINK_LIBRARIES SnowDesktopBuildToolTestSupport winhttp ws2_32
+            COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+            LABELS ${labels})
+        add_dependencies(${target} SnowDesktopBuildToolTestStandIn)
+        set_tests_properties(${name} PROPERTIES TIMEOUT ${timeout}
+            ENVIRONMENT "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE};PSExecutionPolicyPreference=Bypass")
+    endmacro()
+    target_sources(SnowDesktopDeploymentPackagingContractTests PRIVATE tests/release_publication_tests.cpp)
+    target_link_libraries(SnowDesktopDeploymentPackagingContractTests PRIVATE SnowDesktopBuildToolTestSupport)
+    snowdesktop_add_native_tool_test(SnowDesktopSteamLocalDeployContractTests steam_local_deploy_contract
+        steam_local_deploy_contract_tests.cpp "contract;deployment;integration;steam" 60)
+    snowdesktop_add_native_tool_test(SnowDesktopDeploymentManifestIntegrationTests deployment_manifest_integration
+        deployment_manifest_integration.cpp "build;integration;packaging;winui" 60)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildWorkflowTests build_workflow
+        build_workflow_tests.cpp "integration;tools" 300
+        tests/build_entry_tests.cpp tests/build_shell_recovery_tests.cpp)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildPlanExecutionTests build_plan_execution
+        build_plan_execution_tests.cpp "tools;core" 120)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildDashboardTests build_dashboard
+        build_dashboard_tests.cpp "tools;core;retry-isolated-resource" 60)
+    add_test(NAME build_dashboard_browser COMMAND SnowDesktopBuildDashboardTests "${CMAKE_CURRENT_SOURCE_DIR}" --browser)
+    set_tests_properties(build_dashboard_browser PROPERTIES TIMEOUT 180
+        LABELS "manual;integration;tools;retry-isolated-resource"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopBuildDashboardTests>")
+    snowdesktop_add_native_tool_test(SnowDesktopBuildWaitRetryTests build_wait_retry
+        build_wait_retry_tests.cpp "integration;tools" 240)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildSharedResourcesTests build_shared_resources
+        build_shared_resources_tests.cpp "tools;core" 90)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildForegroundWaitTests build_foreground_wait
+        build_foreground_wait_tests.cpp "tools;integration" 90)
+    snowdesktop_add_native_tool_test(SnowDesktopPowerShellRuntimeTests powershell_runtime
+        powershell_runtime_tests.cpp "tools;core" 90)
+    snowdesktop_add_native_tool_test(SnowDesktopTestSelectionTests test_selection
+        test_selection_tests.cpp "core;contract;build" 30)
+    snowdesktop_add_native_tool_test(SnowDesktopBuildCollaborationTests build_collaboration
+        build_collaboration_tests.cpp "core;contract;build" 180)
 endif()
