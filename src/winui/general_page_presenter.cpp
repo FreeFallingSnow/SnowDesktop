@@ -62,6 +62,40 @@ void InitializeCard(
     page.Children().Append(card.root);
 }
 
+mux::FrameworkElement FindDisclosurePart(
+    const mux::DependencyObject& root, const wchar_t* name)
+{
+    if (const auto element = root.try_as<mux::FrameworkElement>();
+        element && element.Name() == name)
+        return element;
+    const int count = mux::Media::VisualTreeHelper::GetChildrenCount(root);
+    for (int index = 0; index < count; ++index)
+    {
+        if (const auto part = FindDisclosurePart(
+                mux::Media::VisualTreeHelper::GetChild(root, index), name))
+            return part;
+    }
+    return nullptr;
+}
+
+void AlignInlineDisclosure(const muxc::Expander& expander)
+{
+    (void)expander.ApplyTemplate();
+    if (const auto header = FindDisclosurePart(expander, L"ExpanderHeader")
+            .try_as<muxc::Primitives::ToggleButton>())
+    {
+        // Header padding is a StaticResource in WinUI's template, so an
+        // instance resource override cannot replace it. Set the native header
+        // properties once its template is realized and let its star column
+        // measure the complete header, including the information button.
+        header.Padding({0.0, 0.0, 0.0, 0.0});
+        header.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+    }
+    if (const auto content = FindDisclosurePart(expander, L"ExpanderContent")
+            .try_as<muxc::Border>())
+        content.BorderThickness({0.0, 0.0, 0.0, 0.0});
+}
+
 void UseInlineDisclosureStyle(const muxc::Expander& expander)
 {
     // The surrounding SettingsCard owns the shared background and border.
@@ -77,12 +111,14 @@ void UseInlineDisclosureStyle(const muxc::Expander& expander)
              L"ExpanderHeaderBorderPointerOverBrush", L"ExpanderHeaderBorderPressedBrush",
              L"ExpanderHeaderDisabledBorderBrush"})
         expander.Resources().Insert(winrt::box_value(key), transparent);
-    for (const auto key : {L"ExpanderHeaderBorderThickness", L"ExpanderHeaderPadding",
-             L"ExpanderContentDownBorderThickness", L"ExpanderContentUpBorderThickness"})
-        expander.Resources().Insert(winrt::box_value(key),
-            winrt::box_value(mux::Thickness{0.0, 0.0, 0.0, 0.0}));
+    expander.Resources().Insert(winrt::box_value(L"ExpanderHeaderBorderThickness"),
+        winrt::box_value(mux::Thickness{0.0, 0.0, 0.0, 0.0}));
     expander.Resources().Insert(winrt::box_value(L"ExpanderChevronMargin"),
         winrt::box_value(mux::Thickness{20.0, 0.0, 0.0, 0.0}));
+    const auto weakExpander = winrt::make_weak(expander);
+    expander.Loaded([weakExpander](const auto&, const auto&) {
+        if (const auto disclosure = weakExpander.get()) AlignInlineDisclosure(disclosure);
+    });
 }
 
 struct HotkeySettingRow
@@ -275,6 +311,7 @@ struct GeneralPagePresenter::Impl
         muxc::FontIcon infoIcon;
         infoIcon.Glyph(L"\xE946");
         infoIcon.FontSize(16.0);
+        infoIcon.IsTextScaleFactorEnabled(false);
         advancedFeatureInfoButton.Content(infoIcon);
         advancedFeatureInfoButton.Width(32.0);
         advancedFeatureInfoButton.Height(32.0);
@@ -347,13 +384,11 @@ struct GeneralPagePresenter::Impl
         featureRow.Children().Append(featureBody);
         featureRow.Margin({0.0, 12.0, 0.0, 0.0});
         advancedFeatureExpander.Content(featureRow);
-        // Card padding is shared with adjacent cards. The native header only
-        // reserves the 32 DIP chevron and its 20 DIP leading space.
-        const auto weakHeader = winrt::make_weak(advancedFeatureRow.root);
+        // Header sizing is owned by the native template's star column. Only
+        // stretch the expanded body to the card's available content width.
         const auto weakBody = winrt::make_weak(featureRow);
-        advancedFeatureExpander.SizeChanged([weakHeader, weakBody](const auto&, const mux::SizeChangedEventArgs& args) {
+        advancedFeatureExpander.SizeChanged([weakBody](const auto&, const mux::SizeChangedEventArgs& args) {
             const double width = static_cast<double>(args.NewSize().Width);
-            if (const auto header = weakHeader.get()) header.Width(std::max(0.0, width - 52.0));
             if (const auto body = weakBody.get()) body.Width(std::max(0.0, width));
         });
         advancedFeaturesCard.content.Children().Append(advancedFeatureExpander);
@@ -519,7 +554,12 @@ struct GeneralPagePresenter::Impl
     void HookEvents()
     {
         themeToken = root.ActualThemeChanged([this](const auto&, const auto&) {
-            if (!closed) RefreshAdvancedFeatureIcon();
+            if (!closed)
+            {
+                RefreshAdvancedFeatureIcon();
+                AlignInlineDisclosure(advancedFeatureExpander);
+                AlignInlineDisclosure(advancedFeatureErrorExpander);
+            }
         });
         autoStartToken = autoStartToggle.Toggled(
             [this](const auto&, const auto&) {
