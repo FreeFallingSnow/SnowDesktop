@@ -39,6 +39,7 @@ exit /b 19
             if marker.exists():
                 marker.unlink()
         env = os.environ.copy()
+        env.pop('SNOWDESKTOP_EXECUTION_TOKEN', None)
         env['SNOWDESKTOP_PREFLIGHT_FIXTURE_EXIT'] = str(exit_code)
         env['SNOWDESKTOP_PREFLIGHT_FIXTURE_ROOT'] = str(root)
         env['PATH'] = str(fake_bin) + os.pathsep + env['PATH']
@@ -69,6 +70,10 @@ exit /b 19
     print('PASS real build entry preserves preflight path after SHIFT and stops on positive/negative failures')
 
 def run_tests(repo,entry=True):
+    # Each copied repository must acquire its own credential. Apply this only
+    # to child process environments; leave the enclosing owner's environment.
+    fixture_env = os.environ.copy()
+    fixture_env.pop('SNOWDESKTOP_EXECUTION_TOKEN', None)
     # Use the actual preflight with fake process observations. Any shell action
     # is a hard failure, including a hook which appears after application close.
     close_root = Path(tempfile.mkdtemp(prefix='SnowDesktop application-only preflight '))
@@ -103,12 +108,10 @@ finally {Exit-BuildEntry $entry}
 ''', encoding='utf-8')
     for initially in (True, False):
         command = '& "' + str(close_probe) + '" -InitiallyOccupied $' + str(initially).lower()
-        observed = subprocess.run([PS, '-NoProfile', '-Command', command], cwd=close_root, capture_output=True, text=True, timeout=15)
+        observed = subprocess.run([PS, '-NoProfile', '-Command', command], cwd=close_root, env=fixture_env, capture_output=True, text=True, timeout=15)
         assert observed.returncode != 0 and 'Explorer hook' in observed.stderr and not (close_root / 'shell-action').exists(), observed
     print('PASS application-only preflight refuses existing and newly observed Explorer hooks without any shell action')
-    # Every repository created below is independent of the enclosing build.
     # Explicit forged-credential probes still provide their own environment.
-    os.environ.pop('SNOWDESKTOP_EXECUTION_TOKEN',None)
     if entry:
         check_build_entry_preflight(repo)
         from build_entry_tests import run_entry_tests
@@ -138,7 +141,7 @@ Write-Output "controlled $Phase passed";exit 0
     (scripts/'build.bat').write_text('@echo off\npowershell.exe -NoProfile -File "%~dp0fake.ps1" -Phase build\nexit /b %ERRORLEVEL%\n')
     (scripts/'build_batch_tests.ps1').write_text('param([string]$Batch)\n& (Join-Path $PSScriptRoot fake.ps1) -Phase test; exit $LASTEXITCODE\n')
     def git(*args):
-        p=subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.invalid',*args],cwd=str(root),capture_output=True,text=True)
+        p=subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.invalid',*args],cwd=str(root),env=fixture_env,capture_output=True,text=True)
         assert p.returncode==0,p.stderr
         return p.stdout.strip()
     git('init','--quiet');git('add','.');git('commit','--quiet','-m','fixture')
@@ -146,7 +149,7 @@ Write-Output "controlled $Phase passed";exit 0
     owned=[]
     foreground=[]
     def call(*args,code=0):
-        p=subprocess.run([PS,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(scripts/'build_manager.ps1'),*map(str,args)],cwd=str(root),capture_output=True,text=True,timeout=20)
+        p=subprocess.run([PS,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(scripts/'build_manager.ps1'),*map(str,args)],cwd=str(root),env=fixture_env,capture_output=True,text=True,timeout=20)
         assert p.returncode==code,(args,p.returncode,p.stderr,p.stdout)
         return json.loads(p.stdout) if p.stdout.strip().startswith('{') else p.stdout
     def state():
@@ -180,7 +183,7 @@ Write-Output "controlled $Phase passed";exit 0
         call('finish','a','-Batch',bid,code=2)
         call('ready','a','-Batch',bid,'-Revision',1,code=2) # stale plan cannot be re-used
         plan('a',bid,1,tests='Beta')
-        active=subprocess.Popen([PS,'-NoProfile','-File',str(scripts/'build_manager.ps1'),'ready-and-wait','a','-Batch',bid,'-Revision','1','-WaitSeconds','20'],cwd=str(root),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        active=subprocess.Popen([PS,'-NoProfile','-File',str(scripts/'build_manager.ps1'),'ready-and-wait','a','-Batch',bid,'-Revision','1','-WaitSeconds','20'],cwd=str(root),env=fixture_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         foreground.append(active);active_pid=active.pid
         until(lambda: state()['current']['participants'][0].get('check',{}).get('status')=='passed')
         # The default foreground path does not require a background waiter.
@@ -199,7 +202,7 @@ Write-Output "controlled $Phase passed";exit 0
         (root/'src/a.txt').write_text('changed input')
         unit=root/'unit.ps1'
         unit.write_text(". $PSScriptRoot/scripts/build_inputs.ps1; Get-BuildInputIdentity $PSScriptRoot | ConvertTo-Json")
-        def digest():return json.loads(subprocess.check_output([PS,'-NoProfile','-File',str(unit)],text=True))['digest']
+        def digest():return json.loads(subprocess.check_output([PS,'-NoProfile','-File',str(unit)],env=fixture_env,text=True))['digest']
         before=digest();git('add','src/a.txt');git('commit','--quiet','-m','content already hashed');assert before==digest()
         print('PASS HEAD-only transaction retains content identity')
 
@@ -259,7 +262,7 @@ Write-Output "controlled $Phase passed";exit 0
         st=state();entry=st['current']['participants'][0];entry['state']='finished';entry['check']={'status':'running','owner':{'pid':2147483647,'startTicks':'0'},'editRevision':0}
         entry['registeredUtc']='2000-01-01T00:00:00Z'
         (state_root/'state.json').write_bytes(json.dumps(st).encode())
-        proc=subprocess.Popen([PS,'-NoProfile','-File',str(scripts/'build_manager.ps1'),'finish','peer','-Batch',bid4,'-Revision','0','-WaitSeconds','1'],cwd=str(root),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        proc=subprocess.Popen([PS,'-NoProfile','-File',str(scripts/'build_manager.ps1'),'finish','peer','-Batch',bid4,'-Revision','0','-WaitSeconds','1'],cwd=str(root),env=fixture_env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         proc.communicate(timeout=8);assert proc.returncode==2
         assert state()['current']['phase']=='editing','crashed check or stale age must not permit freeze'
         call('check','stale','-Batch',bid4,'-Revision',0) # explicit read-only recovery
@@ -278,7 +281,7 @@ if(($names -join ',') -ne 'Alpha,Beta,Manual'){throw 'incorrect dedup/manual uni
 $p.tests=@('Missing');try{Resolve-PlanTests $p $inv|Out-Null;throw 'empty pass'}catch{if($_ -match 'empty pass'){throw}}
 'PASS literal plans, merged dedup, explicit manual and unknown test rejection'
 """)
-        p=subprocess.run([PS,'-NoProfile','-File',str(unit)],text=True,capture_output=True);assert p.returncode==0,p.stderr;print(p.stdout.strip())
+        p=subprocess.run([PS,'-NoProfile','-File',str(unit)],env=fixture_env,text=True,capture_output=True);assert p.returncode==0,p.stderr;print(p.stdout.strip())
         # Legacy live batches cannot be upgraded underneath loaded callers.
         legacy=begin('legacy');legacy_id=legacy['batchId'];st=state();st['current'].pop('protocolVersion');(state_root/'state.json').write_bytes(json.dumps(st).encode())
         call('ready','legacy','-Batch',legacy_id,'-Revision',0,code=2)

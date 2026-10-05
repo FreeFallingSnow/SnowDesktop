@@ -15,6 +15,8 @@ sys.dont_write_bytecode = True
 PS = str(Path(os.environ['WINDIR'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
 
 def run_entry_tests(repo):
+    fixture_env = os.environ.copy()
+    fixture_env.pop('SNOWDESKTOP_EXECUTION_TOKEN', None)
     root=Path(tempfile.mkdtemp(prefix='SnowDesktop-entry-')).resolve()
     scripts=root/'scripts';scripts.mkdir()
     for name in ('build.bat','build_debug.bat','build_entry.ps1','build_runtime.ps1',
@@ -29,7 +31,7 @@ def run_entry_tests(repo):
     def save():(directory/'state.json').write_text(json.dumps(state),encoding='utf-8')
     save()
     def run(argv,code=2,env=None):
-        p=subprocess.run(argv,cwd=str(root),env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=25)
+        p=subprocess.run(argv,cwd=str(root),env=fixture_env if env is None else env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=25)
         assert p.returncode==code,(argv,p.returncode,p.stdout,p.stderr)
         return p
     entries=[['cmd.exe','/d','/c','call scripts\\build.bat --reload-shell'],

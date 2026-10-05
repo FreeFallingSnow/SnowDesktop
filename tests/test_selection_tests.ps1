@@ -4,19 +4,27 @@ $ErrorActionPreference = "Stop"
 # Execute the actual selection functions without running test_manager's entry
 # point. Only the CTest query and build/test subprocess boundary are replaced.
 $managerPath = Join-Path $PSScriptRoot "../scripts/test_manager.ps1"
-$parseTokens = $null
-$parseErrors = $null
-$manager = [System.Management.Automation.Language.Parser]::ParseFile(
-    $managerPath, [ref]$parseTokens, [ref]$parseErrors)
-if ($parseErrors.Count -ne 0) { throw "test manager must parse" }
-foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Get-TestRunOptions", "Assert-HostRuntimeAvailable", "Assert-CompleteTestReport", "Test-IsolatedOutput")) {
-    $definition = $manager.Find({
-        param($node)
-        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -eq $functionName
-    }, $false)
-    if ($null -eq $definition) { throw "missing selection function: $functionName" }
-    . ([scriptblock]::Create($definition.Extent.Text))
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$imports = @(
+    @{ path = $managerPath; functions = @("Get-TestSelection", "Invoke-FilteredTests", "Get-TestRunOptions", "Assert-HostRuntimeAvailable", "Assert-CompleteTestReport") },
+    @{ path = (Join-Path $PSScriptRoot "../scripts/build_protocol.ps1"); functions = @("Get-Field") },
+    @{ path = (Join-Path $PSScriptRoot "../scripts/test_output.ps1"); functions = @("Test-IsolatedOutput") }
+)
+foreach ($import in $imports) {
+    $parseTokens = $null
+    $parseErrors = $null
+    $source = [System.Management.Automation.Language.Parser]::ParseFile(
+        $import.path, [ref]$parseTokens, [ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) { throw "test function source must parse: $($import.path)" }
+    foreach ($functionName in $import.functions) {
+        $definition = $source.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq $functionName
+        }, $false)
+        if ($null -eq $definition) { throw "missing selection function: $functionName" }
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
 }
 
 $script:fixture = ""
@@ -87,7 +95,8 @@ Set-Inventory @(@{ name = "ambiguous-metadata"; properties = @(
     @{ name = "REQUIRED_FILES"; value = @($testBinary, "C:/isolated-tests/SnowDesktopOtherTests.exe") }) })
 Expect-Failure { Get-TestSelection } "Cannot resolve the build target"
 
-$preview = @{ name = "preview"; command = @("C:/tests/SnowDesktopWidgetAuthorPreviewCliTests.exe"); properties = @() }
+$preview = @{ name = "preview"; command = @("C:/tests/SnowDesktopWidgetAuthorPreviewCliTests.exe", (Join-Path $repositoryRoot ".build/Release/SnowDesktop.exe")); properties = @(
+    @{ name = "LABELS"; value = @("host-runtime") }) }
 $script:runtimeLocks = @("owned fixture process")
 Set-Inventory @($preview)
 Expect-Failure { Invoke-FilteredTests -CTestFilterArguments @("-R", "preview") } "Host runtime is in use"
@@ -156,18 +165,18 @@ try {
     [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/tests"))
     [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/SnowDesktop.Runtime/payload"))
     [IO.File]::WriteAllText((Join-Path $outputFixture ".build/Release/tests/SnowDesktopFixtureTests.exe"), "fixture")
-    Test-IsolatedOutput
+    Test-IsolatedOutput $outputFixture
     foreach ($misplaced in @("SnowDesktopMisplacedTests.exe", "misplaced.dll")) {
         $badPath = Join-Path $outputFixture ".build/Release/$misplaced"
         [IO.File]::WriteAllText($badPath, "fixture")
-        Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+        Expect-Failure { Test-IsolatedOutput $outputFixture } "escaped its dedicated"
         Remove-Item -LiteralPath $badPath
     }
     [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/payload"))
-    Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+    Expect-Failure { Test-IsolatedOutput $outputFixture } "escaped its dedicated"
     Remove-Item -LiteralPath (Join-Path $outputFixture ".build/Release/payload")
     Remove-Item -LiteralPath (Join-Path $outputFixture ".build/Release/tests/SnowDesktopFixtureTests.exe")
-    Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+    Expect-Failure { Test-IsolatedOutput $outputFixture } "escaped its dedicated"
 }
 finally {
     [Environment]::CurrentDirectory = $originalProcessDirectory
