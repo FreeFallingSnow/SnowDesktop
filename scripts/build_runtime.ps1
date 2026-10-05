@@ -1,9 +1,22 @@
 param([ValidateSet('dashboard','watch','resource')][string]$RuntimeCommand='dashboard',
     [Parameter(ValueFromRemainingArguments=$true)][string[]]$RuntimeArguments=@())
 # Optional Python enhancements never decide whether required tests disappear.
+function Test-BuildNativeExecutable([string]$Path) {
+    $reader=$null
+    try {
+        $reader=New-Object IO.BinaryReader([IO.File]::Open($Path,'Open','Read',([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)))
+        if($reader.BaseStream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5a4d){return $false}
+        $reader.BaseStream.Position=0x3c;$offset=$reader.ReadInt32()
+        if($offset -lt 64 -or $offset -gt $reader.BaseStream.Length-24){return $false}
+        $reader.BaseStream.Position=$offset
+        return $reader.ReadUInt32() -eq 0x4550
+    } catch {return $false}
+    finally {if($reader){$reader.Dispose()}}
+}
 function Get-BuildPython {
     $candidate=Get-Command python.exe -ErrorAction SilentlyContinue
     if(-not $candidate){return [pscustomobject]@{available=$false;path=$null;reason='Python 3.8+ is not installed/on PATH.'}}
+    if(-not (Test-BuildNativeExecutable $candidate.Source)){return [pscustomobject]@{available=$false;path=$candidate.Source;reason='Python command is not a readable Windows PE executable.'}}
     $process=$null
     try {
         $info=New-Object Diagnostics.ProcessStartInfo

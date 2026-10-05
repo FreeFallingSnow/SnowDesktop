@@ -68,6 +68,15 @@ namespace SnowDesktop.Entry {
    finally {LocalFree(memory);}
   }
   public static Process Start(string executable,string arguments,string directory,string output,string error) {
+   // Reject corrupt executables before entering Windows app-compat/error UI.
+   // The loader can block here even when CreateProcess requested no window.
+   using(var image=new BinaryReader(File.Open(executable,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))) {
+    if(image.BaseStream.Length<64||image.ReadUInt16()!=0x5a4d)throw new InvalidDataException("PowerShell runtime is not a valid Windows PE executable");
+    image.BaseStream.Position=0x3c;int offset=image.ReadInt32();
+    if(offset<64||offset>image.BaseStream.Length-24)throw new InvalidDataException("PowerShell runtime has an invalid PE header");
+    image.BaseStream.Position=offset;
+    if(image.ReadUInt32()!=0x4550)throw new InvalidDataException("PowerShell runtime has an invalid PE signature");
+   }
    IntPtr input=IntPtr.Zero,stdout=IntPtr.Zero,stderr=IntPtr.Zero,attributes=IntPtr.Zero,handles=IntPtr.Zero;
    bool initialized=false;ProcessInfo child=new ProcessInfo();
    var security=new Security{size=Marshal.SizeOf(typeof(Security)),inherit=1};
