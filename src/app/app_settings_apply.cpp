@@ -7,6 +7,7 @@
 #include "../layout_storage.h"
 #include "../page_navigation_rules.h"
 #include "../settings_update_rules.h"
+#include "../theme_library_settings.h"
 
 #include <cstring>
 #include <cwctype>
@@ -1821,6 +1822,7 @@ void DesktopApp::LoadNavigationSettingsAndApply()
 {
     NavigationSettings settings;
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), settings);
+    snowdesktop::themes::RestoreBuiltinQuickPanel(settings, generalSettings_, CurrentPersonalization());
     navigationSettings_ = settings;
     ApplyNavigationHotkey();
 }

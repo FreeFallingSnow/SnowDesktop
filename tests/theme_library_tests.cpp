@@ -1,6 +1,7 @@
 #include "theme_library_settings.h"
 #include "json_value.h"
 #include "winui/theme_edit_state.h"
+#include "app/quick_navigation_theme.h"
 
 #include <algorithm>
 #include <fstream>
@@ -299,6 +300,109 @@ int RunThemeLibraryTests()
     ReconcileReferences(integration, settings);
     check(integration.references.at("global").id.empty() && integration.themes.at(global.id).appearance.widgetAlpha != .2f,
         "parameter editing detaches selection without editing the saved theme");
+
+    {
+        // The reported green search bar survived a native built-in selection:
+        // its material switched, but its separately persisted palette did not.
+        // Exercise the same transition helpers as SettingsWindow and startup,
+        // then resolve the production renderer's search color.
+        auto child = Capture(Kind::QuickPanel, MakeQuickNavigationAppearancePreset(kAppearancePresetAcrylicDark));
+        child.id = "theme/residue-child"; child.name = "Green search";
+        child.layout.fontSize = 19; child.layout.searchHeight = 68;
+        child.colors["searchBg"] = "#00B09B87";
+        auto parent = Capture(Kind::Global, MakeAppearancePreset(kAppearancePresetGlassDark));
+        parent.id = "theme/residue-parent"; parent.name = "Green global";
+        parent.quickPanel = child.id; parent.popup = "builtin/popup/dark";
+        Library transitions; transitions.themes = {{child.id, child}, {parent.id, parent}};
+        SettingsValues selected;
+        selected.navigation.virtualKey = 'Q'; selected.navigation.prefixes[0] = "program";
+        selected.navigation.defaultEngine = "google"; selected.navigation.lastCollapsed = true;
+        selected.navigation.desktopViewMode = QuickNavigationDesktopViewMode::Source;
+        const auto preferences = selected.navigation;
+        auto expectedBuiltin = preferences;
+        expectedBuiltin.layout = {}; expectedBuiltin.colors.clear();
+        check(ApplyTarget(transitions, "global", parent.id, selected, error) &&
+            Select(transitions, "global", parent.id, Kind::Global, parent.scopes, error),
+            "residue fixture selects a real global theme with its immutable child snapshot");
+        const auto green = ResolveQuickNavTheme(false, selected.navigation, true).searchBg;
+        check(green.rgb == RGB(0,176,155), "selected custom theme reaches the production search palette");
+        for (const int preset : {kAppearancePresetDark, kAppearancePresetLight, kAppearancePresetGlassDark,
+            kAppearancePresetGlassLight, kAppearancePresetGlassTransparent, kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight})
+        {
+            auto builtin = selected;
+            ApplyAppearancePreset(builtin.personalization, preset);
+            PrepareGlobalThemeEdit(builtin, selected.personalization);
+            const auto material = ResolveSurfaceTheme(builtin.general.quickNavigationAppearance, builtin.personalization,
+                builtin.general.quickNavTheme, true, &builtin.general.globalQuickNavigationAppearance);
+            const auto palette = ResolveQuickNavTheme(material.contentTheme == 1, builtin.navigation, material.glassEnabled);
+            check(builtin.navigation == expectedBuiltin && !builtin.general.globalQuickNavigationAppearance.customized &&
+                !builtin.general.globalCollectionPopupAppearance.customized && palette.searchBg.rgb != green.rgb,
+                "every native global built-in replaces follower layout/colors and retains all personal search preferences");
+
+            // A restart must also correct configurations written before the fix.
+            builtin.navigation = selected.navigation;
+            check(RestoreBuiltinQuickPanel(builtin.navigation, builtin.general, builtin.personalization) &&
+                builtin.navigation == expectedBuiltin &&
+                !RestoreBuiltinQuickPanel(builtin.navigation, builtin.general, builtin.personalization),
+                "startup clears historical built-in residues once and is then idempotent");
+        }
+        for (int mode : {0,1,2,3,-1})
+        {
+            auto next = selected;
+            next.general.quickNavigationAppearance = {4,true,child.appearance};
+            const auto previous = next.general;
+            next.personalization = MakeAppearancePreset(kAppearancePresetGlassDark);
+            next.general.globalQuickNavigationAppearance = {};
+            SelectSurfaceThemeMode(next.general.quickNavigationAppearance,mode,child.appearance);
+            PrepareQuickPanelSelectionEdit(next,previous,&transitions);
+            check(next.navigation == expectedBuiltin,
+                "independent custom to any native built-in or built-in global replaces the complete quick-panel theme");
+        }
+        for (int mode : {0,1,2,3,4})
+        {
+            auto next = selected;
+            next.general.quickNavigationAppearance.mode = mode;
+            next.navigation.layout.fontSize = 12; next.navigation.colors = {{"searchBg","#FF0000"}};
+            const auto previous = next.general;
+            next.general.quickNavigationAppearance.mode = -1;
+            PrepareQuickPanelSelectionEdit(next,previous,&transitions);
+            check(next.navigation == selected.navigation,
+                "returning to custom global restores both bound layout and palette from the successful snapshot");
+        }
+        for (int mode : {0,1,2,3,4,-2})
+        {
+            auto next = selected; next.general.quickNavigationAppearance.mode = mode;
+            const auto navigationBefore = next.navigation;
+            ApplyAppearancePreset(next.personalization,kAppearancePresetLight);
+            PrepareGlobalThemeEdit(next,selected.personalization);
+            check(next.navigation == navigationBefore,
+                "global switching leaves independent and legacy quick-panel appearance values untouched");
+        }
+        for (int mode : {4,-2})
+        {
+            auto next = selected; next.general.quickNavigationAppearance.mode = mode;
+            check(!RestoreBuiltinQuickPanel(next.navigation,next.general,next.personalization) && next.navigation == selected.navigation,
+                "startup retains independent custom and legacy conditional profiles");
+        }
+        auto custom = selected;
+        check(!RestoreBuiltinQuickPanel(custom.navigation,custom.general,custom.personalization) &&
+            custom.navigation == selected.navigation, "startup preserves custom global bindings");
+        const auto previous = custom.general;
+        custom.general.quickNavigationAppearance.mode = 4;
+        PrepareQuickPanelSelectionEdit(custom,previous,&transitions);
+        check(custom.navigation == selected.navigation, "entering a custom draft retains its effective layout and palette");
+        const auto customPrevious = custom.general;
+        custom.general.quickNavigationAppearance.mode = -1;
+        PrepareQuickPanelSelectionEdit(custom,customPrevious);
+        check(custom.navigation == selected.navigation,
+            "missing custom-global library retains the last available quick-panel values");
+        custom.navigation.colors["searchText"] = "#ABCDEF";
+        const auto unrelatedBefore = custom.navigation;
+        const auto unrelatedGeneral = custom.general;
+        custom.general.dockEnabled = !custom.general.dockEnabled;
+        PrepareQuickPanelSelectionEdit(custom,unrelatedGeneral,&transitions);
+        check(custom.navigation == unrelatedBefore, "unrelated general edits do not replay or reset a theme selection");
+    }
 
     const auto unique = CreateId();
     const auto root = std::filesystem::temp_directory_path() / ("SnowDesktopThemeTests-" + unique.substr(6));

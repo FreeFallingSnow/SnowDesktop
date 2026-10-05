@@ -2548,18 +2548,18 @@ struct SettingsWindowHost::Impl
         const auto snapshot = controller->Snapshot();
         if (!snapshot || snapshot->generation != generation)
             return;
-        GeneralSettings value = snapshot->values.general;
-        edit(value);
-        if (value.quickNavigationAppearance.mode == -1 && snapshot->values.general.quickNavigationAppearance.mode != -1 &&
-            value.globalQuickNavigationAppearance.customized)
-        {
-            themes::Library library;
-            std::string error;
-            auto navigation = snapshot->values.navigation;
-            if (themes::Load(themes::LibraryPath(), library, error) && themes::FollowQuickBinding(library, navigation))
-                controller->UpdateNavigation(std::move(navigation), mode);
-        }
-        controller->UpdateGeneral(std::move(value), mode);
+        auto values = snapshot->values;
+        edit(values.general);
+        themes::Library library;
+        std::string error;
+        const bool needsBinding = values.general.quickNavigationAppearance.mode == -1 &&
+            snapshot->values.general.quickNavigationAppearance.mode != -1 &&
+            values.general.globalQuickNavigationAppearance.customized;
+        const bool loaded = needsBinding && themes::Load(themes::LibraryPath(), library, error);
+        themes::PrepareQuickPanelSelectionEdit(values, snapshot->values.general, loaded ? &library : nullptr);
+        if (values.navigation != snapshot->values.navigation)
+            controller->UpdateNavigation(std::move(values.navigation), mode);
+        controller->UpdateGeneral(std::move(values.general), mode);
     }
 
     void EditNavigation(std::uint64_t generation, SettingsUpdateMode mode,
@@ -2774,14 +2774,14 @@ struct SettingsWindowHost::Impl
         const auto snapshot = controller->Snapshot();
         if (!snapshot || snapshot->generation != generation)
             return;
-        PersonalizationSettings value = snapshot->values.personalization;
-        edit(value);
-        auto general = snapshot->values.general;
-        if (themes::PrepareGlobalCustomEdit(general, snapshot->values.personalization, value))
-        {
-            controller->UpdateGeneral(std::move(general), mode);
-        }
-        controller->UpdatePersonalization(std::move(value), mode);
+        auto values = snapshot->values;
+        edit(values.personalization);
+        const bool generalChanged = themes::PrepareGlobalThemeEdit(values, snapshot->values.personalization);
+        if (values.navigation != snapshot->values.navigation)
+            controller->UpdateNavigation(std::move(values.navigation), mode);
+        if (generalChanged)
+            controller->UpdateGeneral(std::move(values.general), mode);
+        controller->UpdatePersonalization(std::move(values.personalization), mode);
     }
 
     void EditDesktop(std::uint64_t generation, SettingsUpdateMode mode,

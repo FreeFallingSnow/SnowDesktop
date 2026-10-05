@@ -1,6 +1,7 @@
 #include "settings_controller.h"
 
 #include "l10n.h"
+#include "theme_library_settings.h"
 
 #include <algorithm>
 #include <cstring>
@@ -81,6 +82,16 @@ public:
             recordLoadFailure(
                 SettingsDomain::General,
                 L"Failed to read general settings.");
+        }
+
+        if (!HasSettingsDomain(result.failedDomains, SettingsDomain::Personalization) &&
+            !HasSettingsDomain(result.failedDomains, SettingsDomain::General) &&
+            !HasSettingsDomain(result.failedDomains, SettingsDomain::Navigation))
+        {
+            // Correct residues from older theme switches in the authoritative
+            // snapshot, without overwriting files during a read or losing a
+            // custom/legacy profile after a recoverable load error.
+            themes::RestoreBuiltinQuickPanel(values.navigation, values.general, values.personalization);
         }
 
         const std::wstring categoryPath = GetCategorySettingsPath();

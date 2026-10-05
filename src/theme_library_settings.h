@@ -274,6 +274,42 @@ inline bool FollowQuickBinding(const Library& library, NavigationSettings& navig
     }
     return false;
 }
+// Built-in selections own the complete quick-panel appearance, including the
+// palette and layout stored separately from its material. Legacy conditional
+// profiles and independent custom drafts retain their historical values.
+inline bool RestoreBuiltinQuickPanel(NavigationSettings& navigation,
+    const GeneralSettings& general, const PersonalizationSettings& global)
+{
+    const int mode = general.quickNavigationAppearance.mode;
+    const bool builtin = (mode >= 0 && mode <= 3) ||
+        (mode == -1 && global.backgroundPreset != kAppearancePresetCustom &&
+            !general.globalQuickNavigationAppearance.customized);
+    if (!builtin) return false;
+    const QuickNavigationLayout defaults;
+    const bool changed = navigation.layout != defaults || !navigation.colors.empty();
+    navigation.layout = defaults;
+    navigation.colors.clear();
+    return changed;
+}
+inline bool PrepareGlobalThemeEdit(SettingsValues& values,
+    const PersonalizationSettings& previous)
+{
+    const bool generalChanged = PrepareGlobalCustomEdit(values.general, previous, values.personalization);
+    if (values.personalization.backgroundPreset != previous.backgroundPreset &&
+        values.general.quickNavigationAppearance.mode == -1)
+        RestoreBuiltinQuickPanel(values.navigation, values.general, values.personalization);
+    return generalChanged;
+}
+inline void PrepareQuickPanelSelectionEdit(SettingsValues& values,
+    const GeneralSettings& previous, const Library* library = nullptr)
+{
+    if (values.general.quickNavigationAppearance.mode == previous.quickNavigationAppearance.mode)
+        return;
+    RestoreBuiltinQuickPanel(values.navigation, values.general, values.personalization);
+    if (values.general.quickNavigationAppearance.mode == -1 &&
+        values.general.globalQuickNavigationAppearance.customized && library)
+        FollowQuickBinding(*library, values.navigation);
+}
 inline bool ApplyTarget(const Library& library, std::string_view target, std::string_view id,
     SettingsValues& values, std::string& error)
 {
