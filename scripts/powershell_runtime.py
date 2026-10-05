@@ -4,7 +4,6 @@ The bootstrap waits for an explicit permit before invoking any target. Only
 initialization failures are retried; script failures and timeouts are returned
 unchanged. The failed initialization and its output remain available as evidence.
 """
-import base64
 import json
 import os
 from pathlib import Path
@@ -108,9 +107,9 @@ def run(arguments, **options):
             bootstrap = ("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; "
                          "[IO.File]::WriteAllText(" + _literal(ready) + ",'ready'); $startupWait=[Diagnostics.Stopwatch]::StartNew(); "
                          "while(-not [IO.File]::Exists(" + _literal(permit) + ")){if($startupWait.Elapsed.TotalSeconds -gt 15){exit 124}; [Threading.Thread]::Sleep(20)}; " + target)
-            encoded = base64.b64encode(bootstrap.encode('utf-16-le')).decode('ascii')
-            command = [runtime, '-NoProfile', '-NonInteractive', '-InputFormat', 'Text',
-                       '-OutputFormat', 'Text', '-EncodedCommand', encoded]
+            bootstrap_path = Path(folder) / ('bootstrap-' + str(attempt) + '.ps1')
+            bootstrap_path.write_text(bootstrap, encoding='utf-8-sig')
+            command = [runtime, '-NoProfile', '-NonInteractive', '-File', str(bootstrap_path)]
             options['env'] = dict(env, **{PIN: runtime})
             remaining = None if timeout is None else timeout - (time.monotonic() - started)
             if remaining is not None and remaining <= 0:

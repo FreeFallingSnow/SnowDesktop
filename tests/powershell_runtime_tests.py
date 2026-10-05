@@ -1,6 +1,5 @@
 """Real 7/5.1 execution and a deliberately delayed initialization boundary."""
 import argparse
-import base64
 import json
 import os
 from pathlib import Path
@@ -45,6 +44,13 @@ exit $Code
         expression = ". '" + str(repo/'scripts/build_entry.ps1').replace("'", "''") + "'; Get-BuildPowerShell"
         result = runtime.run([str(engine), '-NoProfile', '-Command', expression], env=env, cwd=str(root), capture_output=True, text=True, timeout=15)
         assert result.returncode == 0 and result.stdout.strip() == str(engine), result.stderr
+        # Run only the real version-read statement, never squash/commit/tag.
+        version_line = next(line for line in (repo/'scripts/squash_release_to_main.bat').read_text(encoding='utf-8-sig').splitlines() if line.startswith('for /f "usebackq'))
+        version_probe = root/'read-version.cmd'
+        (root/'version.json').write_bytes((repo/'version.json').read_bytes())
+        version_probe.write_text('@echo off\nsetlocal\n'+version_line+'\necho %VERSION%\n')
+        version = subprocess.run(['cmd.exe','/d','/c',str(version_probe)], env=dict(env, PSExecutionPolicyPreference='Bypass'), cwd=str(root), capture_output=True, text=True, timeout=6)
+        assert version.returncode == 0 and version.stdout.strip() == json.loads((root/'version.json').read_text(encoding='utf-8-sig'))['version'], version.stderr
         print('PASS argument, exit-code and pinned-runtime compatibility: ' + str(engine), flush=True)
 
     # Missing 7 and absent PATH still have a real 5.1 fallback, without probes.
@@ -60,9 +66,9 @@ exit $Code
     def delayed(command, **options):
         launches.append(command[0])
         if len(launches) == 1:
-            command = list(command)
-            body = base64.b64decode(command[-1]).decode('utf-16-le')
-            command[-1] = base64.b64encode(('Start-Sleep -Seconds 6; ' + body).encode('utf-16-le')).decode('ascii')
+            bootstrap = Path(command[-1])
+            body = bootstrap.read_text(encoding='utf-8-sig')
+            bootstrap.write_text('Start-Sleep -Seconds 6; ' + body, encoding='utf-8-sig')
         return original(command, **options)
     marker.unlink(missing_ok=True)
     preferred = str(core if core.is_file() else fallback)

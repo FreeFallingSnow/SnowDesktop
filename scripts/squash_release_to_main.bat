@@ -8,7 +8,7 @@ if defined SNOWDESKTOP_REPOSITORY_ROOT (
     cd /d "%~dp0.."
 )
 
-for /f "usebackq delims=" %%v in (`"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -Command "(Get-Content version.json | ConvertFrom-Json).version"`) do set VERSION=%%v
+for /f "usebackq delims=" %%v in (`call "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -Command "(Get-Content version.json | ConvertFrom-Json).version"`) do set VERSION=%%v
 if "%VERSION%"=="" (
     echo Failed to read version from version.json.
     exit /b 1
