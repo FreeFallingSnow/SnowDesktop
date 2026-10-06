@@ -927,7 +927,45 @@ void BluetoothPowerAndDeviceReadFailures()
     result = SampleBluetooth([&] { return radios; }, peersFail, cancel);
     Require(!result.available && result.error == "canceled" && deviceReads == 1, "canceled Bluetooth reads are never published as successful");
 }
+
+void WifiPresentationPrioritizesSavedConnectableNetworks()
+{
+    auto adapter = json::Object(), networks = json::Array();
+    const auto network = [](const char* id, const char* ssid, bool connected, bool connectable, const char* profile) {
+        auto value = json::Object();
+        value.object["id"] = json::Text(id); value.object["ssid"] = json::Text(ssid);
+        value.object["connected"] = json::Boolean(connected); value.object["connectable"] = json::Boolean(connectable);
+        value.object["profileName"] = json::Text(profile); return value;
+    };
+    // Available-network snapshots are the device boundary. The production
+    // presentation helper feeds both control-center views and their actions.
+    networks.array = {
+        network("saved-z", "Zulu", false, true, "Saved Z"),
+        network("new-a", "Alpha", false, true, ""),
+        network("blocked", "Aardvark", false, false, "Saved blocked"),
+        network("saved-b", "Beta", false, true, "Saved B"),
+        network("active", "Zzz connected", true, false, ""),
+        network("unknown", "Aaa unknown", false, true, "Saved unknown")};
+    networks.array.back().object.erase("connectable");
+    adapter.object["networks"] = networks;
+    const auto ids = [](const auto& visible) {
+        std::vector<std::string> result;
+        for (const auto& item : visible) result.push_back(json::String(item, "id"));
+        return result;
+    };
+    Require(ids(WifiPresentationNetworks(adapter)) ==
+        std::vector<std::string>{"active", "saved-b", "saved-z", "unknown", "blocked", "new-a"},
+        "connected Wi-Fi stays first; only saved and connectable networks precede the alphabetical remainder");
+
+    // A refreshed capability or saved-profile state must reorder the list.
+    adapter.object["networks"].array[2].object["connectable"] = json::Boolean(true);
+    adapter.object["networks"].array[3].object.erase("profileName");
+    Require(ids(WifiPresentationNetworks(adapter)) ==
+        std::vector<std::string>{"active", "blocked", "saved-z", "unknown", "new-a", "saved-b"},
+        "Wi-Fi priority follows current connectability and profile availability after refresh");
 }
+}
+
 void TestSystemControls()
 {
     for(const auto* topic:{"host.projection","host.hotspot","host.airplane","host.awake"})
@@ -1006,6 +1044,7 @@ void TestSystemControls()
     BluetoothPowerAndDeviceReadFailures();
     AudioPresentationKeepsRealEndpoints();
     WifiOffStillHasManageableInterface();
+    WifiPresentationPrioritizesSavedConnectableNetworks();
     ControlReadbackMustReallySettle();
     NewSliderCancelsExecutingOldTarget();
     CancellationDuringReadbackDiscardsOldState();

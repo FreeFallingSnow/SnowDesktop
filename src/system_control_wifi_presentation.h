@@ -30,6 +30,9 @@ inline std::vector<JsonValue> WifiPresentationNetworks(const JsonValue& adapter)
     }
     std::stable_sort(result.begin(), result.end(), [](const auto& first, const auto& second) {
         if (json::Flag(first, "connected") != json::Flag(second, "connected")) return json::Flag(first, "connected");
+        const bool firstSavedConnectable = json::Flag(first, "connectable") && !json::String(first, "profileName").empty();
+        const bool secondSavedConnectable = json::Flag(second, "connectable") && !json::String(second, "profileName").empty();
+        if (firstSavedConnectable != secondSavedConnectable) return firstSavedConnectable;
         return json::String(first, "ssid") < json::String(second, "ssid");
     });
     return result;
