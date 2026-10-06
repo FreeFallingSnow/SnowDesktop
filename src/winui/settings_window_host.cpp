@@ -3,6 +3,7 @@
 #include "settings_window_host.h"
 #include "../settings_search_catalog.h"
 #include "../data_paths.h"
+#include "../resource.h"
 #include "../app_font.h"
 #include "../pending_window_message.h"
 #include "../performance_trace.h"
@@ -846,6 +847,15 @@ struct SettingsWindowHost::Impl
             {
                 SetError(L"Get AppWindow for settings window failed");
                 return false;
+            }
+            // The settings child uses the same embedded artwork as the host.
+            // Set the AppWindow icon explicitly before customizing its title bar;
+            // hiding the caption icon must not remove the taskbar artwork.
+            if (const HICON icon = LoadIconW(
+                    instance, MAKEINTRESOURCEW(IDI_APPICON)))
+            {
+                appWindow.SetIcon(
+                    winrt::Microsoft::UI::GetIconIdFromIcon(icon));
             }
             appWindowTitleBar = appWindow.TitleBar();
             if (!appWindowTitleBar)
@@ -3269,10 +3279,15 @@ struct SettingsWindowHost::Impl
         windowClass.cbSize = sizeof(windowClass);
         windowClass.lpfnWndProc = WindowProcedure;
         windowClass.hInstance = instance;
-        windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(101));
+        windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APPICON));
         if (!windowClass.hIcon)
             windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-        windowClass.hIconSm = windowClass.hIcon;
+        windowClass.hIconSm = static_cast<HICON>(LoadImageW(instance,
+            MAKEINTRESOURCEW(IDI_APPICON_SMALL), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+            LR_SHARED));
+        if (!windowClass.hIconSm)
+            windowClass.hIconSm = windowClass.hIcon;
         windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         windowClass.hbrBackground =
             reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
