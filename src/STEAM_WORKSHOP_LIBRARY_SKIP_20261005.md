@@ -107,3 +107,32 @@ Target: `caacfa12b26bcd990fd930578013df531656cb7b`.
 同一份 Steam 数据只读核对从零个卸载操作变为五个，期间数据哈希稳定；隔离回归实际执行卸载，
 验证本地/已订阅包保留和再次同步。没有引入在线查询或协议；Steam Build 25731163 尚不含此补改，
 待包含该候选的 Steam 宿主实机验收。本次探测未修改 Steam 用户组件数据。
+
+## Steam internal-dev publication (2026-10-06)
+
+- Published source: `ff0813d947192a9901175e03e55121f0a4fa2378`.
+- SteamPipe successfully completed App `5080330` Build `25741790` at
+  2026-10-06 10:04:08 Asia/Shanghai, using `SetLive internal-dev`; Depot
+  `5080331` Manifest `7608319775870335017`.
+- Runtime: `1.0.8.0-e32cdcea93ed20f3`; 428 payload files and ZIP entries verified.
+  Host SHA-256: `9e7be90ac4692770468bffd32424b29820989ce4304a3e7fe9f8eed51f3d3168`.
+  Package SHA-256: `58be4c2e69f1b802d4742784f3a255dc779dddd796de8adf04fbda3b470bf19a`.
+  Manifest SHA-256: `808686d82ce4613a05a2230e83461d198d39442a3427dbbb4a63927ad2b1ceb2`.
+- Reused the matching standard build/full application validation above. Packaged
+  host hash matches the tested host. Public app-info readbacks before/after both
+  report Build `25523336`. Private branch assignment evidence is the SetLive VDF
+  plus successful app/depot receipts; no independent private-branch readback.
+- Desktop Steam was restarted once after all SteamCMD operations, and its new
+  connection log confirms login OK at 10:04:31. The local Steam app manifest now
+  reports Build `25741790`; installed distribution host hash and runtime manifest
+  match the published package. The agent did not start the desktop application.
+- Evidence directory: `artifacts/v1.0.8.0/steam-test-20261006-ff0813d9/`, including
+  `receipt.json`, `package-verification.json`, `app-build.vdf`, app/depot logs,
+  public readbacks, client restoration and installed-payload verification.
+- Pending: actual unsubscribe reconciliation after starting the updated Steam
+  application, along with desktop interaction/appearance acceptance.
+
+中文发布记录：源码 ff0813d9 于 2026-10-06 10:04:08 发布为 internal-dev Build 25741790，
+runtime 和包哈希已核对。复用匹配的标准构建与应用全量结果，公开分支前后仍为 Build 25523336。
+私有分支以 SetLive 和成功回执为证据，未独立回查。Steam 已重启并恢复在线，本机已下载新版，
+安装载荷与发布包一致。未启动桌面宿主，更新后实际退订卸载及桌面交互仍待用户实机验收。
