@@ -514,6 +514,17 @@ inline RECT MagnifyRect(
     return base;
 }
 
+// The cell can be shorter than icon+spacing in a compact fused bar. Preserve
+// its logical icon size and apply only the growth of the actual visual frame;
+// subtracting spacing from the cell's short side shrinks entries but not controls.
+inline int IconSizeForVisualRect(const RECT& base, const RECT& visual, int baseIconSize)
+{
+    const LONG growth = std::max(0L, std::min(
+        (visual.right - visual.left) - (base.right - base.left),
+        (visual.bottom - visual.top) - (base.bottom - base.top)));
+    return std::max(1, baseIconSize + static_cast<int>(growth));
+}
+
 inline RECT AnchorTooltipBounds(
     const RECT& visualBounds, DockPosition position,
     int tooltipWidth, int tooltipHeight, int gap)

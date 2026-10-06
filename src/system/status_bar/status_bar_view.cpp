@@ -203,6 +203,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock)
 {
     if (!context || !text || !w || !h || !std::isfinite(scale) || scale <= 0) return E_INVALIDARG;
+    const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock, static_cast<float>(h), scale);
     const bool hc = palette.highContrast;
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(hc ? palette.foreground :
@@ -226,7 +227,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             if (item.key == "controlCenter" && item.controlGlyphs[2].empty()) return 64.f * scale;
             if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
             if (item.icon || item.text.empty()) return 32.f * scale;
-            auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, mergedDock) : item.text;
+            auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
             if (item.key == "memory") reserved = std::wstring(_LW("statusBar.memory")) + L" 100%";
             // Reserve equal digit advances for the date/time too.
             if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
@@ -301,7 +302,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             { items[i].bounds = {leftCursor, 0, leftCursor + widths[i], viewportHeight}; leftCursor += widths[i]; }
         if (mergedDock)
             for (auto& item : items)
-                item.bounds = StatusBarCompactTarget(item.bounds, scale, item.key == "clock");
+                item.bounds = StatusBarCompactTarget(item.bounds, scale, item.key == "clock" && twoLineClock);
         ComPtr<ID2D1SolidColorBrush> hoverBrush;
         context->CreateSolidColorBrush(hc ? palette.highlight :
             D2D1::ColorF(a.contentTheme == 1 ? 0x000000 : 0xffffff, .08f), &hoverBrush);
@@ -389,7 +390,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 }
                 if (!item.text.empty())
                 {
-                    const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, mergedDock) : item.text;
+                    const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
                     context->DrawText(displayed.c_str(), static_cast<UINT32>(displayed.size()), format.Get(), textRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 }
             }

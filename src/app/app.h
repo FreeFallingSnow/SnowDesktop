@@ -2872,7 +2872,8 @@ private:
         bool commit = true);
     bool StartCollectionPopupCompositionAnimation();
     bool StartLuaWidgetPanelCompositionAnimation();
-    void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
+    void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state,
+        int requestedIconSize = 0);
     void RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t ownerKey);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
@@ -2882,7 +2883,7 @@ private:
     void DrawDockSelectionIndicator(
         ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,
-        const DockRunningAppInfo& app, RECT rect, int state);
+        const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize = 0);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 

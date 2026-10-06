@@ -6,6 +6,27 @@
 void CheckDockMagnificationEntry()
 {
     namespace magnification = snowdesktop::dock_magnification;
+    // A compact fused cell is shorter than its pitch. Previously entries
+    // subtracted spacing from that short side while fixed buttons used the
+    // logical icon size, so the same frame produced different tile extents.
+    for (const auto& [height, iconSize] : std::array<std::pair<int, int>, 4>{{
+            {32, 24}, {40, 30}, {48, 36}, {96, 72}}})
+    {
+        for (const auto position : {DockPosition::Bottom, DockPosition::Top,
+                DockPosition::Left, DockPosition::Right})
+        {
+            const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+            const RECT cell{100, 200, 100 + (vertical ? height : iconSize + 12),
+                200 + (vertical ? iconSize + 12 : height)};
+            for (const auto& [scale, expected] : std::array<std::pair<float, int>, 3>{{
+                    {1.f, iconSize}, {1.5f, iconSize * 3 / 2}, {2.f, iconSize * 2}}})
+            {
+                const auto frame = magnification::MagnifyRect(cell, position, scale, iconSize, 17);
+                Check(magnification::IconSizeForVisualRect(cell, frame, iconSize) == expected,
+                    "entries and fixed controls retain the same icon extent at compact and large bar heights");
+            }
+        }
+    }
     using magnification::HoverEntryAnimation;
     HoverEntryAnimation entry;
     entry.SetHovered(true, 1000.0, 1.0);

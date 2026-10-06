@@ -6,6 +6,13 @@
 
 namespace snowdesktop
 {
+// Small fused bars spend at most one eighth of their height on each inset.
+// Keep the normal Dock spacing along the bar independent of this padding.
+inline int MergedDockVerticalPadding(int height, int normalSpacing)
+{
+    return std::clamp(height / 8, 1, std::max(1, normalSpacing));
+}
+
 inline bool ReserveStatusBarSpace(bool merged, bool summonOnly)
 {
     return !merged || !summonOnly;

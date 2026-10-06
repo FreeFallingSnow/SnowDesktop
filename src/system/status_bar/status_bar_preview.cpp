@@ -188,12 +188,13 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         rectangles.push_back(r);
         if (item.text.empty() || item.icon) continue;
         ComPtr<IDWriteTextLayout> layout;
-        const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, merged) : item.text;
+        const bool twoLineClock = StatusBarUsesTwoLineClock(merged, static_cast<float>(height), scale);
+        const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
         Require(text->CreateTextLayout(displayed.c_str(), static_cast<UINT32>(displayed.size()), font.Get(), 4000, 400, &layout));
         DWRITE_TEXT_METRICS metrics{}; Require(layout->GetMetrics(&metrics));
         if (merged && item.key == "clock")
-            Require(metrics.lineCount == 2 && metrics.height <= r.bottom - r.top + 1,
-                "merged date and time must occupy two fully visible lines");
+            Require(metrics.lineCount == (twoLineClock ? 2u : 1u) && metrics.height <= r.bottom - r.top + 1,
+                "merged date and time must fit the bar's available height");
         const float reserved = item.key == "controlCenter" ? 94.f * scale : 0.f;
         Require(metrics.widthIncludingTrailingWhitespace <= r.right - r.left - reserved + 1,
             "status bar fixed width clips visible text");
@@ -471,7 +472,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     dropped.pinnedTrayItems.size()==1,"only the overflow button must unpin the dragged icon");
                 // Exercise the real renderer's fallback paths without adding
                 // CLI presets or altering the exported normal frame.
-                const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale, bool search = true, bool taskView = true) {
+                const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale,
+                    bool search = true, bool taskView = true, int mergedHeight = 64) {
                     auto compactSettings = settings; compactSettings.clock = date;
                     compactSettings.quickSearch = search; compactSettings.taskView = taskView;
                     compactSettings.cpu = compactSettings.memory = compactSettings.gpu = compactSettings.traffic = true;
@@ -483,7 +485,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "taskView"; }) == taskView,
                         "Task View must respect its visibility setting in both bar layouts");
                     const UINT testWidth = static_cast<UINT>(std::lround(logicalWidth * testScale));
-                    const UINT testHeight = static_cast<UINT>(std::lround((merged ? 64 : 32) * testScale));
+                    const UINT testHeight = static_cast<UINT>(std::lround((merged ? mergedHeight : 32) * testScale));
                     ComPtr<ID2D1Bitmap1> scratch;
                     Require(context->CreateBitmap(D2D1::SizeU(testWidth, testHeight), nullptr, 0, targetProperties, &scratch));
                     context->SetTarget(scratch.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -521,6 +523,12 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 compactLayout(true, true, 480, 1.5f * scale);
                 compactLayout(true, true, 1920, 1.25f * scale);
                 compactLayout(true, true, 1920, 3.f);
+                // Use the real renderer at the single/two-line boundary and
+                // fractional DPI: line height, measured width and hit targets
+                // must fit the compact bar rather than merely changing text.
+                for (const float testScale : {1.f, 1.25f, 1.5f, 3.f})
+                    for (const int mergedHeight : {32, 39, 40, 48})
+                        compactLayout(true, true, 1920, testScale, true, true, mergedHeight);
                 compactLayout(true, true, 320, 3.f);
                 compactLayout(true, true, 240, 3.f);
                 compactLayout(true, false, 320, scale);

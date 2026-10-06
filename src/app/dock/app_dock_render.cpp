@@ -130,13 +130,14 @@ void DesktopApp::DrawDockSelectionIndicator(
 }
 
 void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
-    const DockEntry& entry, RECT rect, int state)
+    const DockEntry& entry, RECT rect, int state, int requestedIconSize)
 {
     if (!ctx) return;
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
         kDockSpacing * ClampDockScale(dockSettings_.thicknessScale))));
-    const int iconSize = std::max(1, static_cast<int>(std::min(
-        rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
+    const int iconSize = requestedIconSize > 0 ? requestedIconSize :
+        std::max(1, static_cast<int>(std::min(
+            rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
     RECT iconRect{
         rect.left + (rect.right - rect.left - iconSize) / 2,
         rect.top + (rect.bottom - rect.top - iconSize) / 2,
@@ -399,13 +400,14 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
 }
 
 void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
-    const DockRunningAppInfo& app, RECT rect, int state)
+    const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize)
 {
     if (!ctx) return;
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
         kDockSpacing * ClampDockScale(dockSettings_.thicknessScale))));
-    const int iconSize = std::max(1, static_cast<int>(std::min(
-        rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
+    const int iconSize = requestedIconSize > 0 ? requestedIconSize :
+        std::max(1, static_cast<int>(std::min(
+            rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
     RECT iconRect{
         rect.left + (rect.right - rect.left - iconSize) / 2,
         rect.top + (rect.bottom - rect.top - iconSize) / 2,

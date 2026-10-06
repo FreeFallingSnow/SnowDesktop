@@ -10,10 +10,14 @@
 
 namespace snowdesktop
 {
-inline std::wstring StatusBarClockDisplay(std::wstring_view value, bool merged)
+inline bool StatusBarUsesTwoLineClock(bool merged, float height, float scale)
+{
+    return merged && height >= 40.f * scale;
+}
+inline std::wstring StatusBarClockDisplay(std::wstring_view value, bool twoLineClock)
 {
     std::wstring result(value);
-    if (merged)
+    if (twoLineClock)
         if (const auto separator = result.find(L"   "); separator != std::wstring::npos)
             result.replace(separator, 3, L"\n");
     return result;

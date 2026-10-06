@@ -4,6 +4,7 @@
 #include "app/app.h"
 #include "common/constants.h"
 #include "dock/dock_magnification.h"
+#include "dock/merged_dock_presentation.h"
 #include "system/status_bar/status_bar_appearance.h"
 #include "settings/animation_settings.h"
 #include "slot.h"
@@ -66,8 +67,12 @@ Container* DockRunningItem::GetContainer() const { return container_; }
 void DockRunningItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
     if (app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size())
+    {
+        const auto* dock = dynamic_cast<const DockContainer*>(container_);
         app_->DrawDockRunningApp(
-            context, app_->dockUnpinnedRunningApps_[runningIndex_], rect, state);
+            context, app_->dockUnpinnedRunningApps_[runningIndex_], rect, state,
+            dock ? dock->GetElementIconSize(bounds_, rect) : 0);
+    }
 }
 
 std::wstring DockRunningItem::GetIdentityKey() const
@@ -133,7 +138,9 @@ void DockFrequentItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
     if (!app_ || itemIndex_ >= app_->items_.size()) return;
     DockEntry entry{ DockEntryType::DesktopItem,
         app_->items_[itemIndex_].layoutKey, true };
-    app_->DrawDockEntry(context, entry, rect, state);
+    const auto* dock = dynamic_cast<const DockContainer*>(container_);
+    app_->DrawDockEntry(context, entry, rect, state,
+        dock ? dock->GetElementIconSize(bounds_, rect) : 0);
 }
 
 ComPtr<IDataObject> DockFrequentItem::CreateDataObject()
@@ -258,7 +265,12 @@ Container* DockEntryItem::GetContainer() const { return container_; }
 void DockEntryItem::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
     const DockEntry* entry = Entry();
-    if (entry && app_) app_->DrawDockEntry(context, *entry, rect, state);
+    if (entry && app_)
+    {
+        const auto* dock = dynamic_cast<const DockContainer*>(container_);
+        app_->DrawDockEntry(context, *entry, rect, state,
+            dock ? dock->GetElementIconSize(bounds_, rect) : 0);
+    }
 }
 
 ComPtr<IDataObject> DockEntryItem::CreateDataObject()
@@ -502,7 +514,9 @@ int DockContainer::ItemIconSize() const
     if (!app_) return kIconSize;
     if (IsMergedWithStatusBar())
     {
-        const int available = std::max(1, static_cast<int>(area_.bottom - area_.top) - 2 * ScaledSpacing());
+        const int height = static_cast<int>(area_.bottom - area_.top);
+        const int padding = snowdesktop::MergedDockVerticalPadding(height, ScaledSpacing());
+        const int available = std::max(1, height - 2 * padding);
         return std::max(1, static_cast<int>(std::round(available * ClampDockScale(app_->dockSettings_.thicknessScale))));
     }
     const POINT center{
@@ -1133,6 +1147,12 @@ RECT DockContainer::GetElementVisualRect(
     return MagnifyElementRect(baseRect, ResolveMagnificationFocusRect(pointer), pointer);
 }
 
+int DockContainer::GetElementIconSize(const RECT& baseRect, const RECT& visualRect) const
+{
+    return snowdesktop::dock_magnification::IconSizeForVisualRect(
+        baseRect, visualRect, ItemIconSize());
+}
+
 RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
 {
     RECT panel = GetBounds();
@@ -1466,13 +1486,8 @@ std::vector<RECT> DockContainer::GetOcclusionRects(POINT pointer) const
         RECT intersection{};
         if (!fixed && !IntersectRect(&intersection, &base, &viewport))
             continue;
-        const float scale = GetMagnificationScale(base, focus, pointer);
         const RECT visual = MagnifyElementRect(base, focus, pointer);
-        const int iconSize = control
-            ? std::max(1, static_cast<int>(std::round(ItemIconSize() * scale)))
-            : std::max(1, static_cast<int>(std::min(
-                visual.right - visual.left, visual.bottom - visual.top)) -
-                ScaledSpacing());
+        const int iconSize = GetElementIconSize(base, visual);
         RECT icon{
             visual.left + (visual.right - visual.left - iconSize) / 2,
             visual.top + (visual.bottom - visual.top - iconSize) / 2,
@@ -2126,12 +2141,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     {
         const bool hovered = isFocused(windowsButton);
         const RECT windowsVisual = visualRectFor(windowsButton);
-        const int backgroundSize = std::max(1, static_cast<int>(std::round(
-            ItemIconSize() *
-            GetMagnificationScale(
-                windowsButton,
-                magnificationFocus,
-                app_->lastMousePoint_))));
+        const int backgroundSize = GetElementIconSize(windowsButton, windowsVisual);
         RECT background{
             windowsVisual.left +
                 (windowsVisual.right - windowsVisual.left - backgroundSize) / 2,
@@ -2144,7 +2154,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         };
         app_->DrawDockControlBackground(context, background, 0, !lt);
 
-        const float logoSize = std::max(20.0f, backgroundSize * 0.58f);
+        const float logoSize = std::max(1.0f, backgroundSize * 0.58f);
         const float paneGap = std::max(1.5f, logoSize * 0.09f);
         const float paneSize = (logoSize - paneGap) * 0.5f;
         const float logoLeft = (background.left + background.right - logoSize) * 0.5f;
@@ -2516,11 +2526,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
 
     const bool searchHovered = isFocused(search);
     const RECT searchVisual = visualRectFor(search);
-    const int backgroundSize = std::max(1, static_cast<int>(std::round(
-        ItemIconSize() *
-        GetMagnificationScale(
-            search, magnificationFocus,
-            app_->lastMousePoint_))));
+    const int backgroundSize = GetElementIconSize(search, searchVisual);
     const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
     RECT searchBackground{
         searchVisual.left +

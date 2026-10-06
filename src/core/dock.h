@@ -132,6 +132,7 @@ public:
     std::vector<RECT> GetOcclusionRects(POINT pointer) const;
     bool ContainsInteractivePoint(POINT pt) const;
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
+    int GetElementIconSize(const RECT& baseRect, const RECT& visualRect) const;
     RECT GetVisualPanelBounds(POINT pointer) const;
     RECT GetHoveredTitleBounds(POINT pointer) const;
     RECT GetDesktopItemVisualRect(
