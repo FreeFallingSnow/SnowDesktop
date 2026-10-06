@@ -2041,6 +2041,8 @@ void DesktopApp::ApplyCollectionPopupAppearance()
     collectionPopupAppearance_ = snowdesktop::ResolveSurfaceTheme(
         generalSettings_.collectionPopupAppearance, globalAppearance,
         generalSettings_.collectionPopupTheme, false, &generalSettings_.globalCollectionPopupAppearance);
+    // Panel presets control the surface; menus keep the global style.
+    collectionPopupAppearance_.contextMenuStyle = globalAppearance.contextMenuStyle;
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =
