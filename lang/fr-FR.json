@@ -2559,5 +2559,7 @@
   "settings.general.advancedFeatures.retry": "Réessayer le déblocage",
   "settings.general.advancedFeatures.steamUpdateRequired": "Le client ou les interfaces Steam doivent être mis à jour. Mettez Steam à jour, redémarrez-le, puis réessayez le déblocage.",
   "settings.general.advancedFeatures.updateGuide": "Comment mettre à jour",
-  "settings.general.advancedFeatures.updateInstructions": "Recherchez les mises à jour du client dans le menu Steam. Après la mise à jour, quittez complètement Steam et rouvrez-le, puis lancez SnowDesktop depuis votre bibliothèque et réessayez. Si le problème persiste, fournissez la version du client et la date de compilation dans Aide → À propos de Steam, ainsi que les détails de l'erreur."
+  "settings.general.advancedFeatures.updateInstructions": "Recherchez les mises à jour du client dans le menu Steam. Après la mise à jour, quittez complètement Steam et rouvrez-le, puis lancez SnowDesktop depuis votre bibliothèque et réessayez. Si le problème persiste, fournissez la version du client et la date de compilation dans Aide → À propos de Steam, ainsi que les détails de l'erreur.",
+  "app.settings.popup_close_on_mouse_leave": "Fermer les fenêtres contextuelles quand le pointeur en sort",
+  "app.settings.popup_close_on_mouse_leave_hint": "Ferme les fenêtres contextuelles des collections et des dossiers du Dock lorsque le pointeur en sort. Elles restent ouvertes pendant un glissement, un renommage ou une action du menu contextuel."
 }

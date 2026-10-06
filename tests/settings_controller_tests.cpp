@@ -315,6 +315,12 @@ void TestRoutes()
     Check(titleBarPosition.page == SettingsPage::WidgetBehavior &&
             titleBarPosition.focusId == "personalization.scrollableTitleBarOnTop",
         "title bar position search and deep links reach Widget behavior");
+    const auto popupLeave = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.popupCloseOnMouseLeave"));
+    Check(popupLeave.page == SettingsPage::WidgetBehavior &&
+            popupLeave.focusId == "personalization.popupCloseOnMouseLeave",
+        "close-on-leave search and deep links reach the Widget behavior switch");
 
     // Old settings-search publications can still carry AppearanceWidgets.
     // The production controller must relocate them while preserving the locator.

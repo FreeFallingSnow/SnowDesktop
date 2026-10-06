@@ -2559,5 +2559,7 @@
   "settings.general.advancedFeatures.retry": "Freischalten erneut versuchen",
   "settings.general.advancedFeatures.steamUpdateRequired": "Der Steam-Client oder seine Schnittstellen müssen aktualisiert werden. Aktualisiere Steam, starte es neu und versuche das Freischalten erneut.",
   "settings.general.advancedFeatures.updateGuide": "So aktualisierst du Steam",
-  "settings.general.advancedFeatures.updateInstructions": "Suche im Steam-Menü nach Client-Updates. Beende Steam nach dem Update vollständig und öffne es erneut. Starte SnowDesktop dann aus deiner Bibliothek und versuche es erneut. Falls es weiterhin fehlschlägt, teile die Client-Version und das Build-Datum unter Hilfe → Über Steam sowie die Fehlerdetails mit."
+  "settings.general.advancedFeatures.updateInstructions": "Suche im Steam-Menü nach Client-Updates. Beende Steam nach dem Update vollständig und öffne es erneut. Starte SnowDesktop dann aus deiner Bibliothek und versuche es erneut. Falls es weiterhin fehlschlägt, teile die Client-Version und das Build-Datum unter Hilfe → Über Steam sowie die Fehlerdetails mit.",
+  "app.settings.popup_close_on_mouse_leave": "Popups schließen, wenn der Mauszeiger sie verlässt",
+  "app.settings.popup_close_on_mouse_leave_hint": "Popups von Sammlungen und Dock-Ordnern schließen, sobald der Mauszeiger sie verlässt. Beim Ziehen, Umbenennen oder Verwenden des Kontextmenüs bleiben sie geöffnet."
 }

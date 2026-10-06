@@ -38,6 +38,18 @@ constexpr bool ShouldRevealHost(
     return !wasVisible && immediatePresent;
 }
 
+constexpr bool ShouldCloseOnMouseLeave(
+    bool enabled,
+    bool collectionPopupInteractive,
+    bool pointerInsidePopup,
+    bool interactionBusy)
+{
+    // Only an actual exit dismisses storage popups. A menu/captured gesture
+    // can produce native mouse-leave messages while still using their data.
+    return enabled && collectionPopupInteractive &&
+        !pointerInsidePopup && !interactionBusy;
+}
+
 template <typename Handle>
 constexpr bool ShouldCancelPointerPressForHostMessage(
     bool cancelMode,

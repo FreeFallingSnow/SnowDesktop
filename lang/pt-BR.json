@@ -2559,5 +2559,7 @@
   "settings.general.advancedFeatures.retry": "Tentar desbloquear novamente",
   "settings.general.advancedFeatures.steamUpdateRequired": "O cliente ou as interfaces do Steam precisam de uma atualização. Atualize e reinicie o Steam e tente desbloquear novamente.",
   "settings.general.advancedFeatures.updateGuide": "Como atualizar",
-  "settings.general.advancedFeatures.updateInstructions": "Verifique se há atualizações do cliente no menu do Steam. Após atualizar, feche completamente o Steam e abra-o novamente. Inicie o SnowDesktop pela biblioteca e tente de novo. Se continuar falhando, informe a versão do cliente e a data da compilação em Ajuda → Sobre o Steam, junto com os detalhes do erro."
+  "settings.general.advancedFeatures.updateInstructions": "Verifique se há atualizações do cliente no menu do Steam. Após atualizar, feche completamente o Steam e abra-o novamente. Inicie o SnowDesktop pela biblioteca e tente de novo. Se continuar falhando, informe a versão do cliente e a data da compilação em Ajuda → Sobre o Steam, junto com os detalhes do erro.",
+  "app.settings.popup_close_on_mouse_leave": "Fechar pop-ups ao retirar o ponteiro",
+  "app.settings.popup_close_on_mouse_leave_hint": "Fecha os pop-ups de coleções e pastas do Dock quando o ponteiro sai deles. Eles permanecem abertos ao arrastar, renomear ou usar o menu de contexto."
 }

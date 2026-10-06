@@ -2797,7 +2797,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "personalization.scrollableTitleBarOnTop",
                 "personalization.showGroupTabCounts",
                 "personalization.popupHoverOpen",
-                "personalization.popupHoverDelayMs"});
+                "personalization.popupHoverDelayMs",
+                "personalization.popupCloseOnMouseLeave"});
             personalizationPage_->Activate();
         }
         break;

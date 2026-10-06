@@ -2559,5 +2559,7 @@
   "settings.general.advancedFeatures.retry": "Retry unlocking",
   "settings.general.advancedFeatures.steamUpdateRequired": "Steam needs a client or interface update. Update and restart Steam, then retry unlocking.",
   "settings.general.advancedFeatures.updateGuide": "How to update",
-  "settings.general.advancedFeatures.updateInstructions": "Check for client updates in the Steam menu. After updating, fully exit and reopen Steam, then launch SnowDesktop from your library and retry. If it still fails, share the client version and build date from Help → About Steam, along with the error details."
+  "settings.general.advancedFeatures.updateInstructions": "Check for client updates in the Steam menu. After updating, fully exit and reopen Steam, then launch SnowDesktop from your library and retry. If it still fails, share the client version and build date from Help → About Steam, along with the error details.",
+  "app.settings.popup_close_on_mouse_leave": "Close popups when the pointer leaves",
+  "app.settings.popup_close_on_mouse_leave_hint": "Close collection and Dock folder popups after the pointer moves out. Keep them open during dragging, renaming or context menu actions."
 }

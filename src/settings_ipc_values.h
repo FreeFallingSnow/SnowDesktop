@@ -24,7 +24,7 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.widgetBorderG, v.widgetBorderB, v.widgetAlpha, v.widgetBorderAlpha,
     v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength, v.edgeLight,
     v.gradientEndA, v.barHeight, v.scrollableTitleBarOnTop, v.widgetTransformCursors, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
-    v.showCategoryTabCounts, v.showGroupTabCounts, v.popupHoverOpen, v.popupHoverDelayMs, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
+    v.showCategoryTabCounts, v.showGroupTabCounts, v.popupHoverOpen, v.popupHoverDelayMs, v.popupCloseOnMouseLeave, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);

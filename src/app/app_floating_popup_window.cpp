@@ -1238,6 +1238,29 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         if (GetCursorPos(&cursor) &&
             WindowFromPoint(cursor) == hwnd)
             return 0;
+        POINT point = cursor;
+        const bool pointerKnown = hwnd_ && IsWindow(hwnd_) &&
+            GetCursorPos(&point) && ScreenToClient(hwnd_, &point);
+        const HWND dialogOwner = ShellDialogOwnerHwnd();
+        const bool interactionBusy =
+            !pointerKnown || HasActiveContextMenuSession() ||
+            renameController_.IsActive() || GetCapture() ||
+            mouseDown_ || dragSession_.HasContext() ||
+            dragDropController_.IsTransportActive() ||
+            widgetAction_ != WidgetAction::None || largeIconGesture_ ||
+            middleButtonWidgetMove_ || detailColumnResizeActive_ ||
+            luaWidgetPanelMouseDown_ ||
+            (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
+            ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+                GetAsyncKeyState(VK_MBUTTON)) & 0x8000);
+        if (snowdesktop::floating_popup_rules::ShouldCloseOnMouseLeave(
+                personalizationSettings_.popupCloseOnMouseLeave,
+                IsCollectionPopupInteractive(),
+                pointerKnown && IsPointInsideOpenPopup(point),
+                interactionBusy))
+        {
+            CloseCollectionPopup();
+        }
         OnMouseLeave();
         return 0;
     }

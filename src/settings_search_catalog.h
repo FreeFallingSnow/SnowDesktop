@@ -293,6 +293,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "app.settings.popup_hover_open", "app.settings.popup_hover_open_hint"},
     {SettingsPage::WidgetBehavior, "personalization.popupHoverDelayMs",
         "app.settings.popup_hover_delay", "app.settings.popup_hover_open_hint"},
+    {SettingsPage::WidgetBehavior, "personalization.popupCloseOnMouseLeave",
+        "app.settings.popup_close_on_mouse_leave", "app.settings.popup_close_on_mouse_leave_hint"},
     {SettingsPage::DesktopCategories,
         "desktop.categoryCounts",
         "app.settings.category_show_count",

@@ -5048,6 +5048,16 @@ int main(int argc, char** argv)
             floatingPopup::ShouldShow(false, true) &&
             !floatingPopup::ShouldShow(false, false),
         "the shared popup host must remain visible while either hosted layer is open");
+    Check(floatingPopup::ShouldCloseOnMouseLeave(true, true, false, false),
+        "an idle storage popup closes on an actual pointer exit when opted in");
+    Check(!floatingPopup::ShouldCloseOnMouseLeave(false, true, false, false),
+        "the default opt-out keeps storage popups open on pointer exit");
+    Check(!floatingPopup::ShouldCloseOnMouseLeave(true, false, false, false),
+        "a Lua-only shared host or an already closing storage popup is not dismissed");
+    Check(!floatingPopup::ShouldCloseOnMouseLeave(true, true, true, false),
+        "a native leave message inside popup content does not dismiss it");
+    Check(!floatingPopup::ShouldCloseOnMouseLeave(true, true, false, true),
+        "pointer exit preserves a popup used by a drag, rename, dialog or menu");
     Check(floatingPopup::ShouldRevealHost(false, true) &&
             !floatingPopup::ShouldRevealHost(false, false) &&
             !floatingPopup::ShouldRevealHost(true, true) &&

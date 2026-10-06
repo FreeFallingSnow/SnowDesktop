@@ -266,6 +266,7 @@ void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId)
     preset.showGroupTabCounts = settings.showGroupTabCounts;
     preset.popupHoverOpen = settings.popupHoverOpen;
     preset.popupHoverDelayMs = settings.popupHoverDelayMs;
+    preset.popupCloseOnMouseLeave = settings.popupCloseOnMouseLeave;
     preset.contextMenuStyle = settings.contextMenuStyle;
     settings = std::move(preset);
 }
@@ -496,6 +497,8 @@ bool LoadPersonalization(
     ReadBoolField(text, "widgetTransformCursors", s.widgetTransformCursors);
     s.popupHoverOpen = false;
     ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
+    s.popupCloseOnMouseLeave = false;
+    ReadBoolField(text, "popupCloseOnMouseLeave", s.popupCloseOnMouseLeave);
     s.popupHoverDelayMs = kDefaultPopupHoverDelayMs;
     if (documentParsed)
         if (const auto* delay = document.Find("popupHoverDelayMs"); delay && delay->IsNumber())
@@ -607,6 +610,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << (s.popupHoverOpen ? "true" : "false") << ",\n";
     file << "  \"popupHoverDelayMs\": "
          << NormalizePopupHoverDelayMs(s.popupHoverDelayMs) << ",\n";
+    file << "  \"popupCloseOnMouseLeave\": "
+         << (s.popupCloseOnMouseLeave ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"contextMenuStyle\": "
