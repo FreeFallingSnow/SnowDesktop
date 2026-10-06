@@ -6021,6 +6021,24 @@ int main(int argc, char** argv)
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");
+    {
+        const DockSettings defaults;
+        Check(!defaults.singleClickLaunchItems,
+            "upgrading without a single-click preference must retain double-click launching");
+        Check(rules::ShouldWaitForDockLaunchDoubleClick(
+                defaults.singleClickLaunchItems, rules::DockClickAction::Launch),
+            "closed apps in both pinned and frequent areas must wait for a double click by default");
+        Check(!rules::ShouldWaitForDockLaunchDoubleClick(
+                true, rules::DockClickAction::Launch),
+            "opting in must launch apps and files in both areas on the first release");
+        for (const bool enabled : {false, true})
+        {
+            for (const auto action : {rules::DockClickAction::Activate,
+                    rules::DockClickAction::Minimize, rules::DockClickAction::Restore})
+                Check(!rules::ShouldWaitForDockLaunchDoubleClick(enabled, action),
+                    "running applications must keep immediate window commands in either area");
+        }
+    }
     Check(identityRules::MatchesRunningApp(
             DockAppIdentityKind::Executable,
             L"C:\\APPS\\EDITOR.EXE", L"", L"",

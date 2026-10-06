@@ -666,7 +666,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        if (entryIndex < dockEntries_.size())
+                        // Single-click mode already launched on the first
+                        // release; this message only completes the click pair.
+                        if (entryIndex < dockEntries_.size() &&
+                            snowdesktop::dock_window_rules::ShouldWaitForDockLaunchDoubleClick(
+                                dockSettings_.singleClickLaunchItems,
+                                snowdesktop::dock_window_rules::DockClickAction::Launch))
                         {
                             const size_t itemIndex =
                                 FindItemIndexByKey(dockEntries_[entryIndex].reference);
@@ -704,7 +709,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        if (itemIndex < items_.size())
+                        if (itemIndex < items_.size() &&
+                            snowdesktop::dock_window_rules::ShouldWaitForDockLaunchDoubleClick(
+                                dockSettings_.singleClickLaunchItems,
+                                snowdesktop::dock_window_rules::DockClickAction::Launch))
                             clearSelectionAfterAcceptedOpen(
                                 LaunchDesktopItem(
                                     itemIndex, true));

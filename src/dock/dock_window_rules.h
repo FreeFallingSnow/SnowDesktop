@@ -161,6 +161,16 @@ constexpr DockClickAction ResolveDockClickAction(
     return DockClickAction::Activate;
 }
 
+// Pinned and frequent launchable icons share the launch gesture preference.
+// Running windows keep their immediate activation/minimize/restore actions.
+constexpr bool ShouldWaitForDockLaunchDoubleClick(
+    bool singleClickLaunchItems,
+    DockClickAction action) noexcept
+{
+    return action == DockClickAction::Launch &&
+        !singleClickLaunchItems;
+}
+
 /**
  * @brief 将预览缩略图点击转换为窗口级点击动作。
  *

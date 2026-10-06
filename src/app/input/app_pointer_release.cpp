@@ -596,8 +596,9 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     bool waitForDoubleClick = false;
     if (appItemIndex < items_.size() && !folderEntry)
         waitForDoubleClick =
-            pressedWindowAction ==
-                snowdesktop::dock_window_rules::DockClickAction::Launch;
+            snowdesktop::dock_window_rules::ShouldWaitForDockLaunchDoubleClick(
+                dockSettings_.singleClickLaunchItems,
+                pressedWindowAction);
     const bool matchingPendingDoubleClick =
         snowdesktop::dock_window_rules::
             IsMatchingPendingDockDoubleClickRelease(
@@ -647,9 +648,11 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     // A click pair can cross Dock HWNDs when the persistent Host changes its
     // selected monitor or Z-order band. Windows then emits two ordinary click
     // sequences instead of WM_LBUTTONDBLCLK. Complete the same action on the
-    // second release so folders and closed items still require two clicks.
+    // second release for folders and closed items using double-click launch.
+    // In single-click mode the first release already launched the item, so
+    // consume the second release without launching it again.
     if (matchingPendingDoubleClick &&
-        (folderEntry || waitForDoubleClick))
+        (folderEntry || waitForDoubleClick || dockSettings_.singleClickLaunchItems))
     {
         dockPendingDoubleClickEntry_ =
             static_cast<size_t>(-1);
@@ -668,7 +671,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
                 shellLaunchWorker_.Enqueue(
                     hwnd_, target.path);
         }
-        else if (appItemIndex < items_.size() &&
+        else if (waitForDoubleClick && appItemIndex < items_.size() &&
             LaunchDesktopItem(appItemIndex, true))
         {
             ClearSelection();
@@ -695,6 +698,21 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     {
         dockSuppressClickReleaseEntry_ =
             static_cast<size_t>(-1);
+        return true;
+    }
+
+    if (dockSettings_.singleClickLaunchItems &&
+        appItemIndex < items_.size() && !folderEntry &&
+        pressedWindowAction == snowdesktop::dock_window_rules::DockClickAction::Launch)
+    {
+        if (LaunchDesktopItem(appItemIndex, true))
+        {
+            // Keep the accepted launch identity until the double-click
+            // interval expires so either HWND path can consume a second click.
+            dockPendingDoubleClickEntry_ = pressedEntryIndex;
+            dockPendingDoubleClickFrequentItem_ = pressedFrequentItemIndex;
+            dockPendingDoubleClickTick_ = GetTickCount();
+        }
         return true;
     }
 

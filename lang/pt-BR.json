@@ -2561,5 +2561,7 @@
   "settings.general.advancedFeatures.updateGuide": "Como atualizar",
   "settings.general.advancedFeatures.updateInstructions": "Verifique se há atualizações do cliente no menu do Steam. Após atualizar, feche completamente o Steam e abra-o novamente. Inicie o SnowDesktop pela biblioteca e tente de novo. Se continuar falhando, informe a versão do cliente e a data da compilação em Ajuda → Sobre o Steam, junto com os detalhes do erro.",
   "app.settings.popup_close_on_mouse_leave": "Fechar pop-ups ao retirar o ponteiro",
-  "app.settings.popup_close_on_mouse_leave_hint": "Fecha os pop-ups de coleções e pastas do Dock quando o ponteiro sai deles, inclusive ao arrastar. Eles permanecem abertos ao renomear ou usar o menu de contexto."
+  "app.settings.popup_close_on_mouse_leave_hint": "Fecha os pop-ups de coleções e pastas do Dock quando o ponteiro sai deles, inclusive ao arrastar. Eles permanecem abertos ao renomear ou usar o menu de contexto.",
+  "settings.dock.singleClickLaunchItems": "Abrir ícones fixados e frequentes com um único clique",
+  "settings.dock.singleClickLaunchItems.description": "Clique uma vez nos ícones de aplicativos e arquivos das áreas de itens fixados e frequentes para iniciá-los ou abri-los. Desativado por padrão; pastas e coleções mantêm o comportamento de pop-up."
 }

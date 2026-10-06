@@ -1113,6 +1113,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
+    ReadBoolField(text, "singleClickLaunchItems",
+        settings.singleClickLaunchItems);
     ReadBoolField(text, "showFrequentItems", settings.showFrequentItems);
     ReadBoolField(text, "keepWhenDesktopHidden",
         settings.keepWhenDesktopHidden);
@@ -1244,6 +1246,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     // every saved configuration to the unconditional feature behavior.
     file << "  \"showRunningApps\": true,\n";
     file << "  \"showWindowPreviews\": " << (settings.showWindowPreviews ? "true" : "false") << ",\n";
+    file << "  \"singleClickLaunchItems\": "
+         << (settings.singleClickLaunchItems ? "true" : "false") << ",\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"keepWhenDesktopHidden\": "

@@ -84,6 +84,7 @@ struct DockSettings : DockLayoutSettings
     // Keep the persisted names for compatibility with existing preferences.
     bool showRunningApps = true;
     bool showWindowPreviews = true;
+    bool singleClickLaunchItems = false;
     bool followComponentAppearance = true;
     int appearancePreset = kAppearancePresetCustom;
     PersonalizationSettings customAppearance;

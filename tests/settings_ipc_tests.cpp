@@ -71,6 +71,12 @@ void TestCodec()
     dockSpace.mergedBarHeight = 64;
     Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
         "system Dock space reservation must cross the settings-process boundary");
+    for (const bool enabled : {true, false})
+    {
+        dockSpace.singleClickLaunchItems = enabled;
+        Check(Unpack<DockSettings>(Pack(dockSpace)).singleClickLaunchItems == enabled,
+            "enabling and disabling single-click launch must reach the desktop host through settings IPC");
+    }
     const auto styleRoute = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::DesktopStyle);
     const auto restoredRoute = Unpack<snowdesktop::SettingsRoute>(Pack(styleRoute));
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,

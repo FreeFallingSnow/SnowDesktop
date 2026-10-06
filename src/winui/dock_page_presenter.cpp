@@ -362,6 +362,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch floatingEdgeSwipeToggle{nullptr};
     muxc::ComboBox edgeRevealGesture{nullptr};
     muxc::ToggleSwitch windowPreviews{nullptr};
+    muxc::ToggleSwitch singleClickLaunchItems{nullptr};
     muxc::ToggleSwitch fullscreenSwipeToggle{nullptr};
     muxc::TextBlock floatingEdgeSwipeHint{nullptr};
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
@@ -400,6 +401,7 @@ struct DockPagePresenter::Impl
     SettingRow monitorScopeRow;
     SettingRow floatingEdgeSwipeRow;
     SettingRow edgeRevealGestureRow, windowPreviewsRow;
+    SettingRow singleClickLaunchItemsRow;
     SettingRow fullscreenSwipeRow;
     SettingRow showWindowsButtonRow;
     SettingRow suppressTaskbarRow;
@@ -456,6 +458,7 @@ struct DockPagePresenter::Impl
     winrt::event_token floatingShortcutToken{};
     winrt::event_token floatingEdgeSwipeToken{};
     winrt::event_token edgeRevealGestureToken{}, windowPreviewsToken{};
+    winrt::event_token singleClickLaunchItemsToken{};
     winrt::event_token fullscreenSwipeToken{};
     winrt::event_token showWindowsButtonToken{};
     winrt::event_token suppressTaskbarToken{};
@@ -565,6 +568,7 @@ struct DockPagePresenter::Impl
         floatingEdgeSwipeToggle = muxc::ToggleSwitch{};
         edgeRevealGesture = NewCombo();
         windowPreviews = muxc::ToggleSwitch{};
+        singleClickLaunchItems = muxc::ToggleSwitch{};
         fullscreenSwipeToggle = muxc::ToggleSwitch{};
         showWindowsButtonToggle = muxc::ToggleSwitch{};
         suppressTaskbarToggle = muxc::ToggleSwitch{};
@@ -593,6 +597,8 @@ struct DockPagePresenter::Impl
         edgeRevealGestureRow.Initialize(edgeRevealGesture);
         windowPreviewsRow.Initialize(windowPreviews);
         windowPreviewsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        singleClickLaunchItemsRow.Initialize(singleClickLaunchItems);
+        singleClickLaunchItemsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenSwipeRow.Initialize(fullscreenSwipeToggle);
         fullscreenSwipeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
@@ -629,6 +635,7 @@ struct DockPagePresenter::Impl
         suppressionStatus.IsOpen(false);
         behaviorCard.content.Children().Append(suppressionStatus);
         behaviorCard.content.Children().Append(windowPreviewsRow.root);
+        behaviorCard.content.Children().Append(singleClickLaunchItemsRow.root);
         behaviorCard.content.Children().Append(showWindowsButtonRow.root);
         behaviorCard.content.Children().Append(showFrequentItemsRow.root);
         behaviorCard.content.Children().Append(frequentItemCount.root);
@@ -1177,6 +1184,11 @@ struct DockPagePresenter::Impl
             const bool value = windowPreviews.IsOn();
             EmitDock(SettingsUpdateMode::PreviewAndCommit,
                 [value](DockSettings& settings) { settings.showWindowPreviews = value; });
+        });
+        singleClickLaunchItemsToken = singleClickLaunchItems.Toggled([this](const auto&, const auto&) {
+            const bool value = singleClickLaunchItems.IsOn();
+            EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                [value](DockSettings& settings) { settings.singleClickLaunchItems = value; });
         });
         fullscreenSwipeToken = fullscreenSwipeToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -1783,6 +1795,7 @@ struct DockPagePresenter::Impl
             static_cast<int>(settings.monitorScope), 0, 2));
         edgeRevealGesture.SelectedIndex(settings.edgeRevealGesture);
         windowPreviews.IsOn(settings.showWindowPreviews);
+        singleClickLaunchItems.IsOn(settings.singleClickLaunchItems);
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
         fullscreenSwipeToggle.IsOn(settings.floatingEdgeSwipeBlockFullscreen);
         floatingEdgeSwipeToggle.IsOn(
@@ -1872,6 +1885,7 @@ struct DockPagePresenter::Impl
         floatingEdgeSwipeRow.SetEnabled(dockEnabled && !showOnlyWhenSummonedToggle.IsOn());
         edgeRevealGestureRow.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
         windowPreviewsRow.SetEnabled(dockEnabled);
+        singleClickLaunchItemsRow.SetEnabled(dockEnabled);
         frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         showOnlyWhenSummonedRow.SetEnabled(dockEnabled);
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
@@ -2489,6 +2503,12 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
+        singleClickLaunchItemsRow.SetText(
+            L("settings.dock.singleClickLaunchItems", L"Launch pinned and frequent icons with a single click"),
+            L("settings.dock.singleClickLaunchItems.description",
+                L"Single-click app and file icons in the pinned and frequent areas to launch or open them. Off by default; folders and collections keep their popup behavior."));
+        muxa::AutomationProperties::SetName(
+            singleClickLaunchItems, singleClickLaunchItemsRow.label.Text());
         showFrequentItemsRow.SetText(L(
             "app.dock.show_frequent_items", L"Show Frequent Items"));
         muxa::AutomationProperties::SetName(
@@ -2717,6 +2737,7 @@ struct DockPagePresenter::Impl
             return floatingShortcutToggle;
         if (id == "dock.edgeRevealGesture") return edgeRevealGesture;
         if (id == "dock.showWindowPreviews") return windowPreviews;
+        if (id == "dock.singleClickLaunchItems") return singleClickLaunchItems;
         if (id == "dock.floatingEdgeSwipeBlockFullscreen")
             return fullscreenSwipeToggle;
         if (id == "dock.floatingEdgeSwipe" ||
@@ -2879,6 +2900,7 @@ struct DockPagePresenter::Impl
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);
             edgeRevealGesture.SelectionChanged(edgeRevealGestureToken);
             windowPreviews.Toggled(windowPreviewsToken);
+            singleClickLaunchItems.Toggled(singleClickLaunchItemsToken);
             fullscreenSwipeToggle.Toggled(fullscreenSwipeToken);
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
             dockPreview.Click(dockPreviewToken); taskbarPreview.Click(taskbarPreviewToken);

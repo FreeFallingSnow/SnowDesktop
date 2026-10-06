@@ -2561,5 +2561,7 @@
   "settings.general.advancedFeatures.updateGuide": "更新方法",
   "settings.general.advancedFeatures.updateInstructions": "请在 Steam 菜单中检查客户端更新。更新后完全退出并重新打开 Steam，再从库中启动 SnowDesktop 重试。若仍失败，请提供“帮助 → 关于 Steam”中的客户端版本、构建日期及错误详情。",
   "app.settings.popup_close_on_mouse_leave": "鼠标移出弹窗时关闭",
-  "app.settings.popup_close_on_mouse_leave_hint": "鼠标移出集合或 Dock 文件夹弹窗后自动关闭，拖拽时同样适用；重命名和右键菜单操作期间保持打开。"
+  "app.settings.popup_close_on_mouse_leave_hint": "鼠标移出集合或 Dock 文件夹弹窗后自动关闭，拖拽时同样适用；重命名和右键菜单操作期间保持打开。",
+  "settings.dock.singleClickLaunchItems": "固定区和常用区图标单击启动",
+  "settings.dock.singleClickLaunchItems.description": "单击固定区和常用区的应用、文件图标即可启动或打开。默认关闭；文件夹和集合仍使用原有弹出方式。"
 }
