@@ -1164,8 +1164,9 @@ void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
             floatingPopupMouseHookGeneration_, pointerInside))
         return;
 
+    // OLE transport can outlive the logical drag during a synchronous Drop.
+    // Its retained context must block dismissal until the commit is detached.
     const bool dragging = dragSession_.IsActive() ||
-        dragDropController_.IsTransportActive() ||
         widgetAction_ == WidgetAction::Move ||
         widgetAction_ == WidgetAction::Resize || largeIconGesture_;
     const HWND dialogOwner = ShellDialogOwnerHwnd();

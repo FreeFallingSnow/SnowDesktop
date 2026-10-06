@@ -34,6 +34,7 @@
 #include "app/tray_notification_window.h"
 #include "constants.h"
 #include "drag_input_rules.h"
+#include "floating_popup_rules.h"
 #include "ole_drag_rules.h"
 
 #include <propsys.h>
@@ -1857,6 +1858,13 @@ void TestOwnedTransientDragTargetBoundsMemberWrappers()
             factoryCalls == 10004,
         "10000 container generations must replace the previous epoch without accumulating handoff wrappers");
 
+    DragDropController popupTransport(session);
+    popupTransport.BeginSelfDrag();
+    Check(!snowdesktop::floating_popup_rules::
+            ShouldBlockMouseLeaveForPointerPress(
+                session.IsActive(), session.HasContext()),
+        "an active popup OLE drag must allow mouse-leave dismissal while retaining its drag context");
+
     Item* committedTargetItem =
         session.TargetSlot()->GetItem();
     session.DeactivateForDrop();
@@ -1866,6 +1874,11 @@ void TestOwnedTransientDragTargetBoundsMemberWrappers()
             session.TargetSlot()->GetItem() ==
                 committedTargetItem,
         "deactivating for a synchronous drop must retain the transient target until the commit context is detached");
+    Check(popupTransport.IsTransportActive() &&
+            snowdesktop::floating_popup_rules::
+                ShouldBlockMouseLeaveForPointerPress(
+                    session.IsActive(), session.HasContext()),
+        "a committing popup drop must block mouse-leave dismissal even while the OLE transport remains active");
     session.UpdateTarget(
         nullptr, nullptr, HitRegion::None);
     target.Reset();
@@ -1873,6 +1886,7 @@ void TestOwnedTransientDragTargetBoundsMemberWrappers()
             target.Get() == nullptr &&
             target.OwnedItemCount() == 0,
         "popup teardown must detach an inactive drop context before destroying the transient target");
+    popupTransport.EndSelfDrag();
     session.End();
 }
 
