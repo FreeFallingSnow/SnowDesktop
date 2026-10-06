@@ -32166,7 +32166,7 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
     const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
         manager.ListPackages(), snapshot);
     snowdesktop::widget::SteamWorkshopSyncResult result;
-    result.errors = plan.conflicts;
+    result.warnings = plan.conflicts;
     result.installFailures = snapshot.discoveryFailures;
     for (const auto& failure : snapshot.discoveryFailures)
     {
@@ -32282,7 +32282,11 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         std::error_code cleanupError;
         std::filesystem::remove(artifact, cleanupError);
     }
-    if (snapshot.CanSynchronize() && result.errors.empty() &&
+    // Subscription identities describe the local manifest independently of
+    // whether each package can be applied. Persist them even when one item
+    // conflicts or fails; remaining managed copies are retried from their
+    // installed source bindings on the next reconciliation.
+    if (snapshot.CanSynchronize() &&
         !snapshot.activeSteamAccountId.empty())
     {
         std::string historyError;

@@ -62,7 +62,8 @@ BuildSteamWorkshopPackageAssociations(
 
 void ResolveSteamWorkshopSubscriptionRemovals(
     SteamWorkshopSubscriptionSnapshot& snapshot,
-    const SteamWorkshopSubscriptionHistory& history)
+    const SteamWorkshopSubscriptionHistory& history,
+    const std::vector<InstalledPackage>& installed)
 {
     snapshot.explicitlyUnsubscribedPublishedFileIds.clear();
     if (!snapshot.authoritative || snapshot.activeSteamAccountId.empty())
@@ -82,7 +83,21 @@ void ResolveSteamWorkshopSubscriptionRemovals(
         if (accountId == snapshot.activeSteamAccountId) continue;
         subscribedByOtherAccounts.insert(itemIds.begin(), itemIds.end());
     }
-    for (const auto& publishedFileId : previous->second)
+    // Once this account has a baseline, recover managed identities omitted by
+    // old/incomplete history directly from the installed source bindings. A
+    // package conflict or failed install must not make removals depend on
+    // having recorded a successful earlier synchronization.
+    std::unordered_set<std::string> candidates(
+        previous->second.begin(), previous->second.end());
+    for (const auto& package : installed)
+    {
+        if (package.builtin || package.development ||
+            package.source.providerId != "steam-workshop")
+            continue;
+        const auto id = SteamPublishedFileId(package.source.externalItemId);
+        if (!id.empty()) candidates.insert(id);
+    }
+    for (const auto& publishedFileId : candidates)
     {
         if (!current.contains(publishedFileId) &&
             !subscribedByOtherAccounts.contains(publishedFileId))
@@ -140,7 +155,8 @@ SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
     std::unordered_set<std::string> scheduledRemoval;
     for (const auto& package : installed)
     {
-        if (package.source.providerId != "steam-workshop")
+        if (package.builtin || package.development ||
+            package.source.providerId != "steam-workshop")
             continue;
         const std::string publishedFileId =
             SteamPublishedFileId(package.source.externalItemId);

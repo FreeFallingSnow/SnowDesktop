@@ -73,3 +73,37 @@ Target: `caacfa12b26bcd990fd930578013df531656cb7b`.
 旧订阅，使历史遗漏的已安装工坊组件无法进入卸载名单。本地音频频谱与工坊包的 ID 冲突又阻止
 有效订阅历史保存。因此此 Steam 数据场景验收失败。上述开发目录的通过记录仅适用于当时数据；
 本次检查只读，不修改用户数据，不查询在线订阅。
+
+## Established-account reconciliation candidate (2026-10-06)
+
+- Reconcile managed Steam source bindings alongside the existing account history,
+  so incomplete old history does not hide installed packages absent from a valid
+  local subscription manifest. New-account baselines, other accounts' remembered
+  subscriptions, local packages, built-ins and development packages stay protected.
+- An existing local package ID causes that subscribed Workshop item to be skipped
+  with a diagnostic warning. Valid subscription identities are persisted independently
+  of individual package apply errors; still-installed absent items can be retried.
+- Standard Release build and full application suite passed in batch
+  `f5a73e34a55f4839b3e07725089bf69b`: 128/128, parallelism 4, 170.38 seconds,
+  no test retries, no compile/link warnings, stable input and output checks passed.
+  Tools/manual suites were not selected; no build-tool implementation changed.
+- Candidate executable SHA-256:
+  `9e7be90ac4692770468bffd32424b29820989ce4304a3e7fe9f8eed51f3d3168`.
+- The same Steam installation data now yields five removal actions, against zero
+  from history-only reconciliation: `3806202707`, `3804397314`, `3806093751`,
+  `3806138954`, `3806972908`. The manifest and registry hashes remained stable
+  across the read-only probe. No actual Steam user package was removed by the probe.
+- Isolated production-source/package-manager regression performs removal with stale
+  history and a competing local package ID, checks subscribed/local retention and
+  persisted identities, and retries a remaining managed copy after history advances.
+- Evidence: `.build/verification/workshop-skip-20261005/steam-registry-after-20261006.log`
+  and `steam-registry-evidence-20261006.json`; the batch log and CTest report preserve
+  the full suite. No online subscription query or protocol was added.
+- Pending: acceptance in a Steam runtime containing this candidate. Build `25731163`
+  contains the previous try, and has not been replaced/published by this task.
+
+中文结果：以已安装工坊来源补齐旧历史的遗漏，单项本地 ID 冲突跳过并记录提示，有效本地订阅历史
+独立保存。标准 Release 和应用全量 128/128 通过，4 路并行 170.38 秒，无重试、编译或链接警告。
+同一份 Steam 数据只读核对从零个卸载操作变为五个，期间数据哈希稳定；隔离回归实际执行卸载，
+验证本地/已订阅包保留和再次同步。没有引入在线查询或协议；Steam Build 25731163 尚不含此补改，
+待包含该候选的 Steam 宿主实机验收。本次探测未修改 Steam 用户组件数据。

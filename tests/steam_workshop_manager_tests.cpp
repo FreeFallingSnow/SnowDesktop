@@ -655,14 +655,14 @@ void TestSteamSubscriptionSyncPlan()
     switchedAccount.authoritative = true;
     switchedAccount.activeSteamAccountId = "222";
     ResolveSteamWorkshopSubscriptionRemovals(
-        switchedAccount, subscriptionHistory);
+        switchedAccount, subscriptionHistory, { current });
     plan = BuildSteamWorkshopSyncPlan({ current }, switchedAccount);
     Check(plan.actions.empty(),
         "an empty cache after switching Steam accounts preserves local components");
 
     SteamWorkshopSubscriptionSnapshot sharedAcrossAccounts = unsubscribed;
     ResolveSteamWorkshopSubscriptionRemovals(sharedAcrossAccounts,
-        { { "111", { "100" } }, { "222", { "100" } } });
+        { { "111", { "999" } }, { "222", { "100" } } }, { current });
     plan = BuildSteamWorkshopSyncPlan({ current }, sharedAcrossAccounts);
     Check(plan.actions.empty(),
         "another account's remembered subscription preserves the local component");
@@ -702,6 +702,29 @@ void TestSteamSubscriptionSyncPlan()
     plan = BuildSteamWorkshopSyncPlan({ local }, snapshot);
     Check(plan.actions.empty() && plan.conflicts.size() == 1,
         "automatic subscription sync does not replace another package source");
+
+    auto staleHistory = snapshot;
+    staleHistory.activeSteamAccountId = "111";
+    const auto retired = Installed("package-retired", "1.0.0", "steam-workshop", "200@42");
+    const auto retainedLocal = Installed("local-only", "1.0.0", "local-directory", "300");
+    auto developmentOnly = Installed("development-only", "1.0.0", "steam-workshop", "400");
+    developmentOnly.development = true;
+    const SteamWorkshopSubscriptionHistory incomplete{{"111", {"999"}}};
+    const std::vector<InstalledPackage> managed{current, retired, local, retainedLocal, developmentOnly};
+    ResolveSteamWorkshopSubscriptionRemovals(staleHistory, incomplete);
+    const auto historyOnlyPlan = BuildSteamWorkshopSyncPlan(managed, staleHistory);
+    Check(std::none_of(historyOnlyPlan.actions.begin(), historyOnlyPlan.actions.end(),
+            [](const auto& action) { return action.kind == SteamWorkshopSyncActionKind::Uninstall; }),
+        "history-only reconciliation reproduces the Steam installation's missing removal");
+    ResolveSteamWorkshopSubscriptionRemovals(staleHistory, incomplete, managed);
+    plan = BuildSteamWorkshopSyncPlan(managed, staleHistory);
+    Check(plan.actions.size() == 2 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        plan.actions[0].packageId == "package-retired" && plan.actions[1].kind == SteamWorkshopSyncActionKind::Update,
+        "established-account local subscriptions retire history omissions while retaining subscribed and local packages");
+    staleHistory.authoritative = false;
+    ResolveSteamWorkshopSubscriptionRemovals(staleHistory, incomplete, managed);
+    Check(BuildSteamWorkshopSyncPlan(managed, staleHistory).actions.empty(),
+        "an unreadable subscription manifest cannot remove packages recovered from installed bindings");
 }
 
 void TestProjectStore()
@@ -1411,8 +1434,8 @@ void TestPartialWorkshopSourceAndPackageMutations()
         installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id) &&
         manager.Resolve(id)->manifest.version == "1.1.0" && manager.Resolve(unseenId).has_value(),
         "updating refreshes the warmed catalogue while the unavailable library's package survives");
-    Check(manager.UpdateSteamSubscriptionHistory("123", {"100", "200"}, error),
-        "persist the real pre-unsubscribe history in the isolated package registry");
+    Check(manager.UpdateSteamSubscriptionHistory("123", {"999"}, error),
+        "reproduce the Steam installation's stale established-account history in the isolated registry");
     using PackageValidationQuery = snowdesktop::BoundedFileQuery<SteamWorkshopSubscriptionSnapshot>;
     const auto validationKey = bridge.lexically_normal().native() + L"\n100:" +
         archive.parent_path().lexically_normal().native();
@@ -1432,7 +1455,7 @@ void TestPartialWorkshopSourceAndPackageMutations()
     Check(PackageValidationQuery::Wait(stalledValidation,
         std::chrono::steady_clock::now() + std::chrono::seconds(2)).has_value(),
         "the held validation job exits before fixture cleanup");
-    ResolveSteamWorkshopSubscriptionRemovals(slow, manager.SteamSubscriptionHistory());
+    ResolveSteamWorkshopSubscriptionRemovals(slow, manager.SteamSubscriptionHistory(), manager.ListPackages());
     const auto slowPlan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), slow);
     Check(error.empty() && slow.error.empty() && slow.authoritative && slow.installable.empty() &&
         slow.warning.find("packages skipped") != std::string::npos &&
@@ -1441,15 +1464,41 @@ void TestPartialWorkshopSourceAndPackageMutations()
         "a skipped slow archive does not erase local subscriptions or block their unsubscribe plan");
     auto blocked = snapshot;
     blocked.authoritative = false; // Negative control: the preceding try's whole-scan gate.
-    ResolveSteamWorkshopSubscriptionRemovals(blocked, manager.SteamSubscriptionHistory());
+    ResolveSteamWorkshopSubscriptionRemovals(blocked, manager.SteamSubscriptionHistory(), manager.ListPackages());
     Check(BuildSteamWorkshopSyncPlan(manager.ListPackages(), blocked).actions.empty(),
         "the former non-authoritative gate reproduces the reported unsubscribe residue");
     ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory());
+    Check(BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot).actions.empty(),
+        "stale history without installed bindings reproduces the actual Steam removal-plan failure");
+    const std::string localId = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb25";
+    writePackage(localId, "1.0.0");
+    Check(manager.InstallDirectory(sourceDirectory, {"local-directory", "audio-spectrum"}, false,
+        installed, report, error), "retain a real local package before its subscribed ID conflict");
+    PackageDetails conflicting;
+    conflicting.manifest = installed.manifest;
+    conflicting.source = {"steam-workshop", "300"};
+    snapshot.installable.push_back(conflicting);
+    snapshot.subscribedPublishedFileIds.push_back("300");
+    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory(), manager.ListPackages());
     const auto removal = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
     Check(removal.actions.size() == 1 && removal.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
-        removal.actions[0].packageId == unseenId && manager.Uninstall(unseenId, error) &&
-        manager.RefreshCatalog(error) && !manager.ContainsPackage(unseenId) && manager.Resolve(id).has_value(),
-        "a local manifest unsubscribe removes its managed package despite skipped roots and refreshes the catalogue");
+        removal.actions[0].packageId == unseenId && removal.conflicts.size() == 1 &&
+        manager.Uninstall(unseenId, error) && manager.RefreshCatalog(error) &&
+        !manager.ContainsPackage(unseenId) && manager.Resolve(id).has_value() && manager.Resolve(localId).has_value(),
+        "stale history and an unrelated local ID conflict cannot stop local-manifest uninstallation or overwrite local packages");
+    Check(manager.UpdateSteamSubscriptionHistory("123",
+            BuildSteamWorkshopSubscriptionHistory(snapshot, manager.SteamSubscriptionHistory()), error) &&
+        manager.SteamSubscriptionHistory().at("123") == std::vector<std::string>({"100", "300"}),
+        "valid local subscription identities persist independently of a package conflict");
+    // A failed removal also needs a fresh plan after history has advanced.
+    writePackage(unseenId, "1.0.0");
+    Check(manager.InstallDirectory(sourceDirectory, {"steam-workshop", "200@42"}, false,
+        installed, report, error), "recreate a remaining managed copy for removal retry");
+    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory(), manager.ListPackages());
+    const auto retry = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    Check(retry.actions.size() == 1 && retry.actions[0].packageId == unseenId &&
+        retry.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall && manager.Uninstall(unseenId, error),
+        "a managed copy still absent from subscriptions is retried even after history was saved");
     Check(manager.Uninstall(id, error) && manager.RefreshCatalog(error) && !manager.ContainsPackage(id),
         "local uninstall immediately removes cached Workshop package entries");
     const auto resubscribed = source.QuerySubscriptions(query, error);

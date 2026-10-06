@@ -78,13 +78,19 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             }
             if (result.errors.empty())
             {
-                if (ready->snapshot.warning != steamWorkshopSubscriptionLastError_)
+                std::string warnings = ready->snapshot.warning;
+                for (const auto& warning : result.warnings)
                 {
-                    steamWorkshopSubscriptionLastError_ = ready->snapshot.warning;
-                    if (!ready->snapshot.warning.empty())
+                    if (!warnings.empty()) warnings += " | ";
+                    warnings += warning;
+                }
+                if (warnings != steamWorkshopSubscriptionLastError_)
+                {
+                    steamWorkshopSubscriptionLastError_ = warnings;
+                    if (!warnings.empty())
                     {
                         const std::wstring message = Utf8ToWide(
-                            "Steam Workshop skipped libraries: " + ready->snapshot.warning);
+                            "Steam Workshop subscription sync skipped: " + warnings);
                         WriteDiagnosticLogEntry(message.c_str());
                     }
                 }
@@ -287,7 +293,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         snapshot.confirmedUnsubscribedPublishedFileIds =
             std::move(confirmedUnsubscriptions);
         snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
-            snapshot, subscriptionHistory);
+            snapshot, subscriptionHistory, installedPackages);
         WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
             installedPackages, packageStaging);
         {
