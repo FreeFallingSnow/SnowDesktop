@@ -37,6 +37,10 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 
 void DesktopApp::OnMouseLeave()
 {
+    POINT popupPoint{};
+    if (hwnd_ && IsWindow(hwnd_) && GetCursorPos(&popupPoint) &&
+        ScreenToClient(hwnd_, &popupPoint))
+        UpdatePopupCloseOnMouseLeave(popupPoint);
     POINT hoverPoint{};
     if (TryGetDesktopHoverPointFromCursor(hoverPoint)) UpdatePopupHover(hoverPoint);
     else CancelPopupHover();

@@ -5057,7 +5057,13 @@ int main(int argc, char** argv)
     Check(!floatingPopup::ShouldCloseOnMouseLeave(true, true, true, false),
         "a native leave message inside popup content does not dismiss it");
     Check(!floatingPopup::ShouldCloseOnMouseLeave(true, true, false, true),
-        "pointer exit preserves a popup used by a drag, rename, dialog or menu");
+        "pointer exit preserves a popup used by a rename, dialog or menu");
+    Check(!floatingPopup::ShouldBlockMouseLeaveForPointerPress(true, true) &&
+            !floatingPopup::ShouldBlockMouseLeaveForPointerPress(true, false),
+        "native/OLE/widget dragging permits popup exit even with capture or buttons held");
+    Check(floatingPopup::ShouldBlockMouseLeaveForPointerPress(false, true) &&
+            !floatingPopup::ShouldBlockMouseLeaveForPointerPress(false, false),
+        "pending clicks and selection presses keep their popup until a drag is established");
     Check(floatingPopup::ShouldRevealHost(false, true) &&
             !floatingPopup::ShouldRevealHost(false, false) &&
             !floatingPopup::ShouldRevealHost(true, true) &&

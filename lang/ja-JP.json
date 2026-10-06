@@ -2561,5 +2561,5 @@
   "settings.general.advancedFeatures.updateGuide": "更新方法",
   "settings.general.advancedFeatures.updateInstructions": "Steam メニューからクライアントの更新を確認してください。更新後は Steam を完全に終了して再起動し、ライブラリから SnowDesktop を起動して再試行してください。解決しない場合は、「ヘルプ → Steam について」に表示されるクライアントのバージョンとビルド日、およびエラーの詳細をお知らせください。",
   "app.settings.popup_close_on_mouse_leave": "マウスポインターが離れたらポップアップを閉じる",
-  "app.settings.popup_close_on_mouse_leave_hint": "コレクションや Dock フォルダーのポップアップからマウスポインターが離れると、自動的に閉じます。ドラッグ、名前の変更、右クリックメニューの操作中は開いたままにします。"
+  "app.settings.popup_close_on_mouse_leave_hint": "コレクションや Dock フォルダーのポップアップからマウスポインターが離れると、ドラッグ中でも自動的に閉じます。名前の変更や右クリックメニューの操作中は開いたままにします。"
 }

@@ -2561,5 +2561,5 @@
   "settings.general.advancedFeatures.updateGuide": "Cómo actualizar",
   "settings.general.advancedFeatures.updateInstructions": "Busca actualizaciones del cliente en el menú de Steam. Después de actualizar, cierra Steam por completo y vuelve a abrirlo. Inicia SnowDesktop desde tu biblioteca y vuelve a intentarlo. Si sigue fallando, comparte la versión del cliente y la fecha de compilación de Ayuda → Acerca de Steam, junto con los detalles del error.",
   "app.settings.popup_close_on_mouse_leave": "Cerrar ventanas emergentes al sacar el cursor",
-  "app.settings.popup_close_on_mouse_leave_hint": "Cierra las ventanas emergentes de colecciones y carpetas del Dock al sacar el cursor. Permanecen abiertas al arrastrar, cambiar nombres o usar el menú contextual."
+  "app.settings.popup_close_on_mouse_leave_hint": "Cierra las ventanas emergentes de colecciones y carpetas del Dock al sacar el cursor, incluso al arrastrar. Permanecen abiertas al cambiar nombres o usar el menú contextual."
 }

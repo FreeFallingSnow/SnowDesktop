@@ -44,10 +44,18 @@ constexpr bool ShouldCloseOnMouseLeave(
     bool pointerInsidePopup,
     bool interactionBusy)
 {
-    // Only an actual exit dismisses storage popups. A menu/captured gesture
-    // can produce native mouse-leave messages while still using their data.
+    // Only an actual exit dismisses storage popups. Menus and editing can
+    // produce native mouse-leave messages while still using their data.
     return enabled && collectionPopupInteractive &&
         !pointerInsidePopup && !interactionBusy;
+}
+
+constexpr bool ShouldBlockMouseLeaveForPointerPress(
+    bool dragActive, bool pointerPressed)
+{
+    // An established native/OLE/widget drag may leave with capture/buttons held;
+    // a pending click or selection gesture must keep its popup alive.
+    return pointerPressed && !dragActive;
 }
 
 template <typename Handle>

@@ -1909,6 +1909,8 @@ private:
     /** Passive hover uses live hit testing and never shares drag dwell state. */
     void UpdatePopupHover(POINT point, bool allowOpen = false);
     void CancelPopupHover(bool suppressUntilLeave = false);
+    void UpdatePopupCloseOnMouseLeave(POINT point);
+    void SyncPopupMouseLeaveTimer();
     /** @brief 拖动条目时更新集合组标签的悬停切换计时。 */
     void UpdateCollectionGroupTabDwell(POINT point);
     void EnsureCollectionGroupTabDwellTimerArmed();
@@ -4474,6 +4476,8 @@ private:
     /** @brief 悬停打开：拖拽中悬停在集合"全部"按钮上 */
     PopupDwellController popupDwellController_;
     PopupHoverController popupHoverController_;
+    PopupMouseLeaveController popupMouseLeaveController_;
+    bool popupMouseLeaveTimerArmed_ = false;
     bool popupHoverTimerArmed_ = false;
     bool collectionPopupDwellTimerArmed_ = false;
     bool collectionPopupDwellTimerObserved_ = false;

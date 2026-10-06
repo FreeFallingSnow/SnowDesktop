@@ -2035,6 +2035,7 @@ void DesktopApp::ApplyQuickNavigationAppearance()
 
 void DesktopApp::ApplyCollectionPopupAppearance()
 {
+    SyncPopupMouseLeaveTimer();
     const PersonalizationSettings globalAppearance = CurrentPersonalization();
 
     collectionPopupAppearance_ = snowdesktop::ResolveSurfaceTheme(

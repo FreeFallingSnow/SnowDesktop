@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 /** Owns hover-candidate timing for drag-opened collection popups. */
@@ -89,4 +90,26 @@ private:
     std::wstring token_;
     DWORD startedAt_ = 0;
     bool consumed_ = false;
+};
+
+/** Pointer/OLE/timer samples share one entry latch for the current popup. */
+class PopupMouseLeaveController
+{
+public:
+    bool Observe(std::uint32_t generation, bool pointerInside)
+    {
+        if (generation_ != generation)
+        {
+            generation_ = generation;
+            entered_ = false;
+        }
+        if (pointerInside) entered_ = true;
+        return entered_ && !pointerInside;
+    }
+
+    void Reset() { generation_ = 0; entered_ = false; }
+
+private:
+    std::uint32_t generation_ = 0;
+    bool entered_ = false;
 };

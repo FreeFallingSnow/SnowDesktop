@@ -491,6 +491,10 @@ HRESULT DesktopApp::HandleOleDragOver(
 
 HRESULT DesktopApp::HandleOleDragLeave()
 {
+    POINT popupPoint{};
+    if (hwnd_ && IsWindow(hwnd_) && GetCursorPos(&popupPoint) &&
+        ScreenToClient(hwnd_, &popupPoint))
+        UpdatePopupCloseOnMouseLeave(popupPoint);
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;

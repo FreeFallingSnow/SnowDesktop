@@ -15,6 +15,7 @@ void DesktopApp::CancelPopupHover(bool suppressUntilLeave)
 
 void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
 {
+    UpdatePopupCloseOnMouseLeave(point);
     if (!personalizationSettings_.popupHoverOpen)
     {
         CancelPopupHover();
@@ -285,6 +286,7 @@ void DesktopApp::CancelCollectionGroupTabDwell()
 
 void DesktopApp::UpdateCollectionPopupDwell(POINT point)
 {
+    UpdatePopupCloseOnMouseLeave(point);
     lastMousePoint_ = point;
     if (!CanCurrentDragUseCollectionPopup())
     {

@@ -10,6 +10,9 @@
 
 namespace
 {
+constexpr UINT_PTR kPopupMouseLeaveTimerId = 1;
+constexpr UINT kPopupMouseLeavePollIntervalMs = 50;
+
 RECT UnionRects(const RECT& first, const RECT& second)
 {
     if (IsRectEmpty(&first))
@@ -205,6 +208,7 @@ void DesktopApp::StopFloatingPopupOutsideClickMonitor()
 
 void DesktopApp::AdvanceFloatingPopupContentGeneration()
 {
+    popupMouseLeaveController_.Reset();
     ++floatingPopupMouseHookGeneration_;
     if (floatingPopupMouseHookGeneration_ == 0)
         ++floatingPopupMouseHookGeneration_;
@@ -923,6 +927,7 @@ void DesktopApp::UpdateCollectionPopupBackdrop()
 void DesktopApp::UpdateFloatingPopupWindowBounds(
     bool immediatePresent)
 {
+    SyncPopupMouseLeaveTimer();
     if (!ShouldShowFloatingPopupWindow())
     {
         StopFloatingPopupOutsideClickMonitor();
@@ -1123,6 +1128,71 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
         ApplyFloatingPopupLayerPolicy();
     }
     ApplyDragPreviewLayerPolicy();
+    SyncPopupMouseLeaveTimer();
+}
+
+void DesktopApp::SyncPopupMouseLeaveTimer()
+{
+    const bool shouldPoll = personalizationSettings_.popupCloseOnMouseLeave &&
+        IsCollectionPopupInteractive() && floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_);
+    if (shouldPoll)
+    {
+        if (!popupMouseLeaveTimerArmed_)
+            popupMouseLeaveTimerArmed_ = SetTimer(floatingPopupHwnd_,
+                kPopupMouseLeaveTimerId, kPopupMouseLeavePollIntervalMs, nullptr) != 0;
+    }
+    else
+    {
+        if (popupMouseLeaveTimerArmed_ && floatingPopupHwnd_)
+            KillTimer(floatingPopupHwnd_, kPopupMouseLeaveTimerId);
+        popupMouseLeaveTimerArmed_ = false;
+        popupMouseLeaveController_.Reset();
+    }
+}
+
+void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
+{
+    if (!personalizationSettings_.popupCloseOnMouseLeave ||
+        !IsCollectionPopupInteractive())
+    {
+        popupMouseLeaveController_.Reset();
+        return;
+    }
+    const bool pointerInside = IsPointInsideOpenPopup(point);
+    if (!popupMouseLeaveController_.Observe(
+            floatingPopupMouseHookGeneration_, pointerInside))
+        return;
+
+    const bool dragging = dragSession_.IsActive() ||
+        dragDropController_.IsTransportActive() ||
+        widgetAction_ == WidgetAction::Move ||
+        widgetAction_ == WidgetAction::Resize || largeIconGesture_;
+    const HWND dialogOwner = ShellDialogOwnerHwnd();
+    const bool pointerPressed = GetCapture() || mouseDown_ ||
+        dragSession_.HasContext() || middleButtonWidgetMove_ ||
+        widgetAction_ != WidgetAction::None ||
+        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+            GetAsyncKeyState(VK_MBUTTON)) & 0x8000);
+    const bool interactionBusy = HasActiveContextMenuSession() ||
+        renameController_.IsActive() ||
+        detailColumnResizeActive_ || luaWidgetPanelMouseDown_ ||
+        (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
+        snowdesktop::floating_popup_rules::ShouldBlockMouseLeaveForPointerPress(
+            dragging, pointerPressed);
+    if (!snowdesktop::floating_popup_rules::ShouldCloseOnMouseLeave(
+            personalizationSettings_.popupCloseOnMouseLeave,
+            IsCollectionPopupInteractive(), pointerInside, interactionBusy))
+        return;
+
+    // Hiding the source HWND must not emit capture loss that cancels a native
+    // drag. The existing close transition snapshots a Dock-folder source and
+    // detaches only the outgoing popup target; keep the drag selection intact.
+    popupMouseLeaveController_.Reset();
+    if (dragging && !dragDropController_.IsTransportActive() &&
+        GetCapture() == floatingPopupHwnd_ && hwnd_ && IsWindow(hwnd_))
+        SetCapture(hwnd_);
+    CloseCollectionPopup(!dragging);
 }
 
 void DesktopApp::PaintFloatingPopupWindow(HWND hwnd)
@@ -1238,32 +1308,20 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         if (GetCursorPos(&cursor) &&
             WindowFromPoint(cursor) == hwnd)
             return 0;
-        POINT point = cursor;
-        const bool pointerKnown = hwnd_ && IsWindow(hwnd_) &&
-            GetCursorPos(&point) && ScreenToClient(hwnd_, &point);
-        const HWND dialogOwner = ShellDialogOwnerHwnd();
-        const bool interactionBusy =
-            !pointerKnown || HasActiveContextMenuSession() ||
-            renameController_.IsActive() || GetCapture() ||
-            mouseDown_ || dragSession_.HasContext() ||
-            dragDropController_.IsTransportActive() ||
-            widgetAction_ != WidgetAction::None || largeIconGesture_ ||
-            middleButtonWidgetMove_ || detailColumnResizeActive_ ||
-            luaWidgetPanelMouseDown_ ||
-            (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
-            ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
-                GetAsyncKeyState(VK_MBUTTON)) & 0x8000);
-        if (snowdesktop::floating_popup_rules::ShouldCloseOnMouseLeave(
-                personalizationSettings_.popupCloseOnMouseLeave,
-                IsCollectionPopupInteractive(),
-                pointerKnown && IsPointInsideOpenPopup(point),
-                interactionBusy))
-        {
-            CloseCollectionPopup();
-        }
         OnMouseLeave();
         return 0;
     }
+    case WM_TIMER:
+        if (wp == kPopupMouseLeaveTimerId)
+        {
+            SyncPopupMouseLeaveTimer();
+            POINT point{};
+            if (popupMouseLeaveTimerArmed_ && hwnd_ && IsWindow(hwnd_) &&
+                GetCursorPos(&point) && ScreenToClient(hwnd_, &point))
+                UpdatePopupCloseOnMouseLeave(point);
+            return 0;
+        }
+        break;
     case WM_LBUTTONDOWN:
         handlingFloatingPopupInput_ = true;
         OnLeftButtonDown(wp, desktopLParam());
@@ -1350,6 +1408,8 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         CloseLuaWidgetPanel(L"", "window-close");
         return 0;
     case WM_DESTROY:
+        popupMouseLeaveTimerArmed_ = false;
+        popupMouseLeaveController_.Reset();
         StopFloatingPopupOutsideClickMonitor();
         if (floatingPopupHwnd_ == hwnd)
             floatingPopupHwnd_ = nullptr;

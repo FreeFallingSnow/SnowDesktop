@@ -2561,5 +2561,5 @@
   "settings.general.advancedFeatures.updateGuide": "업데이트 방법",
   "settings.general.advancedFeatures.updateInstructions": "Steam 메뉴에서 클라이언트 업데이트를 확인하세요. 업데이트 후 Steam을 완전히 종료한 다음 다시 열고, 라이브러리에서 SnowDesktop을 실행하여 다시 시도하세요. 계속 실패하면 도움말 → Steam 정보에 표시된 클라이언트 버전과 빌드 날짜, 오류 상세 정보를 알려 주세요.",
   "app.settings.popup_close_on_mouse_leave": "마우스 포인터가 벗어나면 팝업 닫기",
-  "app.settings.popup_close_on_mouse_leave_hint": "마우스 포인터가 컬렉션이나 Dock 폴더 팝업 밖으로 나가면 자동으로 닫습니다. 드래그, 이름 변경 또는 우클릭 메뉴 조작 중에는 열린 상태를 유지합니다."
+  "app.settings.popup_close_on_mouse_leave_hint": "마우스 포인터가 컬렉션이나 Dock 폴더 팝업 밖으로 나가면 드래그 중에도 자동으로 닫습니다. 이름 변경 또는 우클릭 메뉴 조작 중에는 열린 상태를 유지합니다."
 }

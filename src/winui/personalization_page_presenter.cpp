@@ -1607,7 +1607,7 @@ struct PersonalizationPagePresenter::Impl
         popupCloseOnMouseLeaveRow.SetText(
             L("app.settings.popup_close_on_mouse_leave", L"Close popups when the pointer leaves"),
             L("app.settings.popup_close_on_mouse_leave_hint",
-                L"Close collection and Dock folder popups after the pointer moves out. Keep them open during dragging, renaming or context menu actions."));
+                L"Close collection and Dock folder popups after the pointer moves out, including while dragging. Keep them open during renaming or context menu actions."));
         muxa::AutomationProperties::SetName(
             popupCloseOnMouseLeave, popupCloseOnMouseLeaveRow.label.Text());
         muxa::AutomationProperties::SetName(

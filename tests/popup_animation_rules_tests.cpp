@@ -35,6 +35,19 @@ int main()
 {
     using namespace snowdesktop::popup_animation_rules;
 
+    PopupMouseLeaveController mouseLeave;
+    Check(!mouseLeave.Observe(1, false),
+        "a newly opened popup stays reachable while the drag pointer is still on its opener");
+    Check(!mouseLeave.Observe(1, true) && mouseLeave.Observe(1, false),
+        "pointer or OLE drag entry followed by an outside sample detects popup exit");
+    mouseLeave.Reset();
+    Check(!mouseLeave.Observe(1, false),
+        "disabled/closed popup state cannot retain an entry from an earlier interaction");
+    Check(!mouseLeave.Observe(1, true) && !mouseLeave.Observe(2, false),
+        "replacing popup A with B cannot close B using A's entry latch");
+    Check(!mouseLeave.Observe(2, true) && mouseLeave.Observe(2, false),
+        "timer samples detect drag exit without a native WM_MOUSELEAVE message");
+
     // Exercise the production hover-switch dispatcher and timing controller.
     // Only the window/GPU boundary is replaced: close advances the real State,
     // and publishing replacement content must wait for its hidden endpoint.
