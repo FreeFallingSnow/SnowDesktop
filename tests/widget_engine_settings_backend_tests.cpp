@@ -229,9 +229,9 @@ int main(int argc, char* argv[])
     {
         const std::filesystem::path root(argv[1]);
         const std::string source = ReadFile(
-            root / "src" / "widget_engine_settings_backend.cpp");
+            root / "src/widget/settings/widget_engine_settings_backend.cpp");
         const std::string engineSource = ReadFile(
-            root / "src" / "widget_engine.cpp");
+            root / "src/widget/runtime/widget_engine.cpp");
         Check(!source.empty(), "backend source is readable for contracts");
         Check(!engineSource.empty(),
             "widget engine source is readable for event contracts");

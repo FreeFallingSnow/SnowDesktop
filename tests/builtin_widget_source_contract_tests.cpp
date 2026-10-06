@@ -79,9 +79,9 @@ void TestPublishedV2Catalog(const fs::path& repository)
             std::vector<std::string>{"one", "two"},
         "static catalog extraction tolerates wrapped initializer fields");
     const std::string registry = ReadFile(
-        repository / "src" / "widget_api_registry.cpp");
+        repository / "src/widget/api/widget_api_registry.cpp");
     const std::string viewContract = ReadFile(
-        repository / "src" / "widget_view_contract.cpp");
+        repository / "src/widget/api/widget_view_contract.cpp");
     const std::string luaLs = ReadFile(repository / "widgets" /
         "snowdesktop-lua-widget" / "library" / "snowdesktop-v2.lua");
     const std::string api = ReadFile(repository / "widgets" /

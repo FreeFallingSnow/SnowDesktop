@@ -263,34 +263,29 @@ int main(int argc, char** argv)
     {
         const std::filesystem::path root(argv[1]);
         const std::string composition = ReadFile(
-            root / "src" / "app" / "app_widget_composition.cpp");
+            root / "src/app/widgets/app_widget_composition.cpp");
         const std::string scene = ReadFile(
-            root / "src" / "app" / "app_scene_render.cpp");
+            root / "src/app/render/app_scene_render.cpp");
         const std::string invalidation = ReadFile(
-            root / "src" / "app" / "app_run.cpp");
+            root / "src/app/lifecycle/app_run.cpp");
         const std::string marquee = ReadFile(
-            root / "src" / "app" /
-                "app_widget_marquee_composition.cpp");
+            root / "src/app/widgets/app_widget_marquee_composition.cpp");
         const std::string engine = ReadFile(
-            root / "src" / "widget_engine.cpp");
+            root / "src/widget/runtime/widget_engine.cpp");
         const std::string luaWidget = ReadFile(
             root / "src" / "widgets" / "lua_script.cpp");
         const std::string pointer = ReadFile(
-            root / "src" / "app" / "app_pointer_move.cpp");
+            root / "src/app/input/app_pointer_move.cpp");
         const std::string scrolling = ReadFile(
-            root / "src" / "app" / "app_scroll_interaction.cpp");
+            root / "src/app/input/app_scroll_interaction.cpp");
         const std::string foreground = ReadFile(
-            root / "src" / "app" /
-                "app_desktop_foreground_composition.cpp");
+            root / "src/app/render/app_desktop_foreground_composition.cpp");
         const std::string animationOverlay = ReadFile(
-            root / "src" / "app" /
-                "app_composition_animation_overlay.cpp");
+            root / "src/app/render/app_composition_animation_overlay.cpp");
         const std::string floatingDock = ReadFile(
-            root / "src" / "app" /
-                "app_floating_dock_window.cpp");
+            root / "src/app/dock/app_floating_dock_window.cpp");
         const std::string floatingPopup = ReadFile(
-            root / "src" / "app" /
-                "app_floating_popup_window.cpp");
+            root / "src/app/popup/app_floating_popup_window.cpp");
 
         // Architectural guard for the WM_SIZE/topology recovery defect:
         // parent teardown owns child-cache retirement. This checks source
