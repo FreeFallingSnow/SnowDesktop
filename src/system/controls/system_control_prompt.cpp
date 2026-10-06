@@ -1,6 +1,6 @@
 #include "system_control_prompt.h"
 #include "ui/input/text_input_window.h"
-#include "ui/menu/modern_menu.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 #include "ui/render/native_form_style.h"
 #include "widget/view/widget_scroll_rules.h"
 #include "common/l10n.h"
@@ -106,7 +106,8 @@ struct Prompt
         const wchar_t* labels[]{_LW("controlCenter.openNetwork"),L"WPA2-Personal",L"WPA3-Personal"};
         for(int i=0;i<3;++i){modern_menu::Item item;item.command=static_cast<UINT>(i+1);item.label=labels[i];item.checked=i==securityChoice;choices.push_back(std::move(item));}
         modern_menu::Options options;options.owner=security;options.zOrderOwner=window;options.dpi=dpi;
-        options.appearance=GetRValue(palette.background)>128?modern_menu::Appearance::OpaqueLight:modern_menu::Appearance::OpaqueDark;
+        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(appearance.contextMenuStyle,0,6));
+        options.lightTheme=modern_menu::appearance_rules::IsLightThemeForCurrentWindows(options.appearance);
         GetWindowRect(security,&options.anchorRect);options.anchor={options.anchorRect.left,options.anchorRect.bottom};
         options.rootPlacement=modern_menu::RootPlacement::BelowAnchorRect;
         const auto result=modern_menu::Show(choices,options);

@@ -3,7 +3,7 @@
 #include "system/calendar/system_calendar_editor.h"
 #include "system_panel_placement.h"
 #include "system_panel_transition.h"
-#include "ui/menu/modern_menu.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 #include "layout/popup_round_geometry.h"
 #include "theme/flat_glass_rim.h"
 #include "app/render/desktop_backdrop_compositor.h"
@@ -479,6 +479,8 @@ struct SystemPanel::Impl
             item.enabled=std::string_view(action.id)!="hibernate"||IsPwrHibernateAllowed()!=FALSE;items.push_back(std::move(item));
         }
         modern_menu::Options options;options.owner=window;options.topmost=true;options.dpi=static_cast<UINT>(scale*96);
+        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(current->appearance.contextMenuStyle,0,6));
+        options.lightTheme=modern_menu::appearance_rules::IsLightThemeForCurrentWindows(options.appearance);
         options.anchor={anchor.left,anchor.top};options.anchorRect=anchor;options.rootPlacement=modern_menu::RootPlacement::AboveAnchorRect;
         const auto life=lifetime;auto active=model;StopPointerHover();input.Cancel();modal=calendarMenu=true;
         modern_menu::Result result;
