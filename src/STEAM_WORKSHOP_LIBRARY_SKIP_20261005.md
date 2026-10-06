@@ -46,3 +46,30 @@ Target: `caacfa12b26bcd990fd930578013df531656cb7b`.
 中文结果：新构建运行后，三个退订组件已按宿主原有卸载流程转入隔离目录并从注册表移除；用户
 重新订阅的项目仍保留。实际订阅历史与本地清单一致，补查无待卸载操作。启动时发生的包校验
 超时也未阻断退订同步。本地退订残留的数据流程验收通过；本记录未验收桌面菜单视觉效果。
+
+## Steam installation follow-up failure (2026-10-06)
+
+- Target: `caacfa12b26bcd990fd930578013df531656cb7b`, included in packaged source
+  `72f09bba624bf394adb7341dc6d8a8c7aa66effc`, internal-dev Build `25731163`.
+- The running Steam runtime is `1.0.8.0-487c906757f9f76f`; its executable SHA-256
+  is `4051edebd31e06b690c5f1bf6dc51104ebca9d9a69be27bdd9a6e6a40550b851`.
+  Git ancestry and the local publication receipt confirm it contains that try.
+- Steam uses `D:/SteamLibrary/steamapps/common/SnowDesktop/data/widgets/packages.json`,
+  separate from the developer deployment accepted above. Its active-account
+  history contains only old item `3780926790`; several installed managed
+  Workshop packages absent from the local subscription manifest remain.
+- A read-only production cache/planner probe reports authority true, eight
+  subscriptions, the unavailable E: library skipped, and zero removal actions.
+  Evidence: `.build/verification/workshop-skip-20261005/steam-registry-before-20261006.log`.
+- The Steam deployment log at 2026-10-05 23:58:04 reports an ownership conflict
+  for local-directory package `fe32b603-6fcf-4bc1-a4cf-367f06d42e17`. Planner
+  conflicts do not stop individual actions, but the result-error gate prevents
+  persisting the otherwise valid subscription history.
+- Result: unsubscribe reconciliation **fails in this Steam installation**.
+  The prior developer-data success remains scoped to that dataset. This diagnosis
+  does not modify Steam user data, subscribe/unsubscribe, or query Steam online.
+
+中文结论：当前 Steam 版包含上一轮尝试，但 Steam 安装目录使用另一份组件注册表；历史只含一条
+旧订阅，使历史遗漏的已安装工坊组件无法进入卸载名单。本地音频频谱与工坊包的 ID 冲突又阻止
+有效订阅历史保存。因此此 Steam 数据场景验收失败。上述开发目录的通过记录仅适用于当时数据；
+本次检查只读，不修改用户数据，不查询在线订阅。
