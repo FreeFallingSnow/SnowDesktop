@@ -1126,6 +1126,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kBackgroundShellReadyMessage:
         PollInitialShellRead();
         DrainBackgroundShellWork();
+        if (generalSettings_.dockEnabled && !reloading_ && dockRunningWindowsRefreshTick_ == 0)
+            RefreshDockRunningWindows();
         return 0;
     case kFolderSubscriptionReadyMessage:
         SyncFolderChangeNotifications();
@@ -1221,6 +1223,11 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case kForegroundInteractionChangedMessage:
         HandleDockForegroundInteractionChanged();
+        return 0;
+    case kDockWindowListChangedMessage:
+        if (generalSettings_.dockEnabled && !reloading_ &&
+            dockWindowListChangedTick_.load() != dockRunningWindowsStateTick_)
+            RefreshDockRunningWindows();
         return 0;
     case kSteamWorkshopSubscriptionReadyMessage:
         PollSteamWorkshopSubscriptions();

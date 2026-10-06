@@ -525,9 +525,7 @@ void DesktopApp::RefreshDockRunningWindows(
                         processId,
                         *context->processParents);
             }
-            bool windowIdentityPending = false;
-            std::wstring appUserModelId = context->owner->GetDockWindowAppUserModelIdAsync(
-                window, &windowIdentityPending);
+            std::wstring appUserModelId = context->owner->GetDockWindowAppUserModelIdAsync(window);
             if (appUserModelId.empty() &&
                 (context->hasApplicationPins || context->fixedIdentityPending))
             {
@@ -536,7 +534,6 @@ void DesktopApp::RefreshDockRunningWindows(
                 auto [idIt, newProcess] = context->processAppIds.try_emplace(processId);
                 if (newProcess) idIt->second = QueryDockProcessAppUserModelId(processId);
                 appUserModelId = idIt->second;
-                if (!appUserModelId.empty()) windowIdentityPending = false;
             }
 
             int score = DockWindowsShareActivationGroup(
@@ -585,18 +582,9 @@ void DesktopApp::RefreshDockRunningWindows(
             }
             if (fixed) return TRUE;
 
-            const bool alreadyVisible = std::any_of(
-                context->owner->dockUnpinnedRunningApps_.begin(),
-                context->owner->dockUnpinnedRunningApps_.end(), [&](const auto& app) {
-                    return app.presence.Visible() && app.executablePath == pathIt->second &&
-                        std::find(app.trackedWindows.begin(), app.trackedWindows.end(), window) !=
-                            app.trackedWindows.end();
-                });
-            if (snowdesktop::dock_app_identity_rules::ShouldDeferUnpinnedWindow(
-                    windowIdentityPending, context->fixedIdentityPending,
-                    context->hasApplicationPins, alreadyVisible))
-                return TRUE;
-
+            // The first running presentation must not wait for a Shell query.
+            // Executable identity is usable now; refine its ID/artwork later
+            // without restarting the same window's entrance animation.
             const std::wstring identityKey = !appUserModelId.empty()
                 ? L"AUMID:" + appUserModelId : L"EXE:" + pathIt->second;
             wchar_t titleBuffer[512]{};
@@ -724,6 +712,7 @@ void DesktopApp::RefreshDockRunningWindows(
         info.minimized = candidate.minimized;
         info.foreground = candidate.foreground;
         info.trackedWindows = std::move(candidate.trackedWindows);
+        bool refineIdentityArtwork = false;
         for (size_t i = 0; i < dockUnpinnedRunningApps_.size(); ++i)
         {
             DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
@@ -732,6 +721,8 @@ void DesktopApp::RefreshDockRunningWindows(
                     old.trackedWindows.end();
             if (reused[i] || (old.identityKey != info.identityKey && !sameWindow)) continue;
             info.presence = old.presence;
+            refineIdentityArtwork = old.appUserModelId != info.appUserModelId &&
+                !info.appUserModelId.empty();
             if (old.iconBitmap &&
                 (old.iconRequestedSize >= requiredIconSize ||
                  snowdesktop::icon_render_rules::
@@ -752,9 +743,10 @@ void DesktopApp::RefreshDockRunningWindows(
         }
         info.presence.SetVisible(true, animationNow, animatePresence,
             snowdesktop::animation::RuntimeDurationScale());
-        if (!info.iconBitmap)
+        if (!info.iconBitmap || refineIdentityArtwork)
         {
-            info.iconRequestedSize = requiredIconSize;
+            const int requestSize = std::max(requiredIconSize, info.iconRequestedSize);
+            info.iconRequestedSize = requestSize;
             const auto key = info.identityKey;
             const auto path = info.executablePath;
             const auto appId = info.appUserModelId;
@@ -763,46 +755,46 @@ void DesktopApp::RefreshDockRunningWindows(
             GetWindowThreadProcessId(window, &process);
             const auto queuedAt = GetTickCount64();
             dockIconWork_.Submit(L"dock-running:" + key + L"\n" +
-                std::to_wstring(requiredIconSize), [path, appId, window, process, requiredIconSize, queuedAt] {
+                std::to_wstring(requestSize), [path, appId, window, process, requestSize, queuedAt] {
                 const auto started = GetTickCount64();
                 auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                 result->bitmap = snowdesktop::initial_icon_bitmap::ReadRunning(!appId.empty(),
-                    [&] { return GetLocalIconResourceBitmap(path, result->size, requiredIconSize); },
+                    [&] { return GetLocalIconResourceBitmap(path, result->size, requestSize); },
                     [&]() -> HBITMAP {
                         DWORD current = 0;
                         GetWindowThreadProcessId(window, &current);
                         if (!process || current != process) return nullptr;
-                        return CreateDockWindowProvidedIconBitmap(window, result->size, requiredIconSize);
+                        return CreateDockWindowProvidedIconBitmap(window, result->size, requestSize);
                     });
                 WriteDiagnosticLogEntry((L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;
-            }, [window, process, path, appId, requiredIconSize, queuedAt] {
+            }, [window, process, path, appId, requestSize, queuedAt] {
                 const auto started = GetTickCount64();
                 auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                 DWORD current = 0;
                 GetWindowThreadProcessId(window, &current);
                 if (current == process)
                     result->bitmap = CreateDockWindowIconBitmap(window, path, appId,
-                        result->size, requiredIconSize);
+                        result->size, requestSize);
                 WriteDiagnosticLogEntry((L"Dock Shell running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;
-            }, [this, key, path, appId, requiredIconSize](auto result, bool refined) {
+            }, [this, key, path, appId, requestSize](auto result, bool refined) {
                 if (!result || !result->bitmap) return;
                 for (auto& app : dockUnpinnedRunningApps_)
                 {
                     if (!app.presence.Visible()) continue;
                     if (app.identityKey != key || app.executablePath != path ||
-                        app.appUserModelId != appId || app.iconRequestedSize > requiredIconSize) continue;
+                        app.appUserModelId != appId || app.iconRequestedSize > requestSize) continue;
                     // A slow local completion must not replace a refined icon.
                     if (!refined && app.iconBitmap) return;
                     if (app.iconBitmap) { EraseD2DIconCacheForBitmap(app.iconBitmap); DeleteObject(app.iconBitmap); }
                     app.iconBitmap = std::exchange(result->bitmap, nullptr);
                     app.iconBitmapSize = result->size;
-                    app.iconRequestedSize = requiredIconSize;
+                    app.iconRequestedSize = requestSize;
                     InvalidateDragStaticScene();
                     InvalidateDockRects();
                     break;
@@ -1475,9 +1467,11 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
 
     RECT desktopDirty{};
     for (const auto& container : containers_)
-        if (const auto* dock = dynamic_cast<const DockContainer*>(container.get()))
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get());
+            dock && !FindPersistentDockHost(dock))
         {
-            RECT bounds = dock->GetAnimationVisualBounds();
+            RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+                dock->GetAnimationVisualBounds(), dockSettings_.position);
             UnionRect(&desktopDirty, &desktopDirty, &bounds);
         }
     bool keep = false;
@@ -1508,7 +1502,8 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
             }
             else
             {
-                RECT bounds = dock->GetAnimationVisualBounds();
+                RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+                    dock->GetAnimationVisualBounds(), dockSettings_.position);
                 UnionRect(&desktopDirty, &desktopDirty, &bounds);
             }
         }

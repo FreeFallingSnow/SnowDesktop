@@ -38,7 +38,12 @@ public:
         if (!animating_) return;
         const float progress = static_cast<float>(
             std::clamp((now - started_) / duration_, 0.0, 1.0));
-        const float eased = progress * progress * (3.0f - 2.0f * progress);
+        // Entrance has immediate visible velocity; a slow ease-in looks like
+        // an extra discovery delay before the first few pixels appear.
+        const float remaining = 1.0f - progress;
+        const float eased = to_ > from_
+            ? 1.0f - remaining * remaining * remaining
+            : progress * progress * (3.0f - 2.0f * progress);
         amount_ = from_ + (to_ - from_) * eased;
         if (progress >= 1.0f)
         {

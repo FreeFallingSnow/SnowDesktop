@@ -582,6 +582,16 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
         event == EVENT_OBJECT_UNCLOAKED;
 #endif
     if (dockWindowListChanged)
+    {
         dockWindowListChangedTick_.fetch_add(
             1, std::memory_order_relaxed);
+        DWORD ownerProcess = 0;
+        if (window) GetWindowThreadProcessId(window, &ownerProcess);
+        // The callback only posts evidence. UI-thread discovery consumes the
+        // latest tick once for a burst, and ignores our own presentation HWNDs.
+        if (ownerProcess != GetCurrentProcessId() &&
+            (!window || !IsWindow(window) || GetAncestor(window, GA_ROOT) == window))
+            if (const HWND target = dockForegroundNotificationWindow_.load())
+                PostMessageW(target, kDockWindowListChangedMessage, 0, 0);
+    }
 }

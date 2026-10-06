@@ -1737,8 +1737,11 @@ int main(int argc, char** argv)
         item.SetVisible(true, 1000.0, true);
         Check(item.Amount() == 0.0f && item.IsAnimating() && !item.Interactive(),
             "a newly discovered running app starts without changing Dock length or accepting a tiny hit target");
+        item.Advance(1016.0);
+        Check(item.Amount() > 0.15f,
+            "the first normal animation frame is already visible rather than adding a slow ease-in delay");
         float previous = item.Amount();
-        for (int frame = 1; frame <= 22; ++frame)
+        for (int frame = 2; frame <= 22; ++frame)
         {
             item.Advance(1000.0 + frame * 10.0);
             Check(item.Amount() >= previous && item.Amount() <= 1.0f,
@@ -1775,7 +1778,7 @@ int main(int argc, char** argv)
         const float midpoint = item.Amount();
         item.SetVisible(true, 3220.0, true, 2.0);
         item.Advance(3440.0);
-        Check(std::abs(midpoint - 0.5f) < 0.0001f && item.Amount() == 1.0f,
+        Check(std::abs(midpoint - 0.875f) < 0.0001f && item.Amount() == 1.0f,
             "global animation speed is honored and rediscovery does not restart an entrance");
 
         // At either endpoint the animated layout must exactly match the old
@@ -1798,13 +1801,6 @@ int main(int argc, char** argv)
                 presence::ScrollableExtent(2, 0, 0, 0.999f, 64, 16) == 208,
             "adding or retiring the first running slot causes no endpoint jump in width or separator space");
 
-        Check(identityRules::ShouldDeferUnpinnedWindow(true, false, true, false) &&
-                identityRules::ShouldDeferUnpinnedWindow(false, true, false, false),
-            "a first window must not become an unpinned app while a relevant identity is still unknown");
-        Check(!identityRules::ShouldDeferUnpinnedWindow(false, false, true, false) &&
-                !identityRules::ShouldDeferUnpinnedWindow(true, false, false, false) &&
-                !identityRules::ShouldDeferUnpinnedWindow(true, true, true, true),
-            "known mismatches, executable-only pins and existing presentations are not withheld by identity queries");
     }
     // Focus/geometry fixtures, including WinComp's background windows, run on
     // isolated desktops. This executable never tests IME composition and must
