@@ -1,4 +1,10 @@
 #include "app.h"
+#include "../theme_workshop.h"
+#include "../theme_library_settings.h"
+#include "../steam_workshop_cache.h"
+#include "../steam_app_identity.h"
+#include "../dock_snapshot_warmup_rules.h"
+#include "../layout_scroll_save_rules.h"
 #include "dock_taskbar_diagnostics.h"
 #include "../drag_input_rules.h"
 #include "../ole_drag_rules.h"
@@ -60,7 +66,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         bool synchronizationSucceeded = false;
         bool hostReloaded = false;
         std::wstring synchronizationMessage;
-        if (ready->snapshot.authoritative)
+        if (ready->snapshot.CanSynchronize())
         {
             const auto result =
                 widgetEngine_->ApplySteamWorkshopSubscriptions(
@@ -72,7 +78,22 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
             }
             if (result.errors.empty())
             {
-                steamWorkshopSubscriptionLastError_.clear();
+                std::string warnings = ready->snapshot.warning;
+                for (const auto& warning : result.warnings)
+                {
+                    if (!warnings.empty()) warnings += " | ";
+                    warnings += warning;
+                }
+                if (warnings != steamWorkshopSubscriptionLastError_)
+                {
+                    steamWorkshopSubscriptionLastError_ = warnings;
+                    if (!warnings.empty())
+                    {
+                        const std::wstring message = Utf8ToWide(
+                            "Steam Workshop subscription sync skipped: " + warnings);
+                        WriteDiagnosticLogEntry(message.c_str());
+                    }
+                }
                 synchronizationSucceeded = true;
                 synchronizationMessage = _LW(
                     "settings.widgets.source.syncCompleted");
@@ -230,19 +251,49 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     const auto state = steamWorkshopSubscriptionPollState_;
     const HWND notifyWindow = hwnd_;
     std::uint64_t queryId = 0;
+    std::vector<std::string> confirmedUnsubscriptions;
     {
         std::lock_guard lock(state->mutex);
         queryId = state->nextQueryId++;
+        for (const auto& completion : state->settingsCompletions)
+            if (completion.queryId <= queryId &&
+                !completion.expectedUnsubscribedPublishedFileId.empty())
+                confirmedUnsubscriptions.push_back(
+                    completion.expectedUnsubscribedPublishedFileId);
         state->activeQueryId = queryId;
         state->queryInFlight.store(true);
     }
     std::thread([state, locale, notifyWindow, queryId,
-        installedPackages, subscriptionHistory, packageStaging]
+        installedPackages, subscriptionHistory, packageStaging,
+        confirmedUnsubscriptions = std::move(confirmedUnsubscriptions)]() mutable
     {
+        // Local cache inspection decides whether theme work is relevant. All
+        // online theme requests still go through the independently capable bridge.
+        try
+        {
+            using namespace snowdesktop;
+            themes::Library library; std::string error;
+            bool relevant = themes::Load(themes::LibraryPath(), library, error) && !library.workshop.empty();
+            const auto roots = widget::DiscoverSteamLibraryRoots(kSnowDesktopSteamAppId, error);
+            const auto cache = widget::ReadSteamWorkshopLocalCache(roots, kSnowDesktopSteamAppId);
+            for (const auto& item : cache.readyItems)
+            {
+                std::error_code ec;
+                relevant = relevant || std::filesystem::is_regular_file(item.contentDirectory / L"package.snowtheme", ec);
+            }
+            const auto bridge = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe";
+            if (relevant && themes::workshop::Available(bridge, SNOWDESKTOP_VERSION))
+                (void)themes::workshop::Sync(bridge, themes::LibraryPath(), library, error);
+        }
+        catch (...) { /* Failed/partial queries never remove installed themes. */ }
         auto snapshot =
             WidgetEngine::QuerySteamWorkshopSubscriptions(locale);
+        // Completions are queued only after the bridge accepts the user's
+        // unsubscribe, and this query began after that acknowledgement.
+        snapshot.confirmedUnsubscribedPublishedFileIds =
+            std::move(confirmedUnsubscriptions);
         snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
-            snapshot, subscriptionHistory);
+            snapshot, subscriptionHistory, installedPackages);
         WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
             installedPackages, packageStaging);
         {
@@ -304,6 +355,34 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
 
 void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kLayoutScrollSaveTimerId)
+    {
+        if (controlHwnd_) KillTimer(controlHwnd_, kLayoutScrollSaveTimerId);
+        if (!layoutScrollSave_.Pending()) return;
+        const auto now = snowdesktop::LayoutScrollSave::Clock::now();
+        // Never persist an intermediate drag/transport model. The pending
+        // flag still protects explicit backup/settings/exit save boundaries.
+        const bool interactionActive = !snowdesktop::CanFlushScrollLayout(
+            reloading_, dragSession_.HasContext(),
+            dragDropController_.IsTransportActive(),
+            widgetAction_ != WidgetAction::None);
+        if (!layoutScrollSave_.Due(now) || interactionActive)
+        {
+            const UINT delay = interactionActive
+                ? snowdesktop::LayoutScrollSave::QuietMilliseconds
+                : layoutScrollSave_.Delay(now);
+            if (!controlHwnd_ || !SetTimer(controlHwnd_, kLayoutScrollSaveTimerId,
+                    delay, nullptr))
+            {
+                CancelDeferredLayoutSave();
+                WriteDiagnosticLogEntry(L"Scroll layout save timer unavailable; layout remains pending",
+                    DiagnosticLogLevel::Warning);
+            }
+            return;
+        }
+        SaveLayoutSlots();
+        return;
+    }
     if (timerId == kRenameClickTimerId)
     {
         OnRenameClickTimer();
@@ -415,7 +494,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 dragSession_.HasContext(),
                 dragDropController_.IsTransportActive());
         if (mouseDown_ || reloading_ || deferForDrag ||
-            renameEdit_ || HasActiveContextMenuSession())
+            renameController_.IsActive() || HasActiveContextMenuSession())
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);
@@ -503,6 +582,16 @@ void DesktopApp::OnTimer(WPARAM timerId)
         // window's host-watch timer. Some display-driver paths leave that
         // timer alive but do not deliver its low-priority WM_TIMER promptly.
         PollDisplayTopology();
+        if (quickNavigationOpen_ && quickNavigationSearchType_ == QuickNavigationSearchType::Settings &&
+            GetTickCount64() - quickNavigationSettingsRefreshTick_ >= 1000)
+        {
+            quickNavigationSettingsRefreshTick_ = GetTickCount64();
+            const auto previous = quickNavigationSettingsResults_;
+            const auto selection = quickNavigationListSelection_;
+            RefreshQuickNavigationTypedResults();
+            if (previous == quickNavigationSettingsResults_) quickNavigationListSelection_ = selection;
+            else { if (quickNavigationCollapsed_) PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }
+        }
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
         TrimHiddenDesktopWidgetSurfaces();
@@ -526,9 +615,18 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (dockWindowTransition_)
         {
             const HWND foreground = GetForegroundWindow();
-            const bool tracked = generalSettings_.dockEnabled &&
-                !dragSession_.HasContext() &&
-                !quickNavigationAnimation_.IsAnimating() &&
+            const bool presentationVisible = std::any_of(containers_.begin(), containers_.end(),
+                [this](const auto& container) {
+                    const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+                    if (!dock || !IsDockContainerInteractionVisible(dock)) return false;
+                    const auto* host = FindPersistentDockHost(dock);
+                    // Active persistent/merged hosts use their existing visibility
+                    // policy. A fallback desktop surface also requires visible icons.
+                    return (host && host->active) || (customDesktopVisible_ && !desktopIconsHidden_);
+                });
+            const bool tracked = snowdesktop::dock_snapshot_warmup_rules::CanOfferForeground(
+                generalSettings_.dockEnabled, presentationVisible,
+                dragSession_.HasContext(), quickNavigationAnimation_.IsAnimating()) &&
                 (std::any_of(dockRunningWindows_.begin(), dockRunningWindows_.end(),
                     [foreground](const auto& entry) {
                         return entry.second.running && entry.second.window == foreground;
@@ -653,16 +751,24 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 IsFolderDockEntry(dockEntries_[entryIndex]) &&
                 !IsLogicalDockEntryType(dockEntries_[entryIndex].type))
             {
-                ResetDockHandoffDwell();
-                OpenDockFolderPopupAt(
-                    entryIndex, dwellPoint);
-                RefreshDwellDragTarget(dwellPoint);
-                InvalidateRect(
-                    hwnd_, nullptr, FALSE);
-                PresentPointerInteractionFrame();
-                PresentDesktopPointerUpdate();
-                InvalidateFloatingDockWindow(
-                    true);
+                // Do not reset the old popup's cache/timeline by publishing
+                // another folder during its close. Keep polling the live drag
+                // target, so leaving, cancellation or a third folder wins.
+                snowdesktop::popup_animation_rules::OpenAfterClose(
+                    popupAnimation_, GetOpenPopupWidget() != nullptr,
+                    [this] {
+                        pendingCollectionPopupOpen_.reset();
+                        BeginCollectionPopupClose(false);
+                    },
+                    [this, entryIndex, dwellPoint] {
+                        ResetDockHandoffDwell();
+                        OpenDockFolderPopupAt(entryIndex, dwellPoint);
+                        RefreshDwellDragTarget(dwellPoint);
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                        PresentPointerInteractionFrame();
+                        PresentDesktopPointerUpdate();
+                        InvalidateFloatingDockWindow(true);
+                    });
                 return;
             }
 

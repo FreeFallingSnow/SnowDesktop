@@ -9,6 +9,7 @@
  */
 
 #include "widget.h"
+#include "folder_mapping_rules.h"
 #include "slot.h"
 #include "item.h"
 #include "types.h"
@@ -35,10 +36,10 @@ static std::wstring FolderEntryCategoryId(
     const FolderEntry& entry, const CategorySettings& settings)
 {
     if (entry.isDirectory)
-        return L"folders";
+        return IsCategoryRuleEnabled(settings, L"folders") ? L"folders" : L"others";
     std::wstring categoryId =
-        CategoryIdForExtension(settings, ToUpperInvariant(PathFindExtensionW(entry.name.c_str())));
-    return categoryId.empty() ? L"others" : categoryId;
+        CategoryIdForItemType(settings, ToUpperInvariant(PathFindExtensionW(entry.name.c_str())), entry.shortcutTarget);
+    return categoryId.empty() ? (entry.isApplicationShortcut && IsCategoryRuleEnabled(settings, L"programs") ? L"programs" : L"others") : categoryId;
 }
 
 static const std::vector<std::wstring>& FolderEntryDateGroupOrder()
@@ -185,14 +186,15 @@ void FolderMapping::EnsureCategorySnapshot() const
 {
     if (!data_ || !app_) return;
 
-    std::vector<std::wstring> currentPaths;
-    currentPaths.reserve(data_->folderEntries.size());
-    for (const auto& entry : data_->folderEntries)
-        currentPaths.push_back(ToUpperInvariant(entry.fullPath));
-    if (categorySnapshotValid_ && currentPaths == categorySnapshotPaths_)
+    if (categorySnapshotValid_ && snowdesktop::folder_mapping_rules::PathsMatch(
+            data_->folderEntries, categorySnapshotPaths_,
+            [](const auto& entry) -> const std::wstring& { return entry.fullPath; }))
         return;
 
-    categorySnapshotPaths_ = std::move(currentPaths);
+    categorySnapshotPaths_.clear();
+    categorySnapshotPaths_.reserve(data_->folderEntries.size());
+    for (const auto& entry : data_->folderEntries)
+        categorySnapshotPaths_.push_back(entry.fullPath);
     entryIndicesByCategory_.clear();
     visibleCategoryIds_.clear();
     visibleEntryIndices_.clear();
@@ -211,7 +213,7 @@ void FolderMapping::EnsureCategorySnapshot() const
             data_->folderEntries[i], app_->GetCategorySettings())].push_back(i);
     }
 
-    for (const auto& categoryId : GetCategoryOrder(app_->GetCategorySettings()))
+    for (const auto& categoryId : GetCategoryTabOrder())
     {
         auto it = entryIndicesByCategory_.find(categoryId);
         if (it != entryIndicesByCategory_.end() && !it->second.empty())
@@ -369,7 +371,7 @@ static std::vector<int> FolderMappingTabWidths(
     for (const auto& entry : data->folderEntries)
         ++counts[FolderEntryCategoryId(entry, settings)];
 
-    const std::vector<std::wstring> order = GetCategoryOrder(settings);
+    const std::vector<std::wstring> order = widget->GetCategoryTabOrder();
     std::vector<std::wstring> labels;
     for (const auto& categoryId : order)
     {
@@ -407,7 +409,7 @@ static RECT FolderMappingTabLayoutRect(
     present.insert(L"all");
     for (const auto& entry : data->folderEntries)
         present.insert(FolderEntryCategoryId(entry, settings));
-    for (const auto& categoryId : GetCategoryOrder(settings))
+    for (const auto& categoryId : widget->GetCategoryTabOrder())
         if (present.contains(categoryId))
             categories.push_back(categoryId);
     if (index >= categories.size()) return {};
@@ -965,7 +967,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
         !PtInRect(&data_->bounds, app_->lastMousePoint_);
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = UsesLightContentTheme();
 
     DrawSearchBox(context);
     DrawDetailsHeader(context, FolderMappingContentRect(this));
@@ -1131,7 +1133,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
                 entry.name, entry.selected, entry.iconIsMediaThumbnail,
                 {}, nullptr,
                 { entry.typeName, entry.lastWriteTime,
-                  entry.fileSize, entry.isDirectory });
+                  entry.fileSize, entry.isDirectory }, std::nullopt, !app_->IsRenamingItem(&entry));
     }
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(
@@ -1159,7 +1161,7 @@ RECT FolderMapping::GetMemberLayoutRect(size_t index) const
 void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool hovered)
 {
     if (!data_ || !app_) return;
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = UsesLightContentTheme();
 
     const float bs = GetBarScale();
     const int btnSize = Cu(14.0f * bs);
@@ -1238,8 +1240,9 @@ std::wstring FolderMapping::CategoryIdAtPoint(POINT pt) const
     return L"";
 }
 
-bool FolderMapping::TryScrollTabs(POINT pt, int delta)
+bool FolderMapping::TryScrollTabs(POINT pt, int delta, bool* changed)
 {
+    if (changed) *changed = false;
     if (!data_ || !app_ || !data_->showFileCategories) return false;
     RECT tabs = FolderMappingTabsRect(this);
     if (IsRectEmptyRect(tabs) || !PtInRect(&tabs, pt)) return false;
@@ -1249,8 +1252,10 @@ bool FolderMapping::TryScrollTabs(POINT pt, int delta)
         FolderMappingTabTotalWidth(widths) -
         static_cast<int>(tabs.right - tabs.left));
     if (maxScroll <= 0) return false;
+    const int previous = data_->tabScrollOffset;
     data_->tabScrollOffset =
         std::clamp(data_->tabScrollOffset - delta / 2, 0, maxScroll);
+    if (changed) *changed = previous != data_->tabScrollOffset;
     return true;
 }
 

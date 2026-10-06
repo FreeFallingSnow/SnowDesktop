@@ -1,7 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 /**
  * Applies selection mutations consistently across every selectable surface.
@@ -11,6 +14,70 @@
 class SelectionController
 {
 public:
+    // Targets borrow current model flags only for the duration of an operation.
+    // The anchor retains identities, never pointers into rebuilt lists.
+    struct Target
+    {
+        std::wstring key;
+        bool* selected = nullptr;
+    };
+
+    void RememberAnchor(const std::wstring& scope, const std::wstring& key)
+    {
+        anchorScope_ = scope;
+        anchorKey_ = key;
+    }
+
+    template <typename ClearSelection>
+    bool SelectRange(const std::wstring& scope,
+        const std::vector<Target>& targets, const std::wstring& key,
+        bool additive, ClearSelection clearSelection)
+    {
+        const auto findKey = [&](const std::wstring& candidate) {
+            return std::find_if(targets.begin(), targets.end(),
+                [&](const Target& target) {
+                    return target.selected && target.key == candidate;
+                });
+        };
+        const auto end = findKey(key);
+        if (end == targets.end()) return false;
+        auto anchor = anchorScope_ == scope
+            ? findKey(anchorKey_) : targets.end();
+        if (anchor == targets.end())
+            anchor = std::find_if(targets.begin(), targets.end(),
+                [](const Target& target) {
+                    return target.selected && *target.selected;
+                });
+        if (anchor == targets.end()) anchor = end;
+        const std::wstring anchorKey = anchor->key;
+        if (!additive) clearSelection();
+        bool changed = false;
+        const auto first = std::min(anchor, end);
+        const auto last = std::max(anchor, end);
+        for (auto target = first; target != last + 1; ++target)
+            if (target->selected && !*target->selected)
+            {
+                *target->selected = true;
+                changed = true;
+            }
+        RememberAnchor(scope, anchorKey);
+        AdvanceRevisionIf(changed);
+        return true;
+    }
+
+    bool SelectAll(const std::vector<Target>& targets)
+    {
+        bool changed = false;
+        for (const auto& target : targets)
+            if (target.selected && !*target.selected)
+            {
+                *target.selected = true;
+                changed = true;
+            }
+        AdvanceRevisionIf(changed);
+        return changed;
+    }
+
     template <typename DesktopItems, typename DockEntries,
         typename RunningApps, typename Widgets>
     bool ClearAll(
@@ -19,6 +86,8 @@ public:
         RunningApps& runningApps,
         Widgets& widgets)
     {
+        anchorScope_.clear();
+        anchorKey_.clear();
         bool changed = ClearRange(desktopItems);
         changed = ClearRange(dockEntries) || changed;
         changed = ClearRange(runningApps) || changed;
@@ -104,4 +173,6 @@ private:
     }
 
     std::uint64_t revision_ = 0;
+    std::wstring anchorScope_;
+    std::wstring anchorKey_;
 };

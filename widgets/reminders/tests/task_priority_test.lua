@@ -11,6 +11,14 @@ local function ids(tasks)
 end
 
 return {
+    ["manual mode keeps saved order within pending and completed groups"] = function()
+        local source = {
+            task("low", 0), task("done-first", 0, true), task("urgent", 3),
+            task("done-second", 3, true), task("normal", 1),
+        }
+        assert(ids(priority.groupCompleted(source)) == "low,urgent,normal,done-first,done-second")
+        assert(source[2].id == "done-first")
+    end,
     ["pending urgency precedes completed tasks and ties retain saved order"] = function()
         local source = {
             task("normal", 1), task("done-urgent", 3, true),

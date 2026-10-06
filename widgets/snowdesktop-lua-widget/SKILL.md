@@ -150,6 +150,13 @@ Read surface-dependent layout metrics in `view` or `render`; do not cache them
 in `setup`, because later resizes can differ from the initial load-time
 surface.
 
+Choose text and icon alignment according to each element's role and the intended
+composition. Declarative text defaults to `textAlign="start"` and
+`verticalAlign="center"`; do not assume a control label is horizontally centered.
+Set alignment explicitly when the intended placement differs from the default,
+and check the rendered label together with its padding and any icon. This is an
+alignment reminder, not a requirement to center every control.
+
 ## Create a package
 
 1. For a new widget, use the bundled deterministic initializer rather than

@@ -8,9 +8,27 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <filesystem>
+#include <algorithm>
 
 namespace snowdesktop::dock_drop_rules
 {
+
+// Only direct desktop children belong to the existing desktop model. A path
+// merely sharing its prefix (or nested inside a desktop folder) needs a link.
+inline bool CanReferenceDesktopPaths(const std::vector<std::wstring>& paths,
+    const std::vector<std::filesystem::path>& desktopRoots)
+{
+    if (paths.empty()) return false;
+    return std::all_of(paths.begin(), paths.end(), [&](const auto& value) {
+        const std::filesystem::path path(value);
+        if (!path.is_absolute() || path.filename().empty()) return false;
+        const auto parent = path.lexically_normal().parent_path();
+        return std::any_of(desktopRoots.begin(), desktopRoots.end(), [&](const auto& root) {
+            return _wcsicmp(parent.c_str(), root.lexically_normal().c_str()) == 0;
+        });
+    });
+}
 
 // External resources pinned to Dock are represented by a shortcut on the
 // managed desktop. The source file must never be moved into that directory.

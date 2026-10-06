@@ -1,6 +1,8 @@
 #include "settings_search_index.h"
+#include "settings_search_catalog.h"
 
 #include <cstdlib>
+#include <algorithm>
 #include <iostream>
 #include <string>
 
@@ -192,6 +194,32 @@ void TestStableRankingAndLimit()
 
 int main()
 {
+    SettingsSearchIndexInput catalog;
+    PopulateSettingsSearchCatalog(catalog,[](std::string_view key) {return std::wstring(key.begin(),key.end());},false,false);
+    const auto find = [&](std::string_view id) {return std::find_if(catalog.staticSettings.begin(),catalog.staticSettings.end(),[&](const auto& descriptor) {return descriptor.focusId == id;});};
+    Check(find("personalization.savedThemes")->page == SettingsPage::ThemeManager,
+        "theme management search targets the independent page");
+    Check(find("general.quickNavigation")->page == SettingsPage::QuickNavigation && find("personalization.quickNavigationTheme")->page == SettingsPage::AppearanceTheme,"the shared catalog preserves the theme location and routes navigation behavior to its page");
+    Check(find("quickNav.layout.iconSize") != catalog.staticSettings.end() && find("quickNav.color.searchBg") != catalog.staticSettings.end(),"advanced navigation fields are indexed individually");
+    Check(find("quickNav.layout.iconSize")->page == SettingsPage::AppearanceTheme && find("quickNav.color.searchBg")->page == SettingsPage::AppearanceTheme,
+        "navigation dimensions and colors belong to the original appearance theme page");
+    Check(find("quickNav.prefixes")->page == SettingsPage::QuickNavigation && find("quickNav.defaultCollapsed") == catalog.staticSettings.end(),
+        "functional search settings stay on navigation and the obsolete opening preference is absent");
+    Check(!find("general.advancedFeatures")->visible && find("statusBar.controlCenterPanel") == catalog.staticSettings.end(),"shared catalog honors advanced and system capability visibility");
+    for (int style = 0; style <= 6; ++style)
+    {
+        SettingsSearchIndexInput menus;
+        PopulateSettingsSearchCatalog(menus, [](std::string_view key) {
+            return std::wstring(key.begin(), key.end());
+        }, false, false, style);
+        const auto contains = [&](std::string_view id) {
+            return std::any_of(menus.staticSettings.begin(), menus.staticSettings.end(),
+                [&](const auto& descriptor) { return descriptor.focusId == id; });
+        };
+        Check(contains("contextMenu.expandQuickActions") == (style < 5) &&
+            contains("contextMenu.hidePageManagement"),
+            "menu search exposes expansion only outside Win10 styles and always exposes page hiding");
+    }
     TestNavigationAndFocus();
     TestConditionalPagesAndNoLeaks();
     TestWidgetFields();

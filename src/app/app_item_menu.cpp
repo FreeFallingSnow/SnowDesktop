@@ -258,7 +258,19 @@ void DesktopApp::ShowItemContextMenu(
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
     const auto largeIconKey = items_[itemIndex].layoutKey;
-    const bool largeIconMenu = selectedCount == 1 && !dockFrequentItem && !dockApplicationItem &&
+    std::vector<std::wstring> largeIconKeys{largeIconKey};
+    for (const auto& item : items_)
+        if (item.selected && item.layoutKey != largeIconKey) largeIconKeys.push_back(item.layoutKey);
+    const auto allLargeIcons = [&](auto predicate) {
+        for (const auto& key : largeIconKeys)
+        {
+            const auto index = FindItemIndexByKey(key);
+            if (index >= items_.size() || !items_[index].largeIcon || IsItemInAnyWidget(items_[index]) ||
+                items_[index].gridCell.pageId == kDockPageId || !predicate(*items_[index].largeIcon)) return false;
+        }
+        return true;
+    };
+    const bool largeIconMenu = (selectedCount == 1 || allLargeIcons([](const auto&) { return true; })) && !dockFrequentItem && !dockApplicationItem &&
         !dockMapping && !dockEntryIndex && !keepQuickNavigationOpen &&
         !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
     const auto entitlement = steamEntitlementService_
@@ -271,32 +283,33 @@ void DesktopApp::ShowItemContextMenu(
         if (items_[itemIndex].largeIcon && largeIconAccess == EntryAccess::Edit)
         {
             namespace presets = snowdesktop::large_icon_preset_rules;
-            const auto& config = *items_[itemIndex].largeIcon;
-            const auto runtime = largeIconRuntime_.find(largeIconKey);
-            const bool hasEdge = runtime != largeIconRuntime_.end() && runtime->second.asset && runtime->second.asset->hasEdgeColor;
+            const bool hasEdge = std::all_of(largeIconKeys.begin(), largeIconKeys.end(), [&](const auto& key) {
+                const auto runtime = largeIconRuntime_.find(key);
+                return runtime != largeIconRuntime_.end() && runtime->second.asset && runtime->second.asset->hasEdgeColor;
+            });
             const bool editable = CanEditLargeIcons();
             HMENU settings = CreatePopupMenu();
             HMENU backgrounds = CreatePopupMenu(), effects = CreatePopupMenu();
             for (size_t i = 0; i < presets::backgrounds.size(); ++i)
             {
                 const auto option = presets::backgrounds[i];
-                if (!presets::BackgroundVisible(option.value, hasEdge, config)) continue;
+                if (!allLargeIcons([&](const auto& c) { return presets::BackgroundVisible(option.value, hasEdge, c); })) continue;
                 const auto id = kContextLargeIconBackgroundFirst + static_cast<UINT>(i);
                 AppendMenuW(backgrounds, MF_STRING | (editable ? 0 : MF_GRAYED) |
-                    (presets::Background(config) == option.value ? MF_CHECKED : 0), id, _LW(option.label));
+                    (allLargeIcons([&](const auto& c) { return presets::Background(c) == option.value; }) ? MF_CHECKED : 0), id, _LW(option.label));
             }
             for (size_t i = 0; i < presets::effects.size(); ++i)
             {
                 const auto option = presets::effects[i];
-                const bool enabled = editable && (option.value != 2 || !snowdesktop::IsLargeIconFill(config));
+                const bool enabled = editable && allLargeIcons([&](const auto& c) { return option.value != 2 || !snowdesktop::IsLargeIconFill(c); });
                 AppendMenuW(effects, MF_STRING | (enabled ? 0 : MF_GRAYED) |
-                    (presets::Effect(config) == option.value ? MF_CHECKED : 0),
+                    (allLargeIcons([&](const auto& c) { return presets::Effect(c) == option.value; }) ? MF_CHECKED : 0),
                     kContextLargeIconEffectFirst + static_cast<UINT>(i), _LW(option.label));
             }
             AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(backgrounds), _LW("largeIcon.backgroundSettings"));
             AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(effects), _LW("largeIcon.effectsSection"));
-            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (config.showOnHoverOnly ? MF_CHECKED : 0), kContextLargeIconHoverOnly, _LW("app.interact.hover_only"));
-            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (config.keepWhenDesktopHidden ? MF_CHECKED : 0), kContextLargeIconKeepWhenHidden, _LW("app.interact.keep_when_hidden"));
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (allLargeIcons([](const auto& c) { return c.showOnHoverOnly; }) ? MF_CHECKED : 0), kContextLargeIconHoverOnly, _LW("app.interact.hover_only"));
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (allLargeIcons([](const auto& c) { return c.keepWhenDesktopHidden; }) ? MF_CHECKED : 0), kContextLargeIconKeepWhenHidden, _LW("app.interact.keep_when_hidden"));
             SetMenuItemIcon(settings, kContextLargeIconHoverOnly, L"\uF06E");
             SetMenuItemIcon(settings, kContextLargeIconKeepWhenHidden, L"\uF108");
             AppendMenuW(settings, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.detailedSettings"));
@@ -374,6 +387,13 @@ void DesktopApp::ShowItemContextMenu(
         fanLabel += L"\t";
         fanLabel += dockFolderEntry->fanPopup ? _LW("app.interact.on") : _LW("app.interact.off");
         AppendMenuW(menu, MF_STRING, kContextPopupFan, fanLabel.c_str());
+        auto optionLabel = [](const wchar_t* title, bool enabled) {
+            return std::wstring(title) + L"\t" + (enabled ? _LW("app.interact.on") : _LW("app.interact.off"));
+        };
+        const auto searchLabel = optionLabel(_LW("app.interact.search_box"), dockFolderEntry->showSearchBox);
+        const auto categoriesLabel = optionLabel(_LW("app.interact.file_categories"), dockFolderEntry->showFileCategories);
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleSearchBox, searchLabel.c_str());
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleFileCategories, categoriesLabel.c_str());
         const auto statusLabel = [](
             const wchar_t* title,
             const wchar_t* status) {
@@ -489,6 +509,9 @@ void DesktopApp::ShowItemContextMenu(
         MenuIconFont::FluentRegular);
     if (dockFolderEntry)
     {
+        SetMenuItemIcon(menu, kContextWidgetToggleFileCategories,
+            snowdesktop::menu_fluent_glyphs::kCategoryBar, MenuIconFont::FluentRegular);
+        SetMenuItemIcon(menu, kContextWidgetToggleSearchBox, L"\uF68F", MenuIconFont::FluentRegular);
         SetMenuItemIcon(
             menu,
             kContextWidgetToggleListMode,
@@ -529,29 +552,33 @@ void DesktopApp::ShowItemContextMenu(
         if (largeIconMenu && (backgroundCommand || effectCommand || visibilityCommand))
         {
             // The menu runs a nested loop: resolve identity and entitlement again at commit time.
-            const auto index = FindItemIndexByKey(largeIconKey);
-            if (index < items_.size() && items_[index].largeIcon)
+            if (!CanEditLargeIcons()) { OpenLargeIconSettings(largeIconKeys); return; }
+            std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
+            const bool showOnHover = !allLargeIcons([](const auto& c) { return c.showOnHoverOnly; });
+            const bool keepWhenHidden = !allLargeIcons([](const auto& c) { return c.keepWhenDesktopHidden; });
+            for (const auto& key : largeIconKeys)
             {
+                const auto index = FindItemIndexByKey(key);
+                if (index >= items_.size() || !items_[index].largeIcon) return;
                 auto config = *items_[index].largeIcon;
-                const auto runtime = largeIconRuntime_.find(largeIconKey);
+                const auto runtime = largeIconRuntime_.find(key);
                 const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
                 if (visibilityCommand && CanEditLargeIcons())
                 {
-                    if (command == kContextLargeIconHoverOnly) config.showOnHoverOnly = !config.showOnHoverOnly;
-                    else config.keepWhenDesktopHidden = !config.keepWhenDesktopHidden;
+                    if (command == kContextLargeIconHoverOnly) config.showOnHoverOnly = showOnHover;
+                    else config.keepWhenDesktopHidden = keepWhenHidden;
                 }
                 const bool changed = visibilityCommand ? CanEditLargeIcons() : backgroundCommand ? presets::ApplyBackground(config,
                     presets::backgrounds[command - kContextLargeIconBackgroundFirst].value, CanEditLargeIcons(),
                     asset && asset->hasEdgeColor, asset ? asset->accent : 0, asset ? asset->edgeColor : 0) :
                     presets::ApplyEffect(config, static_cast<int>(command - kContextLargeIconEffectFirst), CanEditLargeIcons());
-                if (changed)
-                {
-                    if (!SetLargeIconConfig(index, config))
-                        MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
-                    else if (backgroundCommand && config.backgroundStyle == kAppearancePresetCustom)
-                        OpenLargeIconSettings(index);
-                }
+                if (!changed) return;
+                changes.emplace_back(index, std::move(config));
             }
+            if (!SetLargeIconConfigs(changes))
+                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+            else if (backgroundCommand && presets::backgrounds[command - kContextLargeIconBackgroundFirst].value == kAppearancePresetCustom)
+                OpenLargeIconSettings(largeIconKeys);
         }
     };
     const auto changeLargeIcon = [&](UINT command, auto& currentItems) {
@@ -565,21 +592,20 @@ void DesktopApp::ShowItemContextMenu(
         UpdateLargeIconHover();
         const auto index = FindItemIndexByKey(largeIconKey);
         if (index >= items_.size() || !items_[index].largeIcon) { snowdesktop::modern_menu::DismissActive(); return true; }
-        const auto config = *items_[index].largeIcon;
         const bool editable = CanEditLargeIcons();
         snowdesktop::modern_menu::VisitItems(currentItems, [&](auto& item) {
-            if (item.command == kContextLargeIconHoverOnly) { item.checked = config.showOnHoverOnly; item.enabled = editable; }
-            if (item.command == kContextLargeIconKeepWhenHidden) { item.checked = config.keepWhenDesktopHidden; item.enabled = editable; }
+            if (item.command == kContextLargeIconHoverOnly) { item.checked = allLargeIcons([](const auto& c) { return c.showOnHoverOnly; }); item.enabled = editable; }
+            if (item.command == kContextLargeIconKeepWhenHidden) { item.checked = allLargeIcons([](const auto& c) { return c.keepWhenDesktopHidden; }); item.enabled = editable; }
             if (item.command >= kContextLargeIconBackgroundFirst && item.command < kContextLargeIconBackgroundFirst + presets::backgrounds.size())
             {
-                item.checked = presets::Background(config) == presets::backgrounds[item.command - kContextLargeIconBackgroundFirst].value;
+                item.checked = allLargeIcons([&](const auto& c) { return presets::Background(c) == presets::backgrounds[item.command - kContextLargeIconBackgroundFirst].value; });
                 item.enabled = editable;
             }
             if (item.command >= kContextLargeIconEffectFirst && item.command < kContextLargeIconEffectFirst + presets::effects.size())
             {
                 const int value = static_cast<int>(item.command - kContextLargeIconEffectFirst);
-                item.checked = presets::Effect(config) == value;
-                item.enabled = editable && (value != 2 || !snowdesktop::IsLargeIconFill(config));
+                item.checked = allLargeIcons([&](const auto& c) { return presets::Effect(c) == value; });
+                item.enabled = editable && allLargeIcons([&](const auto& c) { return value != 2 || !snowdesktop::IsLargeIconFill(c); });
             }
         });
         return true;
@@ -628,6 +654,8 @@ void DesktopApp::ShowItemContextMenu(
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;
         dockFolderPopupWidget_.fanPopup = dockFolderEntry->fanPopup;
+        dockFolderPopupWidget_.showSearchBox = dockFolderEntry->showSearchBox;
+        dockFolderPopupWidget_.showFileCategories = dockFolderEntry->showFileCategories;
         dockFolderPopupWidget_.detailShowModified =
             dockFolderEntry->detailShowModified;
         dockFolderPopupWidget_.detailShowType =
@@ -648,7 +676,12 @@ void DesktopApp::ShowItemContextMenu(
                     dockFolderEntry->detailShowSize);
         popupScrollOffset_ = 0;
         if (dockFolderPopupContainer_)
-            dockFolderPopupContainer_->InvalidateSlots();
+        {
+            if (!dockFolderEntry->showSearchBox) dockFolderPopupContainer_->ClearSearchText();
+            if (!dockFolderEntry->showFileCategories) dockFolderPopupContainer_->EndCategoryTabDrag(false);
+            dockFolderPopupContainer_->InvalidateFilterCache();
+        }
+        InvalidateCollectionPopupContent();
         RefreshDockFolderPopupGeometry();
     };
 
@@ -694,11 +727,15 @@ void DesktopApp::ShowItemContextMenu(
         }
         break;
     case kContextLargeIconSettings:
-        if (largeIconMenu) OpenLargeIconSettings(FindItemIndexByKey(largeIconKey));
+        if (largeIconMenu) OpenLargeIconSettings(largeIconKeys);
         break;
     case kContextLargeIconRestore:
-        if (largeIconMenu && !SetLargeIconConfig(itemIndex, std::nullopt))
-            MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+        if (largeIconMenu)
+        {
+            std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
+            for (const auto& key : largeIconKeys) changes.emplace_back(FindItemIndexByKey(key), std::nullopt);
+            if (!SetLargeIconConfigs(changes)) MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+        }
         break;
     case kContextOpenCommand:
     {
@@ -753,6 +790,15 @@ void DesktopApp::ShowItemContextMenu(
         {
             dockFolderEntry->listMode =
                 !dockFolderEntry->listMode;
+            applyDockFolderDisplayChange();
+        }
+        break;
+    case kContextWidgetToggleSearchBox:
+    case kContextWidgetToggleFileCategories:
+        if (dockFolderEntry)
+        {
+            if (command == kContextWidgetToggleSearchBox) dockFolderEntry->showSearchBox = !dockFolderEntry->showSearchBox;
+            else dockFolderEntry->showFileCategories = !dockFolderEntry->showFileCategories;
             applyDockFolderDisplayChange();
         }
         break;
@@ -812,7 +858,7 @@ void DesktopApp::ShowItemContextMenu(
                 static_cast<size_t>(itemIndex));
         else
             BeginRenameSelected(dockRenameAnchor);
-        inlineEditorStarted = renameEdit_ != nullptr;
+        inlineEditorStarted = renameController_.IsActive();
         break;
     case kContextCutCommand:
     case kContextCopyCommand:

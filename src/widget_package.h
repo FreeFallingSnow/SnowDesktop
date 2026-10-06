@@ -19,6 +19,7 @@
 
 namespace snowdesktop::widget
 {
+namespace detail { class CatalogRefresh; }
 inline constexpr int kPackageSchemaVersion = 2;
 inline constexpr int kHostApiVersion = 2;
 inline constexpr std::uint64_t kMaxArchiveBytes = 20ull * 1024ull * 1024ull;
@@ -427,6 +428,8 @@ private:
     std::filesystem::path CreateStagingPath(const char* purpose) const;
 
     PackagePaths paths_;
+    std::shared_ptr<detail::CatalogRefresh> catalogueRefresh_;
+    std::shared_ptr<const char> catalogueRevision_;
     WidgetPackageValidator validator_;
     std::vector<InstalledPackage> packages_;
     std::vector<InvalidPackage> invalidPackages_;

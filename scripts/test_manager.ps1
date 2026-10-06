@@ -1,8 +1,9 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("full", "fast", "core", "label", "name", "list")]
+    [ValidateSet("full", "fast", "core", "tools", "label", "name", "list", "plan")]
     [string]$Mode = "full",
-    [string]$Filter = ""
+    [string]$Filter = "",
+    [ValidatePattern("^[a-f0-9]{32}$")][string]$PlanBatch
 )
 
 Set-StrictMode -Version Latest
@@ -10,6 +11,15 @@ $ErrorActionPreference = "Stop"
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 Set-Location -LiteralPath $repositoryRoot
+
+# Direct PowerShell, batch, IDE and CI callers all enter the same private Job.
+# A coordinator child already has live delegated authority and does not recurse.
+if(-not [Environment]::GetEnvironmentVariable('SNOWDESKTOP_EXECUTION_TOKEN','Process')) {
+    $entryOptions=@{Action='tests';Mode=$Mode;Filter=$Filter}
+    if($PlanBatch){$entryOptions.PlanBatch=$PlanBatch}
+    & (Join-Path $PSScriptRoot 'build_entry.ps1') @entryOptions
+    exit $LASTEXITCODE
+}
 
 function Invoke-Checked {
     param(
@@ -23,7 +33,9 @@ function Invoke-Checked {
     if ($FilePath -eq "ctest") {
         $reportRoot = Join-Path $repositoryRoot ".build\Testing"
         [void][IO.Directory]::CreateDirectory($reportRoot)
+        $script:lastReportPath = $null
         $reportPath = Join-Path $reportRoot ("test-run-" + [Guid]::NewGuid().ToString("N") + ".xml")
+        $script:lastReportPath = $reportPath
         $Arguments += @("--output-junit", $reportPath)
     }
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
@@ -113,8 +125,20 @@ function Invoke-FilteredTests {
         throw "The requested filter did not match any configured tests."
     }
 
-    $needsHostRuntime = $selection.Targets -contains "SnowDesktopWidgetAuthorPreviewCliTests"
-    if ($needsHostRuntime -or $BuildPreset -eq "tests") {
+    $blocked=@($selection.Tests|Where-Object {@($_.properties|Where-Object name -eq 'LABELS'|ForEach-Object {$_.value}) -contains 'environment-blocked'}|ForEach-Object {$_.name})
+    if($blocked.Count){throw ('Environment blocked; required tests not executed: '+($blocked -join ', '))}
+    $hostExecutable=[IO.Path]::GetFullPath((Join-Path $repositoryRoot '.build\Release\SnowDesktop.exe'))
+    $needsHostRuntime = @($selection.Tests | Where-Object {
+        $labels=@($_.properties | Where-Object name -eq 'LABELS' | ForEach-Object {$_.value})
+        # Metadata works before the first build, when CTest omits command.
+        # Existing configured inventories remain usable through host arguments.
+        $paths=@(Get-Field $_ 'command' @())+@($_.properties | Where-Object name -eq 'REQUIRED_FILES' | ForEach-Object {$_.value})
+        ($labels -contains 'host-runtime') -or @($paths | Where-Object {
+            [string]$_ -and [IO.Path]::IsPathRooted([string]$_) -and
+                [IO.Path]::GetFullPath([string]$_).Equals($hostExecutable,[StringComparison]::OrdinalIgnoreCase)
+        }).Count -gt 0
+    }).Count -gt 0
+    if ($needsHostRuntime -or $BuildPreset -in "tests", "all-tests") {
         Assert-HostRuntimeAvailable
     }
 
@@ -132,9 +156,9 @@ function Invoke-FilteredTests {
     }
 
     # The full aggregate already arranges its output in CMake.
-    if ($needsHostRuntime -and $BuildPreset -ne "tests") {
-        Invoke-Checked -FilePath "powershell.exe" -Arguments @(
-            "-NoProfile", "-ExecutionPolicy", "Bypass",
+    if ($needsHostRuntime -and $BuildPreset -notin "tests", "all-tests") {
+        Invoke-Checked -FilePath (Get-BuildPowerShell) -Arguments @(
+            "-NoProfile",
             "-File", (Join-Path $PSScriptRoot "arrange_build_output.ps1"),
             "-BuildOutput", (Join-Path $repositoryRoot ".build\Release"),
             "-AllowMissingFirstPartyRuntime"
@@ -142,6 +166,18 @@ function Invoke-FilteredTests {
     }
 
     Write-Host ""
+    if($Mode -eq 'plan'){
+        $artifacts=@()
+        foreach($test in $selection.Tests){
+            $cmd=@(Get-Field $test 'command' @());if($cmd.Count -eq 0){continue}
+            $path=[IO.Path]::GetFullPath([string]$cmd[0])
+            if($path.StartsWith($repositoryRoot+'\',[StringComparison]::OrdinalIgnoreCase) -and [IO.File]::Exists($path)){
+                $artifacts += [pscustomobject]@{test=$test.name;executable=$path.Substring($repositoryRoot.Length+1);sha256=(Get-FileDigest $path);bytes=(Get-Item -LiteralPath $path).Length}
+            }
+        }
+        Set-Field $coverage 'testExecutablesBeforeRun' $artifacts
+        $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
+    }
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
     Invoke-Checked -FilePath "ctest" -Arguments (
         @("--preset", $TestPreset) + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
@@ -153,6 +189,7 @@ function Get-TestRunOptions {
         "full" { return @{ TestPreset = "tests"; BuildPreset = "tests"; CTestFilterArguments = @() } }
         "core" { return @{ TestPreset = "core-tests"; BuildPreset = "core-tests"; CTestFilterArguments = @() } }
         "fast" { return @{ TestPreset = "fast-tests"; BuildPreset = "fast-tests"; CTestFilterArguments = @() } }
+        "tools" { return @{ TestPreset = "tools-tests"; BuildPreset = "tools-tests"; CTestFilterArguments = @() } }
         { $_ -in "name", "label" } {
             if ([string]::IsNullOrWhiteSpace($Filter)) {
                 throw "$Mode mode requires a non-empty regular expression."
@@ -201,28 +238,92 @@ function Assert-HostRuntimeAvailable {
     }
 }
 
-function Test-IsolatedOutput {
-    $releaseRoot = [IO.Path]::GetFullPath(".build\Release")
-    $testRoot = Join-Path $releaseRoot "tests"
-    $runtimeRoot = Join-Path $releaseRoot "SnowDesktop.Runtime"
-    $tests = @(Get-ChildItem -LiteralPath $testRoot -File -Filter "SnowDesktop*Tests.exe" -ErrorAction Stop)
-    $rootTests = @(Get-ChildItem -LiteralPath $releaseRoot -File -Filter "SnowDesktop*Tests.exe" -ErrorAction Stop)
-    $rootDlls = @(Get-ChildItem -LiteralPath $releaseRoot -File -Filter "*.dll" -ErrorAction Stop)
-    $runtimeDirectoryNames = @(Get-ChildItem -LiteralPath $runtimeRoot -Directory -ErrorAction Stop | ForEach-Object Name)
-    $emptyRuntimeDirs = @(Get-ChildItem -LiteralPath $releaseRoot -Directory -ErrorAction Stop | Where-Object {
-            $runtimeDirectoryNames -contains $_.Name -and
-                [IO.Directory]::GetFileSystemEntries($_.FullName).Count -eq 0
-        })
-    if ($tests.Count -eq 0 -or $rootTests.Count -ne 0 -or
-        $rootDlls.Count -ne 0 -or $emptyRuntimeDirs.Count -ne 0) {
-        throw "Build or CTest output escaped its dedicated runtime/test directory."
-    }
-}
+. (Join-Path $PSScriptRoot 'test_output.ps1')
 
+. (Join-Path $PSScriptRoot 'build_entry.ps1')
+$entryLease=$null
+try {
+    try {$entryLease=Enter-BuildEntry $repositoryRoot}
+    catch {[Console]::Error.WriteLine($_.Exception.Message);exit 2}
+. (Join-Path $PSScriptRoot 'build_protocol.ps1')
+$script:lastReportPath=$null
+if($Mode -eq 'plan') {
+    if(-not $PlanBatch){throw 'Plan mode requires a frozen batch ID.'}
+    $initialPlanRoot=Join-Path $repositoryRoot '.build/collaboration'
+    $initialPlan=Read-EntryJson (Join-Path $initialPlanRoot ($PlanBatch+'.plan.json'))
+    if(-not $initialPlan -or $initialPlan.schemaVersion -ne 1 -or $initialPlan.batchId -ne $PlanBatch -or $initialPlan.configuration -ne 'Release'){throw 'Invalid frozen testing plan.'}
+    # Publish a new not-run receipt before configure/selection. A failure there
+    # cannot leave an earlier passing coverage record masquerading as this run.
+    [pscustomobject]@{schemaVersion=1;batchId=$PlanBatch;mode=$initialPlan.mode;status='not-run';selectionStatus='pending';
+        selected=@();completed=@();report=$null;error='Configuration/selection has not completed.';
+        postChecks=$(if($initialPlan.mode -eq 'full'){@{outputIsolation=(New-OutputIsolationCheck)}}else{@{}});
+        tasks=@($initialPlan.tasks|ForEach-Object {[pscustomobject]@{participant=$_.participant;requested=@($_.requirement.tests);suites=@($_.requirement.suites);status='not-run';reason=$_.requirement.reason;failed=@();requiresOutputIsolation=($_.requirement.requiredFull -or $_.requirement.suites -contains 'full')}})} |
+        ConvertTo-Json -Depth 15 | Set-Content -LiteralPath (Join-Path $initialPlanRoot ($PlanBatch+'.coverage.json')) -Encoding UTF8
+}
 Write-Host "=== Configuring tests ==="
 Invoke-Checked -FilePath "cmake" -Arguments @("--preset", "tests")
 
-if ($Mode -eq "list") {
+if ($Mode -eq "plan") {
+    if (-not $PlanBatch) { throw 'Plan mode requires a frozen batch ID.' }
+    $planRoot=Join-Path $repositoryRoot '.build\collaboration'
+    $plan=[IO.File]::ReadAllText((Join-Path $planRoot ($PlanBatch+'.plan.json'))) | ConvertFrom-Json
+    if ($plan.schemaVersion -ne 1 -or $plan.batchId -ne $PlanBatch -or $plan.configuration -ne 'Release') { throw 'Invalid frozen testing plan.' }
+    $inventory=Get-TestSelection -TestPreset 'all-tests'
+    $names=@(Resolve-PlanTests $plan $inventory.Tests)
+    $coverage=[pscustomobject]@{schemaVersion=1;batchId=$PlanBatch;mode=$plan.mode;status='running';selected=$names;completed=@();tasks=@();report=$null;error='';postChecks=$(if($plan.mode -eq 'full'){@{outputIsolation=(New-OutputIsolationCheck)}}else{@{}})}
+    foreach($task in $plan.tasks) {
+        $request=$task.requirement
+        $single=[pscustomobject]@{tests=$request.tests;suites=$request.suites;mode=$(if($request.suites -contains 'none'){'skipped'}elseif($request.requiredFull -or $request.suites -contains 'full'){'full'}else{'selected'});tasks=@()}
+        $coverage.tasks += [pscustomobject]@{participant=$task.participant;requested=@(Resolve-PlanTests $single $inventory.Tests);status=$(if($single.mode -eq 'skipped'){'not-required'}else{'not-run'});reason=$request.reason;failed=@();requiresOutputIsolation=($single.mode -eq 'full')}
+    }
+    $coveragePath=Join-Path $planRoot ($PlanBatch+'.coverage.json')
+    $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
+    try {
+        $blocked=@($inventory.Tests|Where-Object {$names -contains $_.name -and @($_.properties|Where-Object name -eq 'LABELS'|ForEach-Object {$_.value}) -contains 'environment-blocked'}|ForEach-Object {$_.name})
+        if($blocked.Count){
+            $coverage.status='environment-blocked'
+            Set-Field $coverage 'blocked' $blocked
+            foreach($task in $coverage.tasks){if(@($task.requested|Where-Object {$_ -in $blocked}).Count){$task.status='environment-blocked'}}
+            throw ('Required tests not executed: '+($blocked -join ', ')+'. Install/repair Python separately; no automatic installation.')
+        }
+        # CTest uses the CMake regex engine, which does not support (?:...).
+        $pattern='^('+ (($names | ForEach-Object {[regex]::Escape($_)}) -join '|') +')$'
+        $arguments=@('-R',$pattern)
+        if ($plan.mode -eq 'full') {
+            $includesTools=@($inventory.Tests | Where-Object {$names -contains $_.name -and @($_.properties | Where-Object name -eq 'LABELS' | ForEach-Object {$_.value}) -contains 'tools'}).Count -gt 0
+            $fullBuildPreset=if($includesTools){'all-tests'}else{'tests'}
+            Invoke-FilteredTests -CTestFilterArguments $arguments -BuildPreset $fullBuildPreset -TestPreset 'all-tests'
+            Invoke-OutputIsolationCheck $repositoryRoot $coverage.postChecks.outputIsolation
+        }
+        else { Invoke-FilteredTests -CTestFilterArguments $arguments -TestPreset 'all-tests' }
+        $coverage.status='passed'
+    } catch { if($coverage.status -ne 'environment-blocked'){$coverage.status='failed'};$coverage.error=$_.Exception.Message; throw }
+    finally {
+        $coverage.report=$script:lastReportPath
+        if ($script:lastReportPath -and [IO.File]::Exists($script:lastReportPath)) {
+            $report=[xml][IO.File]::ReadAllText($script:lastReportPath)
+            $coverage.completed=@($report.SelectNodes('//testcase') | ForEach-Object {
+                [pscustomobject]@{name=$_.GetAttribute('name');status=$(if($_.SelectSingleNode('failure|error')){'failed'}elseif($_.SelectSingleNode('skipped') -or $_.GetAttribute('status') -in 'notrun','disabled'){'not-run'}else{'passed'});seconds=$_.GetAttribute('time')}
+            })
+            foreach($task in $coverage.tasks) {
+                if($task.status -eq 'not-required'){continue}
+                $actual=@($coverage.completed | Where-Object {$task.requested -contains $_.name})
+                $task.failed=@($actual | Where-Object status -eq 'failed' | ForEach-Object {$_.name})
+                $task.status=if($task.failed.Count){'failed'}elseif($actual.Count -eq $task.requested.Count -and @($actual | Where-Object status -ne 'passed').Count -eq 0){'passed'}else{'not-run'}
+                if($task.requiresOutputIsolation -and $task.status -eq 'passed' -and $coverage.postChecks.outputIsolation.status -ne 'passed'){
+                    $task.status=if($coverage.postChecks.outputIsolation.status -eq 'failed'){'failed'}else{'not-run'}
+                }
+            }
+        }
+        foreach($artifact in @(Get-Field $coverage 'testExecutablesBeforeRun' @())){
+            $path=Join-Path $repositoryRoot $artifact.executable
+            if(-not [IO.File]::Exists($path) -or (Get-FileDigest $path) -ne $artifact.sha256){$coverage.status='invalidated';$coverage.error='Test executable changed during run.'}
+        }
+        $coverage | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $coveragePath -Encoding UTF8
+        if($coverage.status -eq 'invalidated'){throw $coverage.error}
+    }
+}
+elseif ($Mode -eq "list") {
         $selection = Get-TestSelection -TestPreset "all-tests"
         foreach ($test in $selection.Tests) {
             $labelProperty = @($test.properties |
@@ -241,15 +342,17 @@ if ($Mode -eq "list") {
 else {
     $options = Get-TestRunOptions -Mode $Mode -Filter $Filter
     if ($Mode -in "full", "core", "fast") {
-        Write-Host "Manual diagnostic tests are excluded; select them explicitly with name or label."
+        Write-Host "Build tool regressions and manual diagnostics are excluded; select tools, name or label explicitly."
     }
     Invoke-FilteredTests @options
     if ($Mode -eq "full") {
         Write-Host ""
         Write-Host "=== Verifying isolated test output ==="
-        Test-IsolatedOutput
+        Test-IsolatedOutput $repositoryRoot
     }
 }
 
 Write-Host ""
 Write-Host "=== Tests complete ($Mode) ==="
+
+} finally {Exit-BuildEntry $entryLease}

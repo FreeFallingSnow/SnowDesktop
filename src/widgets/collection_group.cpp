@@ -492,8 +492,9 @@ std::wstring CollectionGroup::CategoryIdAtPoint(POINT pt) const
         : L"";
 }
 
-bool CollectionGroup::TryScrollTabs(POINT pt, int delta)
+bool CollectionGroup::TryScrollTabs(POINT pt, int delta, bool* changed)
 {
+    if (changed) *changed = false;
     if (!data_) return false;
     RECT tabs = CollectionGroupTabsRect(this);
     if (IsRectEmptyRect(tabs) || !PtInRect(&tabs, pt))
@@ -505,8 +506,10 @@ bool CollectionGroup::TryScrollTabs(POINT pt, int delta)
         0, CollectionGroupTabsTotalWidth(widths) -
             static_cast<int>(tabs.right - tabs.left));
     if (maxScroll <= 0) return false;
+    const int previous = data_->tabScrollOffset;
     data_->tabScrollOffset = std::clamp(
         data_->tabScrollOffset - delta / 2, 0, maxScroll);
+    if (changed) *changed = previous != data_->tabScrollOffset;
     return true;
 }
 
@@ -1145,7 +1148,7 @@ void CollectionGroup::DrawContent(
                     item->selected, item->iconIsMediaThumbnail,
                     demoIdentity, activeCollection,
                     { item->typeName, item->modifiedTime,
-                      item->fileSize, false });
+                      item->fileSize, false }, std::nullopt, !app_->IsRenamingItem(item));
             }
         }
         else if (privacyActive)

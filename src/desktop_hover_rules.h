@@ -1,17 +1,12 @@
 #pragma once
 
+#include "desktop_hover_types.h"
+
 #include <cstdint>
 
 namespace snowdesktop::desktop_hover_rules
 {
 inline constexpr std::uint32_t kActivationSettleMs = 150;
-
-enum class ReconcileMode
-{
-    DeactivateOnly,
-    AllowImmediateActivation,
-    AllowActivationAfterForegroundSettle,
-};
 
 constexpr ReconcileMode ShellPopupCloseReconcileMode()
 {
@@ -37,6 +32,22 @@ constexpr bool ShouldRetainHoverAcrossMouseLeave(
 {
     return pointerOnContentWindow ||
         pointerOnPairedBackdropWindow;
+}
+
+template<typename RearmTracking>
+bool RetainPairedSurfaceMouseLeave(
+    bool pointerOnContentWindow,
+    bool pointerOnPairedBackdropWindow,
+    RearmTracking rearmTracking)
+{
+    if (!ShouldRetainHoverAcrossMouseLeave(
+            pointerOnContentWindow, pointerOnPairedBackdropWindow))
+        return false;
+    // Only the content HWND owns this leave subscription. Retain a backdrop
+    // handoff without replaying input, changing regions or scheduling a paint.
+    if (pointerOnContentWindow)
+        rearmTracking();
+    return true;
 }
 
 constexpr bool ShouldResamplePassiveMouseMove(

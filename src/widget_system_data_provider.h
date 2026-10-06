@@ -1,8 +1,11 @@
 #pragma once
+#include "system_controls.h"
 
 #include "widget_data_semantic_debounce.h"
 #include "widget_network_traffic.h"
+#include "widget_gpu_sampler.h"
 #include "widget_runtime_image.h"
+#include "widget_resource_history.h"
 
 #include <atomic>
 #include <chrono>
@@ -124,27 +127,6 @@ struct WidgetNetworkTrafficDataSnapshot
     std::uint64_t sentBytes = 0;
     std::uint64_t downloadBytesPerSecond = 0;
     std::uint64_t uploadBytesPerSecond = 0;
-    std::int64_t timestampMs = 0;
-    std::uint64_t revision = 0;
-    std::string error;
-};
-
-struct WidgetGpuAdapterDataSnapshot
-{
-    std::string id;
-    std::string name;
-    double usagePercent = 0.0;
-    std::uint64_t dedicatedMemoryBytes = 0;
-    std::uint64_t dedicatedUsedBytes = 0;
-    std::uint64_t sharedMemoryBytes = 0;
-    std::uint64_t sharedUsedBytes = 0;
-};
-
-struct WidgetGpuDataSnapshot
-{
-    bool available = false;
-    bool warmingUp = true;
-    std::vector<WidgetGpuAdapterDataSnapshot> adapters;
     std::int64_t timestampMs = 0;
     std::uint64_t revision = 0;
     std::string error;
@@ -367,7 +349,16 @@ public:
     bool StartTopic(std::string_view topic,
         std::chrono::milliseconds interval);
     bool StopTopic(std::string_view topic);
+    // Host-internal consumers share one schedule per topic. The two-argument
+    // overloads retain the widget broker's demand for existing callers.
+    bool StartTopic(std::string_view consumer, std::string_view topic,
+        std::chrono::milliseconds interval);
+    bool StopTopic(std::string_view consumer, std::string_view topic);
+    void RemoveConsumer(std::string_view consumer);
+    std::optional<std::chrono::milliseconds> EffectiveInterval(
+        std::string_view topic) const;
     void StopAll();
+    std::shared_ptr<system_control::Service> Controls() const { return controls_; }
 
     std::optional<WidgetCpuDataSnapshot> Cpu() const;
     std::optional<WidgetMemoryDataSnapshot> Memory() const;
@@ -375,7 +366,8 @@ public:
     std::optional<WidgetPowerDataSnapshot> Power() const;
     std::optional<WidgetNetworkStatusDataSnapshot> NetworkStatus() const;
     std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
-    std::optional<WidgetGpuDataSnapshot> Gpu() const;
+    std::optional<WidgetGpuDataSnapshot> Gpu(bool includeDetails = false) const;
+    std::vector<WidgetResourcePoint> ResourceHistory(std::string_view topic, std::string_view adapterId = {}) const;
     std::optional<WidgetStorageVolumesDataSnapshot> StorageVolumes() const;
     std::optional<WidgetStorageIoDataSnapshot> StorageIo() const;
     std::optional<WidgetDisplayTopologyDataSnapshot> DisplayTopology() const;
@@ -414,10 +406,8 @@ private:
     WidgetStorageVolumesDataSnapshot SampleStorageVolumes();
     WidgetStorageIoDataSnapshot SampleStorageIo();
     WidgetDisplayTopologyDataSnapshot SampleDisplayTopology();
-    WidgetAudioOutputDefaultDataSnapshot SampleAudioOutputDefault();
-    WidgetAudioOutputVolumeDataSnapshot SampleAudioOutputVolume();
     WidgetMediaSessionsDataSnapshot SampleMediaSessions(
-        bool includeArtwork = false);
+        bool includeArtwork, std::stop_token stopToken);
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishProcessSummary(WidgetProcessSummaryDataSnapshot snapshot);
@@ -429,22 +419,22 @@ private:
     void PublishStorageIo(WidgetStorageIoDataSnapshot snapshot);
     void PublishDisplayTopology(WidgetDisplayTopologyDataSnapshot snapshot);
     void PublishDisplayCurrent(WidgetDisplayTopologyDataSnapshot snapshot);
-    void PublishAudioOutputDefault(
-        WidgetAudioOutputDefaultDataSnapshot snapshot);
-    void PublishAudioOutputVolume(
-        WidgetAudioOutputVolumeDataSnapshot snapshot);
     void PublishMediaSessions(WidgetMediaSessionsDataSnapshot snapshot);
     void PublishMediaCurrent(const WidgetMediaSessionsDataSnapshot& snapshot);
     void PublishMediaTimeline(const WidgetMediaSessionsDataSnapshot& snapshot);
     void PublishMediaArtwork(const WidgetMediaSessionsDataSnapshot& snapshot);
-    bool InitializeGpuQuery();
-    void CloseGpuQuery();
+    void CloseGpuResources();
     bool InitializeStorageIoQuery();
     void CloseStorageIoQuery();
 
     mutable std::mutex mutex_;
+    std::shared_ptr<system_control::Service> controls_ = std::make_shared<system_control::Service>();
+    // Serializes worker creation/join without holding the snapshot mutex.
+    mutable std::mutex lifecycleMutex_;
     std::condition_variable condition_;
     std::unordered_map<std::string, TopicSchedule> schedules_;
+    std::unordered_map<std::string,
+        std::unordered_map<std::string, std::chrono::milliseconds>> demands_;
     std::unordered_set<std::string> changedTopics_;
     std::unordered_map<std::string, WidgetDataSemanticDebouncer>
         semanticDebouncers_;
@@ -456,12 +446,12 @@ private:
     WidgetNetworkStatusDebouncer networkStatusDebouncer_;
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
     std::optional<WidgetGpuDataSnapshot> gpu_;
+    std::optional<WidgetGpuDataSnapshot> gpuDetails_;
+    WidgetResourceHistory resourceHistory_;
     std::optional<WidgetStorageVolumesDataSnapshot> storageVolumes_;
     std::optional<WidgetStorageIoDataSnapshot> storageIo_;
     std::optional<WidgetDisplayTopologyDataSnapshot> displayTopology_;
     std::optional<WidgetDisplayTopologyDataSnapshot> displayCurrent_;
-    std::optional<WidgetAudioOutputDefaultDataSnapshot> audioOutputDefault_;
-    std::optional<WidgetAudioOutputVolumeDataSnapshot> audioOutputVolume_;
     std::optional<WidgetMediaSessionsDataSnapshot> mediaSessions_;
     std::optional<WidgetMediaCurrentDataSnapshot> mediaCurrent_;
     std::optional<WidgetMediaTimelineDataSnapshot> mediaTimeline_;
@@ -485,10 +475,7 @@ private:
     std::unordered_map<std::string, std::uint64_t> previousProcessCpuTimes_;
     Clock::time_point previousProcessSample_{};
     WidgetNetworkTrafficSampler networkTrafficSampler_;
-    void* gpuQuery_ = nullptr;
-    void* gpuUtilizationCounter_ = nullptr;
-    void* gpuDedicatedUsageCounter_ = nullptr;
-    void* gpuSharedUsageCounter_ = nullptr;
+    WidgetGpuSampler gpuSampler_;
     void* storageIoQuery_ = nullptr;
     void* storageReadCounter_ = nullptr;
     void* storageWriteCounter_ = nullptr;

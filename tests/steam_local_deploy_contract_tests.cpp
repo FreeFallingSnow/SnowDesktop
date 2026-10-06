@@ -1,0 +1,30 @@
+#include "build_tool_test_support.h"
+#include <iostream>
+using namespace build_test;
+namespace {
+void test(const fs::path& repo){
+    auto root=temporary("steam-local-deploy"),steam=root/L"Steam",install=steam/L"steamapps/common/SnowDesktop",payload=root/L"payload";
+    fs::create_directories(install);std::string escaped=utf8(steam.wstring());size_t at=0;
+    while((at=escaped.find('\\',at))!=std::string::npos){escaped.insert(at,"\\");at+=2;}
+    auto library=steam/L"steamapps/libraryfolders.vdf",manifest=steam/L"steamapps/appmanifest_5080330.acf";
+    write(library,"\"libraryfolders\"\n{\n\"0\"\n{\n\"path\" \""+escaped+"\"\n\"apps\"\n{\n\"5080330\" \"0\"\n}\n}\n}\n",true);
+    write(manifest,"\"AppState\"\n{\n\"appid\" \"5080330\"\n\"name\" \"SnowDesktop\"\n\"StateFlags\" \"4\"\n\"installdir\" \"SnowDesktop\"\n\"buildid\" \"0\"\n\"InstalledDepots\"\n{\n}\n}\n",true);
+    write(payload/L"SnowDesktop.exe","contract executable");write(payload/L"lang/en-US/contract.txt","contract translation");write(payload/L"SnowDesktop.runtime-context.json","{\"schemaVersion\":1,\"kind\":\"steam-managed\"}");
+    auto manifestBytes=read(manifest),libraryBytes=read(library);Bridge bridge(repo,root);
+    auto args=std::vector<std::string>{"-SteamRoot",utf8(steam.wstring()),"-PayloadDirectory",utf8(payload.wstring()),"-BuildId","contract-build","-ProfileId","contract-profile","-Json"};auto script=repo/L"scripts/steam_local_deploy.ps1";
+    auto dry=bridge.call(script,args);
+    require(!dry.at("applied").boolean&&dry.at("deploymentKind").str()=="steam-local-dev"&&!dry.at("steamManaged").boolean&&!dry.at("changesActiveDeployment").boolean&&dry.at("fileCount").integer()==2&&!fs::exists(install/L".snowdesktop"),"Dry run touched install/misclassified payload");
+    args.push_back("-Apply");auto applied=bridge.call(script,args);auto destination=install/L".snowdesktop/dev/contract-build";
+    require(applied.at("applied").boolean&&fs::equivalent(wide(applied.at("destination").str()),destination)&&read(destination/L"SnowDesktop.exe")=="contract executable"&&read(destination/L"lang/en-US/contract.txt")=="contract translation","Local staging destination/content incorrect");
+    auto marker=Json::parse(read(destination/L"SnowDesktop.runtime-context.json"));
+    for(const auto& pair:std::vector<std::pair<std::string,std::string>>{{"kind","steam-local-dev"},{"installRootRelative","../../.."},{"dataRootRelative",".snowdesktop/dev-data/contract-profile"},{"launcherRelative",".snowdesktop/dev/contract-build/SnowDesktop.exe"},{"profileId","contract-profile"}})require(marker.at(pair.first).str()==pair.second,"Staged runtime context incorrect: "+pair.first);
+    require(Json::parse(read(destination/L"content-manifest.json")).at("files").items.size()==2&&read(manifest)==manifestBytes&&read(library)==libraryBytes,"Manifest/library overwritten");
+    for(const auto& name:{"data","distribution","runtime","state",".snowdesktop/dev-data"})require(!fs::exists(install/name),"Staging changed protected directory");
+    require(bridge.invoke(script,args).code!=0&&read(destination/L"SnowDesktop.exe")=="contract executable","Redeploy overwrote existing development build");
+    auto bad=root/L"bad-payload";write(bad/L"SnowDesktop.exe","contract executable");write(bad/L"data/settings.json","user data");auto badArgs=args;badArgs[3]=utf8(bad.wstring());badArgs[5]="bad-payload";
+    require(bridge.invoke(script,badArgs).code!=0&&!fs::exists(install/L".snowdesktop/dev/bad-payload"),"Payload containing user data accepted");
+    badArgs=args;badArgs[5]="..\\escape";require(bridge.invoke(script,badArgs).code!=0,"Unsafe build ID accepted");badArgs=args;badArgs[7]="..\\escape";require(bridge.invoke(script,badArgs).code!=0,"Unsafe profile ID accepted");
+    std::cout<<"PASS local Steam staging isolation and unchanged manifests\n";
+}
+}
+int main(int argc,char** argv){return test_main(argc,argv,test);}

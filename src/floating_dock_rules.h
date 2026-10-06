@@ -27,6 +27,7 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
+inline constexpr DWORD kEdgeHoverDelayMs = 250;
 inline constexpr int kPassiveDragRevealEdgeBandDip = 6;
 inline constexpr ULONGLONG kPassiveDragLeaveDelayMs = 360;
 
@@ -72,11 +73,38 @@ inline FloatingDockInputPolicy ResolveFloatingDockInputPolicy(
 inline bool IsDockEffectivelyPromoted(
     bool manuallyPromoted,
     bool passiveDragRevealed,
-    bool summonOnlyEnabled)
+    bool /*summonOnlyEnabled*/)
 {
-    return manuallyPromoted ||
-        (summonOnlyEnabled && passiveDragRevealed);
+    return manuallyPromoted || passiveDragRevealed;
 }
+
+// Before an external drag enters a SnowDesktop drop target there is no OLE
+// payload/session here. Recognize only a held, moved pointer from another app;
+// actual drop acceptance remains exclusively in the normal OLE target path.
+class ExternalPointerDrag
+{
+public:
+    bool Update(POINT point, bool buttonHeld, bool externalSource,
+        bool canceledOrMovingWindow, int thresholdX, int thresholdY)
+    {
+        if (!buttonHeld) { Reset(); return false; }
+        if (!held_)
+        {
+            held_ = true;
+            origin_ = point;
+            eligible_ = externalSource;
+        }
+        if (canceledOrMovingWindow) eligible_ = active_ = false;
+        if (eligible_ && (std::abs(point.x - origin_.x) >= std::max(1, thresholdX) ||
+            std::abs(point.y - origin_.y) >= std::max(1, thresholdY))) active_ = true;
+        return active_;
+    }
+    bool Active() const { return active_; }
+    void Reset() { held_ = eligible_ = active_ = false; origin_ = {}; }
+private:
+    POINT origin_{};
+    bool held_ = false, eligible_ = false, active_ = false;
+};
 
 inline bool ShouldShowPersistentDockHost(
     bool active,
@@ -89,9 +117,24 @@ inline bool ShouldShowPersistentDockHost(
 {
     return active && !desktopPassthroughActive &&
         (effectivelyPromoted ||
-            (!summonOnlyEnabled && customDesktopVisible &&
-                (!desktopIconsHidden ||
+            (!summonOnlyEnabled &&
+                (!customDesktopVisible || !desktopIconsHidden ||
                     keepWhenDesktopHidden)));
+}
+
+// Merging adds only a monitor-owned interaction hold and fullscreen observation
+// to the ordinary Dock policy. Native Explorer desktop remains a Dock surface;
+// wallpaper passthrough and summon-only still hide the idle bar.
+inline bool ShouldShowMergedStatusBarDockHost(
+    bool active, bool effectivelyPromoted, bool summonOnlyEnabled,
+    bool customDesktopVisible, bool desktopIconsHidden,
+    bool keepWhenDesktopHidden, bool desktopPassthroughActive,
+    bool fullscreen, bool interactionHeld)
+{
+    const bool floating = effectivelyPromoted || interactionHeld;
+    return ShouldShowPersistentDockHost(active, floating, summonOnlyEnabled,
+        customDesktopVisible, desktopIconsHidden, keepWhenDesktopHidden,
+        desktopPassthroughActive) && (!fullscreen || floating);
 }
 
 inline bool ShouldPassivelyRevealDockForDragAtEdge(
@@ -101,6 +144,22 @@ inline bool ShouldPassivelyRevealDockForDragAtEdge(
 {
     return pointerInEdgeProjection &&
         (internalDragActive || oleDragActive);
+}
+
+inline bool IsPointInMergedDockInteraction(
+    POINT point, const RECT& dockInteraction, const RECT& strip)
+{
+    // Keep the real magnification envelope and the strip as separate targets:
+    // their bounding rectangle would also retain unrelated desktop corners.
+    return PtInRect(&dockInteraction, point) || PtInRect(&strip, point);
+}
+
+inline bool IsMenuOwnedByDock(HWND menuRoot, HWND dockWindow)
+{
+    // Both modern menus and the native Shell tracker use the actual source
+    // HWND as their native owner. A menu on another monitor grants no hold.
+    return menuRoot && dockWindow && IsWindow(menuRoot) && IsWindow(dockWindow) &&
+        GetWindow(menuRoot, GW_OWNER) == dockWindow;
 }
 
 enum class PassiveDragRevealAction
@@ -113,7 +172,7 @@ enum class PassiveDragRevealAction
 };
 
 inline PassiveDragRevealAction ResolvePassiveDragRevealUpdate(
-    bool summonOnlyEnabled,
+    bool passiveRevealEnabled,
     bool manuallyPromoted,
     bool passiveDragRevealed,
     bool revealRequested,
@@ -121,7 +180,7 @@ inline PassiveDragRevealAction ResolvePassiveDragRevealUpdate(
     bool leavePending,
     bool leaveDelayElapsed)
 {
-    if (!summonOnlyEnabled || manuallyPromoted)
+    if (!passiveRevealEnabled || manuallyPromoted)
         return leavePending
             ? PassiveDragRevealAction::CancelLeave
             : PassiveDragRevealAction::None;
@@ -444,7 +503,8 @@ public:
         DockPosition position, DWORD tick,
         int edgeBand, int requiredTravel,
         DWORD maximumDurationMs =
-            kEdgeSwipeMaximumDurationMs)
+            kEdgeSwipeMaximumDurationMs,
+        bool hover = false)
     {
         if (!IsPointOnDockScreenEdge(
                 point, monitorRect, position, edgeBand))
@@ -457,15 +517,16 @@ public:
 
         const bool contextChanged =
             !tracking_ ||
-            position != position_ ||
+            position != position_ || hover != hover_ ||
             !EqualRect(&monitorRect_, &monitorRect);
         const DWORD elapsed = tick - startTick_;
         if (contextChanged ||
-            (tracking_ && elapsed > maximumDurationMs))
+            (!hover && tracking_ && elapsed > maximumDurationMs))
         {
             tracking_ = true;
             monitorRect_ = monitorRect;
             position_ = position;
+            hover_ = hover;
             startPoint_ = point;
             startTick_ = tick;
             return false;
@@ -477,7 +538,7 @@ public:
                 position == DockPosition::Bottom
             ? point.x - startPoint_.x
             : point.y - startPoint_.y;
-        if (std::abs(alongEdge) < requiredTravel)
+        if (hover ? elapsed < kEdgeHoverDelayMs : std::abs(alongEdge) < requiredTravel)
             return false;
 
         tracking_ = false;
@@ -511,6 +572,7 @@ public:
 
 private:
     bool tracking_ = false;
+    bool hover_ = false;
     bool awaitingEdgeLeave_ = false;
     RECT monitorRect_{};
     POINT startPoint_{};
@@ -532,14 +594,14 @@ inline RECT UnionNonEmptyRects(const RECT& first, const RECT& second)
 inline RECT ExpandHostForTitleLayer(
     RECT dockRect, DockPosition position)
 {
-    // The title chip is at most 260x30 with an 8px gap. Keep this
+    // The title chip is at most 300x36 with an 8px gap and a 4px vertical offset. Keep this
     // allocation stable while the pointer moves; only the exact title
     // chip is added to the HWND region, so the transparent reserve never
     // receives input.
-    constexpr int titleWidthAxisPadding = 134;
-    constexpr int titleHeightAxisPadding = 18;
-    constexpr int titleWidthAndGap = 272;
-    constexpr int titleHeightAndGap = 42;
+    constexpr int titleWidthAxisPadding = 154;
+    constexpr int titleHeightAxisPadding = 26;
+    constexpr int titleWidthAndGap = 312;
+    constexpr int titleHeightAndGap = 52;
     switch (position)
     {
     case DockPosition::Top:

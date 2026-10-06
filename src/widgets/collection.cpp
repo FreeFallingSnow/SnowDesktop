@@ -127,10 +127,22 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
     }
     if (CollectionTitlelessActive(widget))
         return CollectionDenseLayout(widget).geometry;
-    return snowdesktop::widget_item_layout::ResolveGrid(
+    auto layout = snowdesktop::widget_item_layout::ResolveGrid(
         content, std::max(1, data->gridSpan.columns), fixedRows,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
+    const int savedTitleHeight = std::max(0,
+        snowdesktop::item_layout_rules::CollapsedTextHeight(
+            metrics.fontSize * 7.0f / 6.0f) - metrics.titleHeight);
+    if (!data->scrollContainerMode && savedTitleHeight > 0)
+    {
+        layout = snowdesktop::widget_item_layout::ResolveGrid(
+            content, std::max(1, data->gridSpan.columns), fixedRows,
+            metrics.minimumGridWidth, metrics.minimumGridHeight + savedTitleHeight, spacing);
+        layout = snowdesktop::widget_item_layout::CompressFixedGridRows(
+            layout, savedTitleHeight);
+    }
+    return layout;
 }
 
 /**
@@ -353,7 +365,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         app_->DrawDemoCollectionIdentityIcon(
             context, *data_, demoIdentity, iconRect, 1.0f);
     }
-    else if (item.iconState == IconState::Loading)
+    else if (!item.iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, item.sysIconIndex, iconRect, 1.0f);
     }
@@ -364,9 +376,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
             app_->ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail));
         if (bmp)
         {
-            D2D1_RECT_F dst = D2D1::RectF(static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
-                static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
-            context->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+            app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
+                reinterpret_cast<std::uintptr_t>(&item), false);
         }
         else
         {
@@ -376,7 +387,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
 
     if (!useDemoIdentity &&
         app_->ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
-        item.iconState != IconState::Loading)
+        (item.iconBitmap || item.iconState != IconState::Loading))
     {
         app_->DrawShortcutArrowOverlay(context, iconRect, 1.0f);
     }
@@ -400,9 +411,9 @@ void Collection::DrawTitlelessTooltip(
                 frameInset * 2 - horizontalPadding * 2));
     IDWriteTextFormat* format = GetCuTextFormatWeight(
         app_->itemFontSizeCu_,
-        app_->IsLightContentTheme()
-            ? DWRITE_FONT_WEIGHT_LIGHT
-            : app_->itemFontWeight_, true);
+        static_cast<DWRITE_FONT_WEIGHT>(
+            snowdesktop::font_weight_rules::RenderedWeight(
+                app_->itemFontWeight_, app_->IsLightContentTheme())), true);
     if (!format || !app_->dwriteFactory_) return;
 
     ComPtr<IDWriteTextLayout> layout;
@@ -517,7 +528,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         DrawListItem(context, cell, nullptr, -1, L"", false, false);
                     else
                         app_->DrawPlaceholderIcon(context, -1,
-                            app_->GetItemIconRect(cell), 1.0f);
+                            app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_)), 1.0f);
                 }
                 continue;
             }
@@ -556,7 +567,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         di.sysIconIndex, di.name, di.selected,
                         di.iconIsMediaThumbnail, demoIdentity, data_,
                         { di.typeName, di.modifiedTime,
-                          di.fileSize, false });
+                          di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di));
                 }
             }
         }
@@ -611,7 +622,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 const RECT iconRect = compact ? GetThumbnailIconRect(slotRect) : titlelessLargeFolder
                     ? snowdesktop::ResolveCenteredIconRect(slotRect, titlelessIconSize)
-                    : app_->GetItemIconRect(slotRect);
+                    : app_->GetItemIconRect(slotRect, app_->ResolveItemTitleLines(data_));
                 app_->DrawPlaceholderIcon(context, -1, iconRect, 1.0f);
             }
             continue;
@@ -707,7 +718,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 return;
             }
 
-            RECT mosaicRect = app_->GetItemIconRect(allRect);
+            RECT mosaicRect = app_->GetItemIconRect(allRect, app_->ResolveItemTitleLines(data_));
             if (titlelessLargeFolder)
                 mosaicRect =
                     snowdesktop::ResolveCenteredIconRect(
@@ -756,7 +767,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 app_->DrawItemText(context, allRect,
                     collectionTitle, false, 1.0f,
-                    app_->IsLightContentTheme(), true);
+                    app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
             }
             else if (canShowTitlelessTooltip &&
                 PtInRect(&allRect,
@@ -970,8 +981,8 @@ void Collection::ReorderMembers(const std::vector<size_t>& indices, size_t inser
 /**
  * @brief 获取集合中所有选中项的 Item 指针（用于拖拽操作）
  *
- * 遍历集合的全部项，为每个选中项创建 DesktopIcon 并计算其可见边界，
- * 缓存在 dragSourceCache_ 中。调用时清空之前的拖拽缓存。
+ * 遍历集合的全部项，为每个选中项创建 DesktopIcon。当前没有可见边界的
+ * 成员仍属于拖拽载荷，其空边界仅用于预览几何。调用时清空之前的拖拽缓存。
  * @return 选中项的 Item 指针列表
  */
 std::vector<Item*> Collection::GetSelectedItems() const
@@ -987,7 +998,6 @@ std::vector<Item*> Collection::GetSelectedItems() const
         DesktopItem& di = app_->GetDesktopItems()[idx];
         if (!di.selected) continue;
         RECT bounds = app_->GetVisibleCollectionItemBounds(idx);
-        if (IsRectEmptyRect(bounds)) continue;
 
         auto icon = std::make_unique<DesktopIcon>(&app_->GetDesktopItems()[idx], const_cast<Collection*>(this), app_);
         icon->SetBounds(bounds);

@@ -4,6 +4,7 @@
 #include "../item_render_layer_rules.h"
 #include "../drag_visual_rules.h"
 #include "../large_icon_render_rules.h"
+#include "../large_icon_shape_geometry.h"
 #include "../widget_composition_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
@@ -509,6 +510,7 @@ void DesktopApp::DrawDynamicOverlays(
         {
             RECT bounds = targetSlot->GetBounds();
             float radius = 6.f;
+            ComPtr<ID2D1Geometry> largeIconOutline;
             D2D1_MATRIX_3X2_F handoffTransform{};
             ctx->GetTransform(&handoffTransform);
             if (popupTarget && UsesCollectionPopupFan(*openPopupWidget))
@@ -531,11 +533,24 @@ void DesktopApp::DrawDynamicOverlays(
                     bounds = GetLargeIconFrameRect(*item);
                     const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
                         EffectiveLargeIconConfig(*item), CurrentPersonalization().cornerRadius);
+                    bounds = snowdesktop::large_icon_shape::Frame(config, bounds);
                     radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
                         bounds.right - bounds.left, bounds.bottom - bounds.top, GetItemLayoutScale(item->bounds)));
+                    if (config.shape >= 2)
+                        largeIconOutline = snowdesktop::large_icon_shape::Geometry(d2dFactory_.Get(), config.shape, ToD2DRect(bounds), radius, config.flagDirection);
                 }
             }
-            DrawD2DRoundedRectangle(ctx, bounds, radius,
+            if (largeIconOutline)
+            {
+                ComPtr<ID2D1SolidColorBrush> brush;
+                if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f), &brush)))
+                {
+                    ctx->FillGeometry(largeIconOutline.Get(), brush.Get());
+                    brush->SetOpacity(.60f);
+                    ctx->DrawGeometry(largeIconOutline.Get(), brush.Get(), 2.f);
+                }
+            }
+            else DrawD2DRoundedRectangle(ctx, bounds, radius,
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
             ctx->SetTransform(handoffTransform);

@@ -204,44 +204,7 @@ bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
     const SystemTaskbarDynamicRule& rule) const
 {
-    PersonalizationSettings result;
-    switch (rule.themeMode)
-    {
-    case SystemTaskbarThemeMode::FollowGlobal:
-        result = CurrentPersonalization();
-        break;
-    case SystemTaskbarThemeMode::Dark:
-        result = MakeAppearancePreset(kAppearancePresetDark);
-        break;
-    case SystemTaskbarThemeMode::Light:
-        result = MakeAppearancePreset(kAppearancePresetLight);
-        break;
-    case SystemTaskbarThemeMode::GlassDark:
-        result = MakeAppearancePreset(kAppearancePresetGlassDark);
-        break;
-    case SystemTaskbarThemeMode::GlassLight:
-        result = MakeAppearancePreset(kAppearancePresetGlassLight);
-        break;
-    case SystemTaskbarThemeMode::AcrylicDark:
-        result = MakeAppearancePreset(kAppearancePresetAcrylicDark);
-        break;
-    case SystemTaskbarThemeMode::AcrylicLight:
-        result = MakeAppearancePreset(kAppearancePresetAcrylicLight);
-        break;
-    case SystemTaskbarThemeMode::Transparent:
-        result = MakeTransparentTaskbarAppearance();
-        break;
-    case SystemTaskbarThemeMode::Custom:
-        result = rule.appearance;
-        break;
-    case SystemTaskbarThemeMode::Native:
-    default:
-        result = PersonalizationSettings::DarkPreset();
-        break;
-    }
-    if (rule.contentTheme >= 0)
-        result.contentTheme = rule.contentTheme;
-    return result;
+    return snowdesktop::ResolveTaskbarRuleAppearance(rule, CurrentPersonalization());
 }
 
 bool IsSystemTaskbarCandidateWindow(HWND window,
@@ -325,6 +288,32 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
         systemTaskbarShellUiMonitor_;
     systemTaskbarMonitorWindowStates_.clear();
 
+    // UpdateLayoutWorkArea publishes this list only after a complete successful
+    // EnumDisplayMonitors sample. Reuse it instead of enumerating monitors for
+    // every window scan, but reject stale geometry during topology changes.
+    // Resolve handles exactly as SyncStatusBar does; monitorId is not a handle
+    // or necessarily a Win32 device name, and pages may share one monitor.
+    std::vector<HMONITOR> knownMonitors;
+    bool monitorsKnown = !gridPages_.empty();
+    for (const auto& page : gridPages_)
+    {
+        RECT screen = page.bounds;
+        OffsetRect(&screen, virtualLeft_, virtualTop_);
+        const HMONITOR monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL);
+        MONITORINFO info{sizeof(info)};
+        if (IsRectEmpty(&screen) || !monitor || !GetMonitorInfoW(monitor, &info) ||
+            !EqualRect(&screen, &info.rcMonitor))
+        {
+            monitorsKnown = false;
+            break;
+        }
+        if (std::find(knownMonitors.begin(), knownMonitors.end(), monitor) == knownMonitors.end())
+            knownMonitors.push_back(monitor);
+    }
+    const int monitorCount = GetSystemMetrics(SM_CMONITORS);
+    monitorsKnown = monitorsKnown && monitorCount > 0 &&
+        knownMonitors.size() == static_cast<std::size_t>(monitorCount);
+
     ComPtr<IVirtualDesktopManager> virtualDesktopManager;
     CoCreateInstance(CLSID_VirtualDesktopManager, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&virtualDesktopManager));
@@ -342,7 +331,7 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
         SystemTaskbarWindowObservation> observations;
     context.observations = &observations;
 
-    EnumWindows([](HWND window, LPARAM value) -> BOOL {
+    const bool windowsKnown = EnumWindows([](HWND window, LPARAM value) -> BOOL {
         auto* context = reinterpret_cast<EnumerationContext*>(value);
         if (!IsSystemTaskbarCandidateWindow(window,
             context->virtualDesktopManager))
@@ -358,7 +347,21 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
         if (IsZoomed(window))
             state.maximized = true;
         return TRUE;
-    }, reinterpret_cast<LPARAM>(&context));
+    }, reinterpret_cast<LPARAM>(&context)) != FALSE;
+    if (!windowsKnown)
+    {
+        // A partial or failed scan is unknown, including on a monitor whose
+        // previous valid sample happened to contain no application windows.
+        systemTaskbarMonitorWindowStates_.clear();
+        observations.clear();
+    }
+    else if (monitorsKnown)
+    {
+        // Positive observations remain usable without a complete monitor list;
+        // only the absence of windows requires both complete observations.
+        for (const HMONITOR monitor : knownMonitors)
+            systemTaskbarMonitorWindowStates_.try_emplace(monitor);
+    }
     {
         std::scoped_lock lock(
             systemTaskbarWindowObservationMutex_);
@@ -495,7 +498,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const PersonalizationSettings defaultAppearance =
         ResolveSystemTaskbarAppearance(dockSettings_);
     std::vector<HMONITOR> dockMonitors;
-    if ((protectActivation || suppressionRequested) && hwnd_)
+    if (suppressionRequested && hwnd_)
     {
         for (const auto& container : containers_)
         {
@@ -540,8 +543,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         target.taskbar = taskbar;
         // Panel access remains available even with all appearance rules off.
         target.shellPanelVisible = shellPanelVisible;
-        target.suppressTaskbar = suppressionRequested && hasDock;
-        target.protectAutoHideActivation = protectActivation && !shellPanelVisible && hasDock;
+        ConfigureSystemTaskbarTargetProtection(
+            target, suppressionRequested, protectActivation, hasDock);
         if (selectedRule)
         {
             target.enabled =

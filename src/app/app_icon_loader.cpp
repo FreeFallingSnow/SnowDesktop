@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../shortcut_category_target.h"
 #include "../pending_window_message.h"
 #include "shell_icon_request.h"
 #include "initial_icon_bitmap.h"
@@ -123,6 +124,7 @@ void DesktopApp::StartDemoIconLoader()
                     ? snowdesktop::icon_beautify::DetectEdgeFill(
                         result->pixels, result->width, result->height)
                     : std::nullopt;
+                result->needsGlassBackdrop = task.beautify.enabled && task.beautify.glassEnabled && !edge;
                 result->pixels = snowdesktop::icon_beautify::Render(
                     result->pixels, result->width, result->height,
                     task.beautify, edge);
@@ -182,7 +184,10 @@ void DesktopApp::ResetDemoIconLoader()
         demoIconLoaderFailed_.fill(false);
     }
     for (auto& bitmap : demoIdentityIconBitmaps_)
+    {
+        iconGlassBackdrop_.erase(bitmap.Get());
         bitmap.Reset();
+    }
 }
 
 void DesktopApp::QueueDemoIdentityBitmap(std::size_t visualIndex)
@@ -235,6 +240,8 @@ void DesktopApp::OnDemoIconDecoded(LPARAM lParam)
             static_cast<UINT32>(result->width * sizeof(std::uint32_t)),
             &properties, &bitmap)))
         return;
+    iconGlassBackdrop_.erase(demoIdentityIconBitmaps_[result->visualIndex].Get());
+    iconGlassBackdrop_[bitmap.Get()] = result->needsGlassBackdrop;
     demoIdentityIconBitmaps_[result->visualIndex] = std::move(bitmap);
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))
@@ -248,18 +255,31 @@ void DesktopApp::StartIconLoader() {}
 
 void DesktopApp::DrainBackgroundShellWork()
 {
-    if (exitRequested_ || compositionPaintInProgress_ || reloading_ ||
-        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
-        HasActiveContextMenuSession() || mouseDown_ || renameEdit_ ||
+    if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
+        HasActiveContextMenuSession() || renameController_.IsActive() ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty())
         return; // The maintenance timer retries after the interaction fence.
+    // Directory results can fill a newly opened drop destination while the
+    // pointer is still held. The delivery mailbox defers all source/model edits.
+    folderReadWork_.Drain();
+    RetryFolderReads();
+    if (dragSession_.HasContext() || dragDropController_.IsTransportActive() || mouseDown_)
+    {
+        // First pixels/refinement update only the current popup's presentation;
+        // source containers and all ordinary model deliveries remain fenced.
+        if (dockFolderPopupOpen_ && popupAnimation_.IsInteractive())
+            iconWork_.Drain(std::to_wstring(iconLoadSerial_) + L"\nF\n" +
+                kDockFolderPopupWidgetId + L"\n");
+        return;
+    }
+    folderReadDelivery_.Drain(
+        [this](const auto& key) { return folderReadVersions_[key]; },
+        [this](auto& snapshot) { ApplyFolderRefresh(snapshot); });
     iconWork_.Drain();
     dockIconWork_.Drain();
     shellVisualWork_.Drain();
     shellModelWork_.Drain();
     appIndexWork_.Drain();
-    folderReadWork_.Drain();
-    RetryFolderReads();
     clipboardReadWork_.Drain();
 }
 
@@ -446,6 +466,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             namespace shortcutRules = snowdesktop::shortcut_application_rules;
             const bool isLnk = shortcutRules::HasExtension(path, L".lnk");
             const bool isUrl = shortcutRules::HasExtension(path, L".url");
+            result->shortcutTarget.classified = isLnk || isUrl;
             result->isShortcut = isLnk || isUrl;
             ULONGLONG loadMs = 0, classifyMs = 0, targetMs = 0;
             if (isLnk)
@@ -469,6 +490,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                     loadMs = loadedAt - started;
                     if (loaded)
                     {
+                        result->shortcutTarget = snowdesktop::category_collection_rules::ReadShellLinkTarget(shellLink.Get());
                         result->isApplicationShortcut =
                             shellCalls::Call(L"Classify.ApplicationTarget", [&] {
                                 return IsApplicationsShellLinkTarget(shellLink.Get(), path);
@@ -497,7 +519,12 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                                                     path.c_str());
                 });
                 result->isApplicationShortcut = shortcutRules::IsSteamApplicationUrl(url);
+                result->shortcutTarget.application = result->isApplicationShortcut;
             }
+            result->isApplicationShortcut = result->isApplicationShortcut ||
+                snowdesktop::category_collection_rules::IsProgramItem(
+                    ToUpperInvariant(PathFindExtensionW(path.c_str())), false, {}, result->shortcutTarget);
+            result->shortcutTarget.application = result->isApplicationShortcut;
             const auto elapsed = GetTickCount64() - started;
             if (elapsed >= 250)
             {
@@ -622,6 +649,7 @@ void DesktopApp::StopIconLoader()
     shellModelWork_.Stop();
     folderReadWork_.Stop();
     folderReadRetries_.Clear();
+    folderReadDelivery_.Clear();
     clipboardReadWork_.Stop();
     iconLoaderPendingKeys_.clear();
 }
@@ -645,14 +673,25 @@ void DesktopApp::CancelDockFolderPopupIconLoads()
 void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
 {
     const bool wasEnabled = customDesktopVisible_;
-    if (!enabled)
-        EndDesktopPassthrough(false);
-    customDesktopVisible_ = enabled;
+    dockDragDesktopRevealed_ = false; // An explicit setting supersedes a temporary reveal.
     generalSettings_.softwareDesktopEnabled = enabled;
     if (persist)
         SaveGeneralSettings(GetGeneralSettingsPath().c_str(), generalSettings_);
     if (settingsController_)
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
+
+    if (!enabled && wasEnabled) SaveLayoutSlots();
+    SetSoftwareDesktopPresentation(enabled);
+    if (enabled && !wasEnabled && !explorerDesktopRecreatePending_ && hwnd_ && IsWindow(hwnd_))
+        ReloadItems();
+}
+
+// Presentation-only transitions must not reload containers held by a drag or
+// publish a temporary reveal to settings. The ordinary toggle owns those steps.
+void DesktopApp::SetSoftwareDesktopPresentation(bool enabled)
+{
+    if (!enabled) EndDesktopPassthrough(false);
+    customDesktopVisible_ = enabled;
 
     if (!hwnd_ || !IsWindow(hwnd_))
     {
@@ -664,11 +703,7 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
     {
         if (widgetEngine_)
             widgetEngine_->SetAllWidgetDesktopVisible(false);
-        if (wasEnabled)
-        {
-            SaveLayoutSlots();
-            HideDragHintWindow();
-        }
+        HideDragHintWindow();
         desktopBackdropCompositor_.SetVisible(false);
         ShowWindow(hwnd_, SW_HIDE);
         if (inputHwnd_ && IsWindow(inputHwnd_))
@@ -687,7 +722,7 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
     }
 
     HideExplorerIcons();
-    ShowWindow(hwnd_, SW_SHOW);
+    ShowWindow(hwnd_, SW_SHOWNA);
     if (!desktopBackdropCompositor_.IsAvailable())
     {
         if (desktopBackdropCompositor_.Initialize(hwnd_))
@@ -714,8 +749,36 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
         SetTimer(controlHwnd_, kDesktopHostWatchTimerId,
             kDesktopHostWatchIntervalMs, nullptr);
     InvalidateRect(hwnd_, nullptr, TRUE);
-    if (!wasEnabled)
-        ReloadItems();
     UpdatePersistentDockHostVisibility();
     ApplyDesktopPassthroughHotkey();
+}
+
+void DesktopApp::RevealSoftwareDesktopForDockDrag(POINT clientPoint)
+{
+    if (customDesktopVisible_ || desktopPassthroughActive_ ||
+        explorerDesktopRecreatePending_ || !dragSession_.IsActive()) return;
+    auto* source = dragSession_.Source();
+    auto* widgetSource = dynamic_cast<WidgetContainer*>(source);
+    const bool fromDock = dynamic_cast<DockContainer*>(source) ||
+        (source && source == dockFolderPopupContainer_.get()) ||
+        (source && source == dockFolderPopupDragSourceContainer_.get()) ||
+        (widgetSource && collectionPopupDockHost_ && popupWidgetIndex_ < widgets_.size() &&
+            widgetSource->GetWidgetData() == &widgets_[popupWidgetIndex_]);
+    if (!fromDock || !hwnd_ || !IsWindow(hwnd_)) return;
+    POINT screenPoint = clientPoint;
+    if (!ClientToScreen(hwnd_, &screenPoint) ||
+        !IsBaseDesktopHoverSurfaceWindow(ResolveWindowBelowDragPreviewAt(screenPoint))) return;
+
+    dockDragPreviousIconsHidden_ = desktopIconsHidden_;
+    dockDragDesktopRevealed_ = true;
+    SetSoftwareDesktopPresentation(true);
+    InvalidateDragStaticScene();
+    PresentDesktopPointerUpdate();
+}
+
+void DesktopApp::RestoreDesktopAfterDockDrag()
+{
+    if (!std::exchange(dockDragDesktopRevealed_, false)) return;
+    SetSoftwareDesktopPresentation(false);
+    desktopIconsHidden_ = dockDragPreviousIconsHidden_;
 }

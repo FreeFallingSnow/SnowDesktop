@@ -415,6 +415,23 @@ const wchar_t* Locale::TrW(const char* key) const
     return insertedIt->second.c_str();
 }
 
+std::wstring Locale::TrWForLanguage(const char* key, const std::string& language) const
+{
+    if (!key || !*key)
+        return {};
+    const auto lookup = [&](const std::string& code) -> const std::string* {
+        const auto catalog = catalogs_.find(code);
+        if (catalog == catalogs_.end()) return nullptr;
+        const auto value = catalog->second.find(key);
+        return value == catalog->second.end() ? nullptr : &value->second;
+    };
+    if (const auto* value = lookup(ResolveLanguage(language)))
+        return Utf8ToWideStatic(*value);
+    if (const auto* value = lookup("en-US"))
+        return Utf8ToWideStatic(*value);
+    return Utf8ToWideStatic(key);
+}
+
 std::string Locale::TrFormat(const char* key,
     std::initializer_list<std::string> arguments) const
 {

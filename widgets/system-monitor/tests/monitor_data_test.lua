@@ -1,28 +1,159 @@
 local monitorData = module.require("modules/monitor_data.lua")
 
+local function adapter(id, name, usage, capacity, used)
+    return {
+        id = id, name = name, usagePercent = usage, usageAvailable = true,
+        dedicatedMemoryBytes = capacity, dedicatedUsedBytes = used,
+        dedicatedUsageAvailable = true,
+        sharedMemoryBytes = 1000, sharedUsedBytes = 100,
+        sharedUsageAvailable = true,
+    }
+end
+
 return {
-    ["two dedicated GPUs sum both memory use and capacity"] = function()
+    ["default chooses one dedicated device and never sums other GPUs"] = function()
         local gib = 1024 * 1024 * 1024
         local value = monitorData.summarizeGpu({ adapters = {
-            { name = "A", usagePercent = 30, dedicatedMemoryBytes = 8 * gib,
-                dedicatedUsedBytes = 4 * gib },
-            { name = "B", usagePercent = 50, dedicatedMemoryBytes = 8 * gib,
-                dedicatedUsedBytes = 5 * gib },
-        } })
-        assert(value.dedicatedMemoryBytes == 16 * gib)
-        assert(value.dedicatedUsedBytes == 9 * gib)
-        assert(value.usagePercent == 50)
+            adapter("adapter-1", "A", 30, 4 * gib, 3 * gib),
+            adapter("adapter-2", "B", 50, 8 * gib, 5 * gib),
+        } }, nil, true)
+        assert(value.dedicatedMemoryBytes == 8 * gib)
+        assert(value.dedicatedUsedBytes == 5 * gib)
+        assert(value.usagePercent == 50 and value.busiestName == "B")
+        assert(value.count == 1 and value.name == "B")
     end,
-    ["UMA and absent GPU states do not invent dedicated memory"] = function()
-        local value = monitorData.summarizeGpu({ adapters = {
-            { dedicatedMemoryBytes = 0, dedicatedUsedBytes = 0,
-                sharedMemoryBytes = 1000, sharedUsedBytes = 200 },
-            { sharedMemoryBytes = 1000, sharedUsedBytes = 100 },
-        } })
-        assert(value.dedicatedMemoryBytes == 0)
-        assert(value.sharedMemoryBytes == 1000)
-        assert(value.sharedUsedBytes == 300)
-        assert(monitorData.summarizeGpu(nil) == nil)
-        assert(monitorData.summarizeGpu({ adapters = {} }) == nil)
+    ["selection follows stable identity through reorder and disappearance"] = function()
+        local a = adapter("adapter-123", "same model", 30, 800, 400)
+        local b = adapter("adapter-456", "same model", 70, 1600, 1200)
+        for _, adapters in ipairs({ { a, b }, { b, a } }) do
+            local value = monitorData.summarizeGpu({ adapters = adapters }, a.id, true)
+            assert(value.count == 1 and value.usagePercent == 30)
+            assert(value.dedicatedMemoryBytes == 800 and value.dedicatedUsedBytes == 400)
+            local choices = monitorData.gpuChoices({ adapters = adapters })
+            assert(choices[1].id == a.id and choices[2].id == b.id)
+            assert(choices[1].label ~= choices[2].label)
+        end
+        assert(monitorData.summarizeGpu({ adapters = { b } }, a.id, true) == nil)
+        assert(monitorData.summarizeGpu({ adapters = { a, b } }, "", true).name == b.name)
+    end,
+    ["unknown usage does not hide independently valid memory or become zero"] = function()
+        local a = adapter("adapter-1", "A", 0, 800, 400)
+        local b = adapter("adapter-2", "B", 50, 800, 500)
+        a.usageAvailable = false
+        local value = monitorData.summarizeGpu({ adapters = { a, b } }, nil, true)
+        assert(value.usagePercent == nil and value.busiestName == nil)
+        assert(value.dedicatedUsedBytes == 400)
+        a.usageAvailable, b.dedicatedUsageAvailable = true, false
+        value = monitorData.summarizeGpu({ adapters = { a, b } }, nil, true)
+        assert(value.usagePercent == 0 and value.dedicatedUsedBytes == 400)
+        assert(value.sharedUsedBytes == 100)
+        local selectedB = monitorData.summarizeGpu({ adapters = { a, b } }, b.id, true)
+        assert(selectedB.usagePercent == 50 and selectedB.dedicatedUsedBytes == nil)
+        local idle = monitorData.summarizeGpu({ adapters = { a } }, a.id, true)
+        assert(idle.usagePercent == 0)
+    end,
+    ["old hosts never advertise missing channel validity as idle"] = function()
+        local a = adapter("adapter-1", "A", 0, 800, 0)
+        local value = monitorData.summarizeGpu({ adapters = { a } }, nil, false)
+        assert(value.name == "A" and value.dedicatedMemoryBytes == 800)
+        assert(value.usagePercent == nil and value.dedicatedUsedBytes == nil)
+        assert(value.sharedUsedBytes == nil)
+        a.usageAvailable, a.dedicatedUsageAvailable, a.sharedUsageAvailable = nil, nil, nil
+        value = monitorData.summarizeGpu({ adapters = { a } }, nil, true)
+        assert(value.usagePercent == nil and value.dedicatedUsedBytes == nil)
+    end,
+    ["UMA does not invent dedicated memory or duplicate shared capacity"] = function()
+        local a = adapter("adapter-1", "UMA", 20, 0, 0)
+        a.dedicatedUsageAvailable = false
+        local value = monitorData.summarizeGpu({ adapters = { a } }, nil, true)
+        assert(value.dedicatedMemoryBytes == 0 and value.dedicatedUsedBytes == nil)
+        local b = adapter("adapter-2", "dedicated", 40, 800, 200)
+        value = monitorData.summarizeGpu({ adapters = { a, b } }, nil, true)
+        assert(value.dedicatedMemoryBytes == 800 and value.dedicatedUsedBytes == 200)
+        assert(value.sharedMemoryBytes == 1000 and value.sharedUsedBytes == 100)
+        assert(monitorData.summarizeGpu(nil, nil, true) == nil)
+        assert(monitorData.summarizeGpu({ adapters = {} }, nil, true) == nil)
+    end,
+    ["default selection survives reorder and counter availability changes"] = function()
+        local integrated = adapter("adapter-1", "Integrated", 90, 0, 0)
+        local dedicated = adapter("adapter-9", "Dedicated", 0, 800, 100)
+        local other = adapter("adapter-8", "Other", 99, 400, 200)
+        for _, adapters in ipairs({ { integrated, dedicated, other },
+                { other, dedicated, integrated } }) do
+            assert(monitorData.resolveGpuChoice({ adapters = adapters }).id == dedicated.id)
+            dedicated.usageAvailable = false
+            assert(monitorData.resolveGpuChoice({ adapters = adapters }).id == dedicated.id)
+        end
+        assert(monitorData.resolveGpuChoice(nil) == nil)
+        assert(monitorData.resolveGpuChoice({ adapters = {} }) == nil)
+    end,
+    ["saved alias resolves only with proven host identity and exact ID wins"] = function()
+        local physical = adapter("adapter-9", "Same model", 25, 800, 300)
+        physical.aliasIds = { "adapter-old" }
+        local second = adapter("adapter-10", "Same model", 50, 800, 400)
+        local value = { adapters = { physical, second } }
+        assert(monitorData.resolveGpuChoice(value, "adapter-old").id == physical.id)
+        assert(monitorData.summarizeGpu(value, "adapter-old", true).usagePercent == 25)
+        assert(monitorData.resolveGpuChoice(value, "missing-adapter") == nil)
+        physical.aliasIds = { second.id }
+        assert(monitorData.resolveGpuChoice(value, second.id).id == second.id)
+        physical.aliasIds = nil
+        assert(monitorData.resolveGpuChoice(value, "adapter-old") == nil)
+        assert(#monitorData.gpuChoices(value) == 2)
+    end,
+    ["a missing selection falls back to an available adapter and stays there"] = function()
+        local a = adapter("adapter-a", "Dedicated", 10, 800, 100)
+        local b = adapter("adapter-b", "Integrated", 20, 0, 0)
+        local state = {}
+        assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }).id == a.id)
+        assert(monitorData.rememberGpuChoice(state, { adapters = { b } }).id == b.id)
+        assert(monitorData.rememberGpuChoice(state, nil).id == b.id)
+        assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }).id == b.id)
+        assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }, b.id).id == b.id)
+        assert(monitorData.rememberGpuChoice(state, { adapters = { a, b } }, "unknown").id == a.id)
+    end,
+    ["old session ID recovers without creating a phantom duplicate"] = function()
+        local a = adapter("new-id", "Dedicated", 0, 800, 0)
+        local b = adapter("integrated", "Integrated", 10, 0, 0)
+        local choice = monitorData.rememberGpuChoice({}, { adapters = { a, b } }, "old-id", "Dedicated", 1)
+        assert(choice.id == a.id)
+        assert(#monitorData.gpuChoices({ adapters = { a, b } }) == 2)
+    end,
+    ["a stale saved ID retires even while all current counters are unavailable"] = function()
+        local a = adapter("new-id", "Dedicated", 0, 800, 0)
+        local b = adapter("integrated", "Integrated", 0, 0, 0)
+        for _, device in ipairs({a, b}) do
+            device.usageAvailable, device.dedicatedUsageAvailable, device.sharedUsageAvailable = false, false, false
+        end
+        local choice = monitorData.rememberGpuChoice({}, { adapters = {a, b} }, "old-id", a.name, 1)
+        assert(choice.id == a.id)
+        assert(monitorData.summarizeGpu({ adapters = {a, b} }, choice.id, true).usagePercent == nil)
+        assert(monitorData.rememberGpuChoice({}, { adapters = {a, b} }, "old-id", "unknown", 1).id == a.id)
+        assert(monitorData.rememberGpuChoice({}, nil, "old-id", a.name, 1) == nil)
+    end,
+    ["fallback waits for distinct invalid samples and constant idle is valid"] = function()
+        local a = adapter("a", "Dedicated", 0, 800, 0)
+        local b = adapter("b", "Integrated", 10, 0, 0)
+        local state, value = {}, { adapters = { a, b } }
+        for timestamp = 1, 10 do
+            assert(monitorData.rememberGpuChoice(state, value, a.id, a.name, timestamp).id == a.id)
+        end
+        a.usageAvailable, a.dedicatedUsageAvailable, a.sharedUsageAvailable = false, false, false
+        for _ = 1, 20 do
+            assert(monitorData.rememberGpuChoice(state, value, a.id, a.name, 11).id == a.id)
+        end
+        assert(monitorData.rememberGpuChoice(state, value, a.id, a.name, 12).id == a.id)
+        assert(monitorData.rememberGpuChoice(state, value, a.id, a.name, 13).id == b.id)
+    end,
+    ["proven alias migration stays canonical after the host discards alias history"] = function()
+        local a = adapter("adapter-new", "Dedicated", 10, 800, 100)
+        a.aliasIds = { "adapter-old" }
+        local state, value = {}, { adapters = { a } }
+        assert(monitorData.rememberGpuChoice(state, value, "adapter-old").id == a.id)
+        a.aliasIds = nil
+        assert(monitorData.rememberGpuChoice(state, value, "adapter-old").id == a.id)
+        -- A lifecycle callback persisted the canonical ID; a new instance can
+        -- now resolve it without the previous sampler's alias history.
+        assert(monitorData.rememberGpuChoice({}, value, state.choice.id).id == a.id)
     end,
 }

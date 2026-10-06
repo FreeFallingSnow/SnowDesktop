@@ -124,12 +124,16 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
     const float dragOpacity = dragged ? 0.6f : 1.0f;
     const float alpha = dragOpacity * cutOpacity;
 
+    const auto* widget = dynamic_cast<WidgetContainer*>(container_);
+    const int componentTitleLines = demoCollection || widget
+        ? app_->ResolveItemTitleLines(demoCollection ? demoCollection : widget->GetWidgetData()) : 0;
+
     RECT iconRect = forcedIconSize > 0 && !quickNavLayout
         ? snowdesktop::ResolveCenteredIconRect(
             rect, forcedIconSize)
         : (quickNavLayout
             ? app_->GetQuickNavItemIconRect(rect)
-            : app_->GetItemIconRect(rect));
+            : app_->GetItemIconRect(rect, componentTitleLines));
     if (forcedIconSize <= 0 &&
         centerIconVertically && !quickNavLayout)
         iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
@@ -165,7 +169,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             ? highlightRect
             : (quickNavLayout
                 ? rect
-                : app_->GetItemSelectionRect(rect, true));
+                : app_->GetItemSelectionRect(rect, true, componentTitleLines));
         const float radius = quickNavLayout
             ? static_cast<float>(app_->QuickNavScale(6))
             : 6.0f * app_->GetItemLayoutScale(rect);
@@ -185,7 +189,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         else
             app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
     }
-    else if (item_->iconState == IconState::Loading)
+    // Loading describes pending work, not whether the last image is drawable.
+    else if (!item_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
     }
@@ -196,7 +201,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             app_->ShouldBeautifyIconBitmap(item_->iconIsMediaThumbnail));
         if (bmp)
         {
-            app_->DrawIconBitmap(context, bmp, iconRect, alpha);
+            app_->DrawIconBitmap(context, bmp, iconRect, alpha,
+                reinterpret_cast<std::uintptr_t>(item_));
         }
         else
         {
@@ -206,7 +212,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
 
     if (!useDemoIdentity &&
         app_->ShouldDrawShortcutArrow(item_->isShortcut, item_->isApplicationShortcut) &&
-        item_->iconState != IconState::Loading)
+        (item_->iconBitmap || item_->iconState != IconState::Loading))
         app_->DrawShortcutArrowOverlay(context, iconRect, alpha);
 
     if (!dragged && drawText)
@@ -217,7 +223,7 @@ void DesktopIcon::DrawTitle(ID2D1RenderTarget* context, RECT rect,
     bool selected, float opacity, bool lightTheme,
     const DesktopWidget* demoCollection)
 {
-    if (!app_ || !item_ || !context) return;
+    if (!app_ || !item_ || !context || app_->IsRenamingItem(item_)) return;
     const bool useDemoIdentity = demoCollection
         ? app_->ShouldUseDemoCollectionIdentity(demoCollection)
         : app_->ShouldUseDemoIdentity(*item_);
@@ -233,7 +239,9 @@ void DesktopIcon::DrawTitle(ID2D1RenderTarget* context, RECT rect,
     app_->DrawItemText(
         context, rect, title,
         selected, opacity, lightTheme,
-        demoCollection || dynamic_cast<WidgetContainer*>(container_));
+        demoCollection || dynamic_cast<WidgetContainer*>(container_),
+        app_->ResolveItemTitleLines(demoCollection ? demoCollection :
+            (dynamic_cast<WidgetContainer*>(container_) ? dynamic_cast<WidgetContainer*>(container_)->GetWidgetData() : nullptr)));
 }
 
 /**
@@ -332,6 +340,8 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
     const bool selected = (state == 2 || state == 3);
     const bool dragged = (state == 3);
     const float opacity = dragged ? 0.6f : (entry_->isCut ? 0.4f : 1.0f);
+    const auto* widget = dynamic_cast<WidgetContainer*>(container_);
+    const int componentTitleLines = widget ? app_->ResolveItemTitleLines(widget->GetWidgetData()) : 0;
 
     if (hovered && !selected)
     {
@@ -348,7 +358,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
 
     RECT iconRect = quickNavLayout
         ? app_->GetQuickNavItemIconRect(rect)
-        : app_->GetItemIconRect(rect);
+        : app_->GetItemIconRect(rect, componentTitleLines);
 
     if (selected && !dragged)
     {
@@ -356,7 +366,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
             ? static_cast<float>(app_->QuickNavScale(6))
             : 6.0f * app_->GetItemLayoutScale(rect);
         app_->DrawD2DRoundedRectangle(context,
-            quickNavLayout ? rect : app_->GetItemSelectionRect(rect, true),
+            quickNavLayout ? rect : app_->GetItemSelectionRect(rect, true, componentTitleLines),
             radius,
             lightTheme ? D2D1::ColorF(0.20f, 0.40f, 0.70f, 0.18f * opacity)
                        : D2D1::ColorF(0.55f, 0.55f, 0.55f, 0.34f * opacity),
@@ -364,7 +374,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
 
-    if (entry_->iconState == IconState::Loading)
+    if (!entry_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
     }
@@ -375,7 +385,8 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
             app_->ShouldBeautifyIconBitmap(entry_->iconIsMediaThumbnail));
         if (bmp)
         {
-            app_->DrawIconBitmap(context, bmp, iconRect, opacity);
+            app_->DrawIconBitmap(context, bmp, iconRect, opacity,
+                reinterpret_cast<std::uintptr_t>(entry_));
         }
         else
         {
@@ -384,7 +395,7 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
     }
 
     if (app_->ShouldDrawShortcutArrow(entry_->isShortcut, entry_->isApplicationShortcut) &&
-        entry_->iconState != IconState::Loading)
+        (entry_->iconBitmap || entry_->iconState != IconState::Loading))
         app_->DrawShortcutArrowOverlay(context, iconRect, opacity);
 
     if (!dragged && drawText)
@@ -395,11 +406,12 @@ void FolderEntryIcon::DrawTitle(ID2D1RenderTarget* context,
     RECT rect, bool selected, float opacity,
     bool lightTheme, const DesktopWidget*)
 {
-    if (!app_ || !entry_ || !context) return;
+    if (!app_ || !entry_ || !context || app_->IsRenamingItem(entry_)) return;
     app_->DrawItemText(
         context, rect, entry_->name,
         selected, opacity, lightTheme,
-        dynamic_cast<WidgetContainer*>(container_) != nullptr);
+        dynamic_cast<WidgetContainer*>(container_) != nullptr,
+        app_->ResolveItemTitleLines(dynamic_cast<WidgetContainer*>(container_) ? dynamic_cast<WidgetContainer*>(container_)->GetWidgetData() : nullptr));
 }
 
 /**

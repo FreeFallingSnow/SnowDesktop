@@ -1,4 +1,10 @@
 #include "widget_preview_stage.h"
+#include "appearance_edge_presets.h"
+#include "popup_round_geometry.h"
+#include <d2d1_1helper.h>
+#include <d3d11.h>
+#include <dxgi.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <cmath>
@@ -14,10 +20,160 @@ void Check(bool condition, const char* message)
     std::cerr << "FAILED: " << message << '\n';
     std::exit(1);
 }
+
+void CheckRimCoverage()
+{
+    using Microsoft::WRL::ComPtr;
+    namespace wp = snowdesktop::widget_preview;
+    namespace rounded = snowdesktop::popup_round_geometry;
+    ComPtr<ID3D11Device> gpu; ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory; ComPtr<ID2D1Device> device; ComPtr<ID2D1DeviceContext> context;
+    Check(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &gpu, nullptr, nullptr)) &&
+        SUCCEEDED(gpu.As(&dxgi)) && SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) &&
+        SUCCEEDED(factory->CreateDevice(dxgi.Get(), &device)) &&
+        SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)), "rim oracle creates an offscreen WARP context");
+    std::size_t oldLoss = 0, tightSurfaceLoss = 0;
+    for (float scale : {1.f, 1.25f, 1.5f, 2.f, 3.f})
+    {
+        const UINT w = static_cast<UINT>(200 * scale), h = static_cast<UINT>(160 * scale);
+        const RECT frame{static_cast<LONG>(12 * scale), static_cast<LONG>(16 * scale),
+            static_cast<LONG>(164 * scale), static_cast<LONG>(120 * scale)};
+        const float radius = 12.25f * scale;
+        ComPtr<ID2D1Bitmap1> target, readable;
+        Check(SUCCEEDED(context->CreateBitmap(D2D1::SizeU(w, h), nullptr, 0,
+            D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)), &target)) &&
+            SUCCEEDED(context->CreateBitmap(D2D1::SizeU(w, h), nullptr, 0,
+            D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)), &readable)), "rim oracle creates readable bitmaps");
+        context->SetTarget(target.Get()); context->SetDpi(96,96);
+        context->BeginDraw(); context->Clear(D2D1::ColorF(0,0.f));
+        context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_ADD);
+        Check(wp::DrawEdgeHighlight(context.Get(),frame,radius,D2D1::ColorF(1.f,1.f,1.f,.02f),4.f,.9f), "rim draws with its full reserved halo");
+        Check(context->GetPrimitiveBlend()==D2D1_PRIMITIVE_BLEND_ADD &&
+            context->GetAntialiasMode()==D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,"rim restores caller blend and antialias state");
+        Check(SUCCEEDED(context->EndDraw()) && SUCCEEDED(readable->CopyFromBitmap(nullptr,target.Get(),nullptr)),"rim pixels read back");
+        D2D1_MAPPED_RECT map{}; Check(SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ,&map)),"rim pixels map");
+        HRGN fence = rounded::CreateWindowFence(frame,radius,0,3), old = rounded::CreateWindowFence(frame,radius);
+        Check(fence && old,"rim oracle creates both content fences");
+        std::size_t lost=0;
+        for(UINT y=0;y<h;++y)for(UINT x=0;x<w;++x)
+            if(map.bits[static_cast<std::size_t>(y)*map.pitch+x*4+3])
+            { if(!PtInRegion(fence,static_cast<int>(x),static_cast<int>(y)))++lost;
+               if(!PtInRegion(old,static_cast<int>(x),static_cast<int>(y)))++oldLoss;
+               if(!PtInRect(&frame,POINT{static_cast<LONG>(x),static_cast<LONG>(y)}))++tightSurfaceLoss; }
+        readable->Unmap(); DeleteObject(fence); DeleteObject(old);
+        Check(lost==0,"popup fence retains every actual rim pixel, including fractional rounded corners");
+        // A status strip renders its complete reflection inside the filled
+        // allocation. No exterior halo or opposite contour may require a gap.
+        for(auto edge : {wp::HighlightEdge::Top, wp::HighlightEdge::Bottom, wp::HighlightEdge::Left, wp::HighlightEdge::Right})
+        {
+            const auto style=snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
+            context->BeginDraw();context->Clear(D2D1::ColorF(0,0.f));
+            Check(wp::DrawEdgeHighlight(context.Get(),frame,0,D2D1::ColorF(1.f,1.f,1.f,.02f),style.width*scale,style.opacity,style.light,edge),"status edge uses the shared material");
+            Check(SUCCEEDED(context->EndDraw()) && SUCCEEDED(readable->CopyFromBitmap(nullptr,target.Get(),nullptr)) &&
+                SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ,&map)),"single-edge pixels read back");
+            const auto alpha=[&](LONG x,LONG y){return map.bits[static_cast<std::size_t>(y)*map.pitch+static_cast<std::size_t>(x)*4+3];};
+            const LONG midX=(frame.left+frame.right)/2,midY=(frame.top+frame.bottom)/2;
+            const LONG x=edge==wp::HighlightEdge::Left?frame.left:edge==wp::HighlightEdge::Right?frame.right-1:midX;
+            const LONG y=edge==wp::HighlightEdge::Top?frame.top:edge==wp::HighlightEdge::Bottom?frame.bottom-1:midY;
+            Check(alpha(x,y)>0,"status reflection reaches the original material boundary");
+            Check(alpha(midX,frame.top-1)==0 && alpha(midX,frame.bottom)==0 &&
+                alpha(frame.left-1,midY)==0 && alpha(frame.right,midY)==0,"status reflection needs no outside drawing space");
+            Check(alpha(midX,midY)==0,"single edge adds no contour through the strip body");
+            readable->Unmap();
+        }
+        context->SetTarget(nullptr);
+    }
+    Check(oldLoss>0,"rim oracle reproduces clipping caused by the previous one-pixel content fence");
+    Check(tightSurfaceLoss>0,"a render target bounded to the card crops straight-edge pixels even with an expanded GDI fence");
+}
+
+void CheckAcrylicNoiseRendering()
+{
+    using Microsoft::WRL::ComPtr;
+    namespace wp = snowdesktop::widget_preview;
+    ComPtr<ID3D11Device> gpu;
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory;
+    ComPtr<ID2D1Device> device;
+    ComPtr<ID2D1DeviceContext> context;
+    Check(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+        &gpu, nullptr, nullptr)) && SUCCEEDED(gpu.As(&dxgi)) &&
+        SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            factory.GetAddressOf())) &&
+        SUCCEEDED(factory->CreateDevice(dxgi.Get(), &device)) &&
+        SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+            &context)), "acrylic regression creates an offscreen WARP context");
+    const auto render = [&](int background, float dpi, bool lightTheme) {
+        constexpr UINT size = 256;
+        ComPtr<ID2D1Bitmap1> target;
+        ComPtr<ID2D1Bitmap1> readable;
+        const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+            D2D1_ALPHA_MODE_PREMULTIPLIED);
+        Check(SUCCEEDED(context->CreateBitmap(D2D1::SizeU(size, size),
+            nullptr, 0, D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+                format, 96.f, 96.f), &target)) &&
+            SUCCEEDED(context->CreateBitmap(D2D1::SizeU(size, size),
+            nullptr, 0, D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                format, 96.f, 96.f), &readable)),
+            "acrylic regression creates readable bitmaps");
+        context->SetTarget(target.Get());
+        context->SetDpi(dpi, dpi);
+        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        context->BeginDraw();
+        const float value = static_cast<float>(background) / 255.f;
+        context->Clear(D2D1::ColorF(value, value, value, 1.f));
+        wp::DrawAcrylicNoise(context.Get(), {0, 0, size, size}, 0.f,
+            lightTheme, {37, -19});
+        Check(SUCCEEDED(context->EndDraw()) &&
+            SUCCEEDED(readable->CopyFromBitmap(nullptr, target.Get(), nullptr)),
+            "acrylic pixels draw and read back");
+        D2D1_MAPPED_RECT mapped{};
+        Check(SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ, &mapped)),
+            "acrylic pixels map");
+        std::vector<std::uint32_t> result(size * size);
+        for (UINT y = 0; y < size; ++y)
+            std::copy_n(reinterpret_cast<const std::uint32_t*>(
+                mapped.bits + static_cast<std::size_t>(y) * mapped.pitch),
+                size, result.data() + static_cast<std::size_t>(y) * size);
+        readable->Unmap();
+        context->SetTarget(nullptr);
+        return result;
+    };
+    for (int background : {32, 224})
+    {
+        const auto pixels = render(background, 96.f, background > 128);
+        double sum = 0.0;
+        double squareSum = 0.0;
+        for (std::uint32_t pixel : pixels)
+        {
+            const double value = pixel & 0xffu;
+            sum += value;
+            squareSum += value * value;
+        }
+        const double count = static_cast<double>(pixels.size());
+        const double mean = sum / count;
+        const double deviation = std::sqrt(squareSum / count - mean * mean);
+        // The old black/white alpha noise has about 1.98 levels of variation
+        // on these backgrounds. WinUI's 2% gray texture is about 1.06 levels.
+        Check(deviation > 0.8 && deviation < 1.4,
+            "deep and pale acrylic keep subtle native-reference grain contrast");
+        Check(std::abs(mean - (background == 32 ? 33.926 : 222.086)) < 0.6,
+            "acrylic noise uses low-opacity gray instead of shifting the tint");
+        Check(pixels == render(background, 144.f, background <= 128) &&
+            pixels == render(background, 192.f, background > 128),
+            "text theme and 150/200 percent DPI do not change physical noise pixels");
+    }
+}
 }
 
 int main()
 {
+    CheckRimCoverage();
+    CheckAcrylicNoiseRendering();
     using namespace snowdesktop::widget_preview;
     const Wallpaper dark = GenerateWallpaper(96, 72, false);
     const Wallpaper repeated = GenerateWallpaper(96, 72, false);
@@ -242,18 +398,18 @@ int main()
             std::abs(transparentReflection.b - 1.0f) < 0.0001f,
         "fully transparent panel material reflects the neutral white incident-light estimate");
 
-    const AcrylicNoisePixels darkNoise = GenerateAcrylicNoise(false);
-    const AcrylicNoisePixels repeatedNoise = GenerateAcrylicNoise(false);
-    const AcrylicNoisePixels lightNoise = GenerateAcrylicNoise(true);
-    Check(darkNoise == repeatedNoise,
-        "acrylic noise generation is deterministic");
-    Check(darkNoise != lightNoise,
-        "acrylic noise polarity follows the content theme");
-    for (std::size_t index = 0; index < darkNoise.size(); ++index)
-    {
-        Check((darkNoise[index] >> 24) == (lightNoise[index] >> 24),
-            "acrylic theme variants preserve the same alpha texture");
-    }
+    const auto& darkNoise = GenerateAcrylicNoise(false);
+    const auto& lightNoise = GenerateAcrylicNoise(true);
+    Check(darkNoise.size() == 256u * 256u,
+        "the embedded native-reference noise decodes a full 256-pixel tile");
+    Check(darkNoise == lightNoise,
+        "the text theme does not invert the material's grayscale noise");
+    Check(std::all_of(darkNoise.begin(), darkNoise.end(),
+        [](std::uint32_t pixel) {
+            return (pixel >> 24) == 255u &&
+                (pixel & 0xffu) == ((pixel >> 8) & 0xffu) &&
+                (pixel & 0xffu) == ((pixel >> 16) & 0xffu);
+        }), "native-reference noise retains opaque grayscale source pixels");
     std::cout << "widget preview stage tests passed\n";
     return 0;
 }

@@ -1,11 +1,14 @@
 #include "calendar_service.h"
 #include "calendar_display.h"
+#include "l10n.h"
+#include "system_calendar_editor_state.h"
 
 #include <windows.h>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 
 namespace
@@ -35,10 +38,364 @@ void Write(
         std::ios::binary | std::ios::trunc);
     file << text;
 }
+void CheckNativeCalendarEditor(const std::filesystem::path& root)
+{
+    using snowdesktop::SystemCalendarEditorState;
+    using snowdesktop::ParseCalendarEditorTime;
+    Expect(ParseCalendarEditorTime(L"00:00")==0&&ParseCalendarEditorTime(L"23:59")==1439&&
+        !ParseCalendarEditorTime(L"24:00")&&!ParseCalendarEditorTime(L"09:60")&&!ParseCalendarEditorTime(L"9:05"),
+        "native editor parses HH:mm without accepting impossible or partial times");
+    CalendarService service(root/L"native-editor"/L"calendar.json");Expect(service.Load(),"native editor test store loads");
+    int writes=0;bool authorized=true;
+    SystemCalendarEditorState editor;
+    editor.valid=[&]{return authorized;};
+    editor.actions.save=[&](const CalendarEvent& event){++writes;return event.id.empty()?service.Create(event):service.Update(event.id,event.revision,event);};
+    editor.actions.current=[&](const CalendarEvent& event){return service.EventById(event.id);};
+    editor.actions.remove=[&](const std::string& id){++writes;return service.Remove(id);};
+    CalendarEvent draft;draft.title="Popup draft";draft.date="2026-09-27";draft.startMinutes=540;draft.endMinutes=600;draft.notes="Keep this text";
+    Expect(editor.Save(draft)&&editor.draft.revision==1&&service.EventById(editor.draft.id).has_value(),
+        "native editor creates through the shared calendar service");
+    editor.original=editor.draft;draft=editor.draft;draft.title="Changed directly";draft.date="2026-09-28";
+    Expect(editor.Save(draft)&&editor.draft.revision==2&&service.EventById(editor.draft.id)->date=="2026-09-28",
+        "native editor edits and reschedules the original revision");
+    editor.original=editor.draft;draft=editor.draft;
+    auto external=draft;external.title="External edit";Expect(service.Update(external.id,external.revision,external).ok,"external calendar change succeeds");
+    draft.title="Unsaved title";draft.notes="Do not discard after conflict";
+    Expect(!editor.Save(draft)&&editor.error=="conflict"&&editor.draft.title==draft.title&&editor.draft.notes==draft.notes&&editor.original.revision==2,
+        "conflict preserves the user's entire draft and original revision");
+    const int beforeDelete=writes;
+    Expect(!editor.Remove()&&editor.error=="conflict"&&writes==beforeDelete&&service.EventById(external.id).has_value(),
+        "delete confirmation cannot delete a concurrently changed event");
+    editor.original=*service.EventById(external.id);
+    authorized=false;
+    Expect(!editor.Save(draft)&&!editor.Remove()&&writes==beforeDelete,
+        "a closed popup cannot commit either a save or a confirmed deletion");
+    authorized=true;
+    const auto realSave=editor.actions.save;
+    editor.actions.save=[](const CalendarEvent&){return snowdesktop::calendar::MutationResult{false,{},0,"write_failed"};};
+    Expect(!editor.Save(draft)&&editor.draft.title==draft.title&&editor.draft.notes==draft.notes&&service.EventById(external.id)->title=="External edit",
+        "persistence failure keeps the draft and stored event intact");
+    editor.actions.save=realSave;
+    editor.actions.current=[&](const CalendarEvent& event){authorized=false;return service.EventById(event.id);};
+    Expect(!editor.Remove()&&writes==beforeDelete,"revocation during delete lookup is rechecked before mutation");
+    authorized=true;editor.actions.current=[&](const CalendarEvent& event){return service.EventById(event.id);};
+    Expect(editor.Remove()&&editor.deleted&&!service.EventById(external.id),"confirmed current revision can be deleted through the shared backend");
 }
 
-int main()
+void CheckOccurrenceReminderEdits(const std::filesystem::path& root)
 {
+    using snowdesktop::calendar::CalendarSeries;
+    CalendarNow now{"2026-07-30", 9 * 60 + 45};
+    const auto path = root / L"occurrence-reminder-edits" / L"SnowDesktop.calendar.json";
+    auto service = std::make_unique<CalendarService>(path, [&] { return now; });
+    const bool loaded = service->Load();
+    Expect(loaded, "occurrence reminder edit store loads");
+    if (!loaded) return;
+
+    CalendarSeries alarm;
+    alarm.event.title = "Occurrence alarm";
+    alarm.event.startMinutes = 10 * 60;
+    alarm.event.endMinutes = 11 * 60;
+    alarm.event.reminderMinutes = 15;
+    alarm.rule.kind = "dates";
+    alarm.rule.dates = {"2026-07-30"};
+    const auto created = service->CreateSeries(alarm);
+    Expect(created.ok, "occurrence reminder edit series is created");
+    if (!created.ok) return;
+    const auto id = created.id + "/2026-07-30";
+    int delivered = 0;
+    const auto notified = [&](const CalendarEvent&) { ++delivered; };
+    service->SetNotificationCallback(notified);
+    const auto edit = [&](const auto& change) {
+        auto occurrence = service->EventById(id);
+        if (!occurrence) return false;
+        change(*occurrence);
+        return service->Update(id, occurrence->revision, *occurrence).ok;
+    };
+    const auto restart = [&] {
+        auto restored = std::make_unique<CalendarService>(path, [&] { return now; });
+        const bool restoredLoaded = restored->Load();
+        Expect(restoredLoaded, "occurrence reminder edit store reloads");
+        if (!restoredLoaded) return false;
+        restored->SetNotificationCallback(notified);
+        service = std::move(restored);
+        service->CheckReminders(now, true);
+        return true;
+    };
+
+    service->CheckReminders(now, true);
+    Expect(delivered == 1, "initial occurrence reminder is delivered at its trigger");
+    Expect(edit([](CalendarEvent& event) { event.title = "Renamed occurrence"; }),
+        "title-only occurrence edit succeeds");
+    now.minutes = 9 * 60 + 50;
+    Expect(restart() && delivered == 1,
+        "title-only occurrence edit cannot repeat a sent reminder after restart");
+    Expect(edit([](CalendarEvent& event) { event.notes = "Changed notes"; }),
+        "notes-only occurrence edit succeeds");
+    now.minutes = 9 * 60 + 55;
+    Expect(restart() && delivered == 1,
+        "notes-only occurrence edit cannot repeat a sent reminder after restart");
+
+    Expect(edit([](CalendarEvent& event) { event.reminderMinutes = -1; }),
+        "occurrence reminder can be disabled");
+    Expect(restart() && delivered == 1,
+        "disabled occurrence reminder remains silent after restart");
+    Expect(edit([](CalendarEvent& event) { event.reminderMinutes = 15; }),
+        "occurrence reminder can be re-enabled");
+    Expect(restart() && delivered == 2,
+        "re-enabling the same occurrence reminder allows a fresh startup delivery");
+
+    Expect(edit([](CalendarEvent& event) {
+        event.date = "2026-07-31";
+        event.startMinutes = 10 * 60 + 30;
+        event.endMinutes = 11 * 60 + 30;
+    }), "occurrence reminder date and time can be rescheduled");
+    Expect(restart() && delivered == 2,
+        "a moved occurrence does not notify on its former date");
+    now = {"2026-07-31", 10 * 60 + 14};
+    Expect(restart() && delivered == 2,
+        "a moved occurrence remains silent before its new trigger");
+    now.minutes = 10 * 60 + 15;
+    service->CheckReminders(now, false);
+    Expect(delivered == 3, "a moved occurrence notifies at its new date and time");
+    Expect(edit([](CalendarEvent& event) { event.notes = "Changed moved occurrence"; }),
+        "notes-only moved occurrence edit succeeds");
+    now.minutes = 10 * 60 + 20;
+    Expect(restart() && delivered == 3,
+        "editing a moved occurrence preserves its sent reminder across restart");
+}
+
+void CheckSeries(const std::filesystem::path& root)
+{
+    using snowdesktop::calendar::CalendarSeries;
+    CalendarNow now{"2026-09-29", 9 * 60};
+    const auto path = root / L"series" / L"SnowDesktop.calendar.json";
+    CalendarService service(path, [&] { return now; });
+    Expect(service.Load(), "series store starts empty");
+    CalendarEvent legacy;
+    legacy.title = "Legacy"; legacy.date = "2026-10-02";
+    legacy.startMinutes = 600; legacy.endMinutes = 660;
+    Expect(service.Create(legacy).ok, "legacy event remains in its original file");
+
+    CalendarSeries dates;
+    dates.event.title = "Selected dates";
+    dates.event.startMinutes = 600; dates.event.endMinutes = 660;
+    dates.rule.kind = "dates";
+    dates.rule.dates = {"2026-10-03", "2026-10-01"};
+    const auto created = service.CreateSeries(dates);
+    Expect(created.ok && service.Events("2026-10-01", "2026-10-03").size() == 3,
+        "explicit dates and legacy events appear in one bounded query");
+    Expect(std::filesystem::is_regular_file(path.parent_path() / L"SnowDesktop.calendar-series.json"),
+        "series uses its own file without changing the legacy store format");
+    auto occurrence = service.EventById(created.id + "/2026-10-01");
+    Expect(occurrence && occurrence->seriesId == created.id &&
+        occurrence->occurrenceDate == "2026-10-01",
+        "series occurrence has stable identity and origin date");
+    if (occurrence)
+    {
+        auto moved = *occurrence; moved.date = "2026-10-04";
+        Expect(service.Update(moved.id, moved.revision, moved).ok &&
+            service.EventById(moved.id)->date == "2026-10-04" &&
+            service.Events("2026-10-04", "2026-10-04").size() == 1,
+            "single occurrence moves without losing its original identity");
+        Expect(service.Remove(moved.id).ok && !service.EventById(moved.id),
+            "single removal cancels only the selected occurrence");
+    }
+    CalendarService reloaded(path, [&] { return now; });
+    Expect(reloaded.Load() && !reloaded.EventById(created.id + "/2026-10-01") &&
+        reloaded.EventById(created.id + "/2026-10-03") &&
+        reloaded.Events("2026-10-02", "2026-10-02").size() == 1,
+        "series exception and legacy event survive reload independently");
+
+    CalendarSeries weekly;
+    weekly.event.title = "Every other week";
+    weekly.event.startMinutes = 600; weekly.event.endMinutes = 660;
+    weekly.rule.kind = "weekly"; weekly.rule.startDate = "2026-09-28";
+    weekly.rule.endDate = "2026-10-14"; weekly.rule.interval = 2;
+    weekly.rule.weekdays = {2, 4};
+    const auto week = service.CreateSeries(weekly);
+    Expect(week.ok && service.Events("2026-10-05", "2026-10-11").empty() &&
+        service.EventById(week.id + "/2026-10-12") &&
+        service.EventById(week.id + "/2026-10-14") &&
+        !service.EventById(week.id + "/2026-10-15"),
+        "weekly interval is anchored to the start week and end is inclusive");
+
+    CalendarSeries monthly;
+    monthly.event.title = "Thirty first";
+    monthly.event.startMinutes = 600; monthly.event.endMinutes = 660;
+    monthly.rule.kind = "monthly"; monthly.rule.startDate = "2026-01-31";
+    monthly.rule.endDate = "2026-04-30"; monthly.rule.monthDay = 31;
+    const auto month = service.CreateSeries(monthly);
+    Expect(month.ok && service.EventById(month.id + "/2026-01-31") &&
+        !service.EventById(month.id + "/2026-02-28") &&
+        service.EventById(month.id + "/2026-03-31"),
+        "monthly day 31 skips short months");
+    monthly.rule.monthDay = 0;
+    const auto last = service.CreateSeries(monthly);
+    Expect(last.ok && service.EventById(last.id + "/2026-02-28") &&
+        service.EventById(last.id + "/2026-04-30"),
+        "monthly last day follows each month length");
+    auto third = service.EventById(created.id + "/2026-10-03");
+    if (third)
+    {
+        third->notes = "changed once";
+        Expect(service.Update(third->id, third->revision, *third).ok,
+            "second occurrence can have its own edit");
+    }
+    auto changedDates = *service.SeriesById(created.id);
+    changedDates.rule.dates = {"2026-10-01", "2026-10-04"};
+    changedDates.exceptions.emplace("2026-10-04",
+        snowdesktop::calendar::CalendarSeriesException{true, {}});
+    const auto revisedDates = service.UpdateSeries(created.id,
+        changedDates.revision, changedDates);
+    const auto afterRuleChange = service.SeriesById(created.id);
+    Expect(revisedDates.ok && afterRuleChange &&
+        afterRuleChange->exceptions.size() == 1 &&
+        afterRuleChange->exceptions.contains("2026-10-01") &&
+        !afterRuleChange->exceptions.contains("2026-10-03") &&
+        !afterRuleChange->exceptions.contains("2026-10-04"),
+        "rule updates retain only prior exceptions still matching the new rule");
+    CalendarSeries yearBoundary;
+    yearBoundary.event.title = "Cross year";
+    yearBoundary.event.startMinutes = 600; yearBoundary.event.endMinutes = 660;
+    yearBoundary.rule.kind = "weekly";
+    yearBoundary.rule.startDate = "2026-12-28";
+    yearBoundary.rule.endDate = "2027-01-11";
+    yearBoundary.rule.interval = 2;
+    yearBoundary.rule.weekdays = {2};
+    const auto acrossYear = service.CreateSeries(yearBoundary);
+    Expect(acrossYear.ok && service.EventById(acrossYear.id + "/2026-12-28") &&
+        !service.EventById(acrossYear.id + "/2027-01-04") &&
+        service.EventById(acrossYear.id + "/2027-01-11"),
+        "weekly intervals remain anchored across a year boundary");
+    CalendarSeries leap;
+    leap.event.title = "Leap day";
+    leap.event.startMinutes = 600; leap.event.endMinutes = 660;
+    leap.rule.kind = "monthly";
+    leap.rule.startDate = "2024-02-29";
+    leap.rule.endDate = "2025-02-28";
+    leap.rule.interval = 12;
+    leap.rule.monthDay = 0;
+    const auto leapResult = service.CreateSeries(leap);
+    Expect(leapResult.ok && service.EventById(leapResult.id + "/2024-02-29") &&
+        service.EventById(leapResult.id + "/2025-02-28"),
+        "last-day recurrence includes leap day and the next non-leap February");
+    auto latest = *service.SeriesById(week.id);
+    latest.event.title = "Updated series";
+    Expect(!service.UpdateSeries(week.id, 0, latest).ok &&
+        service.UpdateSeries(week.id, week.revision, latest).ok,
+        "whole-series update requires the current revision");
+    Expect(service.RemoveSeries(week.id, week.revision).error == "conflict",
+        "stale whole-series delete is rejected");
+
+    CalendarNow reminderNow{"2026-07-30", 9 * 60 + 45};
+    const auto reminderPath = root / L"series-reminder" / L"SnowDesktop.calendar.json";
+    CalendarService reminders(reminderPath, [&] { return reminderNow; });
+    Expect(reminders.Load(), "series reminder store loads");
+    CalendarSeries alarm;
+    alarm.event.title = "Alarm"; alarm.event.startMinutes = 600;
+    alarm.event.endMinutes = 660; alarm.event.reminderMinutes = 15;
+    alarm.rule.kind = "dates"; alarm.rule.dates = {"2026-07-30"};
+    Expect(reminders.CreateSeries(alarm).ok, "single-date series can be saved");
+    int delivered = 0;
+    reminders.SetNotificationCallback([&](const CalendarEvent&) { ++delivered; });
+    reminders.CheckReminders(reminderNow, true);
+    CalendarService restarted(reminderPath, [&] { return reminderNow; });
+    Expect(restarted.Load(), "series reminder state reloads");
+    restarted.SetNotificationCallback([&](const CalendarEvent&) { ++delivered; });
+    reminderNow.minutes = 9 * 60 + 50;
+    restarted.CheckReminders(reminderNow, true);
+    Expect(delivered == 1, "series reminder is delivered only once across restart");
+
+    const auto isolatedPath = root / L"series-isolation" / L"SnowDesktop.calendar.json";
+    CalendarService isolated(isolatedPath, [&] { return now; });
+    Expect(isolated.Load(), "isolated series store starts empty");
+    CalendarSeries validSeries;
+    validSeries.event.title = "Independent series";
+    validSeries.event.startMinutes = 600; validSeries.event.endMinutes = 660;
+    validSeries.rule.kind = "dates"; validSeries.rule.dates = {"2026-10-08"};
+    const auto independent = isolated.CreateSeries(validSeries);
+    Write(isolatedPath, "{broken");
+    CalendarService damagedLegacy(isolatedPath, [&] { return now; });
+    Expect(!damagedLegacy.Load() && damagedLegacy.SeriesById(independent.id),
+        "corrupt legacy data is quarantined while the independent series still loads");
+    const auto sidecar = isolatedPath.parent_path() / L"SnowDesktop.calendar-series.json";
+    Write(sidecar, "{broken");
+    CalendarService damagedSeries(isolatedPath, [&] { return now; });
+    Expect(!damagedSeries.Load() && !std::filesystem::exists(sidecar) &&
+        damagedSeries.Series().empty(),
+        "corrupt series data is quarantined independently");
+
+    const auto limitPath = root / L"series-limit" / L"SnowDesktop.calendar.json";
+    std::string limitJson =
+        "{\"schemaVersion\":1,\"series\":[{\"id\":\"limited\",\"revision\":1,"
+        "\"event\":{\"title\":\"Limit\",\"date\":\"2026-01-01\",\"allDay\":true,"
+        "\"startMinutes\":0,\"endMinutes\":1439,\"notes\":\"\",\"reminderMinutes\":-1},"
+        "\"rule\":{\"kind\":\"weekly\",\"startDate\":\"2026-01-01\",\"endDate\":\"\","
+        "\"interval\":1,\"monthDay\":0,\"dates\":[],\"weekdays\":[1,2,3,4,5,6,7]},"
+        "\"exceptions\":[";
+    for (int index = 0; index < 2000; ++index)
+    {
+        if (index) limitJson += ',';
+        limitJson += "{\"date\":\"" + *CalendarService::AddDays("2026-01-01", index) +
+            "\",\"canceled\":" + (index == 0 ? "false,\"event\":{\"title\":\"Existing\","
+            "\"date\":\"2026-01-01\",\"allDay\":true,\"startMinutes\":0,"
+            "\"endMinutes\":1439,\"notes\":\"\",\"reminderMinutes\":-1}" : "true") + "}";
+    }
+    limitJson += "],\"notified\":[]}]}";
+    Write(limitPath.parent_path() / L"SnowDesktop.calendar-series.json", limitJson);
+    CalendarService limited(limitPath, [&] { return now; });
+    Expect(limited.Load(), "maximum persisted exception count loads");
+    auto existing = limited.EventById("limited/2026-01-01");
+    Expect(existing && limited.Update(existing->id, existing->revision, *existing).ok,
+        "updating an existing exception is allowed at the limit");
+    const auto overflowDate = *CalendarService::AddDays("2026-01-01", 2000);
+    const auto overflow = limited.EventById("limited/" + overflowDate);
+    Expect(overflow && !limited.Update(overflow->id, overflow->revision, *overflow).ok &&
+        limited.Remove(overflow->id).error == "event_limit",
+        "new overrides are rejected before exceeding the reload limit");
+    CalendarService limitedReload(limitPath, [&] { return now; });
+    Expect(limitedReload.Load(), "rejected override leaves a reloadable series file");
+}
+}
+
+int wmain(int argc, wchar_t* argv[])
+{
+    if (argc != 2)
+    {
+        std::cerr << "usage: SnowDesktopCalendarServiceTests <project-root>\n";
+        return 2;
+    }
+    auto& locale = Locale::Instance();
+    locale.Init((std::filesystem::path(argv[1]) / L"lang").c_str());
+    Expect(!locale.GetAvailableLanguages().empty(), "calendar label tests load the real language catalogs");
+    const auto rocLabel = [](const std::string& language) {
+        for (const auto& option : snowdesktop::calendar::CalendarOptions(language))
+            if (option.id == "roc") return option.label;
+        return std::wstring{};
+    };
+    locale.SetLanguage("en-US");
+    Expect(rocLabel("zh-CN") == L"民国纪年（公历）",
+        "ROC calendar name describes its era and Gregorian dates in simplified Chinese");
+    snowdesktop::calendar::DisplayPreferences rocDisplay;
+    rocDisplay.enabled=true;rocDisplay.calendar="roc";
+    const auto rocChinese=snowdesktop::calendar::Annotate("2026-09-29","2026-09-29",rocDisplay,"zh-CN");
+    Expect(rocChinese.size()==1&&rocChinese[0].calendarAvailable&&
+        rocChinese[0].fullDate.find("民国115")!=std::string::npos&&
+        rocChinese[0].monthHeading.find("民国115")!=std::string::npos&&
+        rocChinese[0].secondary.find("Taiwan")==std::string::npos&&
+        rocChinese[0].fullDate.find("Taiwan")==std::string::npos,
+        "ROC date text uses the translated era rather than ICU's Taiwan label");
+    for (const auto& language : locale.GetAvailableLanguages())
+    {
+        locale.SetLanguage(language.code.c_str());
+        const std::wstring expected = locale.TrW("settings.calendar.rocName");
+        locale.SetLanguage(language.code == "en-US" ? "zh-CN" : "en-US");
+        const std::string active = locale.GetLanguage();
+        Expect(rocLabel(language.code) == expected && expected != L"settings.calendar.rocName",
+            "calendar options use the requested language rather than the active UI language");
+        Expect(locale.GetLanguage() == active, "calendar option lookup must not switch the active UI catalog");
+    }
     const auto root =
         std::filesystem::temp_directory_path() /
         (L"SnowDesktopCalendarServiceTests-" +
@@ -46,6 +403,9 @@ int main()
     std::error_code error;
     std::filesystem::remove_all(root, error);
     std::filesystem::create_directories(root);
+    CheckNativeCalendarEditor(root);
+    CheckSeries(root);
+    CheckOccurrenceReminderEdits(root);
 
     const auto leap =
         CalendarService::GetDateInfo("2024-02-29");
@@ -82,6 +442,11 @@ int main()
     Expect(Annotate("2026-10-01", "2026-10-01", display, "zh-CN")[0].fullDate.find(" 星期四") != std::string::npos,
         "full lunar date separates the weekday with a space");
     Expect(Annotate("2024-02-10", "2024-02-10", display, "zh-CN")[0].secondary == "正月", "lunar new year caption is month only");
+    const auto cyclical=Annotate("2026-09-29","2026-09-29",display,"zh-CN");
+    Expect(cyclical.size()==1&&cyclical[0].monthHeading.starts_with("丙午年")&&
+        cyclical[0].fullDate.starts_with("丙午年")&&
+        cyclical[0].fullDate.find("2026")==std::string::npos,
+        "Chinese lunar dates use the sexagenary year without a Gregorian year prefix");
     display.holidaysEnabled = true; display.region = "CN";
     const auto formerHoliday = Annotate("2024-10-01", "2024-10-01", display, "zh-CN");
     Expect(formerHoliday.size() == 1 && formerHoliday[0].calendarAvailable && formerHoliday[0].holidays.empty() && !formerHoliday[0].holidaysAvailable,

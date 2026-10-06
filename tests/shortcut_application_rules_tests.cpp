@@ -1,4 +1,8 @@
 #include "shortcut_application_rules.h"
+#include "category_collection_rules.h"
+#include "desktop_category_item_rules.h"
+#include "shortcut_category_target.h"
+#include "empty_group_drop_rules.h"
 #include "shortcut_icon_resource.h"
 #include "large_icon_steam.h"
 
@@ -90,6 +94,58 @@ void CheckInternetShortcutIconResource()
     Check(!snowdesktop::shortcut_icon_resource::
               ReadInternetShortcutIconResource(missingPath.wstring()),
         "Internet shortcuts without IconFile must use the Shell fallback");
+}
+
+void CheckShortcutCategoryTargets()
+{
+    namespace collection = snowdesktop::category_collection_rules;
+    Check(collection::NormalizeExtensionToken(L"lnk:pdf") == L".LNK:.PDF" &&
+        collection::NormalizeExtensionToken(L"*.lnk:folder") == L".LNK:FOLDER" &&
+        collection::NormalizeExtensionToken(L"url:steam") == L".URL:STEAM",
+        "editable shortcut selectors accept optional dots and normalize case");
+    const auto merged = collection::MergeLegacyProgramShortcutRules({L".PY", L".LNK", L".URL", L".LNK:APP"});
+    Check(merged == std::vector<std::wstring>({L".PY", L".LNK:APP", L".URL:STEAM"}) &&
+        collection::MergeLegacyProgramShortcutRules(merged) == merged,
+        "upgrade merges target selectors without losing custom suffixes or duplicating rules");
+    TemporaryDirectory temporary;
+    const auto initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    Check(SUCCEEDED(initialized) && !temporary.Path().empty(), "shortcut category fixture initializes COM and a private directory");
+    if (FAILED(initialized) || temporary.Path().empty()) return;
+    const auto folder = temporary.Path() / L"folder.with.dots";
+    std::filesystem::create_directory(folder);
+    const auto document = temporary.Path() / L"report.PDF";
+    const auto executable = temporary.Path() / L"program.EXE";
+    std::ofstream(document) << "document";
+    std::ofstream(executable) << "fixture only, never launched";
+    for (const auto& target : {folder, document, executable})
+    {
+        const auto shortcut = temporary.Path() / (target.filename().wstring() + L".lnk");
+        Microsoft::WRL::ComPtr<IShellLinkW> link;
+        Microsoft::WRL::ComPtr<IPersistFile> file;
+        const bool saved = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&link))) && SUCCEEDED(link->SetPath(target.c_str())) &&
+            SUCCEEDED(link.As(&file)) && SUCCEEDED(file->Save(shortcut.c_str(), TRUE));
+        Check(saved, "real Shell links are saved for folder, document and executable targets");
+        if (!saved) continue;
+        const auto resolved = collection::ReadShortcutTarget(shortcut.wstring());
+        Check(resolved.classified, "saved links complete target classification");
+        const bool isFolder = target == folder;
+        const bool isProgram = target == executable;
+        Check(resolved.directory == isFolder && collection::IsProgramItem(L".LNK", false,
+            {L".EXE", L".LNK:APP", L".URL:STEAM"}, resolved) == isProgram,
+            "only executable links require the default program opt-in");
+        Check(collection::MatchesExtensionRule(L".LNK:FOLDER", L".LNK", resolved) == isFolder,
+            "the editable folder-target rule distinguishes a dotted directory from files");
+        if (target == document)
+            Check(collection::MatchesExtensionRule(L".PDF", L".LNK", resolved) &&
+                collection::MatchesExtensionRule(L".LNK:.PDF", L".LNK", resolved) &&
+                !collection::MatchesExtensionRule(L".LNK:.EXE", L".LNK", resolved),
+                "plain and link-only user suffix rules classify document targets");
+    }
+    const auto broken = collection::ReadShortcutTarget((temporary.Path() / L"missing.lnk").wstring());
+    Check(!collection::IsProgramItem(L".LNK", false, {L".LNK:APP"}, broken),
+        "an unresolved link is not silently treated as a program");
+    CoUninitialize();
 }
 #include "local_shortcut_icon_cases.h"
 } // namespace
@@ -196,6 +252,113 @@ int wmain(int argc, wchar_t** argv)
         "non-launch Steam URLs must remain ordinary Internet shortcuts");
 
     CheckInternetShortcutIconResource();
+    CheckShortcutCategoryTargets();
+
+    // The opt-in must cover native executables and app links, including
+    // links that have no filesystem extension and user-defined suffixes.
+    namespace collection = snowdesktop::category_collection_rules;
+    Check(collection::IsProgramItem(L".exe", false, {}), "executables require the program opt-in");
+    Check(collection::IsProgramItem(L"", true, {}), "Shell app identities require the program opt-in");
+    Check(!collection::IsProgramItem(L".LNK", false, {}), "a shortcut suffix alone does not require program collection");
+    Check(!collection::IsProgramItem(L".URL", false, {L".URL:STEAM"}), "ordinary web links remain collectable with programs disabled");
+    Check(collection::IsProgramItem(L".PY", false, {L".PY"}), "custom program suffixes require the same opt-in");
+    Check(!collection::IsProgramItem(L".PDF", false, {L".PY"}), "ordinary documents stay collectable while programs are disabled");
+    // These are the production predicates used by FileCategories admission,
+    // category snapshots and the commit-time program opt-in. No Shell/UI is
+    // simulated here; actual drop execution still needs desktop validation.
+    for (const auto* clsid : {kDesktopIconClsidThisPC, kDesktopIconClsidUserFiles,
+            kDesktopIconClsidNetwork, kDesktopIconClsidControlPanel, kDesktopIconClsidRecycleBin})
+    {
+        DesktopItem item;
+        item.layoutKey = L"SYSTEM-ICON";
+        item.desktopIconClsid = clsid;
+        item.parsingName = L"C:\\Users\\Example";
+        Check(collection::IsDesktopNamespaceProgram(item),
+            "each standard desktop namespace icon requires program collection");
+        Check(collection::DesktopNamespaceCategory(item, true) == L"programs" &&
+            collection::DesktopNamespaceCategory(item, false) == L"others",
+            "namespace icons use Programs, falling back to Others when that category is disabled");
+        for (const bool folder : {false, true})
+        {
+            Check(!collection::IsCollectableDesktopItem(item, false, folder, L"", {}),
+                "namespace icons cannot bypass the program opt-in through a directory-backed PIDL");
+            Check(collection::IsCollectableDesktopItem(item, true, folder, L"", {}),
+                "enabling program collection admits system icons with or without filesystem paths");
+        }
+        item.desktopIconClsid.clear();
+        item.parsingName = L"::" + std::wstring(clsid);
+        Check(collection::IsDesktopNamespaceProgram(item) &&
+            collection::IsCollectableDesktopItem(item, true, false, L"", {}) &&
+            !collection::IsCollectableDesktopItem(item, false, false, L"", {}),
+            "a Shell parsing identity retains the same opt-in before CLSID enrichment");
+        item.layoutKey.clear();
+        Check(!collection::IsCollectableDesktopItem(item, true, false, L"", {}),
+            "even an enabled system icon needs a persistent layout key");
+    }
+    DesktopItem ordinary;
+    ordinary.layoutKey = L"ordinary";
+    ordinary.parsingName = L"C:\\Docs\\{20D04FE0-3AEA-1069-A2D8-08002B30309D}.pdf";
+    Check(!collection::IsDesktopNamespaceProgram(ordinary) &&
+        collection::DesktopNamespaceCategory(ordinary, true).empty() &&
+        collection::IsCollectableDesktopItem(ordinary, false, false, L".PDF", {}),
+        "a document whose filename contains a CLSID remains an ordinary collectable document");
+    Check(collection::IsCollectableDesktopItem(ordinary, false, true, L"", {}) &&
+        !collection::IsCollectableDesktopItem(ordinary, false, false, L".EXE", {}) &&
+        collection::IsCollectableDesktopItem(ordinary, true, false, L".EXE", {}),
+        "ordinary folders retain their admission and executables still require the opt-in");
+    const std::vector<std::wstring> defaults{L"all", L"folders", L"programs", L"images", L"others"};
+    auto order = collection::ResolveTabOrder(defaults, {L"images", L"all", L"images", L"removed"});
+    Check(order == std::vector<std::wstring>({L"images", L"all", L"folders", L"programs", L"others"}),
+        "saved tab order deduplicates IDs, drops stale IDs, and retains new categories");
+    Check(collection::MoveTab(order, L"all", L"others") && order.back() == L"all",
+        "All can be moved to the end without changing category matching rules");
+    Check(collection::MoveTab(order, L"all", L"images") && order.front() == L"all",
+        "All can be moved back to the beginning");
+    Check(!collection::MoveTab(order, L"all", L"missing"), "an invalid target cannot discard a tab");
+
+    namespace emptyGroup = snowdesktop::empty_group_drop_rules;
+    for (const auto groupType : {DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
+    {
+        for (const bool programs : {false, true})
+        {
+            DesktopWidget group;
+            group.type = groupType;
+            group.id = L"retained-id";
+            group.gridCell.pageId = L"retained-page";
+            group.gridCell.column = 3;
+            group.gridCell.row = 4;
+            group.gridSpan = {5, 2};
+            group.bounds = RECT{111, 222, 777, 555};
+            group.userRenamed = true;
+            group.title = L"My group";
+            group.showSearchBox = true;
+            group.showFileCategories = true;
+            group.childWidgetIds = {L"stale-child"};
+            const std::vector<DesktopWidget> noSources;
+            Check(emptyGroup::Convert(group, noSources, programs, L"Default title") &&
+                group.type == (programs ? DesktopWidgetType::Collection : DesktopWidgetType::FileCategories),
+                "either empty group can convert to the matching drop type");
+            Check(group.id == L"retained-id" && group.gridCell.pageId == L"retained-page" &&
+                group.gridCell.column == 3 && group.gridCell.row == 4 &&
+                group.gridSpan.columns == 5 && group.gridSpan.rows == 2 &&
+                group.bounds.left == 111 && group.bounds.top == 222 &&
+                group.bounds.right == 777 && group.bounds.bottom == 555,
+                "conversion preserves identity, page, position, size and runtime bounds");
+            Check(group.title == L"My group" && group.showSearchBox && group.showFileCategories &&
+                group.childWidgetIds.empty(), "conversion retains renamed titles and display options, clearing stale sources");
+        }
+        DesktopWidget group;
+        group.type = groupType;
+        group.childWidgetIds = {L"valid-child"};
+        DesktopWidget child;
+        child.id = L"valid-child";
+        child.type = groupType == DesktopWidgetType::CollectionGroup
+            ? DesktopWidgetType::Collection : DesktopWidgetType::FolderMapping;
+        const std::vector<DesktopWidget> validSources{child};
+        Check(!emptyGroup::Convert(group, validSources, false, L"Files") && group.type == groupType &&
+            group.childWidgetIds == std::vector<std::wstring>{L"valid-child"},
+            "an existing empty child source prevents conversion and is never discarded");
+    }
 
     if (failures != 0)
     {

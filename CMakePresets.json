@@ -60,7 +60,27 @@
       "configuration": "Release",
       "jobs": 4,
       "targets": [
+        "SnowDesktopAppTests"
+      ]
+    },
+    {
+      "name": "all-tests",
+      "displayName": "All native application and build tool tests",
+      "configurePreset": "tests",
+      "configuration": "Release",
+      "jobs": 4,
+      "targets": [
         "SnowDesktopTests"
+      ]
+    },
+    {
+      "name": "tools-tests",
+      "displayName": "Build tool regression tests",
+      "configurePreset": "tests",
+      "configuration": "Release",
+      "jobs": 4,
+      "targets": [
+        "SnowDesktopBuildToolTests"
       ]
     },
     {
@@ -92,15 +112,18 @@
       "configuration": "Release",
       "output": {
         "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 4
       }
     },
     {
       "name": "tests",
-      "displayName": "Full automatic suite excluding manual diagnostics",
+      "displayName": "Full application suite excluding tools and manual diagnostics",
       "inherits": "all-tests",
       "filter": {
         "exclude": {
-          "label": "^manual$"
+          "label": "^(manual|tools)$"
         }
       }
     },
@@ -123,7 +146,20 @@
       "inherits": "tests",
       "filter": {
         "exclude": {
-          "label": "^(integration|manual)$"
+          "label": "^(integration|manual|tools)$"
+        }
+      }
+    },
+    {
+      "name": "tools-tests",
+      "displayName": "Build tool regression tests excluding manual diagnostics",
+      "inherits": "all-tests",
+      "filter": {
+        "include": {
+          "label": "^tools$"
+        },
+        "exclude": {
+          "label": "^manual$"
         }
       }
     }

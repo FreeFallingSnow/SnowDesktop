@@ -1,7 +1,207 @@
 // Shell reads are represented by explicitly ordered completions. The actual
 // UI-owned cache and running-app matcher execute; no timing/sleeps are needed.
+void CheckDockProcessSnapshotReuse()
+{
+    using Snapshot = std::unordered_map<std::uint32_t, std::uint32_t>;
+    unsigned queries = 0;
+    const auto query = [&] { ++queries; return Snapshot{{2, 1}}; };
+    {
+        std::optional<Snapshot> pass;
+        const Snapshot* first = nullptr;
+        for (int window = 0; window < 128; ++window)
+        {
+            const auto& parents = snowdesktop::dock_process_snapshot::Read(pass, query);
+            if (!first) first = &parents;
+            Check(&parents == first && parents.at(2) == 1,
+                "all probes in one enumeration borrow one consistent parent snapshot");
+        }
+        Check(queries == 1, "many preview probes query the process snapshot once");
+    }
+    {
+        std::optional<Snapshot> nextPass;
+        snowdesktop::dock_process_snapshot::Read(nextPass, query);
+        Check(queries == 2, "a new enumeration gets a fresh process snapshot");
+    }
+    unsigned unavailableQueries = 0;
+    std::optional<Snapshot> failedPass;
+    const auto unavailable = [&] { ++unavailableQueries; return Snapshot{}; };
+    Check(snowdesktop::dock_process_snapshot::Read(failedPass, unavailable).empty() &&
+            snowdesktop::dock_process_snapshot::Read(failedPass, unavailable).empty() &&
+            unavailableQueries == 1, "an unavailable snapshot retries on the next pass rather than every window");
+    std::cout << "preview synthetic128 probes: process snapshots=1; next pass fresh\n";
+}
+
+class CacheComReference final : public IUnknown
+{
+public:
+    explicit CacheComReference(unsigned& released) : released_(released) {}
+    virtual ~CacheComReference() = default;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override
+    {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        if (iid != __uuidof(IUnknown)) return E_NOINTERFACE;
+        *result = static_cast<IUnknown*>(this);
+        AddRef();
+        return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++references_; }
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        const ULONG remaining = --references_;
+        if (!remaining) { ++released_; delete this; }
+        return remaining;
+    }
+private:
+    ULONG references_ = 1;
+    unsigned& released_;
+};
+
+void CheckCacheComPtrOwnership()
+{
+    using Owned = Microsoft::WRL::ComPtr<CacheComReference>;
+    unsigned released = 0;
+    snowdesktop::BoundedLruCache<int, Owned> cache(1);
+    auto make = [&] { Owned owned; owned.Attach(new CacheComReference(released)); return owned; };
+    const auto* inserted = cache.Insert(1, make());
+    Check(inserted && inserted->Get() && released == 0,
+        "returning an inserted ComPtr address does not release its resource");
+    const auto* hit = cache.Find(1);
+    Check(hit && hit->Get() && released == 0,
+        "returning a hit ComPtr address does not release its resource");
+    const auto* replaced = cache.Insert(1, make());
+    Check(replaced && replaced->Get() && released == 1,
+        "replacement releases only the old resource and preserves the new ComPtr");
+    const auto* evicted = cache.Insert(2, make());
+    Check(evicted && evicted->Get() && released == 2 && !cache.Find(1),
+        "LRU eviction releases one resource and preserves the returned ComPtr");
+    cache.Clear();
+    Check(released == 3 && cache.Size() == 0,
+        "Clear releases each remaining COM resource exactly once");
+}
+
+void CheckBoundedIconCache()
+{
+    CheckCacheComPtrOwnership();
+    snowdesktop::BoundedLruCache<int, std::unique_ptr<int>> cache(2);
+    cache.Insert(1, std::make_unique<int>(10));
+    cache.Insert(2, std::make_unique<int>(20));
+    Check(cache.Find(1) && **cache.Find(1) == 10, "a hit preserves the owned value");
+    cache.Insert(3, std::make_unique<int>(30));
+    Check(cache.Size() == 2 && !cache.Find(2) && cache.Find(1),
+        "inserting evicts only the least recently used icon");
+    cache.Insert(1, std::make_unique<int>(40));
+    Check(cache.Size() == 2 && **cache.Find(1) == 40, "replacement keeps one entry");
+    cache.Clear();
+    Check(cache.Size() == 0 && !cache.Find(1), "device/style reset releases all owned values");
+    snowdesktop::BoundedLruCache<int, int> disabled(0);
+    Check(!disabled.Insert(1, 2) && disabled.Size() == 0, "zero capacity keeps no value");
+    snowdesktop::BoundedLruCache<int, int> reflection(64);
+    unsigned misses = 0;
+    for (int size = 0; size < 64; ++size) reflection.Insert(size, size);
+    for (int size = 64; size < 128; ++size)
+    {
+        if (!reflection.Find(63)) ++misses;
+        reflection.Insert(size, size);
+        Check(reflection.Size() <= 64, "mixed sizes retain the configured bound");
+    }
+    Check(misses == 0 && reflection.Find(63), "mixed rare sizes keep the frequently drawn reflection");
+    std::cout << "reflection synthetic mixed sizes: hot-key misses=0; retained<=64\n";
+}
+
+void CheckEverythingIconRows()
+{
+    snowdesktop::IconRowIndex<int> rows;
+    for (unsigned row = 0; row < 1024; ++row) rows.Add(static_cast<int>(row % 64), row);
+    unsigned visits = 0;
+    for (int icon = 0; icon < 64; ++icon)
+        rows.Visit(icon, 1024, [&](std::size_t row) {
+            ++visits;
+            Check(row % 64 == static_cast<unsigned>(icon), "completion visits matching rows only");
+        });
+    Check(visits == 1024, "64 completions touch1024 matching rows rather than65536 rows");
+    rows.Add(100, 2000);
+    rows.Visit(100, 1024, [&](std::size_t) { Check(false, "out-of-range rows are skipped"); });
+    rows.Clear();
+    rows.Add(200, 0);
+    rows.Visit(1, 1, [&](std::size_t) { Check(false, "obsolete query row index is retired"); });
+    unsigned current = 0;
+    rows.Visit(200, 1, [&](std::size_t row) { ++current; Check(row == 0, "new query owns its row"); });
+    Check(current == 1, "replacement rows accept their matching completion");
+    std::cout << "Everything synthetic1024 rows/64 icons: completion visits=1024; re-queries=0\n";
+}
+
+void CheckSlowCallLimit()
+{
+    using Phase = snowdesktop::SlowCallPhase;
+    snowdesktop::SlowCallLimiter limiter;
+    unsigned writes = 0;
+    std::uint64_t reported = 0;
+    for (int event = 0; event < 100; ++event)
+    {
+        if (const auto result = limiter.Record(Phase::Message, event * 10.0, event + 60.0))
+        { ++writes; reported += result->count; }
+    }
+    Check(writes == 1, "100 slow calls in one second emit one phase record");
+    const auto next = limiter.Record(Phase::Message, 1000, 70);
+    Check(next && next->count == 99 && next->maximumMs == 159,
+        "next phase record carries the suppressed count and maximum");
+    Check(limiter.Record(Phase::Due, 1000, 80).has_value(), "other phases have independent quotas");
+    limiter.Record(Phase::Due, 1001, 90);
+    const auto final = limiter.Flush(Phase::Due);
+    Check(final && final->count == 1 && final->maximumMs == 90 && !limiter.Flush(Phase::Due),
+        "normal shutdown reports pending samples exactly once");
+    Check(limiter.Record(Phase::Message, 1, 80).has_value(), "clock reversal starts a new quota");
+    Check(reported == 0, "first record has no fabricated prior samples");
+    std::cout << "slow-call synthetic100 events/1s: sink writes=1; next record suppressed=99\n";
+}
+
 void CheckDockRefreshContinuity()
 {
+    CheckSlowCallLimit();
+    CheckEverythingIconRows();
+    CheckBoundedIconCache();
+    CheckDockProcessSnapshotReuse();
+    {
+        // Exercise the production cache policy used by window AppID reads.
+        // Shell itself is the controlled completion boundary, not mocked UI
+        // enumeration. Empty IDs are valid negative metadata with short age.
+        using AppIds = snowdesktop::dock_refresh_cache::Cache<std::wstring, std::uintptr_t>;
+        AppIds cache;
+        const AppIds::Clock::time_point start{};
+        unsigned requests = 0, changes = 0;
+        for (int second = 0; second < 60; ++second)
+        {
+            const auto now = start + std::chrono::seconds(second);
+            cache.ReadOrSubmit(7, L"pid:thread", [&](std::uint64_t ticket) {
+                ++requests;
+                const auto changed = cache.PublishWithLifetimeChanged(7, ticket,
+                    L"stable.app", std::chrono::seconds(30), now);
+                if (changed && *changed) ++changes;
+            }, now);
+        }
+        Check(requests == 2 && changes == 1,
+            "stable AppID reads revalidate by age, not every maintenance pass");
+        const auto reusedAt = start + std::chrono::seconds(60);
+        const auto old = cache.Read(7, L"pid:thread", reusedAt);
+        const auto reused = cache.Read(7, L"other-pid:thread", reusedAt);
+        Check(!reused.sameSourceVersion && !cache.PublishWithLifetime(7, old.ticket,
+            L"stale.app", std::chrono::seconds(30), reusedAt),
+            "reused window identity rejects the obsolete completion");
+        cache.PublishWithLifetime(7, reused.ticket, L"", std::chrono::seconds(5), reusedAt);
+        Check(cache.Read(7, L"other-pid:thread", reusedAt + std::chrono::seconds(4)).fresh &&
+            !cache.Read(7, L"other-pid:thread", reusedAt + std::chrono::seconds(5)).fresh,
+            "negative AppIDs retry after their short lifetime");
+        const auto pending = cache.Read(7, L"other-pid:thread", reusedAt + std::chrono::seconds(5));
+        cache.Invalidate();
+        const auto replacement = cache.Read(7, L"other-pid:thread", reusedAt + std::chrono::seconds(5));
+        Check(!cache.PublishWithLifetime(7, pending.ticket, L"late", std::chrono::seconds(30), reusedAt + std::chrono::seconds(5)) &&
+            replacement.ticket != pending.ticket,
+            "window events retire in-flight identity tickets");
+        cache.Retain([](auto) { return false; });
+        Check(!cache.PeekValue(7, L"other-pid:thread"), "dead windows release their metadata");
+        std::cout << "AppID synthetic 60s: requests=2, first-identity refresh=1, identical-result refresh=0\n";
+    }
     using snowdesktop::dock_refresh_cache::Cache;
     {
         Cache<int> pixels;

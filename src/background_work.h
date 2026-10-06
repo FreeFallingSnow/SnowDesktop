@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <objbase.h>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -77,7 +78,8 @@ public:
     }
 
     // Bound batches so a burst of completed icons cannot monopolize a frame.
-    void Drain(std::chrono::milliseconds budget = std::chrono::milliseconds(4))
+    void Drain(std::chrono::milliseconds budget = std::chrono::milliseconds(4),
+        const std::wstring& prefix = {})
     {
         const auto deadline = std::chrono::steady_clock::now() + budget;
         for (unsigned count = 0; count < 32; ++count)
@@ -86,8 +88,11 @@ public:
             {
                 std::lock_guard lock(state_->mutex);
                 if (state_->stopped || state_->ready.empty()) break;
-                auto result = std::move(state_->ready.front());
-                state_->ready.pop_front();
+                const auto ready = std::find_if(state_->ready.begin(), state_->ready.end(),
+                    [&](const auto& entry) { return entry.key.starts_with(prefix); });
+                if (ready == state_->ready.end()) break;
+                auto result = std::move(*ready);
+                state_->ready.erase(ready);
                 const auto live = state_->live.find(result.key);
                 if (live == state_->live.end() || live->second != result.id) continue;
                 state_->live.erase(live);
@@ -97,7 +102,10 @@ public:
             if (std::chrono::steady_clock::now() >= deadline) break;
         }
         std::lock_guard lock(state_->mutex);
-        if (!state_->ready.empty() && state_->window)
+        // Deferred consumers must not spin the UI message loop while a drag
+        // owns their model. Only eligible remaining results request a wakeup.
+        if (state_->window && std::any_of(state_->ready.begin(), state_->ready.end(),
+                [&](const auto& entry) { return entry.key.starts_with(prefix); }))
             PostMessageW(state_->window, state_->message, 0, 0);
     }
 

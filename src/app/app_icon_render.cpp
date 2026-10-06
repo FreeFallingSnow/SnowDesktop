@@ -404,7 +404,7 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
 }
 
 void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
-    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth)
+    D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey)
 {
     if (!ctx || IsRectEmptyRect(rect)) return;
     ComPtr<ID2D1Factory> factory;
@@ -447,6 +447,28 @@ void DesktopApp::DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
     if (strokeWidth > 0.0f && border.a > 0.0f &&
         SUCCEEDED(ctx->CreateSolidColorBrush(border, &borderBrush)) && borderBrush)
         ctx->DrawGeometry(geometry.Get(), borderBrush.Get(), strokeWidth);
+    if (iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
+        RegisterIconBackdrop(rect, fill.a > 0.0f ? 1.0f : 0.0f, ownerKey);
+    if (!iconBeautifySettings_.enabled || !iconBeautifySettings_.edgeHighlightEnabled) return;
+    const int pixelWidth = rect.right - rect.left, pixelHeight = rect.bottom - rect.top;
+    const auto key = (static_cast<std::uint64_t>(pixelWidth) << 32) |
+        static_cast<std::uint32_t>(pixelHeight);
+    auto* cached = iconReflectionCache_.Find(key);
+    if (!cached)
+    {
+        const auto pixels = snowdesktop::icon_beautify::RenderEdgeReflection(
+            pixelWidth, pixelHeight, iconBeautifySettings_);
+        ComPtr<ID2D1Bitmap1> bitmap;
+        const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (!d2dContext_ || FAILED(d2dContext_->CreateBitmap(
+                D2D1::SizeU(static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight)),
+                pixels.data(), static_cast<UINT32>(pixelWidth * sizeof(std::uint32_t)),
+                &properties, &bitmap))) return;
+        cached = iconReflectionCache_.Insert(key, std::move(bitmap));
+    }
+    ctx->DrawBitmap(cached->Get(), ToD2DRect(rect), 1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 void DesktopApp::DrawPrivacyFaIcon(
@@ -520,8 +542,7 @@ void DesktopApp::DrawPrivacyFaIcon(
 
     if (cached)
     {
-        ctx->DrawBitmap(cached.Get(), ToD2DRect(rect), 1.0f,
-            D2D1_INTERPOLATION_MODE_LINEAR);
+        DrawIconBitmap(ctx, cached.Get(), rect, 1.0f, 0, false);
         return;
     }
 

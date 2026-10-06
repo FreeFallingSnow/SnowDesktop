@@ -146,7 +146,17 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     {
         strokeWidth = std::max(kMinimumWidgetBorderWidth, strokeWidth);
         if (auto* strokeBrush = getBrush(stroke))
-            ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
+        {
+            auto outline = rr;
+            if (!selected)
+            {
+                const float inset = strokeWidth * 0.5f;
+                outline.rect = D2D1::RectF(rr.rect.left + inset, rr.rect.top + inset,
+                    rr.rect.right - inset, rr.rect.bottom - inset);
+                outline.radiusX = outline.radiusY = std::max(0.0f, radius - inset);
+            }
+            ctx->DrawRoundedRectangle(outline, strokeBrush, strokeWidth, nullptr);
+        }
     }
     if (!selected)
         (void)DrawWidgetPanelEdgeHighlight(
@@ -172,7 +182,8 @@ bool DesktopApp::DrawWidgetPanelEdgeHighlight(
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
         std::max(0.0f, effectScale);
     return DrawEdgeHighlight(ctx, frame, std::max(0.0f, radius), fill,
-        edgeWidth, p.widgetEdgeHighlightStrength);
+        edgeWidth, p.widgetEdgeHighlightStrength,
+        p.edgeLight);
 }
 
 void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
@@ -193,8 +204,9 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
         if (acrylicNoiseBrushCache_.size() >= 8)
             acrylicNoiseBrushCache_.clear();
 
-        const auto pixels =
+        const auto& pixels =
             snowdesktop::widget_preview::GenerateAcrylicNoise(lightTheme);
+        if (pixels.empty()) return;
 
         D2D1_BITMAP_PROPERTIES1 bitmapProperties =
             D2D1::BitmapProperties1(
@@ -218,6 +230,7 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
         if (FAILED(ctx->CreateBitmapBrush(bitmap.Get(), &brushProperties,
                 nullptr, &brush)) || !brush)
             return;
+        brush->SetOpacity(snowdesktop::widget_preview::AcrylicNoiseOpacity);
         found = acrylicNoiseBrushCache_.emplace(cacheKey,
             std::move(brush)).first;
     }

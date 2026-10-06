@@ -24,10 +24,10 @@ inline bool ShouldRevealTaskbarForShellPanel(
 
 inline void NormalizeAlwaysEnabledFeatures(
     bool& showRunningApps,
-    bool& showWindowPreviews) noexcept
+    bool& /*showWindowPreviews*/) noexcept
 {
     showRunningApps = true;
-    showWindowPreviews = true;
+    // Window previews remain a default-on user preference.
 }
 
 // Summon-only display temporarily requires both linked features. Resolve the

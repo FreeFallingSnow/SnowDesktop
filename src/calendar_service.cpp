@@ -21,10 +21,29 @@ namespace
 {
 constexpr int kSchemaVersion = 1;
 constexpr std::size_t kMaximumEvents = 2000;
+constexpr std::size_t kMaximumSeries = 2000;
+constexpr std::size_t kMaximumExceptions = 2000;
 constexpr std::size_t kMaximumFileBytes =
     32u * 1024u * 1024u;
 constexpr std::size_t kMaximumTitleBytes = 512;
 constexpr std::size_t kMaximumNotesBytes = 8192;
+
+bool ExceptionLimitReached(const std::vector<CalendarSeries>& series)
+{
+    std::size_t count = 0;
+    for (const auto& item : series)
+    {
+        count += item.exceptions.size();
+        if (count >= kMaximumExceptions) return true;
+    }
+    return false;
+}
+
+std::filesystem::path SeriesPath(const std::filesystem::path& legacy)
+{
+    return legacy.parent_path() /
+        (legacy.stem().wstring() + L"-series.json");
+}
 
 long long DaysFromCivil(int year, unsigned month, unsigned day)
 {
@@ -293,6 +312,7 @@ std::optional<std::string> CalendarService::AddDays(
 bool CalendarService::Load()
 {
     events_.clear();
+    series_.clear();
     selectedDate_ = clock_().date;
     if (!GetDateInfo(selectedDate_))
         selectedDate_ = CurrentLocalNow().date;
@@ -303,24 +323,29 @@ bool CalendarService::Load()
 
     std::error_code error;
     if (!std::filesystem::is_regular_file(path_, error))
-        return true;
+        return LoadSeries();
     const std::uintmax_t size =
         std::filesystem::file_size(path_, error);
     if (error || size > kMaximumFileBytes)
     {
         QuarantineCorruptFile();
+        (void)LoadSeries();
         return false;
     }
     std::ifstream file(path_, std::ios::binary);
     if (!file)
+    {
+        (void)LoadSeries();
         return false;
+    }
     std::ostringstream input;
     input << file.rdbuf();
     file.close();
     if (LoadText(input.str()))
-        return true;
+        return LoadSeries();
     QuarantineCorruptFile();
     events_.clear();
+    (void)LoadSeries();
     return false;
 }
 
@@ -536,6 +561,11 @@ std::optional<CalendarEvent> CalendarService::EventById(const std::string& id) c
 {
     for (const auto& event : events_)
         if (event.id == id) return event;
+    const auto separator = id.find('/');
+    if (separator != std::string::npos)
+        for (const auto& series : series_)
+            if (series.id == id.substr(0, separator))
+                return Occurrence(series, id.substr(separator + 1));
     return std::nullopt;
 }
 
@@ -554,8 +584,48 @@ std::vector<CalendarEvent> CalendarService::Events(
             event.date <= toDate)
             result.push_back(event);
     }
+    const auto from = GetDateInfo(fromDate);
+    const auto to = GetDateInfo(toDate);
+    if (from && to &&
+        DaysFromCivil(to->year, to->month, to->day) -
+            DaysFromCivil(from->year, from->month, from->day) < 366)
+    {
+        for (const auto& series : series_)
+        {
+            for (std::string date = fromDate; date <= toDate;)
+            {
+                if (auto event = Occurrence(series, date);
+                    event && event->date >= fromDate && event->date <= toDate)
+                    result.push_back(std::move(*event));
+                const auto next = AddDays(date, 1);
+                if (!next) break;
+                date = *next;
+            }
+            for (const auto& [origin, exception] : series.exceptions)
+            {
+                if (origin >= fromDate && origin <= toDate || exception.canceled ||
+                    exception.event.date < fromDate || exception.event.date > toDate)
+                    continue;
+                if (auto event = Occurrence(series, origin))
+                    result.push_back(std::move(*event));
+            }
+        }
+    }
     std::sort(result.begin(), result.end(), EventLess);
     return result;
+}
+
+std::vector<CalendarEvent> CalendarService::SingleEvents() const
+{
+    auto result = events_;
+    std::sort(result.begin(), result.end(), EventLess);
+    return result;
+}
+
+bool CalendarService::MatchesRule(const CalendarSeriesRule& rule,
+    const std::string& date)
+{
+    return Matches(rule, date);
 }
 
 bool CalendarService::SetSelectedDate(
@@ -606,6 +676,42 @@ MutationResult CalendarService::Update(
     int expectedRevision,
     CalendarEvent event)
 {
+    if (const auto separator = id.find('/'); separator != std::string::npos)
+    {
+        for (auto& series : series_)
+        {
+            if (series.id != id.substr(0, separator)) continue;
+            const std::string origin = id.substr(separator + 1);
+            const auto current = Occurrence(series, origin);
+            if (!current) return {false, id, 0, "not_found"};
+            if (series.revision != expectedRevision)
+                return {false, id, series.revision, "conflict"};
+            std::string error;
+            if (!ValidateAndNormalize(event, error))
+                return {false, id, series.revision, error};
+            if (!series.exceptions.contains(origin) && ExceptionLimitReached(series_))
+                return {false, id, series.revision, "event_limit"};
+            const bool scheduleChanged =
+                event.date != current->date ||
+                event.allDay != current->allDay ||
+                event.startMinutes != current->startMinutes ||
+                event.endMinutes != current->endMinutes ||
+                event.reminderMinutes != current->reminderMinutes;
+            auto previous = series;
+            event.id = id;
+            event.seriesId = series.id;
+            event.occurrenceDate = origin;
+            event.occurrenceOverride = true;
+            event.revision = ++series.revision;
+            event.notifiedTrigger.clear();
+            series.exceptions[origin] = {false, std::move(event)};
+            if (scheduleChanged) series.notifiedTriggers.erase(origin);
+            if (!SaveSeries()) { series = std::move(previous); return {false, id, 0, "save_failed"}; }
+            if (changedCallback_) changedCallback_("events");
+            return {true, id, series.revision, {}};
+        }
+        return {false, id, 0, "not_found"};
+    }
     const auto found = std::find_if(
         events_.begin(), events_.end(),
         [&](const CalendarEvent& current) {
@@ -646,8 +752,29 @@ MutationResult CalendarService::Update(
 }
 
 MutationResult CalendarService::Remove(
-    const std::string& id)
+    const std::string& id, int expectedRevision)
 {
+    if (const auto separator = id.find('/'); separator != std::string::npos)
+    {
+        for (auto& series : series_)
+        {
+            if (series.id != id.substr(0, separator)) continue;
+            const std::string origin = id.substr(separator + 1);
+            if (!Occurrence(series, origin)) return {false, id, 0, "not_found"};
+            if (expectedRevision && expectedRevision != series.revision)
+                return {false, id, series.revision, "conflict"};
+            if (!series.exceptions.contains(origin) && ExceptionLimitReached(series_))
+                return {false, id, series.revision, "event_limit"};
+            auto previous = series;
+            ++series.revision;
+            series.exceptions[origin] = {true, {}};
+            series.notifiedTriggers.erase(origin);
+            if (!SaveSeries()) { series = std::move(previous); return {false, id, 0, "save_failed"}; }
+            if (changedCallback_) changedCallback_("events");
+            return {true, id, 0, {}};
+        }
+        return {false, id, 0, "not_found"};
+    }
     const auto found = std::find_if(
         events_.begin(), events_.end(),
         [&](const CalendarEvent& event) {
@@ -670,6 +797,371 @@ MutationResult CalendarService::Remove(
     if (changedCallback_)
         changedCallback_("events");
     return { true, id, 0, {} };
+}
+
+std::string CalendarService::OccurrenceId(const std::string& seriesId,
+    const std::string& date)
+{
+    return seriesId + "/" + date;
+}
+
+bool CalendarService::Matches(const CalendarSeriesRule& rule,
+    const std::string& date)
+{
+    if (!GetDateInfo(date)) return false;
+    if (rule.kind == "dates")
+        return std::binary_search(rule.dates.begin(), rule.dates.end(), date);
+    if (date < rule.startDate || (!rule.endDate.empty() && date > rule.endDate))
+        return false;
+    const auto current = *GetDateInfo(date);
+    const auto start = *GetDateInfo(rule.startDate);
+    if (rule.kind == "weekly")
+    {
+        const long long currentDay = DaysFromCivil(current.year, current.month, current.day);
+        const long long startDay = DaysFromCivil(start.year, start.month, start.day);
+        const long long anchor = startDay - (start.weekday + 5) % 7;
+        return ((currentDay - anchor) / 7) % rule.interval == 0 &&
+            std::find(rule.weekdays.begin(), rule.weekdays.end(), current.weekday) !=
+                rule.weekdays.end();
+    }
+    if (rule.kind == "monthly")
+    {
+        const int months = (current.year - start.year) * 12 + current.month - start.month;
+        return months % rule.interval == 0 &&
+            current.day == (rule.monthDay == 0 ? current.daysInMonth : rule.monthDay);
+    }
+    return false;
+}
+
+std::optional<CalendarEvent> CalendarService::Occurrence(
+    const CalendarSeries& series, const std::string& date) const
+{
+    if (!Matches(series.rule, date)) return std::nullopt;
+    const auto found = series.exceptions.find(date);
+    if (found != series.exceptions.end() && found->second.canceled)
+        return std::nullopt;
+    CalendarEvent event = found != series.exceptions.end()
+        ? found->second.event : series.event;
+    event.id = OccurrenceId(series.id, date);
+    event.revision = series.revision;
+    event.seriesId = series.id;
+    event.occurrenceDate = date;
+    event.occurrenceOverride = found != series.exceptions.end();
+    if (!event.occurrenceOverride) event.date = date;
+    return event;
+}
+
+std::optional<CalendarSeries> CalendarService::SeriesById(const std::string& id) const
+{
+    for (const auto& series : series_)
+        if (series.id == id) return series;
+    return std::nullopt;
+}
+
+bool CalendarService::ValidateSeries(CalendarSeries& series, std::string& error) const
+{
+    auto& rule = series.rule;
+    if (rule.kind == "dates")
+    {
+        if (rule.dates.empty() || rule.dates.size() > 366)
+        { error = "invalid_rule"; return false; }
+        std::sort(rule.dates.begin(), rule.dates.end());
+        if (std::adjacent_find(rule.dates.begin(), rule.dates.end()) != rule.dates.end() ||
+            std::any_of(rule.dates.begin(), rule.dates.end(),
+                [](const auto& date) { return !GetDateInfo(date); }))
+        { error = "invalid_rule"; return false; }
+        rule.startDate = rule.dates.front();
+        rule.endDate = rule.dates.back();
+        rule.interval = 1;
+        rule.weekdays.clear();
+        rule.monthDay = 0;
+    }
+    else if (rule.kind == "weekly" || rule.kind == "monthly")
+    {
+        if (!GetDateInfo(rule.startDate) ||
+            (!rule.endDate.empty() &&
+                (!GetDateInfo(rule.endDate) || rule.endDate < rule.startDate)) ||
+            rule.interval < 1 || rule.interval > 99 || !rule.dates.empty())
+        { error = "invalid_rule"; return false; }
+        if (rule.kind == "weekly")
+        {
+            std::sort(rule.weekdays.begin(), rule.weekdays.end());
+            if (rule.weekdays.empty() || rule.weekdays.size() > 7 || rule.monthDay != 0 ||
+                rule.weekdays.front() < 1 || rule.weekdays.back() > 7 ||
+                std::adjacent_find(rule.weekdays.begin(), rule.weekdays.end()) != rule.weekdays.end())
+            { error = "invalid_rule"; return false; }
+        }
+        else if (!rule.weekdays.empty() || rule.monthDay < 0 || rule.monthDay > 31)
+        { error = "invalid_rule"; return false; }
+    }
+    else { error = "invalid_rule"; return false; }
+    series.event.date = rule.startDate;
+    return ValidateAndNormalize(series.event, error);
+}
+
+MutationResult CalendarService::CreateSeries(CalendarSeries series)
+{
+    if (series_.size() >= kMaximumSeries)
+        return {false, {}, 0, "event_limit"};
+    std::string error;
+    if (!ValidateSeries(series, error)) return {false, {}, 0, error};
+    series.id = GenerateId();
+    if (series.id.empty()) return {false, {}, 0, "id_failed"};
+    series.revision = 1;
+    series.exceptions.clear();
+    series.notifiedTriggers.clear();
+    series_.push_back(std::move(series));
+    if (!SaveSeries()) { series_.pop_back(); return {false, {}, 0, "save_failed"}; }
+    if (changedCallback_) changedCallback_("events");
+    return {true, series_.back().id, 1, {}};
+}
+
+MutationResult CalendarService::UpdateSeries(const std::string& id,
+    int expectedRevision, CalendarSeries series)
+{
+    const auto found = std::find_if(series_.begin(), series_.end(),
+        [&](const auto& current) { return current.id == id; });
+    if (found == series_.end()) return {false, id, 0, "not_found"};
+    if (found->revision != expectedRevision)
+        return {false, id, found->revision, "conflict"};
+    std::string error;
+    if (!ValidateSeries(series, error)) return {false, id, found->revision, error};
+    CalendarSeries previous = *found;
+    series.id = id;
+    series.revision = found->revision + 1;
+    series.exceptions.clear();
+    series.notifiedTriggers.clear();
+    for (const auto& [date, exception] : found->exceptions)
+        if (Matches(series.rule, date)) series.exceptions.emplace(date, exception);
+    const bool scheduleChanged = series.rule.kind != found->rule.kind ||
+        series.rule.dates != found->rule.dates ||
+        series.rule.startDate != found->rule.startDate ||
+        series.rule.endDate != found->rule.endDate ||
+        series.rule.interval != found->rule.interval ||
+        series.rule.weekdays != found->rule.weekdays ||
+        series.rule.monthDay != found->rule.monthDay ||
+        series.event.allDay != found->event.allDay ||
+        series.event.startMinutes != found->event.startMinutes ||
+        series.event.endMinutes != found->event.endMinutes ||
+        series.event.reminderMinutes != found->event.reminderMinutes;
+    if (!scheduleChanged) series.notifiedTriggers = found->notifiedTriggers;
+    *found = std::move(series);
+    if (!SaveSeries()) { *found = std::move(previous); return {false, id, 0, "save_failed"}; }
+    if (changedCallback_) changedCallback_("events");
+    return {true, id, found->revision, {}};
+}
+
+MutationResult CalendarService::RemoveSeries(const std::string& id,
+    int expectedRevision)
+{
+    const auto found = std::find_if(series_.begin(), series_.end(),
+        [&](const auto& current) { return current.id == id; });
+    if (found == series_.end()) return {false, id, 0, "not_found"};
+    if (found->revision != expectedRevision)
+        return {false, id, found->revision, "conflict"};
+    const auto index = static_cast<std::size_t>(found - series_.begin());
+    CalendarSeries previous = *found;
+    series_.erase(found);
+    if (!SaveSeries())
+    { series_.insert(series_.begin() + static_cast<std::ptrdiff_t>(index), std::move(previous));
+      return {false, id, 0, "save_failed"}; }
+    if (changedCallback_) changedCallback_("events");
+    return {true, id, 0, {}};
+}
+
+bool CalendarService::LoadSeries()
+{
+    series_.clear();
+    const auto path = SeriesPath(path_);
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) return true;
+    const auto size = std::filesystem::file_size(path, error);
+    bool valid = !error && size <= kMaximumFileBytes;
+    std::ifstream file(path, std::ios::binary);
+    std::ostringstream input;
+    if (valid && file) input << file.rdbuf();
+    else valid = false;
+    file.close();
+    JsonValue root;
+    valid = valid && ParseJson(input.str(), root) && root.IsObject();
+    const auto* schema = valid ? Field(root, "schemaVersion", JsonValue::Type::Number) : nullptr;
+    const auto* items = valid ? Field(root, "series", JsonValue::Type::Array) : nullptr;
+    valid = schema && schema->number == 1 && items && items->array.size() <= kMaximumSeries;
+    auto readInt = [](const JsonValue& object, const char* key, int low, int high,
+        int& target) {
+        const auto* field = Field(object, key, JsonValue::Type::Number);
+        if (!field || !std::isfinite(field->number) ||
+            std::trunc(field->number) != field->number ||
+            field->number < low || field->number > high) return false;
+        target = static_cast<int>(field->number);
+        return true;
+    };
+    const auto readEvent = [&](const JsonValue& object, CalendarEvent& event) {
+        const auto* title = Field(object, "title", JsonValue::Type::String);
+        const auto* date = Field(object, "date", JsonValue::Type::String);
+        const auto* notes = Field(object, "notes", JsonValue::Type::String);
+        const auto* allDay = Field(object, "allDay", JsonValue::Type::Boolean);
+        if (!title || !date || !notes || !allDay ||
+            !readInt(object, "startMinutes", 0, 1439, event.startMinutes) ||
+            !readInt(object, "endMinutes", 0, 1439, event.endMinutes) ||
+            !readInt(object, "reminderMinutes", -1, 1440, event.reminderMinutes))
+            return false;
+        event.title = title->string; event.date = date->string;
+        event.notes = notes->string; event.allDay = allDay->boolean;
+        std::string failure;
+        return ValidateAndNormalize(event, failure);
+    };
+    std::unordered_set<std::string> ids;
+    std::size_t exceptionCount = 0;
+    if (valid) for (const auto& item : items->array)
+    {
+        if (!item.IsObject()) { valid = false; break; }
+        const auto* id = Field(item, "id", JsonValue::Type::String);
+        const auto* base = Field(item, "event", JsonValue::Type::Object);
+        const auto* rule = Field(item, "rule", JsonValue::Type::Object);
+        const auto* exceptions = Field(item, "exceptions", JsonValue::Type::Array);
+        const auto* notified = Field(item, "notified", JsonValue::Type::Array);
+        CalendarSeries series;
+        if (!id || id->string.empty() || id->string.find('/') != std::string::npos ||
+            !ids.insert(id->string).second || !base || !rule || !exceptions || !notified ||
+            !readInt(item, "revision", 1, (std::numeric_limits<int>::max)(), series.revision) ||
+            !readEvent(*base, series.event)) { valid = false; break; }
+        series.id = id->string;
+        const auto* kind = Field(*rule, "kind", JsonValue::Type::String);
+        const auto* start = Field(*rule, "startDate", JsonValue::Type::String);
+        const auto* end = Field(*rule, "endDate", JsonValue::Type::String);
+        const auto* dates = Field(*rule, "dates", JsonValue::Type::Array);
+        const auto* weekdays = Field(*rule, "weekdays", JsonValue::Type::Array);
+        if (!kind || !start || !end || !dates || !weekdays ||
+            !readInt(*rule, "interval", 1, 99, series.rule.interval) ||
+            !readInt(*rule, "monthDay", 0, 31, series.rule.monthDay))
+        { valid = false; break; }
+        series.rule.kind = kind->string;
+        series.rule.startDate = start->string;
+        series.rule.endDate = end->string;
+        for (const auto& value : dates->array)
+        { if (!value.IsString()) { valid = false; break; } series.rule.dates.push_back(value.string); }
+        for (const auto& value : weekdays->array)
+        { if (!value.IsNumber() || value.number < 1 || value.number > 7 ||
+              std::trunc(value.number) != value.number) { valid = false; break; }
+          series.rule.weekdays.push_back(static_cast<int>(value.number)); }
+        std::string failure;
+        if (!valid || !ValidateSeries(series, failure) ||
+            exceptions->array.size() + exceptionCount > kMaximumExceptions)
+        { valid = false; break; }
+        exceptionCount += exceptions->array.size();
+        for (const auto& exception : exceptions->array)
+        {
+            const auto* date = Field(exception, "date", JsonValue::Type::String);
+            const auto* canceled = Field(exception, "canceled", JsonValue::Type::Boolean);
+            if (!date || !canceled || !Matches(series.rule, date->string) ||
+                series.exceptions.contains(date->string)) { valid = false; break; }
+            CalendarSeriesException entry;
+            entry.canceled = canceled->boolean;
+            if (!entry.canceled)
+            {
+                const auto* value = Field(exception, "event", JsonValue::Type::Object);
+                if (!value || !readEvent(*value, entry.event)) { valid = false; break; }
+            }
+            series.exceptions.emplace(date->string, std::move(entry));
+        }
+        if (!valid) break;
+        for (const auto& entry : notified->array)
+        {
+            const auto* date = Field(entry, "date", JsonValue::Type::String);
+            const auto* trigger = Field(entry, "trigger", JsonValue::Type::String);
+            if (!date || !trigger || !Matches(series.rule, date->string) ||
+                trigger->string.size() > 64 ||
+                !series.notifiedTriggers.emplace(date->string, trigger->string).second)
+            { valid = false; break; }
+        }
+        if (!valid) break;
+        series_.push_back(std::move(series));
+    }
+    if (valid) return true;
+    series_.clear();
+    SYSTEMTIME now{}; GetLocalTime(&now);
+    wchar_t suffix[64]{};
+    swprintf_s(suffix, L".corrupt-%04u%02u%02u-%02u%02u%02u.json",
+        now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
+    MoveFileExW(path.c_str(), (path.wstring() + suffix).c_str(),
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    return false;
+}
+
+bool CalendarService::SaveSeries() const
+{
+    const auto path = SeriesPath(path_);
+    std::ostringstream output;
+    const auto quote = [&](std::string_view value) {
+        output << '"' << EscapeJson(value) << '"';
+    };
+    const auto writeEvent = [&](const CalendarEvent& event) {
+        output << "{\"title\":"; quote(event.title);
+        output << ",\"date\":"; quote(event.date);
+        output << ",\"allDay\":" << (event.allDay ? "true" : "false")
+            << ",\"startMinutes\":" << event.startMinutes
+            << ",\"endMinutes\":" << event.endMinutes
+            << ",\"notes\":"; quote(event.notes);
+        output << ",\"reminderMinutes\":" << event.reminderMinutes << '}';
+    };
+    output << "{\"schemaVersion\":1,\"series\":[";
+    bool firstSeries = true;
+    for (const auto& series : series_)
+    {
+        if (!firstSeries) output << ',';
+        firstSeries = false;
+        output << "{\"id\":"; quote(series.id);
+        output << ",\"revision\":" << series.revision << ",\"event\":";
+        writeEvent(series.event);
+        const auto& rule = series.rule;
+        output << ",\"rule\":{\"kind\":"; quote(rule.kind);
+        output << ",\"startDate\":"; quote(rule.startDate);
+        output << ",\"endDate\":"; quote(rule.endDate);
+        output << ",\"interval\":" << rule.interval
+            << ",\"monthDay\":" << rule.monthDay << ",\"dates\":[";
+        for (std::size_t i = 0; i < rule.dates.size(); ++i)
+        { if (i) output << ','; quote(rule.dates[i]); }
+        output << "],\"weekdays\":[";
+        for (std::size_t i = 0; i < rule.weekdays.size(); ++i)
+        { if (i) output << ','; output << rule.weekdays[i]; }
+        output << "]},\"exceptions\":[";
+        bool first = true;
+        for (const auto& [date, exception] : series.exceptions)
+        {
+            if (!first) output << ',';
+            first = false;
+            output << "{\"date\":"; quote(date);
+            output << ",\"canceled\":" << (exception.canceled ? "true" : "false");
+            if (!exception.canceled) { output << ",\"event\":"; writeEvent(exception.event); }
+            output << '}';
+        }
+        output << "],\"notified\":[";
+        first = true;
+        for (const auto& [date, trigger] : series.notifiedTriggers)
+        {
+            if (!first) output << ',';
+            first = false;
+            output << "{\"date\":"; quote(date);
+            output << ",\"trigger\":"; quote(trigger);
+            output << '}';
+        }
+        output << "]}";
+    }
+    output << "]}\n";
+    const auto text = output.str();
+    if (text.size() > kMaximumFileBytes) return false;
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    const auto temporary = std::filesystem::path(path.wstring() + L".tmp");
+    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    file.write(text.data(), static_cast<std::streamsize>(text.size()));
+    file.flush();
+    if (!file) return false;
+    file.close();
+    return MoveFileExW(temporary.c_str(), path.c_str(),
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
 }
 
 std::string CalendarService::GenerateId()
@@ -731,6 +1223,7 @@ void CalendarService::CheckReminders(
         AbsoluteMinute(now.date, 0);
     if (lastCheckAbsoluteMinute_ == 0)
         lastCheckAbsoluteMinute_ = absoluteNow - 1;
+    const long long previousCheck = lastCheckAbsoluteMinute_;
 
     std::vector<std::size_t> due;
     std::vector<CalendarEvent> previous = events_;
@@ -774,18 +1267,53 @@ void CalendarService::CheckReminders(
         due.push_back(index);
     }
     lastCheckAbsoluteMinute_ = absoluteNow;
-    if (due.empty())
-        return;
-    if (!Save())
+    if (!due.empty() && !Save())
     {
         events_ = std::move(previous);
-        return;
+        due.clear();
     }
     if (notificationCallback_)
     {
         for (const std::size_t index : due)
             notificationCallback_(events_[index]);
     }
+    if (series_.empty()) return;
+    const auto tomorrow = AddDays(now.date, 1);
+    if (!tomorrow) return;
+    const auto candidates = Events(now.date, *tomorrow);
+    std::vector<CalendarEvent> seriesDue;
+    const auto previousSeries = series_;
+    bool changed = false;
+    const auto yesterday = AddDays(now.date, -1).value_or(now.date);
+    for (auto& series : series_)
+        for (auto it = series.notifiedTriggers.begin(); it != series.notifiedTriggers.end();)
+            if (it->second.substr(0, 10) < yesterday)
+            { it = series.notifiedTriggers.erase(it); changed = true; }
+            else ++it;
+    for (const auto& event : candidates)
+    {
+        if (event.seriesId.empty() || event.reminderMinutes < 0) continue;
+        const int baseMinutes = event.allDay ? 9 * 60 : event.startMinutes;
+        const long long start = AbsoluteMinute(event.date, baseMinutes);
+        const long long end = AbsoluteMinute(event.date,
+            event.allDay ? 1439 : event.endMinutes);
+        const long long trigger = start - event.reminderMinutes;
+        if (end < absoluteNow || trigger > absoluteNow ||
+            (startupCatchUp ? trigger < todayStart : trigger <= previousCheck))
+            continue;
+        const auto found = std::find_if(series_.begin(), series_.end(),
+            [&](const auto& series) { return series.id == event.seriesId; });
+        if (found == series_.end()) continue;
+        const auto key = TriggerKey(trigger);
+        if (found->notifiedTriggers[event.occurrenceDate] == key) continue;
+        found->notifiedTriggers[event.occurrenceDate] = key;
+        changed = true;
+        seriesDue.push_back(event);
+    }
+    if (changed && !SaveSeries())
+    { series_ = previousSeries; seriesDue.clear(); }
+    if (notificationCallback_)
+        for (const auto& event : seriesDue) notificationCallback_(event);
 }
 
 } // namespace snowdesktop::calendar

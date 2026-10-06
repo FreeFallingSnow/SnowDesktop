@@ -53,8 +53,9 @@ inline bool PreserveOwnedMenuZOrder(
  *
  * DeferWindowPos 不能在一次事务中可靠地把一个窗口跨 TOPMOST 边界，
  * 同时再用另一个正在跨边界的窗口作为 hWndInsertAfter。跨带时按视觉
- * 安全顺序分别归一化：降级先移动 backdrop，提升先移动内容窗；两窗
- * 已在同一带时仍使用延迟事务完成普通重排。
+ * 安全顺序归一化：降级先移动 backdrop；提升在同一事务内分别指定
+ * TOPMOST（backdrop 在先、内容窗在后），不从边界窗口推断所属带。
+ * 两窗已在同一带时仍使用延迟事务完成普通重排。
  */
 inline bool Apply(
     HWND contentWindow,
@@ -156,7 +157,37 @@ inline bool Apply(
     const bool changesZOrderBand =
         IsTopmost(contentWindow) != topmost ||
         IsTopmost(backdropWindow) != topmost;
-    if (changesZOrderBand)
+    if (changesZOrderBand && topmost)
+    {
+        // Inserting after the LAST topmost window preserves a non-topmost
+        // helper's band. Both windows therefore need explicit promotion,
+        // even when content/backdrop are already adjacent. Promote together
+        // with content last so the helper never presents above its content.
+        HDWP promotion = BeginDeferWindowPos(2);
+        if (promotion)
+            promotion = DeferWindowPos(promotion, backdropWindow, HWND_TOPMOST,
+                backdropOrigin.x, backdropOrigin.y, backdropSize.cx, backdropSize.cy,
+                backdropFlags);
+        if (promotion)
+            promotion = DeferWindowPos(promotion, contentWindow, HWND_TOPMOST,
+                0, 0, 0, 0, contentFlags);
+        if (!promotion || !EndDeferWindowPos(promotion))
+        {
+            // Retain the existing direct-call fallback if User32 cannot
+            // allocate or commit a positioning transaction.
+            if (!SetWindowPos(backdropWindow, HWND_TOPMOST,
+                    backdropOrigin.x, backdropOrigin.y, backdropSize.cx, backdropSize.cy,
+                    backdropFlags) ||
+                !SetWindowPos(contentWindow, HWND_TOPMOST, 0, 0, 0, 0, contentFlags))
+                return false;
+        }
+        if (contentInsertAfter == bandInsertAfter)
+            return IsTopmost(contentWindow) && IsTopmost(backdropWindow) &&
+                IsPaired(contentWindow, backdropWindow);
+        // Both bands are now explicit; concrete-anchor placement can use the
+        // ordinary same-band transaction below.
+    }
+    else if (changesZOrderBand)
     {
         bool succeeded = true;
         if (!topmost)

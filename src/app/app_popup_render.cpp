@@ -2,6 +2,7 @@
 #include "popup_opacity_scope.h"
 #include "quick_navigation_theme.h"
 #include "../item_render_layer_rules.h"
+#include "categorized_popup_scope.h"
 #include <d2d1effects.h>
 
 // Collection-popup rendering.
@@ -85,7 +86,7 @@ void DesktopApp::DrawCollectionPopup(
         }
     }
 
-    const auto& popupKeys = widget.itemKeys;
+    const auto popupKeys = GetPopupItemKeys(widget);
     if (!fan)
     {
         PersonalizationSettings popupBackgroundAppearance =
@@ -116,14 +117,11 @@ void DesktopApp::DrawCollectionPopup(
         const auto headerBounds =
             snowdesktop::collection_popup_layout::
                 ResolveHeaderVerticalBounds(popupMetrics.scale);
-        RECT titleRect = snowdesktop::collection_popup_layout::
-            ResolveTitleRect(popupRect_, popupMetrics.scale);
-        if (dockFolderPopupOpen_)
-            titleRect.right =
-                GetDockFolderPopupSortButtonRect(
-                    popupRect_).left -
-                snowdesktop::collection_popup_layout::
-                    ScaleDimension(10, popupMetrics.scale);
+        const RECT titleRect = snowdesktop::collection_popup_layout::
+            ResolveTitleRect(popupRect_, popupMetrics.scale,
+                dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
+                    snowdesktop::collection_popup_layout::ScaleDimension(10, popupMetrics.scale)
+                    : (std::numeric_limits<LONG>::max)());
         std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
             ? GetDemoCollectionCategoryTitle(widget)
             : (widget.title.empty()
@@ -202,6 +200,15 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
+    if (auto* view = GetCategorizedPopupView())
+    {
+        const RECT controls = GetCollectionPopupControlsRect(popupRect_);
+        const RECT frame = GetCategorizedPopupFrame(popupRect_);
+        CategorizedPopupScope scope(view, frame);
+        ctx->PushAxisAlignedClip(ToD2DRect(controls), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        view->DrawContent(ctx, frame);
+        ctx->PopAxisAlignedClip();
+    }
     DesktopWidget popupListStyle;
     popupListStyle.type = widget.type;
     popupListStyle.bounds = popupRect_;
@@ -361,7 +368,7 @@ void DesktopApp::DrawCollectionPopup(
 
         if (widget.type == DesktopWidgetType::FolderMapping)
         {
-            FolderEntry& entry = dockFolderPopupWidget_.folderEntries[i];
+            FolderEntry& entry = dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(widget, i)];
             if (fan)
             {
                 drawFanItem(i, entry, nullptr);
@@ -383,7 +390,7 @@ void DesktopApp::DrawCollectionPopup(
                         entry.fileSize,
                         entry.isDirectory,
                     },
-                    collectionPopupLightTheme_);
+                    collectionPopupLightTheme_, !IsRenamingItem(&entry));
                 continue;
             }
             const bool hovered =
@@ -454,7 +461,7 @@ void DesktopApp::DrawCollectionPopup(
                         item.fileSize,
                         false,
                     },
-                    collectionPopupLightTheme_);
+                    collectionPopupLightTheme_, !IsRenamingItem(&item));
                 continue;
             }
             bool hovered =
@@ -484,7 +491,7 @@ void DesktopApp::DrawCollectionPopup(
         if (widget.type == DesktopWidgetType::FolderMapping)
         {
             FolderEntry& entry =
-                dockFolderPopupWidget_.folderEntries[i];
+                dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(widget, i)];
             if (!entry.selected) continue;
             FolderEntryIcon icon(
                 &entry, dockFolderPopupContainer_.get(), this);

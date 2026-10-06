@@ -1,4 +1,5 @@
 #include "shell_launch_process.h"
+#include "operation_feedback.h"
 
 #include <shellapi.h>
 #include <algorithm>
@@ -112,7 +113,7 @@ HANDLE ParseHandle(std::wstring_view text)
 }
 
 void Monitor(Handle process, Handle job, DWORD timeoutMs,
-    std::shared_ptr<HelperSlot> slot)
+    std::shared_ptr<HelperSlot> slot, std::wstring target)
 {
     const DWORD wait = WaitForSingleObject(process.value, timeoutMs);
     DWORD result = ERROR_PROCESS_ABORTED;
@@ -124,8 +125,9 @@ void Monitor(Handle process, Handle job, DWORD timeoutMs,
     }
     else if (wait == WAIT_OBJECT_0)
     {
-        GetExitCodeProcess(process.value, &result);
+        if (!GetExitCodeProcess(process.value, &result)) result = GetLastError();
     }
+    else if (wait == WAIT_FAILED) result = GetLastError();
     if (result != ERROR_SUCCESS)
     {
         wchar_t message[160]{};
@@ -133,6 +135,8 @@ void Monitor(Handle process, Handle job, DWORD timeoutMs,
             L"SnowDesktop: Shell helper %lu ended with error %lu.\n",
             GetProcessId(process.value), result);
         OutputDebugStringW(message);
+        operation_feedback::Report({"app.operation.openFailed",
+            target + L"\n" + message, result});
     }
     // Closing the private kill-on-close job also covers an unexpected wait
     // failure. SILENT_BREAKAWAY_OK keeps successfully opened apps independent.
@@ -145,7 +149,7 @@ std::vector<unsigned char> Encode(const Request& request)
 {
     if ((request.path.empty() && request.absolutePidl.empty()) || request.path.size() > kMaxPathChars ||
         request.path.find(L'\0') != std::wstring::npos ||
-        request.action > Action::RunAs || request.showCommand < SW_HIDE ||
+        request.action > Action::RunCommand || request.showCommand < SW_HIDE ||
         request.showCommand > SW_MAX || !ValidPidl(request.absolutePidl)) return {};
     const std::size_t pathBytes = request.path.size() * sizeof(wchar_t);
     std::vector<unsigned char> bytes(kHeaderBytes + pathBytes + request.absolutePidl.size());
@@ -177,7 +181,7 @@ std::optional<Request> Decode(std::span<const unsigned char> bytes)
     const auto show = Get<std::int32_t>(bytes, 24);
     const auto owner = Get<std::uint64_t>(bytes, 32);
     if ((!pathChars && !pidlBytes) || pathChars > kMaxPathChars || pidlBytes > kMaxPidlBytes ||
-        action > static_cast<std::uint32_t>(Action::RunAs) ||
+        action > static_cast<std::uint32_t>(Action::RunCommand) ||
         show < SW_HIDE || show > SW_MAX || owner > UINTPTR_MAX ||
         kHeaderBytes + pathChars * sizeof(wchar_t) + pidlBytes != bytes.size())
         return std::nullopt;
@@ -194,49 +198,58 @@ std::optional<Request> Decode(std::span<const unsigned char> bytes)
     return request;
 }
 
-StartedProcess Start(const Request& request, DWORD timeoutMs)
+StartedProcess Start(const Request& request, DWORD timeoutMs, bool reportDispatchFailure)
 {
-    if (!timeoutMs || timeoutMs == INFINITE) return {};
+    const auto failed = [&](const wchar_t* stage, DWORD error) {
+        if (reportDispatchFailure)
+            operation_feedback::Report({"app.operation.openFailed",
+                request.path + L"\n" + stage, error ? error : ERROR_GEN_FAILURE});
+        return StartedProcess{};
+    };
+    if (!timeoutMs || timeoutMs == INFINITE) return failed(L"deadline", ERROR_INVALID_PARAMETER);
     try
     {
         const auto bytes = Encode(request);
-        if (bytes.empty()) return {};
+        if (bytes.empty()) return failed(L"request", ERROR_INVALID_DATA);
         if (activeHelpers.fetch_add(1) >= kMaxHelpers)
         {
             activeHelpers.fetch_sub(1);
-            return {};
+            return failed(L"helper capacity", ERROR_BUSY);
         }
         // Keep the slot reserved through helper startup and monitor cleanup.
         std::shared_ptr<HelperSlot> slot;
         try { slot = std::make_shared<HelperSlot>(); }
-        catch (...) { activeHelpers.fetch_sub(1); return {}; }
+        catch (...) { activeHelpers.fetch_sub(1); return failed(L"helper allocation", ERROR_NOT_ENOUGH_MEMORY); }
 
         Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
             PAGE_READWRITE, 0, static_cast<DWORD>(bytes.size()), nullptr));
-        if (!mapping.value) return {};
+        if (!mapping.value) return failed(L"CreateFileMapping", GetLastError());
         {
             View view{MapViewOfFile(mapping.value, FILE_MAP_WRITE, 0, 0, bytes.size())};
-            if (!view.value) return {};
+            if (!view.value) return failed(L"MapViewOfFile", GetLastError());
             std::memcpy(view.value, bytes.data(), bytes.size());
         }
         Handle childMapping, parent;
         if (!DuplicateHandle(GetCurrentProcess(), mapping.value, GetCurrentProcess(),
                 &childMapping.value, FILE_MAP_READ, TRUE, 0) ||
             !DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(),
-                &parent.value, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, TRUE, 0)) return {};
+                &parent.value, SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, TRUE, 0))
+            return failed(L"DuplicateHandle", GetLastError());
 
         Handle job(CreateJobObjectW(nullptr, nullptr));
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
             JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
         if (!job.value || !SetInformationJobObject(job.value,
-                JobObjectExtendedLimitInformation, &limits, sizeof(limits))) return {};
+                JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+            return failed(L"helper job", GetLastError());
 
         SIZE_T attributeBytes = 0;
         InitializeProcThreadAttributeList(nullptr, 1, 0, &attributeBytes);
         std::vector<unsigned char> storage(attributeBytes);
         auto attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
-        if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attributeBytes)) return {};
+        if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attributeBytes))
+            return failed(L"InitializeProcThreadAttributeList", GetLastError());
         struct AttributeGuard
         {
             LPPROC_THREAD_ATTRIBUTE_LIST value;
@@ -244,9 +257,10 @@ StartedProcess Start(const Request& request, DWORD timeoutMs)
         } guard{attributes};
         HANDLE inherited[] = {childMapping.value, parent.value};
         if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                inherited, sizeof(inherited), nullptr, nullptr)) return {};
+                inherited, sizeof(inherited), nullptr, nullptr))
+            return failed(L"handle allowlist", GetLastError());
         const auto executable = ExecutablePath();
-        if (executable.empty()) return {};
+        if (executable.empty()) return failed(L"executable path", GetLastError());
         std::wstring command = L"\"" + executable + L"\" " + kCommand + L" " +
             std::to_wstring(reinterpret_cast<std::uintptr_t>(childMapping.value)) + L" " +
             std::to_wstring(reinterpret_cast<std::uintptr_t>(parent.value));
@@ -262,22 +276,25 @@ StartedProcess Start(const Request& request, DWORD timeoutMs)
         PROCESS_INFORMATION information{};
         if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
                 EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW,
-                nullptr, nullptr, &startup.StartupInfo, &information)) return {};
+                nullptr, nullptr, &startup.StartupInfo, &information))
+            return failed(L"CreateProcess", GetLastError());
         Handle process(information.hProcess), thread(information.hThread);
         if (!AssignProcessToJobObject(job.value, process.value))
         {
+            const DWORD error = GetLastError();
             TerminateProcess(process.value, ERROR_PROCESS_ABORTED);
-            return {};
+            return failed(L"AssignProcessToJobObject", error);
         }
         AllowSetForegroundWindow(information.dwProcessId);
-        if (ResumeThread(thread.value) == static_cast<DWORD>(-1)) return {};
+        if (ResumeThread(thread.value) == static_cast<DWORD>(-1))
+            return failed(L"ResumeThread", GetLastError());
         std::thread(Monitor, std::move(process), std::move(job), timeoutMs,
-            std::move(slot)).detach();
+            std::move(slot), request.path).detach();
         return {information.dwProcessId};
     }
     catch (...)
     {
-        return {};
+        return failed(L"helper dispatch exception", ERROR_UNHANDLED_EXCEPTION);
     }
 }
 
@@ -310,10 +327,11 @@ std::optional<int> TryRunCommand(Executor executor)
             !SetHandleInformation(parent.value, HANDLE_FLAG_INHERIT, 0))
             return ERROR_INVALID_HANDLE;
         const DWORD parentId = GetProcessId(parent.value);
-        const auto parentPath = ExecutablePath(parent.value);
-        const auto executable = ExecutablePath();
-        if (!parentId || parentId == GetCurrentProcessId() || parentPath.empty() ||
-            executable.empty() || _wcsicmp(parentPath.c_str(), executable.c_str()) != 0 ||
+        // This helper gains no privileges. The inherited read-only request,
+        // live parent handle and payload PID bind its lifetime and transport.
+        // Comparing image path strings is not an authorization boundary and
+        // rejects the same executable under MSIX/extended path representations.
+        if (!parentId || parentId == GetCurrentProcessId() ||
             WaitForSingleObject(parent.value, 0) != WAIT_TIMEOUT) return ERROR_ACCESS_DENIED;
         View view{MapViewOfFile(mapping.value, FILE_MAP_READ, 0, 0, 0)};
         MEMORY_BASIC_INFORMATION region{};
@@ -335,9 +353,11 @@ std::optional<int> TryRunCommand(Executor executor)
         if (FAILED(com)) return static_cast<int>(com);
         // The executor refreshes Shell foreground access after resolving the
         // shortcut policy, immediately before invocation rather than here.
+        SetLastError(ERROR_SUCCESS);
         const bool opened = executor(*request);
+        const DWORD openError = GetLastError();
         CoUninitialize();
-        return opened ? ERROR_SUCCESS : ERROR_OPEN_FAILED;
+        return opened ? ERROR_SUCCESS : static_cast<int>(openError ? openError : ERROR_OPEN_FAILED);
     }
     catch (...)
     {

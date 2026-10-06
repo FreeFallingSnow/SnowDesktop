@@ -3,6 +3,7 @@
 #include "dock_folder_popup_read.h"
 #include "../json_value.h"
 #include "dock_platform_helpers.h"
+#include "../dock_pin_cleanup.h"
 
 // Dock entry identity, grouping, usage history and drag-out mutation.
 
@@ -147,6 +148,53 @@ void DesktopApp::PruneDockShellMetadata()
     dockAppIdentityCache_.Retain([&](const auto& key) { return identities.contains(key); });
     dockFolderTargetCache_.Retain([&](const auto& key) { return folders.contains(key); });
     dockFolderBitmapCache_.Retain([&](const auto& key) { return icons.contains(key); });
+
+    if (!desktopItemsReady_) return; // Never prune against partial startup reads.
+    std::vector<std::wstring> candidates;
+    for (const auto& entry : dockEntries_)
+        if (entry.type == DockEntryType::DesktopItem && !IsRecycleBinDockEntry(entry) &&
+            FindItemIndexByKey(entry.reference) >= items_.size())
+            candidates.push_back(entry.reference);
+    if (candidates.empty()) return;
+    const auto revision = shellRefreshRevision_.Current();
+    shellVisualWork_.Submit(L"dock-missing-pins:" + std::to_wstring(revision),
+        [candidates = std::move(candidates)] {
+            std::vector<std::wstring> missing;
+            for (const auto& path : candidates)
+                if (path.empty() || snowdesktop::dock_pin_cleanup::IsMissingLocalFile(path))
+                    missing.push_back(path);
+            return missing;
+        }, [this, revision](const std::vector<std::wstring>& missing) {
+            // Shell events invalidate this revision before queued results drain.
+            // The common drain also fences drags, menus, renames and file writes.
+            if (exitRequested_ || !desktopItemsReady_ || missing.empty() ||
+                !shellRefreshRevision_.IsCurrent(revision)) return;
+            bool closesFolderPopup = false;
+            const auto removed = std::erase_if(dockEntries_, [&](const DockEntry& entry) {
+                const bool remove = entry.type == DockEntryType::DesktopItem && !IsRecycleBinDockEntry(entry) &&
+                    FindItemIndexByKey(entry.reference) >= items_.size() &&
+                    std::any_of(missing.begin(), missing.end(), [&](const auto& path) {
+                        return _wcsicmp(path.c_str(), entry.reference.c_str()) == 0;
+                    });
+                if (remove && dockFolderPopupOpen_ && dockFolderPopupSourceId_ ==
+                    std::to_wstring(static_cast<int>(entry.type)) + L":" + ToUpperInvariant(entry.reference))
+                    closesFolderPopup = true;
+                return remove;
+            });
+            if (!removed) return;
+            if (closesFolderPopup) CloseCollectionPopup();
+            ClearDockPressedState();
+            ClearSelection();
+            NormalizeDockRecycleBinPosition();
+            RefreshCollectedKeysCache();
+            SaveLayoutSlots();
+            RebuildContainersAndItems();
+            LayoutItems();
+            InvalidateDragStaticScene();
+            InvalidateDockRects();
+            const auto message = L"Removed confirmed missing local Dock pins: " + std::to_wstring(removed);
+            WriteDiagnosticLogEntry(message.c_str());
+        }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage);
 }
 
 bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const

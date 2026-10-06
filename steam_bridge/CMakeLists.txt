@@ -28,13 +28,17 @@ add_library(SnowDesktopWorkshopManagerSupport STATIC
     src/manager_localization.cpp
     src/package_tool.cpp
     src/workshop_localization.cpp
-    src/workshop_project.cpp)
+    src/workshop_project.cpp
+    src/theme_workshop_publish.cpp
+    "${CMAKE_SOURCE_DIR}/src/theme_library.cpp"
+    "${CMAKE_SOURCE_DIR}/src/personalization.cpp"
+    "${CMAKE_SOURCE_DIR}/src/atomic_file.cpp")
 target_compile_features(SnowDesktopWorkshopManagerSupport PUBLIC cxx_std_20)
 target_include_directories(SnowDesktopWorkshopManagerSupport PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(SnowDesktopWorkshopManagerSupport PUBLIC
-    ole32 shell32)
+    SnowDesktopSteamAppIdentity ole32 shell32 bcrypt shlwapi windowscodecs)
 
 add_executable(SnowDesktopSteamBridge src/main.cpp)
 target_link_libraries(SnowDesktopSteamBridge PRIVATE

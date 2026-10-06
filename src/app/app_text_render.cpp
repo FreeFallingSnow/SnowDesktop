@@ -1,5 +1,8 @@
+#include "../app_font.h"
+#include "../item_title_layout.h"
 #include "app.h"
 #include "quick_navigation_theme.h"
+#include "quick_navigation_helpers.h"
 
 // DirectWrite item text rendering.
 
@@ -220,18 +223,27 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
 
 void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     const std::wstring& text, bool selected, float opacity, bool lightTheme,
-    bool componentPanel)
+    bool componentPanel, int titleLines)
 {
     if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
 
-    RECT textRect = GetItemTextRect(bounds, selected);
+    titleLines = titleLines > 0 ? std::clamp(titleLines, 1, 2) : desktopTitleLines_;
+    const int componentTitleLines = componentPanel ? titleLines : 0;
+    RECT textRect = GetItemTextRect(bounds, selected, componentTitleLines);
     float tw = static_cast<float>(std::max<LONG>(1, textRect.right - textRect.left));
     float th = static_cast<float>(std::max<LONG>(1, textRect.bottom - textRect.top));
 
-    const auto visualMetrics = GetItemVisualMetrics(bounds);
+    const auto visualMetrics = GetItemVisualMetrics(bounds, componentTitleLines);
     const float fontScale = visualMetrics.fontScale;
     const float fontSize = visualMetrics.fontSize;
     const float lineHeight = fontSize * 7.0f / 6.0f;
+    if (!selected)
+    {
+        th = static_cast<float>(snowdesktop::item_layout_rules::TextHeightForLineCount(lineHeight, titleLines));
+        textRect.bottom = textRect.top + static_cast<LONG>(th);
+    }
+    const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
+        snowdesktop::font_weight_rules::RenderedWeight(itemFontWeight_, lightTheme));
     auto createConfiguredLayout =
         [&](const std::wstring& layoutText,
             float maxWidth,
@@ -259,6 +271,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         result->SetFontSize(
             fontSize,
             range);
+        snowdesktop::app_fonts::SetWeight(result.Get(), fontWeight, range);
+        result->SetWordWrapping(DWRITE_WORD_WRAPPING_CHARACTER);
         result->SetLineSpacing(
             DWRITE_LINE_SPACING_METHOD_UNIFORM,
             lineHeight,
@@ -271,51 +285,14 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
         std::to_wstring(scaleKey) + L"@" +
         std::to_wstring(lightTheme ? 1 : 0) + L"@" +
-        std::to_wstring(selected ? 1 : 0);
+        std::to_wstring(selected ? 1 : 0) + L"@" + std::to_wstring(titleLines) + L"@" +
+        std::to_wstring(titleEllipsis_ ? 1 : 0);
     auto layoutIt = itemTextLayoutCache_.find(layoutKey);
     if (layoutIt == itemTextLayoutCache_.end())
     {
         std::wstring visibleText = text;
-        if (!selected)
-        {
-            ComPtr<IDWriteTextLayout>
-                wrappedMeasureLayout;
-            if (createConfiguredLayout(
-                    text, tw, 10000.0f,
-                    wrappedMeasureLayout))
-            {
-                UINT32 lineCount = 0;
-                wrappedMeasureLayout->
-                    GetLineMetrics(
-                        nullptr, 0,
-                        &lineCount);
-                if (lineCount > 2)
-                {
-                    std::vector<
-                        DWRITE_LINE_METRICS>
-                        lines(lineCount);
-                    UINT32 actualLineCount = 0;
-                    if (SUCCEEDED(
-                            wrappedMeasureLayout->
-                                GetLineMetrics(
-                                    lines.data(),
-                                    lineCount,
-                                    &actualLineCount)))
-                    {
-                        visibleText.resize(
-                            snowdesktop::
-                                item_layout_rules::
-                                    VisibleTextLengthForLineLimit(
-                                        lines.data(),
-                                        actualLineCount,
-                                        2,
-                                        text.size()));
-                    }
-                }
-            }
-        }
 
-        float layoutHeight = th;
+        float layoutHeight = selected ? th : lineHeight * static_cast<float>(titleLines);
         if (selected)
         {
             const int measurementHeight =
@@ -357,6 +334,13 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                 layoutHeight, layout))
             return;
 
+        if (!selected)
+        {
+            ComPtr<IDWriteTextFormat> ellipsisFormat;
+            snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", fontWeight,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &ellipsisFormat);
+            snowdesktop::TrimItemTitle(dwriteFactory_.Get(), layout.Get(), ellipsisFormat.Get(), titleLines, lineHeight, titleEllipsis_);
+        }
         DWRITE_TEXT_METRICS metrics{};
         layout->GetMetrics(&metrics);
         bool isSingleLine = (metrics.lineCount == 1);
@@ -376,6 +360,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
                 measureLayout->SetFontSize(
                     fontSize,
                     measureRange);
+                snowdesktop::app_fonts::SetWeight(measureLayout.Get(), fontWeight, measureRange);
                 DWRITE_TEXT_METRICS m{};
                 measureLayout->GetMetrics(&m);
                 isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
@@ -387,6 +372,8 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     }
 
     float ty = static_cast<float>(textRect.top);
+    if (componentPanel && !selected && titleLines == 1)
+        ty += std::max(0.0f, (static_cast<float>(visualMetrics.titleHeight) - th) / 2.0f);
     DWRITE_TEXT_METRICS metrics{};
     layoutIt->second->GetMetrics(&metrics);
     if (selected)
@@ -403,7 +390,9 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             static_cast<LONG>(std::ceil(th));
     }
     bool isSingleLine = (metrics.lineCount == 1);
-    if (!isSingleLine)
+    // The full-width measurement only positions an expanded selected title.
+    // Collapsed titles already have their cached layout and do not use it.
+    if (selected && !isSingleLine)
     {
         ComPtr<IDWriteTextLayout> measureLayout;
         if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
@@ -413,6 +402,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             const DWRITE_TEXT_RANGE fullRange{
                 0, static_cast<UINT32>(text.size()) };
             measureLayout->SetFontSize(fontSize, fullRange);
+            snowdesktop::app_fonts::SetWeight(measureLayout.Get(), fontWeight, fullRange);
             DWRITE_TEXT_METRICS m{};
             measureLayout->GetMetrics(&m);
             isSingleLine = (m.widthIncludingTrailingWhitespace <= tw + 2.0f);
@@ -420,7 +410,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     }
     if (isSingleLine && selected)
     {
-        RECT cr = GetItemTextRect(bounds, false);
+        RECT cr = GetItemTextRect(bounds, false, componentTitleLines);
         float collapsedH = static_cast<float>(cr.bottom - cr.top);
         ty = cr.top + (collapsedH - th) * 0.5f;
     }
@@ -432,7 +422,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
 }
 
 void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
-    const std::wstring& text, bool /*selected*/, bool lightTheme)
+    const std::wstring& text, bool selected, bool lightTheme)
 {
     if (!ctx || !dwriteFactory_ || !quickNavItemTextFormat_ || text.empty())
         return;
@@ -440,16 +430,11 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     const float fontSize = quickNavItemTextFormat_->GetFontSize();
     const float lineSpacing = std::max(1.0f, std::floor(fontSize * 1.08f));
     const float baseline = std::max(1.0f, std::floor(fontSize * 0.84f));
-    const int textHeight = std::max(1, static_cast<int>(std::ceil(lineSpacing * 2.0f)));
+    const int textHeight = std::max(1, static_cast<int>(std::ceil(lineSpacing * static_cast<float>(navigationSettings_.layout.labelLines))));
     RECT iconRect = GetQuickNavItemIconRect(bounds);
     const int horizontalPad = QuickNavScale(4);
-    const int topGap = std::max(1, QuickNavScale(2));
-    const int textTop = std::max<LONG>(bounds.top, iconRect.bottom + topGap);
-    RECT textRect = MakeRect(
-        bounds.left + horizontalPad,
-        textTop,
-        bounds.right - horizontalPad,
-        std::min<LONG>(bounds.bottom, textTop + textHeight));
+    const int topGap = std::max(1, QuickNavScale(10));
+    RECT textRect = QuickNavigationItemTextRect(bounds, iconRect, horizontalPad, topGap, textHeight);
     if (IsRectEmptyRect(textRect))
         return;
 
@@ -471,6 +456,8 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         quickNavItemTextFormat_.Get(), &trimmingSign)) && trimmingSign)
         layout->SetTrimming(&trimming, trimmingSign.Get());
 
+    // Match desktop titles: a short label is centered in the reserved title
+    // band while wrapped labels retain their first-line position.
     DWRITE_TEXT_METRICS metrics{};
     if (SUCCEEDED(layout->GetMetrics(&metrics)) && metrics.lineCount == 1)
         layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -493,8 +480,9 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         return it->second.Get();
     };
 
-    const QuickNavTheme& theme = lightTheme ? kQuickNavLight : kQuickNavDark;
-    ID2D1SolidColorBrush* textBrush = getBrush(ToD2DColor(theme.itemText));
+    const QuickNavTheme theme = ResolveQuickNavTheme(lightTheme, navigationSettings_);
+    const auto textColor = selected ? theme.selectedText : theme.itemText;
+    ID2D1SolidColorBrush* textBrush = getBrush(ToD2DColor(textColor));
     if (!textBrush)
         return;
 
@@ -504,7 +492,7 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
     if (!lightTheme)
     {
         if (ID2D1SolidColorBrush* shadowBrush =
-            getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.38f)))
+            getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.38f * textColor.alpha)))
         {
             ctx->DrawTextLayout(
                 D2D1::Point2F(origin.x + 1.0f, origin.y + 1.0f),

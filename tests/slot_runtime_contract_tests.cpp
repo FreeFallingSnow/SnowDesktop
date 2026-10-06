@@ -19,10 +19,12 @@
 #include "app/rename_model_update.h"
 #include "app/shell_refresh_snapshot.h"
 #include "app/folder_read_retries.h"
+#include "app/folder_read_delivery.h"
 #include "app/dock_folder_popup_read.h"
 #include "dock_refresh_cache.h"
 #include "app/dock_icon_work.h"
 #include "app/initial_icon_bitmap.h"
+#include "icon_hbitmap_pixels.h"
 #include "app/startup_shell_read.h"
 #include "background_work.h"
 #include "app/shell_icon_request.h"
@@ -2448,6 +2450,88 @@ void TestSelectionControllerCoversEveryRegisteredRange()
         "selecting one widget must clear nested entry selection on every widget");
 }
 
+void TestPointerSelectionRangesAndScopedSelectAll()
+{
+    // These are the same model flags used by desktop icons and mapped-folder
+    // entries. Expected sets are explicit, independent of the range algorithm.
+    SelectionController controller;
+    std::vector<SelectionFixtureEntry> desktop(1);
+    std::vector<SelectionFixtureEntry> dock;
+    std::vector<SelectionFixtureEntry> running;
+    std::vector<SelectionFixtureWidget> widgets(1);
+    auto& entries = widgets[0].folderEntries;
+    entries.resize(5);
+    const std::vector<SelectionController::Target> targets{
+        {L"a", &entries[0].selected}, {L"b", &entries[1].selected},
+        {L"c", &entries[2].selected}, {L"d", &entries[3].selected},
+        {L"e", &entries[4].selected},
+    };
+    const auto clear = [&]() { controller.ClearAll(desktop, dock, running, widgets); };
+    const auto selected = [&]() {
+        std::vector<size_t> result;
+        for (size_t i = 0; i < entries.size(); ++i)
+            if (entries[i].selected) result.push_back(i);
+        return result;
+    };
+
+    entries[1].selected = true;
+    desktop[0].selected = true;
+    controller.RememberAnchor(L"folder", L"b");
+    Check(controller.SelectRange(L"folder", targets, L"e", false, clear) &&
+            selected() == std::vector<size_t>({1, 2, 3, 4}) &&
+            !desktop[0].selected,
+        "Shift selects both endpoints and every intervening entry, clearing another surface");
+    Check(controller.SelectRange(L"folder", targets, L"c", false, clear) &&
+            selected() == std::vector<size_t>({1, 2}),
+        "repeated Shift clicks contract the range from the original clicked anchor");
+    Check(controller.SelectRange(L"folder", targets, L"a", false, clear) &&
+            selected() == std::vector<size_t>({0, 1}),
+        "a range works in reverse without moving its anchor to the first selected entry");
+    entries[4].selected = true;
+    Check(controller.SelectRange(L"folder", targets, L"c", true, clear) &&
+            selected() == std::vector<size_t>({0, 1, 2, 4}),
+        "Ctrl+Shift adds an inclusive range without dropping other selected entries");
+
+    // A sorted/filtered list may have no Slots for offscreen rows. Supply its
+    // complete logical ordering, as the production widget projection does.
+    const std::vector<SelectionController::Target> reordered{
+        targets[4], targets[3], targets[2], targets[1], targets[0],
+    };
+    Check(controller.SelectRange(L"folder", reordered, L"e", false, clear) &&
+            selected() == std::vector<size_t>({1, 2, 3, 4}),
+        "range anchors follow item identities after sorting rather than stale positions");
+    clear();
+    controller.RememberAnchor(L"folder", L"removed");
+    Check(controller.SelectRange(L"folder", targets, L"c", false, clear) &&
+            selected() == std::vector<size_t>({2}),
+        "a deleted or filtered-out anchor falls back to the clicked entry");
+    controller.RememberAnchor(L"other-folder", L"a");
+    Check(controller.SelectRange(L"folder", targets, L"e", false, clear) &&
+            selected() == std::vector<size_t>({2, 3, 4}),
+        "an anchor from another surface cannot extend the current range");
+    const auto revision = controller.Revision();
+    Check(!controller.SelectRange(L"folder", targets, L"missing", false, clear) &&
+            controller.Revision() == revision &&
+            selected() == std::vector<size_t>({2, 3, 4}),
+        "an invalid endpoint leaves all selection flags untouched");
+
+    clear();
+    const std::vector<SelectionController::Target> filtered{targets[1], targets[3]};
+    Check(controller.SelectAll(filtered) &&
+            selected() == std::vector<size_t>({1, 3}) &&
+            !desktop[0].selected && !widgets[0].selected,
+        "component Ctrl+A selects exactly its filtered contents without selecting the desktop or widget frame");
+    const auto allRevision = controller.Revision();
+    Check(!controller.SelectAll(filtered) && controller.Revision() == allRevision,
+        "repeated scoped select-all is idempotent");
+    clear();
+    controller.SelectAll({{L"desktop", &desktop[0].selected}});
+    Check(desktop[0].selected && selected().empty(),
+        "desktop select-all excludes component contents");
+    Check(!controller.SelectAll({}) && selected().empty(),
+        "an empty component cannot fall through to a different selection surface");
+}
+
 void TestRenameControllerKeepsTargetsExclusive()
 {
     RenameController controller;
@@ -3179,6 +3263,7 @@ int wmain(int argc, wchar_t** argv)
     TestTrayNotificationRegistrationPreservesPreferences();
     TestTrayNotificationShortcutPreservesUserEntry();
     TestSelectionControllerCoversEveryRegisteredRange();
+    TestPointerSelectionRangesAndScopedSelectAll();
     TestRenameControllerKeepsTargetsExclusive();
     TestSlowRenameClicks();
     TestRenameControllerRejectsStaleFocusCommits();
@@ -3195,10 +3280,13 @@ int wmain(int argc, wchar_t** argv)
     TestShortcutClassificationCapacityRecovery();
     TestLocalIconsBypassBlockedShellFallback();
     TestBackgroundShellWorkIsolation();
+    TestFilteredBackgroundDeliveryDoesNotWakeDeferredModels();
+    TestPopupIconsDeliverWhileSourceResultsRemainDeferred();
     TestDeferredFolderReadAfterCapacityRecovers();
     TestDockLocalIconsBypassShell();
     TestInitialIconBitmaps();
     TestShellIconSourceStamp();
+    TestIconRefreshPresentation();
     TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();
     TestShellRefreshPreservesCurrentItemState();

@@ -2097,6 +2097,25 @@ ManagerArguments ReadArguments()
 }
 }
 
+namespace
+{
+void ShowManagerStartupFailure(const wchar_t* stage, DWORD error)
+{
+    snowdesktop::steam_bridge::ManagerLocalization localization;
+    std::string ignored;
+    localization.Load(ExecutableDirectory() / L"lang", ReadArguments().language, ignored);
+    std::wstring message = Utf8ToWide(localization.Translate(
+        "SnowDesktop could not start. See the details below.",
+        "SnowDesktop 无法启动，请查看下方详情。"));
+    message += L"\n\n" + std::wstring(stage) + L"\n" + std::to_wstring(error);
+    wchar_t description[1024]{};
+    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, error, 0, description, static_cast<DWORD>(std::size(description)), nullptr);
+    message += L"\n" + std::wstring(description);
+    MessageBoxW(nullptr, message.c_str(), L"SnowDesktop Workshop Manager", MB_OK | MB_ICONERROR);
+}
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
     if (!EnsureExpectedSteamEnvironmentIfMissing())
@@ -2107,10 +2126,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         return 1;
     }
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 1;
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(com)) { ShowManagerStartupFailure(L"COM", static_cast<DWORD>(com)); return 1; }
     HANDLE singleInstance = CreateMutexW(nullptr, FALSE,
         L"Local\\SnowDesktopWorkshopManager");
-    if (!singleInstance || GetLastError() == ERROR_ALREADY_EXISTS)
+    const DWORD mutexError = GetLastError();
+    if (!singleInstance)
+    {
+        ShowManagerStartupFailure(L"CreateMutex", mutexError);
+        CoUninitialize();
+        return 1;
+    }
+    if (mutexError == ERROR_ALREADY_EXISTS)
     {
         if (singleInstance) CloseHandle(singleInstance);
         MessageBoxW(nullptr, L"SnowDesktop Workshop Manager is already open.",
@@ -2135,6 +2162,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         nullptr, nullptr, instance, nullptr);
     if (!window || !CreateDevice(window))
     {
+        const DWORD error = window ? ERROR_GEN_FAILURE : GetLastError();
+        ShowManagerStartupFailure(window ? L"Direct3D" : L"CreateWindow", error);
         if (window) DestroyWindow(window);
         UnregisterClassW(className, instance);
         CloseHandle(singleInstance);
@@ -2201,6 +2230,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         if (result == 0) break;
         if (result == -1)
         {
+            ShowManagerStartupFailure(L"GetMessage", GetLastError());
             messageLoopFailed = true;
             break;
         }

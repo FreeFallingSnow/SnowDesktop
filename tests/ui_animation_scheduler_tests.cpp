@@ -2,6 +2,9 @@
 #include "ui_animation_scheduler_rules.h"
 #include "animation_settings.h"
 #include "popup_animation_rules.h"
+#include "status_bar_shell_shortcut.h"
+#include "status_bar_activation.h"
+#include "system_panel_transition.h"
 
 #include <windows.h>
 
@@ -51,10 +54,435 @@ bool PumpMessagesUntil(Predicate done, DWORD timeoutMilliseconds = 3000)
     }
     return done();
 }
+
+constexpr UINT kBarContinuation = WM_APP + 45;
+struct BarContinuationFixture
+{
+    snowdesktop::StatusBarActivationQueue queue;
+    int messages = 0;
+};
+LRESULT CALLBACK BarContinuationProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    auto* state = reinterpret_cast<BarContinuationFixture*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE)
+    {
+        state = static_cast<BarContinuationFixture*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+    }
+    if (message == kBarContinuation && state)
+    {
+        ++state->messages;
+        if (auto callback = state->queue.Take()) callback();
+        return 0;
+    }
+    return DefWindowProcW(window, message, wp, lp);
+}
+
+void TestStatusBarContinuationDispatch()
+{
+    // No desktop/Shell surface: exercise the production single-slot queue on a
+    // real message-only HWND and preserve the scheduler's reentrancy boundary.
+    constexpr wchar_t name[] = L"SnowDesktop.StatusBarContinuationTest";
+    WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpszClassName = name; cls.lpfnWndProc = BarContinuationProc;
+    Check(RegisterClassW(&cls) != 0, "bar continuation fixture registers");
+    BarContinuationFixture state;
+    const HWND window = CreateWindowExW(0, name, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
+        nullptr, cls.hInstance, &state);
+    Check(window != nullptr, "bar continuation fixture is message-only");
+    snowdesktop::UiAnimationScheduler scheduler;
+    bool scheduling = false;
+    int delivered = 0, nestedDeadline = 0;
+    scheduler.ScheduleOnce(0, [&](auto) {
+        scheduling = true;
+        Check(state.queue.Post(window, kBarContinuation, [&] {
+            Check(!scheduling, "menu activation never runs in its scheduling callback");
+            ++delivered;
+            scheduler.ScheduleOnce(0, [&](auto) { ++nestedDeadline; });
+            scheduler.DispatchDue();
+        }), "scheduler posts activation to the bar HWND");
+        Check(delivered == 0, "posting does not synchronously enter a modal surface");
+        scheduling = false;
+    });
+    scheduler.DispatchDue();
+    Check(PumpMessagesUntil([&] { return delivered == 1; }) && nestedDeadline == 1,
+        "window-dispatched activation leaves the scheduler available to a nested menu loop");
+    state.queue.Post(window, kBarContinuation, [&] { delivered += 10; });
+    state.queue.Post(window, kBarContinuation, [&] { delivered += 100; });
+    Check(PumpMessagesUntil([&] { return state.messages == 2; }) && delivered == 101,
+        "rapid undelivered requests coalesce to one latest continuation");
+    state.queue.Post(window, kBarContinuation, [&] { delivered += 1000; });
+    state.queue.Cancel();
+    Check(PumpMessagesUntil([&] { return state.messages == 3; }) && delivered == 101,
+        "hiding cancels the callback even though its native message is already queued");
+    state.queue.Post(window, kBarContinuation, [&] { ++delivered; });
+    Check(PumpMessagesUntil([&] { return delivered == 102; }),
+        "a later explicit click after cancellation remains a new deliverable action");
+    DestroyWindow(window);
+    UnregisterClassW(name, cls.hInstance);
+}
+
+void TestSystemPanelTransitionHandoff()
+{
+    // Same production queue as the popup. Native rendering/device services are
+    // outside this boundary; resource-release reentry and message order are not.
+    struct Request
+    {
+        int page, owner;
+        bool powerConfirmation = false;
+        bool SameTarget(const Request& other) const
+        { return page == other.page && owner == other.owner && powerConfirmation == other.powerConfirmation; }
+        int Monitor() const { return owner; }
+    };
+    using Transition = snowdesktop::SystemPanelTransition<Request>;
+    using Action = Transition::Action;
+    Transition transition;
+    const std::optional<Request> current = Request{1, 10};
+    Check(transition.Queue({2, 10}, current, true, false) == Action::Close,
+        "switching pages first closes the current panel");
+    Check(transition.Queue({3, 10}, current, true, true) == Action::Wait &&
+        transition.Pending()->page == 3,
+        "rapid switching while closing retains only the latest destination");
+    Check(transition.Queue({3, 10}, current, true, true) == Action::Close && !transition.Pending(),
+        "a second click on the pending destination cancels its opening");
+    Check(transition.Queue({1, 10}, current, true, false) == Action::Close && !transition.Pending(),
+        "clicking the current page closes it without scheduling a reopen");
+    Check(transition.Queue({1, 10}, current, true, true) == Action::Wait,
+        "an explicit click after dismissal may reopen the closing page");
+    transition.Cancel();
+    Check(transition.Queue({1, 20}, current, true, false) == Action::Close &&
+        transition.Pending()->owner == 20,
+        "the same page on another monitor transfers instead of toggling off");
+    // Each fixture bar is on its own monitor. This is the cancellation path
+    // taken when the old monitor's auto-hidden bar reports its disappearance.
+    Check(!transition.CancelForMonitor(10) && transition.Pending()->owner == 20,
+        "old-monitor hiding cannot discard the new-monitor popup request");
+    Check(!transition.ShouldCancelOnDeactivation(10, 20),
+        "activation of the destination bar retains cross-monitor handoff");
+    Check(transition.ShouldCancelOnDeactivation(10, 30),
+        "unrelated foreground activation still dismisses queued opening");
+    Check(transition.CancelForMonitor(20) && !transition.Pending(),
+        "hiding the destination monitor cancels its own queued popup");
+
+    Check(transition.ShouldDismissForDpiChange(), "external DPI changes dismiss an idle popup");
+    {
+        auto placement = transition.BeginPlacement();
+        Check(!transition.ShouldDismissForDpiChange(),
+            "cross-monitor window placement cannot dismiss the destination on WM_DPICHANGED");
+        {
+            auto nested = transition.BeginPlacement();
+            Check(!transition.ShouldDismissForDpiChange(), "nested placement preserves DPI ownership");
+        }
+        Check(!transition.ShouldDismissForDpiChange(), "inner placement cannot clear its parent's DPI ownership");
+    }
+    Check(transition.ShouldDismissForDpiChange(), "DPI dismissal resumes after destination placement");
+    Check(transition.Queue({1, 10, true}, current, true, false) == Action::Close &&
+        transition.Pending()->powerConfirmation,
+        "a power confirmation is distinct from the control overview");
+    transition.Cancel();
+
+    constexpr wchar_t name[] = L"SnowDesktop.SystemPanelHandoffTest";
+    WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpszClassName = name; cls.lpfnWndProc = BarContinuationProc;
+    Check(RegisterClassW(&cls) != 0, "panel handoff fixture registers");
+    BarContinuationFixture state;
+    const HWND window = CreateWindowExW(0, name, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
+        nullptr, cls.hInstance, &state);
+    Check(window != nullptr, "panel handoff fixture is message-only");
+    bool oldConsumerAttached = true;
+    int opened = 0;
+    const auto dispatch = [&] {
+        if (auto request = transition.Take())
+        {
+            Check(!oldConsumerAttached, "new page never subscribes before old consumer release");
+            opened = request->page;
+        }
+    };
+    {
+        auto release = transition.BeginRelease();
+        Check(static_cast<bool>(release), "old panel acquires release ownership");
+        // HideNow has detached its model and reset showing. This used to let a
+        // nested click open immediately, then be erased by the old cleanup.
+        Check(transition.Queue({2, 10}, {}, false, false) == Action::Wait,
+            "click during consumer release waits despite the hidden HWND");
+        Check(state.queue.Post(window, kBarContinuation, dispatch), "release callback posts nested opening");
+        Check(PumpMessagesUntil([&] { return state.messages == 1; }) && opened == 0 &&
+            transition.Pending()->page == 2,
+            "nested message cannot consume or open the destination during cleanup");
+        {
+            auto nested = transition.BeginRelease();
+            Check(!nested, "reentrant hiding cannot clean up the same panel twice");
+        }
+        Check(transition.Releasing(), "nested guard cannot end its parent's release");
+        Check(transition.Queue({3, 10}, {}, false, false) == Action::Wait,
+            "newest page supersedes the old request during release");
+        oldConsumerAttached = false;
+    }
+    Check(state.queue.Post(window, kBarContinuation, dispatch), "release endpoint reposts opening");
+    Check(PumpMessagesUntil([&] { return opened == 3; }) && !transition.Pending(),
+        "release endpoint opens only the newest page exactly once");
+    Check(transition.Queue({2, 10}, {}, false, true) == Action::Wait,
+        "menu lifetime defers the next destination");
+    transition.Cancel();
+    dispatch();
+    Check(opened == 3, "outside dismissal removes the queued destination");
+    Check(transition.Queue({2, 10}, {}, false, false) == Action::Open,
+        "a new click after cancellation remains deliverable");
+    dispatch();
+    Check(opened == 2, "later click opens after the old consumer is gone");
+    DestroyWindow(window);
+    UnregisterClassW(name, cls.hInstance);
+}
+
+void TestTaskViewTransition()
+{
+    using namespace snowdesktop;
+    TaskViewTransitionGuard transition;
+    Check(!transition.Busy(0) && transition.Begin(0, false), "first Task View request starts immediately");
+    int accepted = 1;
+    for (int time = 1; time < 350; ++time)
+    {
+        if (time == 50) transition.Observe(true, time);
+        if (transition.Begin(time, true)) ++accepted;
+    }
+    Check(accepted == 1, "a burst during native opening produces one toggle and queues no replay");
+    Check(!transition.Busy(400) && !transition.Begin(400, true) && !transition.Begin(5000, true),
+        "Windows 10's visible bar cannot toggle an open Task View after animation or timeout");
+    Check(!transition.Begin(5000, false), "an observed shown state also prevents a stale caller from reopening");
+    transition.Observe(false, 6000);
+    transition.Observe(false, 6200);
+    Check(transition.Busy(6349) && !transition.Busy(6350),
+        "external dismissal settles before reopening; duplicate hidden events do not extend it");
+    Check(transition.Begin(6350, false), "a closed, settled view permits a new explicit request");
+    transition.Observe(false, 6400);
+    Check(transition.Busy(7849) && !transition.Busy(7850),
+        "missing Shell callbacks on either Windows version cannot permanently block buttons");
+    Check(transition.Begin(7850, false), "timeout permits recovery without replaying a queued toggle");
+    transition.Observe(true, 9400);
+    Check(!transition.Begin(10000, false), "a shown event arriving after timeout still blocks repeated opening");
+    transition.Reset();
+    Check(!transition.Busy(10001) && transition.Begin(10001, false),
+        "Explorer restart or completely failed injection releases transition protection");
+    transition.Reset();
+    Check(!transition.Begin(11000, true), "Task View opened outside the bar cannot be toggled by its button");
+    transition.Observe(true, 11000);
+    transition.Observe(true, 11200);
+    Check(!transition.Busy(11350) && !transition.CanBegin(11350, true),
+        "duplicate shown events allow other native panels after settling but keep Task View open-only");
+    Check(IsTaskViewTransitionSensitiveAction(StatusBarAction::TaskView) &&
+        IsTaskViewTransitionSensitiveAction(StatusBarAction::Notifications) &&
+        IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemCalendar) &&
+        IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemControlCenter) &&
+        !IsTaskViewTransitionSensitiveAction(StatusBarAction::Dismiss) &&
+        !IsTaskViewTransitionSensitiveAction(StatusBarAction::Settings),
+        "other native panels cannot interrupt Task View's transition, while dismissal and settings remain available");
+}
+
+void TestTaskViewMouseHandoff()
+{
+    using namespace snowdesktop;
+    using Result = StatusBarShortcutResult;
+    Check(ResolveStatusBarShellChord(StatusBarAction::TaskView, true, false).pointerQuietMilliseconds == GetDoubleClickTime() &&
+        ResolveStatusBarShellChord(StatusBarAction::TaskView, false, true).pointerQuietMilliseconds == GetDoubleClickTime(),
+        "both Windows versions finish the configured double-click interval before opening Task View");
+    UiAnimationScheduler scheduler;
+    Check(scheduler.Initialize(), "Task View handoff scheduler initializes");
+    // Run the production scheduler/input construction with only time, physical
+    // input and SendInput replaced; never synthesize desktop input in tests.
+    double now = 0;
+    int held = 0;
+    int sends = 0;
+    bool current = true;
+    std::vector<Result> outcomes;
+    const auto queue = [&](UINT quiet = 500) {
+        return ScheduleStatusBarShellShortcut(scheduler, {VK_TAB, false, quiet}, {
+            [&](int code) { return code == held; },
+            [&](UINT count, INPUT*, int) { ++sends; return count; },
+            [&](auto) { return current; },
+            [&](auto, Result result) { outcomes.push_back(result); },
+            [&] { return now; }});
+    };
+    queue();
+    now = 499; WaitAndDispatch(scheduler);
+    Check(sends == 0 && outcomes.empty(), "first release does not expose Shell to the second click");
+    held = VK_LBUTTON; WaitAndDispatch(scheduler);
+    now = 1000; WaitAndDispatch(scheduler);
+    Check(sends == 0, "held second press cannot open Task View under the pointer");
+    held = 0; now = 1499; WaitAndDispatch(scheduler);
+    Check(sends == 0, "releasing the second press still leaves its quiet interval");
+    now = 1500; WaitAndDispatch(scheduler);
+    Check(sends == 1 && outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
+        "completed double-click opens exactly once, with no deferred replay");
+
+    outcomes.clear(); queue(); current = false; WaitAndDispatch(scheduler);
+    Check(sends == 1 && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
+        "foreground change, hidden bar or externally opened Task View cancels the delayed request");
+    current = true; outcomes.clear(); queue();
+    held = VK_RBUTTON; now = 7000; WaitAndDispatch(scheduler);
+    Check(sends == 1 && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
+        "held mouse cannot leave an unbounded deferred opening request");
+    held = 0; outcomes.clear();
+    queue(5000); now = 12000; WaitAndDispatch(scheduler);
+    Check(sends == 2 && outcomes == std::vector<Result>{Result::Sent},
+        "maximum Windows double-click interval has its own budget before the input timeout");
+}
+
+void TestStatusBarShellShortcuts()
+{
+    using namespace snowdesktop;
+    using Action = StatusBarAction;
+    using Result = StatusBarShortcutResult;
+    // No global keyboard injection: only the OS key-state/input boundaries are
+    // replaced. Production scheduling, cancellation and INPUT construction run.
+    const auto request = ResolveStatusBarClick(Action::ControlCenter, true);
+    Check(request == Action::SystemControlCenter && ResolveStatusBarClick(request, false) == request,
+        "Ctrl click intent survives release while a nested menu unwinds");
+    Check(ResolveStatusBarClick(Action::ControlCenter, false) == Action::ControlCenter &&
+        ResolveStatusBarClick(Action::Dismiss, true) == Action::Dismiss,
+        "ordinary click opens the local panel and blank click still dismisses with Ctrl held");
+    StatusBarSettings settings;
+    Check(ResolveStatusBarClick(Action::Calendar, false, settings, true) == Action::Calendar &&
+        ResolveStatusBarClick(Action::ControlCenter, false, settings, true) == Action::ControlCenter,
+        "new click options preserve the existing local-panel defaults");
+    settings.clockSystemPanel = settings.controlCenterSystemPanel = true;
+    Check(ResolveStatusBarClick(Action::Calendar, false, settings, false) == Action::SystemCalendar &&
+        ResolveStatusBarClick(Action::ControlCenter, false, settings, true) == Action::SystemControlCenter &&
+        ResolveStatusBarClick(Action::ControlCenter, true, settings, false) == Action::ControlCenter &&
+        ResolveStatusBarClick(Action::SystemControlCenter, false, settings, false) == Action::ControlCenter,
+        "native clock works on both OS versions but Windows 10 cannot select Quick Settings even with stored preferences or Ctrl");
+    Check(!StatusBarSupportsSystemQuickSettings(10, 19045) && !StatusBarSupportsSystemQuickSettings(0, 0) &&
+        StatusBarSupportsSystemQuickSettings(10, 22000), "Quick Settings uses the OS version rather than taskbar appearance");
+    const auto legacyClock = ResolveStatusBarShellChord(Action::SystemCalendar, false, true);
+    Check(legacyClock.key == 'D' && legacyClock.alt &&
+        ResolveStatusBarShellChord(Action::SystemCalendar, true, true).key == 'N' &&
+        ResolveStatusBarShellChord(Action::TaskView, false, true).key == VK_TAB &&
+        !ResolveStatusBarShellChord(Action::SystemControlCenter, false, true).key,
+        "clock and Task View select their own Shell entries without replacing the Windows 10 date panel with Action Center");
+
+    UiAnimationScheduler scheduler;
+    Check(scheduler.Initialize(), "status bar shortcut scheduler initializes");
+    int held = VK_CONTROL;
+    bool current = true;
+    std::vector<std::vector<INPUT>> batches;
+    UINT sentCount = 4;
+    std::vector<Result> outcomes;
+    const auto queue = [&](WORD key, UINT timeout = 5000, bool alt = false) {
+        return ScheduleStatusBarShellShortcut(scheduler, StatusBarShellChord{key, alt}, {
+            [&](int code) { return code == held; },
+            [&](UINT count, INPUT* input, int size) {
+                Check(size == sizeof(INPUT), "shortcut uses the native INPUT size");
+                batches.emplace_back(input, input + count);
+                return count >= 4 ? sentCount : count;
+            },
+            [&](auto) { return current; },
+            [&](auto, Result result) { outcomes.push_back(result); }}, timeout);
+    };
+    const auto expectChord = [&](WORD key) {
+        Check(batches.size() == 1 && batches.front().size() == 4,
+            "system surface gets exactly one complete chord, with no modifier restoration");
+        const auto& input = batches.front();
+        const WORD keys[]{VK_LWIN, key, key, VK_LWIN};
+        const DWORD flags[]{KEYEVENTF_EXTENDEDKEY, 0, KEYEVENTF_KEYUP, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP};
+        for (std::size_t i = 0; i < 4; ++i)
+            Check(input[i].type == INPUT_KEYBOARD && input[i].ki.wVk == keys[i] && input[i].ki.dwFlags == flags[i],
+                "system shortcut has balanced Windows/key presses and releases");
+        Check(outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
+            "successful shortcut reports once and leaves no polling timer");
+    };
+
+    queue('A');
+    for (const int key : {VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, 0x41})
+    {
+        held = key;
+        WaitAndDispatch(scheduler);
+        Check(batches.empty() && outcomes.empty(), "physically held modifiers or chord key prevent injection");
+    }
+    held = 0;
+    WaitAndDispatch(scheduler);
+    expectChord('A');
+    batches.clear(); outcomes.clear();
+    queue('N'); WaitAndDispatch(scheduler); expectChord('N');
+    batches.clear(); outcomes.clear();
+    queue(VK_TAB); WaitAndDispatch(scheduler); expectChord(VK_TAB);
+    batches.clear(); outcomes.clear();
+    sentCount = 6;
+    queue('D', 5000, true); held = VK_MENU; WaitAndDispatch(scheduler);
+    Check(batches.empty() && outcomes.empty(), "date-panel shortcut waits for a physically held Alt key");
+    held = 0; WaitAndDispatch(scheduler);
+    Check(batches.size() == 1 && batches.front().size() == 6 && outcomes == std::vector<Result>{Result::Sent},
+        "Windows 10 clock sends one complete Win+Alt+D chord");
+    if (batches.size() == 1 && batches.front().size() == 6)
+    {
+        const WORD keys[]{VK_LWIN, VK_MENU, 'D', 'D', VK_MENU, VK_LWIN};
+        for (std::size_t index = 0; index < 6; ++index)
+            Check(batches.front()[index].ki.wVk == keys[index] &&
+                ((batches.front()[index].ki.dwFlags & KEYEVENTF_KEYUP) != 0) == (index >= 3),
+                "date-panel modifier presses and releases are balanced in reverse order");
+    }
+    batches.clear(); outcomes.clear(); sentCount = 4;
+
+    held = VK_CONTROL;
+    const auto cancelled = queue('A');
+    WaitAndDispatch(scheduler);
+    scheduler.Cancel(cancelled); // Same token used by blank clicks and bar disable.
+    held = 0; scheduler.DispatchDue();
+    Check(batches.empty() && outcomes.empty() && !scheduler.HasScheduledWork(),
+        "blank click or shutdown cancels the pending shortcut before release");
+    queue('A'); current = false; WaitAndDispatch(scheduler);
+    Check(batches.empty() && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
+        "changed foreground, hidden owner or fullscreen guard cancels without input");
+    current = true; outcomes.clear();
+    queue('A', 0); WaitAndDispatch(scheduler);
+    Check(batches.empty() && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
+        "expired shortcut never opens a system panel after the user moved on");
+    outcomes.clear();
+
+    for (UINT partial = 0; partial < 4; ++partial)
+    {
+        sentCount = partial;
+        queue('A'); WaitAndDispatch(scheduler);
+        Check(outcomes == std::vector<Result>{Result::Failed} && !scheduler.HasScheduledWork(),
+            "input refusal or partial insertion is failure, never a successful system toggle");
+        Check(batches.size() == (partial ? 2u : 1u), "failed chord is not retried");
+        if (partial)
+        {
+            const auto& recovery = batches.back();
+            Check(recovery.size() == (partial == 2 ? 2u : 1u) && recovery.back().ki.wVk == VK_LWIN,
+                "partial input releases the injected Windows key");
+            for (const auto& input : recovery)
+                Check((input.ki.dwFlags & KEYEVENTF_KEYUP) != 0 &&
+                    (input.ki.wVk == VK_LWIN || input.ki.wVk == 'A'),
+                    "recovery only releases unmatched synthetic presses");
+        }
+        batches.clear(); outcomes.clear();
+    }
+    for (UINT partial = 1; partial < 6; ++partial)
+    {
+        sentCount = partial; queue('D', 5000, true); WaitAndDispatch(scheduler);
+        Check(outcomes == std::vector<Result>{Result::Failed} && batches.size() == 2 && !scheduler.HasScheduledWork(),
+            "partially inserted date-panel chord fails without retrying the system toggle");
+        if (batches.size() == 2)
+        {
+            const std::vector<WORD> expected = partial == 1 || partial == 5 ? std::vector<WORD>{VK_LWIN} :
+                partial == 2 || partial == 4 ? std::vector<WORD>{VK_MENU, VK_LWIN} : std::vector<WORD>{'D', VK_MENU, VK_LWIN};
+            const auto& release = batches.back();
+            Check(release.size() == expected.size(), "partial date chord releases only its remaining synthetic keys");
+            for (std::size_t index = 0; index < release.size() && index < expected.size(); ++index)
+                Check(release[index].ki.wVk == expected[index] && (release[index].ki.dwFlags & KEYEVENTF_KEYUP),
+                    "date chord cleanup does not leave Alt pressed or release an unrelated key");
+        }
+        batches.clear(); outcomes.clear();
+    }
+}
 }
 
 int main()
 {
+    TestStatusBarContinuationDispatch();
+    TestSystemPanelTransitionHandoff();
+    TestTaskViewTransition();
+    TestTaskViewMouseHandoff();
+    TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&
         motion::ResolveEnabled(motion::FollowSystem, true) &&

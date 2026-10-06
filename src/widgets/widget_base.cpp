@@ -1,3 +1,4 @@
+#include "../app_font.h"
 /**
  * @file widget_base.cpp
  * @brief Widget 基类、容器布局、滚动列表、组件 Chrome 绘制、滚动条绘制及组件工厂的实现。
@@ -24,13 +25,100 @@
 #include "widget_preview_scene.h"
 #include "../widget_item_layout.h"
 #include "../widget_scroll_rules.h"
+#include "../category_collection_rules.h"
+#include "../desktop_category_item_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
 #include "../l10n.h"
-
-
 #include <algorithm>
 #include <cmath>
+
+namespace
+{
+ScrollingItemWidget* CategoryTabSource(ScrollingItemWidget* widget)
+{
+    if (auto* group = dynamic_cast<FileGroup*>(widget))
+        return group->GetActiveSourceContainer();
+    return dynamic_cast<FileCategories*>(widget) || dynamic_cast<FolderMapping*>(widget)
+        ? widget : nullptr;
+}
+
+void InvalidateCategoryTabSource(ScrollingItemWidget* widget)
+{
+    if (auto* group = dynamic_cast<FileGroup*>(widget)) group->InvalidateHostedView();
+    else if (auto* categories = dynamic_cast<FileCategories*>(widget)) categories->InvalidateCategoryCache();
+    else if (auto* folder = dynamic_cast<FolderMapping*>(widget)) folder->InvalidateFilterCache();
+}
+}
+
+std::vector<std::wstring> ScrollingItemWidget::GetCategoryTabOrder() const
+{
+    auto* source = CategoryTabSource(const_cast<ScrollingItemWidget*>(this));
+    const auto defaults = app_ ? GetCategoryOrder(app_->GetCategorySettings()) : std::vector<std::wstring>{};
+    return source && source->GetWidgetData()
+        ? snowdesktop::category_collection_rules::ResolveTabOrder(defaults, source->GetWidgetData()->categoryTabOrder)
+        : defaults;
+}
+
+bool ScrollingItemWidget::BeginCategoryTabDrag(POINT point)
+{
+    auto* source = CategoryTabSource(this);
+    if (!source || !source->GetWidgetData()) return false;
+    const auto id = CategoryIdAtPoint(point);
+    if (id.empty()) return false;
+    pressedCategoryTab_ = id;
+    pressedCategorySourceId_ = source->GetWidgetData()->id;
+    categoryTabPressPoint_ = point;
+    categoryTabOriginalOrder_ = source->GetWidgetData()->categoryTabOrder;
+    categoryTabDragging_ = false;
+    return true;
+}
+
+bool ScrollingItemWidget::UpdateCategoryTabDrag(POINT point)
+{
+    if (!HasCategoryTabPress()) return false;
+    auto* source = CategoryTabSource(this);
+    if (!source || !source->GetWidgetData() ||
+        source->GetWidgetData()->id != pressedCategorySourceId_) return true;
+    if (!categoryTabDragging_)
+    {
+        if (std::abs(point.x - categoryTabPressPoint_.x) < GetSystemMetrics(SM_CXDRAG) &&
+            std::abs(point.y - categoryTabPressPoint_.y) < GetSystemMetrics(SM_CYDRAG)) return true;
+        categoryTabDragging_ = true;
+    }
+    const auto target = CategoryIdAtPoint(point);
+    if (target.empty()) return true;
+    auto order = GetCategoryTabOrder();
+    if (snowdesktop::category_collection_rules::MoveTab(order, pressedCategoryTab_, target))
+    {
+        source->GetWidgetData()->categoryTabOrder = std::move(order);
+        InvalidateCategoryTabSource(this);
+        if (app_) InvalidateRect(app_->hwnd_, nullptr, FALSE);
+    }
+    return true;
+}
+
+bool ScrollingItemWidget::EndCategoryTabDrag(bool commit)
+{
+    if (!HasCategoryTabPress()) return false;
+    auto* source = CategoryTabSource(this);
+    if (source && source->GetWidgetData() && source->GetWidgetData()->id == pressedCategorySourceId_)
+    {
+        if (!commit)
+        {
+            source->GetWidgetData()->categoryTabOrder = categoryTabOriginalOrder_;
+            InvalidateCategoryTabSource(this);
+        }
+        else if (categoryTabDragging_ && app_)
+            app_->SaveLayoutSlots();
+    }
+    pressedCategoryTab_.clear();
+    pressedCategorySourceId_.clear();
+    categoryTabOriginalOrder_.clear();
+    categoryTabDragging_ = false;
+    return true;
+}
+
 
 using Microsoft::WRL::ComPtr;
 
@@ -117,10 +205,18 @@ float Widget::GetLayoutSpacingScale() const
     return app_ ? app_->GetLayoutSpacingScale() : 1.0f;
 }
 
+bool Widget::UsesLightContentTheme() const
+{
+    if (!app_) return false;
+    const auto* container = dynamic_cast<const WidgetContainer*>(this);
+    return container && container->IsPopupHosted()
+        ? app_->collectionPopupLightTheme_ : app_->IsLightContentTheme();
+}
+
 snowdesktop::PageItemVisualMetrics Widget::GetItemVisualMetrics() const
 {
     return app_
-        ? app_->GetItemVisualMetrics(GetBounds())
+        ? app_->GetItemVisualMetrics(GetBounds(), app_->ResolveItemTitleLines(data_))
         : snowdesktop::ResolvePageItemVisualMetrics(
             kCellWidth, kMinCellHeight, kDefaultItemFontSizeCu);
 }
@@ -189,7 +285,7 @@ IDWriteTextFormat* Widget::GetCuTextFormat(float value, bool bold, bool centered
         return found->second.Get();
 
     ComPtr<IDWriteTextFormat> format;
-    app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+    snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI",
         bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     if (!format)
@@ -214,7 +310,7 @@ IDWriteTextFormat* Widget::GetCuTextFormatWeight(float value, DWRITE_FONT_WEIGHT
         return found->second.Get();
 
     ComPtr<IDWriteTextFormat> format;
-    app_->dwriteFactory_->CreateTextFormat(L"Segoe UI", nullptr,
+    snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI",
         weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     if (!format)
         return nullptr;
@@ -387,7 +483,7 @@ RECT WidgetContainer::GetCollapseButtonRect() const
 snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 {
     return app_
-        ? app_->GetItemVisualMetrics(GetLayoutFrameRect())
+        ? app_->GetItemVisualMetrics(GetLayoutFrameRect(), app_->ResolveItemTitleLines(data_))
         : Widget::GetItemVisualMetrics();
 }
 
@@ -397,6 +493,7 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
  */
 RECT WidgetContainer::GetBodyRect() const
 {
+    if (popupFrameActive_) return hostedFrame_;
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
@@ -424,6 +521,7 @@ RECT WidgetContainer::GetResizeHandleRect() const
 
 LONG WidgetContainer::GetScrollContentBottom() const
 {
+    if (popupFrameActive_) return hostedFrame_.bottom;
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).contentBottom;
 }
@@ -431,6 +529,7 @@ LONG WidgetContainer::GetScrollContentBottom() const
 RECT WidgetContainer::GetScrollbarViewportRect() const
 {
     RECT viewport = GetContentViewportRect();
+    if (popupFrameActive_) return viewport;
     if (UsesTopTitleBar())
         viewport.bottom = std::max<LONG>(viewport.top,
             std::min(viewport.bottom, GetResizeHandleRect().top));
@@ -604,9 +703,27 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
         bool sourceHasShortcut = sourceItems.empty() && app_ &&
             app_->dragDropController_.IsExternalDragActive() &&
             app_->dragDropController_.ExternalSummary().hasShortcut;
+        bool sourceHasNamespaceProgram = false;
         for (auto* item : sourceItems)
         {
             if (!item) continue;
+            const DesktopItem* desktopItem = nullptr;
+            if (auto* icon = dynamic_cast<DesktopIcon*>(item))
+                desktopItem = icon->GetDesktopItem();
+            else if (app_)
+            {
+                size_t index = static_cast<size_t>(-1);
+                if (auto* dockItem = dynamic_cast<DockEntryItem*>(item);
+                    dockItem && dockItem->GetEntryType() == DockEntryType::DesktopItem)
+                    index = app_->FindItemIndexByKey(dockItem->GetReference());
+                else if (auto* frequent = dynamic_cast<DockFrequentItem*>(item))
+                    index = frequent->GetItemIndex();
+                if (index < app_->GetDesktopItems().size())
+                    desktopItem = &app_->GetDesktopItems()[index];
+            }
+            if (desktopItem && snowdesktop::category_collection_rules::
+                    IsDesktopNamespaceProgram(*desktopItem))
+                sourceHasNamespaceProgram = true;
             std::wstring path = item->GetPath();
             if (!path.empty() && isShortcutPath(path))
             {
@@ -615,10 +732,9 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
             }
         }
 
-        if (sourceHasShortcut)
-            return _LW("widget.desktop.no_shortcut");
-        if (action == DropAction::Link)
-            return _LW("widget.desktop.no_create_shortcut");
+        if (app_ && !app_->GetCategorySettings().collectProgramsEnabled &&
+            (sourceHasNamespaceProgram || sourceHasShortcut || action == DropAction::Link))
+            return _LW("app.settings.collect_programs_confirm_title");
 
         if (data_->dateHeaders &&
             origin == this && (region == HitRegion::SortBefore || region == HitRegion::SortAfter))
@@ -736,6 +852,12 @@ void WidgetContainer::SetHostedFrame(const RECT* frame)
     InvalidateSlots();
 }
 
+void WidgetContainer::SetPopupFrame(const RECT* frame)
+{
+    SetHostedFrame(frame);
+    popupFrameActive_ = frame != nullptr;
+}
+
 RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     bool visible) const
 {
@@ -745,7 +867,7 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     RECT body = snowdesktop::storage_title_bar::InsetContent(
         GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(12.0f), Cu(4.0f));
     if (IsRectEmptyRect(body)) return {};
-    InflateRect(&body, -Cu(2.0f), 0);
+    if (!IsPopupHosted()) InflateRect(&body, -Cu(2.0f), 0);
     if (IsRectEmptyRect(body)) return {};
     const LONG bottom = std::min<LONG>(
         body.bottom, body.top + Cu(GetCategorizedSearchBoxHeight()));
@@ -917,7 +1039,7 @@ void ScrollingItemWidget::DrawCategorizedTab(
         IsRectEmptyRect(visibleTabRect) ||
         IsRectEmptyRect(layoutTabRect))
         return;
-    const bool light = app_->IsLightContentTheme();
+    const bool light = UsesLightContentTheme();
     app_->DrawD2DRoundedRectangle(
         context, visibleTabRect,
         static_cast<float>(Cu(8.0f)),
@@ -1015,18 +1137,22 @@ bool ScrollingItemWidget::EraseSearchSelection()
 void ScrollingItemWidget::ReplaceSearchSelection(
     const std::wstring& text)
 {
+    const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
     EraseSearchSelection();
     searchCursorPos_ =
         std::min(searchCursorPos_, searchText_.size());
     searchText_.insert(searchCursorPos_, text);
     searchCursorPos_ += text.size();
     searchSelectionAnchor_ = searchCursorPos_;
+    searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
     InvalidateSlots();
 }
 
 void ScrollingItemWidget::SetSearchText(
     const std::wstring& text)
 {
+    if (searchText_ == text) return;
+    searchHistory_.Clear();
     searchText_ = text;
     searchCursorPos_ = searchText_.size();
     searchSelectionAnchor_ = searchCursorPos_;
@@ -1037,39 +1163,59 @@ void ScrollingItemWidget::SetSearchText(
 
 void ScrollingItemWidget::AppendSearchChar(wchar_t ch)
 {
+    if(!searchDuplicateImeResult_.empty()&&searchDuplicateImeResult_.front()==ch)
+    {searchDuplicateImeResult_.erase(0,1);return;}
+    searchDuplicateImeResult_.clear();
+    if (ch >= 0xd800 && ch <= 0xdbff) { searchHighSurrogate_ = ch; return; }
+    if (searchHighSurrogate_ && ch >= 0xdc00 && ch <= 0xdfff)
+    {
+        const wchar_t pair[]{searchHighSurrogate_, ch}; searchHighSurrogate_ = 0;
+        ReplaceSearchSelection(std::wstring(pair, 2)); return;
+    }
+    searchHighSurrogate_ = 0;
+    if (ch >= 0xdc00 && ch <= 0xdfff) return;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
     ReplaceSearchSelection(std::wstring(1, ch));
 }
 
-void ScrollingItemWidget::BackspaceSearchText()
+void ScrollingItemWidget::BackspaceSearchText(bool word)
 {
+    const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
+    if(word&&!HasSearchSelection())searchSelectionAnchor_=snowdesktop::text_input::WordBoundary(searchText_,searchCursorPos_,false);
     if (!EraseSearchSelection() && searchCursorPos_ > 0)
     {
-        searchText_.erase(searchCursorPos_ - 1, 1);
-        --searchCursorPos_;
+        const auto start = snowdesktop::text_input::PreviousBoundary(searchText_, searchCursorPos_);
+        searchText_.erase(start, searchCursorPos_ - start);
+        searchCursorPos_ = start;
         searchSelectionAnchor_ = searchCursorPos_;
     }
+    searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
     InvalidateSlots();
 }
 
-void ScrollingItemWidget::DeleteSearchText()
+void ScrollingItemWidget::DeleteSearchText(bool word)
 {
+    const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
+    if(word&&!HasSearchSelection())searchSelectionAnchor_=snowdesktop::text_input::WordBoundary(searchText_,searchCursorPos_,true);
     if (!EraseSearchSelection() &&
         searchCursorPos_ < searchText_.size())
     {
-        searchText_.erase(searchCursorPos_, 1);
+        searchText_.erase(searchCursorPos_, snowdesktop::text_input::NextBoundary(searchText_, searchCursorPos_) - searchCursorPos_);
         searchSelectionAnchor_ = searchCursorPos_;
     }
+    searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
     InvalidateSlots();
 }
 
 void ScrollingItemWidget::ClearSearchText()
 {
+    searchHistory_.Clear(); searchHighSurrogate_ = 0;
+    searchComposing_=false;searchDuplicateImeResult_.clear();
     searchText_.clear();
     searchCursorPos_ = 0;
     searchSelectionAnchor_ = 0;
@@ -1090,6 +1236,7 @@ void ScrollingItemWidget::SetSearchFocused(bool focused)
     searchFocused_ = focused;
     if (!focused)
     {
+        searchComposing_=false;searchDuplicateImeResult_.clear();searchHighSurrogate_=0;
         searchSelectionAnchor_ = searchCursorPos_;
         searchCompositionText_.clear();
         searchCompositionCursor_ = 0;
@@ -1100,7 +1247,7 @@ void ScrollingItemWidget::SetSearchFocused(bool focused)
 void ScrollingItemWidget::SetSearchCursorPosition(
     size_t position)
 {
-    searchCursorPos_ = std::min(position, searchText_.size());
+    searchCursorPos_ = snowdesktop::text_input::SnapBoundary(searchText_,position);
     searchSelectionAnchor_ = searchCursorPos_;
 }
 
@@ -1123,7 +1270,7 @@ void ScrollingItemWidget::MoveCursorLeft(bool extendSelection)
     if (!extendSelection && HasSearchSelection())
         searchCursorPos_ = GetSearchSelectionStart();
     else if (searchCursorPos_ > 0)
-        --searchCursorPos_;
+        searchCursorPos_ = snowdesktop::text_input::PreviousBoundary(searchText_, searchCursorPos_);
     if (!extendSelection)
         searchSelectionAnchor_ = searchCursorPos_;
     ClearSearchComposition();
@@ -1134,7 +1281,7 @@ void ScrollingItemWidget::MoveCursorRight(bool extendSelection)
     if (!extendSelection && HasSearchSelection())
         searchCursorPos_ = GetSearchSelectionEnd();
     else if (searchCursorPos_ < searchText_.size())
-        ++searchCursorPos_;
+        searchCursorPos_ = snowdesktop::text_input::NextBoundary(searchText_, searchCursorPos_);
     if (!extendSelection)
         searchSelectionAnchor_ = searchCursorPos_;
     ClearSearchComposition();
@@ -1161,10 +1308,22 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
     if (!searchFocused_)
         return false;
 
+    searchDuplicateImeResult_.clear();
+    if(searchComposing_)return true;
+
     const bool control =
         (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift =
         (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    searchHighSurrogate_ = 0;
+    if (control && (key == 'Z' || key == 'Y'))
+    {
+        const bool changed = key == 'Y' || shift
+            ? searchHistory_.Redo(searchText_, searchCursorPos_, searchSelectionAnchor_)
+            : searchHistory_.Undo(searchText_, searchCursorPos_, searchSelectionAnchor_);
+        if (changed) { ClearSearchComposition(); InvalidateSlots(); }
+        return true;
+    }
     searchCursorPos_ =
         std::min(searchCursorPos_, searchText_.size());
     searchSelectionAnchor_ =
@@ -1217,7 +1376,9 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
         }
         if (key == 'X' && copied)
         {
+            const snowdesktop::text_input::Snapshot before{searchText_, searchCursorPos_, searchSelectionAnchor_};
             EraseSearchSelection();
+            searchHistory_.Record(before, {searchText_, searchCursorPos_, searchSelectionAnchor_});
             InvalidateSlots();
         }
         ClearSearchComposition();
@@ -1258,21 +1419,23 @@ bool ScrollingItemWidget::HandleSearchKey(WPARAM key)
     }
     if (key == VK_BACK)
     {
-        BackspaceSearchText();
+        BackspaceSearchText(control);
         return true;
     }
     if (key == VK_DELETE)
     {
-        DeleteSearchText();
+        DeleteSearchText(control);
         return true;
     }
     if (key == VK_LEFT)
     {
+        if (control) { searchCursorPos_ = snowdesktop::text_input::WordBoundary(searchText_, searchCursorPos_, false); if (!shift) searchSelectionAnchor_ = searchCursorPos_; return true; }
         MoveCursorLeft(shift);
         return true;
     }
     if (key == VK_RIGHT)
     {
+        if (control) { searchCursorPos_ = snowdesktop::text_input::WordBoundary(searchText_, searchCursorPos_, true); if (!shift) searchSelectionAnchor_ = searchCursorPos_; return true; }
         MoveCursorRight(shift);
         return true;
     }
@@ -1394,6 +1557,7 @@ void ScrollingItemWidget::SetSearchComposition(
 {
     if (!searchFocused_)
         return;
+    searchComposing_=true;
     searchCompositionText_ = text;
     searchCompositionCursor_ =
         std::min(cursor, text.size());
@@ -1405,15 +1569,19 @@ void ScrollingItemWidget::CommitSearchComposition(
     if (!searchFocused_)
         return;
     ReplaceSearchSelection(text);
+    searchDuplicateImeResult_=text;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
 }
 
 void ScrollingItemWidget::ClearSearchComposition()
 {
+    searchComposing_=false;
     searchCompositionText_.clear();
     searchCompositionCursor_ = 0;
 }
+void ScrollingItemWidget::BeginSearchComposition()
+{searchComposing_=true;searchCompositionText_.clear();searchCompositionCursor_=0;searchDuplicateImeResult_.clear();}
 
 bool ScrollingItemWidget::GetSearchCaretRect(
     RECT& rect) const
@@ -1496,7 +1664,7 @@ void ScrollingItemWidget::DrawSearchBox(ID2D1DeviceContext* context)
     RECT searchRect = GetSearchBoxRect();
     if (IsRectEmptyRect(searchRect)) return;
 
-    const bool light = app_->IsLightContentTheme();
+    const bool light = UsesLightContentTheme();
     const bool hovered =
         PtInRect(&searchRect, app_->lastMousePoint_) != FALSE;
     const bool keyboardSelected =
@@ -1828,7 +1996,7 @@ void ScrollingItemWidget::DrawDetailsHeader(
     if (IsRectEmptyRect(header)) return;
 
     const bool light = lightTheme.value_or(
-        app_->IsLightContentTheme());
+        UsesLightContentTheme());
     RECT separator = MakeRect(
         header.left, header.bottom - 1,
         header.right, header.bottom);
@@ -2043,11 +2211,14 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
         std::max<LONG>(1, textRect.bottom - textRect.top));
     const float layoutScale = GetCellScale();
     const float fontSize = FontCu(app_->listItemFontSizeCu_);
+    const auto fontWeight = static_cast<DWRITE_FONT_WEIGHT>(
+        snowdesktop::font_weight_rules::RenderedWeight(
+            app_->itemFontWeight_, lightTheme));
     const int scaleKey = static_cast<int>(std::round(layoutScale * 1000.0f));
     std::wstring layoutKey = L"list\x1f" + title + L"\x1f" +
         std::to_wstring(textRect.right - textRect.left) + L"x" +
         std::to_wstring(textRect.bottom - textRect.top) + L"@" +
-        std::to_wstring(scaleKey);
+        std::to_wstring(scaleKey) + L"@" + std::to_wstring(fontWeight);
     auto layoutIt = app_->componentListTextLayoutCache_.find(layoutKey);
     if (layoutIt == app_->componentListTextLayoutCache_.end())
     {
@@ -2061,6 +2232,7 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
                 0, static_cast<UINT32>(title.size())
             };
             layout->SetFontSize(fontSize, fullRange);
+            snowdesktop::app_fonts::SetWeight(layout.Get(), fontWeight, fullRange);
             layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -2070,9 +2242,12 @@ void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
             DWRITE_TRIMMING trimming{};
             trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
             ComPtr<IDWriteInlineObject> ellipsis;
+            ComPtr<IDWriteTextFormat> ellipsisFormat;
+            snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI", fontWeight,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &ellipsisFormat);
             if (SUCCEEDED(app_->dwriteFactory_->
                     CreateEllipsisTrimmingSign(
-                        app_->componentListTextFormat_.Get(),
+                        ellipsisFormat ? ellipsisFormat.Get() : app_->componentListTextFormat_.Get(),
                         &ellipsis)) && ellipsis)
                 layout->SetTrimming(&trimming, ellipsis.Get());
             layoutIt = app_->componentListTextLayoutCache_.emplace(
@@ -2104,12 +2279,12 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     bool iconIsMediaThumbnail, std::wstring_view demoIdentity,
     const DesktopWidget* demoCollection,
     const ListItemDetails& details,
-    std::optional<bool> lightTheme) const
+    std::optional<bool> lightTheme, bool drawTitle) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
     const bool light = lightTheme.value_or(
-        app_->IsLightContentTheme());
+        UsesLightContentTheme());
     bool hovered = PtInRect(&cell, app_->lastMousePoint_) != FALSE;
     if (hovered && !selected)
     {
@@ -2145,8 +2320,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             iconBitmap,
             app_->ShouldBeautifyIconBitmap(iconIsMediaThumbnail)))
     {
-        context->DrawBitmap(bmp, app_->ToD2DRect(iconRect), 1.0f,
-            D2D1_INTERPOLATION_MODE_LINEAR);
+        app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
+            reinterpret_cast<std::uintptr_t>(iconBitmap), false);
     }
     else
     {
@@ -2159,8 +2334,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             ? app_->GetDemoCollectionIdentityTitle(
                 *demoCollection, demoIdentity)
             : app_->GetDemoIdentityTitle(demoIdentity));
-    DrawListItemTitle(
-        context, nameCell, iconRect, title, light);
+    if (drawTitle)
+        DrawListItemTitle(context, nameCell, iconRect, title, light);
 
     if (!IsDetailsVisible() || !demoIdentity.empty()) return;
 
@@ -2180,7 +2355,9 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         : RECT{};
 
     IDWriteTextFormat* format = GetCuTextFormatWeight(
-        app_->listItemFontSizeCu_, app_->itemFontWeight_, false);
+        app_->listItemFontSizeCu_, static_cast<DWRITE_FONT_WEIGHT>(
+            snowdesktop::font_weight_rules::RenderedWeight(
+                app_->itemFontWeight_, light)), false);
     if (!format) format = app_->componentListTextFormat_.Get();
     const D2D1_COLOR_F color = light
         ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.66f)
@@ -2237,7 +2414,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                app_->IsLightContentTheme(), true);
+                UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
         return;
     }
 
@@ -2250,7 +2427,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         if (showLabel)
             DrawListItemTitle(
                 context, rect, iconRect, label,
-                app_->IsLightContentTheme());
+                UsesLightContentTheme());
         return;
     }
 
@@ -2259,14 +2436,14 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         std::round(50.0f * layoutScale));
     if (height >= regularLayoutThreshold)
     {
-        RECT iconRect = app_->GetItemIconRect(rect);
+        RECT iconRect = app_->GetItemIconRect(rect, app_->ResolveItemTitleLines(data_));
         if (centerIconVertically)
             iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
                 rect, iconRect);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                app_->IsLightContentTheme(), true);
+                UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
         return;
     }
 
@@ -2294,7 +2471,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
 
     RECT titleRect = MakeRect(rect.left + Cu(1.0f), iconRect.bottom + Cu(2.0f),
         rect.right - Cu(1.0f), rect.bottom);
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = UsesLightContentTheme();
     IDWriteTextFormat* titleFormat = lt
         ? GetCuTextFormatWeight(12.0f, DWRITE_FONT_WEIGHT_LIGHT, true)
         : GetCuTextFormat(12.0f, false, true);
@@ -2431,7 +2608,7 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
         app_->widgetScrollbarDragContainer_ == this;
     DrawScrollbarAt(context, viewport, content,
         visible, GetScrollOffset(), hovered || active,
-        app_->IsLightContentTheme(), GetCellScale());
+        UsesLightContentTheme(), GetCellScale());
 }
 
 // ── Cached clip geometry ─────────────────────────────────────
@@ -2464,7 +2641,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     const bool fixedGuideAppearance =
         data_->type == DesktopWidgetType::Guide;
     const bool lightTheme = fixedGuideAppearance
-        ? true : app_->IsLightContentTheme();
+        ? true : UsesLightContentTheme();
 
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
@@ -2617,9 +2794,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             {
                 auto* dwrite = app_->GetDWriteFactory();
                 auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
-                    std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
-                if (UsesTopTitleBar())
-                    titleWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+                    snowdesktop::font_weight_rules::RenderedWeight(
+                        UsesTopTitleBar() ? DWRITE_FONT_WEIGHT_SEMI_BOLD
+                            : app_->GetItemFontWeight(), lightTheme));
                 IDWriteTextFormat* fmt = GetCuTextFormatWeight(UsesTopTitleBar()
                     ? GetBarHeight() * 18.0f / 34.0f
                     : GetBarHeight() * 0.542f, titleWeight, UsesTopTitleBar());

@@ -91,8 +91,11 @@ JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
         {"keepWhenDesktopHidden", BooleanValue(settings.keepWhenDesktopHidden)},
         {"allowDesktopContentOverlap", BooleanValue(settings.allowDesktopContentOverlap)},
         {"showOnlyWhenSummoned", BooleanValue(settings.showOnlyWhenSummoned)},
+        {"reserveScreenSpace", BooleanValue(settings.reserveScreenSpace)},
         {"frequentItemCount", NumberValue(settings.frequentItemCount)},
         {"thicknessScale", NumberValue(settings.thicknessScale)},
+        {"lastMonitorUseHomeSize", BooleanValue(settings.lastMonitorUseHomeSize)},
+        {"mergedBarHeight", NumberValue(settings.mergedBarHeight)},
     };
     return encoded;
 }
@@ -305,6 +308,8 @@ bool DecodePages(const JsonValue& root, Document& document,
         PageRecord record;
         if (!ReadRequiredString(object, "id", path + ".id",
                 record.id, error) ||
+            !ReadOptionalString(object, "name", path + ".name",
+                record.name, error) ||
             !ReadOptionalInteger(object, "columns", path + ".columns",
                 record.columns, error) ||
             !ReadOptionalInteger(object, "rows", path + ".rows",
@@ -501,6 +506,8 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 path + ".bottomBarHover", record.bottomBarHover, error) ||
             !ReadOptionalBoolean(object, "userRenamed",
                 path + ".userRenamed", record.userRenamed, error) ||
+            !ReadStringArray(object, "categoryTabOrder", path + ".categoryTabOrder",
+                record.categoryTabOrder, error) ||
             !ReadStringArray(object, "items", path + ".items",
                 record.items, error) ||
             !ReadStringArray(object, "childWidgets",
@@ -539,6 +546,9 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
                 record.folderSortAscending, error) ||
             !ReadStringArray(object, "folderItems",
                 path + ".folderItems", record.folderItems, error) ||
+            !ReadBoolean(object, "showSearchBox", path + ".showSearchBox", record.showSearchBox, error) ||
+            !ReadBoolean(object, "showFileCategories", path + ".showFileCategories", record.showFileCategories, error) ||
+            !ReadStringArray(object, "categoryTabOrder", path + ".categoryTabOrder", record.categoryTabOrder, error) ||
             !ReadBoolean(object, "listMode",
                 path + ".listMode", record.listMode, error) ||
             !ReadBoolean(object, "fanPopup", path + ".fanPopup",
@@ -589,7 +599,10 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
         !ReadBoolean(*value, "showFrequentItems", "dockLayout.showFrequentItems", decoded.showFrequentItems, error) ||
         !ReadBoolean(*value, "keepWhenDesktopHidden", "dockLayout.keepWhenDesktopHidden", decoded.keepWhenDesktopHidden, error) ||
         !ReadBoolean(*value, "allowDesktopContentOverlap", "dockLayout.allowDesktopContentOverlap", decoded.allowDesktopContentOverlap, error) ||
-        !ReadBoolean(*value, "showOnlyWhenSummoned", "dockLayout.showOnlyWhenSummoned", decoded.showOnlyWhenSummoned, error))
+        !ReadBoolean(*value, "showOnlyWhenSummoned", "dockLayout.showOnlyWhenSummoned", decoded.showOnlyWhenSummoned, error) ||
+        !ReadBoolean(*value, "lastMonitorUseHomeSize", "dockLayout.lastMonitorUseHomeSize", decoded.lastMonitorUseHomeSize, error) ||
+        !ReadInteger(*value, "mergedBarHeight", "dockLayout.mergedBarHeight", decoded.mergedBarHeight, error) ||
+        !ReadBoolean(*value, "reserveScreenSpace", "dockLayout.reserveScreenSpace", decoded.reserveScreenSpace, error))
         return false;
     if (position < 0 || position > 3)
         return Fail(error, "dockLayout.position", "must be between 0 and 3");
@@ -598,6 +611,8 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
     if (decoded.frequentItemCount < 1 || decoded.frequentItemCount > 8)
         return Fail(error, "dockLayout.frequentItemCount", "must be between 1 and 8");
     decoded.thicknessScale = thickness.value_or(decoded.thicknessScale);
+    if (decoded.mergedBarHeight < 32 || decoded.mergedBarHeight > 96)
+        return Fail(error, "dockLayout.mergedBarHeight", "must be between 32 and 96");
     if (decoded.thicknessScale < kDockMinimumScale || decoded.thicknessScale > kDockMaximumScale)
         return Fail(error, "dockLayout.thicknessScale", "is outside the supported range");
     decoded.position = static_cast<DockPosition>(position);
@@ -649,6 +664,10 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.listItemFontSize, error) ||
         !ReadOptionalFloat(root, "itemFontWeight", "itemFontWeight",
             decoded.itemFontWeight, error) ||
+        !ReadOptionalInteger(root, "desktopTitleLines", "desktopTitleLines", decoded.desktopTitleLines, error) ||
+        !ReadOptionalInteger(root, "largeFolderTitleLines", "largeFolderTitleLines", decoded.largeFolderTitleLines, error) ||
+        !ReadOptionalInteger(root, "scrollingTitleLines", "scrollingTitleLines", decoded.scrollingTitleLines, error) ||
+        !ReadOptionalRootBoolean(root, "titleEllipsis", decoded.titleEllipsis, error) ||
         !ReadOptionalFloat(root, "iconSpacing", "iconSpacing",
             decoded.iconSpacing, error) ||
         !ReadOptionalFloat(root, "componentSpacing", "componentSpacing",
@@ -661,6 +680,16 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.shortcutArrowMode, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",
             decoded.iconBeautifyEnabled, error) ||
+        !ReadOptionalBoolean(root, "iconBeautifyGlassEnabled", "iconBeautifyGlassEnabled",
+            decoded.iconBeautifyGlassEnabled, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyGlassBlurRadius", "iconBeautifyGlassBlurRadius",
+            decoded.iconBeautifyGlassBlurRadius, error) ||
+        !ReadOptionalBoolean(root, "iconBeautifyEdgeHighlightEnabled", "iconBeautifyEdgeHighlightEnabled",
+            decoded.iconBeautifyEdgeHighlightEnabled, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyEdgeHighlightWidth", "iconBeautifyEdgeHighlightWidth",
+            decoded.iconBeautifyEdgeHighlightWidth, error) ||
+        !ReadOptionalFloat(root, "iconBeautifyEdgeHighlightStrength", "iconBeautifyEdgeHighlightStrength",
+            decoded.iconBeautifyEdgeHighlightStrength, error) ||
         !ReadOptionalInteger(root, "iconBeautifyPreset", "iconBeautifyPreset",
             decoded.iconBeautifyPreset, error) ||
         !ReadOptionalInteger(root, "iconBeautifyMode", "iconBeautifyMode",
@@ -755,6 +784,13 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.navTabOrder, error))
     {
         return false;
+    }
+
+    if (const auto* light = root.Find("iconBeautifyEdgeLight"))
+    {
+        EdgeLightSettings value;
+        if (!DecodeEdgeLight(*light, value)) return Fail(error, "iconBeautifyEdgeLight", "has invalid edge-light parameters");
+        decoded.iconBeautifyEdgeLight = value;
     }
 
     // Schema 0 used the same structural fields but had no explicit version.

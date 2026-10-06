@@ -1,6 +1,7 @@
 #include "widget_layout_context.h"
 #include "widget_ui_metrics.h"
 #include "font_cu_rules.h"
+#include "desktop_display_settings.h"
 
 #include <iostream>
 
@@ -181,6 +182,30 @@ void TestLegacyPointSizesMigrateToCuOnce()
     Expect(!ResolveStoredSize(std::nullopt, 9.0f).has_value(),
         "invalid legacy point fields fall back to the caller default");
 }
+
+void TestWeightPercentKeepsLegacySettingsAndCompensationSeparate()
+{
+    using namespace snowdesktop::font_weight_rules;
+    Expect(snowdesktop::DesktopDisplaySettings{}.itemFontWeight == 520 &&
+            FromPercent(100.0) == 520,
+        "new layouts and the percentage reset both use weight 520");
+    Expect(std::abs(ToPercent(600) - 115.38461538461538) < 0.000001,
+        "legacy weight 600 displays its percentage without resetting to 520");
+    // Covers off-preset legacy weights as well as 950, which the old settings
+    // control clipped to 900. Opening and reloading must preserve every value.
+    for (int weight = 100; weight <= 950; ++weight)
+        Expect(FromPercent(ToPercent(weight)) == weight,
+            "every supported saved weight survives percentage round trips");
+    const int storedWeight = 520;
+    Expect(RenderedWeight(storedWeight, true) == 416 &&
+            RenderedWeight(storedWeight, false) == 520 &&
+            storedWeight == 520 && ToPercent(storedWeight) == 100.0,
+        "foreground compensation changes rendering only, including theme switches");
+    Expect(RenderedWeight(600, true) == 480 &&
+            RenderedWeight(100, true) == 80 &&
+            RenderedWeight(950, true) == 760,
+        "dark text scales by 0.8 instead of subtracting a fixed weight");
+}
 }
 
 int main()
@@ -192,6 +217,7 @@ int main()
     TestReferencePixelsUseTheManifestDefaultShortEdge();
     TestSemanticUiMetricsUseRowHeightAndPageCu();
     TestLegacyPointSizesMigrateToCuOnce();
+    TestWeightPercentKeepsLegacySettingsAndCompensationSeparate();
     if (failures == 0)
         std::cout << "Widget layout context tests passed\n";
     return failures == 0 ? 0 : 1;

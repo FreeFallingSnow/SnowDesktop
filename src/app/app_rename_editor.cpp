@@ -1,10 +1,11 @@
+#include "../app_font.h"
 #include "app.h"
 
 // Native rename editor creation.
 
 void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
 {
-    if (renameEdit_ != nullptr ||
+    if (renameController_.IsActive() ||
         widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping ||
         memberIndex >= widgets_[widgetIndex].folderEntries.size())
@@ -22,48 +23,50 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
         renameController_.Reset();
         return;
     }
-    InflateRect(&rect, 2, 2);
+    const float renameScale = GetGridCuScaleForBounds(gridPages_, rect);
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    InflateRect(&rect, renameMargin, 0);
     RECT screenRect = rect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
     const size_t owner = ResolveRenameVisibilityWidgetIndex(widgetIndex);
-    const DWORD style = snowdesktop::rename_edit_layout::EditStyle(
-        owner < widgets_.size() && widgets_[owner].listMode);
-    renameEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        L"EDIT", widgets_[widgetIndex].folderEntries[memberIndex].name.c_str(), style,
+    const bool listMode = owner < widgets_.size() && widgets_[owner].listMode;
+    const DWORD style = snowdesktop::rename_edit_layout::EditStyle(listMode, !listMode);
+    renameInputWindow_ = CreateWindowExW( WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        snowdesktop::text_input::WindowClass(), widgets_[widgetIndex].folderEntries[memberIndex].name.c_str(), style,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
 
-    if (!renameEdit_)
+    if (!renameInputWindow_)
     {
         renameController_.Reset();
         return;
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetGridCuScaleForBounds(
-        gridPages_, rect);
     renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
         ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    SendMessageW(renameEdit_, WM_SETFONT,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+    SendMessageW(renameInputWindow_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
-    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+    SendMessageW(renameInputWindow_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(renameMargin, renameMargin));
-    SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
+    SetWindowSubclass(renameInputWindow_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
-    renameEditLayout_.Begin(renameEdit_);
-    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+    snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
+    snowdesktop::text_input::SetPadding(renameInputWindow_,
+        static_cast<float>(renameMargin), 4.0f * renameScale);
+    renameEditLayout_.Begin(renameInputWindow_);
+    SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    SendMessageW(renameEdit_, EM_SETSEL, 0,
+    SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
             widgets_[widgetIndex].folderEntries[memberIndex].name,
             widgets_[widgetIndex].folderEntries[memberIndex].isDirectory));
-    SetFocus(renameEdit_);
+    SetFocus(renameInputWindow_);
     const size_t visibilityWidgetIndex =
         ResolveRenameVisibilityWidgetIndex(widgetIndex);
     if (visibilityWidgetIndex < widgets_.size())
@@ -119,15 +122,15 @@ bool DesktopApp::BeginDockAnchoredRename(
                 desiredWidth, desiredHeight,
                 gap, monitorMargin);
 
-    renameEdit_ = CreateWindowExW(
-        WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        L"EDIT", text.c_str(),
+    renameInputWindow_ = CreateWindowExW(
+         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        snowdesktop::text_input::WindowClass(), text.c_str(),
         snowdesktop::rename_edit_layout::EditStyle(),
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left,
         screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
-    if (!renameEdit_)
+    if (!renameInputWindow_)
         return false;
 
     if (renameFont_)
@@ -141,18 +144,18 @@ bool DesktopApp::BeginDockAnchoredRename(
         FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    SendMessageW(renameEdit_, WM_SETFONT,
+        DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+    SendMessageW(renameInputWindow_, WM_SETFONT,
         reinterpret_cast<WPARAM>(
             renameFont_ ? renameFont_
                 : GetStockObject(DEFAULT_GUI_FONT)),
         TRUE);
     const int editMargin = std::max(
         3, MulDiv(5, static_cast<int>(dpiX), 96));
-    SendMessageW(renameEdit_, EM_SETMARGINS,
+    SendMessageW(renameInputWindow_, EM_SETMARGINS,
         EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(editMargin, editMargin));
-    SetWindowSubclass(renameEdit_,
+    SetWindowSubclass(renameInputWindow_,
         &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
     using snowdesktop::rename_edit_layout::HeightAnchor;
@@ -160,12 +163,13 @@ bool DesktopApp::BeginDockAnchoredRename(
         ? HeightAnchor::Bottom
         : dockSettings_.position == DockPosition::Top
             ? HeightAnchor::Top : HeightAnchor::Center;
-    renameEditLayout_.Begin(renameEdit_, heightAnchor);
-    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+    snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
+    renameEditLayout_.Begin(renameInputWindow_, heightAnchor);
+    SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    SendMessageW(renameEdit_, EM_SETSEL,
+    SendMessageW(renameInputWindow_, EM_SETSEL,
         0, selectionEnd);
-    SetFocus(renameEdit_);
+    SetFocus(renameInputWindow_);
     return true;
 }
 
@@ -175,7 +179,7 @@ void DesktopApp::
 BeginRenameDockFolderPopupEntry(
     size_t memberIndex)
 {
-    if (renameEdit_ != nullptr ||
+    if (renameController_.IsActive() ||
         !dockFolderPopupOpen_ ||
         memberIndex >=
             dockFolderPopupWidget_.
@@ -202,14 +206,17 @@ BeginRenameDockFolderPopupEntry(
         GetCollectionPopupItemRect(
             popup, memberIndex);
     RECT rect =
-        GetCollectionPopupItemTextRect(
-            itemRect);
+        UsesCollectionPopupList(dockFolderPopupWidget_)
+            ? GetCollectionPopupItemTextRect(itemRect)
+            : GetItemRenameRect(itemRect, ResolveItemTitleLines(&dockFolderPopupWidget_));
     if (IsRectEmptyRect(rect))
     {
         renameController_.Reset();
         return;
     }
-    InflateRect(&rect, 2, 2);
+    const float renameScale = GetGridCuScaleForBounds(gridPages_, itemRect);
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    InflateRect(&rect, renameMargin, 0);
     RECT screenRect = rect;
     MapWindowPoints(
         hwnd_, nullptr,
@@ -217,12 +224,12 @@ BeginRenameDockFolderPopupEntry(
             &screenRect), 2);
 
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(
-        UsesCollectionPopupList(dockFolderPopupWidget_));
-    renameEdit_ = CreateWindowExW(
-        WS_EX_CLIENTEDGE |
+        UsesCollectionPopupList(dockFolderPopupWidget_),
+        !UsesCollectionPopupList(dockFolderPopupWidget_));
+    renameInputWindow_ = CreateWindowExW(
             WS_EX_TOOLWINDOW |
             WS_EX_TOPMOST,
-        L"EDIT", entry.name.c_str(),
+        snowdesktop::text_input::WindowClass(), entry.name.c_str(),
         style,
         screenRect.left,
         screenRect.top,
@@ -231,7 +238,7 @@ BeginRenameDockFolderPopupEntry(
         screenRect.bottom -
             screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
-    if (!renameEdit_)
+    if (!renameInputWindow_)
     {
         renameController_.Reset();
         return;
@@ -239,8 +246,6 @@ BeginRenameDockFolderPopupEntry(
 
     if (renameFont_)
         DeleteObject(renameFont_);
-    const float renameScale =
-        GetGridCuScaleForBounds(gridPages_, itemRect);
     renameFont_ = CreateFontW(
         -std::max(
             1, static_cast<int>(
@@ -254,43 +259,43 @@ BeginRenameDockFolderPopupEntry(
         CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE,
-        L"Segoe UI");
+        snowdesktop::app_fonts::GdiFamily().c_str());
     SendMessageW(
-        renameEdit_, WM_SETFONT,
+        renameInputWindow_, WM_SETFONT,
         reinterpret_cast<WPARAM>(
             renameFont_
                 ? renameFont_
                 : GetStockObject(
                     DEFAULT_GUI_FONT)),
         TRUE);
-    const int renameMargin =
-        std::max(
-            1, static_cast<int>(
-                std::round(
-                    6.0f * renameScale)));
     SendMessageW(
-        renameEdit_, EM_SETMARGINS,
+        renameInputWindow_, EM_SETMARGINS,
         EC_LEFTMARGIN |
             EC_RIGHTMARGIN,
         MAKELPARAM(
             renameMargin,
             renameMargin));
     SetWindowSubclass(
-        renameEdit_,
+        renameInputWindow_,
         &DesktopApp::
             RenameEditSubclassProc,
         1,
         reinterpret_cast<DWORD_PTR>(
             this));
-    renameEditLayout_.Begin(renameEdit_);
-    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+    snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
+    snowdesktop::text_input::SetPadding(renameInputWindow_,
+        static_cast<float>(renameMargin), 4.0f * renameScale);
+    renameEditLayout_.Begin(renameInputWindow_);
+    SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(
-        renameEdit_, EM_SETSEL, 0,
+        renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
             entry.name,
             entry.isDirectory));
-    SetFocus(renameEdit_);
+    SetFocus(renameInputWindow_);
+    InvalidateCollectionPopupContent();
+    InvalidateFloatingPopupWindow(false);
 }
 
 LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
@@ -308,6 +313,8 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
             return 0;
         break;
     case WM_ACTIVATE:
+        if (snowdesktop::text_input::HasEditingMenu(hwnd))
+            break;
         if (app->renameController_.
                 IsQuickNavigationPresentation() &&
             LOWORD(wParam) == WA_INACTIVE)
@@ -331,10 +338,15 @@ LRESULT CALLBACK DesktopApp::RenameEditSubclassProc(
         }
         break;
     case WM_KEYDOWN:
+        if (snowdesktop::text_input::IsComposing(hwnd))
+            break;
         if (wParam == VK_RETURN) { app->CommitRename(false); return 0; }
         if (wParam == VK_ESCAPE) { app->CommitRename(true); return 0; }
         break;
     case WM_KILLFOCUS:
+        if (snowdesktop::text_input::HasEditingMenu(hwnd))
+            return 0;
+        snowdesktop::text_input::CompleteComposition(hwnd);
         if (!app->renameCommitPending_)
         {
             app->renameCommitPending_ = true;

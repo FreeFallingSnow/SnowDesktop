@@ -77,27 +77,27 @@
     },
     {
       "file": "paste-native-light",
-      "metadata": "Microsoft Fluent System Icons Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete official Regular outer and inner subpaths recolored together as a hollow outline. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "7ec03ff35057168bdd570a0dc8a431adb676b19a247913c234483b84e077f40d",
-      "pngSha256": "7cf84014b9f9df809f2d6660681436e5e114c0f6a1b2078896c4b847134e7188"
+      "metadata": "Microsoft Fluent System Icons Clipboard 24 Filled + Regular and Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete Clipboard paths translated -1 on x align the rear board behind the original paste paper and clip surfaces. White board, paper and clip surfaces; neutral outlines and blue paper border. Original path geometry preserved verbatim. Context-menu artwork.",
+      "svgSha256": "2559e66a06438027e72844d4c84fcc23ddfee3801a6d92aa02ae035964b9a1a0",
+      "pngSha256": "323d6586e26482ed01a99fe412f35cf33b42cc7c77cae317d741969b8f413f52"
     },
     {
       "file": "paste-native-dark",
-      "metadata": "Microsoft Fluent System Icons Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete official Regular outer and inner subpaths recolored together as a hollow outline. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "25fdd3c49a8a778d31445161d0a75794c512fbb939bd28479bba59565cd1c72b",
-      "pngSha256": "3af595a2c3e54654e57d7a2f5ba138d573e860a6e7e9bd515190beef6b696b27"
+      "metadata": "Microsoft Fluent System Icons Clipboard 24 Filled + Regular and Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete Clipboard paths translated -1 on x align the rear board behind the original paste paper and clip surfaces. Graphite board, paper and clip surfaces; neutral outlines and blue paper border. Original path geometry preserved verbatim. Context-menu artwork.",
+      "svgSha256": "d589124f8bb709f3f9a78023f5af005354e4f4136344e03e9491513d9c3d2a63",
+      "pngSha256": "8a196424379be0736514b65434ce861917a03ed510aa47f69d51b8eddeea3e29"
     },
     {
       "file": "new-item-native-light",
-      "metadata": "Microsoft Fluent System Icons Add Circle 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "12623e9c341c33c404b3590a303bd8368f320c746d543f9beb1c3114784936b2",
-      "pngSha256": "a52279b5e23c67c260effe1e8bd6f8aa5811845aafc98c390924eca372292a9f"
+      "metadata": "Microsoft Fluent System Icons Add Circle 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete original closed inner subpaths provide white circle interior surface with neutral circle outline and blue plus. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "eb21530d4e7898e009b2aa39f67a4a15a95e5a78e09fa48f8ec200bccec54815",
+      "pngSha256": "3399289f532d5ad0d8ccb369af5615b9761ba976c50fb06ea6edd1e404a73549"
     },
     {
       "file": "new-item-native-dark",
-      "metadata": "Microsoft Fluent System Icons Add Circle 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "7d833181e7956db755026fd504c905650660df5bc2168768b87274526e0fe12f",
-      "pngSha256": "4207d22501377bcda387689e001be30a37f00005f7d3c128828560eb1979b9f2"
+      "metadata": "Microsoft Fluent System Icons Add Circle 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete original closed inner subpaths provide graphite circle interior surface with neutral circle outline and blue plus. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "9cfd78fa1942c84c861884e5c550e5bf75ec5b033602949414b8d8297e2c6216",
+      "pngSha256": "d1513fe175594cf3d5c5ad97f4468b58442ace71ef85d60ced316fb35eb0845f"
     },
     {
       "file": "refresh-native-light",

@@ -107,6 +107,32 @@ int main()
             cache.Bytes() == 0,
         "decoded pixels must remain until their last handle is released");
 
+    // resource.image rejects malformed package revisions before creating a
+    // releasable handle. Repeated reloads must not retain every failed digest,
+    // while recent failures still avoid decoding and active images stay alive.
+    const auto* retained = cache.Acquire("retained-source", first.wstring());
+    Check(retained != nullptr, "active source must exist during negative-cache churn");
+    for (int revision = 0; revision < 2048; ++revision)
+    {
+        Check(!cache.Acquire("invalid-revision-" + std::to_string(revision),
+                invalid.wstring(), &acquireError) &&
+                acquireError == PackageImageAcquireError::DecodeFailed,
+            "each malformed revision must still report a decode failure");
+    }
+    Check(!cache.Failed("invalid-revision-0") &&
+            cache.Failed("invalid-revision-2047") &&
+            cache.Find("retained-source") == retained &&
+            cache.ReferenceCount("retained-source") == 1 && cache.Bytes() == 4,
+        "old failed digests must expire without evicting active decoded images");
+    Check(!cache.Acquire("invalid-revision-2047", first.wstring()) &&
+            cache.Acquire("invalid-revision-0", first.wstring()) &&
+            cache.Release("invalid-revision-0") && cache.Release("retained-source"),
+        "recent failures remain cached while evicted failures can decode again");
+    cache.Clear();
+    Check(!cache.Failed("invalid-revision-2047") &&
+            !cache.Acquire("after-clear", invalid.wstring()) && cache.Failed("after-clear"),
+        "clear must reset the negative-entry eviction order for subsequent loads");
+
     WidgetPackageImageCache quotaCache(4, 4);
     WriteBitmap(first, 0xff336699u);
     Check(quotaCache.Acquire("quota-first", first.wstring()) &&

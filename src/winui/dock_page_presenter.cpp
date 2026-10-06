@@ -4,8 +4,12 @@
 #include "settings_presenter_controls.h"
 #include "appearance_sections.h"
 #include "panel_gradient_editor.h"
+#include "panel_appearance_editor.h"
+#include "merged_bar_height_editor.h"
 
 #include "../dock_settings.h"
+#include "../taskbar_appearance.h"
+#include "theme_library_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -116,6 +120,7 @@ struct TaskbarGradientControl
     AppearanceSections sections;
     std::shared_ptr<PanelGradientEditor> editor;
     bool enabled = false;
+    std::shared_ptr<PanelAppearanceEditor> borderEditor;
 };
 
 struct DynamicRuleControl
@@ -142,6 +147,7 @@ struct DynamicRuleControl
     ContinuousControl blurRadius;
     muxc::ToggleSwitch acrylic{nullptr};
     SettingRow acrylicRow;
+    std::unique_ptr<ThemeLibraryControls> savedThemes;
     SystemTaskbarDynamicRule DockSettings::* member = nullptr;
 
     winrt::event_token enabledToken{};
@@ -154,6 +160,8 @@ struct DynamicRuleControl
 struct ConfirmationGate
 {
     std::atomic_bool alive{true};
+    std::atomic_bool active{false};
+    std::atomic_bool confirmationPending{false};
     std::atomic<std::uint64_t> generation{0};
 };
 
@@ -250,7 +258,7 @@ int PresetForTaskbarMode(SystemTaskbarThemeMode mode) noexcept
     }
 }
 
-void ApplyMainTaskbarTheme(DockSettings& settings, int selectedIndex)
+void ApplyMainTaskbarTheme(DockSettings& settings, int selectedIndex, const PersonalizationSettings& global)
 {
     const auto mode = static_cast<SystemTaskbarThemeMode>(std::clamp(
         selectedIndex,
@@ -279,15 +287,7 @@ void ApplyMainTaskbarTheme(DockSettings& settings, int selectedIndex)
             PresetForTaskbarMode(mode));
         break;
     case SystemTaskbarThemeMode::Custom:
-        settings.systemTaskbarBackdropEnabled = true;
-        settings.systemTaskbarFollowPersonalization = false;
-        settings.systemTaskbarAppearance.backgroundPreset =
-            kAppearancePresetCustom;
-        if (settings.systemTaskbarContentTheme < 0)
-        {
-            settings.systemTaskbarContentTheme = std::clamp(
-                settings.systemTaskbarAppearance.contentTheme, 0, 1);
-        }
+        SelectTaskbarCustomAppearance(settings, global);
         break;
     case SystemTaskbarThemeMode::Transparent:
         settings.systemTaskbarBackdropEnabled = true;
@@ -299,20 +299,6 @@ void ApplyMainTaskbarTheme(DockSettings& settings, int selectedIndex)
     }
 }
 
-void PrepareDynamicRuleTheme(
-    SystemTaskbarDynamicRule& rule,
-    SystemTaskbarThemeMode mode)
-{
-    const SystemTaskbarThemeMode previous = rule.themeMode;
-    rule.themeMode = mode;
-    if (mode != SystemTaskbarThemeMode::Custom)
-        return;
-
-    const int preset = PresetForTaskbarMode(previous);
-    if (preset >= 0)
-        rule.appearance = MakeAppearancePreset(preset);
-    rule.appearance.backgroundPreset = kAppearancePresetCustom;
-}
 
 } // namespace
 
@@ -343,6 +329,12 @@ struct DockPagePresenter::Impl
     mux::Media::Animation::Storyboard cardHighlightAnimation{nullptr};
     LocalizeCallback localize;
     DockPageActions actions;
+    std::unique_ptr<MergedBarHeightEditor> mergedHeight;
+    BarSettingsAvailability barAvailability;
+    muxc::ToggleSwitch homeSize;
+    presenter_controls::SettingRow homeSizeRow;
+    muxc::ComboBox taskbarMode;
+    winrt::event_token homeSizeToken{}, taskbarModeToken{};
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel dockEnableRoot{nullptr};
@@ -355,8 +347,11 @@ struct DockPagePresenter::Impl
     SettingsCard behaviorCard;
     SettingsCard taskbarCard;
     SettingsCard taskbarAppearanceCard;
+    std::unique_ptr<ThemeLibraryControls> taskbarThemes;
     SettingsCard taskbarRulesCard;
     SettingsCard taskbarSystemPanelCard;
+    muxc::Button dockPreview, taskbarPreview;
+    winrt::event_token dockPreviewToken{}, taskbarPreviewToken{};
 
     muxc::ToggleSwitch dockEnabledToggle{nullptr};
     muxc::ComboBox positionCombo{nullptr};
@@ -365,10 +360,14 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch floatingShortcutToggle{nullptr};
     muxc::TextBlock floatingShortcutHint{nullptr};
     muxc::ToggleSwitch floatingEdgeSwipeToggle{nullptr};
+    muxc::ComboBox edgeRevealGesture{nullptr};
+    muxc::ToggleSwitch windowPreviews{nullptr};
     muxc::ToggleSwitch fullscreenSwipeToggle{nullptr};
     muxc::TextBlock floatingEdgeSwipeHint{nullptr};
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
+    muxc::ToggleSwitch taskbarSuppressToggle{nullptr};
+    muxc::ToggleSwitch reserveScreenSpaceToggle{nullptr};
     muxc::InfoBar suppressionStatus{nullptr};
     muxc::ToggleSwitch showFrequentItemsToggle{nullptr};
     muxc::ToggleSwitch keepWhenDesktopHiddenToggle{nullptr};
@@ -400,9 +399,12 @@ struct DockPagePresenter::Impl
     SettingRow layoutRow;
     SettingRow monitorScopeRow;
     SettingRow floatingEdgeSwipeRow;
+    SettingRow edgeRevealGestureRow, windowPreviewsRow;
     SettingRow fullscreenSwipeRow;
     SettingRow showWindowsButtonRow;
     SettingRow suppressTaskbarRow;
+    SettingRow taskbarSuppressRow;
+    SettingRow reserveScreenSpaceRow;
     SettingRow showFrequentItemsRow;
     SettingRow allowDesktopContentOverlapRow;
     SettingRow showOnlyWhenSummonedRow;
@@ -433,12 +435,14 @@ struct DockPagePresenter::Impl
     std::uint64_t generation = 0;
     std::uint64_t generalRevision = 0;
     std::uint64_t dockRevision = 0;
+    PersonalizationSettings globalAppearance;
     bool hasSnapshot = false;
     bool updatingControls = false;
     bool synchronizingPair = false;
     bool taskbarContentThemeCustomItems = false;
     bool taskbarHookRequired = false;
     bool taskbarInputReady = false;
+    bool spaceReservedByStatusBar = false;
     int windowsSystemThemeValue = 0;
     int taskbarContentThemeValue = -1;
     int taskbarAppearanceContentThemeValue = 0;
@@ -451,9 +455,12 @@ struct DockPagePresenter::Impl
     winrt::event_token monitorScopeToken{};
     winrt::event_token floatingShortcutToken{};
     winrt::event_token floatingEdgeSwipeToken{};
+    winrt::event_token edgeRevealGestureToken{}, windowPreviewsToken{};
     winrt::event_token fullscreenSwipeToken{};
     winrt::event_token showWindowsButtonToken{};
     winrt::event_token suppressTaskbarToken{};
+    winrt::event_token taskbarSuppressToken{};
+    winrt::event_token reserveScreenSpaceToken{};
     winrt::event_token showFrequentItemsToken{};
     winrt::event_token keepWhenDesktopHiddenToken{};
     winrt::event_token allowDesktopContentOverlapToken{};
@@ -527,9 +534,10 @@ struct DockPagePresenter::Impl
         dockEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         enableCard.content.Children().Append(dockEnabledRow.root);
 
+        InitializeCard(layoutCard, cardStyle, dockRoot);
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
         InitializeCard(behaviorCard, cardStyle, dockRoot);
-        InitializeCard(layoutCard, cardStyle, dockRoot);
+        layoutCard.content.Children().Append(dockPreview);
         positionCombo = NewCombo();
         layoutCombo = NewCombo();
         monitorScopeCombo = NewCombo();
@@ -543,12 +551,25 @@ struct DockPagePresenter::Impl
         layoutCard.content.Children().Append(monitorScopeRow.root);
         layoutCard.content.Children().Append(layoutRow.root);
         layoutCard.content.Children().Append(thicknessScale.root);
+        mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
+        layoutCard.content.Children().Append(mergedHeight->Content());
+        homeSizeRow.Initialize(homeSize);
+        homeSizeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(homeSizeRow.root);
+        homeSizeToken = homeSize.Toggled([this](const auto&, const auto&) {
+            const bool enabled = homeSize.IsOn();
+            EmitDock(SettingsUpdateMode::PreviewAndCommit, [enabled](DockSettings& value) { value.lastMonitorUseHomeSize = enabled; });
+        });
 
         floatingShortcutToggle = muxc::ToggleSwitch{};
         floatingEdgeSwipeToggle = muxc::ToggleSwitch{};
+        edgeRevealGesture = NewCombo();
+        windowPreviews = muxc::ToggleSwitch{};
         fullscreenSwipeToggle = muxc::ToggleSwitch{};
         showWindowsButtonToggle = muxc::ToggleSwitch{};
         suppressTaskbarToggle = muxc::ToggleSwitch{};
+        taskbarSuppressToggle = muxc::ToggleSwitch{};
+        reserveScreenSpaceToggle = muxc::ToggleSwitch{};
         showFrequentItemsToggle = muxc::ToggleSwitch{};
         keepWhenDesktopHiddenToggle = muxc::ToggleSwitch{};
         allowDesktopContentOverlapToggle = muxc::ToggleSwitch{};
@@ -569,6 +590,9 @@ struct DockPagePresenter::Impl
         floatingShortcutHint = NewHint();
         floatingEdgeSwipeHint = NewHint();
         floatingEdgeSwipeRow.Initialize(floatingEdgeSwipeToggle);
+        edgeRevealGestureRow.Initialize(edgeRevealGesture);
+        windowPreviewsRow.Initialize(windowPreviews);
+        windowPreviewsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenSwipeRow.Initialize(fullscreenSwipeToggle);
         fullscreenSwipeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
@@ -593,14 +617,18 @@ struct DockPagePresenter::Impl
         // Floating shortcut mode/hotkey is rendered once by General.
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
         edgeSwipeCard.content.Children().Append(fullscreenSwipeRow.root);
-        behaviorCard.content.Children().Append(
-            allowDesktopContentOverlapRow.root);
-        behaviorCard.content.Children().Append(showOnlyWhenSummonedRow.root);
-        behaviorCard.content.Children().Append(suppressTaskbarRow.root);
+        edgeSwipeCard.content.Children().InsertAt(0, showOnlyWhenSummonedRow.root);
+        edgeSwipeCard.content.Children().InsertAt(2, edgeRevealGestureRow.root);
+        reserveScreenSpaceRow.Initialize(reserveScreenSpaceToggle);
+        reserveScreenSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        behaviorCard.content.Children().Append(reserveScreenSpaceRow.root);
+        behaviorCard.content.Children().Append(allowDesktopContentOverlapRow.root);
+
         suppressionStatus = muxc::InfoBar{};
         suppressionStatus.IsClosable(false);
         suppressionStatus.IsOpen(false);
         behaviorCard.content.Children().Append(suppressionStatus);
+        behaviorCard.content.Children().Append(windowPreviewsRow.root);
         behaviorCard.content.Children().Append(showWindowsButtonRow.root);
         behaviorCard.content.Children().Append(showFrequentItemsRow.root);
         behaviorCard.content.Children().Append(frequentItemCount.root);
@@ -622,6 +650,15 @@ struct DockPagePresenter::Impl
         // remains outside the 1:1 legacy surface.
 
         InitializeCard(taskbarCard, cardStyle, taskbarRoot);
+        taskbarSuppressRow.Initialize(taskbarMode);
+        taskbarModeToken = taskbarMode.SelectionChanged([this](const auto&, const auto&) {
+            if (updatingControls) return;
+            const int mode = taskbarMode.SelectedIndex();
+            if (mode < 0 || (mode == 2 && !dockEnabledToggle.IsOn())) return;
+            EmitDock(SettingsUpdateMode::PreviewAndCommit, [mode](DockSettings& value) { SetTaskbarDisplayMode(value, mode); });
+        });
+        taskbarSuppressRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        taskbarCard.content.Children().Append(taskbarSuppressRow.root);
         taskbarSettingsLink = muxc::HyperlinkButton{};
         taskbarSettingsLink.UseSystemFocusVisuals(true);
         taskbarSettingsRow.Initialize(taskbarSettingsLink);
@@ -629,14 +666,17 @@ struct DockPagePresenter::Impl
         taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
         InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot);
+        taskbarAppearanceCard.content.Children().Append(taskbarPreview);
         taskbarThemeCombo = NewCombo();
+        taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar", false, taskbarThemeCombo, 10, 8);
         taskbarContentThemeCombo = NewCombo();
-        taskbarThemeRow.Initialize(taskbarThemeCombo);
+        taskbarThemeRow.Initialize(taskbarThemes->SelectionContent());
         taskbarContentThemeRow.Initialize(taskbarContentThemeCombo);
         taskbarRuntimeStatus = muxc::InfoBar{};
         taskbarRuntimeStatus.IsClosable(false);
         taskbarRuntimeStatus.IsOpen(false);
         taskbarAppearanceCard.content.Children().Append(taskbarThemeRow.root);
+        taskbarAppearanceCard.content.Children().Append(taskbarThemes->Content());
         taskbarAppearanceCard.content.Children().Append(
             taskbarContentThemeRow.root);
         taskbarAppearanceCard.content.Children().Append(taskbarRuntimeStatus);
@@ -668,12 +708,12 @@ struct DockPagePresenter::Impl
         taskbarAcrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         InitializeTaskbarGradient(taskbarGradient, taskbarCustomAppearance);
         taskbarGradient.sections.colors.Children().Append(taskbarBackgroundColor.root);
-        taskbarGradient.sections.border.Children().Append(taskbarBorderColor.root);
         taskbarGradient.sections.colors.Children().Append(taskbarBackgroundAlpha.root);
-        taskbarGradient.sections.border.Children().Append(taskbarBorderAlpha.root);
         taskbarGradient.sections.material.Children().Append(taskbarGlassRow.root);
         taskbarGradient.sections.material.Children().Append(taskbarBlurRadius.root);
         taskbarGradient.sections.material.Children().Append(taskbarAcrylicRow.root);
+        taskbarCustomAppearance.Children().Append(taskbarThemes->SaveContent());
+        taskbarThemes->SetCustomContent({taskbarCustomAppearance});
         taskbarAppearanceCard.content.Children().Append(
             taskbarCustomAppearance);
 
@@ -853,7 +893,25 @@ struct DockPagePresenter::Impl
         const muxc::StackPanel& parent,
         SystemTaskbarDynamicRule DockSettings::* member = nullptr)
     {
-        control.sections.Initialize(parent, false, false, false);
+        control.sections.Initialize(parent, true, false, false);
+        control.borderEditor = PanelAppearanceEditor::Create(
+            [this](auto key) { return L(key, L""); },
+            [this, member](const PersonalizationSettings& value, bool commit) {
+                EmitDock(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [member, value](DockSettings& settings) {
+                        auto& appearance = member ? (settings.*member).appearance : settings.systemTaskbarAppearance;
+                        appearance.widgetBorderR = value.widgetBorderR;
+                        appearance.widgetBorderG = value.widgetBorderG;
+                        appearance.widgetBorderB = value.widgetBorderB;
+                        appearance.widgetBorderAlpha = value.widgetBorderAlpha;
+                        appearance.widgetBorderWidth = value.widgetBorderWidth;
+                        appearance.widgetEdgeHighlightEnabled = value.widgetEdgeHighlightEnabled;
+                        appearance.widgetEdgeHighlightWidth = value.widgetEdgeHighlightWidth;
+                        appearance.widgetEdgeHighlightStrength = value.widgetEdgeHighlightStrength;
+                        appearance.edgeLight = value.edgeLight;
+                    });
+            }, true);
+        control.sections.border.Children().Append(control.borderEditor->Content());
         control.editor = PanelGradientEditor::Create(
             [this](auto key) { return L(key, L""); },
             [this, &control, member](const PanelGradient& gradient, bool commit) {
@@ -906,7 +964,6 @@ struct DockPagePresenter::Impl
         control.details.Spacing(12.0);
         control.details.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
-        control.themeRow.Initialize(control.theme);
         control.contentThemeRow.Initialize(control.contentTheme);
         // The always-visible scenario switch discloses its appearance editors.
         control.details.Children().Append(control.enabledRow.root);
@@ -914,7 +971,12 @@ struct DockPagePresenter::Impl
         control.appearanceDetails.Spacing(12.0);
         control.appearanceDetails.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
+        const std::string target = member == &DockSettings::systemTaskbarShellUi ? "taskbar/shellUi" :
+            member == &DockSettings::systemTaskbarMaximizedWindow ? "taskbar/maximizedWindow" : "taskbar/visibleWindow";
+        control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.theme, 10, 8);
+        control.themeRow.Initialize(control.savedThemes->SelectionContent());
         control.appearanceDetails.Children().Append(control.themeRow.root);
+        control.appearanceDetails.Children().Append(control.savedThemes->Content());
         control.appearanceDetails.Children().Append(
             control.contentThemeRow.root);
 
@@ -943,12 +1005,12 @@ struct DockPagePresenter::Impl
         control.acrylicRow.Initialize(control.acrylic);
         control.acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         control.gradient.sections.colors.Children().Append(control.backgroundColor.root);
-        control.gradient.sections.border.Children().Append(control.borderColor.root);
         control.gradient.sections.colors.Children().Append(control.backgroundAlpha.root);
-        control.gradient.sections.border.Children().Append(control.borderAlpha.root);
         control.gradient.sections.material.Children().Append(control.glassRow.root);
         control.gradient.sections.material.Children().Append(control.blurRadius.root);
         control.gradient.sections.material.Children().Append(control.acrylicRow.root);
+        control.customAppearance.Children().Append(control.savedThemes->SaveContent());
+        control.savedThemes->SetCustomContent({control.customAppearance});
         control.appearanceDetails.Children().Append(control.customAppearance);
         control.details.Children().Append(control.appearanceDetails);
         control.root.Children().Append(control.details);
@@ -1020,6 +1082,13 @@ struct DockPagePresenter::Impl
 
     void HookEvents()
     {
+        const auto preview = [this](std::string target) {
+            if (!CanEmitDock() || !actions.previewAppearance) return;
+            CommitContinuousEdits(); CommitOpenColorEditors(); mergedHeight->Flush();
+            actions.previewAppearance(generation, std::move(target));
+        };
+        dockPreviewToken = dockPreview.Click([preview](const auto&, const auto&) { preview("dock"); });
+        taskbarPreviewToken = taskbarPreview.Click([preview](const auto&, const auto&) { preview("taskbar"); });
         taskbarRootLoadedToken = taskbarRoot.Loaded(
             [this](const auto&, const auto&) {
                 if (closed)
@@ -1029,15 +1098,23 @@ struct DockPagePresenter::Impl
             });
         dockEnabledToken = dockEnabledToggle.Toggled(
             [this](const auto&, const auto&) {
-                UpdateDependentStates();
+                if (!CanEmitGeneral()) return;
                 const bool value = dockEnabledToggle.IsOn();
-                const bool highlight = value && CanEmitGeneral();
+                if (!value)
+                {
+                    updatingControls = true;
+                    dockEnabledToggle.IsOn(true);
+                    updatingControls = false;
+                    UpdateDependentStates();
+                    ConfirmDisableDock();
+                    return;
+                }
                 EmitGeneral(SettingsUpdateMode::PreviewAndCommit,
                     [value](GeneralSettings& settings) {
                         settings.dockEnabled = value;
                     });
-                if (highlight) HighlightEnabledDockCards();
-                else if (!value) StopCardHighlights();
+                UpdateDependentStates();
+                HighlightEnabledDockCards();
             });
         positionToken = positionCombo.SelectionChanged(
             [this](const auto&, const auto&) {
@@ -1091,6 +1168,16 @@ struct DockPagePresenter::Impl
                                 settings.showOnlyWhenSummoned);
                     });
             });
+        edgeRevealGestureToken = edgeRevealGesture.SelectionChanged([this](const auto&, const auto&) {
+            const int value = edgeRevealGesture.SelectedIndex();
+            if (value >= 0) EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                [value](DockSettings& settings) { settings.edgeRevealGesture = value; });
+        });
+        windowPreviewsToken = windowPreviews.Toggled([this](const auto&, const auto&) {
+            const bool value = windowPreviews.IsOn();
+            EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                [value](DockSettings& settings) { settings.showWindowPreviews = value; });
+        });
         fullscreenSwipeToken = fullscreenSwipeToggle.Toggled(
             [this](const auto&, const auto&) {
                 const bool value = fullscreenSwipeToggle.IsOn();
@@ -1106,9 +1193,21 @@ struct DockPagePresenter::Impl
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) { settings.suppressSystemTaskbar = value; });
             });
+        taskbarSuppressToken = taskbarSuppressToggle.Toggled(
+            [this](const auto&, const auto&) {
+                if (updatingControls) return;
+                const bool value = taskbarSuppressToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) { settings.suppressSystemTaskbar = value; });
+            });
+        reserveScreenSpaceToken = reserveScreenSpaceToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = reserveScreenSpaceToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) { settings.reserveScreenSpace = value; });
+            });
         showWindowsButtonToken = showWindowsButtonToggle.Toggled(
             [this](const auto&, const auto&) {
-                if (suppressTaskbarToggle.IsOn()) return;
                 const bool value = showWindowsButtonToggle.IsOn();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
@@ -1139,7 +1238,7 @@ struct DockPagePresenter::Impl
                         allowDesktopContentOverlapToggle.IsOn();
                     EmitDock(SettingsUpdateMode::PreviewAndCommit,
                         [value](DockSettings& settings) {
-                            settings.allowDesktopContentOverlap = value;
+                            settings.allowDesktopContentOverlap = !value;
                             snowdesktop::dock_settings_rules::
                                 DisableSummonOnlyWhenPrerequisiteDisabled(
                                     settings.allowDesktopContentOverlap,
@@ -1174,8 +1273,12 @@ struct DockPagePresenter::Impl
             });
         taskbarThemeToken = taskbarThemeCombo.SelectionChanged(
             [this](const auto&, const auto&) {
+                if (updatingControls) return;
+                if (taskbarThemes->ApplySelection()) return;
                 const int value = taskbarThemeCombo.SelectedIndex();
                 if (value < 0) return;
+                CommitContinuousEdits();
+                CommitOpenColorEditors();
                 const bool custom = value ==
                     static_cast<int>(SystemTaskbarThemeMode::Custom);
                 if (!updatingControls &&
@@ -1189,8 +1292,8 @@ struct DockPagePresenter::Impl
                 }
                 UpdateDependentStates();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
-                    [value](DockSettings& settings) {
-                        ApplyMainTaskbarTheme(settings, value);
+                    [value, global = globalAppearance](DockSettings& settings) {
+                        ApplyMainTaskbarTheme(settings, value, global);
                     });
             });
         taskbarContentThemeToken = taskbarContentThemeCombo.SelectionChanged(
@@ -1204,7 +1307,7 @@ struct DockPagePresenter::Impl
                     SetClassicSystemTheme(value);
                     return;
                 }
-                const bool custom = taskbarThemeCombo.SelectedIndex() ==
+                const bool custom = taskbarThemes->NativeSelection() ==
                     static_cast<int>(SystemTaskbarThemeMode::Custom);
                 const int logicalValue = custom
                     ? std::clamp(value, 0, 1)
@@ -1267,7 +1370,7 @@ struct DockPagePresenter::Impl
                     return;
                 const double value = control.slider.Value();
                 synchronizingPair = true;
-                control.number.Value(value);
+                presenter_controls::SetNumberBoxValue(control.number, value);
                 synchronizingPair = false;
                 Preview(control, value);
             });
@@ -1336,14 +1439,18 @@ struct DockPagePresenter::Impl
         control.themeToken = control.theme.SelectionChanged(
             [this, &control](const auto&, const auto&) {
                 UpdateDependentStates();
+                if (updatingControls) return;
+                if (control.savedThemes->ApplySelection()) return;
                 const int value = control.theme.SelectedIndex();
                 if (value < 0) return;
+                CommitContinuousEdits();
+                CommitOpenColorEditors();
                 const auto member = control.member;
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
-                    [member, value](DockSettings& settings) {
-                        PrepareDynamicRuleTheme(settings.*member,
+                    [member, value, global = globalAppearance](DockSettings& settings) {
+                        SelectTaskbarRuleTheme(settings.*member,
                             static_cast<SystemTaskbarThemeMode>(std::clamp(
-                                value, 0, 9)));
+                                value, 0, 9)), global);
                     });
             });
         control.contentThemeToken = control.contentTheme.SelectionChanged(
@@ -1546,6 +1653,28 @@ struct DockPagePresenter::Impl
         *blue = FromByte(color.B);
     }
 
+    void ConfirmDisableDock()
+    {
+        if (!CanEmitGeneral() || !actions.confirm ||
+            confirmationGate->confirmationPending.exchange(true)) return;
+        const auto expectedGeneration = generation;
+        const std::weak_ptr<ConfirmationGate> weak = confirmationGate;
+        const auto update = actions.updateGeneral;
+        actions.confirm(expectedGeneration,
+            L("settings.dock.disableConfirm.title", L"Turn off Dock?"),
+            L("settings.dock.disableConfirm.description", L"Dock items will move back to the desktop."),
+            [weak, update, expectedGeneration](bool confirmed) {
+                const auto gate = weak.lock();
+                if (!gate) return;
+                if (gate->generation != expectedGeneration) return;
+                gate->confirmationPending = false;
+                if (!confirmed || !gate->alive || !gate->active ||
+                    gate->generation != expectedGeneration) return;
+                update(expectedGeneration, SettingsUpdateMode::PreviewAndCommit,
+                    [](GeneralSettings& settings) { settings.dockEnabled = false; });
+            });
+    }
+
     void ConfirmRestartExplorer()
     {
         if (closed || !active || !hasSnapshot || !actions.confirm ||
@@ -1596,7 +1725,7 @@ struct DockPagePresenter::Impl
             control.slider.Minimum(), control.slider.Maximum(),
             control.slider.StepFrequency());
         control.slider.Value(value);
-        control.number.Value(value);
+        presenter_controls::SyncNumberBoxValue(control.number, value);
     }
 
     void PatchColor(
@@ -1628,6 +1757,7 @@ struct DockPagePresenter::Impl
     {
         const auto& rule = settings.*control.member;
         PatchGradient(control.gradient, rule.appearance.panelGradient);
+        control.gradient.borderEditor->SetValue(rule.appearance);
         control.enabled.IsOn(rule.enabled);
         control.theme.SelectedIndex(std::clamp(
             static_cast<int>(rule.themeMode), 0, 9));
@@ -1645,11 +1775,14 @@ struct DockPagePresenter::Impl
     void PatchDock(const DockSettings& settings)
     {
         PatchGradient(taskbarGradient, settings.systemTaskbarAppearance.panelGradient);
+        taskbarGradient.borderEditor->SetValue(settings.systemTaskbarAppearance);
         positionCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.position), 0, 3));
         layoutCombo.SelectedIndex(settings.edgeAttached ? 1 : 0);
         monitorScopeCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.monitorScope), 0, 2));
+        edgeRevealGesture.SelectedIndex(settings.edgeRevealGesture);
+        windowPreviews.IsOn(settings.showWindowPreviews);
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
         fullscreenSwipeToggle.IsOn(settings.floatingEdgeSwipeBlockFullscreen);
         floatingEdgeSwipeToggle.IsOn(
@@ -1658,12 +1791,16 @@ struct DockPagePresenter::Impl
                     settings.showOnlyWhenSummoned,
                     settings.floatingEdgeSwipeEnabled));
         suppressTaskbarToggle.IsOn(settings.suppressSystemTaskbar);
+        taskbarSuppressToggle.IsOn(settings.suppressSystemTaskbar);
+        taskbarMode.SelectedIndex(TaskbarDisplayMode(settings));
+        homeSize.IsOn(settings.lastMonitorUseHomeSize);
+        reserveScreenSpaceToggle.IsOn(settings.reserveScreenSpace);
         showWindowsButtonToggle.IsOn(ShowDockWindowsButton(settings));
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
         allowDesktopContentOverlapToggle.IsOn(
             snowdesktop::dock_settings_rules::
-                IsDesktopContentOverlapEnabled(
+                ShouldReserveDesktopWorkArea(
                     settings.showOnlyWhenSummoned,
                     settings.allowDesktopContentOverlap));
         showOnlyWhenSummonedToggle.IsOn(settings.showOnlyWhenSummoned);
@@ -1671,13 +1808,13 @@ struct DockPagePresenter::Impl
             ? std::clamp(settings.classicTaskbarSystemTheme, -1, 1) + 1
             : (IsWindowsSystemLightThemeEnabled() ? 0 : 1);
         SelectChoice(windowsSystemThemeChoices, windowsSystemThemeValue);
-        const int taskbarMode = MainTaskbarThemeMode(settings);
-        taskbarThemeCombo.SelectedIndex(taskbarMode);
+        const int selectedTheme = MainTaskbarThemeMode(settings);
+        taskbarThemeCombo.SelectedIndex(selectedTheme);
         taskbarContentThemeValue = std::clamp(
             settings.systemTaskbarContentTheme, -1, 1);
         taskbarAppearanceContentThemeValue = std::clamp(
             settings.systemTaskbarAppearance.contentTheme, 0, 1);
-        const bool custom = taskbarMode ==
+        const bool custom = selectedTheme ==
             static_cast<int>(SystemTaskbarThemeMode::Custom);
         ReplaceMainContentThemeItems(custom,
             custom && taskbarContentThemeValue < 0
@@ -1723,9 +1860,19 @@ struct DockPagePresenter::Impl
         layoutRow.SetEnabled(dockEnabled);
         thicknessScale.row.SetEnabled(dockEnabled);
         suppressTaskbarRow.SetEnabled(dockEnabled);
-        showWindowsButtonRow.SetEnabled(dockEnabled && !suppressTaskbarToggle.IsOn());
+        taskbarSuppressRow.SetEnabled(true);
+        if (taskbarMode.Items().Size() == 3)
+            taskbarMode.Items().GetAt(2).as<muxc::ComboBoxItem>().IsEnabled(dockEnabled || taskbarSuppressToggle.IsOn());
+        homeSizeRow.SetEnabled(dockEnabled && barAvailability.dockOnLastMonitor && !barAvailability.allDockMerged);
+        reserveScreenSpaceRow.SetEnabled(dockEnabled &&
+            !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
+        showWindowsButtonRow.SetEnabled(dockEnabled);
         showFrequentItemsRow.SetEnabled(dockEnabled);
-        allowDesktopContentOverlapRow.SetEnabled(dockEnabled);
+        allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
+        floatingEdgeSwipeRow.SetEnabled(dockEnabled && !showOnlyWhenSummonedToggle.IsOn());
+        edgeRevealGestureRow.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
+        windowPreviewsRow.SetEnabled(dockEnabled);
+        frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         showOnlyWhenSummonedRow.SetEnabled(dockEnabled);
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
         layoutCard.root.IsHitTestVisible(dockEnabled);
@@ -1740,12 +1887,12 @@ struct DockPagePresenter::Impl
         frequentItemCount.row.SetEnabled(
             dockEnabled && showFrequentItemsToggle.IsOn());
 
-        const int taskbarMode = taskbarThemeCombo.SelectedIndex();
-        const bool taskbarStyled = taskbarMode !=
+        const int selectedTheme = taskbarThemes->NativeSelection();
+        const bool taskbarStyled = selectedTheme !=
             static_cast<int>(SystemTaskbarThemeMode::Native);
-        const bool taskbarCustom = taskbarMode ==
+        const bool taskbarCustom = taskbarThemes->CustomSelected() && selectedTheme ==
             static_cast<int>(SystemTaskbarThemeMode::Custom);
-        taskbarContentThemeRow.root.Visibility(taskbarStyled || IsClassicSystemTaskbar()
+        taskbarContentThemeRow.root.Visibility(!taskbarThemes->HasSavedSelection() && (taskbarStyled || IsClassicSystemTaskbar())
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
         taskbarContentThemeRow.SetEnabled(taskbarStyled || IsClassicSystemTaskbar());
@@ -1770,15 +1917,15 @@ struct DockPagePresenter::Impl
         for (DynamicRuleControl* control : dynamicRules)
         {
             const bool enabled = control->enabled.IsOn();
-            const bool native = control->theme.SelectedIndex() ==
+            const bool native = control->savedThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Native);
-            const bool custom = control->theme.SelectedIndex() ==
+            const bool custom = control->savedThemes->CustomSelected() && control->savedThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Custom);
             control->appearanceDetails.Visibility(enabled
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);
             control->appearanceDetails.IsHitTestVisible(enabled);
-            control->contentThemeRow.root.Visibility(!native && !IsClassicSystemTaskbar()
+            control->contentThemeRow.root.Visibility(!control->savedThemes->HasSavedSelection() && !native && !IsClassicSystemTaskbar()
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);
             control->customAppearance.Visibility(custom
@@ -2080,7 +2227,7 @@ struct DockPagePresenter::Impl
     void RefreshDynamicRuleSummary(DynamicRuleControl& control)
     {
         const std::wstring summary = control.enabled.IsOn()
-            ? TaskbarThemeText(control.theme.SelectedIndex())
+            ? (control.theme.SelectedItem() ? std::wstring(winrt::unbox_value<winrt::hstring>(control.theme.SelectedItem()).c_str()) : L"")
             : L("app.settings.hotkey_status_disabled", L"Disabled");
         control.summary.Text(summary);
 
@@ -2204,7 +2351,12 @@ struct DockPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        taskbarThemes->LocalizeText();
+        for (auto* rule : dynamicRules) rule->savedThemes->LocalizeText();
+        dockPreview.Content(winrt::box_value(L("themeLibrary.preview", L"")));
+        taskbarPreview.Content(winrt::box_value(L("themeLibrary.preview", L"")));
         const auto refresh = [this](TaskbarGradientControl& gradient) {
+            gradient.borderEditor->RefreshLocalizedText();
             gradient.sections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
             gradient.editor->RefreshLocalizedText();
         };
@@ -2291,6 +2443,14 @@ struct DockPagePresenter::Impl
             L("app.dock.floating_edge_swipe", L"Edge Swipe"),
             L("app.dock.floating_edge_swipe_hint",
                 L"Reveal the floating Dock from a screen edge."));
+        edgeRevealGestureRow.SetText(L("settings.dock.edgeRevealGesture", L"Reveal gesture"),
+            L("settings.dock.edgeRevealGesture.description", L"Dragging an item to the edge reveals the bar immediately."));
+        ReplaceComboItems(edgeRevealGesture, {
+            {"settings.dock.gestureSwipe", L"Swipe"}, {"settings.dock.gestureHover", L"Hover"}});
+        windowPreviewsRow.SetText(L("settings.dock.windowPreviews", L"Task thumbnails"),
+            L("settings.dock.windowPreviews.description", L"Show open windows when hovering over an app."));
+        muxa::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
+        muxa::AutomationProperties::SetName(windowPreviews, windowPreviewsRow.label.Text());
         fullscreenSwipeRow.SetText(
             L("settings.dock.blockFullscreenSwipe", L"Disable edge swipe in fullscreen apps"),
             L("settings.dock.blockFullscreenSwipe.description",
@@ -2310,8 +2470,23 @@ struct DockPagePresenter::Impl
                 L"Show the Dock by swiping along its screen edge or "
                   "dragging an item to that edge."));
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
-            L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels. Keep the Windows button in Dock."));
+            L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
+        taskbarSuppressRow.SetText(L("settings.bars.taskbarMode", L"Taskbar visibility"));
+        const int displayMode = taskbarMode.SelectedIndex();
+        taskbarMode.Items().Clear();
+        for (const auto key : {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar"})
+        {
+            muxc::ComboBoxItem item; item.Content(winrt::box_value(L(key, L"")));
+            taskbarMode.Items().Append(item);
+        }
+        taskbarMode.SelectedIndex(displayMode);
+        homeSizeRow.SetText(L("settings.bars.homeSize", L"Keep the last display Dock at its first-page size"), L("settings.bars.homeSize.description", L""));
+        mergedHeight->RefreshLocalizedText();
+        muxa::AutomationProperties::SetName(taskbarSuppressToggle, suppressTaskbarRow.label.Text());
+        reserveScreenSpaceRow.SetText(L("settings.dock.reserveScreenSpace", L"Reserve screen space"),
+            L("settings.dock.reserveScreenSpace.description", L"Keep maximized apps clear of the independent Dock. A merged bar reserves space automatically; summon-only mode reserves none. Desktop content spacing is a separate setting below."));
+        muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
         showFrequentItemsRow.SetText(L(
@@ -2388,7 +2563,7 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             taskbarContentThemeCombo, taskbarContentThemeRow.label.Text());
         ReplaceMainContentThemeItems(
-            taskbarThemeCombo.SelectedIndex() ==
+            taskbarThemes->NativeSelection() ==
                 static_cast<int>(SystemTaskbarThemeMode::Custom),
             taskbarContentThemeCustomItems &&
                     taskbarContentThemeValue < 0
@@ -2469,15 +2644,31 @@ struct DockPagePresenter::Impl
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
         generation = snapshot.generation;
+        taskbarThemes->SetGeneration(generation);
+        for (auto* rule : dynamicRules) rule->savedThemes->SetGeneration(generation);
         confirmationGate->generation.store(generation,
             std::memory_order_release);
         const bool previousUpdating = updatingControls;
         updatingControls = true;
+        globalAppearance = snapshot.values.personalization;
+        const auto& dock = snapshot.values.dock;
+        const auto& bar = snapshot.values.general.statusBar;
+        // Disable only when every Dock copy is merged. With an all-monitor
+        // Dock and a single-monitor bar, this still controls the other copies.
+        barAvailability = ResolveBarSettingsAvailability(snapshot.values.general.dockEnabled, dock, bar, GetSystemMetrics(SM_CMONITORS));
+        spaceReservedByStatusBar = barAvailability.allDockMerged;
+        mergedHeight->Update(snapshot);
+        thicknessScale.row.SetText(L(barAvailability.anyMerged ? "settings.bars.iconSize" : "app.settings.dock_thickness", L"Dock size"));
         if (newGeneration)
         {
+            confirmationGate->confirmationPending = false;
             PatchGradient(taskbarGradient, snapshot.values.dock.systemTaskbarAppearance.panelGradient, true);
+            taskbarGradient.borderEditor->SetValue(snapshot.values.dock.systemTaskbarAppearance, true);
             for (auto* control : dynamicRules)
+            {
                 PatchGradient(control->gradient, (snapshot.values.dock.*control->member).appearance.panelGradient, true);
+                control->gradient.borderEditor->SetValue((snapshot.values.dock.*control->member).appearance, true);
+            }
         }
 
         if (newGeneration ||
@@ -2502,6 +2693,9 @@ struct DockPagePresenter::Impl
             }
         }
         hasSnapshot = true;
+        taskbarThemes->SyncSelection(MainTaskbarThemeMode(dock), snapshot.values);
+        for (auto* control : dynamicRules)
+            control->savedThemes->SyncSelection(static_cast<int>((dock.*control->member).themeMode), snapshot.values);
         UpdateDependentStates();
         updatingControls = previousUpdating;
     }
@@ -2514,16 +2708,23 @@ struct DockPagePresenter::Impl
             return layoutCombo;
         if (id == "dock.monitor" || id == "dock.monitorScope")
             return monitorScopeCombo;
+        if (id == "dock.mergedBarHeight") return mergedHeight->FocusTarget();
+        if (id == "dock.lastMonitorUseHomeSize") return homeSize;
+        if (id == "taskbar.displayMode" || id == "taskbar.suppressSystemTaskbar" || id == "taskbar.autoHide") return taskbarMode;
         if (id == "dock.thickness" || id == "dock.thicknessScale")
             return thicknessScale.slider;
         if (id == "dock.floatingShortcutMode")
             return floatingShortcutToggle;
+        if (id == "dock.edgeRevealGesture") return edgeRevealGesture;
+        if (id == "dock.showWindowPreviews") return windowPreviews;
         if (id == "dock.floatingEdgeSwipeBlockFullscreen")
             return fullscreenSwipeToggle;
         if (id == "dock.floatingEdgeSwipe" ||
             id == "dock.floatingEdgeSwipeEnabled")
             return floatingEdgeSwipeToggle;
         if (id == "dock.suppressSystemTaskbar") return suppressTaskbarToggle;
+        if (id == "taskbar.suppressSystemTaskbar") return taskbarSuppressToggle;
+        if (id == "dock.reserveScreenSpace") return reserveScreenSpaceToggle;
         if (id == "dock.showWindowsButton")
             return showWindowsButtonToggle;
         if (id == "dock.showFrequentItems")
@@ -2548,11 +2749,11 @@ struct DockPagePresenter::Impl
         if (id == "taskbar.backgroundColor")
             return taskbarBackgroundColor.editor.button;
         if (id == "taskbar.borderColor")
-            return taskbarBorderColor.editor.button;
+            return taskbarGradient.borderEditor->FocusTarget("app.settings.border_color");
         if (id == "taskbar.backgroundOpacity")
             return taskbarBackgroundAlpha.slider;
         if (id == "taskbar.borderOpacity")
-            return taskbarBorderAlpha.slider;
+            return taskbarGradient.borderEditor->FocusTarget("largeIcon.borderOpacity");
         if (id == "taskbar.glass") return taskbarGlassToggle;
         if (id == "taskbar.blurRadius") return taskbarBlurRadius.slider;
         if (id == "taskbar.acrylic") return taskbarAcrylicToggle;
@@ -2573,6 +2774,8 @@ struct DockPagePresenter::Impl
     {
         try
         {
+            taskbarGradient.borderEditor->Flush();
+            for (auto* rule : dynamicRules) rule->gradient.borderEditor->Flush();
             taskbarGradient.editor->Flush();
             for (auto* rule : dynamicRules) rule->gradient.editor->Flush();
             for (ContinuousControl* control : continuousControls)
@@ -2655,6 +2858,10 @@ struct DockPagePresenter::Impl
         active = false;
         closed = true;
         StopCardHighlights();
+        taskbarThemes->Close();
+        for (auto* rule : dynamicRules) rule->savedThemes->Close();
+        taskbarGradient.borderEditor->Close();
+        for (auto* rule : dynamicRules) rule->gradient.borderEditor->Close();
         taskbarGradient.editor->Close();
         for (auto* rule : dynamicRules) rule->gradient.editor->Close();
         confirmationGate->alive.store(false, std::memory_order_release);
@@ -2670,9 +2877,17 @@ struct DockPagePresenter::Impl
             monitorScopeCombo.SelectionChanged(monitorScopeToken);
             floatingShortcutToggle.Toggled(floatingShortcutToken);
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);
+            edgeRevealGesture.SelectionChanged(edgeRevealGestureToken);
+            windowPreviews.Toggled(windowPreviewsToken);
             fullscreenSwipeToggle.Toggled(fullscreenSwipeToken);
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
+            dockPreview.Click(dockPreviewToken); taskbarPreview.Click(taskbarPreviewToken);
+            mergedHeight->Close();
+            homeSize.Toggled(homeSizeToken);
+            taskbarMode.SelectionChanged(taskbarModeToken);
             suppressTaskbarToggle.Toggled(suppressTaskbarToken);
+            taskbarSuppressToggle.Toggled(taskbarSuppressToken);
+            reserveScreenSpaceToggle.Toggled(reserveScreenSpaceToken);
             showFrequentItemsToggle.Toggled(showFrequentItemsToken);
             keepWhenDesktopHiddenToggle.Toggled(keepWhenDesktopHiddenToken);
             allowDesktopContentOverlapToggle.Toggled(
@@ -2724,7 +2939,25 @@ DockPagePresenter::~DockPagePresenter()
 void DockPagePresenter::SetActions(DockPageActions actions)
 {
     if (impl_ && !impl_->closed)
+    {
+        impl_->mergedHeight->SetActions(actions);
         impl_->actions = std::move(actions);
+        const auto configure = [state = impl_.get()](ThemeLibraryControls& themes) {
+            themes.SetChanged([state] {
+                state->taskbarThemes->Refresh();
+                for (auto* rule : state->dynamicRules) rule->savedThemes->Refresh();
+            });
+            themes.SetActions(state->actions.themeLibrary, state->actions.themeAsync, [state] {
+                if (!state->active || state->closed || !state->hasSnapshot) return false;
+                state->CommitOpenColorEditors(); state->CommitContinuousEdits();
+                state->taskbarGradient.borderEditor->Flush(); state->taskbarGradient.editor->Flush();
+                for (auto* rule : state->dynamicRules) { rule->gradient.borderEditor->Flush(); rule->gradient.editor->Flush(); }
+                return true;
+            });
+        };
+        configure(*impl_->taskbarThemes);
+        for (auto* rule : impl_->dynamicRules) configure(*rule->savedThemes);
+    }
 }
 
 mux::UIElement DockPagePresenter::Content() const noexcept
@@ -2764,6 +2997,7 @@ void DockPagePresenter::Activate() noexcept
     if (impl_ && !impl_->closed)
     {
         impl_->active = true;
+        impl_->confirmationGate->active = true;
         try { impl_->runtimeTimer.Start(); impl_->RefreshTaskbarRuntimeState(); } catch (...) {}
     }
 }
@@ -2774,6 +3008,11 @@ void DockPagePresenter::ActivateTaskbar() noexcept
         return;
     impl_->taskbarInputReady = false;
     impl_->active = true;
+    try {
+        impl_->taskbarThemes->Refresh();
+        for (auto* rule : impl_->dynamicRules) rule->savedThemes->Refresh();
+    } catch (...) {}
+    impl_->confirmationGate->active = false;
     try { impl_->runtimeTimer.Start(); impl_->RefreshTaskbarRuntimeState(); } catch (...) {}
 }
 
@@ -2781,10 +3020,12 @@ void DockPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed)
         return;
+    impl_->mergedHeight->Flush();
     impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->taskbarInputReady = false;
     impl_->active = false;
+    impl_->confirmationGate->active = false;
     impl_->StopCardHighlights();
     try { impl_->runtimeTimer.Stop(); } catch (...) {}
 }

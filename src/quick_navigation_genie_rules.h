@@ -121,4 +121,66 @@ inline dock_genie::Rect GenieBandClip(const GenieStripProjection& projection,
         ? dock_genie::Rect{-crossPadding, begin, projection.width + crossPadding, end}
         : dock_genie::Rect{begin, -crossPadding, end, projection.height + crossPadding};
 }
+
+inline dock_genie::Rect GenieRasterBandClip(const dock_genie::Rect& window,
+    const dock_genie::Rect& dock, dock_genie::Edge edge, double collapsed,
+    double width, double height, std::size_t index,
+    double hostLeft, double hostTop, double hostWidth, double hostHeight) noexcept
+{
+    if (index >= dock_genie::StripCount || width <= 0.0 || height <= 0.0)
+        return {};
+    const bool vertical = dock_genie::Vertical(edge);
+    // All bands share one axial scale. Compute every join from the same frame,
+    // rather than projecting two independently rounded local matrices. Clips
+    // live on untransformed parents, in physical host pixels AFTER perspective.
+    const auto frame = dock_genie::StripMatrix(window, dock, edge, collapsed,
+        width, height, 0.0, 0.0, hostLeft, hostTop);
+    const double origin = vertical ? frame.dy : frame.dx;
+    const double length = (vertical ? height : width) *
+        (vertical ? frame.m22 : frame.m11);
+    const auto boundary = [&](std::size_t value) {
+        return origin + length * static_cast<double>(value) / dock_genie::StripCount;
+    };
+    // A shared integer boundary assigns each destination pixel to exactly one
+    // band. Bands narrower than a pixel may be empty; do not overlap alpha to
+    // conceal a crack. The bitmap still antialiases the outer silhouette.
+    const double begin = index == 0 ? std::floor(boundary(0)) - 2.0
+        : std::round(boundary(index));
+    const double end = index + 1 == dock_genie::StripCount
+        ? std::ceil(boundary(dock_genie::StripCount)) + 2.0
+        : std::round(boundary(index + 1));
+    return vertical ? dock_genie::Rect{0.0, begin, hostWidth, end}
+        : dock_genie::Rect{begin, 0.0, end, hostHeight};
+}
+
+inline dock_genie::Rect GenieSourceBandClip(const GenieStripProjection& projection,
+    const dock_genie::Rect& destination, dock_genie::Edge edge,
+    double width, double height) noexcept
+{
+    // The strip homography is valid near its own band, not over the full
+    // texture: extrapolating it can cross w=0. Crop before the parent projects
+    // the bitmap; retain two destination pixels for filtering and snapped joins.
+    const bool vertical = dock_genie::Vertical(edge);
+    const double sourceBegin = vertical ? projection.sourceY : projection.sourceX;
+    const double sourceLength = vertical ? height : width;
+    const double scale = vertical ? projection.m22 : projection.m11;
+    const double origin = vertical ? projection.m42 : projection.m41;
+    const double perspective = vertical ? projection.m24 : projection.m14;
+    const auto inverse = [&](double target) {
+        const double denominator = scale - target * perspective;
+        if (denominator <= 0.0)
+            return target < origin ? -sourceBegin : sourceLength - sourceBegin;
+        return (target * projection.m44 - origin) / denominator;
+    };
+    double begin = inverse((vertical ? destination.top : destination.left) - 2.0);
+    double end = inverse((vertical ? destination.bottom : destination.right) + 2.0);
+    // Keep the entire cropped intermediate bitmap on the positive-w branch,
+    // including filtering margins at the first/last band.
+    if (perspective > 0.0) begin = std::max(begin, -0.75 / perspective);
+    if (perspective < 0.0) end = std::min(end, -0.75 / perspective);
+    begin = std::clamp(sourceBegin + begin, 0.0, sourceLength);
+    end = std::clamp(sourceBegin + end, begin, sourceLength);
+    return vertical ? dock_genie::Rect{0.0, begin, width, end}
+        : dock_genie::Rect{begin, 0.0, end, height};
+}
 }

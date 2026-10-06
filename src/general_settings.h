@@ -11,10 +11,12 @@
 
 #include <string>
 #include "animation_settings.h"
+#include "app_font.h"
 #include "calendar_display.h"
 #include "dock_layout_settings.h"
 #include "surface_theme.h"
 #include "shell_extension_settings.h"
+#include "status_bar_settings.h"
 
 struct GeneralSettings
 {
@@ -41,7 +43,12 @@ struct GeneralSettings
     int collectionPopupTheme = 0;
     snowdesktop::SurfaceTheme quickNavigationAppearance;
     snowdesktop::SurfaceTheme collectionPopupAppearance;
+    // Last successfully applied bindings; independent surfaces keep their own
+    // snapshots. Missing fields preserve the legacy global-preset resolver.
+    snowdesktop::SurfaceTheme globalQuickNavigationAppearance;
+    snowdesktop::SurfaceTheme globalCollectionPopupAppearance;
     bool dockEnabled = kDefaultDockEnabled;
+    snowdesktop::StatusBarSettings statusBar;
     bool widgetDeveloperToolsEnabled = false;
     int animationMode = 0;
     int popupAnimationEffect = 2;
@@ -51,6 +58,9 @@ struct GeneralSettings
     bool animationOnBattery = false;
     snowdesktop::calendar::DisplayPreferences calendarDisplay;
     snowdesktop::shell_extensions::Preferences shellExtensions;
+    bool contextMenuExpandQuickActions = false;
+    bool contextMenuHidePageManagement = false;
+    snowdesktop::app_fonts::Selection font;
     char language[85] = "system";
 };
 

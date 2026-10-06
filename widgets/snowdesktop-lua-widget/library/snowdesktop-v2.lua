@@ -618,6 +618,7 @@
 ---@field selectAll? boolean Select all text when focus is first acquired.
 ---@field liveUpdate? boolean Persist accepted edits immediately; defaults to true.
 ---@field maxBytes? integer UTF-8 limit from 1..65536; defaults to 4096.
+---@field events? {submit: SnowInteractionAction}? Optional Enter/textArea Ctrl+Enter action; requires control.inputEvents. The host commits storage and blurs before dispatch, with current text and targetKey; synchronous submit may refocus the same live editor even without outer widget selection.
 
 ---@class SnowTextAreaDescriptor: SnowTextInputDescriptor
 ---@field placeholderWhenWhitespace? boolean Show the placeholder for unfocused whitespace-only values.
@@ -736,9 +737,9 @@
 ---@field relatedRevision? integer Revision of relatedSlotId after the same transaction.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer
----@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowLocationTaskValue|SnowStateValue
 ---@field error? string
 ---@field notificationId? string Host-issued notification ID for notification.delivered.
 ---@field actionId? string Declared action ID for notification.action.
@@ -900,6 +901,13 @@
 ---@class SnowTextMetrics
 ---@field width number
 ---@field height number
+---@field ink? SnowTextInkBounds Visible glyph bounds relative to the draw.text origin; available with draw.textInkMetrics during rendering. Empty/whitespace-only text has zero bounds. Unavailable measurements omit ink.
+
+---@class SnowTextInkBounds
+---@field left number May be negative for a glyph overhang.
+---@field top number Offset relative to the text origin, independent of line-box padding.
+---@field width number Nonnegative visible glyph width in logical drawing units.
+---@field height number Nonnegative visible glyph height in logical drawing units; raster hinting may change final pixel bounds slightly.
 
 ---@class SnowMarqueeTextOptions
 ---@field key string Stable 1..128-byte key used to preserve the native scroll phase across data refreshes.
@@ -1357,9 +1365,23 @@ function animation.cancelFrame(id) end
 ---@field dedicatedUsedBytes integer PDH Dedicated Usage assigned by adapter LUID.
 ---@field sharedMemoryBytes integer
 ---@field sharedUsedBytes integer PDH Shared Usage assigned by adapter LUID.
+---@field usageAvailable? boolean With includeDetails: whether usagePercent is a measured value for this adapter. False during warm-up.
+---@field dedicatedUsageAvailable? boolean With includeDetails: whether dedicatedUsedBytes is valid (zero can be valid).
+---@field sharedUsageAvailable? boolean With includeDetails: whether sharedUsedBytes is valid independently of dedicated memory.
+---@field engines? SnowGpuEngineDataValue[] With includeDetails: valid engine intervals, empty when usage is unavailable or warming up.
+---@field aliasIds? string[] With includeDetails and data.system.gpu.identity (host 1.0.8.0): other opaque IDs proven to represent this same single physical GPU during the current shared sampler lifetime. Excludes id; may be empty. Match id first, then aliasIds. No PnP path or persistent hardware ID is exposed.
+
+---@class SnowGpuEngineDataValue
+---@field physicalIndex integer Physical GPU index within this adapter.
+---@field engineIndex integer Engine number within the physical GPU. Combine both indices for identity; never group by type.
+---@field type string Display label; may be empty or shared by multiple engines.
+---@field usagePercent number Process contributions summed for this engine and clamped to 0..100.
+
+---@class SnowGpuSubscribeOptions: SnowDataSubscribeOptions
+---@field includeDetails? boolean Requires data.system.gpu.details (host 1.0.8.0; also feature-check earlier builds). Defaults to false. When true, available means adapter topology is present; check per-adapter validity before using counters. No additional sampling.
 
 ---@class SnowGpuDataValue
----@field adapters SnowGpuAdapterDataValue[]
+---@field adapters SnowGpuAdapterDataValue[] Logical aliases are merged only when the host proves the same single physical GPU. Same-model distinct devices and unknown/linked mappings remain separate. Older hosts can return duplicate physical devices; never deduplicate by name or unavailable counters.
 
 ---@class SnowPowerDataValue
 ---@field acPower boolean
@@ -1448,6 +1470,94 @@ function animation.cancelFrame(id) end
 ---@field muted boolean
 ---@field minimum number Currently 0.0.
 ---@field maximum number Currently 1.0.
+
+---@class SnowAudioDevice
+---@field id string Opaque endpoint ID; use as a token, never parse it.
+---@field name string
+---@field direction 'input'|'output'
+---@field state 'active'|'disabled'|'unplugged'|'notPresent'
+---@field isDefault boolean
+---@field available boolean
+
+---@class SnowAudioDevicesDataValue
+---@field devices SnowAudioDevice[] Includes inactive endpoints with available=false.
+
+---@class SnowAudioInputVolumeDataValue: SnowAudioOutputVolumeDataValue
+
+---@class SnowBrightnessMonitor
+---@field id string Opaque brightness endpoint token, distinct from display.topology IDs; discard after device removal and reread the list.
+---@field name string
+---@field kind 'internal'|'ddc'
+---@field available boolean
+---@field brightness? number 0..100; omitted for unsupported hardware.
+---@field error? string
+
+---@class SnowDisplayBrightnessDataValue
+---@field monitors SnowBrightnessMonitor[] Proven WMI/DDC aliases share one row (available endpoint preferred, then internal WMI). Unknown mappings and distinct same-name displays remain separate; older hosts may return aliases as separate rows.
+
+---@class SnowWifiNetwork
+---@field id string Network token scoped to its interface; do not persist or parse.
+---@field ssid string Display name; may be empty for hidden networks.
+---@field signal number 0..100.
+---@field security 'open'|'wpa2'|'wpa3'|'system'
+---@field connected boolean
+---@field connectable boolean Windows assessment, not a guarantee of authentication success.
+---@field profileName? string Saved profile name. No passwords are exposed.
+
+---@class SnowWifiProfile
+---@field name string
+---@field managed boolean Policy-managed profiles must be managed in Windows.
+
+---@class SnowWifiInterface
+---@field id string Adapter token; select one explicitly for every Wi-Fi control task.
+---@field name string
+---@field connected boolean
+---@field enabled? boolean Software radio status, omitted when unavailable.
+---@field hardwareEnabled? boolean Hardware radio status, omitted when unavailable.
+---@field available boolean
+---@field error? string Includes accessDenied for Windows wireless/location restrictions.
+---@field networks SnowWifiNetwork[] Cached discovery results; subscription does not scan.
+---@field profiles SnowWifiProfile[]
+
+---@class SnowWifiDataValue
+---@field interfaces SnowWifiInterface[]
+
+---@class SnowBluetoothRadio
+---@field id string Radio token.
+---@field name string
+---@field enabled boolean
+---@field available boolean
+
+---@class SnowBluetoothDevice
+---@field id string Device token; may change after unpairing or reconnecting hardware.
+---@field name string
+---@field address string Device address; requires the separate Bluetooth read permission.
+---@field paired boolean
+---@field connected boolean
+---@field lowEnergy boolean
+---@field canConnect boolean Unsupported device management belongs in Windows Settings.
+---@field canDisconnect boolean
+---@field batteryPercent? number 0..100; omitted if the device does not expose it.
+
+---@class SnowBluetoothDevicesDataValue
+---@field radios SnowBluetoothRadio[]
+---@field devices SnowBluetoothDevice[] Paired devices only; this subscription does not pair or discover new devices.
+
+---@class SnowPowerPlan
+---@field id string Plan token.
+---@field name string
+---@field active boolean
+
+---@class SnowPowerPlansDataValue
+---@field plans SnowPowerPlan[]
+---@field activePlanId string
+---@field modeSupported boolean
+---@field acMode? 'balanced'|'efficiency'|'performance'|'unknown'
+---@field dcMode? 'balanced'|'efficiency'|'performance'|'unknown'
+---@field batteryPresent? boolean Omitted when Windows cannot report power status.
+---@field onAC? boolean
+---@field batteryPercent? number
+---@field charging? boolean Omitted when charging state is unknown or no battery is present; older hosts may omit it.
 
 ---@class SnowAudioOutputAnalysisDataValue
 ---@field waveform? number[] Requested normalized mono points in -1.0..1.0; omitted when not selected.
@@ -1538,6 +1648,9 @@ function animation.cancelFrame(id) end
 ---@field endMinutes integer
 ---@field notes string
 ---@field reminderMinutes integer Negative when disabled.
+---@field seriesId? string Present for a series occurrence.
+---@field occurrenceDate? string Stable original date even when moved.
+---@field occurrenceOverride? boolean Whether this occurrence has a single-instance edit.
 
 ---@class SnowCalendarEventsDataValue
 ---@field events SnowCalendarEventDataValue[] At most 512 entries.
@@ -1585,7 +1698,7 @@ data = {}
 ---@overload fun(topic: 'system.cpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCpuDataValue>
 ---@overload fun(topic: 'system.memory', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMemoryDataValue>
 ---@overload fun(topic: 'process.summary', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowProcessSummaryDataValue>
----@overload fun(topic: 'system.gpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowGpuDataValue>
+---@overload fun(topic: 'system.gpu', options?: SnowGpuSubscribeOptions): SnowDataSubscription<SnowGpuDataValue>
 ---@overload fun(topic: 'system.power', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerDataValue>
 ---@overload fun(topic: 'system.network.status', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkStatusDataValue>
 ---@overload fun(topic: 'system.network.traffic', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkTrafficDataValue>
@@ -1594,6 +1707,12 @@ data = {}
 ---@overload fun(topic: 'system.display.topology', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayTopologyDataValue>
 ---@overload fun(topic: 'system.display.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayCurrentDataValue>
 ---@overload fun(topic: 'audio.output.default', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputDefaultDataValue>
+---@overload fun(topic: 'audio.devices', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioDevicesDataValue>
+---@overload fun(topic: 'audio.input.volume', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioInputVolumeDataValue>
+---@overload fun(topic: 'system.display.brightness', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayBrightnessDataValue>
+---@overload fun(topic: 'network.wifi', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowWifiDataValue>
+---@overload fun(topic: 'bluetooth.devices', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowBluetoothDevicesDataValue>
+---@overload fun(topic: 'system.power.plans', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerPlansDataValue>
 ---@overload fun(topic: 'audio.output.volume', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputVolumeDataValue>
 ---@overload fun(topic: 'audio.output.analysis', options?: SnowAudioAnalysisSubscribeOptions): SnowDataSubscription<SnowAudioOutputAnalysisDataValue>
 ---@overload fun(topic: 'media.sessions', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaSessionsDataValue>
@@ -1641,6 +1760,53 @@ function data.subscribe(topic, options) end
 
 ---@class SnowAudioOutputMuteArguments
 ---@field muted boolean Requested master mute state.
+
+-- The following device-write tasks require minHostVersion 1.0.8.0, their
+-- individual task.* feature, an independent control grant and a trusted gesture.
+-- Their task.done success value is SnowAcceptedTaskValue; preview has no side effects.
+---@class SnowAudioDeviceArguments
+---@field endpointId string Non-empty opaque active endpoint ID from audio.devices, matching the requested input/output direction.
+
+---@class SnowAudioInputVolumeArguments
+---@field volume number Finite scalar clamped by the host to 0.0 through 1.0 for the current default multimedia microphone.
+
+---@class SnowAudioInputMuteArguments
+---@field muted boolean Requested mute state for the current default multimedia microphone.
+
+---@class SnowDisplayBrightnessArguments
+---@field monitorId string Non-empty opaque ID from system.display.brightness.
+---@field brightness number Finite brightness from 0 through 100.
+
+---@class SnowWifiInterfaceArguments
+---@field interfaceId string Non-empty opaque interface ID from network.wifi.
+
+---@class SnowWifiRadioArguments: SnowWifiInterfaceArguments
+---@field enabled boolean Requested software radio state; hardware and policy can still reject it.
+
+---@class SnowWifiConnectArguments: SnowWifiInterfaceArguments
+---@field networkId? string Exactly one of networkId, profileName or ssid is required. Use a current network.wifi network ID.
+---@field profileName? string Saved profile on this interface; mutually exclusive with networkId and ssid.
+---@field ssid? string Non-empty UTF-8 SSID, at most 32 bytes; mutually exclusive with networkId and profileName.
+---@field hidden? boolean Whether this is a hidden network.
+---@field security? 'open'|'wpa2'|'wpa3' Required for a direct ssid target; networkId security is resolved again by the host.
+-- Passwords and confirmation flags are never accepted as Lua arguments. The host
+-- owns credential/confirmation dialogs; cancellation prevents submission.
+
+---@class SnowWifiForgetArguments: SnowWifiInterfaceArguments
+---@field profileName string Non-empty saved profile name. Requires a separate host confirmation.
+
+---@class SnowBluetoothRadioArguments
+---@field radioId string Non-empty opaque radio ID from bluetooth.devices.
+---@field enabled boolean Requested radio state.
+
+---@class SnowBluetoothDeviceArguments
+---@field deviceId string Non-empty paired device ID from bluetooth.devices; respect canConnect/canDisconnect.
+
+---@class SnowPowerPlanArguments
+---@field planId string Non-empty plan ID from system.power.plans.
+
+---@class SnowPowerModeArguments
+---@field mode 'balanced'|'efficiency'|'performance' Sets AC and battery modes together when supported.
 
 ---@class SnowSystemSettingsArguments
 ---@field page 'notifications'|'audio'|'display'|'network'|'bluetooth'|'power'|'storage'|'apps'|'personalization' Host-maintained settings page name.
@@ -1846,9 +2012,53 @@ function data.subscribe(topic, options) end
 ---@class SnowCalendarRemoveArguments
 ---@field id string Host-issued event ID.
 
+---@class SnowCalendarSeriesRule
+---@field kind 'dates'|'weekly'|'monthly'
+---@field dates string[] Sorted unique ISO dates, 1-366 for dates; empty otherwise.
+---@field startDate string Inclusive interval anchor.
+---@field endDate string Inclusive end date, or empty for no end.
+---@field interval integer 1-99 weeks or months; 1 for dates.
+---@field weekdays integer[] 1=Sunday through 7=Saturday; empty unless weekly.
+---@field monthDay integer 1-31, or 0 for last day; zero unless monthly.
+
+---@class SnowCalendarSeriesArguments: SnowCalendarEventArguments
+---@field kind 'dates'|'weekly'|'monthly'
+---@field dates string[]
+---@field startDate string
+---@field endDate string
+---@field interval integer
+---@field weekdays integer[]
+---@field monthDay integer
+
+---@class SnowCalendarSeriesUpdateArguments: SnowCalendarSeriesArguments
+---@field id string Host-issued series ID.
+---@field expectedRevision integer Current series revision.
+
+---@class SnowCalendarSeriesRemoveArguments
+---@field id string Host-issued series ID.
+---@field expectedRevision integer Current series revision.
+
+---@class SnowCalendarSeriesValue
+---@field id string
+---@field revision integer
+---@field event SnowCalendarEventDataValue
+---@field rule SnowCalendarSeriesRule
+---@field exceptions {occurrenceDate:string,canceled:boolean,event?:SnowCalendarEventDataValue}[]
+
 ---@class SnowCalendarMutationTaskValue
 ---@field id string Host-issued event ID; preserved for update/remove.
 ---@field revision integer New revision for create/update; zero for remove.
+
+---@class SnowLocationArguments
+---@field timeoutMs? integer Position timeout, 1000..30000 ms; default 10000. Windows consent is outside this timeout.
+---@field maximumAgeMs? integer Maximum reading age, 0..3600000 ms; default 300000.
+
+---@class SnowLocationTaskValue
+---@field latitude number Degrees in [-90,90].
+---@field longitude number Degrees in [-180,180].
+---@field accuracyMeters number Reported horizontal uncertainty in meters.
+---@field timestampMs integer UTC epoch milliseconds of the system reading.
+---@field source 'satellite'|'wifi'|'cellular'|'ip'|'default'|'obfuscated'|'unknown' System source; never assume GPS accuracy.
 
 ---@class SnowNetworkRequestArguments
 ---@field url string HTTP/HTTPS URL including local services; optional widget.json networkDomains narrows it to exact declared hostnames. Requires task.network.standardHttp for HTTP/local targets and system proxy support.
@@ -1887,6 +2097,25 @@ task = {}
 ---@overload fun(name: 'media.setRepeat', arguments: SnowMediaRepeatArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.output.setVolume', arguments: SnowAudioOutputVolumeArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.output.setMute', arguments: SnowAudioOutputMuteArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.output.selectDevice', arguments: SnowAudioDeviceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.input.selectDevice', arguments: SnowAudioDeviceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.input.setVolume', arguments: SnowAudioInputVolumeArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.input.setMute', arguments: SnowAudioInputMuteArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.display.setBrightness', arguments: SnowDisplayBrightnessArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.setRadio', arguments: SnowWifiRadioArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.scan', arguments: SnowWifiInterfaceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.connect', arguments: SnowWifiConnectArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.disconnect', arguments: SnowWifiInterfaceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.forget', arguments: SnowWifiForgetArguments): taskId: integer?, error: string?
+---@overload fun(name: 'bluetooth.setRadio', arguments: SnowBluetoothRadioArguments): taskId: integer?, error: string?
+---@overload fun(name: 'bluetooth.connect', arguments: SnowBluetoothDeviceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'bluetooth.disconnect', arguments: SnowBluetoothDeviceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.setPlan', arguments: SnowPowerPlanArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.setMode', arguments: SnowPowerModeArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.lock'): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.sleep'): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.restart'): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.shutdown'): taskId: integer?, error: string?
 ---@overload fun(name: 'system.openSettings', arguments: SnowSystemSettingsArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'clipboard.read', arguments: SnowClipboardReadArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'clipboard.write', arguments: SnowClipboardWriteArguments): taskId: integer?, error: string?
@@ -1915,12 +2144,16 @@ task = {}
 ---@overload fun(name: 'calendar.create', arguments: SnowCalendarEventArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.update', arguments: SnowCalendarUpdateArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
+---@overload fun(name: 'calendar.series.create', arguments: SnowCalendarSeriesArguments): taskId: integer?, error: string?
+---@overload fun(name: 'calendar.series.update', arguments: SnowCalendarSeriesUpdateArguments): taskId: integer?, error: string?
+---@overload fun(name: 'calendar.series.remove', arguments: SnowCalendarSeriesRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error
+---@overload fun(name: 'location.current', arguments?: SnowLocationArguments): taskId: integer?, error: string?
 function task.start(name, arguments) end
 
 ---Request cancellation of a task owned by the current Lua VM.
@@ -2029,6 +2262,11 @@ function calendar.addDays(date, offset) end
 ---@param date string ISO YYYY-MM-DD.
 ---@return boolean selected
 function calendar.selectDate(date) end
+
+---Read one series definition and its occurrence exceptions. Requires calendar.read and calendar.series.
+---@param id string
+---@return SnowCalendarSeriesValue?
+function calendar.seriesById(id) end
 
 ---@class snow.l10n
 l10n = {}
@@ -2505,9 +2743,9 @@ widgetId = ''
 
 ---@class SnowDatePickerOptions
 ---@field key string Stable instance-local key, 1-80 bytes; create outside view callbacks.
----@field mode? 'single'|'range' Defaults to single.
+---@field mode? 'single'|'range'|'multiple' Defaults to single; multiple requires ui.datePicker.multiple.
 ---@field todayDate string Current local ISO YYYY-MM-DD date.
----@field value? string|SnowDateRange Initial value; invalid date text remains an uncommitted draft.
+---@field value? string|SnowDateRange|string[] Initial value; multiple accepts up to 366 unique ISO dates.
 ---@field minDate? string Inclusive ISO date; defaults to 0001-01-01.
 ---@field maxDate? string Inclusive ISO date; defaults to 9999-12-31.
 ---@field disabledDates? string[] At most 366 unavailable ISO dates. Ranges may not cross them.
@@ -2521,14 +2759,14 @@ widgetId = ''
 ---@class SnowDatePickerResult
 ---@field handled boolean
 ---@field changed boolean True only for a valid committed selection.
----@field value? string|SnowDateRange Detached committed value when changed=true.
+---@field value? string|SnowDateRange|string[] Detached committed value when changed=true.
 ---@class SnowDatePicker
 ---@field view fun(self: SnowDatePicker, options?: {rowHeight?: number}): SnowViewNode
 ---@field handle fun(self: SnowDatePicker, event: SnowWidgetEvent): SnowDatePickerResult? Forward action events; nil means unrelated.
----@field value fun(self: SnowDatePicker): string|SnowDateRange Last committed value.
----@field draftValue fun(self: SnowDatePicker): string|SnowDateRange Current input including invalid drafts.
+---@field value fun(self: SnowDatePicker): string|SnowDateRange|string[] Last committed value.
+---@field draftValue fun(self: SnowDatePicker): string|SnowDateRange|string[] Current input including invalid drafts.
 ---@field validation fun(self: SnowDatePicker): string? Localized draft error; nil when valid.
----@field setValue fun(self: SnowDatePicker, value: string|SnowDateRange): boolean, string? Invalid values are rejected without changing state.
+---@field setValue fun(self: SnowDatePicker, value: string|SnowDateRange|string[]): boolean, string? Invalid values are rejected without changing state.
 ---@param options SnowDatePickerOptions
 ---@return SnowDatePicker
 function ui.datePicker(options) end

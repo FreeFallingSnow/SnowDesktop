@@ -62,7 +62,8 @@ BuildSteamWorkshopPackageAssociations(
 
 void ResolveSteamWorkshopSubscriptionRemovals(
     SteamWorkshopSubscriptionSnapshot& snapshot,
-    const SteamWorkshopSubscriptionHistory& history)
+    const SteamWorkshopSubscriptionHistory& history,
+    const std::vector<InstalledPackage>& installed)
 {
     snapshot.explicitlyUnsubscribedPublishedFileIds.clear();
     if (!snapshot.authoritative || snapshot.activeSteamAccountId.empty())
@@ -82,7 +83,21 @@ void ResolveSteamWorkshopSubscriptionRemovals(
         if (accountId == snapshot.activeSteamAccountId) continue;
         subscribedByOtherAccounts.insert(itemIds.begin(), itemIds.end());
     }
-    for (const auto& publishedFileId : previous->second)
+    // Once this account has a baseline, recover managed identities omitted by
+    // old/incomplete history directly from the installed source bindings. A
+    // package conflict or failed install must not make removals depend on
+    // having recorded a successful earlier synchronization.
+    std::unordered_set<std::string> candidates(
+        previous->second.begin(), previous->second.end());
+    for (const auto& package : installed)
+    {
+        if (package.builtin || package.development ||
+            package.source.providerId != "steam-workshop")
+            continue;
+        const auto id = SteamPublishedFileId(package.source.externalItemId);
+        if (!id.empty()) candidates.insert(id);
+    }
+    for (const auto& publishedFileId : candidates)
     {
         if (!current.contains(publishedFileId) &&
             !subscribedByOtherAccounts.contains(publishedFileId))
@@ -99,23 +114,49 @@ void ResolveSteamWorkshopSubscriptionRemovals(
         snapshot.explicitlyUnsubscribedPublishedFileIds.end());
 }
 
+std::vector<std::string> BuildSteamWorkshopSubscriptionHistory(
+    const SteamWorkshopSubscriptionSnapshot& snapshot,
+    const SteamWorkshopSubscriptionHistory& history)
+{
+    std::unordered_set<std::string> remembered;
+    if (!snapshot.authoritative)
+        if (const auto previous = history.find(snapshot.activeSteamAccountId);
+            previous != history.end())
+            remembered.insert(previous->second.begin(), previous->second.end());
+    remembered.insert(snapshot.subscribedPublishedFileIds.begin(),
+        snapshot.subscribedPublishedFileIds.end());
+    for (const auto& id : snapshot.confirmedUnsubscribedPublishedFileIds)
+        if (std::find(snapshot.subscribedPublishedFileIds.begin(),
+                snapshot.subscribedPublishedFileIds.end(), id) ==
+            snapshot.subscribedPublishedFileIds.end())
+            remembered.erase(id);
+    std::vector<std::string> result(remembered.begin(), remembered.end());
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
 SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
     const std::vector<InstalledPackage>& installed,
     const SteamWorkshopSubscriptionSnapshot& snapshot)
 {
     SteamWorkshopSyncPlan plan;
-    if (!snapshot.authoritative) return plan;
+    if (!snapshot.CanSynchronize()) return plan;
 
     const std::unordered_set<std::string> subscribed(
         snapshot.subscribedPublishedFileIds.begin(),
         snapshot.subscribedPublishedFileIds.end());
-    const std::unordered_set<std::string> explicitlyUnsubscribed(
-        snapshot.explicitlyUnsubscribedPublishedFileIds.begin(),
-        snapshot.explicitlyUnsubscribedPublishedFileIds.end());
+    std::unordered_set<std::string> explicitlyUnsubscribed(
+        snapshot.confirmedUnsubscribedPublishedFileIds.begin(),
+        snapshot.confirmedUnsubscribedPublishedFileIds.end());
+    if (snapshot.authoritative)
+        explicitlyUnsubscribed.insert(
+            snapshot.explicitlyUnsubscribedPublishedFileIds.begin(),
+            snapshot.explicitlyUnsubscribedPublishedFileIds.end());
     std::unordered_set<std::string> scheduledRemoval;
     for (const auto& package : installed)
     {
-        if (package.source.providerId != "steam-workshop")
+        if (package.builtin || package.development ||
+            package.source.providerId != "steam-workshop")
             continue;
         const std::string publishedFileId =
             SteamPublishedFileId(package.source.externalItemId);
@@ -131,6 +172,7 @@ SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
         }
     }
 
+    if (!snapshot.authoritative && !snapshot.partial) return plan;
     std::unordered_set<std::string> plannedPackages;
     for (const auto& available : snapshot.installable)
     {

@@ -1,7 +1,9 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "startup_diagnostics.h"
 #include "../performance_trace.h"
 #include "../drag_input_rules.h"
+#include "../desktop_hover_rules.h"
 
 // Floating-Dock paint and window-message dispatch.
 
@@ -222,6 +224,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return desktopPoint();
     };
 
+    if (host.mergedPresentationActive && !host.mergedPresentation.inputEnabled &&
+        ((msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_CONTEXTMENU ||
+            msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR ||
+            msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP || msg == WM_SYSCHAR)) return 0;
     switch (msg)
     {
     case WM_WINDOWPOSCHANGING:
@@ -233,7 +239,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return MA_NOACTIVATE;
     case WM_NCHITTEST:
     {
-        if (!host.active)
+        if (!host.active || (host.mergedPresentationActive && !host.mergedPresentation.inputEnabled))
             return HTTRANSPARENT;
         POINT hitDesktopPoint{
             GET_X_LPARAM(lp),
@@ -288,9 +294,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         // Hiding the floating HWND generates a synthetic leave before the
         // desktop HWND receives its hand-off move. Dynamic title/rounded HRGN
         // updates can also post a stale leave while User32 still resolves the
-        // pointer to this HWND. Retain that sample, but never rearm tracking or
-        // replay full input from inside WM_MOUSELEAVE: the region can change
-        // again during presentation and otherwise create a posted-message loop.
+        // pointer to the content/backdrop pair. Retain that sample without
+        // replaying input or painting: region changes during presentation can
+        // otherwise create a posted-message loop.
         if (floatingDockHoverHandoffPending_ &&
             !host.active)
         {
@@ -308,19 +314,26 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         POINT cursorScreen{};
         if (GetCursorPos(&cursorScreen))
         {
-            if (WindowFromPoint(cursorScreen) == hwnd)
+            const HWND hitWindow = WindowFromPoint(cursorScreen);
+            if (snowdesktop::desktop_hover_rules::RetainPairedSurfaceMouseLeave(
+                    hitWindow == hwnd,
+                    host.backdrop.IsBackdropWindow(hitWindow),
+                    [hwnd]() {
+                        TRACKMOUSEEVENT tracking{ sizeof(tracking) };
+                        tracking.dwFlags = TME_LEAVE;
+                        tracking.hwndTrack = hwnd;
+                        TrackMouseEvent(&tracking);
+                    }))
             {
-                // A region update can consume the current leave subscription
-                // while the pointer still resolves to this exact HWND. Restore
-                // only that subscription. Mutating hover state, geometry or
-                // presentation here would let the region update post another
-                // leave and recreate the input-starving feedback loop.
-                TRACKMOUSEEVENT tracking{ sizeof(tracking) };
-                tracking.dwFlags = TME_LEAVE;
-                tracking.hwndTrack = hwnd;
-                TrackMouseEvent(&tracking);
+                snowdesktop::dock_taskbar_diagnostics::Record(
+                    hitWindow == hwnd
+                        ? L"Dock mouse-leave retained on content"
+                        : L"Dock mouse-leave retained on backdrop",
+                    hitWindow);
                 return 0;
             }
+            snowdesktop::dock_taskbar_diagnostics::Record(
+                L"Dock mouse-leave outside content/backdrop", hitWindow);
         }
         if (rightButtonDownDockHost_ == &host)
             rightButtonDownDockHost_ = nullptr;
@@ -328,6 +341,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     }
     case WM_LBUTTONDOWN:
+    {
+        POINT screenPoint{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ClientToScreen(hwnd, &screenPoint);
+        if (DismissMergedDockBackground(host, desktopPoint(), screenPoint)) return 0;
         // Persistent Dock Hosts deliberately use WS_EX_NOACTIVATE, so a
         // pointer press on their empty surface does not deactivate the
         // foreground modern menu. Dismiss the current menu explicitly before
@@ -341,6 +358,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingPersistentDockHost_ = nullptr;
         InvalidateFloatingDockWindow(host, true);
         return 0;
+    }
     case WM_LBUTTONUP:
         SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;

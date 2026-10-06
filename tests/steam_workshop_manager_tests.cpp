@@ -10,8 +10,10 @@
 #include "steam_child_environment.h"
 #include "steam_workshop_cache.h"
 #include "steam_workshop_sync.h"
+#include "steam_workshop_watch_thread.h"
 #include "workshop_localization.h"
 #include "workshop_project.h"
+#include "workshop_upload_validation.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -21,6 +23,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -29,6 +32,31 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <stdexcept>
+#include "data_paths.h"
+#include "steam_workshop_source.h"
+#include "bounded_file_query.h"
+#include <future>
+#include <cwctype>
+
+namespace
+{
+std::filesystem::path workshopTestDeployment;
+}
+
+// Only deployment path resolution is substituted. Source queries, archive
+// validation, reconciliation and package mutations use production code.
+std::wstring GetExecutableDirectoryPath()
+{
+    if (workshopTestDeployment.empty())
+        throw std::logic_error("Workshop source test deployment is not configured");
+    return workshopTestDeployment.wstring();
+}
+
+std::wstring GetDataDirectoryPath()
+{
+    return (std::filesystem::path(GetExecutableDirectoryPath()) / L"data").wstring();
+}
 
 using namespace snowdesktop::steam_bridge;
 using namespace snowdesktop::widget;
@@ -62,6 +90,42 @@ struct TemporaryDirectory
         std::filesystem::remove_all(path, error);
     }
 };
+
+void TestWorkshopUploadFileKinds()
+{
+    TemporaryDirectory temporary;
+    const auto theme = temporary.path / L"package.SNOWTHEME";
+    const auto widget = temporary.path / L"package.snowwidget";
+    const auto preview = temporary.path / L"cover.png";
+    { std::ofstream file(theme); file << R"({"format":"snowdesktop.theme","version":1,"global":[{"id":"builtin/global/dark"}],"quickPanel":[],"popup":[]})"; }
+    { std::ofstream file(widget); file << "widget"; }
+    { std::ofstream file(preview); file << "preview"; }
+    CoreError error;
+    Check(ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error),
+        "production upload preflight accepts a theme artifact before any Steam call");
+    Check(!ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Widget, error) && error.code == "invalid_package" &&
+        !ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Theme, error),
+        "the old widget-only validation rejects this theme; opposite content kinds remain rejected");
+    Check(ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Widget, error), "widget upload preflight keeps its existing package kind");
+    std::filesystem::resize_file(theme, 4ull * 1024ull * 1024ull);
+    Check(ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error), "theme package accepts its format limit");
+    std::filesystem::resize_file(theme, 4ull * 1024ull * 1024ull + 1);
+    Check(!ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error), "theme package above 4 MiB is rejected");
+    std::filesystem::resize_file(widget, 20ull * 1024ull * 1024ull);
+    Check(ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Widget, error), "widget package retains its 20 MiB limit");
+    std::filesystem::resize_file(widget, 20ull * 1024ull * 1024ull + 1);
+    Check(!ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Widget, error), "oversized widget package remains rejected");
+    std::filesystem::resize_file(preview, 1024ull * 1024ull - 1);
+    Check(ValidateWorkshopUploadFile(preview, true, WorkshopContentKind::Theme, error), "preview accepts files strictly below 1 MiB");
+    std::filesystem::resize_file(preview, 1024ull * 1024ull);
+    Check(!ValidateWorkshopUploadFile(preview, true, WorkshopContentKind::Theme, error) && error.code == "invalid_preview",
+        "preview at 1 MiB is rejected");
+    std::filesystem::resize_file(theme, 0);
+    Check(!ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error) &&
+        !ValidateWorkshopUploadFile(temporary.path, false, WorkshopContentKind::Theme, error) &&
+        !ValidateWorkshopUploadFile(temporary.path / L"missing.snowtheme", false, WorkshopContentKind::Theme, error),
+        "empty, directory and missing upload paths never reach Steam");
+}
 
 struct ScopedEnvironmentVariable
 {
@@ -150,6 +214,87 @@ struct ScopedSteamRegistry
     ScopedSteamRegistry(const ScopedSteamRegistry&) = delete;
     ScopedSteamRegistry& operator=(const ScopedSteamRegistry&) = delete;
 };
+
+// Regression for the desktop watcher blocking exit while directory I/O is
+// stalled. Real Win32 thread/event ownership is exercised here; only the OS
+// operation is a gated stand-in. The exact desktop producer is also exercised
+// by the isolated native reproducer recorded with this fix.
+struct WorkshopWatchThreadFixture
+{
+    HANDLE entryGate = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::atomic<bool> stopObserved = false;
+
+    ~WorkshopWatchThreadFixture()
+    {
+        if (entryGate) CloseHandle(entryGate);
+        if (entered) CloseHandle(entered);
+        if (release) CloseHandle(release);
+    }
+};
+
+std::atomic<HANDLE> workshopThreadEntryGate = nullptr;
+
+DWORD WINAPI GatedWorkshopWatchThread(LPVOID parameter)
+{
+    // Hold entry before touching the context to cover stop-before-start.
+    WaitForSingleObject(workshopThreadEntryGate.load(), INFINITE);
+    std::unique_ptr<snowdesktop::workshop_watch::ThreadContext> context(
+        static_cast<snowdesktop::workshop_watch::ThreadContext*>(parameter));
+    auto* fixture = reinterpret_cast<WorkshopWatchThreadFixture*>(context->notifyWindow);
+    SetEvent(fixture->entered);
+    WaitForSingleObject(fixture->release, INFINITE);
+    fixture->stopObserved = WaitForSingleObject(context->stopEvent, 0) == WAIT_OBJECT_0;
+    return 0;
+}
+
+void TestSteamWorkshopWatchThreadShutdown(bool delayedEntry)
+{
+    WorkshopWatchThreadFixture fixture;
+    Check(fixture.entryGate && fixture.entered && fixture.release, "create watcher cancellation fixture");
+    if (!fixture.entryGate || !fixture.entered || !fixture.release) return;
+    workshopThreadEntryGate = fixture.entryGate;
+    if (!delayedEntry) SetEvent(fixture.entryGate);
+    DWORD baseline = 0;
+    Check(GetProcessHandleCount(GetCurrentProcess(), &baseline) != FALSE,
+        "read watcher fixture handle baseline");
+    const auto handles = snowdesktop::workshop_watch::StartThread(
+        reinterpret_cast<HWND>(&fixture), &GatedWorkshopWatchThread);
+    Check(handles.thread && handles.stopEvent, "start self-contained watcher worker");
+    if (!handles.thread) return;
+    HANDLE observer = nullptr;
+    const bool observed = DuplicateHandle(GetCurrentProcess(), handles.thread,
+        GetCurrentProcess(), &observer, SYNCHRONIZE, FALSE, 0) != FALSE;
+    Check(observed, "retain only a test-owned completion observation");
+    if (!observed)
+    {
+        SetEvent(fixture.entryGate);
+        SetEvent(fixture.release);
+        const bool completed = WaitForSingleObject(handles.thread, 3000) == WAIT_OBJECT_0;
+        snowdesktop::workshop_watch::StopThread(handles.thread, handles.stopEvent);
+        if (!completed) std::exit(1); // Do not destroy a fixture still used by a worker.
+        return;
+    }
+    const bool entered = delayedEntry ||
+        WaitForSingleObject(fixture.entered, 3000) == WAIT_OBJECT_0;
+    Check(entered, "watcher reached the gated I/O boundary");
+    const ULONGLONG began = GetTickCount64();
+    snowdesktop::workshop_watch::StopThread(handles.thread, handles.stopEvent);
+    const ULONGLONG elapsed = GetTickCount64() - began;
+    Check(elapsed < 500, "watcher shutdown does not join blocked filesystem I/O");
+    SetEvent(fixture.entryGate);
+    SetEvent(fixture.release);
+    const bool completed = WaitForSingleObject(observer, 3000) == WAIT_OBJECT_0;
+    Check(completed, "stopped watcher completes when its I/O is released");
+    CloseHandle(observer);
+    if (!completed) std::exit(1); // Bound failure without a fixture use-after-free.
+    Check(completed && fixture.stopObserved,
+        "worker keeps a valid signaled event after caller handles are closed");
+    DWORD after = 0;
+    Check(GetProcessHandleCount(GetCurrentProcess(), &after) != FALSE && after == baseline,
+        "watcher releases caller and worker handles after completion");
+}
 
 void TestManagerFrameScheduler()
 {
@@ -510,14 +655,14 @@ void TestSteamSubscriptionSyncPlan()
     switchedAccount.authoritative = true;
     switchedAccount.activeSteamAccountId = "222";
     ResolveSteamWorkshopSubscriptionRemovals(
-        switchedAccount, subscriptionHistory);
+        switchedAccount, subscriptionHistory, { current });
     plan = BuildSteamWorkshopSyncPlan({ current }, switchedAccount);
     Check(plan.actions.empty(),
         "an empty cache after switching Steam accounts preserves local components");
 
     SteamWorkshopSubscriptionSnapshot sharedAcrossAccounts = unsubscribed;
     ResolveSteamWorkshopSubscriptionRemovals(sharedAcrossAccounts,
-        { { "111", { "100" } }, { "222", { "100" } } });
+        { { "111", { "999" } }, { "222", { "100" } } }, { current });
     plan = BuildSteamWorkshopSyncPlan({ current }, sharedAcrossAccounts);
     Check(plan.actions.empty(),
         "another account's remembered subscription preserves the local component");
@@ -527,10 +672,59 @@ void TestSteamSubscriptionSyncPlan()
     Check(plan.actions.empty(),
         "a failed/non-authoritative Steam query never removes components");
 
+    auto partial = snapshot;
+    partial.authoritative = false;
+    partial.partial = true;
+    partial.activeSteamAccountId = "111";
+    const auto unseen = Installed("package-unseen", "1.0.0", "steam-workshop", "200@42");
+    ResolveSteamWorkshopSubscriptionRemovals(partial, {{"111", {"100", "200"}}});
+    plan = BuildSteamWorkshopSyncPlan({current, unseen}, partial);
+    Check(partial.explicitlyUnsubscribedPublishedFileIds.empty() &&
+        plan.actions.size() == 1 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Update,
+        "a skipped library permits healthy updates without inferring an unsubscribe");
+    Check(BuildSteamWorkshopSubscriptionHistory(partial, {{"111", {"200"}}}) ==
+        std::vector<std::string>({"100", "200"}),
+        "new subscriptions observed in a partial scan join history without dropping unreadable ones");
+    partial.confirmedUnsubscribedPublishedFileIds = {"200"};
+    plan = BuildSteamWorkshopSyncPlan({current, unseen}, partial);
+    Check(plan.actions.size() == 2 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        plan.actions[0].packageId == "package-unseen",
+        "an explicit unsubscribe accepted by Steam is not blocked by an unrelated skipped library");
+    Check(BuildSteamWorkshopSubscriptionHistory(partial, {{"111", {"100", "200"}}}) ==
+        std::vector<std::string>{"100"},
+        "only a confirmed unsubscribe can leave remembered history during a partial scan");
+    partial.confirmedUnsubscribedPublishedFileIds = {"100"};
+    plan = BuildSteamWorkshopSyncPlan({current, unseen}, partial);
+    Check(plan.actions.size() == 1 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Update,
+        "a still-subscribed cache entry prevents premature unsubscribe completion");
+
     auto local = Installed("package-a", "1.0.0", "local-import", "package-a");
     plan = BuildSteamWorkshopSyncPlan({ local }, snapshot);
     Check(plan.actions.empty() && plan.conflicts.size() == 1,
         "automatic subscription sync does not replace another package source");
+
+    auto staleHistory = snapshot;
+    staleHistory.activeSteamAccountId = "111";
+    const auto retired = Installed("package-retired", "1.0.0", "steam-workshop", "200@42");
+    const auto retainedLocal = Installed("local-only", "1.0.0", "local-directory", "300");
+    auto developmentOnly = Installed("development-only", "1.0.0", "steam-workshop", "400");
+    developmentOnly.development = true;
+    const SteamWorkshopSubscriptionHistory incomplete{{"111", {"999"}}};
+    const std::vector<InstalledPackage> managed{current, retired, local, retainedLocal, developmentOnly};
+    ResolveSteamWorkshopSubscriptionRemovals(staleHistory, incomplete);
+    const auto historyOnlyPlan = BuildSteamWorkshopSyncPlan(managed, staleHistory);
+    Check(std::none_of(historyOnlyPlan.actions.begin(), historyOnlyPlan.actions.end(),
+            [](const auto& action) { return action.kind == SteamWorkshopSyncActionKind::Uninstall; }),
+        "history-only reconciliation reproduces the Steam installation's missing removal");
+    ResolveSteamWorkshopSubscriptionRemovals(staleHistory, incomplete, managed);
+    plan = BuildSteamWorkshopSyncPlan(managed, staleHistory);
+    Check(plan.actions.size() == 2 && plan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        plan.actions[0].packageId == "package-retired" && plan.actions[1].kind == SteamWorkshopSyncActionKind::Update,
+        "established-account local subscriptions retire history omissions while retaining subscribed and local packages");
+    staleHistory.authoritative = false;
+    ResolveSteamWorkshopSubscriptionRemovals(staleHistory, incomplete, managed);
+    Check(BuildSteamWorkshopSyncPlan(managed, staleHistory).actions.empty(),
+        "an unreadable subscription manifest cannot remove packages recovered from installed bindings");
 }
 
 void TestProjectStore()
@@ -1066,6 +1260,65 @@ void TestSteamLibraryDiscovery()
     writeLibraries(false, false, true);
     checkSubscriptions("legacy library paths remain discoverable without apps maps");
 
+    // Skipped roots must not disable reconciliation of successfully read
+    // local subscriptions. An entirely unreadable scan stays unavailable.
+    const auto invalidLibrary = temporaryRoot / L"not-a-directory";
+    std::ofstream(invalidLibrary) << "file";
+    const auto partial = ReadSteamWorkshopLocalCache(
+        {secondaryRoot, invalidLibrary}, 5080330u);
+    Check(partial.authoritative && partial.partial && partial.error.empty() &&
+        !partial.skippedLibraries.empty() &&
+        partial.subscribedPublishedFileIds == itemIds,
+        "skipped library failures preserve usable local subscription authority");
+
+    const auto disabled = temporaryRoot / L"disabled-library";
+    const auto missing = ReadSteamWorkshopLocalCache({disabled, secondaryRoot}, 5080330u);
+    Check(missing.partial && missing.authoritative && missing.error.empty() &&
+        missing.readyItems.size() == itemIds.size() &&
+        missing.skippedLibraries.size() == 1 &&
+        missing.skippedLibraries[0].find("disabled-library") != std::string::npos,
+        "a missing first root is skipped with its path while a healthy library stays usable");
+    const auto unavailable = ReadSteamWorkshopLocalCache({disabled}, 5080330u);
+    Check(!unavailable.authoritative && !unavailable.partial && !unavailable.error.empty(),
+        "no readable cache remains unavailable rather than inventing an authoritative empty set");
+
+    // Hold only the unavailable root at the redirector boundary. The healthy
+    // root still runs its actual ACF reader and must finish within the budget.
+    using CacheQuery = snowdesktop::BoundedFileQuery<SteamWorkshopLocalCache>;
+    const auto offline = temporaryRoot / L"offline-library";
+    std::wstring offlineKey = offline.wstring();
+    std::transform(offlineKey.begin(), offlineKey.end(), offlineKey.begin(),
+        [](wchar_t value) { return static_cast<wchar_t>(std::towlower(value)); });
+    offlineKey += L":5080330";
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    const auto stalled = CacheQuery::ForProcess().Request(offlineKey,
+        [&entered, releaseFuture] {
+            entered.set_value();
+            releaseFuture.wait();
+            return SteamWorkshopLocalCache{};
+        });
+    Check(enteredFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "the controlled offline library starts its read-only job");
+    const auto began = std::chrono::steady_clock::now();
+    const auto timed = ReadSteamWorkshopLocalCache({offline, secondaryRoot}, 5080330u);
+    const auto elapsed = std::chrono::steady_clock::now() - began;
+    release.set_value();
+    Check(CacheQuery::Wait(stalled, std::chrono::steady_clock::now() + std::chrono::seconds(2)).has_value(),
+        "the controlled offline reader is released before fixture cleanup");
+    Check(timed.partial && timed.error.empty() && timed.readyItems.size() == itemIds.size() &&
+        timed.skippedLibraries.size() == 1 &&
+        elapsed < std::chrono::milliseconds(1500),
+        "a timed-out first library cannot disable or indefinitely delay healthy subscriptions");
+    std::filesystem::create_directories(offline / L"steamapps" / L"workshop");
+    std::ofstream(offline / L"steamapps" / L"workshop" / L"appworkshop_5080330.acf") <<
+        R"("AppWorkshop" { "appid" "5080330" "WorkshopItemsInstalled" {} "WorkshopItemDetails" {} })";
+    const auto recovered = ReadSteamWorkshopLocalCache({offline, secondaryRoot}, 5080330u);
+    Check(recovered.authoritative && !recovered.partial && recovered.skippedLibraries.empty() &&
+        recovered.readyItems.size() == itemIds.size(),
+        "a recovered library returns to a complete snapshot without restarting the process");
+
     std::filesystem::remove(libraryFile);
     std::string error;
     auto libraries = DiscoverSteamLibraryRoots(5080330u, error);
@@ -1075,6 +1328,187 @@ void TestSteamLibraryDiscovery()
     libraries = DiscoverSteamLibraryRoots(5080330u, error);
     Check(!error.empty() && libraries == std::vector{steamRoot},
         "partially written library metadata reports an error and retains the fallback");
+}
+
+void TestPartialWorkshopSourceAndPackageMutations()
+{
+    TemporaryDirectory temporary;
+    struct DeploymentScope
+    {
+        ~DeploymentScope() { workshopTestDeployment.clear(); }
+    } deploymentScope;
+    workshopTestDeployment = std::filesystem::canonical(temporary.path);
+    const auto steam = workshopTestDeployment / L"SteamClient";
+    const auto disabled = workshopTestDeployment / L"disabled-library";
+    const auto corrupt = workshopTestDeployment / L"corrupt-library";
+    const auto workshop = steam / L"steamapps" / L"workshop";
+    const auto archive = workshop / L"content" / L"5080330" / L"100" / L"package.snowwidget";
+    std::filesystem::create_directories(archive.parent_path());
+    std::filesystem::create_directories(corrupt / L"steamapps" / L"workshop");
+    // A corrupt root must not leak identities that could authorize an update.
+    std::ofstream(corrupt / L"steamapps" / L"workshop" / L"appworkshop_5080330.acf") <<
+        R"("AppWorkshop" { "appid" "5080330" "WorkshopItemDetails" {
+            "900" { "latest_manifest" "99" } "invalid-item" { "latest_manifest" "88" } } })";
+    const auto pathText = [](const std::filesystem::path& path) {
+        const auto utf8 = path.generic_u8string();
+        return std::string(utf8.begin(), utf8.end());
+    };
+    {
+        std::ofstream file(steam / L"steamapps" / L"libraryfolders.vdf");
+        file << "\"libraryfolders\" { \"0\" { \"path\" " << std::quoted(pathText(disabled))
+            << " } \"1\" { \"path\" " << std::quoted(pathText(steam))
+            << " } \"2\" { \"path\" " << std::quoted(pathText(corrupt)) << " } }";
+    }
+    std::ofstream(workshop / L"appworkshop_5080330.acf") <<
+        R"("AppWorkshop" { "appid" "5080330"
+            "WorkshopItemsInstalled" { "100" { "manifest" "11" } }
+            "WorkshopItemDetails" { "100" { "latest_manifest" "11" "subscribedby" "123" } } })";
+    ScopedSteamRegistry registry(steam);
+    if (!registry.redirected) return;
+    HKEY activeProcess = nullptr;
+    const DWORD accountId = 123;
+    const auto activeOpened = RegCreateKeyExW(registry.root, L"Software\\Valve\\Steam\\ActiveProcess",
+        0, nullptr, REG_OPTION_VOLATILE, KEY_ALL_ACCESS, nullptr, &activeProcess, nullptr);
+    Check(activeOpened == ERROR_SUCCESS, "create an isolated active Steam account");
+    if (activeOpened != ERROR_SUCCESS) return;
+    const auto activeWritten = RegSetValueExW(activeProcess, L"ActiveUser", 0, REG_DWORD,
+        reinterpret_cast<const BYTE*>(&accountId), static_cast<DWORD>(sizeof(accountId)));
+    RegCloseKey(activeProcess);
+    Check(activeWritten == ERROR_SUCCESS, "set the isolated subscription history account");
+    const auto sourceDirectory = workshopTestDeployment / L"source-package";
+    std::filesystem::create_directory(sourceDirectory);
+    const std::string id = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb23";
+    const std::string unseenId = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb24";
+    const auto writePackage = [&](const std::string& packageId, const char* version) {
+        std::ofstream file(sourceDirectory / L"widget.json", std::ios::binary | std::ios::trunc);
+        file << R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,"id":")" << packageId
+            << R"(","slug":"workshop-skip-test","version":")" << version
+            << R"(","entry":"main.lua","permissions":[],"name":"Workshop skip test"})";
+        std::ofstream(sourceDirectory / L"main.lua") << "return widget.define({})";
+    };
+    const auto paths = PackagePaths::ForCurrentDeployment();
+    std::filesystem::create_directories(paths.builtin);
+    WidgetPackageManager manager(paths);
+    std::string error;
+    Check(manager.Initialize(error), "isolated package registry initializes before the real source query");
+    PackageArtifact artifact;
+    ValidationReport report;
+    writePackage(id, "1.0.0");
+    if (!manager.ExportDirectory(sourceDirectory, archive, artifact, report, error))
+    {
+        Check(false, "the healthy Workshop library contains a valid production archive");
+        return;
+    }
+    const auto bridge = workshopTestDeployment / L"unused-bridge.exe";
+    std::ofstream(bridge) << "status only; never launched";
+    SteamWorkshopSource source(bridge);
+    Check(source.Status().available, "a skipped library does not disable the usable Workshop provider");
+    PackageQuery query;
+    auto snapshot = source.QuerySubscriptions(query, error);
+    Check(error.empty() && snapshot.error.empty() && snapshot.partial && snapshot.authoritative &&
+        snapshot.subscribedPublishedFileIds == std::vector<std::string>{"100"} &&
+        snapshot.installable.size() == 1 && snapshot.localArtifacts.contains("100") &&
+        snapshot.warning.find("disabled-library") != std::string::npos &&
+        snapshot.warning.find("corrupt-library") != std::string::npos,
+        "the real provider returns healthy packages and logs skipped roots without a search error");
+    if (snapshot.installable.size() != 1) return;
+    InstalledPackage installed;
+    Check(manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,
+        installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id).has_value(),
+        "installation refreshes the warmed catalogue after a partial Workshop query");
+    Check(manager.SetEnabled(id, false, error) && manager.RefreshCatalog(error) && !manager.Resolve(id) &&
+        manager.SetEnabled(id, true, error) && manager.RefreshCatalog(error) && manager.Resolve(id).has_value(),
+        "disable and reenable remain visible through the catalogue cache");
+    writePackage(unseenId, "1.0.0");
+    Check(manager.InstallDirectory(sourceDirectory, {"steam-workshop", "200@42"}, false,
+        installed, report, error), "an unseen-library package exists before partial reconciliation");
+    writePackage(id, "1.1.0");
+    Check(manager.ExportDirectory(sourceDirectory, archive, artifact, report, error),
+        "a downloaded Workshop update replaces the test archive");
+    snapshot = source.QuerySubscriptions(query, error);
+    const auto plan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    Check(error.empty() && plan.actions.size() == 1 &&
+        plan.actions[0].kind == SteamWorkshopSyncActionKind::Update && plan.actions[0].packageId == id,
+        "partial discovery reaches a real update plan and preserves the unseen package");
+    Check(manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,
+        installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id) &&
+        manager.Resolve(id)->manifest.version == "1.1.0" && manager.Resolve(unseenId).has_value(),
+        "updating refreshes the warmed catalogue while the unavailable library's package survives");
+    Check(manager.UpdateSteamSubscriptionHistory("123", {"999"}, error),
+        "reproduce the Steam installation's stale established-account history in the isolated registry");
+    using PackageValidationQuery = snowdesktop::BoundedFileQuery<SteamWorkshopSubscriptionSnapshot>;
+    const auto validationKey = bridge.lexically_normal().native() + L"\n100:" +
+        archive.parent_path().lexically_normal().native();
+    std::promise<void> validationEntered, validationRelease;
+    auto validationEnteredFuture = validationEntered.get_future();
+    auto validationReleaseFuture = validationRelease.get_future().share();
+    const auto stalledValidation = PackageValidationQuery::ForProcess().Request(validationKey,
+        [&validationEntered, validationReleaseFuture] {
+            validationEntered.set_value();
+            validationReleaseFuture.wait();
+            return SteamWorkshopSubscriptionSnapshot{};
+        });
+    Check(validationEnteredFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready,
+        "the controlled slow archive validation enters its read-only boundary");
+    auto slow = source.QuerySubscriptions(query, error);
+    validationRelease.set_value();
+    Check(PackageValidationQuery::Wait(stalledValidation,
+        std::chrono::steady_clock::now() + std::chrono::seconds(2)).has_value(),
+        "the held validation job exits before fixture cleanup");
+    ResolveSteamWorkshopSubscriptionRemovals(slow, manager.SteamSubscriptionHistory(), manager.ListPackages());
+    const auto slowPlan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), slow);
+    Check(error.empty() && slow.error.empty() && slow.authoritative && slow.installable.empty() &&
+        slow.warning.find("packages skipped") != std::string::npos &&
+        slowPlan.actions.size() == 1 && slowPlan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        slowPlan.actions[0].packageId == unseenId,
+        "a skipped slow archive does not erase local subscriptions or block their unsubscribe plan");
+    auto blocked = snapshot;
+    blocked.authoritative = false; // Negative control: the preceding try's whole-scan gate.
+    ResolveSteamWorkshopSubscriptionRemovals(blocked, manager.SteamSubscriptionHistory(), manager.ListPackages());
+    Check(BuildSteamWorkshopSyncPlan(manager.ListPackages(), blocked).actions.empty(),
+        "the former non-authoritative gate reproduces the reported unsubscribe residue");
+    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory());
+    Check(BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot).actions.empty(),
+        "stale history without installed bindings reproduces the actual Steam removal-plan failure");
+    const std::string localId = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb25";
+    writePackage(localId, "1.0.0");
+    Check(manager.InstallDirectory(sourceDirectory, {"local-directory", "audio-spectrum"}, false,
+        installed, report, error), "retain a real local package before its subscribed ID conflict");
+    PackageDetails conflicting;
+    conflicting.manifest = installed.manifest;
+    conflicting.source = {"steam-workshop", "300"};
+    snapshot.installable.push_back(conflicting);
+    snapshot.subscribedPublishedFileIds.push_back("300");
+    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory(), manager.ListPackages());
+    const auto removal = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    Check(removal.actions.size() == 1 && removal.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        removal.actions[0].packageId == unseenId && removal.conflicts.size() == 1 &&
+        manager.Uninstall(unseenId, error) && manager.RefreshCatalog(error) &&
+        !manager.ContainsPackage(unseenId) && manager.Resolve(id).has_value() && manager.Resolve(localId).has_value(),
+        "stale history and an unrelated local ID conflict cannot stop local-manifest uninstallation or overwrite local packages");
+    Check(manager.UpdateSteamSubscriptionHistory("123",
+            BuildSteamWorkshopSubscriptionHistory(snapshot, manager.SteamSubscriptionHistory()), error) &&
+        manager.SteamSubscriptionHistory().at("123") == std::vector<std::string>({"100", "300"}),
+        "valid local subscription identities persist independently of a package conflict");
+    // A failed removal also needs a fresh plan after history has advanced.
+    writePackage(unseenId, "1.0.0");
+    Check(manager.InstallDirectory(sourceDirectory, {"steam-workshop", "200@42"}, false,
+        installed, report, error), "recreate a remaining managed copy for removal retry");
+    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory(), manager.ListPackages());
+    const auto retry = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    Check(retry.actions.size() == 1 && retry.actions[0].packageId == unseenId &&
+        retry.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall && manager.Uninstall(unseenId, error),
+        "a managed copy still absent from subscriptions is retried even after history was saved");
+    Check(manager.Uninstall(id, error) && manager.RefreshCatalog(error) && !manager.ContainsPackage(id),
+        "local uninstall immediately removes cached Workshop package entries");
+    const auto resubscribed = source.QuerySubscriptions(query, error);
+    const auto reinstall = BuildSteamWorkshopSyncPlan(manager.ListPackages(), resubscribed);
+    Check(error.empty() && reinstall.actions.size() == 1 &&
+        reinstall.actions[0].kind == SteamWorkshopSyncActionKind::Install &&
+        reinstall.actions[0].packageId == id &&
+        manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,
+            installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id).has_value(),
+        "a newly present local subscription can reinstall its managed package after removal");
 }
 
 void TestSteamWorkshopLocalCache()
@@ -1127,12 +1561,24 @@ void TestSteamWorkshopLocalCache()
         "a partially written Workshop cache never authorizes removals");
 }
 
+std::uint64_t BundledAuthoringRevision(const std::filesystem::path& repositoryRoot)
+{
+    std::ifstream file(repositoryRoot / L"widgets" / L"snowdesktop-lua-widget" / L"skill.json");
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    JsonValue manifest;
+    std::string error;
+    const bool valid = ParseJson(text, manifest, error) && JsonUnsigned(manifest, "revision") > 0;
+    Check(valid, "bundled authoring manifest has a positive revision");
+    return valid ? JsonUnsigned(manifest, "revision").value_or(0) : 0;
+}
+
 void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
     const std::filesystem::path& snowwidget)
 {
     TemporaryDirectory temporary;
     const auto bundled = repositoryRoot / L"widgets" /
         L"snowdesktop-lua-widget";
+    const auto expectedRevision = BundledAuthoringRevision(repositoryRoot);
     const std::array kinds = {
         AgentSkillTargetKind::Shared,
         AgentSkillTargetKind::Codex,
@@ -1152,7 +1598,7 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
         auto status = InspectAgentSkill(
             bundled, snowwidget, target, error);
         Check(status.state == SkillInstallState::NotInstalled &&
-            status.bundledRevision == 13,
+            status.bundledRevision == expectedRevision,
             "each supported agent reports a clean not-installed state");
         Check(InstallOrUpdateAgentSkill(status, error),
             "Agent Skill installs transactionally into every selected root");
@@ -1179,6 +1625,7 @@ void TestRealPackageTool(const std::filesystem::path& executable,
     const auto stagingRoot = temporaryRoot.path / L"data" /
         L"SteamWorkshopManager" / L"staging" / L"packages";
     PackageTool tool(executable, stagingRoot);
+    const auto expectedRevision = BundledAuthoringRevision(repositoryRoot);
     const std::wstring capabilitiesCommand = L"\"" + executable.wstring() +
         L"\" capabilities";
     FILE* capabilitiesPipe = _wpopen(capabilitiesCommand.c_str(), L"rt");
@@ -1202,7 +1649,7 @@ void TestRealPackageTool(const std::filesystem::path& executable,
             capabilities.Find("authoringSkill") &&
             capabilities.Find("authoringSkill")->IsObject() &&
             JsonUnsigned(*capabilities.Find("authoringSkill"), "revision") ==
-                13u &&
+                expectedRevision &&
             capabilities.Find("executableSchemaVersions") &&
             capabilities.Find("executableSchemaVersions")->IsArray() &&
             capabilities.Find("executableSchemaVersions")->array.size() == 1 &&
@@ -1287,6 +1734,8 @@ void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
 
 int wmain(int argc, wchar_t** argv)
 {
+    TestSteamWorkshopWatchThreadShutdown(false);
+    TestSteamWorkshopWatchThreadShutdown(true);
     TestJson();
     TestSteamIdentity();
     TestSteamChildEnvironment();
@@ -1295,12 +1744,14 @@ int wmain(int argc, wchar_t** argv)
     TestManagerLocalization();
     TestSteamSubscriptionSyncPlan();
     TestSteamLibraryDiscovery();
+    TestPartialWorkshopSourceAndPackageMutations();
     TestSteamWorkshopLocalCache();
     TestProjectStore();
     TestWorkshopManagerDataMigration();
     TestMetadataBinding();
     TestCommandLineQuoting();
     TestPublishLifecycle();
+    TestWorkshopUploadFileKinds();
     TestWorkshopLocalization();
     TestComponentPublishPlan();
     if (argc == 3)

@@ -31,22 +31,38 @@ local sources = {
         age = 1000, hidden = "pause", permission = "system.storage.read" },
 }
 
-function M.reconcile(handles, cardShown, hasFeature, hasPermission, subscribe)
+-- The caller owns this capability value alongside its handles. Keeping it out
+-- of the handle table lets disposal iterate only subscriptions, and needs no
+-- weak tables or metatable functions unavailable in the widget sandbox.
+function M.reconcile(handles, cardShown, hasFeature, hasPermission, subscribe,
+        previousGpuDetails)
+    local details = hasFeature("data.system.gpu.details") == true
+    if handles.gpu and previousGpuDetails ~= details then
+        handles.gpu:unsubscribe()
+        handles.gpu = nil
+    end
     for _, source in ipairs(sources) do
         local wanted = (cardShown(source.card) or
             (source.sharedCard and cardShown(source.sharedCard))) and
             hasFeature("data." .. source.topic) and
             hasPermission(source.permission)
         if wanted and not handles[source.key] then
-            handles[source.key] = subscribe(source.topic, {
+            local options = {
                 maxAgeMs = source.age,
                 whenHidden = source.hidden or "throttle",
-            })
+            }
+            -- Old hosts reject unknown subscription options. Only request
+            -- per-channel validity and engine details after the feature probe.
+            if source.key == "gpu" and details then
+                options.includeDetails = true
+            end
+            handles[source.key] = subscribe(source.topic, options)
         elseif not wanted and handles[source.key] then
             handles[source.key]:unsubscribe()
             handles[source.key] = nil
         end
     end
+    return details
 end
 
 return M

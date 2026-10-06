@@ -1,6 +1,9 @@
 #include "app.h"
+#include "../layout_scroll_save_rules.h"
+#include "../desktop_hover_rules.h"
 #include "shell_change_notification.h"
 #include "../desktop_keyboard_rules.h"
+#include "../desktop_source.h"
 #include "../drag_input_rules.h"
 #include "../performance_trace.h"
 
@@ -88,10 +91,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg)
     {
     case WM_COMMAND:
-        if (renameEdit_ && reinterpret_cast<HWND>(lp) == renameEdit_ &&
+        if (renameInputWindow_ && reinterpret_cast<HWND>(lp) == renameInputWindow_ &&
             HIWORD(wp) == EN_UPDATE)
         {
-            renameEditLayout_.Update(renameEdit_);
+            renameEditLayout_.Update(renameInputWindow_);
             return 0;
         }
         break;
@@ -773,8 +776,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 RECT content =
                     GetCollectionPopupContentRect(popup);
                 for (size_t i = 0;
-                     i < dockFolderPopupWidget_.
-                        folderEntries.size(); ++i)
+                     i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
                 {
                     RECT itemRect =
                         GetCollectionPopupItemRect(
@@ -789,8 +791,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         !HitTestCollectionPopupItem(popup, i, pt))
                         continue;
                     const std::wstring path =
-                        dockFolderPopupWidget_.
-                            folderEntries[i].fullPath;
+                        dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].fullPath;
                     if (LaunchPathWithShortcutPolicy(
                             hwnd_, path))
                         CloseCollectionPopup();
@@ -852,6 +853,28 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 return 0;
             }
             if (wc->IsCollapsed()) continue;
+            if (auto* group = dynamic_cast<FileGroup*>(wc);
+                group && wc->HitTestWidget(pt) == WidgetHit::SourceTab)
+            {
+                // Source tabs are outside the content slots. Resolve the
+                // clicked source rather than the group's active source.
+                const size_t sourceIndex =
+                    FindWidgetIndexById(group->SourceIdAtPoint(pt));
+                if (sourceIndex < widgets_.size())
+                {
+                    const DesktopWidget& source = widgets_[sourceIndex];
+                    const std::wstring path =
+                        source.type == DesktopWidgetType::FolderMapping
+                        ? source.sourceFolderPath
+                        : (source.type == DesktopWidgetType::FileCategories
+                            ? snowdesktop::desktop_source::Directory()
+                            : L"");
+                    if (!path.empty())
+                        clearSelectionAfterAcceptedOpen(
+                            shellLaunchWorker_.Enqueue(hwnd_, path));
+                }
+                return 0;
+            }
             RECT bodyRect = wc->GetBodyRect();
             for (auto& slot : wc->GetSlots())
             {
@@ -1081,7 +1104,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // Explorer also broadcasts this message for view options such as
         // "Hidden items". Theme and taskbar notifications do not change the
         // desktop namespace, so avoid a synchronous full item reload for them.
-        if (!traySettings && !immersiveColor)
+        if (!traySettings && !immersiveColor && wp != SPI_SETWORKAREA)
             ReloadItems(false);
         return 0;
     }
@@ -1176,7 +1199,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 static_cast<std::size_t>(lp)))
             return 0;
         renameCommitPending_ = false;
-        if (GetFocus() != renameEdit_)
+        if (GetFocus() != renameInputWindow_)
             CommitRename(wp != 0);
         return 0;
     case kShellFileOperationCompletedMessage:
@@ -1203,6 +1226,18 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kTrayCallbackMessage:
         OnTrayCallback(lp);
         return 0;
+    case WM_QUERYENDSESSION:
+    case WM_ENDSESSION:
+        // The hidden control window is top-level and receives session events.
+        // Best-effort flush never vetoes shutdown or serializes a partial drag
+        // or reload. Failure stays pending; a canceled session can still retry.
+        if (snowdesktop::ShouldFlushScrollLayoutForSession(
+                layoutSavePending_, msg == WM_QUERYENDSESSION, wp != 0,
+                reloading_, dragSession_.HasContext(),
+                dragDropController_.IsTransportActive(),
+                widgetAction_ != WidgetAction::None))
+            SaveLayoutSlots(false);
+        return msg == WM_QUERYENDSESSION ? TRUE : 0;
     case WM_CLOSE:
         RequestExit();
         return 0;

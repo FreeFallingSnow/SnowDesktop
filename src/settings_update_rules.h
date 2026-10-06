@@ -35,11 +35,17 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.softwareDesktopEnabled == after.softwareDesktopEnabled &&
         before.demoModeEnabled == after.demoModeEnabled &&
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
+        before.contextMenuExpandQuickActions == after.contextMenuExpandQuickActions &&
+        before.contextMenuHidePageManagement == after.contextMenuHidePageManagement &&
         before.quickNavTheme == after.quickNavTheme &&
         before.collectionPopupTheme == after.collectionPopupTheme &&
         before.quickNavigationAppearance == after.quickNavigationAppearance &&
         before.collectionPopupAppearance == after.collectionPopupAppearance &&
+        before.globalQuickNavigationAppearance == after.globalQuickNavigationAppearance &&
+        before.globalCollectionPopupAppearance == after.globalCollectionPopupAppearance &&
+        before.font == after.font &&
         before.dockEnabled == after.dockEnabled &&
+        before.statusBar == after.statusBar &&
         before.animationMode == after.animationMode &&
         before.popupAnimationEffect == after.popupAnimationEffect &&
         before.animationSpeed == after.animationSpeed &&
@@ -53,13 +59,16 @@ inline bool IsGeneralShortcutOnlyCommit(
 
 inline bool IsNavigationShortcutOnlyCommit(
     const NavigationSettings& before,
-    const NavigationSettings& after) noexcept
+    const NavigationSettings& after)
 {
     const bool shortcutChanged = before.enabled != after.enabled ||
         before.modifiers != after.modifiers ||
         before.virtualKey != after.virtualKey;
-    return shortcutChanged &&
-        before.desktopViewMode == after.desktopViewMode;
+    NavigationSettings comparable = before;
+    comparable.enabled = after.enabled;
+    comparable.modifiers = after.modifiers;
+    comparable.virtualKey = after.virtualKey;
+    return shortcutChanged && comparable == after;
 }
 
 inline bool IsFloatingDockShortcutOnlyCommit(

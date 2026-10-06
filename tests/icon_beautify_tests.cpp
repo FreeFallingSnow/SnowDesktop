@@ -1,5 +1,6 @@
 #include "icon_beautify.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -95,7 +96,10 @@ int main()
         static_cast<int>(IconBeautifyFinish::Sticker) == 3 &&
         static_cast<int>(IconBeautifyPreset::None) == 0 &&
         static_cast<int>(IconBeautifyPreset::DefaultBeautify) == 1 &&
-        static_cast<int>(IconBeautifyPreset::Custom) == 5,
+        static_cast<int>(IconBeautifyPreset::Custom) == 5 &&
+        static_cast<int>(IconBeautifyPreset::FrostedGlass) == 6 &&
+        static_cast<int>(IconBeautifyPreset::FrostedGlassDark) == 7 &&
+        static_cast<int>(IconBeautifyPreset::FrostedGlassLight) == 8,
         "persisted beautification enums have stable values");
 
     beautify::ContinuousPreviewState continuousState;
@@ -113,10 +117,13 @@ int main()
             beautify::InteractionAction::Commit,
         "continuous controls throttle previews and commit only on release");
 
-    constexpr std::array<IconBeautifyPreset, 3> builtInPresets{
+    constexpr std::array<IconBeautifyPreset, 6> builtInPresets{
         IconBeautifyPreset::None,
         IconBeautifyPreset::DefaultBeautify,
         IconBeautifyPreset::Custom,
+        IconBeautifyPreset::FrostedGlass,
+        IconBeautifyPreset::FrostedGlassDark,
+        IconBeautifyPreset::FrostedGlassLight,
     };
     for (IconBeautifyPreset preset : builtInPresets)
     {
@@ -124,16 +131,59 @@ int main()
         Check(beautify::IdentifyPreset(presetSettings) == preset,
             "built-in icon beautify presets round-trip through identification");
     }
+    // The loader must refresh explicit recipes, but preserve custom/legacy
+    // material and geometry values. This protects updates, not visual taste.
+    for (const auto preset : builtInPresets)
+    {
+        auto previous = beautify::MakePreset(preset);
+        previous.edgeLight.direction = 127.f;
+        previous.edgeLight.spread = 117.f;
+        previous.backgroundOpacity = .47f;
+        previous.mode = 1;
+        previous.contentScale = .79f;
+        const auto loaded = beautify::ResolvePersistedSettings(previous, true);
+        Check(beautify::Equal(loaded, preset == IconBeautifyPreset::Custom
+                ? previous : beautify::MakePreset(preset)),
+            "explicit built-in icon presets refresh while custom parameters survive loading");
+        if (preset != IconBeautifyPreset::None && preset != IconBeautifyPreset::Custom)
+        {
+            previous.enabled = false;
+            auto expected = beautify::MakePreset(preset); expected.enabled = false;
+            Check(beautify::Equal(beautify::ResolvePersistedSettings(previous, true), expected),
+                "refreshing an icon recipe does not re-enable disabled beautification");
+        }
+    }
+    {
+        auto legacy = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
+        legacy.mode = 1; legacy.contentScale = .79f;
+        auto expected = legacy; expected.preset = IconBeautifyPreset::Custom;
+        Check(beautify::Equal(beautify::ResolvePersistedSettings(legacy, false), expected),
+            "layouts without an explicit icon preset preserve saved scaling and appearance");
+        legacy.preset = static_cast<IconBeautifyPreset>(2);
+        Check(beautify::Equal(beautify::ResolvePersistedSettings(legacy, true), expected),
+            "retired icon preset identities retain their material as custom");
+    }
+    {
+        auto plate = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
+        const auto baseline = beautify::RenderEdgeReflection(104, 104, plate);
+        auto plain = plate; plain.glassEnabled = false; plain.preset = IconBeautifyPreset::Custom;
+        Check(beautify::RenderEdgeReflection(104, 104, plain) == baseline,
+            "edge pixels depend on material parameters rather than glass or preset identity");
+        snowdesktop::VisitEdgeLightFields([&](auto name, auto field, float minimum, float maximum) {
+            auto changed = plate;
+            changed.edgeLight.*field = plate.edgeLight.*field < (minimum + maximum) * .5f ? maximum : minimum;
+            const bool changedPixels = beautify::RenderEdgeReflection(104, 104, changed) != baseline;
+            if (!changedPixels) std::cerr << "Unresponsive edge parameter: " << name << '\n';
+            Check(changedPixels,
+                "each shared material parameter changes actual icon-edge pixels");
+            Check(beautify::IdentifyPreset(changed) == IconBeautifyPreset::Custom,
+                "editing a reflection parameter turns a preset into custom values");
+        });
+    }
     auto customPreset = beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
     customPreset.contentScale = 0.71f;
     Check(beautify::IdentifyPreset(customPreset) == IconBeautifyPreset::Custom,
         "edited preset settings are identified as custom");
-    auto inheritedDefault = beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
-    inheritedDefault.preset = IconBeautifyPreset::Custom;
-    Check(inheritedDefault.enabled && !inheritedDefault.outlineEnabled &&
-        inheritedDefault.shape == IconBeautifyShape::LegacyRounded &&
-        inheritedDefault.contentScale == 0.68f,
-        "default beautification uses classic rounded and retains all preset parameters");
 
     constexpr std::array<IconBeautifyShape, 5> shapes{
         IconBeautifyShape::LegacyRounded,
@@ -361,6 +411,60 @@ int main()
         beautify::EdgeColor{240, 240, 240});
     Check(smartCompact == smartLarge,
         "smart recognition clips the original icon without content scaling");
+
+    const auto glass = beautify::MakePreset(IconBeautifyPreset::FrostedGlass);
+    const auto darkGlass = beautify::MakePreset(IconBeautifyPreset::FrostedGlassDark);
+    const auto lightGlass = beautify::MakePreset(IconBeautifyPreset::FrostedGlassLight);
+    // A wholly empty source is intentionally returned unchanged. Use a real
+    // glyph and inspect its uncovered plate, isolating fill from rim/shadow.
+    const auto fillOnly = [](auto style) {
+        style.edgeHighlightEnabled = false; style.outlineEnabled = false; style.shadowStrength = 0;
+        return beautify::Render(TestIcon(52), 52, 52, style);
+    };
+    const auto darkPlate = fillOnly(darkGlass);
+    const auto lightPlate = fillOnly(lightGlass);
+    const auto transparentPlate = fillOnly(glass);
+    Check(darkGlass.glassEnabled && lightGlass.glassEnabled &&
+        darkPlate != lightPlate && lightPlate != transparentPlate &&
+        darkPlate != transparentPlate,
+        "glass presets enable the material and produce distinct fills");
+    Check(glass.glassEnabled && glass.edgeHighlightEnabled,
+        "transparent glass enables both material and edge highlight");
+    auto changedGlass = glass;
+    changedGlass.glassBlurRadius = 28.0f;
+    Check(!beautify::Equal(glass, changedGlass) &&
+        beautify::IdentifyPreset(changedGlass) == IconBeautifyPreset::Custom,
+        "editing blur creates a custom preset rather than losing the change");
+    for (IconBeautifyShape shape : shapes)
+    {
+        auto style = glass; style.shape = shape;
+        const auto reflection = beautify::RenderEdgeReflection(104, 104, style);
+        const auto noReflection = [&] { style.edgeHighlightEnabled = false;
+            return beautify::RenderEdgeReflection(104, 104, style); }();
+        bool masked = true;
+        for (int y = 0; y < 104; ++y) for (int x = 0; x < 104; ++x)
+        {
+            const auto alpha = reflection[static_cast<size_t>(y) * 104 + x] >> 24;
+            if (beautify::ShapeMaskAlpha(shape, x, y, 104, 104) == 0 && alpha) masked = false;
+        }
+        Check(masked && reflection[52 * 104 + 52] == 0,
+            "reflection follows each contour and leaves the center and exterior clear");
+        Check(HashPixels(reflection) != HashPixels(noReflection),
+            "disabling reflection removes its pixels for every shape");
+    }
+    const std::vector<std::uint32_t> nativePlate(104 * 104, Premultiplied(18, 110, 62, 255));
+    const auto preservedPlate = beautify::Render(nativePlate, 104, 104, glass,
+        beautify::DetectEdgeFill(nativePlate, 104, 104));
+    auto unlitGlass = glass;
+    unlitGlass.edgeHighlightEnabled = false;
+    const auto unlitPlate = beautify::Render(nativePlate, 104, 104, unlitGlass,
+        beautify::DetectEdgeFill(nativePlate, 104, 104));
+    // A narrow rim need not reach a fixed inset pixel. Compare the actual
+    // reflected plate with its unlit counterpart while protecting native color.
+    Check(preservedPlate[52 * 104 + 52] == nativePlate[52 * 104 + 52] &&
+        unlitPlate[52 * 104 + 52] == nativePlate[52 * 104 + 52] &&
+        preservedPlate != unlitPlate,
+        "smart glass preserves the opaque native plate color while adding its edge reflection");
 
     if (failures != 0)
     {

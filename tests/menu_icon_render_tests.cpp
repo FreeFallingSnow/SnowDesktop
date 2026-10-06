@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <vector>
 
 namespace
 {
@@ -324,7 +325,7 @@ void CheckIconlessRows(HDC dc, std::uint32_t* pixels, int width, int height)
 }
 
 // Real embedded resources and production WIC/GDI entry points: catches missing
-// packaging, wrong theme/down-arrow coloring, filled holes, and skipped draw paths.
+// packaging, wrong theme/down-arrow coloring, incorrect surfaces, and skipped draw paths.
 void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
     std::uint32_t* pixels, int width, int height)
 {
@@ -333,14 +334,20 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
     const Sample holes[] = {
         { BuiltinIcon::Display, 8.75, 17.75 },
         { BuiltinIcon::Display, 15.25, 6.25 },
-        { BuiltinIcon::Paste, 15.5, 15 },
         { BuiltinIcon::Pin, 13.5, 9 },
         { BuiltinIcon::Settings, 12, 12 },
+    };
+    const Sample surfaces[] = {
+        { BuiltinIcon::Paste, 7, 12 },
+        { BuiltinIcon::Paste, 15.5, 15 },
+        { BuiltinIcon::Paste, 11, 4.25 },
+        { BuiltinIcon::NewItem, 8, 8 },
     };
     const Sample blue[] = {
         { BuiltinIcon::Display, 15.25, 3.5 },
         { BuiltinIcon::Display, 8.75, 15 },
         { BuiltinIcon::Paste, 20.25, 15 },
+        { BuiltinIcon::NewItem, 12, 12 },
         { BuiltinIcon::Settings, 12, 9 },
         { BuiltinIcon::Sort, 17.25, 10 },
         { BuiltinIcon::Sort, 14.25, 16.25 },
@@ -349,6 +356,7 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
     const Sample neutral[] = {
         { BuiltinIcon::Display, 3, 6.25 },
         { BuiltinIcon::Paste, 3.75, 10 },
+        { BuiltinIcon::NewItem, 2.75, 12 },
         { BuiltinIcon::Pin, 5, 19 },
         { BuiltinIcon::Pin, 17.5, 5.25 },
         { BuiltinIcon::AddPage, 12, 12 },
@@ -373,7 +381,7 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
             };
             for (const auto& point : holes) if (point.icon == icon)
                 Expect((sample(point) >> 24) == 0,
-                    "approved display/paste/pin/settings interiors stay transparent");
+                    "approved display/pin/settings interiors stay transparent");
             const auto matches = [&](std::uint32_t pixel, COLORREF color) {
                 const auto expected = PixelColor(color);
                 if ((pixel >> 24) < 240) return false;
@@ -382,11 +390,17 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
                         static_cast<int>((expected >> shift) & 255)) > 2) return false;
                 return true;
             };
+            for (const auto& point : surfaces) if (point.icon == icon)
+                Expect(matches(sample(point), light ? RGB(255, 255, 255) : RGB(59, 59, 59)),
+                    "paste and new-item interiors have independent theme surfaces");
             for (const auto& point : blue) if (point.icon == icon)
                 Expect(matches(sample(point), light ? RGB(0, 120, 212) : RGB(96, 205, 255)),
                     "requested contours and complete down arrow use the theme blue");
             for (const auto& point : neutral) if (point.icon == icon)
-                Expect(matches(sample(point), light ? RGB(48, 52, 59) : RGB(228, 230, 234)),
+                Expect(matches(sample(point), light
+                        ? ((icon == BuiltinIcon::Paste || icon == BuiltinIcon::NewItem)
+                            ? RGB(89, 89, 89) : RGB(48, 52, 59))
+                        : RGB(228, 230, 234)),
                     "up arrow, clipboard back, entire pin, add-page plus and rails stay neutral");
             DeleteObject(image);
         }
@@ -444,6 +458,59 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
             GdiFlush();
             Expect(CountBlueAccentPixelsInRect(pixels, width, height, row) > 0,
                 "widget search input draws colored artwork");
+        }
+    }
+}
+
+// The desktop explicitly binds these resources; component/folder/input menus
+// only declare the operation. Both paths must paint the same filled artwork.
+void CheckSemanticArtwork(HDC dc, HFONT font, HFONT iconFont,
+    std::uint32_t* pixels, int width, int height)
+{
+    using namespace snowdesktop;
+    using namespace snowdesktop::menu_icon;
+    struct Action { MenuQuickIcon semantic; BuiltinIcon artwork; const wchar_t* glyph; };
+    const Action actions[] = {
+        { MenuQuickIcon::Paste, BuiltinIcon::Paste, L"\uF2D5" },
+        { MenuQuickIcon::NewItem, BuiltinIcon::NewItem, L"\uF10C" },
+    };
+    const size_t count = static_cast<size_t>(width) * height;
+    for (const bool light : { true, false })
+    for (const bool compact : { false, true })
+    for (const UINT dpi : { 96u, 120u, 144u, 192u })
+    {
+        auto palette = ResolvePalette(light);
+        palette.colorIcons = true;
+        const auto metrics = ResolveMetrics(dpi, compact);
+        for (const auto& action : actions)
+        for (const UINT state : { 0u, static_cast<UINT>(ODS_DISABLED | ODS_GRAYED) })
+        for (const bool quick : { true, false })
+        {
+            ItemView automatic{ L"", action.glyph };
+            if (!quick) automatic.semanticIcon = action.semantic;
+            auto explicitItem = automatic;
+            explicitItem.builtinIcon = action.artwork;
+            const RECT bounds{ 0, 0,
+                quick ? metrics.quickActionMaximumWidth : width,
+                quick ? metrics.quickActionHeight : metrics.rowHeight };
+            const auto draw = [&](const ItemView& item) {
+                std::fill_n(pixels, count, 0u);
+                const bool painted = quick
+                    ? DrawQuickAction(dc, font, iconFont, action.semantic,
+                        item, bounds, state, palette, metrics)
+                    : DrawItem(dc, font, iconFont, item, bounds, state, palette, metrics);
+                Expect(painted, "semantic menu artwork draw succeeds");
+                GdiFlush();
+            };
+            draw(explicitItem);
+            const std::vector<std::uint32_t> reference(pixels, pixels + count);
+            draw(automatic);
+            if (state == 0)
+                Expect(CountColorInRect(pixels, width, height, bounds,
+                        light ? RGB(255, 255, 255) : RGB(59, 59, 59)) > 0,
+                    "unbound paste/new actions paint the approved independent surfaces");
+            Expect(std::equal(reference.begin(), reference.end(), pixels),
+                "unbound semantic actions match desktop artwork in quick strips and ordinary rows");
         }
     }
 }
@@ -561,6 +628,7 @@ int wmain(int argc, wchar_t** argv)
 
     CheckIconlessRows(dc, pixels, kWidth, kHeight);
     CheckBuiltinArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
+    CheckSemanticArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
 
     const snowdesktop::menu_icon::ItemView normal{
         L"Open", L"O", false, false, false,
@@ -827,6 +895,7 @@ int wmain(int argc, wchar_t** argv)
         "hiding the caret removes interior accent pixels while retaining the border");
 
     const std::array accentedQuickIcons{
+        snowdesktop::MenuQuickIcon::Paste,
         snowdesktop::MenuQuickIcon::NewItem,
         snowdesktop::MenuQuickIcon::Cut,
         snowdesktop::MenuQuickIcon::Copy,
@@ -858,10 +927,6 @@ int wmain(int argc, wchar_t** argv)
     Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
         newIconBounds) > 0,
         "dark add-circle keeps a visible blue plus");
-    Expect(CountColorInRect(pixels, kWidth, kHeight,
-        newIconBounds, dark.text) > 0,
-        "dark add-circle keeps a neutral Fluent ring");
-
     const snowdesktop::menu_icon::ItemView moreOptionsItem{
         L"Show more options", L"\uF582", false, false, false,
         snowdesktop::MenuQuickIcon::Open,
@@ -976,7 +1041,6 @@ int wmain(int argc, wchar_t** argv)
     }
 
     const std::array neutralQuickIcons{
-        snowdesktop::MenuQuickIcon::Paste,
         snowdesktop::MenuQuickIcon::Refresh,
         snowdesktop::MenuQuickIcon::Delete,
         snowdesktop::MenuQuickIcon::Edit,

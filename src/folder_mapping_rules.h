@@ -1,9 +1,23 @@
 #pragma once
 
 #include <string>
+#include <cstddef>
+#include <vector>
 
 namespace snowdesktop::folder_mapping_rules
 {
+// Compare borrowed paths before building a new snapshot. Exact comparison
+// may rebuild on a case-only edit; it never conceals a source path change.
+template<class Entries, class Path>
+bool PathsMatch(const Entries& entries, const std::vector<std::wstring>& snapshot,
+    Path path)
+{
+    if (entries.size() != snapshot.size()) return false;
+    for (std::size_t i = 0; i < entries.size(); ++i)
+        if (path(entries[i]) != snapshot[i]) return false;
+    return true;
+}
+
 
 /**
  * @brief 拼接映射目录下的子项路径。

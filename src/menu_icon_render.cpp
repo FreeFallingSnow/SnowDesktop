@@ -25,10 +25,23 @@ struct BitmapDeleter
 };
 
 HBITMAP ResolveItemImage(const ItemView& item, const Palette& palette,
-    const Metrics& metrics, bool quickAction = false)
+    const Metrics& metrics, bool quickAction = false,
+    MenuQuickIcon quickIcon = MenuQuickIcon::FontGlyph)
 {
     if (item.image) return item.image;
-    if (!palette.colorIcons || item.builtinIcon == BuiltinIcon::None)
+    BuiltinIcon builtinIcon = item.builtinIcon;
+    if (builtinIcon == BuiltinIcon::None)
+    {
+        // Component, folder-popup and text-input menus declare the same
+        // operations as the desktop menu without explicitly binding artwork.
+        switch (quickAction ? quickIcon : item.semanticIcon)
+        {
+        case MenuQuickIcon::Paste: builtinIcon = BuiltinIcon::Paste; break;
+        case MenuQuickIcon::NewItem: builtinIcon = BuiltinIcon::NewItem; break;
+        default: break;
+        }
+    }
+    if (!palette.colorIcons || builtinIcon == BuiltinIcon::None)
         return nullptr;
     int size = quickAction ? metrics.quickActionFontHeight : metrics.iconFontHeight;
     if (metrics.maximumImageSize > 0)
@@ -38,10 +51,10 @@ HBITMAP ResolveItemImage(const ItemView& item, const Palette& palette,
     // Only the current draw borrows the bitmap; no menu model owns cache entries.
     // Bound GDI use when a session encounters many monitor scales.
     thread_local std::map<Key, Bitmap> cache;
-    const Key key{ item.builtinIcon, palette.lightTheme, size };
+    const Key key{ builtinIcon, palette.lightTheme, size };
     auto found = cache.find(key);
     if (found != cache.end()) return found->second.get();
-    Bitmap bitmap(CreateBuiltinIconBitmap(item.builtinIcon, palette.lightTheme, size));
+    Bitmap bitmap(CreateBuiltinIconBitmap(builtinIcon, palette.lightTheme, size));
     if (!bitmap) return nullptr;
     if (cache.size() >= 256) cache.clear();
     return cache.emplace(key, std::move(bitmap)).first->second.get();
@@ -1076,7 +1089,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 
-    const HBITMAP image = ResolveItemImage(item, palette, metrics, true);
+    const HBITMAP image = ResolveItemImage(item, palette, metrics, true, quickIcon);
     FillSolidRect(dc, bounds, palette.background);
     const bool disabled =
         (itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;
@@ -1143,7 +1156,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
 
 bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
-    const Palette& palette, const Metrics& metrics)
+    const Palette& palette, const Metrics& metrics, InlineActionStyle style)
 {
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
@@ -1153,20 +1166,35 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const bool disabled =
         (itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;
     const bool selected = (itemState & ODS_SELECTED) != 0 || item.checked;
-    if (selected && !disabled)
+    const bool primary = style == InlineActionStyle::Primary && !disabled;
+    if (style != InlineActionStyle::Plain || (selected && !disabled))
     {
         RECT selection = bounds;
         selection.left += metrics.outerInset;
         selection.right -= metrics.outerInset;
         selection.top += metrics.selectionInsetY;
         selection.bottom -= metrics.selectionInsetY;
-        FillRoundedRect(dc, selection, metrics.selectionRadius,
-            palette.hoverBackground);
+        const COLORREF fill = primary ? palette.accent
+            : (selected && !disabled ? palette.hoverBackground : palette.background);
+        if (style != InlineActionStyle::Plain)
+        {
+            const COLORREF border = primary ? (selected ? palette.text : palette.accent)
+                : (selected && !disabled ? palette.disabledText : palette.separator);
+            FillRoundedRect(dc, selection, metrics.selectionRadius, border);
+            const int stroke = std::max(1, metrics.outerInset / 4);
+            InflateRect(&selection, -stroke, -stroke);
+            FillRoundedRect(dc, selection, std::max(1, metrics.selectionRadius - stroke), fill);
+        }
+        else
+        {
+            FillRoundedRect(dc, selection, metrics.selectionRadius, fill);
+        }
     }
 
     const COLORREF foreground = disabled
         ? palette.disabledText
-        : (item.checked ? palette.accent : palette.text);
+        : (primary ? (palette.lightTheme ? RGB(255, 255, 255) : RGB(26, 26, 26))
+                   : (item.checked ? palette.accent : palette.text));
     const int oldMode = SetBkMode(dc, TRANSPARENT);
     const COLORREF oldColor = SetTextColor(dc, foreground);
     const bool hasGlyph = (item.glyph && *item.glyph) || image;
@@ -1231,6 +1259,18 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     SetTextColor(dc, oldColor);
     SetBkMode(dc, oldMode);
     return true;
+}
+
+RECT TextInputTextBounds(const RECT& bounds, const Metrics& metrics, bool hasIcon)
+{
+    RECT text = bounds;
+    text.left += hasIcon
+        ? metrics.outerInset + metrics.leftPadding / 2 + metrics.iconColumnWidth + metrics.textGap
+        : metrics.leftPadding;
+    text.right -= metrics.outerInset + metrics.rightPadding;
+    text.top += metrics.selectionInsetY;
+    text.bottom -= metrics.selectionInsetY;
+    return text;
 }
 
 bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
@@ -1300,9 +1340,8 @@ bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
     const bool showingPlaceholder = display.empty() && !input.focused;
     const std::wstring visibleText = showingPlaceholder
         ? std::wstring(item.label ? item.label : L"") : display;
-    RECT textBounds = field;
-    textBounds.left = glyphBounds.right + metrics.textGap;
-    textBounds.right -= metrics.rightPadding;
+    const RECT textBounds = TextInputTextBounds(bounds, metrics,
+        (item.glyph && *item.glyph) || item.image || item.builtinIcon != BuiltinIcon::None);
     const COLORREF oldColor = SetTextColor(dc,
         showingPlaceholder ? palette.disabledText : palette.text);
     oldFont = SelectObject(dc,

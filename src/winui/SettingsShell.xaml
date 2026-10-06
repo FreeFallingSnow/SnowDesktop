@@ -158,6 +158,7 @@
             </NavigationView.PaneCustomContent>
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="GeneralItem" Tag="general" />
+                <NavigationViewItemHeader x:Name="AppearanceHeader" />
                 <NavigationViewItem x:Name="PersonalizationItem"
                                     Tag="appearance"
                                     IsExpanded="True"
@@ -171,19 +172,26 @@
                                             Tag="appearance-desktop-icons" />
                         <NavigationViewItem x:Name="AppearanceIconBeautificationItem"
                                             Tag="appearance-icon-beautification" />
+                        <NavigationViewItem x:Name="ThemeManagerItem" Tag="theme-manager" />
                     </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="AnimationItem" Tag="animation-performance" />
-                <NavigationViewItemHeader x:Name="DesktopShellHeader" />
+                <NavigationViewItem x:Name="ContextMenuItem" Tag="context-menu" />
+                <NavigationViewItemHeader x:Name="DesktopBarsHeader" />
+                <NavigationViewItem x:Name="DesktopStyleItem" Tag="desktop-style" />
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
-                <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
-                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
+                <NavigationViewItem x:Name="QuickNavigationItem" Tag="quick-navigation" />
                 <NavigationViewItem x:Name="DockItem" Tag="dock" />
                 <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
+                <NavigationViewItem x:Name="StatusBarItem" Tag="status-bar" Visibility="Collapsed" />
+                <NavigationViewItemHeader x:Name="DesktopShellHeader" />
+                <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
+                <NavigationViewItemHeader x:Name="WidgetsAndCategoriesHeader" />
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
-                <NavigationViewItem x:Name="ContextMenuItem" Tag="context-menu" />
-                <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
+                <NavigationViewItem x:Name="WidgetBehaviorItem" Tag="widget-behavior" />
+                <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
                 <NavigationViewItemHeader x:Name="DataHeader" />
+                <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>

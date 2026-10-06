@@ -137,8 +137,25 @@ public:
     RECT GetDesktopItemVisualRect(
         size_t itemIndex, POINT pointer) const;
     void SetReservedArea(RECT area);
+    // Stable layout relationship, including while the bar is fullscreen-hidden.
+    bool IsMergedWithStatusBar() const;
+    // Shared chrome is a layout relationship, independent of animation/input.
+    bool SharesStatusBarAppearance() const;
     bool IsMagnificationAnimating() const;
     bool AdvanceMagnificationAnimation(double nowMilliseconds);
+    // Host runtime-tree rebuilds replace item wrappers, but a stationary
+    // pointer must keep its presentation timeline. This snapshot owns no
+    // Container, Item or Slot pointers.
+    struct PresentationState
+    {
+        RECT reservedArea{};
+        RECT focusRect{};
+        int scrollOffset = 0;
+        snowdesktop::dock_magnification::HoverEntryAnimation entry;
+        snowdesktop::dock_magnification::SingleFocusAnimation single;
+    };
+    PresentationState CapturePresentationState() const;
+    bool RestorePresentationState(const PresentationState& state);
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
@@ -153,6 +170,7 @@ private:
     };
 
     bool IsMagnificationSuppressed() const;
+    bool UsesEdgeAnchoredMagnification() const;
     float GetMaximumMagnificationScale() const;
     float GetCurrentMagnificationScale() const;
     int GetLaunchAnimationPadding(bool reserveForLaunch = false) const;
@@ -175,12 +193,15 @@ private:
         const RECT& baseRect) const;
     std::vector<RECT> GetElementBaseRects() const;
     RECT ResolveMagnificationFocusRect(POINT pointer) const;
+    snowdesktop::dock_magnification::SingleFocusGeometry
+        GetSingleMagnificationGeometry(const RECT& baseRect) const;
     float GetMagnificationScale(
         const RECT& baseRect, const RECT& focusRect,
         POINT pointer) const;
     int GetMagnificationAxisShift(
         const RECT& baseRect, const RECT& focusRect,
         POINT pointer) const;
+    RECT MagnifyElementRect(const RECT& baseRect, const RECT& focusRect, POINT pointer) const;
     RECT CalculateTitleTooltipBounds(
         const std::wstring& title,
         const RECT& hoveredBounds,
@@ -224,4 +245,6 @@ private:
     mutable RECT magnificationFocusRect_{};
     mutable snowdesktop::dock_magnification::HoverEntryAnimation
         magnificationEntry_;
+    mutable snowdesktop::dock_magnification::SingleFocusAnimation
+        singleMagnification_;
 };

@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "startup_animation.h"
 #include "../diagnostic_log.h"
 #include "../resource.h"
@@ -248,13 +249,13 @@ public:
             __uuidof(IDWriteFactory),
             reinterpret_cast<IUnknown**>(write.GetAddressOf())));
         ComPtr<IDWriteTextFormat> text;
-        Require(write->CreateTextFormat(L"Segoe UI", nullptr,
+        Require(snowdesktop::app_fonts::CreateTextFormat(write, L"Segoe UI",
             DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, 24, L"", &text));
         Require(text->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER));
         Require(text->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER));
         ComPtr<IDWriteTextFormat> statusText;
-        Require(write->CreateTextFormat(L"Segoe UI", nullptr,
+        Require(snowdesktop::app_fonts::CreateTextFormat(write, L"Segoe UI",
             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, 14, L"", &statusText));
         Require(statusText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER));

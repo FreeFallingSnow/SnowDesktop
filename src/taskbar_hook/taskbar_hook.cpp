@@ -7,14 +7,18 @@
 // https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
 
 #include "taskbar_hook_protocol.h"
+#include "taskbar_material_render.h"
 #include "taskbar_autohide_observer.h"
 #include "taskbar_native.h"
+#include "taskbar_hook_lifecycle.h"
 #include "taskview_visibility.h"
 
 #include <windows.h>
 #include <commctrl.h>
 #include <d2d1_1.h>
 #include <d2d1effects.h>
+#include <d3d11.h>
+#include <windows.ui.composition.interop.h>
 #include <ocidl.h>
 #include <servprov.h>
 #include <windows.graphics.effects.interop.h>
@@ -27,6 +31,7 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.Graphics.Effects.h>
+#include <winrt/Windows.Graphics.DirectX.h>
 #include <winrt/Windows.UI.Composition.h>
 #include <winrt/Windows.UI.Xaml.h>
 #include <winrt/Windows.UI.Xaml.Hosting.h>
@@ -39,6 +44,7 @@
 #include <cstdint>
 #include <cwchar>
 #include <mutex>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
@@ -63,6 +69,8 @@ constexpr CLSID kTapSiteClsid = {
     { 0xb5, 0x47, 0x81, 0x6b, 0xf9, 0xcf, 0x78, 0xa4 }
 };
 constexpr UINT_PTR kTaskbarSubclassId = 0x53445442;
+constexpr UINT_PTR kHookOwnerSubclassId = 0x5344484f;
+LRESULT CALLBACK HookOwnerSubclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 HMODULE g_module = nullptr;
 HANDLE g_mapping = nullptr;
@@ -71,8 +79,94 @@ UINT g_applyMessage = 0;
 std::atomic<DWORD> g_watchedOwnerProcessId{0};
 std::atomic_bool g_forceRestore{false};
 std::atomic_bool g_taskbarTapStarted{false};
+auto& g_retired = hookInstanceRetired;
+std::atomic<HWND> g_primaryTaskbar{nullptr};
 UINT g_taskViewStateMessage = 0;
 UINT g_registryQueryMessage = 0;
+
+bool IsCurrentHookInstance()
+{
+    const HWND primary = g_primaryTaskbar.load();
+    return !g_retired.load() && primary &&
+        GetPropW(primary, kHookOwnerProperty) == g_module;
+}
+
+DWORD ClaimHookInstance(HWND primary)
+{
+    if (!g_applyMessage) g_applyMessage = RegisterWindowMessageW(kApplyMessageName);
+    if (!g_applyMessage) return GetLastError();
+    // Serialize competing DLLs without holding a C++ lock while sending to
+    // the old instance's window threads. Retire callbacks never take this lock.
+    const std::wstring name = L"Local\\SnowDesktop.Taskbar.HookOwner." +
+        std::to_wstring(GetCurrentProcessId());
+    const HANDLE mutex = CreateMutexW(nullptr, FALSE, name.c_str());
+    if (!mutex) return GetLastError();
+    const DWORD waited = WaitForSingleObject(mutex, 2000);
+    if (waited != WAIT_OBJECT_0 && waited != WAIT_ABANDONED)
+    {
+        const DWORD error = waited == WAIT_TIMEOUT ? ERROR_BUSY : GetLastError();
+        CloseHandle(mutex);
+        return error;
+    }
+    struct Release
+    {
+        HANDLE value;
+        ~Release() { ReleaseMutex(value); CloseHandle(value); }
+    } release{mutex};
+
+    std::vector<HWND> taskbars{primary};
+    const auto append = [&](HWND window) {
+        if (!window || !IsWindow(window)) return;
+        DWORD process = 0;
+        GetWindowThreadProcessId(window, &process);
+        if (process != GetCurrentProcessId()) return;
+        wchar_t type[64]{};
+        GetClassNameW(window, type, 64);
+        if (wcscmp(type, L"Shell_TrayWnd") != 0 &&
+            wcscmp(type, L"Shell_SecondaryTrayWnd") != 0) return;
+        if (std::find(taskbars.begin(), taskbars.end(), window) == taskbars.end())
+            taskbars.push_back(window);
+    };
+    Snapshot snapshot;
+    if (ReadSharedSnapshot(g_sharedState, snapshot))
+        for (LONG i = 0; i < snapshot.targetCount; ++i)
+            append(reinterpret_cast<HWND>(snapshot.targets[i].taskbar));
+    EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+        auto& windows = *reinterpret_cast<std::vector<HWND>*>(parameter);
+        DWORD process = 0;
+        GetWindowThreadProcessId(window, &process);
+        wchar_t type[64]{};
+        GetClassNameW(window, type, 64);
+        if (process == GetCurrentProcessId() &&
+            (wcscmp(type, L"Shell_TrayWnd") == 0 ||
+             wcscmp(type, L"Shell_SecondaryTrayWnd") == 0) &&
+            std::find(windows.begin(), windows.end(), window) == windows.end())
+            windows.push_back(window);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&taskbars));
+
+    const UINT retire = RegisterWindowMessageW(kRetireHookMessageName);
+    if (!retire) return GetLastError();
+    for (HWND window : taskbars)
+    {
+        const HANDLE previous = GetPropW(window, kHookOwnerProperty);
+        if (!previous || previous == g_module) continue;
+        DWORD_PTR stopped = 0;
+        if (!SendMessageTimeoutW(window, retire,
+                reinterpret_cast<WPARAM>(previous), 0,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &stopped) || stopped != 1)
+            return ERROR_BUSY;
+    }
+    if (!SetPropW(primary, kHookOwnerProperty, g_module)) return GetLastError();
+    if (!SetWindowSubclass(primary, HookOwnerSubclass, kHookOwnerSubclassId, 0))
+    {
+        const DWORD error = GetLastError();
+        RemovePropW(primary, kHookOwnerProperty);
+        return error ? error : ERROR_INVALID_FUNCTION;
+    }
+    g_primaryTaskbar.store(primary);
+    return ERROR_SUCCESS;
+}
 
 std::wstring RegistryQueryMappingName(DWORD ownerProcessId)
 {
@@ -159,6 +253,7 @@ void ProcessRegistryQuery(DWORD ownerProcessId)
 
 bool PostTaskViewState(bool visible)
 {
+    if (g_retired.load()) return false;
     if (!g_taskViewStateMessage)
         g_taskViewStateMessage =
             RegisterWindowMessageW(kTaskViewStateMessageName);
@@ -194,13 +289,23 @@ struct TaskViewVisibilitySink : winrt::implements<TaskViewVisibilitySink,
 
 DWORD WINAPI MonitorTaskView(void*)
 {
+    // Publish the ID only after creating its queue, so retirement cannot lose
+    // WM_QUIT while this thread is still initializing its COM subscriptions.
+    MSG message{};
+    PeekMessageW(&message, nullptr, 0, 0, PM_NOREMOVE);
+    taskViewMonitorThread.store(GetCurrentThreadId());
+    struct ClearThread
+    {
+        ~ClearThread() { taskViewMonitorThread.store(0); }
+    } clearThread;
+    if (g_retired.load()) return ERROR_CANCELLED;
     // The immersive-shell visibility service is an STA service. Its change
     // notifications are delivered through the apartment's message pump.
     const HRESULT initialized = CoInitializeEx(nullptr,
         COINIT_APARTMENTTHREADED);
     winrt::com_ptr<IServiceProvider> provider;
     HRESULT result = E_FAIL;
-    for (unsigned attempt = 0; attempt < 20; ++attempt)
+    for (unsigned attempt = 0; attempt < 20 && !g_retired.load(); ++attempt)
     {
         result = CoCreateInstance(kImmersiveShellClsid, nullptr,
             CLSCTX_INPROC_SERVER, IID_PPV_ARGS(provider.put()));
@@ -208,14 +313,14 @@ DWORD WINAPI MonitorTaskView(void*)
             break;
         Sleep(500);
     }
-    if (FAILED(result))
+    if (FAILED(result) || g_retired.load())
     {
         if (SUCCEEDED(initialized)) CoUninitialize();
-        return static_cast<DWORD>(result);
+        return g_retired.load() ? ERROR_CANCELLED : static_cast<DWORD>(result);
     }
 
     winrt::com_ptr<IMultitaskingViewVisibilityService> service;
-    for (unsigned attempt = 0; attempt < 20; ++attempt)
+    for (unsigned attempt = 0; attempt < 20 && !g_retired.load(); ++attempt)
     {
         result = provider->QueryService(
             kMultitaskingViewVisibilityServiceSid, service.put());
@@ -223,10 +328,10 @@ DWORD WINAPI MonitorTaskView(void*)
             break;
         Sleep(500);
     }
-    if (FAILED(result))
+    if (FAILED(result) || g_retired.load())
     {
         if (SUCCEEDED(initialized)) CoUninitialize();
-        return static_cast<DWORD>(result);
+        return g_retired.load() ? ERROR_CANCELLED : static_cast<DWORD>(result);
     }
 
     auto sink = winrt::make_self<TaskViewVisibilitySink>();
@@ -245,12 +350,11 @@ DWORD WINAPI MonitorTaskView(void*)
         const bool visible =
             (visibleFlags & MultitaskingViewTaskView) != 0;
         for (unsigned attempt = 0;
-             attempt < 60 && !PostTaskViewState(visible); ++attempt)
+             attempt < 60 && !g_retired.load() && !PostTaskViewState(visible); ++attempt)
             Sleep(500);
     }
 
-    MSG message{};
-    while (GetMessageW(&message, nullptr, 0, 0) > 0)
+    while (!g_retired.load() && GetMessageW(&message, nullptr, 0, 0) > 0)
     {
         TranslateMessage(&message);
         DispatchMessageW(&message);
@@ -282,7 +386,7 @@ bool OpenSharedState()
 
 void SetHookStatus(LONG status, DWORD error = ERROR_SUCCESS)
 {
-    if (!g_sharedState)
+    if (!g_sharedState || g_retired.load())
         return;
     InterlockedExchange(&g_sharedState->lastError, static_cast<LONG>(error));
     InterlockedExchange(&g_sharedState->status, status);
@@ -290,6 +394,7 @@ void SetHookStatus(LONG status, DWORD error = ERROR_SUCCESS)
 
 void SignalReady()
 {
+    if (g_retired.load()) return;
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, kReadyEventName);
     if (event)
     {
@@ -652,6 +757,7 @@ public:
         std::thread([self = get_strong()] {
             const HRESULT result = self->diagnostics_.as<IVisualTreeService3>()
                 ->AdviseVisualTreeChange(self.get());
+            if (g_retired.load()) return;
             if (g_sharedState)
                 InterlockedExchange(&g_sharedState->diagnosticStage, 240);
             if (SUCCEEDED(result))
@@ -669,6 +775,7 @@ public:
     HRESULT STDMETHODCALLTYPE OnVisualTreeChange(ParentChildRelation relation,
         VisualElement element, VisualMutationType mutationType) override try
     {
+        if (g_retired.load()) return S_OK;
         if (mutationType == Add)
         {
             const std::wstring_view type = element.Type
@@ -713,6 +820,7 @@ public:
 
     void ApplyTaskbar(HWND taskbar)
     {
+        if (!IsCurrentHookInstance()) return;
         Snapshot snapshot;
         if (!ReadSnapshot(snapshot))
         {
@@ -737,7 +845,8 @@ public:
         for (LONG index = 0; index < snapshot.targetCount; ++index)
             if (reinterpret_cast<HWND>(snapshot.targets[index].taskbar) == taskbar)
                 protectActivation = snapshot.targets[index].protectAutoHideActivation != FALSE;
-        autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, hookEnabled, protectActivation);
+        autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, hookEnabled, protectActivation,
+            snapshot.autoHideAdapter, snapshot.autoHideResolutionError);
 
         bool applied = false;
         for (auto& [handle, info] : taskbars_)
@@ -767,6 +876,7 @@ public:
                 effective.borderBlue = target.borderBlue;
                 effective.borderAlpha = target.borderAlpha;
                 effective.gradient = target.gradient;
+                effective.edge = target.edge;
                 break;
             }
             const bool enabled = controllerEnabled && targetEnabled;
@@ -822,9 +932,8 @@ public:
                 if (DecodeGradient(effective.gradient).enabled) material.alpha = 0;
                 ApplyBackdrop(info.background, material);
                 ApplyGradient(info.background, effective.gradient);
-                ApplySolidFill(info.border, effective.borderRed,
-                    effective.borderGreen, effective.borderBlue,
-                    effective.borderAlpha);
+                ApplySolidFill(info.border, 0.f, 0.f, 0.f, 0.f);
+                ApplyEdges(info.background, effective, info.taskbar);
             }
             info.appliedGeneration = snapshot.generation;
             info.appliedEnabled = enabled;
@@ -842,6 +951,8 @@ public:
     }
 
 private:
+    friend LRESULT CALLBACK HookOwnerSubclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
     struct ControlInfo
     {
         wux::Shapes::Shape control{nullptr};
@@ -856,6 +967,13 @@ private:
         Gradient appliedGradient;
         wuc::Visual originalChildVisual{nullptr};
         wuc::SpriteVisual gradientVisual{nullptr};
+        wuc::ContainerVisual materialVisual{nullptr};
+        wuc::SpriteVisual edgeVisual{nullptr};
+        wuc::CompositionGraphicsDevice edgeDevice{nullptr};
+        TargetAppearance edgeStyle;
+        HWND edgeTaskbar = nullptr;
+        winrt::event_token edgeSizeToken{};
+        bool edgeSizeSubscribed = false;
     };
 
     struct TaskbarInfo
@@ -1019,6 +1137,103 @@ private:
         control.appliedBlur = 0.0f;
     }
 
+    static void EnsureMaterialVisual(ControlInfo& control)
+    {
+        const auto current = wuxh::ElementCompositionPreview::GetElementChildVisual(control.control);
+        if (control.materialVisual && current == control.materialVisual) return;
+        control.originalChildVisual = current;
+        auto compositor = wuxh::ElementCompositionPreview::GetElementVisual(control.control).Compositor();
+        if (!control.materialVisual) control.materialVisual = compositor.CreateContainerVisual();
+        if (current)
+        {
+            wuxh::ElementCompositionPreview::SetElementChildVisual(control.control, nullptr);
+            control.materialVisual.Children().InsertAtBottom(current);
+        }
+        wuxh::ElementCompositionPreview::SetElementChildVisual(control.control, control.materialVisual);
+    }
+
+    static void RenderEdges(ControlInfo& control)
+    {
+        if (!control.control || !control.edgeVisual) return;
+        auto host = wuxh::ElementCompositionPreview::GetElementVisual(control.control);
+        const auto size = host.Size();
+        const float scale = static_cast<float>(GetDpiForWindow(control.edgeTaskbar)) / 96.f;
+        if (size.x <= 0 || size.y <= 0 || scale <= 0) return;
+        const auto width = static_cast<UINT>(std::ceil(size.x * scale));
+        const auto height = static_cast<UINT>(std::ceil(size.y * scale));
+        auto compositor = host.Compositor();
+        if (!control.edgeDevice)
+        {
+            winrt::com_ptr<ID3D11Device> d3d;
+            HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, d3d.put(), nullptr, nullptr);
+            if (FAILED(hr)) hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, d3d.put(), nullptr, nullptr);
+            winrt::check_hresult(hr);
+            const auto dxgi = d3d.as<IDXGIDevice>();
+            winrt::com_ptr<ID2D1Factory1> factory;
+            winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                __uuidof(ID2D1Factory1), nullptr, factory.put_void()));
+            winrt::com_ptr<ID2D1Device> device;
+            winrt::check_hresult(factory->CreateDevice(dxgi.get(), device.put()));
+            winrt::check_hresult(compositor.as<ABI::Windows::UI::Composition::ICompositorInterop>()->
+                CreateGraphicsDevice(device.get(), reinterpret_cast<ABI::Windows::UI::Composition::ICompositionGraphicsDevice**>(
+                    winrt::put_abi(control.edgeDevice))));
+        }
+        const auto surface = control.edgeDevice.CreateDrawingSurface(
+            {static_cast<float>(width), static_cast<float>(height)},
+            winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
+        const auto interop = surface.as<ABI::Windows::UI::Composition::ICompositionDrawingSurfaceInterop>();
+        winrt::com_ptr<ID2D1DeviceContext> context;
+        POINT offset{};
+        winrt::check_hresult(interop->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext), context.put_void(), &offset));
+        context->SetDpi(96.f, 96.f);
+        context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
+        context->Clear(D2D1::ColorF(0, 0));
+        const HRESULT drawResult = DrawTaskbarEdges(context.get(), width, height, scale, control.edgeStyle,
+            ResolveTaskbarMaterialEdge(control.edgeTaskbar));
+        const HRESULT endResult = interop->EndDraw();
+        winrt::check_hresult(drawResult); winrt::check_hresult(endResult);
+        control.edgeVisual.Brush(compositor.CreateSurfaceBrush(surface));
+        control.edgeVisual.Size(size);
+    }
+
+    static void ApplyEdges(ControlInfo& control, const Snapshot& snapshot, HWND taskbar)
+    {
+        if (!control.control) return;
+        control.edgeStyle.red = snapshot.red; control.edgeStyle.green = snapshot.green;
+        control.edgeStyle.blue = snapshot.blue; control.edgeStyle.alpha = snapshot.alpha;
+        control.edgeStyle.borderRed = snapshot.borderRed; control.edgeStyle.borderGreen = snapshot.borderGreen;
+        control.edgeStyle.borderBlue = snapshot.borderBlue; control.edgeStyle.borderAlpha = snapshot.borderAlpha;
+        control.edgeStyle.edge = snapshot.edge;
+        control.edgeTaskbar = taskbar;
+        if (snapshot.borderAlpha <= 0 && (!snapshot.edge.highlightEnabled || snapshot.edge.highlightStrength <= 0))
+        {
+            if (control.edgeVisual)
+            {
+                control.materialVisual.Children().Remove(control.edgeVisual);
+                control.edgeVisual.Close(); control.edgeVisual = nullptr;
+            }
+            return;
+        }
+        EnsureMaterialVisual(control);
+        if (!control.edgeVisual)
+        {
+            control.edgeVisual = control.materialVisual.Compositor().CreateSpriteVisual();
+            control.materialVisual.Children().InsertAtTop(control.edgeVisual);
+        }
+        if (!control.edgeSizeSubscribed)
+        {
+            control.edgeSizeToken = control.control.SizeChanged([pointer = &control](const auto&, const auto&) {
+                try { RenderEdges(*pointer); }
+                catch (...) { SetHookStatus(kStatusFailed, ERROR_INVALID_DATA); }
+            });
+            control.edgeSizeSubscribed = true;
+        }
+        RenderEdges(control);
+    }
+
     static void ApplyGradient(ControlInfo& control, const Gradient& value)
     {
         if (!control.control) return;
@@ -1027,16 +1242,14 @@ private:
         {
             if (control.gradientVisual)
             {
-                if (wuxh::ElementCompositionPreview::GetElementChildVisual(control.control) == control.gradientVisual)
-                    wuxh::ElementCompositionPreview::SetElementChildVisual(control.control, control.originalChildVisual);
+                if (control.materialVisual) control.materialVisual.Children().Remove(control.gradientVisual);
                 control.gradientVisual.Close(); control.gradientVisual = nullptr;
-                control.originalChildVisual = nullptr; control.appliedGradient = {};
+                control.appliedGradient = {};
             }
             return;
         }
-        const auto current = wuxh::ElementCompositionPreview::GetElementChildVisual(control.control);
-        if (control.gradientVisual && current == control.gradientVisual && control.appliedGradient == value) return;
-        if (!control.gradientVisual || current != control.gradientVisual) control.originalChildVisual = current;
+        EnsureMaterialVisual(control);
+        if (control.gradientVisual && control.appliedGradient == value) return;
         auto host = wuxh::ElementCompositionPreview::GetElementVisual(control.control);
         auto compositor = host.Compositor();
         auto brush = compositor.CreateLinearGradientBrush();
@@ -1069,8 +1282,13 @@ private:
         auto visual = compositor.CreateSpriteVisual(); visual.Brush(brush);
         auto size = compositor.CreateExpressionAnimation(L"host.Size"); size.SetReferenceParameter(L"host", host);
         visual.StartAnimation(L"Size", size);
-        wuxh::ElementCompositionPreview::SetElementChildVisual(control.control, visual);
-        if (control.gradientVisual) control.gradientVisual.Close();
+        if (control.gradientVisual)
+        {
+            control.materialVisual.Children().Remove(control.gradientVisual);
+            control.gradientVisual.Close();
+        }
+        if (control.edgeVisual) control.materialVisual.Children().InsertBelow(visual, control.edgeVisual);
+        else control.materialVisual.Children().InsertAtTop(visual);
         control.gradientVisual = visual; control.appliedGradient = value;
     }
 
@@ -1078,6 +1296,20 @@ private:
     {
         const bool wasApplied = control.appliedFill != nullptr;
         ApplyGradient(control, {});
+        if (control.edgeSizeSubscribed)
+        {
+            control.control.SizeChanged(control.edgeSizeToken);
+            control.edgeSizeSubscribed = false;
+        }
+        if (control.materialVisual)
+        {
+            control.materialVisual.Children().RemoveAll();
+            if (wuxh::ElementCompositionPreview::GetElementChildVisual(control.control) == control.materialVisual)
+                wuxh::ElementCompositionPreview::SetElementChildVisual(control.control, control.originalChildVisual);
+            if (control.edgeVisual) control.edgeVisual.Close();
+            control.edgeVisual = nullptr; control.edgeDevice = nullptr;
+            control.materialVisual.Close(); control.materialVisual = nullptr; control.originalChildVisual = nullptr;
+        }
         if (control.control && control.originalFill)
             control.control.Fill(control.originalFill);
         control.appliedFill = nullptr;
@@ -1134,6 +1366,15 @@ private:
             winrt::check_hresult(source.as<IDesktopWindowXamlSourceNative>()
                 ->get_WindowHandle(&xamlWindow));
             HWND taskbar = GetAncestor(xamlWindow, GA_PARENT);
+            wchar_t type[64]{};
+            GetClassNameW(taskbar, type, 64);
+            if (!IsCurrentHookInstance() && !g_retired.load() &&
+                wcscmp(type, L"Shell_TrayWnd") == 0)
+            {
+                const DWORD error = ClaimHookInstance(taskbar);
+                if (error) { SetHookStatus(kStatusFailed, error); return; }
+            }
+            if (!IsCurrentHookInstance()) return;
             auto& info = taskbars_[frameHandle];
             info.xamlWindow = xamlWindow;
             info.taskbar = taskbar;
@@ -1142,8 +1383,17 @@ private:
             if (info.rootElement)
                 info.nativeRequestedTheme = info.rootElement.RequestedTheme();
             if (taskbar && subclassedTaskbars_.insert(taskbar).second)
-                SetWindowSubclass(taskbar, TaskbarSubclassProc,
-                    kTaskbarSubclassId, reinterpret_cast<DWORD_PTR>(this));
+            {
+                if (!SetPropW(taskbar, kHookOwnerProperty, g_module) ||
+                    !SetWindowSubclass(taskbar, HookOwnerSubclass, kHookOwnerSubclassId, 0) ||
+                    !SetWindowSubclass(taskbar, TaskbarSubclassProc,
+                        kTaskbarSubclassId, reinterpret_cast<DWORD_PTR>(this)))
+                {
+                    subclassedTaskbars_.erase(taskbar);
+                    SetHookStatus(kStatusFailed, ERROR_INVALID_FUNCTION);
+                    return;
+                }
+            }
             xamlSources_.erase(iterator);
             break;
         }
@@ -1166,6 +1416,7 @@ private:
         auto shape = FromHandle<wux::Shapes::Shape>(controlHandle);
         ControlInfo& control = border
             ? iterator->second.border : iterator->second.background;
+        if (control.control) RestoreControl(control);
         control.control = shape;
         control.originalFill = shape.Fill();
         iterator->second.appliedGeneration = -1;
@@ -1178,6 +1429,7 @@ private:
         if (iterator == taskbars_.end())
             return;
         const HWND taskbar = iterator->second.taskbar;
+        RestoreTaskbarVisuals(iterator->second);
         taskbars_.erase(iterator);
         bool stillUsed = false;
         for (const auto& [otherHandle, info] : taskbars_)
@@ -1202,11 +1454,31 @@ private:
         subclassedTaskbars_.erase(taskbar);
     }
 
+    bool RetireTaskbar(HWND taskbar)
+    {
+        // Park the pinned TAP permanently; it must never adopt a later host
+        // session or write its protection properties over the new instance.
+        MarkHookInstanceRetired();
+        g_forceRestore.store(true);
+        const bool revealStopped = autohide_observer::Disable();
+        const bool nativeStopped = native::Retire(taskbar);
+        for (auto& [handle, info] : taskbars_)
+        {
+            (void)handle;
+            if (info.taskbar == taskbar && RestoreTaskbarVisuals(info))
+                PostMessageW(taskbar, WM_DWMCOMPOSITIONCHANGED, 1, 0);
+        }
+        if (!revealStopped || !nativeStopped) return false;
+        RemoveWindowSubclass(taskbar, TaskbarSubclassProc, kTaskbarSubclassId);
+        subclassedTaskbars_.erase(taskbar);
+        return true;
+    }
+
     static LRESULT CALLBACK TaskbarSubclassProc(HWND window, UINT message,
         WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR reference)
     {
         auto* self = reinterpret_cast<VisualTreeWatcher*>(reference);
-        if (self && message == g_applyMessage)
+        if (self && message == g_applyMessage && IsCurrentHookInstance())
         {
             try
             {
@@ -1217,7 +1489,9 @@ private:
                 SetHookStatus(kStatusFailed,
                     static_cast<DWORD>(winrt::to_hresult()));
             }
-            return 0;
+            // Native restoration and the lifecycle control subclass must also
+            // observe graceful shutdown; a TAP must not consume their Apply.
+            return DefSubclassProc(window, message, wParam, lParam);
         }
         if (self && message == WM_NCDESTROY)
         {
@@ -1225,7 +1499,9 @@ private:
                 kTaskbarSubclassId);
             self->OnTaskbarDestroyed(window);
         }
-        return autohide_observer::Dispatch(window, message, wParam, lParam);
+        return IsCurrentHookInstance()
+            ? autohide_observer::Dispatch(window, message, wParam, lParam)
+            : DefSubclassProc(window, message, wParam, lParam);
     }
 
     winrt::com_ptr<IXamlDiagnostics> diagnostics_;
@@ -1233,6 +1509,50 @@ private:
     std::unordered_map<InstanceHandle, TaskbarInfo> taskbars_;
     std::unordered_set<HWND> subclassedTaskbars_;
 };
+
+LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
+    LPARAM lParam, UINT_PTR, DWORD_PTR)
+{
+    if (message == RegisterWindowMessageW(kRetireHookMessageName) &&
+        reinterpret_cast<HMODULE>(wParam) == g_module)
+    {
+        try
+        {
+            MarkHookInstanceRetired();
+            g_forceRestore.store(true);
+            bool stopped;
+            if (g_visualTreeWatcher) stopped = g_visualTreeWatcher->RetireTaskbar(window);
+            else
+            {
+                const bool revealStopped = autohide_observer::Disable();
+                const bool nativeStopped = native::Retire(window);
+                stopped = revealStopped && nativeStopped;
+            }
+            if (!stopped) return 0;
+            RemoveWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId);
+            if (GetPropW(window, kHookOwnerProperty) == g_module)
+            {
+                RemovePropW(window, autohide_observer::kActivationProtectionProperty);
+                RemovePropW(window, kHookOwnerProperty);
+            }
+            return 1;
+        }
+        catch (...) { return 0; }
+    }
+    if (message == g_applyMessage && IsCurrentHookInstance())
+    {
+        Snapshot snapshot;
+        if (ReadSnapshot(snapshot) &&
+            (!snapshot.enabled || !IsProcessAlive(snapshot.ownerProcessId)))
+            autohide_observer::Disable();
+    }
+    if (message == WM_NCDESTROY)
+    {
+        RemoveWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId);
+        if (g_primaryTaskbar.load() == window) g_primaryTaskbar.store(nullptr);
+    }
+    return DefSubclassProc(window, message, wParam, lParam);
+}
 
 class TapSite : public winrt::implements<TapSite, IObjectWithSite,
     winrt::non_agile>
@@ -1418,6 +1738,27 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
         GetClassNameW(message->hwnd, className, 64);
         if (wcscmp(className, L"Shell_TrayWnd") != 0 && wcscmp(className, L"Shell_SecondaryTrayWnd") != 0)
             return CallNextHookEx(nullptr, code, wParam, lParam);
+        if (g_retired.load())
+            return CallNextHookEx(nullptr, code, wParam, lParam);
+        if (wcscmp(className, L"Shell_TrayWnd") == 0 && !IsCurrentHookInstance())
+        {
+            const DWORD error = ClaimHookInstance(message->hwnd);
+            if (error)
+            {
+                SetHookStatus(kStatusFailed, error);
+                SignalReady();
+                return CallNextHookEx(nullptr, code, wParam, lParam);
+            }
+        }
+        if (!IsCurrentHookInstance())
+            return CallNextHookEx(nullptr, code, wParam, lParam);
+        if (!SetPropW(message->hwnd, kHookOwnerProperty, g_module) ||
+            !SetWindowSubclass(message->hwnd, HookOwnerSubclass, kHookOwnerSubclassId, 0))
+        {
+            SetHookStatus(kStatusFailed, ERROR_INVALID_FUNCTION);
+            SignalReady();
+            return CallNextHookEx(nullptr, code, wParam, lParam);
+        }
         const bool classic = native::IsClassicTaskbarPlatform();
         if (classic || g_sharedState->suppressTaskbar)
         {

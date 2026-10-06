@@ -115,6 +115,35 @@ void TestBlockedSearchDoesNotBlockSubmissionAndCoalesces()
     }
 }
 
+void TestFailedSearchSettlesAndAllowsNextQuery()
+{
+    snowdesktop::QuickNavigationEverythingSearchAsync search(
+        [](const std::wstring& query, DWORD) {
+            snowdesktop::QuickNavigationEverythingSearchResponse response;
+            response.error = query == L"unavailable" ? 2 : ERROR_SUCCESS;
+            return response;
+        });
+    const auto waitForResult = [&]() {
+        std::optional<snowdesktop::QuickNavigationEverythingSearchResult> result;
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            result = search.TakeCompleted();
+            if (result) break;
+            std::this_thread::sleep_for(5ms);
+        }
+        return result;
+    };
+    Check(search.Submit(nullptr,0,{1,L"unavailable",200}),"unavailable search is accepted asynchronously");
+    const auto failed = waitForResult();
+    Check(failed && failed->generation == 1 && failed->error == 2 && failed->results.empty(),
+        "an unavailable provider publishes a completed error rather than leaving search pending");
+    Check(search.Submit(nullptr,0,{2,L"retry",200}),"a subsequent search is accepted after an error");
+    const auto retry = waitForResult();
+    Check(retry && retry->generation == 2 && retry->error == ERROR_SUCCESS,
+        "a later successful query replaces the unavailable state");
+}
+
 void TestStopDoesNotJoinBlockedProvider()
 {
     std::mutex mutex;
@@ -170,6 +199,7 @@ void TestStopDoesNotJoinBlockedProvider()
 int main()
 {
     TestBlockedSearchDoesNotBlockSubmissionAndCoalesces();
+    TestFailedSearchSettlesAndAllowsNextQuery();
     TestStopDoesNotJoinBlockedProvider();
     if (failures == 0)
     {

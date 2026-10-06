@@ -1,9 +1,20 @@
 #include "pch.h"
 
 #include "settings_window_host.h"
+#include "../settings_search_catalog.h"
+#include "../data_paths.h"
+#include "../resource.h"
+#include "../app_font.h"
 #include "../pending_window_message.h"
 #include "../performance_trace.h"
+#include "../diagnostic_log.h"
 #include "../shell_launch_worker.h"
+#include "../status_bar_shell_shortcut.h"
+#include "../theme_library_settings.h"
+#include "../theme_workshop.h"
+#include "../theme_preview.h"
+#include "../theme_workshop_tags.h"
+#include "theme_edit_state.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -11,6 +22,8 @@
 #include "../steam_app_identity.h"
 #include "../widget_engine.h"
 #include "../widget_settings_service.h"
+#include "../widget_package_file_export.h"
+#include "../utils.h"
 
 #include <shobjidl.h>
 #include <dwmapi.h>
@@ -30,6 +43,8 @@
 #include <new>
 #include <optional>
 #include <utility>
+#include <thread>
+#include <stdexcept>
 #include <vector>
 
 namespace snowdesktop::winui
@@ -207,460 +222,7 @@ void ApplySettingsWindowChrome(HWND window, bool darkTheme) noexcept
         &captionColor, sizeof(captionColor));
 }
 
-struct StaticSearchDefinition
-{
-    SettingsPage page;
-    const char* focusId;
-    const char* labelKey;
-    const char* descriptionKey;
-};
 
-constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
-    {SettingsPage::AnimationPerformance, "animation.mode",
-        "settings.animation.mode", "settings.animation.mode.description"},
-    {SettingsPage::AnimationPerformance, "animation.popup",
-        "settings.animation.popup", "settings.animation.popup.description"},
-    {SettingsPage::AnimationPerformance, "animation.speed",
-        "settings.animation.speed", "settings.animation.speed.description"},
-    {SettingsPage::AnimationPerformance, "animation.hover",
-        "settings.animation.hover", "settings.animation.hover.description"},
-    {SettingsPage::AnimationPerformance, "animation.hoverScale",
-        "settings.animation.hoverScale", "settings.animation.hoverScale.description"},
-    {SettingsPage::AnimationPerformance, "animation.launch",
-        "settings.animation.launch", "settings.animation.launch.description"},
-    {SettingsPage::AnimationPerformance, "animation.window",
-        "settings.animation.window", "settings.animation.window.description"},
-    {SettingsPage::AnimationPerformance, "animation.frameLimit",
-        "settings.animation.frameLimit", "settings.animation.frameLimit.description"},
-    {SettingsPage::AnimationPerformance, "animation.energySaver",
-        "settings.animation.energySaver", "settings.animation.energySaver.description"},
-    {SettingsPage::AnimationPerformance, "animation.onBattery",
-        "settings.animation.onBattery", "settings.animation.onBattery.description"},
-
-    {SettingsPage::General, "start.explore", "start.title", "start.description"},
-    {SettingsPage::General, "start.collection", "start.collection.title", "start.collection.description"},
-    {SettingsPage::General, "start.move", "start.move.title", "start.move.description"},
-    {SettingsPage::General, "start.collectionGroup", "start.collectionGroup.title", "start.collectionGroup.description"},
-    {SettingsPage::General, "start.files", "start.files.title", "start.files.description"},
-    {SettingsPage::General, "start.folderMapping", "start.folderMapping.title", "start.folderMapping.description"},
-    {SettingsPage::General, "start.fileGroup", "start.fileGroup.title", "start.fileGroup.description"},
-    {SettingsPage::General, "start.dockPin", "start.dockPin.title", "start.dockPin.description"},
-    {SettingsPage::General, "start.dockMapping", "start.dockMapping.title", "start.dockMapping.description"},
-    {SettingsPage::General, "start.dockCollection", "start.dockCollection.title", "start.dockCollection.description"},
-    {SettingsPage::General, "start.dockFiles", "start.dockFiles.title", "start.dockFiles.description"},
-    {SettingsPage::General, "start.luaWidget", "start.luaWidget.title", "start.luaWidget.description"},
-    {SettingsPage::General, "general.autoStart",
-        "settings.general.startup",
-        "settings.general.startup.description"},
-    {SettingsPage::General, "general.advancedFeatures",
-        "settings.general.advancedFeatures",
-        "settings.general.advancedFeatures.description"},
-    {SettingsPage::Desktop, "desktop.softwareDesktop",
-        "settings.general.softwareDesktop",
-        "settings.general.softwareDesktop.description"},
-    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description"},
-    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.objects", "settings.contextMenu.locations"},
-    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.background", "settings.contextMenu.locations"},
-    {SettingsPage::ContextMenu, "contextMenu.items", "settings.contextMenu.inspect", "settings.contextMenu.hint"},
-    {SettingsPage::ContextMenu, "contextMenu.application", "settings.contextMenu.viewApplications", "settings.contextMenu.extensions"},
-    {SettingsPage::ContextMenu, "contextMenu.extension", "settings.contextMenu.viewExtensions", "settings.contextMenu.extensions"},
-    {SettingsPage::ContextMenu, "contextMenu.batch", "settings.contextMenu.groupToggle", "settings.contextMenu.groupHint"},
-    {SettingsPage::Calendar, "calendar.secondary", "settings.calendar.showSecondary", "settings.calendar.pageDescription"},
-    {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription"},
-    {SettingsPage::General, "general.language",
-        "settings.general.language",
-        "settings.general.language.description"},
-    {SettingsPage::Desktop, "desktop.doubleClickHide",
-        "settings.general.doubleClickHide",
-        "settings.general.doubleClickHide.description"},
-    {SettingsPage::General, "general.quickNavigation",
-        "settings.general.quickNavigation",
-        "settings.general.quickNavigation.description"},
-    {SettingsPage::General, "general.quickNavigation.hotkey",
-        "app.settings.hotkey",
-        "settings.general.quickNavigation.description"},
-    {SettingsPage::DesktopPages, "general.pageNavigation",
-        "settings.general.pageNavigation",
-        "settings.general.pageNavigation.description"},
-    {SettingsPage::DesktopPages, "general.pageNavigation.previous",
-        "app.settings.page_navigation_previous",
-        "settings.general.pageNavigation.description"},
-    {SettingsPage::DesktopPages, "general.pageNavigation.next",
-        "app.settings.page_navigation_next",
-        "settings.general.pageNavigation.description"},
-    {SettingsPage::DesktopPages, "pages.order",
-        "settings.pages.manage",
-        "settings.pages.manage.description"},
-    {SettingsPage::DesktopPages, "pages.add",
-        "app.menu.add_page",
-        "settings.pages.manage.description"},
-    {SettingsPage::DesktopPages, "pages.grid",
-        "settings.pages.grid",
-        "settings.pages.grid.description"},
-    {SettingsPage::Desktop, "desktop.passthrough",
-        "settings.general.desktopPassthrough",
-        "settings.general.desktopPassthrough.description"},
-    {SettingsPage::Desktop, "desktop.passthrough.hotkey",
-        "app.settings.hotkey",
-        "settings.general.desktopPassthrough.description"},
-    {SettingsPage::Dock, "dock.floatingShortcutMode",
-        "settings.general.floatingDock",
-        "settings.general.floatingDock.description"},
-    {SettingsPage::Dock, "dock.floatingShortcutMode.hotkey",
-        "app.settings.hotkey",
-        "settings.general.floatingDock.description"},
-    {SettingsPage::AppearanceTheme, "personalization.dockAppearance",
-        "guide.setting.dockAppearance.title", "guide.setting.dockAppearance"},
-    {SettingsPage::AppearanceWidgets, "personalization.luaWidgetRowHeight",
-        "app.settings.lua_widget_row_height", "settings.personalization.widgets.description"},
-    {SettingsPage::DesktopPages, "pages.rows", "settings.pages.rows", "settings.pages.grid.description"},
-    {SettingsPage::AppearanceTheme, "personalization.theme",
-        "settings.personalization.theme",
-        "settings.personalization.theme.description"},
-    {SettingsPage::AppearanceTheme, "personalization.backgroundColor",
-        "settings.personalization.colors",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme,
-        "personalization.quickNavigationTheme",
-        "app.settings.quick_nav_theme",
-        "settings.personalization.theme.description"},
-    {SettingsPage::AppearanceTheme,
-        "personalization.collectionPopupTheme",
-        "app.settings.collection_popup_theme",
-        "settings.personalization.theme.description"},
-    {SettingsPage::AppearanceTheme, "personalization.borderColor",
-        "app.settings.component_border",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme, "personalization.widgetAlpha",
-        "app.settings.bg_opacity",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme, "personalization.borderAlpha",
-        "app.settings.border_opacity",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme, "personalization.borderWidth",
-        "app.settings.border_width",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme, "personalization.edgeHighlight",
-        "app.settings.edge_highlight",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme, "personalization.edgeHighlightWidth",
-        "app.settings.edge_highlight_width",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme,
-        "personalization.edgeHighlightStrength",
-        "app.settings.edge_highlight_strength",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme, "personalization.enableGradient",
-        "app.settings.enable_gradient",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme,
-        "personalization.gradientEndAlpha",
-        "app.settings.gradient_end_alpha",
-        "settings.personalization.colors.description"},
-    {SettingsPage::AppearanceTheme, "personalization.glass",
-        "settings.personalization.glass",
-        "settings.personalization.glass.description"},
-    {SettingsPage::AppearanceTheme, "personalization.acrylic",
-        "settings.personalization.acrylic",
-        "settings.personalization.acrylic.description"},
-    {SettingsPage::AppearanceTheme, "personalization.blurRadius",
-        "app.settings.blur_radius",
-        "settings.personalization.glass.description"},
-    {SettingsPage::AppearanceTheme, "personalization.contentTheme",
-        "app.settings.text_color",
-        "settings.personalization.theme.description"},
-    {SettingsPage::ContextMenu, "personalization.contextMenu",
-        "settings.personalization.contextMenu",
-        "settings.personalization.contextMenu.description"},
-    {SettingsPage::AppearanceWidgets, "personalization.cornerRadius",
-        "settings.personalization.widgets",
-        "settings.personalization.widgets.description"},
-    {SettingsPage::AppearanceWidgets, "personalization.barHeight",
-        "app.settings.bar_height",
-        "settings.personalization.widgets.description"},
-    {SettingsPage::AppearanceWidgets, "personalization.scrollableTitleBarOnTop",
-        "app.settings.scrollable_title_bar_position",
-        "app.settings.scrollable_title_bar_position_hint"},
-    {SettingsPage::AppearanceWidgets, "desktop.categoryLayout",
-        "app.settings.tab_height",
-        "settings.personalization.widgets.description"},
-    {SettingsPage::AppearanceWidgets, "personalization.showGroupTabCounts",
-        "app.settings.group_show_count", "app.settings.group_show_count_hint"},
-    {SettingsPage::AppearanceWidgets, "personalization.popupHoverOpen",
-        "app.settings.popup_hover_open", "app.settings.popup_hover_open_hint"},
-    {SettingsPage::AppearanceWidgets, "personalization.popupHoverDelayMs",
-        "app.settings.popup_hover_delay", "app.settings.popup_hover_open_hint"},
-    {SettingsPage::DesktopCategories,
-        "desktop.categoryCounts",
-        "app.settings.category_show_count",
-        "settings.desktop.categoryLayout.description"},
-    {SettingsPage::AppearanceWidgets, "desktop.spacing",
-        "settings.desktop.spacing", "settings.desktop.spacing.description"},
-    {SettingsPage::AppearanceDesktopIcons, "desktop.iconSize",
-        "settings.desktop.iconSize", "settings.desktop.iconSize.description"},
-    {SettingsPage::AppearanceDesktopIcons, "desktop.itemFontSize",
-        "settings.desktop.typography",
-        "settings.desktop.typography.description"},
-    {SettingsPage::AppearanceDesktopIcons, "desktop.listFontSize",
-        "app.settings.list_font_size",
-        "settings.desktop.typography.description"},
-    {SettingsPage::AppearanceDesktopIcons, "desktop.fontWeight",
-        "app.settings.title_font_weight",
-        "settings.desktop.typography.description"},
-    {SettingsPage::AppearanceDesktopIcons, "desktop.shortcutArrow",
-        "settings.desktop.shortcutArrow",
-        "settings.desktop.shortcutArrow.description"},
-    {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify",
-        "settings.desktop.iconBeautify",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.mode",
-        "app.settings.beautify_mode",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.backgroundColor",
-        "app.settings.default_bg",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.backgroundOpacity",
-        "app.settings.bg_opacity_val",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.gradient",
-        "app.settings.enable_gradient_bg",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.gradientEndColor",
-        "app.settings.gradient_end_color",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.gradientDirection",
-        "app.settings.beautify_gradient_dir",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.shape",
-        "app.settings.beautify_shape",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.contentScale",
-        "app.settings.beautify_content_scale",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.highlightStrength",
-        "app.settings.beautify_texture_highlight",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.highlightSize",
-        "app.settings.beautify_texture_highlight_size",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.highlightAngle",
-        "app.settings.beautify_texture_highlight_angle",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.shadeStrength",
-        "app.settings.beautify_texture_shade",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.edgeHighlight",
-        "app.settings.beautify_texture_edge",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.filter",
-        "app.settings.beautify_filter",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.filterColor",
-        "app.settings.beautify_filter_color",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.filterStrength",
-        "app.settings.beautify_filter_strength",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.shadowStrength",
-        "app.settings.beautify_shadow_strength",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.outline",
-        "app.settings.beautify_outline",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.outlineWidth",
-        "app.settings.beautify_outline_width",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.outlineOpacity",
-        "app.settings.beautify_outline_opacity",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::AppearanceIconBeautification,
-        "desktop.iconBeautify.outlineColor",
-        "app.settings.beautify_outline_color",
-        "settings.desktop.iconBeautify.description"},
-    {SettingsPage::DesktopCategories, "desktop.categoryRules",
-        "app.settings.category_rules",
-        "settings.desktop.categories.description"},
-    {SettingsPage::DesktopCategories, "desktop.categories",
-        "settings.desktop.categories",
-        "settings.desktop.categories.description"},
-    {SettingsPage::DesktopCategories, "desktop.category.add",
-        "app.settings.add_category",
-        "settings.desktop.categories.description"},
-    {SettingsPage::Dock, "dock.enable", "settings.dock.enable",
-        "settings.dock.enable.description"},
-    {SettingsPage::Dock, "dock.position",
-        "settings.dock.position", "settings.dock.position.description"},
-    {SettingsPage::Dock, "dock.layout", "settings.dock.layout",
-        "settings.dock.layout.description"},
-    {SettingsPage::Dock, "dock.monitor", "settings.dock.monitor",
-        "settings.dock.monitor.description"},
-    {SettingsPage::Dock, "dock.thickness",
-        "settings.dock.thickness", "settings.dock.thickness.description"},
-    {SettingsPage::Dock, "dock.allowDesktopContentOverlap",
-        "settings.dock.allowDesktopContentOverlap",
-        "settings.dock.allowDesktopContentOverlap.description"},
-    {SettingsPage::Dock, "dock.showOnlyWhenSummoned",
-        "settings.dock.showOnlyWhenSummoned",
-        "settings.dock.showOnlyWhenSummoned.description"},
-    {SettingsPage::Dock, "dock.showFrequentItems",
-        "settings.dock.frequentItems",
-        "settings.dock.frequentItems.description"},
-    {SettingsPage::Dock, "dock.floatingEdgeSwipe",
-        "app.dock.floating_edge_swipe",
-        "settings.dock.items.description"},
-    {SettingsPage::Dock, "dock.floatingEdgeSwipeBlockFullscreen",
-        "settings.dock.blockFullscreenSwipe",
-        "settings.dock.blockFullscreenSwipe.description"},
-    {SettingsPage::Dock, "dock.suppressSystemTaskbar",
-        "settings.dock.suppressTaskbar", "settings.dock.suppressTaskbar.description"},
-    {SettingsPage::Dock, "dock.showWindowsButton",
-        "app.dock.show_windows_button",
-        "settings.dock.items.description"},
-    {SettingsPage::Dock, "dock.frequentItemCount",
-        "app.settings.show_count",
-        "settings.dock.frequentItems.description"},
-    {SettingsPage::Taskbar, "taskbar.systemSettings",
-        "settings.taskbar.systemSettings",
-        "settings.taskbar.systemSettings.description"},
-    {SettingsPage::Taskbar, "taskbar.theme",
-        "settings.taskbar.theme", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.contentTheme",
-        "app.settings.taskbar_foreground_color",
-        "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.backgroundColor",
-        "app.settings.bg_color", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.borderColor",
-        "app.settings.border_color", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.backgroundOpacity",
-        "app.settings.bg_opacity", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.borderOpacity",
-        "app.settings.border_opacity", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.glass",
-        "app.settings.glass_enabled", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.blurRadius",
-        "app.settings.blur_radius", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.acrylic",
-        "app.settings.acrylic_noise", "settings.taskbar.theme.description"},
-    {SettingsPage::Taskbar, "taskbar.dynamic.shellUi",
-        "app.settings.taskbar_dynamic_shell_ui",
-        "settings.taskbar.scenarioOverrides.description"},
-    {SettingsPage::Taskbar, "taskbar.dynamic.maximizedWindow",
-        "app.settings.taskbar_dynamic_maximized_window",
-        "settings.taskbar.scenarioOverrides.description"},
-    {SettingsPage::Taskbar, "taskbar.dynamic.visibleWindow",
-        "app.settings.taskbar_dynamic_visible_window",
-        "settings.taskbar.scenarioOverrides.description"},
-    {SettingsPage::Taskbar, "taskbar.systemTheme",
-        "app.settings.system_panel",
-        "settings.taskbar.restartExplorer.description"},
-    {SettingsPage::Taskbar, "taskbar.restartExplorer",
-        "settings.taskbar.restartExplorer",
-        "settings.taskbar.restartExplorer.description"},
-    {SettingsPage::Widgets, "widgets.installed",
-        "settings.widgets.installed",
-        "settings.widgets.installed.description"},
-    {SettingsPage::Widgets, "widgets.search",
-        "app.settings.widgets_search",
-        "settings.widgets.installed.description"},
-    {SettingsPage::Widgets, "widgets.install",
-        "app.settings.widgets_install_package",
-        "settings.widgets.sources.description"},
-    {SettingsPage::Widgets, "widgets.workshop",
-        "app.settings.widgets_open_steam_workshop",
-        "settings.widgets.sources.description"},
-    {SettingsPage::Widgets, "widgets.developer",
-        "app.settings.widgets_self_develop",
-        "settings.widgets.sources.description"},
-    {SettingsPage::Widgets, "widgets.included",
-        "app.settings.widgets_builtin",
-        "settings.widgets.installed.description"},
-    {SettingsPage::Widgets, "widgets.sources", "settings.widgets.sources",
-        "settings.widgets.sources.description"},
-    {SettingsPage::Widgets, "widgets.permissions",
-        "settings.widgets.permissions",
-        "settings.widgets.permissions.description"},
-    {SettingsPage::BackupAndData, "backup.layout", "settings.backup.layout",
-        "settings.backup.layout.description"},
-    {SettingsPage::BackupAndData, "backup.full", "settings.backup.full",
-        "settings.backup.full.description"},
-    {SettingsPage::BackupAndData, "backup.directory",
-        "settings.backup.directory",
-        "settings.backup.directory.description"},
-    {SettingsPage::BackupAndData, "backup.migration",
-        "app.settings.migrate_all_data",
-        "settings.backup.full.description"},
-    {SettingsPage::BackupAndData, "backup.clearData",
-        "settings.backup.clearData", "settings.backup.clearData.description"},
-    {SettingsPage::About, "about.version", "settings.about.version",
-        "settings.about.version.description"},
-    {SettingsPage::About, "about.profile", "app.settings.personal_homepages",
-        "app.settings.about_description"},
-    {SettingsPage::About, "about.project", "settings.about.project",
-        "settings.about.project.description"},
-    {SettingsPage::About, "about.website", "settings.about.officialWebsite",
-        "settings.about.project.description"},
-    {SettingsPage::About, "about.community", "app.settings.community",
-        "app.settings.join_qq"},
-    {SettingsPage::About, "about.thirdparty", "settings.about.thirdparty",
-        "settings.about.thirdparty.description"},
-    {SettingsPage::DeveloperTools, "developer.overrides",
-        "settings.developer.overrides",
-        "settings.developer.overrides.description"},
-    {SettingsPage::DeveloperTools, "developer.tools",
-        "settings.developer.tools",
-        "settings.developer.tools.description"},
-    {SettingsPage::DeveloperTools, "developer.agentSkill",
-        "app.settings.widgets_agent_skill",
-        "app.settings.widgets_agent_skill_description"},
-    {SettingsPage::DeveloperTools, "developer.workspace",
-        "app.settings.widgets_authoring_workspace",
-        "settings.developer.tools.description"},
-    {SettingsPage::DeveloperTools, "developer.cli",
-        "app.settings.widgets_component_cli",
-        "settings.developer.tools.description"},
-    {SettingsPage::DeveloperTools, "developer.publish",
-        "app.settings.widgets_authoring_publish",
-        "app.settings.widgets_authoring_publish_description"},
-    {SettingsPage::DeveloperTools, "developer.reference",
-        "app.settings.widgets_authoring_reference",
-        "app.settings.widgets_authoring_reference_description"},
-    {SettingsPage::DeveloperTools, "developer.runtime",
-        "app.settings.widgets_runtime_diagnostics",
-        "settings.developer.tools.description"},
-    {SettingsPage::Debug, "debug.profile", "settings.debug.profile.enabled", "settings.debug.profile.description"},
-    {SettingsPage::Debug, "debug.desktop", "settings.debug.profile.desktop", "settings.debug.profile.chooseHint"},
-    {SettingsPage::Debug, "debug.clearProfile", "settings.debug.profile.clear", "settings.debug.profile.clearHint"},
-    {SettingsPage::Debug, "debug.demo_mode", "app.settings.demo_mode",
-        "app.settings.demo_mode_hint"},
-    {SettingsPage::Debug, "debug.initialization", "settings.debug.initialization",
-        "settings.debug.initialization.description"},
-    {SettingsPage::Debug, "debug.animation",
-        "app.settings.animation_diagnostics",
-        "app.settings.animation_diagnostics_desc"},
-    {SettingsPage::Debug, "debug.resetUnlock", "settings.debug.resetUnlock",
-        "settings.debug.resetUnlock.description"},
-    {SettingsPage::Debug, "debug.crash", "app.settings.crash_test",
-        "app.settings.crash_test_desc"},
-};
 
 std::wstring FormatWin32Error(const wchar_t* operation, DWORD error)
 {
@@ -811,6 +373,7 @@ struct SettingsWindowHost::Impl
     muw::AppWindow appWindow{nullptr};
     muw::AppWindowTitleBar appWindowTitleBar{nullptr};
     SettingsSearchIndex searchIndex;
+    int searchContextMenuStyle = -1;
     std::shared_ptr<CallbackState> callbacks;
     std::unique_ptr<IWidgetsPageBackend> widgetsPageBackend;
     std::unique_ptr<IBackupDataPageBackend> backupDataPageBackend;
@@ -820,6 +383,7 @@ struct SettingsWindowHost::Impl
     bool backupDataPageActive = false;
     bool initialized = false;
     bool shuttingDown = false;
+    bool applyingSnapshot = false;
     bool interactionSuspended = true;
     bool darkTheme = false;
     bool viewReleaseQueued = false;
@@ -835,6 +399,281 @@ struct SettingsWindowHost::Impl
     bool integratedTitleBarInsetsUpdateQueued = false;
     bool externalStateRefreshQueued = false;
     std::wstring lastError;
+
+    struct ThemeTask
+    {
+        std::atomic_bool cancel{false};
+        std::uint64_t generation = 0;
+        ThemeLibraryRequest request;
+        unsigned previewScope = themes::All;
+        themes::Package snapshot;
+        steam_bridge::ThemePublishPlan plan;
+        std::vector<themes::preview::Image> images;
+        std::filesystem::path directory, cover, customCover, customBackground;
+        std::function<void(ThemeLibraryResult)> completed;
+        ~ThemeTask() { if (!directory.empty()) { std::error_code ec; std::filesystem::remove_all(directory, ec); } }
+    };
+    std::shared_ptr<ThemeTask> themeTask;
+    std::map<std::string, std::filesystem::path> themeCovers;
+    std::map<std::string, std::filesystem::path> themeBackgrounds;
+
+    std::filesystem::path ThemeBridge() const { return std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe"; }
+    bool ThemeSharingAvailable() const { return themes::workshop::Available(ThemeBridge(), SNOWDESKTOP_VERSION); }
+    void CompleteThemeTask(const std::shared_ptr<ThemeTask>& task, bool success, std::string error)
+    {
+        if (themeTask != task) return;
+        ThemeLibraryResult result;
+        result.succeeded = success;
+        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), SNOWDESKTOP_VERSION, result.sharingAvailable);
+        std::string ignored;
+        if (!themes::Load(themes::LibraryPath(), result.library, ignored))
+        { result.succeeded = false; if (error.empty()) error = ignored; }
+        if (!result.succeeded && error != "cancelled")
+        {
+            result.message = L(
+                error == "agreementRequired" ? "themeLibrary.agreementRequired" :
+                error == "authorMismatch" ? "themeLibrary.authorMismatch" :
+                error == "stalePreparation" ? "themeLibrary.stalePreview" :
+                error == "creationUncertain" ? "themeLibrary.creationUncertain" :
+                error == "tagsRequired" ? "themeLibrary.tagsRequired" : "themeLibrary.operationFailed");
+            if (!error.empty())
+            {
+                auto detail = L("app.operation.errorCode");
+                const auto placeholder = detail.find(L"{0}");
+                if (placeholder != std::wstring::npos) detail.replace(placeholder, 3, Utf8ToWide(error));
+                result.message += L"\n" + detail;
+            }
+            WriteDiagnosticLogEntry((L"SettingsUI theme operation=" +
+                std::to_wstring(static_cast<int>(task->request.command)) +
+                L" error=" + Utf8ToWide(error)).c_str(), DiagnosticLogLevel::Error);
+        }
+        for (const auto& [id, theme] : result.library.themes)
+        {
+            (void)theme;
+            auto url = steam_bridge::ThemePublishedUrl(GetDataDirectoryPath(), id);
+            if (url.empty()) for (const auto& [item, origin] : result.library.workshop)
+                if (origin.ids.contains(id)) { url = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item; break; }
+            if (!url.empty()) result.publishedUrls.emplace(id, std::move(url));
+        }
+        if (shell) shell->HideProgress(task->generation);
+        auto completed = std::move(task->completed);
+        themeTask.reset();
+        if (completed) completed(std::move(result));
+    }
+    bool CurrentThemeTask(const std::shared_ptr<ThemeTask>& task) const
+    {
+        if (themeTask != task || task->cancel.load() || !shell || !controller ||
+            !controller->IsGenerationCurrent(task->generation)) return false;
+        const auto snapshot = controller->Snapshot();
+        return snapshot && snapshot->sessionActive && !snapshot->externalReplacementPending;
+    }
+    void PublishThemeTask(const std::shared_ptr<ThemeTask>& task)
+    {
+        if (!CurrentThemeTask(task)) { CompleteThemeTask(task, false, "cancelled"); return; }
+        std::string error; themes::Library library; themes::Package latest;
+        if (!ThemeSharingAvailable() || !themes::Load(themes::LibraryPath(), library, error) ||
+            !themes::Export(library, task->request.id, latest, error) ||
+            themes::EncodePackage(latest, error) != themes::EncodePackage(task->snapshot, error))
+        { CompleteThemeTask(task, false, "stalePreparation"); return; }
+        (void)shell->ShowProgress({task->generation, L("themeLibrary.share"), L("themeLibrary.preparing"), true, 0, true});
+        const auto weak = std::weak_ptr<CallbackState>(callbacks);
+        const auto bridge = ThemeBridge(), data = std::filesystem::path(GetDataDirectoryPath());
+        std::thread([weak, task, bridge, data] {
+            std::string output, detail; bool success = false;
+            try { success = themes::workshop::Publish(bridge, task->plan, data, output, detail, &task->cancel); }
+            catch (...) { detail = "publishFailed"; }
+            if (const auto state = weak.lock(); state && state->alive.load())
+                (void)state->dispatcher.TryEnqueue([weak, task, success, detail] {
+                    if (const auto current = weak.lock(); current && current->alive.load() && current->owner)
+                        current->owner->CompleteThemeTask(task, success, detail);
+                });
+        }).detach();
+    }
+    void ShowThemeTask(const std::shared_ptr<ThemeTask>& task)
+    {
+        if (!CurrentThemeTask(task)) { CompleteThemeTask(task, false, "cancelled"); return; }
+        shell->HideProgress(task->generation);
+        const auto theme = themes::Resolve(task->snapshot, task->request.id);
+        if (!theme) { CompleteThemeTask(task, false, "stalePreparation"); return; }
+        shell_impl::SettingsShellDialogRequest dialog;
+        dialog.generation = task->generation; dialog.title = winrt::to_hstring(theme->name).c_str();
+        dialog.closeButtonText = L("settings.dialog.cancel"); dialog.previewImagePath = task->cover.wstring();
+        if (!task->customCover.empty()) dialog.previewImages.push_back({L("themeLibrary.chooseCover"), task->cover.wstring()});
+        for (const auto& image : task->images)
+        {
+            const char* key = image.component == "folder-mapping" ? "app.menu.folder_mapping" :
+                image.component == "dock" ? "themeLibrary.dock" : image.component == "status-bar" ? "themeLibrary.statusBar" :
+                image.component == "taskbar" ? "themeLibrary.taskbar" : image.component == "quick-navigation" ? "themeLibrary.quickPanel" :
+                image.component == "control-panel" ? "statusBar.controlCenter" : "themeLibrary.popup";
+            dialog.previewImages.push_back({L(key), image.path.wstring()});
+        }
+        const bool share = task->request.command == ThemeLibraryCommand::Share;
+        dialog.defaultClose = share;
+        dialog.message = L("themeLibrary.fixedPreview");
+        if (theme->kind == themes::Kind::Global)
+        {
+            for (const auto& [bit, key] : std::vector<std::pair<unsigned, const char*>>{
+                {themes::Components,"themeLibrary.components"}, {themes::Dock,"themeLibrary.dock"},
+                {themes::StatusBar,"themeLibrary.statusBar"}, {themes::Taskbar,"themeLibrary.taskbar"}})
+                if (task->previewScope & bit) dialog.message += L"\n" + L(key);
+            for (const auto& [id, key] : std::vector<std::pair<std::string, const char*>>{
+                {theme->quickPanel,"themeLibrary.quickPanel"}, {theme->popup,"themeLibrary.popup"}})
+                if (const auto child = themes::Resolve(task->snapshot, id); child && task->previewScope == theme->scopes)
+                    dialog.message += L"\n" + L(key) + L": " + std::wstring(winrt::to_hstring(child->name));
+        }
+        if (share)
+        {
+            dialog.message += L"\n" + L("themeLibrary.tagsRequired");
+            for (const auto& tag : task->plan.tags)
+                for (const auto& category : themes::tags::Categories)
+                    if (category.value == tag) dialog.message += L"\n" + L(category.label);
+            if (task->plan.publishedFileId) dialog.message += L"\n" + std::wstring(winrt::to_hstring(
+                "https://steamcommunity.com/sharedfiles/filedetails/?id=" + std::to_string(task->plan.publishedFileId)));
+            dialog.message += L"\n\n" + L("themeLibrary.confirmShare");
+            dialog.primaryButtonText = L(task->plan.publishedFileId ? "themeLibrary.publishUpdate" : "themeLibrary.publish");
+        }
+        const auto weak = std::weak_ptr<CallbackState>(callbacks);
+        shell->ShowConfirmation(std::move(dialog), [weak, task, share](bool confirmed) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+            {
+                if (share && confirmed) state->owner->PublishThemeTask(task);
+                else state->owner->CompleteThemeTask(task, !share, share ? "cancelled" : "");
+            }
+        });
+    }
+    void BeginThemeTask(std::uint64_t generation, ThemeLibraryRequest request,
+        std::function<void(ThemeLibraryResult)> completed)
+    {
+        if (themeTask || !controller || !controller->IsGenerationCurrent(generation) || !shell)
+        { if (completed) completed({}); return; }
+        auto task = std::make_shared<ThemeTask>(); task->generation = generation;
+        task->request = std::move(request); task->completed = std::move(completed); themeTask = task;
+        if (!CurrentThemeTask(task)) { CompleteThemeTask(task, false, "cancelled"); return; }
+        const bool sync = task->request.command == ThemeLibraryCommand::SyncSubscriptions;
+        const bool share = task->request.command == ThemeLibraryCommand::Share;
+        if ((share || sync) && !ThemeSharingAvailable()) { CompleteThemeTask(task, false, "missingCapability"); return; }
+        std::string error; themes::Library library;
+        if (task->request.command == ThemeLibraryCommand::BindWorkshop || task->request.command == ThemeLibraryCommand::UnbindWorkshop)
+        {
+            const bool unbind = task->request.command == ThemeLibraryCommand::UnbindWorkshop;
+            if ((!unbind && !ThemeSharingAvailable()) || !themes::Load(themes::LibraryPath(), library, error))
+            { CompleteThemeTask(task, false, error.empty() ? "missingCapability" : error); return; }
+            const auto theme = themes::Resolve(library.themes, task->request.id);
+            bool subscribed = false;
+            for (const auto& [item, origin] : library.workshop) { (void)item; if (origin.ids.contains(task->request.id)) subscribed = true; }
+            if (!theme || subscribed || themes::Builtin(theme->id)) { CompleteThemeTask(task, false, "invalidSelection"); return; }
+            const auto weak = std::weak_ptr<CallbackState>(callbacks);
+            const auto bridge = ThemeBridge(), data = std::filesystem::path(GetDataDirectoryPath());
+            (void)shell->ShowProgress({generation, L(unbind ? "themeLibrary.unbindWorkshop" : "themeLibrary.bindWorkshop"), L("themeLibrary.preparing"), true, 0, !unbind});
+            std::thread([weak, task, bridge, data, theme = *theme, unbind] {
+                std::string detail;
+                bool success = false;
+                try {
+                    success = unbind ? steam_bridge::UnbindThemePublication(data, theme.id, detail) :
+                        themes::workshop::Bind(bridge, data, theme, task->request.replacement, detail, &task->cancel);
+                }
+                catch (...) { detail = "writeFailed"; }
+                if (const auto state = weak.lock(); state && state->alive.load())
+                    (void)state->dispatcher.TryEnqueue([weak, task, success, detail] {
+                        if (const auto active = weak.lock(); active && active->alive.load() && active->owner)
+                            active->owner->CompleteThemeTask(task, success, detail);
+                    });
+            }).detach();
+            return;
+        }
+        if (!sync)
+        {
+            if (task->request.id.empty() && task->request.command == ThemeLibraryCommand::Preview &&
+                (task->request.target == "dock" || task->request.target == "taskbar"))
+            {
+                auto theme = themes::CaptureTarget(task->request.target, controller->Snapshot()->values);
+                theme.id = themes::CreateId();
+                theme.name = winrt::to_string(L(task->request.target == "dock" ? "themeLibrary.dock" : "themeLibrary.taskbar"));
+                theme.scopes = themes::All; theme.quickPanel = "builtin/quickpanel/dark"; theme.popup = "builtin/popup/dark";
+                task->request.id = theme.id; task->snapshot.emplace(theme.id, std::move(theme));
+            }
+            else if (!themes::Load(themes::LibraryPath(), library, error) ||
+                !themes::Export(library, task->request.id, task->snapshot, error))
+            { CompleteThemeTask(task, false, error); return; }
+        }
+        if (share)
+        {
+            const auto selected = themes::Resolve(task->snapshot, task->request.id);
+            if (!selected || !themes::tags::Valid(*selected, task->request.tags)) { CompleteThemeTask(task, false, "tagsRequired"); return; }
+            if (!task->request.chooseCover) themeCovers.erase(task->request.id);
+            if (!task->request.chooseBackground) themeBackgrounds.erase(task->request.id);
+        }
+        if (task->request.command == ThemeLibraryCommand::ChooseBackground || (share && task->request.chooseBackground))
+        {
+            const auto selected = ShowOpenPathDialog(window, L("themeLibrary.chooseBackground"),
+                {{L("themeLibrary.chooseBackground"), L"*.png;*.jpg;*.jpeg;*.bmp"}}, false);
+            if (!selected) { CompleteThemeTask(task, false, "cancelled"); return; }
+            themeBackgrounds[task->request.id] = *selected;
+            while (themeBackgrounds.size() > 16) themeBackgrounds.erase(themeBackgrounds.begin());
+        }
+        if (task->request.command == ThemeLibraryCommand::ChooseCover || (share && task->request.chooseCover))
+        {
+            const auto selected = ShowOpenPathDialog(window, L("themeLibrary.chooseCover"),
+                {{L("themeLibrary.chooseCover"), L"*.png;*.jpg;*.jpeg;*.bmp"}}, false);
+            if (!selected) { CompleteThemeTask(task, false, "cancelled"); return; }
+            themeCovers[task->request.id] = *selected;
+            while (themeCovers.size() > 16) themeCovers.erase(themeCovers.begin());
+        }
+        if (task->request.command == ThemeLibraryCommand::Regenerate)
+        { themeCovers.erase(task->request.id); themeBackgrounds.erase(task->request.id); }
+        if (const auto selected = themeCovers.find(task->request.id); selected != themeCovers.end()) task->customCover = selected->second;
+        if (const auto selected = themeBackgrounds.find(task->request.id); selected != themeBackgrounds.end()) task->customBackground = selected->second;
+        wchar_t temporary[MAX_PATH + 1]{};
+        if (!GetTempPathW(MAX_PATH, temporary)) { CompleteThemeTask(task, false, "writeFailed"); return; }
+        task->directory = theme_controls::TaskDirectory(std::filesystem::path(temporary), themes::CreateId());
+        if (task->directory.empty()) { CompleteThemeTask(task, false, "writeFailed"); return; }
+        (void)shell->ShowProgress({generation, L(sync ? "themeLibrary.sync" : "themeLibrary.preview"), L("themeLibrary.preparing"), true, 0, true});
+        const auto weak = std::weak_ptr<CallbackState>(callbacks);
+        const auto host = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe", bridge = ThemeBridge(), data = std::filesystem::path(GetDataDirectoryPath());
+        const auto libraryPath = themes::LibraryPath();
+        std::thread([weak, task, sync, share, host, bridge, data, libraryPath] {
+            const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            bool success = false; std::string detail;
+            try
+            {
+                if (sync) { themes::Library result; success = themes::workshop::Sync(bridge, libraryPath, result, detail, &task->cancel); }
+                else
+                {
+                    const auto theme = themes::Resolve(task->snapshot, task->request.id);
+                    const auto scope = theme && theme->kind == themes::Kind::Global ?
+                        (share || task->request.target == "global" ? theme->scopes : themes::TargetScope(task->request.target)) : themes::All;
+                    task->previewScope = scope;
+                    if (share)
+                    {
+                        success = themes::workshop::Prepare(task->snapshot, task->request.id, scope, task->directory, data,
+                            task->customCover, [host, task](const auto& package, auto root, auto applicable, const auto& directory,
+                                auto& cover, auto& error, auto* cancel) {
+                                return themes::preview::RenderGallery(host, package, root, applicable, directory, task->images, cover, error, cancel, task->customBackground);
+                            }, task->plan, detail, &task->cancel, task->request.tags);
+                        task->cover = task->plan.preview;
+                    }
+                    else
+                    {
+                        success = themes::preview::RenderGallery(host, task->snapshot, task->request.id, scope, task->directory, task->images, task->cover, detail, &task->cancel, task->customBackground);
+                        if (success && !task->customCover.empty())
+                        {
+                            success = themes::preview::NormalizeCover(task->customCover, task->cover, detail);
+                        }
+                    }
+                }
+            }
+            catch (...) { detail = "previewFailed"; }
+            if (SUCCEEDED(initialized)) CoUninitialize();
+            if (const auto state = weak.lock(); state && state->alive.load())
+                (void)state->dispatcher.TryEnqueue([weak, task, success, detail, sync] {
+                    if (const auto current = weak.lock(); current && current->alive.load() && current->owner)
+                    {
+                        if (!success || sync) current->owner->CompleteThemeTask(task, success, detail);
+                        else current->owner->ShowThemeTask(task);
+                    }
+                });
+        }).detach();
+    }
 
     [[nodiscard]] bool OnOwnerThread() const noexcept
     {
@@ -869,6 +708,8 @@ struct SettingsWindowHost::Impl
     void SetError(std::wstring message)
     {
         lastError = std::move(message);
+        WriteDiagnosticLogEntry((L"SettingsUI pid=" + std::to_wstring(GetCurrentProcessId()) +
+            L" error: " + lastError).c_str(), DiagnosticLogLevel::Error);
     }
 
     void QueueSystemBackdropUpdate() noexcept
@@ -1006,6 +847,15 @@ struct SettingsWindowHost::Impl
             {
                 SetError(L"Get AppWindow for settings window failed");
                 return false;
+            }
+            // The settings child uses the same embedded artwork as the host.
+            // Set the AppWindow icon explicitly before customizing its title bar;
+            // hiding the caption icon must not remove the taskbar artwork.
+            if (const HICON icon = LoadIconW(
+                    instance, MAKEINTRESOURCEW(IDI_APPICON)))
+            {
+                appWindow.SetIcon(
+                    winrt::Microsoft::UI::GetIconIdFromIcon(icon));
             }
             appWindowTitleBar = appWindow.TitleBar();
             if (!appWindowTitleBar)
@@ -1218,6 +1068,7 @@ struct SettingsWindowHost::Impl
     SettingsSearchIndexInput BuildSearchInput()
     {
         SettingsSearchIndexInput input;
+        const auto snapshot = controller ? controller->Snapshot() : nullptr;
         if (options.searchInput)
             input = options.searchInput();
 
@@ -1232,67 +1083,16 @@ struct SettingsWindowHost::Impl
 
         if (input.staticSettings.empty())
         {
-            const auto pageContext = [this](SettingsPage page) {
-                switch (page)
-                {
-                case SettingsPage::General:
-                    return L("app.settings.general");
-                case SettingsPage::AnimationPerformance:
-                    return L("settings.nav.animation");
-                case SettingsPage::Personalization:
-                    return L("app.settings.appearance");
-                case SettingsPage::AppearanceTheme:
-                    return L("settings.personalization.theme");
-                case SettingsPage::AppearanceWidgets:
-                    return L("settings.personalization.widgets");
-                case SettingsPage::AppearanceDesktopIcons:
-                    return L("app.settings.desktop_icons");
-                case SettingsPage::AppearanceIconBeautification:
-                    return L("app.settings.icon_beautify");
-                case SettingsPage::Desktop:
-                    return L("settings.nav.desktop");
-                case SettingsPage::DesktopPages:
-                    return L("settings.nav.pages");
-                case SettingsPage::DesktopCategories:
-                    return L("settings.nav.categories");
-                case SettingsPage::Dock:
-                case SettingsPage::DockAndTaskbar:
-                    return L("settings.nav.dock");
-                case SettingsPage::Taskbar:
-                    return L("settings.nav.taskbar");
-                case SettingsPage::Widgets:
-                    return L("app.settings.widgets");
-                case SettingsPage::BackupAndData:
-                    return L("app.settings.backup");
-                case SettingsPage::About:
-                    return L("app.settings.about");
-                case SettingsPage::DeveloperTools:
-                    return L("app.settings.widgets_developer_tools");
-                case SettingsPage::Debug:
-                    return L("app.settings.debug");
-                default:
-                    return std::wstring{};
-                }
-            };
-            input.staticSettings.reserve(std::size(kStaticSearchDefinitions));
-            for (const auto& definition : kStaticSearchDefinitions)
-            {
-                StaticSettingSearchDescriptor descriptor;
-                descriptor.page = definition.page;
-                descriptor.focusId = definition.focusId;
-                descriptor.label = L(definition.labelKey);
-                descriptor.description = L(definition.descriptionKey);
-                descriptor.context = pageContext(definition.page);
-                descriptor.visible =
-                    definition.page != SettingsPage::DeveloperTools &&
-                        definition.page != SettingsPage::Debug
-                    ? true
-                    : (definition.page == SettingsPage::DeveloperTools
-                        ? input.developerToolsVisible
-                        : input.debugVisible);
-                if (!descriptor.label.empty())
-                    input.staticSettings.push_back(std::move(descriptor));
-            }
+            PopulateSettingsSearchCatalog(input, [this](std::string_view key) { return L(key); },
+                advancedFeaturesVisible, StatusBarSupportsSystemQuickSettings(),
+                snapshot ? snapshot->values.personalization.contextMenuStyle : 0);
+        }
+        if (snapshot && (snapshot->values.personalization.contextMenuStyle == 5 ||
+            snapshot->values.personalization.contextMenuStyle == 6))
+        {
+            std::erase_if(input.staticSettings, [](const auto& descriptor) {
+                return descriptor.focusId == "contextMenu.expandQuickActions";
+            });
         }
         if (!advancedFeaturesVisible)
         {
@@ -1317,6 +1117,8 @@ struct SettingsWindowHost::Impl
         {
             SettingsSearchIndexInput input = BuildSearchInput();
             searchIndex.Rebuild(input);
+            const auto snapshot = controller ? controller->Snapshot() : nullptr;
+            searchContextMenuStyle = snapshot ? snapshot->values.personalization.contextMenuStyle : 0;
             if (shell)
             {
                 shell->SetConditionalPagesVisible(
@@ -1379,22 +1181,48 @@ struct SettingsWindowHost::Impl
             return;
         if (!Visible() && !snapshot->sessionActive)
             return;
-        if (!shell->ApplySnapshot(*snapshot))
-            return;
-        // Ordinary controller revisions must not touch the Island's window-
-        // level backdrop. In particular, continuous Slider/ColorPicker
-        // previews publish here while WinUI owns pointer capture or a Flyout.
-        // Backdrop refresh remains tied to attach and system theme/contrast
-        // messages, where a window-level material transition is intentional.
-        SynchronizePageBackends(*snapshot);
-        if (options.homeAboutStatus)
+        if (applyingSnapshot)
         {
-            HomeAboutStatusPatch patch = options.homeAboutStatus(
-                snapshot->generation, snapshot->revision);
-            // Preserve the host's status sequence; it also orders direct
-            // publications while the controller snapshot is unchanged.
-            (void)shell->ApplyHomeAboutStatusPatch(patch);
-
+            // Synchronous IPC queries may deliver a newer snapshot while a
+            // presenter is being constructed/activated. Render it on the next
+            // owner turn rather than rebuilding controls on their own stack.
+            QueueSnapshot(std::move(snapshot));
+            return;
+        }
+        applyingSnapshot = true;
+        struct ApplyGuard
+        {
+            bool& applying;
+            ~ApplyGuard() { applying = false; }
+        } applyGuard{applyingSnapshot};
+        try
+        {
+            if (!shell->ApplySnapshot(*snapshot))
+                return;
+            if (searchContextMenuStyle != snapshot->values.personalization.contextMenuStyle)
+                RebuildSearchIndex();
+            // Ordinary controller revisions must not touch the Island's window-
+            // level backdrop. In particular, continuous Slider/ColorPicker
+            // previews publish here while WinUI owns pointer capture or a Flyout.
+            // Backdrop refresh remains tied to attach and system theme/contrast
+            // messages, where a window-level material transition is intentional.
+            SynchronizePageBackends(*snapshot);
+            if (options.homeAboutStatus)
+            {
+                HomeAboutStatusPatch patch = options.homeAboutStatus(
+                    snapshot->generation, snapshot->revision);
+                // Preserve the host's status sequence; it also orders direct
+                // publications while the controller snapshot is unchanged.
+                (void)shell->ApplyHomeAboutStatusPatch(patch);
+            }
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            SetError(L"Apply settings snapshot: " + std::wstring(error.message().c_str()));
+        }
+        catch (...)
+        {
+            SetError(L"Apply settings snapshot failed");
         }
     }
 
@@ -1610,9 +1438,91 @@ struct SettingsWindowHost::Impl
             auto selected = ShowOpenPathDialog(state->owner->window,
                 state->owner->L("app.settings.widgets_install_package"),
                 {{state->owner->L("app.settings.widgets_install_package"),
-                    L"*.snowwidget"}}, false);
+                    L"*.snowwidget;*.snowtheme"}}, false);
             if (completed)
                 completed(std::move(selected));
+        };
+        configured.exportDevelopmentPackage = [weak](std::uint64_t generation,
+            std::filesystem::path projectRoot, std::string packageId, std::string version,
+            WidgetsPageBackendOptions::PackageExportCompletion completed) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                if (completed) completed(std::nullopt);
+                return;
+            }
+            const std::wstring title = state->owner->L("app.settings.widgets_export_package");
+            auto selected = ShowSavePathDialog(state->owner->window, title,
+                projectRoot.filename().wstring() + L"-" + Utf8ToWide(version) + L".snowwidget",
+                {{title, L"*.snowwidget"}}, L"snowwidget");
+            if (!selected || !state->alive.load() || !state->owner ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                if (completed) completed(std::nullopt);
+                return;
+            }
+            const std::wstring successText = state->owner->L("app.settings.widgets_export_package_success");
+            const std::wstring failureText = state->owner->L("app.settings.widgets_export_package_failed");
+            const std::wstring operationError = state->owner->L("app.settings.widgets_error_operation_failed");
+            const auto formatFeedback = [](std::wstring text, std::wstring_view detail) {
+                const auto placeholder = text.find(L"{0}");
+                if (placeholder != std::wstring::npos)
+                    text.replace(placeholder, 3, detail);
+                else
+                    text += L"\n" + std::wstring(detail);
+                return text;
+            };
+            const auto dispatcher = state->dispatcher;
+            const auto done = std::make_shared<WidgetsPageBackendOptions::PackageExportCompletion>(
+                std::move(completed));
+            try
+            {
+                std::thread([weak, dispatcher, done, projectRoot = std::move(projectRoot),
+                    packageId = std::move(packageId), version = std::move(version),
+                    output = std::move(*selected), successText, failureText, operationError, formatFeedback]() {
+                    WidgetsPageHostOperationResult result;
+                    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                    try
+                    {
+                        if (FAILED(apartment))
+                            throw std::runtime_error("export worker COM initialization failed");
+                        const auto exported = snowdesktop::widget::detail::ExportDevelopmentPackageFile(
+                            projectRoot, output, packageId, version);
+                        result.succeeded = exported.succeeded;
+                        std::wstring detail = exported.succeeded ? output.wstring()
+                            : Utf8ToWide(exported.report.Ok() ? exported.error : exported.report.ToJson());
+                        result.message = formatFeedback(
+                            exported.succeeded ? successText : failureText, detail);
+                    }
+                    catch (const std::exception& exception)
+                    {
+                        result = WidgetsPageHostOperationResult::Failure(
+                            formatFeedback(failureText, Utf8ToWide(exception.what())));
+                    }
+                    catch (...)
+                    {
+                        result = WidgetsPageHostOperationResult::Failure(formatFeedback(failureText, operationError));
+                    }
+                    if (SUCCEEDED(apartment)) CoUninitialize();
+                    // The worker owns all file IO inputs. A closed settings
+                    // process/view cannot receive a callback through a raw owner.
+                    try
+                    {
+                        (void)dispatcher.TryEnqueue([weak, done, result = std::move(result)]() mutable {
+                            const auto live = weak.lock();
+                            if (live && live->alive.load() && *done)
+                                (*done)(std::move(result));
+                        });
+                    }
+                    catch (...) {} // The settings dispatcher may already be closed.
+                }).detach();
+            }
+            catch (...)
+            {
+                if (*done) (*done)(WidgetsPageHostOperationResult::Failure(formatFeedback(failureText, operationError)));
+            }
         };
         configured.confirmInstall = [weak](std::uint64_t generation,
                                         WidgetInstallConfirmationRequest request,
@@ -1858,8 +1768,9 @@ struct SettingsWindowHost::Impl
         backupDataPageActive = false;
         if (widgetsPageBackend)
         {
-            widgetsPageBackend->Close();
-            widgetsPageBackend.reset();
+            auto backend = std::move(widgetsPageBackend);
+            backend->SetSnapshotChangedCallback({});
+            backend->Close();
         }
         if (backupDataPageBackend)
         {
@@ -1877,6 +1788,11 @@ struct SettingsWindowHost::Impl
 
     void SynchronizePageBackends(const SettingsSnapshot& snapshot)
     {
+        if (themeTask && (!snapshot.sessionActive || snapshot.externalReplacementPending || snapshot.generation != themeTask->generation))
+        {
+            auto task = themeTask; task->cancel.store(true);
+            CompleteThemeTask(task, false, "cancelled");
+        }
         if (!snapshot.sessionActive || shuttingDown)
             return;
         EnsurePageBackends();
@@ -2189,7 +2105,43 @@ struct SettingsWindowHost::Impl
         });
 
         PersonalizationPageActions personalization;
+        personalization.themeLibrary = [weak](std::uint64_t generation, const ThemeLibraryRequest& request) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner) return ThemeLibraryResult{};
+            return state->owner->ThemeOperation(generation, request);
+        };
         personalization.contextMenu = options.contextMenu;
+        personalization.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
+            const auto state = weak.lock();
+            if (state && state->alive.load() && state->owner)
+                state->owner->BeginThemeTask(generation, std::move(request), std::move(completed));
+            else if (completed) completed({});
+        };
+        personalization.appliedFont = options.appliedFont;
+        personalization.restartApplication = [weak](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation) ||
+                !state->owner->FlushPendingChanges()) return;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::RestartApplication;
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+        };
+        personalization.listFonts = [] {
+            return app_fonts::List(std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());
+        };
+        personalization.importFonts = [weak](bool folder, std::string& error) {
+            std::vector<app_fonts::Choice> choices;
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+            {
+                const auto path = ShowOpenPathDialog(state->owner->window,
+                    state->owner->L("font.title"), {{L"TTF / OTF / TTC", L"*.ttf;*.otf;*.ttc"}}, folder);
+                if (path) app_fonts::Import(*path, GetDataDirectoryPath(), choices, error);
+            }
+            return choices;
+        };
         personalization.update = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,
@@ -2215,6 +2167,10 @@ struct SettingsWindowHost::Impl
         personalization.updateDock = [weak](std::uint64_t generation, SettingsUpdateMode mode, PersonalizationPageActions::DockEdit edit) {
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
                 state->owner->EditDock(generation, mode, std::move(edit));
+        };
+        personalization.updateNavigation = [weak](std::uint64_t generation, SettingsUpdateMode mode, PersonalizationPageActions::NavigationEdit edit) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->EditNavigation(generation, mode, std::move(edit));
         };
         personalization.navigate = [weak](const SettingsRoute& route) {
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner) state->owner->RequestRoute(route);
@@ -2268,6 +2224,21 @@ struct SettingsWindowHost::Impl
         shell->SetDesktopPageActions(std::move(desktop));
 
         DockPageActions dock;
+        dock.themeLibrary = [weak](std::uint64_t generation, const ThemeLibraryRequest& request) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner ? state->owner->ThemeOperation(generation, request) : ThemeLibraryResult{};
+        };
+        dock.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->BeginThemeTask(generation, std::move(request), std::move(completed));
+        };
+        dock.previewAppearance = [weak](std::uint64_t generation, std::string target) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+            {
+                ThemeLibraryRequest request; request.command = ThemeLibraryCommand::Preview; request.target = std::move(target);
+                state->owner->BeginThemeTask(generation, std::move(request), {});
+            }
+        };
         dock.updateGeneral = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,
@@ -2292,17 +2263,22 @@ struct SettingsWindowHost::Impl
         };
         dock.invokeHost = [weak](
             std::uint64_t generation,
-            SettingsHostActions::Request request) {
+            SettingsHostActions::Request request) -> SettingsActionResult {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner ||
                 !state->owner->controller ||
                 !state->owner->controller->IsGenerationCurrent(generation))
             {
-                return;
+                return SettingsActionResult::Busy(L"The settings page is no longer active.");
             }
-            const SettingsActionResult result =
+            SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
+            // The optional animation dialog follows an accepted layout commit,
+            // not merely a queued draft or a failed host action.
+            if (result.Succeeded() && request.action == SettingsHostActions::Action::ApplyDesktopStylePreset)
+                result = state->owner->controller->FlushPending();
             state->owner->ShowActionError(result);
+            return result;
         };
         dock.openTaskbarSettings = [weak](std::uint64_t generation) {
             const auto state = weak.lock();
@@ -2582,9 +2558,18 @@ struct SettingsWindowHost::Impl
         const auto snapshot = controller->Snapshot();
         if (!snapshot || snapshot->generation != generation)
             return;
-        GeneralSettings value = snapshot->values.general;
-        edit(value);
-        controller->UpdateGeneral(std::move(value), mode);
+        auto values = snapshot->values;
+        edit(values.general);
+        themes::Library library;
+        std::string error;
+        const bool needsBinding = values.general.quickNavigationAppearance.mode == -1 &&
+            snapshot->values.general.quickNavigationAppearance.mode != -1 &&
+            values.general.globalQuickNavigationAppearance.customized;
+        const bool loaded = needsBinding && themes::Load(themes::LibraryPath(), library, error);
+        themes::PrepareQuickPanelSelectionEdit(values, snapshot->values.general, loaded ? &library : nullptr);
+        if (values.navigation != snapshot->values.navigation)
+            controller->UpdateNavigation(std::move(values.navigation), mode);
+        controller->UpdateGeneral(std::move(values.general), mode);
     }
 
     void EditNavigation(std::uint64_t generation, SettingsUpdateMode mode,
@@ -2613,6 +2598,184 @@ struct SettingsWindowHost::Impl
         controller->UpdateDock(std::move(value), mode);
     }
 
+    ThemeLibraryResult ThemeOperation(std::uint64_t generation, const ThemeLibraryRequest& request)
+    {
+        ThemeLibraryResult result;
+        result.workshopAvailable = themes::workshop::Availability(ThemeBridge(), SNOWDESKTOP_VERSION, result.sharingAvailable);
+        if (!controller || !controller->IsGenerationCurrent(generation)) return result;
+        const auto current = controller->Snapshot();
+        if (!current || current->externalReplacementPending) return result;
+        std::string error;
+        const auto feedback = [&]() {
+            result.message = result.succeeded ? std::wstring{} : L(themes::ErrorLocalizationKey(error));
+            if (!result.succeeded && result.message.empty()) result.message = L("themeLibrary.error.invalidPackage");
+        };
+        if (request.command == ThemeLibraryCommand::Refresh)
+        {
+            result.succeeded = themes::Load(themes::LibraryPath(), result.library, error);
+            if (result.succeeded) for (const auto& [id, theme] : result.library.themes)
+            {
+                (void)theme; auto url = steam_bridge::ThemePublishedUrl(GetDataDirectoryPath(), id);
+                if (url.empty()) for (const auto& [item, origin] : result.library.workshop)
+                    if (origin.ids.contains(id)) { url = "https://steamcommunity.com/sharedfiles/filedetails/?id=" + item; break; }
+                if (!url.empty()) result.publishedUrls.emplace(id, std::move(url));
+            }
+            if (!result.succeeded) feedback();
+            return result;
+        }
+        if (request.command == ThemeLibraryCommand::Detach)
+        {
+            result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto&) {
+                themes::Detach(library, request.target); return true;
+            }, result.library, error);
+            if (!result.succeeded) feedback();
+            return result;
+        }
+        if (request.command == ThemeLibraryCommand::Import)
+        {
+            const auto path = ShowOpenPathDialog(window, L("themeLibrary.import"), {{L("themeLibrary.title"), L"*.snowtheme"}}, false);
+            if (!path) { result.succeeded = themes::Load(themes::LibraryPath(), result.library, error); return result; }
+            if (!controller->IsGenerationCurrent(generation)) return result;
+            themes::Package package;
+            if (!themes::ReadPackage(*path, package, error)) { feedback(); return result; }
+            std::map<std::string, std::string> mapping;
+            result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
+                return themes::Import(library, package, mapping, detail);
+            }, result.library, error);
+            feedback(); return result;
+        }
+        if (!controller->FlushAll().Succeeded())
+        { error = "writeFailed"; feedback(); return result; }
+        if (!themes::Load(themes::LibraryPath(), result.library, error)) { feedback(); return result; }
+        themes::ReconcileReferences(result.library, current->values);
+        if (request.command == ThemeLibraryCommand::Export)
+        {
+            themes::Package package;
+            if (!themes::Export(result.library, request.id, package, error)) { feedback(); return result; }
+            const auto exported = themes::Resolve(result.library.themes, request.id);
+            if (!exported) { error = "themeNotFound"; feedback(); return result; }
+            const auto suggestedName = themes::ExportFileName(Utf8ToWide(exported->name));
+            const auto path = ShowSavePathDialog(window, L("themeLibrary.export"), suggestedName,
+                {{L("themeLibrary.title"), L"*.snowtheme"}}, L"snowtheme");
+            if (!path) { result.succeeded = true; return result; }
+            if (!controller->IsGenerationCurrent(generation)) return result;
+            result.succeeded = themes::WritePackage(*path, package, error); feedback(); return result;
+        }
+        if (request.command == ThemeLibraryCommand::Apply)
+        {
+            const auto apply = [&](const SettingsValues& values) {
+                controller->UpdatePersonalization(values.personalization, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateDock(values.dock, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateNavigation(values.navigation, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateGeneral(values.general, SettingsUpdateMode::PreviewAndCommit);
+                return controller->FlushAll();
+            };
+            bool settingsTouched = false;
+            // Keep the file's last successful reference untouched until settings
+            // persist. The lock also binds application and snapshot to the same
+            // library values; a failed write never needs a second library rollback.
+            result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
+                themes::ReconcileReferences(library, current->values);
+                auto next = current->values;
+                if (!themes::ApplyTarget(library, request.target, request.id, next, detail)) return false;
+                const auto theme = themes::Resolve(library.themes, request.id);
+                if (request.target == "global" && !themes::FullScope(theme->scopes))
+                {
+                    for (const auto& [scope, target] : {std::pair{themes::Dock, "dock"}, {themes::StatusBar, "statusBar"}, {themes::Taskbar, "taskbar"}})
+                        if ((theme->scopes & scope) && !themes::Select(library, target, request.id, themes::Kind::Global, scope, detail)) return false;
+                }
+                else if (!themes::Select(library, request.target, request.id, themes::TargetKind(request.target),
+                    request.target == "global" ? theme->scopes : themes::TargetScope(request.target), detail)) return false;
+                settingsTouched = true;
+                if (apply(next).Succeeded()) return true;
+                detail = "writeFailed";
+                return false;
+            }, result.library, error);
+            if (!result.succeeded && settingsTouched) (void)apply(current->values);
+            feedback(); return result;
+        }
+        result.succeeded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
+            themes::ReconcileReferences(library, current->values);
+            if (request.command == ThemeLibraryCommand::Remove)
+                return themes::Remove(library, request.id, request.replacement, true, detail);
+            if (request.command == ThemeLibraryCommand::CopyLocal)
+                return themes::workshop::CopyLocal(library, request.id, result.savedId, detail);
+            auto theme = themes::CaptureTarget(request.target, current->values);
+            theme.id = request.id; theme.name = request.name; theme.scopes = request.scopes;
+            std::array<themes::BindingDraft, 2> bindings;
+            if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
+            {
+                bindings[0] = {themes::CaptureGlobalBinding(themes::Kind::QuickPanel, current->values,
+                    themes::Resolve(library.themes, request.quickSourceId)), request.quickPanel, request.quickSourceId};
+                bindings[1] = {themes::CaptureGlobalBinding(themes::Kind::Popup, current->values,
+                    themes::Resolve(library.themes, request.popupSourceId)), request.popup, request.popupSourceId};
+                bindings[0].effective.name = request.name + " / " + winrt::to_string(L("themeLibrary.quickPanel"));
+                bindings[1].effective.name = request.name + " / " + winrt::to_string(L("themeLibrary.popup"));
+            }
+            return themes::SaveDraft(library, std::move(theme), bindings,
+                request.command == ThemeLibraryCommand::Update, result.savedId, result.updatedIds, detail);
+        }, result.library, error);
+        if (result.succeeded && request.command == ThemeLibraryCommand::Update)
+        {
+            auto next = current->values;
+            std::vector<std::string> targets;
+            for (const auto& changedId : result.updatedIds)
+                for (const auto& target : themes::ApplySavedUpdate(result.library, changedId, next, error))
+                    if (std::find(targets.begin(), targets.end(), target) == targets.end()) targets.push_back(target);
+            bool applied = true;
+            if (!targets.empty())
+            {
+                controller->UpdatePersonalization(next.personalization, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateDock(next.dock, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateNavigation(next.navigation, SettingsUpdateMode::PreviewAndCommit);
+                controller->UpdateGeneral(next.general, SettingsUpdateMode::PreviewAndCommit);
+                applied = controller->FlushAll().Succeeded();
+                if (!applied)
+                {
+                    controller->UpdatePersonalization(current->values.personalization, SettingsUpdateMode::PreviewAndCommit);
+                    controller->UpdateDock(current->values.dock, SettingsUpdateMode::PreviewAndCommit);
+                    controller->UpdateNavigation(current->values.navigation, SettingsUpdateMode::PreviewAndCommit);
+                    controller->UpdateGeneral(current->values.general, SettingsUpdateMode::PreviewAndCommit);
+                    (void)controller->FlushAll();
+                }
+            }
+            std::vector<std::string> completed = applied ? targets : std::vector<std::string>{};
+            for (const auto& [target, reference] : result.library.references)
+            {
+                if (!target.starts_with("widget/") || reference.id != result.savedId) continue;
+                if (!widgetSettingsService) { applied = false; continue; }
+                const auto previous = themes::Resolve(reference.snapshot, reference.id);
+                const auto theme = themes::Resolve(result.library.themes, reference.id);
+                const auto loaded = widgetSettingsService->Load(Utf8ToWide(target.substr(7)));
+                if (!loaded.Succeeded() || !loaded.snapshot || !previous || !theme ||
+                    !themes::WidgetMatches(loaded.snapshot->hostAppearance, *previous))
+                { applied = false; continue; }
+                const auto changed = widgetSettingsService->UpdateHostAppearance(
+                    widget_runtime::WidgetSettingMutationGuard::FromSnapshot(*loaded.snapshot), themes::WidgetPatch(*theme));
+                if (changed.Succeeded()) completed.push_back(target);
+                else applied = false;
+            }
+            if (!completed.empty())
+            {
+                themes::Library refreshed;
+                const bool recorded = themes::Transact(themes::LibraryPath(), [&](auto& library, auto& detail) {
+                    for (const auto& target : completed)
+                    {
+                        const auto found = library.references.find(target);
+                        if (found == library.references.end() || found->second.id.empty()) continue;
+                        const auto reference = found->second;
+                        if (!themes::Select(library, target, reference.id, reference.kind, reference.scope, detail)) return false;
+                    }
+                    return true;
+                }, refreshed, error);
+                if (recorded) result.library = std::move(refreshed);
+                else applied = false;
+            }
+            if (!applied) { result.message = L("themeLibrary.savedPending"); return result; }
+        }
+        feedback(); return result;
+    }
+
     void EditPersonalization(std::uint64_t generation,
         SettingsUpdateMode mode, PersonalizationPageActions::Edit edit)
     {
@@ -2621,9 +2784,14 @@ struct SettingsWindowHost::Impl
         const auto snapshot = controller->Snapshot();
         if (!snapshot || snapshot->generation != generation)
             return;
-        PersonalizationSettings value = snapshot->values.personalization;
-        edit(value);
-        controller->UpdatePersonalization(std::move(value), mode);
+        auto values = snapshot->values;
+        edit(values.personalization);
+        const bool generalChanged = themes::PrepareGlobalThemeEdit(values, snapshot->values.personalization);
+        if (values.navigation != snapshot->values.navigation)
+            controller->UpdateNavigation(std::move(values.navigation), mode);
+        if (generalChanged)
+            controller->UpdateGeneral(std::move(values.general), mode);
+        controller->UpdatePersonalization(std::move(values.personalization), mode);
     }
 
     void EditDesktop(std::uint64_t generation, SettingsUpdateMode mode,
@@ -2658,6 +2826,9 @@ struct SettingsWindowHost::Impl
         performance::Scope performanceScope("settings.navigate", SettingsPageKey(route.page));
         if (!controller || !route.IsValid() || shuttingDown)
             return false;
+        WriteDiagnosticLogEntry((L"SettingsUI navigate pid=" +
+            std::to_wstring(GetCurrentProcessId()) + L" page=" +
+            std::to_wstring(static_cast<int>(route.page))).c_str());
         if ((route.page == SettingsPage::DeveloperTools &&
                 (!options.developerToolsVisible ||
                     !options.developerToolsVisible())) ||
@@ -3108,10 +3279,15 @@ struct SettingsWindowHost::Impl
         windowClass.cbSize = sizeof(windowClass);
         windowClass.lpfnWndProc = WindowProcedure;
         windowClass.hInstance = instance;
-        windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(101));
+        windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APPICON));
         if (!windowClass.hIcon)
             windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-        windowClass.hIconSm = windowClass.hIcon;
+        windowClass.hIconSm = static_cast<HICON>(LoadImageW(instance,
+            MAKEINTRESOURCEW(IDI_APPICON_SMALL), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+            LR_SHARED));
+        if (!windowClass.hIconSm)
+            windowClass.hIconSm = windowClass.hIcon;
         windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         windowClass.hbrBackground =
             reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
@@ -3154,6 +3330,7 @@ struct SettingsWindowHost::Impl
 
     void ReleaseView() noexcept
     {
+        if (themeTask) { themeTask->cancel.store(true); themeTask->completed = {}; themeTask.reset(); }
         viewReleaseQueued = false;
         CancelWorkingSetTrim();
         settingsSessionWorkingSetBaseline.reset();
@@ -3375,7 +3552,10 @@ struct SettingsWindowHost::Impl
                             std::move(query), generation, requestId);
                     }
                 });
-            shell->SetCancelOperationCallback([](std::uint64_t) {});
+            shell->SetCancelOperationCallback([weak](std::uint64_t generation) {
+                if (const auto state = weak.lock(); state && state->alive.load() && state->owner && state->owner->themeTask &&
+                    state->owner->themeTask->generation == generation) state->owner->themeTask->cancel.store(true);
+            });
             shell->SetWidgetSettingsService(widgetSettingsService);
             ConfigurePageActions();
             RebuildSearchIndex();
@@ -3422,6 +3602,8 @@ struct SettingsWindowHost::Impl
         performance::Scope performanceScope("settings", "hide");
         if (!controller || !window || shuttingDown)
             return false;
+        WriteDiagnosticLogEntry((L"SettingsUI close begin pid=" +
+            std::to_wstring(GetCurrentProcessId())).c_str());
         if (!FlushPendingChanges())
             return false;
         ++viewEpoch;

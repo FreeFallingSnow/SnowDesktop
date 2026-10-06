@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "app.h"
 #include "../modern_menu.h"
 
@@ -43,7 +44,7 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     const float fontScale = scale * std::clamp(textScale / 100.0f, 1.0f, 2.25f);
     ComPtr<IDWriteTextFormat> format, titleFormat, smallFormat;
     const auto makeFormat = [&](float size, DWRITE_FONT_WEIGHT weight, ComPtr<IDWriteTextFormat>& value) {
-        if (FAILED(factory->CreateTextFormat(L"Segoe UI", nullptr, weight,
+        if (FAILED(snowdesktop::app_fonts::CreateTextFormat(factory, L"Segoe UI", weight,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size * fontScale, L"", &value))) return false;
         value->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP); return true;
     };
@@ -374,8 +375,7 @@ void DesktopApp::PreparePageNotifyTextCache()
     auto* dwrite = GetDWriteFactory();
     if (!dwrite || pageNotifyText_.empty())
         return;
-    if (FAILED(dwrite->CreateTextFormat(
-            L"Segoe UI", nullptr,
+    if (FAILED(snowdesktop::app_fonts::CreateTextFormat(dwrite, L"Segoe UI",
             DWRITE_FONT_WEIGHT_SEMI_BOLD,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
@@ -401,6 +401,19 @@ void DesktopApp::PreparePageNotifyTextCache()
         ResetPageNotifyTextCache();
         return;
     }
+    const auto order = BuildMonitorRenderOrder();
+    float maximumWidth = 2000.0f;
+    if (!order.empty())
+    {
+        const auto& work = gridPages_[order.back()].workArea;
+        maximumWidth = std::max(1.0f, static_cast<float>(work.right - work.left) - 104.0f);
+    }
+    pageNotifyTextMetrics_.width = std::min(pageNotifyTextMetrics_.width, maximumWidth);
+    DWRITE_TRIMMING trimming{};
+    trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+    ComPtr<IDWriteInlineObject> ellipsis;
+    if (SUCCEEDED(dwrite->CreateEllipsisTrimmingSign(pageNotifyTextFormat_.Get(), &ellipsis)))
+        pageNotifyTextFormat_->SetTrimming(&trimming, ellipsis.Get());
     if (FAILED(dwrite->CreateTextLayout(
             pageNotifyText_.c_str(),
             static_cast<UINT32>(pageNotifyText_.size()),
@@ -535,7 +548,7 @@ void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
     const std::wstring hintText = _LW("app.overlay.hide_hint");
 
     ComPtr<IDWriteTextFormat> fmt;
-    if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+    if (FAILED(snowdesktop::app_fonts::CreateTextFormat(dwrite, L"Segoe UI",
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &fmt)) || !fmt)
         return;
@@ -603,7 +616,7 @@ void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
     const std::wstring hintText = _LW("app.overlay.widget_move_hint");
 
     ComPtr<IDWriteTextFormat> fmt;
-    if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+    if (FAILED(snowdesktop::app_fonts::CreateTextFormat(dwrite, L"Segoe UI",
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &fmt)) || !fmt)
         return;

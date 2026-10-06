@@ -2,6 +2,7 @@
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_cache.h"
+#include "shell_extension_nvidia_compat.h"
 #include "menu_label.h"
 #include "settings_process.h"
 #include "shell_context_menu_invoke.h"
@@ -77,6 +78,7 @@ struct CacheState
     {
         for (auto root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
             for (auto path : {L"Software\\Classes",
+                              L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\nvcplui.exe",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"})
                 watches.push_back(std::make_unique<RegistryWatch>(root, path));
@@ -264,6 +266,7 @@ struct Native
     HMENU menu = CreatePopupMenu();
     std::wstring directory;
     bool metadataOnly = false;
+    ComPtr<IShellItem> nvidiaApplication;
     ~Native()
     {
         if (menu)
@@ -649,6 +652,50 @@ struct Host
         invoked = false;
     }
     bool catalogueInitialized = false;
+    void NvidiaCompatibility(const Request &request, Reply &reply)
+    {
+        if (!request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
+            !NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return;
+        CLSID clsid{};
+        if (FAILED(CLSIDFromString(NvidiaControlPanelClsid, &clsid))) return;
+        ComPtr<IContextMenu> extension;
+        const auto factory = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&extension));
+        if (!NvidiaCompatibilityRequired(request, true, true, factory)) return;
+        auto item = NvidiaControlPanelApplication();
+        if (!item) return;
+        auto source = std::make_unique<Native>();
+        source->nvidiaApplication = item;
+        PWSTR filePath = nullptr;
+        if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &filePath)) && filePath)
+        {
+            source->directory = std::filesystem::path(filePath).parent_path().wstring();
+            CoTaskMemFree(filePath);
+        }
+        if (!source->menu || FAILED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&source->context))) ||
+            FAILED(source->context->QueryContextMenu(source->menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return;
+        const auto command = DefaultApplicationOpen(source->context.Get(), source->menu);
+        if (!command) return;
+        PWSTR name = nullptr;
+        if (FAILED(item->GetDisplayName(SIGDN_NORMALDISPLAY, &name)) || !name) return;
+        Entry entry;
+        entry.label = name; CoTaskMemFree(name);
+        if (entry.label.empty()) return;
+        entry.key = "{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
+        entry.registration = NvidiaControlPanelRegistration;
+        ComPtr<IShellItemImageFactory> image;
+        HBITMAP bitmap = nullptr;
+        if (SUCCEEDED(item.As(&image)) && SUCCEEDED(image->GetImage({20, 20}, SIIGBF_ICONONLY, &bitmap)))
+        {
+            Bitmap(entry, bitmap);
+            DeleteObject(bitmap);
+        }
+        entry.token = next++;
+        commands[entry.token] = {source.get(), *command, false};
+        reply.entries.push_back(std::move(entry));
+        ++count;
+        menus.push_back(std::move(source));
+        MenuTrace("nvidia_compatibility", "installed_application");
+    }
     Reply Query(const Request &request)
     {
         auto reply = QueryOnce(request);
@@ -808,6 +855,7 @@ struct Host
         reply.entries = Read(*native, native->menu, "");
         if (request.sourceClsid.empty())
             for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
+        NvidiaCompatibility(request, reply);
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
@@ -840,8 +888,28 @@ struct Host
         auto command = found->second;
         auto &source = *command.source;
         if (source.metadataOnly) return;
-        source.site.Initialize(source.folder.Get(), window);
-        source.site.Attach(source.context.Get());
+        if (source.nvidiaApplication)
+        {
+            // Recheck registration/security and the installed target at click.
+            // A stale menu cannot launch an unregistered or blocked provider,
+            // a replacement application, or a newly disabled default command.
+            if (!NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return;
+            auto current = NvidiaControlPanelApplication();
+            int order = 1;
+            if (!current || FAILED(source.nvidiaApplication->Compare(current.Get(), SICHINT_CANONICAL, &order)) || order) return;
+            source.context.Reset();
+            DestroyMenu(source.menu); source.menu = CreatePopupMenu();
+            if (!source.menu || FAILED(current->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&source.context))) ||
+                FAILED(source.context->QueryContextMenu(source.menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return;
+            const auto refreshed = DefaultApplicationOpen(source.context.Get(), source.menu);
+            if (!refreshed) return;
+            command.offset = *refreshed;
+        }
+        else
+        {
+            source.site.Initialize(source.folder.Get(), window);
+            source.site.Attach(source.context.Get());
+        }
         if (command.native)
         {
             const auto popup = command.nativeMenu ? command.nativeMenu : source.menu;
@@ -857,7 +925,7 @@ struct Host
         }
         // Keep application-owned file operations out of the native fallback.
         // Their desktop/Dock semantics are handled by the existing host menu.
-        if (OwnedVerb(Verb(source, command.offset + 1)))
+        if (!source.nvidiaApplication && OwnedVerb(Verb(source, command.offset + 1)))
             return;
         std::function<bool(HMENU, int)> enabled = [&](HMENU menu, int depth) {
             if (depth > 16)

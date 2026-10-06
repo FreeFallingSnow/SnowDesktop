@@ -10,8 +10,9 @@ bool DesktopApp::TryHandlePageNavigationKey(
     if (key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT)
         return false;
 
-    bool textInputActive = renameEdit_ != nullptr ||
+    bool textInputActive = renameController_.IsActive() ||
         (widgetEngine_ && widgetEngine_->HasFocusedHostInput());
+    if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused()) textInputActive = true;
     for (const auto& container : containers_)
     {
         const auto* searchable =
@@ -140,6 +141,12 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
     CancelRenameClick();
+    if (key == VK_ESCAPE && (dragSession_.HasContext() ||
+            widgetAction_ != WidgetAction::None || largeIconGesture_))
+    {
+        // Holding Esc after dismissing a popup must not cancel the same drag.
+        if (repeated || TryDismissPopupForEscape()) return true;
+    }
     if (largeIconGesture_)
     {
         if (key == VK_ESCAPE) { CancelLargeIconGesture(); return true; }
@@ -161,10 +168,18 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         return false;
     }
 
-    if (renameEdit_ != nullptr) return false;
+    if (renameController_.IsActive()) return false;
 
     // Handle searchable widget keyboard input.
     {
+        if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
+        {
+            const bool handled = view->HandleSearchKey(key);
+            popupScrollOffset_ = 0;
+            ResetCollectionPopupAnimationCache();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (handled || (key != VK_RETURN && key != VK_UP && key != VK_DOWN)) return handled;
+        }
         for (auto& c : containers_)
         {
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
@@ -436,8 +451,13 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             }
         }
 
-        if (DeleteSelectedFolderEntries(shift))
+        if (!GetSelectedFolderEntryPaths().empty())
+        {
+            // Failure to queue a mapped-folder deletion must never fall through
+            // and delete a different desktop selection instead.
+            DeleteSelectedFolderEntries(shift);
             break;
+        }
 
         cutPaths_.clear();
         std::vector<std::wstring> paths;
@@ -649,35 +669,30 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (auto* popup = GetOpenPopupWidget();
             IsCollectionPopupInteractive() && popup)
         {
+            const auto targets = GetPopupSelectionTargets();
             ClearSelection();
             if (dockFolderPopupOpen_)
-            {
-                for (auto& entry : popup->folderEntries)
-                    entry.selected = true;
-            }
-            else
-            {
-                for (const auto& itemKey : popup->itemKeys)
-                {
-                    const size_t index = FindItemIndexByKey(itemKey);
-                    if (index < items_.size())
-                        items_[index].selected = true;
-                }
-            }
+                for (auto& entry : popup->folderEntries) entry.selected = false;
+            selectionController_.SelectAll(targets);
             InvalidateRect(
                 hwnd_, nullptr, FALSE);
             break;
         }
-        ClearSelection();
-        for (auto& oo : items_oo_)
+        const size_t widgetIndex = GetSelectionWidgetIndex();
+        if (widgetIndex < widgets_.size())
         {
-            auto* icon = dynamic_cast<DesktopIcon*>(oo.get());
-            if (!icon) continue;
-            DesktopItem* di = icon->GetDesktopItem();
-            if (!di || di->name.empty()) continue;
-            if (desktopIconsHidden_ && !IsRetainedLargeIcon(*di)) continue;
-            di->selected = true;
+            const auto targets = GetWidgetSelectionTargets(widgetIndex);
+            ClearSelection();
+            selectionController_.SelectAll(targets);
+            if (targets.empty())
+                widgets_[widgetIndex].selected = true;
+            SyncKeyboardNavFromSelection();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            break;
         }
+        const auto targets = GetDesktopSelectionTargets();
+        ClearSelection();
+        selectionController_.SelectAll(targets);
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
     break;
@@ -735,6 +750,19 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     case VK_ESCAPE:
         handled = true;
         restoreFloatingDockLayer = true;
+        for (auto& container : containers_)
+            if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->HasCategoryTabPress())
+            {
+                CancelPointerPressWithoutCaptureRelease();
+                ReleaseCapture();
+                return true;
+            }
+        if (auto* view = GetCategorizedPopupView(); view && view->HasCategoryTabPress())
+        {
+            CancelPointerPressWithoutCaptureRelease();
+            ReleaseCapture();
+            return true;
+        }
         if (widgetAction_ != WidgetAction::None)
         {
             CancelPointerPressWithoutCaptureRelease();
@@ -786,6 +814,38 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             RestoreInteractionInputFocus();
     }
     return handled;
+}
+
+bool DesktopApp::TryDismissPopupForEscape()
+{
+    using snowdesktop::desktop_keyboard_rules::PopupEscapeAction;
+    const auto action = snowdesktop::desktop_keyboard_rules::ResolvePopupEscapeAction(
+        quickNavigationOpen_, !luaWidgetPanelRequest_.widgetId.empty(),
+        luaWidgetPanelRequest_.dismissOnEscape, GetOpenPopupWidget() != nullptr);
+    switch (action)
+    {
+    case PopupEscapeAction::CloseQuickNavigation:
+        CloseQuickNavigation();
+        return true;
+    case PopupEscapeAction::CloseLuaPanel:
+        CloseLuaWidgetPanel(luaWidgetPanelRequest_.widgetId, "escape");
+        return true;
+    case PopupEscapeAction::KeepLuaPanel:
+        return true;
+    case PopupEscapeAction::CloseCollectionPopup:
+        pendingCollectionPopupOpen_.reset();
+        CancelCollectionPopupDwell();
+        CancelCollectionGroupTabDwell();
+        CloseCollectionPopup(false);
+        cachedDropPreview_ = {};
+        cachedDropPreviewPoint_ = { -1, -1 };
+        cachedDropPreviewTarget_ = nullptr;
+        cachedDropPreviewSlot_ = nullptr;
+        return true;
+    case PopupEscapeAction::None:
+    default:
+        return false;
+    }
 }
 
 /**

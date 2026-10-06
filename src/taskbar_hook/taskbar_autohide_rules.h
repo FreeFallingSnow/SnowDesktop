@@ -13,7 +13,7 @@ struct ActivationRevealContext
     bool explicitFocus = false;
     bool secondary = false;
     LONG activation = WA_INACTIVE;
-    std::uint32_t callerRva = 0;
+    bool callerIsActivationHandler = false;
     RECT taskbar{}, monitor{};
     POINT cursor{};
 };
@@ -32,11 +32,11 @@ inline bool IsHiddenBottomTaskbar(const ActivationRevealContext& context) noexce
 inline bool ShouldSuppressActivationReveal(const ActivationRevealContext& context,
     int flags, int request) noexcept
 {
-    // RVAs belong ONLY to the independently verified Taskbar.dll adapter.
-    // Keyboard focus can use the exact same activation request and call site.
+    // The caller must belong to the symbol-resolved native window procedure.
+    // Keyboard focus can use the same activation request and call site.
     if (!context.protectedTaskbar || context.explicitFocus ||
         context.activation != WA_ACTIVE || flags != 0 || request != 8 ||
-        context.callerRva != (context.secondary ? 0x22550u : 0x92af3u) ||
+        !context.callerIsActivationHandler ||
         !IsHiddenBottomTaskbar(context))
         return false;
     const auto& screen = context.monitor;

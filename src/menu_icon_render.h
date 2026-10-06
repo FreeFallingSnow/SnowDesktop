@@ -108,10 +108,16 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     MenuQuickIcon quickIcon, const ItemView& item, const RECT& bounds,
     UINT itemState, const Palette& palette, const Metrics& metrics);
 
+enum class InlineActionStyle { Plain, Secondary, Primary };
+
 /** @brief 绘制位于普通菜单流中的紧凑横向操作按钮。 */
 bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
-    const Palette& palette, const Metrics& metrics);
+    const Palette& palette, const Metrics& metrics,
+    InlineActionStyle style = InlineActionStyle::Plain);
+
+/** Shared text origin for painting, pointer caret placement and IME anchors. */
+RECT TextInputTextBounds(const RECT& bounds, const Metrics& metrics, bool hasIcon);
 
 /** @brief 绘制菜单内的单行文本搜索框。 */
 bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,

@@ -1,4 +1,6 @@
+#include "../app_font.h"
 #include "app.h"
+#include "../widget_title_layout.h"
 
 // Rename command target selection and editor placement.
 
@@ -6,13 +8,15 @@ void DesktopApp::BeginRenameSelected(
     std::optional<RECT> dockRenameAnchor)
 {
     CancelRenameClick();
-    if (renameEdit_ != nullptr) return;
+    if (renameController_.IsActive()) return;
     if (const auto* popup = GetOpenPopupWidget(); popup && UsesCollectionPopupFan(*popup))
         ShowAllCollectionPopupItems();
     renameCommitPending_ = false;
 
     if (IsCollectionPopupInteractive() &&
-        dockFolderPopupOpen_)
+        dockFolderPopupOpen_ &&
+        std::none_of(widgets_.begin(), widgets_.end(),
+            [](const DesktopWidget& widget) { return widget.selected; }))
     {
         size_t selectedMember =
             static_cast<size_t>(-1);
@@ -55,7 +59,11 @@ void DesktopApp::BeginRenameSelected(
                 selectedWidgetIndex);
         renameController_.BeginWidget(
             selectedWidgetIndex);
-        if (dockRenameAnchor)
+        const bool popupTitleRename = IsCollectionPopupInteractive() &&
+            ((!dockFolderPopupOpen_ && popupWidgetIndex_ == selectedWidgetIndex) ||
+                (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ ==
+                    widgets_[selectedWidgetIndex].id));
+        if (dockRenameAnchor && !popupTitleRename)
         {
             if (!BeginDockAnchoredRename(
                     widgets_[selectedWidgetIndex].title,
@@ -69,18 +77,25 @@ void DesktopApp::BeginRenameSelected(
         RECT frame = widgets_[selectedWidgetIndex].bounds;
         RECT handle = frame;
         bool foundContainer = false;
-        bool groupedTabRename = false;
-        const bool popupTitleRename = !dockFolderPopupOpen_ &&
-            popupWidgetIndex_ == selectedWidgetIndex &&
-            IsCollectionPopupInteractive();
+        bool leftAligned = false;
+        float fontSize = ScaleWidgetFontCu(itemFontSizeCu_,
+            GetGridCuScaleForBounds(gridPages_, frame));
+        int fontWeight = FW_NORMAL;
         if (popupTitleRename)
         {
             // Dock collections have no visible desktop frame. Anchor their
             // editor to the same title rectangle that the popup renders.
-            frame = GetCollectionPopupRect(widgets_[selectedWidgetIndex]);
+            const auto& popupWidget = dockFolderPopupOpen_
+                ? dockFolderPopupWidget_ : widgets_[selectedWidgetIndex];
+            frame = GetCollectionPopupRect(popupWidget);
+            const float popupScale = GetCollectionPopupLayoutMetrics(popupWidget).scale;
             handle = snowdesktop::collection_popup_layout::ResolveTitleRect(
-                frame, GetCollectionPopupLayoutMetrics(
-                    widgets_[selectedWidgetIndex]).scale);
+                frame, popupScale, dockFolderPopupOpen_
+                    ? GetDockFolderPopupSortButtonRect(frame).left -
+                        snowdesktop::collection_popup_layout::ScaleDimension(10, popupScale)
+                    : (std::numeric_limits<LONG>::max)());
+            if (itemTextFormat_) fontSize = itemTextFormat_->GetFontSize();
+            leftAligned = true;
             foundContainer = true;
         }
         else if (IsGroupedCollection(
@@ -106,7 +121,9 @@ void DesktopApp::BeginRenameSelected(
                     {
                         handle = frame;
                         foundContainer = true;
-                        groupedTabRename = true;
+                        InflateRect(&handle, -group->Cu(7.0f), 0);
+                        fontSize = group->FontCu(group->GetCategorizedTabFontSize());
+                        fontWeight = FW_SEMIBOLD;
                     }
                     break;
                 }
@@ -134,7 +151,9 @@ void DesktopApp::BeginRenameSelected(
                     {
                         handle = frame;
                         foundContainer = true;
-                        groupedTabRename = true;
+                        InflateRect(&handle, -group->Cu(7.0f), 0);
+                        fontSize = group->FontCu(group->GetCategorizedTabFontSize());
+                        fontWeight = FW_SEMIBOLD;
                     }
                     break;
                 }
@@ -150,7 +169,11 @@ void DesktopApp::BeginRenameSelected(
                         &widgets_[selectedWidgetIndex])
                 {
                     frame = wc->GetFrameRect();
-                    handle = wc->GetMoveHandleRect();
+                    handle = wc->GetTitleRect();
+                    leftAligned = !wc->UsesTopTitleBar();
+                    fontSize = wc->FontCu(wc->GetBarHeight() *
+                        (wc->UsesTopTitleBar() ? 18.0f / 34.0f : 0.542f));
+                    fontWeight = wc->UsesTopTitleBar() ? FW_SEMIBOLD : GetItemFontWeight();
                     foundContainer = true;
                     break;
                 }
@@ -160,62 +183,58 @@ void DesktopApp::BeginRenameSelected(
         {
             frame = GetStandaloneWidgetFrameRect(widgets_[selectedWidgetIndex]);
             handle = GetStandaloneWidgetMoveHandleRect(widgets_[selectedWidgetIndex]);
+            const float scale = GetWidgetCellScale(widgets_[selectedWidgetIndex]);
+            const float barHeight = CurrentPersonalization().barHeight;
+            handle = snowdesktop::widget_title_layout::LuaTitleRect(handle,
+                ScaleWidgetCu(4.0f, scale), ScaleWidgetCu(barHeight * 0.083f, scale),
+                ScaleWidgetCu(barHeight * 1.17f, scale));
+            fontSize = ScaleWidgetFontCu(barHeight * 0.542f, scale);
+            fontWeight = GetItemFontWeight();
+            leftAligned = true;
         }
-        const int editHeight = groupedTabRename
-            ? std::max(
-                24, static_cast<int>(
-                    handle.bottom - handle.top))
-            : std::max(
-                40, static_cast<int>(
-                    handle.bottom - handle.top) * 2);
-        RECT rect = popupTitleRename ? handle : groupedTabRename
-            ? MakeRect(
-                frame.left + 2, frame.top,
-                frame.right - 2, frame.top + editHeight)
-            : MakeRect(
-                frame.left + 4, handle.top,
-                frame.right - 4,
-                handle.top + editHeight);
-        InflateRect(&rect, 2, 2);
+        const float renameScale = GetGridCuScaleForBounds(gridPages_, frame);
+        const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+        RECT rect = handle;
+        InflateRect(&rect, renameMargin, 0);
         RECT screenRect = rect;
         MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
         const DWORD editStyle = snowdesktop::rename_edit_layout::EditStyle(
-            popupTitleRename);
-        renameEdit_ = CreateWindowExW(
-            WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-            L"EDIT",
+            leftAligned);
+        renameInputWindow_ = CreateWindowExW(
+             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            snowdesktop::text_input::WindowClass(),
             widgets_[selectedWidgetIndex].title.c_str(),
             editStyle,
             screenRect.left, screenRect.top,
             screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
             hwnd_, nullptr, instance_, nullptr);
-        if (!renameEdit_)
+        if (!renameInputWindow_)
         {
             renameController_.Reset();
             return;
         }
 
         if (renameFont_) DeleteObject(renameFont_);
-        const float renameScale = GetGridCuScaleForBounds(
-            gridPages_, frame);
         renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
-            ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
-            0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            fontSize))),
+            0, 0, 0, fontWeight, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        SendMessageW(renameEdit_, WM_SETFONT,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+        SendMessageW(renameInputWindow_, WM_SETFONT,
             reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-        const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
-        SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        SendMessageW(renameInputWindow_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
             MAKELPARAM(renameMargin, renameMargin));
-        SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
+        SetWindowSubclass(renameInputWindow_, &DesktopApp::RenameEditSubclassProc, 1,
             reinterpret_cast<DWORD_PTR>(this));
-        renameEditLayout_.Begin(renameEdit_);
-        SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+        snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
+        snowdesktop::text_input::SetPadding(renameInputWindow_,
+            static_cast<float>(renameMargin), 4.0f * renameScale);
+        renameEditLayout_.Begin(renameInputWindow_);
+        SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-        SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
-        SetFocus(renameEdit_);
+        SendMessageW(renameInputWindow_, EM_SETSEL, 0, -1);
+        SetFocus(renameInputWindow_);
         if (visibilityWidgetIndex < widgets_.size())
         {
             interactionPinnedWidgetId_ =
@@ -283,12 +302,14 @@ void DesktopApp::BeginRenameSelected(
         !dockFolderPopupOpen_ &&
         popupWidgetIndex_ < widgets_.size() &&
         IsCollectionPopupInteractive();
-    bool singleLineRename = popupRename &&
+    bool leftAlignedRename = popupRename &&
         UsesCollectionPopupList(widgets_[popupWidgetIndex_]);
-    RECT textRect = popupRename
+    const DesktopWidget* titleWidget = popupRename ? &widgets_[popupWidgetIndex_] :
+        visibilityWidgetIndex < widgets_.size() ? &widgets_[visibilityWidgetIndex] : nullptr;
+    RECT textRect = leftAlignedRename
         ? GetCollectionPopupItemTextRect(
             itemBounds)
-        : GetItemTextRect(itemBounds, true);
+        : GetItemRenameRect(itemBounds, ResolveItemTitleLines(titleWidget));
     if (!popupRename)
     {
         for (const auto& container : containers_)
@@ -301,59 +322,66 @@ void DesktopApp::BeginRenameSelected(
                 if (icon && icon->GetDesktopItem() == &items_[selectedIndex])
                 {
                     textRect = list->GetListItemTextRect(slot->GetBounds());
-                    singleLineRename = true;
+                    leftAlignedRename = true;
                     break;
                 }
             }
-            if (singleLineRename) break;
+            if (leftAlignedRename) break;
         }
     }
-    InflateRect(&textRect, 2, 2);
+    const float renameScale = GetGridCuScaleForBounds(gridPages_, itemBounds);
+    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
+    InflateRect(&textRect, renameMargin, 0);
     RECT screenRect = textRect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
     const DWORD renameStyle =
-        snowdesktop::rename_edit_layout::EditStyle(singleLineRename);
-    renameEdit_ = CreateWindowExW(
-        WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        L"EDIT",
+        snowdesktop::rename_edit_layout::EditStyle(leftAlignedRename, !leftAlignedRename);
+    renameInputWindow_ = CreateWindowExW(
+         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        snowdesktop::text_input::WindowClass(),
         items_[selectedIndex].name.c_str(),
         renameStyle,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
 
-    if (!renameEdit_)
+    if (!renameInputWindow_)
     {
         renameController_.Reset();
         return;
     }
 
     if (renameFont_) DeleteObject(renameFont_);
-    const float renameScale = GetGridCuScaleForBounds(
-        gridPages_, itemBounds);
     renameFont_ = CreateFontW(-std::max(1, static_cast<int>(std::round(
         ScaleWidgetFontCu(itemFontSizeCu_, renameScale)))),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    SendMessageW(renameEdit_, WM_SETFONT,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+    SendMessageW(renameInputWindow_, WM_SETFONT,
         reinterpret_cast<WPARAM>(renameFont_ ? renameFont_ : GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    const int renameMargin = std::max(1, static_cast<int>(std::round(6.0f * renameScale)));
-    SendMessageW(renameEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+    SendMessageW(renameInputWindow_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
         MAKELPARAM(renameMargin, renameMargin));
-    SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
+    SetWindowSubclass(renameInputWindow_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
-    renameEditLayout_.Begin(renameEdit_);
-    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+    snowdesktop::text_input::SetAccessibleName(renameInputWindow_, _LW("app.menu.rename"));
+    snowdesktop::text_input::SetPadding(renameInputWindow_,
+        static_cast<float>(renameMargin), 4.0f * renameScale);
+    renameEditLayout_.Begin(renameInputWindow_);
+    SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    SendMessageW(renameEdit_, EM_SETSEL, 0,
+    SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(items_[selectedIndex].name, isDirectory));
-    SetFocus(renameEdit_);
+    SetFocus(renameInputWindow_);
     if (visibilityWidgetIndex < widgets_.size())
     {
         interactionPinnedWidgetId_ =
             widgets_[visibilityWidgetIndex].id;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (popupRename)
+    {
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
     }
 }

@@ -1,4 +1,6 @@
 #include "icon_beautify.h"
+#include "flat_glass_rim.h"
+#include "appearance_edge_presets.h"
 
 #include <algorithm>
 #include <array>
@@ -534,6 +536,56 @@ void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
     }
 }
 
+void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int height,
+    const IconBeautifySettings& settings)
+{
+    if (!settings.edgeHighlightEnabled || settings.edgeHighlightStrength <= 0.0f) return;
+    const auto& outline = OutlineFor(settings.shape);
+    const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
+    const float wf = static_cast<float>(width), hf = static_cast<float>(height);
+    const float shortSide = std::min(wf, hf);
+    const float depth = settings.edgeHighlightWidth * shortSide / 52.0f;
+    const flat_glass_rim::Evaluator material(settings.edgeLight);
+    const float rimInset = depth * .5f;
+    const float halo = rimInset + std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true));
+    const auto& inner = CachedMask(settings.shape, width, height, halo);
+    for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
+    {
+        const size_t index = static_cast<size_t>(y) * width + x;
+        if (mask[index] == 0 || inner[index] == 255) continue;
+        float nearest = halo * halo;
+        for (size_t i = 0; i < outline.size(); ++i)
+        {
+            const auto& a = outline[i]; const auto& b = outline[(i + 1) % outline.size()];
+            const float ax = a.x * wf, ay = a.y * hf;
+            const float dx = (b.x - a.x) * wf, dy = (b.y - a.y) * hf;
+            const float length2 = dx * dx + dy * dy;
+            if (length2 < 0.00001f) continue;
+            const float t = std::clamp(((static_cast<float>(x) + 0.5f - ax) * dx + (static_cast<float>(y) + 0.5f - ay) * dy) / length2, 0.0f, 1.0f);
+            const float ex = ax + t * dx - (static_cast<float>(x) + 0.5f), ey = ay + t * dy - (static_cast<float>(y) + 0.5f);
+            const float distance2 = ex * ex + ey * ey;
+            if (distance2 < nearest)
+            {
+                nearest = distance2;
+            }
+        }
+        const float distance = std::sqrt(nearest) - rimInset;
+        const float lighting = material.Lighting((static_cast<float>(x) + .5f) / wf,
+            (static_cast<float>(y) + .5f) / hf);
+        const float light = material.Intensity(distance, depth, lighting);
+        const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
+        output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
+        if (material.settings.shadowStrength > 0.f)
+        {
+            const int shadowAlpha = static_cast<int>(std::lround(
+                material.Occlusion(distance, depth, lighting) *
+                settings.edgeHighlightStrength * material.settings.shadowStrength * mask[index]));
+            output[index] = SourceOver(
+                PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
+        }
+    }
+}
+
 void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
     const IconBeautifySettings& settings)
 {
@@ -542,7 +594,9 @@ void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
     const EdgeColor stroke = ColorFromFloats(
         settings.outlineR, settings.outlineG, settings.outlineB);
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
-    const auto& inner = CachedMask(settings.shape, width, height, settings.outlineWidth);
+    const float outlineWidth = settings.glassEnabled
+        ? settings.outlineWidth * std::min(width, height) / 52.0f : settings.outlineWidth;
+    const auto& inner = CachedMask(settings.shape, width, height, outlineWidth);
     const int opacity = static_cast<int>(std::round(settings.outlineOpacity * 255.0f));
     for (size_t i = 0; i < output.size(); ++i)
     {
@@ -564,8 +618,18 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
     const int preset = static_cast<int>(settings.preset);
     if (preset != static_cast<int>(IconBeautifyPreset::None) &&
         preset != static_cast<int>(IconBeautifyPreset::DefaultBeautify) &&
-        preset != static_cast<int>(IconBeautifyPreset::Custom))
+        preset != static_cast<int>(IconBeautifyPreset::Custom) &&
+        preset != static_cast<int>(IconBeautifyPreset::FrostedGlass) &&
+        preset != static_cast<int>(IconBeautifyPreset::FrostedGlassDark) &&
+        preset != static_cast<int>(IconBeautifyPreset::FrostedGlassLight))
         settings.preset = IconBeautifyPreset::Custom;
+    settings.glassBlurRadius = std::isfinite(settings.glassBlurRadius) ?
+        std::clamp(settings.glassBlurRadius, 4.0f, 48.0f) : 16.0f;
+    settings.edgeHighlightWidth = std::isfinite(settings.edgeHighlightWidth) ?
+        std::clamp(settings.edgeHighlightWidth, 0.5f, 4.0f) : 1.0f;
+    settings.edgeHighlightStrength = std::isfinite(settings.edgeHighlightStrength) ?
+        std::clamp(settings.edgeHighlightStrength, 0.0f, 1.0f) : 0.40f;
+    settings.edgeLight = NormalizeEdgeLight(settings.edgeLight);
     settings.mode = std::clamp(settings.mode, 0, 1);
     settings.backgroundOpacity = std::clamp(settings.backgroundOpacity, 0.0f, 1.0f);
     settings.gradientDirection = std::clamp(settings.gradientDirection, 0, 3);
@@ -619,6 +683,10 @@ bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
     return a.enabled == b.enabled && a.preset == b.preset &&
         a.mode == b.mode &&
         eq(a.backgroundOpacity, b.backgroundOpacity) &&
+        a.glassEnabled == b.glassEnabled && eq(a.glassBlurRadius, b.glassBlurRadius) &&
+        a.edgeHighlightEnabled == b.edgeHighlightEnabled &&
+        eq(a.edgeHighlightWidth, b.edgeHighlightWidth) &&
+        eq(a.edgeHighlightStrength, b.edgeHighlightStrength) && a.edgeLight == b.edgeLight &&
         a.gradientEnabled == b.gradientEnabled &&
         a.gradientDirection == b.gradientDirection &&
         eq(a.backgroundStartR, b.backgroundStartR) &&
@@ -651,7 +719,7 @@ bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings)
         s.textureHighlightStrength <= 0.0005f &&
         s.textureShadeStrength <= 0.0005f &&
         s.textureEdgeHighlight <= 0.0005f && !s.filterEnabled &&
-        !s.outlineEnabled &&
+        !s.outlineEnabled && !s.glassEnabled && !s.edgeHighlightEnabled &&
         std::abs(s.outlineWidth - 1.0f) <= 0.0005f &&
         std::abs(s.outlineOpacity - 1.0f) <= 0.0005f &&
         std::abs(s.contentScale - 0.68f) <= 0.0005f &&
@@ -672,12 +740,79 @@ IconBeautifySettings MakePreset(IconBeautifyPreset preset)
         settings.shape = IconBeautifyShape::LegacyRounded;
         settings.outlineEnabled = false;
         return settings;
+    case IconBeautifyPreset::FrostedGlass:
+    case IconBeautifyPreset::FrostedGlassDark:
+    case IconBeautifyPreset::FrostedGlassLight:
+    {
+        settings.preset = preset;
+        settings.enabled = true;
+        settings.shape = IconBeautifyShape::ContinuousRounded;
+        settings.backgroundStartR = settings.backgroundStartG = settings.backgroundStartB = 1.0f;
+        settings.backgroundEndR = settings.backgroundEndG = settings.backgroundEndB = 1.0f;
+        settings.backgroundOpacity = 0.04f;
+        settings.glassEnabled = true;
+        settings.glassBlurRadius = 10.0f;
+        settings.edgeHighlightEnabled = true;
+        const auto edge = MaterialEdges(preset == IconBeautifyPreset::FrostedGlassDark ? MaterialEdgePreset::GlassDark :
+            preset == IconBeautifyPreset::FrostedGlassLight ? MaterialEdgePreset::GlassLight : MaterialEdgePreset::GlassTransparent);
+        settings.edgeHighlightWidth = edge.width;
+        settings.edgeHighlightStrength = edge.opacity;
+        settings.edgeLight = edge.light;
+        // Presets tune the shared inward rim for normal icon sizes. Its center
+        // stays inside the plate so both glow controls contribute visible pixels.
+        settings.edgeHighlightWidth = 1.8f;
+        settings.edgeHighlightStrength = preset == IconBeautifyPreset::FrostedGlassDark ? .24f :
+            preset == IconBeautifyPreset::FrostedGlassLight ? .30f : .28f;
+        settings.edgeLight.innerGlow = 1.6f;
+        // Start fading earlier along the contour instead of keeping a long
+        // bright plateau followed by a localized dip. The broader feather
+        // carries the transition across the weak arcs at normal icon sizes.
+        settings.edgeLight.spread = 50.f;
+        settings.edgeLight.feather = 70.f;
+        settings.edgeLight.ambient = .10f;
+        settings.edgeLight.primary = .67f;
+        settings.edgeLight.opposite = .63f;
+        settings.edgeLight.glowStrength = .12f;
+        if (preset != IconBeautifyPreset::FrostedGlass)
+        {
+            const bool dark = preset == IconBeautifyPreset::FrostedGlassDark;
+            settings.backgroundStartR = settings.backgroundEndR = (dark ? 13.f : 235.f) / 255.f;
+            settings.backgroundStartG = settings.backgroundEndG = (dark ? 18.f : 245.f) / 255.f;
+            settings.backgroundStartB = settings.backgroundEndB = (dark ? 26.f : 255.f) / 255.f;
+            settings.backgroundOpacity = dark ? .28f : .15f;
+            settings.glassBlurRadius = dark ? 24.f : 22.f;
+        }
+        // The glass reflection supplies the contour. A second uniform stroke
+        // would brighten the weak sectors and sharpen the outside edge.
+        settings.outlineEnabled = false;
+        settings.outlineWidth = 0.75f;
+        settings.outlineOpacity = 0.05f;
+        settings.outlineR = settings.outlineG = settings.outlineB = 1.0f;
+        settings.shadowStrength = 0.15f;
+        return settings;
+    }
     case IconBeautifyPreset::Custom:
     default:
         settings.preset = IconBeautifyPreset::Custom;
         settings.enabled = true;
         return settings;
     }
+}
+
+IconBeautifySettings ResolvePersistedSettings(IconBeautifySettings settings,
+    bool hasExplicitPreset)
+{
+    settings = Normalize(settings);
+    if (!hasExplicitPreset)
+    {
+        settings.preset = IdentifyPreset(settings);
+        return settings;
+    }
+    if (settings.preset == IconBeautifyPreset::Custom) return settings;
+    auto current = MakePreset(settings.preset);
+    if (current.preset != IconBeautifyPreset::None)
+        current.enabled = settings.enabled;
+    return current;
 }
 
 void ApplyLegacyFinish(IconBeautifySettings& settings,
@@ -717,8 +852,11 @@ IconBeautifyPreset IdentifyPreset(const IconBeautifySettings& settings)
         return IconBeautifyPreset::None;
     if (normalized.preset == IconBeautifyPreset::Custom)
         return IconBeautifyPreset::Custom;
-    constexpr std::array<IconBeautifyPreset, 1> presets{
+    constexpr std::array<IconBeautifyPreset, 4> presets{
         IconBeautifyPreset::DefaultBeautify,
+        IconBeautifyPreset::FrostedGlass,
+        IconBeautifyPreset::FrostedGlassDark,
+        IconBeautifyPreset::FrostedGlassLight,
     };
     for (IconBeautifyPreset preset : presets)
     {
@@ -753,6 +891,15 @@ std::uint8_t ShapeMaskAlpha(IconBeautifyShape shape, int x, int y,
     return static_cast<std::uint8_t>((hits * 255 + 8) / 16);
 }
 
+std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
+    const IconBeautifySettings& settings)
+{
+    if (width <= 0 || height <= 0) return {};
+    std::vector<std::uint32_t> pixels(static_cast<size_t>(width) * height, 0);
+    ApplyEdgeReflection(pixels, width, height, Normalize(settings));
+    return pixels;
+}
+
 std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& rawSettings,
     std::optional<EdgeColor> detectedEdgeFill)
@@ -781,6 +928,7 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
                 ApplyFilter(source[i], settings), background), mask[i]);
         ApplyTexture(output, width, height, settings);
         ApplyOutline(output, width, height, settings);
+        ApplyEdgeReflection(output, width, height, settings);
         return output;
     }
 
@@ -854,6 +1002,7 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
 
     ApplyTexture(output, width, height, settings);
     ApplyOutline(output, width, height, settings);
+    ApplyEdgeReflection(output, width, height, settings);
     return output;
 }
 

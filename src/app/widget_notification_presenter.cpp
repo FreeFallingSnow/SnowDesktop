@@ -1,3 +1,4 @@
+#include "../app_font.h"
 #include "widget_notification_presenter.h"
 
 #include <wincodec.h>
@@ -84,7 +85,7 @@ HFONT CreateUiFont(HWND hwnd, int points, int weight)
     font.lfHeight = -MulDiv(points,
         static_cast<int>(GetDpiForWindow(hwnd)), 72);
     font.lfWeight = weight;
-    wcscpy_s(font.lfFaceName, L"Segoe UI");
+    wcsncpy_s(font.lfFaceName, snowdesktop::app_fonts::GdiFamily().c_str(), _TRUNCATE);
     return CreateFontIndirectW(&font);
 }
 }

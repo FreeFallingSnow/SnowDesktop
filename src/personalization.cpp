@@ -7,6 +7,8 @@
  */
 
 #include "personalization.h"
+#include "appearance_edge_presets.h"
+#include "edge_light_codec.h"
 #include "data_paths.h"
 
 #include <windows.h>
@@ -14,7 +16,9 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <sstream>
+#include <utility>
 
 /**
  * @brief 从 JSON 文本中读取指定字段的 double 值
@@ -102,7 +106,7 @@ PersonalizationSettings PersonalizationSettings::LightPreset()
 PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
 {
     PersonalizationSettings s = DarkPreset();
-    s.widgetBgR = 0.05f; s.widgetBgG = 0.07f; s.widgetBgB = 0.10f;
+    s.widgetBgR = 13.f / 255.f; s.widgetBgG = 18.f / 255.f; s.widgetBgB = 26.f / 255.f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.28f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetGlassDark;
@@ -110,8 +114,10 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
     s.glassEnabled = true;
     s.widgetBorderWidth = 1.0f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassDark);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.glassBlurRadius = 24.0f;
     return s;
 }
@@ -119,7 +125,7 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
 PersonalizationSettings PersonalizationSettings::GlassLightPreset()
 {
     PersonalizationSettings s = LightPreset();
-    s.widgetBgR = 0.92f; s.widgetBgG = 0.96f; s.widgetBgB = 1.0f;
+    s.widgetBgR = 235.f / 255.f; s.widgetBgG = 245.f / 255.f; s.widgetBgB = 1.f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.15f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetGlassLight;
@@ -127,9 +133,31 @@ PersonalizationSettings PersonalizationSettings::GlassLightPreset()
     s.glassEnabled = true;
     s.widgetBorderWidth = 1.0f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassLight);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.glassBlurRadius = 22.0f;
+    s.contentTheme = 0;
+    return s;
+}
+
+PersonalizationSettings PersonalizationSettings::GlassTransparentPreset()
+{
+    PersonalizationSettings s;
+    s.backgroundPreset = kAppearancePresetGlassTransparent;
+    s.widgetBgR = s.widgetBgG = s.widgetBgB = 1.0f;
+    s.widgetAlpha = 0.02f;
+    s.widgetBorderAlpha = 0.05f;
+    s.widgetBorderWidth = 0.75f;
+    s.widgetEdgeHighlightEnabled = true;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::GlassTransparent);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
+    s.gradientEndA = 0.0f;
+    s.glassEnabled = true;
+    s.glassBlurRadius = 10.0f;
     s.contentTheme = 0;
     return s;
 }
@@ -138,7 +166,7 @@ PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
 {
     PersonalizationSettings s = DarkPreset();
     // Match the neutral #202020 tint used by Windows dark shell panels.
-    s.widgetBgR = 0.125f; s.widgetBgG = 0.125f; s.widgetBgB = 0.125f;
+    s.widgetBgR = s.widgetBgG = s.widgetBgB = 32.f / 255.f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetAcrylicDark;
@@ -147,8 +175,10 @@ PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
     s.acrylicEnabled = true;
     s.widgetBorderWidth = 1.0f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::AcrylicDark);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 0;
     return s;
@@ -158,7 +188,7 @@ PersonalizationSettings PersonalizationSettings::AcrylicLightPreset()
 {
     PersonalizationSettings s = LightPreset();
     // Match the neutral #F3F3F3 tint used by Windows light shell panels.
-    s.widgetBgR = 0.953f; s.widgetBgG = 0.953f; s.widgetBgB = 0.953f;
+    s.widgetBgR = s.widgetBgG = s.widgetBgB = 243.f / 255.f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
     s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetAcrylicLight;
@@ -167,8 +197,10 @@ PersonalizationSettings PersonalizationSettings::AcrylicLightPreset()
     s.acrylicEnabled = true;
     s.widgetBorderWidth = 1.0f;
     s.widgetEdgeHighlightEnabled = true;
-    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
-    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    const auto edge = snowdesktop::MaterialEdges(snowdesktop::MaterialEdgePreset::AcrylicLight);
+    s.widgetEdgeHighlightWidth = edge.width;
+    s.widgetEdgeHighlightStrength = edge.opacity;
+    s.edgeLight = edge.light;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 1;
     return s;
@@ -186,6 +218,7 @@ int NormalizeAppearancePresetId(int presetId)
     case 10:
     case 11:
     case 12:
+    case 13:
         return presetId;
     case 3:
     case 4:
@@ -207,6 +240,7 @@ PersonalizationSettings MakeAppearancePreset(int presetId)
     case 1: return PersonalizationSettings::LightPreset();
     case 6: return PersonalizationSettings::GlassDarkPreset();
     case 7: return PersonalizationSettings::GlassLightPreset();
+    case 13: return PersonalizationSettings::GlassTransparentPreset();
     case 10: return PersonalizationSettings::AcrylicDarkPreset();
     case 11: return PersonalizationSettings::AcrylicLightPreset();
     case 9:
@@ -219,11 +253,29 @@ PersonalizationSettings MakeAppearancePreset(int presetId)
     }
 }
 
+void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId)
+{
+    auto preset = MakeAppearancePreset(presetId);
+    preset.cornerRadius = settings.cornerRadius;
+    preset.barHeight = settings.barHeight;
+    preset.scrollableTitleBarOnTop = settings.scrollableTitleBarOnTop;
+    preset.widgetTransformCursors = settings.widgetTransformCursors;
+    preset.categorizedTabHeight = settings.categorizedTabHeight;
+    preset.luaWidgetContentRowHeight = settings.luaWidgetContentRowHeight;
+    preset.showCategoryTabCounts = settings.showCategoryTabCounts;
+    preset.showGroupTabCounts = settings.showGroupTabCounts;
+    preset.popupHoverOpen = settings.popupHoverOpen;
+    preset.popupHoverDelayMs = settings.popupHoverDelayMs;
+    preset.contextMenuStyle = settings.contextMenuStyle;
+    settings = std::move(preset);
+}
+
 PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId)
 {
     PersonalizationSettings s;
     int normalizedId = NormalizeAppearancePresetId(presetId);
-    if (normalizedId == kAppearancePresetGlassDark)
+    if (normalizedId == kAppearancePresetGlassDark ||
+        normalizedId == kAppearancePresetGlassTransparent)
         normalizedId = kAppearancePresetAcrylicDark;
     else if (normalizedId == kAppearancePresetGlassLight)
         normalizedId = kAppearancePresetAcrylicLight;
@@ -231,23 +283,23 @@ PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId)
     {
     case kAppearancePresetLight:
         s = PersonalizationSettings::LightPreset();
-        s.widgetBgR = 0.965f; s.widgetBgG = 0.973f; s.widgetBgB = 0.988f;
-        s.widgetBorderR = 0.706f; s.widgetBorderG = 0.745f; s.widgetBorderB = 0.784f;
-        s.widgetAlpha = 0.96f; s.widgetBorderAlpha = 0.70f;
+        s.widgetBgR = s.widgetBgG = s.widgetBgB = 0.970f;
+        s.widgetBorderR = s.widgetBorderG = s.widgetBorderB = 0.710f;
+        s.widgetAlpha = 1.0f; s.widgetBorderAlpha = 0.34f;
         s.glassEnabled = false;
         break;
     case kAppearancePresetAcrylicDark:
         s = PersonalizationSettings::AcrylicDarkPreset();
-        s.widgetBgR = 0.065f; s.widgetBgG = 0.080f; s.widgetBgB = 0.110f;
-        s.widgetBorderR = 0.58f; s.widgetBorderG = 0.66f; s.widgetBorderB = 0.78f;
-        s.widgetAlpha = 0.75f; s.widgetBorderAlpha = 0.72f;
+        s.widgetBgR = s.widgetBgG = s.widgetBgB = 44.0f / 255.0f;
+        s.widgetBorderR = s.widgetBorderG = s.widgetBorderB = 0.580f;
+        s.widgetAlpha = 0.83f; s.widgetBorderAlpha = 0.32f;
         s.glassBlurRadius = 30.0f;
         break;
-case kAppearancePresetAcrylicLight:
+    case kAppearancePresetAcrylicLight:
         s = PersonalizationSettings::AcrylicLightPreset();
-        s.widgetBgR = 0.935f; s.widgetBgG = 0.955f; s.widgetBgB = 0.985f;
-        s.widgetBorderR = 0.72f; s.widgetBorderG = 0.77f; s.widgetBorderB = 0.86f;
-        s.widgetAlpha = 0.75f; s.widgetBorderAlpha = 0.78f;
+        s.widgetBgR = s.widgetBgG = s.widgetBgB = 0.970f;
+        s.widgetBorderR = s.widgetBorderG = s.widgetBorderB = 0.710f;
+        s.widgetAlpha = 0.88f; s.widgetBorderAlpha = 0.34f;
         s.glassBlurRadius = 28.0f;
         break;
     case kAppearancePresetCustom:
@@ -256,12 +308,13 @@ case kAppearancePresetAcrylicLight:
         break;
     default:
         s = PersonalizationSettings::DarkPreset();
-        s.widgetBgR = 0.055f; s.widgetBgG = 0.071f; s.widgetBgB = 0.102f;
+        s.widgetBgR = 0.105f; s.widgetBgG = 0.108f; s.widgetBgB = 0.116f;
         s.widgetBorderR = 0.471f; s.widgetBorderG = 0.510f; s.widgetBorderB = 0.588f;
-        s.widgetAlpha = 0.96f; s.widgetBorderAlpha = 0.62f;
+        s.widgetAlpha = 1.0f; s.widgetBorderAlpha = 0.30f;
         s.glassEnabled = false;
         break;
     }
+    s.widgetEdgeHighlightStrength = 0.25f;
     return s;
 }
 
@@ -269,6 +322,32 @@ PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId)
 {
     PersonalizationSettings s =
         MakeQuickNavigationAppearancePreset(presetId);
+    // Preserve collection materials independently of navigation styling.
+    s.widgetEdgeHighlightStrength = MakeAppearancePreset(s.backgroundPreset).widgetEdgeHighlightStrength;
+    switch (s.backgroundPreset)
+    {
+    case kAppearancePresetLight:
+        s.widgetBgR = .965f; s.widgetBgG = .973f; s.widgetBgB = .988f;
+        s.widgetBorderR = .706f; s.widgetBorderG = .745f; s.widgetBorderB = .784f;
+        s.widgetAlpha = .96f; s.widgetBorderAlpha = .70f;
+        break;
+    case kAppearancePresetAcrylicDark:
+        s.widgetBgR = .065f; s.widgetBgG = .080f; s.widgetBgB = .110f;
+        s.widgetBorderR = .58f; s.widgetBorderG = .66f; s.widgetBorderB = .78f;
+        s.widgetAlpha = .75f; s.widgetBorderAlpha = .72f;
+        break;
+    case kAppearancePresetAcrylicLight:
+        s.widgetBgR = .935f; s.widgetBgG = .955f; s.widgetBgB = .985f;
+        s.widgetBorderR = .72f; s.widgetBorderG = .77f; s.widgetBorderB = .86f;
+        s.widgetAlpha = .75f; s.widgetBorderAlpha = .78f;
+        break;
+    case kAppearancePresetDark:
+        s.widgetBgR = .055f; s.widgetBgG = .071f; s.widgetBgB = .102f;
+        s.widgetBorderR = .471f; s.widgetBorderG = .510f; s.widgetBorderB = .588f;
+        s.widgetAlpha = .96f; s.widgetBorderAlpha = .62f;
+        break;
+    default: break;
+    }
     if (s.widgetEdgeHighlightEnabled)
     {
         // Collection popups participate in the independent edge-light
@@ -286,10 +365,6 @@ PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId)
  *
  * @return std::wstring 配置文件的绝对路径
  */
-std::wstring GetPersonalizationPath()
-{
-    return GetDataFilePath(L"SnowDesktop.personalization.json");
-}
 
 /**
  * @brief 从 JSON 文件加载个性化设置
@@ -369,6 +444,10 @@ bool LoadPersonalization(
     s.panelGradient = {};
     JsonValue document;
     const bool documentParsed = ParseJson(text, document);
+    s.edgeLight = {};
+    if (documentParsed)
+        if (const auto* light = document.Find("edgeLight"))
+            if (!snowdesktop::DecodeEdgeLight(*light, s.edgeLight)) return false;
     if (documentParsed)
         if (const auto* gradient = document.Find("panelGradient"))
             if (!snowdesktop::DecodePanelGradient(*gradient, s.panelGradient)) return false;
@@ -403,7 +482,8 @@ bool LoadPersonalization(
         s.luaWidgetContentRowHeight = std::clamp(
             static_cast<float>(v) * 0.70f, 18.0f, 48.0f);
     }
-    if (ReadDoubleField(text, "backgroundPreset", v))
+    const bool backgroundPresetLoaded = ReadDoubleField(text, "backgroundPreset", v);
+    if (backgroundPresetLoaded)
     {
         s.backgroundPreset = NormalizeAppearancePresetId((int)v);
     }
@@ -412,6 +492,8 @@ bool LoadPersonalization(
         s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 6);
     s.scrollableTitleBarOnTop = false;
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
+    s.widgetTransformCursors = true;
+    ReadBoolField(text, "widgetTransformCursors", s.widgetTransformCursors);
     s.popupHoverOpen = false;
     ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
     s.popupHoverDelayMs = kDefaultPopupHoverDelayMs;
@@ -446,54 +528,12 @@ bool LoadPersonalization(
             kDefaultEdgeHighlightStrength;
     if (!edgeHighlightEnabledLoaded && s.glassEnabled)
         s.widgetBorderAlpha = 0.0f;
-    // Presets are immutable choices in the UI. Refresh persisted acrylic
-    // values so palette refinements and the old placeholder migration are
-    // applied without requiring users to reselect the theme.
-    if (s.backgroundPreset == kAppearancePresetAcrylicDark ||
-        s.backgroundPreset == kAppearancePresetAcrylicLight)
-    {
-        const float explicitBorderWidth = s.widgetBorderWidth;
-        const bool explicitEdgeHighlightEnabled =
-            s.widgetEdgeHighlightEnabled;
-        const float explicitEdgeHighlightWidth =
-            s.widgetEdgeHighlightWidth;
-        const float explicitEdgeHighlightStrength =
-            s.widgetEdgeHighlightStrength;
-        const float cornerRadius = s.cornerRadius;
-        const float barHeight = s.barHeight;
-        const bool titleBarOnTop = s.scrollableTitleBarOnTop;
-        const bool popupHoverOpen = s.popupHoverOpen;
-        const float popupHoverDelayMs = s.popupHoverDelayMs;
-        const float categorizedTabHeight =
-            s.categorizedTabHeight;
-        const float luaWidgetContentRowHeight =
-            s.luaWidgetContentRowHeight;
-        const bool showCategoryTabCounts =
-            s.showCategoryTabCounts;
-        const bool showGroupTabCounts = s.showGroupTabCounts;
-        const int contextMenuStyle = s.contextMenuStyle;
-        s = MakeAppearancePreset(s.backgroundPreset);
-        s.cornerRadius = cornerRadius;
-        s.barHeight = barHeight;
-        s.scrollableTitleBarOnTop = titleBarOnTop;
-        s.popupHoverOpen = popupHoverOpen;
-        s.popupHoverDelayMs = popupHoverDelayMs;
-        s.categorizedTabHeight =
-            categorizedTabHeight;
-        s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
-        s.showCategoryTabCounts =
-            showCategoryTabCounts;
-        s.showGroupTabCounts = showGroupTabCounts;
-        s.contextMenuStyle = contextMenuStyle;
-        if (borderWidthLoaded)
-            s.widgetBorderWidth = explicitBorderWidth;
-        if (edgeHighlightEnabledLoaded)
-            s.widgetEdgeHighlightEnabled = explicitEdgeHighlightEnabled;
-        if (edgeHighlightWidthLoaded)
-            s.widgetEdgeHighlightWidth = explicitEdgeHighlightWidth;
-        if (edgeHighlightStrengthLoaded)
-            s.widgetEdgeHighlightStrength = explicitEdgeHighlightStrength;
-    }
+    // A selected built-in theme is a live recipe, not a saved material snapshot.
+    // Profiles without a selection and explicit custom profiles retain their values.
+    if (backgroundPresetLoaded && s.backgroundPreset != kAppearancePresetCustom)
+        ApplyAppearancePreset(s, s.backgroundPreset);
+    else if (!backgroundPresetLoaded)
+        s.backgroundPreset = kAppearancePresetCustom;
     return true;
 }
 
@@ -513,6 +553,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     if (!snowdesktop::ValidatePanelGradient(s.panelGradient)) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
+    // Applied theme snapshots must survive a settings save/reload exactly.
+    file.precision(std::numeric_limits<float>::max_digits10);
     file << "{\n";
     file << "  \"widgetBgR\": " << s.widgetBgR << ",\n";
     file << "  \"widgetBgG\": " << s.widgetBgG << ",\n";
@@ -528,6 +570,7 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
                     kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth)
                 : 1.0f)
          << ",\n";
+    file << "  \"edgeLight\": " << snowdesktop::EncodeEdgeLight(snowdesktop::NormalizeEdgeLight(s.edgeLight)) << ",\n";
     file << "  \"widgetEdgeHighlightEnabled\": "
          << (s.widgetEdgeHighlightEnabled ? "true" : "false") << ",\n";
     file << "  \"widgetEdgeHighlightWidth\": "
@@ -546,6 +589,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"barHeight\": " << s.barHeight << ",\n";
     file << "  \"scrollableTitleBarOnTop\": "
          << (s.scrollableTitleBarOnTop ? "true" : "false") << ",\n";
+    file << "  \"widgetTransformCursors\": "
+         << (s.widgetTransformCursors ? "true" : "false") << ",\n";
     file << "  \"categorizedTabHeight\": "
          << std::clamp(
                 s.categorizedTabHeight,

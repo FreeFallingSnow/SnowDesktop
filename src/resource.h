@@ -36,3 +36,14 @@
 #define IDR_MENU_FOLDER_MAPPING 42
 #define IDR_MENU_SEARCH 43
 #define IDR_MENU_WORKSHOP 44
+
+// Quick-navigation semantic artwork: pinned Fluent Filled + Regular paths.
+#define IDR_QUICK_NAV_ALL 48
+#define IDR_QUICK_NAV_APP 49
+#define IDR_QUICK_NAV_WEB 50
+#define IDR_QUICK_NAV_SETTINGS 51
+#define IDR_QUICK_NAV_RUN 52
+#define IDR_QUICK_NAV_CALCULATOR 53
+
+// Self-contained default wallpaper for theme previews.
+#define IDR_THEME_PREVIEW_BACKGROUND 54

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "theme_library_actions.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -16,6 +17,8 @@ namespace snowdesktop::winui
 /** Commands emitted by the cached Dock and taskbar settings presenter. */
 struct DockPageActions
 {
+    ThemeLibraryAction themeLibrary;
+    ThemeLibraryAsyncAction themeAsync;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
     using DockEdit = std::function<void(DockSettings&)>;
     using ConfirmationCompletion = std::function<void(bool confirmed)>;
@@ -33,12 +36,13 @@ struct DockPageActions
         DockEdit edit)> updateDock;
 
     /** Routes non-setting work through SettingsHostActions. */
-    std::function<void(
+    std::function<SettingsActionResult(
         std::uint64_t generation,
         SettingsHostActions::Request request)> invokeHost;
 
     /** Opens Windows taskbar settings through the owning desktop window. */
     std::function<void(std::uint64_t generation)> openTaskbarSettings;
+    std::function<void(std::uint64_t, std::string target)> previewAppearance;
 
     /**
      * Shows the host-owned ContentDialog used for dangerous actions.

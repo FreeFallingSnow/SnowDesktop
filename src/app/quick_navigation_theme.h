@@ -2,42 +2,53 @@
 
 #include <d2d1.h>
 #include <windows.h>
+#include "../navigation_settings.h"
+#include "../rgba_color.h"
+#include <array>
+#include <cstdlib>
+#include <utility>
 
 // Colors shared by quick-navigation rendering and desktop label rendering.
 
 struct QuickNavTheme {
-    COLORREF windowBg, windowBorder;
-    COLORREF searchBg, searchBorder, searchEditBg;
-    COLORREF tabActiveFill, tabActiveStroke;
-    COLORREF tabHoverFill, tabHoverStroke;
-    COLORREF tabDefaultFill, tabDefaultStroke;
-    COLORREF tabText, tabSeparator;
-    COLORREF tabDragFill, tabDragStroke;
-    COLORREF tabDragFloatFill, tabDragFloatStroke, tabDragFloatText;
-    COLORREF tabDragIndicator;
-    COLORREF itemHoverFill, itemHoverStroke;
-    COLORREF itemText;
-    COLORREF headerText, headerSeparator;
-    COLORREF appRowHoverFill, appRowHoverStroke;
-    COLORREF appNameText, appTypeText;
-    COLORREF expandHoverText, expandDefaultText;
-    COLORREF emptyText, emptyHeaderText;
-    COLORREF scrollTrack, scrollThumbDefault, scrollThumbHover;
+    snowdesktop::RgbaColor windowBg, windowBorder;
+    snowdesktop::RgbaColor searchBg, searchBorder, searchEditBg;
+    snowdesktop::RgbaColor tabActiveFill, tabActiveStroke;
+    snowdesktop::RgbaColor tabHoverFill, tabHoverStroke;
+    snowdesktop::RgbaColor tabDefaultFill, tabDefaultStroke;
+    snowdesktop::RgbaColor tabText, tabSeparator;
+    snowdesktop::RgbaColor tabDragFill, tabDragStroke;
+    snowdesktop::RgbaColor tabDragFloatFill, tabDragFloatStroke, tabDragFloatText;
+    snowdesktop::RgbaColor tabDragIndicator;
+    snowdesktop::RgbaColor itemHoverFill, itemHoverStroke;
+    snowdesktop::RgbaColor itemText;
+    snowdesktop::RgbaColor headerText, headerSeparator;
+    snowdesktop::RgbaColor appRowHoverFill, appRowHoverStroke;
+    snowdesktop::RgbaColor appNameText, appTypeText;
+    snowdesktop::RgbaColor expandHoverText, expandDefaultText;
+    snowdesktop::RgbaColor emptyText, emptyHeaderText;
+    snowdesktop::RgbaColor scrollTrack, scrollThumbDefault, scrollThumbHover;
 
     D2D1_COLOR_F popupBg, popupBorder, popupTitle;
     D2D1_COLOR_F iconHoverBgFill, iconHoverBgStroke;
     D2D1_COLOR_F iconSelectBgFill, iconSelectBgStroke;
     D2D1_COLOR_F iconTextColor;
     D2D1_COLOR_F iconShadowFallback;
+    snowdesktop::RgbaColor searchText = RGB(28,34,44), searchPlaceholder = RGB(100,105,115), searchFocus = RGB(75,120,205);
+    snowdesktop::RgbaColor typeFill = RGB(224,232,246), typeText = RGB(45,80,145);
+    snowdesktop::RgbaColor resultFill = RGB(246,248,252), resultBorder = RGB(246,248,252);
+    snowdesktop::RgbaColor tabActiveText = RGB(30,60,110), tabHoverText = RGB(28,34,44);
+    snowdesktop::RgbaColor iconPlateFill = RGB(255,255,255), iconPlateBorder = RGB(255,255,255);
+    snowdesktop::RgbaColor selectedFill = RGB(222,234,252), selectedBorder = RGB(185,210,246), selectedText = RGB(28,34,44);
 };
 
 inline const QuickNavTheme kQuickNavDark = {
     // GDI
     RGB(18, 22, 30),    // windowBg
     RGB(120, 130, 150),  // windowBorder
-    RGB(255, 255, 255),  // searchBg
+    RGB(35, 40, 51),    // searchBg
     RGB(92, 105, 128),   // searchBorder
-    RGB(18, 22, 30),     // searchEditBg
+    RGB(35, 40, 51),     // searchEditBg
     RGB(48, 112, 215),   // tabActiveFill
     RGB(82, 140, 235),   // tabActiveStroke
     RGB(66, 72, 84),     // tabHoverFill
@@ -130,3 +141,70 @@ inline const QuickNavTheme kQuickNavLight = {
 };
 
 // ── Graphics ─────────────────────────────────────────────────
+inline constexpr std::pair<const char*, snowdesktop::RgbaColor QuickNavTheme::*> kQuickNavColorFields[] = {
+    {"searchBg", &QuickNavTheme::searchBg}, {"searchBorder", &QuickNavTheme::searchBorder},
+    {"searchText", &QuickNavTheme::searchText}, {"searchPlaceholder", &QuickNavTheme::searchPlaceholder},
+    {"searchFocus", &QuickNavTheme::searchFocus}, {"typeFill", &QuickNavTheme::typeFill}, {"typeText", &QuickNavTheme::typeText},
+    {"tabDefaultFill", &QuickNavTheme::tabDefaultFill}, {"tabDefaultStroke", &QuickNavTheme::tabDefaultStroke},
+    {"tabText", &QuickNavTheme::tabText}, {"tabHoverFill", &QuickNavTheme::tabHoverFill}, {"tabHoverStroke", &QuickNavTheme::tabHoverStroke},
+    {"tabActiveFill", &QuickNavTheme::tabActiveFill}, {"tabActiveStroke", &QuickNavTheme::tabActiveStroke},
+    {"tabActiveText", &QuickNavTheme::tabActiveText}, {"tabHoverText", &QuickNavTheme::tabHoverText},
+    {"iconPlateFill", &QuickNavTheme::iconPlateFill}, {"iconPlateBorder", &QuickNavTheme::iconPlateBorder},
+    {"headerText", &QuickNavTheme::headerText}, {"headerSeparator", &QuickNavTheme::headerSeparator},
+    {"resultFill", &QuickNavTheme::resultFill}, {"resultBorder", &QuickNavTheme::resultBorder},
+    {"appNameText", &QuickNavTheme::appNameText}, {"appTypeText", &QuickNavTheme::appTypeText},
+    {"appRowHoverFill", &QuickNavTheme::appRowHoverFill}, {"appRowHoverStroke", &QuickNavTheme::appRowHoverStroke},
+    {"selectedFill", &QuickNavTheme::selectedFill}, {"selectedBorder", &QuickNavTheme::selectedBorder}, {"selectedText", &QuickNavTheme::selectedText},
+    {"itemText", &QuickNavTheme::itemText}, {"itemHoverFill", &QuickNavTheme::itemHoverFill}, {"itemHoverStroke", &QuickNavTheme::itemHoverStroke},
+    {"scrollTrack", &QuickNavTheme::scrollTrack}, {"scrollThumbDefault", &QuickNavTheme::scrollThumbDefault},
+    {"scrollThumbHover", &QuickNavTheme::scrollThumbHover}, {"emptyText", &QuickNavTheme::emptyText}
+};
+
+inline QuickNavTheme ResolveQuickNavTheme(bool light, const NavigationSettings& settings, bool glass = false)
+{
+    QuickNavTheme t = light ? kQuickNavLight : kQuickNavDark;
+    t.searchBg = light ? RGB(250,250,250) : RGB(44,44,44);
+    t.searchEditBg = t.searchBg;
+    t.searchBorder = light ? RGB(185,185,185) : RGB(86,86,86);
+    t.searchText = light ? RGB(36,36,36) : RGB(240,240,240);
+    t.searchPlaceholder = light ? RGB(104,104,104) : RGB(177,177,177);
+    t.tabText = light ? RGB(69,69,69) : RGB(207,207,207);
+    t.tabActiveText = t.searchText; t.tabHoverText = t.searchText;
+    t.appTypeText = light ? RGB(96,96,96) : RGB(168,168,168);
+    t.headerText = t.appTypeText; t.tabSeparator = light ? RGB(164,164,164) : RGB(103,103,103);
+    t.emptyText = t.appTypeText;
+    t.searchFocus = light ? RGB(68,112,199) : RGB(117,161,239);
+    t.tabDefaultFill = light ? RGB(239,239,239) : RGB(38,38,38);
+    t.tabDefaultStroke = t.tabDefaultFill;
+    t.tabActiveFill = light ? RGB(230,230,230) : RGB(60,60,60);
+    t.tabActiveStroke = t.tabActiveFill;
+    t.tabHoverFill = light ? RGB(239,239,239) : RGB(47,47,47);
+    t.tabHoverStroke = t.tabHoverFill;
+    t.typeFill = t.tabActiveFill; t.typeText = t.searchText;
+    t.resultFill = light ? RGB(248,248,248) : RGB(30,30,30);
+    t.resultBorder = t.resultFill;
+    t.selectedFill = t.tabActiveFill; t.selectedBorder = t.tabActiveStroke; t.selectedText = t.searchText;
+    t.appRowHoverFill = t.tabHoverFill; t.appRowHoverStroke = t.tabHoverFill;
+    t.itemHoverFill = t.tabHoverFill; t.itemHoverStroke = t.tabHoverStroke;
+    t.headerSeparator = light ? RGB(205,205,205) : RGB(78,78,78);
+    t.scrollTrack = light ? RGB(228,228,228) : RGB(45,45,45);
+    t.scrollThumbDefault = light ? RGB(148,148,148) : RGB(116,116,116);
+    t.scrollThumbHover = light ? RGB(120,120,120) : RGB(160,160,160);
+    t.appNameText = light ? RGB(36,36,36) : RGB(245,245,245);
+    // Transparent default colors replace the old presence-based paint gates.
+    t.resultFill.alpha = t.resultBorder.alpha = 0.f;
+    t.iconPlateFill.alpha = t.iconPlateBorder.alpha = 0.f;
+    t.tabDefaultFill.alpha = t.tabDefaultStroke.alpha = 0.f;
+    t.tabActiveStroke.alpha = t.tabHoverStroke.alpha = 0.f;
+    t.tabActiveFill.alpha = .82f; t.tabHoverFill.alpha = .72f;
+    t.searchBorder.alpha = .4f; t.headerSeparator.alpha = .45f;
+    t.searchBg.alpha = glass ? .52f : 1.f;
+    for (const auto& [name, field] : kQuickNavColorFields)
+    {
+        auto it = settings.colors.find(name);
+        snowdesktop::RgbaColor color;
+        if (it != settings.colors.end() && snowdesktop::DecodeRgbaColor(it->second, color)) t.*field = color;
+    }
+    t.searchEditBg = t.searchBg;
+    return t;
+}

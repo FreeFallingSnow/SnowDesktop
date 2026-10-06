@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.SharedBuildGuard.cmake")
+snowdesktop_check_shared_output()
+
 project(SnowDesktop LANGUAGES C CXX)
 
 # WinUI 3 XAML compilation and NuGet PackageReference integration are MSBuild
@@ -10,6 +13,8 @@ if (NOT CMAKE_GENERATOR MATCHES "^Visual Studio ")
     message(FATAL_ERROR
         "SnowDesktop WinUI 3 requires a Visual Studio/MSBuild generator")
 endif()
+
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
 
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
 string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
@@ -129,7 +134,21 @@ message(STATUS
 set(SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION "2.4.0")
 set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
 
+set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
+    src/system_controls.cpp
+    src/system_control_windows.cpp
+    src/system_control_audio.cpp
+    src/system_control_power.cpp
+    src/system_control_brightness.cpp
+    src/system_control_wifi.cpp
+    src/system_control_bluetooth.cpp
+    src/system_control_media.cpp
+    src/system_control_quick_actions.cpp)
+set(SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES
+    dxva2 wlanapi powrprof setupapi oleaut32 wbemuuid)
+
 set(SNOWDESKTOP_SOURCES
+    ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}
     src/main.cpp
     src/auto_start_manager.cpp
     src/auto_start_manager.h
@@ -154,6 +173,35 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_dock_drop.cpp
     src/app/app_dock_launch.cpp
     src/app/app_dock_layout.cpp
+    src/dock_appbar.cpp
+    src/dock_appbar.h
+    src/app/app_status_bar.cpp
+    src/status_bar_view.cpp
+    src/status_bar_view.h
+    src/status_bar_preview.cpp
+    src/status_bar_preview.h
+    src/status_bar.cpp
+    src/status_bar_input_method.cpp
+    src/status_bar_input_method.h
+    src/status_bar_notification.cpp
+    src/status_bar_notification.h
+    src/tray_service.cpp
+    src/tray_menu_placement.cpp
+    src/tray_menu_placement.h
+    src/native_tooltip.cpp
+    src/native_tooltip.h
+    src/native_tooltip_content.h
+    src/native_tooltip_state.h
+    src/native_control_geometry.h
+    src/tray_model.cpp
+    src/tray_service.h
+    src/tray_focus.h
+    src/taskbar_hook/tray_protocol.h
+    src/status_bar.h
+    src/status_bar_shell_shortcut.h
+    src/status_bar_interaction.h
+    src/status_bar_settings.h
+    src/status_bar_appbar.h
     src/app/app_dock_menu.cpp
     src/app/app_dock_model.cpp
     src/app/app_dock_render.cpp
@@ -230,6 +278,9 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_popup_render.cpp
     src/app/app_popup_transition.cpp
     src/app/app_quick_navigation_interaction.cpp
+    src/app/app_quick_navigation_features.cpp
+    src/app/app_quick_navigation_preview.cpp
+    src/app/app_theme_preview.cpp
     src/app/app_quick_navigation_layout.cpp
     src/app/app_quick_navigation_messages.cpp
     src/app/app_quick_navigation_model.cpp
@@ -303,6 +354,7 @@ set(SNOWDESKTOP_SOURCES
     src/shortcut_icon_resource.cpp
     src/shortcut_icon_resource.h
     src/utils.cpp
+    src/operation_feedback.cpp
     src/desktop_display_settings.h
     src/settings_controller.cpp
     src/settings_controller.h
@@ -329,6 +381,22 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.cpp
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
+    src/winui/status_bar_page_presenter.cpp
+    src/winui/desktop_style_page_presenter.cpp
+    src/winui/desktop_style_page_presenter.h
+    src/native_ui_scene.cpp
+    src/native_ui_scene.h
+    src/system_panel.cpp
+    src/system_control_prompt.cpp
+    src/system_panel.h
+    src/system_panel_model.cpp
+    src/system_panel_model.h
+    src/system_calendar_editor.cpp
+    src/system_calendar_editor.h
+    src/system_calendar_editor_state.h
+    src/system_panel_preview.cpp
+    src/system_panel_preview.h
+    src/winui/status_bar_page_presenter.h
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h
     src/winui/context_menu_page_presenter.cpp
@@ -373,9 +441,15 @@ set(SNOWDESKTOP_SOURCES
     src/winui/xaml_type_info_impl_bridge.cpp
     src/ui_animation_scheduler.cpp
     src/personalization.cpp
+    src/personalization_path.cpp
+    src/theme_library.cpp
+    src/theme_preview.cpp
+    src/theme_workshop.cpp
     src/dock_settings.cpp
+    src/taskbar_hook/taskbar_symbol_resolver.cpp
     src/navigation_settings.cpp
     src/general_settings.cpp
+    src/app_font.cpp
     src/category_settings.cpp
     src/component_preview.cpp
     src/native_component_preview_export.cpp
@@ -402,10 +476,12 @@ set(SNOWDESKTOP_SOURCES
     src/widget_preview_context.cpp
     src/widget_data_broker.cpp
     src/widget_task_broker.cpp
+    src/widget_location_task_executor.cpp
     src/widget_notification_runtime.cpp
     src/widget_notification_schedule_store.cpp
     src/widget_media_task_executor.cpp
     src/widget_audio_output_task_executor.cpp
+    src/widget_system_control_tasks.cpp
     src/widget_clipboard_task_executor.cpp
     src/widget_filesystem_handle_store.cpp
     src/widget_filesystem_task_executor.cpp
@@ -413,6 +489,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_app_task_executor.cpp
     src/widget_system_settings.cpp
     src/widget_system_data_provider.cpp
+    src/widget_gpu_sampler.cpp
     src/widget_audio_analysis_provider.cpp
     src/widget_draw_geometry.cpp
     src/widget_background_cache.cpp
@@ -507,7 +584,7 @@ target_include_directories(SnowDesktopWorkshopImgui PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopWorkshopImgui PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopWorkshopImgui PRIVATE /MP4 /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_options(SnowDesktopWorkshopImgui PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS} /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktopWorkshopImgui PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
@@ -518,7 +595,7 @@ target_include_directories(SnowDesktopLua PUBLIC third_party/lua)
 if(MSVC)
     set_property(TARGET SnowDesktopLua PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopLua PRIVATE /MP4
+    target_compile_options(SnowDesktopLua PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS}
         /wd4244 /wd4310 /wd4324 /wd4701 /wd4702)
 endif()
 
@@ -529,7 +606,7 @@ target_include_directories(SnowDesktopEverything PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopEverything PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopEverything PRIVATE /MP4 /wd4100 /wd4133 /wd4996)
+    target_compile_options(SnowDesktopEverything PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS} /wd4100 /wd4133 /wd4996)
 endif()
 
 add_library(SnowDesktopPinyinData STATIC ${PINYIN_DATA_SOURCES})
@@ -539,7 +616,7 @@ target_include_directories(SnowDesktopPinyinData PUBLIC
 if(MSVC)
     set_property(TARGET SnowDesktopPinyinData PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktopPinyinData PRIVATE /MP4)
+    target_compile_options(SnowDesktopPinyinData PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS})
 endif()
 
 if (MSVC)
@@ -619,6 +696,8 @@ if (MSVC)
 
     add_library(SnowDesktopTaskbarHook SHARED
         src/taskbar_hook/taskbar_hook.cpp
+        src/taskbar_hook/tray_collector.cpp
+        src/taskbar_hook/tray_protocol.h
         src/taskbar_hook/taskbar_native.cpp
         src/taskbar_hook/taskbar_classic_surface.cpp
         src/taskbar_hook/taskbar_hook_protocol.h
@@ -724,22 +803,35 @@ set_source_files_properties(
     PROPERTIES
         VS_SETTINGS "DependentUpon=SettingsShell.xaml;SubType=Code")
 
+# CMake merges .manifest target sources with the linker/Windows App SDK
+# manifests. Opt in only native HWND hosts and their matching preview tests;
+# preserve generated UAC, WinRT activation and common-controls declarations.
+function(snowdesktop_enable_native_window_compatibility TARGET_NAME)
+    target_sources(${TARGET_NAME} PRIVATE
+        "${CMAKE_SOURCE_DIR}/cmake/native_windows_compatibility.manifest")
+endfunction()
+
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
     src/resource.rc
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
+snowdesktop_enable_native_window_compatibility(SnowDesktop)
 
 # Error messages must survive a missing or damaged distribution/lang tree.
 # Keep lang/*.json as the only translation source, embedded at configure time.
 file(GLOB SNOWDESKTOP_LAUNCHER_CATALOGS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/lang/*.json")
-set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
+set(SNOWDESKTOP_LAUNCHER_MESSAGES "#pragma once\nstruct LauncherMessage { const char* language; const wchar_t* message; const wchar_t* pending; const wchar_t* warning; const wchar_t* startup; const wchar_t* securitySoftwareHint; };\ninline constexpr LauncherMessage kLauncherMessages[] = {\n")
 foreach(catalog IN LISTS SNOWDESKTOP_LAUNCHER_CATALOGS)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${catalog}")
     get_filename_component(language "${catalog}" NAME_WE)
     file(READ "${catalog}" catalog_json)
     string(JSON message GET "${catalog_json}" "app.launcher.failed")
-    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\"},\n")
+    string(JSON pending GET "${catalog_json}" "app.launcher.pending")
+    string(JSON warning GET "${catalog_json}" "app.launcher.warning")
+    string(JSON startup GET "${catalog_json}" "app.operation.startFailed")
+    string(JSON security_hint GET "${catalog_json}" "app.launcher.securitySoftwareHint")
+    string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "{\"${language}\", LR\"LAUNCHER(${message})LAUNCHER\", LR\"LAUNCHER(${pending})LAUNCHER\", LR\"LAUNCHER(${warning})LAUNCHER\", LR\"LAUNCHER(${startup})LAUNCHER\", LR\"LAUNCHER(${security_hint})LAUNCHER\"},\n")
 endforeach()
 string(APPEND SNOWDESKTOP_LAUNCHER_MESSAGES "};\n")
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_messages.h"
@@ -813,6 +905,7 @@ endif()
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
     src
+    "${CMAKE_BINARY_DIR}/generated"
     src/core
     src/app
     src/winui
@@ -821,7 +914,7 @@ target_include_directories(SnowDesktop PRIVATE
 
 if (MSVC)
     set_property(TARGET SnowDesktop PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(SnowDesktop PRIVATE /MP4 /bigobj /W4 /permissive- /EHsc /utf-8 /Z7)
+    target_compile_options(SnowDesktop PRIVATE /MP${SNOWDESKTOP_COMPILE_JOBS} /bigobj /W4 /permissive- /EHsc /utf-8 /Z7)
     target_compile_definitions(SnowDesktop PRIVATE
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00
@@ -867,10 +960,11 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
+    ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES}
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
+    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleacc oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
     version wbemuuid taskschd
 )
 
@@ -898,6 +992,8 @@ string(JSON SNOWDESKTOP_WIDGET_SKILL_REVISION GET
 
 add_executable(snowwidget
     tools/snowwidget/main.cpp
+    tools/snowwidget/gpu_diagnostics.cpp
+    src/widget_gpu_sampler.cpp
     src/widget_author_lint.cpp
     src/widget_author_permissions.cpp
     src/widget_author_test.cpp
@@ -913,7 +1009,7 @@ add_executable(snowwidget
     src/widget_view_contract_json.cpp)
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 target_include_directories(snowwidget PRIVATE src)
-target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32)
+target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32 pdh dxgi)
 target_compile_definitions(snowwidget PRIVATE
     SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
     SNOWDESKTOP_WIDGET_SKILL_REVISION=${SNOWDESKTOP_WIDGET_SKILL_REVISION})
@@ -960,11 +1056,26 @@ if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
         COMMENT "Embedding the permitted Steamworks runtime for the Agent Skill Workshop CLI...")
 endif()
 
+add_library(SnowDesktopTextInput STATIC src/text_input_window.cpp src/text_input_accessibility.cpp)
+target_include_directories(SnowDesktopTextInput PUBLIC src)
+target_compile_features(SnowDesktopTextInput PUBLIC cxx_std_20)
+target_compile_definitions(SnowDesktopTextInput PRIVATE
+    _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(SnowDesktopTextInput PUBLIC d2d1 dwrite gdi32 imm32 user32 ole32 oleaut32 uuid uiautomationcore)
+if (MSVC)
+    set_property(TARGET SnowDesktopTextInput PROPERTY MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(SnowDesktopTextInput PRIVATE /W4 /permissive- /EHsc /utf-8)
+endif()
+target_link_libraries(SnowDesktop PRIVATE SnowDesktopTextInput)
+
 include(CTest)
 if (BUILD_TESTING)
     set(SNOWDESKTOP_TEST_TARGETS)
     set(SNOWDESKTOP_CORE_TEST_TARGETS)
     set(SNOWDESKTOP_FAST_TEST_TARGETS)
+    set(SNOWDESKTOP_APP_TEST_TARGETS)
+    set(SNOWDESKTOP_TOOL_TEST_TARGETS)
 
     function(snowdesktop_add_test TEST_TARGET TEST_NAME)
         set(multiValueArgs
@@ -974,7 +1085,7 @@ if (BUILD_TESTING)
             COMMAND_ARGUMENTS
             LABELS)
         cmake_parse_arguments(
-            SNOW_TEST "" "" "${multiValueArgs}" ${ARGN})
+            SNOW_TEST "NATIVE_WINDOW_COMPATIBILITY" "" "${multiValueArgs}" ${ARGN})
 
         if (NOT SNOW_TEST_SOURCES)
             message(FATAL_ERROR
@@ -982,6 +1093,10 @@ if (BUILD_TESTING)
         endif()
 
         add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
+        target_link_libraries(${TEST_TARGET} PRIVATE SnowDesktopTextInput)
+        if (SNOW_TEST_NATIVE_WINDOW_COMPATIBILITY)
+            snowdesktop_enable_native_window_compatibility(${TEST_TARGET})
+        endif()
         # Keep every CTest binary, symbol file, and import library outside the
         # runnable product root. Generator expressions prevent Visual Studio
         # from appending a second configuration directory.
@@ -1042,12 +1157,21 @@ if (BUILD_TESTING)
         list(APPEND SNOWDESKTOP_TEST_TARGETS ${TEST_TARGET})
         set(SNOWDESKTOP_TEST_TARGETS
             "${SNOWDESKTOP_TEST_TARGETS}" PARENT_SCOPE)
-        if ("core" IN_LIST SNOW_TEST_LABELS)
+        if ("tools" IN_LIST SNOW_TEST_LABELS)
+            list(APPEND SNOWDESKTOP_TOOL_TEST_TARGETS ${TEST_TARGET})
+            set(SNOWDESKTOP_TOOL_TEST_TARGETS
+                "${SNOWDESKTOP_TOOL_TEST_TARGETS}" PARENT_SCOPE)
+        else()
+            list(APPEND SNOWDESKTOP_APP_TEST_TARGETS ${TEST_TARGET})
+            set(SNOWDESKTOP_APP_TEST_TARGETS
+                "${SNOWDESKTOP_APP_TEST_TARGETS}" PARENT_SCOPE)
+        endif()
+        if ("core" IN_LIST SNOW_TEST_LABELS AND NOT "tools" IN_LIST SNOW_TEST_LABELS)
             list(APPEND SNOWDESKTOP_CORE_TEST_TARGETS ${TEST_TARGET})
             set(SNOWDESKTOP_CORE_TEST_TARGETS
                 "${SNOWDESKTOP_CORE_TEST_TARGETS}" PARENT_SCOPE)
         endif()
-        if (NOT "integration" IN_LIST SNOW_TEST_LABELS)
+        if (NOT "integration" IN_LIST SNOW_TEST_LABELS AND NOT "tools" IN_LIST SNOW_TEST_LABELS)
             list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS ${TEST_TARGET})
             set(SNOWDESKTOP_FAST_TEST_TARGETS
                 "${SNOWDESKTOP_FAST_TEST_TARGETS}" PARENT_SCOPE)
@@ -1143,6 +1267,15 @@ if (BUILD_TESTING)
             src/widget_time.cpp
         INCLUDE_DIRECTORIES src
         LABELS integration contract l10n lua time widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetLocationTaskExecutorTests
+        widget_location_task_executor
+        SOURCES tests/widget_location_task_executor_tests.cpp
+            src/widget_location_task_executor.cpp src/widget_task_broker.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES windowsapp user32
+        LABELS contract permission widget location)
 
     snowdesktop_add_test(
         SnowDesktopWidgetRuntimeDiagnosticsTests
@@ -1300,9 +1433,13 @@ if (BUILD_TESTING)
         widget_system_data_provider
         SOURCES
             tests/widget_system_data_provider_tests.cpp
+            tests/system_controls_tests.cpp
+            src/widget_system_control_tasks.cpp
             src/widget_system_data_provider.cpp
+            src/widget_gpu_sampler.cpp
+            ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32 dxgi dxguid iphlpapi ole32 pdh propsys runtimeobject shcore user32 windowsapp windowscodecs
+        LINK_LIBRARIES ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES} advapi32 dxgi dxguid iphlpapi ole32 pdh propsys runtimeobject shcore user32 windowsapp windowscodecs
         LABELS contract data system widget)
 
     snowdesktop_add_test(
@@ -1388,8 +1525,10 @@ if (BUILD_TESTING)
             tests/calendar_service_tests.cpp
             src/calendar_service.cpp
     src/calendar_display.cpp
+            src/l10n.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS service)
 
     snowdesktop_add_test(
@@ -1407,10 +1546,32 @@ if (BUILD_TESTING)
         general_settings
         SOURCES
             tests/general_settings_tests.cpp
+            tests/theme_library_tests.cpp
+            src/theme_library.cpp
             src/general_settings.cpp
+            src/app_font.cpp
             src/personalization.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES dwrite d2d1 windowscodecs gdi32 ole32
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract settings)
+
+    snowdesktop_add_test(
+        SnowDesktopThemeWorkflowTests
+        theme_workflow
+        SOURCES
+            tests/theme_preview_tests.cpp
+            tests/theme_workshop_tests.cpp
+            src/theme_preview.cpp
+            src/theme_workshop.cpp
+            src/preview_png_writer.cpp
+            src/widget_preview_stage.cpp
+        INCLUDE_DIRECTORIES src steam_bridge/src
+        LINK_LIBRARIES SnowDesktopWorkshopManagerSupport d2d1 d3d11 dxguid windowscodecs ole32 shlwapi
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktop>"
+        LABELS contract integration settings steam sdk-free host-runtime)
+    set_tests_properties(theme_workflow PROPERTIES TIMEOUT 180)
+    add_dependencies(SnowDesktopThemeWorkflowTests SnowDesktop)
 
     snowdesktop_add_test(
         SnowDesktopDemoModeRulesTests
@@ -1495,25 +1656,6 @@ if (BUILD_TESTING)
         LINK_LIBRARIES bcrypt shell32
         LABELS contract deployment integration steam update)
     add_dependencies(SnowDesktopSteamRuntimeUpdateTests SnowDesktopLauncher)
-    add_test(
-        NAME steam_local_deploy_contract
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
-            -File
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/steam_local_deploy_contract_tests.ps1")
-    set_tests_properties(
-        steam_local_deploy_contract PROPERTIES
-        TIMEOUT 60
-        LABELS "contract;deployment;integration;steam")
-    add_test(
-        NAME deployment_manifest_integration
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
-            -File
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/deployment_manifest_integration.ps1"
-            -RepositoryRoot "${CMAKE_CURRENT_SOURCE_DIR}")
-    set_tests_properties(
-        deployment_manifest_integration PROPERTIES
-        TIMEOUT 60
-        LABELS "build;integration;packaging;winui")
 
     snowdesktop_add_test(
         SnowDesktopSettingsControllerTests
@@ -1690,7 +1832,7 @@ if (BUILD_TESTING)
             src/l10n.cpp
         INCLUDE_DIRECTORIES src src/core
         LINK_LIBRARIES advapi32 d2d1 ole32 shell32 user32 uuid
-        LABELS core contract interaction slot integration)
+        LABELS core contract interaction slot integration shell)
 
     snowdesktop_add_test(
         SnowDesktopWidgetInteractionRulesTests
@@ -1782,28 +1924,52 @@ if (BUILD_TESTING)
         widget_author_tools
         SOURCES
             tests/widget_author_tools_tests.cpp
+            tests/widget_package_review_tests.cpp
+            tools/snowwidget/gpu_diagnostics.cpp
+            src/widget_gpu_sampler.cpp
             src/widget_author_permissions.cpp
             src/widget_api_registry.cpp
             src/widget_logical_slot.cpp
             src/widget_package.cpp
             src/widget_permission_broker.cpp
             src/widget_permission_state.cpp
-        INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES SnowDesktopLua bcrypt ole32
-        LABELS authoring contract permission security widget)
+        INCLUDE_DIRECTORIES src tools/snowwidget
+        LINK_LIBRARIES SnowDesktopLua bcrypt ole32 pdh dxgi
+        LABELS authoring contract data permission security widget)
+
+    # Keep file-export validation independent from installation-review fixtures.
+    add_test(NAME widget_package_file_export
+        COMMAND SnowDesktopWidgetAuthorToolsTests --package-export)
+    set_tests_properties(widget_package_file_export PROPERTIES
+        TIMEOUT 30 LABELS "authoring;contract;data;security;widget"
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetAuthorToolsTests>")
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorPreviewCliTests
         widget_author_preview_cli
+        NATIVE_WINDOW_COMPATIBILITY
         SOURCES tests/widget_author_preview_cli_tests.cpp
+        INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 windowscodecs
         COMMAND_ARGUMENTS
             "$<TARGET_FILE:snowwidget>"
             "$<TARGET_FILE:SnowDesktop>"
-            "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS authoring integration lua preview render widget)
+            "${CMAKE_CURRENT_SOURCE_DIR}" native
+        LABELS authoring integration lua preview render widget host-runtime)
     add_dependencies(SnowDesktopWidgetAuthorPreviewCliTests
         snowwidget SnowDesktop)
+    # One executable, five independently bounded scenes. Every child deadline
+    # is below its 80-second suite budget and CTest's 90-second outer watchdog.
+    set_tests_properties(widget_author_preview_cli PROPERTIES TIMEOUT 90)
+    foreach(preview_suite background materials runtime validation)
+        add_test(NAME widget_author_preview_cli_${preview_suite}
+            COMMAND SnowDesktopWidgetAuthorPreviewCliTests
+                "$<TARGET_FILE:snowwidget>" "$<TARGET_FILE:SnowDesktop>"
+                "${CMAKE_CURRENT_SOURCE_DIR}" ${preview_suite})
+        set_tests_properties(widget_author_preview_cli_${preview_suite} PROPERTIES
+            TIMEOUT 90 LABELS "authoring;integration;lua;preview;render;widget;host-runtime"
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetAuthorPreviewCliTests>")
+    endforeach()
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewTreeTests
@@ -1828,6 +1994,14 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES dwrite
         LABELS contract interaction lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopTextInputWindowTests
+        text_input_window
+        SOURCES tests/text_input_window_tests.cpp
+        INCLUDE_DIRECTORIES src
+        COMMAND_ARGUMENTS ${CMAKE_SOURCE_DIR}
+        LABELS core contract interaction accessibility security)
 
     snowdesktop_add_test(
         SnowDesktopWidgetStorageTransactionTests
@@ -2148,6 +2322,11 @@ if (BUILD_TESTING)
     set_tests_properties(shell_file_operation_worker_network_preflight PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 20 LABELS "rules;shell;test-infrastructure")
+    add_test(NAME shell_file_operation_feedback
+        COMMAND SnowDesktopShellFileOperationWorkerTests --failure-feedback-tests)
+    set_tests_properties(shell_file_operation_feedback PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
+        TIMEOUT 20 LABELS "core;shell;storage")
     # The automatic preflight regression shares the manual integration binary.
     # A cold fast build still needs it, although it never runs the integration.
     list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS SnowDesktopShellFileOperationWorkerTests)
@@ -2155,23 +2334,41 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopDockAndWindowRulesTests
         dock_and_window_rules
+        NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock_and_window_rules_tests.cpp
             tests/taskbar_native_tests.cpp
+            tests/taskbar_symbol_resolver_tests.cpp
+            src/taskbar_hook/taskbar_symbol_resolver.cpp
             src/taskbar_hook/taskbar_native.cpp
             src/taskbar_hook/taskbar_classic_surface.cpp
             ${MINHOOK64_SOURCES}
             tests/desktop_backdrop_compositor_tests.cpp
+            tests/tray_model_tests.cpp
+            tests/tray_live_tests.cpp
+            src/tray_model.cpp
+            src/tray_service.cpp
+            src/tray_menu_placement.cpp
             src/app/desktop_backdrop_compositor.cpp
+            src/icon_beautify.cpp
             src/l10n.cpp
             src/dock_window_preview.cpp
             src/dock_window_transition.cpp
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES comctl32 d2d1 d3d11 dcomp dwrite dwmapi dxgi dxguid gdi32 ole32 runtimeobject shcore user32 windowsapp
+        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 runtimeobject shell32 shcore shlwapi user32 windowsapp winhttp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
+    add_dependencies(SnowDesktopDockAndWindowRulesTests SnowDesktopTaskbarHook)
+    # Explicit opt-in: this real-Shell diagnostic registers only its own fixture
+    # icon and broadcasts TaskbarCreated, never launching the desktop host.
+    add_test(NAME tray_live_integration
+        COMMAND SnowDesktopDockAndWindowRulesTests --tray-live "$<TARGET_FILE:SnowDesktopTaskbarHook>")
+    set_tests_properties(tray_live_integration PROPERTIES
+        TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDockAndWindowRulesTests>"
+        LABELS "integration;shell;tray;manual")
 
     snowdesktop_add_test(
         SnowDesktopDesktopDropCacheTests
@@ -2207,16 +2404,18 @@ if (BUILD_TESTING)
         modern_menu_interaction
         SOURCES
             tests/modern_menu_interaction_tests.cpp
+            tests/tray_focus_tests.cpp
             src/menu_icon_render.cpp
             src/menu_builtin_icon.cpp
             src/modern_menu.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES gdi32 imm32 ole32 user32 windowscodecs
+        LINK_LIBRARIES comctl32 gdi32 imm32 ole32 user32 windowscodecs
         LABELS integration ui)
 
     snowdesktop_add_test(
         SnowDesktopComponentPreviewTests
         component_preview
+        NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/component_preview_tests.cpp
             tests/widget_background_cache_tests.cpp
@@ -2240,7 +2439,7 @@ if (BUILD_TESTING)
             tests/widget_preview_stage_tests.cpp
             src/widget_preview_stage.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 dxguid ole32 windowscodecs
+        LINK_LIBRARIES d2d1 d3d11 dxgi dxguid gdi32 ole32 windowscodecs
         LABELS contract render ui preview)
 
     snowdesktop_add_test(
@@ -2260,14 +2459,22 @@ if (BUILD_TESTING)
             tests/steam_workshop_manager_tests.cpp
             steam_bridge/src/preview_cache.cpp
             src/steam_workshop_cache.cpp
+            src/steam_workshop_source.cpp
             src/steam_workshop_sync.cpp
+            src/widget_package.cpp
+            src/widget_package_paths.cpp
+            src/widget_logical_slot.cpp
+            src/widget_permission_broker.cpp
+            src/widget_permission_state.cpp
         INCLUDE_DIRECTORIES steam_bridge/src src
         LINK_LIBRARIES
             SnowDesktopWorkshopManagerSupport
             SnowDesktopSteamAppIdentity
             advapi32
+            bcrypt
             d3d11
             dxgi
+            ole32
             user32
             windowscodecs
             winhttp
@@ -2311,14 +2518,21 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LABELS rules animation)
 
+    include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ToolTests.cmake")
+    # Shared desktop/Explorer/host resources are serialized. Isolated fixtures
+    # and pure logic cases can execute alongside these tests.
+    get_property(SNOWDESKTOP_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
+    foreach(test_name IN LISTS SNOWDESKTOP_REGISTERED_TESTS)
+        get_test_property(${test_name} LABELS test_labels)
+        if(("shell" IN_LIST test_labels OR "window" IN_LIST test_labels OR
+            "ui" IN_LIST test_labels OR "host-runtime" IN_LIST test_labels)
+            AND NOT "tools" IN_LIST test_labels)
+            set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
+        endif()
+    endforeach()
     add_custom_target(
         SnowDesktopCoreTests
         DEPENDS ${SNOWDESKTOP_CORE_TEST_TARGETS})
-    add_test(NAME test_selection
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
-            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selection_tests.ps1")
-    set_tests_properties(test_selection PROPERTIES
-        TIMEOUT 30 LABELS "core;contract;build")
     # Partial environment coverage must not be presented as a passing entry.
     # Failures take precedence over this distinct unavailable-environment code.
     set_tests_properties(application_data_lifecycle steam_runtime_update steam_workshop_manager
@@ -2328,10 +2542,23 @@ if (BUILD_TESTING)
         SnowDesktopFastTests
         DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})
     add_custom_target(
+        SnowDesktopBuildToolTests
+        DEPENDS ${SNOWDESKTOP_TOOL_TEST_TARGETS})
+    add_custom_target(
+        SnowDesktopAppTests
+        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
+            -File "${CMAKE_SOURCE_DIR}/scripts/arrange_build_output.ps1"
+            -BuildOutput "${CMAKE_BINARY_DIR}/$<CONFIG>"
+            -AllowMissingFirstPartyRuntime
+        DEPENDS ${SNOWDESKTOP_APP_TEST_TARGETS})
+    add_custom_target(
         SnowDesktopTests
-        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        COMMAND "${CMAKE_COMMAND}" -E env "PSExecutionPolicyPreference=Bypass" "SNOWDESKTOP_ENTRY_POWERSHELL=${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" "${SNOWDESKTOP_POWERSHELL_EXECUTABLE}" -NoProfile
             -File "${CMAKE_SOURCE_DIR}/scripts/arrange_build_output.ps1"
             -BuildOutput "${CMAKE_BINARY_DIR}/$<CONFIG>"
             -AllowMissingFirstPartyRuntime
         DEPENDS ${SNOWDESKTOP_TEST_TARGETS})
 endif()
+
+
+snowdesktop_install_shared_guard()

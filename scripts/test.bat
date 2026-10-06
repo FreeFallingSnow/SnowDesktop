@@ -1,5 +1,7 @@
 @echo off
 setlocal
+call "%~dp0powershell_runtime.bat"
+if errorlevel 1 exit /b 2
 cd /d "%~dp0.."
 
 set "MODE=full"
@@ -9,6 +11,7 @@ if "%~1"=="" goto run
 if /i "%~1"=="full" set "MODE=full"& goto validate_tail
 if /i "%~1"=="fast" set "MODE=fast"& goto validate_tail
 if /i "%~1"=="core" set "MODE=core"& goto validate_tail
+if /i "%~1"=="tools" set "MODE=tools"& goto validate_tail
 if /i "%~1"=="list" set "MODE=list"& goto validate_tail
 if /i "%~1"=="label" (
     if "%~2"=="" goto usage
@@ -32,15 +35,16 @@ goto run
 if not "%~3"=="" goto usage
 
 :run
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test_manager.ps1 -Mode "%MODE%" -Filter "%FILTER%"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\test_manager.ps1 -Mode "%MODE%" -Filter "%FILTER%"
 exit /b %ERRORLEVEL%
 
 :usage
 echo Usage:
-echo   scripts\test.bat                         Full automatic suite, excludes manual diagnostics
-echo   scripts\test.bat full                    Full automatic suite, excludes manual diagnostics
+echo   scripts\test.bat                         Full application suite, excludes tools and manual diagnostics
+echo   scripts\test.bat full                    Full application suite, excludes tools and manual diagnostics
 echo   scripts\test.bat fast                    Exclude integration tests
 echo   scripts\test.bat core                    Core tests only
+echo   scripts\test.bat tools                   Build tool regression tests, excludes manual diagnostics
 echo   scripts\test.bat label ^<regex^>           Tests matching a CTest label
 echo   scripts\test.bat name ^<regex^>            Tests matching a CTest name
 echo   scripts\test.bat list                    List tests and labels

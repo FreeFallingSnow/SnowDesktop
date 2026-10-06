@@ -3,6 +3,7 @@
 #include "settings_ipc_backends.h"
 #include "settings_ipc_values.h"
 #include "../l10n.h"
+#include "../diagnostic_log.h"
 
 #include <commctrl.h>
 #include <ole2.h>
@@ -99,13 +100,22 @@ int RunSettingsProcess(HINSTANCE instance)
         controller.reset();
         channel.SetDisconnected({});
         channel.Close();
+        WriteDiagnosticLogEntry((L"SettingsUI exit pid=" + std::to_wstring(GetCurrentProcessId()) +
+            L" code=" + std::to_wstring(message.wParam)).c_str());
         return static_cast<int>(message.wParam);
     }
     catch (const std::exception& error)
     {
         OutputDebugStringA((std::string("SnowDesktop settings process: ") + error.what() + "\n").c_str());
+        WriteDiagnosticLogEntry((L"SettingsUI exception pid=" +
+            std::to_wstring(GetCurrentProcessId())).c_str(), DiagnosticLogLevel::Error);
         return ERROR_INVALID_DATA;
     }
-    catch (...) { return ERROR_INVALID_DATA; }
+    catch (...)
+    {
+        WriteDiagnosticLogEntry((L"SettingsUI unknown exception pid=" +
+            std::to_wstring(GetCurrentProcessId())).c_str(), DiagnosticLogLevel::Error);
+        return ERROR_INVALID_DATA;
+    }
 }
 }

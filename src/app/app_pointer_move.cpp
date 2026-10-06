@@ -7,6 +7,7 @@
 #include "../widget_scroll_rules.h"
 #include "../ole_drag_rules.h"
 #include "../page_navigation_rules.h"
+#include "categorized_popup_scope.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
@@ -15,7 +16,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     CancelPopupHover(true);
     CancelRenameClick();
     (void)wp;
-    if (renameEdit_ != nullptr)
+    if (renameController_.IsActive())
         CommitRename(false);
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelRequest_.modal)
@@ -209,6 +210,19 @@ void DesktopApp::OnMouseMoveAt(
         *dragPreviewSynced = false;
     (void)wp;
     const POINT tracePoint = current;
+    if (auto* view = GetCategorizedPopupView(); view &&
+        (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
+    {
+        const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+        CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+        if (view->HasCategoryTabPress()) view->UpdateCategoryTabDrag(current);
+        else view->UpdateSearchPointerSelection(current);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    for (auto& container : containers_)
+        if (auto* categorized = dynamic_cast<ScrollingItemWidget*>(container.get());
+            categorized && categorized->UpdateCategoryTabDrag(current)) return;
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseMoveBegin,
         tracePoint);
@@ -586,8 +600,15 @@ void DesktopApp::OnMouseMoveAt(
                 std::move(visualItemBounds), primaryVisualIndex);
             auto* listSource =
                 dynamic_cast<ListContainer*>(source);
+            const auto* popupWidget = GetOpenPopupWidget();
+            // Collection::SingleColumn describes its inline layout. A popup
+            // row must use the popup's view even in large-folder mode.
+            const bool sourceUsesList =
+                mouseDownHit_ == popupMouseDownItem_.get() && popupWidget
+                    ? UsesCollectionPopupList(*popupWidget)
+                    : listSource && listSource->SingleColumn();
             const bool listIconDrag =
-                listSource && listSource->SingleColumn() &&
+                sourceUsesList &&
                 (dynamic_cast<DesktopIcon*>(mouseDownHit_) ||
                  dynamic_cast<FolderEntryIcon*>(mouseDownHit_));
             if (fanDrag)
@@ -860,8 +881,15 @@ void DesktopApp::OnMouseMoveAt(
         if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
         if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;
         if (GetAsyncKeyState(VK_SHIFT) & 0x8000)   currentMods |= MK_SHIFT;
-        dragSession_.UpdateActionFromMods(currentMods);
+        if (dragSession_.UpdateActionFromMods(currentMods))
+        {
+            // Move/copy changes whether the source icons belong to the
+            // retained background. Repaint that transition before using a
+            // foreground-only drop-feedback update.
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
 
+        RevealSoftwareDesktopForDockDrag(current);
         SyncDragPreviewWindow();
         if (dragPreviewSynced)
             *dragPreviewSynced = true;
@@ -1129,6 +1157,39 @@ void DesktopApp::OnMouseMoveAt(
             targetRegion = resolved.region;
         }
         dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
+
+        if (dynamic_cast<DesktopGrid*>(dragSession_.Source()) &&
+            dynamic_cast<DesktopGrid*>(targetContainer))
+        {
+            // Drop feedback lives on the foreground surface, but icon hover
+            // pixels still belong to the background. Retire both hover states
+            // before presenting the new feedback, including large-icon bounds.
+            if (IsPointOverWidgetChrome(oldMouse) ||
+                IsPointOverWidgetChrome(current))
+            {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            else
+            {
+                // Background hover uses the complete layout cell, whereas
+                // input hit testing uses the tighter selection rectangle.
+                // Leaving the cell's padding must also erase its hover pixels.
+                for (const auto& entry : items_oo_)
+                {
+                    const auto* icon = dynamic_cast<const DesktopIcon*>(entry.get());
+                    const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+                    if (!item || IsRectEmptyRect(item->bounds) ||
+                        PtInRect(&item->bounds, oldMouse) ==
+                            PtInRect(&item->bounds, current))
+                        continue;
+                    RECT dirty = item->largeIcon
+                        ? GetLargeIconFrameRect(*item) : item->bounds;
+                    if (IsRectEmptyRect(dirty)) continue;
+                    InflateRect(&dirty, 8, 8);
+                    InvalidateRect(hwnd_, &dirty, FALSE);
+                }
+            }
+        }
 
         std::wstring hint;
         if (const std::wstring removalHint = GetDockDragOutRemovalHint(current);

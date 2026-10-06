@@ -1,4 +1,5 @@
 #include "widget_text_input_rules.h"
+#include "text_input_state.h"
 
 #include <dwrite.h>
 #include <cmath>
@@ -120,6 +121,37 @@ void TestContextMenuState()
             !emptyInput.canCopy &&
             emptyInput.canPaste,
         "empty inputs expose only an available paste operation");
+}
+
+void TestSubmittedInputFocusScope()
+{
+    using snowdesktop::widget_runtime::HostInputSubmitFocusScope;
+    const HostInputSubmitFocusScope* active = nullptr;
+    {
+        HostInputSubmitFocusScope submit(active, L"reminders", "new-task", "desktop");
+        Check(active && active->AllowsFocus(
+                L"reminders", "new-task", "desktop", true, false, true),
+            "a live submit can restore its own editor without outer widget selection");
+        Check(!active->AllowsFocus(L"other", "new-task", "desktop", true, false, true) &&
+                !active->AllowsFocus(L"reminders", "other", "desktop", true, false, true) &&
+                !active->AllowsFocus(L"reminders", "new-task", "panel", true, false, true),
+            "submit focus cannot transfer to another widget, editor or surface");
+        Check(!active->AllowsFocus(L"reminders", "new-task", "desktop", false, false, true) &&
+                !active->AllowsFocus(L"reminders", "new-task", "desktop", true, true, true) &&
+                !active->AllowsFocus(L"reminders", "new-task", "desktop", true, false, false),
+            "invalid, preview and hidden editors cannot be restored");
+        {
+            HostInputSubmitFocusScope nested(active, L"reminders", "panel-input", "panel");
+            Check(active->AllowsFocus(L"reminders", "panel-input", "panel", true, false, true) &&
+                    !active->AllowsFocus(L"reminders", "new-task", "desktop", true, false, true),
+                "a nested submit temporarily owns the focus grant");
+        }
+        Check(active == &submit && active->AllowsFocus(
+                L"reminders", "new-task", "desktop", true, false, true),
+            "a nested submit returns the grant to its still-active caller");
+    }
+    Check(active == nullptr,
+        "the submit grant expires before a later render or timer can request focus");
 }
 
 void TestDeferredFocusRequest()
@@ -267,10 +299,37 @@ void TestWrappedLineVerticalCaretMovement()
 
 int main()
 {
+    using namespace snowdesktop::text_input;
+    const std::wstring clusters = L"a\u0301\U0001f469\u200d\U0001f4bb\U0001f1e8\U0001f1f3Z";
+    const auto accentEnd = NextBoundary(clusters, 0);
+    const auto emojiEnd = NextBoundary(clusters, accentEnd);
+    const auto flagEnd = NextBoundary(clusters, emojiEnd);
+    Check(accentEnd == 2 && PreviousBoundary(clusters, accentEnd) == 0,
+        "combining marks must move and delete with their base character");
+    Check(emojiEnd == 7 && PreviousBoundary(clusters, emojiEnd) == accentEnd,
+        "a surrogate-pair ZWJ emoji must remain a single editing unit");
+    Check(flagEnd == 11 && NextBoundary(clusters, flagEnd) == clusters.size(),
+        "regional indicator pairs must remain a single editing unit");
+    Check(NextBoundary(L"\r\nx", 0) == 2 && SnapBoundary(clusters, 4) == accentEnd,
+        "CRLF and positions inside a cluster must resolve to stable boundaries");
+    History history;
+    std::wstring draft = L"draft"; std::size_t cursor = 5, anchor = 0;
+    const Snapshot initial{draft, cursor, anchor};
+    draft = L"中文"; cursor = anchor = 2;
+    history.Record(initial, {draft, cursor, anchor});
+    history.Record({draft, cursor, anchor}, {draft, 0, 0});
+    Check(history.Undo(draft, cursor, anchor) && draft == L"draft" && cursor == 5 && anchor == 0,
+        "one completed input must undo together with its original selection");
+    Check(history.Redo(draft, cursor, anchor) && draft == L"中文" && cursor == 2 && anchor == 2,
+        "redo must restore the completed input and caret");
+    history.Undo(draft, cursor, anchor);
+    history.Record({draft, cursor, anchor}, {L"replacement", 11, 11});
+    Check(!history.CanRedo(), "a new edit after undo must retire the old redo branch");
     TestUtf8Counting();
     TestBoundedReplacement();
     TestReadOnlyMutationGate();
     TestContextMenuState();
+    TestSubmittedInputFocusScope();
     TestDeferredFocusRequest();
     TestCaretVisibilityRequest();
     TestVerticalExtents();

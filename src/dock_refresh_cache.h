@@ -12,7 +12,7 @@ namespace snowdesktop::dock_refresh_cache
 // UI-owned metadata: invalidating a Shell query must not unpin a running app
 // or move a folder into the main section while its replacement is pending.
 // The key includes the logical item and source path; the version is its stamp.
-template<class Value>
+template<class Value, class Key = std::wstring>
 class Cache
 {
 public:
@@ -25,7 +25,7 @@ public:
         bool sameSourceVersion = false;
     };
 
-    Lookup Read(const std::wstring& key, const std::wstring& version = {},
+    Lookup Read(const Key& key, const std::wstring& version = {},
         Clock::time_point now = Clock::now())
     {
         auto& entry = entries_[key];
@@ -42,7 +42,7 @@ public:
             entry.value && entry.valueVersion == version};
     }
 
-    bool Publish(const std::wstring& key, std::uint64_t ticket, Value value, bool replaceCurrent = true)
+    bool Publish(const Key& key, std::uint64_t ticket, Value value, bool replaceCurrent = true)
     {
         const auto found = entries_.find(key);
         if (found == entries_.end() || found->second.generation != generation_ ||
@@ -61,7 +61,7 @@ public:
 
     // Failed Shell queries are not durable metadata. Keep a previously valid
     // icon while throttling retries, and reject failures from retired requests.
-    bool PublishFailure(const std::wstring& key, std::uint64_t ticket,
+    bool PublishFailure(const Key& key, std::uint64_t ticket,
         std::chrono::milliseconds delay, Clock::time_point now = Clock::now())
     {
         const auto found = entries_.find(key);
@@ -71,6 +71,47 @@ public:
         found->second.fresh = true;
         found->second.retryAt = now + delay;
         return true;
+    }
+
+    // A value can remain visible while a bounded-age identity revalidation is
+    // pending. Publishing still rejects obsolete tickets and source versions.
+    template<class Submit>
+    Lookup ReadOrSubmit(const Key& key, const std::wstring& version, Submit submit,
+        Clock::time_point now = Clock::now())
+    {
+        const auto lookup = Read(key, version, now);
+        if (!lookup.fresh) submit(lookup.ticket);
+        return lookup;
+    }
+
+    bool PublishWithLifetime(const Key& key, std::uint64_t ticket, Value value,
+        std::chrono::milliseconds lifetime, Clock::time_point now = Clock::now())
+    {
+        if (!Publish(key, ticket, std::move(value))) return false;
+        entries_.at(key).retryAt = now + lifetime;
+        return true;
+    }
+
+    std::optional<bool> PublishWithLifetimeChanged(const Key& key,
+        std::uint64_t ticket, Value value, std::chrono::milliseconds lifetime,
+        Clock::time_point now = Clock::now())
+    {
+        const auto found = entries_.find(key);
+        if (found == entries_.end()) return std::nullopt;
+        const auto previous = PeekValue(key, found->second.requestVersion);
+        const bool changed = previous.value_or(Value{}) != value;
+        if (!PublishWithLifetime(key, ticket, std::move(value), lifetime, now))
+            return std::nullopt;
+        return changed;
+    }
+
+    std::optional<Value> PeekValue(const Key& key,
+        const std::wstring& version = {}) const
+    {
+        const auto found = entries_.find(key);
+        if (found == entries_.end() || found->second.valueVersion != version)
+            return std::nullopt;
+        return found->second.value;
     }
 
     void Invalidate() { ++generation_; }
@@ -93,7 +134,7 @@ private:
         std::optional<Clock::time_point> retryAt;
         std::uint64_t valueTicket = 0;
     };
-    std::unordered_map<std::wstring, Entry> entries_;
+    std::unordered_map<Key, Entry> entries_;
     std::uint64_t generation_ = 1;
     std::uint64_t ticket_ = 0;
 };

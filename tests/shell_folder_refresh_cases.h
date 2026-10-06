@@ -95,6 +95,43 @@ void TestFolderRefreshScopeAndReads()
     TestFolderFirstListing();
     TestPopupTargetRebinding();
     using namespace snowdesktop::shell_refresh;
+    // A completed destination listing must be visible before button-up, while
+    // the source model stays untouched until release and obsolete reads expire.
+    FolderReadDelivery delivery;
+    std::uint64_t version = 1;
+    int previews = 0, modelApplies = 0;
+    bool dragLoading = true, dragAvailable = false;
+    auto ready = std::make_shared<Snapshot>();
+    auto& destination = ready->folders[L"C:\\DESTINATION"];
+    destination.path = L"C:\\destination";
+    destination.complete = true;
+    destination.entries.emplace_back();
+    const auto preview = [&](auto& result) {
+        ++previews;
+        const auto& folder = result.folders.at(L"C:\\DESTINATION");
+        snowdesktop::dock_folder_popup_read::Refresh(folder.path, &folder,
+            dragAvailable, dragLoading, [](const auto&) {}, [](const auto&) {});
+    };
+    const auto publish = [&](auto&) { ++modelApplies; };
+    const auto current = [&](const auto&) { return version; };
+    delivery.Deliver(L"C:\\DESTINATION", version, ready, true, preview, publish);
+    Check(previews == 1 && !dragLoading && dragAvailable && modelApplies == 0,
+        "a held drag receives its finished destination listing without replacing the source model");
+    delivery.Drain(current, publish);
+    delivery.Drain(current, publish);
+    Check(modelApplies == 1, "button-up publishes the retained read exactly once without re-reading");
+    delivery.Deliver(L"C:\\DESTINATION", version, ready, true, preview, publish);
+    ++version;
+    delivery.Drain(current, publish);
+    Check(modelApplies == 1, "a directory change during dragging rejects the obsolete retained read");
+    delivery.Deliver(L"C:\\DESTINATION", version, ready, true, preview, publish);
+    delivery.Deliver(L"C:\\DESTINATION", version, ready, false, preview, publish);
+    delivery.Drain(current, publish);
+    Check(modelApplies == 2, "a newer idle result supersedes the retained drag result");
+    delivery.Deliver(L"C:\\DESTINATION", version, ready, true, preview, publish);
+    delivery.Clear();
+    delivery.Drain(current, publish);
+    Check(modelApplies == 2, "shutdown discards queued folder publication");
     const std::wstring first = L"C:\\mapped";
     const std::wstring second = L"C:\\other";
     Check(FolderKey(L"c:/mapped/.") == FolderKey(first) &&

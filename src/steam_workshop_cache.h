@@ -21,8 +21,12 @@ struct SteamWorkshopCachedItem
 struct SteamWorkshopLocalCache
 {
     bool authoritative = false;
+    // Reports skipped roots separately from the successfully parsed local
+    // manifest's authority. An entirely unreadable scan is not authoritative.
+    bool partial = false;
     std::vector<std::string> subscribedPublishedFileIds;
     std::vector<SteamWorkshopCachedItem> readyItems;
+    std::vector<std::string> skippedLibraries;
     std::string error;
 };
 

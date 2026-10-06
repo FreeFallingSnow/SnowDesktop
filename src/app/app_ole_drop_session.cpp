@@ -2143,6 +2143,16 @@ HRESULT DesktopApp::HandleOleDrop(
             dock && externalDockMappingTarget &&
             dock == externalDropDock)
         {
+            if (!stagedDropPathLease && CanPinExistingDesktopPaths(dropPaths))
+            {
+                const auto mappingEffect = snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect);
+                const bool pinned = mappingEffect != DROPEFFECT_NONE &&
+                    AddMaterializedItemsToDock(dropPaths, externalDockInsertIndex, true);
+                if (pinned) { SaveLayoutSlots(); RequestShellRefresh(); }
+                EndDragSession();
+                *effect = pinned ? mappingEffect : DROPEFFECT_NONE;
+                return S_OK;
+            }
             if (!dock->HasCapacity(sourceItems.size()))
             {
                 MessageBeep(MB_ICONWARNING);
@@ -2263,6 +2273,8 @@ HRESULT DesktopApp::HandleOleDrop(
 HRESULT DesktopApp::HandleOleQueryContinueDrag(
     BOOL escapePressed, DWORD keyState)
 {
+    if (escapePressed && TryDismissPopupForEscape())
+        escapePressed = FALSE;
     POINT desktopPoint{};
     const bool pointerOnDesktopSurface =
         dragDropController_.IsSelfDragActive() &&

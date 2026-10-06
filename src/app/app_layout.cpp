@@ -1,5 +1,8 @@
 #include "app.h"
+#include "../layout_scroll_save_rules.h"
 #include "../large_icon_backup.h"
+#include "../operation_recovery_dialog.h"
+#include <set>
 #include "../collection_titleless_rules.h"
 #include "../font_cu_rules.h"
 #include "../widgets/collection_group_rules.h"
@@ -56,6 +59,7 @@ void DesktopApp::ReloadLayoutStateFromDisk()
  */
 void DesktopApp::LoadLayoutSlots()
 {
+    CancelDeferredLayoutSave();
     initializeGridFromWindows_ = false;
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     snowdesktop::layout_storage::Document document;
@@ -72,8 +76,8 @@ void DesktopApp::LoadLayoutSlots()
     {
         const std::wstring message = L"Layout load rejected: " +
             Utf8ToWide(loadResult.error);
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Error);
+        WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+        snowdesktop::operation_feedback::Report({"app.operation.layoutLoadFailed", message});
         return;
     }
     if (loadResult.status ==
@@ -81,8 +85,7 @@ void DesktopApp::LoadLayoutSlots()
     {
         const std::wstring message = L"Layout recovered from last-good backup: " +
             Utf8ToWide(loadResult.error);
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Warning);
+        snowdesktop::operation_feedback::Report({"app.operation.layoutRecovered", message, 0, true});
     }
 
     InvalidateDockShellMetadata();
@@ -122,6 +125,7 @@ void DesktopApp::LoadLayoutSlots()
     widgets_.clear();
     dockEntries_.clear();
     savedPageIds_.clear();
+    savedPageNames_.clear();
     savedPageColumns_.clear();
     savedPageRows_.clear();
 
@@ -158,6 +162,10 @@ void DesktopApp::LoadLayoutSlots()
     listItemFontSizeCu_ = savedListFontSizeCu.value_or(
         itemFontSizeCu_);
 
+    if (document.desktopTitleLines) desktopTitleLines_ = std::clamp(*document.desktopTitleLines, 1, 2);
+    if (document.largeFolderTitleLines) largeFolderTitleLines_ = std::clamp(*document.largeFolderTitleLines, 1, 2);
+    if (document.scrollingTitleLines) scrollingTitleLines_ = std::clamp(*document.scrollingTitleLines, 1, 2);
+    if (document.titleEllipsis) titleEllipsis_ = *document.titleEllipsis;
     if (document.itemFontWeight &&
         *document.itemFontWeight >= 100 &&
         *document.itemFontWeight <= 950)
@@ -176,13 +184,26 @@ void DesktopApp::LoadLayoutSlots()
             *document.shortcutArrowMode, 0, 2);
 
     // Missing beautification fields are the compatibility path for old layouts.
-    iconBeautifySettings_ = snowdesktop::IconBeautifySettings{};
+    iconBeautifySettings_ = document.iconBeautifyPreset
+        ? snowdesktop::icon_beautify::MakePreset(
+            static_cast<snowdesktop::IconBeautifyPreset>(*document.iconBeautifyPreset))
+        : snowdesktop::IconBeautifySettings{};
     if (document.iconBeautifyEnabled)
         iconBeautifySettings_.enabled = *document.iconBeautifyEnabled;
     if (document.iconBeautifyPreset)
         iconBeautifySettings_.preset = static_cast<snowdesktop::IconBeautifyPreset>(
             *document.iconBeautifyPreset);
 
+    if (document.iconBeautifyGlassEnabled)
+        iconBeautifySettings_.glassEnabled = *document.iconBeautifyGlassEnabled;
+    if (document.iconBeautifyGlassBlurRadius)
+        iconBeautifySettings_.glassBlurRadius = *document.iconBeautifyGlassBlurRadius;
+    if (document.iconBeautifyEdgeHighlightEnabled)
+        iconBeautifySettings_.edgeHighlightEnabled = *document.iconBeautifyEdgeHighlightEnabled;
+    if (document.iconBeautifyEdgeHighlightWidth)
+        iconBeautifySettings_.edgeHighlightWidth = *document.iconBeautifyEdgeHighlightWidth;
+    if (document.iconBeautifyEdgeHighlightStrength)
+        iconBeautifySettings_.edgeHighlightStrength = *document.iconBeautifyEdgeHighlightStrength;
     if (document.iconBeautifyMode)
         iconBeautifySettings_.mode = *document.iconBeautifyMode;
 
@@ -264,22 +285,20 @@ void DesktopApp::LoadLayoutSlots()
         iconBeautifySettings_.outlineB = *document.iconBeautifyOutlineB;
     if (document.iconBeautifyShadowStrength)
         iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
-    iconBeautifySettings_ = snowdesktop::icon_beautify::Normalize(
-        iconBeautifySettings_);
-    if (document.iconBeautifyPreset &&
-        iconBeautifySettings_.preset ==
-            snowdesktop::IconBeautifyPreset::DefaultBeautify)
-        iconBeautifySettings_ = snowdesktop::icon_beautify::MakePreset(
-            snowdesktop::IconBeautifyPreset::DefaultBeautify);
-    else if (!document.iconBeautifyPreset)
-        iconBeautifySettings_.preset = snowdesktop::icon_beautify::IdentifyPreset(
-            iconBeautifySettings_);
+    if (document.iconBeautifyEdgeLight) iconBeautifySettings_.edgeLight = *document.iconBeautifyEdgeLight;
+    iconBeautifySettings_ = snowdesktop::icon_beautify::ResolvePersistedSettings(
+        iconBeautifySettings_, document.iconBeautifyPreset.has_value());
 
     for (const auto& page : document.pages)
     {
         const std::wstring pageId = Utf8ToWide(page.id);
         if (pageId == kDockPageId) continue;
         RememberSavedPageId(pageId);
+        if (page.name)
+        {
+            const auto name = snowdesktop::page_management::NormalizeName(Utf8ToWide(*page.name));
+            if (name && !name->empty()) savedPageNames_[pageId] = *name;
+        }
         if (page.columns && *page.columns > 0)
             savedPageColumns_[pageId] = *page.columns;
         if (page.rows && *page.rows > 0)
@@ -539,6 +558,8 @@ void DesktopApp::LoadLayoutSlots()
             widget.contentSortAscending = widget.folderSortAscending;
         }
         widget.activeCategoryId = Utf8ToWide(saved.activeCategory);
+        for (const auto& id : saved.categoryTabOrder)
+            widget.categoryTabOrder.push_back(Utf8ToWide(id));
         widget.itemKeys.reserve(saved.items.size());
         for (const auto& key : saved.items)
             widget.itemKeys.push_back(Utf8ToWide(key));
@@ -678,6 +699,9 @@ void DesktopApp::LoadLayoutSlots()
             entry.folderItemKeys.push_back(Utf8ToWide(key));
         entry.listMode = saved.listMode;
         entry.fanPopup = saved.fanPopup;
+        entry.showSearchBox = saved.showSearchBox;
+        entry.showFileCategories = saved.showFileCategories;
+        for (const auto& id : saved.categoryTabOrder) entry.categoryTabOrder.push_back(Utf8ToWide(id));
         entry.detailShowModified = saved.detailShowModified;
         entry.detailShowType = saved.detailShowType;
         entry.detailShowSize = saved.detailShowSize;
@@ -800,7 +824,7 @@ void DesktopApp::LoadLayoutSlots()
                         pair.second.hasGrid && pair.second.cell.pageId == candidate;
                 });
         }
-        if (hasDesktopContent) continue;
+        if (hasDesktopContent || savedPageNames_.contains(candidate)) continue;
         std::erase(savedPageIds_, candidate);
         savedPageColumns_.erase(candidate);
         savedPageRows_.erase(candidate);
@@ -820,8 +844,45 @@ void DesktopApp::LoadLayoutSlots()
  *
  * 写入内容包括：首选监视器、页面列表、桌面项（排除组件所属项）以及所有组件的完整定义。
  */
-bool DesktopApp::SaveLayoutSlots()
+void DesktopApp::CancelDeferredLayoutSave()
 {
+    if (controlHwnd_) KillTimer(controlHwnd_, kLayoutScrollSaveTimerId);
+    layoutScrollSave_.Clear();
+}
+
+void DesktopApp::DeferScrollLayoutSave()
+{
+    if (layoutReload_.Pending() || !desktopItemsReady_ || gridPages_.empty())
+        return;
+    layoutSavePending_ = true;
+    const auto now = snowdesktop::LayoutScrollSave::Clock::now();
+    const bool alreadyDue = layoutScrollSave_.Due(now);
+    const unsigned delay = layoutScrollSave_.Request(now);
+    // Once the bounded deadline is due, leave its timer queued. Repeated
+    // wheel input must not continually reset it just before dispatch.
+    if (alreadyDue) return;
+    if (!controlHwnd_ || !SetTimer(controlHwnd_, kLayoutScrollSaveTimerId,
+            delay, nullptr))
+    {
+        // Preserve pending state during a drag if a timer cannot be armed;
+        // the normal commit/backup/exit boundary will retry the current model.
+        if (!snowdesktop::CanFlushScrollLayout(
+                reloading_, dragSession_.HasContext(),
+                dragDropController_.IsTransportActive(),
+                widgetAction_ != WidgetAction::None))
+        {
+            CancelDeferredLayoutSave();
+            WriteDiagnosticLogEntry(L"Scroll layout save timer unavailable; layout remains pending",
+                DiagnosticLogLevel::Warning);
+        }
+        else
+            SaveLayoutSlots();
+    }
+}
+
+bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
+{
+    CancelDeferredLayoutSave();
     // A backup may already be on disk while Shell still shows the old model.
     // Exit and unrelated settings commits must not overwrite that document.
     if (layoutReload_.Pending())
@@ -830,6 +891,29 @@ bool DesktopApp::SaveLayoutSlots()
     if (!desktopItemsReady_ || gridPages_.empty())
         return false;
 
+    if (dockFolderPopupOpen_)
+    {
+        const auto source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
+        if (source < widgets_.size())
+            widgets_[source].categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
+        else
+            for (auto& entry : dockEntries_)
+            {
+                const auto id = std::to_wstring(static_cast<int>(entry.type)) + L":" + ToUpperInvariant(entry.reference);
+                if (id == dockFolderPopupSourceId_) entry.categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
+            }
+    }
+
+    layoutSavePending_ = true;
+    const auto failed = [this, notifyFailure](const std::wstring& detail) {
+        WriteDiagnosticLogEntry(detail.c_str(), DiagnosticLogLevel::Error);
+        if (notifyFailure && !layoutSaveFailureNotified_)
+        {
+            layoutSaveFailureNotified_ = true;
+            snowdesktop::operation_feedback::Report({"app.operation.layoutUnsaved", detail});
+        }
+        return false;
+    };
     // Container membership is committed before this persistence boundary.
     // Rendering a temporary drag target or sending files to an application never
     // changes membership and therefore never reaches this conversion.
@@ -848,22 +932,40 @@ bool DesktopApp::SaveLayoutSlots()
         const std::filesystem::path data = GetDataDirectoryPath();
         auto state = std::filesystem::path(GetDataStateRootPath());
         if (state.empty()) state = data.parent_path();
-        const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 2);
-        if (!result.ok)
-        {
-            WriteDiagnosticLogEntry((L"Large icon upgrade backup failed: " + Utf8ToWide(result.error)).c_str(), DiagnosticLogLevel::Error);
-            return false;
-        }
+        // The user may skip this additional upgrade backup. The actual layout
+        // save below still validates and atomically persists the document.
+        // Remember that choice only for this data directory and session.
+        static std::set<std::filesystem::path> skippedBackups;
+        const auto ensureBackup = [&](int generation) {
+            const auto identity = data;
+            if (skippedBackups.contains(identity)) return true;
+            for (;;)
+            {
+                const auto backup = snowdesktop::EnsureLargeIconUpgradeBackup(
+                    state, data, SNOWDESKTOP_VERSION, generation);
+                if (backup.ok) return true;
+                using snowdesktop::operation_feedback::RecoveryChoice;
+                const auto choice = snowdesktop::operation_feedback::ChooseRecovery(
+                    hwnd_,
+                    {"app.operation.upgradeBackupFailed", Utf8ToWide(backup.error), 0, true},
+                    _LW("app.operation.saveAnyway"));
+                if (choice == RecoveryChoice::Retry) continue;
+                if (choice == RecoveryChoice::Continue)
+                {
+                    skippedBackups.insert(identity);
+                    WriteDiagnosticLogEntry(L"User chose to save without the additional layout upgrade backup",
+                        DiagnosticLogLevel::Warning);
+                    return true;
+                }
+                return false;
+            }
+        };
+        if (!ensureBackup(2)) return false;
         if (std::any_of(items_.begin(), items_.end(), [](const auto& item) {
             return item.largeIcon && item.largeIcon->backgroundStyle <= -4;
         }))
         {
-            const auto presetBackup = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 3);
-            if (!presetBackup.ok)
-            {
-                WriteDiagnosticLogEntry((L"Large icon preset upgrade backup failed: " + Utf8ToWide(presetBackup.error)).c_str(), DiagnosticLogLevel::Error);
-                return false;
-            }
+            if (!ensureBackup(3)) return false;
         }
     }
     demoCollectionIdentityCache_.clear();
@@ -924,11 +1026,21 @@ bool DesktopApp::SaveLayoutSlots()
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
+         << ",\n  \"desktopTitleLines\": " << desktopTitleLines_
+         << ",\n  \"largeFolderTitleLines\": " << largeFolderTitleLines_
+         << ",\n  \"scrollingTitleLines\": " << scrollingTitleLines_
+         << ",\n  \"titleEllipsis\": " << (titleEllipsis_ ? "true" : "false")
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
          << ",\n  \"iconSizeScale\": " << itemIconSizeScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
+         << ",\n  \"iconBeautifyGlassEnabled\": " << (iconBeautifySettings_.glassEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyGlassBlurRadius\": " << iconBeautifySettings_.glassBlurRadius
+         << ",\n  \"iconBeautifyEdgeHighlightEnabled\": " << (iconBeautifySettings_.edgeHighlightEnabled ? "true" : "false")
+         << ",\n  \"iconBeautifyEdgeHighlightWidth\": " << iconBeautifySettings_.edgeHighlightWidth
+         << ",\n  \"iconBeautifyEdgeHighlightStrength\": " << iconBeautifySettings_.edgeHighlightStrength
+         << ",\n  \"iconBeautifyEdgeLight\": " << snowdesktop::EncodeEdgeLight(iconBeautifySettings_.edgeLight)
          << ",\n  \"iconBeautifyMode\": " << iconBeautifySettings_.mode
          << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifySettings_.backgroundOpacity
          << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifySettings_.gradientEnabled ? "true" : "false")
@@ -973,7 +1085,10 @@ bool DesktopApp::SaveLayoutSlots()
             if (colIt != savedPageColumns_.end()) columns = colIt->second;
             if (rowIt != savedPageRows_.end()) rows = rowIt->second;
         }
-        file << "\", \"columns\": " << std::max(1, columns) <<
+        file << "\"";
+        if (const auto name = savedPageNames_.find(pagesToWrite[i]); name != savedPageNames_.end())
+            file << ", \"name\": \"" << JsonEscapeUtf8(name->second) << "\"";
+        file << ", \"columns\": " << std::max(1, columns) <<
             ", \"rows\": " << std::max(1, rows) << " }";
         file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
     }
@@ -1082,7 +1197,13 @@ bool DesktopApp::SaveLayoutSlots()
                     NormalizeMode(w.folderSortMode)
              << ", \"folderSortAscending\": "
              << (w.folderSortAscending ? "true" : "false")
-             << ", \"items\": [";
+             << ", \"categoryTabOrder\": [";
+        for (size_t j = 0; j < w.categoryTabOrder.size(); ++j)
+        {
+            if (j) file << ",";
+            file << "\"" << JsonEscapeUtf8(w.categoryTabOrder[j]) << "\"";
+        }
+        file << "], \"items\": [";
         for (size_t j = 0; j < w.itemKeys.size(); ++j)
         {
             file << "\"" << JsonEscapeUtf8(w.itemKeys[j]) << "\"";
@@ -1118,6 +1239,8 @@ bool DesktopApp::SaveLayoutSlots()
              << ", \"listMode\": "
              << (entry.listMode ? "true" : "false")
              << ", \"fanPopup\": " << (entry.fanPopup ? "true" : "false")
+             << ", \"showSearchBox\": " << (entry.showSearchBox ? "true" : "false")
+             << ", \"showFileCategories\": " << (entry.showFileCategories ? "true" : "false")
              << ", \"detailShowModified\": "
              << (entry.detailShowModified ? "true" : "false")
              << ", \"detailShowType\": "
@@ -1130,7 +1253,13 @@ bool DesktopApp::SaveLayoutSlots()
              << entry.detailTypePosition
              << ", \"detailSizePosition\": "
              << entry.detailSizePosition
-             << ", \"folderItems\": [";
+             << ", \"categoryTabOrder\": [";
+        for (size_t j = 0; j < entry.categoryTabOrder.size(); ++j)
+        {
+            if (j) file << ", ";
+            file << "\"" << JsonEscapeUtf8(entry.categoryTabOrder[j]) << "\"";
+        }
+        file << "], \"folderItems\": [";
         for (size_t j = 0;
             j < entry.folderItemKeys.size(); ++j)
         {
@@ -1163,15 +1292,14 @@ bool DesktopApp::SaveLayoutSlots()
     {
         const std::wstring message = L"Layout save failed: " +
             Utf8ToWide(saveError);
-        WriteDiagnosticLogEntry(
-            message.c_str(), DiagnosticLogLevel::Error);
-        return false;
+        return failed(message);
     }
     if (!snowdesktop::debug_profile::AcknowledgeDesktopChange(saveError))
     {
-        WriteDiagnosticLogEntry(Utf8ToWide(saveError).c_str(), DiagnosticLogLevel::Error);
-        return false;
+        return failed(Utf8ToWide(saveError));
     }
+    layoutSavePending_ = false;
+    layoutSaveFailureNotified_ = false;
     return true;
 }
 

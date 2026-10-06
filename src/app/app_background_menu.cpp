@@ -573,7 +573,7 @@ DesktopApp::RenderWidgetMenuPreview(
                     borderR, borderG, borderB, borderAlpha,
                     borderWidth, edgeHighlightEnabled,
                     edgeHighlightWidth, edgeHighlightStrength,
-                    gradientEndA, glass, acrylic, &stageAppearance.panelGradient))
+                    gradientEndA, glass, acrylic, &stageAppearance.panelGradient, &stageAppearance.edgeLight))
             {
                 stageAppearance.widgetBorderWidth = borderWidth;
                 stageAppearance.widgetEdgeHighlightEnabled =
@@ -715,6 +715,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.widgetEdgeHighlightEnabled) + L":" +
         std::to_wstring(appearance.widgetEdgeHighlightWidth) + L":" +
         std::to_wstring(appearance.widgetEdgeHighlightStrength) + L":" +
+        Utf8ToWide(snowdesktop::EncodeEdgeLight(appearance.edgeLight)) + L":" +
         std::to_wstring(appearance.gradientEndA) + L":" +
         std::to_wstring(appearance.cornerRadius) + L":" +
         std::to_wstring(appearance.barHeight) + L":" +
@@ -1286,6 +1287,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
 
     snowdesktop::modern_menu::Options options;
     options.owner = hwnd_;
+    options.zOrderCompanion = [&]() { return previewWindow.Handle(); };
     options.anchor = screenPoint;
     options.dpi = menuIconDpi_;
     options.lightTheme = menuLightTheme_;
@@ -1573,9 +1575,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Display);
     }
 
-    const auto allLuaWidgets = BuildLuaWidgetMenuEntries();
-    const bool workshopAvailable =
-        WidgetEngine::IsSteamWorkshopBridgeAvailable();
+    // The root does not need the component catalogue. Refresh/validate it only
+    // when Add Widget opens, retaining one fresh snapshot for this menu session.
+    std::vector<LuaWidgetMenuEntry> allLuaWidgets;
+    bool luaWidgetCatalogueLoaded = false;
+    bool workshopAvailable = false;
     std::wstring luaSearch;
     LuaWidgetMenuFilter luaFilter = LuaWidgetMenuFilter::All;
     auto luaWidgets = FilterLuaWidgetMenuEntries(
@@ -1625,11 +1629,13 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     int maxOff = MaxPageOffset();
     const size_t monitorCount = gridPages_.size();
     // 单物理屏同时承担首屏和末屏，也应提供末屏的分页导航菜单。
-    const bool showPageNavigation = !isFirstPage || monitorCount == 1;
+    const bool showPageManagement = !generalSettings_.contextMenuHidePageManagement;
+    const bool showPageNavigation = showPageManagement &&
+        (!isFirstPage || monitorCount == 1);
 
     // ── 首屏/末屏锁定开关（持久化、互斥，仅多屏时显示） ──
     HMENU pinPageMenu = nullptr;
-    if (monitorCount >= 2)
+    if (showPageManagement && monitorCount >= 2)
     {
         pinPageMenu = CreatePopupMenu();
         if (pinPageMenu)
@@ -1684,8 +1690,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
             for (int i = 0; static_cast<size_t>(i) < savedPageIds_.size(); ++i)
             {
-                if (!PageHasContent(savedPageIds_[i]) && !pagesOnMonitors.contains(i)) continue;
-                std::wstring label = GetPageDisplayName(i);
+                if (!PageIsNavigable(savedPageIds_[i]) && !pagesOnMonitors.contains(i)) continue;
+                std::wstring label = snowdesktop::page_management::MenuLabel(GetPageDisplayName(i));
                 UINT flags = MF_STRING;
                 if (pagesOnMonitors.contains(i))
                     flags |= MF_GRAYED;
@@ -1700,8 +1706,46 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
 
-    AppendMenuW(menu, MF_STRING, kContextPageAdd, _LW("app.menu.add_page"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    const auto pageSnapshot = CapturePageLayoutSnapshot();
+    const auto renamedPage = std::ranges::find(pageSnapshot.pages, clickedPageId,
+        &snowdesktop::PageLayoutEntry::id);
+    std::wstring pageNameDraft = renamedPage != pageSnapshot.pages.end()
+        ? renamedPage->name : std::wstring{};
+    HMENU pageMenu = showPageManagement ? CreatePopupMenu() : nullptr;
+    if (pageMenu)
+    {
+        AppendMenuW(pageMenu, MF_STRING, kContextPageAdd, _LW("app.menu.add_page"));
+        HMENU renameMenu = CreatePopupMenu();
+        if (renameMenu)
+        {
+            const auto title = snowdesktop::page_management::MenuLabel(
+                GetPageDisplayName(static_cast<int>(renamedPage - pageSnapshot.pages.begin())));
+            AppendMenuW(renameMenu, MF_STRING | MF_GRAYED, 0, title.c_str());
+            AppendMenuW(renameMenu, MF_STRING, kContextPageNameInput, _LW("settings.pages.nameHint"));
+            AppendMenuW(renameMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(renameMenu, MF_STRING, kContextPageRename, _LW("settings.pages.saveName"));
+            AppendMenuW(renameMenu, MF_STRING, kContextPageRenameCancel, _LW("app.settings.cancel"));
+            SetMenuItemTextInput(renameMenu, kContextPageNameInput, pageNameDraft);
+            SetMenuItemInlineAction(renameMenu, kContextPageRename, 1);
+            SetMenuItemInlineAction(renameMenu, kContextPageRenameCancel, 1);
+            AppendMenuW(pageMenu, MF_POPUP | (pageSnapshot.editable &&
+                renamedPage != pageSnapshot.pages.end() ? 0 : MF_GRAYED),
+                reinterpret_cast<UINT_PTR>(renameMenu), _LW("app.menu.rename_page"));
+            SetMenuItemIcon(pageMenu, reinterpret_cast<UINT_PTR>(renameMenu),
+                L"\uF3DD", MenuIconFont::FluentRegular);
+        }
+        AppendMenuW(pageMenu, MF_STRING | (pageSnapshot.editable &&
+            savedPageIds_.size() > std::max<std::size_t>(1, gridPages_.size()) ? 0 : MF_GRAYED),
+            kContextPageDelete, _LW("app.menu.delete_page"));
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(pageMenu), _LW("app.menu.pages"));
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pageMenu),
+            snowdesktop::menu_fluent_glyphs::kFileGroup, MenuIconFont::FluentRegular);
+        SetMenuItemIcon(pageMenu, kContextPageAdd, L"\uF067",
+            MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
+        SetMenuItemIcon(pageMenu, kContextPageDelete, L"\uF2ED");
+    }
+    if (showPageManagement)
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextSettingsCommand, _LW("app.menu.settings"));
 
     SetMenuItemIcon(menu, kContextNewMenu,
@@ -1798,8 +1842,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(menu, kContextPagePrev, L"");
     if (pageOffset_ < maxOff)
         SetMenuItemIcon(menu, kContextPageNext, L"");
-    SetMenuItemIcon(menu, kContextPageAdd, L"",
-        MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
 
@@ -1884,6 +1926,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     };
     auto searchLuaWidgets = [&](UINT command, const std::wstring& text,
                                 auto& rootItems) {
+        if (command == kContextPageNameInput)
+        {
+            pageNameDraft = text;
+            return;
+        }
         if (command != kContextAddLuaWidgetSearch)
             return;
         luaSearch = text;
@@ -1965,9 +2012,26 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     shellRequest.background = true;
     shellRequest.context = snowdesktop::shell_extensions::Context::Desktop;
     shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    auto prepareWidgetSubmenu = [&](UINT submenuCommand,
+        std::vector<snowdesktop::modern_menu::Item>& children) {
+        if (!widgetMenu || luaWidgetCatalogueLoaded ||
+            submenuCommand != static_cast<UINT>(
+                reinterpret_cast<UINT_PTR>(widgetMenu)))
+            return;
+        allLuaWidgets = BuildLuaWidgetMenuEntries();
+        workshopAvailable = WidgetEngine::IsSteamWorkshopBridgeAvailable();
+        luaWidgets = FilterLuaWidgetMenuEntries(
+            allLuaWidgets, luaSearch, luaFilter);
+        children = BuildAddWidgetMenuItems(allLuaWidgets, luaWidgets,
+            luaPage, luaSearch, luaFilter, workshopAvailable);
+        luaWidgetCatalogueLoaded = true;
+    };
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
-        previewWidgetMenuItem, searchLuaWidgets, &shellRequest);
+        previewWidgetMenuItem, searchLuaWidgets, &shellRequest,
+        [&]() { return previewWindow.Handle(); }, false,
+        kContextPageRename, kContextPageRenameCancel,
+        prepareWidgetSubmenu);
     previewWindow.Close();
 
     if (sortMenu) DestroyMenu(sortMenu);
@@ -2071,6 +2135,21 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextPagePrev: NavigatePageOffset(-1); break;
         case kContextPageNext: NavigatePageOffset(1); break;
         case kContextPageAdd: AddNewPage(); break;
+        case kContextPageRename:
+        {
+            const auto result = RenamePage(pageSnapshot.revision, clickedPageId, pageNameDraft);
+            if (!result.Succeeded())
+                MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_,
+                    result.status == snowdesktop::PageLayoutOperationStatus::Stale
+                        ? _LW("settings.pages.status.stale")
+                        : (result.message.empty() ? _LW("settings.pages.status.failed") : result.message.c_str()),
+                    _LW("app.menu.rename_page"), MB_OK | MB_ICONWARNING);
+            break;
+        }
+        case kContextPageDelete:
+            if (CapturePageLayoutSnapshot().revision == pageSnapshot.revision)
+                ConfirmPageRemoval(clickedPageId, screenPoint);
+            break;
         default: break;
         }
     }

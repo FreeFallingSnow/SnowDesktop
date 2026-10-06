@@ -174,9 +174,20 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost)
 {
+    // Nonactivating Dock Hosts do not dismiss another menu on their own.
+    // Unwind that session before release starts an asynchronous running-app
+    // lookup: its delivery is fenced while a menu is active, and otherwise
+    // captures the old menu HWND as a foreground that cannot survive teardown.
+    DismissActiveContextMenuForPopupTransition();
+    POINT cursor{};
+    if (quickNavigationOpen_ && GetCursorPos(&cursor))
+    {
+        const POINT point{cursor.x - virtualLeft_, cursor.y - virtualTop_};
+        if (!PtInRect(&quickNavigationRect_, point)) CloseQuickNavigation(false);
+    }
     CancelPopupHover(true);
     CancelRenameClick();
-    if (renameEdit_ != nullptr)
+    if (renameController_.IsActive())
         CommitRename(false);
     rightButtonDownDockHost_ = dockHost;
     // Right-click menu interaction is never an edge-swipe gesture. Cancel an
@@ -195,7 +206,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     // A right click cancels placement as one complete press/release gesture.
     // Preserve surface ownership on press, then consume release without a menu.
     if (largeIconGesture_) { CancelLargeIconGesture(); return; }
-    if (renameEdit_ != nullptr) return;
+    if (renameController_.IsActive()) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     POINT screenPt = pt;
@@ -435,7 +446,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             InvalidateRect(owner, nullptr, FALSE);
         }
     } visibilityGuard{
-        interactionPinnedWidgetId_, hwnd_, renameEdit_, luaInlineEdit_,
+        interactionPinnedWidgetId_, hwnd_, renameInputWindow_, luaInlineEdit_,
         interactionPinnedWidgetId_
     };
     if (contextWidgetIndex < widgets_.size())
@@ -458,8 +469,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             RECT content =
                 GetCollectionPopupContentRect(popup);
             for (size_t i = 0;
-                 i < dockFolderPopupWidget_.
-                    folderEntries.size(); ++i)
+                 i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
             {
                 RECT itemRect =
                     GetCollectionPopupItemRect(popup, i);
@@ -472,21 +482,19 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     !HitTestCollectionPopupItem(popup, i, pt))
                     continue;
                 ClearSelection();
-                if (!dockFolderPopupWidget_.
-                        folderEntries[i].selected)
+                if (!dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].selected)
                 {
                     for (auto& entry :
                          dockFolderPopupWidget_.
                             folderEntries)
                         entry.selected = false;
-                    dockFolderPopupWidget_.
-                        folderEntries[i].
+                    dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)].
                             selected = true;
                 }
                 InvalidateRect(
                     hwnd_, nullptr, FALSE);
                 ShowDockFolderPopupContextMenu(
-                    screenPt, i);
+                    screenPt, GetPopupFolderEntryIndex(dockFolderPopupWidget_, i));
                 return;
             }
             ShowDockFolderPopupContextMenu(

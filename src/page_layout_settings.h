@@ -20,10 +20,12 @@ enum class PageLayoutRole : std::uint8_t
 struct PageLayoutEntry
 {
     std::wstring id;
+    std::wstring name;
     int columns = 1;
     int rows = 1;
     std::size_t itemCount = 0;
     std::size_t widgetCount = 0;
+    std::size_t guideCount = 0;
     PageLayoutRole role = PageLayoutRole::Overflow;
     std::size_t monitorOrdinal = 0;
     bool visible = false;
@@ -38,9 +40,23 @@ struct PageLayoutSnapshot
     std::uint64_t revision = 0;
     std::size_t monitorCount = 0;
     std::vector<PageLayoutEntry> pages;
+    bool editable = false;
 
     friend bool operator==(const PageLayoutSnapshot&, const PageLayoutSnapshot&) =
         default;
+};
+
+struct PageRemovalImpact
+{
+    bool valid = false;
+    std::size_t itemCount = 0;
+    std::size_t widgetCount = 0;
+    std::size_t addedPageCount = 0;
+
+    [[nodiscard]] bool RequiresConfirmation() const noexcept
+    {
+        return itemCount != 0 || widgetCount != 0;
+    }
 };
 
 struct PageGridChangeImpact

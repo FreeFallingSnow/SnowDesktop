@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../widgets/collection_group_rules.h"
+#include "../desktop_source.h"
 
 // Dock insertion, collection drops and restoration to the desktop.
 
@@ -235,8 +236,18 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
 
 bool DesktopApp::AddMaterializedItemsToDock(
     const std::vector<std::wstring>& createdPaths,
-    size_t insertIndex)
+    size_t insertIndex, bool keepOnDesktop)
 {
+    std::unordered_set<std::wstring> newKeys;
+    for (const auto& path : createdPaths)
+    {
+        const auto key = ToUpperInvariant(path);
+        if (key.empty() || snowdesktop::shell_item_visibility::IsAlwaysHidden(key)) continue;
+        if (std::none_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
+                return entry.type == DockEntryType::DesktopItem &&
+                    ToUpperInvariant(entry.reference) == key;
+            })) newKeys.insert(key);
+    }
     bool hasDock = false;
     for (const auto& container : containers_)
     {
@@ -244,7 +255,7 @@ bool DesktopApp::AddMaterializedItemsToDock(
             dynamic_cast<DockContainer*>(container.get());
         if (!dock) continue;
         hasDock = true;
-        if (!dock->HasCapacity(createdPaths.size()))
+        if (!dock->HasCapacity(newKeys.size()))
             return false;
     }
     if (!hasDock) return false;
@@ -258,27 +269,48 @@ bool DesktopApp::AddMaterializedItemsToDock(
                 shell_item_visibility::
                     IsAlwaysHidden(upper))
             continue;
-        bool exists = std::any_of(dockEntries_.begin(), dockEntries_.end(),
+        auto existing = std::find_if(dockEntries_.begin(), dockEntries_.end(),
             [&](const DockEntry& entry) {
                 return entry.type == DockEntryType::DesktopItem &&
                     ToUpperInvariant(entry.reference) == upper;
         });
-        if (exists) continue;
+        if (existing != dockEntries_.end())
+        {
+            if (keepOnDesktop && !existing->keepOnDesktop)
+            {
+                existing->keepOnDesktop = true;
+                const auto itemIndex = FindItemIndexByKey(upper);
+                if (itemIndex < items_.size() && items_[itemIndex].gridCell.pageId == kDockPageId)
+                    items_[itemIndex].gridCell = {};
+                changed = true;
+            }
+            continue;
+        }
         auto recycleBin = std::find_if(dockEntries_.begin(), dockEntries_.end(),
             [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
         insertIndex = std::min(insertIndex,
             static_cast<size_t>(std::distance(dockEntries_.begin(), recycleBin)));
         dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(insertIndex),
-            DockEntry{ DockEntryType::DesktopItem, upper, false });
+            DockEntry{ DockEntryType::DesktopItem, upper, keepOnDesktop });
         ++insertIndex;
         changed = true;
     }
-    if (!changed) return false;
+    if (!changed) return keepOnDesktop && !createdPaths.empty();
     NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
     return true;
+}
+
+bool DesktopApp::CanPinExistingDesktopPaths(const std::vector<std::wstring>& paths) const
+{
+    std::vector<std::filesystem::path> roots;
+    if (snowdesktop::debug_profile::Enabled())
+        roots.emplace_back(snowdesktop::desktop_source::Directory());
+    else
+        roots = snowdesktop::desktop_source::SystemDesktops();
+    return snowdesktop::dock_drop_rules::CanReferenceDesktopPaths(paths, roots);
 }
 
 bool DesktopApp::FindDockReturnCell(
@@ -358,10 +390,15 @@ void DesktopApp::MoveDockItemsToDesktop(
     if (indices.empty()) return;
 
     std::vector<std::pair<size_t, DockEntry>> moving;
+    std::unordered_set<std::wstring> movingDesktopKeys;
     for (size_t index : indices)
     {
         if (index < dockEntries_.size())
+        {
             moving.emplace_back(index, dockEntries_[index]);
+            if (dockEntries_[index].type == DockEntryType::DesktopItem)
+                movingDesktopKeys.insert(ToUpperInvariant(dockEntries_[index].reference));
+        }
     }
 
     std::unordered_set<std::wstring> usedSlots;
@@ -370,7 +407,8 @@ void DesktopApp::MoveDockItemsToDesktop(
             widget.gridCell.pageId != kDockPageId)
             MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
     for (const auto& item : items_)
-        if (!item.name.empty() && item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item))
+        if (!item.name.empty() && item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item) &&
+            !movingDesktopKeys.contains(ToUpperInvariant(item.layoutKey)))
             MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
 
     const GridPage* targetPage = FindGridPage(gridPages_, targetCell.pageId);
@@ -384,7 +422,6 @@ void DesktopApp::MoveDockItemsToDesktop(
             moving[movingIndex].first;
         const DockEntry& entry =
             moving[movingIndex].second;
-        if (entry.keepOnDesktop) continue;
         GridSpan span{ 1, 1 };
         if (IsWidgetDockEntryType(entry.type))
         {

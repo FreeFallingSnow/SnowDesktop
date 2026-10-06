@@ -20,6 +20,29 @@ void Check(bool condition, const char* message)
 
 void TestHistoryAndFocusRoutes()
 {
+    Check(static_cast<int>(SettingsPage::General) == 1 && static_cast<int>(SettingsPage::WidgetBehavior) == 25 && static_cast<int>(SettingsPage::QuickNavigation) == 26,"new pages append without changing existing route IDs");
+    for (const auto focus : {"general.quickNavigation","general.quickNavigation.hotkey","general.hotkeys"})
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::General,focus)).page == SettingsPage::QuickNavigation,"legacy navigation shortcuts route to the dedicated page");
+    for (const auto focus : {"personalization.quickNavigationTheme","personalization.quickNavTheme"})
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::AppearanceTheme,"quick-navigation theme links retain their original appearance page");
+    for (const auto focus : {"quickNav.layout", "quickNav.layout.iconSize", "quickNav.colors.search", "quickNav.color.searchBg"})
+    {
+        const auto route = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::QuickNavigation, focus));
+        Check(route.page == SettingsPage::AppearanceTheme && route.focusId == focus,
+            "legacy navigation appearance links retain their focus within the existing custom theme");
+    }
+    for (const auto focus : {"quickNav.view", "quickNav.defaultCollapsed", "quickNav.prefixes", "quickNav.defaultEngine"})
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::QuickNavigation, focus)).page == SettingsPage::QuickNavigation,
+            "navigation behavior and legacy opening links remain on the functional page");
+    for (const auto focus : {"animation.hover", "animation.hoverScale", "animation.launch", "animation.window"})
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::Dock,
+            "old Dock animation links reach the Dock tab after settings reorganization");
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.dockAppearance")).page == SettingsPage::Dock,
+        "old Dock theme links reach the Dock tab");
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::Dock, "dock.suppressSystemTaskbar")).page == SettingsPage::Taskbar,
+        "old taskbar hiding links reach the taskbar visibility control");
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.savedThemes")).page == SettingsPage::ThemeManager,
+        "old saved-theme search opens the independent manager");
     SettingsShellNavigationState state;
     Check(state.Route().page == SettingsPage::General && !state.CanGoBack(),
         "navigation starts at the legacy General page without back history");
@@ -47,6 +70,22 @@ void TestHistoryAndFocusRoutes()
             state.Route().page == SettingsPage::AppearanceWidgets &&
             state.Route().focusId == "personalization.cornerRadius",
         "Appearance leaves are available as first-class navigation targets");
+}
+
+void TestRelocatedWidgetBehaviorNavigation()
+{
+    SettingsShellNavigationState state;
+    const auto appearance = SettingsRoute::ForPage(SettingsPage::AppearanceWidgets);
+    const auto oldLink = SettingsRoute::ForPage(SettingsPage::AppearanceWidgets,
+        "personalization.popupHoverDelayMs");
+    Check(state.Navigate(appearance) && state.Navigate(oldLink) &&
+            state.Route().page == SettingsPage::WidgetBehavior &&
+            state.Route().focusId == "personalization.popupHoverDelayMs",
+        "the shell accepts a relocated setting from an old appearance search result");
+    Check(state.GoBack() == appearance && state.GoForward()->page == SettingsPage::WidgetBehavior,
+        "Back and Forward retain the independent behavior page and its focus target");
+    Check(SettingsPageKey(SettingsPage::WidgetBehavior) == "widget-behavior",
+        "the new behavior destination has its own stable settings key");
 }
 
 void TestConditionalPages()
@@ -212,11 +251,42 @@ int main()
 {
     TestHistoryAndFocusRoutes();
     TestConditionalPages();
+    TestRelocatedWidgetBehaviorNavigation();
     TestControllerGenerationGate();
     TestControllerCommittedBackNavigation();
     TestInvalidRoutes();
     TestLargeIconParentNavigation();
     TestNavigationFeedbackLifetime();
+    {
+        SettingsShellNavigationState bars;
+        Check(bars.Navigate(SettingsRoute::ForPage(SettingsPage::DockAndTaskbar, "taskbar.theme")) &&
+                bars.Route().page == SettingsPage::Taskbar,
+            "moving the taskbar in navigation must preserve legacy taskbar routes");
+        Check(bars.Navigate(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.enable")) &&
+                bars.Route().page == SettingsPage::StatusBar && SettingsPageKey(bars.Route().page) == "status-bar",
+            "the appended status bar destination must support focus and stable route keys");
+        const auto back = bars.GoBack();
+        Check(back && back->page == SettingsPage::Taskbar,
+            "desktop bar pages must preserve navigation history");
+        for (const auto page : {SettingsPage::Personalization, SettingsPage::AppearanceTheme})
+        {
+            const auto legacy = CanonicalizeSettingsRoute(SettingsRoute::ForPage(page, "personalization.statusBarTheme"));
+            Check(legacy.page == SettingsPage::StatusBar && legacy.focusId == "statusBar.theme",
+                "legacy status bar theme links must open the relocated editor");
+        }
+        const auto statusTheme = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.theme"));
+        Check(statusTheme.page == SettingsPage::StatusBar && statusTheme.focusId == "statusBar.theme",
+            "the status bar theme route must remain on the status bar page");
+        for (const auto* focus : {"statusBar.shellUi", "statusBar.visibleWindow"})
+        {
+            const auto retired = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::StatusBar, focus));
+            Check(retired.page == SettingsPage::StatusBar && retired.focusId == "statusBar.theme",
+                "retired scene links open the default editor rather than reversing visible-window semantics");
+        }
+        const auto noWindow = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.noWindow"));
+        Check(noWindow.page == SettingsPage::StatusBar && noWindow.focusId == "statusBar.noWindow",
+            "the no-window scene has an independent focus destination");
+    }
     if (failures != 0)
     {
         std::cerr << failures << " WinUI settings navigation check(s) failed\n";

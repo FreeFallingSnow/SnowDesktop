@@ -3,6 +3,7 @@
 #include "json_value.h"
 #include "steam_runtime_context.h"
 #include "steam_runtime_publish.h"
+#include "steam_runtime_flush.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -569,52 +570,6 @@ bool NormalizeStagedFileAttributes(const std::filesystem::path& path,
 
 bool ValidatePlainFileNoReparse(const std::filesystem::path& path,
     std::string_view label, std::string& error);
-
-bool FlushPlainFile(const std::filesystem::path& path,
-    std::string_view label, std::string& error)
-{
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
-        nullptr);
-    if (file == INVALID_HANDLE_VALUE)
-    {
-        error = "cannot open " + std::string(label) +
-            " for durable publication (Win32 error " +
-            std::to_string(GetLastError()) + ')';
-        return false;
-    }
-
-    // Only the attributes are needed; tag-information queries are not
-    // supported by every filesystem. Inspect the already opened handle so
-    // rejecting a reparse point does not depend on a second path lookup.
-    BY_HANDLE_FILE_INFORMATION attributes{};
-    DWORD operationError = ERROR_SUCCESS;
-    if (!GetFileInformationByHandle(file, &attributes))
-    {
-        operationError = GetLastError();
-    }
-    else if ((attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
-        (attributes.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
-        (attributes.dwFileAttributes & FILE_ATTRIBUTE_DEVICE) != 0)
-    {
-        operationError = ERROR_INVALID_DATA;
-    }
-    else if (!FlushFileBuffers(file))
-    {
-        operationError = GetLastError();
-    }
-    const bool closed = CloseHandle(file) != FALSE;
-    const DWORD closeError = closed ? ERROR_SUCCESS : GetLastError();
-    if (operationError != ERROR_SUCCESS || !closed)
-    {
-        error = "cannot durably flush " + std::string(label) +
-            " (Win32 error " + std::to_string(
-                operationError != ERROR_SUCCESS ?
-                    operationError : closeError) + ')';
-        return false;
-    }
-    return true;
-}
 
 bool WriteTextAtomically(const std::filesystem::path& path,
     std::string_view value, std::string& error)
@@ -1798,18 +1753,44 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot,
             staging / file.relativePath;
         std::filesystem::create_directories(
             fileDestination.parent_path(), fileError);
-        if (fileError || !CopyFileW(
-                source.c_str(), fileDestination.c_str(), FALSE) ||
-            !NormalizeStagedFileAttributes(fileDestination, error) ||
-            !ValidateFile(fileDestination, file, error) ||
-            !FlushPlainFile(fileDestination,
-                "staged Steam runtime file", error))
+        const auto utf8Destination = fileDestination.u8string();
+        const std::string destinationText(utf8Destination.begin(), utf8Destination.end());
+        if (fileError)
+        {
+            error = "cannot create runtime directory: " + fileError.message();
+            staged = false;
+            break;
+        }
+        if (!CopyFileW(source.c_str(), fileDestination.c_str(), FALSE))
+        {
+            const DWORD copyError = GetLastError();
+            error = "cannot stage Steam runtime file (Win32 error " +
+                std::to_string(copyError) + "); path: " + destinationText;
+            staged = false;
+            break;
+        }
+        if (!NormalizeStagedFileAttributes(fileDestination, error) ||
+            !ValidateFile(fileDestination, file, error))
         {
             if (error.empty())
                 error = "cannot stage Steam runtime file: " +
                     file.relativePath.string();
             staged = false;
             break;
+        }
+        const auto flushed = detail::FlushRuntimePayload(fileDestination);
+        if (flushed.error != ERROR_SUCCESS)
+        {
+            const std::string detail = "runtime payload flush unavailable (Win32 error " +
+                std::to_string(flushed.error) + ", attempts " +
+                  std::to_string(flushed.attempts) + "); path: " + destinationText;
+            if (!flushed.WarningOnly()) { error = detail; staged = false; break; }
+            // The immutable payload was copied and hash-verified. Its source
+            // remains available for repair and every reuse checks its hashes.
+            // A scanning reader must not prevent first launch. Metadata still
+            // uses durable atomic writes; never apply this policy to user data.
+            if (!cleanupWarning.empty()) cleanupWarning += "; ";
+            cleanupWarning += detail;
         }
     }
     if (staged)

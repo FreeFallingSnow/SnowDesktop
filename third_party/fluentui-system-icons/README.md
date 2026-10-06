@@ -9,3 +9,9 @@ System Icons. The file is pinned to upstream commit
 - License: MIT; see `LICENSE` in this directory.
 
 The Filled font is not redistributed.
+
+The status bar and control center also use the unmodified **Battery Charge 20
+Filled** SVG geometry from the same commit. `src/status_bar_battery.h` retains
+the original path for WinUI and an equivalent sequence of Direct2D path commands
+for native rendering. Only its fill color changes to indicate charging. This
+geometry remains covered by the Microsoft copyright and MIT license above.

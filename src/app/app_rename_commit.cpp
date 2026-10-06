@@ -58,7 +58,7 @@ void DesktopApp::ApplyPendingRenames()
     // Sorting entries/rebuilding adapters must not invalidate a live editor,
     // pointer press, menu or retained native/OLE drag source.
     if (shellFileOperationInFlight_ > 0 || mouseDown_ || reloading_ ||
-        renameEdit_ || HasActiveContextMenuSession() ||
+        renameController_.IsActive() || HasActiveContextMenuSession() ||
         snowdesktop::drag_input_rules::ShouldDeferModelReload(
             dragSession_.HasContext(), dragDropController_.IsTransportActive()))
     {
@@ -207,7 +207,7 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
 void DesktopApp::CommitRename(bool cancel)
 {
     renameCommitPending_ = false;
-    if (renameEdit_ == nullptr)
+    if (renameInputWindow_ == nullptr)
     {
         renameController_.
             SetQuickNavigationPresentation(false);
@@ -222,8 +222,8 @@ void DesktopApp::CommitRename(bool cancel)
     const size_t renameIndex =
         renameController_.Index();
 
-    HWND edit = renameEdit_;
-    renameEdit_ = nullptr;
+    HWND edit = renameInputWindow_;
+    renameInputWindow_ = nullptr;
     renameEditLayout_.Reset();
     RemoveWindowSubclass(edit, &DesktopApp::RenameEditSubclassProc, 1);
 
@@ -243,6 +243,8 @@ void DesktopApp::CommitRename(bool cancel)
     if (renameFont_) { DeleteObject(renameFont_); renameFont_ = nullptr; }
     interactionPinnedWidgetId_.clear();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidateCollectionPopupContent();
+    InvalidateFloatingPopupWindow(false);
 
     if (renameController_.IsFolderEntry())
     {
@@ -286,6 +288,13 @@ void DesktopApp::CommitRename(bool cancel)
                         _LW("widget.collection_group");
                 SaveLayoutSlots();
             }
+        }
+        if (!cancel && renameIndex < widgets_.size() && dockFolderPopupOpen_ &&
+            dockFolderPopupMappingWidgetId_ == widgets_[renameIndex].id)
+        {
+            dockFolderPopupWidget_.title = widgets_[renameIndex].title;
+            ResetCollectionPopupAnimationCache();
+            InvalidateFloatingPopupWindow(false);
         }
         renameController_.Reset();
         InvalidateRect(hwnd_, nullptr, TRUE);

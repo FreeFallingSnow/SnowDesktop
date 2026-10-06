@@ -1,17 +1,11 @@
-#include "../icon_bitmap_pixels.h"
+#include "../icon_hbitmap_pixels.h"
 #include "app.h"
+#include "desktop_backdrop_update_rules.h"
 
 // HBITMAP analysis, icon beautification and Direct2D bitmap caching.
 
 namespace
 {
-    struct IconPixelBuffer
-    {
-        int width = 0;
-        int height = 0;
-        std::vector<std::uint32_t> pixels;
-    };
-
     struct IconVisibleBounds
     {
         bool hasVisiblePixels = false;
@@ -48,57 +42,6 @@ namespace
             (g * a + 127) / 255,
             (r * a + 127) / 255,
             a);
-    }
-
-    bool ReadHBitmapPixels(HBITMAP hbm, IconPixelBuffer& out)
-    {
-        BITMAP bm{};
-        if (!hbm || GetObjectW(hbm, sizeof(bm), &bm) == 0)
-            return false;
-
-        const int width = bm.bmWidth;
-        const int height = std::abs(bm.bmHeight);
-        if (width <= 0 || height <= 0)
-            return false;
-
-        out.width = width;
-        out.height = height;
-        out.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
-
-        if (bm.bmBits != nullptr && bm.bmBitsPixel == 32)
-        {
-            const auto* src = static_cast<const std::uint8_t*>(bm.bmBits);
-            const int stride = std::abs(bm.bmWidthBytes);
-            for (int y = 0; y < height; ++y)
-            {
-                std::memcpy(out.pixels.data() + static_cast<size_t>(y) * width,
-                    src + static_cast<size_t>(y) * stride,
-                    static_cast<size_t>(width) * sizeof(std::uint32_t));
-            }
-            snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(out.pixels);
-            return true;
-        }
-
-        HDC screenDc = GetDC(nullptr);
-        if (!screenDc)
-            return false;
-
-        BITMAPINFO bitmapInfo{};
-        bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
-        bitmapInfo.bmiHeader.biWidth = width;
-        bitmapInfo.bmiHeader.biHeight = -height;
-        bitmapInfo.bmiHeader.biPlanes = 1;
-        bitmapInfo.bmiHeader.biBitCount = 32;
-        bitmapInfo.bmiHeader.biCompression = BI_RGB;
-
-        const bool ok = GetDIBits(screenDc, hbm, 0, static_cast<UINT>(height),
-            out.pixels.data(), &bitmapInfo, DIB_RGB_COLORS) != 0;
-        ReleaseDC(nullptr, screenDc);
-        if (!ok)
-            return false;
-
-        snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(out.pixels);
-        return true;
     }
 
     IconVisibleBounds AnalyzeIconVisibleBounds(const std::vector<std::uint32_t>& pixels,
@@ -527,6 +470,11 @@ std::uintptr_t DesktopApp::GetD2DIconCacheKey(HBITMAP hbm, bool beautified) cons
 void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
 {
     if (!hbm) return;
+    for (const bool beautified : {false, true})
+    {
+        const auto it = d2dIconCache_.find(GetD2DIconCacheKey(hbm, beautified));
+        if (it != d2dIconCache_.end()) iconGlassBackdrop_.erase(it->second.Get());
+    }
     d2dIconCache_.erase(GetD2DIconCacheKey(hbm, false));
     d2dIconCache_.erase(GetD2DIconCacheKey(hbm, true));
 }
@@ -537,10 +485,11 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
     if (!hbm || !d2dContext_)
         return nullptr;
 
-    IconPixelBuffer buffer;
-    if (!ReadHBitmapPixels(hbm, buffer))
+    snowdesktop::icon_bitmap_pixels::Buffer buffer;
+    if (!snowdesktop::icon_bitmap_pixels::ReadHBitmap(hbm, buffer))
         return nullptr;
 
+    bool needsGlassBackdrop = false;
     if (beautify)
     {
         std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
@@ -554,6 +503,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
                     detected.r, detected.g, detected.b };
             }
         }
+        needsGlassBackdrop = iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled && !edgeFill;
         buffer.pixels = snowdesktop::icon_beautify::Render(
             buffer.pixels, buffer.width, buffer.height,
             iconBeautifySettings_, edgeFill);
@@ -574,6 +524,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
         return nullptr;
     }
 
+    iconGlassBackdrop_[bitmap.Get()] = needsGlassBackdrop;
     return bitmap;
 }
 
@@ -617,16 +568,22 @@ ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(
 }
 
 void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
-    ID2D1Bitmap* bitmap, RECT destination, float opacity)
+    ID2D1Bitmap* bitmap, RECT destination, float opacity,
+    std::uintptr_t ownerKey, bool fitWithoutUpscaling)
 {
     if (!target || !bitmap || IsRectEmptyRect(destination))
         return;
 
     const D2D1_SIZE_U source = bitmap->GetPixelSize();
-    const auto fitted = snowdesktop::icon_render_rules::FitWithoutUpscaling(
+    auto fitted = snowdesktop::icon_render_rules::FitWithoutUpscaling(
         static_cast<int>(source.width), static_cast<int>(source.height),
         destination.right - destination.left,
         destination.bottom - destination.top);
+    if (!fitWithoutUpscaling)
+    {
+        fitted.width = destination.right - destination.left;
+        fitted.height = destination.bottom - destination.top;
+    }
     if (fitted.width <= 0 || fitted.height <= 0)
         return;
 
@@ -639,15 +596,51 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         static_cast<float>(left + fitted.width),
         static_cast<float>(top + fitted.height));
 
+    const auto glass = iconGlassBackdrop_.find(bitmap);
+    if (glass != iconGlassBackdrop_.end() && glass->second && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
+    {
+        RegisterIconBackdrop({left, top, left + fitted.width, top + fitted.height}, opacity, ownerKey);
+    }
+
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (SUCCEEDED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) &&
         deviceContext)
     {
         deviceContext->DrawBitmap(bitmap, &dst, opacity,
-            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+            fitWithoutUpscaling ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC : D2D1_INTERPOLATION_MODE_LINEAR,
             nullptr, nullptr);
         return;
     }
     target->DrawBitmap(bitmap, dst, opacity,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+}
+
+void DesktopApp::RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t ownerKey)
+{
+    // Popup/quick-navigation backdrops are collected by their own animation
+    // transaction. Icons inherit that panel rather than adding a second blur.
+    if (renderingFloatingPopup_ || quickNavCompositionPaintInProgress_) return;
+    DesktopBackdropCompositor* compositor = &desktopBackdropCompositor_;
+    bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
+        desktopWidgetBackdropRequestedDuringDraw_;
+    if (renderingPersistentDockHost_)
+    {
+        // Merged Dock chrome is painted by the status bar's separate target.
+        // Its backdrop is absent from this compositor's local panel list.
+        if (statusBar_ && renderingPersistentDockHost_->container &&
+            renderingPersistentDockHost_->container->IsMergedWithStatusBar())
+        {
+            RECT screenFrame = frame;
+            OffsetRect(&screenFrame, virtualLeft_, virtualTop_);
+            parentSuppliesGlass = parentSuppliesGlass || statusBar_->HasMergedGlassBackdrop(
+                renderingPersistentDockHost_->monitor, screenFrame);
+        }
+        compositor = &renderingPersistentDockHost_->backdrop;
+        frame = snowdesktop::floating_dock_rules::DesktopRectToWindowRect(
+            frame, renderingPersistentDockHost_->sourceRect);
+    }
+    const auto key = ownerKey ? ownerKey | 1u : 0;
+    snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(*compositor,
+        frame, iconBeautifySettings_.shape, iconBeautifySettings_.glassBlurRadius,
+        opacity, key, parentSuppliesGlass);
 }

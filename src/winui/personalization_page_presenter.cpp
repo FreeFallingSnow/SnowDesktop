@@ -4,7 +4,12 @@
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
 #include "appearance_sections.h"
+#include "edge_light_editor.h"
 #include "panel_appearance_editor.h"
+#include "font_picker_search.h"
+#include "quick_navigation_options.h"
+#include "../theme_library_settings.h"
+#include "theme_library_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -13,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -32,11 +38,12 @@ using presenter_controls::SettingRow;
 namespace
 {
 
-constexpr std::array<int, 7> kPresetIds = {
+constexpr std::array<int, 8> kPresetIds = {
     kAppearancePresetDark,
     kAppearancePresetLight,
     kAppearancePresetGlassDark,
     kAppearancePresetGlassLight,
+    kAppearancePresetGlassTransparent,
     kAppearancePresetAcrylicDark,
     kAppearancePresetAcrylicLight,
     kAppearancePresetCustom,
@@ -130,8 +137,8 @@ bool IsEnter(const muxi::KeyRoutedEventArgs& args) noexcept
 
 struct PersonalizationPagePresenter::Impl
 {
-    explicit Impl(LocalizeCallback callback, const mux::Style& style)
-        : localize(std::move(callback)), cardStyle(style)
+    explicit Impl(LocalizeCallback callback, const mux::Style& style, const mux::Style& navigation)
+        : localize(std::move(callback)), cardStyle(style), navigationStyle(navigation)
     {
         BuildControls();
         HookEvents();
@@ -141,26 +148,60 @@ struct PersonalizationPagePresenter::Impl
     LocalizeCallback localize;
     PersonalizationPageActions actions;
     mux::Style cardStyle{nullptr};
-    muxc::StackPanel themeRoot{nullptr};
+    mux::Style navigationStyle{nullptr};
+    muxc::StackPanel themeRoot{nullptr}, dockThemeRoot{nullptr};
+    muxc::ContentControl dockAppearanceHost;
     muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
+    muxc::StackPanel widgetBehaviorRoot;
 
     SettingsCard themeCard;
+    std::unique_ptr<ThemeLibraryControls> globalThemes, quickThemes, popupThemes, dockThemes, themeTransfers;
+    muxc::StackPanel managementRoot;
+    SettingsCard fontCard;
+    SettingRow fontRow;
+    muxc::DropDownButton fontPicker;
+    muxc::TextBlock fontPickerLabel;
+    muxc::Flyout fontFlyout;
+    muxc::StackPanel fontPopup;
+    muxc::TextBox fontSearch;
+    muxc::ListView fontResults;
+    muxc::TextBlock fontEmpty;
+    muxc::Button fontImportFile, fontImportFolder;
+    muxc::Button fontRestartButton;
+    muxc::InfoBar fontRestart;
+    muxc::TextBlock fontError;
+    winrt::event_token fontOpenToken{}, fontSearchToken{}, fontSearchKeyToken{}, fontResultToken{}, fontResultKeyToken{};
+    winrt::event_token fontImportFileToken{}, fontImportFolderToken{}, fontRestartToken{};
+    std::vector<app_fonts::Choice> fonts;
+    std::vector<std::size_t> visibleFonts;
+    app_fonts::Selection selectedFont;
     SettingsCard themeTargetsCard;
-    SettingsCard popupThemeCard, dockThemeCard, taskbarLinkCard;
+    SettingsCard popupThemeCard, dockThemeCard;
     std::shared_ptr<PanelAppearanceEditor> quickAppearanceEditor, popupAppearanceEditor, dockAppearanceEditor;
+    std::unique_ptr<QuickNavigationOptions> quickAppearanceOptions;
+    muxc::StackPanel quickAppearanceContent;
+    muxc::StackPanel popupAppearanceContent;
+    muxc::Button popupCopyComponent;
+    SettingRow popupCopyComponentRow;
+    winrt::event_token popupCopyComponentToken{};
+    std::uint64_t navigationRevision = 0;
     muxc::ComboBox dockAppearanceCombo{nullptr};
-    muxc::HyperlinkButton taskbarLink{nullptr};
-    SettingRow taskbarThemeRow;
+    muxc::Button taskbarLink{nullptr}, statusBarLink{nullptr}, dockLink{nullptr};
+    muxc::TextBlock taskbarLinkTitle, taskbarLinkDescription, statusBarLinkTitle, statusBarLinkDescription;
+    muxc::TextBlock dockLinkTitle, dockLinkDescription;
     SettingRow dockAppearanceRow;
-    winrt::event_token dockAppearanceToken{}, taskbarLinkToken{};
+    winrt::event_token dockAppearanceToken{}, statusBarLinkToken{}, taskbarLinkToken{}, dockLinkToken{};
     PersonalizationSettings currentGlobalAppearance;
     std::uint64_t dockRevision = 0;
     SettingsCard widgetAppearanceCard;
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
+    SettingsCard behaviorCard;
     AppearanceSections appearanceSections;
     std::shared_ptr<PanelGradientEditor> panelGradientEditor;
+    std::shared_ptr<EdgeLightEditor> edgeLightEditor;
+    std::vector<std::pair<SettingRow*, muxc::Button>> appearanceResets;
     bool panelGradientEnabled = false;
 
     muxc::ComboBox presetCombo{nullptr};
@@ -187,6 +228,9 @@ struct PersonalizationPagePresenter::Impl
     muxc::ToggleSwitch topTitleBarToggle{nullptr};
     SettingRow topTitleBarRow;
     winrt::event_token topTitleBarToken{};
+    muxc::ToggleSwitch widgetTransformCursors{nullptr};
+    SettingRow widgetTransformCursorsRow;
+    winrt::event_token widgetTransformCursorsToken{};
     ContinuousControl luaWidgetContentRowHeight;
     muxc::ToggleSwitch showGroupTabCounts{nullptr};
     SettingRow showGroupTabCountsRow;
@@ -247,7 +291,7 @@ struct PersonalizationPagePresenter::Impl
 
     [[nodiscard]] std::wstring L(
         std::string_view key,
-        std::wstring_view fallback) const
+        std::wstring_view fallback = {}) const
     {
         if (localize)
         {
@@ -269,8 +313,13 @@ struct PersonalizationPagePresenter::Impl
     {
         if (!CanEmit())
             return;
-        actions.update(generation, mode,
-            PersonalizationPageActions::Edit(std::move(edit)));
+        actions.update(generation, mode, [edit = std::move(edit)](auto& settings) {
+            const auto previous = settings; edit(settings);
+            bool changed = previous.edgeLight != settings.edgeLight || previous.panelGradient != settings.panelGradient || previous.contentTheme != settings.contentTheme || previous.gradientEndA != settings.gradientEndA;
+            VisitPanelAppearanceFields([&](auto, auto field, double, double) { changed = changed || (field != &PersonalizationSettings::cornerRadius && previous.*field != settings.*field); });
+            VisitPanelAppearanceFlags([&](auto, auto field) { changed = changed || previous.*field != settings.*field; });
+            if (settings.backgroundPreset == previous.backgroundPreset && changed) settings.backgroundPreset = kAppearancePresetCustom;
+        });
     }
 
     template <typename Edit>
@@ -298,6 +347,9 @@ struct PersonalizationPagePresenter::Impl
         presetCombo.MaxWidth(520.0);
         presetRow.Initialize(presetCombo);
         themeCard.content.Children().Append(presetRow.root);
+        globalThemes = std::make_unique<ThemeLibraryControls>(localize, "global", false, presetCombo, 8, 7);
+        presetRow.controlHost.Content(nullptr); presetRow.controlHost.Content(globalThemes->SelectionContent());
+        themeCard.content.Children().Append(globalThemes->Content());
 
         InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
         appearanceSections.Initialize(widgetAppearanceCard.content, true, true);
@@ -319,11 +371,11 @@ struct PersonalizationPagePresenter::Impl
         InitializeContinuousControl(borderWidth,
             &PersonalizationSettings::widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
-            0.5, 1.0);
+            0.05, 1.0);
         InitializeContinuousControl(edgeHighlightWidth,
             &PersonalizationSettings::widgetEdgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
-            0.5, 1.0);
+            0.05, 1.0);
         InitializeContinuousControl(edgeHighlightStrength,
             &PersonalizationSettings::widgetEdgeHighlightStrength,
             0.0, 100.0, 1.0, 0.01);
@@ -354,6 +406,10 @@ struct PersonalizationPagePresenter::Impl
         appearanceSections.border.Children().Append(edgeHighlightRow.root);
         appearanceSections.border.Children().Append(edgeHighlightWidth.row.root);
         appearanceSections.border.Children().Append(edgeHighlightStrength.row.root);
+        edgeLightEditor = EdgeLightEditor::Create([this](auto key) { return L(key, L""); }, [this](auto const& light, bool commit) {
+            Emit(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview, [light](auto& settings) { settings.edgeLight = light; settings.backgroundPreset = kAppearancePresetCustom; });
+        });
+        appearanceSections.border.Children().Append(edgeLightEditor->Content());
 
         panelGradientEditor = PanelGradientEditor::Create(
             [this](std::string_view key) { return L(key, L""); },
@@ -389,6 +445,23 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
 
+        const auto reset = [this](SettingRow& row, auto action) {
+            appearanceResets.emplace_back(&row, presenter_controls::AddRestoreDefaultAction(row,
+                L("app.settings.restore_default", L"Restore default"), [this, action] {
+                    Emit(SettingsUpdateMode::PreviewAndCommit, action);
+                }));
+        };
+        for (auto* color : colorControls)
+            reset(color->editor.row, [color](auto& value) {
+                const PersonalizationSettings defaults;
+                value.*color->red = defaults.*color->red; value.*color->green = defaults.*color->green; value.*color->blue = defaults.*color->blue;
+            });
+        reset(glassRow, [](auto& value) { value.glassEnabled = PersonalizationSettings{}.glassEnabled; });
+        reset(acrylicRow, [](auto& value) { value.acrylicEnabled = PersonalizationSettings{}.acrylicEnabled; });
+        reset(edgeHighlightRow, [](auto& value) { value.widgetEdgeHighlightEnabled = PersonalizationSettings{}.widgetEdgeHighlightEnabled; });
+        reset(contentThemeRow, [](auto& value) { value.contentTheme = PersonalizationSettings{}.contentTheme; });
+        reset(gradientToggleRow, [](auto& value) { value.gradientEndA = PersonalizationSettings{}.gradientEndA; });
+        widgetAppearanceCard.content.Children().Append(globalThemes->SaveContent());
         InitializeCard(contextMenuCard, cardStyle, menuRoot);
         contextMenuCombo = muxc::ComboBox{};
         contextMenuCombo.HorizontalAlignment(
@@ -412,40 +485,127 @@ struct PersonalizationPagePresenter::Impl
             quickNavigationThemeRow.root);
 
 
+        quickThemes = std::make_unique<ThemeLibraryControls>(localize, "quickPanel", false, quickNavigationThemeCombo, 6, 5);
+        quickNavigationThemeRow.controlHost.Content(nullptr); quickNavigationThemeRow.controlHost.Content(quickThemes->SelectionContent());
+        themeTargetsCard.content.Children().Append(quickThemes->Content());
         quickAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
+                if (quickFollowsGlobal && globalThemes->CustomSelected()) globalThemes->UseCurrentBinding(themes::Kind::QuickPanel);
+                const auto global = currentGlobalAppearance;
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.quickNavigationAppearance.appearance = value; settings.quickNavigationAppearance.customized = true; });
+                    [value, global](auto& settings) { themes::EditSurfaceAppearance(settings, true, value, global); });
             });
-        themeTargetsCard.content.Children().Append(quickAppearanceEditor->Content());
+        quickAppearanceContent.Spacing(8);
+        quickAppearanceContent.Children().Append(quickAppearanceEditor->Content());
+        quickAppearanceOptions = std::make_unique<QuickNavigationOptions>(localize,
+            [this](QuickNavigationOptions::Edit edit) {
+                if (quickFollowsGlobal && globalThemes->CustomSelected()) globalThemes->UseCurrentBinding(themes::Kind::QuickPanel);
+                if (CanEmit() && actions.updateNavigation)
+                    actions.updateNavigation(generation, SettingsUpdateMode::PreviewAndCommit, std::move(edit));
+            }, cardStyle, true);
+        quickAppearanceContent.Children().Append(quickAppearanceOptions->Content());
+        quickAppearanceContent.Children().Append(quickThemes->SaveContent());
+        themeTargetsCard.content.Children().Append(quickAppearanceContent);
         InitializeCard(popupThemeCard, cardStyle, themeRoot);
         popupThemeCard.content.Children().Append(collectionPopupThemeRow.root);
+        popupThemes = std::make_unique<ThemeLibraryControls>(localize, "popup", false, collectionPopupThemeCombo, 6, 5);
+        collectionPopupThemeRow.controlHost.Content(nullptr); collectionPopupThemeRow.controlHost.Content(popupThemes->SelectionContent());
+        popupThemeCard.content.Children().Append(popupThemes->Content());
         popupAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
+                if (popupFollowsGlobal && globalThemes->CustomSelected()) globalThemes->UseCurrentBinding(themes::Kind::Popup);
+                const auto global = currentGlobalAppearance;
                 EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.collectionPopupAppearance.appearance = value; settings.collectionPopupAppearance.customized = true; });
+                    [value, global](auto& settings) { themes::EditSurfaceAppearance(settings, false, value, global); });
             });
-        popupThemeCard.content.Children().Append(popupAppearanceEditor->Content());
-        InitializeCard(dockThemeCard, cardStyle, themeRoot);
+        popupAppearanceContent.Spacing(8);
+        popupCopyComponentRow.Initialize(popupCopyComponent);
+        popupCopyComponentRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        popupCopyComponentToken = popupCopyComponent.Click([this](const auto&, const auto&) {
+            if (!CanEmit()) return;
+            popupAppearanceEditor->Flush();
+            if (popupFollowsGlobal && globalThemes->CustomSelected()) globalThemes->UseCurrentBinding(themes::Kind::Popup);
+            const auto componentAppearance = currentGlobalAppearance;
+            EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [componentAppearance](auto& settings) {
+                themes::CopyComponentAppearanceToPopup(settings, componentAppearance);
+            });
+        });
+        popupAppearanceContent.Children().Append(popupCopyComponentRow.root);
+        popupAppearanceContent.Children().Append(popupAppearanceEditor->Content());
+        popupAppearanceContent.Children().Append(popupThemes->SaveContent());
+        popupThemeCard.content.Children().Append(popupAppearanceContent);
+        dockThemeRoot = muxc::StackPanel{};
+        muxc::StackPanel dockBody;
+        InitializeCard(dockThemeCard, cardStyle, dockBody);
+        dockAppearanceHost.Content(dockBody);
+        dockAppearanceHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        dockThemeRoot.Children().Append(dockAppearanceHost);
         dockAppearanceCombo = muxc::ComboBox{};
         dockAppearanceCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         dockAppearanceCombo.MaxWidth(520.0);
         dockAppearanceRow.Initialize(dockAppearanceCombo);
         dockThemeCard.content.Children().Append(dockAppearanceRow.root);
+        dockThemes = std::make_unique<ThemeLibraryControls>(localize, "dock", false, dockAppearanceCombo, 9, 8);
+        dockAppearanceRow.controlHost.Content(nullptr); dockAppearanceRow.controlHost.Content(dockThemes->SelectionContent());
+        dockThemeCard.content.Children().Append(dockThemes->Content());
         dockAppearanceEditor = PanelAppearanceEditor::Create(localize,
             [this](const auto& value, bool commit) {
                 EmitDockAppearance(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.customAppearance = value; });
+                    [value](auto& settings) { settings.customAppearance = value; settings.appearancePreset = kAppearancePresetCustom; });
             });
         dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
-        InitializeCard(taskbarLinkCard, cardStyle, themeRoot);
-        taskbarLink = muxc::HyperlinkButton{};
-        taskbarLink.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        taskbarThemeRow.Initialize(taskbarLink);
-        taskbarThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        taskbarLinkCard.content.Children().Append(taskbarThemeRow.root);
+        dockThemeCard.content.Children().Append(dockThemes->SaveContent());
+        InitializeNavigationCard(statusBarLink, statusBarLinkTitle, statusBarLinkDescription);
+        InitializeNavigationCard(taskbarLink, taskbarLinkTitle, taskbarLinkDescription);
+        InitializeNavigationCard(dockLink, dockLinkTitle, dockLinkDescription);
+        InitializeCard(fontCard, cardStyle, themeRoot);
+        fontPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        fontPicker.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        fontPicker.MaxWidth(520.0);
+        fontPickerLabel.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+        fontPicker.Content(fontPickerLabel);
+        fontPopup.Width(presenter_controls::kSettingControlWidth);
+        fontPopup.Spacing(8.0);
+        fontSearch.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        fontResults.SelectionMode(muxc::ListViewSelectionMode::Single);
+        fontResults.IsItemClickEnabled(true);
+        fontResults.MaxHeight(300.0);
+        fontEmpty.TextWrapping(mux::TextWrapping::Wrap);
+        fontEmpty.Margin({12.0, 8.0, 12.0, 8.0});
+        fontEmpty.Visibility(mux::Visibility::Collapsed);
+        fontPopup.Children().Append(fontSearch);
+        fontPopup.Children().Append(fontResults);
+        fontPopup.Children().Append(fontEmpty);
+        for (const auto& button : {fontImportFile, fontImportFolder})
+        {
+            button.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            button.HorizontalContentAlignment(mux::HorizontalAlignment::Left);
+            fontPopup.Children().Append(button);
+        }
+        fontFlyout.Content(fontPopup);
+        fontFlyout.Placement(muxc::Primitives::FlyoutPlacementMode::BottomEdgeAlignedLeft);
+        fontPicker.Flyout(fontFlyout);
+        fontRow.Initialize(fontPicker);
+        fontCard.content.Children().Append(fontRow.root);
+        fontRestart.IsClosable(false);
+        fontRestart.IsOpen(false);
+        fontRestart.Severity(muxc::InfoBarSeverity::Informational);
+        fontRestartButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        fontRestart.ActionButton(fontRestartButton);
+        fontCard.content.Children().Append(fontRestart);
+        fontError.TextWrapping(mux::TextWrapping::Wrap);
+        fontError.Visibility(mux::Visibility::Collapsed);
+        fontCard.content.Children().Append(fontError);
+        managementRoot.Spacing(12);
+        themeTransfers = std::make_unique<ThemeLibraryControls>(localize, "global", true, nullptr, 0, -1, cardStyle);
+        managementRoot.Children().Append(themeTransfers->Content());
+        globalThemes->SetCustomContent({widgetAppearanceCard.root});
+        quickThemes->SetCustomContent({quickAppearanceContent});
+        popupThemes->SetCustomContent({popupAppearanceContent});
+        dockThemes->SetCustomContent({dockAppearanceEditor->Content()});
 
         InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
+        InitializeCard(behaviorCard, cardStyle, widgetBehaviorRoot);
         InitializeContinuousControl(cornerRadius,
             &PersonalizationSettings::cornerRadius,
             4.0, 28.0, 1.0, 1.0, 12.0);
@@ -464,7 +624,7 @@ struct PersonalizationPagePresenter::Impl
         topTitleBarToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         topTitleBarRow.Initialize(topTitleBarToggle);
         topTitleBarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        layoutCard.content.Children().Append(topTitleBarRow.root);
+        behaviorCard.content.Children().Append(topTitleBarRow.root);
         layoutCard.content.Children().Append(categorizedTabHeight.row.root);
         InitializeContinuousControl(luaWidgetContentRowHeight,
             &PersonalizationSettings::luaWidgetContentRowHeight,
@@ -472,22 +632,56 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(luaWidgetContentRowHeight, L"cu");
         layoutCard.content.Children().Append(
             luaWidgetContentRowHeight.row.root);
+        widgetTransformCursors = muxc::ToggleSwitch{};
+        widgetTransformCursors.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        widgetTransformCursorsRow.Initialize(widgetTransformCursors);
+        widgetTransformCursorsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(widgetTransformCursorsRow.root);
         showGroupTabCounts = muxc::ToggleSwitch{};
         showGroupTabCounts.HorizontalAlignment(mux::HorizontalAlignment::Right);
         showGroupTabCountsRow.Initialize(showGroupTabCounts);
         showGroupTabCountsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        layoutCard.content.Children().Append(showGroupTabCountsRow.root);
+        behaviorCard.content.Children().Append(showGroupTabCountsRow.root);
         popupHoverOpen = muxc::ToggleSwitch{};
         popupHoverOpen.HorizontalAlignment(mux::HorizontalAlignment::Right);
         popupHoverOpenRow.Initialize(popupHoverOpen);
         popupHoverOpenRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        layoutCard.content.Children().Append(popupHoverOpenRow.root);
+        behaviorCard.content.Children().Append(popupHoverOpenRow.root);
         InitializeContinuousControl(popupHoverDelayMs,
             &PersonalizationSettings::popupHoverDelayMs,
             kMinimumPopupHoverDelayMs, kMaximumPopupHoverDelayMs,
             100.0, 1.0, kDefaultPopupHoverDelayMs);
         SetUnit(popupHoverDelayMs, L"ms");
-        layoutCard.content.Children().Append(popupHoverDelayMs.row.root);
+        behaviorCard.content.Children().Append(popupHoverDelayMs.row.root);
+    }
+
+    void InitializeNavigationCard(muxc::Button& button, muxc::TextBlock& title, muxc::TextBlock& description)
+    {
+        button = muxc::Button{};
+        if (navigationStyle) button.Style(navigationStyle);
+        muxc::Grid content;
+        content.ColumnSpacing(20);
+        muxc::ColumnDefinition textColumn, actionColumn;
+        textColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+        actionColumn.Width(mux::GridLengthHelper::Auto());
+        content.ColumnDefinitions().Append(textColumn);
+        content.ColumnDefinitions().Append(actionColumn);
+        muxc::StackPanel text;
+        text.Spacing(4);
+        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        title.TextWrapping(mux::TextWrapping::Wrap);
+        description.TextWrapping(mux::TextWrapping::Wrap);
+        description.Opacity(0.68);
+        text.Children().Append(title);
+        text.Children().Append(description);
+        content.Children().Append(text);
+        muxc::FontIcon chevron;
+        chevron.Glyph(L"\xE76C");
+        chevron.FontSize(14);
+        muxc::Grid::SetColumn(chevron, 1);
+        content.Children().Append(chevron);
+        button.Content(content);
+        themeRoot.Children().Append(button);
     }
 
     void InitializeColorControl(
@@ -556,13 +750,14 @@ struct PersonalizationPagePresenter::Impl
         control.unit.Visibility(mux::Visibility::Collapsed);
         control.member = member;
         control.scale = scale;
+        if (!std::isfinite(defaultValue)) defaultValue = PersonalizationSettings{}.*member / scale;
         control.defaultValue = defaultValue;
         control.editors.Children().Append(control.slider);
         muxc::Grid::SetColumn(control.number, 1);
         control.editors.Children().Append(control.number);
         muxc::Grid::SetColumn(control.unit, 2);
         control.editors.Children().Append(control.unit);
-        if (std::isfinite(defaultValue))
+        if (std::isfinite(control.defaultValue))
         {
             muxc::ColumnDefinition resetColumn{};
             resetColumn.Width(mux::GridLengthHelper::Auto());
@@ -588,13 +783,115 @@ struct PersonalizationPagePresenter::Impl
                 : mux::Visibility::Visible);
     }
 
+    void ConfigureThemes()
+    {
+        for (auto* form : {globalThemes.get(), quickThemes.get(), popupThemes.get(), dockThemes.get(), themeTransfers.get()})
+        {
+            form->SetChanged([this] { RefreshThemes(); });
+            form->SetActions(actions.themeLibrary, actions.themeAsync, [this] {
+                if (!CanEmit()) return false;
+                CommitContinuousEdits(); CommitOpenColorEditors();
+                quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush(); dockAppearanceEditor->Flush();
+                return true;
+            });
+        }
+        globalThemes->SetBindingChanged([this](const themes::Theme& theme) { ApplyBoundDraft(theme); });
+        for (auto* form : {quickThemes.get(), popupThemes.get()})
+        {
+            form->SetBoundActions([this](const themes::Theme& theme) {
+                globalThemes->AdoptBinding(theme.kind, theme); PatchInheritedCustom();
+            }, [this](const themes::Theme& theme) {
+                ApplyBoundDraft(theme); globalThemes->AdoptBinding(theme.kind, theme); PatchInheritedCustom();
+            }, [this] { globalThemes->BeginEdit(); PatchInheritedCustom(); });
+        }
+    }
+    void ApplyBoundDraft(const themes::Theme& theme)
+    {
+        if (!CanEmit() || !globalThemes->CustomSelected()) return;
+        const bool quick = theme.kind == themes::Kind::QuickPanel;
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [quick, appearance = theme.appearance](auto& settings) {
+            auto& binding = quick ? settings.globalQuickNavigationAppearance : settings.globalCollectionPopupAppearance;
+            binding = {4, true, appearance};
+        });
+        if (quick && quickFollowsGlobal && actions.updateNavigation)
+            actions.updateNavigation(generation, SettingsUpdateMode::PreviewAndCommit,
+                [theme](auto& navigation) { themes::ApplyQuickPanel(navigation, theme); });
+    }
+    bool quickFollowsGlobal = false, popupFollowsGlobal = false;
+    void PatchInheritedCustom()
+    {
+        const bool custom = currentBackgroundPreset == kAppearancePresetCustom && globalThemes->CustomSelected();
+        quickThemes->SetInheritedCustom(custom && quickFollowsGlobal, globalThemes->BoundSource(themes::Kind::QuickPanel));
+        popupThemes->SetInheritedCustom(custom && popupFollowsGlobal, globalThemes->BoundSource(themes::Kind::Popup));
+    }
+    void RefreshThemes()
+    {
+        for (auto* form : {globalThemes.get(), quickThemes.get(), popupThemes.get(), dockThemes.get(), themeTransfers.get()})
+        { form->SetGeneration(generation); form->Refresh(); }
+        PatchInheritedCustom();
+    }
+
     void HookEvents()
     {
+        fontOpenToken = fontFlyout.Opened([this](const auto&, const auto&) {
+            if (!CanEmit()) return;
+            // Rescan newly installed fonts, but never commit a search query or
+            // replace a saved font just because the dropdown is opened.
+            updatingControls = true;
+            fontSearch.Text(L"");
+            updatingControls = false;
+            fontPopup.Width(std::clamp(fontPicker.ActualWidth(), 240.0, 520.0));
+            RefreshFonts();
+            fontSearch.Focus(mux::FocusState::Programmatic);
+        });
+        fontSearchToken = fontSearch.TextChanged([this](const auto&, const auto&) {
+            if (CanEmit()) FilterFonts();
+        });
+        fontSearchKeyToken = fontSearch.KeyDown([this](const auto&, const muxi::KeyRoutedEventArgs& args) {
+            if (!CanEmit() || visibleFonts.empty()) return;
+            if (args.Key() == winrt::Windows::System::VirtualKey::Down)
+            {
+                if (fontResults.SelectedIndex() < 0) fontResults.SelectedIndex(0);
+                fontResults.Focus(mux::FocusState::Keyboard);
+                fontResults.ScrollIntoView(fontResults.SelectedItem());
+                args.Handled(true);
+            }
+            else if (IsEnter(args))
+            {
+                ChooseFont(fontResults.SelectedIndex() < 0 ? 0 : fontResults.SelectedIndex());
+                args.Handled(true);
+            }
+        });
+        fontResultToken = fontResults.ItemClick([this](const auto&, const muxc::ItemClickEventArgs& args) {
+            uint32_t index = 0;
+            if (fontResults.Items().IndexOf(args.ClickedItem(), index)) ChooseFont(static_cast<int>(index));
+        });
+        fontResultKeyToken = fontResults.KeyDown([this](const auto&, const muxi::KeyRoutedEventArgs& args) {
+            if (IsEnter(args))
+            {
+                ChooseFont(fontResults.SelectedIndex());
+                args.Handled(true);
+            }
+        });
+        fontImportFileToken = fontImportFile.Click([this](const auto&, const auto&) {
+            fontFlyout.Hide();
+            ImportFonts(false);
+        });
+        fontImportFolderToken = fontImportFolder.Click([this](const auto&, const auto&) {
+            fontFlyout.Hide();
+            ImportFonts(true);
+        });
+        fontRestartToken = fontRestartButton.Click([this](const auto&, const auto&) {
+            if (CanEmit() && fontRestart.IsOpen() && actions.restartApplication)
+                actions.restartApplication(generation);
+        });
         presetToken = presetCombo.SelectionChanged(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
                 if (!CanEmit())
                     return;
+                if (globalThemes->ApplySelection()) return;
+                edgeLightEditor->Cancel();
                 const int index = presetCombo.SelectedIndex();
                 if (index < 0 ||
                     static_cast<std::size_t>(index) >= kPresetIds.size())
@@ -610,29 +907,7 @@ struct PersonalizationPagePresenter::Impl
                                 kAppearancePresetCustom;
                             return;
                         }
-                        const float corner = settings.cornerRadius;
-                        const float bar = settings.barHeight;
-                        const bool titleOnTop = settings.scrollableTitleBarOnTop;
-                        const float tab = settings.categorizedTabHeight;
-                        const float luaWidgetContentRowHeight =
-                            settings.luaWidgetContentRowHeight;
-                        const bool counts = settings.showCategoryTabCounts;
-                        const bool groupCounts = settings.showGroupTabCounts;
-                        const bool hoverOpen = settings.popupHoverOpen;
-                        const float hoverDelayMs = settings.popupHoverDelayMs;
-                        const int menu = settings.contextMenuStyle;
-                        settings = MakeAppearancePreset(preset);
-                        settings.cornerRadius = corner;
-                        settings.barHeight = bar;
-                        settings.scrollableTitleBarOnTop = titleOnTop;
-                        settings.categorizedTabHeight = tab;
-                        settings.luaWidgetContentRowHeight =
-                            luaWidgetContentRowHeight;
-                        settings.showCategoryTabCounts = counts;
-                        settings.showGroupTabCounts = groupCounts;
-                        settings.popupHoverOpen = hoverOpen;
-                        settings.popupHoverDelayMs = hoverDelayMs;
-                        settings.contextMenuStyle = menu;
+                        ApplyAppearancePreset(settings, preset);
                     });
             });
         quickNavigationThemeToken = quickNavigationThemeCombo.SelectionChanged(
@@ -641,16 +916,25 @@ struct PersonalizationPagePresenter::Impl
             [this](auto const&, auto const&) { SelectSurfaceTheme(false, collectionPopupThemeCombo.SelectedIndex()); });
         dockAppearanceToken = dockAppearanceCombo.SelectionChanged([this](auto const&, auto const&) {
             if (!CanEmit()) return;
-            dockAppearanceEditor->Flush();
+            if (dockThemes->ApplySelection()) return;
             const int index = dockAppearanceCombo.SelectedIndex();
             if (index < 0 || index > static_cast<int>(kPresetIds.size())) return;
-            EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [index](auto& settings) {
-                settings.followComponentAppearance = index == 0;
-                if (index > 0) settings.appearancePreset = kPresetIds[index - 1];
+            dockAppearanceEditor->Flush();
+            const auto global = currentGlobalAppearance;
+            EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [index, global](auto& settings) {
+                SelectDockAppearance(settings, index == 0,
+                    index > 0 ? kPresetIds[index - 1] : settings.appearancePreset, global);
             });
         });
+        dockLinkToken = dockLink.Click([this](const auto&, const auto&) {
+            if (CanEmit() && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Dock, "personalization.dockAppearance"));
+        });
+        statusBarLinkToken = statusBarLink.Click([this](const auto&, const auto&) {
+            if (!closed && active && actions.navigate)
+                actions.navigate(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.theme"));
+        });
         taskbarLinkToken = taskbarLink.Click([this](auto const&, auto const&) {
-            if (!closed && active && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Taskbar));
+            if (!closed && active && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Taskbar, "taskbar.theme"));
         });
         gradientToken = gradientToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -735,6 +1019,14 @@ struct PersonalizationPagePresenter::Impl
                         settings.popupHoverOpen = enabled;
                     });
             });
+        widgetTransformCursorsToken = widgetTransformCursors.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = widgetTransformCursors.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.widgetTransformCursors = enabled;
+                    });
+            });
         for (ContinuousControl* control : continuousControls)
             HookContinuousControl(*control);
     }
@@ -757,7 +1049,7 @@ struct PersonalizationPagePresenter::Impl
                     return;
                 const double value = control.slider.Value();
                 synchronizingPair = true;
-                control.number.Value(value);
+                presenter_controls::SetNumberBoxValue(control.number, value);
                 synchronizingPair = false;
                 Preview(control, value);
             });
@@ -869,7 +1161,7 @@ struct PersonalizationPagePresenter::Impl
             control.slider.Minimum(), control.slider.Maximum(),
             control.slider.StepFrequency());
         control.slider.Value(clamped);
-        control.number.Value(clamped);
+        presenter_controls::SyncNumberBoxValue(control.number, clamped);
     }
 
     void PatchColor(
@@ -886,6 +1178,8 @@ struct PersonalizationPagePresenter::Impl
     {
         const int normalized = NormalizeAppearancePresetId(
             settings.backgroundPreset);
+        if (currentBackgroundPreset != normalized && normalized == kAppearancePresetCustom)
+            appearanceSections.CollapseAll();
         currentBackgroundPreset = normalized;
         auto preset = std::find(kPresetIds.begin(), kPresetIds.end(), normalized);
         presetCombo.SelectedIndex(preset == kPresetIds.end()
@@ -901,9 +1195,11 @@ struct PersonalizationPagePresenter::Impl
         glassToggle.IsOn(settings.glassEnabled);
         acrylicToggle.IsOn(settings.acrylicEnabled);
         edgeHighlightToggle.IsOn(settings.widgetEdgeHighlightEnabled);
+        edgeLightEditor->SetValue(settings.edgeLight);
         showGroupTabCounts.IsOn(settings.showGroupTabCounts);
         popupHoverOpen.IsOn(settings.popupHoverOpen);
         topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
+        widgetTransformCursors.IsOn(settings.widgetTransformCursors);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
         contextMenuCombo.SelectedIndex(
@@ -911,31 +1207,111 @@ struct PersonalizationPagePresenter::Impl
         UpdateDependentStates();
     }
 
+    void UpdateFontRestartNotice()
+    {
+        const auto applied = app_fonts::current.load();
+        const auto hostFont = actions.appliedFont ? actions.appliedFont()
+            : (applied ? applied->selection : app_fonts::Selection{});
+        fontRestart.IsOpen(selectedFont != hostFont);
+    }
+
+    std::wstring FontChoiceName(const app_fonts::Choice& choice) const
+    {
+        auto name = choice.selection.package == "system" ? L("font.system", L"System default") : choice.name;
+        if (choice.selection.package == "installed") name += L" · " + L("font.installed", L"Installed");
+        return name;
+    }
+
+    void FilterFonts()
+    {
+        visibleFonts = font_picker::Filter(fonts, fontSearch.Text().c_str(), L("font.system", L"System default"));
+        fontResults.Items().Clear();
+        int selected = -1;
+        for (std::size_t i = 0; i < visibleFonts.size(); ++i)
+        {
+            const auto& choice = fonts[visibleFonts[i]];
+            fontResults.Items().Append(winrt::box_value(FontChoiceName(choice)));
+            if (choice.selection == selectedFont) selected = static_cast<int>(i);
+        }
+        fontResults.SelectedIndex(selected);
+        fontResults.Visibility(visibleFonts.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        fontEmpty.Visibility(visibleFonts.empty() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    }
+
+    void ChooseFont(int index)
+    {
+        if (!CanEmit() || index < 0 || static_cast<std::size_t>(index) >= visibleFonts.size()) return;
+        const auto& choice = fonts[visibleFonts[static_cast<std::size_t>(index)]];
+        selectedFont = choice.selection;
+        fontPickerLabel.Text(FontChoiceName(choice));
+        fontFlyout.Hide();
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
+        UpdateFontRestartNotice();
+    }
+
+    void RefreshFonts()
+    {
+        if (!actions.listFonts) return;
+        const bool previous = updatingControls;
+        updatingControls = true;
+        fonts = actions.listFonts();
+        const auto selected = std::find_if(fonts.begin(), fonts.end(), [this](const auto& choice) { return choice.selection == selectedFont; });
+        // Missing packages retain the saved selection. Merely opening settings
+        // must never replace an unavailable user font with the system default.
+        if (selected == fonts.end())
+        {
+            fonts.push_back({selectedFont, L("font.unavailable", L"Saved font unavailable"), {}});
+            fontPickerLabel.Text(fonts.back().name);
+        }
+        else fontPickerLabel.Text(FontChoiceName(*selected));
+        FilterFonts();
+        updatingControls = previous;
+        UpdateFontRestartNotice();
+    }
+
+    void ImportFonts(bool folder)
+    {
+        if (!CanEmit() || !actions.importFonts) return;
+        std::string error;
+        const auto imported = actions.importFonts(folder, error);
+        fontError.Text(error.empty() ? L"" : L(error));
+        fontError.Visibility(error.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        if (imported.empty()) return;
+        selectedFont = imported.front().selection;
+        RefreshFonts();
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
+    }
+
     void PatchGeneral(const GeneralSettings& settings)
     {
+        if (selectedFont != settings.font || fonts.empty())
+        {
+            selectedFont = settings.font;
+            RefreshFonts();
+        }
         const auto index = [this](const SurfaceTheme& theme, int legacy) {
             if (theme.mode != -2) return theme.mode + 1;
             return currentGlobalAppearance.backgroundPreset == kAppearancePresetCustom ? NormalizeFourThemeSelection(legacy) + 1 : 0;
         };
         quickNavigationThemeCombo.SelectedIndex(index(settings.quickNavigationAppearance, settings.quickNavTheme));
         collectionPopupThemeCombo.SelectedIndex(index(settings.collectionPopupAppearance, settings.collectionPopupTheme));
-        quickAppearanceEditor->Content().Visibility(IsCustomSurfaceTheme(settings.quickNavigationAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        popupAppearanceEditor->Content().Visibility(IsCustomSurfaceTheme(settings.collectionPopupAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        quickAppearanceContent.Visibility(IsCustomSurfaceTheme(settings.quickNavigationAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        popupAppearanceContent.Visibility(IsCustomSurfaceTheme(settings.collectionPopupAppearance, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        popupThemes->SaveContent().Visibility(popupAppearanceContent.Visibility());
     }
 
     void SelectSurfaceTheme(bool quick, int index)
     {
-        if (!CanEmit() || index < 0 || index > 5) return;
+        if (!CanEmit()) return;
+        if ((quick ? quickThemes : popupThemes)->ApplySelection()) return;
+        if (index < 0 || index > 5) return;
         (quick ? quickAppearanceEditor : popupAppearanceEditor)->Flush();
         const auto global = currentGlobalAppearance;
         EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [quick, index, global](auto& settings) {
             auto& theme = quick ? settings.quickNavigationAppearance : settings.collectionPopupAppearance;
-            if (index == 5 && !theme.customized)
-            {
-                theme.appearance = ResolveSurfaceTheme(theme, global, quick ? settings.quickNavTheme : settings.collectionPopupTheme, quick);
-                theme.customized = true;
-            }
-            theme.mode = index - 1;
+            SelectSurfaceThemeMode(theme, index - 1,
+                ResolveSurfaceTheme(theme, global, quick ? settings.quickNavTheme : settings.collectionPopupTheme, quick,
+                    quick ? &settings.globalQuickNavigationAppearance : &settings.globalCollectionPopupAppearance));
         });
     }
 
@@ -948,8 +1324,7 @@ struct PersonalizationPagePresenter::Impl
     {
         if (closed)
             return;
-        const bool custom = presetCombo.SelectedIndex() ==
-            static_cast<int>(kPresetIds.size() - 1);
+        const bool custom = currentBackgroundPreset == kAppearancePresetCustom;
         themeTargetsCard.root.Visibility(mux::Visibility::Visible);
         widgetAppearanceCard.root.Visibility(custom
                 ? mux::Visibility::Visible
@@ -977,6 +1352,7 @@ struct PersonalizationPagePresenter::Impl
         const auto visible = [](bool value) { return value ? mux::Visibility::Visible : mux::Visibility::Collapsed; };
         edgeHighlightWidth.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
         edgeHighlightStrength.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
+        edgeLightEditor->Content().Visibility(visible(edgeHighlightToggle.IsOn()));
         gradientEndAlpha.row.root.Visibility(visible(gradientToggle.IsOn()));
         blurRadius.row.root.Visibility(visible(glassToggle.IsOn()));
         acrylicRow.root.Visibility(visible(glassToggle.IsOn()));
@@ -1037,6 +1413,8 @@ struct PersonalizationPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        for (auto* form : {globalThemes.get(), quickThemes.get(), popupThemes.get(), dockThemes.get(), themeTransfers.get()}) form->LocalizeText();
+        edgeLightEditor->RefreshLocalizedText();
         appearanceSections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
         if (panelGradientEditor) panelGradientEditor->RefreshLocalizedText();
         if (closed)
@@ -1044,27 +1422,53 @@ struct PersonalizationPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
+        SetCardText(fontCard, "font.title", L"Interface font");
+        fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
+        muxa::AutomationProperties::SetName(fontPicker, fontRow.label.Text());
+        fontSearch.PlaceholderText(L("font.search", L"Search fonts"));
+        muxa::AutomationProperties::SetName(fontSearch, fontSearch.PlaceholderText());
+        muxa::AutomationProperties::SetName(fontResults, fontRow.label.Text());
+        fontEmpty.Text(L("font.noResults", L"No matching fonts"));
+        fontImportFile.Content(winrt::box_value(L("font.importFile")));
+        fontImportFolder.Content(winrt::box_value(L("font.importFolder")));
+        fontRestartButton.Content(winrt::box_value(L("font.restartNow", L"Restart now")));
+        fontRestart.Message(L("font.restartRequired", L"Restart SnowDesktop to apply this font."));
+        RefreshFonts();
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");
         SetCardText(themeTargetsCard, "appearance.quickPanelCard", L"Quick panel theme");
         SetCardText(popupThemeCard, "appearance.popupCard", L"Popup theme");
+        popupCopyComponent.Content(winrt::box_value(L("appearance.copyComponent", L"Copy current component appearance")));
+        popupCopyComponentRow.SetText(L("appearance.copyComponent", L"Copy current component appearance"),
+            L("appearance.copyComponentHint", L"Copy the component appearance from the global theme once, then edit independently."));
+        muxa::AutomationProperties::SetName(popupCopyComponent, popupCopyComponentRow.label.Text());
         SetCardText(dockThemeCard, "settings.dock.dock", L"Dock");
-        SetCardText(taskbarLinkCard, "settings.dock.taskbar", L"Taskbar");
-        taskbarLink.Content(winrt::box_value(L("appearance.openTaskbar", L"Open taskbar settings")));
+        statusBarLinkTitle.Text(L("settings.nav.statusBar", L"Status bar"));
+        statusBarLinkDescription.Text(L("appearance.openStatusBar", L"Open status bar settings"));
+        dockLinkTitle.Text(L("guide.setting.dockAppearance.title"));
+        dockLinkDescription.Text(L("appearance.openDock"));
+        muxa::AutomationProperties::SetName(dockLink, dockLinkDescription.Text());
+        taskbarLinkTitle.Text(L("settings.dock.taskbar", L"Taskbar"));
+        taskbarLinkDescription.Text(L("appearance.openTaskbar", L"Open taskbar settings"));
+        muxa::AutomationProperties::SetName(statusBarLink, statusBarLinkDescription.Text());
+        muxa::AutomationProperties::SetName(taskbarLink, taskbarLinkDescription.Text());
         dockAppearanceRow.SetText(L("app.settings.theme", L"Theme"));
-        taskbarThemeRow.SetText(L("app.settings.theme", L"Theme"));
-        ReplaceComboItems(dockAppearanceCombo, {{"largeIcon.follow", L"Follow component theme"},
+        ReplaceComboItems(dockAppearanceCombo, {{"app.settings.taskbar_follow_global", L"Follow global theme"},
             {"app.settings.dark", L"Dark"}, {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
+            {"app.settings.transparent_glass", L"Transparent glass"},
             {"app.settings.dark_acrylic", L"Dark acrylic"}, {"app.settings.light_acrylic", L"Light acrylic"},
             {"app.settings.custom", L"Custom"}});
         quickAppearanceEditor->RefreshLocalizedText(); popupAppearanceEditor->RefreshLocalizedText(); dockAppearanceEditor->RefreshLocalizedText();
+        quickAppearanceOptions->RefreshText();
         SetCardText(widgetAppearanceCard,
             "app.settings.component_bg", L"Widget Appearance");
         SetCardText(contextMenuCard,
             "app.settings.context_menu_appearance", L"Context Menu");
         SetCardText(layoutCard,
             "app.settings.widget_layout", L"Widget Layout");
+        SetCardText(behaviorCard,
+            "settings.widgetBehavior.title", L"Widget behavior");
 
         presetRow.SetText(L("app.settings.theme", L"Theme"));
         ReplaceComboItems(presetCombo, {
@@ -1072,6 +1476,7 @@ struct PersonalizationPagePresenter::Impl
             {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark Glass"},
             {"app.settings.light_glass", L"Light Glass"},
+            {"app.settings.transparent_glass", L"Transparent glass"},
             {"app.settings.dark_acrylic", L"Dark Acrylic"},
             {"app.settings.light_acrylic", L"Light Acrylic"},
             {"app.settings.custom", L"Custom"},
@@ -1097,6 +1502,7 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(collectionPopupThemeCombo,
             collectionPopupThemeRow.label.Text());
 
+        presetRow.help.Text(L("appearance.presetHelp", L"")); presetRow.help.Visibility(mux::Visibility::Visible);
         SetColorText(backgroundColor,
             "app.settings.component_bg", L"Widget Background");
         SetColorText(borderColor,
@@ -1128,8 +1534,8 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.SetText(
             L("app.settings.text_color", L"Text Color"));
         ReplaceComboItems(contentThemeCombo, {
-            {"app.settings.light", L"Light"},
-            {"app.settings.dark", L"Dark"},
+            {"appearance.lightText", L"Light text"},
+            {"appearance.darkText", L"Dark text"},
         });
 
         contextMenuRow.SetText(
@@ -1160,6 +1566,13 @@ struct PersonalizationPagePresenter::Impl
         SetContinuousText(luaWidgetContentRowHeight,
             "app.settings.lua_widget_row_height",
             L"Lua Widget Row Height");
+        widgetTransformCursorsRow.SetText(
+            L("app.settings.widget_transform_cursors",
+                L"Show component move and resize cursors"),
+            L("app.settings.widget_transform_cursors_hint",
+                L"Change the pointer when hovering over or dragging component move and resize handles. Turn off to use the standard pointer."));
+        muxa::AutomationProperties::SetName(
+            widgetTransformCursors, widgetTransformCursorsRow.label.Text());
         showGroupTabCountsRow.SetText(
             L("app.settings.group_show_count", L"Show file counts on group tabs"),
             L("app.settings.group_show_count_hint",
@@ -1176,6 +1589,12 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.popup_hover_delay", L"Hover delay");
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
+        const auto explain = [](auto& row, const std::wstring& text) { row.help.Text(text); row.help.Visibility(mux::Visibility::Visible); };
+        explain(widgetAlpha.row, L("appearance.opacityHelp", L""));
+        explain(glassRow, L("appearance.glassHelp", L""));
+        explain(edgeHighlightRow, L("appearance.borderHelp", L""));
+        explain(edgeHighlightWidth.row, L("appearance.rimWidthHelp", L""));
+        for (auto const& [row, button] : appearanceResets) presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default", L"Restore default") + L" · " + std::wstring(row->label.Text()));
         muxa::AutomationProperties::SetName(
             edgeHighlightToggle, edgeHighlightRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1198,13 +1617,16 @@ struct PersonalizationPagePresenter::Impl
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
         generation = snapshot.generation;
+        themeTransfers->SetGeneration(generation);
+        themeTransfers->Refresh();
         const bool personalizationChanged = newGeneration ||
             snapshot.domainRevisions.personalization !=
                 personalizationRevision;
         const bool generalChanged = newGeneration ||
             snapshot.domainRevisions.general != generalRevision;
         const bool dockChanged = newGeneration || snapshot.domainRevisions.dock != dockRevision;
-        if (!personalizationChanged && !generalChanged && !dockChanged)
+        const bool navigationChanged = newGeneration || snapshot.domainRevisions.navigation != navigationRevision;
+        if (!personalizationChanged && !generalChanged && !dockChanged && !navigationChanged)
         {
             hasSnapshot = true;
             return;
@@ -1214,6 +1636,7 @@ struct PersonalizationPagePresenter::Impl
         updatingControls = true;
         if (newGeneration)
         {
+            edgeLightEditor->Cancel();
             for (ContinuousControl* control : continuousControls)
             {
                 if (control->idleCommitTimer)
@@ -1221,6 +1644,7 @@ struct PersonalizationPagePresenter::Impl
                 control->dirty = false;
             }
         }
+        dockAppearanceHost.IsEnabled(snapshot.values.general.dockEnabled);
         currentGlobalAppearance = snapshot.values.personalization;
         if (personalizationChanged)
         {
@@ -1230,8 +1654,8 @@ struct PersonalizationPagePresenter::Impl
         }
         if (generalChanged || personalizationChanged)
         {
-            quickAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, currentGlobalAppearance, snapshot.values.general.quickNavTheme, true), newGeneration);
-            popupAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.collectionPopupAppearance, currentGlobalAppearance, snapshot.values.general.collectionPopupTheme, false), newGeneration);
+            quickAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, currentGlobalAppearance, snapshot.values.general.quickNavTheme, true, &snapshot.values.general.globalQuickNavigationAppearance), newGeneration);
+            popupAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.collectionPopupAppearance, currentGlobalAppearance, snapshot.values.general.collectionPopupTheme, false, &snapshot.values.general.globalCollectionPopupAppearance), newGeneration);
             PatchGeneral(snapshot.values.general);
             generalRevision = snapshot.domainRevisions.general;
         }
@@ -1241,25 +1665,63 @@ struct PersonalizationPagePresenter::Impl
             const auto found = std::find(kPresetIds.begin(), kPresetIds.end(), dock.appearancePreset);
             dockAppearanceCombo.SelectedIndex(dock.followComponentAppearance ? 0 :
                 found == kPresetIds.end() ? static_cast<int>(kPresetIds.size()) : static_cast<int>(found - kPresetIds.begin()) + 1);
-            dockAppearanceEditor->SetValue(snapshot.values.dock.customAppearance, newGeneration);
+            dockAppearanceEditor->SetValue(ResolveDockAppearance(dock, currentGlobalAppearance), newGeneration);
             dockAppearanceEditor->Content().Visibility(!dock.followComponentAppearance && dock.appearancePreset == kAppearancePresetCustom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            dockThemes->SaveContent().Visibility(dockAppearanceEditor->Content().Visibility());
             dockRevision = snapshot.domainRevisions.dock;
         }
+        if (navigationChanged || generalChanged || personalizationChanged)
+        {
+            const auto appearance = ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance,
+                currentGlobalAppearance, snapshot.values.general.quickNavTheme, true, &snapshot.values.general.globalQuickNavigationAppearance);
+            quickAppearanceOptions->Apply(snapshot.values.navigation, appearance.contentTheme == 1, appearance.glassEnabled);
+            navigationRevision = snapshot.domainRevisions.navigation;
+        }
         hasSnapshot = true;
+        globalThemes->SetGeneration(generation); quickThemes->SetGeneration(generation);
+        popupThemes->SetGeneration(generation); dockThemes->SetGeneration(generation);
+        globalThemes->SyncSelection(globalThemes->NativeSelection(), snapshot.values);
+        quickThemes->SyncSelection(quickThemes->NativeSelection(), snapshot.values);
+        popupThemes->SyncSelection(popupThemes->NativeSelection(), snapshot.values);
+        dockThemes->SyncSelection(dockThemes->NativeSelection(), snapshot.values);
+        quickFollowsGlobal = snapshot.values.general.quickNavigationAppearance.mode == -1;
+        popupFollowsGlobal = snapshot.values.general.collectionPopupAppearance.mode == -1;
+        PatchInheritedCustom();
         updatingControls = previousUpdating;
+        if (newGeneration)
+        {
+            RefreshThemes();
+        }
     }
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
+        if (id == "personalization.savedThemes")
+        {
+            return themeTransfers->Choice();
+        }
+        if (id == "quickNav.layout" || id.starts_with("quickNav.layout.") ||
+            id.starts_with("quickNav.color.") || id.starts_with("quickNav.colors."))
+        {
+            if (quickAppearanceContent.Visibility() != mux::Visibility::Visible) return quickNavigationThemeCombo;
+            return quickAppearanceOptions->FocusTarget(id);
+        }
+        const auto appearanceTarget = [this](mux::FrameworkElement target) {
+            if (currentBackgroundPreset != kAppearancePresetCustom) return mux::FrameworkElement{presetCombo};
+            appearanceSections.Reveal(target);
+            return target;
+        };
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;
+        if (id == "personalization.font") return fontPicker;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
+        if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
         if (id == "personalization.backgroundColor")
-            return backgroundColor.editor.button;
+            return appearanceTarget(backgroundColor.editor.button);
         if (id == "personalization.borderColor")
-            return borderColor.editor.button;
+            return appearanceTarget(borderColor.editor.button);
         if (id == "personalization.quickNavigationTheme" ||
             id == "personalization.quickNavTheme")
             return quickNavigationThemeCombo;
@@ -1267,30 +1729,30 @@ struct PersonalizationPagePresenter::Impl
             return collectionPopupThemeCombo;
         if (id == "personalization.widgetAlpha" ||
             id == "personalization.backgroundOpacity")
-            return widgetAlpha.slider;
+            return appearanceTarget(widgetAlpha.slider);
         if (id == "personalization.borderAlpha" ||
             id == "personalization.borderOpacity")
-            return borderAlpha.slider;
+            return appearanceTarget(borderAlpha.slider);
         if (id == "personalization.borderWidth")
-            return borderWidth.slider;
+            return appearanceTarget(borderWidth.slider);
         if (id == "personalization.edgeHighlight")
-            return edgeHighlightToggle;
+            return appearanceTarget(edgeHighlightToggle);
         if (id == "personalization.edgeHighlightWidth")
-            return edgeHighlightWidth.slider;
+            return appearanceTarget(edgeHighlightWidth.slider);
         if (id == "personalization.edgeHighlightStrength")
-            return edgeHighlightStrength.slider;
+            return appearanceTarget(edgeHighlightStrength.slider);
         if (id == "personalization.gradientEndAlpha")
-            return gradientEndAlpha.slider;
+            return appearanceTarget(gradientEndAlpha.slider);
         if (id == "personalization.enableGradient")
-            return gradientToggle;
+            return appearanceTarget(gradientToggle);
         if (id == "personalization.glass")
-            return glassToggle;
+            return appearanceTarget(glassToggle);
         if (id == "personalization.blurRadius")
-            return blurRadius.slider;
+            return appearanceTarget(blurRadius.slider);
         if (id == "personalization.acrylic")
-            return acrylicToggle;
+            return appearanceTarget(acrylicToggle);
         if (id == "personalization.contentTheme")
-            return contentThemeCombo;
+            return appearanceTarget(contentThemeCombo);
         if (id == "personalization.contextMenu")
             return contextMenuCombo;
         if (id == "personalization.cornerRadius")
@@ -1310,6 +1772,8 @@ struct PersonalizationPagePresenter::Impl
             return topTitleBarToggle;
         if (id == "personalization.luaWidgetRowHeight")
             return luaWidgetContentRowHeight.slider;
+        if (id == "personalization.widgetTransformCursors")
+            return widgetTransformCursors;
         if (id == "desktop.categoryLayout" ||
             id == "desktop.tabHeight" ||
             id == "personalization.tabHeight")
@@ -1352,6 +1816,7 @@ struct PersonalizationPagePresenter::Impl
 
     void CommitOpenColorEditors() noexcept
     {
+        quickAppearanceOptions->Dismiss();
         for (ColorControl* control : colorControls)
             control->editor.Dismiss();
     }
@@ -1362,6 +1827,7 @@ struct PersonalizationPagePresenter::Impl
         {
             quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush(); dockAppearanceEditor->Flush();
             if (panelGradientEditor) panelGradientEditor->Flush();
+            if (edgeLightEditor) edgeLightEditor->Flush();
             for (ContinuousControl* control : continuousControls)
                 Commit(*control);
         }
@@ -1374,15 +1840,27 @@ struct PersonalizationPagePresenter::Impl
     {
         if (closed)
             return;
+        for (auto* form : {globalThemes.get(), quickThemes.get(), popupThemes.get(), dockThemes.get(), themeTransfers.get()}) form->Close();
         CommitOpenColorEditors();
         if (active)
             CommitContinuousEdits();
         active = false;
         closed = true;
         quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close();
-        dockAppearanceCombo.SelectionChanged(dockAppearanceToken); taskbarLink.Click(taskbarLinkToken);
+        quickAppearanceOptions->Close();
+        popupCopyComponent.Click(popupCopyComponentToken);
+        dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken); dockLink.Click(dockLinkToken);
         try
         {
+            fontFlyout.Hide();
+            fontFlyout.Opened(fontOpenToken);
+            fontSearch.TextChanged(fontSearchToken);
+            fontSearch.KeyDown(fontSearchKeyToken);
+            fontResults.ItemClick(fontResultToken);
+            fontResults.KeyDown(fontResultKeyToken);
+            fontImportFile.Click(fontImportFileToken);
+            fontImportFolder.Click(fontImportFolderToken);
+            fontRestartButton.Click(fontRestartToken);
             presetCombo.SelectionChanged(presetToken);
             quickNavigationThemeCombo.SelectionChanged(
                 quickNavigationThemeToken);
@@ -1397,6 +1875,7 @@ struct PersonalizationPagePresenter::Impl
             showGroupTabCounts.Toggled(showGroupTabCountsToken);
             popupHoverOpen.Toggled(popupHoverOpenToken);
             topTitleBarToggle.Toggled(topTitleBarToken);
+            widgetTransformCursors.Toggled(widgetTransformCursorsToken);
         }
         catch (...)
         {
@@ -1405,7 +1884,8 @@ struct PersonalizationPagePresenter::Impl
             UnhookContinuousControl(*control);
         for (ColorControl* control : colorControls)
             UnhookColorControl(*control);
-        if (panelGradientEditor) panelGradientEditor->Close();
+            if (panelGradientEditor) panelGradientEditor->Close();
+            if (edgeLightEditor) edgeLightEditor->Close();
         actions = {};
         localize = {};
     }
@@ -1413,8 +1893,9 @@ struct PersonalizationPagePresenter::Impl
 
 PersonalizationPagePresenter::PersonalizationPagePresenter(
     LocalizeCallback localize,
-    const mux::Style& cardStyle)
-    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle))
+    const mux::Style& cardStyle,
+    const mux::Style& navigationStyle)
+    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, navigationStyle))
 {
 }
 
@@ -1427,7 +1908,11 @@ void PersonalizationPagePresenter::SetActions(
     PersonalizationPageActions actions)
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->actions = std::move(actions);
+        impl_->ConfigureThemes();
+        impl_->RefreshFonts();
+    }
 }
 
 void PersonalizationPagePresenter::SetLayoutSpacingContent(
@@ -1443,6 +1928,10 @@ void PersonalizationPagePresenter::SetLayoutSpacingContent(
 mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept
 { return impl_ ? impl_->menuRoot : nullptr; }
 
+mux::UIElement PersonalizationPagePresenter::DockAppearanceContent() const noexcept { return impl_ ? impl_->dockThemeRoot : nullptr; }
+
+mux::UIElement PersonalizationPagePresenter::ThemeManagementContent() const noexcept { return impl_ ? impl_->managementRoot : nullptr; }
+
 mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
 {
     return impl_ ? impl_->themeRoot : nullptr;
@@ -1452,6 +1941,11 @@ mux::UIElement PersonalizationPagePresenter::WidgetLayoutContent()
     const noexcept
 {
     return impl_ ? impl_->widgetLayoutRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::WidgetBehaviorContent() const noexcept
+{
+    return impl_ ? impl_->widgetBehaviorRoot : nullptr;
 }
 
 void PersonalizationPagePresenter::ApplySnapshot(
@@ -1470,7 +1964,14 @@ void PersonalizationPagePresenter::RefreshLocalizedText()
 void PersonalizationPagePresenter::Activate() noexcept
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->active = true;
+        try
+        {
+            if (impl_->hasSnapshot) impl_->RefreshThemes();
+        }
+        catch (...) { }
+    }
 }
 
 void PersonalizationPagePresenter::Deactivate() noexcept
@@ -1479,6 +1980,7 @@ void PersonalizationPagePresenter::Deactivate() noexcept
     impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
+    try { impl_->fontFlyout.Hide(); } catch (...) {}
 }
 
 mux::FrameworkElement PersonalizationPagePresenter::FocusTarget(

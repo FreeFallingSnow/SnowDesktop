@@ -19,6 +19,7 @@
  * - 渲染通过 D2DState 结构管理资源，支持逐小部件独立绘制
  */
 #pragma once
+#include "text_input_state.h"
 
 #include <windows.h>
 #include <d2d1_1.h>
@@ -42,10 +43,12 @@
 #include "widget_lua_lifecycle.h"
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
+#include "widget_location_task_executor.h"
 #include "widget_notification_runtime.h"
 #include "widget_notification_schedule_store.h"
 #include "widget_media_task_executor.h"
 #include "widget_audio_output_task_executor.h"
+#include "widget_system_control_tasks.h"
 #include "widget_clipboard_task_executor.h"
 #include "widget_filesystem_handle_store.h"
 #include "widget_filesystem_task_executor.h"
@@ -433,6 +436,7 @@ struct LuaWidgetDataSnapshot
         audioOutputDefault;
     snowdesktop::widget_runtime::WidgetAudioOutputVolumeDataSnapshot
         audioOutputVolume;
+    JsonValue systemControl;
     snowdesktop::widget_runtime::WidgetAudioAnalysisDataSnapshot
         audioAnalysis;
     snowdesktop::widget_runtime::WidgetMediaSessionsDataSnapshot
@@ -541,6 +545,8 @@ struct LuaWidget
         int contentWidth = 0;
         int viewportWidth = 0;
         bool horizontal = false;
+        bool selectPopup = false;
+        int initialScrollOffset = 0;
         std::size_t maximumUtf8Bytes = 0;
     };
 
@@ -762,6 +768,10 @@ public:
      */
     ~WidgetEngine();
 
+    // Set before Init. Preview engines never attach live application services.
+    void SetSystemDataProvider(std::shared_ptr<
+        snowdesktop::widget_runtime::WidgetSystemDataProvider> provider);
+
     /**
      * @brief 初始化引擎
      * @param d2dContext Direct2D 设备上下文指针
@@ -780,6 +790,8 @@ public:
      * @brief 关闭引擎，释放所有资源，卸载所有已加载的小部件
      */
     void Shutdown();
+    // Stop queued device work without destroying objects used by modal callbacks.
+    void BeginTaskShutdown();
 
     using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
     using ApplicationSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
@@ -811,6 +823,9 @@ public:
     using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
     using AudioAnalysisWakeCallback = std::function<void()>;
     using TaskWakeCallback = std::function<void()>;
+    using SystemControlPromptCallback = std::function<snowdesktop::system_control::Result(
+        snowdesktop::system_control::Request&, const std::wstring&, std::function<bool()>)>;
+    void SetSystemControlPromptCallback(SystemControlPromptCallback callback) { systemControlPromptCallback_ = std::move(callback); }
 
     /** @brief 设置桌面快照提供者回调 */
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
@@ -1067,7 +1082,11 @@ public:
      */
     bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
 
-    /** Reads the effective widget appearance used by desktop host menus. */
+    /** Resolve the selected host material recipe while retaining custom values. */
+    bool ReadCustomAppearance(const std::wstring& widgetId,
+        PersonalizationSettings& appearance) const;
+
+    /** Reads stored/script material values for custom appearance resolution. */
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
@@ -1075,7 +1094,9 @@ public:
         float& edgeHighlightWidth, float& edgeHighlightStrength,
         float& gradientEndA,
         bool& glassEnabled, bool& acrylicEnabled,
-        snowdesktop::PanelGradient* panelGradient = nullptr) const;
+        snowdesktop::PanelGradient* panelGradient = nullptr,
+        snowdesktop::EdgeLightSettings* edgeLight = nullptr,
+        bool includeStoredValues = true) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表
@@ -1146,6 +1167,9 @@ public:
         const std::filesystem::path& catalogPath, std::string& error);
     static std::vector<snowdesktop::widget::PackageSourceInfo>
         ListWidgetPackageSources();
+    /** Internal host snapshot: retain providers through an asynchronous page close. */
+    static std::vector<std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>>
+        SnapshotWidgetPackageSourceProviders();
     static std::vector<snowdesktop::widget::PackageDetails>
         QueryWidgetPackageSource(const std::string& providerId,
             const snowdesktop::widget::PackageQuery& query,
@@ -1248,7 +1272,7 @@ public:
                 audioAnalysis = {}, std::string eventId = {});
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
-        std::uint64_t subscriptionId) const;
+        std::uint64_t subscriptionId, bool includeGpuDetails = false) const;
 
     /**
      * @brief 添加一条运行时日志
@@ -1286,6 +1310,21 @@ public:
         RuntimeCalendarEvents(
             const std::string& fromDate,
             const std::string& toDate) const;
+    std::vector<snowdesktop::calendar::CalendarEvent>
+        RuntimeCalendarSingleEvents() const;
+    std::optional<snowdesktop::calendar::CalendarEvent>
+        RuntimeCalendarEventById(const std::string& id) const;
+    std::optional<snowdesktop::calendar::CalendarSeries>
+        RuntimeCalendarSeriesById(const std::string& id) const;
+    std::vector<snowdesktop::calendar::CalendarSeries>
+        RuntimeCalendarSeries() const;
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesCreate(
+        snowdesktop::calendar::CalendarSeries series);
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesUpdate(
+        const std::string& id, int expectedRevision,
+        snowdesktop::calendar::CalendarSeries series);
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesRemove(
+        const std::string& id, int expectedRevision);
     snowdesktop::calendar::MutationResult
         RuntimeCalendarCreate(
             snowdesktop::calendar::CalendarEvent event);
@@ -1295,7 +1334,7 @@ public:
             int expectedRevision,
             snowdesktop::calendar::CalendarEvent event);
     snowdesktop::calendar::MutationResult
-        RuntimeCalendarRemove(const std::string& id);
+        RuntimeCalendarRemove(const std::string& id, int expectedRevision = 0);
 
     /**
      * @brief 通过宿主打开指定路径
@@ -1614,6 +1653,8 @@ public:
         const std::wstring& text, size_t cursor);
     bool CommitHostInputComposition(const std::wstring& text);
     void ClearHostInputComposition();
+    void BeginHostInputComposition();
+    bool IsHostInputComposing() const { return focusedHostInput_.active && focusedHostInput_.composing; }
     bool HasFocusedHostInput() const;
     bool GetFocusedHostInputCaretRect(RECT& rect) const;
     bool IsHostInputAt(const std::wstring& widgetId, int x, int y,
@@ -1833,6 +1874,8 @@ private:
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     AudioAnalysisWakeCallback audioAnalysisWakeCallback_;
     TaskWakeCallback taskWakeCallback_;
+    SystemControlPromptCallback systemControlPromptCallback_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetSystemControlTasks> systemControlTasks_;
     bool applyingTaskBrokerActions_ = false;
     bool taskWakePending_ = false;
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
@@ -1846,6 +1889,8 @@ private:
         snowdesktop::widget_runtime::WidgetNotificationScheduleStore>
         notificationScheduleStore_;
     std::filesystem::path notificationSchedulePath_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetLocationTaskExecutor> locationTaskExecutor_;
+    std::unordered_map<std::uint64_t, snowdesktop::widget_runtime::LocationResult> locationTaskCompletions_;
     std::unique_ptr<
         snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
         mediaTaskExecutor_;
@@ -1922,8 +1967,10 @@ private:
     std::unordered_map<int, std::uint64_t> networkRequestTasks_;
     snowdesktop::widget_runtime::WidgetTrustedGestureState
         trustedGestureState_;
+    const snowdesktop::widget_runtime::HostInputSubmitFocusScope*
+        hostInputSubmitFocus_ = nullptr;
     std::uint64_t nextWidgetRuntimeToken_ = 0;
-    std::unique_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
+    std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
         widgetSystemDataProvider_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>
         widgetAudioAnalysisProvider_;
@@ -1948,6 +1995,7 @@ private:
     bool previewOnly_ = false;
     struct FocusedHostInput
     {
+        snowdesktop::text_input::History history;
         bool active = false;
         std::wstring widgetId;
         std::string id;
@@ -1959,6 +2007,8 @@ private:
         snowdesktop::widget_runtime::InteractionAction submitAction;
         std::wstring text;
         std::wstring originalText;
+        std::wstring modelText;
+        std::optional<std::wstring> deferredModelText;
         size_t cursor = 0;
         size_t selectionAnchor = 0;
         std::optional<snowdesktop::widget_runtime::ViewTextSelection>
@@ -1968,6 +2018,9 @@ private:
         size_t pointerSelectionStartCursor = 0;
         size_t pointerSelectionStartAnchor = 0;
         std::wstring compositionText;
+        std::wstring duplicateImeResult;
+        bool composing = false;
+        bool deferredSelection = false;
         size_t compositionCursor = 0;
         wchar_t pendingHighSurrogate = 0;
         bool pointerSelecting = false;

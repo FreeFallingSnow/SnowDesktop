@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file app.h
  * @brief SnowDesktop 主应用程序类的声明头文件。
  *
@@ -16,12 +16,18 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "../text_input_window.h"
+#include "../layout_scroll_save.h"
+#include "../scroll_content_clip.h"
+#include "../operation_feedback.h"
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
 #include "../single_instance.h"
 #include "shell_icon_work.h"
 #include "shell_icon_request.h"
 #include "../dock_refresh_cache.h"
+#include "../bounded_lru_cache.h"
+#include "../icon_row_index.h"
 #include "dock_icon_work.h"
 #include "../desktop_namespace_registry.h"
 #include "item.h"
@@ -46,12 +52,18 @@
 #include "website_icon.h"
 #include "large_icon_motion.h"
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
+namespace snowdesktop::tray { struct Icon; }
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "../status_bar.h"
+#include "../status_bar_shell_shortcut.h"
+#include "../dock_appbar.h"
+#include "../system_panel.h"
 #include "desktop_passthrough_indicator.h"
 #include "shell_extension_menu.h"
 #include "display_topology_refresh.h"
 #include "dock_settings.h"
+#include "taskbar_appearance.h"
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
 #include "dock_collection_icon_rules.h"
@@ -74,7 +86,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "floating_dock_rules.h"
 #include "../floating_popup_rules.h"
 #include "../widget_composition_layer_rules.h"
-#include "../desktop_hover_rules.h"
+#include "../desktop_hover_types.h"
 #include "../desktop_drop_cache.h"
 #include "../dock_app_identity_rules.h"
 #include "../shell_launch_worker.h"
@@ -116,6 +128,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "shell_refresh_snapshot.h"
 #include "layout_reload.h"
 #include "folder_read_retries.h"
+#include "folder_read_delivery.h"
 #include "startup_shell_read.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
@@ -127,6 +140,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "../deployment_context.h"
 #include "../steam_entitlement.h"
 #include "../page_layout_settings.h"
+#include "../page_management_rules.h"
 
 #include <windowsx.h>
 #include <dbt.h>
@@ -293,6 +307,7 @@ enum class QuickNavigationInvocationSource
     Pointer,
     DockSearch,
     Hotkey,
+    StatusBar,
 };
 
 struct DockAppIdentity
@@ -355,6 +370,7 @@ struct IconLoadResult {
     bool shortcutArrow = false;
     bool isShortcut = false;
     bool isApplicationShortcut = false;
+    snowdesktop::category_collection_rules::ShortcutTarget shortcutTarget;
     bool iconIsMediaThumbnail = false;
     IconLoadPhase phase = IconLoadPhase::Phase1;
     bool isDesktopItem = true;
@@ -367,6 +383,7 @@ struct DemoIconDecodeResult {
     int width = 0;
     int height = 0;
     std::vector<std::uint32_t> pixels;
+    bool needsGlassBackdrop = false;
 };
 
 struct DemoIconLoadTask {
@@ -596,6 +613,7 @@ public:
         std::wstring modifiedText;
         bool isDirectory = false;
         int systemIconIndex = -1;
+        std::wstring iconCacheKey;
     };
 
     struct QuickNavigationAppEntry
@@ -762,10 +780,19 @@ private:
         // keyboard session, and its leave timer must never collapse a Host
         // that the user summoned explicitly.
         bool passivelyRevealed = false;
+        bool edgeHoverRequested = false;
         ULONGLONG passiveRevealTick = 0;
         ULONGLONG passiveLeaveStartTick = 0;
         bool revealPending = false;
         bool frameReady = false;
+        snowdesktop::quick_navigation_animation_rules::State mergedAnimation;
+        snowdesktop::UiScheduleToken mergedAnimationToken = 0;
+        snowdesktop::StatusBarDockPresentation mergedPresentation;
+        // Shared visibility timeline for merged bars and summon-only Docks.
+        bool mergedPresentationActive = false, updatingMergedPresentation = false;
+        bool presentationMerged = false;
+        bool mergedInteractionHeld = false, mergedCloseAfterInteraction = false;
+        ComPtr<IDCompositionEffectGroup> mergedOpacity;
         bool compositionRenderRecoveryPending = false;
         bool compositionPaintInProgress = false;
         bool dropTargetRegistered = false;
@@ -976,7 +1003,7 @@ private:
     /** @brief 依据材质直通 RGB/透明度绘制独立边缘高光（左上主反射与右下弱透射）。 @return 成功绘制返回 true */
     bool DrawEdgeHighlight(ID2D1DeviceContext* ctx, RECT frame,
         float radius, D2D1_COLOR_F color, float strokeWidth,
-        float effectStrength);
+        float effectStrength, const snowdesktop::EdgeLightSettings& edgeLight = {});
     /** @brief 获取原生毛玻璃后端状态文本。 */
     std::wstring GetGlassBackendStatusText() const;
     /** @brief 触发换页通知（记录文本与时间戳，安排淡出截止时间）。 @param text 通知文本 */
@@ -1103,6 +1130,13 @@ private:
     void RebuildContainersAndItems();
     /** @brief 为目标显示器上的 Dock 预留工作区并计算各自绘制区域。 */
     void ApplyDockWorkAreaReservation();
+    void SyncStatusBar();
+    void ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor);
+    struct StatusBarActivationHold;
+    void ContinueStatusBarActivation(snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
+        std::uint64_t generation, std::shared_ptr<StatusBarActivationHold> hold);
+    void CancelStatusBarActivation(HMONITOR monitor = nullptr, bool immediate = true);
+    snowdesktop::TrayDragFeedback MakeStatusBarTrayDragFeedback();
     /** @brief 将已重算的预留区域应用到现有 Dock 容器。 */
     bool SynchronizeDockContainerAreas();
     DockContainer* GetDockContainer() const;
@@ -1123,6 +1157,14 @@ private:
     bool RenderDragPreviewCompositionFrame(
         const RECT& desktopBounds);
     void SyncDragPreviewWindow();
+    // Tray pointer capture reuses the desktop/Dock presentation window without
+    // manufacturing an Item or starting a desktop/OLE drag session.
+    bool BeginTrayDragPreview(HWND captureOwner, const snowdesktop::tray::Icon& icon,
+        POINT screen, UINT iconSizePx);
+    void UpdateTrayDragPreview(POINT screen, bool accepted);
+    void EndTrayDragPreview();
+    void SyncTrayDragPreviewWindow();
+    bool RenderTrayDragPreviewFrame();
     void ApplyDragPreviewLayerPolicy();
     bool IsDragPresentationOnlyWindow(HWND window) const;
     HWND ResolveWindowBelowDragPreviewAt(
@@ -1168,6 +1210,8 @@ private:
     void UpdatePersistentDockHostVisibility();
     void UpdatePersistentDockHostVisibility(
         PersistentDockHost& host);
+    void ApplyMergedDockPresentationFrame(PersistentDockHost& host);
+    void ResetMergedDockPresentation(PersistentDockHost& host);
     void ShowFloatingDock(
         HMONITOR preferredMonitor = nullptr);
     bool EnsureFloatingDockVisibleForAssociatedSurface(
@@ -1208,6 +1252,7 @@ private:
     bool UpdatePassiveDragRevealHosts(
         POINT cursorScreen);
     void UpdateFloatingDockEdgeSwipe();
+    bool DismissMergedDockBackground(PersistentDockHost& host, POINT desktopPoint, POINT screenPoint);
     DockContainer* SelectFloatingDockContainerAtCursor() const;
     DockContainer* SelectFloatingDockContainerForMonitor(
         HMONITOR monitor) const;
@@ -1274,13 +1319,15 @@ private:
     void PaintFloatingPopupWindow(HWND hwnd);
     POINT FloatingPopupClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
+    int GetDockPageItemIconSize(const GridPage& page) const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
     bool AddMaterializedItemsToDock(
         const std::vector<std::wstring>& createdPaths,
-        size_t insertIndex);
+        size_t insertIndex, bool keepOnDesktop = false);
+    bool CanPinExistingDesktopPaths(const std::vector<std::wstring>& paths) const;
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false);
     /** @brief Open a path, redirecting run-as-user shortcuts to elevation. */
@@ -1343,7 +1390,7 @@ private:
     void PruneDockShellMetadata();
     static DockAppIdentity ReadDockAppIdentity(const std::wstring& path);
     std::wstring GetDockWindowAppUserModelIdAsync(HWND window);
-    std::unordered_map<HWND, std::pair<DWORD, std::wstring>> dockWindowAppIds_;
+    snowdesktop::dock_refresh_cache::Cache<std::wstring, HWND> dockWindowAppIds_;
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
     void RefreshDockForegroundState();
     void RefreshDockRunningWindows(bool invalidateChanged = true,
@@ -1470,6 +1517,9 @@ private:
     bool IsDesktopPassthroughPointerDown() const;
     /** @brief 应用软件桌面启用状态，并可选择持久化到通用设置。 */
     void SetSoftwareDesktopEnabled(bool enabled, bool persist);
+    void SetSoftwareDesktopPresentation(bool enabled);
+    void RevealSoftwareDesktopForDockDrag(POINT clientPoint);
+    void RestoreDesktopAfterDockDrag();
     /** @brief 根据全局继承或快捷搜索覆盖项解析并应用主题。 */
     void ApplyQuickNavigationAppearance();
     /** @brief 根据全局继承或独立覆盖项解析集合组件与 Dock 弹窗主题。 */
@@ -1483,18 +1533,7 @@ private:
     PersonalizationSettings ResolveSystemTaskbarAppearance(
         const DockSettings& settings) const
     {
-        PersonalizationSettings result = settings.systemTaskbarFollowPersonalization
-            ? CurrentPersonalization()
-            : settings.systemTaskbarAppearance;
-        if (settings.systemTaskbarContentTheme >= 0)
-            result.contentTheme = settings.systemTaskbarContentTheme;
-        else if (!settings.systemTaskbarFollowPersonalization &&
-                 settings.systemTaskbarAppearance.backgroundPreset !=
-                     kAppearancePresetCustom)
-            result.contentTheme = MakeAppearancePreset(
-                settings.systemTaskbarAppearance.backgroundPreset)
-                .contentTheme;
-        return result;
+        return snowdesktop::ResolveTaskbarAppearance(settings, CurrentPersonalization());
     }
     /** @brief 当前文字颜色是否为深色(黑字)。contentTheme==1 时为 true。 */
     bool IsLightContentTheme() const
@@ -1550,7 +1589,7 @@ private:
         QuickNavigationInvocationSource source =
             QuickNavigationInvocationSource::Pointer);
     /** @brief 关闭快速导航面板。 */
-    void CloseQuickNavigation();
+    void CloseQuickNavigation(bool restoreDesktopFocus = true);
     /** @brief 关闭动画完成后执行动作。 */
     void CloseQuickNavigationThen(
         std::function<void()> action);
@@ -1589,6 +1628,43 @@ private:
     void EnsureQuickNavTextFormats();
     /** @brief 绘制快捷导航窗口内容。 @param hwnd 窗口句柄 */
     void PaintQuickNavigationWindow(HWND hwnd);
+    void DrawQuickNavigationSurface(ID2D1DeviceContext* context);
+    snowdesktop::native_component_preview::Result ExportThemeSurfacePreview(
+        const snowdesktop::native_component_preview::Request& request);
+    snowdesktop::native_component_preview::Result ExportQuickNavigationPreviews(
+        const snowdesktop::native_component_preview::Request& request);
+    snowdesktop::SettingsSearchIndexInput BuildSettingsSearchInput();
+    bool UseQuickNavigationList() const;
+    int QuickNavigationGridCellWidth() const;
+    int QuickNavigationGridCellHeight() const;
+    RECT GetQuickNavigationInputRect(const RECT& overlay) const;
+    RECT GetQuickNavigationToolbarRect(const RECT& overlay, int button) const;
+    void ToggleQuickNavigationCollapsed();
+    bool HandleQuickNavigationSearchKey(WPARAM key);
+    bool HandleQuickNavigationToolbarClick(POINT point);
+    void SetQuickNavigationSearchScope(QuickNavigationSearchType type, std::string engine = {});
+    std::wstring QuickNavigationTypeLabel() const;
+    std::wstring QuickNavigationViewLabel() const;
+    void RefreshQuickNavigationTypedResults();
+    struct QuickNavigationListRow
+    {
+        enum class Kind { Header, Item, App, Everything, ExpandApps, LoadMore, Settings, Web, Run, Calculator, Notice, Scope };
+        Kind kind = Kind::Notice;
+        size_t index = 0;
+        std::wstring title, detail, value;
+        bool enabled = true;
+    };
+    std::vector<QuickNavigationListRow> BuildQuickNavigationListRows() const;
+    int QuickNavigationListRowHeight(const QuickNavigationListRow& row) const;
+    RECT GetQuickNavigationListRowRect(size_t index) const;
+    void DrawQuickNavigationList(ID2D1DeviceContext* context);
+    void DrawQuickNavigationMenus(ID2D1DeviceContext* context);
+    void DrawQuickNavigationActionIcon(ID2D1DeviceContext* context, QuickNavigationSearchType type, RECT bounds, int sizeDip);
+    void DrawQuickNavigationCenteredText(ID2D1DeviceContext* context, const std::wstring& text,
+        RECT bounds, IDWriteTextFormat* format, const D2D1_COLOR_F& color, float fontSize = 0.f);
+    bool DismissQuickNavigationMenuAtPoint(POINT point);
+    bool HandleQuickNavigationListClick(POINT point, bool contextMenu = false, POINT screenPoint = {});
+    bool ActivateQuickNavigationListRow(size_t index);
     /** @brief 确保快速导航搜索编辑框已创建。 */
     void EnsureQuickNavigationSearchEdit();
     /** @brief 更新快速导航搜索编辑框的位置和大小。 */
@@ -1605,7 +1681,8 @@ private:
         WPARAM cookie);
     void ApplyQuickNavigationEverythingSearchResult(
         snowdesktop::QuickNavigationEverythingSearchResult result);
-    int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory);
+    int GetQuickNavigationEverythingIconIndex(const std::wstring& path, bool isDirectory,
+        std::wstring* outKey = nullptr);
     const QuickNavigationAppEntry* FindQuickNavigationEverythingAppEntry() const;
     std::wstring GetQuickNavigationEverythingNoticeText() const;
     bool TryLaunchQuickNavigationEverythingApp();
@@ -1682,18 +1759,27 @@ private:
     /** @brief 从磁盘文件加载布局信息（槽位记录、页面配置等）。 */
     void LoadLayoutSlots();
     /** @brief 将当前布局信息保存到磁盘文件。 */
-    bool SaveLayoutSlots();
+    bool SaveLayoutSlots(bool notifyFailure = true);
+    void DeferScrollLayoutSave();
+    void CancelDeferredLayoutSave();
+    snowdesktop::LayoutScrollSave layoutScrollSave_;
+    bool layoutSavePending_ = false;
+    bool layoutSaveFailureNotified_ = false;
     bool CanEditLargeIcons() const;
     snowdesktop::LargeIconConfig MakeLargeIconDefaults(size_t itemIndex);
     bool SetLargeIconConfig(size_t itemIndex, std::optional<snowdesktop::LargeIconConfig> config);
+    bool SetLargeIconConfigs(const std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>>& configs);
     void OpenLargeIconSettings(size_t itemIndex);
+    void OpenLargeIconSettings(std::vector<std::wstring> keys);
     RECT GetLargeIconFrameRect(const DesktopItem& item) const;
+    RECT GetLargeIconResizeHandleRect(const DesktopItem& item, POINT* center = nullptr) const;
     bool IsRetainedLargeIcon(const DesktopItem& item) const;
     bool IsLargeIconVisible(const DesktopItem& item, POINT pointer, bool hidden) const;
     void DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state);
     snowdesktop::LargeIconSettingsSnapshot EditLargeIcon(snowdesktop::LargeIconSettingsRequest request);
     const snowdesktop::LargeIconConfig& EffectiveLargeIconConfig(const DesktopItem& item) const;
-    void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {}, int variant = 0);
+    void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {}, int variant = 0,
+        std::vector<std::wstring> importKeys = {});
     void ProcessLargeIconAssets();
     void UpdateLargeIconHover();
     bool HandleLargeIconPointerDown(POINT point);
@@ -1868,6 +1954,18 @@ private:
     void SelectWidgetOnly(size_t index);
     /** @brief 切换指定桌面项的选择状态。 @param index 桌面项索引 */
     void ToggleSelection(int index);
+    std::vector<SelectionController::Target> GetDesktopSelectionTargets(
+        const std::wstring& pageId = L"");
+    std::vector<SelectionController::Target> GetWidgetSelectionTargets(
+        size_t widgetIndex);
+    std::vector<SelectionController::Target> GetPopupSelectionTargets();
+    std::wstring GetItemSelectionKey(Item* item) const;
+    std::wstring GetWidgetSelectionScope(size_t widgetIndex) const;
+    std::wstring GetPopupSelectionScope() const;
+    size_t GetSelectionWidgetIndex() const;
+    bool ExtendPointerSelection(const std::wstring& scope,
+        const std::vector<SelectionController::Target>& targets,
+        const std::wstring& key, bool additive);
     /** @brief 获取当前框选目标使用的滚动偏移。 */
     int GetMarqueeScrollOffset() const;
     /** @brief 获取当前框选目标的内容视口。 */
@@ -1926,6 +2024,8 @@ private:
         bool hovered);
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint);
+    HMENU CreateDockContextMenu(bool includeStatusBar);
+    void ExecuteDockContextMenuCommand(UINT command, HWND owner);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
     void ShowDockRunningAppContextMenu(
         POINT screenPoint, size_t runningIndex);
@@ -2040,7 +2140,13 @@ private:
         std::function<void(UINT, const std::wstring&,
             std::vector<snowdesktop::modern_menu::Item>&)>
             onTextChanged = {},
-        const snowdesktop::shell_extensions::Request* shellRequest = nullptr);
+        const snowdesktop::shell_extensions::Request* shellRequest = nullptr,
+        std::function<HWND()> zOrderCompanion = {},
+        bool forceTopmost = false,
+        UINT textInputSubmitCommand = 0,
+        UINT textInputCancelCommand = 0,
+        std::function<void(UINT,
+            std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu = {});
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
     BOOL InvokeShellMenuCommand(IContextMenu* menu,
@@ -2105,6 +2211,16 @@ private:
     void SetGridDimensions(int columns, int rows);
     /** @brief 捕获设置页使用的有序页面与网格快照。 */
     snowdesktop::PageLayoutSnapshot CapturePageLayoutSnapshot() const;
+    snowdesktop::page_management::RemovalPlan PlanPageRemoval(const std::wstring& pageId) const;
+    snowdesktop::PageRemovalImpact AnalyzePageRemoval(const std::wstring& pageId) const;
+    snowdesktop::PageLayoutOperationResult RenamePage(std::uint64_t expectedRevision,
+        const std::wstring& pageId, const std::wstring& name);
+    snowdesktop::PageLayoutOperationResult RemovePage(std::uint64_t expectedRevision,
+        const std::wstring& pageId);
+    bool CommitPageMutation(const std::function<void()>& change,
+        const std::vector<std::size_t>& removedGuideIndices = {});
+    void ConfirmPageRemoval(const std::wstring& pageId, POINT point);
+    bool PageIsNavigable(const std::wstring& pageId) const;
     /** @brief 分析按页面 ID 调整网格时会被重新安置的内容。 */
     snowdesktop::PageGridChangeImpact AnalyzePageGridChange(
         const std::wstring& pageId, int columns, int rows) const;
@@ -2147,7 +2263,7 @@ private:
     /** @brief 实时预览组件列表字号，不保存布局。 */
     void PreviewListItemFontSize(float valueCu);
     float GetListItemFontSize() const { return listItemFontSizeCu_; }
-    /** @brief 设置图标标题字体粗细（粗/中/细）。 @param weight DWRITE_FONT_WEIGHT */
+    /** @brief 设置图标标题字体粗细。 @param weight 未经深色文字补偿的 DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
     /** @brief 实时预览标题字体粗细，不保存布局。 */
     void PreviewItemFontWeight(DWRITE_FONT_WEIGHT weight);
@@ -2213,9 +2329,9 @@ private:
     /** @brief 跳转到指定的页面偏移量。 @param targetOffset 目标偏移 */
     void JumpToPageOffset(int targetOffset);
     /** @brief 新增空白分页，放置指南组件并自动跳转。 */
-    void AddNewPage();
+    void AddNewPage(bool notifyFailure = true);
     /** @brief 在指定页面上放置分页指南组件。 @param pageId 页面标识 */
-    void PlaceGuideWidgetOnPage(const std::wstring& pageId);
+    void PlaceGuideWidgetOnPage(const std::wstring& pageId, bool notifyFailure = true);
     /** @brief 生成唯一的 __page:N 格式页面 ID。 */
     std::wstring GeneratePageId() const;
     /** @brief 每次加载布局时将页面 ID 重新规整为 __page:1, __page:2... 顺序。 */
@@ -2546,18 +2662,21 @@ private:
     snowdesktop::PageItemVisualMetrics GetPageItemVisualMetrics(
         const GridPage& page) const;
     snowdesktop::PageItemVisualMetrics GetItemVisualMetrics(
-        RECT bounds) const;
+        RECT bounds, int componentTitleLines = 0) const;
     /** @brief 从项边界矩形计算图标区域。 @param bounds 项边界 @return 图标矩形 */
-    RECT GetItemIconRect(RECT bounds) const;
+    RECT GetItemIconRect(RECT bounds, int componentTitleLines = 0) const;
     /** @brief 从快捷导航项边界计算图标区域（独立于桌面网格缩放）。 @param bounds 项边界 @return 图标矩形 */
     RECT GetQuickNavItemIconRect(RECT bounds) const;
     /** @brief 从项边界矩形计算文本区域。 @param bounds 项边界 @param expanded 是否展开 @return 文本矩形 */
-    RECT GetItemTextRect(RECT bounds, bool expanded) const;
+    RECT GetItemTextRect(RECT bounds, bool expanded, int componentTitleLines = 0) const;
+    RECT GetItemRenameRect(RECT bounds, int componentTitleLines = 0) const;
+    bool IsRenamingItem(const DesktopItem* item) const;
+    bool IsRenamingItem(const FolderEntry* entry) const;
     /** @brief 获取项目所在网格单元相对于 92x116 基准尺寸的布局缩放比例。 */
     float GetItemLayoutScale(RECT bounds) const;
     bool UpdateWidgetHandleCursor(POINT point);
     /** @brief 从项边界矩形计算选中框区域。 @param bounds 项边界 @param expanded 是否展开 @return 选中框矩形 */
-    RECT GetItemSelectionRect(RECT bounds, bool expanded) const;
+    RECT GetItemSelectionRect(RECT bounds, bool expanded, int componentTitleLines = 0) const;
     /**
      * @brief 绘制圆角矩形。
      * @param ctx D2D 上下文
@@ -2598,7 +2717,8 @@ private:
      */
     void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f,
-        bool lightTheme = false, bool componentPanel = false);
+        bool lightTheme = false, bool componentPanel = false, int titleLines = 0);
+    int ResolveItemTitleLines(const DesktopWidget* widget = nullptr) const;
     /**
      * @brief 快捷导航大图标下标签的自绘文本（不依赖桌面 DrawItemText）。
      * 使用 quickNavItemTextFormat_（变量字体 + 细字重），居中、可换行。
@@ -2647,7 +2767,8 @@ private:
      */
     void DrawD2DTextEllipsis(ID2D1RenderTarget* ctx, const std::wstring& text,
         RECT rect, IDWriteTextFormat* format, const D2D1_COLOR_F& color,
-        DWRITE_TEXT_ALIGNMENT hAlign, DWRITE_PARAGRAPH_ALIGNMENT vAlign, bool ellipsis = true);
+        DWRITE_TEXT_ALIGNMENT hAlign = DWRITE_TEXT_ALIGNMENT_LEADING,
+        DWRITE_PARAGRAPH_ALIGNMENT vAlign = DWRITE_PARAGRAPH_ALIGNMENT_CENTER, bool ellipsis = true);
     /**
      * @brief 绘制集合弹出面板内容。
      * @param ctx D2D 上下文
@@ -2750,11 +2871,12 @@ private:
     bool StartCollectionPopupCompositionAnimation();
     bool StartLuaWidgetPanelCompositionAnimation();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state);
+    void RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t ownerKey);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
-        D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth);
+        D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
     bool DrawDockControlBackground(ID2D1DeviceContext* ctx, RECT rect, int state,
-        bool forceWhiteStyle = false);
+        bool forceWhiteStyle = false, std::uintptr_t ownerKey = 0);
     void DrawDockSelectionIndicator(
         ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,
@@ -2774,7 +2896,8 @@ private:
         ID2D1RenderTarget* target, HBITMAP hbm, bool beautify);
     ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify);
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
-        RECT destination, float opacity = 1.0f);
+        RECT destination, float opacity = 1.0f,
+        std::uintptr_t ownerKey = 0, bool fitWithoutUpscaling = true);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
     bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
@@ -2976,6 +3099,11 @@ private:
     DesktopWidget* GetOpenPopupWidget();
     const DesktopWidget* GetOpenPopupWidget() const;
     size_t GetPopupItemCount(const DesktopWidget& widget) const;
+    ScrollingItemWidget* GetCategorizedPopupView() const;
+    bool UsesCategorizedPopupControls(const DesktopWidget& widget) const;
+    size_t GetPopupFolderEntryIndex(const DesktopWidget& widget, size_t visibleIndex) const;
+    RECT GetCollectionPopupControlsRect(const RECT& popup) const;
+    RECT GetCategorizedPopupFrame(const RECT& popup) const;
     bool UsesCollectionPopupFan(const DesktopWidget& widget) const;
     bool UsesCollectionPopupList(const DesktopWidget& widget) const;
     bool CollectionPopupFanRootAbove() const;
@@ -3023,6 +3151,8 @@ private:
     /** Start closing while retaining a passive hover request for revalidation. */
     void BeginCollectionPopupClose(bool clearSelection);
     void FinalizeCloseCollectionPopup();
+    /** @brief Esc 优先处理前景弹窗，保留仍按住的拖拽及其来源。 */
+    bool TryDismissPopupForEscape();
     void StartCollectionPopupAnimation(
         bool reverseClosingAnimation = false);
     void InvalidateCollectionPopupAnimation(
@@ -3078,8 +3208,15 @@ private:
     int GetQuickNavigationGap(const RECT& overlay) const;
     /** @brief 获取快速导航面板中内容的最大滚动偏移。 @param overlay 面板矩形 @return 最大滚动偏移 */
     int GetQuickNavigationMaxScrollOffset(const RECT& overlay) const;
+    int GetQuickNavigationMaxScrollOffset(const RECT& overlay,
+        const QuickNavigationContentModel& model) const;
     int GetQuickNavigationContentHeight(const RECT& overlay) const;
+    int GetQuickNavigationContentHeight(const RECT& overlay,
+        const QuickNavigationContentModel& model) const;
     bool GetQuickNavigationScrollbarGeometry(const RECT& overlay,
+        RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const;
+    bool GetQuickNavigationScrollbarGeometry(const RECT& overlay,
+        const QuickNavigationContentModel& model,
         RECT& outTrack, RECT& outThumb, int& outMaxScroll, int& outContentHeight) const;
     QuickNavigationPointerTarget
         HitTestQuickNavigationPointerTarget(
@@ -3386,6 +3523,18 @@ private:
     class SettingsHostActionsAdapter;
     std::unique_ptr<snowdesktop::SettingsHostActions> settingsHostActions_;
     std::unique_ptr<snowdesktop::SettingsController> settingsController_;
+    std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
+        systemDataProvider_;
+    std::unique_ptr<snowdesktop::StatusBar> statusBar_;
+    snowdesktop::UiScheduleToken statusBarActivationToken_ = 0;
+    snowdesktop::TaskViewTransitionGuard statusBarTaskViewTransition_;
+    std::shared_ptr<std::uint64_t> statusBarActivationGeneration_ = std::make_shared<std::uint64_t>(0);
+    HMONITOR statusBarActivationMonitor_ = nullptr;
+    HMONITOR statusBarMenuMonitor_ = nullptr;
+    HWND statusBarMenuOwner_ = nullptr;
+    snowdesktop::StatusBarAction statusBarMenuAction_ = snowdesktop::StatusBarAction::None;
+    HMONITOR statusBarQuickNavigationMonitor_ = nullptr;
+    std::unique_ptr<snowdesktop::SystemPanel> systemPanel_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     std::unique_ptr<snowdesktop::widget_runtime::IWidgetSettingsBackend>
         widgetSettingsBackend_;
@@ -3393,6 +3542,7 @@ private:
         widgetSettingsService_;
     std::unique_ptr<SettingsWindow> settingsWindow_;
     snowdesktop::LargeIconEditSession largeIconEdit_;
+    std::vector<std::wstring> largeIconSettingsKeys_;
     std::uint64_t largeIconSessionSerial_ = 0;
     std::unique_ptr<snowdesktop::LargeIconAssets> largeIconAssets_;
     struct LargeIconRuntime
@@ -3434,6 +3584,7 @@ private:
         snowdesktop::LargeIconConfig config;
         GridCell cell;
         bool creating = false, resizing = false, valid = false;
+        POINT resizePointerOffset{};
     };
     std::optional<LargeIconGesture> largeIconGesture_;
     std::unique_ptr<snowdesktop::steam_entitlement::Service>
@@ -3465,6 +3616,19 @@ private:
     HANDLE steamWorkshopWatcherStopEvent_ = nullptr;
     std::atomic<bool> steamWorkshopWatcherActive_{ false };
     NavigationSettings navigationSettings_;
+    bool quickNavigationCollapsed_ = false;
+    bool quickNavigationFixedTop_ = false;
+    int quickNavigationAnchorTop_ = 0;
+    QuickNavigationSearchType quickNavigationSearchType_ = QuickNavigationSearchType::All;
+    std::string quickNavigationSearchEngine_;
+    enum class QuickNavigationMenu { None, Types, Views };
+    QuickNavigationMenu quickNavigationMenu_ = QuickNavigationMenu::None;
+    int quickNavigationMenuSelection_ = 0;
+    int quickNavigationListSelection_ = -1;
+    std::vector<snowdesktop::SettingsSearchResult> quickNavigationSettingsResults_;
+    std::wstring quickNavigationActionNotice_;
+    bool quickNavigationPreview_ = false;
+    ULONGLONG quickNavigationSettingsRefreshTick_ = 0;
     GeneralSettings generalSettings_;
     DockSettings dockSettings_;
     PersonalizationSettings personalizationSettings_ =
@@ -3591,6 +3755,8 @@ private:
     bool systemTaskbarTaskViewActive_ = false;
     UINT systemTaskbarTaskViewStateMsg_ = 0;
     std::vector<RECT> dockAreas_;
+    std::unique_ptr<snowdesktop::DockAppBars> dockAppBars_;
+    std::vector<RECT> dockReservedAreas_; // Excludes the AppBar's own reservation.
     bool dockWorkAreaReservationApplied_ = false;
     DockPosition dockWorkAreaReservationPosition_ =
         DockPosition::Bottom;
@@ -3612,6 +3778,9 @@ private:
     std::unordered_map<std::wstring, bool> settingsIconVisibility_;
     std::unordered_map<std::wstring, int> savedPageColumns_;
     std::unordered_map<std::wstring, int> savedPageRows_;
+    std::unordered_map<std::wstring, std::wstring> savedPageNames_;
+    std::uint64_t pageMutationRevision_ = 0;
+    bool pageMutationActive_ = false;
     std::vector<std::wstring> savedPageIds_;
     bool desktopItemsReady_ = false;
     bool initializeGridFromWindows_ = false;
@@ -3648,8 +3817,13 @@ private:
     bool itemFontSizePreviewActive_ = false;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
     bool listItemFontSizePreviewActive_ = false;
-    DWRITE_FONT_WEIGHT itemFontWeight_ = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    DWRITE_FONT_WEIGHT itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(
+        snowdesktop::font_weight_rules::kDefaultWeight);
     bool itemFontWeightPreviewActive_ = false;
+    int desktopTitleLines_ = 2;
+    int largeFolderTitleLines_ = 2;
+    int scrollingTitleLines_ = 2;
+    bool titleEllipsis_ = true;
     int shortcutArrowMode_ = 0;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     std::wstring primaryMonitorId_;
@@ -3732,6 +3906,7 @@ private:
     snowdesktop::floating_dock_rules::EdgeSwipeDetector
         floatingDockEdgeSwipeDetector_;
     UINT floatingDockPointerButtonsDown_ = 0;
+    snowdesktop::floating_dock_rules::ExternalPointerDrag floatingDockExternalPointerDrag_;
     DockContainer* floatingDockContainer_ = nullptr;
     HMONITOR floatingDockMonitor_ = nullptr;
     RECT floatingDockHoverHandoffRect_{};
@@ -3795,6 +3970,7 @@ private:
     bool renderingFloatingDock_ = false;
     bool handlingFloatingDockInput_ = false;
     bool renderingFloatingPopup_ = false;
+    snowdesktop::BoundedLruCache<std::uint64_t, ComPtr<ID2D1Bitmap1>> iconReflectionCache_{64};
     bool handlingFloatingPopupInput_ = false;
     /** @brief 浮动 Dock 被动 hover 最近一次同步提交时刻（8ms 限频用）。 */
     ULONGLONG floatingDockLastPointerPresentTick_ = 0;
@@ -3816,6 +3992,15 @@ private:
     std::vector<RECT> dragPreviewItemBounds_;
     std::uint64_t dragPreviewRenderRevision_ = 0;
     bool dragPreviewCompositionPaintInProgress_ = false;
+    struct TrayDragPreview
+    {
+        HWND captureOwner = nullptr;
+        POINT screen{};
+        UINT width = 0, height = 0, iconSize = 0;
+        std::vector<std::uint32_t> pixels;
+        bool accepted = false, dirty = true;
+    };
+    std::optional<TrayDragPreview> trayDragPreview_;
     ComPtr<IDCompositionTarget> floatingPopupDcompTarget_;
     ComPtr<IDCompositionVisual2> floatingPopupDcompVisual_;
     ComPtr<IDCompositionSurface> floatingPopupDcompSurface_;
@@ -3859,12 +4044,16 @@ private:
     // 快捷导航 DirectWrite 文本格式（替代 GDI HFONT）
     ComPtr<IDWriteTextFormat> quickNavTabTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavItemTextFormat_;
+    ComPtr<IDWriteTextFormat> quickNavSearchTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavPathTextFormat_;
     ComPtr<IDWriteTextFormat> quickNavFluentTextFormat_;
+    snowdesktop::ScrollContentFadeCache quickNavScrollFadeCache_;
     /** @brief 快捷导航应用/Everything 行图标的 D2D 位图缓存（按索引和源尺寸）。 */
     std::unordered_map<std::uint64_t, ComPtr<ID2D1Bitmap>> quickNavSysIconCache_;
     /** @brief 应用图标快照的 D2D 缓存；键为 AppsFolder 稳定解析身份。 */
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap>> quickNavAppIconCache_;
+    std::array<ComPtr<ID2D1Bitmap>, 7> quickNavActionIconCache_;
+    ID2D1DeviceContext* quickNavActionIconContext_ = nullptr;
     std::vector<int> quickNavTabWidths_;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -3884,6 +4073,8 @@ private:
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;
     bool customDesktopVisible_ = true;
+    bool dockDragDesktopRevealed_ = false;
+    bool dockDragPreviousIconsHidden_ = false;
     bool desktopPassthroughHotkeyRegistered_ = false;
     bool desktopPassthroughActive_ = false;
     snowdesktop::DesktopPassthroughIndicator desktopPassthroughIndicator_;
@@ -4092,7 +4283,7 @@ private:
 
     /** @name 重命名编辑控件 */
     /** @{ */
-    HWND renameEdit_ = nullptr;
+    HWND renameInputWindow_ = nullptr;
     HFONT renameFont_ = nullptr;
     bool renameCommitPending_ = false;
     RenameController renameController_;
@@ -4351,6 +4542,7 @@ private:
     RECT quickNavigationHostRect_{};
     bool quickNavigationWindowRegionExpanded_ = false;
     std::wstring quickNavigationSearchText_;
+    std::wstring quickNavigationEffectiveSearchText_;
     std::wstring quickNavigationSearchCompositionText_;
     std::vector<QuickNavigationEverythingEntry> quickNavigationEverythingResults_;
     DWORD quickNavigationEverythingResultLimit_ = kQuickNavigationEverythingResultBatchSize;
@@ -4388,7 +4580,8 @@ private:
     QuickNavigationPointerTarget
         quickNavigationPointerTarget_{};
     HIMAGELIST quickNavigationSystemImageListSmall_ = nullptr;
-    std::unordered_map<std::wstring, int> quickNavigationEverythingIconCache_;
+    snowdesktop::BoundedLruCache<std::wstring, int> quickNavigationEverythingIconCache_{512};
+    snowdesktop::IconRowIndex<std::wstring> quickNavigationEverythingIconRows_;
     snowdesktop::QuickNavigationEverythingSearchAsync
         quickNavigationEverythingSearch_;
     bool everythingSearchAvailable_ = true;
@@ -4411,6 +4604,7 @@ private:
 
     /** @brief D2D 位图缓存 */
     std::unordered_map<std::uintptr_t, ComPtr<ID2D1Bitmap1>> d2dIconCache_;
+    std::unordered_map<ID2D1Bitmap*, bool> iconGlassBackdrop_;
     /** @brief 从开发资源目录加载的演示应用图标（按稳定视觉身份索引）。 */
     std::array<ComPtr<ID2D1Bitmap1>,
         snowdesktop::demo_mode_rules::kDemoIconAssetCount>
@@ -4459,6 +4653,7 @@ private:
     std::unordered_map<std::wstring, std::uint64_t> folderReadVersions_;
     std::unordered_set<std::wstring> folderReadsPending_;
     snowdesktop::shell_refresh::FolderReadRetries folderReadRetries_;
+    snowdesktop::shell_refresh::FolderReadDelivery folderReadDelivery_;
     bool QueueFolderRead(const std::wstring& path);
     void RetryFolderReads();
     void QueueIconTask(IconLoadTask task);

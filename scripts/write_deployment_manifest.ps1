@@ -171,7 +171,10 @@ $noticeSpecs = @(
     @($WindowsMlLicensePath, "WindowsML-LICENSE.txt"),
     @($WindowsMlNoticePath, "WindowsML-NOTICE.txt"),
     @($WebView2LicensePath, "WebView2-LICENSE.txt"),
-    @($WebView2NoticePath, "WebView2-NOTICE.txt")
+    @($WebView2NoticePath, "WebView2-NOTICE.txt"),
+    @((Join-Path (Split-Path -Parent $PSScriptRoot) "third_party/yasb/LICENSE"), "YASB-LICENSE.txt"),
+    @((Join-Path (Split-Path -Parent $PSScriptRoot) "third_party/misans/LICENSE.pdf"), "MiSans-LICENSE.pdf"),
+    @((Join-Path (Split-Path -Parent $PSScriptRoot) "third_party/harmonyos-sans/LICENSE.txt"), "HarmonyOS-Sans-LICENSE.txt")
 )
 $notices = foreach ($spec in $noticeSpecs) {
     $source = [System.IO.Path]::GetFullPath([string]$spec[0])

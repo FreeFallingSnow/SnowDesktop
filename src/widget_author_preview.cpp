@@ -307,6 +307,9 @@ std::optional<PreviewAppearance> ParseAppearance(std::string_view name)
     if (name == "glass-light")
         return PreviewAppearance{
             PersonalizationSettings::GlassLightPreset(), "light", true };
+    if (name == "glass-transparent")
+        return PreviewAppearance{
+            PersonalizationSettings::GlassTransparentPreset(), "dark", false };
     if (name == "acrylic-dark")
         return PreviewAppearance{
             PersonalizationSettings::AcrylicDarkPreset(), "dark", false };
@@ -382,7 +385,7 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 borderR, borderG, borderB, resolved.theme.borderAlpha,
                 borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
                 edgeHighlightStrength,
-                gradient, glass, acrylic, &resolved.material.panelGradient))
+                gradient, glass, acrylic, &resolved.material.panelGradient, &resolved.material.edgeLight))
         {
             resolved.theme.bg =
                 (static_cast<int>(std::lround(bgR * 255.0f)) << 16) |
@@ -402,6 +405,7 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 edgeHighlightStrength;
             resolved.material.glassEnabled = glass;
             resolved.material.acrylicEnabled = glass && acrylic;
+
         }
         const std::string storedTheme = engine.RuntimeGetStorageValue(
             kPreviewWidgetId, "__contentTheme");
@@ -452,20 +456,17 @@ void DrawHostBackground(ID2D1DeviceContext* context,
         const float strokeWidth = std::clamp(
             resolved.material.widgetBorderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
-        const LONG borderInset = static_cast<LONG>(std::ceil(
-            strokeWidth * 0.5f));
-        RECT borderBounds = bounds;
-        InflateRect(&borderBounds, -borderInset, -borderInset);
-        if (!IsRectEmpty(&borderBounds))
+        const float borderInset = strokeWidth * 0.5f;
+        const auto borderBounds = D2D1::RectF(
+            rounded.rect.left + borderInset, rounded.rect.top + borderInset,
+            rounded.rect.right - borderInset, rounded.rect.bottom - borderInset);
+        if (borderBounds.right > borderBounds.left &&
+            borderBounds.bottom > borderBounds.top)
         {
             const float borderRadius = std::max(
-                0.0f, radius - static_cast<float>(borderInset));
+                0.0f, radius - borderInset);
             context->DrawRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(
-                    static_cast<float>(borderBounds.left),
-                    static_cast<float>(borderBounds.top),
-                    static_cast<float>(borderBounds.right),
-                    static_cast<float>(borderBounds.bottom)),
+                D2D1::RoundedRect(borderBounds,
                     borderRadius, borderRadius), border.Get(), strokeWidth);
         }
     }
@@ -491,7 +492,8 @@ void DrawHostEdgeHighlight(ID2D1DeviceContext* context,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
     (void)snowdesktop::widget_preview::DrawEdgeHighlight(
         context, bounds, radius, color(theme.bg, theme.alpha), edgeWidth,
-        resolved.material.widgetEdgeHighlightStrength);
+        resolved.material.widgetEdgeHighlightStrength,
+        resolved.material.edgeLight);
 }
 
 std::string FirstValidationError(

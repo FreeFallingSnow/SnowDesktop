@@ -7,6 +7,8 @@
 #include "preview_png_writer.h"
 #include "utils.h"
 #include "widget_preview_stage.h"
+#include "system_panel_preview.h"
+#include "status_bar_preview.h"
 
 #include <shellapi.h>
 
@@ -129,6 +131,8 @@ bool ResolveAppearance(std::string_view name,
         settings = PersonalizationSettings::GlassLightPreset();
         lightStage = true;
     }
+    else if (name == "glass-transparent")
+        settings = PersonalizationSettings::GlassTransparentPreset();
     else if (name == "acrylic-dark")
         settings = PersonalizationSettings::AcrylicDarkPreset();
     else if (name == "acrylic-light")
@@ -147,7 +151,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -249,7 +253,8 @@ DesktopApp::ExportNativeComponentPreviews(
 
     PersonalizationSettings appearance;
     bool lightStage = false;
-    if (!ResolveAppearance(request.appearance, appearance, lightStage))
+    if (request.theme) { appearance = request.theme->appearance; lightStage = appearance.contentTheme == 1; }
+    else if (!ResolveAppearance(request.appearance, appearance, lightStage))
     {
         result.stage = "request.appearance";
         result.error = "unsupported component preview appearance";
@@ -301,6 +306,33 @@ DesktopApp::ExportNativeComponentPreviews(
         result.error = "cannot initialize the native component renderer";
         return result;
     }
+
+    if (request.component == "calendar-panel" || request.component == "control-panel" ||
+        request.component == "tray-panel" || request.component == "resource-panel")
+        return ExportSystemPanelPreview(request, d2dDevice_.Get(), dwriteFactory_.Get(), appearance,
+            [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& style, float scale) {
+                DrawWidgetPanelBackground(context, frame, style.cornerRadius * scale,
+                    D2D1::ColorF(style.widgetBgR, style.widgetBgG, style.widgetBgB, style.widgetAlpha),
+                    D2D1::ColorF(style.widgetBorderR, style.widgetBorderG, style.widgetBorderB, style.widgetBorderAlpha),
+                    false, style.widgetBorderWidth * scale, &style, false, 0, scale);
+                brushCache_.clear(); brushCacheContext_ = nullptr;
+            });
+
+    if (request.component == "status-bar" && request.theme) return ExportThemeSurfacePreview(request);
+    if (request.component == "status-bar")
+        return ExportStatusBarPreview(request, d2dDevice_.Get(), dwriteFactory_.Get(), appearance,
+            [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& style, float scale, DockPosition position) {
+                auto fill = StatusBarFillAppearance(style);
+                DrawWidgetPanelBackground(context, frame, 0,
+                    D2D1::ColorF(fill.widgetBgR, fill.widgetBgG, fill.widgetBgB, fill.widgetAlpha),
+                    D2D1::ColorF(0, 0.f), false, 0, &fill, false, 0, scale);
+                DrawStatusBarEdge(context, frame, style, scale, position);
+                brushCache_.clear(); brushCacheContext_ = nullptr;
+            });
+
+    if (request.component == "quick-navigation") return ExportQuickNavigationPreviews(request);
+    if (request.component == "dock" || request.component == "taskbar" || request.component == "popup")
+        return ExportThemeSurfacePreview(request);
 
     const float scale = static_cast<float>(request.dpi) /
         static_cast<float>(USER_DEFAULT_SCREEN_DPI);
@@ -496,6 +528,7 @@ DesktopApp::ExportNativeComponentPreviews(
         }
         for (const Variant& variant : buildVariants(definition.id))
         {
+            if (request.theme && variant.id != (request.component == "folder-mapping" ? "grid" : "compact")) continue;
             component_preview::Card& card = model.cards[variant.cardIndex];
             const int width = card.previewWidth;
             const int height = card.previewHeight;
@@ -587,7 +620,7 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     handled = true;
     Result result;
     std::filesystem::path resultPath;
-    if (argumentCount != 14)
+    if (argumentCount != 14 && argumentCount != 16)
     {
         result.stage = "request.arguments";
         result.error = "invalid native component preview host arguments";
@@ -622,6 +655,16 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
     request.dpi = static_cast<unsigned>(dpi);
     request.transparent = std::wstring_view(arguments[11]) == L"1";
     request.contentOnly = std::wstring_view(arguments[12]) == L"1";
+    if (argumentCount == 16)
+    {
+        themes::Package package;
+        if (!themes::ReadPackage(arguments[14], package, result.error) ||
+            !(request.theme = themes::Resolve(package, WideToUtf8(arguments[15]))))
+        {
+            result.stage = "request.theme"; WriteResultFile(resultPath, result);
+            releaseArguments(); return 2;
+        }
+    }
     result.request = request;
     if (!IsSupportedComponent(request.component) || request.locale.empty() ||
         request.locale.size() > 35 ||

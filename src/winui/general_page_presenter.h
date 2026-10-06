@@ -76,6 +76,7 @@ struct GeneralAdvancedFeatureStatus
 struct GeneralPageActions
 {
     StartPageActions onboarding;
+    std::function<void(const SettingsRoute&)> navigate;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
     using NavigationEdit = std::function<void(NavigationSettings&)>;
     using DockEdit = std::function<void(DockSettings&)>;
@@ -135,6 +136,7 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         Root() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel QuickNavigationContent() const noexcept;
     /** Desktop behavior and interaction settings, rendered on Desktop. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         DesktopBehaviorContent() const noexcept;

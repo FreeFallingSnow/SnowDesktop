@@ -6,9 +6,34 @@
 #include <windows.h>
 
 #include <string>
+#include <algorithm>
 
 inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
+
+inline RECT QuickNavigationSearchInputRect(RECT search, int inset)
+{
+    InflateRect(&search, -inset, -inset);
+    search.right = std::max<LONG>(search.left + 1, search.right);
+    search.bottom = std::max<LONG>(search.top + 1, search.bottom);
+    return search;
+}
+
+inline RECT QuickNavigationItemTextRect(RECT item, RECT icon, int pad, int gap, int height)
+{
+    const LONG top = std::max(item.top, icon.bottom + gap);
+    return {item.left + pad, top, item.right - pad, std::min<LONG>(item.bottom, top + height)};
+}
+
+// Keep drawing, hover, activation and keyboard bounds clear of the row gap.
+inline RECT QuickNavigationResultRowRect(RECT slot, int inset)
+{
+    const LONG bounded = std::min<LONG>(std::max(0, inset),
+        std::max<LONG>(0, (slot.bottom - slot.top - 1) / 2));
+    slot.top += bounded;
+    slot.bottom -= bounded;
+    return slot;
+}
 
 inline std::wstring QuickNavigationReadImeCompositionString(HWND hwnd)
 {
@@ -35,6 +60,13 @@ inline int QuickNavigationRowsHeight(int rows, int cellHeight, int rowGap)
     if (rows <= 0)
         return 0;
     return rows * cellHeight + (rows - 1) * rowGap;
+}
+
+// Empty search sources contribute neither a heading nor its surrounding space.
+inline int QuickNavigationSearchDesktopSectionHeight(int rows, int gridHeight,
+    int headerHeight, int gap)
+{
+    return rows > 0 ? headerHeight + gap + gridHeight + gap : 0;
 }
 
 inline bool QuickNavigationHasFileTime(const FILETIME& value)

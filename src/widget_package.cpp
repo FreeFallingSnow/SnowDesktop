@@ -1,4 +1,6 @@
 #include "widget_package.h"
+#include "widget_package_read.h"
+#include "widget_catalog_refresh.h"
 
 #include "json_value.h"
 #include "language_fallback.h"
@@ -2074,7 +2076,8 @@ ValidationReport WidgetPackageValidator::ValidateArchive(
 }
 
 WidgetPackageManager::WidgetPackageManager(PackagePaths paths)
-    : paths_(std::move(paths))
+    : paths_(std::move(paths)),
+      catalogueRefresh_(std::make_shared<detail::CatalogRefresh>())
 {
 }
 
@@ -2407,6 +2410,7 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
 bool WidgetPackageManager::RefreshCatalog(std::string& error)
 {
     error.clear();
+    if (catalogueRefresh_->CanReuse(catalogueRevision_)) return true;
     auto refreshed = *this;
     if (!refreshed.Refresh(error)) return false;
     *this = std::move(refreshed);
@@ -2415,6 +2419,7 @@ bool WidgetPackageManager::RefreshCatalog(std::string& error)
 
 bool WidgetPackageManager::Refresh(std::string& error)
 {
+    catalogueRefresh_->Begin({paths_.builtin, paths_.installed, paths_.development});
     const auto previousKnown = knownDevelopmentIds_;
     const auto previousOverrides = developmentOverrides_;
     packages_.clear();
@@ -2670,6 +2675,8 @@ bool WidgetPackageManager::Refresh(std::string& error)
     for (auto& package : packages_)
         if (package.builtin && activeIds.contains(package.manifest.id))
             package.active = false;
+    catalogueRevision_ = std::make_shared<const char>('\0');
+    catalogueRefresh_->Complete(catalogueRevision_);
     return error.empty();
 }
 
@@ -3757,7 +3764,15 @@ bool WidgetPackageManager::Uninstall(const std::string& packageId,
 std::string WidgetPackageManager::Sha256File(
     const std::filesystem::path& path)
 {
-    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+    return detail::HashPackageFile(path, false);
+}
+
+std::string detail::HashPackageFile(
+    const std::filesystem::path& path, bool allowConcurrentAccess)
+{
+    const DWORD sharing = allowConcurrentAccess
+        ? FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE : FILE_SHARE_READ;
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, sharing,
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return {};
     BCRYPT_ALG_HANDLE algorithm = nullptr;

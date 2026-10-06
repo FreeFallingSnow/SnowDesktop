@@ -1,4 +1,5 @@
 #include "dock_settings.h"
+#include "taskbar_appearance.h"
 #include "dock_gradient_storage.h"
 #include "surface_theme.h"
 
@@ -7,6 +8,8 @@
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_connection.h"
+#include "taskbar_hook/taskbar_symbol_resolver.h"
+#include "diagnostic_log.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -457,6 +460,7 @@ public:
             state_->explorerProcessId != currentExplorerProcessId;
         if (explorerProcessChanged)
         {
+            symbolAttemptProcessId_ = 0;
             if (injectionCancelEvent_)
                 SetEvent(injectionCancelEvent_);
             state_->explorerProcessId = 0;
@@ -514,6 +518,11 @@ public:
         state_->borderBlue = std::clamp(appearance.widgetBorderB, 0.0f, 1.0f);
         state_->borderAlpha = std::clamp(appearance.widgetBorderAlpha, 0.0f, 1.0f);
         state_->gradient = snowdesktop::taskbar_hook::EncodeGradient(appearance.panelGradient);
+        state_->edge.borderWidth = appearance.widgetBorderWidth;
+        state_->edge.highlightEnabled = appearance.widgetEdgeHighlightEnabled;
+        state_->edge.highlightWidth = appearance.widgetEdgeHighlightWidth;
+        state_->edge.highlightStrength = appearance.widgetEdgeHighlightStrength;
+        state_->edge.light = appearance.edgeLight;
         const LONG targetCount = static_cast<LONG>(std::min<std::size_t>(
             targets.size(),
             snowdesktop::taskbar_hook::kMaximumTaskbarTargets));
@@ -558,6 +567,11 @@ public:
             destination.borderAlpha = std::clamp(
                 source.appearance.widgetBorderAlpha, 0.0f, 1.0f);
             destination.gradient = snowdesktop::taskbar_hook::EncodeGradient(source.appearance.panelGradient);
+            destination.edge.borderWidth = source.appearance.widgetBorderWidth;
+            destination.edge.highlightEnabled = source.appearance.widgetEdgeHighlightEnabled;
+            destination.edge.highlightWidth = source.appearance.widgetEdgeHighlightWidth;
+            destination.edge.highlightStrength = source.appearance.widgetEdgeHighlightStrength;
+            destination.edge.light = source.appearance.edgeLight;
         }
         for (std::size_t index = static_cast<std::size_t>(targetCount);
              index < snowdesktop::taskbar_hook::kMaximumTaskbarTargets;
@@ -597,6 +611,7 @@ public:
 
         if (!hookEnabled)
         {
+            symbolAttemptProcessId_ = 0;
             if (injectionCancelEvent_)
                 SetEvent(injectionCancelEvent_);
             return true;
@@ -608,21 +623,42 @@ public:
         const bool nativeMissing = nativeRequired && std::any_of(taskbars.begin(), taskbars.end(), [](HWND window) {
             return !GetPropW(window, snowdesktop::taskbar_hook::native::kAttachedProperty);
         });
-        if (!nativeMissing && state_->explorerProcessId == explorerProcessId &&
-            state_->status >= snowdesktop::taskbar_hook::kStatusInjecting)
+        const bool protectActivation = std::any_of(targets.begin(), targets.end(), [](const auto& target) {
+            return target.protectAutoHideActivation;
+        });
+        const ULONGLONG now = GetTickCount64();
+        const bool resolveSymbols = protectActivation &&
+            (symbolAttemptProcessId_ != explorerProcessId ||
+                (state_->autoHideResolutionError != ERROR_SUCCESS && now - lastSymbolAttemptTick_ >= 60000));
+        // A retained mapping/TAP from an earlier host is not this launch's
+        // connection. Inject once per host/Explorer pair to retire that DLL
+        // and bind activation observation and native entry points together.
+        const bool ownsConnection = injectedExplorerProcessId_ == explorerProcessId;
+        const bool alreadyInjected = ownsConnection && !nativeMissing && state_->explorerProcessId == explorerProcessId &&
+            state_->status >= snowdesktop::taskbar_hook::kStatusInjecting;
+        if (alreadyInjected && !resolveSymbols)
             return true;
         if (injectionInFlight_.load(std::memory_order_acquire))
             return false;
-        const ULONGLONG now = GetTickCount64();
         constexpr ULONGLONG kFailedInjectionRetryDelayMs = 10000;
-        if (state_->explorerProcessId == explorerProcessId &&
+        if (!alreadyInjected && state_->explorerProcessId == explorerProcessId &&
             now - lastInjectionAttemptTick_ < kFailedInjectionRetryDelayMs)
             return false;
 
-        const bool appearanceConnected = state_->explorerProcessId == explorerProcessId &&
+        const bool appearanceConnected = ownsConnection && state_->explorerProcessId == explorerProcessId &&
             state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
         state_->explorerProcessId = explorerProcessId;
         lastInjectionAttemptTick_ = now;
+        if (resolveSymbols)
+        {
+            symbolAttemptProcessId_ = explorerProcessId;
+            lastSymbolAttemptTick_ = now;
+            InterlockedIncrement(&state_->generation);
+            state_->autoHideResolutionError = ERROR_IO_PENDING;
+            state_->autoHideAdapter = {};
+            MemoryBarrier();
+            InterlockedIncrement(&state_->generation);
+        }
         if (!appearanceConnected)
             InterlockedExchange(&state_->status,
                 snowdesktop::taskbar_hook::kStatusInjecting);
@@ -632,10 +668,17 @@ public:
         injectionInFlight_.store(true, std::memory_order_release);
         try
         {
+            // Capture deployment paths on the host, before the headless helper.
+            // It must not initialize user stores or start a second desktop.
+            const auto executable = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe";
+            const auto symbolCache = std::filesystem::path(GetDataDirectoryPath()) / L"ShellHookSymbols";
             injectionThread_ = std::thread([this, primaryTaskbar, explorerProcessId,
-                    appearanceConnected, taskbars = std::move(taskbars)] {
-                const bool injected = Inject(primaryTaskbar, explorerProcessId,
+                    appearanceConnected, alreadyInjected, resolveSymbols, executable, symbolCache,
+                    taskbars = std::move(taskbars)] {
+                const bool injected = alreadyInjected || Inject(primaryTaskbar, explorerProcessId,
                     taskbars, appearanceConnected);
+                if (injected && resolveSymbols)
+                    ResolveAdapter(explorerProcessId, taskbars, executable, symbolCache);
                 {
                     std::lock_guard workerLock(mutex_);
                     if (!injected && state_ &&
@@ -679,6 +722,44 @@ public:
     }
 
 private:
+    void ResolveAdapter(DWORD explorerProcessId, const std::vector<HWND>& taskbars,
+        const std::filesystem::path& executable, const std::filesystem::path& cache)
+    {
+        using namespace snowdesktop::taskbar_hook;
+        const auto started = GetTickCount64();
+        AutoHideResolution result;
+        try { result = RunTaskbarSymbolHelper(executable, cache, injectionCancelEvent_); }
+        catch (...) { result.error = ERROR_NOT_ENOUGH_MEMORY; }
+        {
+            std::lock_guard lock(mutex_);
+            if (!state_ || !state_->enabled || state_->explorerProcessId != explorerProcessId ||
+                (injectionCancelEvent_ && WaitForSingleObject(injectionCancelEvent_, 0) == WAIT_OBJECT_0)) return;
+            InterlockedIncrement(&state_->generation);
+            state_->autoHideAdapter = result.error == ERROR_SUCCESS ? result.adapter : AutoHideAdapter{};
+            state_->autoHideResolutionError = result.error;
+            MemoryBarrier();
+            InterlockedIncrement(&state_->generation);
+            lastSymbolAttemptTick_ = GetTickCount64();
+        }
+        const auto& id = result.adapter.image;
+        wchar_t message[512]{};
+        swprintf_s(message, L"[TaskbarAutoHideSymbols] explorerPid=%lu error=%lu elapsedMs=%llu "
+            L"timestamp=0x%08lX imageSize=0x%lX pdb=%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X "
+            L"age=%lu secondaryRva=0x%lX",
+            explorerProcessId, result.error, GetTickCount64() - started, id.timestamp, id.imageSize,
+            id.pdb.Data1, id.pdb.Data2, id.pdb.Data3, id.pdb.Data4[0], id.pdb.Data4[1],
+            id.pdb.Data4[2], id.pdb.Data4[3], id.pdb.Data4[4], id.pdb.Data4[5], id.pdb.Data4[6], id.pdb.Data4[7], id.age,
+            result.adapter.Get(AutoHideSymbol::SecondaryUnhide).begin);
+        WriteDiagnosticLogEntry(message);
+        const UINT apply = RegisterWindowMessageW(kApplyMessageName);
+        for (const HWND taskbar : taskbars)
+        {
+            DWORD owner = 0;
+            if (GetWindowThreadProcessId(taskbar, &owner) && owner == explorerProcessId)
+                PostMessageW(taskbar, apply, 0, 0);
+        }
+    }
+
     bool OpenState()
     {
         if (state_)
@@ -752,9 +833,11 @@ private:
         if (error != ERROR_SUCCESS) return Fail(expectedExplorerProcessId, error);
 
         std::lock_guard lock(mutex_);
-        return state_ &&
+        const bool connected = state_ &&
             state_->explorerProcessId == expectedExplorerProcessId &&
             state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
+        if (connected) injectedExplorerProcessId_ = expectedExplorerProcessId;
+        return connected;
     }
 
     bool Fail(DWORD expectedExplorerProcessId, DWORD error)
@@ -776,6 +859,9 @@ private:
     std::thread injectionThread_;
     std::atomic<bool> injectionInFlight_{ false };
     ULONGLONG lastInjectionAttemptTick_ = 0;
+    DWORD symbolAttemptProcessId_ = 0;
+    DWORD injectedExplorerProcessId_ = 0;
+    ULONGLONG lastSymbolAttemptTick_ = 0;
 };
 
 TaskbarBackdropController& GetTaskbarBackdropController()
@@ -968,25 +1054,6 @@ bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
         appearance, targets, appearanceEnabled, suppressTaskbar);
 }
 
-PersonalizationSettings MakeTransparentTaskbarAppearance()
-{
-    PersonalizationSettings appearance =
-        PersonalizationSettings::DarkPreset();
-    appearance.widgetBgR = 0.0f;
-    appearance.widgetBgG = 0.0f;
-    appearance.widgetBgB = 0.0f;
-    appearance.widgetAlpha = 0.0f;
-    appearance.widgetBorderR = 0.0f;
-    appearance.widgetBorderG = 0.0f;
-    appearance.widgetBorderB = 0.0f;
-    appearance.widgetBorderAlpha = 0.0f;
-    appearance.gradientEndA = 0.0f;
-    appearance.backgroundPreset = kAppearancePresetTaskbarTransparent;
-    appearance.glassEnabled = false;
-    appearance.acrylicEnabled = false;
-    return appearance;
-}
-
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
 {
     NormalizeDockSettings(settings);
@@ -1023,6 +1090,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "floatingEdgeSwipeEnabled",
         settings.floatingEdgeSwipeEnabled);
+    if (ReadDoubleField(text, "edgeRevealGesture", value))
+        settings.edgeRevealGesture = value == 1 ? 1 : 0;
     ReadBoolField(text, "floatingEdgeSwipeBlockFullscreen",
         settings.floatingEdgeSwipeBlockFullscreen);
     if (ReadDoubleField(text, "monitorScope", value))
@@ -1049,6 +1118,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.keepWhenDesktopHidden);
     ReadBoolField(text, "allowDesktopContentOverlap",
         settings.allowDesktopContentOverlap);
+    ReadBoolField(text, "reserveScreenSpace", settings.reserveScreenSpace);
+    ReadBoolField(text, "lastMonitorUseHomeSize", settings.lastMonitorUseHomeSize);
+    if (ReadDoubleField(text, "mergedBarHeight", value) && std::isfinite(value))
+        settings.mergedBarHeight = static_cast<int>(std::clamp(value, 32., 96.));
     bool loadedLegacyAutoHide = false;
     if (!ReadBoolField(text, "showOnlyWhenSummoned",
             settings.showOnlyWhenSummoned))
@@ -1105,12 +1178,6 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         taskbarStyle.backgroundPreset = NormalizeAppearancePresetId(static_cast<int>(value));
     ReadBoolField(text, "taskbarGlassEnabled", taskbarStyle.glassEnabled);
     ReadBoolField(text, "taskbarAcrylicEnabled", taskbarStyle.acrylicEnabled);
-    if (taskbarStyle.backgroundPreset == kAppearancePresetAcrylicDark ||
-        taskbarStyle.backgroundPreset == kAppearancePresetAcrylicLight)
-    {
-        taskbarStyle = MakeAppearancePreset(
-            taskbarStyle.backgroundPreset);
-    }
     if (ReadDoubleField(text, "taskbarContentTheme", value)) // legacy name
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
     if (ReadDoubleField(text, "systemTaskbarContentTheme", value))
@@ -1127,6 +1194,11 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     JsonValue gradientDocument;
     if (!ParseJson(text, gradientDocument) ||
         !snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
+    if (!snowdesktop::ReadTaskbarMaterials(gradientDocument, settings)) return false;
+    if (taskbarStyle.backgroundPreset == kAppearancePresetTaskbarTransparent)
+        taskbarStyle = MakeTransparentTaskbarAppearance();
+    else if (taskbarStyle.backgroundPreset != kAppearancePresetCustom)
+        ApplyAppearancePreset(taskbarStyle, taskbarStyle.backgroundPreset);
     ReadBoolField(text, "followComponentAppearance", settings.followComponentAppearance);
     if (ReadDoubleField(text, "dockAppearancePreset", value))
         settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
@@ -1141,7 +1213,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     std::ostringstream gradientFields;
     if (!snowdesktop::WriteTaskbarGradients(gradientFields, settings)) return false;
     const auto customAppearance = snowdesktop::EncodePanelAppearance(settings.customAppearance);
-    if (customAppearance.empty()) return false;
+    std::ostringstream materialFields;
+    if (customAppearance.empty() || !snowdesktop::WriteTaskbarMaterials(materialFields, settings)) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
 
@@ -1159,6 +1232,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"floatingEdgeSwipeEnabled\": "
          << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
          << ",\n";
+    file << "  \"edgeRevealGesture\": " << settings.edgeRevealGesture << ",\n";
     file << "  \"floatingEdgeSwipeBlockFullscreen\": "
          << (settings.floatingEdgeSwipeBlockFullscreen ? "true" : "false")
          << ",\n";
@@ -1169,7 +1243,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     // Preserve the legacy keys for downgrade compatibility while migrating
     // every saved configuration to the unconditional feature behavior.
     file << "  \"showRunningApps\": true,\n";
-    file << "  \"showWindowPreviews\": true,\n";
+    file << "  \"showWindowPreviews\": " << (settings.showWindowPreviews ? "true" : "false") << ",\n";
     file << "  \"showFrequentItems\": "
          << (settings.showFrequentItems ? "true" : "false") << ",\n";
     file << "  \"keepWhenDesktopHidden\": "
@@ -1179,9 +1253,13 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << ",\n";
     file << "  \"showOnlyWhenSummoned\": "
          << (settings.showOnlyWhenSummoned ? "true" : "false") << ",\n";
+    file << "  \"reserveScreenSpace\": "
+         << (settings.reserveScreenSpace ? "true" : "false") << ",\n";
     file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
+    file << "  \"lastMonitorUseHomeSize\": " << (settings.lastMonitorUseHomeSize ? "true" : "false") << ",\n";
+    file << "  \"mergedBarHeight\": " << settings.mergedBarHeight << ",\n";
     file << "  \"hoverEffect\": " << snowdesktop::animation::NormalizeHoverEffect(settings.hoverEffect) << ",\n";
     file << "  \"hoverScale\": " << snowdesktop::animation::NormalizeHoverScale(settings.hoverScale) << ",\n";
     file << "  \"launchEffect\": " << snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect) << ",\n";
@@ -1219,6 +1297,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     WriteDynamicRule(file, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
+    file << materialFields.str();
     file << gradientFields.str();
     file << "  \"followComponentAppearance\": " << (settings.followComponentAppearance ? "true" : "false") << ",\n";
     file << "  \"dockAppearancePreset\": " << settings.appearancePreset << ",\n";

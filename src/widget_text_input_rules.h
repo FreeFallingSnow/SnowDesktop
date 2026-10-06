@@ -9,6 +9,48 @@ struct IDWriteTextLayout;
 
 namespace snowdesktop::widget_runtime
 {
+// A keyboard submit may restore its own editor after storage commit has blurred
+// it. The outer widget selection is deliberately cleared by input-field clicks.
+// Borrowed identifiers live for the synchronous callback; nested scopes restore
+// the previous grant and never retain a request for a later render or timer.
+class HostInputSubmitFocusScope
+{
+public:
+    HostInputSubmitFocusScope(const HostInputSubmitFocusScope*& active,
+        std::wstring_view widgetId, std::string_view controlId,
+        std::string_view surface) noexcept
+        : active_(active), previous_(active), widgetId_(widgetId),
+          controlId_(controlId), surface_(surface)
+    {
+        active_ = this;
+    }
+
+    ~HostInputSubmitFocusScope() { active_ = previous_; }
+
+    bool Matches(std::wstring_view widgetId, std::string_view controlId,
+        std::string_view surface) const noexcept
+    {
+        return widgetId_ == widgetId && controlId_ == controlId && surface_ == surface;
+    }
+
+    bool AllowsFocus(std::wstring_view widgetId, std::string_view controlId,
+        std::string_view surface, bool valid, bool preview,
+        bool visible) const noexcept
+    {
+        return valid && !preview && visible && Matches(widgetId, controlId, surface);
+    }
+
+    HostInputSubmitFocusScope(const HostInputSubmitFocusScope&) = delete;
+    HostInputSubmitFocusScope& operator=(const HostInputSubmitFocusScope&) = delete;
+
+private:
+    const HostInputSubmitFocusScope*& active_;
+    const HostInputSubmitFocusScope* previous_;
+    std::wstring_view widgetId_;
+    std::string_view controlId_;
+    std::string_view surface_;
+};
+
 class DeferredHostInputFocus
 {
 public:

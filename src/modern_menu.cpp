@@ -1,4 +1,6 @@
+#include "app_font.h"
 #include "modern_menu.h"
+#include "text_input_state.h"
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
@@ -122,12 +124,14 @@ struct Popup
     int windowWidth = 0;
     int windowHeight = 0;
     POINT panelScreenOrigin{};
+    RECT workArea{};
     menu_icon::Metrics rowMetrics;
     std::vector<RECT> itemRects;
     std::vector<int> navigationOrder;
     RECT quickSeparatorRect{};
     int quickActionRight = 0;
     int quickActionCellWidth = 0;
+    std::wstring initialInputText;
 };
 
 class MenuController
@@ -163,7 +167,7 @@ public:
         textFont_ = CreateFontW(textHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
         // Only the official Regular face is embedded.  Requesting Semibold
         // makes GDI synthesize thicker outlines, which distorts the 20px
         // Fluent masters most visibly on 96-DPI / low-resolution screens.
@@ -184,7 +188,7 @@ public:
         quickTextFont_ = CreateFontW(quickTextHeight, 0, 0, 0, FW_NORMAL,
             FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
         quickFluentIconFont_ = CreateFontW(quickIconHeight, 0, 0, 0,
             FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
             OUT_TT_ONLY_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -346,11 +350,29 @@ public:
         }
 
         TraceOwnedPopupZOrder(L"session-end", nullptr, true);
+        // Activation can change before its posted cancellation is dispatched.
+        // Sample while our popup HWNDs still exist so their normal destruction
+        // cannot be mistaken for the user switching to an unrelated window.
+        const HWND foreground = GetForegroundWindow();
+        if (foreground && !IsPopupWindow(foreground) &&
+            !IsOwnerWindow(foreground))
+            externalActivation_ = true;
+        result_.reason = superseded_ ? ExitReason::Replaced :
+            externalActivation_ ? ExitReason::ExternalActivation :
+            result_.command ? ExitReason::Command : ExitReason::Cancelled;
+        if (superseded_ || externalActivation_)
+        {
+            // Existing hosts only consume command. They must also see a
+            // cancelled operation when focus moved after an item was chosen.
+            result_.command = 0;
+            result_.itemScreenRect = {};
+        }
         HWND expectedRoot = rootWindow;
         gActiveRootMenu.compare_exchange_strong(expectedRoot, nullptr);
         CloseFromDepth(0);
         TraceOwnedPopupZOrder(L"after-popup-destroy", nullptr, true);
-        if (!superseded_ && options_.owner && IsWindow(options_.owner))
+        if (!superseded_ && !externalActivation_ && options_.owner &&
+            IsWindow(options_.owner) && IsWindowVisible(options_.owner))
         {
             SetForegroundWindow(options_.owner);
             SetFocus(options_.owner);
@@ -428,6 +450,8 @@ public:
             return 0;
         }
         case WM_KEYDOWN:
+            textDuplicateImeResult_.clear();
+            if(textInputComposing_)return DefWindowProcW(hwnd,message,wParam,lParam);
             if (!HandleTextInputKey(wParam))
                 HandleKey(wParam);
             return 0;
@@ -461,6 +485,8 @@ public:
             }
             return 0;
         case WM_IME_STARTCOMPOSITION:
+            textInputComposing_=true;
+            textDuplicateImeResult_.clear();
             textInputComposition_.clear();
             textInputCompositionCursor_ = 0;
             ResetTextCaret(popup);
@@ -470,6 +496,7 @@ public:
             HandleTextInputImeComposition(hwnd, lParam);
             return 0;
         case WM_IME_ENDCOMPOSITION:
+            textInputComposing_=false;
             textInputComposition_.clear();
             textInputCompositionCursor_ = 0;
             ResetTextCaret(popup);
@@ -478,7 +505,13 @@ public:
             if (popup.depth == 0 && LOWORD(wParam) == WA_INACTIVE &&
                 !closing_ && !IsPopupWindow(
                     reinterpret_cast<HWND>(lParam)))
+            {
+                // Returning to the owner is an ordinary dismissal; another
+                // application or independent window keeps its new activation.
+                if (!IsOwnerWindow(reinterpret_cast<HWND>(lParam)))
+                    externalActivation_ = true;
                 PostMessageW(hwnd, kCancelMessage, 0, 0);
+            }
             return 0;
         case WM_MOUSEACTIVATE:
             // Cascaded popup windows deliberately do not take activation away
@@ -643,8 +676,13 @@ public:
             }
             else if (item.inlineAction)
             {
+                const auto style = !IsTextInputEditor(popup)
+                    ? menu_icon::InlineActionStyle::Plain
+                    : (item.command == options_.textInputSubmitCommand
+                        ? menu_icon::InlineActionStyle::Primary
+                        : menu_icon::InlineActionStyle::Secondary);
                 menu_icon::DrawInlineAction(memoryDc, textFont_, iconFont,
-                    view, row, state, palette_, metrics_);
+                    view, row, state, palette_, metrics_, style);
             }
             else
             {
@@ -754,6 +792,10 @@ private:
         popup->items = &items;
         popup->depth = depth;
         popup->parentItem = parentItem;
+        // A submenu anchor is the parent's exclusive right edge. At a monitor
+        // seam that point belongs to the neighbouring display, not the menu.
+        // Keep layout, placement and subsequent refreshes on the same work area.
+        popup->workArea = parent ? parent->workArea : ResolveRootWorkArea();
         CalculateLayout(*popup);
         PlacePopup(*popup, anchor, parent);
 
@@ -784,6 +826,7 @@ private:
         {
             if (items[i].textInput && items[i].enabled)
             {
+                rawPopup->initialInputText = items[i].inputText;
                 FocusTextInput(*rawPopup, static_cast<int>(i),
                     items[i].inputText.size(), false);
                 break;
@@ -800,8 +843,19 @@ private:
             !item.inlineAction;
     }
 
+    bool IsTextInputEditor(const Popup& popup) const
+    {
+        return options_.textInputSubmitCommand != 0 &&
+            std::ranges::any_of(*popup.items, [&](const Item& item) {
+                return item.command == options_.textInputSubmitCommand;
+            }) && std::ranges::any_of(*popup.items, [](const Item& item) {
+                return item.textInput;
+            });
+    }
+
     void CalculateLayout(Popup &popup, bool preserveWidth = false)
     {
+        const int editorInset = IsTextInputEditor(popup) ? panelPadding_ : 0;
         popup.rowMetrics = metrics_;
         // Each cascade owns its gutter; icons in descendants or separators
         // do not reserve space here. Search and inline controls keep their metrics.
@@ -1038,9 +1092,9 @@ private:
                 }
                 const int flexibleWidth = flexibleCount > 0
                     ? std::max(narrowWidth,
-                        (width - fixedWidth) / flexibleCount)
+                        (width - fixedWidth - editorInset * 2) / flexibleCount)
                     : std::max(1, width / count);
-                int left = shadowSize_;
+                int left = shadowSize_ + editorInset;
                 for (size_t i = position; i <= runEnd; ++i)
                 {
                     const int actionIndex = regularIndices[i];
@@ -1055,7 +1109,7 @@ private:
                                                            : compactWidth)
                                                     : flexibleWidth);
                     const int actionWidth = i == runEnd
-                        ? shadowSize_ + width - left
+                        ? shadowSize_ + width - editorInset - left
                         : (flexible ? flexibleWidth : requestedWidth);
                     popup.itemRects[actionIndex] = {
                         left, contentTop, left + actionWidth,
@@ -1070,7 +1124,7 @@ private:
             }
             const int height = item.separator
                 ? metrics_.separatorHeight : metrics_.rowHeight;
-            const int horizontalPadding = item.textInput
+            const int horizontalPadding = item.textInput || editorInset > 0
                 ? panelPadding_ : 0;
             popup.itemRects[index] = {
                 shadowSize_ + horizontalPadding, contentTop,
@@ -1087,18 +1141,8 @@ private:
             MaxHorizontalScroll(popup));
         popup.contentHeight = contentTop - shadowSize_ - panelPadding_;
 
-        HMONITOR monitor = MonitorFromPoint(options_.anchor,
-            MONITOR_DEFAULTTONEAREST);
-        MONITORINFO monitorInfo{ sizeof(monitorInfo) };
-        if (!GetMonitorInfoW(monitor, &monitorInfo))
-        {
-            monitorInfo.rcWork = {
-                0, 0, GetSystemMetrics(SM_CXSCREEN),
-                GetSystemMetrics(SM_CYSCREEN),
-            };
-        }
         const int workHeight = static_cast<int>(
-            monitorInfo.rcWork.bottom - monitorInfo.rcWork.top);
+            popup.workArea.bottom - popup.workArea.top);
         int availablePanelHeight = workHeight - Scale(16, options_.dpi);
         if (popup.depth == 0)
         {
@@ -1107,13 +1151,13 @@ private:
             {
                 availablePanelHeight = std::min(availablePanelHeight,
                     static_cast<int>(options_.anchorRect.top -
-                        monitorInfo.rcWork.top));
+                        popup.workArea.top));
             }
             else if (options_.rootPlacement ==
                 RootPlacement::BelowAnchorRect)
             {
                 availablePanelHeight = std::min(availablePanelHeight,
-                    static_cast<int>(monitorInfo.rcWork.bottom -
+                    static_cast<int>(popup.workArea.bottom -
                         options_.anchorRect.bottom));
             }
         }
@@ -1128,10 +1172,10 @@ private:
         popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
     }
 
-    void PlacePopup(Popup& popup, POINT anchor, const Popup* parent)
+    RECT ResolveRootWorkArea() const
     {
-        POINT monitorPoint = anchor;
-        if (!parent && options_.rootPlacement != RootPlacement::Default)
+        POINT monitorPoint = options_.anchor;
+        if (options_.rootPlacement != RootPlacement::Default)
         {
             monitorPoint = {
                 (options_.anchorRect.left + options_.anchorRect.right) / 2,
@@ -1148,14 +1192,18 @@ private:
                 GetSystemMetrics(SM_CYSCREEN),
             };
         }
+        return monitorInfo.rcWork;
+    }
 
+    void PlacePopup(Popup& popup, POINT anchor, const Popup* parent)
+    {
         int left = anchor.x;
         int top = anchor.y;
         if (parent)
         {
             left = parent->panelScreenOrigin.x + parent->panelWidth -
                 Scale(kSubmenuOverlapDip, options_.dpi);
-            if (left + popup.panelWidth > monitorInfo.rcWork.right)
+            if (left + popup.panelWidth > popup.workArea.right)
             {
                 left = parent->panelScreenOrigin.x - popup.panelWidth +
                     Scale(kSubmenuOverlapDip, options_.dpi);
@@ -1179,21 +1227,21 @@ private:
                 break;
             case RootPlacement::Default:
             default:
-                if (left + popup.panelWidth > monitorInfo.rcWork.right)
+                if (left + popup.panelWidth > popup.workArea.right)
                     left -= popup.panelWidth;
                 break;
             }
         }
 
         left = std::clamp(left,
-            static_cast<int>(monitorInfo.rcWork.left),
-            std::max(static_cast<int>(monitorInfo.rcWork.left),
-                static_cast<int>(monitorInfo.rcWork.right) -
+            static_cast<int>(popup.workArea.left),
+            std::max(static_cast<int>(popup.workArea.left),
+                static_cast<int>(popup.workArea.right) -
                     popup.panelWidth));
         top = std::clamp(top,
-            static_cast<int>(monitorInfo.rcWork.top),
-            std::max(static_cast<int>(monitorInfo.rcWork.top),
-                static_cast<int>(monitorInfo.rcWork.bottom) -
+            static_cast<int>(popup.workArea.top),
+            std::max(static_cast<int>(popup.workArea.top),
+                static_cast<int>(popup.workArea.bottom) -
                     popup.panelHeight));
         popup.panelScreenOrigin = { left, top };
     }
@@ -1353,6 +1401,11 @@ private:
         }
 
         const UINT command = item.command;
+        if (IsTextInputEditor(popup) && command == options_.textInputCancelCommand)
+        {
+            CancelTextInputEditor(popup);
+            return;
+        }
         RECT rect = popup.itemRects[index];
         if (item.horizontalScrollAction)
             OffsetRect(&rect, -popup.horizontalScrollOffset, 0);
@@ -1387,6 +1440,15 @@ private:
             return;
         }
 
+        if (options_.onPrepareSubmenu)
+        {
+            // Tear down any child before its backing vector can be replaced.
+            CloseFromDepth(popup.depth + 1);
+            options_.onPrepareSubmenu(item.command, item.children);
+            if (done_ || item.children.empty())
+                return;
+        }
+
         RECT row = popup.itemRects[index];
         if (item.horizontalScrollAction)
             OffsetRect(&row, -popup.horizontalScrollOffset, 0);
@@ -1414,6 +1476,14 @@ private:
         return std::ranges::any_of(popups_, [hwnd](const auto& popup) {
             return popup && popup->hwnd == hwnd;
         });
+    }
+
+    bool IsOwnerWindow(HWND hwnd) const
+    {
+        if (!hwnd || !options_.owner)
+            return false;
+        return hwnd == options_.owner ||
+            GetAncestor(hwnd, GA_ROOT) == GetAncestor(options_.owner, GA_ROOT);
     }
 
     void HandleKey(WPARAM key)
@@ -1457,7 +1527,11 @@ private:
             }
             break;
         case VK_ESCAPE:
-            if (popup->depth > 0)
+            if (IsTextInputEditor(*popup))
+            {
+                CancelTextInputEditor(*popup);
+            }
+            else if (popup->depth > 0)
             {
                 const int closingDepth = popup->depth;
                 CloseFromDepth(closingDepth);
@@ -1633,8 +1707,10 @@ private:
         if (!item.textInput || !item.enabled)
             return;
         activeDepth_ = popup.depth;
+        if (textInputCommand_ != item.command) textInputHistory_.Clear();
+        textInputComposing_=false;textDuplicateImeResult_.clear();textHighSurrogate_=0;
         textInputCommand_ = item.command;
-        textInputCursor_ = std::min(cursor, item.inputText.size());
+        textInputCursor_ = text_input::SnapBoundary(item.inputText,cursor);
         textInputSelectionAnchor_ = textInputCursor_;
         textInputComposition_.clear();
         textInputCompositionCursor_ = 0;
@@ -1666,14 +1742,10 @@ private:
         Item& item = (*popup.items)[index];
         RECT row = popup.itemRects[index];
         OffsetRect(&row, 0, -popup.scrollOffset);
-        RECT field = row;
-        field.left += metrics_.outerInset;
-        field.right -= metrics_.outerInset;
-        RECT glyphBounds = field;
-        glyphBounds.left += metrics_.leftPadding / 2;
-        glyphBounds.right = glyphBounds.left + metrics_.iconColumnWidth;
-        const int textLeft = glyphBounds.right + metrics_.textGap;
-        const int textRight = field.right - metrics_.rightPadding;
+        const RECT textBounds = menu_icon::TextInputTextBounds(row, metrics_,
+            !item.glyph.empty() || item.image || item.builtinIcon != menu_icon::BuiltinIcon::None);
+        const int textLeft = textBounds.left;
+        const int textRight = textBounds.right;
 
         HDC dc = GetDC(nullptr);
         size_t position = item.inputText.size();
@@ -1730,7 +1802,7 @@ private:
             std::min(textInputSelectionAnchor_, item.inputText.size()));
     }
 
-    bool ReplaceTextSelection(Item& item, std::wstring text)
+    bool ReplaceTextSelection(Item& item, std::wstring text, const text_input::Snapshot* original = nullptr)
     {
         constexpr size_t kMaximumInputLength = 96;
         const size_t start = TextSelectionStart(item);
@@ -1740,14 +1812,16 @@ private:
         const size_t available = retainedLength < kMaximumInputLength
             ? kMaximumInputLength - retainedLength : 0;
         if (text.size() > available)
-            text.resize(available);
+            text.resize(text_input::SnapBoundary(text,available));
         if (start == end && text.empty())
             return false;
+        const text_input::Snapshot before=original?*original:text_input::Snapshot{item.inputText,textInputCursor_,textInputSelectionAnchor_};
         item.inputText.replace(start, end - start, text);
         textInputCursor_ = start + text.size();
         textInputSelectionAnchor_ = textInputCursor_;
         textInputComposition_.clear();
         textInputCompositionCursor_ = 0;
+        textInputHistory_.Record(before, {item.inputText, textInputCursor_, textInputSelectionAnchor_});
         return true;
     }
 
@@ -1771,10 +1845,21 @@ private:
         Item* input = FindFocusedTextInput(*popup);
         if (!input)
             return false;
+        if(!textDuplicateImeResult_.empty()&&textDuplicateImeResult_.front()==character)
+        {textDuplicateImeResult_.erase(0,1);return true;}
+        textDuplicateImeResult_.clear();
+        if(textInputComposing_)return true;
         if (character == L'\b' || character < L' ' || character == 0x7F ||
             (GetKeyState(VK_CONTROL) & 0x8000) != 0)
             return true;
-        if (ReplaceTextSelection(*input, std::wstring(1, character)))
+        if (character >= 0xd800 && character <= 0xdbff) { textHighSurrogate_ = character; return true; }
+        std::wstring replacement;
+        if (textHighSurrogate_ && character >= 0xdc00 && character <= 0xdfff)
+            replacement.push_back(textHighSurrogate_);
+        textHighSurrogate_ = 0;
+        if (replacement.empty() && character >= 0xdc00 && character <= 0xdfff) return true;
+        replacement.push_back(character);
+        if (ReplaceTextSelection(*input, replacement))
             NotifyTextInputChanged(*popup, *input);
         return true;
     }
@@ -1827,6 +1912,28 @@ private:
         return result;
     }
 
+    void CancelTextInputEditor(Popup& popup)
+    {
+        // Discard this editor session's draft before returning to its parent.
+        for (auto& item : *popup.items)
+        {
+            if (!item.textInput) continue;
+            item.inputText = popup.initialInputText;
+            if (options_.onTextChanged)
+                options_.onTextChanged(item.command, item.inputText, rootItems_);
+            break;
+        }
+        if (popup.depth == 0)
+        {
+            Cancel();
+            return;
+        }
+        const int depth = popup.depth;
+        CloseFromDepth(depth);
+        activeDepth_ = depth - 1;
+        if (Popup* parent = ActivePopup()) Render(*parent);
+    }
+
     bool HandleTextInputKey(WPARAM key)
     {
         Popup* popup = ActivePopup();
@@ -1835,8 +1942,29 @@ private:
         Item* input = FindFocusedTextInput(*popup);
         if (!input)
             return false;
-        if (!textInputComposition_.empty())
+        if (textInputComposing_)
             return true;
+
+        if (IsTextInputEditor(*popup))
+        {
+            if (key == VK_ESCAPE) { CancelTextInputEditor(*popup); return true; }
+            if (key == VK_RETURN)
+            {
+                const int selected = CurrentItem(*popup);
+                if (selected >= 0 && (*popup->items)[selected].inlineAction)
+                {
+                    ActivateItem(*popup, selected, true);
+                    return true;
+                }
+                for (std::size_t i = 0; i < popup->items->size(); ++i)
+                    if ((*popup->items)[i].command == options_.textInputSubmitCommand)
+                    {
+                        ActivateItem(*popup, static_cast<int>(i), true);
+                        break;
+                    }
+                return true;
+            }
+        }
 
         const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -1845,7 +1973,15 @@ private:
             textInputSelectionAnchor_, input->inputText.size());
         bool changed = false;
 
-        if (control && key == 'A')
+        textHighSurrogate_ = 0;
+        const text_input::Snapshot beforeKey{input->inputText,textInputCursor_,textInputSelectionAnchor_};
+        if (control && (key == 'Z' || key == 'Y'))
+        {
+            changed = key == 'Y' || shift
+                ? textInputHistory_.Redo(input->inputText, textInputCursor_, textInputSelectionAnchor_)
+                : textInputHistory_.Undo(input->inputText, textInputCursor_, textInputSelectionAnchor_);
+        }
+        else if (control && key == 'A')
         {
             textInputSelectionAnchor_ = 0;
             textInputCursor_ = input->inputText.size();
@@ -1866,8 +2002,9 @@ private:
                 changed = ReplaceTextSelection(*input, L"");
             else if (textInputCursor_ > 0)
             {
-                textInputSelectionAnchor_ = textInputCursor_ - 1;
-                changed = ReplaceTextSelection(*input, L"");
+                textInputSelectionAnchor_ = control ? text_input::WordBoundary(input->inputText, textInputCursor_, false)
+                    : text_input::PreviousBoundary(input->inputText, textInputCursor_);
+                changed = ReplaceTextSelection(*input, L"", &beforeKey);
             }
         }
         else if (key == VK_DELETE)
@@ -1876,8 +2013,9 @@ private:
                 changed = ReplaceTextSelection(*input, L"");
             else if (textInputCursor_ < input->inputText.size())
             {
-                textInputSelectionAnchor_ = textInputCursor_ + 1;
-                changed = ReplaceTextSelection(*input, L"");
+                textInputSelectionAnchor_ = control ? text_input::WordBoundary(input->inputText, textInputCursor_, true)
+                    : text_input::NextBoundary(input->inputText, textInputCursor_);
+                changed = ReplaceTextSelection(*input, L"", &beforeKey);
             }
         }
         else if (key == VK_LEFT || key == VK_RIGHT ||
@@ -1895,10 +2033,12 @@ private:
                     : TextSelectionEnd(*input);
             }
             else if (key == VK_LEFT && textInputCursor_ > 0)
-                --textInputCursor_;
+                textInputCursor_ = control ? text_input::WordBoundary(input->inputText, textInputCursor_, false)
+                    : text_input::PreviousBoundary(input->inputText, textInputCursor_);
             else if (key == VK_RIGHT &&
                 textInputCursor_ < input->inputText.size())
-                ++textInputCursor_;
+                textInputCursor_ = control ? text_input::WordBoundary(input->inputText, textInputCursor_, true)
+                    : text_input::NextBoundary(input->inputText, textInputCursor_);
             if (!shift)
                 textInputSelectionAnchor_ = textInputCursor_;
         }
@@ -1960,8 +2100,8 @@ private:
         bool changed = false;
         if ((flags & GCS_RESULTSTR) != 0)
         {
-            changed = ReplaceTextSelection(
-                *input, ReadImeString(context, GCS_RESULTSTR));
+            textDuplicateImeResult_=ReadImeString(context,GCS_RESULTSTR);
+            changed = ReplaceTextSelection(*input,textDuplicateImeResult_);
         }
         if ((flags & (GCS_COMPSTR | GCS_CURSORPOS)) != 0)
         {
@@ -2018,12 +2158,10 @@ private:
 
         RECT row = popup->itemRects[index];
         OffsetRect(&row, 0, -popup->scrollOffset);
-        RECT field = row;
-        field.left += metrics_.outerInset;
-        field.right -= metrics_.outerInset;
-        const int textLeft = field.left + metrics_.leftPadding / 2 +
-            metrics_.iconColumnWidth + metrics_.textGap;
-        const int textRight = field.right - metrics_.rightPadding;
+        const RECT textBounds = menu_icon::TextInputTextBounds(row, metrics_,
+            !input->glyph.empty() || input->image || input->builtinIcon != menu_icon::BuiltinIcon::None);
+        const int textLeft = textBounds.left;
+        const int textRight = textBounds.right;
         HDC dc = GetDC(nullptr);
         int advance = 0;
         int horizontalOffset = 0;
@@ -2047,7 +2185,7 @@ private:
             popup->panelScreenOrigin.x - shadowSize_ +
                 std::clamp(textLeft + advance - horizontalOffset,
                     textLeft, std::max(textLeft, textRight - 1)),
-            popup->panelScreenOrigin.y - shadowSize_ + field.bottom,
+            popup->panelScreenOrigin.y - shadowSize_ + textBounds.bottom,
         };
         ScreenToClient(focusWindow, &caret);
         HIMC context = ImmGetContext(focusWindow);
@@ -2079,18 +2217,13 @@ private:
             // Async additions must not move existing actions under the cursor.
             // Grow downward from the visible origin; use the existing scrolling
             // viewport when the remaining work area cannot fit the new rows.
-            MONITORINFO monitor{sizeof(monitor)};
-            if (GetMonitorInfoW(MonitorFromPoint(popup.panelScreenOrigin, MONITOR_DEFAULTTONEAREST),
-                                &monitor))
-            {
-                const auto bottom = options_.rootPlacement == RootPlacement::AboveAnchorRect
-                                        ? std::min(monitor.rcWork.bottom, options_.anchorRect.top)
-                                        : monitor.rcWork.bottom;
-                popup.panelHeight =
-                    std::min(popup.panelHeight, static_cast<int>(bottom - popup.panelScreenOrigin.y));
-                SetScrollViewport(popup);
-                popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
-            }
+            const auto bottom = options_.rootPlacement == RootPlacement::AboveAnchorRect
+                                    ? std::min(popup.workArea.bottom, options_.anchorRect.top)
+                                    : popup.workArea.bottom;
+            popup.panelHeight =
+                std::min(popup.panelHeight, static_cast<int>(bottom - popup.panelScreenOrigin.y));
+            SetScrollViewport(popup);
+            popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
             popup.scrollOffset =
                 std::clamp(previousOffset, 0, MaxScroll(popup));
             SetScrollViewport(popup);
@@ -2395,7 +2528,12 @@ private:
         }
 
         const HWND floor = ResolveZOrderFloor();
-        if (!options_.topmost && !floor)
+        const HWND candidate = options_.zOrderCompanion
+            ? options_.zOrderCompanion() : nullptr;
+        const HWND companion = candidate && IsWindow(candidate) &&
+                IsWindowVisible(candidate) ? candidate : nullptr;
+        const bool keepTopmost = options_.topmost || floor;
+        if (!keepTopmost && !companion)
             return;
         bool needsRestore = floor &&
             !IsWindowAbove(popups_.front()->hwnd, floor);
@@ -2407,10 +2545,16 @@ private:
                 continue;
             needsRestore = needsRestore ||
                 (precedingWindow && !IsWindowAbove(popup->hwnd, precedingWindow)) ||
-                (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) &
-                    WS_EX_TOPMOST) == 0;
+                (keepTopmost &&
+                    (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) &
+                        WS_EX_TOPMOST) == 0);
             precedingWindow = popup->hwnd;
         }
+        needsRestore = needsRestore || (companion &&
+            (!IsWindowAbove(companion, precedingWindow) ||
+                (keepTopmost &&
+                    (GetWindowLongPtrW(companion, GWL_EXSTYLE) &
+                        WS_EX_TOPMOST) == 0)));
         if (!needsRestore)
             return;
 
@@ -2430,13 +2574,19 @@ private:
                 IsWindowVisible(popup->hwnd))
             {
                 if (!SetWindowPos(
-                    popup->hwnd, HWND_TOPMOST,
+                    popup->hwnd, keepTopmost ? HWND_TOPMOST : HWND_TOP,
                     0, 0, 0, 0, flags))
                 {
                     allRepositionsSucceeded = false;
                 }
             }
         }
+        // Menu restacks must end with the preview; a one-time raise when it
+        // opens is lost on the next host paint or submenu creation.
+        if (companion && !SetWindowPos(companion,
+                keepTopmost ? HWND_TOPMOST : HWND_TOP,
+                0, 0, 0, 0, flags))
+            allRepositionsSucceeded = false;
         TraceOwnedPopupZOrder(
             allRepositionsSucceeded
                 ? L"restore-result" : L"restore-failed",
@@ -2746,14 +2896,19 @@ private:
     int activeDepth_ = 0;
     UINT textInputCommand_ = 0;
     size_t textInputCursor_ = 0;
+    text_input::History textInputHistory_;
+    wchar_t textHighSurrogate_ = 0;
     size_t textInputSelectionAnchor_ = 0;
     std::wstring textInputComposition_;
+    std::wstring textDuplicateImeResult_;
+    bool textInputComposing_=false;
     size_t textInputCompositionCursor_ = 0;
     bool textCaretVisible_ = true;
     bool done_ = false;
     bool pointerPressed_ = false;
     bool closing_ = false;
     bool superseded_ = false;
+    bool externalActivation_ = false;
     bool hasTracedZOrderSnapshot_ = false;
     OwnedPopupZOrderSnapshot tracedZOrderSnapshot_{};
     Result result_{};

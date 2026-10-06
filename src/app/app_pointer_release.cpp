@@ -1,4 +1,6 @@
 #include "app.h"
+#include "categorized_popup_scope.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../desktop_hover_rules.h"
 #include "../steam_app_identity.h"
 #include "../widget_visibility_rules.h"
@@ -53,7 +55,7 @@ void DesktopApp::OnMouseLeave()
         return;
     }
     POINT cursorScreen{};
-    GetCursorPos(&cursorScreen);
+    const bool cursorValid = GetCursorPos(&cursorScreen) != FALSE;
     const bool pointerStillInteractsWithDockPreview =
         dockWindowPreview_ &&
         dockWindowPreview_->ContainsInteractionPoint(cursorScreen);
@@ -111,6 +113,11 @@ void DesktopApp::OnMouseLeave()
                 luaWidgetPanelMouseDown_);
     if (canClearPassiveHover)
     {
+        wchar_t phase[160]{};
+        swprintf_s(phase, L"Passive hover cleared by mouse-leave: previous=%ld,%ld cursor=%ld,%ld cursorValid=%d",
+            lastMousePoint_.x, lastMousePoint_.y, cursorScreen.x, cursorScreen.y,
+            cursorValid ? 1 : 0);
+        snowdesktop::dock_taskbar_diagnostics::Record(phase);
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
@@ -816,6 +823,47 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 {
+    if (auto* view = GetCategorizedPopupView(); view &&
+        (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
+    {
+        const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+        CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+        if (view->HasCategoryTabPress())
+        {
+            view->UpdateCategoryTabDrag(upPoint);
+            view->EndCategoryTabDrag(true);
+            if (dockFolderPopupOpen_)
+            {
+                const size_t source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
+                if (source < widgets_.size())
+                {
+                    widgets_[source].categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
+                    widgets_[source].activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
+                }
+            }
+            SaveLayoutSlots();
+        }
+        else view->EndSearchPointerSelection();
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        ReleaseCapture();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    for (auto& container : containers_)
+        if (auto* categorized = dynamic_cast<ScrollingItemWidget*>(container.get());
+            categorized && categorized->HasCategoryTabPress())
+        {
+            categorized->UpdateCategoryTabDrag(upPoint);
+            categorized->EndCategoryTabDrag(true);
+            mouseDown_ = false;
+            mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+            mouseDownHit_ = nullptr;
+            ReleaseCapture();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
     if (HandleUsageGuidePointerUp(upPoint)) return;
     if (HandleLargeIconPointerUp()) return;
     if (middleButtonWidgetMove_) return;

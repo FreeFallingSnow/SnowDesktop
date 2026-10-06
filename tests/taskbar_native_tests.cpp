@@ -1,11 +1,14 @@
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_classic_surface.h"
 #include "taskbar_hook/taskbar_classic_appearance.h"
+#include "taskbar_hook/taskbar_material_render.h"
 #include "taskbar_hook/taskbar_connection.h"
 #include "dock_settings.h"
 #include "taskbar_monitor.h"
 #include <dwmapi.h>
+#include <array>
 #include <iostream>
+#include <cstring>
 #include <string>
 
 namespace
@@ -96,6 +99,85 @@ int RunNativeTaskbarTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
     };
+    const auto dwmEntry = [] {
+        std::array<BYTE, 16> bytes{};
+        std::memcpy(bytes.data(), reinterpret_cast<const void*>(&DwmSetWindowAttribute), bytes.size());
+        return bytes;
+    };
+    const auto originalDwmEntry = dwmEntry();
+    {
+        TargetAppearance material;
+        material.borderAlpha = 1.f; material.edge.borderWidth = 1.f;
+        const auto thin = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
+        material.edge.borderWidth = 4.f;
+        const auto thick = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
+        const auto scaled = MakeTaskbarEdgePixels(240, 96, 2.f, material, TaskbarMaterialEdge::Top);
+        const auto alphaAt = [](const auto& image, std::size_t width, std::size_t x, std::size_t y) {
+            return image[(y * width + x) * 4 + 3];
+        };
+        check(alphaAt(thin, 120, 60, 2) == 0 && alphaAt(thick, 120, 60, 2) == 255,
+            "production taskbar raster obeys configurable border width");
+        check(alphaAt(scaled, 240, 120, 7) == 255 && alphaAt(scaled, 240, 120, 8) == 0,
+            "taskbar border width scales from DIPs to physical pixels");
+        material.borderAlpha = 0.f;
+        material.edge.highlightEnabled = TRUE; material.edge.highlightStrength = 1.f;
+        const auto lit = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
+        material.edge.light.direction += 180.f;
+        const auto rotated = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
+        check(lit != rotated && alphaAt(lit, 120, 60, 0) > 0 && alphaAt(lit, 120, 60, 24) == 0,
+            "highlight-only taskbars render a directional rim while keeping their center clear");
+        check(native::NeedsClassicSurface(material), "a highlight alone requires the classic composited surface");
+        const RECT monitor{-1920, -1080, 0, 0};
+        struct EdgeCase { RECT taskbar; TaskbarMaterialEdge edge; UINT width; UINT height; };
+        const std::array<EdgeCase, 8> edges{{
+            {{-1920, -48, 0, 0}, TaskbarMaterialEdge::Top, 120, 48},
+            {{-1920, -1080, 0, -1032}, TaskbarMaterialEdge::Bottom, 120, 48},
+            {{-1920, -1080, -1872, 0}, TaskbarMaterialEdge::Right, 48, 120},
+            {{-48, -1080, 0, 0}, TaskbarMaterialEdge::Left, 48, 120},
+            // Auto-hide moves almost the entire taskbar beyond its monitor.
+            {{-1920, -1, 0, 47}, TaskbarMaterialEdge::Top, 120, 48},
+            {{-1920, -1127, 0, -1079}, TaskbarMaterialEdge::Bottom, 120, 48},
+            {{-1967, -1080, -1919, 0}, TaskbarMaterialEdge::Right, 48, 120},
+            {{-1, -1080, 47, 0}, TaskbarMaterialEdge::Left, 48, 120}
+        }};
+        for (const auto& item : edges)
+        {
+            check(ResolveTaskbarMaterialEdge(item.taskbar, monitor) == item.edge,
+                "normal and auto-hidden taskbars select their desktop-facing edge on a negative-origin monitor");
+            for (const bool highlighted : {false, true})
+            {
+                material.borderAlpha = highlighted ? 0.f : 1.f;
+                material.edge.highlightEnabled = highlighted;
+                const auto pixels = MakeTaskbarEdgePixels(item.width, item.height, 1.f, material, item.edge);
+                const auto centerX = item.width / 2, centerY = item.height / 2;
+                const std::array<std::uint8_t, 4> sides{
+                    alphaAt(pixels, item.width, centerX, 0),
+                    alphaAt(pixels, item.width, centerX, item.height - 1),
+                    alphaAt(pixels, item.width, 0, centerY),
+                    alphaAt(pixels, item.width, item.width - 1, centerY)
+                };
+                const auto expected = item.edge == TaskbarMaterialEdge::Top ? 0u :
+                    item.edge == TaskbarMaterialEdge::Bottom ? 1u : item.edge == TaskbarMaterialEdge::Left ? 2u : 3u;
+                check(sides[expected] > 0 && alphaAt(pixels, item.width, centerX, centerY) == 0,
+                    "border-only and highlight-only taskbars draw their selected edge and keep their center clear");
+                for (std::size_t side = 0; side < sides.size(); ++side)
+                    if (side != expected) check(sides[side] == 0,
+                        "taskbar materials leave the other three sides clear, like status bars");
+            }
+        }
+        material.borderAlpha = 0.f;
+        material.edge.highlightEnabled = FALSE;
+        const auto clear = MakeTaskbarEdgePixels(120, 48, 1.f, material, TaskbarMaterialEdge::Top);
+        check(std::all_of(clear.begin(), clear.end(), [](auto byte) { return byte == 0; }),
+            "disabling both border and highlight removes all edge pixels");
+        SharedState state; state.edge.highlightEnabled = TRUE; state.edge.borderWidth = 3.25f;
+        state.edge.light.direction = 137.f;
+        Snapshot snapshot;
+        check(ReadSharedSnapshot(&state, snapshot) && snapshot.edge == state.edge,
+            "shared snapshots retain complete edge material");
+        state.version = 12;
+        check(!ReadSharedSnapshot(&state, snapshot), "an old Hook protocol is rejected before reading changed material layout");
+    }
     // Win10 user regression: blur/acrylic switched but every solid tint was
     // clear. Exercise the production policy with independent ABGR constants;
     // DirectComposition HRESULTs alone cannot prove a native tint was sent.
@@ -153,8 +235,8 @@ int RunNativeTaskbarTests()
     settings.showWindowsButton = false;
     check(!ShowDockWindowsButton(settings), "Windows button follows base preference outside suppression");
     settings.suppressSystemTaskbar = true;
-    check(ShowDockWindowsButton(settings) && !settings.showWindowsButton,
-        "taskbar suppression must provide Start without overwriting the saved preference");
+    check(!ShowDockWindowsButton(settings) && !settings.showWindowsButton,
+        "taskbar suppression must respect the saved Windows button preference");
     settings.suppressSystemTaskbar = false;
     check(!ShowDockWindowsButton(settings), "leaving suppression restores the original Windows button preference");
 
@@ -191,6 +273,7 @@ int RunNativeTaskbarTests()
         "the native controller must refuse non-taskbar windows");
     check(native::Attach(window, &shared, false, TestAppBarMessage) && cloaked(),
         "production suppression must cloak its target immediately");
+    check(dwmEntry() != originalDwmEntry, "native suppression installs its actual DWM entry patch");
     check((appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == FALSE,
         "suppression temporarily enables auto-hide to release the work-area reservation");
     const BOOL reveal = FALSE;
@@ -200,6 +283,31 @@ int RunNativeTaskbarTests()
         "a real taskbar-owned popup releases its owner and permits Explorer's reveal during the menu loop");
     check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
         "closing the taskbar popup resumes suppression and removes the scene exemption");
+    const UINT beginAccess = RegisterWindowMessageW(native::kBeginMenuAccess);
+    const UINT cancelAccess = RegisterWindowMessageW(native::kCancelMenuAccess);
+    check(!SendMessageW(window, beginAccess, shared.ownerProcessId + 1, 10) && cloaked(),
+        "a menu request with a different controller identity cannot release suppression");
+    check(SendMessageW(window, beginAccess, shared.ownerProcessId, 10) && !cloaked(),
+        "programmatic native menu access releases suppression before invoking its provider");
+    check(SendMessageW(window, beginAccess, shared.ownerProcessId, 11) &&
+        !SendMessageW(window, cancelAccess, shared.ownerProcessId, 10) && !cloaked(),
+        "a stale cancellation cannot revoke a newer native menu request");
+    check(SendMessageW(window, cancelAccess, shared.ownerProcessId, 11) && cloaked(),
+        "a cancelled provider request promptly restores suppression");
+    {
+        native::MenuAccess access;
+        check(access.Begin(window) == S_OK && !cloaked(),
+            "the production native-menu client receives the hook's visibility acknowledgement");
+        // The hook can tick after revealing the taskbar but before UIA creates
+        // its popup. The revealed owner is not itself evidence of a menu.
+        SendMessageW(window, apply, 0, 0);
+    }
+    MSG canceled{};
+    while (PeekMessageW(&canceled, window, cancelAccess, cancelAccess, PM_REMOVE)) DispatchMessageW(&canceled);
+    check(cloaked(), "a failed native provider automatically releases its request without waiting for timeout");
+    // Reset the fixture after an assertion failure so later scenarios remain
+    // independent of a leaked request. Never send this to the real taskbar.
+    SendMessageW(window, WM_EXITMENULOOP, TRUE, 0);
     WNDCLASSW trayRegistration{};
     trayRegistration.hInstance = instance;
     trayRegistration.lpszClassName = L"SnowDesktop.IsolatedTrayChild";
@@ -259,18 +367,32 @@ int RunNativeTaskbarTests()
             "a tray context request hands off to another menu owner beyond the opening grace period");
         check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
             "closing a handed-off tray menu resumes suppression");
-        HWND customPopup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            L"STATIC", L"Isolated custom tray popup", WS_POPUP, -32000, -32000, 80, 80,
-            nullptr, nullptr, instance, nullptr);
-        check(customPopup != nullptr, "create a private non-Win32 menu popup");
-        if (customPopup)
+        // Read-only Win11 IME trace: Xaml_WindowedPopupClass on the taskbar
+        // thread, WS_POPUP, WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
+        // with no WS_EX_TOOLWINDOW or Win32 menu loop. Keep both popup kinds.
+        WNDCLASSW xamlPopupClass{};
+        xamlPopupClass.hInstance = instance;
+        xamlPopupClass.lpfnWndProc = DefWindowProcW;
+        xamlPopupClass.lpszClassName = L"Xaml_WindowedPopupClass";
+        check(RegisterClassW(&xamlPopupClass) != 0, "register the isolated XAML menu window class");
+        for (const bool xamlPopup : {false, true})
         {
+            HWND customPopup = CreateWindowExW(WS_EX_NOACTIVATE |
+                (xamlPopup ? WS_EX_NOREDIRECTIONBITMAP : WS_EX_TOOLWINDOW),
+                xamlPopup ? xamlPopupClass.lpszClassName : L"STATIC",
+                L"Isolated custom tray popup", WS_POPUP, -32000, -32000, 80, 80,
+                xamlPopup ? window : nullptr, nullptr, instance, nullptr);
+            check(customPopup != nullptr, "create a private non-Win32 menu popup");
+            if (!customPopup) continue;
             ShowWindow(customPopup, SW_SHOWNOACTIVATE);
             SendMessageW(window, apply, 0, 0);
             check(cloaked(), "an ordinary custom popup without a tray origin does not release suppression");
             ShowWindow(customPopup, SW_HIDE);
-            SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+            native::MenuAccess access;
+            check(access.Begin(window) == S_OK, "prepare UIA-style menu without synthetic mouse or WM_CONTEXTMENU");
+            SendMessageW(window, apply, 0, 0);
             ShowWindow(customPopup, SW_SHOWNOACTIVATE);
+            access.HandOff();
             SendMessageW(window, apply, 0, 0);
             const ULONGLONG menuDeadline = GetTickCount64() + 1650;
             while (GetTickCount64() < menuDeadline)
@@ -281,13 +403,16 @@ int RunNativeTaskbarTests()
                 MsgWaitForMultipleObjectsEx(0, nullptr, 30, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             }
             SendMessageW(window, apply, 0, 0);
-            check(!cloaked(), "a custom tray popup remains exempt beyond the opening grace period");
+            check(!cloaked(), xamlPopup
+                ? "an owned XAML menu without TOOLWINDOW remains exempt until dismissal"
+                : "a custom tray popup remains exempt beyond the opening grace period");
             ShowWindow(customPopup, SW_HIDE);
             SendMessageW(window, apply, 0, 0);
             check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
                 "hiding a custom tray popup ends its exemption");
             DestroyWindow(customPopup);
         }
+        UnregisterClassW(xamlPopupClass.lpszClassName, instance);
         DWORD value = 0;
         DwmSetWindowAttribute(unrelated, DWMWA_CLOAK, &reveal, sizeof(reveal));
         check(SUCCEEDED(DwmGetWindowAttribute(unrelated, DWMWA_CLOAKED, &value, sizeof(value))) &&
@@ -364,6 +489,8 @@ int RunNativeTaskbarTests()
         "turning the setting off releases the cloak and subclass");
     check(!(appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == -1,
         "turning suppression off restores the original non-auto-hide preference");
+    check(dwmEntry() == originalDwmEntry,
+        "the last released taskbar restores the native entry instead of leaving the old detour installed");
 
     // Preserve pre-existing app cloaking when no native uncloak is requested.
     const BOOL conceal = TRUE;
@@ -670,6 +797,22 @@ int RunNativeTaskbarTests()
     SendMessageW(window, apply, 0, 0);
     check(!(appBarState & ABS_AUTOHIDE) && !GetPropW(window, native::kAttachedProperty),
         "pending auto-hide restoration completes without leaving a watcher");
+    check(dwmEntry() == originalDwmEntry, "owner shutdown restores the entry after all taskbars detach");
+    shared.enabled = TRUE;
+    check(native::Attach(window, &shared, false, TestAppBarMessage) && dwmEntry() != originalDwmEntry,
+        "a later attachment re-enables retained native hooks after a complete stop");
+    rejectAppBarChange = true;
+    check(!native::Retire(window) && GetPropW(window, native::kAttachedProperty),
+        "replacement cannot acknowledge handoff while the original preference cannot be restored");
+    rejectAppBarChange = false;
+    check(native::Retire(window) && !GetPropW(window, native::kAttachedProperty) &&
+        !(appBarState & ABS_AUTOHIDE) && dwmEntry() == originalDwmEntry,
+        "successful replacement handoff restores preference, cloak, subclass and native entry");
+    check(native::Attach(window, &shared, false, TestAppBarMessage) && cloaked(),
+        "the retained hook records remain usable after a replacement-style stop");
+    shared.enabled = FALSE;
+    SendMessageW(window, apply, 0, 0);
+    check(dwmEntry() == originalDwmEntry, "final shutdown leaves no owned DWM entry patch");
     DestroyWindow(window);
     registration.lpszClassName = L"Shell_TrayWnd";
     UnregisterClassW(registration.lpszClassName, instance);

@@ -1,5 +1,7 @@
 #include "widget_system_data_provider.h"
+#include "system_control_windows.h"
 #include "widget_gpu_usage.h"
+#include "system_power_status.h"
 #include "widget_storage_usage.h"
 #include "performance_trace.h"
 #include "widget_media_contract.h"
@@ -172,26 +174,6 @@ std::string OpaqueProcessId(DWORD processId,
     return "process-" + std::to_string(hash);
 }
 
-std::uint64_t LuidKey(const LUID& luid)
-{
-    return (static_cast<std::uint64_t>(
-                static_cast<std::uint32_t>(luid.HighPart)) << 32) |
-        static_cast<std::uint32_t>(luid.LowPart);
-}
-
-std::optional<std::uint64_t> ParseGpuLuid(const wchar_t* instance)
-{
-    if (!instance) return std::nullopt;
-    const wchar_t* marker = wcsstr(instance, L"luid_0x");
-    if (!marker) return std::nullopt;
-    unsigned long high = 0;
-    unsigned long low = 0;
-    if (swscanf_s(marker, L"luid_0x%lx_0x%lx", &high, &low) != 2)
-        return std::nullopt;
-    return (static_cast<std::uint64_t>(high) << 32) |
-        static_cast<std::uint32_t>(low);
-}
-
 std::string OpaqueVolumeId(const wchar_t* root, bool resolveVolumeName)
 {
     wchar_t volumeName[MAX_PATH + 1]{};
@@ -270,19 +252,6 @@ std::string OpaqueDisplayId(std::wstring_view deviceName)
     return "display-" + std::to_string(hash);
 }
 
-std::string OpaqueAudioEndpointId(std::wstring_view endpointId)
-{
-    constexpr std::uint64_t offset = 14695981039346656037ull;
-    constexpr std::uint64_t prime = 1099511628211ull;
-    std::uint64_t hash = offset;
-    for (const wchar_t character : endpointId)
-    {
-        hash ^= static_cast<std::uint16_t>(character);
-        hash *= prime;
-    }
-    return "audio-output-" + std::to_string(hash);
-}
-
 std::string BoundedMediaString(std::wstring_view value)
 {
     const std::wstring copy(value);
@@ -323,7 +292,8 @@ std::uint64_t MediaArtworkIdentity(std::string_view sessionId,
 WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
     const winrt::Windows::Storage::Streams::IRandomAccessStreamReference&
         reference,
-    std::string sessionId, std::int64_t timestampMs)
+    std::string sessionId, std::int64_t timestampMs,
+    const system_control::Cancellation& cancel)
 {
     using namespace winrt::Windows::Storage::Streams;
     WidgetMediaArtworkDataSnapshot snapshot;
@@ -336,7 +306,8 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
     }
     try
     {
-        const auto stream = reference.OpenReadAsync().get();
+        if (cancel.Stop()) throw winrt::hresult_canceled();
+        const auto stream = system_control::windows::Await(reference.OpenReadAsync(), cancel);
         if (!stream)
         {
             snapshot.error = "artworkReadFailed";
@@ -357,7 +328,8 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
         DataReader reader(stream.GetInputStreamAt(0));
         const std::uint32_t expected =
             static_cast<std::uint32_t>(encodedSize);
-        if (reader.LoadAsync(expected).get() != expected)
+        if (cancel.Stop()) throw winrt::hresult_canceled();
+        if (system_control::windows::Await(reader.LoadAsync(expected), cancel) != expected)
         {
             snapshot.error = "artworkReadFailed";
             return snapshot;
@@ -365,6 +337,7 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
         std::vector<std::uint8_t> encoded(expected);
         reader.ReadBytes(encoded);
         reader.Close();
+        if (cancel.Stop()) throw winrt::hresult_canceled();
 
         Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
         if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
@@ -451,6 +424,7 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
     }
     catch (...)
     {
+        if (cancel.Stop()) throw;
         snapshot.error = "artworkReadFailed";
     }
     return snapshot;
@@ -476,48 +450,6 @@ std::string MediaPlaybackStatus(
 std::int64_t TimeSpanMilliseconds(winrt::Windows::Foundation::TimeSpan value)
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(value).count();
-}
-
-std::string AudioDeviceState(DWORD state)
-{
-    if ((state & DEVICE_STATE_ACTIVE) != 0) return "active";
-    if ((state & DEVICE_STATE_DISABLED) != 0) return "disabled";
-    if ((state & DEVICE_STATE_UNPLUGGED) != 0) return "unplugged";
-    if ((state & DEVICE_STATE_NOTPRESENT) != 0) return "notPresent";
-    return "unknown";
-}
-
-Microsoft::WRL::ComPtr<IMMDevice> DefaultRenderEndpoint(
-    std::string& error)
-{
-    error.clear();
-    Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
-    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&enumerator))))
-    {
-        error = "audioEnumeratorUnavailable";
-        return {};
-    }
-    Microsoft::WRL::ComPtr<IMMDevice> endpoint;
-    const HRESULT status = enumerator->GetDefaultAudioEndpoint(
-        eRender, eMultimedia, &endpoint);
-    if (FAILED(status) || !endpoint)
-    {
-        error = status == HRESULT_FROM_WIN32(ERROR_NOT_FOUND)
-            ? "notPresent" : "audioEndpointUnavailable";
-        return {};
-    }
-    return endpoint;
-}
-
-std::string OpaqueEndpointId(IMMDevice* endpoint)
-{
-    if (!endpoint) return {};
-    LPWSTR rawId = nullptr;
-    if (FAILED(endpoint->GetId(&rawId)) || !rawId) return {};
-    const std::string result = OpaqueAudioEndpointId(rawId);
-    CoTaskMemFree(rawId);
-    return result;
 }
 
 struct DisplayTargetMetadata
@@ -773,7 +705,7 @@ WidgetSystemDataProvider::~WidgetSystemDataProvider()
 bool WidgetSystemDataProvider::SupportsTopic(
     std::string_view topic) noexcept
 {
-    return topic == CpuTopic || topic == MemoryTopic ||
+    return system_control::SupportsTopic(topic) || topic == CpuTopic || topic == MemoryTopic ||
         topic == ProcessSummaryTopic ||
         topic == PowerTopic || topic == NetworkStatusTopic ||
         topic == NetworkTrafficTopic || topic == GpuTopic ||
@@ -787,19 +719,36 @@ bool WidgetSystemDataProvider::SupportsTopic(
 bool WidgetSystemDataProvider::StartTopic(
     std::string_view topic, std::chrono::milliseconds interval)
 {
-    if (!SupportsTopic(topic) || interval < MinimumInterval ||
+    return StartTopic("widgets", topic, interval);
+}
+
+bool WidgetSystemDataProvider::StartTopic(std::string_view consumer,
+    std::string_view topic, std::chrono::milliseconds interval)
+{
+    if (consumer.empty() || !SupportsTopic(topic) || interval < MinimumInterval ||
         interval > MaximumInterval)
         return false;
 
+    std::scoped_lock lifecycleLock(lifecycleMutex_);
+    if (system_control::SupportsTopic(topic))
+        return controls_->Subscribe(std::string(consumer), std::string(topic), interval);
     bool startWorker = false;
     {
         std::scoped_lock lock(mutex_);
         const auto now = Clock::now();
         const std::string key(topic);
+        auto& consumers = demands_[key];
+        consumers.insert_or_assign(std::string(consumer), interval);
+        for (const auto& [id, demand] : consumers)
+        {
+            (void)id;
+            interval = std::min(interval, demand);
+        }
         auto existing = schedules_.find(key);
         if (existing == schedules_.end())
         {
             schedules_.emplace(key, TopicSchedule{ interval, now });
+            resourceHistory_.Clear(topic);
             if (topic == CpuTopic) resetCpuBaseline_.store(true);
             if (topic == ProcessSummaryTopic)
                 resetProcessBaseline_.store(true);
@@ -837,13 +786,42 @@ bool WidgetSystemDataProvider::StartTopic(
 
 bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
 {
+    return StopTopic("widgets", topic);
+}
+
+bool WidgetSystemDataProvider::StopTopic(
+    std::string_view consumer, std::string_view topic)
+{
+    std::scoped_lock lifecycleLock(lifecycleMutex_);
+    if (system_control::SupportsTopic(topic)) return controls_->Unsubscribe(consumer, topic);
     bool removed = false;
     bool stopWorker = false;
     {
         std::scoped_lock lock(mutex_);
+        const auto demand = demands_.find(std::string(topic));
+        if (demand == demands_.end() ||
+            demand->second.erase(std::string(consumer)) == 0)
+            return false;
+        if (!demand->second.empty())
+        {
+            auto interval = MaximumInterval;
+            for (const auto& [id, value] : demand->second)
+            {
+                (void)id;
+                interval = std::min(interval, value);
+            }
+            auto& schedule = schedules_.at(std::string(topic));
+            schedule.interval = interval;
+            schedule.due = Clock::now() + interval;
+            ++configurationGeneration_;
+            condition_.notify_all();
+            return true;
+        }
+        demands_.erase(demand);
         removed = schedules_.erase(std::string(topic)) > 0;
         if (!removed) return false;
         semanticDebouncers_.erase(std::string(topic));
+        resourceHistory_.Clear(topic);
         if (topic == MediaArtworkTopic) mediaArtwork_.reset();
         if (topic == ProcessSummaryTopic) processSummary_.reset();
         if (topic == CpuTopic) resetCpuBaseline_.store(true);
@@ -854,7 +832,10 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
         if (topic == NetworkStatusTopic)
             networkStatusDebouncer_.Reset();
         if (topic == GpuTopic)
+        {
+            gpuDetails_.reset();
             closeGpuRequested_.store(true);
+        }
         if (topic == StorageIoTopic)
             closeStorageIoRequested_.store(true);
         ++configurationGeneration_;
@@ -870,16 +851,43 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
     return true;
 }
 
+void WidgetSystemDataProvider::RemoveConsumer(std::string_view consumer)
+{
+    controls_->RemoveConsumer(consumer);
+    std::vector<std::string> topics;
+    {
+        std::scoped_lock lock(mutex_);
+        for (const auto& [topic, consumers] : demands_)
+            if (consumers.contains(std::string(consumer))) topics.push_back(topic);
+    }
+    for (const auto& topic : topics) (void)StopTopic(consumer, topic);
+}
+
+std::optional<std::chrono::milliseconds>
+WidgetSystemDataProvider::EffectiveInterval(std::string_view topic) const
+{
+    if (system_control::SupportsTopic(topic)) return controls_->EffectiveInterval(topic);
+    std::scoped_lock lock(mutex_);
+    const auto schedule = schedules_.find(std::string(topic));
+    if (schedule == schedules_.end()) return std::nullopt;
+    return schedule->second.interval;
+}
+
 void WidgetSystemDataProvider::StopAll()
 {
+    std::scoped_lock lifecycleLock(lifecycleMutex_);
+    controls_->StopAll();
     {
         std::scoped_lock lock(mutex_);
         schedules_.clear();
+        resourceHistory_.Clear();
+        demands_.clear();
         changedTopics_.clear();
         semanticDebouncers_.clear();
         networkStatusDebouncer_.Reset();
         mediaArtwork_.reset();
         processSummary_.reset();
+        gpuDetails_.reset();
         ++configurationGeneration_;
     }
     resetCpuBaseline_.store(true);
@@ -901,8 +909,15 @@ void WidgetSystemDataProvider::StopAll()
     previousProcessCpuTimes_.clear();
     previousProcessSample_ = {};
     networkTrafficSampler_.Reset();
-    CloseGpuQuery();
+    CloseGpuResources();
     CloseStorageIoQuery();
+}
+
+std::vector<WidgetResourcePoint> WidgetSystemDataProvider::ResourceHistory(
+    std::string_view topic, std::string_view adapterId) const
+{
+    std::scoped_lock lock(mutex_);
+    return resourceHistory_.Read(topic, adapterId);
 }
 
 std::optional<WidgetCpuDataSnapshot>
@@ -948,10 +963,10 @@ WidgetSystemDataProvider::NetworkTraffic() const
 }
 
 std::optional<WidgetGpuDataSnapshot>
-WidgetSystemDataProvider::Gpu() const
+WidgetSystemDataProvider::Gpu(bool includeDetails) const
 {
     std::scoped_lock lock(mutex_);
-    return gpu_;
+    return includeDetails ? gpuDetails_ : gpu_;
 }
 
 std::optional<WidgetStorageVolumesDataSnapshot>
@@ -985,15 +1000,21 @@ WidgetSystemDataProvider::DisplayCurrent() const
 std::optional<WidgetAudioOutputDefaultDataSnapshot>
 WidgetSystemDataProvider::AudioOutputDefault() const
 {
-    std::scoped_lock lock(mutex_);
-    return audioOutputDefault_;
+    const auto state = controls_->Current(AudioOutputDefaultTopic); if (!state) return {};
+    WidgetAudioOutputDefaultDataSnapshot result;
+    result.available = state->available; result.error = state->error; result.timestampMs = state->timestampMs; result.revision = state->revision;
+    result.id = system_control::json::String(state->value, "id"); result.name = system_control::json::String(state->value, "name");
+    result.state = system_control::json::String(state->value, "state"); return result;
 }
 
 std::optional<WidgetAudioOutputVolumeDataSnapshot>
 WidgetSystemDataProvider::AudioOutputVolume() const
 {
-    std::scoped_lock lock(mutex_);
-    return audioOutputVolume_;
+    const auto state = controls_->Current(AudioOutputVolumeTopic); if (!state) return {};
+    WidgetAudioOutputVolumeDataSnapshot result;
+    result.available = state->available; result.error = state->error; result.timestampMs = state->timestampMs; result.revision = state->revision;
+    result.endpointId = system_control::json::String(state->value, "endpointId"); result.volume = system_control::json::Numeric(state->value, "volume");
+    result.muted = system_control::json::Flag(state->value, "muted"); return result;
 }
 
 std::optional<WidgetMediaSessionsDataSnapshot>
@@ -1031,13 +1052,15 @@ WidgetSystemDataProvider::DrainChangedTopics()
     std::vector<std::string> result(
         changedTopics_.begin(), changedTopics_.end());
     changedTopics_.clear();
+    const auto controls = controls_->DrainChangedTopics(); result.insert(result.end(), controls.begin(), controls.end());
     std::sort(result.begin(), result.end());
     return result;
 }
 
 bool WidgetSystemDataProvider::Running() const noexcept
 {
-    return worker_.joinable();
+    std::scoped_lock lock(lifecycleMutex_);
+    return worker_.joinable() || controls_->ActiveTopicCount() != 0;
 }
 
 bool WidgetSystemDataProvider::GpuResourcesActive() const noexcept
@@ -1053,7 +1076,7 @@ bool WidgetSystemDataProvider::StorageIoResourcesActive() const noexcept
 std::size_t WidgetSystemDataProvider::ActiveTopicCount() const
 {
     std::scoped_lock lock(mutex_);
-    return schedules_.size();
+    return schedules_.size() + controls_->ActiveTopicCount();
 }
 
 void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
@@ -1070,7 +1093,7 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
     while (!stopToken.stop_requested())
     {
         if (closeGpuRequested_.exchange(false))
-            CloseGpuQuery();
+            CloseGpuResources();
         if (closeStorageIoRequested_.exchange(false))
             CloseStorageIoQuery();
         std::vector<std::string> dueTopics;
@@ -1140,17 +1163,14 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishDisplayTopology(SampleDisplayTopology());
             else if (topic == DisplayCurrentTopic)
                 PublishDisplayCurrent(SampleDisplayTopology());
-            else if (topic == AudioOutputDefaultTopic)
-                PublishAudioOutputDefault(SampleAudioOutputDefault());
-            else if (topic == AudioOutputVolumeTopic)
-                PublishAudioOutputVolume(SampleAudioOutputVolume());
         }
         if (mediaDue && !stopToken.stop_requested())
         {
             const bool artworkDue = std::find(
                 dueTopics.begin(), dueTopics.end(),
                 MediaArtworkTopic) != dueTopics.end();
-            const auto snapshot = SampleMediaSessions(artworkDue);
+            const auto snapshot = SampleMediaSessions(artworkDue, stopToken);
+            if (stopToken.stop_requested()) break;
             if (std::find(dueTopics.begin(), dueTopics.end(),
                     MediaSessionsTopic) != dueTopics.end())
                 PublishMediaSessions(snapshot);
@@ -1164,7 +1184,7 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishMediaArtwork(snapshot);
         }
     }
-    CloseGpuQuery();
+    CloseGpuResources();
     CloseStorageIoQuery();
     if (apartmentInitialized)
         winrt::uninit_apartment();
@@ -1378,22 +1398,23 @@ WidgetPowerDataSnapshot WidgetSystemDataProvider::SamplePower()
         snapshot.error = "Power sampling failed";
         return snapshot;
     }
-    snapshot.acPower = status.ACLineStatus == 1;
-    snapshot.charging = (status.BatteryFlag & 8) != 0;
-    snapshot.saver = status.SystemStatusFlag != 0;
-    if (status.BatteryFlag == 128)
+    const auto state = DecodeSystemPowerStatus(status.BatteryFlag,
+        status.ACLineStatus, status.BatteryLifePercent, status.SystemStatusFlag);
+    snapshot.acPower = state.onAC.value_or(false);
+    snapshot.charging = state.charging.value_or(false);
+    snapshot.saver = state.saver;
+    if (state.batteryPresent == false)
     {
         snapshot.error = "notPresent";
         return snapshot;
     }
-    if (status.BatteryLifePercent == 255)
+    if (!state.batteryPercent)
     {
         snapshot.error = "temporarilyUnavailable";
         return snapshot;
     }
     snapshot.available = true;
-    snapshot.batteryPercent = std::clamp(
-        static_cast<double>(status.BatteryLifePercent), 0.0, 100.0);
+    snapshot.batteryPercent = *state.batteryPercent;
     if (status.BatteryLifeTime != static_cast<DWORD>(-1))
     {
         snapshot.estimatedRemainingSeconds =
@@ -1496,245 +1517,17 @@ WidgetSystemDataProvider::SampleNetworkTraffic()
     return snapshot;
 }
 
-bool WidgetSystemDataProvider::InitializeGpuQuery()
+void WidgetSystemDataProvider::CloseGpuResources()
 {
-    CloseGpuQuery();
-    HQUERY query = nullptr;
-    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS)
-        return false;
-    HCOUNTER counter = nullptr;
-    HCOUNTER dedicatedUsageCounter = nullptr;
-    HCOUNTER sharedUsageCounter = nullptr;
-    if (PdhAddEnglishCounterW(query,
-            L"\\GPU Engine(*)\\Utilization Percentage",
-            0, &counter) != ERROR_SUCCESS ||
-        PdhAddEnglishCounterW(query,
-            L"\\GPU Adapter Memory(*)\\Dedicated Usage",
-            0, &dedicatedUsageCounter) != ERROR_SUCCESS ||
-        PdhAddEnglishCounterW(query,
-            L"\\GPU Adapter Memory(*)\\Shared Usage",
-            0, &sharedUsageCounter) != ERROR_SUCCESS)
-    {
-        if (sharedUsageCounter) PdhRemoveCounter(sharedUsageCounter);
-        if (dedicatedUsageCounter) PdhRemoveCounter(dedicatedUsageCounter);
-        if (counter) PdhRemoveCounter(counter);
-        PdhCloseQuery(query);
-        return false;
-    }
-    if (PdhCollectQueryData(query) != ERROR_SUCCESS)
-    {
-        PdhRemoveCounter(sharedUsageCounter);
-        PdhRemoveCounter(dedicatedUsageCounter);
-        PdhRemoveCounter(counter);
-        PdhCloseQuery(query);
-        return false;
-    }
-    gpuQuery_ = query;
-    gpuUtilizationCounter_ = counter;
-    gpuDedicatedUsageCounter_ = dedicatedUsageCounter;
-    gpuSharedUsageCounter_ = sharedUsageCounter;
-    gpuResourcesActive_.store(true);
-    return true;
-}
-
-void WidgetSystemDataProvider::CloseGpuQuery()
-{
-    if (gpuSharedUsageCounter_)
-    {
-        PdhRemoveCounter(
-            reinterpret_cast<HCOUNTER>(gpuSharedUsageCounter_));
-        gpuSharedUsageCounter_ = nullptr;
-    }
-    if (gpuDedicatedUsageCounter_)
-    {
-        PdhRemoveCounter(
-            reinterpret_cast<HCOUNTER>(gpuDedicatedUsageCounter_));
-        gpuDedicatedUsageCounter_ = nullptr;
-    }
-    if (gpuUtilizationCounter_)
-    {
-        PdhRemoveCounter(
-            reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_));
-        gpuUtilizationCounter_ = nullptr;
-    }
-    if (gpuQuery_)
-    {
-        PdhCloseQuery(reinterpret_cast<HQUERY>(gpuQuery_));
-        gpuQuery_ = nullptr;
-    }
+    gpuSampler_.Reset();
     gpuResourcesActive_.store(false);
 }
 
 WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
 {
     performance::Scope performanceScope("shared.system", "SampleGpu");
-    struct AdapterEntry
-    {
-        std::uint64_t luid = 0;
-        WidgetGpuAdapterDataSnapshot snapshot;
-    };
-
-    WidgetGpuDataSnapshot snapshot;
-    snapshot.timestampMs = TimestampMilliseconds();
-    std::vector<AdapterEntry> adapters;
-    Microsoft::WRL::ComPtr<IDXGIFactory6> factory;
-    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
-    {
-        snapshot.error = "GPU adapter enumeration failed";
-        snapshot.warmingUp = false;
-        return snapshot;
-    }
-    for (UINT index = 0; ; ++index)
-    {
-        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
-        if (factory->EnumAdapters1(index, &adapter) == DXGI_ERROR_NOT_FOUND)
-            break;
-        if (!adapter) continue;
-        DXGI_ADAPTER_DESC1 description{};
-        if (FAILED(adapter->GetDesc1(&description)) ||
-            (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
-            continue;
-
-        AdapterEntry entry;
-        entry.luid = LuidKey(description.AdapterLuid);
-        entry.snapshot.id = WidgetGpuAdapterId(entry.luid);
-        entry.snapshot.name = WideToUtf8(description.Description);
-        entry.snapshot.dedicatedMemoryBytes =
-            description.DedicatedVideoMemory;
-        entry.snapshot.sharedMemoryBytes =
-            description.SharedSystemMemory;
-        adapters.push_back(std::move(entry));
-    }
-    if (adapters.empty())
-    {
-        snapshot.error = "notPresent";
-        snapshot.warmingUp = false;
-        return snapshot;
-    }
-    const bool initializeQuery = resetGpuBaseline_.exchange(false) ||
-        !gpuQuery_ || !gpuUtilizationCounter_ ||
-        !gpuDedicatedUsageCounter_ || !gpuSharedUsageCounter_;
-    if (initializeQuery)
-    {
-        if (!InitializeGpuQuery())
-        {
-            snapshot.error = "GPU utilization sampling unavailable";
-            snapshot.warmingUp = false;
-        }
-    }
-    else if (PdhCollectQueryData(
-                 reinterpret_cast<HQUERY>(gpuQuery_)) == ERROR_SUCCESS)
-    {
-        bool utilizationAvailable = false;
-        bool memoryUsageAvailable = false;
-        DWORD bufferBytes = 0;
-        DWORD itemCount = 0;
-        PDH_STATUS status = PdhGetFormattedCounterArrayW(
-            reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_),
-            PDH_FMT_DOUBLE, &bufferBytes, &itemCount, nullptr);
-        if (status == PDH_MORE_DATA && bufferBytes > 0)
-        {
-            std::vector<std::byte> buffer(bufferBytes);
-            auto* items = reinterpret_cast<
-                PPDH_FMT_COUNTERVALUE_ITEM_W>(buffer.data());
-            status = PdhGetFormattedCounterArrayW(
-                reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_),
-                PDH_FMT_DOUBLE, &bufferBytes, &itemCount, items);
-            if (status == ERROR_SUCCESS)
-            {
-                WidgetGpuUsageAccumulator usage;
-                for (DWORD index = 0; index < itemCount; ++index)
-                {
-                    if (items[index].FmtValue.CStatus !=
-                            PDH_CSTATUS_VALID_DATA &&
-                        items[index].FmtValue.CStatus !=
-                            PDH_CSTATUS_NEW_DATA)
-                        continue;
-                    usage.AddSample(items[index].szName,
-                        items[index].FmtValue.doubleValue);
-                }
-                for (auto& entry : adapters)
-                {
-                    const auto percent = usage.UsagePercent(entry.luid);
-                    entry.snapshot.usagePercent = percent.value_or(0.0);
-                    utilizationAvailable = utilizationAvailable || percent.has_value();
-                }
-            }
-        }
-
-        const auto readMemoryUsage = [](void* counter,
-            std::unordered_map<std::uint64_t, std::uint64_t>& byLuid) {
-            DWORD bytes = 0;
-            DWORD count = 0;
-            PDH_STATUS status = PdhGetFormattedCounterArrayW(
-                reinterpret_cast<HCOUNTER>(counter), PDH_FMT_LARGE,
-                &bytes, &count, nullptr);
-            if (status != PDH_MORE_DATA || bytes == 0)
-                return false;
-            std::vector<std::byte> buffer(bytes);
-            auto* values = reinterpret_cast<
-                PPDH_FMT_COUNTERVALUE_ITEM_W>(buffer.data());
-            status = PdhGetFormattedCounterArrayW(
-                reinterpret_cast<HCOUNTER>(counter), PDH_FMT_LARGE,
-                &bytes, &count, values);
-            if (status != ERROR_SUCCESS)
-                return false;
-            for (DWORD index = 0; index < count; ++index)
-            {
-                if (values[index].FmtValue.CStatus !=
-                        PDH_CSTATUS_VALID_DATA &&
-                    values[index].FmtValue.CStatus !=
-                        PDH_CSTATUS_NEW_DATA)
-                    continue;
-                const auto luid = ParseGpuLuid(values[index].szName);
-                if (!luid || values[index].FmtValue.largeValue < 0)
-                    continue;
-                byLuid[*luid] += static_cast<std::uint64_t>(
-                    values[index].FmtValue.largeValue);
-            }
-            return !byLuid.empty();
-        };
-        std::unordered_map<std::uint64_t, std::uint64_t>
-            dedicatedUsageByLuid;
-        std::unordered_map<std::uint64_t, std::uint64_t>
-            sharedUsageByLuid;
-        memoryUsageAvailable = readMemoryUsage(
-                gpuDedicatedUsageCounter_, dedicatedUsageByLuid) &&
-            readMemoryUsage(
-                gpuSharedUsageCounter_, sharedUsageByLuid);
-        if (memoryUsageAvailable)
-        {
-            memoryUsageAvailable = false;
-            for (auto& entry : adapters)
-            {
-                const auto dedicated = dedicatedUsageByLuid.find(entry.luid);
-                const auto shared = sharedUsageByLuid.find(entry.luid);
-                if (dedicated == dedicatedUsageByLuid.end() ||
-                    shared == sharedUsageByLuid.end())
-                    continue;
-                entry.snapshot.dedicatedUsedBytes = dedicated->second;
-                entry.snapshot.sharedUsedBytes = shared->second;
-                memoryUsageAvailable = true;
-            }
-        }
-
-        snapshot.available = utilizationAvailable && memoryUsageAvailable;
-        snapshot.warmingUp = false;
-        if (!utilizationAvailable)
-            snapshot.error = "GPU utilization sampling unavailable";
-        else if (!memoryUsageAvailable)
-            snapshot.error = "GPU memory sampling unavailable";
-    }
-    else
-    {
-        snapshot.error = "GPU utilization sampling failed";
-        snapshot.warmingUp = false;
-        CloseGpuQuery();
-    }
-
-    snapshot.adapters.reserve(adapters.size());
-    for (auto& entry : adapters)
-        snapshot.adapters.push_back(std::move(entry.snapshot));
+    auto snapshot = gpuSampler_.Sample(resetGpuBaseline_.exchange(false));
+    gpuResourcesActive_.store(gpuSampler_.Active());
     return snapshot;
 }
 
@@ -2066,103 +1859,28 @@ WidgetSystemDataProvider::SampleDisplayTopology()
     return snapshot;
 }
 
-WidgetAudioOutputDefaultDataSnapshot
-WidgetSystemDataProvider::SampleAudioOutputDefault()
-{
-    performance::Scope performanceScope("shared.system", "SampleAudioOutputDefault");
-    WidgetAudioOutputDefaultDataSnapshot snapshot;
-    snapshot.timestampMs = TimestampMilliseconds();
-    std::string error;
-    auto endpoint = DefaultRenderEndpoint(error);
-    if (!endpoint)
-    {
-        snapshot.error = std::move(error);
-        return snapshot;
-    }
-    snapshot.id = OpaqueEndpointId(endpoint.Get());
-    DWORD state = 0;
-    if (FAILED(endpoint->GetState(&state)))
-    {
-        snapshot.error = "audioEndpointStateUnavailable";
-        return snapshot;
-    }
-    snapshot.state = AudioDeviceState(state);
-
-    Microsoft::WRL::ComPtr<IPropertyStore> properties;
-    if (SUCCEEDED(endpoint->OpenPropertyStore(STGM_READ, &properties)) &&
-        properties)
-    {
-        PROPVARIANT value{};
-        PropVariantInit(&value);
-        if (SUCCEEDED(properties->GetValue(
-                PKEY_Device_FriendlyName, &value)) &&
-            value.vt == VT_LPWSTR && value.pwszVal)
-        {
-            snapshot.name = WideToUtf8(value.pwszVal);
-        }
-        PropVariantClear(&value);
-    }
-    snapshot.available = !snapshot.id.empty();
-    if (!snapshot.available)
-        snapshot.error = "audioEndpointIdentityUnavailable";
-    return snapshot;
-}
-
-WidgetAudioOutputVolumeDataSnapshot
-WidgetSystemDataProvider::SampleAudioOutputVolume()
-{
-    performance::Scope performanceScope("shared.system", "SampleAudioOutputVolume");
-    WidgetAudioOutputVolumeDataSnapshot snapshot;
-    snapshot.timestampMs = TimestampMilliseconds();
-    std::string error;
-    auto endpoint = DefaultRenderEndpoint(error);
-    if (!endpoint)
-    {
-        snapshot.error = std::move(error);
-        return snapshot;
-    }
-    snapshot.endpointId = OpaqueEndpointId(endpoint.Get());
-    Microsoft::WRL::ComPtr<IAudioEndpointVolume> volume;
-    if (FAILED(endpoint->Activate(__uuidof(IAudioEndpointVolume),
-            CLSCTX_INPROC_SERVER, nullptr,
-            reinterpret_cast<void**>(volume.GetAddressOf()))) || !volume)
-    {
-        snapshot.error = "audioVolumeUnavailable";
-        return snapshot;
-    }
-    float scalar = 0.0f;
-    BOOL muted = FALSE;
-    if (FAILED(volume->GetMasterVolumeLevelScalar(&scalar)) ||
-        FAILED(volume->GetMute(&muted)))
-    {
-        snapshot.error = "audioVolumeUnavailable";
-        return snapshot;
-    }
-    snapshot.available = !snapshot.endpointId.empty();
-    snapshot.volume = std::clamp(
-        static_cast<double>(scalar), 0.0, 1.0);
-    snapshot.muted = muted != FALSE;
-    if (!snapshot.available)
-        snapshot.error = "audioEndpointIdentityUnavailable";
-    return snapshot;
-}
-
 WidgetMediaSessionsDataSnapshot
-WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
+WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_token stopToken)
 {
     performance::Scope performanceScope("shared.system", "SampleMediaSessions");
     using namespace winrt::Windows::Media::Control;
     WidgetMediaSessionsDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     snapshot.artwork.timestampMs = snapshot.timestampMs;
+    // All metadata and artwork reads share one deadline. StopTopic's worker
+    // join must not wait for a stalled player's outstanding WinRT operation.
+    const system_control::Cancellation cancel{
+        std::make_shared<std::atomic_bool>(false), Clock::now() + std::chrono::seconds(5)};
+    std::stop_callback stopped(stopToken, [flag = cancel.canceled] { flag->store(true); });
     try
     {
+        if (cancel.Stop()) throw winrt::hresult_canceled();
         thread_local GlobalSystemMediaTransportControlsSessionManager manager{
             nullptr };
         if (!manager)
         {
-            manager = GlobalSystemMediaTransportControlsSessionManager::
-                RequestAsync().get();
+            manager = system_control::windows::Await(
+                GlobalSystemMediaTransportControlsSessionManager::RequestAsync(), cancel);
         }
         if (!manager)
         {
@@ -2174,6 +1892,7 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
         const auto sessions = manager.GetSessions();
         std::unordered_map<std::wstring, std::size_t> sourceOccurrences;
         const auto appendSession = [&](const auto& session, bool current) {
+            if (cancel.Stop()) throw winrt::hresult_canceled();
             if (!session || snapshot.sessions.size() >=
                     MaximumExposedMediaSessions)
                 return;
@@ -2227,13 +1946,15 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
 
             try
             {
-                const auto properties =
-                    session.TryGetMediaPropertiesAsync().get();
+                if (cancel.Stop()) throw winrt::hresult_canceled();
+                const auto properties = system_control::windows::Await(
+                    session.TryGetMediaPropertiesAsync(), cancel);
                 value.title = BoundedMediaString(properties.Title());
                 value.artist = BoundedMediaString(properties.Artist());
                 value.album = BoundedMediaString(properties.AlbumTitle());
                 if (current && includeArtwork)
                 {
+                    if (cancel.Stop()) throw winrt::hresult_canceled();
                     const std::uint64_t mediaIdentity = MediaArtworkIdentity(
                         value.id, value.title, value.artist, value.album);
                     const auto previous = MediaArtwork();
@@ -2247,13 +1968,14 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
                     {
                         snapshot.artwork = DecodeMediaArtwork(
                             properties.Thumbnail(), value.id,
-                            snapshot.timestampMs);
+                            snapshot.timestampMs, cancel);
                         snapshot.artwork.mediaIdentity = mediaIdentity;
                     }
                 }
             }
             catch (...)
             {
+                if (cancel.Stop()) throw;
                 // One source may withhold metadata without invalidating the
                 // session list, playback state, controls, or timeline.
                 if (current && includeArtwork)
@@ -2275,6 +1997,7 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
             if (currentSession && session == currentSession) continue;
             appendSession(session, false);
         }
+        if (cancel.Stop()) throw winrt::hresult_canceled();
         snapshot.available = true;
         if (includeArtwork && snapshot.artwork.error.empty() &&
             !snapshot.artwork.available)
@@ -2294,6 +2017,8 @@ void WidgetSystemDataProvider::PublishCpu(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(CpuTopic))) return;
+    resourceHistory_.Append(CpuTopic, {}, {snapshot.timestampMs,
+        snapshot.available && !snapshot.warmingUp ? std::optional<double>(snapshot.usagePercent) : std::nullopt, {}});
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), cpu_,
         semanticDebouncers_[std::string(CpuTopic)]);
     snapshot.revision = cpu_ ? cpu_->revision + 1 : 1;
@@ -2306,6 +2031,8 @@ void WidgetSystemDataProvider::PublishMemory(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(MemoryTopic))) return;
+    resourceHistory_.Append(MemoryTopic, {}, {snapshot.timestampMs,
+        snapshot.available && snapshot.totalBytes ? std::optional<double>(100. * snapshot.usedBytes / snapshot.totalBytes) : std::nullopt, {}});
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), memory_,
         semanticDebouncers_[std::string(MemoryTopic)]);
     snapshot.revision = memory_ ? memory_->revision + 1 : 1;
@@ -2355,6 +2082,10 @@ void WidgetSystemDataProvider::PublishNetworkTraffic(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(NetworkTrafficTopic))) return;
+    const bool valid = snapshot.available && !snapshot.warmingUp;
+    resourceHistory_.Append(NetworkTrafficTopic, {}, {snapshot.timestampMs,
+        valid ? std::optional<double>(static_cast<double>(snapshot.downloadBytesPerSecond)) : std::nullopt,
+        valid ? std::optional<double>(static_cast<double>(snapshot.uploadBytesPerSecond)) : std::nullopt});
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
         networkTraffic_,
         semanticDebouncers_[std::string(NetworkTrafficTopic)]);
@@ -2368,6 +2099,18 @@ void WidgetSystemDataProvider::PublishGpu(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(GpuTopic))) return;
+    std::vector<std::string> identities;
+    for (const auto& adapter : snapshot.adapters)
+    {
+        identities.push_back(adapter.id);
+        resourceHistory_.Append(GpuTopic, adapter.id, {snapshot.timestampMs,
+            adapter.usageAvailable && !snapshot.warmingUp ? std::optional<double>(adapter.usagePercent) : std::nullopt, {}});
+    }
+    resourceHistory_.Retain(GpuTopic, identities);
+    // Detailed consumers must see this sample's validity, including the first
+    // failed read. Preserve the legacy envelope debounce for old subscribers.
+    snapshot.revision = gpu_ ? gpu_->revision + 1 : 1;
+    gpuDetails_ = snapshot;
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), gpu_,
         semanticDebouncers_[std::string(GpuTopic)]);
     snapshot.revision = gpu_ ? gpu_->revision + 1 : 1;
@@ -2426,34 +2169,6 @@ void WidgetSystemDataProvider::PublishDisplayCurrent(
         ? displayCurrent_->revision + 1 : 1;
     displayCurrent_ = std::move(snapshot);
     changedTopics_.insert(std::string(DisplayCurrentTopic));
-}
-
-void WidgetSystemDataProvider::PublishAudioOutputDefault(
-    WidgetAudioOutputDefaultDataSnapshot snapshot)
-{
-    std::scoped_lock lock(mutex_);
-    if (!schedules_.contains(std::string(AudioOutputDefaultTopic))) return;
-    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
-        audioOutputDefault_,
-        semanticDebouncers_[std::string(AudioOutputDefaultTopic)]);
-    snapshot.revision = audioOutputDefault_
-        ? audioOutputDefault_->revision + 1 : 1;
-    audioOutputDefault_ = std::move(snapshot);
-    changedTopics_.insert(std::string(AudioOutputDefaultTopic));
-}
-
-void WidgetSystemDataProvider::PublishAudioOutputVolume(
-    WidgetAudioOutputVolumeDataSnapshot snapshot)
-{
-    std::scoped_lock lock(mutex_);
-    if (!schedules_.contains(std::string(AudioOutputVolumeTopic))) return;
-    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
-        audioOutputVolume_,
-        semanticDebouncers_[std::string(AudioOutputVolumeTopic)]);
-    snapshot.revision = audioOutputVolume_
-        ? audioOutputVolume_->revision + 1 : 1;
-    audioOutputVolume_ = std::move(snapshot);
-    changedTopics_.insert(std::string(AudioOutputVolumeTopic));
 }
 
 void WidgetSystemDataProvider::PublishMediaSessions(

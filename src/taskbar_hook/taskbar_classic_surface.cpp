@@ -1,5 +1,6 @@
 #include "taskbar_classic_surface.h"
 #include "taskbar_classic_appearance.h"
+#include "taskbar_material_render.h"
 #include <d3d11.h>
 #include <dwmapi.h>
 #include <dxgi.h>
@@ -191,15 +192,9 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
             if (SUCCEEDED(hr)) render->FillRectangle(rectangle, brush.Get());
         }
         else if (SUCCEEDED(hr)) render->FillRectangle(rectangle, solid.Get());
-        if (SUCCEEDED(hr) && style.borderAlpha > 0)
-        {
-            solid->SetColor(D2D1::ColorF(style.borderRed, style.borderGreen,
-                style.borderBlue, style.borderAlpha));
-            const float stroke = static_cast<float>(GetDpiForWindow(window)) / 96.0f;
-            const float half = stroke / 2;
-            render->DrawRectangle(D2D1::RectF(half, half, static_cast<float>(width) - half,
-                static_cast<float>(height) - half), solid.Get(), stroke);
-        }
+        if (SUCCEEDED(hr)) hr = DrawTaskbarEdges(render.Get(), static_cast<UINT>(width),
+            static_cast<UINT>(height), static_cast<float>(GetDpiForWindow(window)) / 96.f, style,
+            ResolveTaskbarMaterialEdge(window));
         render->PopAxisAlignedClip();
         const HRESULT drawResult = render->EndDraw();
         if (SUCCEEDED(hr)) hr = drawResult;

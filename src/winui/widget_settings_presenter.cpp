@@ -6,6 +6,9 @@
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
 #include "appearance_sections.h"
+#include "../theme_library_settings.h"
+#include "../widget_theme_selection.h"
+#include "edge_light_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -329,6 +332,7 @@ struct TransientPreviewHint
 
 enum class AppearanceThemeKind
 {
+    Saved,
     BuiltIn,
     Custom,
     Component,
@@ -431,6 +435,9 @@ struct WidgetSettingsPresenter::Impl
     AppearanceScalarControl backgroundOpacity;
     AppearanceSections appearanceSections;
     std::shared_ptr<PanelGradientEditor> panelGradientEditor;
+    std::shared_ptr<EdgeLightEditor> edgeLightEditor;
+    std::vector<std::pair<presenter_controls::SettingRow*, muxc::Button>> appearanceResets;
+    presenter_controls::SettingRow restoreBackgroundRow;
     std::unique_ptr<presenter_controls::ColorFlyoutEditor>
         borderColorEditor;
     AppearanceScalarControl borderOpacity;
@@ -593,6 +600,7 @@ struct WidgetSettingsPresenter::Impl
 
     void RunAppearancePatch(wr::WidgetHostAppearancePatch patch)
     {
+        if (!patch.presetId && !patch.followPersonalization) patch.presetId = "__custom";
         RunMutation("__appearance",
             [this, patch = std::move(patch)](const auto& guard) {
                 return service.UpdateHostAppearance(guard, patch);
@@ -620,7 +628,7 @@ struct WidgetSettingsPresenter::Impl
                     control.slider.Value(), control.minimum,
                     control.maximum) * control.scale);
                 control.synchronizing = true;
-                control.number.Value(value / control.scale);
+                presenter_controls::SetNumberBoxValue(control.number, value / control.scale);
                 control.synchronizing = false;
                 QueueAppearancePreview(control, value);
             });
@@ -678,6 +686,22 @@ struct WidgetSettingsPresenter::Impl
         appearanceThemeRow.Initialize(appearanceTheme);
         appearanceCard.content.Children().Append(appearanceThemeRow.root);
 
+        muxc::Button restoreBackground; restoreBackground.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        restoreBackground.Content(winrt::box_value(L("app.settings.restore_default", L"Restore default")));
+        restoreBackground.Click([this](auto const&, auto const&) {
+            if (!CanMutate()) return;
+            wr::WidgetHostAppearanceState defaults; wr::WidgetHostAppearancePatch patch;
+            patch.backgroundColor = defaults.backgroundColor; patch.borderColor = defaults.borderColor;
+            patch.backgroundOpacity = defaults.backgroundOpacity; patch.borderOpacity = defaults.borderOpacity;
+            patch.borderWidth = defaults.borderWidth; patch.edgeHighlightEnabled = defaults.edgeHighlightEnabled;
+            patch.edgeHighlightWidth = defaults.edgeHighlightWidth; patch.edgeHighlightStrength = defaults.edgeHighlightStrength;
+            patch.edgeLight = defaults.edgeLight; patch.gradientEndOpacity = defaults.gradientEndOpacity;
+            patch.glassEnabled = defaults.glassEnabled; patch.acrylicEnabled = defaults.acrylicEnabled;
+            patch.contentTheme = defaults.contentTheme; patch.panelGradient = defaults.panelGradient;
+            RunAppearancePatch(std::move(patch));
+        });
+        restoreBackgroundRow.Initialize(restoreBackground);
+        appearanceCard.content.Children().Append(restoreBackgroundRow.root);
         customAppearanceHost = muxc::StackPanel{};
         customAppearanceHost.Spacing(10.0);
         appearanceCard.content.Children().Append(customAppearanceHost);
@@ -732,7 +756,7 @@ struct WidgetSettingsPresenter::Impl
         appearanceSections.border.Children().Append(borderOpacity.row.root);
         InitializeAppearanceScalar(borderWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
-            0.5, 1.0, L"px");
+            0.05, 1.0, L"px");
         appearanceSections.border.Children().Append(borderWidth.row.root);
 
         edgeHighlightEnabled = muxc::ToggleSwitch{};
@@ -745,11 +769,19 @@ struct WidgetSettingsPresenter::Impl
 
         InitializeAppearanceScalar(edgeHighlightWidth,
             kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth,
-            0.5, 1.0, L"px");
+            0.05, 1.0, L"px");
         appearanceSections.border.Children().Append(edgeHighlightWidth.row.root);
         InitializeAppearanceScalar(edgeHighlightStrength,
             0.0, 100.0, 1.0, 0.01, L"%");
         appearanceSections.border.Children().Append(edgeHighlightStrength.row.root);
+        edgeLightEditor = EdgeLightEditor::Create([this](auto key) { return L(key, L""); }, [this](auto const& light, bool commit) {
+            if (!CanMutate()) return;
+            wr::WidgetHostAppearancePatch patch; patch.edgeLight = light;
+            constexpr std::string_view owner = "__appearance.edgeLight";
+            QueueTransientAppearance(owner, std::move(patch));
+            if (commit) (void)CommitTransientOwner(owner);
+        });
+        appearanceSections.border.Children().Append(edgeLightEditor->Content());
         InitializeAppearanceScalar(gradientEndOpacity);
         appearanceSections.bottomBar.Children().Append(gradientEndOpacity.row.root);
 
@@ -772,6 +804,26 @@ struct WidgetSettingsPresenter::Impl
         appearanceSections.text.Children().Append(contentThemeRow.root);
         contentThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         contentTheme.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        const auto addAppearanceRestore = [this](presenter_controls::SettingRow& row, auto action) {
+            appearanceResets.emplace_back(&row, presenter_controls::AddRestoreDefaultAction(row,
+                L("app.settings.restore_default", L"Restore default"), [this, action] {
+                    if (!CanMutate()) return;
+                    wr::WidgetHostAppearancePatch patch; action(patch, wr::WidgetHostAppearanceState{});
+                    RunAppearancePatch(std::move(patch));
+                }));
+        };
+        addAppearanceRestore(backgroundColorEditor->row, [](auto& patch, auto const& value) { patch.backgroundColor = value.backgroundColor; });
+        addAppearanceRestore(borderColorEditor->row, [](auto& patch, auto const& value) { patch.borderColor = value.borderColor; });
+        addAppearanceRestore(backgroundOpacity.row, [](auto& patch, auto const& value) { patch.backgroundOpacity = value.backgroundOpacity; });
+        addAppearanceRestore(borderOpacity.row, [](auto& patch, auto const& value) { patch.borderOpacity = value.borderOpacity; });
+        addAppearanceRestore(borderWidth.row, [](auto& patch, auto const& value) { patch.borderWidth = value.borderWidth; });
+        addAppearanceRestore(edgeHighlightRow, [](auto& patch, auto const& value) { patch.edgeHighlightEnabled = value.edgeHighlightEnabled; });
+        addAppearanceRestore(edgeHighlightWidth.row, [](auto& patch, auto const& value) { patch.edgeHighlightWidth = value.edgeHighlightWidth; });
+        addAppearanceRestore(edgeHighlightStrength.row, [](auto& patch, auto const& value) { patch.edgeHighlightStrength = value.edgeHighlightStrength; });
+        addAppearanceRestore(gradientEndOpacity.row, [](auto& patch, auto const& value) { patch.gradientEndOpacity = value.gradientEndOpacity; });
+        addAppearanceRestore(glassRow, [](auto& patch, auto const& value) { patch.glassEnabled = value.glassEnabled; });
+        addAppearanceRestore(acrylicRow, [](auto& patch, auto const& value) { patch.acrylicEnabled = value.acrylicEnabled; });
+        addAppearanceRestore(contentThemeRow, [](auto& patch, auto const& value) { patch.contentTheme = value.contentTheme; });
         root.Children().Append(appearanceCard.root);
 
         InitializeCard(stylePreviewCard);
@@ -844,6 +896,41 @@ struct WidgetSettingsPresenter::Impl
                     return;
                 const auto choice = appearanceThemeChoices[
                     static_cast<std::size_t>(index)];
+                CommitOpenColorEditors();
+                if (!FlushPendingEdits().Succeeded()) return;
+                if (choice.kind == AppearanceThemeKind::Saved)
+                {
+                    const std::string target = "widget/" + winrt::to_string(widgetId);
+                    RunMutation("__appearance", [this, target, id = choice.id](const auto& guard) {
+                        const auto previous = currentHostAppearance;
+                        themes::Library library; std::string error;
+                        auto mutation = UnchangedResult();
+                        auto restored = UnchangedResult();
+                        const auto selected = themes::detail::SelectWidgetTheme(themes::LibraryPath(), target, id,
+                            [&](const auto& patch) {
+                                mutation = service.UpdateHostAppearance(guard, patch);
+                                return themes::detail::WidgetThemeMutation{mutation.Succeeded(), mutation.Changed()};
+                            }, [&] {
+                                restored = service.UpdateHostAppearance(
+                                    wr::WidgetSettingMutationGuard{widgetId, mutation.generation, mutation.revision},
+                                    themes::detail::WidgetAppearanceSnapshotPatch(previous));
+                                return restored.Succeeded();
+                            }, library, error);
+                        if (selected.committed) return mutation;
+                        // Refresh only after the transaction/rollback completes.
+                        // RunMutation's normal success refresh likewise sees the
+                        // new committed reference, never the old one mid-write.
+                        if (const auto current = service.Snapshot(widgetId)) (void)ApplySnapshot(*current);
+                        if (!selected.mutationSucceeded && error == "widgetApplyFailed") return mutation;
+                        const bool rollbackFailed = selected.rollbackAttempted && !selected.rollbackSucceeded;
+                        const auto final = selected.rollbackAttempted ? restored : mutation;
+                        return wr::WidgetSettingMutationResult{wr::WidgetSettingMutationStatus::PersistenceFailed,
+                            final.generation, final.revision,
+                            rollbackFailed ? "themeSelectionRollbackFailed" : error,
+                            winrt::to_string(L(rollbackFailed ? "themeLibrary.error.widgetRollbackFailed" : themes::ErrorLocalizationKey(error), L""))};
+                    });
+                    return;
+                }
                 if (choice.kind == AppearanceThemeKind::Component)
                 {
                     if (choice.componentPresetIndex >= cachedPresets.size())
@@ -883,12 +970,31 @@ struct WidgetSettingsPresenter::Impl
                         preset.widgetEdgeHighlightWidth;
                     patch.edgeHighlightStrength =
                         preset.widgetEdgeHighlightStrength;
+                    patch.edgeLight = preset.edgeLight;
                     patch.gradientEndOpacity = preset.gradientEndA;
-                    patch.panelGradient = currentHostAppearance.panelGradient;
-                    patch.panelGradient->enabled = false;
+                    patch.panelGradient = preset.panelGradient;
                     patch.glassEnabled = preset.glassEnabled;
                     patch.acrylicEnabled = preset.acrylicEnabled;
                     patch.contentTheme = preset.contentTheme;
+                }
+                else if (choice.kind == AppearanceThemeKind::Custom)
+                {
+                    // Enter custom editing from the effective current recipe,
+                    // including a preset that changed since the saved snapshot.
+                    patch.backgroundColor = currentHostAppearance.backgroundColor;
+                    patch.borderColor = currentHostAppearance.borderColor;
+                    patch.backgroundOpacity = currentHostAppearance.backgroundOpacity;
+                    patch.borderOpacity = currentHostAppearance.borderOpacity;
+                    patch.borderWidth = currentHostAppearance.borderWidth;
+                    patch.edgeHighlightEnabled = currentHostAppearance.edgeHighlightEnabled;
+                    patch.edgeHighlightWidth = currentHostAppearance.edgeHighlightWidth;
+                    patch.edgeHighlightStrength = currentHostAppearance.edgeHighlightStrength;
+                    patch.edgeLight = currentHostAppearance.edgeLight;
+                    patch.gradientEndOpacity = currentHostAppearance.gradientEndOpacity;
+                    patch.panelGradient = currentHostAppearance.panelGradient;
+                    patch.glassEnabled = currentHostAppearance.glassEnabled;
+                    patch.acrylicEnabled = currentHostAppearance.acrylicEnabled;
+                    patch.contentTheme = currentHostAppearance.contentTheme;
                 }
                 RunAppearancePatch(std::move(patch));
             });
@@ -1091,9 +1197,14 @@ struct WidgetSettingsPresenter::Impl
         field.editorRow.ColumnSpacing(8.0);
         field.editorRow.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
+        const bool compactEditor =
+            field.schema.Kind() == wr::WidgetSettingKind::Boolean ||
+            field.schema.Kind() == wr::WidgetSettingKind::Color;
         muxc::ColumnDefinition editorColumn{};
-        editorColumn.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
+        editorColumn.Width(compactEditor
+                ? mux::GridLengthHelper::Auto()
+                : mux::GridLengthHelper::FromValueAndType(
+                      1.0, mux::GridUnitType::Star));
         field.editorRow.ColumnDefinitions().Append(editorColumn);
         field.editorHost = muxc::StackPanel{};
         field.editorHost.Spacing(7.0);
@@ -1118,6 +1229,8 @@ struct WidgetSettingsPresenter::Impl
                 });
         }
         field.row.Initialize(field.editorRow);
+        if (compactEditor)
+            field.row.SetControlAlignment(mux::HorizontalAlignment::Right);
         field.row.SetText(
             ToWide(field.schema.label),
             ToWide(field.schema.description));
@@ -1226,6 +1339,7 @@ struct WidgetSettingsPresenter::Impl
     void BuildBooleanEditor(WidgetFieldControl& field)
     {
         field.toggle = muxc::ToggleSwitch{};
+        field.toggle.MinWidth(0.0);
         field.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         field.toggled = field.toggle.Toggled(
             [this, &field](const auto&, const auto&) {
@@ -1303,7 +1417,7 @@ struct WidgetSettingsPresenter::Impl
                 if (field.synchronizing || updatingControls) return;
                 const double value = field.slider.Value();
                 field.synchronizing = true;
-                field.number.Value(value);
+                presenter_controls::SetNumberBoxValue(field.number, value);
                 field.synchronizing = false;
                 QueueNumberPreview(field, value);
             });
@@ -1673,23 +1787,23 @@ struct WidgetSettingsPresenter::Impl
         updatingControls = true;
         appearanceThemeChoices.clear();
         appearanceTheme.Items().Clear();
-        constexpr std::array<const char*, 6> ids = {
+        constexpr std::array<const char*, 7> ids = {
             "__global_dark", "__global_light",
-            "__global_glass_dark", "__global_glass_light",
+            "__global_glass_dark", "__global_glass_light", "__global_glass_transparent",
             "__global_acrylic_dark", "__global_acrylic_light",
         };
-        constexpr std::array<int, 6> presetIds = {
+        constexpr std::array<int, 7> presetIds = {
             kAppearancePresetDark, kAppearancePresetLight,
-            kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+            kAppearancePresetGlassDark, kAppearancePresetGlassLight, kAppearancePresetGlassTransparent,
             kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight,
         };
-        constexpr std::array<const char*, 6> labelKeys = {
+        constexpr std::array<const char*, 7> labelKeys = {
             "app.settings.dark", "app.settings.light",
-            "app.settings.dark_glass", "app.settings.light_glass",
+            "app.settings.dark_glass", "app.settings.light_glass", "app.settings.transparent_glass",
             "app.settings.dark_acrylic", "app.settings.light_acrylic",
         };
-        constexpr std::array<const wchar_t*, 6> labelFallbacks = {
-            L"Dark", L"Light", L"Dark glass", L"Light glass",
+        constexpr std::array<const wchar_t*, 7> labelFallbacks = {
+            L"Dark", L"Light", L"Dark glass", L"Light glass", L"Transparent glass",
             L"Dark acrylic", L"Light acrylic",
         };
         for (std::size_t index = 0; index < ids.size(); ++index)
@@ -1713,6 +1827,15 @@ struct WidgetSettingsPresenter::Impl
         appearanceThemeChoices.push_back({
             AppearanceThemeKind::Custom, "__custom",
             kAppearancePresetCustom, 0});
+        themes::Library library;
+        std::string libraryError;
+        if (themes::Load(themes::LibraryPath(), library, libraryError))
+            for (const auto& theme : themes::Choices(library, themes::Kind::Global, themes::Components))
+            {
+                if (themes::Builtin(theme.id)) continue;
+                appearanceTheme.Items().Append(winrt::box_value(ToText(theme.name)));
+                appearanceThemeChoices.push_back({AppearanceThemeKind::Saved, theme.id, kAppearancePresetCustom, 0});
+            }
         for (std::size_t index = 0; index < cachedPresets.size(); ++index)
         {
             const auto& preset = cachedPresets[index];
@@ -1765,6 +1888,7 @@ struct WidgetSettingsPresenter::Impl
         if (rebuild)
         {
             panelGradientEditor->SetValue(snapshot.hostAppearance.panelGradient, true);
+            edgeLightEditor->SetValue(snapshot.hostAppearance.edgeLight, true);
             pendingTransientPreviews.clear();
             transientPreviewActive = false;
             transientPreviewOwner.clear();
@@ -1804,7 +1928,7 @@ struct WidgetSettingsPresenter::Impl
             static_cast<double>(value) / control.scale,
             control.minimum, control.maximum);
         control.slider.Value(normalized);
-        control.number.Value(normalized);
+        presenter_controls::SyncNumberBoxValue(control.number, normalized);
         control.synchronizing = false;
     }
 
@@ -1854,16 +1978,38 @@ struct WidgetSettingsPresenter::Impl
                 break;
             }
         }
-        constexpr int customThemeIndex = 6;
+        const auto customChoice = std::find_if(appearanceThemeChoices.begin(), appearanceThemeChoices.end(), [](auto const& choice) { return choice.kind == AppearanceThemeKind::Custom; });
+        themes::Library library;
+        std::string libraryError;
+        const std::string target = "widget/" + winrt::to_string(widgetId);
+        if (themes::Load(themes::LibraryPath(), library, libraryError))
+            if (const auto reference = library.references.find(target); reference != library.references.end() && !reference->second.id.empty())
+            {
+                const auto theme = themes::Resolve(reference->second.snapshot, reference->second.id);
+                if (theme && themes::WidgetMatches(snapshot.hostAppearance, *theme))
+                {
+                    for (std::size_t i = 0; i < appearanceThemeChoices.size(); ++i)
+                        if (appearanceThemeChoices[i].kind == AppearanceThemeKind::Saved && appearanceThemeChoices[i].id == reference->second.id)
+                            selectedTheme = static_cast<int>(i);
+                }
+                else
+                    (void)themes::Transact(themes::LibraryPath(), [&](auto& current, auto&) { themes::Detach(current, target); return true; }, library, libraryError);
+            }
+        const int customThemeIndex = static_cast<int>(std::distance(appearanceThemeChoices.begin(), customChoice));
         if (selectedTheme < 0 && snapshot.customStyle)
             selectedTheme = customThemeIndex;
         appearanceTheme.SelectedIndex(selectedTheme);
+        const bool showCustomAppearance = snapshot.customStyle &&
+            !snapshot.hostAppearance.followPersonalization &&
+            customChoice != appearanceThemeChoices.end() &&
+            selectedTheme == customThemeIndex;
+        if (showCustomAppearance && customAppearanceHost.Visibility() != mux::Visibility::Visible)
+            appearanceSections.CollapseAll();
+        restoreBackgroundRow.root.Visibility(showCustomAppearance ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         appearanceTheme.IsEnabled(snapshot.customStyle &&
             !snapshot.hostAppearance.followPersonalization);
         customAppearanceHost.Visibility(
-            snapshot.customStyle &&
-                !snapshot.hostAppearance.followPersonalization &&
-                selectedTheme == customThemeIndex
+            showCustomAppearance
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
 
@@ -1879,6 +2025,8 @@ struct WidgetSettingsPresenter::Impl
             snapshot.hostAppearance.borderOpacity);
         PatchAppearanceScalar(borderWidth,
             snapshot.hostAppearance.borderWidth);
+        edgeLightEditor->SetValue(snapshot.hostAppearance.edgeLight);
+        edgeLightEditor->Content().Visibility(snapshot.hostAppearance.edgeHighlightEnabled ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         edgeHighlightEnabled.IsOn(
             snapshot.hostAppearance.edgeHighlightEnabled);
         PatchAppearanceScalar(edgeHighlightWidth,
@@ -1971,7 +2119,7 @@ struct WidgetSettingsPresenter::Impl
                 state.currentValue, field.schema.minimum);
             field.synchronizing = true;
             field.slider.Value(value);
-            field.number.Value(value);
+            presenter_controls::SyncNumberBoxValue(field.number, value);
             field.synchronizing = false;
         }
         if (field.colorEditor)
@@ -2228,6 +2376,7 @@ struct WidgetSettingsPresenter::Impl
     void QueueTransientAppearance(
         std::string_view owner, wr::WidgetHostAppearancePatch patch)
     {
+        if (!patch.presetId && !patch.followPersonalization) patch.presetId = "__custom";
         PendingTransientPreview preview;
         preview.appearance = std::move(patch);
         ScheduleTransientPreview(std::string(owner), std::move(preview));
@@ -2801,6 +2950,8 @@ struct WidgetSettingsPresenter::Impl
         const bool oldUpdating = updatingControls;
         updatingControls = true;
         appearanceTitle.Text(L("app.settings.appearance", L"Appearance"));
+        restoreBackgroundRow.SetText(L("appearance.restoreBackground", L"Restore panel defaults"), L("appearance.restoreBackground.description", L""));
+        appearanceThemeRow.help.Text(L("appearance.presetHelp", L"")); appearanceThemeRow.help.Visibility(mux::Visibility::Visible);
         followGlobalRow.SetText(
             L("engine.editor.follow_global", L"Follow global settings"));
         appearanceThemeRow.SetText(
@@ -2812,6 +2963,7 @@ struct WidgetSettingsPresenter::Impl
         backgroundOpacity.row.SetText(
             L("app.settings.bg_opacity", L"Background opacity"));
         appearanceSections.RefreshLocalizedText([this](auto key) { return L(key, {}); });
+        edgeLightEditor->RefreshLocalizedText();
         panelGradientEditor->RefreshLocalizedText();
         UpdateBackgroundControls(currentHostAppearance.panelGradient.enabled);
         borderColorEditor->SetText(
@@ -2838,9 +2990,9 @@ struct WidgetSettingsPresenter::Impl
             "app.settings.widget_content_theme", L"Widget content theme"));
         contentTheme.Items().Clear();
         contentTheme.Items().Append(winrt::box_value(
-            L("app.settings.light", L"Light")));
+            L("appearance.lightText", L"Light text")));
         contentTheme.Items().Append(winrt::box_value(
-            L("app.settings.dark", L"Dark")));
+            L("appearance.darkText", L"Dark text")));
 
         stylePreviewTitle.Text(
             L("app.settings.style_preview", L"Style preview"));
@@ -2916,6 +3068,12 @@ struct WidgetSettingsPresenter::Impl
         muxa::AutomationProperties::SetName(
             reset, resetText);
 
+        const auto explain = [](auto& row, const std::wstring& text) { row.help.Text(text); row.help.Visibility(mux::Visibility::Visible); };
+        explain(backgroundOpacity.row, L("appearance.opacityHelp", L""));
+        explain(glassRow, L("appearance.glassHelp", L""));
+        explain(edgeHighlightRow, L("appearance.borderHelp", L""));
+        explain(edgeHighlightWidth.row, L("appearance.rimWidthHelp", L""));
+        for (auto const& [row, button] : appearanceResets) presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default", L"Restore default") + L" · " + std::wstring(row->label.Text()));
         RebuildPresetItems();
         for (auto& field : fields)
             SetFieldLocalizedText(*field);
@@ -2951,6 +3109,7 @@ struct WidgetSettingsPresenter::Impl
             return {wr::WidgetSettingMutationStatus::Disabled,
                 generation, revision, "presenterInactive", {}};
         }
+        edgeLightEditor->Flush();
         panelGradientEditor->Flush();
         wr::WidgetSettingMutationResult aggregate = CommitAllTransient();
         if (!aggregate.Succeeded()) return aggregate;
@@ -3213,6 +3372,7 @@ struct WidgetSettingsPresenter::Impl
             unhookScalar(edgeHighlightStrength);
             unhookScalar(gradientEndOpacity);
             if (panelGradientEditor) panelGradientEditor->Close();
+            if (edgeLightEditor) edgeLightEditor->Close();
             if (backgroundColorEditor)
             {
                 backgroundColorEditor->changed = {};

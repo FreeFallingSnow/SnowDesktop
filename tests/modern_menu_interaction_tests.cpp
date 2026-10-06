@@ -3,8 +3,11 @@
 #include "shell_extension_menu_presentation.h"
 #include "menu_label.h"
 #include "desktop_input_activation.h"
+#include "status_bar_interaction.h"
+#include "floating_dock_rules.h"
 
 #include <windows.h>
+#include <windowsx.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -48,6 +51,7 @@ bool gObservedAboveZOrderOwner = false;
 HWND gZOrderOwnerProbe = nullptr;
 bool gDismissOnDrive = false;
 bool gObservedDismissHidden = false;
+bool gObservedDismissWithoutRelease = false;
 bool gSelectEnd = false;
 bool gNestedMenuCompleted = false;
 UINT gNestedMenuCommand = 0;
@@ -226,9 +230,21 @@ LRESULT CALLBACK OwnerWindowProc(
             }
             if (gDismissOnDrive)
             {
-                snowdesktop::modern_menu::DismissActive();
+                // Real menu loop + production bar input state; only the
+                // desktop HWND/hit geometry is replaced by a fixed fixture.
+                snowdesktop::StatusBarItem button;
+                button.key = "menu";
+                button.action = snowdesktop::StatusBarAction::SystemMenu;
+                button.bounds = {0, 0, 32, 32};
+                const std::vector<snowdesktop::StatusBarItem> items{button};
+                snowdesktop::StatusBarInteraction input;
+                if (input.Press(items, {64, 16}, false) == snowdesktop::StatusBarAction::Dismiss)
+                    snowdesktop::modern_menu::DismissActive();
                 gObservedDismissHidden =
                     IsWindowVisible(menus.root) == FALSE;
+                input.CancelPointer(); // Release may be lost after capture/leave.
+                gObservedDismissWithoutRelease = gObservedDismissHidden &&
+                    !input.Release(items, {16, 16}, false).accepted;
                 gInputPosted = true;
                 KillTimer(hwnd, kDriveTimer);
                 return 0;
@@ -383,6 +399,124 @@ void Expect(bool condition, const char* message)
     }
 }
 
+struct StatusBarKeyboardProbe
+{
+    snowdesktop::StatusBarInteraction input;
+    std::vector<snowdesktop::StatusBarItem> items;
+    std::vector<snowdesktop::StatusBarInvocation> invoked;
+    unsigned paints = 0, dismissals = 0, defaultKeys = 0;
+    static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM key, LPARAM bits)
+    {
+        auto* self = reinterpret_cast<StatusBarKeyboardProbe*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (message == WM_NCCREATE)
+        {
+            self = static_cast<StatusBarKeyboardProbe*>(reinterpret_cast<CREATESTRUCTW*>(bits)->lpCreateParams);
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+        }
+        // The native bar uses this exact dispatcher and target resolver. Only
+        // drawing / foreign-app invocation / dismissal effects are recorded.
+        if (self && snowdesktop::DispatchStatusBarKeyboard(message, key, bits,
+            (GetKeyState(VK_SHIFT) & 0x8000) != 0, self->input, self->items,
+            [&] { ++self->paints; },
+            [&](bool context) {
+                if (auto invocation = snowdesktop::ResolveStatusBarInvocation(self->items, self->input.focused, context))
+                    self->invoked.push_back(std::move(*invocation));
+            }, [&] { ++self->dismissals; })) return 0;
+        if (self && message == WM_CONTEXTMENU)
+        {
+            POINT point{GET_X_LPARAM(bits), GET_Y_LPARAM(bits)};
+            ScreenToClient(window, &point);
+            if (snowdesktop::DispatchStatusBarPointerContextMenu(self->items, point, [&](std::size_t index) {
+                if (auto invocation = snowdesktop::ResolveStatusBarInvocation(self->items, index, true))
+                    self->invoked.push_back(std::move(*invocation));
+            })) return 0;
+        }
+        if (self && (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)) ++self->defaultKeys;
+        return DefWindowProcW(window, message, key, bits);
+    }
+};
+
+void CheckStatusBarKeyboardMessages()
+{
+    using namespace snowdesktop;
+    WNDCLASSW definition{};
+    definition.hInstance = GetModuleHandleW(nullptr);
+    definition.lpszClassName = L"SnowDesktop.StatusBarKeyboardTest";
+    definition.lpfnWndProc = StatusBarKeyboardProbe::Procedure;
+    Expect(RegisterClassW(&definition) != 0, "isolated bar keyboard window class is registered");
+    StatusBarKeyboardProbe probe;
+    StatusBarItem menu{}; menu.key = "menu"; menu.action = StatusBarAction::SystemMenu; menu.bounds = {0, 0, 32, 32};
+    StatusBarItem icon{}; icon.key = "tray"; icon.action = StatusBarAction::Tray; icon.bounds = {64, 0, 96, 32};
+    icon.icon.emplace(); icon.icon->key = "player";
+    probe.items = {menu, icon}; probe.input.focused = 1;
+    const auto window = CreateWindowW(definition.lpszClassName, L"", WS_POPUP, 0, 0, 128, 32,
+        nullptr, nullptr, definition.hInstance, &probe);
+    Expect(window != nullptr, "isolated bar keyboard window exists");
+    BYTE saved[256]{}, keys[256]{};
+    Expect(GetKeyboardState(saved) && SetKeyboardState(keys), "test owns only its thread-local keyboard state");
+    constexpr LPARAM repeat = (LPARAM{1} << 30) | 1;
+    SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
+    SendMessageW(window, WM_KEYDOWN, VK_RETURN, repeat);
+    SendMessageW(window, WM_KEYDOWN, VK_SPACE, repeat);
+    Expect(probe.invoked.size() == 1 && probe.invoked.back().isTray &&
+        probe.invoked.back().trayKey == "player" && probe.invoked.back().trayAction == tray::Activation::Keyboard,
+        "Enter activates the focused tray identity once and held activation keys cannot repeat it");
+
+    keys[VK_SHIFT] = 0x80;
+    Expect(SetKeyboardState(keys) != FALSE, "Shift is scoped to the isolated test thread");
+    SendMessageW(window, WM_SYSKEYDOWN, VK_F10, 1);
+    SendMessageW(window, WM_SYSKEYDOWN, VK_F10, repeat);
+    SendMessageW(window, WM_SYSKEYUP, VK_F10, repeat | (LPARAM{1} << 31));
+    Expect(probe.invoked.size() == 2 && probe.invoked.back().isTray &&
+        probe.invoked.back().trayAction == tray::Activation::ContextKeyboard && probe.invoked.back().bounds.left == 64,
+        "real DefWindowProc Shift+F10 requests the selected icon context menu exactly once at its own bounds");
+    keys[VK_SHIFT] = 0;
+    Expect(SetKeyboardState(keys) != FALSE, "the temporary Shift state is cleared");
+    // Apps is generated by the OS input path, not by manually sending a key-up.
+    // Exercise its documented context request without injecting global input.
+    SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), MAKELPARAM(-1, -1));
+    Expect(probe.invoked.size() == 3 && probe.invoked.back().trayKey == "player" &&
+        probe.invoked.back().trayAction == tray::Activation::ContextKeyboard,
+        "Apps context request and zero-extended coordinates use the focused tray target");
+    const auto paints = probe.paints, defaults = probe.defaultKeys;
+    SendMessageW(window, WM_KEYDOWN, 'Q', 1);
+    Expect(probe.paints == paints && probe.defaultKeys == defaults + 1,
+        "unhandled keys reach Windows without showing a keyboard highlight");
+    SendMessageW(window, WM_KEYDOWN, VK_ESCAPE, 1);
+    SendMessageW(window, WM_KEYDOWN, VK_ESCAPE, repeat);
+    Expect(probe.dismissals == 1, "Escape dismisses once through the same route as a blank press");
+    SendMessageW(window, WM_KEYDOWN, VK_LEFT, 1);
+    SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+    Expect(probe.invoked.size() == 4 && !probe.invoked.back().isTray &&
+        probe.invoked.back().action == StatusBarAction::Menu && probe.invoked.back().bounds.left == 0,
+        "built-in control context requests still open the bar menu at the selected control");
+    probe.input.focused.reset();
+    SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+    probe.input.focused = 1; probe.items[1].bounds = {};
+    SendMessageW(window, WM_KEYDOWN, VK_SPACE, 1);
+    Expect(probe.invoked.size() == 4, "missing and layout-hidden targets cannot invoke a replacement icon");
+    StatusBarItem ime{}; ime.key = "inputMethod"; ime.action = StatusBarAction::InputMethod;
+    ime.bounds = {32, 0, 64, 32};
+    probe.items.push_back(ime); probe.input.focused = 2;
+    // Real DefWindowProc turns a mouse right release into WM_CONTEXTMENU;
+    // only the panel opening is replaced by invocation recording.
+    SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
+    SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), MAKELPARAM(-1, -1));
+    Expect(probe.invoked.size() == 6 &&
+        probe.invoked[4].action == StatusBarAction::InputMethodPanel &&
+        probe.invoked[5].action == StatusBarAction::InputMethodPanel && probe.invoked[4].bounds.left == 32,
+        "mouse and keyboard IME context requests open the picker panel without invoking the native menu");
+    SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
+    Expect(probe.invoked.size() == 7 && probe.invoked.back().action == StatusBarAction::InputMethod,
+        "normal IME activation remains distinct from the context menu request");
+    probe.items[2].bounds = {};
+    SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
+    Expect(probe.invoked.size() == 7, "a hidden IME control cannot respond to context clicks");
+    Expect(SetKeyboardState(saved) != FALSE, "thread-local key state is restored");
+    DestroyWindow(window);
+    UnregisterClassW(definition.lpszClassName, definition.hInstance);
+}
+
 struct IsolatedMenuDesktop
 {
     HDESK original = GetThreadDesktop(GetCurrentThreadId());
@@ -403,7 +537,386 @@ struct IsolatedMenuDesktop
     }
 };
 
+struct DockContextTransitionProbe
+{
+    HWND owner = nullptr;
+    bool dismissOnPress = true;
+    bool pressOwned = false;
+    bool deliveryBlocked = false;
+    bool delivered = false;
+    bool foregroundRejected = false;
+    bool timedOut = false;
+    HWND requestForeground = nullptr;
+    UINT command = 0;
+};
+
+constexpr UINT kDockMenuReadyMessage = WM_APP + 92;
+
+LRESULT CALLBACK DockContextTransitionWindowProc(
+    HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    auto* probe = reinterpret_cast<DockContextTransitionProbe*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (message == WM_NCCREATE)
+    {
+        probe = static_cast<DockContextTransitionProbe*>(
+            reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(probe));
+    }
+    if (!probe) return DefWindowProcW(hwnd, message, wParam, lParam);
+    if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    if (message == WM_RBUTTONDOWN)
+    {
+        // Same ordering as the host's right-button route: dismiss first,
+        // then retain the press surface for the matching release.
+        if (probe->dismissOnPress) snowdesktop::modern_menu::DismissActive();
+        probe->pressOwned = true;
+        return 0;
+    }
+    if (message == WM_RBUTTONUP)
+    {
+        Expect(snowdesktop::floating_dock_rules::ShouldDispatchDockContextMenu(
+            true, std::exchange(probe->pressOwned, false)),
+            "a menu transition retains ownership of the Dock right press");
+        // Windows reports no global foreground on a private test desktop.
+        // Its real thread-active HWND still exercises the same destruction
+        // and owner-activation transition as the production foreground guard.
+        probe->requestForeground = GetActiveWindow();
+        // Only the Shell result is replaced; actual HWND activation, the
+        // nested menu loop and the background-delivery fence are exercised.
+        PostMessageW(hwnd, kDockMenuReadyMessage, 0, 0);
+        return 0;
+    }
+    if (message == kDockMenuReadyMessage)
+    {
+        if (snowdesktop::modern_menu::IsActive())
+        {
+            probe->deliveryBlocked = true;
+            PostMessageW(snowdesktop::modern_menu::ActiveRootWindow(),
+                WM_KEYDOWN, VK_ESCAPE, 0);
+            PostMessageW(hwnd, kDockMenuReadyMessage, 0, 0);
+            return 0;
+        }
+        probe->foregroundRejected =
+            GetActiveWindow() != probe->requestForeground;
+        if (!probe->foregroundRejected)
+        {
+            gInputPosted = false;
+            SetTimer(probe->owner, kDriveTimer, 10, nullptr);
+            snowdesktop::modern_menu::Options options;
+            options.owner = probe->owner;
+            options.anchor = {80, 80};
+            probe->command = snowdesktop::modern_menu::Show(
+                {{93, L"Running app action", L"", true}}, options).command;
+        }
+        probe->delivered = true;
+        return 0;
+    }
+    if (message == WM_TIMER)
+    {
+        probe->timedOut = true;
+        probe->delivered = true;
+        snowdesktop::modern_menu::DismissActive();
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+void CheckDockRunningMenuTransition(HWND owner)
+{
+    constexpr wchar_t dockClass[] = L"SnowDesktop.MenuTests.NonactivatingDock";
+    WNDCLASSW definition{};
+    definition.lpfnWndProc = DockContextTransitionWindowProc;
+    definition.hInstance = GetModuleHandleW(nullptr);
+    definition.lpszClassName = dockClass;
+    Expect(RegisterClassW(&definition) != 0, "nonactivating Dock fixture is registered");
+    for (const bool dismissOnPress : {false, true})
+    {
+        DockContextTransitionProbe probe;
+        probe.owner = owner;
+        probe.dismissOnPress = dismissOnPress;
+        const HWND dock = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            dockClass, L"", WS_POPUP | WS_VISIBLE, 20, 20, 20, 20,
+            nullptr, nullptr, definition.hInstance, &probe);
+        Expect(dock != nullptr, "nonactivating Dock fixture exists");
+        bool pressed = false;
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gMenuScript = [&](HWND root) {
+            if (!pressed)
+            {
+                pressed = true;
+                SendMessageW(dock, WM_RBUTTONDOWN, 0, 0);
+                PostMessageW(dock, WM_RBUTTONUP, 0, 0);
+            }
+            else
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+        };
+        SetForegroundWindow(owner);
+        SetFocus(owner);
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(dock, kWatchdogTimer, 3000, nullptr);
+        snowdesktop::modern_menu::Options options;
+        options.owner = owner;
+        options.anchor = {80, 80};
+        const auto oldResult = snowdesktop::modern_menu::Show(
+            {{91, L"Existing menu", L"", true}}, options);
+        MSG message{};
+        while (!probe.delivered && GetMessageW(&message, nullptr, 0, 0) > 0)
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        KillTimer(dock, kWatchdogTimer);
+        DestroyWindow(dock);
+        gMenuScript = {};
+        Expect(pressed && !probe.timedOut && probe.delivered && oldResult.command == 0,
+            "the Dock transition completes without executing the old menu");
+        if (dismissOnPress)
+            Expect(!probe.deliveryBlocked && !probe.foregroundRejected && probe.command == 93,
+                "dismissing on press allows asynchronous running-menu delivery after release");
+        else
+            Expect(probe.deliveryBlocked && probe.foregroundRejected && probe.command == 0,
+                "an undismissed menu fences delivery then invalidates its captured foreground");
+    }
+    UnregisterClassW(dockClass, definition.hInstance);
+}
+
+void CheckLazySubmenuPreparation(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    Options options;
+    options.owner = owner;
+    options.anchor = {80, 80};
+    unsigned catalogueReads = 0;
+    unsigned preparations = 0;
+    bool loaded = false;
+    options.onPrepareSubmenu = [&](UINT command, std::vector<Item>& children) {
+        if (command != 71) return;
+        const auto root = ActiveRootWindow();
+        Expect(root && IsWindowVisible(root),
+            "component catalogue reads occur only after the root menu is visible");
+        ++preparations;
+        if (loaded) return;
+        ++catalogueReads;
+        children = {{72, L"Current component", L"", true}};
+        loaded = true;
+    };
+    const std::vector<Item> items{
+        {71, L"Add Widget", L"", true, false, false,
+            {{0, L"Builtin action", L"", true}}},
+        {73, L"Other action", L"", true},
+    };
+    for (const bool openComponents : {false, true, true})
+    {
+        // A new background-menu session gets a fresh catalogue; closing and
+        // reopening its cascade reuses the same search/paging snapshot.
+        loaded = false;
+        const auto readsBefore = catalogueReads;
+        const auto preparationsBefore = preparations;
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMenuScript = [&](HWND root) {
+            if (openComponents)
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_LEFT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+            else
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show(items, options);
+        KillTimer(owner, kWatchdogTimer);
+        gMenuScript = {};
+        Expect(!gWatchdogFired && gInputPosted && result.command == (openComponents ? 72U : 73U),
+            "lazy component entries remain selectable after closing and reopening their cascade");
+        Expect(catalogueReads - readsBefore == (openComponents ? 1U : 0U) &&
+            preparations - preparationsBefore == (openComponents ? 2U : 0U),
+            "ordinary root actions skip catalogue refresh while each component-menu session reads once");
+    }
+}
+
+void CheckCascadeWorkArea(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    std::vector<MONITORINFO> monitors;
+    Expect(EnumDisplayMonitors(nullptr, nullptr,
+        [](HMONITOR monitor, HDC, LPRECT, LPARAM context) -> BOOL {
+            MONITORINFO info{sizeof(info)};
+            if (GetMonitorInfoW(monitor, &info))
+                reinterpret_cast<std::vector<MONITORINFO>*>(context)->push_back(info);
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&monitors)) != FALSE && !monitors.empty(),
+        "monitor work areas are available on the isolated test desktop");
+    unsigned adjacentSeams = 0;
+    for (const auto& monitor : monitors)
+    {
+        for (const UINT dpi : {96U, 144U, 192U})
+        {
+            const RECT work = monitor.rcWork;
+            Options options;
+            options.owner = owner;
+            options.dpi = dpi;
+            // Blur has no synthetic shadow margin: the observed HWND is the
+            // exact panel and its exclusive right edge is the next display.
+            options.appearance = Appearance::SystemLightBlur;
+            options.rootPlacement = RootPlacement::AboveAnchorRect;
+            options.anchor = {work.right - 1, (work.top + work.bottom) / 2};
+            options.anchorRect = {work.right - 32, options.anchor.y,
+                work.right, options.anchor.y + 20};
+            const std::vector<Item> rows{
+                {0, L"Parent", L"", true, false, false,
+                    {{9100, L"Child", L"", true, false, false,
+                        {{9101, L"Grandchild", L"", true}}}}},
+            };
+            int deepest = 0;
+            options.onHover = [&](const HoverInfo& hover) {
+                if (!hover.command) return;
+                deepest = std::max(deepest, hover.depth);
+                const RECT bounds = hover.popupScreenRect;
+                Expect(bounds.left >= work.left && bounds.right <= work.right &&
+                    bounds.top >= work.top && bounds.bottom <= work.bottom,
+                    "every cascade remains inside its root monitor work area");
+            };
+            gDriveMode = DriveMode::Script;
+            gInputPosted = false;
+            gWatchdogFired = false;
+            gMenuScript = [&](HWND root) {
+                RECT bounds{};
+                Expect(GetWindowRect(root, &bounds) && bounds.right == work.right,
+                    "the parent panel touches the monitor's exclusive right boundary");
+                const POINT edge{bounds.right, bounds.top};
+                if (MonitorFromPoint(edge, MONITOR_DEFAULTTONEAREST) !=
+                    MonitorFromWindow(root, MONITOR_DEFAULTTONEAREST))
+                    ++adjacentSeams;
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            };
+            SetTimer(owner, kDriveTimer, 10, nullptr);
+            SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+            const auto result = Show(rows, options);
+            KillTimer(owner, kWatchdogTimer);
+            Expect(!gWatchdogFired && result.command == 9101 && deepest == 2,
+                "a two-level cascade at the screen edge remains keyboard accessible");
+        }
+    }
+    std::cout << "cascade placement: " << monitors.size()
+              << " monitors, " << adjacentSeams << " adjacent seam cases\n";
+    gMenuScript = {};
+}
+
+void CheckPreviewCompanionOrder(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    for (const bool topmost : {false, true})
+    {
+        // Only preview contents are replaced. Native ownership, nonactivation,
+        // menu cascades and the real post-message/presentation recovery run.
+        HWND companion = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            kOwnerClass, L"Preview fixture", WS_POPUP,
+            20, 20, 40, 40, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(companion != nullptr, "preview companion fixture is created");
+        Options options;
+        options.owner = owner;
+        options.anchor = {80, 80};
+        options.topmost = topmost;
+        options.zOrderCompanion = [&] { return companion; };
+        const std::vector<Item> rows{
+            {0, L"Parent", L"", true, false, false,
+                {{9102, L"Child", L"", true}}},
+        };
+        constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE |
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+        HWND child = nullptr;
+        HWND activeBeforePreview = nullptr;
+        HWND focusBeforePreview = nullptr;
+        int phase = -1;
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMenuScript = [&](HWND root) {
+            SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            MenuWindows menus;
+            EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows,
+                reinterpret_cast<LPARAM>(&menus));
+            child = menus.child;
+            Expect(child != nullptr, "preview fixture opens beside a real cascade");
+            // The isolated desktop is intentionally never made the user's
+            // input desktop, so it need not own the global foreground HWND.
+            activeBeforePreview = GetActiveWindow();
+            focusBeforePreview = GetFocus();
+            ShowWindow(companion, SW_SHOWNOACTIVATE);
+            SetWindowPos(companion, child, 0, 0, 0, 0, flags);
+            Expect(!IsWindowAbove(companion, child),
+                "the regression injects a preview covered by the menu");
+            phase = 0;
+        };
+        options.eventPump.flushPresentation = [&] {
+            const HWND root = ActiveRootWindow();
+            if (!root || phase < 0 || phase > 4) return;
+            if (phase == 0 || phase == 1 || phase == 3)
+            {
+                Expect(IsWindowAbove(companion, child) && IsWindowAbove(child, root),
+                    "preview recovers above the complete menu cascade before presentation");
+                Expect(GetActiveWindow() == activeBeforePreview &&
+                    GetFocus() == focusBeforePreview && GetFocus() != companion,
+                    "restoring the preview never steals menu activation or keyboard focus");
+                Expect(((GetWindowLongPtrW(companion, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) == topmost,
+                    "preview follows the menu's topmost band");
+            }
+            if (phase == 0)
+            {
+                // A presentation pass raises the menus after the preview was
+                // already shown; restoring only in Show() cannot handle this.
+                SetWindowPos(child, topmost ? HWND_TOPMOST : HWND_TOP,
+                    0, 0, 0, 0, flags);
+                Expect(!IsWindowAbove(companion, child),
+                    "presentation really covers the existing preview again");
+            }
+            else if (phase == 1)
+                ShowWindow(companion, SW_HIDE);
+            else if (phase == 2)
+            {
+                Expect(!IsWindowVisible(companion),
+                    "menu recovery never revives a hidden preview");
+                ShowWindow(companion, SW_SHOWNOACTIVATE);
+                SetWindowPos(companion, child, 0, 0, 0, 0, flags);
+            }
+            else if (phase == 3)
+                DestroyWindow(companion);
+            else
+                PostMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            ++phase;
+            PostMessageW(root, WM_NULL, 0, 0);
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show(rows, options);
+        KillTimer(owner, kWatchdogTimer);
+        Expect(!gWatchdogFired && result.command == 9102 && phase == 5,
+            "hidden, reopened and destroyed previews preserve menu interaction");
+    }
+    gMenuScript = {};
+}
+
 } // namespace
+
+void RunTrayFocusWindowTests();
 
 int wmain()
 {
@@ -435,6 +948,8 @@ int wmain()
     // Do not switch the user's input desktop. Test windows need real activation
     // and Z-order, but unrelated applications must not cancel their menu loops.
     IsolatedMenuDesktop isolatedDesktop;
+    RunTrayFocusWindowTests();
+    CheckStatusBarKeyboardMessages();
     using snowdesktop::modern_menu::Appearance;
     using snowdesktop::modern_menu::appearance_rules::ResolveForWindows;
     Expect(ResolveForWindows(
@@ -486,6 +1001,13 @@ int wmain()
     ShowWindow(owner, SW_SHOW);
     SetForegroundWindow(owner);
     SetFocus(owner);
+
+    CheckCascadeWorkArea(owner);
+    CheckPreviewCompanionOrder(owner);
+    CheckDockRunningMenuTransition(owner);
+    CheckLazySubmenuPreparation(owner);
+    gDriveMode = DriveMode::Cascade;
+    gInputPosted = false;
 
     using snowdesktop::modern_menu::Item;
     const std::vector<Item> items{
@@ -585,12 +1107,44 @@ int wmain()
         gOwnerFocusCallback = {};
         gMenuScript = {};
         Expect(!gWatchdogFired && gInputPosted &&
-                closeResult.command == (selectCommand ? 21U : 0U),
+                closeResult.command == (selectCommand ? 21U : 0U) &&
+                closeResult.reason == (selectCommand ? snowdesktop::modern_menu::ExitReason::Command :
+                    snowdesktop::modern_menu::ExitReason::Cancelled),
             "teardown presentation covers command selection and cancellation");
         Expect(focusRepaintObserved,
             "restoring owner focus after popup destruction generates a host repaint");
         Expect(contentSubmittedAfterTeardown && !contentPending,
             "menu exit submits focus-triggered content before returning to the Shell caller");
+    }
+    // Same private desktop, but an independent window takes activation while
+    // the menu is open. The real WM_ACTIVATE/cancellation/teardown chain must
+    // preserve that choice rather than returning focus to the old popup host.
+    {
+        HWND other = CreateWindowExW(WS_EX_TOOLWINDOW, kOwnerClass, L"",
+            WS_POPUP | WS_VISIBLE, -32000, -32000, 20, 20,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(other != nullptr, "independent focus target exists on the isolated desktop");
+        for(const bool chooseBeforeActivation : {false,true})
+        {
+            SetActiveWindow(owner);SetFocus(owner);
+            gDriveMode = DriveMode::Script;gInputPosted = false;gWatchdogFired = false;
+            bool externalAcquiredFocus = false;
+            gMenuScript = [&](HWND root) {
+                if(chooseBeforeActivation)
+                {SendMessageW(root,WM_KEYDOWN,VK_HOME,0);SendMessageW(root,WM_KEYDOWN,VK_RETURN,0);}
+                SetActiveWindow(other);SetFocus(other);
+                externalAcquiredFocus = GetActiveWindow() == other && GetFocus() == other;
+            };
+            SetTimer(owner, kDriveTimer, 10, nullptr);SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+            const auto externalResult = snowdesktop::modern_menu::Show(adjustmentItems, options);
+            KillTimer(owner, kWatchdogTimer);gMenuScript = {};
+            Expect(!gWatchdogFired && gInputPosted && externalAcquiredFocus && externalResult.command == 0 &&
+                    externalResult.reason == snowdesktop::modern_menu::ExitReason::ExternalActivation,
+                "external activation must discard a command and return an explicit dismissal");
+            Expect(GetActiveWindow() == other && GetFocus() == other,
+                "menu teardown stole activation or keyboard focus back from the user's new window");
+        }
+        DestroyWindow(other);SetActiveWindow(owner);SetFocus(owner);
     }
     // Regression for the user's desktop-click flash investigation. Exercise
     // the host's owner resolver and real menu activation/teardown on an
@@ -657,7 +1211,9 @@ int wmain()
                 KillTimer(owner, kWatchdogTimer);
                 CloseHandle(wake);
                 Expect(scriptRan && !gWatchdogFired &&
-                        focusResult.command == (outsideClick ? 0U : 21U),
+                        focusResult.command == (outsideClick ? 0U : 21U) &&
+                        focusResult.reason == (outsideClick ? snowdesktop::modern_menu::ExitReason::Cancelled :
+                            snowdesktop::modern_menu::ExitReason::Command),
                     "proxy-owned menus support outside dismissal and keyboard commands");
                 Expect(nativeOwnerMatches && gDesktopParentActivations == 0,
                     "desktop menus must not own or activate the rendering child's parent");
@@ -777,11 +1333,24 @@ int wmain()
     options.eventPump.scheduledWorkHandle = zOrderRefresh;
     std::vector<std::wstring> zOrderDiagnostics;
     bool observedActiveRootWindow = false;
+    bool ownedMenuRetainedDock = false;
+    bool ownedMenuRetainedOtherDock = false;
     options.eventPump.traceDiagnostic =
         [&](const std::wstring& message) {
             zOrderDiagnostics.push_back(message);
             observedActiveRootWindow = observedActiveRootWindow ||
                 snowdesktop::modern_menu::ActiveRootWindow() != nullptr;
+            const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+            if (root)
+            {
+                namespace dock = snowdesktop::floating_dock_rules;
+                ownedMenuRetainedDock = ownedMenuRetainedDock ||
+                    dock::ResolvePassiveDragRevealUpdate(true, false, true, false,
+                        dock::IsMenuOwnedByDock(root, zOrderOwner), true, true) ==
+                            dock::PassiveDragRevealAction::CancelLeave;
+                ownedMenuRetainedOtherDock = ownedMenuRetainedOtherDock ||
+                    dock::IsMenuOwnedByDock(root, owner);
+            }
         };
     options.eventPump.dispatchScheduledWork = [&]() {
         SetWindowPos(
@@ -817,6 +1386,12 @@ int wmain()
     Expect(observedActiveRootWindow &&
             snowdesktop::modern_menu::ActiveRootWindow() == nullptr,
         "the active root menu diagnostic is scoped to the menu session");
+    Expect(ownedMenuRetainedDock && !ownedMenuRetainedOtherDock &&
+        snowdesktop::floating_dock_rules::ResolvePassiveDragRevealUpdate(true, false, true, false,
+            snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
+                snowdesktop::modern_menu::ActiveRootWindow(), zOrderOwner), true, true) ==
+                    snowdesktop::floating_dock_rules::PassiveDragRevealAction::Hide,
+        "a real object menu retains only its source Dock past the leave deadline and releases that hold on exit");
     Expect(hasZOrderDiagnostic(L"stage=session-start") &&
             hasZOrderDiagnostic(L"stage=session-end"),
         "Z-order diagnostics record the menu session boundaries");
@@ -981,6 +1556,7 @@ int wmain()
     gCaptureTopmost = false;
     gDismissOnDrive = true;
     gObservedDismissHidden = false;
+    gObservedDismissWithoutRelease = false;
     gWatchdogFired = false;
     options.topmost = false;
     SetTimer(owner, kDriveTimer, 10, nullptr);
@@ -992,8 +1568,8 @@ int wmain()
     Expect(!gWatchdogFired,
         "programmatically dismissed menu did not time out");
     Expect(dismissedMenuResult.command == 0 &&
-            gObservedDismissHidden,
-        "popup transitions hide the active menu before its loop unwinds");
+            gObservedDismissHidden && gObservedDismissWithoutRelease,
+        "blank bar press hides the active menu before release and its nested loop unwinds");
     gDismissOnDrive = false;
 
     auto quickAdjustmentItems = adjustmentItems;
@@ -1286,6 +1862,7 @@ int wmain()
     textInputItems[1].command = 82;
     textInputItems[1].label = L"Initial result";
     std::wstring observedSearch;
+    std::vector<std::wstring> observedEdits;
     int textChangeCount = 0;
     options.onCommand = {};
     options.onTextChanged = [&](UINT command, const std::wstring& text,
@@ -1293,6 +1870,7 @@ int wmain()
         Expect(command == 81,
             "text callback receives the search row command");
         observedSearch = text;
+        observedEdits.push_back(text);
         ++textChangeCount;
         currentItems[1].label = L"Filtered result";
     };
@@ -1306,6 +1884,13 @@ int wmain()
         snowdesktop::modern_menu::Show(textInputItems, options);
     KillTimer(owner, kWatchdogTimer);
     Expect(!gWatchdogFired, "text-input popup did not time out");
+    if (textChangeCount != 7 || observedSearch != L"a")
+    {
+        std::wcerr << L"Search edit sequence:";
+        for (const auto& edit : observedEdits) std::wcerr << L" [" << edit << L"]";
+        std::wcerr << L"; Ctrl=" << GetKeyState(VK_CONTROL)
+                   << L" Shift=" << GetKeyState(VK_SHIFT) << L'\n';
+    }
     Expect(textChangeCount == 7 && observedSearch == L"a",
         "caret insertion, delete, spaces, and backspace update search in place");
     Expect(textInputResult.command == 82,
@@ -1329,6 +1914,112 @@ int wmain()
             "compact-menu input reaches the real popup without timing out");
         return selected;
     };
+    // The page-name editor is a real third-level cascade. Its submit/cancel
+    // keys must not leak into the component-search submenu in the same tree.
+    {
+        Item input{9501, L"Page name"};
+        input.textInput = true;
+        input.inputText = L"主页";
+        Item save{9502, L"Save name"};
+        save.inlineAction = true; save.inlineGroup = 1;
+        Item cancel{9503, L"Cancel"};
+        cancel.inlineAction = true; cancel.inlineGroup = 1;
+        Item rename{0, L"Rename", L"", true, false, false,
+            {{0, L"Page 1", L"", false}, input, save, cancel}};
+        Item pages{0, L"Pages", L"", true, false, false, {rename}};
+        Item search{9601, L"Search"}; search.textInput = true;
+        Item widgets{0, L"Widgets", L"", true, false, false,
+            {search, {9602, L"Search result"}}};
+        const std::vector<Item> editorItems{pages, widgets};
+        const auto menuWindows = [] {
+            std::vector<HWND> windows;
+            EnumThreadWindows(GetCurrentThreadId(), [](HWND hwnd, LPARAM data) -> BOOL {
+                wchar_t name[96]{};
+                GetClassNameW(hwnd, name, static_cast<int>(std::size(name)));
+                if (wcscmp(name, L"SnowDesktop.ModernMenuPopup") == 0)
+                    reinterpret_cast<std::vector<HWND>*>(data)->push_back(hwnd);
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&windows));
+            return windows;
+        };
+        const auto openEditor = [&](HWND root) {
+            SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            Expect(menuWindows().size() == 3 &&
+                snowdesktop::modern_menu::ActiveRootWindow() == root,
+                "rename opens at depth three without replacing the root menu");
+        };
+        snowdesktop::modern_menu::Options editorOptions;
+        editorOptions.owner = owner;
+        editorOptions.anchor = {80, 80};
+        editorOptions.appearance = snowdesktop::modern_menu::Appearance::OpaqueLight;
+        editorOptions.textInputSubmitCommand = 9502;
+        editorOptions.textInputCancelCommand = 9503;
+        std::wstring draft, searchText;
+        RECT cancelRect{};
+        editorOptions.onTextChanged = [&](UINT command, const auto& text, auto&) {
+            if (command == 9501) draft = text;
+            if (command == 9601) searchText = text;
+        };
+        editorOptions.onHover = [&](const auto& hover) {
+            if (hover.command == 9503) cancelRect = hover.itemScreenRect;
+        };
+        const auto saved = runScript(editorItems, editorOptions, [&](HWND root) {
+            openEditor(root);
+            SendMessageW(root, WM_CHAR, L'名', 0);
+            Expect(menuWindows().size() == 3, "typing preserves all three menu levels");
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+        });
+        Expect(saved.command == 9502 && draft == L"主页名",
+            "Enter submits the edited name from the third-level menu");
+        for (const int cancelMode : {0, 1, 2})
+        {
+            const auto cancelled = runScript(editorItems, editorOptions, [&](HWND root) {
+                openEditor(root);
+                SendMessageW(root, WM_CHAR, L'改', 0);
+                if (cancelMode == 0) SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+                else
+                {
+                    // Typing clears result selection; the first Down selects Save.
+                    SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                    SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                    if (cancelMode == 1) SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+                    else
+                    {
+                        const POINT point{(cancelRect.left + cancelRect.right) / 2,
+                            (cancelRect.top + cancelRect.bottom) / 2};
+                        HWND target = nullptr;
+                        for (const HWND window : menuWindows())
+                        {
+                            RECT rect{}; GetWindowRect(window, &rect);
+                            if (PtInRect(&rect, point)) { target = window; break; }
+                        }
+                        Expect(target != nullptr, "Cancel button has a live cascade hit target");
+                        POINT client = point; ScreenToClient(target, &client);
+                        SendMessageW(target, WM_LBUTTONUP, 0, MAKELPARAM(client.x, client.y));
+                    }
+                }
+                Expect(menuWindows().size() == 2 && IsWindow(root) && draft == L"主页",
+                    "Escape, keyboard Cancel and mouse Cancel discard the draft and keep parent menus open");
+                SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            });
+            Expect(cancelled.command == 0, "cancelling never returns the save command");
+        }
+        const auto searched = runScript(editorItems, editorOptions, [&](HWND root) {
+            SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            SendMessageW(root, WM_CHAR, L'x', 0);
+            SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            Expect(searchText.empty() && menuWindows().size() == 2,
+                "search Escape still clears its query instead of cancelling the page editor");
+            SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+        });
+        Expect(searched.command == 9602, "search Enter still invokes the selected search result");
+    }
+
     // Real cascade widths must follow their own contents, including disabled
     // icons/checks. A decorated descendant must not force its parent's gutter.
     {
@@ -1774,7 +2465,7 @@ int wmain()
         "a replacement menu completed inside the first modal loop");
     Expect(gNestedMenuCommand == 31,
         "the replacement menu remains interactive");
-    Expect(replacedResult.command == 0,
+    Expect(replacedResult.command == 0 && replacedResult.reason == snowdesktop::modern_menu::ExitReason::Replaced,
         "opening a replacement dismisses the previous menu session");
     std::cout << "modern menu interaction tests passed\n";
     return 0;

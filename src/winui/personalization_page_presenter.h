@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "theme_library_actions.h"
 #include "../shell_extension_service.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -13,7 +14,6 @@
 
 namespace snowdesktop::winui
 {
-
 /** Commands emitted by the cached Personalization settings presenter. */
 struct PersonalizationPageActions
 {
@@ -21,6 +21,7 @@ struct PersonalizationPageActions
     using Edit = std::function<void(PersonalizationSettings&)>;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
     using DockEdit = std::function<void(DockSettings&)>;
+    using NavigationEdit = std::function<void(NavigationSettings&)>;
 
     /**
      * Applies an edit to the controller's latest PersonalizationSettings.
@@ -36,7 +37,14 @@ struct PersonalizationPageActions
         SettingsUpdateMode mode,
         GeneralEdit edit)> updateGeneral;
     std::function<void(std::uint64_t, SettingsUpdateMode, DockEdit)> updateDock;
+    std::function<void(std::uint64_t, SettingsUpdateMode, NavigationEdit)> updateNavigation;
     std::function<void(const SettingsRoute&)> navigate;
+    std::function<std::vector<app_fonts::Choice>()> listFonts;
+    std::function<app_fonts::Selection()> appliedFont;
+    std::function<std::vector<app_fonts::Choice>(bool folder, std::string& error)> importFonts;
+    std::function<void(std::uint64_t generation)> restartApplication;
+    std::function<ThemeLibraryResult(std::uint64_t, const ThemeLibraryRequest&)> themeLibrary;
+    std::function<void(std::uint64_t, ThemeLibraryRequest, std::function<void(ThemeLibraryResult)>)> themeAsync;
 };
 
 /**
@@ -54,7 +62,8 @@ public:
 
     PersonalizationPagePresenter(
         LocalizeCallback localize,
-        const winrt::Microsoft::UI::Xaml::Style& cardStyle);
+        const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        const winrt::Microsoft::UI::Xaml::Style& navigationStyle = nullptr);
     ~PersonalizationPagePresenter();
 
     PersonalizationPagePresenter(
@@ -67,10 +76,14 @@ public:
     /** Global, custom-surface, target-surface, and context-menu themes. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         ThemeContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement ThemeManagementContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockAppearanceContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement MenuContent() const noexcept;
     /** Shared widget dimension and layout controls. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         WidgetLayoutContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        WidgetBehaviorContent() const noexcept;
     void SetLayoutSpacingContent(
         const winrt::Microsoft::UI::Xaml::UIElement& content);
     void ApplySnapshot(const SettingsSnapshot& snapshot);

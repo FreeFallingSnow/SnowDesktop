@@ -1,4 +1,6 @@
 #include "settings_window.h"
+#include "diagnostic_log.h"
+#include "utils.h"
 
 #include "settings_controller.h"
 #include "settings_ipc_services.h"
@@ -80,8 +82,8 @@ struct SettingsWindow::Impl
             GetWindowThreadProcessId(candidate, &owner);
             if (!initialized || !candidate || owner != process.ProcessId())
             {
-                if (!error.empty()) OutputDebugStringW(error.c_str());
-                lastError = LocalizedError("settings.process.startFailed");
+                if (!error.empty()) WriteDiagnosticLogEntry(error.c_str(), DiagnosticLogLevel::Error);
+                lastError = LocalizedError("settings.process.startFailed") + (error.empty() ? L"" : L"\n" + error);
                 channel->Close();
                 EndSession();
                 return false;
@@ -94,8 +96,8 @@ struct SettingsWindow::Impl
         catch (const std::exception& error)
         {
             const std::string message(error.what());
-            OutputDebugStringA(message.c_str());
-            lastError = LocalizedError("settings.process.startFailed");
+            WriteDiagnosticLogEntry(Utf8ToWide(message).c_str(), DiagnosticLogLevel::Error);
+            lastError = LocalizedError("settings.process.startFailed") + L"\n" + Utf8ToWide(message);
             if (channel) channel->Close();
             EndSession();
             return false;

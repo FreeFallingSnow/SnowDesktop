@@ -467,13 +467,12 @@ void DesktopApp::ShowWidgetContextMenu(
             AppendMenuW(menu, MF_STRING,
                 kContextWidgetToggleCollectionMode,
                 collectionModeLabel.c_str());
-            if (widget.scrollContainerMode)
-            {
-                AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
-                    displayTypeLabel.c_str());
-                appendDetailsMenu();
-            }
         }
+        // Every collection can open a popup, including compact and large-folder
+        // collections whose inline content keeps its own grid presentation.
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
+            displayTypeLabel.c_str());
+        appendDetailsMenu();
     }
     else if (widget.type == DesktopWidgetType::CollectionGroup)
     {
@@ -1008,6 +1007,10 @@ void DesktopApp::ShowWidgetContextMenu(
         {
             dockFolderPopupWidget_.listMode =
                 source.listMode;
+            dockFolderPopupWidget_.showSearchBox = source.showSearchBox;
+            dockFolderPopupWidget_.showFileCategories = source.showFileCategories;
+            dockFolderPopupWidget_.categoryTabOrder = source.categoryTabOrder;
+            dockFolderPopupWidget_.activeCategoryId = source.activeCategoryId;
             dockFolderPopupWidget_.fanPopup = source.fanPopup;
             dockFolderPopupWidget_.showDetails =
                 source.showDetails;
@@ -1029,8 +1032,13 @@ void DesktopApp::ShowWidgetContextMenu(
                 source.contentSortAscending;
             popupScrollOffset_ = 0;
             if (dockFolderPopupContainer_)
-                dockFolderPopupContainer_->
-                    InvalidateSlots();
+            {
+                if (!source.showSearchBox)
+                    dockFolderPopupContainer_->ClearSearchText();
+                if (!source.showFileCategories)
+                    dockFolderPopupContainer_->EndCategoryTabDrag(false);
+                dockFolderPopupContainer_->InvalidateFilterCache();
+            }
             RefreshDockFolderPopupGeometry();
             return;
         }
@@ -1038,6 +1046,7 @@ void DesktopApp::ShowWidgetContextMenu(
             popupWidgetIndex_ == widgetIndex)
         {
             popupScrollOffset_ = 0;
+            InvalidateCollectionPopupContent();
             RefreshOpenCollectionPopupGeometry();
         }
     };
@@ -1274,6 +1283,7 @@ void DesktopApp::ShowWidgetContextMenu(
                 }
             }
             SaveLayoutSlots();
+            refreshOpenPopupDisplay();
             InvalidateRect(hwnd_, nullptr, TRUE);
         }
         break;
@@ -1309,6 +1319,7 @@ void DesktopApp::ShowWidgetContextMenu(
                 }
             }
             SaveLayoutSlots();
+            refreshOpenPopupDisplay();
             InvalidateRect(hwnd_, nullptr, TRUE);
         }
         break;

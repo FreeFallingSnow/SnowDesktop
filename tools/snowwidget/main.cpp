@@ -5,6 +5,7 @@
 #include "widget_api_contract_json.h"
 #include "widget_system_contract_json.h"
 #include "widget_view_contract_json.h"
+#include "gpu_diagnostics.h"
 
 #include <windows.h>
 
@@ -32,6 +33,7 @@ void PrintUsage()
         << "  snowwidget api-contract\n"
         << "  snowwidget system-contract\n"
         << "  snowwidget view-contract\n"
+        << "  snowwidget gpu-diagnostics <new-output.jsonl> [--samples 2..120] [--interval-ms 250..5000]\n"
         << "  snowwidget inspect <package-directory>\n"
         << "  snowwidget lint <package-directory>\n"
         << "  snowwidget quality <package-directory>\n"
@@ -41,15 +43,15 @@ void PrintUsage()
            " [--columns N] [--rows N] [--dpi N]"
            " [--canvas-size N] [--padding N]"
            " [--locale CODE]"
-           " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
+           " [--appearance dark|light|glass-dark|glass-light|glass-transparent|acrylic-dark|acrylic-light]"
            " [--theme dark|light]"
            " [--data-state ready|empty|loading|error|stale|permission-denied]"
            " [--background image-file]"
            " [--content-only]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
-        << "  snowwidget preview-native <collection|collection-group|file-group|file-categories|folder-mapping|all> <output-directory>"
+        << "  snowwidget preview-native <collection|collection-group|file-group|file-categories|folder-mapping|calendar-panel|control-panel|tray-panel|resource-panel|status-bar|all> <output-directory>"
            " [--dpi N] [--locale CODE]"
-           " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
+           " [--appearance dark|light|glass-dark|glass-light|glass-transparent|acrylic-dark|acrylic-light]"
            " [--background image-file]"
            " [--transparent] [--content-only]"
            " [--canvas-width N] [--canvas-height N] [--padding N]"
@@ -469,6 +471,7 @@ int wmain(int argc, wchar_t** argv)
                "\"recommendedApiVersion\":2,"
                "\"executableSchemaVersions\":[2],"
                "\"executableApiVersions\":[2],"
+               "\"gpuDiagnostics\":{\"schemaVersion\":1,\"format\":\"jsonl\"},"
                "\"preview\":{\"contentOnly\":true},"
                "\"nativePreview\":{\"resultVersion\":2,"
                "\"contentOnly\":true,"
@@ -477,7 +480,7 @@ int wmain(int argc, wchar_t** argv)
                "\"showSearchBox\"]},\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
                "\"lint\",\"quality\",\"test\",\"preview\",\"permissions\","
-               "\"preview-native\",\"validate\",\"pack\",\"publish-local\"]}"
+               "\"preview-native\",\"gpu-diagnostics\",\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
     }
@@ -502,6 +505,8 @@ int wmain(int argc, wchar_t** argv)
             << '\n';
         return 0;
     }
+    if (argc >= 2 && std::wstring_view(argv[1]) == L"gpu-diagnostics")
+        return snowdesktop::gpu_diagnostics::Run(argc, argv, SNOWDESKTOP_VERSION);
     if (argc < 3)
     {
         PrintUsage();
@@ -526,7 +531,7 @@ int wmain(int argc, wchar_t** argv)
              component != L"collection-group" &&
              component != L"file-group" &&
              component != L"file-categories" &&
-             component != L"folder-mapping" && component != L"all"))
+              component != L"folder-mapping" && component != L"calendar-panel" && component != L"control-panel" && component != L"tray-panel" && component != L"resource-panel" && component != L"status-bar" && component != L"all"))
         {
             std::cerr << "{\"ok\":false,\"error\":\"preview-native requires a supported component or all and an output directory\"}\n";
             return 2;
@@ -579,10 +584,11 @@ int wmain(int argc, wchar_t** argv)
                 if (appearance != L"dark" && appearance != L"light" &&
                     appearance != L"glass-dark" &&
                     appearance != L"glass-light" &&
+                    appearance != L"glass-transparent" &&
                     appearance != L"acrylic-dark" &&
                     appearance != L"acrylic-light")
                 {
-                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, acrylic-dark, or acrylic-light\"}\n";
+                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, glass-transparent, acrylic-dark, or acrylic-light\"}\n";
                     return 2;
                 }
             }
@@ -932,10 +938,11 @@ int wmain(int argc, wchar_t** argv)
                 if (appearance != L"dark" && appearance != L"light" &&
                     appearance != L"glass-dark" &&
                     appearance != L"glass-light" &&
+                    appearance != L"glass-transparent" &&
                     appearance != L"acrylic-dark" &&
                     appearance != L"acrylic-light")
                 {
-                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, acrylic-dark, or acrylic-light\"}\n";
+                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, glass-transparent, acrylic-dark, or acrylic-light\"}\n";
                     return 2;
                 }
                 theme = appearance.ends_with(L"light")

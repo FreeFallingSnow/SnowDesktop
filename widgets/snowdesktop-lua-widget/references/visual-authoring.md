@@ -65,6 +65,7 @@ pairing:
 | `light` | `1` | dark/black |
 | `glass-dark` | `0` | light/white |
 | `glass-light` | `0` | light/white |
+| `glass-transparent` | `0` | light/white |
 | `acrylic-dark` | `0` | light/white |
 | `acrylic-light` | `1` | dark/black |
 
@@ -120,7 +121,7 @@ and writes a real API v2/D2D PNG. It does not emulate the view tree. The output
 is opaque and contains the chosen background, resolved host material and widget
 content.
 
-Use `--appearance` with `dark`, `light`, `glass-dark`, `glass-light`,
+Use `--appearance` with `dark`, `light`, `glass-dark`, `glass-light`, `glass-transparent`,
 `acrylic-dark` or `acrylic-light`. The legacy `--theme dark|light` shorthand
 cannot be combined with `--appearance`. Use `--background <image-file>` for the
 final catalog composition. The source background is not included in the package
@@ -143,7 +144,10 @@ different state:
 2. Open the PNG at native size.
 3. Check that the purpose and hierarchy are immediately recognizable.
 4. Check text, icons, strokes, controls, disabled content and focus states for
-   contrast and clipping.
+   contrast and clipping. Inspect label and icon placement inside each changed
+   control: horizontal and vertical alignment, baseline, padding and balance
+   must match the design intent. Do not assume framework defaults match that
+   intent or treat centering as a universal rule.
 5. Check that the host outer surface remains visible and is not duplicated by a
    widget-drawn full-size card.
 6. For a proportional visual component, compare small and large previews with
@@ -180,8 +184,23 @@ use manifest preview data and `--data-state` rather than waiting for real
 schedules. Exercise ready, empty, loading, error, stale and permission-denied
 only when those states apply to the widget.
 
+Review each changed surface, including panels and other auxiliary interfaces;
+a desktop or catalog preview does not verify a different surface. If the preview
+CLI cannot render the required surface directly, an isolated temporary package
+may route its actual view callback to a previewable surface to inspect parsing
+and layout. Match the target surface's content bounds, semantic UI metrics and
+theme; an unrelated preview scale cannot establish runtime text readability.
+Record that adaptation and its limits: it does not verify native
+surface routing, focus, keyboard interaction or runtime permission prompts.
+Keep temporary inspection changes out of the delivered package, fix visible
+defects, and inspect the new render before claiming visual acceptance.
+
 Generate the final package preview before packing. Save it inside the package,
 set the manifest `preview` field to that relative file, validate, and then pack.
 For a square Workshop image, keep the component's real `--columns` and `--rows`
 and add `--canvas-size 512 --padding 48`; the host preserves the widget aspect
 ratio and center-crops the supplied background.
+
+`glass-transparent` uses light/white content (`contentTheme=0`), neutral low-opacity tint,
+blur and edge reflections. Use the tool bundled with a supporting host; older
+tools reject this appearance. Lua API and schema versions remain unchanged.

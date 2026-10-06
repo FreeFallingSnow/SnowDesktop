@@ -1,4 +1,7 @@
+#include "../settings_search_catalog.h"
 #include "app.h"
+#include "../modern_menu.h"
+#include "../system_control_prompt.h"
 #include "dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
 #include "startup_diagnostics.h"
@@ -10,7 +13,9 @@
 #include "../steam_runtime_startup.h"
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
+#include "../widget_system_data_provider.h"
 
+#include "../slow_call_limiter.h"
 #include <commoncontrols.h>
 #include <imm.h>
 #include <new>
@@ -18,6 +23,63 @@
 
 namespace
 {
+snowdesktop::SlowCallLimiter slowCallLimiter;
+constexpr const wchar_t* slowCallPhaseNames[] = {
+    L"DispatchMessage", L"FlushComposition", L"FlushQuickNavigation", L"DispatchDue" };
+void LogSlowMessageLoopCall(snowdesktop::SlowCallPhase phase, double started,
+    const MSG* message = nullptr) noexcept try
+{
+    const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started;
+    if (elapsed <= 50.0) return;
+    const auto summary = slowCallLimiter.Record(phase,
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), elapsed);
+    if (!summary) return;
+    // Wall time includes any nested modal loop. Record no text, key payloads or
+    // window titles; a slow entry is a timing observation, not a hang verdict.
+    wchar_t line[320]{};
+    swprintf_s(line, L"MessageLoopSlowCall phase=%ls elapsedMs=%.3f suppressed=%llu maxSuppressedMs=%.3f hwnd=%p message=0x%04X timer=%llu",
+        slowCallPhaseNames[static_cast<std::size_t>(phase)], elapsed,
+        static_cast<unsigned long long>(summary->count), summary->maximumMs,
+        message ? static_cast<void*>(message->hwnd) : nullptr,
+        message ? message->message : 0U,
+        message && message->message == WM_TIMER ? static_cast<unsigned long long>(message->wParam) : 0ULL);
+    WriteDiagnosticLogEntry(line);
+}
+catch (...) { /* Diagnostics must not interrupt the message pump. */ }
+
+void LogDelayedInputMessage(const MSG& message) noexcept try
+{
+    switch (message.message)
+    {
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+    case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+    case WM_MBUTTONDOWN: case WM_MBUTTONUP:
+    case WM_XBUTTONDOWN: case WM_XBUTTONUP:
+        break;
+    default:
+        return;
+    }
+    const DWORD now = GetTickCount();
+    // MSG::time and GetTickCount share the wrapping 32-bit millisecond clock.
+    const DWORD age = now - message.time;
+    if (age <= 250) return;
+    static bool logged = false;
+    static DWORD lastLog = 0;
+    static std::uint64_t delayedCount = 0;
+    ++delayedCount;
+    // Always retain the first delayed click; a released backlog must not flood
+    // the synchronous diagnostic sink. No coordinates or button payloads.
+    if (logged && now - lastLog < 1000) return;
+    logged = true;
+    lastLog = now;
+    wchar_t line[192]{};
+    swprintf_s(line, L"InputMessageDelayed ageMs=%lu hwnd=%p message=0x%04X delayedCount=%llu",
+        age, static_cast<void*>(message.hwnd), message.message,
+        static_cast<unsigned long long>(delayedCount));
+    WriteDiagnosticLogEntry(line);
+}
+catch (...) { /* Diagnostics must not interrupt the message pump. */ }
+
 LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
     const LuaWidgetFilePickerRequest& request)
 {
@@ -332,6 +394,23 @@ void DesktopApp::StartSteamEntitlementRegistration(bool revalidateRegistered)
 int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
+    snowdesktop::operation_feedback::Session operationFeedback;
+    snowdesktop::text_input::SetMenuHandler([this](HWND window,POINT point,const snowdesktop::text_input::MenuState& state){
+        namespace menu=snowdesktop::modern_menu;
+        using Command=snowdesktop::text_input::MenuCommand;
+        std::vector<menu::Item> items;
+        const auto add=[&](Command command,const wchar_t* label,bool enabled){menu::Item item;item.command=static_cast<UINT>(command);item.label=label;item.enabled=enabled;items.push_back(std::move(item));};
+        add(Command::Undo,_LW("app.menu.undo"),state.undo);add(Command::Redo,_LW("app.menu.redo"),state.redo);
+        menu::Item separator;separator.separator=true;items.push_back(separator);
+        add(Command::Cut,_LW("app.menu.cut"),state.cut);add(Command::Copy,_LW("app.menu.copy"),state.copy);add(Command::Paste,_LW("app.menu.paste"),state.paste);
+        items.push_back(separator);add(Command::SelectAll,_LW("app.menu.select_all"),state.selectAll);
+        menu::Options options;options.owner=window;options.anchor=point;options.dpi=GetDpiForWindow(window);
+        options.zOrderOwner=(GetWindowLongPtrW(window,GWL_STYLE)&WS_CHILD)?GetParent(window):window;
+        options.topmost=(GetWindowLongPtrW(options.zOrderOwner,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
+        options.appearance=static_cast<menu::Appearance>(menuAppearanceStyle_);
+        return static_cast<Command>(menu::Show(items,options).command);
+    });
+    struct InputMenuSession{~InputMenuSession(){snowdesktop::text_input::SetMenuHandler({});}} inputMenuSession;
 
     const ULONGLONG startupStarted = GetTickCount64();
     const auto logStartupStage = [startupStarted](const wchar_t* stage) {
@@ -350,6 +429,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         Locale::Instance().Init(langDir.c_str());
     }
 
+    const auto& deployment = snowdesktop::deployment::GetRuntimeDeploymentContext();
+    if (!deployment.warning.empty())
+        snowdesktop::operation_feedback::Report({"app.launcher.warning", Utf8ToWide(deployment.warning), 0, true});
+
     LoadUsageGuidePreferences();
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -361,7 +444,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (FAILED(oleInitializeResult))
     {
         WriteDiagnosticLogEntry(L"OleInit FAILED");
-        return __LINE__;
+        return static_cast<int>(oleInitializeResult);
     }
     WriteDiagnosticLogEntry(L"OleInit ok");
 
@@ -379,7 +462,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     {
         WriteDiagnosticLogEntry(
             L"UiAnimationScheduler initialization failed");
-        return __LINE__;
+        return static_cast<int>(ERROR_GEN_FAILURE);
     }
 
     instance_ = instance;
@@ -450,6 +533,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.itemFontSizeCu = itemFontSizeCu_;
         desktopSettings.listItemFontSizeCu = listItemFontSizeCu_;
         desktopSettings.itemFontWeight = static_cast<int>(itemFontWeight_);
+        desktopSettings.desktopTitleLines = desktopTitleLines_;
+        desktopSettings.largeFolderTitleLines = largeFolderTitleLines_;
+        desktopSettings.scrollingTitleLines = scrollingTitleLines_;
+        desktopSettings.titleEllipsis = titleEllipsis_;
         desktopSettings.shortcutArrowMode = shortcutArrowMode_;
         desktopSettings.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(
@@ -540,7 +627,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         wc.lpszClassName, L"SnowDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance, this);
-    if (!hwnd_) { WriteDiagnosticLogEntry(L"CreateWindow FAILED"); return __LINE__; }
+    if (!hwnd_) { const DWORD error = GetLastError(); WriteDiagnosticLogEntry(L"CreateWindow FAILED"); return static_cast<int>(error ? error : ERROR_GEN_FAILURE); }
     // Keep the main UI window unparented while initialization can block.
     // Cross-process child windows couple the main and Explorer input queues,
     // even when the child is hidden. The startup layer has its own UI thread.
@@ -552,12 +639,17 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             },
             [this](HWND window) {
                 CloseDockWindowFromPreview(window);
+            }, [this] {
+                if (exitRequested_) return;
+                for (const auto& host : persistentDockHosts_)
+                    if (host && host->active) UpdateFloatingDockWindowBounds(*host, false, true);
+                InvalidateDockRects();
             }))
         dockWindowPreview_.reset();
     if (!CreateDesktopInputWindow(parent))
     {
         WriteDiagnosticLogEntry(L"CreateInputWindow FAILED");
-        return __LINE__;
+        return static_cast<int>(ERROR_GEN_FAILURE);
     }
     WriteDiagnosticLogEntry(L"Window created");
     {
@@ -568,7 +660,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         WriteDiagnosticLogEntry(buf);
     }
 
-    if (!InitGraphics()) { WriteDiagnosticLogEntry(L"InitGraphics FAILED"); return __LINE__; }
+    if (!InitGraphics()) { WriteDiagnosticLogEntry(L"InitGraphics FAILED"); return static_cast<int>(ERROR_GEN_FAILURE); }
     WriteDiagnosticLogEntry(L"InitGraphics ok");
     InitializeDockWindowTransition();
 
@@ -584,6 +676,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     controlHwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         kControlWindowClassName, L"SnowDesktopControl", WS_POPUP,
         0, 0, 1, 1, nullptr, nullptr, instance, this);
+    if (!controlHwnd_)
+    {
+        const DWORD error = GetLastError();
+        WriteDiagnosticLogEntry(L"Control window creation failed");
+        return static_cast<int>(error ? error : ERROR_GEN_FAILURE);
+    }
     SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
@@ -591,13 +689,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         L"SnowDesktop.Taskbar.Dynamic.TaskView.v1");
 
     // Create DComp target and initial surface
-    if (FAILED(dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_)))
-        { WriteDiagnosticLogEntry(L"CreateTargetForHwnd FAILED"); return __LINE__; }
-    if (FAILED(dcompDevice_->CreateVisual(&dcompVisual_)))
-        { WriteDiagnosticLogEntry(L"CreateVisual FAILED"); return __LINE__; }
+    if (const HRESULT result = dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_); FAILED(result))
+        { WriteDiagnosticLogEntry(L"CreateTargetForHwnd FAILED"); return static_cast<int>(result); }
+    if (const HRESULT result = dcompDevice_->CreateVisual(&dcompVisual_); FAILED(result))
+        { WriteDiagnosticLogEntry(L"CreateVisual FAILED"); return static_cast<int>(result); }
     dcompTarget_->SetRoot(dcompVisual_.Get());
-    if (FAILED(CreateOrResizeCompositionSurface()))
-        { WriteDiagnosticLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
+    if (const HRESULT result = CreateOrResizeCompositionSurface(); FAILED(result))
+        { WriteDiagnosticLogEntry(L"CreateCompositionSurface FAILED"); return static_cast<int>(result); }
     WriteDiagnosticLogEntry(L"Composition target ready");
 
     LoadCategorySettingsAndApply();
@@ -677,64 +775,15 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         return languages;
     };
-    settingsHostOptions.searchInput = [this]() {
-        snowdesktop::SettingsSearchIndexInput input;
-        input.languageTag = Locale::Instance().GetEffectiveLanguage();
-        if (!widgetSettingsBackend_)
-            return input;
-        // Indexing must not replace live WidgetSettingsService sessions or
-        // advance their revisions. A short-lived reader evaluates the same
-        // v2 dependency/visibility rules without publishing UI events.
-        snowdesktop::widget_runtime::WidgetSettingsService searchReader(
-            *widgetSettingsBackend_);
-        for (const auto& widget : widgets_)
-        {
-            if (widget.type != DesktopWidgetType::LuaScript)
-                continue;
-            const auto loaded = searchReader.Load(widget.id);
-            if (!loaded.Succeeded() || !loaded.snapshot)
-            {
-                continue;
-            }
-            const auto& snapshot = *loaded.snapshot;
-            snowdesktop::WidgetSettingsSearchDescriptor searchable;
-            searchable.instanceId = widget.id;
-            searchable.widgetName = Utf8ToWide(snapshot.widgetName);
-            if (searchable.widgetName.empty())
-                searchable.widgetName = widget.title;
-
-            std::unordered_map<std::string, std::wstring> groupLabels;
-            for (const auto& group : snapshot.groups)
-                groupLabels[group.id] = Utf8ToWide(group.label);
-            std::unordered_set<std::string> indexedKeys;
-            for (const auto& fieldState : snapshot.fields)
-            {
-                const auto& schema = fieldState.schema;
-                if (!fieldState.visible || schema.key.empty() ||
-                    schema.label.empty() ||
-                    !indexedKeys.insert(schema.key).second)
-                {
-                    continue;
-                }
-                snowdesktop::WidgetSettingSearchFieldDescriptor field;
-                field.key = schema.key;
-                field.focusId = schema.key;
-                field.label = Utf8ToWide(schema.label);
-                field.description = Utf8ToWide(schema.description);
-                const auto group = groupLabels.find(schema.group);
-                if (group != groupLabels.end())
-                    field.groupLabel = group->second;
-                searchable.fields.push_back(std::move(field));
-            }
-            if (!searchable.fields.empty())
-                input.widgets.push_back(std::move(searchable));
-        }
-        return input;
-    };
+    settingsHostOptions.searchInput = [this]() { return BuildSettingsSearchInput(); };
     settingsHostOptions.homeAboutStatus = [this](
         std::uint64_t generation,
         std::uint64_t) {
         return BuildHomeAboutStatus(generation);
+    };
+    settingsHostOptions.appliedFont = [] {
+        const auto applied = snowdesktop::app_fonts::current.load();
+        return applied ? applied->selection : snowdesktop::app_fonts::Selection{};
     };
     settingsHostOptions.startupConflict = [this]() {
         using snowdesktop::winui::GeneralStartupConflict;
@@ -781,6 +830,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.pageLayoutPage.capture = [this]() {
         return CapturePageLayoutSnapshot();
     };
+    settingsHostOptions.pageLayoutPage.analyzeRemoval = [this](const std::wstring& id) {
+        return AnalyzePageRemoval(id);
+    };
+    settingsHostOptions.pageLayoutPage.renamePage = [this](std::uint64_t revision,
+        const std::wstring& id, const std::wstring& name) {
+        return RenamePage(revision, id, name);
+    };
+    settingsHostOptions.pageLayoutPage.removePage = [this](std::uint64_t revision, const std::wstring& id) {
+        return RemovePage(revision, id);
+    };
     settingsHostOptions.pageLayoutPage.analyzeGrid = [this](
         const std::wstring& pageId, int columns, int rows) {
         return AnalyzePageGridChange(pageId, columns, rows);
@@ -815,6 +874,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.itemFontSizeCu = itemFontSizeCu_;
         desktop.listItemFontSizeCu = listItemFontSizeCu_;
         desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
+        desktop.desktopTitleLines = desktopTitleLines_;
+        desktop.largeFolderTitleLines = largeFolderTitleLines_;
+        desktop.scrollingTitleLines = scrollingTitleLines_;
+        desktop.titleEllipsis = titleEllipsis_;
         desktop.shortcutArrowMode = shortcutArrowMode_;
         desktop.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(std::move(desktop));
@@ -1169,7 +1232,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     StartSteamEntitlementRegistration(true);
 
+    systemDataProvider_ = std::make_shared<
+        snowdesktop::widget_runtime::WidgetSystemDataProvider>();
     widgetEngine_ = std::make_unique<WidgetEngine>();
+    widgetEngine_->SetSystemDataProvider(systemDataProvider_);
+    SyncStatusBar();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
     {
         widgetEngine_->SetDesktopSnapshotProvider([this]() {
@@ -1371,6 +1438,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             [this](const LuaWidgetFilePickerRequest& request) {
                 return ShowLuaWidgetFilePicker(hwnd_, request);
             });
+        widgetEngine_->SetSystemControlPromptCallback([this](auto& request, const auto& identity, auto valid) {
+            const auto state=std::make_shared<snowdesktop::SystemControlPromptState>();
+            state->valid=[this,valid=std::move(valid)] { return !exitRequested_ && valid(); };
+            const auto wifi=systemDataProvider_?systemDataProvider_->Controls()->Current("network.wifi"):std::nullopt;
+            const bool accepted=snowdesktop::ConfirmSystemControl(controlHwnd_?controlHwnd_:hwnd_,request,state,collectionPopupAppearance_,identity,wifi?&*wifi:nullptr);
+            return snowdesktop::system_control::Result{accepted,state->error,0};
+        });
         widgetEngine_->SetLogicalSlotPickerCallback(
             [this](const LogicalSlotPickerRequest& request) {
                 return OpenLuaLogicalSlotPicker(request);
@@ -1383,6 +1457,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     (void)PostMessageW(widgetAudioWakeWindow,
                         kWidgetTaskWakeMessage, 0, 0);
             });
+        systemDataProvider_->Controls()->SetWake([widgetAudioWakeWindow] {
+            if(widgetAudioWakeWindow)(void)PostMessageW(widgetAudioWakeWindow,kWidgetTaskWakeMessage,0,0);
+        });
         widgetEngine_->SetAudioAnalysisWakeCallback(
             [widgetAudioWakeWindow]() {
                 if (widgetAudioWakeWindow)
@@ -1517,7 +1594,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             WriteDiagnosticLogEntry(
                 L"Startup first frame FAILED; native desktop retained",
                 DiagnosticLogLevel::Error);
-            return __LINE__;
+            return static_cast<int>(ERROR_GEN_FAILURE);
         }
         logStartupStage(L"first frame ready");
     }
@@ -1556,7 +1633,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             WriteDiagnosticLogEntry(
                 L"Startup glass frame FAILED; native desktop retained",
                 DiagnosticLogLevel::Error);
-            return __LINE__;
+            return static_cast<int>(ERROR_GEN_FAILURE);
         }
         LogDesktopWidgetBackdropState(L"prepared");
     }
@@ -1617,6 +1694,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // PeekMessage itself dispatches sent messages, including an exit
             // requested by a nested tray/settings callback.
             if (exitRequested_) break;
+            LogDelayedInputMessage(msg);
             const bool nativeDragActive =
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
@@ -1663,12 +1741,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const bool settingsMessageHandled = settingsWindow_ &&
                 (settingsWindow_->PreTranslateMessage(&msg) ||
                     settingsWindow_->ProcessTabNavigation(&msg));
-            if (!settingsMessageHandled)
+            const bool systemPanelMessageHandled = !settingsMessageHandled && systemPanel_ && systemPanel_->PreTranslateMessage(&msg);
+            if (!settingsMessageHandled && !systemPanelMessageHandled)
             {
                 TranslateMessage(&msg);
+                const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
                 DispatchMessageW(&msg);
+                LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Message, dispatchStarted, &msg);
             }
             if (exitRequested_) break;
+            operationFeedback.Drain();
             FinishWidgetGroupTransitions();
             if (usageGuideWelcomeQueued_) ShowUsageGuideWelcome();
             if (usageGuideWaitingForDesktop_ &&
@@ -1681,8 +1763,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // Pointer-driven desktop/Dock pixels must enter their own DComp
             // channel first. Quick Navigation is flushed independently so a
             // panel animation transaction cannot delay this presentation.
+            const double commitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingCompositionCommit();
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Composition, commitStarted, &msg);
+            const double quickCommitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingQuickNavigationCompositionCommit();
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::QuickNavigation, quickCommitStarted, &msg);
             ++processedMessages;
         }
         if (!running || exitRequested_) break;
@@ -1696,15 +1782,95 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // iteration is sufficient and never creates catch-up bursts. The
             // initial wait result must be retained because the high-resolution
             // waitable timer is auto-reset and that wait consumes its signal.
+            const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             uiAnimationScheduler_.DispatchDue();
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Due, dispatchStarted);
             FinishWidgetGroupTransitions();
+            const double commitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingCompositionCommit();
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::Composition, commitStarted);
+            const double quickCommitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingQuickNavigationCompositionCommit();
+            LogSlowMessageLoopCall(snowdesktop::SlowCallPhase::QuickNavigation, quickCommitStarted);
+        }
+    }
+    for (std::size_t phase = 0; phase < static_cast<std::size_t>(snowdesktop::SlowCallPhase::Count); ++phase)
+    {
+        if (const auto summary = slowCallLimiter.Flush(static_cast<snowdesktop::SlowCallPhase>(phase)))
+        {
+            wchar_t line[224]{};
+            swprintf_s(line, L"MessageLoopSlowCallSummary phase=%ls suppressed=%llu maxSuppressedMs=%.3f",
+                slowCallPhaseNames[phase], static_cast<unsigned long long>(summary->count), summary->maximumMs);
+            WriteDiagnosticLogEntry(line);
         }
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");
+    operationFeedback.Drain();
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();
     uiAnimationScheduler_.Shutdown();
     return exitRequested_ ? 0 : static_cast<int>(msg.wParam);
+}
+
+snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
+{
+        snowdesktop::SettingsSearchIndexInput input;
+        input.languageTag = Locale::Instance().GetEffectiveLanguage();
+        input.developerToolsVisible = generalSettings_.widgetDeveloperToolsEnabled;
+        input.debugVisible = snowdesktop::debug_profile::Enabled() || !initializationExperimentDirectory_.empty();
+        snowdesktop::PopulateSettingsSearchCatalog(input, [](std::string_view key) {return std::wstring(_LW(std::string(key).c_str()));},
+            steamEntitlementService_ && ToGeneralAdvancedFeatureStatus(steamEntitlementService_->Current(),
+                snowdesktop::deployment::GetRuntimeDeploymentContext().kind).cardVisible,
+            snowdesktop::StatusBarSupportsSystemQuickSettings(),
+            CurrentPersonalization().contextMenuStyle);
+        if (!widgetSettingsBackend_)
+            return input;
+        // Indexing must not replace live WidgetSettingsService sessions or
+        // advance their revisions. A short-lived reader evaluates the same
+        // v2 dependency/visibility rules without publishing UI events.
+        snowdesktop::widget_runtime::WidgetSettingsService searchReader(
+            *widgetSettingsBackend_);
+        for (const auto& widget : widgets_)
+        {
+            if (widget.type != DesktopWidgetType::LuaScript)
+                continue;
+            const auto loaded = searchReader.Load(widget.id);
+            if (!loaded.Succeeded() || !loaded.snapshot)
+            {
+                continue;
+            }
+            const auto& snapshot = *loaded.snapshot;
+            snowdesktop::WidgetSettingsSearchDescriptor searchable;
+            searchable.instanceId = widget.id;
+            searchable.widgetName = Utf8ToWide(snapshot.widgetName);
+            if (searchable.widgetName.empty())
+                searchable.widgetName = widget.title;
+
+            std::unordered_map<std::string, std::wstring> groupLabels;
+            for (const auto& group : snapshot.groups)
+                groupLabels[group.id] = Utf8ToWide(group.label);
+            std::unordered_set<std::string> indexedKeys;
+            for (const auto& fieldState : snapshot.fields)
+            {
+                const auto& schema = fieldState.schema;
+                if (!fieldState.visible || schema.key.empty() ||
+                    schema.label.empty() ||
+                    !indexedKeys.insert(schema.key).second)
+                {
+                    continue;
+                }
+                snowdesktop::WidgetSettingSearchFieldDescriptor field;
+                field.key = schema.key;
+                field.focusId = schema.key;
+                field.label = Utf8ToWide(schema.label);
+                field.description = Utf8ToWide(schema.description);
+                const auto group = groupLabels.find(schema.group);
+                if (group != groupLabels.end())
+                    field.groupLabel = group->second;
+                searchable.fields.push_back(std::move(field));
+            }
+            if (!searchable.fields.empty())
+                input.widgets.push_back(std::move(searchable));
+        }
+        return input;
 }

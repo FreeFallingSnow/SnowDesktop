@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../drag_visual_rules.h"
+#include "../tray_service.h"
 #include "popup_window_pair_z_order.h"
 
 // Compact top-level DComp surface used only for the custom drag ghost. The
@@ -31,6 +32,7 @@ bool DesktopApp::CreateDragPreviewWindow()
 
 void DesktopApp::ResetDragPreviewCompositionResources()
 {
+    if (trayDragPreview_) trayDragPreview_->dirty = true;
     if (dragPreviewDcompVisual_)
         dragPreviewDcompVisual_->SetContent(nullptr);
     dragPreviewDcompSurface_.Reset();
@@ -82,6 +84,7 @@ void DesktopApp::ApplyDragPreviewLayerPolicy()
 
 void DesktopApp::DestroyDragPreviewWindow()
 {
+    trayDragPreview_.reset();
     HideDragPreviewWindow();
     ResetDragPreviewCompositionResources();
     if (dragPreviewDcompTarget_)
@@ -282,6 +285,13 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
 
 void DesktopApp::SyncDragPreviewWindow()
 {
+    if (trayDragPreview_)
+    {
+        if (!dragSession_.IsActive()) { SyncTrayDragPreviewWindow(); return; }
+        // Desktop drag ownership takes priority. Never replace its payload or
+        // leave a stale tray bitmap in the shared presentation surface.
+        EndTrayDragPreview();
+    }
     const auto& dragItems = dragSession_.Items();
     if (!snowdesktop::drag_visual_rules::ShouldShowPreview(
             dragSession_.IsActive(),
@@ -537,6 +547,138 @@ void DesktopApp::SyncDragPreviewWindow()
         SetWindowPos(dragPreviewHwnd_, policy.insertAfter, 0, 0, 0, 0,
             policy.flags | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     }
+}
+
+bool DesktopApp::BeginTrayDragPreview(HWND captureOwner, const snowdesktop::tray::Icon& icon,
+    POINT screen, UINT iconSizePx)
+{
+    if (dragSession_.IsActive() || !captureOwner || GetCapture() != captureOwner ||
+        !icon.width || !icon.height || icon.width > snowdesktop::tray::kIconSize ||
+        icon.height > snowdesktop::tray::kIconSize ||
+        icon.pixels.size() < static_cast<std::size_t>(icon.width) * icon.height) return false;
+    DWORD process = 0;
+    if (GetWindowThreadProcessId(captureOwner, &process) != GetCurrentThreadId() ||
+        process != GetCurrentProcessId()) return false;
+    TrayDragPreview preview;
+    preview.captureOwner = captureOwner; preview.screen = screen;
+    preview.width = icon.width; preview.height = icon.height;
+    preview.iconSize = (std::clamp)(iconSizePx, 16u, 256u);
+    preview.pixels.assign(icon.pixels.begin(), icon.pixels.begin() +
+        static_cast<std::size_t>(icon.width) * icon.height);
+    trayDragPreview_ = std::move(preview);
+    // Invalidate the shared surface even when this icon has the same size as
+    // the last desktop preview; no previous drag's pixels may be reused.
+    dragPreviewRenderRevision_ = 0;
+    SyncTrayDragPreviewWindow();
+    return trayDragPreview_.has_value();
+}
+
+void DesktopApp::UpdateTrayDragPreview(POINT screen, bool accepted)
+{
+    if (!trayDragPreview_) return;
+    trayDragPreview_->screen = screen;
+    if (trayDragPreview_->accepted != accepted)
+    { trayDragPreview_->accepted = accepted; trayDragPreview_->dirty = true; }
+    SyncTrayDragPreviewWindow();
+}
+
+void DesktopApp::EndTrayDragPreview()
+{
+    if (!trayDragPreview_) return;
+    trayDragPreview_.reset();
+    HideDragPreviewWindow();
+    // A subsequent desktop drag must render its own Item payload even if its
+    // cached revision or dimensions happen to match the former tray bitmap.
+    ResetDragPreviewCompositionResources();
+}
+
+bool DesktopApp::RenderTrayDragPreviewFrame()
+{
+    if (!trayDragPreview_ || graphicsDeviceRecovery_.Pending() ||
+        dragPreviewCompositionPaintInProgress_) return false;
+    dragPreviewCompositionPaintInProgress_ = true;
+    struct PaintScope { bool& active; ~PaintScope() { active = false; } } scope{dragPreviewCompositionPaintInProgress_};
+    const auto& preview = *trayDragPreview_;
+    const UINT extent = preview.iconSize + (std::max)(8u, preview.iconSize / 3u) + 4u;
+    if (FAILED(CreateOrResizeDragPreviewCompositionSurface(extent, extent))) return false;
+    ComPtr<ID2D1DeviceContext> context;
+    POINT offset{};
+    if (FAILED(dragPreviewDcompSurface_->BeginDraw(nullptr, IID_PPV_ARGS(&context), &offset))) return false;
+    context->SetDpi(96, 96);
+    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x), static_cast<float>(offset.y)));
+    context->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    context->Clear(D2D1::ColorF(0, 0.f));
+    ComPtr<ID2D1Bitmap> bitmap;
+    const auto properties = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    HRESULT result = context->CreateBitmap(D2D1::SizeU(preview.width, preview.height), preview.pixels.data(),
+        preview.width * static_cast<UINT>(sizeof(std::uint32_t)), properties, &bitmap);
+    const float size = static_cast<float>(preview.iconSize);
+    if (SUCCEEDED(result)) context->DrawBitmap(bitmap.Get(), D2D1::RectF(2, 2, 2 + size, 2 + size), .85f);
+    const float radius = static_cast<float>((std::max)(8u, preview.iconSize / 3u)) / 2.f;
+    const D2D1_POINT_2F center{size + radius, size + radius};
+    HIGHCONTRASTW contrast{sizeof(contrast)};
+    const bool highContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+        (contrast.dwFlags & HCF_HIGHCONTRASTON);
+    const auto color = [](COLORREF value) {
+        return D2D1::ColorF(GetRValue(value) / 255.f, GetGValue(value) / 255.f, GetBValue(value) / 255.f);
+    };
+    ComPtr<ID2D1SolidColorBrush> background, ink;
+    if (SUCCEEDED(result)) result = context->CreateSolidColorBrush(highContrast ? color(GetSysColor(COLOR_HIGHLIGHT)) :
+        D2D1::ColorF(preview.accepted ? 0x176b36u : 0x9b2525u), &background);
+    if (SUCCEEDED(result)) result = context->CreateSolidColorBrush(highContrast ? color(GetSysColor(COLOR_HIGHLIGHTTEXT)) :
+        D2D1::ColorF(D2D1::ColorF::White), &ink);
+    if (SUCCEEDED(result))
+    {
+        context->FillEllipse(D2D1::Ellipse(center, radius, radius), background.Get());
+        context->DrawEllipse(D2D1::Ellipse(center, radius, radius), ink.Get(), 1.f);
+        const float stroke = (std::max)(1.5f, radius / 4.f);
+        if (preview.accepted)
+        {
+            const D2D1_POINT_2F middle{center.x - radius * .1f, center.y + radius * .4f};
+            context->DrawLine({center.x - radius * .55f, center.y}, middle, ink.Get(), stroke);
+            context->DrawLine(middle, {center.x + radius * .55f, center.y - radius * .4f}, ink.Get(), stroke);
+        }
+        else context->DrawLine({center.x - radius * .5f, center.y + radius * .5f},
+            {center.x + radius * .5f, center.y - radius * .5f}, ink.Get(), stroke);
+    }
+    context.Reset();
+    const auto end = dragPreviewDcompSurface_->EndDraw();
+    if (FAILED(result) || FAILED(end) || !CommitCompositionAnimationFrame())
+    { ResetDragPreviewCompositionResources(); return false; }
+    trayDragPreview_->dirty = false;
+    FlushPendingCompositionCommit();
+    return true;
+}
+
+void DesktopApp::SyncTrayDragPreviewWindow()
+{
+    if (!trayDragPreview_) return;
+    if (dragSession_.IsActive() || GetCapture() != trayDragPreview_->captureOwner ||
+        !IsWindowVisible(trayDragPreview_->captureOwner))
+    { EndTrayDragPreview(); return; }
+    if (graphicsDeviceRecovery_.Pending() || !CreateDragPreviewWindow())
+    { HideDragPreviewWindow(); return; }
+    const auto& preview = *trayDragPreview_;
+    const LONG extent = static_cast<LONG>(preview.iconSize + (std::max)(8u, preview.iconSize / 3u) + 4u);
+    const LONG left = preview.screen.x - static_cast<LONG>(preview.iconSize / 2u) - 2;
+    const LONG top = preview.screen.y - static_cast<LONG>(preview.iconSize / 2u) - 2;
+    const RECT bounds{left, top, left + extent, top + extent};
+    const bool visible = IsWindowVisible(dragPreviewHwnd_) != FALSE;
+    const auto policy = snowdesktop::drag_visual_rules::ResolvePreviewWindowZOrderPolicy(visible);
+    if (snowdesktop::drag_visual_rules::ShouldApplyPreviewWindowPlacement(
+        visible, dragPreviewWindowBoundsValid_, dragPreviewWindowBounds_, bounds))
+    {
+        if (!SetWindowPos(dragPreviewHwnd_, policy.insertAfter, left, top, extent, extent,
+            policy.flags | SWP_NOOWNERZORDER))
+        { dragPreviewWindowBoundsValid_ = false; HideDragPreviewWindow(); return; }
+        dragPreviewWindowBounds_ = bounds; dragPreviewWindowBoundsValid_ = true;
+    }
+    else ApplyDragPreviewLayerPolicy();
+    if ((!dragPreviewDcompSurface_ || preview.dirty) && !RenderTrayDragPreviewFrame())
+    { HideDragPreviewWindow(); return; }
+    if (!visible) SetWindowPos(dragPreviewHwnd_, policy.insertAfter, 0, 0, 0, 0,
+        policy.flags | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
 }
 
 bool DesktopApp::IsDragPresentationOnlyWindow(HWND window) const

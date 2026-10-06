@@ -162,6 +162,7 @@ struct WidgetHostAppearanceState
     bool edgeHighlightEnabled = false;
     float edgeHighlightWidth = kDefaultEdgeHighlightWidth;
     float edgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    EdgeLightSettings edgeLight;
     float gradientEndOpacity = 0.0f;
     bool glassEnabled = false;
     bool acrylicEnabled = false;
@@ -184,6 +185,7 @@ struct WidgetHostAppearancePatch
     std::optional<bool> edgeHighlightEnabled;
     std::optional<float> edgeHighlightWidth;
     std::optional<float> edgeHighlightStrength;
+    std::optional<EdgeLightSettings> edgeLight;
     std::optional<float> gradientEndOpacity;
     std::optional<bool> glassEnabled;
     std::optional<bool> acrylicEnabled;
@@ -196,7 +198,7 @@ struct WidgetHostAppearancePatch
         return !followPersonalization && !presetId && !backgroundColor &&
             !borderColor && !backgroundOpacity && !borderOpacity &&
             !borderWidth && !edgeHighlightEnabled && !edgeHighlightWidth &&
-            !edgeHighlightStrength &&
+            !edgeHighlightStrength && !edgeLight &&
             !gradientEndOpacity && !glassEnabled && !acrylicEnabled &&
             !contentTheme && !clearContentTheme && !panelGradient;
     }

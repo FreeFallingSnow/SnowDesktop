@@ -1,6 +1,8 @@
 #include "taskbar_native.h"
 #include "taskbar_classic_surface.h"
 #include "taskbar_classic_appearance.h"
+#include "taskbar_material_render.h"
+#include "taskbar_hook_lifecycle.h"
 #include "../taskbar_monitor.h"
 
 #include <commctrl.h>
@@ -25,6 +27,8 @@ using SetDwm = HRESULT(WINAPI*)(HWND, DWORD, const void*, DWORD);
 SetComposition originalComposition = nullptr;
 SetDwm originalDwm = nullptr;
 GetComposition getComposition = nullptr;
+std::mutex hooksMutex;
+RetainedHookSet<2> nativeHooks;
 constexpr UINT_PTR kSubclass = 0x5344544e;
 constexpr UINT_PTR kTimer = 0x5344544e;
 
@@ -44,11 +48,13 @@ struct WindowState
     TargetAppearance applied;
     ULONGLONG appearanceRetryTick = 0;
     RECT bounds{};
+    TaskbarMaterialEdge edge = TaskbarMaterialEdge::Top;
     ClassicSurface surface;
     HHOOK menuMouseHook = nullptr;
     HHOOK menuMessageHook = nullptr;
     bool menuLoop = false;
     ULONGLONG contextMenuUntil = 0;
+    DWORD externalMenuToken = 0;
     DWORD contextMenuThread = 0;
     HWND contextMenuPopup = nullptr;
     bool overflowWasVisible = false;
@@ -102,31 +108,48 @@ bool IsVisibleMenuPopup(HWND window)
     const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
     const LONG_PTR extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
     if (!(style & WS_POPUP) || (style & WS_CAPTION) == WS_CAPTION ||
-        !(extended & WS_EX_TOOLWINDOW) || (extended & WS_EX_TRANSPARENT)) return false;
+        (extended & WS_EX_TRANSPARENT)) return false;
     wchar_t name[128]{};
     GetClassNameW(window, name, static_cast<int>(std::size(name)));
+    // Revealing the owner makes the taskbar a new, uncloaked WS_POPUP tool
+    // window before UIA creates the actual menu. Tracking it as the popup
+    // would let the exemption keep itself alive after that menu is dismissed.
+    if (wcscmp(name, L"Shell_TrayWnd") == 0 ||
+        wcscmp(name, L"Shell_SecondaryTrayWnd") == 0) return false;
+    // Win11's native IME menu is a XAML popup with NOACTIVATE and
+    // NOREDIRECTIONBITMAP, not TOOLWINDOW, and has no Win32 menu loop.
+    if (!(extended & WS_EX_TOOLWINDOW) && wcscmp(name, L"Xaml_WindowedPopupClass") != 0)
+        return false;
     if (_wcsicmp(name, L"tooltips_class32") == 0 ||
         wcsstr(name, L"ToolTip") || wcsstr(name, L"Tooltip")) return false;
     DWORD cloak = 0;
     return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && !cloak;
 }
 
-std::vector<HWND> VisibleMenuPopups()
+std::vector<HWND> VisibleMenuPopups(HWND taskbar)
 {
     std::vector<HWND> result;
-    EnumWindows([](HWND window, LPARAM value) -> BOOL {
-        if (IsVisibleMenuPopup(window))
-            reinterpret_cast<std::vector<HWND>*>(value)->push_back(window);
+    const auto collect = [](HWND window, LPARAM value) -> BOOL {
+        auto& popups = *reinterpret_cast<std::vector<HWND>*>(value);
+        if (IsVisibleMenuPopup(window) && std::find(popups.begin(), popups.end(), window) == popups.end())
+            popups.push_back(window);
         return TRUE;
-    }, reinterpret_cast<LPARAM>(&result));
+    };
+    // Shell XAML popups can be omitted by desktop-wide enumeration while
+    // visible. Enumerate the owner's UI thread as well, without scanning
+    // other processes' threads or relying on foreground/focus changes.
+    if (const DWORD thread = GetWindowThreadProcessId(taskbar, nullptr))
+        EnumThreadWindows(thread, collect, reinterpret_cast<LPARAM>(&result));
+    EnumWindows(collect, reinterpret_cast<LPARAM>(&result));
     return result;
 }
 
-void ArmContextMenu(const std::shared_ptr<WindowState>& state)
+void ArmContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
 {
-    auto existing = VisibleMenuPopups();
+    auto existing = VisibleMenuPopups(taskbar);
     std::lock_guard lock(state->mutex);
     state->previousPopups = std::move(existing);
+    state->externalMenuToken = 0;
     state->contextMenuPopup = nullptr;
     state->contextMenuThread = 0;
     state->contextMenuUntil = GetTickCount64() + 1500;
@@ -150,7 +173,7 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
     const ULONGLONG now = GetTickCount64();
     std::lock_guard lock(state->mutex);
     if (overflowVisible && !state->overflowWasVisible && now >= state->contextMenuUntil)
-        state->previousPopups = VisibleMenuPopups();
+        state->previousPopups = VisibleMenuPopups(taskbar);
     state->overflowWasVisible = overflowVisible;
     if (overflowVisible) state->contextMenuUntil = now + 1500;
     if (state->menuLoop || ownedMenu) return true;
@@ -180,7 +203,7 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
             DWORD foregroundProcess = 0, taskbarProcess = 0;
             GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
             GetWindowThreadProcessId(taskbar, &taskbarProcess);
-            for (const HWND popup : VisibleMenuPopups())
+            for (const HWND popup : VisibleMenuPopups(taskbar))
             {
                 if (std::find(state->previousPopups.begin(), state->previousPopups.end(), popup) !=
                     state->previousPopups.end()) continue;
@@ -248,7 +271,7 @@ LRESULT CALLBACK MenuMouseProc(int code, WPARAM message, LPARAM data) try
         for (const auto& [window, state] : targets)
             if (IsTrayOrigin(source, window))
             {
-                ArmContextMenu(state);
+                ArmContextMenu(window, state);
                 PostMessageW(window, RegisterWindowMessageW(kApplyMessageName), 0, 0);
             }
     }
@@ -295,12 +318,14 @@ HRESULT WINAPI SetDwmHook(HWND window, DWORD attribute, const void* data, DWORD 
                     // Observe a newly opened panel before the posted apply
                     // message arrives, so Explorer's own reveal is not blocked.
                     enforce = (ReadSharedSnapshot(state->mapping, snapshot)
-                            ? ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window))
-                            : state->mapping->enabled && state->mapping->suppressTaskbar) &&
+                            ? snapshot.ownerProcessId == state->ownerId &&
+                                ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window))
+                            : state->mapping->ownerProcessId == state->ownerId &&
+                                state->mapping->enabled && state->mapping->suppressTaskbar) &&
                         WaitForSingleObject(state->owner, 0) == WAIT_TIMEOUT && !contextMenu;
                 }
             }
-            if (enforce)
+            if (enforce && !hookInstanceRetired.load())
             {
                 const BOOL cloak = TRUE;
                 return originalDwm(window, attribute, &cloak, sizeof(cloak));
@@ -323,11 +348,12 @@ BOOL WINAPI SetCompositionHook(HWND window, CompositionData* data)
                     state->restoreAccent = *static_cast<const AccentPolicy*>(data->data);
                     state->haveRestoreAccent = true;
                     policy = state->accent;
-                    enforce = state->mapping->enabled && state->mapping->appearanceEnabled &&
+                    enforce = state->mapping->ownerProcessId == state->ownerId &&
+                        state->mapping->enabled && state->mapping->appearanceEnabled &&
                         WaitForSingleObject(state->owner, 0) == WAIT_TIMEOUT;
                 }
             }
-            if (enforce)
+            if (enforce && !hookInstanceRetired.load())
             {
                 CompositionData replacement{19, &policy, sizeof(policy)};
                 return originalComposition(window, &replacement);
@@ -338,28 +364,40 @@ BOOL WINAPI SetCompositionHook(HWND window, CompositionData* data)
 
 bool InstallHooks(bool classic)
 {
-    // Hook/trampoline code remains mapped for Explorer's lifetime, including
-    // calls already in flight when the host dies. Never disable other hooks.
-    static std::once_flag dwmOnce, compositionOnce;
-    static bool dwmReady = false, compositionReady = false;
-    std::call_once(dwmOnce, [] {
-        const auto init = MH_Initialize();
-        if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return;
-        void* entry = reinterpret_cast<void*>(&DwmSetWindowAttribute);
+    std::lock_guard lock(hooksMutex);
+    const auto init = MH_Initialize();
+    if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return false;
+    void* entry = reinterpret_cast<void*>(&DwmSetWindowAttribute);
+    if (!nativeHooks.Contains(entry))
+    {
         if (MH_CreateHook(entry, reinterpret_cast<void*>(&SetDwmHook),
-                reinterpret_cast<void**>(&originalDwm)) != MH_OK) return;
-        dwmReady = MH_EnableHook(entry) == MH_OK;
-    });
-    if (!dwmReady) return false;
-    if (classic) std::call_once(compositionOnce, [] {
+                reinterpret_cast<void**>(&originalDwm)) != MH_OK ||
+            !nativeHooks.Remember(entry)) return false;
+    }
+    if (classic)
+    {
         const auto user = GetModuleHandleW(L"user32.dll");
-        void* entry = reinterpret_cast<void*>(GetProcAddress(user, "SetWindowCompositionAttribute"));
+        entry = reinterpret_cast<void*>(GetProcAddress(user, "SetWindowCompositionAttribute"));
         getComposition = reinterpret_cast<GetComposition>(GetProcAddress(user, "GetWindowCompositionAttribute"));
-        if (!entry || MH_CreateHook(entry, reinterpret_cast<void*>(&SetCompositionHook),
-                reinterpret_cast<void**>(&originalComposition)) != MH_OK) return;
-        compositionReady = MH_EnableHook(entry) == MH_OK;
+        if (!entry) return false;
+        if (!nativeHooks.Contains(entry) &&
+            (MH_CreateHook(entry, reinterpret_cast<void*>(&SetCompositionHook),
+                reinterpret_cast<void**>(&originalComposition)) != MH_OK ||
+             !nativeHooks.Remember(entry))) return false;
+    }
+    return nativeHooks.Enable([](void* target, bool enable) noexcept {
+        const auto result = enable ? MH_EnableHook(target) : MH_DisableHook(target);
+        return result == MH_OK || result == (enable ? MH_ERROR_ENABLED : MH_ERROR_DISABLED);
     });
-    return !classic || compositionReady;
+}
+
+bool StopHooks()
+{
+    std::lock_guard lock(hooksMutex);
+    return nativeHooks.Disable([](void* target, bool) noexcept {
+        const auto result = MH_DisableHook(target);
+        return result == MH_OK || result == MH_ERROR_DISABLED;
+    });
 }
 
 TargetAppearance Resolve(HWND window, const Snapshot& snapshot)
@@ -374,6 +412,7 @@ TargetAppearance Resolve(HWND window, const Snapshot& snapshot)
     result.alpha = snapshot.alpha; result.borderRed = snapshot.borderRed;
     result.borderGreen = snapshot.borderGreen; result.borderBlue = snapshot.borderBlue;
     result.borderAlpha = snapshot.borderAlpha; result.gradient = snapshot.gradient;
+    result.edge = snapshot.edge;
     return result;
 }
 
@@ -452,18 +491,19 @@ bool UpdateAutoHide(HWND window, const std::shared_ptr<WindowState>& state, bool
 
 LRESULT CALLBACK Subclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
-void Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroying = false)
+bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroying = false)
 {
     Restore(window, state);
     // If Shell has not accepted the restore yet, retain the owner-thread timer
     // to retry after normal shutdown or owner death. Never retain a dead HWND.
-    if (!UpdateAutoHide(window, state, false) && !destroying) return;
+    if (!UpdateAutoHide(window, state, false) && !destroying) return false;
     KillTimer(window, kTimer);
     RemoveWindowSubclass(window, Subclass, kSubclass);
     RemovePropW(window, kAttachedProperty);
     RemovePropW(window, kContextMenuProperty);
     std::lock_guard lock(windowsMutex);
     windows.erase(window);
+    return !windows.empty() || StopHooks();
 }
 
 bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
@@ -538,7 +578,9 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
     {
         RECT bounds{};
         GetClientRect(window, &bounds);
-        if (force || !wasStyled || !(style == state->applied) || !EqualRect(&bounds, &state->bounds))
+        const auto edge = ResolveTaskbarMaterialEdge(window);
+        if (force || !wasStyled || !(style == state->applied) || !EqualRect(&bounds, &state->bounds) ||
+            edge != state->edge)
         {
             AccentPolicy policy = MakeClassicTaskbarPolicy(style);
             if (!wasStyled && getComposition)
@@ -561,6 +603,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
             const HRESULT result = materialApplied ? state->surface.Draw(window, style) : E_FAIL;
             state->applied = style;
             state->bounds = bounds;
+            state->edge = edge;
             InterlockedExchange(&state->mapping->status, FAILED(result) ? kStatusFailed : kStatusApplied);
             if (FAILED(result))
             {
@@ -589,6 +632,36 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
         Detach(window, state, true);
         return DefSubclassProc(window, message, wParam, lParam);
     }
+    if (message == RegisterWindowMessageW(kBeginMenuAccess))
+    {
+        Snapshot snapshot;
+        if (wParam != state->ownerId || !lParam ||
+            WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT ||
+            !ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
+            snapshot.ownerProcessId != state->ownerId) return 0;
+        ArmContextMenu(window, state);
+        { std::lock_guard lock(state->mutex);
+          state->externalMenuToken = static_cast<DWORD>(lParam); }
+        // UIA does not send a mouse/WM_CONTEXTMENU gesture. Uncloak its owner
+        // synchronously before the XAML provider creates an owned popup.
+        if (!Update(window, state, false)) return 0;
+        DWORD cloak = 0;
+        return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) &&
+            !(cloak & DWM_CLOAKED_APP);
+    }
+    if (message == RegisterWindowMessageW(kCancelMenuAccess))
+    {
+        {
+            std::lock_guard lock(state->mutex);
+            if (wParam != state->ownerId || !lParam ||
+                state->externalMenuToken != static_cast<DWORD>(lParam)) return 0;
+            state->externalMenuToken = 0;
+            if (!state->contextMenuPopup && !state->contextMenuThread)
+                state->contextMenuUntil = 0;
+        }
+        Update(window, state, false);
+        return 1;
+    }
     const UINT apply = RegisterWindowMessageW(kApplyMessageName);
     if (message == apply)
     {
@@ -599,7 +672,7 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     { Update(window, state, false); return 0; }
     if (message == WM_ENTERMENULOOP || message == WM_CONTEXTMENU)
     {
-        ArmContextMenu(state);
+        ArmContextMenu(window, state);
         { std::lock_guard lock(state->mutex);
           if (message == WM_ENTERMENULOOP) state->menuLoop = true; }
         // Release the owner before Explorer creates its menu; a later host
@@ -642,6 +715,16 @@ bool IsClassicTaskbarPlatform() noexcept
     return getVersion && getVersion(&version) == 0 && version.dwMajorVersion == 10 && version.dwBuildNumber < 22000;
 }
 
+bool Retire(HWND window) noexcept try
+{
+    if (auto state = Find(window)) return Detach(window, state);
+    // A prior stop may have restored windows but failed to patch one entry.
+    // Retry that stop before acknowledging the replacement instance.
+    std::lock_guard lock(windowsMutex);
+    return !windows.empty() || StopHooks();
+}
+catch (...) { return false; }
+
 void ObserveMenuMessage(HWND source, UINT message) noexcept try
 {
     if (message != WM_ENTERMENULOOP && message != WM_EXITMENULOOP && message != WM_CONTEXTMENU)
@@ -652,7 +735,7 @@ void ObserveMenuMessage(HWND source, UINT message) noexcept try
     for (const auto& [window, state] : targets)
         if (IsTrayOrigin(source, window))
         {
-            if (message != WM_EXITMENULOOP) ArmContextMenu(state);
+            if (message != WM_EXITMENULOOP) ArmContextMenu(window, state);
             { std::lock_guard lock(state->mutex);
               if (message != WM_CONTEXTMENU) state->menuLoop = message == WM_ENTERMENULOOP;
               state->contextMenuThread = 0;
@@ -685,12 +768,25 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     if (!state->owner || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) return false;
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-            reinterpret_cast<LPCWSTR>(&Attach), &pinned) || !InstallHooks(classic)) return false;
+            reinterpret_cast<LPCWSTR>(&Attach), &pinned)) return false;
     if (!SetWindowSubclass(window, Subclass, kSubclass, 0)) return false;
-    { std::lock_guard lock(windowsMutex); windows.emplace(window, state); }
+    bool installed;
+    {
+        // Match the last-window stop's lock order: no attachment can enable
+        // hooks just before the previous last window disables them again.
+        std::lock_guard lock(windowsMutex);
+        installed = InstallHooks(classic);
+        if (installed) windows.emplace(window, state);
+    }
+    if (!installed)
+    {
+        RemoveWindowSubclass(window, Subclass, kSubclass);
+        return false;
+    }
     state->menuMouseHook = SetWindowsHookExW(WH_MOUSE, MenuMouseProc, nullptr, GetCurrentThreadId());
     state->menuMessageHook = SetWindowsHookExW(WH_CALLWNDPROC, MenuMessageProc, nullptr, GetCurrentThreadId());
     if (!state->menuMouseHook || !state->menuMessageHook ||
+        !SetPropW(window, kHookOwnerProperty, pinned) ||
         !SetPropW(window, kAttachedProperty, reinterpret_cast<HANDLE>(1)) ||
         !SetTimer(window, kTimer, 250, nullptr))
     { Detach(window, state); return false; }

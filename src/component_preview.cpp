@@ -40,9 +40,12 @@ float detail::RoundedRectangleCoverage(float sampleX, float sampleY,
         (halfWidth - resolvedRadius);
     const float qy = std::fabs(sampleY - centerY) -
         (halfHeight - resolvedRadius);
-    const float signedDistance =
-        std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) +
-        std::min(std::max(qx, qy), 0.0f) - resolvedRadius;
+    // Only the corner region has two positive distance components. On
+    // straight edges and inside the rectangle, the same signed distance
+    // reduces to max(qx, qy), avoiding hypot for most raster samples.
+    const float signedDistance = qx > 0.0f && qy > 0.0f
+        ? std::hypot(qx, qy) - resolvedRadius
+        : std::max(qx, qy) - resolvedRadius;
     return std::clamp(0.5f - signedDistance, 0.0f, 1.0f);
 }
 
@@ -205,6 +208,14 @@ void BlendRgb(std::uint32_t& pixel, COLORREF color, float coverage)
 {
     coverage = std::clamp(coverage, 0.0f, 1.0f);
     if (coverage <= 0.0f) return;
+    if (coverage >= 1.0f)
+    {
+        pixel = (pixel & 0xff000000u) |
+            (static_cast<std::uint32_t>(GetRValue(color)) << 16) |
+            (static_cast<std::uint32_t>(GetGValue(color)) << 8) |
+            static_cast<std::uint32_t>(GetBValue(color));
+        return;
+    }
     const float inverse = 1.0f - coverage;
     const auto mix = [&](unsigned destination, unsigned source) {
         return static_cast<std::uint32_t>(std::clamp(
@@ -271,10 +282,32 @@ void RoundedOutline(std::uint32_t* pixels, int width, int height,
     const int bottom = std::clamp(static_cast<int>(rect.bottom), 0, height);
     const float outerRadius = static_cast<float>(std::max(0, radius));
     const float innerRadius = std::max(0.0f, outerRadius - 1.0f);
+    const int innerLeft = rect.left + 1;
+    const int innerTop = rect.top + 1;
+    const int innerRight = rect.right - 1;
+    const int innerBottom = rect.bottom - 1;
+    const int cornerSpan = static_cast<int>(std::ceil(std::clamp(
+        innerRadius, 0.0f, std::min(
+            std::max(0.0f, static_cast<float>(innerRight - innerLeft) * 0.5f),
+            std::max(0.0f, static_cast<float>(innerBottom - innerTop) * 0.5f)))));
     for (int y = top; y < bottom; ++y)
     {
+        // Pixel centers in either straight inner strip have full inner
+        // coverage, so the outline contributes exactly zero there.
+        const bool insideInner = y >= innerTop && y < innerBottom;
+        const bool straightRow = insideInner &&
+            y >= innerTop + cornerSpan && y < innerBottom - cornerSpan;
+        const int skipLeft = straightRow
+            ? innerLeft : innerLeft + cornerSpan;
+        const int skipRight = straightRow
+            ? innerRight : innerRight - cornerSpan;
         for (int x = left; x < right; ++x)
         {
+            if (insideInner && x >= skipLeft && x < skipRight)
+            {
+                x = skipRight - 1;
+                continue;
+            }
             const float sampleX = static_cast<float>(x) + 0.5f;
             const float sampleY = static_cast<float>(y) + 0.5f;
             const float outerCoverage = detail::RoundedRectangleCoverage(
@@ -443,6 +476,12 @@ void DrawBitmap(HDC destination, const Bitmap& image, const RECT& bounds)
 void ApplyPremultipliedCoverage(std::uint32_t& pixel, float coverage)
 {
     coverage = std::clamp(coverage, 0.0f, 1.0f);
+    if (coverage >= 1.0f) return;
+    if (coverage <= 0.0f)
+    {
+        pixel = 0;
+        return;
+    }
     const auto scale = [&](unsigned channel) {
         return static_cast<std::uint32_t>(std::clamp(
             std::lround(channel * coverage), 0L, 255L));
@@ -762,6 +801,9 @@ void Window::Close()
     onApply_ = {};
     pendingModel_ = {};
     pendingOnApply_ = {};
+    cardFrameCache_.clear();
+    cardFrameCacheBytes_ = 0;
+    cardFrameUseSerial_ = 0;
     desktopWallpaper_ = {};
     desktopWallpaperBounds_ = {};
     wallpaperEngineCache_.reset();
@@ -1314,7 +1356,10 @@ bool Window::RenderCurrent()
     {
         const auto cached = cardFrameCache_.find(frameCacheKey);
         if (cached != cardFrameCache_.end())
-            rendered = cached->second;
+        {
+            cached->second.lastUse = ++cardFrameUseSerial_;
+            rendered = cached->second.bitmap;
+        }
     }
     if (rendered.pixels.empty() && card.render)
     {
@@ -1322,9 +1367,29 @@ bool Window::RenderCurrent()
             stagePlacement, card.applySettings, componentHovered_);
         if (!frameCacheKey.empty() && !rendered.pixels.empty())
         {
-            if (cardFrameCache_.size() >= 128)
-                cardFrameCache_.clear();
-            cardFrameCache_[frameCacheKey] = rendered;
+            // Full-resolution frames vary with grid span and monitor DPI.
+            // Keep recent previews warm without retaining 128 large rasters.
+            constexpr std::size_t maximumBytes = 32ull * 1024 * 1024;
+            const auto frameBytes = rendered.pixels.size() * sizeof(std::uint32_t);
+            while (!cardFrameCache_.empty() &&
+                (cardFrameCache_.size() >= 128 ||
+                    cardFrameCacheBytes_ > maximumBytes ||
+                    frameBytes > maximumBytes - cardFrameCacheBytes_))
+            {
+                const auto oldest = std::min_element(
+                    cardFrameCache_.begin(), cardFrameCache_.end(),
+                    [](const auto& a, const auto& b) {
+                        return a.second.lastUse < b.second.lastUse;
+                    });
+                cardFrameCacheBytes_ -= oldest->second.bitmap.pixels.size() *
+                    sizeof(std::uint32_t);
+                cardFrameCache_.erase(oldest);
+            }
+            // A single unusually large active frame stays warm; the next
+            // distinct frame evicts it before any other raster is retained.
+            cardFrameCache_.emplace(frameCacheKey,
+                CachedCardFrame{rendered, ++cardFrameUseSerial_});
+            cardFrameCacheBytes_ += frameBytes;
         }
     }
     DrawBitmap(dc, rendered, previewRect_);
@@ -1489,8 +1554,9 @@ bool Window::RenderCurrent()
             }
             const unsigned baseAlpha = SameRgb(pixel, palette.background)
                 ? materialAlpha : contentAlpha;
-            const unsigned alpha = static_cast<unsigned>(std::clamp(
-                std::lround(baseAlpha * coverage), 0L, 255L));
+            const unsigned alpha = coverage >= 1.0f ? baseAlpha :
+                static_cast<unsigned>(std::clamp(
+                    std::lround(baseAlpha * coverage), 0L, 255L));
             const unsigned blue = (pixel & 0xFFu) * alpha / 255u;
             const unsigned green = ((pixel >> 8) & 0xFFu) * alpha / 255u;
             const unsigned red = ((pixel >> 16) & 0xFFu) * alpha / 255u;

@@ -5,11 +5,14 @@
 #include <limits>
 #include <numeric>
 #include <tlhelp32.h>
+#include "../dock_process_snapshot.h"
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
 {
+    if (path.empty()) return {};
     if (path.size() >= 2 && path.front() == L'"' && path.back() == L'"')
         path = path.substr(1, path.size() - 2);
+    if (path.empty()) return {};
 
     const DWORD expandedLength = ExpandEnvironmentStringsW(path.c_str(), nullptr, 0);
     if (expandedLength > 1)
@@ -469,7 +472,8 @@ inline HBITMAP CreateDockWindowIconBitmap(
 }
 
 inline bool DockWindowMatchesAppIdentity(
-    HWND window, const DockAppIdentity& identity)
+    HWND window, const DockAppIdentity& identity,
+    std::optional<DockProcessParentMap>* enumerationParents = nullptr)
 {
     if (!window || !IsWindow(window)) return false;
     window = GetAncestor(window, GA_ROOT);
@@ -484,8 +488,10 @@ inline bool DockWindowMatchesAppIdentity(
     if (identity.kind == DockAppIdentityKind::Executable &&
         executablePath != identity.executablePath)
     {
-        const DockProcessParentMap parents =
-            QueryDockProcessParentMap();
+        std::optional<DockProcessParentMap> localParents;
+        auto& snapshot = enumerationParents ? *enumerationParents : localParents;
+        const auto& parents = snowdesktop::dock_process_snapshot::Read(
+            snapshot, &QueryDockProcessParentMap);
         ancestorExecutablePaths =
             QueryDockProcessAncestorExecutablePaths(
                 processId, parents);
@@ -541,14 +547,19 @@ inline bool DockWindowsShareApplicationIdentity(
             QueryDockWindowExecutablePath(second);
 }
 
-inline bool IsDockTaskWindow(HWND window)
+inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
 {
     if (!window || GetAncestor(window, GA_ROOT) != window)
         return false;
+    DWORD cloaked = 0;
+    const bool isCloaked = !includeCloaked &&
+        SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
+            &cloaked, sizeof(cloaked))) && cloaked != 0;
     if (!snowdesktop::dock_window_rules::
             IsTaskWindowPresentationEligible(
                 IsWindowVisible(window) != FALSE,
-                IsIconic(window) != FALSE))
+                IsIconic(window) != FALSE,
+                isCloaked))
         return false;
     wchar_t className[64]{};
     GetClassNameW(window, className, static_cast<int>(std::size(className)));

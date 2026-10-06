@@ -1,0 +1,382 @@
+#include "tray_protocol.h"
+#include "../tray_icon_pixels.h"
+#include <commctrl.h>
+#include <memory>
+#include <new>
+
+namespace snowdesktop::tray
+{
+namespace
+{
+constexpr UINT_PTR kSubclass = 0x53445452;
+thread_local bool nativeGeometryQuery = false;
+struct NativeGeometryQuery
+{
+    bool previous = nativeGeometryQuery;
+    NativeGeometryQuery() { nativeGeometryQuery = true; }
+    ~NativeGeometryQuery() { nativeGeometryQuery = previous; }
+};
+struct Pending : Notification
+{
+    // Do not copy a 16 KiB pixel array in the Explorer callback.
+    HICON icon = nullptr;
+};
+struct Collector
+{
+    HWND window = nullptr;
+    HANDLE mapping = nullptr, signal = nullptr, wake = nullptr, owner = nullptr;
+    SharedState* shared = nullptr;
+    SRWLOCK lock = SRWLOCK_INIT;
+    std::array<Pending, 256> queue{};
+    std::size_t head = 0, tail = 0;
+    volatile LONG stopping = 0;
+    ReregisterSession reregister;
+    ~Collector()
+    {
+        for (auto& event : queue) if (event.icon) DestroyIcon(event.icon);
+        if (shared) UnmapViewOfFile(shared);
+        for (HANDLE handle : {mapping, signal, wake, owner}) if (handle) CloseHandle(handle);
+    }
+    void Lost()
+    { InterlockedIncrement(&shared->resync); SetEvent(signal); }
+    bool Push(Pending event)
+    {
+        if (!TryAcquireSRWLockExclusive(&lock))
+        { if (event.icon) DestroyIcon(event.icon); Lost(); return false; }
+        const auto next = (head + 1) % queue.size();
+        const bool full = next == tail;
+        if (!full) { queue[head] = event; head = next; }
+        ReleaseSRWLockExclusive(&lock);
+        if (full) { if (event.icon) DestroyIcon(event.icon); Lost(); }
+        else SetEvent(wake);
+        return !full;
+    }
+    bool Pop(Pending& event)
+    {
+        AcquireSRWLockExclusive(&lock);
+        const bool available = head != tail;
+        if (available) { event = queue[tail]; queue[tail].icon = nullptr; tail = (tail + 1) % queue.size(); }
+        ReleaseSRWLockExclusive(&lock);
+        return available;
+    }
+};
+
+bool CopyBytes(const void* source, void* destination, SIZE_T length)
+{
+    SIZE_T read = 0;
+    return source && ReadProcessMemory(GetCurrentProcess(), source, destination, length, &read) && read == length;
+}
+void BootstrapClassic(Collector& collector)
+{
+    // Optional compatibility supplement. Read only Explorer-owned toolbars;
+    // private pointers are copied with ReadProcessMemory, never dereferenced.
+    struct Scan { Collector& collector; ULONGLONG deadline; } scan{collector, GetTickCount64() + 1500};
+    const auto collect = [](HWND child, LPARAM parameter) -> BOOL {
+        auto& context = *reinterpret_cast<Scan*>(parameter);
+        auto& self = context.collector;
+        if (GetTickCount64() >= context.deadline || Read(self.stopping) || Read(self.shared->stop)) return FALSE;
+        DWORD process = 0; GetWindowThreadProcessId(child, &process);
+        if (process != GetCurrentProcessId()) return TRUE;
+        wchar_t name[64]{}; GetClassNameW(child, name, 64);
+        if (wcscmp(name, L"ToolbarWindow32") != 0) return TRUE;
+        bool notificationArea = false;
+        for (HWND parent = GetParent(child); parent; parent = GetParent(parent))
+        {
+            GetClassNameW(parent, name, 64);
+            if (wcscmp(name, L"TrayNotifyWnd") == 0 || wcscmp(name, L"NotifyIconOverflowWindow") == 0)
+            { notificationArea = true; break; }
+            if (parent == self.window) break;
+        }
+        if (!notificationArea) return TRUE;
+        DWORD_PTR result = 0;
+        if (!SendMessageTimeoutW(child, TB_BUTTONCOUNT, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &result)) return TRUE;
+        const auto count = (std::min)(result, static_cast<DWORD_PTR>(512));
+        for (DWORD_PTR i = 0; i < count && GetTickCount64() < context.deadline &&
+            !Read(self.stopping) && !Read(self.shared->stop); ++i)
+        {
+            TBBUTTON button{};
+            if (!SendMessageTimeoutW(child, TB_GETBUTTON, i, reinterpret_cast<LPARAM>(&button),
+                    SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &result) || !result || !button.dwData) continue;
+            // Explorer's classic record stores the negotiated version after
+            // its internal state word. Confirmed on Win10 with an owned icon
+            // switching 0 -> 3 -> 4 -> 0; this is not ADD's timeout union.
+            struct ClassicItem { HWND window; UINT id, callback, state, version; HICON icon; } item{};
+            if (!CopyBytes(reinterpret_cast<void*>(button.dwData), &item, sizeof(item)) ||
+                !IsWindow(item.window) || item.callback < WM_USER || item.callback > 0xffff ||
+                item.version > NOTIFYICON_VERSION_4) continue;
+            Event event;
+            event.epoch = static_cast<std::uint64_t>(Read(self.shared->epoch));
+            event.operation = kBootstrapIcon;
+            event.flags = NIF_MESSAGE | NIF_ICON;
+            event.identity.window = reinterpret_cast<std::uint64_t>(item.window); event.identity.id = item.id;
+            GetWindowThreadProcessId(item.window, &event.identity.process);
+            event.callback = item.callback;
+            event.version = item.version;
+            // Internal state contains additional Explorer flags. Do not copy
+            // it or the toolbar's overflow visibility into NIS_HIDDEN.
+            if (auto copy = CopyIcon(item.icon)) { Pixels(copy, event); DestroyIcon(copy); }
+            if (!event.width || !event.height || !event.identity.process) continue;
+            if (!Publish(*self.shared, event)) break;
+            SetEvent(self.signal); // Let the host drain while supplementation runs.
+        }
+        return TRUE;
+    };
+    EnumChildWindows(collector.window, collect, reinterpret_cast<LPARAM>(&scan));
+    // Older Explorer keeps overflow in a separate top-level notification-area
+    // window. Enumerate only that exact class owned by this Explorer process.
+    HWND overflow = nullptr;
+    while (GetTickCount64() < scan.deadline &&
+        (overflow = FindWindowExW(nullptr, overflow, L"NotifyIconOverflowWindow", nullptr)))
+    {
+        DWORD process = 0; GetWindowThreadProcessId(overflow, &process);
+        if (process == GetCurrentProcessId()) EnumChildWindows(overflow, collect, reinterpret_cast<LPARAM>(&scan));
+    }
+}
+
+DWORD WINAPI Worker(void* parameter)
+{
+    std::unique_ptr<std::shared_ptr<Collector>> holder(static_cast<std::shared_ptr<Collector>*>(parameter));
+    auto self = *holder;
+    InterlockedExchange(&self->shared->ready, 1);
+    SetEvent(self->signal);
+    BootstrapClassic(*self);
+    LONG64 epoch = Read(self->shared->epoch);
+    HANDLE handles[]{self->owner, self->wake};
+    while (!Read(self->stopping) && !Read(self->shared->stop))
+    {
+        if (Read(self->shared->epoch) != epoch)
+        {
+            epoch = Read(self->shared->epoch);
+            BootstrapClassic(*self);
+        }
+        Pending pending;
+        while (self->Pop(pending))
+        {
+            if (pending.epoch == static_cast<std::uint64_t>(Read(self->shared->epoch)))
+            {
+                Event event;
+                static_cast<Notification&>(event) = pending;
+                Pixels(pending.icon, event);
+                Publish(*self->shared, event);
+                SetEvent(self->signal);
+            }
+            if (pending.icon) DestroyIcon(pending.icon);
+        }
+        if (WaitForMultipleObjects(2, handles, FALSE, 1000) == WAIT_OBJECT_0) break;
+    }
+    // The subclass owns another shared_ptr until its UI thread detaches. It
+    // stays valid even if a hung Explorer delays this message past our exit.
+    InterlockedExchange(&self->shared->ready, 0); SetEvent(self->signal);
+    PostMessageW(self->window, RegisterWindowMessageW(kDetachMessage), self->shared->owner,
+        static_cast<LPARAM>(Read(self->shared->epoch)));
+    return 0;
+}
+
+LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data)
+{
+    auto* holder = reinterpret_cast<std::shared_ptr<Collector>*>(data);
+    const auto keepAlive = *holder;
+    auto& self = *keepAlive;
+    if (message == RegisterWindowMessageW(kReregisterMessage))
+    {
+        if (Read(self.stopping) || Read(self.shared->stop) ||
+            WaitForSingleObject(self.owner, 0) != WAIT_TIMEOUT || wp != self.shared->owner ||
+            lp != static_cast<LPARAM>(Read(self.shared->epoch))) return FALSE;
+        return self.reregister.Arm(self.shared->owner, static_cast<std::uint64_t>(lp),
+            self.shared->owner, static_cast<std::uint64_t>(Read(self.shared->epoch)), GetTickCount64()) ? TRUE : FALSE;
+    }
+    if ((message == RegisterWindowMessageW(kDetachMessage) && wp == self.shared->owner &&
+            lp == static_cast<LPARAM>(Read(self.shared->epoch))) || message == WM_NCDESTROY)
+    {
+        InterlockedExchange(&self.stopping, 1); SetEvent(self.wake);
+        RemoveWindowSubclass(window, Procedure, kSubclass);
+        delete holder;
+        return DefSubclassProc(window, message, wp, lp);
+    }
+    if (message == WM_COPYDATA && lp && !Read(self.stopping) && !Read(self.shared->stop))
+    {
+        const auto* copy = reinterpret_cast<const COPYDATASTRUCT*>(lp);
+        if (copy->dwData == 1)
+        {
+            InterlockedIncrement(&self.shared->received);
+            InterlockedExchange(&self.shared->lastSize, static_cast<LONG>(copy->cbData));
+            // Decode into a stack-local wire copy. Pixel conversion and all IPC
+            // are on Worker; the UI callback only keeps an independent HICON.
+            ShellTrayData wire{};
+            Notification decoded;
+            HICON icon = nullptr;
+            if (copy->cbData <= kMaxNotificationBytes &&
+                CopyBytes(copy->lpData, &wire, (std::min)(static_cast<std::size_t>(copy->cbData), sizeof(wire))) &&
+                Decode(&wire, copy->cbData, decoded, icon))
+            {
+                InterlockedIncrement(&self.shared->decoded);
+                Pending pending;
+                pending.epoch = static_cast<std::uint64_t>(Read(self.shared->epoch));
+                pending.operation = decoded.operation; pending.flags = decoded.flags;
+                pending.callback = decoded.callback; pending.state = decoded.state;
+                pending.stateMask = decoded.stateMask; pending.version = decoded.version;
+                pending.identity = decoded.identity;
+                const DWORD notificationThread = GetWindowThreadProcessId(
+                    reinterpret_cast<HWND>(pending.identity.window), &pending.identity.process);
+                if (pending.operation == NIM_SETFOCUS)
+                {
+                    FocusTicket ticket;
+                    HWND foreground = GetForegroundWindow();
+                    DWORD process = 0, originProcess = 0;
+                    GetWindowThreadProcessId(foreground, &process);
+                    if (!ReadFocusTicket(*self.shared, pending.identity, ticket) ||
+                        !FocusForegroundAllowed(ticket, reinterpret_cast<std::uint64_t>(foreground), process))
+                        return DefSubclassProc(window, message, wp, lp);
+                    const auto origin = reinterpret_cast<HWND>(ticket.origin);
+                    GetWindowThreadProcessId(origin, &originProcess);
+                    if (originProcess != self.shared->owner || !IsWindowVisible(origin) ||
+                        !ClaimFocusTicket(*self.shared, ticket)) return DefSubclassProc(window, message, wp, lp);
+                    // Grant permission from Explorer without waiting for the
+                    // host. If required, let the native tray regain foreground
+                    // first; an unsupported return retains the native behavior.
+                    bool nativeHandled = false;
+                    LRESULT nativeResult = TRUE;
+                    if (!AllowSetForegroundWindow(self.shared->owner))
+                    {
+                        nativeHandled = true;
+                        nativeResult = DefSubclassProc(window, message, wp, lp);
+                        foreground = GetForegroundWindow();
+                        if (foreground != window || !AllowSetForegroundWindow(self.shared->owner)) return nativeResult;
+                    }
+                    pending.focusSerial = ticket.serial;
+                    pending.focusForeground = reinterpret_cast<std::uint64_t>(foreground);
+                    pending.identity = ticket.identity;
+                    if (self.Push(pending)) return nativeResult;
+                    return nativeHandled ? nativeResult : DefSubclassProc(window, message, wp, lp);
+                }
+                std::copy_n(decoded.tip, std::size(pending.tip), pending.tip);
+                if (icon) pending.icon = CopyIcon(icon);
+                // Capture the image while its sender still owns it, then use
+                // Explorer's result before accepting state/version/deletion.
+                // Duplicate ADD remains a useful registration supplement after
+                // our synthetic TaskbarCreated; the model preserves its version.
+                const LRESULT nativeResult = DefSubclassProc(window, message, wp, lp);
+                bool duplicate = false;
+                if (!nativeResult && pending.icon && !Read(self.stopping) && !Read(self.shared->stop) &&
+                    self.reregister.Eligible(pending, static_cast<std::uint64_t>(Read(self.shared->epoch)), GetTickCount64()))
+                {
+                    const auto target = reinterpret_cast<HWND>(pending.identity.window);
+                    DWORD beforeProcess = 0;
+                    const DWORD beforeThread = GetWindowThreadProcessId(target, &beforeProcess);
+                    if (ReregisterSession::SameOwner(pending.identity, pending.identity.process,
+                        notificationThread, beforeProcess, beforeThread))
+                    {
+                        NOTIFYICONIDENTIFIER identifier{};
+                        identifier.cbSize = sizeof(identifier); identifier.hWnd = target;
+                        identifier.uID = pending.identity.id;
+                        RECT nativeRect{};
+                        HRESULT result;
+                        {
+                            // Do not mistake our mirrored rectangle for proof
+                            // that Explorer already owns this exact icon.
+                            NativeGeometryQuery query;
+                            result = Shell_NotifyIconGetRect(&identifier, &nativeRect);
+                        }
+                        DWORD afterProcess = 0;
+                        const DWORD afterThread = GetWindowThreadProcessId(target, &afterProcess);
+                        duplicate = result == S_OK && !IsRectEmpty(&nativeRect) &&
+                            ReregisterSession::SameOwner(pending.identity, beforeProcess, beforeThread,
+                                afterProcess, afterThread);
+                    }
+                }
+                if (nativeResult || pending.operation == NIM_ADD)
+                {
+                    const bool queued = self.Push(pending); // Push owns the copied HICON, also on failure.
+                    if (duplicate && queued && !Read(self.stopping) && !Read(self.shared->stop) &&
+                        self.reregister.Acknowledge(pending, static_cast<std::uint64_t>(Read(self.shared->epoch)),
+                            GetTickCount64())) return TRUE;
+                }
+                else if (pending.icon) DestroyIcon(pending.icon);
+                return nativeResult;
+            }
+            else if (copy->cbData >= sizeof(DWORD) * 2)
+            {
+                // Unsupported private packets cannot be repaired by making
+                // every application register again. Keep known icons intact.
+                InterlockedIncrement(&self.shared->rejected);
+            }
+        }
+        else if (!nativeGeometryQuery && copy->dwData == 3 && copy->cbData == sizeof(IconIdentifier32))
+        {
+            IconIdentifier32 wire{};
+            if (CopyBytes(copy->lpData, &wire, sizeof(wire)) && (wire.message == 1 || wire.message == 2))
+            {
+                Identity identity{wire.guid, wire.window, wire.id, 0};
+                GetWindowThreadProcessId(reinterpret_cast<HWND>(identity.window), &identity.process);
+                RECT rect{};
+                if (LookupGeometry(*self.shared, identity, rect))
+                    return GeometryReply(wire.message, rect);
+            }
+        }
+    }
+    return DefSubclassProc(window, message, wp, lp);
+}
+
+void Attach(HWND window, DWORD owner)
+{
+    DWORD_PTR existing = 0;
+    if (GetWindowSubclass(window, Procedure, kSubclass, &existing))
+    {
+        auto& current = **reinterpret_cast<std::shared_ptr<Collector>*>(existing);
+        if (current.shared->owner != owner || Read(current.shared->stop))
+            PostMessageW(window, RegisterWindowMessageW(kDetachMessage), current.shared->owner,
+                static_cast<LPARAM>(Read(current.shared->epoch)));
+        return;
+    }
+    auto self = std::make_shared<Collector>();
+    self->window = window;
+    self->mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, ObjectName(owner, L"State").c_str());
+    if (!self->mapping) return;
+    self->shared = static_cast<SharedState*>(MapViewOfFile(self->mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
+    if (!self->shared || self->shared->magic != kMagic || self->shared->version != kVersion ||
+        self->shared->size != sizeof(SharedState) || self->shared->owner != owner || Read(self->shared->stop)) return;
+    self->owner = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, owner);
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    if (!self->owner || !GetProcessTimes(self->owner, &creation, &exit, &kernel, &user) ||
+        (static_cast<std::uint64_t>(creation.dwHighDateTime) << 32 | creation.dwLowDateTime) != self->shared->ownerCreation) return;
+    self->signal = OpenEventW(EVENT_MODIFY_STATE, FALSE, ObjectName(owner, L"Signal").c_str());
+    self->wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!self->signal || !self->wake) return;
+    // Keep code resident while subclass callbacks may still be in flight.
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            reinterpret_cast<LPCWSTR>(&Procedure), &pinned)) return;
+    auto* subclassHolder = new(std::nothrow) std::shared_ptr<Collector>(self);
+    if (!subclassHolder) return;
+    if (!SetWindowSubclass(window, Procedure, kSubclass, reinterpret_cast<DWORD_PTR>(subclassHolder)))
+    { delete subclassHolder; return; }
+    self->shared->explorer = GetCurrentProcessId();
+    auto* workerHolder = new(std::nothrow) std::shared_ptr<Collector>(self);
+    HANDLE worker = workerHolder ? CreateThread(nullptr, 0, Worker, workerHolder, 0, nullptr) : nullptr;
+    if (!worker)
+    {
+        delete workerHolder;
+        RemoveWindowSubclass(window, Procedure, kSubclass); delete subclassHolder;
+        return;
+    }
+    CloseHandle(worker);
+}
+}
+}
+
+extern "C" __declspec(dllexport) LRESULT CALLBACK
+SnowDesktopTrayHookProc(int code, WPARAM wp, LPARAM lp)
+{
+    if (code >= 0 && lp)
+    {
+        const auto& message = *reinterpret_cast<const CWPSTRUCT*>(lp);
+        if (message.message == RegisterWindowMessageW(snowdesktop::tray::kAttachMessage))
+        {
+            wchar_t name[64]{}; GetClassNameW(message.hwnd, name, 64);
+            if (wcscmp(name, L"Shell_TrayWnd") == 0)
+                try { snowdesktop::tray::Attach(message.hwnd, static_cast<DWORD>(message.wParam)); }
+                catch (...) { /* A failed optional collector must not unwind through Explorer. */ }
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}

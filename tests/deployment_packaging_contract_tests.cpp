@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "build_tool_test_support.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -337,11 +338,11 @@ void TestGitHubReleasePublication(const std::filesystem::path& root)
 {
     // Exercise the production publication plan so local Store packages and
     // their checksums cannot leak into the public GitHub attachment set.
-    const std::wstring command =
-        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" +
-        (root / "tests/release_publication_tests.ps1").wstring() + L"\"";
-    Check(_wsystem(command.c_str()) == 0,
-        "GitHub publication uses a version-only title and portable-only assets");
+    try { build_test::publication_tests(root); }
+    catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        Check(false, "GitHub publication uses a version-only title and portable-only assets");
+    }
 }
 
 void TestSteamPipeAutomation(const std::string& steamPipe,
@@ -435,8 +436,8 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
     const std::string& deploymentSource,
     const std::string& mainSource,
     const std::string& wallpaperCapture,
-    const std::string& releaseBuild,
-    const std::string& debugBuild)
+    const std::string&,
+    const std::string&)
 {
     Check(deploymentHeader.find("GetRuntimeFilePath") !=
             std::string::npos &&
@@ -501,17 +502,8 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             startupQueryHandler < previewHost &&
             previewHost < singleInstance,
         "portable builds query the installed StartupTask through the packaged public API before normal app startup");
-    Check(releaseBuild.find(
-              ".build\\Release\\SnowDesktop.Runtime\\SnowDesktopTaskbarHook.dll") !=
-            std::string::npos &&
-            debugBuild.find(
-              ".build_debug\\Debug\\SnowDesktop.Runtime\\SnowDesktopTaskbarHook.dll") !=
-                std::string::npos &&
-            releaseBuild.find("arrange_build_output.ps1") !=
-                std::string::npos &&
-            releaseBuild.find("Get-Process -Name explorer -ErrorAction Stop") !=
-                std::string::npos,
-        "build preflight distinguishes build hooks from disposable temporary copies");
+    // Hook ownership and occupied-output preflight are executed by the isolated
+    // build_workflow tests. Source placement does not prove those behaviors.
 }
 
 void TestAutoStartTransitionManifest(const std::string& manifest)

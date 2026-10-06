@@ -6,9 +6,12 @@
 
 bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
 {
+    const bool transformCursors = CurrentPersonalization().widgetTransformCursors;
+    const LPCWSTR resizeCursor = transformCursors ? IDC_SIZENWSE : IDC_ARROW;
+    const LPCWSTR moveCursor = transformCursors ? IDC_SIZEALL : IDC_ARROW;
     LPCWSTR cursor = nullptr;
-    if (widgetAction_ == WidgetAction::Resize) cursor = IDC_SIZENWSE;
-    else if (widgetAction_ == WidgetAction::Move) cursor = IDC_SIZEALL;
+    if (widgetAction_ == WidgetAction::Resize) cursor = resizeCursor;
+    else if (widgetAction_ == WidgetAction::Move) cursor = moveCursor;
     else if (!dragSession_.IsActive() && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(point))
     {
         WidgetHit hit = WidgetHit::None;
@@ -23,8 +26,8 @@ bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
                 hit = widget->HitTestWidget(point);
                 if (hit != WidgetHit::None) break;
             }
-        if (hit == WidgetHit::ResizeHandle) cursor = IDC_SIZENWSE;
-        else if (hit == WidgetHit::MoveHandle) cursor = IDC_SIZEALL;
+        if (hit == WidgetHit::ResizeHandle) cursor = resizeCursor;
+        else if (hit == WidgetHit::MoveHandle) cursor = moveCursor;
         else if (hit == WidgetHit::CollapseToggleBtn) cursor = IDC_HAND;
     }
     if (!cursor) return false;

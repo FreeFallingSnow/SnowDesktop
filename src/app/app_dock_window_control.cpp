@@ -86,6 +86,7 @@ DesktopApp::CollectDockWindowPreviewItems(
             pendingCloseWindows = nullptr;
         bool includeCloaked = false;
         bool preferTaskbarDocumentProxies = false;
+        std::optional<DockProcessParentMap> processParents = std::nullopt;
     };
 
     std::vector<DockWindowPreviewItem> regularItems;
@@ -104,7 +105,8 @@ DesktopApp::CollectDockWindowPreviewItems(
              context->pendingCloseWindows->contains(window)))
             return TRUE;
 
-        const bool taskWindow = IsDockTaskWindow(window);
+        const bool taskWindow = IsDockTaskWindow(
+            window, context->includeCloaked);
         const bool taskbarDocumentProxyCandidate =
             context->preferTaskbarDocumentProxies &&
             IsDockTaskbarDocumentProxyCandidate(window);
@@ -125,13 +127,16 @@ DesktopApp::CollectDockWindowPreviewItems(
                     applicationLevelWindow))
             return TRUE;
 
+        // Document proxies bypass ordinary task-window presentation rules.
+        // They still need the cloak filter unless collecting all windows to close.
         DWORD cloaked = 0;
-        if (SUCCEEDED(DwmGetWindowAttribute(
+        if (taskbarDocumentProxyCandidate && !context->includeCloaked &&
+            SUCCEEDED(DwmGetWindowAttribute(
                 window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
-            cloaked != 0 &&
-            !context->includeCloaked)
+            cloaked != 0)
             return TRUE;
-        if (!DockWindowMatchesAppIdentity(window, *context->identity))
+        if (!DockWindowMatchesAppIdentity(window, *context->identity,
+                &context->processParents))
             return TRUE;
 
         wchar_t titleBuffer[512]{};
@@ -328,7 +333,7 @@ void DesktopApp::UpdateDockWindowPreview(POINT clientPoint)
 {
     if (!dockWindowPreview_)
         return;
-    if (!generalSettings_.dockEnabled || dragSession_.IsActive())
+    if (!generalSettings_.dockEnabled || !dockSettings_.showWindowPreviews || dragSession_.IsActive())
     {
         HideDockWindowPreview();
         return;
@@ -392,7 +397,7 @@ void DesktopApp::OnDockWindowPreviewHoverTimer()
 
     DockWindowPreviewTarget target;
     const bool hasTarget =
-        generalSettings_.dockEnabled &&
+        generalSettings_.dockEnabled && dockSettings_.showWindowPreviews &&
         !dragSession_.IsActive() &&
         ResolveDockWindowPreviewTarget(cursorClient, target);
     const std::wstring observedToken =

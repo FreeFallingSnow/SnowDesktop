@@ -106,9 +106,14 @@ void PopulateContainerState(const ViewNode& source,
     }
     if (source.type == ViewNodeType::Scroll ||
         source.type == ViewNodeType::VirtualList ||
-        source.type == ViewNodeType::VirtualGrid)
+        source.type == ViewNodeType::VirtualGrid ||
+        (source.type == ViewNodeType::Select && source.expanded))
     {
-        target.scrollHorizontal = source.orientation ==
+        if (source.type == ViewNodeType::Select)
+            target.patterns = target.patterns |
+                ViewAccessibilityPattern::Scroll;
+        target.scrollHorizontal = source.type != ViewNodeType::Select &&
+            source.orientation ==
             ViewOrientation::Horizontal;
         target.scrollViewportExtent = std::max(
             0.0f, source.scrollViewportExtent);
@@ -331,6 +336,8 @@ bool AppendVirtualAccessibilityChildren(const ViewNode& source,
     }
     else if (source.type == ViewNodeType::Select && source.expanded)
     {
+        const ViewRect popup = ViewSelectPopupFrame(
+            source, viewportHeight);
         for (std::size_t index = 0; index < source.options.size(); ++index)
         {
             const auto& option = source.options[index];
@@ -338,7 +345,7 @@ bool AppendVirtualAccessibilityChildren(const ViewNode& source,
                     source.key + "/" + option.key,
                     option.label, "option", "ListItem", option.value,
                     ViewSelectOptionFrame(source, index, viewportHeight),
-                    inheritedClip, parentIndex,
+                    popup, parentIndex,
                     source.enabled && option.enabled,
                     option.value == source.selectedValue,
                     std::nullopt,

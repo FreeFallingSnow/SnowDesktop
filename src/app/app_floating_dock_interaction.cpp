@@ -18,7 +18,6 @@ void DesktopApp::ShowFloatingDock(
         return;
     }
 
-    HideDockWindowPreview();
     const HMONITOR previouslySelectedMonitor =
         floatingDockMonitor_;
     HMONITOR targetMonitor = preferredMonitor;
@@ -29,6 +28,11 @@ void DesktopApp::ShowFloatingDock(
         targetMonitor = MonitorFromPoint(
             cursorScreen, MONITOR_DEFAULTTONEAREST);
     }
+    // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
+    // the keyboard proxy can change foreground ownership. The independently
+    // revealed bar remains usable until its own outside dismissal.
+    if (statusBar_) statusBar_->PrepareDockReveal(targetMonitor);
+    HideDockWindowPreview();
     if (!SyncPersistentDockHost(targetMonitor))
     {
         WriteDiagnosticLogEntry(
@@ -36,6 +40,8 @@ void DesktopApp::ShowFloatingDock(
         MessageBeep(MB_ICONWARNING);
         return;
     }
+    if (statusBar_ && floatingDockHost_->monitor != targetMonitor)
+        statusBar_->PrepareDockReveal(floatingDockHost_->monitor);
 
     const bool hostWasVisible =
         IsWindowVisible(floatingDockHost_->hwnd) != FALSE;
@@ -43,10 +49,14 @@ void DesktopApp::ShowFloatingDock(
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
     floatingDockHost_->promoted = true;
+    floatingDockHost_->mergedCloseAfterInteraction = false;
     floatingDockHost_->passivelyRevealed = false;
     floatingDockHost_->passiveRevealTick = 0;
     floatingDockHost_->passiveLeaveStartTick = 0;
     RefreshFloatingDockVisibilityState();
+    if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
+    // Rebuild shared chrome and hit regions before the first revealed frame.
+    UpdateFloatingDockWindowBounds(*floatingDockHost_, false, true);
     floatingDockLastPointerPresentTick_ = 0;
     bool revealFramePrepared = false;
     if (!hostWasVisible)
@@ -79,6 +89,7 @@ void DesktopApp::ShowFloatingDock(
             // composition surface after recovery.
             floatingDockHost_->promoted = false;
             RefreshFloatingDockVisibilityState();
+            if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
             InvalidateFloatingDockWindow(
                 *floatingDockHost_, true);
             if (previouslySelectedMonitor &&
@@ -188,6 +199,7 @@ void DesktopApp::CloseFloatingDock(
     host.passiveRevealTick = 0;
     host.passiveLeaveStartTick = 0;
     RefreshFloatingDockVisibilityState();
+    if (statusBar_) statusBar_->RefreshDockState(host.monitor);
     UpdatePersistentDockHostVisibility(host);
     InvalidateFloatingDockWindow(host, true);
     if (endKeyboardSession)
@@ -243,6 +255,7 @@ void DesktopApp::CloseAllFloatingDocks(
     {
         if (!host)
             continue;
+        if (statusBar_) statusBar_->RefreshDockState(host->monitor);
         UpdatePersistentDockHostVisibility(*host);
         InvalidateFloatingDockWindow(*host, true);
     }

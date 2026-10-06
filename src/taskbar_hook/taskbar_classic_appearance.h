@@ -14,7 +14,8 @@ struct AccentPolicy
 
 inline bool NeedsClassicSurface(const TargetAppearance& style)
 {
-    return DecodeGradient(style.gradient).enabled || style.borderAlpha > 0;
+    return DecodeGradient(style.gradient).enabled || style.borderAlpha > 0 ||
+        (style.edge.highlightEnabled && style.edge.highlightStrength > 0);
 }
 
 inline AccentPolicy MakeClassicAccentPolicy(const TargetAppearance& style,

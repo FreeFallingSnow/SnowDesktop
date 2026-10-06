@@ -54,6 +54,11 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             msg, wp, lp, shellMenuResult))
         return shellMenuResult;
 
+    if (!quickNavigationAnimation_.IsAnimating() &&
+        snowdesktop::text_input::RoutePointer(quickNavigationSearchEdit_, msg, wp,
+            {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}))
+        return 0;
+
     switch (msg)
     {
     case WM_NCHITTEST:
@@ -134,22 +139,19 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             pt.x + quickNavigationHostRect_.left,
             pt.y + quickNavigationHostRect_.top
         };
+        if (DismissQuickNavigationMenuAtPoint(appPoint)) return 0;
 
         {
             RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
-            const int trackW = QuickNavScale(5);
-            RECT scrollCol = MakeRect(content.right - trackW - QuickNavScale(4), content.top,
-                content.right, content.bottom);
+            RECT track{}, thumb{};
+            int maxScroll = 0, contentHeight = 0;
             if (!quickNavigationInitialJumpOpen_ &&
-                PtInRect(&scrollCol, appPoint))
+                GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+                    track, thumb, maxScroll, contentHeight) && PtInRect(&track, appPoint))
             {
                 if (renameController_.BlocksScrolling())
                     return 0;
 
-                RECT track{}, thumb{};
-                int maxScroll = 0, contentHeight = 0;
-                if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
-                    track, thumb, maxScroll, contentHeight))
                 {
                     if (PtInRect(&thumb, appPoint))
                     {
@@ -179,7 +181,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             }
         }
 
-        if (GetQuickNavigationEffectiveSearchText().empty())
+        if (!UseQuickNavigationList() && quickNavigationMenu_ == QuickNavigationMenu::None && GetQuickNavigationEffectiveSearchText().empty())
         {
             RECT overlay = quickNavigationRect_;
             std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
@@ -328,25 +330,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         bool wasHovered = quickNavScrollbarHovered_;
         quickNavScrollbarHovered_ = false;
         {
-            RECT content = GetQuickNavigationContentRect(quickNavigationRect_);
-            const int trackW = QuickNavScale(5);
-            RECT scrollCol = MakeRect(content.right - trackW - QuickNavScale(4), content.top,
-                content.right, content.bottom);
+            RECT track{}, thumb{};
+            int maxScroll = 0, contentHeight = 0;
             if (!quickNavigationInitialJumpOpen_ &&
-                PtInRect(&scrollCol, appPoint))
-            {
-                if (GetQuickNavigationContentHeight(quickNavigationRect_) >
-                    static_cast<int>(content.bottom - content.top))
-                {
-                    RECT track{}, thumb{};
-                    int ms = 0, ch = 0;
-                    if (GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
-                        track, thumb, ms, ch) && PtInRect(&thumb, appPoint))
-                    {
-                        quickNavScrollbarHovered_ = true;
-                    }
-                }
-            }
+                GetQuickNavigationScrollbarGeometry(quickNavigationRect_,
+                    track, thumb, maxScroll, contentHeight))
+                quickNavScrollbarHovered_ = PtInRect(&thumb, appPoint) != FALSE;
         }
         const QuickNavigationPointerTarget pointerTarget =
             HitTestQuickNavigationPointerTarget(
@@ -358,7 +347,9 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             quickNavigationHoverRegions_.empty();
         quickNavigationPointerTarget_ =
             pointerTarget;
-        if (wasHovered != quickNavScrollbarHovered_ ||
+        if (UseQuickNavigationList() || quickNavigationMenu_ != QuickNavigationMenu::None ||
+            (appPoint.y < GetQuickNavigationSearchRect(quickNavigationRect_).bottom) ||
+            wasHovered != quickNavScrollbarHovered_ ||
             hoverChanged || keyboardHoverCleared ||
             hoverMapMissing)
             queuePointerFrame();
@@ -436,10 +427,10 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         OnMouseWheel(wp, lp);
         return 0;
     case WM_COMMAND:
-        if (renameEdit_ && reinterpret_cast<HWND>(lp) == renameEdit_ &&
+        if (renameInputWindow_ && reinterpret_cast<HWND>(lp) == renameInputWindow_ &&
             HIWORD(wp) == EN_UPDATE)
         {
-            renameEditLayout_.Update(renameEdit_);
+            renameEditLayout_.Update(renameInputWindow_);
             return 0;
         }
         if (reinterpret_cast<HWND>(lp) == quickNavigationSearchEdit_ && HIWORD(wp) == EN_CHANGE)
@@ -451,6 +442,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         }
         break;
     case WM_KEYDOWN:
+        if (snowdesktop::text_input::IsComposing(quickNavigationSearchEdit_) || !quickNavigationSearchCompositionText_.empty()) break;
+        if (HandleQuickNavigationSearchKey(wp)) return 0;
         if (HandleQuickNavigationKeyboardInput(wp))
             return 0;
         if (wp == VK_ESCAPE)
@@ -484,13 +477,14 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 activatedWindow == quickNavigationSearchEdit_ ||
                 (renameController_.
                     IsQuickNavigationPresentation() &&
-                    activatedWindow == renameEdit_) ||
+                    activatedWindow == renameInputWindow_) ||
                 quickNavBackdropCompositor_.IsBackdropWindow(
                     activatedWindow) ||
                 IsWindowOwnedBy(
                     activatedWindow,
                     quickNavigationHwnd_) ||
-                IsCurrentProcessWindow(activatedWindow);
+                (IsCurrentProcessWindow(activatedWindow) &&
+                    !IsSettingsApplicationWindow(activatedWindow));
             if (!snowdesktop::quick_navigation_rules::
                     ShouldCloseOnDeactivate(
                         retainedInteraction))
@@ -502,7 +496,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 quickNavTabDragDeltaX_ = 0;
                 quickNavTabDragging_ = false;
             }
-            CloseQuickNavigation();
+            // A bar action may be waiting for this surface's closing animation.
+            // An external activation cancels that handoff even when open_ is
+            // already false and CloseQuickNavigation would otherwise do nothing.
+            if (statusBarActivationMonitor_ && quickNavigationPostCloseAction_)
+                CancelStatusBarActivation(statusBarActivationMonitor_);
+            CloseQuickNavigation(false);
             return 0;
         }
         break;
@@ -534,6 +533,14 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     auto* app = reinterpret_cast<DesktopApp*>(refData);
     if (!app) return DefSubclassProc(hwnd, message, wParam, lParam);
 
+    if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN)
+    {
+        POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ClientToScreen(hwnd, &point);
+        point.x -= app->virtualLeft_;
+        point.y -= app->virtualTop_;
+        app->DismissQuickNavigationMenuAtPoint(point);
+    }
     if (message == WM_NCHITTEST)
     {
         if (app->quickNavigationAnimation_.IsAnimating())
@@ -542,14 +549,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             GET_X_LPARAM(lParam) - app->virtualLeft_,
             GET_Y_LPARAM(lParam) - app->virtualTop_
         };
-        const RECT search = app->GetQuickNavigationSearchRect(
-            app->quickNavigationRect_);
-        const RECT targetEdit{
-            search.left + app->QuickNavScale(4),
-            search.top + app->QuickNavScale(6),
-            search.right - app->QuickNavScale(4),
-            search.bottom - app->QuickNavScale(4)
-        };
+        const RECT targetEdit = app->GetQuickNavigationInputRect(app->quickNavigationRect_);
         RECT animatedEdit{};
         GetWindowRect(hwnd, &animatedEdit);
         OffsetRect(
@@ -569,6 +569,8 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
 
     if (message == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE)
     {
+        if (snowdesktop::text_input::HasEditingMenu(hwnd))
+            return DefSubclassProc(hwnd,message,wParam,lParam);
         const HWND activatedWindow = reinterpret_cast<HWND>(lParam);
         const bool retainedInteraction =
             activatedWindow == app->quickNavigationHwnd_ ||
@@ -577,17 +579,24 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
             IsWindowOwnedBy(
                 activatedWindow,
                 app->quickNavigationHwnd_) ||
-            IsCurrentProcessWindow(activatedWindow);
+            (IsCurrentProcessWindow(activatedWindow) &&
+                !app->IsSettingsApplicationWindow(activatedWindow));
         if (snowdesktop::quick_navigation_rules::
                 ShouldCloseOnDeactivate(
                     retainedInteraction))
         {
-            app->CloseQuickNavigation();
+            if (app->statusBarActivationMonitor_ && app->quickNavigationPostCloseAction_)
+                app->CancelStatusBarActivation(app->statusBarActivationMonitor_);
+            app->CloseQuickNavigation(false);
             return 0;
         }
     }
 
-    if (message == WM_KEYDOWN && wParam == VK_ESCAPE)
+    if (message == WM_KEYDOWN && !snowdesktop::text_input::IsComposing(hwnd) &&
+        app->quickNavigationSearchCompositionText_.empty() && app->HandleQuickNavigationSearchKey(wParam)) return 0;
+
+    if (message == WM_KEYDOWN && wParam == VK_ESCAPE &&
+        !snowdesktop::text_input::IsComposing(hwnd) && app->quickNavigationSearchCompositionText_.empty())
     {
         if (app->
             HandleQuickNavigationInitialJumpKeyboardInput(
@@ -600,6 +609,7 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         snowdesktop::quick_navigation_rules::
             ShouldRouteSearchEditKeyToResults(
                 wParam) &&
+        !snowdesktop::text_input::IsComposing(hwnd) &&
         app->quickNavigationSearchCompositionText_.empty() &&
         app->HandleQuickNavigationKeyboardInput(wParam))
     {
@@ -612,15 +622,21 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     }
     if (message == WM_IME_STARTCOMPOSITION)
     {
+        const auto result=DefSubclassProc(hwnd,message,wParam,lParam);
         app->ClearQuickNavigationSearchCompositionText();
+        return result;
     }
     if (message == WM_IME_COMPOSITION)
     {
+        const auto result=DefSubclassProc(hwnd,message,wParam,lParam);
         app->RefreshQuickNavigationSearchCompositionText(hwnd, lParam);
+        return result;
     }
     if (message == WM_IME_ENDCOMPOSITION)
     {
+        const auto result=DefSubclassProc(hwnd,message,wParam,lParam);
         app->ClearQuickNavigationSearchCompositionText();
+        return result;
     }
 
     return DefSubclassProc(hwnd, message, wParam, lParam);

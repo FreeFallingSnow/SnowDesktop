@@ -140,6 +140,9 @@ struct Options
     /** Host-internal ordering floor, sampled throughout the menu session.
      * Keeps menus above independent surfaces without giving them ownership. */
     std::function<HWND()> zOrderFloor;
+    /** Host-internal companion (for example a component preview), kept above
+     * every visible cascade without changing focus or native ownership. */
+    std::function<HWND()> zOrderCompanion;
     POINT anchor{};
     UINT dpi = USER_DEFAULT_SCREEN_DPI;
     bool lightTheme = true;
@@ -159,12 +162,31 @@ struct Options
     std::function<std::optional<std::vector<Item>>(const std::vector<Item>&, bool canApply)> pollItems;
     /** Optional application event pump used by the nested modal loop. */
     EventPump eventPump;
+    /** Applies only to the popup containing this command: Enter submits,
+     * Escape cancels the editor and returns to its parent menu. */
+    UINT textInputSubmitCommand = 0;
+    UINT textInputCancelCommand = 0;
+    /** Host-internal lazy submenu preparation. Runs after the root is visible,
+     * before the child popup retains its vector. May replace only children. */
+    std::function<void(UINT, std::vector<Item>&)> onPrepareSubmenu;
+};
+
+enum class ExitReason
+{
+    None,
+    Command,
+    Cancelled,
+    ExternalActivation,
+    Replaced,
 };
 
 struct Result
 {
     UINT command = 0;
     RECT itemScreenRect{};
+    // Internal host signal: a containing popup must not restore itself after
+    // the user has activated a different window while its menu was open.
+    ExitReason reason = ExitReason::None;
 };
 
 /**

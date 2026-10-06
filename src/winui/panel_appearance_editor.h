@@ -1,7 +1,9 @@
 #pragma once
 #include "appearance_sections.h"
+#include "edge_light_editor.h"
 #include "panel_gradient_editor.h"
 #include "../personalization.h"
+#include <unordered_map>
 
 namespace snowdesktop::winui
 {
@@ -16,10 +18,11 @@ class PanelAppearanceEditor : public std::enable_shared_from_this<PanelAppearanc
 public:
     using Localize = PanelGradientEditor::Localize;
     using Change = std::function<void(const PersonalizationSettings&, bool)>;
-    static std::shared_ptr<PanelAppearanceEditor> Create(Localize localize, Change change)
+    static std::shared_ptr<PanelAppearanceEditor> Create(Localize localize, Change change, bool borderOnly = false)
     {
         auto result = std::make_shared<PanelAppearanceEditor>();
         result->localize_ = std::move(localize); result->change_ = std::move(change);
+        result->borderOnly_ = borderOnly;
         std::weak_ptr<PanelAppearanceEditor> weak = result;
         result->preview_.Initialize([weak](auto const& value) {
             if (auto self = weak.lock(); self && self->change_) self->change_(value, false);
@@ -28,10 +31,17 @@ public:
     }
     ~PanelAppearanceEditor() { Close(); }
     Panel Content() const { return root_; }
+    winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(const char* key) const
+    {
+        const auto found = targets_.find(key);
+        return found == targets_.end() ? nullptr : found->second;
+    }
     void SetValue(const PersonalizationSettings& value, bool force = false)
     {
         if (dirty_ && !force && value != value_) return;
         if (force || value != value_) { preview_.Cancel(); dirty_ = false; }
+        if (value.backgroundPreset == kAppearancePresetCustom && value_.backgroundPreset != kAppearancePresetCustom)
+            sections_.CollapseAll();
         value_ = value;
         if (force)
         {
@@ -47,6 +57,7 @@ public:
         if (syncing_ || closed_) return;
         for (auto& editor : colors_) editor->Dismiss();
         if (gradient_) gradient_->Flush();
+        if (edge_) edge_->Flush();
         if (!dirty_) return;
         preview_.Cancel(); dirty_ = false;
         if (change_) change_(value_, true);
@@ -55,6 +66,7 @@ public:
     {
         closed_ = true; preview_.Close();
         if (gradient_) gradient_->Close();
+        if (edge_) edge_->Close();
         for (auto& editor : colors_) editor->Close();
         change_ = {}; localize_ = {};
     }
@@ -65,15 +77,19 @@ private:
     PersonalizationSettings value_;
     Localize localize_; Change change_;
     std::shared_ptr<PanelGradientEditor> gradient_;
+    std::shared_ptr<EdgeLightEditor> edge_;
     std::vector<std::unique_ptr<presenter_controls::ColorFlyoutEditor>> colors_;
     std::vector<std::function<void()>> sync_;
+    std::unordered_map<std::string, winrt::Microsoft::UI::Xaml::FrameworkElement> targets_;
     presenter_controls::CoalescedPreviewTimer<PersonalizationSettings> preview_;
     bool syncing_ = false, dirty_ = false, closed_ = false;
+    bool borderOnly_ = false;
     std::wstring L(const char* key) const { return localize_ ? localize_(key) : std::wstring{}; }
     void Sync()
     {
         syncing_ = true;
         gradient_->SetValue(value_.panelGradient);
+        if (edge_) edge_->SetValue(value_.edgeLight);
         for (auto const& sync : sync_) sync();
         syncing_ = false;
     }
@@ -101,6 +117,7 @@ private:
         presenter_controls::SettingRow row; row.Initialize(group, presenter_controls::kSettingControlWidth + 40);
         row.SetText(L(key)); row.root.MinHeight(44); parent.Children().Append(row.root);
         x::Automation::AutomationProperties::SetName(control, L(key));
+        targets_.insert_or_assign(key, control.as<x::FrameworkElement>());
         if (visible) sync_.push_back([this, visible, root = row.root] { root.Visibility(visible(value_) ? x::Visibility::Visible : x::Visibility::Collapsed); });
     }
     void Number(Panel parent, const char* key, float PersonalizationSettings::* field,
@@ -130,9 +147,10 @@ private:
         slider.PointerReleased(flush); slider.PointerCaptureLost(flush); slider.KeyUp(flush); slider.LostFocus(flush); number.KeyUp(flush); number.LostFocus(flush);
         sync_.push_back([this, field, scale, step, minimum, maximum, slider, number] {
             const auto value = presenter_controls::QuantizeNumericValue(value_.*field * scale, minimum, maximum, step);
-            slider.Value(value); number.Value(value);
+            slider.Value(value); presenter_controls::SyncNumberBoxValue(number, value);
         });
         Row(parent, key, pair, [field](auto& value) { value.*field = PersonalizationSettings{}.*field; }, visible);
+        targets_.insert_or_assign(key, slider);
     }
     void Color(Panel parent, const char* key, float PersonalizationSettings::* red,
         float PersonalizationSettings::* green, float PersonalizationSettings::* blue, Condition visible = {})
@@ -159,12 +177,17 @@ private:
         syncing_ = true;
         for (auto& editor : colors_) editor->Close(); colors_.clear();
         if (gradient_) gradient_->Close();
-        root_.Children().Clear(); sync_.clear(); root_.Spacing(8);
-        sections_ = {}; sections_.Initialize(root_); sections_.RefreshLocalizedText(localize_);
+        if (edge_) edge_->Close();
+        root_.Children().Clear(); sync_.clear(); targets_.clear(); root_.Spacing(8);
+        sections_ = {};
+        if (borderOnly_) sections_.border = root_;
+        else { sections_.Initialize(root_); sections_.RefreshLocalizedText(localize_); }
         std::weak_ptr<PanelAppearanceEditor> weak = shared_from_this();
         gradient_ = PanelGradientEditor::Create(localize_, [weak](auto const& value, bool commit) {
             if (auto self = weak.lock()) self->Apply([&](auto& appearance) { appearance.panelGradient = value; }, commit);
         }, false, {}, true);
+        if (!borderOnly_)
+        {
         sections_.colors.Children().Append(gradient_->Content());
         const auto solid = [](auto const& value) { return !value.panelGradient.enabled; };
         Color(sections_.colors, "app.settings.bg_color", &PersonalizationSettings::widgetBgR, &PersonalizationSettings::widgetBgG, &PersonalizationSettings::widgetBgB, solid);
@@ -187,16 +210,22 @@ private:
         theme.SelectionChanged([weak, theme](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply([&](auto& value) { value.contentTheme = std::clamp(theme.SelectedIndex(), 0, 1); }, true); });
         sync_.push_back([this, theme] { theme.SelectedIndex(value_.contentTheme); });
         Row(sections_.text, "app.settings.text_color", theme, [](auto& value) { value.contentTheme = 0; });
+        }
         Color(sections_.border, "app.settings.border_color", &PersonalizationSettings::widgetBorderR, &PersonalizationSettings::widgetBorderG, &PersonalizationSettings::widgetBorderB);
         Number(sections_.border, "largeIcon.borderOpacity", &PersonalizationSettings::widgetBorderAlpha, 0, 100, 1, 100, L"%");
-        Number(sections_.border, "largeIcon.borderWidth", &PersonalizationSettings::widgetBorderWidth, .5, 4, .5, 1, L"px");
+        Number(sections_.border, "largeIcon.borderWidth", &PersonalizationSettings::widgetBorderWidth, .5, 4, .05, 1, L"px");
         c::ToggleSwitch highlight; highlight.HorizontalAlignment(x::HorizontalAlignment::Right);
         highlight.Toggled([weak, highlight](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply([&](auto& value) { value.widgetEdgeHighlightEnabled = highlight.IsOn(); }, true); });
         sync_.push_back([this, highlight] { highlight.IsOn(value_.widgetEdgeHighlightEnabled); });
         Row(sections_.border, "largeIcon.edgeHighlight", highlight, [](auto& value) { value.widgetEdgeHighlightEnabled = PersonalizationSettings{}.widgetEdgeHighlightEnabled; });
         const auto edge = [](auto const& value) { return value.widgetEdgeHighlightEnabled; };
-        Number(sections_.border, "largeIcon.edgeWidth", &PersonalizationSettings::widgetEdgeHighlightWidth, .5, 4, .5, 1, L"px", edge);
+        Number(sections_.border, "largeIcon.edgeWidth", &PersonalizationSettings::widgetEdgeHighlightWidth, .5, 4, .05, 1, L"px", edge);
         Number(sections_.border, "largeIcon.edgeStrength", &PersonalizationSettings::widgetEdgeHighlightStrength, 0, 100, 1, 100, L"%", edge);
+        edge_ = EdgeLightEditor::Create(localize_, [weak](auto const& light, bool commit) {
+            if (auto self = weak.lock()) self->Apply([&](auto& value) { value.edgeLight = light; }, commit);
+        });
+        sections_.border.Children().Append(edge_->Content());
+        sync_.push_back([this] { edge_->Content().Visibility(value_.widgetEdgeHighlightEnabled ? x::Visibility::Visible : x::Visibility::Collapsed); });
         Sync();
     }
 };

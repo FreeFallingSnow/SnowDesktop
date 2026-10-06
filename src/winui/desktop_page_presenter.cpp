@@ -1,14 +1,18 @@
 #include "pch.h"
 
 #include "desktop_page_presenter.h"
+#include "edge_light_editor.h"
+#include "appearance_sections.h"
 #include "settings_presenter_controls.h"
 
 #include "../constants.h"
+#include "../font_weight_rules.h"
 #include "../layout_spacing_rules.h"
 #include "../icon_beautify.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.Globalization.NumberFormatting.h>
 
 #include <algorithm>
 #include <array>
@@ -122,9 +126,12 @@ bool SameColor(
         left.G == right.G && left.B == right.B;
 }
 
-constexpr std::array<IconBeautifyPreset, 3> kBeautifyPresets = {
+constexpr std::array<IconBeautifyPreset, 6> kBeautifyPresets = {
     IconBeautifyPreset::None,
     IconBeautifyPreset::DefaultBeautify,
+    IconBeautifyPreset::FrostedGlass,
+    IconBeautifyPreset::FrostedGlassDark,
+    IconBeautifyPreset::FrostedGlassLight,
     IconBeautifyPreset::Custom,
 };
 
@@ -273,7 +280,7 @@ struct NumericEditor
                 if (updating || closed) return;
                 const double value = Normalize(slider.Value());
                 updating = true;
-                number.Value(value);
+                presenter_controls::SetNumberBoxValue(number, value);
                 updating = false;
                 PublishPreview(value);
             });
@@ -283,7 +290,7 @@ struct NumericEditor
                 const double value = Normalize(number.Value());
                 updating = true;
                 slider.Value(value);
-                number.Value(value);
+                presenter_controls::SetNumberBoxValue(number, value);
                 updating = false;
                 PublishPreview(value);
             });
@@ -361,7 +368,7 @@ struct NumericEditor
         const bool wasUpdating = updating;
         updating = true;
         slider.Value(value);
-        number.Value(value);
+        presenter_controls::SyncNumberBoxValue(number, value);
         updating = wasUpdating;
     }
 
@@ -489,6 +496,7 @@ struct ColorEditor
 struct RuleRow
 {
     std::wstring id;
+    std::wstring customLabel;
     muxc::Border root{nullptr};
     muxc::StackPanel content{nullptr};
     muxc::Grid nameActions{nullptr};
@@ -497,9 +505,16 @@ struct RuleRow
     muxc::TextBox label{nullptr};
     muxc::TextBox extensions{nullptr};
     muxc::Button remove{nullptr};
+    muxc::Button enabled{nullptr};
+    bool enabledValue = true;
+    muxc::Button restoreName{nullptr};
+    muxc::Button restoreExtensions{nullptr};
     winrt::event_token labelToken{};
     winrt::event_token extensionsToken{};
     winrt::event_token removeToken{};
+    winrt::event_token enabledToken{};
+    winrt::event_token restoreNameToken{};
+    winrt::event_token restoreExtensionsToken{};
     bool closed = false;
 
     void Close() noexcept
@@ -511,6 +526,9 @@ struct RuleRow
             label.TextChanged(labelToken);
             extensions.TextChanged(extensionsToken);
             remove.Click(removeToken);
+            enabled.Click(enabledToken);
+            restoreName.Click(restoreNameToken);
+            restoreExtensions.Click(restoreExtensionsToken);
         }
         catch (...)
         {
@@ -551,9 +569,17 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock shortcutArrowLabel{nullptr};
     muxc::ComboBox shortcutArrow{nullptr};
     SettingRow shortcutArrowRow;
+    std::array<muxc::ComboBox, 3> titleLineCombos;
+    std::array<SettingRow, 3> titleLineRows;
+    std::array<winrt::event_token, 3> titleLineTokens{};
+    muxc::ComboBox titleOverflow{nullptr};
+    SettingRow titleOverflowRow;
+    winrt::event_token titleOverflowToken{};
 
     muxc::ToggleSwitch showCategoryTabCounts{nullptr};
     SettingRow showCategoryTabCountsRow;
+    muxc::ToggleSwitch collectPrograms{nullptr};
+    SettingRow collectProgramsRow;
 
     muxc::TextBlock beautifyPresetLabel{nullptr};
     muxc::ComboBox beautifyPreset{nullptr};
@@ -564,6 +590,13 @@ struct DesktopPagePresenter::Impl
     SettingRow beautifyModeRow;
     std::unique_ptr<ColorEditor> backgroundStart;
     std::unique_ptr<NumericEditor> backgroundOpacity;
+    std::shared_ptr<EdgeLightEditor> edgeLightEditor;
+    AppearanceSections beautifySections;
+    muxc::TextBlock geometryTitle, finishTitle;
+    muxc::ToggleSwitch glassEnabled{nullptr}, edgeReflection{nullptr};
+    SettingRow glassEnabledRow, edgeReflectionRow;
+    winrt::event_token glassEnabledToken{}, edgeReflectionToken{};
+    std::unique_ptr<NumericEditor> glassBlurRadius, reflectionWidth, reflectionStrength;
     muxc::ToggleSwitch gradientEnabled{nullptr};
     SettingRow gradientEnabledRow;
     std::unique_ptr<ColorEditor> backgroundEnd;
@@ -624,6 +657,7 @@ struct DesktopPagePresenter::Impl
 
     winrt::event_token shortcutArrowToken{};
     winrt::event_token showCountsToken{};
+    winrt::event_token collectProgramsToken{};
     winrt::event_token beautifyPresetToken{};
     winrt::event_token beautifyModeToken{};
     winrt::event_token gradientEnabledToken{};
@@ -755,22 +789,36 @@ struct DesktopPagePresenter::Impl
             [](DesktopDisplaySettings& settings, double value) {
                 settings.listItemFontSizeCu = static_cast<float>(value);
             }, 16.0);
-        itemFontWeight = MakeDesktopNumber(100.0, 900.0, 50.0, 0,
+        itemFontWeight = MakeDesktopNumber(
+            font_weight_rules::ToPercent(font_weight_rules::kMinimumWeight),
+            font_weight_rules::ToPercent(font_weight_rules::kMaximumWeight),
+            font_weight_rules::ToPercent(1), 1,
             [](DesktopDisplaySettings& settings, double value) {
-                settings.itemFontWeight = static_cast<int>(std::lround(value));
-            }, 600.0);
+                settings.itemFontWeight = font_weight_rules::FromPercent(value);
+            }, 100.0);
+        winrt::Windows::Globalization::NumberFormatting::DecimalFormatter weightFormatter;
+        weightFormatter.FractionDigits(1);
+        itemFontWeight->number.NumberFormatter(weightFormatter);
         iconSpacing->SetUnit(L"%");
         iconSize->SetUnit(L"%");
         itemFontSize->SetUnit(L"cu");
         listFontSize->SetUnit(L"cu");
+        itemFontWeight->SetUnit(L"%");
         for (const auto* editor : {iconSize.get(),
                  itemFontSize.get(), listFontSize.get(), itemFontWeight.get()})
         {
             displayCard.content.Children().Append(editor->root);
         }
         AppendCombo(displayCard, shortcutArrowRow, shortcutArrow);
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i) AppendCombo(displayCard, titleLineRows[i], titleLineCombos[i]);
+        AppendCombo(displayCard, titleOverflowRow, titleOverflow);
 
         InitializeCard(categoryLayoutCard, cardStyle, categoryRoot);
+        collectPrograms = muxc::ToggleSwitch{};
+        collectPrograms.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        collectProgramsRow.Initialize(collectPrograms);
+        collectProgramsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        categoryLayoutCard.content.Children().Append(collectProgramsRow.root);
         showCategoryTabCounts = muxc::ToggleSwitch{};
         showCategoryTabCounts.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -820,6 +868,30 @@ struct DesktopPagePresenter::Impl
         AppendAdvancedCombo(gradientDirectionRow, gradientDirection);
         AppendAdvancedCombo(shapeRow, shape);
 
+        glassEnabled = muxc::ToggleSwitch{};
+        glassEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        glassEnabledRow.Initialize(glassEnabled);
+        glassEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        edgeReflection = muxc::ToggleSwitch{};
+        edgeReflection.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        edgeReflectionRow.Initialize(edgeReflection);
+        edgeReflectionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        glassBlurRadius = MakeBeautifyNumber(4.0, 48.0, 1.0, 0,
+            [](auto& settings, double v) { settings.glassBlurRadius = static_cast<float>(v); });
+        reflectionWidth = MakeBeautifyNumber(0.5, 4.0, 0.05, 2,
+            [](auto& settings, double v) { settings.edgeHighlightWidth = static_cast<float>(v); });
+        reflectionStrength = MakeBeautifyNumber(0.0, 100.0, 1.0, 0,
+            [](auto& settings, double v) { settings.edgeHighlightStrength = static_cast<float>(v / 100.0); });
+        glassBlurRadius->SetUnit(L"px"); reflectionWidth->SetUnit(L"px"); reflectionStrength->SetUnit(L"%");
+        beautifyAdvanced.Children().Append(glassEnabledRow.root);
+        beautifyAdvanced.Children().Append(glassBlurRadius->root);
+        beautifyAdvanced.Children().Append(edgeReflectionRow.root);
+        beautifyAdvanced.Children().Append(reflectionWidth->root);
+        beautifyAdvanced.Children().Append(reflectionStrength->root);
+        edgeLightEditor = EdgeLightEditor::Create([this](auto key) { return L(key, L""); }, [this](auto const& light, bool commit) {
+            UpdateBeautify(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview, [light](auto& settings) { settings.edgeLight = light; });
+        });
+        beautifyAdvanced.Children().Append(edgeLightEditor->Content());
         contentScale = MakeBeautifyNumber(50.0, 90.0, 1.0, 0,
             [](IconBeautifySettings& settings, double value) {
                 settings.contentScale = static_cast<float>(value / 100.0);
@@ -922,6 +994,24 @@ struct DesktopPagePresenter::Impl
         outlineDetails.Children().Append(outlineColor->root);
         beautifyAdvanced.Children().Append(outlineDetails);
 
+        beautifyAdvanced.Children().Clear();
+        std::vector<muxc::Expander> geometryDisclosures;
+        auto geometry = AppearanceSections::Section(beautifyAdvanced, geometryTitle, &geometryDisclosures);
+        geometry.Children().Append(beautifyModeRow.root);
+        geometry.Children().Append(shapeRow.root);
+        geometry.Children().Append(contentScale->root);
+        beautifySections.Initialize(beautifyAdvanced, true, false, false);
+        beautifySections.disclosures.insert(beautifySections.disclosures.begin(), geometryDisclosures.begin(), geometryDisclosures.end());
+        for (auto const& control : {backgroundStart->root, backgroundOpacity->root, gradientEnabledRow.root, backgroundEnd->root, gradientDirectionRow.root})
+            beautifySections.colors.Children().Append(control);
+        beautifySections.material.Children().Append(glassEnabledRow.root); beautifySections.material.Children().Append(glassBlurRadius->root);
+        beautifySections.border.Children().Append(outlineEnabledRow.root); beautifySections.border.Children().Append(outlineDetails);
+        beautifySections.border.Children().Append(edgeReflectionRow.root); beautifySections.border.Children().Append(reflectionWidth->root);
+        beautifySections.border.Children().Append(reflectionStrength->root); beautifySections.border.Children().Append(edgeLightEditor->Content());
+        auto finish = AppearanceSections::Section(beautifyAdvanced, finishTitle, &beautifySections.disclosures);
+        for (auto const* editor : {highlightStrength.get(), highlightSize.get(), highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(), shadowStrength.get()}) finish.Children().Append(editor->root);
+        finish.Children().Append(filterEnabledRow.root); finish.Children().Append(filterDetails);
+
         InitializeCard(categoryRulesCard, cardStyle, categoryRoot);
         const auto makeSubsectionHeading = [] {
             muxc::TextBlock heading{};
@@ -976,12 +1066,12 @@ struct DesktopPagePresenter::Impl
             mux::VerticalAlignment::Center);
         applyCategory.MinHeight(32.0);
         restoreCategory.MinHeight(32.0);
-        categoryActions.Children().Append(applyCategory);
-        categoryActions.Children().Append(restoreCategory);
+        applyCategory.Visibility(mux::Visibility::Collapsed);
+        restoreCategory.Visibility(mux::Visibility::Collapsed);
         categoryActionsRow.Initialize(categoryActions);
         categoryActionsRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
-        categoryRulesCard.content.Children().Append(saveCategoryHeading);
+        saveCategoryHeading.Visibility(mux::Visibility::Collapsed);
         categoryRulesCard.content.Children().Append(categoryActionsRow.root);
         categoryStatus = muxc::TextBlock{};
         categoryStatus.Opacity(0.72);
@@ -1036,6 +1126,24 @@ struct DesktopPagePresenter::Impl
 
     void HookEvents()
     {
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i)
+            titleLineTokens[i] = titleLineCombos[i].SelectionChanged([this, i](const auto&, const auto&) {
+                const int lines = titleLineCombos[i].SelectedIndex() + 1;
+                if (lines < 1 || lines > 2) return;
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit, [i, lines](DesktopDisplaySettings& s) {
+                    const std::array<int DesktopDisplaySettings::*, 3> fields{&DesktopDisplaySettings::desktopTitleLines, &DesktopDisplaySettings::largeFolderTitleLines, &DesktopDisplaySettings::scrollingTitleLines};
+                    s.*fields[i] = lines;
+                });
+            });
+        titleOverflowToken = titleOverflow.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int selection = titleOverflow.SelectedIndex();
+                if (selection < 0 || selection > 1) return;
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [selection](DesktopDisplaySettings& settings) {
+                        settings.titleEllipsis = selection == 0;
+                    });
+            });
         shortcutArrowToken = shortcutArrow.SelectionChanged(
             [this](const auto&, const auto&) {
                 const int selection = shortcutArrow.SelectedIndex();
@@ -1053,6 +1161,17 @@ struct DesktopPagePresenter::Impl
                         settings.showCategoryTabCounts = enabled;
                     });
             });
+        collectProgramsToken = collectPrograms.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = collectPrograms.IsOn();
+                UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](CategorySettings& settings) {
+                        settings.collectProgramsEnabled = enabled;
+                    });
+                if (!closed && active && hasSnapshot && !updatingControls &&
+                    actions.commitCategory)
+                    actions.commitCategory(generation);
+            });
         beautifyPresetToken = beautifyPreset.SelectionChanged(
             [this](const auto&, const auto&) {
                 const int selection = beautifyPreset.SelectedIndex();
@@ -1060,8 +1179,11 @@ struct DesktopPagePresenter::Impl
                     static_cast<std::size_t>(selection) >=
                         kBeautifyPresets.size())
                     return;
+                if (!updatingControls && active && hasSnapshot) edgeLightEditor->Cancel();
                 const IconBeautifyPreset preset =
                     kBeautifyPresets[static_cast<std::size_t>(selection)];
+                if (!updatingControls && active && hasSnapshot && preset == IconBeautifyPreset::Custom)
+                    beautifySections.CollapseAll();
                 UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
                     [preset](DesktopDisplaySettings& desktop) {
                         if (preset == IconBeautifyPreset::Custom)
@@ -1086,6 +1208,15 @@ struct DesktopPagePresenter::Impl
                         settings.mode = selection;
                     });
             });
+        glassEnabledToken = glassEnabled.Toggled([this](auto const&, auto const&) {
+            const bool v = glassEnabled.IsOn();
+            UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.glassEnabled = v; });
+        });
+        edgeReflectionToken = edgeReflection.Toggled([this](auto const&, auto const&) {
+            UpdateConditionalStates();
+            const bool v = edgeReflection.IsOn();
+            UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.edgeHighlightEnabled = v; });
+        });
         gradientEnabledToken = gradientEnabled.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = gradientEnabled.IsOn();
@@ -1169,8 +1300,12 @@ struct DesktopPagePresenter::Impl
 
     std::wstring RuleLabel(const CategoryRule& rule) const
     {
+        if (rule.id == L"programs")
+            return L("widget.categories.default_program", L"Programs");
         if (!rule.customLabel.empty())
             return rule.customLabel;
+        if (rule.id == L"folders")
+            return L("widget.categories.folder", L"Folders");
         if (rule.id == L"videos")
             return L("widget.categories.default_video", L"Videos");
         if (rule.id == L"images")
@@ -1194,7 +1329,7 @@ struct DesktopPagePresenter::Impl
         const std::wstring id = L"custom-winui-" +
             std::to_wstring(generation) + L"-" +
             std::to_wstring(nextId.fetch_add(1));
-        UpdateCategory(SettingsUpdateMode::Draft,
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
             [id, label = std::move(label), extensions](
                 CategorySettings& settings) mutable {
                 CategoryRule rule;
@@ -1209,7 +1344,8 @@ struct DesktopPagePresenter::Impl
 
     void RemoveCategoryRule(std::wstring id)
     {
-        UpdateCategory(SettingsUpdateMode::Draft,
+        if (IsBuiltinCategoryRuleId(id)) return;
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
             [id = std::move(id)](CategorySettings& settings) {
                 settings.rules.erase(
                     std::remove_if(
@@ -1223,7 +1359,7 @@ struct DesktopPagePresenter::Impl
 
     void EditCategoryLabel(const std::wstring& id, std::wstring label)
     {
-        UpdateCategory(SettingsUpdateMode::Draft,
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
             [id, label = std::move(label)](CategorySettings& settings) {
                 const auto found = std::find_if(
                     settings.rules.begin(), settings.rules.end(),
@@ -1239,7 +1375,7 @@ struct DesktopPagePresenter::Impl
         const std::wstring& id,
         std::wstring extensions)
     {
-        UpdateCategory(SettingsUpdateMode::Draft,
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
             [id, extensions = std::move(extensions)](
                 CategorySettings& settings) {
                 const auto found = std::find_if(
@@ -1250,6 +1386,22 @@ struct DesktopPagePresenter::Impl
                 if (found != settings.rules.end())
                     found->extensions = extensions;
             });
+    }
+
+    void RestoreCategoryField(const std::wstring& id, bool extensions)
+    {
+        UpdateCategory(SettingsUpdateMode::PreviewAndCommit, [id, extensions](CategorySettings& settings) {
+            const auto defaults = CategorySettings::Defaults();
+            const auto builtin = std::find_if(defaults.rules.begin(), defaults.rules.end(),
+                [&](const CategoryRule& rule) { return rule.id == id; });
+            if (builtin == defaults.rules.end()) return;
+            for (auto& rule : settings.rules)
+            {
+                if (rule.id != id) continue;
+                if (extensions) rule.extensions = builtin->extensions;
+                else rule.customLabel.clear();
+            }
+        });
     }
 
     void CloseRuleRows() noexcept
@@ -1268,12 +1420,20 @@ struct DesktopPagePresenter::Impl
         {
             auto row = std::make_unique<RuleRow>();
             row->id = rule.id;
+            row->customLabel = rule.customLabel;
             row->root = muxc::Border{};
             row->content = muxc::StackPanel{};
             row->content.Spacing(8.0);
             row->label = muxc::TextBox{};
             row->extensions = muxc::TextBox{};
             row->remove = muxc::Button{};
+            row->enabled = muxc::Button{};
+            row->restoreName = muxc::Button{};
+            row->restoreExtensions = muxc::Button{};
+            row->enabledValue = rule.enabled;
+            row->enabled.MinWidth(88.0);
+            row->enabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
+            row->enabled.VerticalAlignment(mux::VerticalAlignment::Center);
             row->nameActions = muxc::Grid{};
             row->nameActions.ColumnSpacing(8.0);
             muxc::ColumnDefinition labelColumn{};
@@ -1283,22 +1443,69 @@ struct DesktopPagePresenter::Impl
             deleteColumn.Width(mux::GridLengthHelper::Auto());
             row->nameActions.ColumnDefinitions().Append(labelColumn);
             row->nameActions.ColumnDefinitions().Append(deleteColumn);
+            muxc::ColumnDefinition restoreColumn{};
+            restoreColumn.Width(mux::GridLengthHelper::Auto());
+            row->nameActions.ColumnDefinitions().Append(restoreColumn);
             row->label.Text(RuleLabel(rule));
+            if (rule.id == L"programs")
+            {
+                row->label.IsReadOnly(true);
+                row->remove.Visibility(mux::Visibility::Collapsed);
+            }
             row->extensions.Text(rule.extensions);
             row->nameActions.Children().Append(row->label);
-            muxc::Grid::SetColumn(row->remove, 1);
+            muxc::Grid::SetColumn(row->remove, 2);
             row->nameActions.Children().Append(row->remove);
+            if (IsBuiltinCategoryRuleId(rule.id))
+            {
+                row->remove.Visibility(mux::Visibility::Collapsed);
+                muxc::Grid::SetColumn(row->enabled, 2);
+                row->nameActions.Children().Append(row->enabled);
+                muxc::Grid::SetColumn(row->restoreName, 1);
+                row->nameActions.Children().Append(row->restoreName);
+            }
             row->labelRow.Initialize(row->nameActions);
-            row->extensionsRow.Initialize(row->extensions);
+            muxc::Grid extensionActions{};
+            extensionActions.ColumnSpacing(8.0);
+            muxc::ColumnDefinition extensionColumn{};
+            extensionColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+            muxc::ColumnDefinition restoreExtensionColumn{};
+            restoreExtensionColumn.Width(mux::GridLengthHelper::Auto());
+            extensionActions.ColumnDefinitions().Append(extensionColumn);
+            extensionActions.ColumnDefinitions().Append(restoreExtensionColumn);
+            extensionActions.Children().Append(row->extensions);
+            if (IsBuiltinCategoryRuleId(rule.id))
+            {
+                muxc::Grid::SetColumn(row->restoreExtensions, 1);
+                extensionActions.Children().Append(row->restoreExtensions);
+            }
+            row->extensionsRow.Initialize(extensionActions);
             row->content.Children().Append(row->labelRow.root);
             row->content.Children().Append(row->extensionsRow.root);
             row->root.Child(row->content);
             categoryRulePanel.Children().Append(row->root);
 
             RuleRow* const raw = row.get();
+            row->restoreNameToken = row->restoreName.Click([this, raw](const auto&, const auto&) {
+                if (!raw->closed) RestoreCategoryField(raw->id, false);
+            });
+            row->restoreExtensionsToken = row->restoreExtensions.Click([this, raw](const auto&, const auto&) {
+                if (!raw->closed) RestoreCategoryField(raw->id, true);
+            });
+            row->enabledToken = row->enabled.Click([this, raw](const auto&, const auto&) {
+                if (updatingControls || raw->closed) return;
+                const bool enabled = !raw->enabledValue;
+                raw->enabledValue = enabled;
+                LocalizeCategoryEnabledButton(*raw);
+                const auto id = raw->id;
+                UpdateCategory(SettingsUpdateMode::PreviewAndCommit, [id, enabled](CategorySettings& settings) {
+                    for (auto& rule : settings.rules) if (rule.id == id) rule.enabled = enabled;
+                });
+            });
             row->labelToken = row->label.TextChanged(
                 [this, raw](const auto&, const auto&) {
                     if (updatingControls || raw->closed) return;
+                    raw->customLabel = raw->label.Text().c_str();
                     EditCategoryLabel(raw->id, raw->label.Text().c_str());
                 });
             row->extensionsToken = row->extensions.TextChanged(
@@ -1338,6 +1545,8 @@ struct DesktopPagePresenter::Impl
         {
             const CategoryRule& rule = settings.rules[index];
             RuleRow& row = *ruleRows[index];
+            row.customLabel = rule.customLabel;
+            row.enabledValue = rule.enabled;
             if (row.label.FocusState() == mux::FocusState::Unfocused)
                 row.label.Text(RuleLabel(rule));
             if (row.extensions.FocusState() == mux::FocusState::Unfocused)
@@ -1346,16 +1555,38 @@ struct DesktopPagePresenter::Impl
         LocalizeRuleRows();
     }
 
+    void LocalizeCategoryEnabledButton(RuleRow& row)
+    {
+        const auto action = row.enabledValue
+            ? L("app.settings.widgets_disable", L"Disable")
+            : L("app.settings.widgets_enable", L"Enable");
+        row.enabled.Content(winrt::box_value(action));
+        muxa::AutomationProperties::SetName(row.enabled, action + L" " + row.label.Text());
+    }
+
     void LocalizeRuleRows()
     {
         for (const auto& row : ruleRows)
         {
+            // Language changes do not change the category domain revision.
+            // Refresh default names with the captions, without turning their
+            // translated display text into a persisted custom name.
+            if ((row->id == L"programs" ||
+                    (row->customLabel.empty() && IsBuiltinCategoryRuleId(row->id))) &&
+                (row->id == L"programs" || row->label.FocusState() == mux::FocusState::Unfocused))
+                row->label.Text(RuleLabel(CategoryRule{row->id, row->customLabel, L""}));
             row->labelRow.SetText(
                 L("app.settings.category_name", L"Category name"));
             row->extensionsRow.SetText(
                 L("app.settings.category_extensions", L"Extensions"));
             row->remove.Content(winrt::box_value(
                 L("app.settings.delete", L"Delete")));
+            const auto restore = L("app.settings.restore_default", L"Restore default");
+            presenter_controls::ConfigureRestoreDefaultButton(row->restoreName,
+                std::wstring((restore + L" · " + L("app.settings.category_name", L"Category name") + L" · " + row->label.Text()).c_str()));
+            presenter_controls::ConfigureRestoreDefaultButton(row->restoreExtensions,
+                std::wstring((restore + L" · " + L("app.settings.category_extensions", L"Extensions") + L" · " + row->label.Text()).c_str()));
+            LocalizeCategoryEnabledButton(*row);
             muxa::AutomationProperties::SetName(row->remove,
                 L("app.settings.delete", L"Delete") + L" " +
                     row->label.Text());
@@ -1364,10 +1595,15 @@ struct DesktopPagePresenter::Impl
 
     void UpdateConditionalStates()
     {
-        const bool custom = beautifyPreset.SelectedIndex() ==
-            IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom);
+        const bool custom = beautifyPreset.SelectedIndex() == IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom);
         beautifyAdvanced.Visibility(
             custom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        edgeLightEditor->Content().Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        glassBlurRadius->root.Visibility(glassEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        reflectionWidth->root.Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        reflectionStrength->root.Visibility(edgeReflection.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        backgroundEnd->root.Visibility(gradientEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        gradientDirectionRow.root.Visibility(gradientEnabled.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         backgroundEnd->SetEnabled(gradientEnabled.IsOn());
         gradientDirection.IsEnabled(gradientEnabled.IsOn());
         filterDetails.Visibility(filterEnabled.IsOn()
@@ -1380,15 +1616,21 @@ struct DesktopPagePresenter::Impl
 
     void PatchDesktop(const DesktopDisplaySettings& settings)
     {
+        const std::array<int, 3> lines{settings.desktopTitleLines, settings.largeFolderTitleLines, settings.scrollingTitleLines};
+        for (std::size_t i = 0; i < lines.size(); ++i) titleLineCombos[i].SelectedIndex(std::clamp(lines[i], 1, 2) - 1);
+        titleOverflow.SelectedIndex(settings.titleEllipsis ? 0 : 1);
         iconSpacing->SetValue(settings.iconSpacingScale * 100.0);
         iconSize->SetValue(settings.itemIconSizeScale * 100.0);
         itemFontSize->SetValue(settings.itemFontSizeCu);
         listFontSize->SetValue(settings.listItemFontSizeCu);
-        itemFontWeight->SetValue(settings.itemFontWeight);
+        itemFontWeight->SetValue(font_weight_rules::ToPercent(settings.itemFontWeight));
         shortcutArrow.SelectedIndex(
             std::clamp(settings.shortcutArrowMode, 0, 2));
 
         const IconBeautifySettings& value = settings.iconBeautify;
+        if (value.preset == IconBeautifyPreset::Custom &&
+            beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom))
+            beautifySections.CollapseAll();
         beautifyPreset.SelectedIndex(IndexOf(kBeautifyPresets, value.preset));
         beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 1));
         backgroundStart->SetColor(MakeColor(
@@ -1396,6 +1638,11 @@ struct DesktopPagePresenter::Impl
             value.backgroundStartG,
             value.backgroundStartB));
         backgroundOpacity->SetValue(value.backgroundOpacity * 100.0);
+        glassEnabled.IsOn(value.glassEnabled); edgeReflection.IsOn(value.edgeHighlightEnabled);
+        glassBlurRadius->SetValue(value.glassBlurRadius);
+        edgeLightEditor->SetValue(value.edgeLight);
+        reflectionWidth->SetValue(value.edgeHighlightWidth);
+        reflectionStrength->SetValue(value.edgeHighlightStrength * 100.0);
         gradientEnabled.IsOn(value.gradientEnabled);
         backgroundEnd->SetColor(MakeColor(
             value.backgroundEndR,
@@ -1428,7 +1675,7 @@ struct DesktopPagePresenter::Impl
         for (const NumericEditor* editor : {
                  iconSpacing.get(), iconSize.get(), itemFontSize.get(),
                  listFontSize.get(), itemFontWeight.get(),
-                 backgroundOpacity.get(), contentScale.get(),
+                 backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
                  highlightStrength.get(), highlightSize.get(),
                  highlightAngle.get(), shadeStrength.get(),
                  edgeHighlight.get(), filterStrength.get(),
@@ -1448,6 +1695,7 @@ struct DesktopPagePresenter::Impl
 
     void PatchCategory(const CategorySettings& settings)
     {
+        collectPrograms.IsOn(settings.collectProgramsEnabled);
         PatchRuleRows(settings);
     }
 
@@ -1461,7 +1709,7 @@ struct DesktopPagePresenter::Impl
         return {
             iconSpacing.get(), iconSize.get(), itemFontSize.get(),
             listFontSize.get(), itemFontWeight.get(),
-            backgroundOpacity.get(), contentScale.get(),
+            backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
             highlightStrength.get(), highlightSize.get(),
             highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(),
             filterStrength.get(), shadowStrength.get(), outlineWidth.get(),
@@ -1479,6 +1727,7 @@ struct DesktopPagePresenter::Impl
 
     void CommitContinuousEdits()
     {
+        if (edgeLightEditor) edgeLightEditor->Flush();
         for (NumericEditor* editor : ContinuousNumbers())
             editor->CommitPending();
         for (ColorEditor* editor : ContinuousColors())
@@ -1487,6 +1736,7 @@ struct DesktopPagePresenter::Impl
 
     void CancelContinuousEdits() noexcept
     {
+        if (edgeLightEditor) edgeLightEditor->Cancel();
         for (NumericEditor* editor : ContinuousNumbers())
             editor->CancelPending();
         for (ColorEditor* editor : ContinuousColors())
@@ -1598,6 +1848,20 @@ struct DesktopPagePresenter::Impl
             "app.settings.title_font_size", L"Title font size"));
         listFontSize->SetLabel(L(
             "app.settings.list_font_size", L"List font size"));
+        const std::array<const char*, 3> lineKeys{"titleLines.desktop", "titleLines.largeFolder", "titleLines.scrolling"};
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i)
+        {
+            const int selected = titleLineCombos[i].SelectedIndex();
+            titleLineRows[i].SetText(L(lineKeys[i]));
+            SetComboItems(titleLineCombos[i], {L("titleLines.one"), L("titleLines.two")}, selected);
+            titleLineCombos[i].SelectedIndex(selected);
+            muxa::AutomationProperties::SetName(titleLineCombos[i], titleLineRows[i].label.Text());
+        }
+        const int overflowSelected = titleOverflow.SelectedIndex();
+        titleOverflowRow.SetText(L("titleOverflow.title"), L("titleOverflow.hint"));
+        SetComboItems(titleOverflow, {L("titleOverflow.ellipsis"), L("titleOverflow.clip")}, overflowSelected);
+        titleOverflow.SelectedIndex(overflowSelected);
+        muxa::AutomationProperties::SetName(titleOverflow, titleOverflowRow.label.Text());
         itemFontWeight->SetLabel(L(
             "app.settings.title_font_weight", L"Title font weight"));
         for (NumericEditor* editor : {iconSpacing.get(), iconSize.get(),
@@ -1629,6 +1893,9 @@ struct DesktopPagePresenter::Impl
         SetComboItems(beautifyPreset, {
             L("app.settings.beautify_preset_none", L"None"),
             L("app.settings.beautify_preset_default", L"Default"),
+            L("app.settings.transparent_glass", L"Transparent glass"),
+            L("app.settings.dark_glass", L"Dark glass"),
+            L("app.settings.light_glass", L"Light glass"),
             L("app.settings.custom", L"Custom"),
         }, std::max(0, beautifyPreset.SelectedIndex()));
         beautifyModeRow.SetText(
@@ -1673,6 +1940,16 @@ struct DesktopPagePresenter::Impl
             L("app.settings.beautify_shape_circle", L"Circle"),
             L("app.settings.beautify_shape_pebble", L"Pebble"),
         }, std::max(0, shape.SelectedIndex()));
+        geometryTitle.Text(L("appearance.iconGeometry")); finishTitle.Text(L("appearance.iconFinish"));
+        beautifySections.RefreshLocalizedText([this](auto key) { return L(key); });
+        edgeLightEditor->RefreshLocalizedText();
+        glassEnabledRow.SetText(L("app.settings.glass_enabled", L"Frosted glass background"));
+        edgeReflectionRow.SetText(L("app.settings.edge_highlight", L"Edge highlight"));
+        muxa::AutomationProperties::SetName(glassEnabled, glassEnabledRow.label.Text());
+        muxa::AutomationProperties::SetName(edgeReflection, edgeReflectionRow.label.Text());
+        glassBlurRadius->SetLabel(L("app.settings.blur_radius", L"Blur radius"));
+        reflectionWidth->SetLabel(L("app.settings.edge_highlight_width", L"Edge highlight width"));
+        reflectionStrength->SetLabel(L("app.settings.edge_highlight_strength", L"Edge highlight strength"));
         contentScale->SetLabel(L(
             "app.settings.beautify_content_scale", L"Content scale"));
         highlightStrength->SetLabel(L(
@@ -1713,6 +1990,10 @@ struct DesktopPagePresenter::Impl
 
         categoryHint.Text(L("app.settings.category_hint",
             L"Changes to category rules are applied explicitly."));
+        collectProgramsRow.SetText(
+            L("app.settings.collect_programs", L"Collect programs"),
+            L("app.settings.collect_programs_hint", L"Allow file category widgets to collect programs and shortcuts. Off by default."));
+        muxa::AutomationProperties::SetName(collectPrograms, collectProgramsRow.label.Text());
         categoryTypesHeading.Text(
             L("app.settings.category_type", L"Category type"));
         addCategoryHeading.Text(
@@ -1751,55 +2032,71 @@ struct DesktopPagePresenter::Impl
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
+        const auto appearanceTarget = [this](mux::FrameworkElement target) {
+            if (beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom))
+                return mux::FrameworkElement{beautifyPreset};
+            beautifySections.Reveal(target);
+            return target;
+        };
         if (id == "desktop.spacing" || id == "desktop.iconSpacing")
             return iconSpacing->slider;
         if (id == "desktop.iconSize") return iconSize->slider;
         if (id == "desktop.itemFontSize") return itemFontSize->number;
         if (id == "desktop.listFontSize") return listFontSize->number;
+        if (id == "desktop.titleLines") return titleLineCombos[0];
+        if (id == "desktop.largeFolderTitleLines") return titleLineCombos[1];
+        if (id == "desktop.scrollingTitleLines") return titleLineCombos[2];
+        if (id == "desktop.titleOverflow") return titleOverflow;
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
+        if (id == "desktop.collectPrograms") return collectPrograms;
         if (id == "desktop.iconBeautify" ||
             id == "desktop.iconBeautify.preset")
             return beautifyPreset;
-        if (id == "desktop.iconBeautify.mode") return beautifyMode;
+        if (id == "desktop.iconBeautify.mode") return appearanceTarget(beautifyMode);
         if (id == "desktop.iconBeautify.backgroundColor")
-            return backgroundStart->editor.button;
+            return appearanceTarget(backgroundStart->editor.button);
+        if (id == "desktop.iconBeautify.glass") return appearanceTarget(glassEnabled);
+        if (id == "desktop.iconBeautify.blurRadius") return appearanceTarget(glassBlurRadius->slider);
+        if (id == "desktop.iconBeautify.edgeReflection") return appearanceTarget(edgeReflection);
+        if (id == "desktop.iconBeautify.reflectionWidth") return appearanceTarget(reflectionWidth->slider);
+        if (id == "desktop.iconBeautify.reflectionStrength") return appearanceTarget(reflectionStrength->slider);
         if (id == "desktop.iconBeautify.backgroundOpacity")
-            return backgroundOpacity->slider;
+            return appearanceTarget(backgroundOpacity->slider);
         if (id == "desktop.iconBeautify.gradient")
-            return gradientEnabled;
+            return appearanceTarget(gradientEnabled);
         if (id == "desktop.iconBeautify.gradientEndColor")
-            return backgroundEnd->editor.button;
+            return appearanceTarget(backgroundEnd->editor.button);
         if (id == "desktop.iconBeautify.gradientDirection")
-            return gradientDirection;
-        if (id == "desktop.iconBeautify.shape") return shape;
+            return appearanceTarget(gradientDirection);
+        if (id == "desktop.iconBeautify.shape") return appearanceTarget(shape);
         if (id == "desktop.iconBeautify.contentScale")
-            return contentScale->slider;
+            return appearanceTarget(contentScale->slider);
         if (id == "desktop.iconBeautify.highlightStrength")
-            return highlightStrength->slider;
+            return appearanceTarget(highlightStrength->slider);
         if (id == "desktop.iconBeautify.highlightSize")
-            return highlightSize->slider;
+            return appearanceTarget(highlightSize->slider);
         if (id == "desktop.iconBeautify.highlightAngle")
-            return highlightAngle->slider;
+            return appearanceTarget(highlightAngle->slider);
         if (id == "desktop.iconBeautify.shadeStrength")
-            return shadeStrength->slider;
+            return appearanceTarget(shadeStrength->slider);
         if (id == "desktop.iconBeautify.edgeHighlight")
-            return edgeHighlight->slider;
-        if (id == "desktop.iconBeautify.filter") return filterEnabled;
+            return appearanceTarget(edgeHighlight->slider);
+        if (id == "desktop.iconBeautify.filter") return appearanceTarget(filterEnabled);
         if (id == "desktop.iconBeautify.filterColor")
-            return filterTint->editor.button;
+            return appearanceTarget(filterTint->editor.button);
         if (id == "desktop.iconBeautify.filterStrength")
-            return filterStrength->slider;
+            return appearanceTarget(filterStrength->slider);
         if (id == "desktop.iconBeautify.shadowStrength")
-            return shadowStrength->slider;
-        if (id == "desktop.iconBeautify.outline") return outlineEnabled;
+            return appearanceTarget(shadowStrength->slider);
+        if (id == "desktop.iconBeautify.outline") return appearanceTarget(outlineEnabled);
         if (id == "desktop.iconBeautify.outlineWidth")
-            return outlineWidth->slider;
+            return appearanceTarget(outlineWidth->slider);
         if (id == "desktop.iconBeautify.outlineOpacity")
-            return outlineOpacity->slider;
+            return appearanceTarget(outlineOpacity->slider);
         if (id == "desktop.iconBeautify.outlineColor")
-            return outlineColor->editor.button;
+            return appearanceTarget(outlineColor->editor.button);
         if (id == "desktop.categories" || id == "desktop.categoryRules")
             return applyCategory;
         if (id == "desktop.category.add") return newCategoryLabel;
@@ -1808,13 +2105,17 @@ struct DesktopPagePresenter::Impl
 
     void CloseEditors() noexcept
     {
+        if (edgeLightEditor) edgeLightEditor->Close();
         iconSpacing->Close();
         iconSize->Close();
         itemFontSize->Close();
         listFontSize->Close();
         itemFontWeight->Close();
+        for (std::size_t i = 0; i < titleLineCombos.size(); ++i) titleLineCombos[i].SelectionChanged(titleLineTokens[i]);
+        titleOverflow.SelectionChanged(titleOverflowToken);
         backgroundStart->Close();
         backgroundOpacity->Close();
+        glassBlurRadius->Close(); reflectionWidth->Close(); reflectionStrength->Close();
         backgroundEnd->Close();
         contentScale->Close();
         highlightStrength->Close();
@@ -1857,9 +2158,11 @@ struct DesktopPagePresenter::Impl
             }
             shortcutArrow.SelectionChanged(shortcutArrowToken);
             showCategoryTabCounts.Toggled(showCountsToken);
+            collectPrograms.Toggled(collectProgramsToken);
             beautifyPreset.SelectionChanged(beautifyPresetToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
             gradientEnabled.Toggled(gradientEnabledToken);
+            glassEnabled.Toggled(glassEnabledToken); edgeReflection.Toggled(edgeReflectionToken);
             gradientDirection.SelectionChanged(gradientDirectionToken);
             shape.SelectionChanged(shapeToken);
             filterEnabled.Toggled(filterEnabledToken);

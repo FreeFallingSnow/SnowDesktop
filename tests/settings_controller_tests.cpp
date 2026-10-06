@@ -1,6 +1,7 @@
 #include "settings_controller.h"
 #include "settings_ipc_services.h"
 #include "settings_ipc_values.h"
+#include "desktop_style_presets.h"
 
 #include <array>
 #include <cstring>
@@ -129,6 +130,8 @@ public:
     int routeCount = 0;
     SettingsDomain previewDomains = SettingsDomain::None;
     SettingsDomain commitDomains = SettingsDomain::None;
+    GeneralSettings committedGeneral;
+    DockSettings committedDock;
     float previewedAlpha = 0.0f;
     SettingsRoute route;
     SettingsActionStatus nextPreviewStatus =
@@ -155,11 +158,13 @@ public:
     }
 
     SettingsActionResult OnSettingsCommitted(
-        const SettingsSnapshot&,
+        const SettingsSnapshot& snapshot,
         SettingsDomain domains) override
     {
         ++commitCount;
         commitDomains |= domains;
+        committedGeneral = snapshot.values.general;
+        committedDock = snapshot.values.dock;
         if (duringCommit) duringCommit();
         if (nextCommitStatus == SettingsActionStatus::Busy)
             return SettingsActionResult::Busy(L"commit busy");
@@ -223,7 +228,10 @@ void TestRoutes()
             static_cast<unsigned>(SettingsPage::DesktopPages) == 18u,
         "new settings leaves append without changing existing route values");
 
+    Check(SettingsPageKey(SettingsPage::ThemeManager) == "theme-manager" &&
+        SettingsRoute::ForPage(SettingsPage::ThemeManager).IsValid(), "theme manager has an independent stable route");
     constexpr std::array appearanceLeaves{
+        SettingsPage::ThemeManager,
         SettingsPage::AppearanceTheme,
         SettingsPage::AppearanceWidgets,
         SettingsPage::AppearanceDesktopIcons,
@@ -280,27 +288,47 @@ void TestRoutes()
     const auto groupCounts = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.showGroupTabCounts"));
-    Check(groupCounts.page == SettingsPage::AppearanceWidgets &&
+    Check(groupCounts.page == SettingsPage::WidgetBehavior &&
             groupCounts.focusId == "personalization.showGroupTabCounts",
-        "group count links reach Widgets & layout without redirecting to desktop categories");
+        "group count links reach Widget behavior without redirecting to desktop categories");
+    const auto transformCursors = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.widgetTransformCursors"));
+    Check(transformCursors.page == SettingsPage::AppearanceWidgets &&
+            transformCursors.focusId == "personalization.widgetTransformCursors",
+        "component transform cursor links reach Components and layout");
     const auto popupHover = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.popupHoverOpen"));
-    Check(popupHover.page == SettingsPage::AppearanceWidgets &&
+    Check(popupHover.page == SettingsPage::WidgetBehavior &&
             popupHover.focusId == "personalization.popupHoverOpen",
-        "hover popup search and deep links reach widget layout settings");
+        "hover popup search and deep links reach Widget behavior");
     const auto popupHoverDelay = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.popupHoverDelayMs"));
-    Check(popupHoverDelay.page == SettingsPage::AppearanceWidgets &&
+    Check(popupHoverDelay.page == SettingsPage::WidgetBehavior &&
             popupHoverDelay.focusId == "personalization.popupHoverDelayMs",
-        "hover delay search reaches the same widget layout section as its switch");
+        "hover delay search reaches the same Widget behavior section as its switch");
     const auto titleBarPosition = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.scrollableTitleBarOnTop"));
-    Check(titleBarPosition.page == SettingsPage::AppearanceWidgets &&
+    Check(titleBarPosition.page == SettingsPage::WidgetBehavior &&
             titleBarPosition.focusId == "personalization.scrollableTitleBarOnTop",
-        "title bar position search and deep links reach the global widget layout settings");
+        "title bar position search and deep links reach Widget behavior");
+
+    // Old settings-search publications can still carry AppearanceWidgets.
+    // The production controller must relocate them while preserving the locator.
+    for (const auto* focus : {"personalization.showGroupTabCounts",
+             "personalization.popupHoverOpen", "personalization.popupHoverDelayMs",
+             "personalization.scrollableTitleBarOnTop"})
+    {
+        const auto migrated = CanonicalizeSettingsRoute(
+            SettingsRoute::ForPage(SettingsPage::AppearanceWidgets, focus));
+        Check(migrated.page == SettingsPage::WidgetBehavior && migrated.focusId == focus,
+            "old appearance search results locate the migrated behavior control");
+        Check(CanonicalizeSettingsRoute(migrated) == migrated,
+            "behavior navigation stays stable across repeated controller publications");
+    }
 
     const SettingsRoute desktopIcons = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
@@ -445,6 +473,216 @@ void TestDomainRevisionsTrackChangedDomain()
             desktopChanged->domainRevisions.general ==
                 generalChanged->domainRevisions.general,
         "desktop synchronization advances desktop without changing general");
+}
+
+void TestDesktopStylePresetScope()
+{
+    struct Expected
+    {
+        const wchar_t* key;
+        bool dock, bar, suppress, autoHide, backdrop, summoned, reserve, overlap, swipe;
+        bool preserveOrientation;
+        DockPosition position;
+        bool attached;
+        DockPosition barPosition;
+    };
+    const Expected cases[] = {
+        {L"native", false, false, false, false, true, false, false, true, false,
+            true, DockPosition::Right, false, DockPosition::Bottom},
+        {L"taskbar-dock", true, false, false, true, false, false, false, true, true,
+            false, DockPosition::Bottom, false, DockPosition::Bottom},
+        {L"island", true, true, true, true, false, false, false, false, false,
+            false, DockPosition::Bottom, false, DockPosition::Top},
+        {L"merged", true, true, true, true, false, false, false, false, false,
+            false, DockPosition::Bottom, true, DockPosition::Bottom},
+        {L"side", true, true, true, true, false, false, true, false, false,
+            false, DockPosition::Left, true, DockPosition::Top},
+    };
+    for (const bool attached : {false, true})
+    {
+        GeneralSettings originalGeneral;
+        originalGeneral.dockEnabled = originalGeneral.statusBar.enabled = true;
+        originalGeneral.statusBar.position = DockPosition::Bottom;
+        originalGeneral.statusBar.monitorScope = DockMonitorScope::Last;
+        originalGeneral.demoModeEnabled = true;
+        originalGeneral.animationMode = 2;
+        originalGeneral.popupAnimationEffect = 3;
+        DockSettings originalDock;
+        originalDock.position = attached ? DockPosition::Top : DockPosition::Right;
+        originalDock.edgeAttached = attached;
+        originalDock.monitorScope = DockMonitorScope::All;
+        originalDock.allowDesktopContentOverlap = originalDock.reserveScreenSpace = true;
+        originalDock.suppressSystemTaskbar = true;
+        originalDock.floatingEdgeSwipeEnabled = false;
+        originalDock.hoverEffect = originalDock.launchEffect = originalDock.windowEffect = 0;
+        originalDock.hoverScale = 1.75f;
+        for (const auto& expected : cases)
+        {
+            auto general = originalGeneral, wantedGeneral = originalGeneral;
+            auto dock = originalDock, wantedDock = originalDock;
+            wantedGeneral.dockEnabled = expected.dock;
+            wantedGeneral.statusBar.enabled = expected.bar;
+            wantedGeneral.statusBar.position = expected.barPosition;
+            if (expected.bar) wantedGeneral.statusBar.monitorScope = DockMonitorScope::All;
+            wantedDock.suppressSystemTaskbar = expected.suppress;
+            wantedDock.systemTaskbarAutoHide = expected.autoHide;
+            wantedDock.systemTaskbarBackdropEnabled = expected.backdrop;
+            wantedDock.showOnlyWhenSummoned = expected.summoned;
+            wantedDock.reserveScreenSpace = expected.reserve;
+            wantedDock.allowDesktopContentOverlap = expected.overlap;
+            wantedDock.floatingEdgeSwipeEnabled = expected.swipe;
+            if (!expected.preserveOrientation)
+            { wantedDock.position = expected.position; wantedDock.edgeAttached = expected.attached; }
+            Check(ApplyDesktopStylePreset(expected.key, general, dock) && dock == wantedDock &&
+                    settings_ipc::Pack(general) == settings_ipc::Pack(wantedGeneral),
+                "each desktop style changes only its advertised layout fields and preserves animation preferences");
+        }
+        for (const auto* key : {L"island", L"merged", L"side"})
+        {
+            auto dock = originalDock, wanted = originalDock;
+            const bool island = std::wstring_view(key) == L"island";
+            wanted.hoverEffect = island ? 2 : 1;
+            wanted.launchEffect = island ? 1 : 2;
+            Check(ApplyDesktopStyleAnimations(key, dock) && dock == wanted,
+                "recommended animation changes only hover and launch, retaining layout, scale and window effects");
+            Check(NeedsDesktopStyleAnimations(key, originalDock) && !NeedsDesktopStyleAnimations(key, dock),
+                "matching hover and launch effects do not repeat the animation recommendation dialog");
+            auto changedHover = dock, changedLaunch = dock;
+            changedHover.hoverEffect = 0;
+            changedLaunch.launchEffect = 0;
+            Check(NeedsDesktopStyleAnimations(key, changedHover) && NeedsDesktopStyleAnimations(key, changedLaunch),
+                "changing either recommended effect makes the animation choice meaningful again");
+            dock.hoverScale = 1.25f;
+            dock.windowEffect = 3;
+            Check(!NeedsDesktopStyleAnimations(key, dock),
+                "unrelated magnification scale and window effects do not cause an animation prompt");
+        }
+        for (const auto* key : {L"native", L"taskbar-dock", L"unknown"})
+        {
+            auto dock = originalDock;
+            Check(!ApplyDesktopStyleAnimations(key, dock) && dock == originalDock,
+                "styles without an animation recommendation reject it without changing preferences");
+            Check(!NeedsDesktopStyleAnimations(key, dock),
+                "a style without recommended effects never requests animation confirmation");
+        }
+        auto general = originalGeneral;
+        auto dock = originalDock;
+        Check(!ApplyDesktopStylePreset(L"unknown", general, dock) && dock == originalDock &&
+                settings_ipc::Pack(general) == settings_ipc::Pack(originalGeneral),
+            "unknown layout presets leave both domains unchanged");
+    }
+}
+
+void TestDesktopStyleQueuedCommit()
+{
+    auto store = std::make_shared<FakeStore>();
+    store->loaded.general.dockEnabled = true;
+    store->loaded.dock.position = DockPosition::Right;
+    store->loaded.dock.reserveScreenSpace = true;
+    store->loaded.dock.showOnlyWhenSummoned = true;
+    FakeHostActions host;
+    SettingsController controller(store, &host);
+    (void)controller.Initialize();
+    int scheduled = 0;
+    controller.SetPendingWorkCallback([&] { ++scheduled; });
+    SettingsHostActions::Request request;
+    request.action = SettingsHostActions::Action::ApplyDesktopStylePreset;
+    request.value = L"native";
+    const auto original = controller.Snapshot();
+    Check(controller.InvokeHostAction(request).status == SettingsActionStatus::Busy &&
+            controller.Snapshot()->revision == original->revision &&
+            controller.Snapshot()->dirtyDomains == SettingsDomain::None && scheduled == 0 &&
+            settings_ipc::Pack(controller.Snapshot()->values.general) == settings_ipc::Pack(original->values.general) &&
+            controller.Snapshot()->values.dock == original->values.dock,
+        "disabling an enabled Dock requires confirmation before either preset domain changes");
+
+    request.value = L"merged";
+    const auto domains = SettingsDomain::General | SettingsDomain::Dock;
+    Check(controller.InvokeHostAction(request).Succeeded(), "a valid combined layout preset is accepted for dispatch");
+    const auto queued = controller.Snapshot();
+    Check(queued->dirtyDomains == domains && queued->pendingCommitDomains == domains &&
+            queued->pendingPreviewDomains == SettingsDomain::None && scheduled == 1 &&
+            !queued->values.dock.reserveScreenSpace && !queued->values.dock.showOnlyWhenSummoned &&
+            host.commitCount == 0 && host.invokeCount == 0 && host.previewCount == 0 &&
+            store->generalSaveCount == 0 && store->dockSaveCount == 0,
+        "switching from a reserved summon-only Dock queues the visible non-reserving layout in one joint commit");
+    Check(queued->revision == original->revision + 1 &&
+            queued->domainRevisions.general == queued->revision &&
+            queued->domainRevisions.dock == queued->revision &&
+            queued->domainRevisions.systemTaskbar == queued->revision &&
+            queued->domainRevisions.personalization == original->domainRevisions.personalization &&
+            queued->domainRevisions.navigation == original->domainRevisions.navigation &&
+            queued->domainRevisions.category == original->domainRevisions.category &&
+            queued->domainRevisions.desktop == original->domainRevisions.desktop,
+        "combined preset updates both domain revisions and the Dock system-state guard in one publication");
+    Check(controller.FlushPending().Succeeded() && host.commitCount == 1 && host.commitDomains == domains &&
+            host.committedDock == queued->values.dock &&
+            settings_ipc::Pack(host.committedGeneral) == settings_ipc::Pack(queued->values.general) &&
+            store->dockSaveCount == 1 && store->generalSaveCount == 1 &&
+            controller.Snapshot()->dirtyDomains == SettingsDomain::None,
+        "flush delivers both new mirrors to one host commit and persists each domain once");
+    Check(controller.FlushPending().Succeeded() && host.commitCount == 1 &&
+            store->dockSaveCount == 1 && store->generalSaveCount == 1,
+        "a settled joint preset has no duplicate host or store work");
+
+    request.value = L"native";
+    request.boolValue = true;
+    Check(controller.InvokeHostAction(request).Succeeded() &&
+            !controller.Snapshot()->values.general.dockEnabled &&
+            !controller.Snapshot()->values.general.statusBar.enabled &&
+            controller.Snapshot()->pendingCommitDomains == domains && host.commitCount == 1,
+        "confirmed native layout queues the Dock and status-bar disable together");
+    Check(controller.FlushPending().Succeeded(), "confirmed native layout can be committed");
+    const auto beforeAnimation = controller.Snapshot();
+    host.commitDomains = SettingsDomain::None;
+    request.action = SettingsHostActions::Action::ApplyDesktopStyleAnimations;
+    request.value = L"island";
+    Check(controller.InvokeHostAction(request).Succeeded(), "an animation recommendation can be queued separately");
+    const auto animation = controller.Snapshot();
+    auto wantedDock = beforeAnimation->values.dock;
+    wantedDock.hoverEffect = 2; wantedDock.launchEffect = 1;
+    Check(animation->pendingCommitDomains == SettingsDomain::Dock && animation->values.dock == wantedDock &&
+            settings_ipc::Pack(animation->values.general) == settings_ipc::Pack(beforeAnimation->values.general) &&
+            animation->domainRevisions.general == beforeAnimation->domainRevisions.general &&
+            animation->domainRevisions.dock == animation->revision &&
+            animation->domainRevisions.systemTaskbar == animation->revision,
+        "animation-only actions preserve General and layout while advancing the Dock guards");
+    Check(controller.FlushPending().Succeeded() && host.commitCount == 3 &&
+            host.commitDomains == SettingsDomain::Dock && store->dockSaveCount == 3 && store->generalSaveCount == 2,
+        "animation-only flush does not run or persist a General commit");
+    auto preview = controller.Snapshot()->values.dock;
+    preview.thicknessScale = 1.3f;
+    controller.UpdateDock(preview, SettingsUpdateMode::Preview);
+    request.action = SettingsHostActions::Action::ApplyDesktopStylePreset;
+    request.value = L"side";
+    const auto previews = host.previewCount;
+    Check(controller.InvokeHostAction(request).Succeeded() && controller.FlushPending().Succeeded() &&
+        host.previewCount == previews && host.commitDomains == domains,
+        "a layout preset absorbs old slider previews before its joint commit to avoid a mixed layout");
+    for (const auto position : {DockPosition::Bottom, DockPosition::Top, DockPosition::Left, DockPosition::Right})
+    {
+        for (const bool attached : {false, true})
+        {
+            request.value = L"taskbar-dock";
+            request.desktopStyleDockPosition = position;
+            request.desktopStyleDockAttached = attached;
+            const auto before = controller.Snapshot();
+            const int commits = host.commitCount;
+            Check(controller.InvokeHostAction(request).Succeeded() &&
+                controller.Snapshot()->values.dock.position == position &&
+                controller.Snapshot()->values.dock.edgeAttached == attached &&
+                controller.Snapshot()->values.dock.hoverEffect == before->values.dock.hoverEffect &&
+                !controller.Snapshot()->values.dock.reserveScreenSpace &&
+                !controller.Snapshot()->values.dock.showOnlyWhenSummoned &&
+                !controller.Snapshot()->values.general.statusBar.enabled &&
+                controller.FlushPending().Succeeded() && host.commitCount == commits + 1,
+                "companion draft choices reach one layout commit without changing animations or reserving space");
+        }
+    }
+    request.desktopStyleDockPosition = static_cast<DockPosition>(99);
+    const auto validRevision = controller.Snapshot()->revision;
+    Check(!controller.InvokeHostAction(request).Succeeded() && controller.Snapshot()->revision == validRevision,
+        "invalid companion geometry cannot partially apply either preset domain");
 }
 
 void TestTypedHotkeyRequestTransport()
@@ -1089,6 +1327,37 @@ void TestRemoteSaveFailureKeepsSessionOpen()
             return !badRevision.first.Succeeded() && !badGeneration.first.Succeeded() &&
                 !badTaskbarRevision.first.Succeeded() && unchanged && proxy->CloseSession().Succeeded();
         });
+        ui.Bind<bool>("test.readOnly", [&] {
+            if (!proxy || !proxy->Open(SettingsRoute::ForPage(SettingsPage::General)).Succeeded())
+                return false;
+            int publications = 0;
+            int depth = 0;
+            int maximumDepth = 0;
+            proxy->SetSnapshotChangedCallback([&](auto) {
+                ++publications;
+                maximumDepth = (std::max)(maximumDepth, ++depth);
+                // Entering General probes shortcuts. A duplicate reply must
+                // not publish and re-enter that same probe/render callback.
+                if (depth < 3)
+                {
+                    SettingsHostActions::Request probe;
+                    probe.action = SettingsHostActions::Action::ProbeHotkeyAvailability;
+                    (void)proxy->InvokeHostAction(probe);
+                }
+                --depth;
+            });
+            const auto revision = proxy->Snapshot()->revision;
+            SettingsHostActions::Request probe;
+            probe.action = SettingsHostActions::Action::ProbeHotkeyAvailability;
+            (void)proxy->InvokeHostAction(probe);
+            const bool readOnly = publications == 0 && maximumDepth == 0 &&
+                proxy->Snapshot()->revision == revision;
+            (void)proxy->Open(SettingsRoute::ForPage(SettingsPage::Dock));
+            const bool changed = publications == 1 && maximumDepth == 1 &&
+                proxy->Snapshot()->route.page == SettingsPage::Dock;
+            proxy->SetSnapshotChangedCallback({});
+            return readOnly && changed && proxy->CloseSession().Succeeded();
+        });
         ui.Bind<void>("test.quit", [] { PostQuitMessage(0); });
         started.set_value(GetCurrentThreadId());
         MSG message{};
@@ -1105,6 +1374,8 @@ void TestRemoteSaveFailureKeepsSessionOpen()
             "remote retry closes only after authoritative host persistence succeeds");
         Check(host.Call<bool>("test.stale"),
             "remote stale domain, generation and system taskbar edits cannot overwrite authoritative state");
+        Check(host.Call<bool>("test.readOnly"),
+            "read-only General probes do not republish or recursively render an unchanged IPC snapshot; route changes still publish once");
         host.Notify("test.quit");
     }
     catch (const std::exception& error)
@@ -1131,6 +1402,8 @@ int main()
     TestRoutes();
     TestLoadRouteAndImmutableSnapshots();
     TestDomainRevisionsTrackChangedDomain();
+    TestDesktopStylePresetScope();
+    TestDesktopStyleQueuedCommit();
     TestTypedHotkeyRequestTransport();
     TestPreviewCoalescingAndCommit();
     TestFailureRetryAndExplicitApply();

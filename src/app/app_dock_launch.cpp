@@ -1,6 +1,7 @@
 #include "app.h"
 #include "shell_icon_request.h"
 #include "dock_platform_helpers.h"
+#include "dock_running_app_pin_rules.h"
 #include "animation_settings.h"
 #include "../shell_launch_execution.h"
 
@@ -340,6 +341,12 @@ DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
                     const wchar_t* targetExtension = PathFindExtensionW(target);
                     if (targetExtension && _wcsicmp(targetExtension, L".exe") == 0)
                     {
+                        wchar_t arguments[32768]{};
+                        if (snowdesktop::shortcut_application_rules::IsExplorerExecutable(target) &&
+                            (FAILED(shellLink->GetArguments(arguments,
+                                static_cast<int>(std::size(arguments)))) ||
+                             !snowdesktop::shortcut_application_rules::Trim(arguments).empty()))
+                            return identity;
                         identity.kind = DockAppIdentityKind::Executable;
                         identity.executablePath = NormalizeDockExecutablePath(target);
                     }
@@ -375,13 +382,32 @@ DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
                     }
                 }
 
-                if (identity.kind == DockAppIdentityKind::None)
+                if (identity.kind != DockAppIdentityKind::Executable)
                 {
                     PIDLIST_ABSOLUTE targetPidl = nullptr;
                     if (SUCCEEDED(shellLink->GetIDList(&targetPidl)) && targetPidl)
                     {
+                        // AppsFolder links for desktop applications may expose
+                        // only an application ID through IShellLink::GetPath.
+                        // Resolve their registered executable on this Shell
+                        // worker so the pin still tracks windows without IDs.
+                        const auto application = snowdesktop::dock_running_app_pin::
+                            ReadApplicationIdentity(targetPidl);
+                        if (!application.executablePath.empty() &&
+                            !(snowdesktop::shortcut_application_rules::IsExplorerExecutable(
+                                application.executablePath) &&
+                              !snowdesktop::shortcut_application_rules::Trim(application.arguments).empty()))
+                        {
+                            identity.kind = DockAppIdentityKind::Executable;
+                            identity.executablePath = NormalizeDockExecutablePath(
+                                application.executablePath);
+                        }
+                        if (identity.appUserModelId.empty())
+                            identity.appUserModelId = ToUpperInvariant(
+                                application.appUserModelId);
                         PWSTR parsingName = nullptr;
-                        if (SUCCEEDED(SHGetNameFromIDList(targetPidl,
+                        if (identity.kind != DockAppIdentityKind::Executable &&
+                            SUCCEEDED(SHGetNameFromIDList(targetPidl,
                                 SIGDN_DESKTOPABSOLUTEPARSING, &parsingName)) && parsingName)
                         {
                             const std::wstring targetName(parsingName);

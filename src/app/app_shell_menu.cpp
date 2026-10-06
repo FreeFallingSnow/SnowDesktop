@@ -1,10 +1,12 @@
 #include "app.h"
+#include "../desktop_hover_rules.h"
 #include "popup_window_pair_z_order.h"
 #include "dock_taskbar_diagnostics.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
 #include "../shell_new_item_capture.h"
 #include "../shell_popup_menu_tracker.h"
+#include "../modern_menu_appearance_rules.h"
 
 // Shell New menu, desktop host restoration and protected-icon handling.
 
@@ -33,6 +35,26 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     if (!menu || !owner || !IsWindow(owner))
         return 0;
 
+    // Resolve from the same current preference as the custom menu. New/other
+    // Shell menus can also reach this entry without first preparing menu icons.
+    const bool lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
+        static_cast<snowdesktop::modern_menu::Appearance>(
+            std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
+
+    HWND dockOwner = nullptr;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active || !host->container || !host->hwnd ||
+            !IsWindow(host->hwnd) || !IsWindowVisible(host->hwnd) ||
+            !IsDockContainerInteractionVisible(host->container)) continue;
+        RECT inputBounds = host->container->GetInteractiveBounds();
+        OffsetRect(&inputBounds, virtualLeft_, virtualTop_);
+        const bool mergedBarSource = host->container->IsMergedWithStatusBar() &&
+            statusBar_ && owner == statusBar_->InteractionWindow(host->monitor);
+        if (owner == host->hwnd || mergedBarSource || PtInRect(&inputBounds, screenPoint))
+        { dockOwner = host->hwnd; break; }
+    }
+
     // The native menu loop must share the Shell context menu's STA. Keep
     // widget and composition deadlines running through the existing modal
     // animation pump instead of moving TrackPopupMenuEx to another thread.
@@ -48,7 +70,7 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     const UINT command = snowdesktop::shell_popup_menu_tracker::Track(
         menu, flags, screenPoint, owner,
         ShouldKeepFloatingPopupTopmostForShellMenu(),
-        shellPopupTrackerOwnerHwnd_, shellPopupTrackerCancelRequested_);
+        shellPopupTrackerOwnerHwnd_, shellPopupTrackerCancelRequested_, lightTheme, dockOwner);
     shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
     return command;
 }
@@ -309,6 +331,21 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         bool& active;
         ~LayerUpdateScope() { active = false; }
     } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
+    const bool merged = host.container && host.container->IsMergedWithStatusBar();
+    if (merged)
+    {
+        // The visible merged strip is one topmost surface. Summon/hover policy
+        // still owns its visibility; menu holds never move it between bands.
+        host.mergedPresentation.topmost = true;
+        host.mergedPresentation.insertAfter = host.hwnd;
+        // Merged chrome belongs to the bar; the center has no separate glass
+        // pair. Reapplying TOPMOST would raise it above a side-control menu
+        // before that menu's message pump repairs its order on the next turn.
+        snowdesktop::popup_window_pair_z_order::MaintainContentBand(host.hwnd, true);
+        if (statusBar_ && host.mergedPresentationActive)
+            statusBar_->ApplyMergedDockPresentation(host.monitor, host.mergedPresentation);
+        // Continue through the shared search/window-animation ordering below.
+    }
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;
     const HWND navigationWindow =
@@ -330,14 +367,16 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     {
         // Borrow the presentation band without changing the Dock's summon,
         // input or focus state. Always move the content/backdrop as a pair.
-        host.backdrop.SetPopupWindowPairZOrder(
+        if (!merged) host.backdrop.SetPopupWindowPairZOrder(
             host.hwnd, HWND_TOPMOST, true);
         if (!wasTopmost)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-promoted-for-animation", host.hwnd);
         const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
-        const HWND pairEnd = host.backdrop.IsBackdropWindow(nextWindow)
+        HWND pairEnd = host.backdrop.IsBackdropWindow(nextWindow)
             ? nextWindow : host.hwnd;
+        if (merged && statusBar_)
+            if (const HWND stripBottom = statusBar_->MergedPresentationBottomWindow(host.monitor)) pairEnd = stripBottom;
         // An already-topmost pair deliberately does not raise itself above
         // menus on policy refresh. Lower the transition below its complete
         // pair instead of inserting it between the content and glass helper.
@@ -364,8 +403,16 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         ApplyDragPreviewLayerPolicy();
         return;
     }
-    const bool promoted =
-        IsPersistentDockHostEffectivelyFloating(host);
+    if (merged) { ApplyDragPreviewLayerPolicy(); return; }
+    // Retain the floating band until the last closing frame, without feeding
+    // presentation visibility back into ShouldShowPersistentDockHost.
+    const bool hostsCollectionPopup =
+        popupAnchoredToDock_ && collectionPopupDockHost_ == &host &&
+        (popupAnimation_.IsInteractive() || !popupAnimation_.IsHidden()) &&
+        ShouldShowFloatingPopupWindow();
+    const bool promoted = IsPersistentDockHostEffectivelyFloating(host) ||
+        hostsCollectionPopup ||
+        (host.mergedPresentationActive && host.mergedAnimation.IsClosing());
     const bool systemShowDesktopGuard =
         systemShowDesktopDockLayerGuardActive_ &&
         ShouldShowPersistentDockHost(host);
@@ -431,10 +478,17 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
 
 bool DesktopApp::ShouldKeepFloatingPopupTopmostForShellMenu() const
 {
-    return IsCollectionPopupHostedByFloatingWindow() &&
+    const bool fullscreenDock = floatingDockHost_ && floatingDockHost_->active &&
+        floatingDockHost_->promoted && floatingDockHost_->hwnd &&
+        IsWindowVisible(floatingDockHost_->hwnd) && statusBar_ &&
+        statusBar_->IsFullscreen(floatingDockHost_->monitor);
+    // Demoting a fullscreen-summoned Dock also leaves its native Shell menu
+    // behind a topmost fullscreen application. The tracker must join the same
+    // band, just like a menu opened from the floating collection popup.
+    return fullscreenDock || (IsCollectionPopupHostedByFloatingWindow() &&
         floatingPopupHwnd_ &&
         IsWindow(floatingPopupHwnd_) &&
-        IsWindowVisible(floatingPopupHwnd_);
+        IsWindowVisible(floatingPopupHwnd_));
 }
 
 void DesktopApp::BeginShellPopupMenuLayer()

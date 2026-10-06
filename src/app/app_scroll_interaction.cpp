@@ -1,4 +1,5 @@
 #include "app.h"
+#include "categorized_popup_scope.h"
 
 // Mouse-wheel routing across active drag, popup and widget containers.
 
@@ -155,6 +156,15 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         if (PtInRect(&popup, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
+            if (auto* view = GetCategorizedPopupView())
+            {
+                CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+                if (view->TryScrollTabs(pt, delta))
+                {
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+            }
             if (UsesCollectionPopupFan(*popupWidget))
             {
                 ScrollCollectionPopupFan(-static_cast<double>(delta) / WHEEL_DELTA);
@@ -200,10 +210,12 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
             data->type == DesktopWidgetType::FileGroup)
         {
             auto* categorized = dynamic_cast<ScrollingItemWidget*>(wc);
-            if (categorized && categorized->TryScrollTabs(pt, delta))
+            bool tabsChanged = false;
+            if (categorized && categorized->TryScrollTabs(pt, delta, &tabsChanged))
             {
+                if (!tabsChanged) return;
                 const bool dragRefreshed = refreshDragAfterScroll();
-                SaveLayoutSlots();
+                DeferScrollLayoutSave();
                 (void)QueueDesktopWidgetComposition(data->id);
                 if (dragRefreshed)
                 {
@@ -217,7 +229,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         int maxScroll = wc->GetMaxScrollOffset();
         if (maxScroll <= 0) continue;
 
-        data->scrollOffset = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
+        const int nextScroll = std::clamp(data->scrollOffset - delta / 2, 0, maxScroll);
+        if (nextScroll == data->scrollOffset) return;
+        data->scrollOffset = nextScroll;
         if (auto* group =
                 dynamic_cast<FileGroup*>(wc))
             group->InvalidateHostedView();
@@ -231,7 +245,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         if (mouseDownHit_ && mouseDownHit_->GetContainer() == wc)
             mouseDownHit_ = nullptr;
         const bool dragRefreshed = refreshDragAfterScroll();
-        SaveLayoutSlots();
+        DeferScrollLayoutSave();
         (void)QueueDesktopWidgetComposition(data->id);
         if (dragRefreshed)
         {

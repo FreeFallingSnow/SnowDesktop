@@ -13,7 +13,10 @@ namespace snowdesktop::settings_ipc
         template<class Value> static auto Tie(Value& v) { return std::tie(__VA_ARGS__); } \
     }
 
-SD_IPC_FIELDS(calendar::CalendarEvent, v.id, v.revision, v.title, v.date, v.allDay, v.startMinutes, v.endMinutes, v.notes, v.reminderMinutes, v.notifiedTrigger);
+SD_IPC_FIELDS(calendar::CalendarEvent, v.id, v.revision, v.title, v.date, v.allDay, v.startMinutes, v.endMinutes, v.notes, v.reminderMinutes, v.notifiedTrigger, v.seriesId, v.occurrenceDate, v.occurrenceOverride);
+SD_IPC_FIELDS(calendar::CalendarSeriesRule, v.kind, v.dates, v.startDate, v.endDate, v.interval, v.weekdays, v.monthDay);
+SD_IPC_FIELDS(calendar::CalendarSeriesException, v.canceled, v.event);
+SD_IPC_FIELDS(calendar::CalendarSeries, v.id, v.revision, v.event, v.rule, v.exceptions, v.notifiedTriggers);
 SD_IPC_FIELDS(calendar::MutationResult, v.ok, v.id, v.revision, v.error);
 SD_IPC_FIELDS(winui::WidgetPermissionSnapshot,
     v.id, v.labelKey, v.label, v.description,
@@ -60,7 +63,9 @@ SD_IPC_FIELDS(winui::InstalledWidgetPackageSnapshot,
     v.developmentOverrideActive, v.canCreateDevelopmentProject, v.canInstallDevelopmentSnapshot, v.canPublishDevelopmentPackage,
     v.restorableVersions, v.permissionState, v.canRevokePermissions, v.permissions,
     v.declaredNetworkDomains, v.grantedNetworkDomains, v.invalidSources, v.workshopInstallFailures,
-    v.instances);
+    v.instances, v.canExportDevelopmentPackage);
+SD_IPC_FIELDS(winui::WidgetsPageHostOperationResult,
+    v.succeeded, v.changed, v.message);
 SD_IPC_FIELDS(winui::WidgetPermissionEditorRequest,
     v.packageId, v.packageName, v.version, v.sourceId,
     v.sourceExternalItemId, v.scopeFingerprint, v.permissionState, v.canRevoke,

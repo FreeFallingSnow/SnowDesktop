@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "languageFiles": [
+    "lang/de-DE.json", "lang/en-US.json", "lang/es-419.json", "lang/es-ES.json",
+    "lang/fr-FR.json", "lang/ja-JP.json", "lang/ko-KR.json", "lang/pt-BR.json",
+    "lang/zh-CN.json", "lang/zh-TW.json"
+  ]
+}

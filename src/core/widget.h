@@ -18,6 +18,7 @@
  */
 
 #pragma once
+#include "../text_input_state.h"
 #include "item.h"
 #include "container.h"
 #include "slot.h"
@@ -116,6 +117,7 @@ public:
     DesktopApp* GetApp() const { return app_; }
     float GetCellScale() const;
     float GetLayoutSpacingScale() const;
+    bool UsesLightContentTheme() const;
     virtual snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const;
     int Cu(float value) const;
     float FontCu(float value) const;
@@ -249,7 +251,9 @@ public:
     virtual int  GetVisibleContentHeight() const { return 0; }
     virtual void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const;
     void SetHostedFrame(const RECT* frame);
+    void SetPopupFrame(const RECT* frame);
     bool IsHosted() const { return hostedFrameActive_; }
+    bool IsPopupHosted() const { return popupFrameActive_; }
 
 protected:
     mutable std::vector<std::unique_ptr<Item>> dragSourceCache_;
@@ -261,6 +265,7 @@ protected:
     float cachedClipRadius_ = 0.0f;
     RECT hostedFrame_{};
     bool hostedFrameActive_ = false;
+    bool popupFrameActive_ = false;
 
     /** @brief 获取或创建圆角矩形裁剪几何体，frame/radius 不变时跨帧复用。 */
     ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
@@ -305,7 +310,8 @@ public:
         std::wstring_view demoIdentity = {},
         const DesktopWidget* demoCollection = nullptr,
         const ListItemDetails& details = {},
-        std::optional<bool> lightTheme = std::nullopt) const;
+        std::optional<bool> lightTheme = std::nullopt,
+        bool drawTitle = true) const;
 
     int GetListRowHeight() const;
     RECT GetListItemTextRect(RECT cell) const;
@@ -328,8 +334,8 @@ public:
     const std::wstring& GetSearchText() const { return searchText_; }
     void SetSearchText(const std::wstring& text);
     void AppendSearchChar(wchar_t ch);
-    void BackspaceSearchText();
-    void DeleteSearchText();
+    void BackspaceSearchText(bool word = false);
+    void DeleteSearchText(bool word = false);
     void ClearSearchText();
     bool IsSearchFocused() const { return searchFocused_; }
     void SetSearchFocused(bool focused);
@@ -370,6 +376,8 @@ public:
     void CommitSearchComposition(
         const std::wstring& text);
     void ClearSearchComposition();
+    void BeginSearchComposition();
+    bool IsSearchComposing() const { return searchComposing_; }
     bool GetSearchCaretRect(RECT& rect) const;
     virtual RECT GetSearchBoxRect() const { return {}; }
     bool IsSearchActive() const { return !searchText_.empty(); }
@@ -424,7 +432,12 @@ public:
         return categorizedTabRowOffset_;
     }
     virtual std::wstring CategoryIdAtPoint(POINT pt) const { (void)pt; return L""; }
-    virtual bool TryScrollTabs(POINT pt, int delta) { (void)pt; (void)delta; return false; }
+    std::vector<std::wstring> GetCategoryTabOrder() const;
+    bool BeginCategoryTabDrag(POINT point);
+    bool UpdateCategoryTabDrag(POINT point);
+    bool EndCategoryTabDrag(bool commit);
+    bool HasCategoryTabPress() const { return !pressedCategoryTab_.empty(); }
+    virtual bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) { (void)pt; (void)delta; if (changed) *changed = false; return false; }
     virtual void EnsureCategoryTabVisible(size_t index)
     {
         (void)index;
@@ -435,6 +448,10 @@ public:
 protected:
     snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
     std::wstring searchText_;
+    snowdesktop::text_input::History searchHistory_;
+    wchar_t searchHighSurrogate_ = 0;
+    bool searchComposing_ = false;
+    std::wstring searchDuplicateImeResult_;
     size_t searchCursorPos_ = 0;
     size_t searchSelectionAnchor_ = 0;
     std::wstring searchCompositionText_;
@@ -464,6 +481,11 @@ private:
     bool categorizedTabsVisibilityOverrideActive_ = false;
     bool categorizedTabsVisible_ = false;
     bool categorizedSearchAllCategories_ = false;
+    std::wstring pressedCategoryTab_;
+    std::wstring pressedCategorySourceId_;
+    POINT categoryTabPressPoint_{};
+    bool categoryTabDragging_ = false;
+    std::vector<std::wstring> categoryTabOriginalOrder_;
 };
 
 /**
@@ -571,7 +593,7 @@ public:
     WidgetHit HitTestWidget(POINT pt) const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
     bool IsPointInTabsRect(POINT pt) const;
-    bool TryScrollTabs(POINT pt, int delta) override;
+    bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void EnsureCategoryTabVisible(size_t index) override;
     std::wstring GetCategoryDisplayLabel(const std::wstring& categoryId) const;
     void InvalidateCategoryCache();
@@ -689,7 +711,7 @@ public:
     bool NeedsShellReloadAfterDrop() const override { return false; }
     RECT GetSearchBoxRect() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
-    bool TryScrollTabs(POINT pt, int delta) override;
+    bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void EnsureCategoryTabVisible(size_t index) override;
     const std::vector<size_t>& GetVisibleEntryIndices() const;
     const std::vector<std::wstring>& GetVisibleCategoryIds() const;
@@ -806,7 +828,7 @@ public:
     RECT GetSearchBoxRect() const override;
     const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
-    bool TryScrollTabs(POINT pt, int delta) override;
+    bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
     const std::vector<std::wstring>& GetVisibleCollectionIds() const;
     const std::vector<std::wstring>& GetVisibleItemKeys() const;
@@ -905,7 +927,7 @@ public:
     RECT GetSearchBoxRect() const override;
     const DesktopWidget* GetDetailsSortData() const override;
     std::wstring CategoryIdAtPoint(POINT pt) const override;
-    bool TryScrollTabs(POINT pt, int delta) override;
+    bool TryScrollTabs(POINT pt, int delta, bool* changed = nullptr) override;
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
     const std::vector<std::wstring>& GetVisibleSourceIds() const;
@@ -936,6 +958,10 @@ private:
         std::wstring desktopKey;
         size_t folderEntryIndex = static_cast<size_t>(-1);
     };
+
+    // Desktop selection uses the complete filtered list, including rows that
+    // have no materialized Slot while outside the scrolling viewport.
+    friend class DesktopApp;
 
     const std::vector<SearchResultRef>&
         GetGroupSearchResults() const;

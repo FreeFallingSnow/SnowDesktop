@@ -1,3 +1,6 @@
+#include "app_font.h"
+#include "widget_system_control_data.h"
+#include "widget_gpu_lua.h"
 #include "background_work.h"
 /**
  * @file widget_engine.cpp
@@ -12,6 +15,12 @@
  */
 
 #include "widget_engine.h"
+#include "text_input_accessibility.h"
+namespace text_input = snowdesktop::text_input;
+#include "widget_appearance_presets.h"
+#include "edge_light_codec.h"
+#include "native_control_geometry.h"
+#include "native_tooltip_content.h"
 #include "widget_menu_catalogue.h"
 #include "widget_filesystem_drop.h"
 #include "widget_button_fill.h"
@@ -1006,7 +1015,7 @@ static IDWriteTextFormat* GetCachedTextFormat(D2DState* state, float size,
     }
     else
     {
-        state->dwrite->CreateTextFormat(L"Segoe UI", nullptr, weight,
+        snowdesktop::app_fonts::CreateTextFormat(state->dwrite, L"Segoe UI", weight,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     }
     if (!format) return nullptr;
@@ -2678,12 +2687,26 @@ static int lua_MeasureText(lua_State* L)
                 "draw.measureText: invalid font resource handle");
     }
 
-    auto pushSize = [&](float width, float height) {
-        lua_createtable(L, 0, 2);
+    auto pushSize = [&](float width, float height,
+        const std::optional<D2D1_RECT_F>& ink = std::nullopt) {
+        lua_createtable(L, 0, ink ? 3 : 2);
         lua_pushnumber(L, width);
         lua_setfield(L, -2, "width");
         lua_pushnumber(L, height);
         lua_setfield(L, -2, "height");
+        if (ink)
+        {
+            lua_createtable(L, 0, 4);
+            lua_pushnumber(L, ink->left);
+            lua_setfield(L, -2, "left");
+            lua_pushnumber(L, ink->top);
+            lua_setfield(L, -2, "top");
+            lua_pushnumber(L, std::max(0.0f, ink->right - ink->left));
+            lua_setfield(L, -2, "width");
+            lua_pushnumber(L, std::max(0.0f, ink->bottom - ink->top));
+            lua_setfield(L, -2, "height");
+            lua_setfield(L, -2, "ink");
+        }
         return 1;
     };
 
@@ -2710,6 +2733,19 @@ static int lua_MeasureText(lua_State* L)
 
     DWRITE_TEXT_METRICS metrics{};
     layout->GetMetrics(&metrics);
+    DWRITE_OVERHANG_METRICS overhang{};
+    if (SUCCEEDED(layout->GetOverhangMetrics(&overhang)))
+    {
+        // Visible bounds are separate from the unchanged line metrics.
+        // Negative overhang denotes unused space inside the whole layout box.
+        D2D1_RECT_F ink{};
+        if (metrics.width > 0.0f)
+            ink = { -overhang.left, -overhang.top,
+                layout->GetMaxWidth() + overhang.right,
+                layout->GetMaxHeight() + overhang.bottom };
+        return pushSize(metrics.widthIncludingTrailingWhitespace,
+            metrics.height, ink);
+    }
     return pushSize(metrics.widthIncludingTrailingWhitespace, metrics.height);
 }
 
@@ -3086,7 +3122,7 @@ static bool IsHostAppearanceSettingKey(const std::string& key)
         key == "gradientEndA" ||
         IsRemovedPanelEffectSettingKey(key) || key == "glassEnabled" ||
         key == "glassBlurRadius" || key == "acrylicEnabled" ||
-        key == "followPersonalization";
+        key == "followPersonalization" || key == "__edgeLight";
 }
 
 static std::string FindDeclaredDefaultValue(const LuaWidget& widget, const std::string& key)
@@ -3333,6 +3369,35 @@ static bool ReadInteractionValue(lua_State* state, int index,
     }
     ancestors.erase(identity);
     return true;
+}
+
+// Values originate from the bounded native device providers, never Lua input.
+static void PushSystemControlJson(lua_State* state, const JsonValue& value)
+{
+    switch (value.type)
+    {
+    case JsonValue::Type::Null: lua_pushnil(state); break;
+    case JsonValue::Type::Boolean: lua_pushboolean(state, value.boolean); break;
+    case JsonValue::Type::Number: lua_pushnumber(state, value.number); break;
+    case JsonValue::Type::String:
+        lua_pushlstring(state, value.string.data(), value.string.size()); break;
+    case JsonValue::Type::Array:
+        lua_createtable(state, static_cast<int>(value.array.size()), 0);
+        for (std::size_t i = 0; i < value.array.size(); ++i)
+        {
+            PushSystemControlJson(state, value.array[i]);
+            lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
+        }
+        break;
+    case JsonValue::Type::Object:
+        lua_createtable(state, 0, static_cast<int>(value.object.size()));
+        for (const auto& [key, child] : value.object)
+        {
+            PushSystemControlJson(state, child);
+            lua_setfield(state, -2, key.c_str());
+        }
+        break;
+    }
 }
 
 static void PushInteractionValue(lua_State* state,
@@ -4465,6 +4530,7 @@ struct LuaDataSubscriptionHandle
 {
     WidgetEngine* engine = nullptr;
     std::uint64_t id = 0;
+    bool includeGpuDetails = false;
 };
 
 constexpr char kDataSubscriptionHandleMetatable[] =
@@ -4628,7 +4694,7 @@ static void PushDesktopDataItemValue(
 static void PushCalendarDataEventValue(lua_State* state,
     const snowdesktop::calendar::CalendarEvent& event)
 {
-    lua_createtable(state, 0, 9);
+    lua_createtable(state, 0, 12);
     lua_pushlstring(state, event.id.data(), event.id.size());
     lua_setfield(state, -2, "id");
     lua_pushinteger(state, event.revision);
@@ -4647,14 +4713,25 @@ static void PushCalendarDataEventValue(lua_State* state,
     lua_setfield(state, -2, "notes");
     lua_pushinteger(state, event.reminderMinutes);
     lua_setfield(state, -2, "reminderMinutes");
+    if (!event.seriesId.empty())
+    {
+        lua_pushlstring(state, event.seriesId.data(), event.seriesId.size());
+        lua_setfield(state, -2, "seriesId");
+        lua_pushlstring(state, event.occurrenceDate.data(), event.occurrenceDate.size());
+        lua_setfield(state, -2, "occurrenceDate");
+        lua_pushboolean(state, event.occurrenceOverride);
+        lua_setfield(state, -2, "occurrenceOverride");
+    }
 }
 
 static void PushDataSnapshotEnvelope(lua_State* state,
     const std::optional<LuaWidgetDataSnapshot>& snapshot,
-    const char* missingError = "unsubscribed")
+    const char* missingError = "unsubscribed", bool includeGpuDetails = false)
 {
     lua_createtable(state, 0, 7);
-    const bool available = snapshot && snapshot->available;
+    const bool available = snapshot && (snapshot->available ||
+        (includeGpuDetails && snapshot->topic == "system.gpu" &&
+            snowdesktop::widget_runtime::WidgetGpuValueAvailable(snapshot->gpu, true)));
     lua_pushboolean(state, available);
     lua_setfield(state, -2, "available");
     lua_pushboolean(state, !snapshot || snapshot->stale);
@@ -4673,6 +4750,12 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_setfield(state, -2, "error");
     }
     if (!available) return;
+    if (snowdesktop::widget_runtime::IsSystemControlDataTopic(snapshot->topic))
+    {
+        PushSystemControlJson(state, snapshot->systemControl);
+        lua_setfield(state, -2, "value");
+        return;
+    }
 
     lua_createtable(state, 0, 6);
     if (snapshot->topic == "system.cpu")
@@ -4791,32 +4874,7 @@ static void PushDataSnapshotEnvelope(lua_State* state,
     }
     else if (snapshot->topic == "system.gpu")
     {
-        lua_createtable(state,
-            static_cast<int>(snapshot->gpu.adapters.size()), 0);
-        int adapterIndex = 1;
-        for (const auto& adapter : snapshot->gpu.adapters)
-        {
-            lua_createtable(state, 0, 7);
-            lua_pushlstring(state, adapter.id.data(), adapter.id.size());
-            lua_setfield(state, -2, "id");
-            lua_pushlstring(state, adapter.name.data(), adapter.name.size());
-            lua_setfield(state, -2, "name");
-            lua_pushnumber(state, adapter.usagePercent);
-            lua_setfield(state, -2, "usagePercent");
-            lua_pushinteger(state, static_cast<lua_Integer>(
-                adapter.dedicatedMemoryBytes));
-            lua_setfield(state, -2, "dedicatedMemoryBytes");
-            lua_pushinteger(state, static_cast<lua_Integer>(
-                adapter.dedicatedUsedBytes));
-            lua_setfield(state, -2, "dedicatedUsedBytes");
-            lua_pushinteger(state, static_cast<lua_Integer>(
-                adapter.sharedMemoryBytes));
-            lua_setfield(state, -2, "sharedMemoryBytes");
-            lua_pushinteger(state, static_cast<lua_Integer>(
-                adapter.sharedUsedBytes));
-            lua_setfield(state, -2, "sharedUsedBytes");
-            lua_rawseti(state, -2, adapterIndex++);
-        }
+        snowdesktop::widget_runtime::PushWidgetGpuAdapters(state, snapshot->gpu, includeGpuDetails);
         lua_setfield(state, -2, "adapters");
     }
     else if (snapshot->topic == "system.storage.volumes")
@@ -5117,7 +5175,7 @@ static int lua_DataSubscriptionValue(lua_State* state)
         return 1;
     }
     PushDataSnapshotEnvelope(
-        state, handle->engine->RuntimeGetDataSnapshot(handle->id));
+        state, handle->engine->RuntimeGetDataSnapshot(handle->id, handle->includeGpuDetails), "unsubscribed", handle->includeGpuDetails);
     return 1;
 }
 
@@ -5176,6 +5234,7 @@ static int lua_DataSubscribe(lua_State* state)
         topicValue == "audio.output.analysis";
     lua_Integer maxAgeMs = audioAnalysisTopic ? 33 : 1000;
     bool maxAgeSpecified = false;
+    bool includeGpuDetails = false;
     bool updateHzSpecified = false;
     bool waveformPointsSpecified = false;
     bool spectrumBinsSpecified = false;
@@ -5210,7 +5269,8 @@ static int lua_DataSubscribe(lua_State* state)
             const bool audio = audioAnalysisTopic &&
                 (key == "features" || key == "updateHz" ||
                     key == "waveformPoints" || key == "spectrumBins");
-            if (!common && !calendar && !filesystem && !audio)
+            const bool gpu = topicValue == "system.gpu" && key == "includeDetails";
+            if (!common && !calendar && !filesystem && !audio && !gpu)
             {
                 return luaL_error(state,
                     "data.subscribe: option '%.*s' is not valid for topic '%s'",
@@ -5219,6 +5279,14 @@ static int lua_DataSubscribe(lua_State* state)
             }
             lua_pop(state, 1);
         }
+        lua_getfield(state, 2, "includeDetails");
+        if (!lua_isnil(state, -1))
+        {
+            if (!lua_isboolean(state, -1))
+                return luaL_error(state, "data.subscribe: includeDetails must be a boolean");
+            includeGpuDetails = lua_toboolean(state, -1) != 0;
+        }
+        lua_pop(state, 1);
         lua_getfield(state, 2, "maxAgeMs");
         if (!lua_isnil(state, -1))
         {
@@ -5469,7 +5537,7 @@ static int lua_DataSubscribe(lua_State* state)
 
     auto* handle = static_cast<LuaDataSubscriptionHandle*>(
         lua_newuserdata(state, sizeof(LuaDataSubscriptionHandle)));
-    *handle = { d2d->engine, result.id };
+    *handle = { d2d->engine, result.id, includeGpuDetails };
     luaL_getmetatable(state, kDataSubscriptionHandleMetatable);
     lua_setmetatable(state, -2);
     return 1;
@@ -5499,7 +5567,67 @@ static int lua_TaskStart(lua_State* state)
         }
     }
 
-    if (snowdesktop::widget_runtime::WidgetMediaTaskExecutor::
+    if (taskName == "location.current")
+    {
+        if (hasArguments)
+        {
+            lua_pushnil(state);
+            while (lua_next(state, 2) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING || !lua_isinteger(state, -1))
+                    return luaL_error(state, "task.start: location.current requires integer options");
+                size_t length = 0;
+                const char* key = lua_tolstring(state, -2, &length);
+                arguments[std::string(key, length)] = std::to_string(lua_tointeger(state, -1));
+                lua_pop(state, 1);
+            }
+        }
+        snowdesktop::widget_runtime::LocationOptions options;
+        if (!snowdesktop::widget_runtime::ParseLocationOptions(arguments, options))
+            return luaL_error(state, "task.start: invalid location.current options");
+    }
+    else if (snowdesktop::widget_runtime::IsSystemControlTask(taskName))
+    {
+        using snowdesktop::widget_runtime::SystemControlArgumentKind;
+        if (hasArguments)
+        {
+            lua_pushnil(state);
+            while (lua_next(state, 2) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING)
+                    return luaL_error(state, "task.start: system control keys must be strings");
+                size_t size = 0; const auto* keyText = lua_tolstring(state, -2, &size);
+                if (!size || size > 128) return luaL_error(state, "task.start: invalid system control key");
+                const std::string key(keyText, size);
+                const auto kind = snowdesktop::widget_runtime::SystemControlArgumentType(key);
+                if (kind == SystemControlArgumentKind::Boolean && lua_type(state, -1) == LUA_TBOOLEAN)
+                    arguments[key] = lua_toboolean(state, -1) ? "1" : "0";
+                else if (kind == SystemControlArgumentKind::Number && lua_type(state, -1) == LUA_TNUMBER)
+                {
+                    const auto value = lua_tonumber(state, -1);
+                    if (!std::isfinite(value)) return luaL_error(state, "task.start: expected a finite number");
+                    char encoded[128]{};
+                    const auto formatted = std::to_chars(std::begin(encoded), std::end(encoded), value,
+                        std::chars_format::general, std::numeric_limits<double>::max_digits10);
+                    if (formatted.ec != std::errc{}) return luaL_error(state, "task.start: number cannot be encoded");
+                    arguments[key] = std::string(encoded, formatted.ptr);
+                }
+                else if (kind == SystemControlArgumentKind::Text && lua_type(state, -1) == LUA_TSTRING)
+                {
+                    const auto* text = lua_tolstring(state, -1, &size);
+                    if (!size || size > 4096) return luaL_error(state, "task.start: system control text must contain 1 to 4096 bytes");
+                    arguments[key] = std::string(text, size);
+                    if (!IsValidUtf8Local(arguments[key])) return luaL_error(state, "task.start: expected UTF-8 text");
+                }
+                else return luaL_error(state, "task.start: unknown system control argument or incorrect type");
+                lua_pop(state, 1);
+            }
+        }
+        snowdesktop::system_control::Request request;
+        if (!snowdesktop::widget_runtime::MakeSystemControlRequest(taskName, arguments, request))
+            return luaL_error(state, "task.start: invalid system control arguments");
+    }
+    else if (snowdesktop::widget_runtime::WidgetMediaTaskExecutor::
             SupportsAction(taskName))
     {
         const bool requiresValue = taskName == "media.seek" ||
@@ -7106,14 +7234,21 @@ static int lua_TaskStart(lua_State* state)
     }
     else if (taskName == "calendar.create" ||
         taskName == "calendar.update" ||
-        taskName == "calendar.remove")
+        taskName == "calendar.remove" ||
+        taskName == "calendar.series.create" ||
+        taskName == "calendar.series.update" ||
+        taskName == "calendar.series.remove")
     {
         if (!hasArguments)
             return luaL_error(state,
                 "task.start: %s requires an arguments table",
                 taskName.c_str());
-        const bool update = taskName == "calendar.update";
-        const bool remove = taskName == "calendar.remove";
+        const bool seriesTask = taskName.starts_with("calendar.series.");
+        const bool update = taskName == "calendar.update" ||
+            taskName == "calendar.series.update";
+        const bool remove = taskName == "calendar.remove" ||
+            taskName == "calendar.series.remove";
+        const bool create = !update && !remove;
         lua_pushnil(state);
         while (lua_next(state, 2) != 0)
         {
@@ -7128,14 +7263,21 @@ static int lua_TaskStart(lua_State* state)
             const std::string_view key(
                 keyValue ? keyValue : "", keyLength);
             const bool known = key == "id" ||
+                (seriesTask && remove && key == "expectedRevision") ||
+                (seriesTask && (key == "kind" || key == "dates" ||
+                    key == "startDate" || key == "endDate" ||
+                    key == "interval" || key == "weekdays" ||
+                    key == "monthDay")) ||
                 (!remove && (key == "title" || key == "date" ||
                     key == "allDay" || key == "startMinutes" ||
                     key == "endMinutes" || key == "notes" ||
                     key == "reminderMinutes" ||
                     key == "expectedRevision"));
             const bool allowed = known &&
-                (update || key != "expectedRevision") &&
-                ((update || remove) || key != "id");
+                (update || (seriesTask && remove) || key != "expectedRevision") &&
+                (!create || key != "id") &&
+                (!remove || key == "id" ||
+                    (seriesTask && key == "expectedRevision"));
             if (!allowed)
             {
                 lua_pop(state, 2);
@@ -7181,6 +7323,72 @@ static int lua_TaskStart(lua_State* state)
                     "task.start: %s id must contain 1 to 128 bytes of valid UTF-8",
                     taskName.c_str());
             arguments.emplace("id", std::move(id));
+        }
+        if (seriesTask)
+        {
+            std::string kind;
+            std::string startDate;
+            std::string endDate;
+            if (!remove)
+            {
+                if (!readText("kind", 16, false, kind) ||
+                    (kind != "dates" && kind != "weekly" && kind != "monthly") ||
+                    !readText("startDate", 10, false, startDate) ||
+                    !snowdesktop::calendar::CalendarService::GetDateInfo(startDate) ||
+                    !readText("endDate", 10, true, endDate) ||
+                    (!endDate.empty() &&
+                        !snowdesktop::calendar::CalendarService::GetDateInfo(endDate)))
+                    return luaL_error(state, "task.start: calendar series rule is invalid");
+                arguments.emplace("kind", kind);
+                arguments.emplace("startDate", startDate);
+                arguments.emplace("endDate", endDate);
+                lua_Integer interval = 0;
+                lua_Integer monthDay = 0;
+                if (!readInteger("interval", interval) || interval < 1 || interval > 99 ||
+                    !readInteger("monthDay", monthDay) || monthDay < 0 || monthDay > 31)
+                    return luaL_error(state, "task.start: calendar series interval or monthDay is invalid");
+                arguments.emplace("interval", std::to_string(interval));
+                arguments.emplace("monthDay", std::to_string(monthDay));
+                const auto readArray = [&](const char* field, bool dates,
+                    std::size_t maximum) -> bool {
+                    lua_getfield(state, 2, field);
+                    if (!lua_istable(state, -1)) { lua_pop(state, 1); return false; }
+                    const std::size_t count = lua_rawlen(state, -1);
+                    if (count > maximum) { lua_pop(state, 1); return false; }
+                    std::string encoded;
+                    for (std::size_t index = 1; index <= count; ++index)
+                    {
+                        lua_rawgeti(state, -1, static_cast<lua_Integer>(index));
+                        if (dates)
+                        {
+                            size_t length = 0;
+                            const char* raw = lua_tolstring(state, -1, &length);
+                            const std::string value(raw ? raw : "", length);
+                            if (lua_type(state, -1) != LUA_TSTRING ||
+                                !snowdesktop::calendar::CalendarService::GetDateInfo(value))
+                            { lua_pop(state, 2); return false; }
+                            if (!encoded.empty()) encoded.push_back(',');
+                            encoded += value;
+                        }
+                        else
+                        {
+                            if (!lua_isinteger(state, -1) ||
+                                lua_tointeger(state, -1) < 1 ||
+                                lua_tointeger(state, -1) > 7)
+                            { lua_pop(state, 2); return false; }
+                            if (!encoded.empty()) encoded.push_back(',');
+                            encoded += std::to_string(lua_tointeger(state, -1));
+                        }
+                        lua_pop(state, 1);
+                    }
+                    lua_pop(state, 1);
+                    arguments.emplace(field, std::move(encoded));
+                    return true;
+                };
+                if (!readArray("dates", true, 366) ||
+                    !readArray("weekdays", false, 7))
+                    return luaL_error(state, "task.start: calendar series dates or weekdays is invalid");
+            }
         }
         if (!remove)
         {
@@ -7252,6 +7460,16 @@ static int lua_TaskStart(lua_State* state)
                 arguments.emplace("expectedRevision",
                     std::to_string(expectedRevision));
             }
+        }
+        else if (seriesTask)
+        {
+            lua_Integer expectedRevision = 0;
+            if (!readInteger("expectedRevision", expectedRevision) ||
+                expectedRevision <= 0 ||
+                expectedRevision > std::numeric_limits<int>::max())
+                return luaL_error(state,
+                    "task.start: calendar series expectedRevision must be a positive integer");
+            arguments.emplace("expectedRevision", std::to_string(expectedRevision));
         }
     }
     else if (hasArguments)
@@ -7595,6 +7813,9 @@ static void DrawHostCompositionUnderline(D2DState* state,
     }
 }
 
+static snowdesktop::widget_runtime::InteractionAction ReadControlSubmitAction(
+    lua_State* state, int descriptor, const char* api);
+
 static int lua_UiTextInput(lua_State* L)
 {
     const char* id = luaL_checkstring(L, 1);
@@ -7787,6 +8008,7 @@ static int lua_UiTextInput(lua_State* L)
         control.fontSize = fontSize;
         control.padding = padding;
         control.maximumUtf8Bytes = maximumUtf8Bytes;
+        control.submitAction = ReadControlSubmitAction(L, options, "control.textInput");
         std::string error;
         if (!s->engine->RuntimeRegisterV2HostControl(
                 BoundWidgetId(L), std::move(control), error))
@@ -7951,6 +8173,7 @@ static int lua_UiTextArea(lua_State* L)
         control.contentHeight = verticalExtents.content;
         control.viewportHeight = verticalExtents.viewport;
         control.maximumUtf8Bytes = maximumUtf8Bytes;
+        control.submitAction = ReadControlSubmitAction(L, options, "control.textArea");
         std::string error;
         if (!s->engine->RuntimeRegisterV2HostControl(
                 BoundWidgetId(L), std::move(control), error))
@@ -8161,6 +8384,43 @@ static std::string ReadControlIdentifier(lua_State* state, int table,
     return result;
 }
 
+static snowdesktop::widget_runtime::InteractionAction ReadControlSubmitAction(
+    lua_State* state, int descriptor, const char* api)
+{
+    snowdesktop::widget_runtime::InteractionAction action;
+    if (!descriptor) return action;
+    lua_getfield(state, lua_absindex(state, descriptor), "events");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return action;
+    }
+    luaL_checktype(state, -1, LUA_TTABLE);
+    const int events = lua_absindex(state, -1);
+    static constexpr const char* eventFields[] = { "submit" };
+    ValidateControlTableFields(state, events, eventFields, api);
+    lua_getfield(state, events, "submit");
+    if (!lua_isnil(state, -1))
+    {
+        luaL_checktype(state, -1, LUA_TTABLE);
+        const int binding = lua_absindex(state, -1);
+        static constexpr const char* actionFields[] = { "id", "value" };
+        ValidateControlTableFields(state, binding, actionFields, api);
+        action.id = ReadControlIdentifier(state, binding, "id", api);
+        lua_getfield(state, binding, "value");
+        std::size_t nodes = 0;
+        std::size_t bytes = 0;
+        std::unordered_set<const void*> ancestors;
+        std::string error;
+        if (!ReadInteractionValue(state, -1, action.value, 0,
+                nodes, bytes, ancestors, error))
+            luaL_error(state, "%s: %s", api, error.c_str());
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 2);
+    return action;
+}
+
 static double ReadControlNumber(lua_State* state, int table,
     const char* field, const char* api)
 {
@@ -8279,7 +8539,7 @@ static int LuaControlText(lua_State* state, bool multiline)
         "borderColor", "focusedBorderColor", "backgroundAlpha",
         "focusedBackgroundAlpha", "borderAlpha", "focusedBorderAlpha",
         "radius", "padding", "borderThickness", "selectAll",
-        "liveUpdate", "maxBytes",
+        "liveUpdate", "maxBytes", "events",
     };
     static constexpr const char* areaFields[] = {
         "key", "storageKey", "shape", "placeholder",
@@ -8288,7 +8548,7 @@ static int LuaControlText(lua_State* state, bool multiline)
         "focusedBorderColor", "backgroundAlpha",
         "focusedBackgroundAlpha", "borderAlpha", "focusedBorderAlpha",
         "radius", "padding", "borderThickness", "selectAll",
-        "liveUpdate", "maxBytes",
+        "liveUpdate", "maxBytes", "events",
     };
     ValidateControlTableFields(state, descriptor,
         multiline ? std::span<const char* const>(areaFields)
@@ -8297,6 +8557,7 @@ static int LuaControlText(lua_State* state, bool multiline)
         state, descriptor, "key", api);
     const std::string storageKey = ReadControlIdentifier(
         state, descriptor, "storageKey", api);
+    (void)ReadControlSubmitAction(state, descriptor, api);
 
     lua_getfield(state, descriptor, "shape");
     if (lua_type(state, -1) != LUA_TTABLE)
@@ -9183,38 +9444,34 @@ static void ClearModuleCacheEntry(lua_State* L, int cache,
     lua_setfield(L, cache, key.c_str());
 }
 
-static int lua_ModuleRequire(lua_State* L)
+// Return ordinary validation/load errors before raising them in Lua. Lua uses
+// longjmp on this build, so a rejection must not unwind the C++ file/path/string
+// locals below. Keep the worker out of the object-free Lua callback's frame.
+static __declspec(noinline) int LoadRequiredWidgetModule(lua_State* L,
+    const char* pathRaw, size_t pathLength, const char*& error)
 {
-    size_t pathLength = 0;
-    const char* pathRaw = luaL_checklstring(L, 1, &pathLength);
-    if (pathLength == 0 || pathLength > 512)
-        return luaL_error(L, "module.require: path length is invalid");
-
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_loading");
-    const bool loading = lua_toboolean(L, -1) != 0;
-    lua_pop(L, 1);
-    if (!loading)
-    {
-        return luaL_error(L,
-            "module.require: modules can only be loaded while the entry script is loading");
-    }
-
     const std::wstring relativePath = Utf8ToWideLocal(
         std::string(pathRaw, pathLength));
     if (relativePath.empty() ||
         _wcsicmp(std::filesystem::path(relativePath).extension().c_str(),
             L".lua") != 0)
-        return luaL_error(L, "module.require: path must name a .lua file");
+    {
+        error = "module.require: path must name a .lua file";
+        return 0;
+    }
     const auto fullPath = ResolveCurrentPackageAsset(L, relativePath);
     if (!fullPath)
-        return luaL_error(L, "module.require: path is outside the component package");
+    {
+        error = "module.require: path is outside the component package";
+        return 0;
+    }
 
     std::error_code fileError;
     const auto fileSize = std::filesystem::file_size(*fullPath, fileError);
     if (fileError || fileSize > snowdesktop::widget::kMaxEntryLuaBytes)
     {
-        return luaL_error(L,
-            "module.require: module is missing or exceeds the 1 MiB limit");
+        error = "module.require: module is missing or exceeds the 1 MiB limit";
+        return 0;
     }
     const std::string cacheKey = WidgetWideToUtf8(*fullPath);
     lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_cache");
@@ -9228,7 +9485,10 @@ static int lua_ModuleRequire(lua_State* L)
     const int cache = lua_absindex(L, -1);
     lua_getfield(L, cache, cacheKey.c_str());
     if (lua_touserdata(L, -1) == &kModuleLoadingMarker)
-        return luaL_error(L, "module.require: circular dependency detected");
+    {
+        error = "module.require: circular dependency detected";
+        return 0;
+    }
     if (!lua_isnil(L, -1))
     {
         lua_remove(L, cache);
@@ -9247,8 +9507,8 @@ static int lua_ModuleRequire(lua_State* L)
         fileSize > 4ull * 1024ull * 1024ull -
             static_cast<std::uint64_t>(moduleBytes))
     {
-        return luaL_error(L,
-            "module.require: per-instance module count or byte quota exceeded");
+        error = "module.require: per-instance module count or byte quota exceeded";
+        return 0;
     }
 
     lua_pushlightuserdata(L, &kModuleLoadingMarker);
@@ -9259,7 +9519,8 @@ static int lua_ModuleRequire(lua_State* L)
         !file.read(source.data(), static_cast<std::streamsize>(fileSize))))
     {
         ClearModuleCacheEntry(L, cache, cacheKey);
-        return luaL_error(L, "module.require: module could not be read");
+        error = "module.require: module could not be read";
+        return 0;
     }
     const std::string chunkName = "@module/" +
         WidgetWideToUtf8(std::filesystem::path(relativePath).
@@ -9268,19 +9529,20 @@ static int lua_ModuleRequire(lua_State* L)
             chunkName.c_str()) != LUA_OK)
     {
         ClearModuleCacheEntry(L, cache, cacheKey);
-        return lua_error(L);
+        return 0;
     }
     lua_getfield(L, LUA_REGISTRYINDEX, "__widget_environment");
     if (!lua_istable(L, -1) || lua_setupvalue(L, -2, 1) == nullptr)
     {
         if (lua_isnil(L, -1)) lua_pop(L, 1);
         ClearModuleCacheEntry(L, cache, cacheKey);
-        return luaL_error(L, "module.require: sandbox environment is unavailable");
+        error = "module.require: sandbox environment is unavailable";
+        return 0;
     }
     if (snowdesktop::lua_runtime::ProtectedCall(L, 0, 1) != LUA_OK)
     {
         ClearModuleCacheEntry(L, cache, cacheKey);
-        return lua_error(L);
+        return 0;
     }
     if (lua_isnil(L, -1))
     {
@@ -9295,6 +9557,29 @@ static int lua_ModuleRequire(lua_State* L)
     lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
     lua_remove(L, cache);
     return 1;
+}
+
+static int lua_ModuleRequire(lua_State* L)
+{
+    size_t pathLength = 0;
+    const char* pathRaw = luaL_checklstring(L, 1, &pathLength);
+    if (pathLength == 0 || pathLength > 512)
+        return luaL_error(L, "module.require: path length is invalid");
+
+    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_loading");
+    const bool loading = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (!loading)
+    {
+        return luaL_error(L,
+            "module.require: modules can only be loaded while the entry script is loading");
+    }
+
+    const char* error = nullptr;
+    const int results = LoadRequiredWidgetModule(L, pathRaw, pathLength, error);
+    if (results != 0) return results;
+    if (error) return luaL_error(L, "%s", error);
+    return lua_error(L);
 }
 
 static int lua_WidgetHasPermission(lua_State* L)
@@ -9480,7 +9765,7 @@ static void PushCalendarEvent(
     lua_State* L,
     const snowdesktop::calendar::CalendarEvent& event)
 {
-    lua_createtable(L, 0, 10);
+    lua_createtable(L, 0, 13);
     lua_pushlstring(
         L, event.id.data(), event.id.size());
     lua_setfield(L, -2, "id");
@@ -9503,6 +9788,71 @@ static void PushCalendarEvent(
     lua_setfield(L, -2, "notes");
     lua_pushinteger(L, event.reminderMinutes);
     lua_setfield(L, -2, "reminderMinutes");
+    if (!event.seriesId.empty())
+    {
+        lua_pushlstring(L, event.seriesId.data(), event.seriesId.size());
+        lua_setfield(L, -2, "seriesId");
+        lua_pushlstring(L, event.occurrenceDate.data(), event.occurrenceDate.size());
+        lua_setfield(L, -2, "occurrenceDate");
+        lua_pushboolean(L, event.occurrenceOverride);
+        lua_setfield(L, -2, "occurrenceOverride");
+    }
+}
+
+static void PushCalendarSeries(lua_State* L,
+    const snowdesktop::calendar::CalendarSeries& series)
+{
+    lua_createtable(L, 0, 5);
+    lua_pushlstring(L, series.id.data(), series.id.size());
+    lua_setfield(L, -2, "id");
+    lua_pushinteger(L, series.revision);
+    lua_setfield(L, -2, "revision");
+    PushCalendarEvent(L, series.event);
+    lua_setfield(L, -2, "event");
+    lua_createtable(L, 0, 7);
+    const auto& rule = series.rule;
+    lua_pushlstring(L, rule.kind.data(), rule.kind.size());
+    lua_setfield(L, -2, "kind");
+    lua_pushlstring(L, rule.startDate.data(), rule.startDate.size());
+    lua_setfield(L, -2, "startDate");
+    lua_pushlstring(L, rule.endDate.data(), rule.endDate.size());
+    lua_setfield(L, -2, "endDate");
+    lua_pushinteger(L, rule.interval);
+    lua_setfield(L, -2, "interval");
+    lua_pushinteger(L, rule.monthDay);
+    lua_setfield(L, -2, "monthDay");
+    lua_createtable(L, static_cast<int>(rule.dates.size()), 0);
+    for (std::size_t i = 0; i < rule.dates.size(); ++i)
+    {
+        lua_pushlstring(L, rule.dates[i].data(), rule.dates[i].size());
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    lua_setfield(L, -2, "dates");
+    lua_createtable(L, static_cast<int>(rule.weekdays.size()), 0);
+    for (std::size_t i = 0; i < rule.weekdays.size(); ++i)
+    {
+        lua_pushinteger(L, rule.weekdays[i]);
+        lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    }
+    lua_setfield(L, -2, "weekdays");
+    lua_setfield(L, -2, "rule");
+    lua_createtable(L, static_cast<int>(series.exceptions.size()), 0);
+    int index = 1;
+    for (const auto& [date, exception] : series.exceptions)
+    {
+        lua_createtable(L, 0, 3);
+        lua_pushlstring(L, date.data(), date.size());
+        lua_setfield(L, -2, "occurrenceDate");
+        lua_pushboolean(L, exception.canceled);
+        lua_setfield(L, -2, "canceled");
+        if (!exception.canceled)
+        {
+            PushCalendarEvent(L, exception.event);
+            lua_setfield(L, -2, "event");
+        }
+        lua_rawseti(L, -2, index++);
+    }
+    lua_setfield(L, -2, "exceptions");
 }
 
 static snowdesktop::calendar::CalendarEvent
@@ -9753,6 +10103,20 @@ static int lua_CalendarEvents(lua_State* L)
         PushCalendarEvent(L, event);
         lua_rawseti(L, -2, index++);
     }
+    return 1;
+}
+
+static int lua_CalendarSeriesById(lua_State* L)
+{
+    if (!RequirePermission(L, "calendar.read"))
+        return 0;
+    const char* id = luaL_checkstring(L, 1);
+    auto* state = GetD2D(L);
+    const auto series = state && state->engine
+        ? state->engine->RuntimeCalendarSeriesById(id)
+        : std::nullopt;
+    if (!series) lua_pushnil(L);
+    else PushCalendarSeries(L, *series);
     return 1;
 }
 
@@ -11739,6 +12103,13 @@ WidgetEngine::~WidgetEngine()
     Shutdown();
 }
 
+void WidgetEngine::SetSystemDataProvider(std::shared_ptr<
+    snowdesktop::widget_runtime::WidgetSystemDataProvider> provider)
+{
+    if (!dataBroker_ && !previewOnly_)
+        widgetSystemDataProvider_ = std::move(provider);
+}
+
 void WidgetEngine::SetAudioAnalysisWakeCallback(
     AudioAnalysisWakeCallback callback)
 {
@@ -11786,8 +12157,9 @@ void WidgetEngine::InitializeWidgetDataBroker()
     }
     else
     {
-        widgetSystemDataProvider_ = std::make_unique<
-            snowdesktop::widget_runtime::WidgetSystemDataProvider>();
+        if (!widgetSystemDataProvider_)
+            widgetSystemDataProvider_ = std::make_shared<
+                snowdesktop::widget_runtime::WidgetSystemDataProvider>();
         widgetAudioAnalysisProvider_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>();
         widgetAudioAnalysisProvider_->SetChangedCallback(
@@ -12129,8 +12501,15 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
     ApplyWidgetDataBrokerActions();
 }
 
+void WidgetEngine::BeginTaskShutdown()
+{
+    if (taskBroker_) taskBroker_->Shutdown();
+    systemControlTasks_.reset();
+}
+
 void WidgetEngine::InitializeWidgetTaskBroker()
 {
+    systemControlTasks_.reset();
     using snowdesktop::widget_runtime::TaskDescriptor;
     taskBroker_ = std::make_unique<
         snowdesktop::widget_runtime::WidgetTaskBroker>();
@@ -12149,6 +12528,7 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     }
     if (previewOnly_)
     {
+        locationTaskExecutor_.reset();
         mediaTaskExecutor_.reset();
         audioOutputTaskExecutor_.reset();
         clipboardTaskExecutor_.reset();
@@ -12159,6 +12539,8 @@ void WidgetEngine::InitializeWidgetTaskBroker()
     }
     else
     {
+        locationTaskExecutor_ = std::make_unique<snowdesktop::widget_runtime::WidgetLocationTaskExecutor>();
+        locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
         mediaTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetMediaTaskExecutor>();
         audioOutputTaskExecutor_ = std::make_unique<
@@ -12339,6 +12721,20 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (std::exchange(pending, false) && wake) wake();
         }
     } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
+    if (locationTaskExecutor_)
+        for (auto& completion : locationTaskExecutor_->DrainCompletions())
+        {
+            const auto snapshot = taskBroker_->Snapshot(completion.id);
+            if (!snapshot || snapshot->cancelRequested) continue;
+            const auto id = completion.id;
+            const auto ok = completion.ok;
+            const auto error = completion.error;
+            if (ok) locationTaskCompletions_.insert_or_assign(id, std::move(completion));
+            (void)taskBroker_->Complete(id, ok, error);
+        }
+    if (systemControlTasks_)
+        for (auto& completion : systemControlTasks_->Drain())
+            (void)taskBroker_->Complete(completion.id, completion.ok, std::move(completion.error));
     if (mediaTaskExecutor_)
     {
         for (auto& completion : mediaTaskExecutor_->DrainCompletions())
@@ -12514,6 +12910,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 ? Utf8ToWideLocal(action.instanceId) : std::wstring{}, action.id);
         if (action.type == TaskBrokerActionType::Cancel)
         {
+            if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(action.id);
+            locationTaskCompletions_.erase(action.id);
+            if (action.name == "location.current") (void)taskBroker_->Complete(action.id, false);
+            if (systemControlTasks_) (void)systemControlTasks_->Cancel(action.id);
             if (mediaTaskExecutor_)
                 (void)mediaTaskExecutor_->Cancel(action.id);
             if (audioOutputTaskExecutor_)
@@ -12567,6 +12967,61 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (action.name == "location.current")
+        {
+            snowdesktop::widget_runtime::LocationOptions options;
+            if (!snowdesktop::widget_runtime::ParseLocationOptions(action.arguments, options))
+                (void)taskBroker_->Complete(action.id, false, "invalidArguments");
+            else if (action.preview)
+                (void)taskBroker_->Complete(action.id, false, "previewUnavailable");
+            else if (!snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(owner->permissions, "location.read"))
+                (void)taskBroker_->Complete(action.id, false, "permissionRevoked");
+            else if (!locationTaskExecutor_ || !locationTaskExecutor_->Start(action.id, options, false))
+                (void)taskBroker_->Complete(action.id, false, "taskExecutorUnavailable");
+            continue;
+        }
+        if (snowdesktop::widget_runtime::IsSystemControlTask(action.name))
+        {
+            snowdesktop::system_control::Request request;
+            if (!snowdesktop::widget_runtime::MakeSystemControlRequest(action.name, action.arguments, request))
+            {
+                (void)taskBroker_->Complete(action.id, false, "invalidArguments"); continue;
+            }
+            const auto dispatched = snowdesktop::widget_runtime::DispatchSystemControlTask(request, action.preview,
+                [&](snowdesktop::system_control::Request& liveRequest) -> snowdesktop::system_control::Result {
+                    const auto authorized = [this, id=action.id, token=action.ownerToken, name=action.name]() {
+                        if (!taskBroker_) return false;
+                        const auto task = taskBroker_->Snapshot(id);
+                        const auto permission = taskBroker_->RequiredPermission(name);
+                        const auto live = std::find_if(widgets_.begin(), widgets_.end(), [token](const auto& candidate) { return candidate.runtimeToken == token; });
+                        return task && !task->cancelRequested && task->ownerToken == token && live != widgets_.end() &&
+                            permission && snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(live->permissions, *permission);
+                    };
+                    if (!authorized())
+                        return {false, "permissionRevoked", 0};
+                    if (snowdesktop::system_control::RequiresConfirmation(liveRequest.name) || snowdesktop::system_control::RequiresPasswordPrompt(liveRequest))
+                    {
+                        if (!systemControlPromptCallback_)
+                            return {false, "confirmationUnavailable", 0};
+                        // Copy identity before the modal message loop can unload/reload its owner.
+                        const auto identity = Utf8ToWideLocal(owner->packageId) + L"\n" + owner->widgetId;
+                        snowdesktop::system_control::Result confirmed;
+                        try { confirmed = systemControlPromptCallback_(liveRequest, identity, authorized); }
+                        catch (...) { confirmed.error = "confirmationUnavailable"; }
+                        if (!confirmed.ok || !authorized())
+                            return {false, confirmed.error.empty() ? "canceled" : confirmed.error, 0};
+                    }
+                    if (!widgetSystemDataProvider_)
+                        return {false, "providerUnavailable", 0};
+                    if (!systemControlTasks_) systemControlTasks_ = std::make_unique<snowdesktop::widget_runtime::WidgetSystemControlTasks>(widgetSystemDataProvider_->Controls());
+                    if (!systemControlTasks_->Start(action.id, action.ownerToken, std::move(liveRequest)))
+                        return {false, "taskExecutorUnavailable", 0};
+                    return {true, {}, 0};
+            });
+            if (!dispatched.ok || action.preview)
+                (void)taskBroker_->Complete(action.id, dispatched.ok, dispatched.error);
+            continue;
+        }
         if (action.name == "app.search")
         {
             const auto query = action.arguments.find("query");
@@ -12995,20 +13450,39 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 
         if (action.name == "calendar.create" ||
             action.name == "calendar.update" ||
-            action.name == "calendar.remove")
+            action.name == "calendar.remove" ||
+            action.name == "calendar.series.create" ||
+            action.name == "calendar.series.update" ||
+            action.name == "calendar.series.remove")
         {
             snowdesktop::calendar::MutationResult result;
+            const bool seriesTask = action.name.starts_with("calendar.series.");
+            const auto parseInteger = [](const std::string& text,
+                int& value) {
+                const char* begin = text.data();
+                const char* finish = begin + text.size();
+                const auto parsed = std::from_chars(begin, finish, value);
+                return parsed.ec == std::errc{} && parsed.ptr == finish;
+            };
             if (action.preview)
             {
                 result.error = "previewReadOnly";
             }
-            else if (action.name == "calendar.remove")
+            else if (action.name == "calendar.remove" ||
+                action.name == "calendar.series.remove")
             {
                 const auto id = action.arguments.find("id");
-                result = id != action.arguments.end()
-                    ? RuntimeCalendarRemove(id->second)
-                    : snowdesktop::calendar::MutationResult{
-                        false, {}, 0, "invalidArguments" };
+                if (id == action.arguments.end()) result.error = "invalidArguments";
+                else if (seriesTask)
+                {
+                    const auto revision = action.arguments.find("expectedRevision");
+                    int expectedRevision = 0;
+                    result = revision != action.arguments.end() &&
+                        parseInteger(revision->second, expectedRevision)
+                        ? RuntimeCalendarSeriesRemove(id->second, expectedRevision)
+                        : snowdesktop::calendar::MutationResult{false, id->second, 0, "invalidArguments"};
+                }
+                else result = RuntimeCalendarRemove(id->second);
             }
             else
             {
@@ -13020,15 +13494,6 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 const auto end = action.arguments.find("endMinutes");
                 const auto reminder =
                     action.arguments.find("reminderMinutes");
-                const auto parseInteger = [](const std::string& text,
-                    int& value) {
-                    const char* begin = text.data();
-                    const char* finish = begin + text.size();
-                    const auto parsed = std::from_chars(
-                        begin, finish, value);
-                    return parsed.ec == std::errc{} &&
-                        parsed.ptr == finish;
-                };
                 snowdesktop::calendar::CalendarEvent event;
                 bool valid = title != action.arguments.end() &&
                     date != action.arguments.end() &&
@@ -13052,6 +13517,66 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 if (!valid)
                 {
                     result.error = "invalidArguments";
+                }
+                else if (seriesTask)
+                {
+                    snowdesktop::calendar::CalendarSeries series;
+                    series.event = std::move(event);
+                    const auto get = [&](const char* key) -> const std::string* {
+                        const auto found = action.arguments.find(key);
+                        return found == action.arguments.end() ? nullptr : &found->second;
+                    };
+                    const auto* kind = get("kind");
+                    const auto* startDate = get("startDate");
+                    const auto* endDate = get("endDate");
+                    const auto* interval = get("interval");
+                    const auto* monthDay = get("monthDay");
+                    const auto* dates = get("dates");
+                    const auto* weekdays = get("weekdays");
+                    valid = kind && startDate && endDate && interval &&
+                        monthDay && dates && weekdays &&
+                        parseInteger(*interval, series.rule.interval) &&
+                        parseInteger(*monthDay, series.rule.monthDay);
+                    if (valid)
+                    {
+                        series.rule.kind = *kind;
+                        series.rule.startDate = *startDate;
+                        series.rule.endDate = *endDate;
+                        const auto decode = [&](const std::string& encoded,
+                            bool dateValues) {
+                            std::size_t offset = 0;
+                            while (offset < encoded.size())
+                            {
+                                const auto separator = encoded.find(',', offset);
+                                const auto value = encoded.substr(offset,
+                                    separator == std::string::npos ? std::string::npos : separator - offset);
+                                if (dateValues) series.rule.dates.push_back(value);
+                                else
+                                {
+                                    int weekday = 0;
+                                    if (!parseInteger(value, weekday)) return false;
+                                    series.rule.weekdays.push_back(weekday);
+                                }
+                                if (separator == std::string::npos) break;
+                                offset = separator + 1;
+                            }
+                            return true;
+                        };
+                        valid = decode(*dates, true) && decode(*weekdays, false);
+                    }
+                    if (!valid) result.error = "invalidArguments";
+                    else if (action.name == "calendar.series.create")
+                        result = RuntimeCalendarSeriesCreate(std::move(series));
+                    else
+                    {
+                        const auto* id = get("id");
+                        const auto* revision = get("expectedRevision");
+                        int expectedRevision = 0;
+                        result = id && revision &&
+                            parseInteger(*revision, expectedRevision)
+                            ? RuntimeCalendarSeriesUpdate(*id, expectedRevision, std::move(series))
+                            : snowdesktop::calendar::MutationResult{false, {}, 0, "invalidArguments"};
+                    }
                 }
                 else if (action.name == "calendar.create")
                 {
@@ -14323,6 +14848,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             calendarMutationCompletions_.find(completion.id);
         const auto notificationCompletion =
             notificationTaskCompletions_.find(completion.id);
+        const auto locationCompletion = locationTaskCompletions_.find(completion.id);
         const auto networkCompletion =
             networkTaskCompletions_.find(completion.id);
         const auto clipboardCompletion =
@@ -14334,6 +14860,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         if (widget == widgets_.end() ||
             widget->taskIds.erase(completion.id) == 0)
         {
+            locationTaskCompletions_.erase(completion.id);
             if (searchCompletion != appSearchCompletions_.end())
                 appSearchCompletions_.erase(searchCompletion);
             if (itemSearchCompletion != itemSearchCompletions_.end())
@@ -14367,9 +14894,20 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         const bool calendarTask =
             completion.name == "calendar.create" ||
             completion.name == "calendar.update" ||
-            completion.name == "calendar.remove";
+            completion.name == "calendar.remove" ||
+            completion.name == "calendar.series.create" ||
+            completion.name == "calendar.series.update" ||
+            completion.name == "calendar.series.remove";
         if (calendarTask &&
             calendarCompletion == calendarMutationCompletions_.end())
+        {
+            completion.ok = false;
+            completion.error = "taskResultUnavailable";
+        }
+        const bool locationTask = completion.name == "location.current";
+        const auto* locationResult = locationCompletion != locationTaskCompletions_.end() ? &locationCompletion->second : nullptr;
+        if (completion.ok && locationTask && (!locationResult ||
+            !snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(widget->permissions, "location.read")))
         {
             completion.ok = false;
             completion.error = "taskResultUnavailable";
@@ -14635,7 +15173,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 nextOffset, hasMore,
                 catalogRevision, calendarTask, itemSearchTask,
                 calendarResult, notificationIdTask,
-                notificationCompletion, networkTask,
+                notificationCompletion, locationTask, locationResult, networkTask,
                 networkResult, clipboardReadTask,
                 clipboardResult, filesystemPickerTask,
                 filesystemPickerResult, filesystemDataTask,
@@ -14704,6 +15242,16 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             notificationCompletion->second.size());
                         lua_setfield(eventState, -2,
                             "notificationId");
+                    }
+                    else if (locationTask)
+                    {
+                        lua_createtable(eventState, 0, 6);
+                        lua_pushnumber(eventState, locationResult->latitude); lua_setfield(eventState, -2, "latitude");
+                        lua_pushnumber(eventState, locationResult->longitude); lua_setfield(eventState, -2, "longitude");
+                        lua_pushnumber(eventState, locationResult->accuracyMeters); lua_setfield(eventState, -2, "accuracyMeters");
+                        lua_pushinteger(eventState, locationResult->timestampMs); lua_setfield(eventState, -2, "timestampMs");
+                        lua_pushlstring(eventState, locationResult->source.data(), locationResult->source.size());
+                        lua_setfield(eventState, -2, "source");
                     }
                     else if (networkTask)
                     {
@@ -14951,6 +15499,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
         if (notificationCompletion !=
                 notificationTaskCompletions_.end())
             notificationTaskCompletions_.erase(notificationCompletion);
+        locationTaskCompletions_.erase(completion.id);
         if (networkCompletion != networkTaskCompletions_.end())
             networkTaskCompletions_.erase(networkCompletion);
         if (clipboardCompletion != clipboardTaskCompletions_.end())
@@ -14978,6 +15527,9 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     for (const std::uint64_t taskId : widget.taskIds)
     {
         (void)taskBroker_->Cancel(taskId, reason);
+        if (locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
+        locationTaskCompletions_.erase(taskId);
+        if (systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
         if (mediaTaskExecutor_)
             (void)mediaTaskExecutor_->Cancel(taskId);
         if (audioOutputTaskExecutor_)
@@ -15029,8 +15581,10 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
                 RuntimeInvalidateHost(widgetId);
             });
 
-    // Initialize the package registry before loading layouts or menus.
+    // Warm the validated package catalogue and this UI thread's menu metadata
+    // before loading layouts, so the first Add Widget popup only probes changes.
     (void)GetWidgetPackageManager();
+    (void)ListAvailableMenuEntries();
 
     // Init storage path
     g_storagePath = GetDataFilePath(L"SnowDesktop.storage.json");
@@ -15186,13 +15740,16 @@ void WidgetEngine::Shutdown()
         ApplyWidgetDataBrokerActions();
     }
     if (widgetSystemDataProvider_)
-        widgetSystemDataProvider_->StopAll();
+        widgetSystemDataProvider_->RemoveConsumer("widgets");
     if (widgetAudioAnalysisProvider_)
         widgetAudioAnalysisProvider_->Stop();
     widgets_.clear();
+    systemControlTasks_.reset();
     widgetSystemDataProvider_.reset();
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
+    locationTaskExecutor_.reset();
+    locationTaskCompletions_.clear();
     mediaTaskExecutor_.reset();
     audioOutputTaskExecutor_.reset();
     clipboardTaskExecutor_.reset();
@@ -18346,58 +18903,23 @@ static void DrawWidgetViewNode(D2DState* state,
             : 0.0f;
         const float thumbRadius = std::min(8.0f, std::max(3.0f,
             std::min(node.frame.width, node.frame.height) * 0.3f));
-        const auto content = snowdesktop::widget_runtime::
-            ViewNodeContentRect(node);
-        const float mainLength = vertical
-            ? content.height : content.width;
-        const float inset = std::min(thumbRadius,
-            std::max(0.0f, mainLength * 0.5f));
         const float trackThickness = std::min(4.0f,
             vertical ? node.frame.width : node.frame.height);
-        D2D1_RECT_F trackRect{};
-        if (vertical)
-        {
-            const float x = state->widgetRect.left + content.x +
-                content.width * 0.5f;
-            trackRect = D2D1::RectF(x - trackThickness * 0.5f,
-                state->widgetRect.top + content.y + inset,
-                x + trackThickness * 0.5f,
-                state->widgetRect.top + content.y + content.height - inset);
-        }
-        else
-        {
-            const float y = state->widgetRect.top + content.y +
-                content.height * 0.5f;
-            trackRect = D2D1::RectF(
-                state->widgetRect.left + content.x + inset,
-                y - trackThickness * 0.5f,
-                state->widgetRect.left + content.x + content.width - inset,
-                y + trackThickness * 0.5f);
-        }
-        const float trackRadius = trackThickness * 0.5f;
+        const auto content = snowdesktop::widget_runtime::ViewNodeContentRect(node);
+        const auto geometry = snowdesktop::native_controls::Slider(
+            D2D1::RectF(state->widgetRect.left + content.x, state->widgetRect.top + content.y,
+                state->widgetRect.left + content.x + content.width,
+                state->widgetRect.top + content.y + content.height),
+            thumbRadius, trackThickness, normalized, vertical);
+        const auto& trackRect = geometry.track;
+        const auto& fillRect = geometry.fill;
+        const auto& thumb = geometry.thumb;
+        const float trackRadius = geometry.trackRadius;
         if (ID2D1SolidColorBrush* track = GetCachedBrush(state,
                 static_cast<int>(style.background.value_or(0xFFFFFF)),
                 opacity * (style.background ? 1.0f : 0.22f)))
             state->ctx->FillRoundedRectangle(D2D1::RoundedRect(
                 trackRect, trackRadius, trackRadius), track);
-        D2D1_RECT_F fillRect = trackRect;
-        D2D1_POINT_2F thumb{};
-        if (vertical)
-        {
-            const float y = trackRect.bottom - normalized *
-                (trackRect.bottom - trackRect.top);
-            fillRect.top = y;
-            thumb = D2D1::Point2F(
-                (trackRect.left + trackRect.right) * 0.5f, y);
-        }
-        else
-        {
-            const float x = trackRect.left + normalized *
-                (trackRect.right - trackRect.left);
-            fillRect.right = x;
-            thumb = D2D1::Point2F(x,
-                (trackRect.top + trackRect.bottom) * 0.5f);
-        }
         const std::uint32_t fillColor =
             style.foreground.value_or(0x4C9AFF);
         if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
@@ -18961,41 +19483,11 @@ static void DrawWidgetViewTooltip(D2DState* state,
         DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_WRAP);
     const std::wstring title = Utf8ToWideLocal(region->tooltipTitle);
     const std::wstring body = Utf8ToWideLocal(region->tooltip);
-    std::wstring text;
-    text.reserve(title.size() + body.size() + 1);
-    if (!title.empty())
-    {
-        text += title;
-        text.push_back(L'\n');
-    }
-    text += body;
-    if (!format || text.empty()) return;
-    ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(state->dwrite->CreateTextLayout(text.data(),
-            static_cast<UINT32>(text.size()), format,
-            std::max(1.0f, maximumWidth - 16.0f),
-            std::max(1.0f, maximumHeight - 12.0f), &layout)) || !layout)
-        return;
-    if (!title.empty())
-    {
-        const DWRITE_TEXT_RANGE titleRange{
-            0, static_cast<UINT32>(title.size()) };
-        layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, titleRange);
-        layout->SetFontSize(14.0f, titleRange);
-    }
-    DWRITE_TRIMMING trimming{};
-    trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
-    ComPtr<IDWriteInlineObject> ellipsis;
-    if (SUCCEEDED(state->dwrite->CreateEllipsisTrimmingSign(
-            format, &ellipsis)) && ellipsis)
-        layout->SetTrimming(&trimming, ellipsis.Get());
-    DWRITE_TEXT_METRICS metrics{};
-    if (FAILED(layout->GetMetrics(&metrics))) return;
-    const float width = std::min(maximumWidth,
-        std::max(32.0f, std::ceil(metrics.widthIncludingTrailingWhitespace) +
-            16.0f));
-    const float height = std::min(maximumHeight,
-        std::max(24.0f, std::ceil(metrics.height) + 12.0f));
+    snowdesktop::NativeTooltipTextLayout measured;
+    if (!format || FAILED(snowdesktop::MeasureNativeTooltip(state->dwrite,
+        format, title, body, maximumWidth, maximumHeight, measured))) return;
+    const auto& layout = measured.layout;
+    const float width = measured.width, height = measured.height;
     const auto& shape = region->shape;
     const bool circle = shape.type ==
         snowdesktop::widget_runtime::InteractionShapeType::Circle;
@@ -19043,6 +19535,16 @@ static void DrawWidgetSelectOverlays(D2DState* state,
     WidgetViewTransformScope transformScope(state, node);
     if (node.type == ViewNodeType::Select && node.expanded)
     {
+        const auto popup = snowdesktop::widget_runtime::
+            ViewSelectPopupFrame(node, viewportHeight);
+        if (popup.width <= 0.0f || popup.height <= 0.0f) return;
+        const D2D1_RECT_F popupRect = D2D1::RectF(
+            state->widgetRect.left + popup.x,
+            state->widgetRect.top + popup.y,
+            state->widgetRect.left + popup.x + popup.width,
+            state->widgetRect.top + popup.y + popup.height);
+        state->ctx->PushAxisAlignedClip(popupRect,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         IDWriteTextFormat* format = GetCachedTextFormat(state,
             node.fontSize, state->itemFontWeight, false,
             DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
@@ -19094,23 +19596,32 @@ static void DrawWidgetSelectOverlays(D2DState* state,
                 }
             }
         }
-    }
-    bool clipped = false;
-    if (node.clipFrame)
-    {
-        const auto& clip = *node.clipFrame;
-        state->ctx->PushAxisAlignedClip(D2D1::RectF(
-            state->widgetRect.left + clip.x,
-            state->widgetRect.top + clip.y,
-            state->widgetRect.left + clip.x + clip.width,
-            state->widgetRect.top + clip.y + clip.height),
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        clipped = true;
+        if (node.scrollContentExtent > node.scrollViewportExtent)
+        {
+            const int viewportExtent = std::max(1,
+                static_cast<int>(std::lround(popup.height)));
+            const auto scrollbar = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(0, viewportExtent,
+                    std::max(viewportExtent,
+                        static_cast<int>(std::lround(
+                            node.scrollContentExtent))),
+                    viewportExtent,
+                    static_cast<int>(std::lround(node.scrollOffset)),
+                    CalculateWidgetCellScale(
+                        state->gridCellW, state->gridCellH));
+            DrawHostRect(state, popup.x + popup.width - 5.0f,
+                popup.y, 3.0f, popup.height, 0xFFFFFF, 1.5f, 0.12f);
+            DrawHostRect(state, popup.x + popup.width - 5.0f,
+                popup.y + scrollbar.thumbStart, 3.0f,
+                static_cast<float>(scrollbar.thumbEnd -
+                    scrollbar.thumbStart),
+                0xFFFFFF, 1.5f, 0.65f);
+        }
+        state->ctx->PopAxisAlignedClip();
     }
     for (const auto* child : snowdesktop::widget_runtime::
             ViewChildrenInPaintOrder(node))
         DrawWidgetSelectOverlays(state, *child, regions, viewportHeight);
-    if (clipped) state->ctx->PopAxisAlignedClip();
 }
 
 static std::vector<LuaWidget::HostControl> BuildViewHostControls(
@@ -19128,6 +19639,9 @@ static std::vector<LuaWidget::HostControl> BuildViewHostControls(
         LuaWidget::HostControl control;
         control.type = LuaWidget::HostControl::Type::Scroll;
         control.id = viewport.key;
+        control.selectPopup = viewport.selectPopup;
+        control.initialScrollOffset =
+            static_cast<int>(std::lround(viewport.offset));
         control.rect = {
             static_cast<LONG>(std::lround(viewport.frame.x)),
             static_cast<LONG>(std::lround(viewport.frame.y)),
@@ -20336,7 +20850,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     ComPtr<IDWriteTextFormat> format;
                     const float errFontSize = std::max(9.0f, 15.0f * CalculateWidgetCellScale(
                         d2dState_->gridCellW, d2dState_->gridCellH));
-                    d2dState_->dwrite->CreateTextFormat(L"Segoe UI", nullptr,
+                    snowdesktop::app_fonts::CreateTextFormat(d2dState_->dwrite, L"Segoe UI",
                         DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                         errFontSize, L"", &format);
                     if (format)
@@ -20951,6 +21465,7 @@ void WidgetEngine::OnAudioAnalysisWake()
 void WidgetEngine::SetTaskWakeCallback(TaskWakeCallback callback)
 {
     taskWakeCallback_ = std::move(callback);
+    if (locationTaskExecutor_) locationTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
     if (filesystemTaskExecutor_)
         filesystemTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
 }
@@ -22144,6 +22659,37 @@ bool WidgetEngine::ReadBoolFlag(const std::wstring& packageId, const char* flag,
     return defaultVal;
 }
 
+bool WidgetEngine::ReadCustomAppearance(const std::wstring& widgetId,
+    PersonalizationSettings& appearance) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto selection = RuntimeGetStorageValue(widgetId, "__preset");
+    const auto& widget = widgets_[index];
+    const auto findPreset = [&](const auto& presets) -> const LuaWidgetManifest::SettingPreset* {
+        const auto found = std::find_if(presets.begin(), presets.end(),
+            [&](const auto& preset) { return preset.id == selection; });
+        return found == presets.end() ? nullptr : &*found;
+    };
+    const auto* authored = findPreset(widget.manifest.presets);
+    if (!authored) authored = findPreset(widget.scriptPresets);
+    const int fallbackContentTheme = appearance.contentTheme;
+    if (!ReadCustomColors(widgetId,
+            appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha,
+            appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha,
+            appearance.widgetBorderWidth, appearance.widgetEdgeHighlightEnabled,
+            appearance.widgetEdgeHighlightWidth, appearance.widgetEdgeHighlightStrength,
+            appearance.gradientEndA, appearance.glassEnabled, appearance.acrylicEnabled,
+            &appearance.panelGradient, &appearance.edgeLight, !authored)) return false;
+    const auto contentTheme = RuntimeGetStorageValue(widgetId, "__contentTheme");
+    if (contentTheme == "0" || contentTheme == "1") appearance.contentTheme = contentTheme == "1" ? 1 : 0;
+    if (authored && !authored->values.contains("__contentTheme"))
+        appearance.contentTheme = fallbackContentTheme;
+    appearance = snowdesktop::widget_runtime::ResolveWidgetHostAppearancePreset(
+        std::move(appearance), selection, authored ? &authored->values : nullptr);
+    return true;
+}
+
 bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& bgR, float& bgG, float& bgB, float& alpha,
     float& borderR, float& borderG, float& borderB, float& borderAlpha,
@@ -22151,9 +22697,12 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& edgeHighlightWidth, float& edgeHighlightStrength,
     float& gradientEndA,
     bool& glassEnabled, bool& acrylicEnabled,
-    snowdesktop::PanelGradient* panelGradient) const
+    snowdesktop::PanelGradient* panelGradient,
+    snowdesktop::EdgeLightSettings* edgeLight,
+    bool includeStoredValues) const
 {
     if (panelGradient) *panelGradient = {};
+    if (edgeLight) *edgeLight = {};
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
     const auto& w = widgets_[idx];
@@ -22220,9 +22769,12 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     readFloat("edgeHighlightStrength", edgeHighlightStrength,
         kDefaultEdgeHighlightStrength);
 
+    const auto readStorage = [&](const char* key) {
+        return includeStoredValues ? RuntimeGetStorageValue(widgetId, key) : std::string{};
+    };
     auto readStoredColor = [&](const char* key, float& r, float& g,
                                float& b) {
-        const std::string value = RuntimeGetStorageValue(widgetId, key);
+        const std::string value = readStorage(key);
         if (value.empty()) return;
         const int encoded = std::atoi(value.c_str());
         r = ((encoded >> 16) & 0xFF) / 255.0f;
@@ -22230,12 +22782,12 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
         b = (encoded & 0xFF) / 255.0f;
     };
     auto readStoredFloat = [&](const char* key, float& out) {
-        const std::string value = RuntimeGetStorageValue(widgetId, key);
+        const std::string value = readStorage(key);
         if (!value.empty())
             out = static_cast<float>(std::atof(value.c_str()));
     };
     auto readStoredBool = [&](const char* key, bool& out) {
-        const std::string value = RuntimeGetStorageValue(widgetId, key);
+        const std::string value = readStorage(key);
         if (!value.empty())
             out = value == "1" || value == "true";
     };
@@ -22249,14 +22801,20 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     if (panelGradient)
     {
         JsonValue value;
-        if (ParseJson(RuntimeGetStorageValue(widgetId, "__panelGradient"), value))
+        if (ParseJson(readStorage("__panelGradient"), value))
             (void)snowdesktop::DecodePanelGradient(value, *panelGradient);
     }
 
+    if (edgeLight)
+    {
+        JsonValue value;
+        if (ParseJson(readStorage("__edgeLight"), value))
+            (void)snowdesktop::DecodeEdgeLight(value, *edgeLight);
+    }
     const std::string storedLegacyBorderStyle =
-        RuntimeGetStorageValue(widgetId, "borderStyle");
+        readStorage("borderStyle");
     const std::string storedBorderWidth =
-        RuntimeGetStorageValue(widgetId, "borderWidth");
+        readStorage("borderWidth");
     if (!storedBorderWidth.empty())
     {
         borderWidth = static_cast<float>(
@@ -22265,7 +22823,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     else if (!borderWidthDeclared)
         borderWidth = 1.0f;
     const std::string storedEdgeHighlightEnabled =
-        RuntimeGetStorageValue(widgetId, "edgeHighlightEnabled");
+        readStorage("edgeHighlightEnabled");
     if (!storedEdgeHighlightEnabled.empty())
         edgeHighlightEnabled = storedEdgeHighlightEnabled == "1" ||
             storedEdgeHighlightEnabled == "true";
@@ -22275,7 +22833,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             : legacyBorderStyleDeclared
                 ? legacyBorderStyle == 1 : glassEnabled;
     const std::string storedEdgeHighlightWidth =
-        RuntimeGetStorageValue(widgetId, "edgeHighlightWidth");
+        readStorage("edgeHighlightWidth");
     if (!storedEdgeHighlightWidth.empty())
         edgeHighlightWidth = static_cast<float>(
             std::atof(storedEdgeHighlightWidth.c_str()));
@@ -22286,7 +22844,7 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
             (!storedBorderWidth.empty() || borderWidthDeclared)
             ? borderWidth : kDefaultEdgeHighlightWidth;
     const std::string storedEdgeHighlightStrength =
-        RuntimeGetStorageValue(widgetId, "edgeHighlightStrength");
+        readStorage("edgeHighlightStrength");
     if (!storedEdgeHighlightStrength.empty())
         edgeHighlightStrength = static_cast<float>(
             std::atof(storedEdgeHighlightStrength.c_str()));
@@ -22635,7 +23193,7 @@ bool WidgetEngine::RuntimeUnsubscribeData(
 
 std::optional<LuaWidgetDataSnapshot>
 WidgetEngine::RuntimeGetDataSnapshot(
-    std::uint64_t subscriptionId) const
+    std::uint64_t subscriptionId, bool includeGpuDetails) const
 {
     if (subscriptionId == 0 || !dataBroker_) return std::nullopt;
     const auto binding = dataBroker_->SubscriptionSnapshot(subscriptionId);
@@ -22673,8 +23231,14 @@ WidgetEngine::RuntimeGetDataSnapshot(
         result.available = true;
         result.stale = false;
         result.timestampMs = timestampNow;
+        if (snowdesktop::widget_runtime::IsSystemControlDataTopic(result.topic))
+            result.systemControl = snowdesktop::widget_runtime::PreviewSystemControlData(
+                result.topic, previewState == LuaWidgetPreviewDataState::Empty);
         if (previewState == LuaWidgetPreviewDataState::Empty)
+        {
+            if (result.topic == "audio.input.volume") result.available = false;
             return result;
+        }
         if (result.topic == "system.cpu")
         {
             result.cpu.available = true;
@@ -22752,6 +23316,11 @@ WidgetEngine::RuntimeGetDataSnapshot(
                     8ull * 1024 * 1024 * 1024,
                     1ull * 1024 * 1024 * 1024 }
             };
+            auto& adapter = result.gpu.adapters.front();
+            adapter.usageAvailable = true;
+            adapter.dedicatedUsageAvailable = true;
+            adapter.sharedUsageAvailable = true;
+            adapter.engines = { { 0, 0, "3D", 38.0, 38.0, 2 }, { 0, 1, "Copy", 4.0, 4.0, 1 } };
         }
         else if (result.topic == "system.storage.volumes")
         {
@@ -23113,7 +23682,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
     }
     else if (result.topic == "system.gpu")
     {
-        const auto snapshot = widgetSystemDataProvider_->Gpu();
+        const auto snapshot = widgetSystemDataProvider_->Gpu(includeGpuDetails);
         if (snapshot)
         {
             result.gpu = *snapshot;
@@ -23220,6 +23789,23 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);
         }
+    }
+    else if (snowdesktop::widget_runtime::IsSystemControlDataTopic(result.topic))
+    {
+        const auto snapshot = widgetSystemDataProvider_->Controls()->Current(result.topic);
+        if (snapshot)
+        {
+            result.systemControl = snapshot->value;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+            if (result.topic == "audio.input.volume" && result.available)
+            {
+                result.systemControl.object["minimum"] = snowdesktop::system_control::json::Number(0);
+                result.systemControl.object["maximum"] = snowdesktop::system_control::json::Number(1);
+            }
+        }
+        else result.warmingUp = true;
     }
     else if (result.topic == "audio.output.analysis")
     {
@@ -25918,6 +26504,9 @@ bool WidgetEngine::RuntimeCancelTask(
     if (!snapshot || snapshot->ownerToken != widget.runtimeToken)
         return false;
     const bool canceled = taskBroker_->Cancel(taskId);
+    if (canceled && locationTaskExecutor_) (void)locationTaskExecutor_->Cancel(taskId);
+    if (canceled) locationTaskCompletions_.erase(taskId);
+    if (canceled && systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
     if (canceled && mediaTaskExecutor_)
         (void)mediaTaskExecutor_->Cancel(taskId);
     if (canceled && audioOutputTaskExecutor_)
@@ -26061,6 +26650,60 @@ WidgetEngine::RuntimeCalendarEvents(
             snowdesktop::calendar::CalendarEvent>{};
 }
 
+std::vector<snowdesktop::calendar::CalendarEvent>
+WidgetEngine::RuntimeCalendarSingleEvents() const
+{
+    return calendarService_ ? calendarService_->SingleEvents() :
+        std::vector<snowdesktop::calendar::CalendarEvent>{};
+}
+
+std::optional<snowdesktop::calendar::CalendarEvent>
+WidgetEngine::RuntimeCalendarEventById(const std::string& id) const
+{
+    return calendarService_ ? calendarService_->EventById(id) : std::nullopt;
+}
+
+std::optional<snowdesktop::calendar::CalendarSeries>
+WidgetEngine::RuntimeCalendarSeriesById(const std::string& id) const
+{
+    return calendarService_ ? calendarService_->SeriesById(id) : std::nullopt;
+}
+
+std::vector<snowdesktop::calendar::CalendarSeries>
+WidgetEngine::RuntimeCalendarSeries() const
+{
+    return calendarService_ ? calendarService_->Series() :
+        std::vector<snowdesktop::calendar::CalendarSeries>{};
+}
+
+snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesCreate(
+    snowdesktop::calendar::CalendarSeries series)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad())
+        return { false, {}, 0, "previewReadOnly" };
+    return calendarService_ ? calendarService_->CreateSeries(std::move(series)) :
+        snowdesktop::calendar::MutationResult{ false, {}, 0, "unavailable" };
+}
+
+snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesUpdate(
+    const std::string& id, int expectedRevision,
+    snowdesktop::calendar::CalendarSeries series)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad())
+        return { false, id, 0, "previewReadOnly" };
+    return calendarService_ ? calendarService_->UpdateSeries(id, expectedRevision, std::move(series)) :
+        snowdesktop::calendar::MutationResult{ false, id, 0, "unavailable" };
+}
+
+snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesRemove(
+    const std::string& id, int expectedRevision)
+{
+    if (snowdesktop::widget_runtime::IsDryLoad())
+        return { false, id, 0, "previewReadOnly" };
+    return calendarService_ ? calendarService_->RemoveSeries(id, expectedRevision) :
+        snowdesktop::calendar::MutationResult{ false, id, 0, "unavailable" };
+}
+
 snowdesktop::calendar::MutationResult
 WidgetEngine::RuntimeCalendarCreate(
     snowdesktop::calendar::CalendarEvent event)
@@ -26094,13 +26737,13 @@ WidgetEngine::RuntimeCalendarUpdate(
 
 snowdesktop::calendar::MutationResult
 WidgetEngine::RuntimeCalendarRemove(
-    const std::string& id)
+    const std::string& id, int expectedRevision)
 {
     if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, id, 0,
             _L("app.widget_preview.api.read_only") };
     return calendarService_
-        ? calendarService_->Remove(id)
+        ? calendarService_->Remove(id, expectedRevision)
         : snowdesktop::calendar::MutationResult{
             false, id, 0, "unavailable"
         };
@@ -26447,7 +27090,8 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
             ? std::max(0, control.contentWidth - control.viewportWidth)
             : std::max(0, control.contentHeight - control.viewportHeight);
         int& offset = ScrollOffsetsForSurface(
-            widgets_[index], surface)[control.id];
+            widgets_[index], surface).try_emplace(
+                control.id, control.initialScrollOffset).first->second;
         offset = std::clamp(offset, 0, maximum);
     }
     if (control.type == LuaWidget::HostControl::Type::Input &&
@@ -26472,10 +27116,27 @@ void WidgetEngine::RuntimeRegisterHostControl(const std::wstring& widgetId,
         focusedHostInput_.minimum = control.minimum;
         focusedHostInput_.maximum = control.maximum;
         focusedHostInput_.step = control.step;
+        const std::wstring modelText=Utf8ToWideLocal(control.controlled?control.controlledText:
+            RuntimeGetStorageValue(widgetId,control.storageKey));
+        if(modelText!=focusedHostInput_.modelText&&(control.controlled||control.liveUpdate))
+        {
+            focusedHostInput_.modelText=modelText;
+            if(modelText==focusedHostInput_.text)focusedHostInput_.deferredModelText.reset();
+            else if(focusedHostInput_.composing)focusedHostInput_.deferredModelText=modelText;
+            else
+            {
+                focusedHostInput_.text=modelText;focusedHostInput_.originalText=modelText;
+                focusedHostInput_.cursor=text_input::SnapBoundary(modelText,focusedHostInput_.cursor);
+                focusedHostInput_.selectionAnchor=text_input::SnapBoundary(modelText,focusedHostInput_.selectionAnchor);
+                focusedHostInput_.history.Clear();focusedHostInput_.caretVisibility.Request();
+            }
+        }
         const bool selectionChanged =
             focusedHostInput_.controlledSelection != control.selection;
         focusedHostInput_.controlledSelection = control.selection;
-        if (selectionChanged && control.selection)
+        if (selectionChanged && control.selection && focusedHostInput_.composing)
+            focusedHostInput_.deferredSelection=true;
+        else if (selectionChanged && control.selection)
         {
             const auto anchor = snowdesktop::widget_runtime::
                 HostTextOffsetFromUtf8ByteOffset(
@@ -26609,6 +27270,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
             if (storedText != focusedHostInput_.text)
             {
                 focusedHostInput_.text = storedText;
+                focusedHostInput_.history.Clear();
                 focusedHostInput_.originalText = storedText;
                 focusedHostInput_.cursor = storedText.size();
                 focusedHostInput_.selectionAnchor =
@@ -26673,6 +27335,7 @@ bool WidgetEngine::RuntimeFocusHostInput(const std::wstring& widgetId,
         ? found->controlledText
         : RuntimeGetStorageValue(widgetId, found->storageKey));
     focusedHostInput_.originalText = focusedHostInput_.text;
+    focusedHostInput_.modelText = focusedHostInput_.text;
     focusedHostInput_.cursor = focusedHostInput_.text.size();
     focusedHostInput_.selectionAnchor = found->selectAll
         ? 0 : focusedHostInput_.cursor;
@@ -26802,6 +27465,11 @@ bool WidgetEngine::IsFocusedHostInputAt(
     if (index < 0)
         return false;
     const POINT point{ x, y };
+    for (const auto& control : widgets_[index].hostControls)
+        if (control.selectPopup && control.enabled &&
+            HostControlBelongsToSurface(control, surface) &&
+            HostControlContainsPoint(control, point))
+            return false;
     for (auto it = widgets_[index].hostControls.rbegin();
         it != widgets_[index].hostControls.rend(); ++it)
     {
@@ -28088,6 +28756,56 @@ WidgetEngine::RuntimeAccessibilitySnapshots() const
                         widget.widgetId, control->storageKey);
             }
             node.valueReadOnly = control->readOnly;
+            if (d2dState_)
+            {
+                text_input::AccessibleDocument document;
+                document.text=Utf8ToWideLocal(node.valueText);
+                document.cursor=document.anchor=document.text.size();
+                if(focusedHostInput_.active&&focusedHostInput_.widgetId==widget.widgetId&&focusedHostInput_.id==node.key)
+                {document.cursor=focusedHostInput_.cursor;document.anchor=focusedHostInput_.selectionAnchor;}
+                document.enabled=node.enabled;document.readOnly=control->readOnly;
+                const float innerWidth=std::max(1.f,node.bounds.width-control->padding.left-control->padding.right-(control->multiline?8.f:0.f));
+                const float innerHeight=std::max(1.f,node.bounds.height-control->padding.top-control->padding.bottom);
+                auto layout=control->multiline
+                    ? CreateHostMultilineTextLayout(d2dState_,document.text,control->fontSize,innerWidth)
+                    : CreateHostSingleLineTextLayout(d2dState_,document.text,control->fontSize,innerWidth,innerHeight);
+                const float left=static_cast<float>(widget.lastBounds.left)+node.bounds.x+control->padding.left;
+                const float top=static_cast<float>(widget.lastBounds.top)+node.bounds.y+control->padding.top;
+                const float scroll=control->multiline?static_cast<float>(RuntimeGetScrollOffset(widget.widgetId,node.key)):0.f;
+                const D2D1_RECT_F clip=D2D1::RectF(left,top,left+innerWidth,top+innerHeight);
+                auto access=std::make_shared<text_input::TextAccess>();
+                access->document=[document]{return std::optional<text_input::AccessibleDocument>{document};};
+                access->rectangles=[layout,left,top,scroll,clip](std::size_t start,std::size_t end){
+                    std::vector<text_input::Rectangle> boxesResult;if(!layout)return boxesResult;
+                    UINT32 count=0;layout->HitTestTextRange(static_cast<UINT32>(start),static_cast<UINT32>(end-start),left,top-scroll,nullptr,0,&count);
+                    std::vector<DWRITE_HIT_TEST_METRICS> boxes(count);
+                    if(count&&SUCCEEDED(layout->HitTestTextRange(static_cast<UINT32>(start),static_cast<UINT32>(end-start),left,top-scroll,boxes.data(),count,&count)))
+                        for(const auto& box:boxes){const float x=std::max(clip.left,box.left),y=std::max(clip.top,box.top);
+                            const float right=std::min(clip.right,box.left+box.width),bottom=std::min(clip.bottom,box.top+box.height);
+                            if(right>=x&&bottom>y)boxesResult.push_back({x,y,right-x,bottom-y});}
+                    return boxesResult;
+                };
+                access->hit=[layout,left,top,scroll,text=document.text](text_input::Point point)->std::optional<std::size_t>{
+                    if(!layout)return {};BOOL trailing=FALSE,inside=FALSE;DWRITE_HIT_TEST_METRICS hit{};
+                    if(FAILED(layout->HitTestPoint(static_cast<float>(point.x)-left,static_cast<float>(point.y)-top+scroll,&trailing,&inside,&hit)))return {};
+                    return text_input::SnapBoundary(text,hit.textPosition+(trailing?hit.length:0));
+                };
+                access->unitBoundaries=[layout,length=document.text.size()](text_input::Unit unit){
+                    std::vector<std::size_t> positions;if(unit!=text_input::Unit::Line||!layout)return positions;
+                    UINT32 count=0;layout->GetLineMetrics(nullptr,0,&count);std::vector<DWRITE_LINE_METRICS> lines(count);
+                    if(count&&SUCCEEDED(layout->GetLineMetrics(lines.data(),count,&count))){std::size_t at=0;positions.push_back(0);
+                        for(const auto& line:lines){at=std::min(length,at+line.length);positions.push_back(at);}}
+                    return positions;
+                };
+                access->visibleRanges=[layout,scroll,innerHeight,length=document.text.size()]{
+                    std::vector<std::pair<std::size_t,std::size_t>> ranges;if(!layout)return ranges;
+                    UINT32 count=0;layout->GetLineMetrics(nullptr,0,&count);std::vector<DWRITE_LINE_METRICS> lines(count);
+                    if(count&&SUCCEEDED(layout->GetLineMetrics(lines.data(),count,&count))){std::size_t at=0;float y=-scroll;
+                        for(const auto& line:lines){const auto end=std::min(length,at+line.length);if(y+line.height>0&&y<innerHeight)ranges.emplace_back(at,end);at=end;y+=line.height;}}
+                    return ranges;
+                };
+                node.textAccess=std::move(access);node.textAccessUsesScreenCoordinates=false;
+            }
             if (control->numeric)
             {
                 node.minimum = control->minimum;
@@ -28275,6 +28993,7 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
         if (focused)
         {
             focusedHostInput_.text = value;
+            focusedHostInput_.history.Clear();
             focusedHostInput_.originalText = value;
             focusedHostInput_.cursor = value.size();
             focusedHostInput_.selectionAnchor = value.size();
@@ -28301,6 +29020,37 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
 
     if (request.kind == LuaWidgetAccessibilityActionKind::SetValue)
         return setHostValue(request.textValue);
+    if (request.kind == LuaWidgetAccessibilityActionKind::SetTextSelection ||
+        request.kind == LuaWidgetAccessibilityActionKind::RevealTextPosition)
+    {
+        const auto control=std::find_if(widget.hostControls.rbegin(),widget.hostControls.rend(),[&](const auto& candidate){
+            return candidate.type==LuaWidget::HostControl::Type::Input&&candidate.enabled&&candidate.id==request.nodeKey;});
+        if(control==widget.hostControls.rend())return false;
+        if(request.kind==LuaWidgetAccessibilityActionKind::SetTextSelection)
+        {
+            if(!focusedHostInput_.active||focusedHostInput_.widgetId!=request.widgetId||focusedHostInput_.id!=request.nodeKey)
+                if(!RuntimeFocusHostInput(request.widgetId,request.nodeKey,"accessibility"))return false;
+            if(focusedHostInput_.composing)return false;
+            const auto previousAnchor=focusedHostInput_.selectionAnchor,previousCursor=focusedHostInput_.cursor;
+            focusedHostInput_.selectionAnchor=text_input::SnapBoundary(focusedHostInput_.text,request.textAnchor);
+            focusedHostInput_.cursor=text_input::SnapBoundary(focusedHostInput_.text,request.textCursor);
+            focusedHostInput_.caretVisibility.Request();
+            if(focusedHostInput_.controlledSelection)
+                DispatchHostInputSelectionChange(request.widgetId,request.nodeKey,focusedHostInput_.selectionChangeAction,
+                    focusedHostInput_.text,previousAnchor,previousCursor,focusedHostInput_.selectionAnchor,focusedHostInput_.cursor,"accessibility");
+        }
+        else if(control->multiline&&d2dState_)
+        {
+            const auto text=focusedHostInput_.active&&focusedHostInput_.widgetId==request.widgetId&&focusedHostInput_.id==request.nodeKey
+                ?focusedHostInput_.text:Utf8ToWideLocal(control->controlled?control->controlledText:RuntimeGetStorageValue(request.widgetId,control->storageKey));
+            const auto layout=CreateHostMultilineTextLayout(d2dState_,text,control->fontSize,
+                std::max(1.f,static_cast<float>(control->rect.right-control->rect.left)-control->padding.left-control->padding.right-8.f));
+            if(!layout)return false;float x=0,y=0;DWRITE_HIT_TEST_METRICS hit{};
+            if(FAILED(layout->HitTestTextPosition(static_cast<UINT32>(std::min(request.textCursor,text.size())),FALSE,&x,&y,&hit)))return false;
+            RuntimeSetScrollOffset(request.widgetId,request.nodeKey,static_cast<int>(std::lround(y)));
+        }
+        RuntimeInvalidateHost(request.widgetId);return true;
+    }
     if (request.kind ==
         LuaWidgetAccessibilityActionKind::SetScrollOffset)
     {
@@ -28487,6 +29237,11 @@ bool WidgetEngine::IsHostInputAt(
     if (index < 0)
         return false;
     const POINT point{ x, y };
+    for (const auto& control : widgets_[index].hostControls)
+        if (control.selectPopup && control.enabled &&
+            HostControlBelongsToSurface(control, surface) &&
+            HostControlContainsPoint(control, point))
+            return false;
     for (auto it = widgets_[index].hostControls.rbegin();
         it != widgets_[index].hostControls.rend(); ++it)
     {
@@ -28758,6 +29513,7 @@ bool WidgetEngine::SetHostInputComposition(
         return true;
     }
     focusedHostInput_.pendingHighSurrogate = 0;
+    focusedHostInput_.composing = true;
     const size_t boundedCursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
     const size_t boundedAnchor = std::min(
@@ -28798,6 +29554,10 @@ bool WidgetEngine::CommitHostInputComposition(
     }
     focusedHostInput_.pendingHighSurrogate = 0;
 
+    const snowdesktop::text_input::Snapshot before{
+        focusedHostInput_.text, focusedHostInput_.cursor,
+        focusedHostInput_.selectionAnchor};
+
     const std::wstring previousText = focusedHostInput_.text;
     focusedHostInput_.cursor = std::min(
         focusedHostInput_.cursor, focusedHostInput_.text.size());
@@ -28827,6 +29587,9 @@ bool WidgetEngine::CommitHostInputComposition(
     focusedHostInput_.compositionText.clear();
     focusedHostInput_.compositionCursor = 0;
     focusedHostInput_.caretVisibility.Request();
+    focusedHostInput_.history.Record(before, {focusedHostInput_.text,
+        focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
+    focusedHostInput_.duplicateImeResult = text;
     if (focusedHostInput_.liveUpdate)
     {
         if (focusedHostInput_.controlled)
@@ -28846,13 +29609,33 @@ bool WidgetEngine::CommitHostInputComposition(
 
 void WidgetEngine::ClearHostInputComposition()
 {
-    if (!focusedHostInput_.active ||
-        focusedHostInput_.compositionText.empty())
-        return;
+    if (!focusedHostInput_.active) return;
+    focusedHostInput_.composing = false;
     focusedHostInput_.compositionText.clear();
     focusedHostInput_.compositionCursor = 0;
+    if(focusedHostInput_.deferredModelText)
+    {
+        focusedHostInput_.text=std::move(*focusedHostInput_.deferredModelText);focusedHostInput_.deferredModelText.reset();
+        focusedHostInput_.originalText=focusedHostInput_.text;
+        focusedHostInput_.cursor=text_input::SnapBoundary(focusedHostInput_.text,focusedHostInput_.cursor);
+        focusedHostInput_.selectionAnchor=text_input::SnapBoundary(focusedHostInput_.text,focusedHostInput_.selectionAnchor);
+        focusedHostInput_.history.Clear();
+    }
+    if(focusedHostInput_.deferredSelection&&focusedHostInput_.controlledSelection)
+    {
+        const auto anchor=snowdesktop::widget_runtime::HostTextOffsetFromUtf8ByteOffset(focusedHostInput_.text,focusedHostInput_.controlledSelection->start);
+        const auto cursor=snowdesktop::widget_runtime::HostTextOffsetFromUtf8ByteOffset(focusedHostInput_.text,focusedHostInput_.controlledSelection->finish);
+        if(anchor&&cursor){focusedHostInput_.selectionAnchor=*anchor;focusedHostInput_.cursor=*cursor;}
+    }
+    focusedHostInput_.deferredSelection=false;
     focusedHostInput_.caretVisibility.Request();
     RuntimeInvalidateHost(focusedHostInput_.widgetId);
+}
+void WidgetEngine::BeginHostInputComposition()
+{
+    if(!focusedHostInput_.active)return;
+    focusedHostInput_.composing=true;focusedHostInput_.compositionText.clear();
+    focusedHostInput_.compositionCursor=0;focusedHostInput_.duplicateImeResult.clear();
 }
 
 bool WidgetEngine::HandleHostInputChar(wchar_t ch)
@@ -28861,6 +29644,11 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
         return false;
     if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
             true, focusedHostInput_.readOnly)) return true;
+    if(!focusedHostInput_.duplicateImeResult.empty()&&focusedHostInput_.duplicateImeResult.front()==ch)
+    {focusedHostInput_.duplicateImeResult.erase(0,1);return true;}
+    focusedHostInput_.duplicateImeResult.clear();
+    const snowdesktop::text_input::Snapshot before{
+        focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor};
     if (ch >= 0xD800 && ch <= 0xDBFF)
     {
         focusedHostInput_.pendingHighSurrogate = ch;
@@ -28907,6 +29695,8 @@ bool WidgetEngine::HandleHostInputChar(wchar_t ch)
     focusedHostInput_.selectionAnchor =
         focusedHostInput_.cursor;
     focusedHostInput_.caretVisibility.Request();
+    focusedHostInput_.history.Record(before, {focusedHostInput_.text,
+        focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
     if (focusedHostInput_.liveUpdate)
     {
         if (focusedHostInput_.controlled)
@@ -29098,6 +29888,8 @@ bool WidgetEngine::ExecuteHostInputEditCommand(
 
     if (changed)
     {
+        focusedHostInput_.history.Record({previousText, previousCursor, previousSelectionAnchor},
+            {focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
         focusedHostInput_.caretVisibility.Request();
         if (focusedHostInput_.liveUpdate)
         {
@@ -29129,6 +29921,9 @@ bool WidgetEngine::ExecuteHostInputEditCommand(
 bool WidgetEngine::HandleHostInputKey(WPARAM key)
 {
     if (!focusedHostInput_.active) return false;
+    focusedHostInput_.duplicateImeResult.clear();
+    if (focusedHostInput_.composing &&
+        (key == VK_RETURN || key == VK_ESCAPE)) return true;
     focusedHostInput_.pendingHighSurrogate = 0;
 
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -29213,15 +30008,46 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     };
 
     bool changed = false;
-    if (key == VK_ESCAPE)
+    const bool historyNavigation = ctrl && (key == 'Z' || key == 'Y');
+    if (historyNavigation)
+    {
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly)) return true;
+        changed = key == 'Y' || shift
+            ? focusedHostInput_.history.Redo(focusedHostInput_.text,
+                focusedHostInput_.cursor, focusedHostInput_.selectionAnchor)
+            : focusedHostInput_.history.Undo(focusedHostInput_.text,
+                focusedHostInput_.cursor, focusedHostInput_.selectionAnchor);
+    }
+    else if (key == VK_ESCAPE)
     {
         BlurHostInput(true);
         return true;
     }
-    if (key == VK_RETURN)
+    else if (key == VK_RETURN)
     {
         if (!focusedHostInput_.multiline || ctrl)
         {
+            if (!focusedHostInput_.controlled &&
+                !focusedHostInput_.submitAction.id.empty())
+            {
+                // Commit the storage-bound editor before the callback consumes
+                // or clears its value. A later blur must not restore the draft.
+                const auto widgetId = focusedHostInput_.widgetId;
+                const auto inputId = focusedHostInput_.id;
+                const auto inputSurface = focusedHostInput_.surface;
+                const auto submitAction = focusedHostInput_.submitAction;
+                const auto text = focusedHostInput_.text;
+                BlurHostInput(false);
+                WidgetSurfaceScope surfaceScope(d2dState_, inputSurface.c_str());
+                snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
+                    trustedGestureState_, true);
+                snowdesktop::widget_runtime::HostInputSubmitFocusScope focusScope(
+                    hostInputSubmitFocus_, widgetId, inputId, inputSurface);
+                DispatchHostInputAction(widgetId, inputId,
+                    submitAction, "submit", text, false, "keyboard");
+                return true;
+            }
             DispatchHostInputAction(focusedHostInput_.widgetId,
                 focusedHostInput_.id, focusedHostInput_.submitAction,
                 "submit", focusedHostInput_.text, false, "keyboard");
@@ -29231,6 +30057,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         const size_t start = selectionStart();
         const size_t end = selectionEnd();
         size_t nextCursor = focusedHostInput_.cursor;
+        if (!snowdesktop::widget_runtime::HostInputAllowsMutation(
+                true, focusedHostInput_.readOnly)) return true;
         if (!snowdesktop::widget_runtime::TryApplyHostTextReplacement(
                 focusedHostInput_.text, start, end, L"\n",
                 focusedHostInput_.maximumUtf8Bytes, nextCursor))
@@ -29252,7 +30080,11 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         changed = eraseSelection();
         if (!changed && focusedHostInput_.cursor > 0)
         {
-            focusedHostInput_.text.erase(--focusedHostInput_.cursor, 1);
+            const auto start = ctrl ? snowdesktop::text_input::WordBoundary(
+                focusedHostInput_.text, focusedHostInput_.cursor, false)
+                : snowdesktop::text_input::PreviousBoundary(focusedHostInput_.text, focusedHostInput_.cursor);
+            focusedHostInput_.text.erase(start, focusedHostInput_.cursor - start);
+            focusedHostInput_.cursor = start;
             focusedHostInput_.selectionAnchor =
                 focusedHostInput_.cursor;
             changed = true;
@@ -29266,7 +30098,10 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         if (!changed &&
             focusedHostInput_.cursor < focusedHostInput_.text.size())
         {
-            focusedHostInput_.text.erase(focusedHostInput_.cursor, 1);
+            const auto end = ctrl ? snowdesktop::text_input::WordBoundary(
+                focusedHostInput_.text, focusedHostInput_.cursor, true)
+                : snowdesktop::text_input::NextBoundary(focusedHostInput_.text, focusedHostInput_.cursor);
+            focusedHostInput_.text.erase(focusedHostInput_.cursor, end - focusedHostInput_.cursor);
             focusedHostInput_.selectionAnchor =
                 focusedHostInput_.cursor;
             changed = true;
@@ -29417,8 +30252,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         }
         else
             focusedHostInput_.cursor = key == VK_HOME
-                ? 0 : (focusedHostInput_.cursor > 0
-                    ? focusedHostInput_.cursor - 1 : 0);
+                ? 0 : (ctrl ? snowdesktop::text_input::WordBoundary(focusedHostInput_.text, focusedHostInput_.cursor, false)
+                    : snowdesktop::text_input::PreviousBoundary(focusedHostInput_.text, focusedHostInput_.cursor));
         return finishMovement(focusedHostInput_.cursor);
     }
     else if (key == VK_RIGHT || key == VK_END)
@@ -29438,8 +30273,8 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
         else
             focusedHostInput_.cursor = key == VK_END
                 ? focusedHostInput_.text.size()
-                : std::min(focusedHostInput_.cursor + 1,
-                    focusedHostInput_.text.size());
+                : (ctrl ? snowdesktop::text_input::WordBoundary(focusedHostInput_.text, focusedHostInput_.cursor, true)
+                    : snowdesktop::text_input::NextBoundary(focusedHostInput_.text, focusedHostInput_.cursor));
         return finishMovement(focusedHostInput_.cursor);
     }
     else if (key == VK_CONTROL || key == VK_SHIFT || key == VK_MENU ||
@@ -29456,6 +30291,9 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
 
     if (changed)
     {
+        if (!historyNavigation)
+            focusedHostInput_.history.Record({previousText, previousCursor, previousSelectionAnchor},
+                {focusedHostInput_.text, focusedHostInput_.cursor, focusedHostInput_.selectionAnchor});
         focusedHostInput_.caretVisibility.Request();
         if (focusedHostInput_.liveUpdate)
         {
@@ -29718,6 +30556,46 @@ bool WidgetEngine::HandleHostUiPointer(const std::wstring& widgetId, int x, int 
         NormalizeWidgetSurface(surface);
     WidgetSurfaceScope surfaceScope(d2dState_, normalizedSurface.c_str());
     POINT point{ x, y };
+    for (auto it = widget.hostControls.rbegin();
+        it != widget.hostControls.rend(); ++it)
+    {
+        if (!it->selectPopup || !it->enabled ||
+            !HostControlBelongsToSurface(*it, normalizedSurface) ||
+            !HostControlContainsPoint(*it, point)) continue;
+        if (!wheel)
+        {
+            const float scale = CalculateWidgetCellScale(
+                widget.layoutMetrics.gridCellWidth,
+                widget.layoutMetrics.gridCellHeight);
+            const int offset = RuntimeGetScrollOffset(
+                widgetId, it->id, normalizedSurface);
+            const auto geometry = snowdesktop::widget_scroll_rules::
+                ResolveScrollbarAxisGeometry(it->rect.top,
+                    it->rect.bottom, it->contentHeight,
+                    it->viewportHeight, offset, scale);
+            if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    geometry, y, x, it->rect.right, scale))
+            {
+                hostScrollbarDrag_ = { true, widgetId, it->id,
+                    normalizedSurface, false, y, offset };
+                RuntimeInvalidateHost(widgetId);
+                return true;
+            }
+            return false;
+        }
+        const int maximum = std::max(0,
+            it->contentHeight - it->viewportHeight);
+        int& offset = ScrollOffsetsForSurface(
+            widget, normalizedSurface)[it->id];
+        const auto result = snowdesktop::widget_scroll_rules::
+            ApplyWheelDelta(offset, maximum, delta);
+        if (result.moved)
+        {
+            offset = result.offset;
+            RuntimeInvalidateHost(widgetId);
+        }
+        return true;
+    }
     for (auto it = widget.hostControls.rbegin(); it != widget.hostControls.rend(); ++it)
     {
         if (!HostControlBelongsToSurface(*it, normalizedSurface) ||
@@ -31107,6 +31985,21 @@ WidgetEngine::ListWidgetPackageSources()
     return result;
 }
 
+std::vector<std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>>
+WidgetEngine::SnapshotWidgetPackageSourceProviders()
+{
+    std::vector<std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>> result;
+    for (const auto& [id, source] : GetWidgetPackageSources())
+    {
+        (void)id;
+        result.push_back(source);
+    }
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        return left->ProviderId() < right->ProviderId();
+    });
+    return result;
+}
+
 std::vector<snowdesktop::widget::PackageDetails>
 WidgetEngine::QueryWidgetPackageSource(const std::string& providerId,
     const snowdesktop::widget::PackageQuery& query, std::string& error)
@@ -31200,7 +32093,7 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
     const std::vector<snowdesktop::widget::InstalledPackage>& installed,
     const std::filesystem::path& stagingRoot)
 {
-    if (!snapshot.authoritative) return;
+    if (!snapshot.CanSynchronize()) return;
     const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
         installed, snapshot);
     if (plan.actions.empty()) return;
@@ -31273,7 +32166,7 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
     const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
         manager.ListPackages(), snapshot);
     snowdesktop::widget::SteamWorkshopSyncResult result;
-    result.errors = plan.conflicts;
+    result.warnings = plan.conflicts;
     result.installFailures = snapshot.discoveryFailures;
     for (const auto& failure : snapshot.discoveryFailures)
     {
@@ -31389,23 +32282,40 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         std::error_code cleanupError;
         std::filesystem::remove(artifact, cleanupError);
     }
-    if (snapshot.authoritative && result.errors.empty() &&
+    // Subscription identities describe the local manifest independently of
+    // whether each package can be applied. Persist them even when one item
+    // conflicts or fails; remaining managed copies are retried from their
+    // installed source bindings on the next reconciliation.
+    if (snapshot.CanSynchronize() &&
         !snapshot.activeSteamAccountId.empty())
     {
         std::string historyError;
         if (!manager.UpdateSteamSubscriptionHistory(
                 snapshot.activeSteamAccountId,
-                snapshot.subscribedPublishedFileIds, historyError))
+                snowdesktop::widget::BuildSteamWorkshopSubscriptionHistory(
+                    snapshot, manager.SteamSubscriptionHistory()), historyError))
         {
             result.errors.push_back(
                 "cannot save Steam subscription history: " + historyError);
         }
     }
-    if (snapshot.authoritative)
+    if (snapshot.authoritative || snapshot.partial)
     {
         auto& cache = GetSteamWorkshopPackageAssociationCache();
         std::lock_guard lock(cache.mutex);
-        cache.installFailures = result.installFailures;
+        if (snapshot.authoritative)
+            cache.installFailures = result.installFailures;
+        else
+        {
+            std::erase_if(cache.installFailures, [&](const auto& failure) {
+                const auto id = snowdesktop::widget::SteamPublishedFileId(failure.externalItemId);
+                return std::find(snapshot.subscribedPublishedFileIds.begin(),
+                    snapshot.subscribedPublishedFileIds.end(), id) !=
+                    snapshot.subscribedPublishedFileIds.end();
+            });
+            cache.installFailures.insert(cache.installFailures.end(),
+                result.installFailures.begin(), result.installFailures.end());
+        }
     }
     return result;
 }
@@ -31675,6 +32585,28 @@ bool WidgetEngine::RuntimeFocusHostInputFromTrustedGesture(
     if (!trustedGestureState_.Active())
     {
         error = "trustedGestureRequired";
+        return false;
+    }
+    const std::string submitSurface(CurrentWidgetSurface(d2dState_));
+    if (hostInputSubmitFocus_ &&
+        hostInputSubmitFocus_->Matches(widgetId, id, submitSurface))
+    {
+        const int submittedIndex = FindWidget(widgetId);
+        if (submittedIndex < 0)
+        {
+            error = "hostUnavailable";
+            return false;
+        }
+        const auto& submittedWidget = widgets_[submittedIndex];
+        // Input-field clicks clear the containing widget's selection. Restore
+        // only this live editor, using the callback's fresh storage value.
+        if (hostInputSubmitFocus_->AllowsFocus(widgetId, id, submitSurface,
+                submittedWidget.valid, submittedWidget.preview,
+                IsPanelSurface(submitSurface) ? submittedWidget.panelActive
+                                             : submittedWidget.desktopVisible) &&
+            RuntimeFocusHostInput(widgetId, id, "programmatic"))
+            return true;
+        error = "controlNotFound";
         return false;
     }
     if (RuntimeFocusViewTarget(widgetId, id, "programmatic"))

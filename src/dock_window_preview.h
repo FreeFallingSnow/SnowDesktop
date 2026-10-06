@@ -111,7 +111,7 @@ public:
     bool Initialize(
         HINSTANCE instance,
         ActivateCallback activateCallback,
-        CloseCallback closeCallback);
+        CloseCallback closeCallback, std::function<void()> visibilityChanged = {});
     void Show(const std::vector<DockWindowPreviewItem>& items,
         RECT anchorScreen, DockPosition dockPosition, bool lightTheme,
         HWND dockLayerOwner = nullptr);
@@ -149,6 +149,7 @@ private:
     HWND hwnd_ = nullptr;
     ActivateCallback activateCallback_;
     CloseCallback closeCallback_;
+    std::function<void()> visibilityChanged_;
     std::vector<DockWindowPreviewItem> items_;
     std::vector<RECT> cardRects_;
     std::vector<RECT> thumbnailRects_;

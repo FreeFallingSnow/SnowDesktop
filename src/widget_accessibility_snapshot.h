@@ -19,6 +19,8 @@ enum class LuaWidgetAccessibilityActionKind
     Expand,
     Collapse,
     SetScrollOffset,
+    SetTextSelection,
+    RevealTextPosition,
 };
 
 struct LuaWidgetAccessibilityActionRequest
@@ -29,6 +31,7 @@ struct LuaWidgetAccessibilityActionRequest
     std::string nodeKey;
     double numericValue = 0.0;
     std::wstring textValue;
+    std::size_t textAnchor = 0, textCursor = 0;
 };
 
 struct LuaWidgetAccessibilitySnapshot

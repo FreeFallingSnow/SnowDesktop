@@ -5,9 +5,12 @@
 #include "shell_extension_management.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_presentation.h"
+#include "shell_extension_nvidia_compat.h"
 #include "menu_label.h"
 #include "shell_new_item_capture.h"
 #include "shell_popup_menu_tracker.h"
+#include "modern_menu_appearance_rules.h"
+#include "floating_dock_rules.h"
 
 #include <cstdlib>
 #include <chrono>
@@ -19,7 +22,10 @@
 #include <iostream>
 #include <string>
 #include <stdexcept>
+#include <thread>
+#include <utility>
 #include <wrl/client.h>
+#include <wrl/implements.h>
 
 namespace
 {
@@ -30,6 +36,91 @@ void Expect(bool condition, const char* message)
     {
         throw std::runtime_error(message);
     }
+}
+
+void TestNativeMenuThemeScope()
+{
+    namespace theme = snowdesktop::native_menu_theme;
+    using Mode = theme::detail::PreferredAppMode;
+    using snowdesktop::modern_menu::Appearance;
+    struct State
+    {
+        Mode mode = Mode::AllowDark;
+        unsigned flushes = 0;
+        unsigned windowUpdates = 0;
+        bool windowDark = false;
+        bool highContrast = false;
+    };
+    static State state;
+    state = {};
+    const theme::detail::Api api{
+        [](Mode mode) -> Mode { const auto previous = state.mode; state.mode = mode; return previous; },
+        [](HWND, bool dark) -> bool { state.windowDark = dark; ++state.windowUpdates; return true; },
+        [] { ++state.flushes; },
+        [] { return state.highContrast; },
+    };
+    const HWND window = reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
+    Expect(!theme::detail::SupportsPreferredAppMode(10, 17763) &&
+        !theme::detail::SupportsPreferredAppMode(10, 18361) &&
+        theme::detail::SupportsPreferredAppMode(10, 18362) &&
+        theme::detail::SupportsPreferredAppMode(10, 26100) &&
+        !theme::detail::SupportsPreferredAppMode(6, 7601),
+        "native theme loading rejects the old ordinal-135 ABI and supports current Windows 10/11");
+
+    // The native API is the only substitute. Use the real menu color resolver
+    // with independent expectations, including software overrides opposite to
+    // Windows, so More cannot silently revert to the OS color or stay white.
+    for (const bool systemLight : {false, true})
+    {
+        const std::pair<Appearance, bool> cases[] = {
+            {Appearance::FollowSystem, systemLight},
+            {Appearance::SystemLightBlur, true}, {Appearance::SystemDarkBlur, false},
+            {Appearance::OpaqueLight, true}, {Appearance::OpaqueDark, false},
+            {Appearance::Win10Light, true}, {Appearance::Win10Dark, false},
+        };
+        for (const auto& [appearance, expectedLight] : cases)
+        {
+            const auto previousFlushes = state.flushes;
+            {
+                theme::ScopedTheme scope(
+                    snowdesktop::modern_menu::appearance_rules::IsLightTheme(appearance, systemLight), api);
+                scope.ApplyToWindow(window);
+                Expect(state.mode == (expectedLight ? Mode::ForceLight : Mode::ForceDark) &&
+                    state.windowDark == !expectedLight && state.flushes == previousFlushes + 1,
+                    "native menus apply and refresh the same explicit/system colors as software menus");
+            }
+            Expect(state.mode == Mode::AllowDark && state.flushes == previousFlushes + 2,
+                "closing a native menu restores and refreshes the previous process theme");
+        }
+    }
+    {
+        theme::ScopedTheme outer(false, api);
+        {
+            theme::ScopedTheme inner(true, api);
+            Expect(state.mode == Mode::ForceLight, "an inner native menu can use a light override");
+        }
+        Expect(state.mode == Mode::ForceDark, "an inner menu restores the outer dark menu mode");
+    }
+    Expect(state.mode == Mode::AllowDark, "the outer menu restores the original process mode");
+    state.highContrast = true;
+    {
+        theme::ScopedTheme scope(false, api);
+        scope.ApplyToWindow(window);
+        Expect(state.mode == Mode::Default && !state.windowDark,
+            "high contrast preserves native accessibility colors instead of forcing dark colors");
+    }
+    Expect(state.mode == Mode::AllowDark, "high-contrast menus also restore the original mode");
+    const auto previousFlushes = state.flushes;
+    const auto previousUpdates = state.windowUpdates;
+    auto unavailable = api;
+    unavailable.flushMenuThemes = nullptr;
+    {
+        theme::ScopedTheme scope(false, unavailable);
+        scope.ApplyToWindow(window);
+    }
+    Expect(state.mode == Mode::AllowDark && state.flushes == previousFlushes &&
+        state.windowUpdates == previousUpdates,
+        "missing native theme APIs leave the standard menu and process state untouched");
 }
 
 struct TemporaryDirectory
@@ -124,7 +215,7 @@ void TestRealNewFolderCapture()
         "released New handler retires its completed capture");
 }
 
-void TestNativeCascadeOwnerThread()
+void TestNativeCascadeOnPrivateDesktop()
 {
     // WinRAR's deferred cascade needs the menu loop on the context menu's STA.
     // Keep the real production tracker/window/message loop; replace only the
@@ -135,12 +226,20 @@ void TestNativeCascadeOwnerThread()
         std::atomic<bool> cancelled{ false };
         HMENU menu = CreatePopupMenu();
         HWND window = nullptr;
+        HWND dockOwner = nullptr;
+        HWND observedOwner = nullptr;
         bool initializedOnOwnerThread = false;
         bool displayed = false;
+        bool sourceRetained = false;
+        bool forwardingOwnerRetained = false;
+        bool resetDuringClose = false;
+        bool lightTheme = true;
+        bool themeMatches = false;
         unsigned initializationCount = 0;
         ULONGLONG displayDeadline = 0;
         ~LazyCascade()
         {
+            if (dockOwner) DestroyWindow(dockOwner);
             if (window) DestroyWindow(window);
             if (menu) DestroyMenu(menu);
         }
@@ -154,10 +253,34 @@ void TestNativeCascadeOwnerThread()
             }
             if (self && message == WM_INITMENUPOPUP && reinterpret_cast<HMENU>(wp) == self->menu)
             {
+                // Observe the actual process mode during the production menu
+                // loop. SetPreferredAppMode returns the previous mode; restore
+                // it immediately without changing the menu-theme cache.
+                namespace theme = snowdesktop::native_menu_theme;
+                const auto& api = theme::detail::SystemApi();
+                if (api.setPreferredAppMode && api.allowDarkModeForWindow && api.flushMenuThemes)
+                {
+                    using Mode = theme::detail::PreferredAppMode;
+                    const Mode expected = api.isHighContrast() ? Mode::Default :
+                        self->lightTheme ? Mode::ForceLight : Mode::ForceDark;
+                    const Mode actual = api.setPreferredAppMode(expected);
+                    api.setPreferredAppMode(actual);
+                    self->themeMatches = actual == expected;
+                }
+                else
+                    self->themeMatches = true; // Unsupported OS keeps the native fallback.
                 ++self->initializationCount;
                 DeleteMenu(self->menu, 0, MF_BYPOSITION);
                 self->initializedOnOwnerThread =
                     GetWindowThreadProcessId(self->tracker.load(), nullptr) == GetCurrentThreadId();
+                const HWND root = self->tracker.load();
+                self->observedOwner = GetWindow(root, GW_OWNER);
+                namespace dock = snowdesktop::floating_dock_rules;
+                self->sourceRetained = dock::ResolvePassiveDragRevealUpdate(
+                    true, false, true, false,
+                    dock::IsMenuOwnedByDock(root, self->dockOwner), true, true) ==
+                        dock::PassiveDragRevealAction::CancelLeave;
+                self->forwardingOwnerRetained = dock::IsMenuOwnedByDock(root, self->window);
                 if (self->initializedOnOwnerThread)
                 {
                     AppendMenuW(self->menu, MF_STRING, 71, L"Deferred archive command");
@@ -177,7 +300,9 @@ void TestNativeCascadeOwnerThread()
                     return 0;
                 // Cancel on the tracker's thread, including in the negative
                 // control that restores the old cross-thread implementation.
-                PostMessageW(self->tracker.load(), WM_CANCELMODE, 0, 0);
+                const HWND root = self->tracker.load();
+                if (self->resetDuringClose) self->tracker.store(nullptr);
+                PostMessageW(root, WM_CANCELMODE, 0, 0);
                 KillTimer(window, 1);
                 return 0;
             }
@@ -195,26 +320,149 @@ void TestNativeCascadeOwnerThread()
     cascade.window = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, L"Cascade owner test",
         WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, &cascade);
     Expect(cascade.window != nullptr, "create isolated cascade owner");
-    cascade.displayDeadline = GetTickCount64() + 2000;
-    Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the native popup lifetime");
-    const auto selected = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
-        cascade.tracker, cascade.cancelled);
+    cascade.dockOwner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Source Dock",
+        WS_POPUP, -32000, -32000, 1, 1, cascade.window, nullptr, cls.hInstance, nullptr);
+    Expect(cascade.dockOwner != nullptr, "create a distinct source Dock owner");
+    ShowWindow(cascade.dockOwner, SW_SHOWNOACTIVATE);
+    UINT selected = 0;
+    for (const bool lightTheme : {false, true, false})
+    {
+        while (GetMenuItemCount(cascade.menu) > 0)
+            DeleteMenu(cascade.menu, 0, MF_BYPOSITION);
+        AppendMenuW(cascade.menu, MF_STRING, 70, L"");
+        cascade.displayed = false;
+        cascade.lightTheme = lightTheme;
+        cascade.themeMatches = false;
+        cascade.displayDeadline = GetTickCount64() + 2000;
+        Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the native popup lifetime");
+        selected = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
+            cascade.tracker, cascade.cancelled, lightTheme, cascade.dockOwner);
+        Expect(cascade.themeMatches,
+            "the real native tracker applies the requested theme across dark/light/dark openings");
+    }
     Expect(cascade.initializedOnOwnerThread && GetMenuItemCount(cascade.menu) == 2,
         "deferred cascade initializes on the menu-tracking STA and keeps its commands");
     Expect(cascade.displayed, "initialized deferred commands have visible native menu bounds");
+    Expect(cascade.observedOwner == cascade.dockOwner && cascade.sourceRetained &&
+        !cascade.forwardingOwnerRetained,
+        "the real native menu retains only its source Dock while forwarding initialization to the original STA owner");
     Expect(selected == 0 && cascade.tracker.load() == nullptr,
         "cancellation invokes no command and releases the transient owner");
+    Expect(!snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
+        cascade.tracker.load(), cascade.dockOwner),
+        "the exited native menu releases its source Dock hold");
+
+    // An unrelated native menu keeps the existing ownerless tracker behavior.
+    // Simulate shutdown resetting the slot before Track returns; cleanup must
+    // not restore a still-valid earlier session over that explicit reset.
+    while (GetMenuItemCount(cascade.menu) > 0) DeleteMenu(cascade.menu, 0, MF_BYPOSITION);
+    AppendMenuW(cascade.menu, MF_STRING, 70, L"");
+    cascade.displayed = false;
+    cascade.resetDuringClose = true;
+    cascade.tracker.store(cascade.dockOwner);
+    cascade.displayDeadline = GetTickCount64() + 2000;
+    Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the ownerless native popup lifetime");
+    Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
+        cascade.tracker, cascade.cancelled, cascade.lightTheme) == 0 && cascade.displayed &&
+        cascade.observedOwner == nullptr && !cascade.sourceRetained &&
+        cascade.tracker.load() == nullptr,
+        "a default native menu grants no Dock hold and an explicit session reset is not resurrected on exit");
     cascade.cancelled.store(true);
     const auto before = cascade.initializationCount;
     Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
-        TPM_RETURNCMD, {100, 100}, cascade.window, false, cascade.tracker, cascade.cancelled) == 0 &&
+        TPM_RETURNCMD, {100, 100}, cascade.window, false, cascade.tracker, cascade.cancelled, true) == 0 &&
         cascade.initializationCount == before && cascade.tracker.load() == nullptr,
         "early cancellation never opens or initializes the native menu");
+
+    cascade.tracker.store(cascade.dockOwner);
+    Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+        TPM_RETURNCMD, {100, 100}, cascade.window, false,
+        cascade.tracker, cascade.cancelled, true, cascade.dockOwner) == 0 &&
+        cascade.tracker.load() == cascade.dockOwner,
+        "a cancelled inner tracker restores its still-live outer session slot");
+    cascade.tracker.store(nullptr);
+    HWND child = CreateWindowExW(0, L"STATIC", L"Child is not an owner", WS_CHILD,
+        0, 0, 1, 1, cascade.dockOwner, nullptr, cls.hInstance, nullptr);
+    HWND messageOnly = CreateWindowExW(0, L"STATIC", L"Message-only is not an owner", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, cls.hInstance, nullptr);
+    Expect(child && messageOnly, "create invalid native owner fixtures");
+    cascade.cancelled.store(false);
+    for (const HWND invalid : { child, messageOnly })
+    {
+        // If ownership validation regresses, cancel the erroneously opened
+        // real menu and fail its initialization assertion instead of hanging.
+        cascade.displayed = false;
+        cascade.resetDuringClose = false;
+        cascade.displayDeadline = GetTickCount64() + 2000;
+        Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound an invalid-owner regression");
+        const UINT command = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+            TPM_RETURNCMD, {100, 100}, cascade.window, false,
+            cascade.tracker, cascade.cancelled, true, invalid);
+        KillTimer(cascade.window, 1);
+        Expect(command == 0 &&
+            cascade.initializationCount == before && cascade.tracker.load() == nullptr,
+            invalid == messageOnly ? "message-only HWND cannot acquire native menu ownership" :
+                "child HWND cannot acquire native menu ownership");
+    }
+    DestroyWindow(child);
+    DestroyWindow(messageOnly);
+
+    std::promise<HWND> foreignReady;
+    std::promise<void> foreignRelease;
+    auto foreignReleased = foreignRelease.get_future();
+    const HDESK desktop = GetThreadDesktop(GetCurrentThreadId());
+    std::thread foreign([&] {
+        HWND window = nullptr;
+        if (SetThreadDesktop(desktop))
+            window = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Other thread Dock",
+                WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, nullptr);
+        foreignReady.set_value(window);
+        foreignReleased.wait();
+        if (window) DestroyWindow(window);
+    });
+    const HWND foreignOwner = foreignReady.get_future().get();
+    cascade.displayed = false;
+    cascade.displayDeadline = GetTickCount64() + 2000;
+    const bool boundedForeign = SetTimer(cascade.window, 1, 30, nullptr) != 0;
+    const bool rejectedForeign = boundedForeign && foreignOwner && snowdesktop::shell_popup_menu_tracker::Track(
+        cascade.menu, TPM_RETURNCMD, {100, 100}, cascade.window, false,
+        cascade.tracker, cascade.cancelled, true, foreignOwner) == 0 &&
+        cascade.initializationCount == before && cascade.tracker.load() == nullptr;
+    KillTimer(cascade.window, 1);
+    foreignRelease.set_value();
+    foreign.join();
+    Expect(rejectedForeign, "a real top-level HWND on another thread cannot join the menu's input queue");
+}
+
+void TestNativeCascadeOwnerThread()
+{
+    const std::wstring name = L"SnowDesktop.ShellTrackerTests." + std::to_wstring(GetCurrentProcessId());
+    const HDESK desktop = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+    Expect(desktop != nullptr, "create a private desktop for real native tracker menus");
+    std::exception_ptr failure;
+    std::thread task([&] {
+        try
+        {
+            Expect(SetThreadDesktop(desktop) != FALSE, "attach the tracker test thread to its private desktop");
+            Expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
+                "the private tracker thread preserves the Shell owner STA");
+            try { TestNativeCascadeOnPrivateDesktop(); }
+            catch (...) { CoUninitialize(); throw; }
+            CoUninitialize();
+        }
+        catch (...) { failure = std::current_exception(); }
+    });
+    task.join();
+    const bool closed = CloseDesktop(desktop) != FALSE;
+    if (failure) std::rethrow_exception(failure);
+    Expect(closed, "release the private desktop after the tracker thread exits");
 }
 
 void RunTests()
 {
+    TestNativeMenuThemeScope();
     TestNativeCascadeOwnerThread();
     const std::wstring currentDirectory =
         std::filesystem::current_path().wstring();
@@ -513,6 +761,117 @@ void TestRegistryCatalogue()
     Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.name == L"Provider Shell.dll" &&
         find("reg:*\\shell\\library").application.name == L"Provider Shell.dll", "CLSID and rundll32 registrations identify the providing DLL rather than its generic host");
 
+}
+
+void TestNvidiaCompatibility()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    // System registration and class-factory failures are the external boundary.
+    // The real eligibility, native default-command selection, policy reader,
+    // catalogue association and visibility paths remain under test.
+    ext::Request desktop; desktop.context = ext::Context::Desktop; desktop.background = true;
+    Expect(ext::NvidiaCompatibilityRequired(desktop, true, true, CLASS_E_CLASSNOTAVAILABLE),
+        "a registered enabled NVIDIA extension rejected by the process gate gets compatibility");
+    for (const HRESULT status : {S_OK, E_ACCESSDENIED, REGDB_E_CLASSNOTREG, E_FAIL})
+        Expect(!ext::NvidiaCompatibilityRequired(desktop, true, true, status),
+            "a working, denied, missing or unrelated failed provider never gets a duplicate or policy bypass");
+    Expect(!ext::NvidiaCompatibilityRequired(desktop, false, true, CLASS_E_CLASSNOTAVAILABLE) &&
+        !ext::NvidiaCompatibilityRequired(desktop, true, false, CLASS_E_CLASSNOTAVAILABLE),
+        "removed and system-blocked NVIDIA registrations stay absent");
+    for (auto context : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground})
+    {
+        auto request = desktop; request.context = context;
+        Expect(!ext::NvidiaCompatibilityRequired(request, true, true, CLASS_E_CLASSNOTAVAILABLE),
+            "NVIDIA compatibility does not add application launchers to object or folder menus");
+    }
+    auto probe = desktop; probe.sourceClsid = ext::NvidiaControlPanelClsid;
+    Expect(!ext::NvidiaCompatibilityRequired(probe, true, true, CLASS_E_CLASSNOTAVAILABLE),
+        "metadata attribution probes never contribute executable compatibility entries");
+
+    TemporaryDirectory temp;
+    struct Registry
+    {
+        std::wstring path; HKEY key = nullptr;
+        ~Registry() { if (key) RegCloseKey(key); RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry{L"Software\\SnowDesktopNvidiaTests\\" + temp.path.filename().wstring()};
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, registry.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &registry.key, nullptr) == ERROR_SUCCESS, "private NVIDIA registration fixture");
+    auto put = [&](const wchar_t *path, const wchar_t *name, const wchar_t *value) {
+        HKEY key = nullptr;
+        Expect(RegCreateKeyExW(registry.key, path, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &key, nullptr) == ERROR_SUCCESS,
+            "create private NVIDIA metadata");
+        const auto status = RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value),
+            static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
+        RegCloseKey(key); Expect(status == ERROR_SUCCESS, "write private NVIDIA metadata");
+    };
+    constexpr auto handler = L"Directory\\Background\\shellex\\ContextMenuHandlers\\AliasName";
+    Expect(!ext::NvidiaControlPanelRegistered(registry.key), "no registration is not an available menu");
+    put(handler, nullptr, L"{F2E8B4A1-9C7D-4F6E-B3A5-8D2C1F4E9B7A}");
+    Expect(!ext::NvidiaControlPanelRegistered(registry.key), "the separate NVIDIA App cannot authorize a Control Panel entry");
+    put(handler, nullptr, ext::NvidiaControlPanelClsid);
+    Expect(ext::NvidiaControlPanelRegistered(registry.key), "registration identity is the CLSID, not its installer-chosen key name");
+    Expect(ext::HandlerEnabled(ext::NvidiaControlPanelClsid, registry.key, registry.key), "unblocked handler is enabled");
+    put(L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked", ext::NvidiaControlPanelClsid, L"");
+    Expect(!ext::HandlerEnabled(ext::NvidiaControlPanelClsid, registry.key, registry.key), "Blocked policy also denies compatibility");
+    RegDeleteTreeW(registry.key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked");
+    HKEY policy = nullptr;
+    Expect(RegCreateKeyExW(registry.key, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", 0,
+        nullptr, 0, KEY_ALL_ACCESS, nullptr, &policy, nullptr) == ERROR_SUCCESS, "private approval policy");
+    const DWORD enforce = 1;
+    const auto policyStatus = RegSetValueExW(policy, L"EnforceShellExtensionSecurity", 0, REG_DWORD,
+        reinterpret_cast<const BYTE *>(&enforce), sizeof(enforce));
+    RegCloseKey(policy);
+    Expect(policyStatus == ERROR_SUCCESS && !ext::HandlerEnabled(ext::NvidiaControlPanelClsid, registry.key, registry.key),
+        "enforced approval cannot be bypassed by compatibility");
+    put(L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved", ext::NvidiaControlPanelClsid, L"NVIDIA");
+    Expect(ext::HandlerEnabled(ext::NvidiaControlPanelClsid, registry.key, registry.key), "approved registered handler is eligible");
+
+    auto catalogue = ext::ReadCatalogue(registry.key, false);
+    ext::Reply reply; reply.ok = true;
+    ext::Entry item; item.key = "{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
+    item.provider = "verb:" + item.key; item.label = L"Installed Control Panel"; item.token = 27;
+    reply.entries = {item}; ext::Associate(catalogue, desktop, reply);
+    Expect(reply.entries.front().registration == ext::NvidiaControlPanelRegistration,
+        "compatibility uses the original handler identity in settings");
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, true);
+    Expect(ext::VisibleSnapshot(prefs, reply, ext::ContextBit(ext::Context::Desktop)).size() == 1,
+        "the existing registration switch shows the compatibility item");
+    ext::SetOverride(prefs, ext::NvidiaControlPanelRegistration, ext::Context::Desktop, ext::Visibility::Hide);
+    Expect(ext::VisibleSnapshot(prefs, reply, ext::ContextBit(ext::Context::Desktop)).empty(),
+        "desktop visibility overrides still hide the compatibility item");
+
+    class ApplicationMenu final : public Microsoft::WRL::RuntimeClass<
+        Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IContextMenu>
+    {
+    public:
+        std::wstring verb = L"open";
+        IFACEMETHODIMP QueryContextMenu(HMENU, UINT, UINT, UINT, UINT) override { return E_NOTIMPL; }
+        IFACEMETHODIMP InvokeCommand(LPCMINVOKECOMMANDINFO) override { return E_NOTIMPL; }
+        IFACEMETHODIMP GetCommandString(UINT_PTR offset, UINT flags, UINT *, LPSTR output, UINT size) override
+        {
+            if (offset != 27 || flags != GCS_VERBW || !output || size <= verb.size()) return E_INVALIDARG;
+            wcscpy_s(reinterpret_cast<wchar_t *>(output), size, verb.c_str()); return S_OK;
+        }
+    };
+    auto application = Microsoft::WRL::Make<ApplicationMenu>();
+    struct Menu { HMENU value = CreatePopupMenu(); ~Menu() { DestroyMenu(value); } } menu;
+    AppendMenuW(menu.value, MF_STRING, 1, L"Uninstall");
+    AppendMenuW(menu.value, MF_STRING, 28, L"Open");
+    SetMenuDefaultItem(menu.value, 28, FALSE);
+    Expect(ext::DefaultApplicationOpen(application.Get(), menu.value) == 27u,
+        "the safe application open command keeps its nonzero Shell offset, not the first command");
+    SetMenuDefaultItem(menu.value, 1, FALSE);
+    Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "uninstall is never an application launcher");
+    SetMenuDefaultItem(menu.value, 28, FALSE);
+    application->verb = L"runas";
+    Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "elevation is never substituted for ordinary launch");
+    application->verb = L"open";
+    EnableMenuItem(menu.value, 28, MF_BYCOMMAND | MF_GRAYED);
+    Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "a default action disabled after query cannot run");
+    EnableMenuItem(menu.value, 28, MF_BYCOMMAND | MF_ENABLED);
+    SetMenuDefaultItem(menu.value, UINT(-1), FALSE);
+    Expect(!ext::DefaultApplicationOpen(application.Get(), menu.value), "missing default action is not guessed");
 }
 
 void TestSourceAttribution()
@@ -1000,6 +1359,71 @@ void PumpUntil(Condition condition, const char *message)
         if (!condition()) MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
     }
     Expect(condition(),message);
+}
+
+void TestUnchangedCataloguePersistence()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    const auto cachePath = directory.path / L"cache";
+    std::filesystem::create_directory(cachePath);
+    const auto cataloguePath = cachePath / L"catalogue.bin";
+    ext::Catalogue original; original.revision = 17;
+    ext::Registration row; row.id = "reg:unchanged"; row.revision = 17;
+    row.contexts = ext::ContextBit(ext::Context::File); row.types = {L"*"};
+    row.verbs = {"unchanged"}; row.display.label = L"Original";
+    row.linked = true; original.rows = {row};
+    original.associations.push_back({"verb:unchanged", row.id, ext::Context::File});
+    const auto bytes = snowdesktop::settings_ipc::Pack(std::uint32_t(4), original);
+    {
+        std::ofstream out(cataloguePath, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+    const auto savedTime = std::filesystem::last_write_time(cataloguePath) - std::chrono::hours(1);
+    std::filesystem::last_write_time(cataloguePath, savedTime);
+    std::atomic<unsigned> scans = 0, queries = 0;
+    std::atomic<std::uint64_t> revision = 17;
+    ext::MenuService service(cachePath, [&](const auto &) {
+        ++queries;
+        return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+    }, [&] {
+        auto value = original;
+        value.associations.clear(); value.rows[0].linked = false;
+        value.revision = value.rows[0].revision = revision.load();
+        if (value.revision != 17) value.rows[0].display.label = L"Changed";
+        ++scans; return value;
+    });
+    service.Inspect();
+    PumpUntil([&] { return scans.load() != 0 && !service.Inspect().scanning; },
+        "initial unchanged catalogue scan and discovery complete");
+    Expect(std::filesystem::last_write_time(cataloguePath) == savedTime,
+        "unchanged registry inventory does not rewrite the durable catalogue");
+    const auto initialQueries = queries.load();
+    const auto initialScans = scans.load();
+    service.Inspect({}, true);
+    PumpUntil([&] { return scans.load() > initialScans && !service.Inspect().scanning; },
+        "explicit unchanged refresh still completes its scan");
+    Expect(queries.load() > initialQueries,
+        "unchanged catalogue fast path retains forced command discovery");
+    Expect(std::filesystem::last_write_time(cataloguePath) == savedTime,
+        "explicit unchanged refresh avoids redundant catalogue serialization");
+    revision = 18;
+    const auto previousScans = scans.load();
+    service.Inspect({}, true);
+    PumpUntil([&] { return scans.load() > previousScans && !service.Inspect().scanning &&
+        std::filesystem::last_write_time(cataloguePath) != savedTime; },
+        "changed registration revision replaces the durable catalogue");
+    service.Shutdown();
+    std::ifstream input(cataloguePath, std::ios::binary | std::ios::ate);
+    const auto length = input.tellg(); input.seekg(0);
+    snowdesktop::settings_ipc::Bytes updated(static_cast<size_t>(length));
+    Expect(static_cast<bool>(input.read(reinterpret_cast<char*>(updated.data()), updated.size())),
+        "read refreshed catalogue");
+    const auto [schema, value] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, ext::Catalogue>>(updated);
+    Expect(schema == 4 && value.revision == 18 && value.rows[0].display.label == L"Changed",
+        "changed catalogue preserves schema and publishes new registration metadata");
+    Expect(value.rows[0].linked && value.associations.size() == 1,
+        "unchanged scans retain associations for subsequent changed registration scans");
 }
 
 void TestCatalogueShutdown()
@@ -1719,6 +2143,57 @@ void TestFileTypeDiscovery()
     }
 }
 
+// Opt-in hardware evidence: uses the real production helper without displaying
+// or operating the SnowDesktop desktop. Not part of portable automatic tests.
+void ProbeNvidiaCompatibility(bool invoke)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Request request; request.context = ext::Context::Desktop; request.background = true;
+    request.paths = {snowdesktop::DesktopShellInvocationDirectory()};
+    ext::Session session(request);
+    std::optional<ext::Reply> reply;
+    PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); },
+        "real NVIDIA desktop menu query completes");
+    Expect(reply->ok, "real NVIDIA desktop menu query succeeds");
+    const auto catalogue = ext::ReadCatalogue();
+    auto linked = catalogue; ext::Associate(linked, request, *reply);
+    const auto found = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+        return entry.registration == ext::NvidiaControlPanelRegistration;
+    });
+    Expect(found != reply->entries.end() && found->enabled && found->token,
+        "the previously missing installed NVIDIA Control Panel is now an executable desktop menu item");
+    Expect(std::count_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+        return entry.registration == ext::NvidiaControlPanelRegistration;
+    }) == 1, "exactly one Control Panel entry is returned");
+    Expect(!found->label.empty() && !found->pixels.empty(), "installed application supplies a title and icon");
+    const auto settings = ext::ManagementRows(linked, ext::Category::Background);
+    Expect(std::any_of(settings.begin(), settings.end(), [](const auto &row) {
+        return std::any_of(row.members.begin(), row.members.end(), [](const auto &member) {
+            return member.id == ext::NvidiaControlPanelRegistration;
+        });
+    }), "the actual compatibility entry is manageable under its NVIDIA registration");
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, true);
+    auto visible = ext::VisibleSnapshot(prefs, *reply, ext::ContextBit(ext::Context::Desktop));
+    Expect(std::any_of(visible.begin(), visible.end(), [](const auto &entry) {
+        return entry.registration == ext::NvidiaControlPanelRegistration;
+    }), "the actual entry is visible when enabled");
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, false);
+    visible = ext::VisibleSnapshot(prefs, *reply, ext::ContextBit(ext::Context::Desktop));
+    Expect(std::none_of(visible.begin(), visible.end(), [](const auto &entry) {
+        return entry.registration == ext::NvidiaControlPanelRegistration;
+    }), "the actual entry is hidden when disabled");
+    std::cout << "NVIDIA compatibility: token=" << found->token << " icon=" << found->width << 'x' << found->height
+              << " registration=" << found->registration << " helper=" << session.ProcessId() << std::endl;
+    if (invoke)
+    {
+        session.Invoke(found->token, {});
+        const HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, session.ProcessId());
+        if (process) { WaitForSingleObject(process, 10000); CloseHandle(process); }
+        std::cout << "NVIDIA application open command dispatched; verify the launched application separately.\n";
+    }
+}
+
 void BenchmarkManagement()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -1861,6 +2336,9 @@ void BenchmarkMenus()
 
 int wmain(int argc, wchar_t **argv)
 {
+    const bool nvidiaProbe = argc == 2 && (std::wstring_view(argv[1]) == L"--probe-nvidia-menu" ||
+        std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
+    if (nvidiaProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
@@ -1931,22 +2409,27 @@ int wmain(int argc, wchar_t **argv)
     {
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
-        if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
+        if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
+            TestUnchangedCataloguePersistence();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
             TestRegistryCatalogue();
+            TestNvidiaCompatibility();
         }
         else
         {
+            TestUnchangedCataloguePersistence();
             TestCatalogueShutdown();
             RunTests();
             TestDeferredPopups();
             TestCatalogueCache();
             TestRegistryCatalogue();
+            TestNvidiaCompatibility();
             TestManagementUpdates();
             TestManagementFilters();
             TestSourceAttribution();

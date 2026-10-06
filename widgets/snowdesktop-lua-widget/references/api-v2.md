@@ -36,7 +36,7 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 通过离屏 D2D/WIC 输出 PNG。它使用隔离的 manifest `previewData.storage` 覆盖层，不写实例持久化
 存储；`--storage key=value` 可重复覆盖预览值，`--columns/--rows` 必须落在清单尺寸范围内，
 `--dpi` 支持 96–480，`--locale` 选择宿主已安装语言。`--appearance` 可为
-`dark/light/glass-dark/glass-light/acrylic-dark/acrylic-light`；旧参数 `--theme dark/light`
+`dark/light/glass-dark/glass-light/glass-transparent/acrylic-dark/acrylic-light`；旧参数 `--theme dark/light`
 继续作为普通深/浅外观的简写，但不能和 `--appearance` 同时使用。生成最终打包预览时应通过
 `--background <图片文件>` 显式选择背景；该图片只参与合成，不会被 `pack` 自动加入组件包。
 需要正方形创意工坊图片时，可继续用组件真实的 `--columns/--rows` 渲染透明组件层，并加上
@@ -373,7 +373,7 @@ hoverStyle = { background = "surfaceVariant" }
 `contentTheme`/`context.theme.mode` 决定前景。预览时应分别覆盖材质与前景主题，至少检查
 `--appearance acrylic-light --storage followPersonalization=0 --storage __contentTheme=0/1`
 以及对应的深色材质组合，不能只检查 dark/light 外观默认配对。
-内置预设的默认值不是按名称后缀推导：`dark/glass-dark/glass-light/acrylic-dark` 默认
+内置预设的默认值不是按名称后缀推导：`dark/glass-dark/glass-light/glass-transparent/acrylic-dark` 默认
 `contentTheme=0`（浅色/白色前景），`light/acrylic-light` 默认 `contentTheme=1`
 （深色/黑色前景）。其中 `glass-light` 默认仍是浅色文字；组件和工具不得把所有 `*-light`
 直接解释为深色文字。
@@ -718,8 +718,10 @@ view.searchBox({
 `events.click` 和 `accessibility.label`。展开状态同样由组件通过 `expanded` 控制：触发区 click
 报告 `previousExpanded/expanded`，展开后每个 `<select-key>/<option-key>` 选项 change 报告
 `previousSelection/selection`。宿主在组件内表面顶层绘制选项并优先命中，不调用阻塞式系统
-菜单；组件收到 click/change 后应更新 model 并 invalidate。当前弹层仍受组件及父滚动视口
-裁剪，跨组件表面的通用 popover 属于后续宿主 surface API。
+菜单；组件收到 click/change 后应更新 model 并 invalidate。选项层在当前组件表面内选择
+空间较大的一侧展开，最多显示五项；更多选项可在选项层内滚动，点击优先于下层输入框。
+选项层不受父滚动视口裁剪，但仍限制在组件表面内。跨组件表面的通用 popover 属于后续
+宿主 surface API。
 
 `textInput/textArea/searchBox/numberInput` 可设置 `readOnly=true`。只读输入仍可获得焦点、
 移动光标、选择并复制文字，也可触发 focus/blur/submit；宿主会拒绝键入、IME 提交、粘贴、
@@ -1608,7 +1610,21 @@ Ctrl+Enter 提交，滚轮与光标跟随会调整实例内滚动位置。普通
 `view.keyboardNavigation.basic` 后，这两个即时兼容控件也进入所属 desktop/panel
 surface 的 Tab 顺序。
 
-`control.focus(key)` 只能在直接 click/doubleClick/pointerDown/pointerUp/wheel、菜单命令
+探测 `control.inputEvents` 后，这两个即时控件可声明
+`events={submit={id="task.add", value=...}}`。`events` 当前只接受 `submit`，绑定只接受
+`id/value`；value 沿用 interaction action 的 JSON-like 限制。单行 Enter、多行 Ctrl+Enter
+触发一次 `kind="action"`、`action="submit"` 事件，携带 `id/value/targetKey/text/source/surface`。
+宿主先提交 storage 绑定并失焦，再投递动作，因而回调可以清空草稿而不会被后续失焦写回。
+该键盘提交属于 trusted gesture；同步 submit 回调可调用 `control.focus(key)` 恢复输入焦点，
+重新聚焦时读取回调更新后的 storage 值。render、schedule 等非用户操作回调仍不得抢焦点。
+点击输入框不要求选中组件外框；同步 submit 仍可恢复本次提交的同一输入框，但不能借此
+跳过其他组件、其他控件或其他 surface 的聚焦约束，也不能恢复已隐藏或停用的输入框。
+输入法组合期间 Enter 仍留给输入法；多行普通 Enter 仍换行。没有绑定时保留原有提交与失焦行为。
+旧宿主不接受此字段，依赖提交动作的组件必须声明 `control.inputEvents` 为 required feature；
+可降级组件须在 feature 探测后才传入 `events`。`apiVersion` 仍为 2，不能仅凭相同版本号推断支持。
+
+`control.focus(key)` 只能在直接 click/doubleClick/pointerDown/pointerUp/wheel、
+`control.inputEvents` 的键盘 submit、菜单命令
 或宿主明确标记的打开回调同步栈中接受；render、panel render、schedule、data.change 和
 task.complete 不能抢走键盘焦点。探测 `view.focus.request` 后，key 除文本输入外还可
 指向最后一棵成功视图中的任意启用、可聚焦元素，包括普通按钮、列表项和逻辑槽位项；槽位焦点
@@ -1760,6 +1776,43 @@ GPU；adapter `id` 在同一 Windows 会话内不随枚举顺序改变，不能�
 最后一个 GPU 订阅释放后会关闭 PDH
 query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 
+支持 `data.system.gpu.identity` 的 1.0.8.0 构建会在拓扑刷新时读取 Windows 的物理
+适配器身份，只把已确认完整硬件 PnP key 相同、且各自仅含一个物理 GPU 的逻辑别名
+合成一项；同型号不同物理设备、身份查询失败和多物理 GPU 的 linked adapter 保留独立项。
+组内优先选择支持渲染的适配器，并稳定按 LUID 决定同等候选；不按名称、负载或计数器
+是否可用判断重复。容量与读数只来自选中的 LUID，不把别名的容量或计数相加。
+这会改变旧宿主可能返回的重复条目数量及其中保留的 `id`，API v2、权限和原有字段不变。
+完整 PnP key 仅在宿主内部使用，不公开设备路径、PCI 实例序列或永久硬件标识。
+
+1.0.8.0 新增可选 feature `data.system.gpu.details`。同版本早期构建可能没有此能力，
+必须先用 `widget.hasFeature("data.system.gpu.details")` 检测，才能传入
+`data.subscribe("system.gpu", { includeDetails = true })`；参数只接受 boolean，默认 false。
+API v2、原有权限和采样频率不变，普通订阅保持上述整体有效性及原有字段。
+详情订阅复用相同采集，在已识别到适配器时即可返回 `available=true` 和 `value.adapters`，
+即使部分或全部计数器暂不可用；权限拒绝、无设备、无快照仍不返回 value。
+`warmingUp`、`stale`、`error` 继续报告采样状态。每项额外包含：
+
+- `usageAvailable`：占用读数是否有效，预热期间为 false。
+- `dedicatedUsageAvailable`、`sharedUsageAvailable`：两个显存 used 字段分别是否有效。
+  false 时不可使用相应数值；true 的 0 是测得的空闲／零用量。容量仍来自 DXGI，不能因 used 不可用就把容量误认成 0。
+- `engines`：有效占用区间的数组，包含 `physicalIndex`、`engineIndex`、`type`、`usagePercent`。
+  身份使用适配器 id＋两个编号；类型仅为显示标签，允许为空或重复。预热或占用无效时数组为空。
+- `aliasIds`：支持 `data.system.gpu.identity` 时提供的可选字符串数组，列出当前共享
+  GPU sampler 生命周期内已证明属于同一物理 GPU 的其他不透明 adapter ID，排除当前
+  `id`，无别名时为空。拓扑刷新后仍保留已观察到的别名；最后一个 GPU 消费者释放采样器
+  或宿主退出后清除，不承诺跨重启或未观察过的旧 ID 能被映射。预热不清除此身份信息。
+
+这些新增字段只在 includeDetails=true 时出现。新组件设置 `minHostVersion="1.0.8.0"`，
+并将 feature 列入 optionalFeatures 后检测；缺少能力时使用旧订阅，不传新参数。
+指定 GPU 应先精确匹配 `id`，没有匹配时再检查可选 `aliasIds`，成功后可把已保存的
+选择迁移到该项当前 `id`。不要按数组下标或名称迁移；没有身份依据的失效显式选择应提示
+不可用或重新选择，不能静默改选另一块卡。支持别名迁移的组件设置最低宿主版本并检测
+`widget.hasFeature("data.system.gpu.identity")`，同时允许字段缺失；同版本早期构建或旧宿主
+只能精确匹配旧 `id`，可能仍显示重复物理设备，不可在组件侧按同名或无读数擅自删除。
+全部 GPU 的占用是所有有效适配器的最大值，显存是有效适配器的 used／容量之和；有缺失项时应明确标记部分数据。
+详情订阅不增加 PDH 查询或采样线程；物理身份只在既有拓扑刷新时查询，不随每个订阅或
+每次计数采样重复枚举。原始计数器和状态码使用独立 gpu-diagnostics CLI 导出。
+
 网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
 （`none/ethernet/wifi/cellular/other`）、`costKnown/metered/roaming/overLimit`。
 宿主会对 status 的语义变化做两次连续采样确认：首次状态立即发布，后续只有连续两次
@@ -1803,6 +1856,58 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 0–1 主音量 `volume`、`muted` 和 `minimum/maximum`。没有输出设备时返回
 `available=false,error="notPresent"`。这两个 topic 只读取 endpoint 元数据与主音量，
 不会启动 loopback、取得 PCM 或暴露原生 endpoint ID；预览使用固定模拟设备。
+
+1.0.8.0 新增以下设备状态主题，沿用 `data.subscribe` 和 API v2。组件必须同时声明
+`minHostVersion: "1.0.8.0"`，并通过 `widget.hasFeature("data.<主题>")` 检测功能；同版本
+早期构建可能缺少这些 feature。必需能力放入 `requiredFeatures`，可选能力缺失时隐藏
+对应入口，不调用未知主题。新主题不改变旧音量、媒体主题及其权限。
+
+| 主题 | feature | 读取权限 | value |
+| --- | --- | --- | --- |
+| `audio.devices` | `data.audio.devices` | `audio.devices.read` | `devices[]`：`id/name/direction/state/isDefault/available`，输入与输出端点 |
+| `audio.input.volume` | `data.audio.input.volume` | `audio.input.read` | `endpointId/volume/muted/minimum/maximum`，默认麦克风音量，不采集录音 |
+| `system.display.brightness` | `data.system.display.brightness` | `system.display.read` | `monitors[]`：`id/name/kind/available/brightness?/error?`；亮度为 0–100 |
+| `network.wifi` | `data.network.wifi` | `network.wifi.read` | `interfaces[]`，各网卡独立的开关、网络与保存配置列表 |
+| `bluetooth.devices` | `data.bluetooth.devices` | `bluetooth.read` | `radios[]`、已配对 `devices[]`，连接能力与可选电量 |
+| `system.power.plans` | `data.system.power.plans` | `system.power.read` | `plans[]/activePlanId/modeSupported/acMode?/dcMode?` 与可选电池状态 |
+
+`system.power.plans.charging` 是追加的可选布尔字段。仅在电池存在且 Windows 已报告状态时提供；
+未知或无电池时省略。API v2、权限和原有字段保持不变，不要求提高旧组件的最低宿主版本；
+读取此字段的组件须区分 `nil` 和 `false`，对同版本早期宿主缺字段采用未知状态回退。
+
+输入/输出设备和麦克风的读取权限独立于音量控制。Wi-Fi、蓝牙权限涉及网络名称与设备
+标识，按个人数据申请；`network.internet` 或 `audio.output.read` 不隐含这些权限。
+字段类型见随附 Lua 类型库。所有 ID 只作为所属主题的设备令牌使用，不解析其格式；
+亮度端点 ID 与显示拓扑 ID 不等价。移除设备后应丢弃旧 ID，重新读取列表。
+
+`system.display.brightness.monitors` 按完整显示器设备实例合并已确认对应同一物理屏幕的
+WMI/DDC 记录：优先选择可用端点，同样可用时优先内置屏 WMI。名称取友好硬件名；
+同名但身份不同的真实屏幕保留，无法证明对应关系的端点也保留，不按名称或数组位置去重。
+合并只影响返回的记录集合，不删除底层控制端点：当前设备仍存在时，先前读取的 DDC/WMI
+令牌仍可交给 `system.display.setBrightness`，按原端点执行并验证真实结果。失败或不支持
+仍报告错误，不借另一端点的数值声称成功。端点令牌不是可跨拔插持久化的物理显示器 ID；
+列表、数量和主记录 ID 可能随设备状态变化，组件应使用最新快照并处理目标消失。
+早期宿主可能把同一物理屏幕的端点分别返回，组件应允许重复名称和可变列表数量，不能依赖
+去重后的固定项数。此修订不增加字段、feature，不提高 API v2 或主题原有最低宿主版本；
+不代表依赖旧重复记录行为的组件已经完成实机兼容验证。
+
+订阅 Wi-Fi 只读取 Windows 缓存，不触发主动扫描；网卡 `networks` 包含
+`id/ssid/signal/security/connected/connectable/profileName?`，`profiles` 包含
+`name/managed`。不提供已保存密码。无线/位置权限拒绝返回 `accessDenied`；不要把
+空列表或缺失字段显示为“无线已关闭”。企业认证和受策略管理的配置交给 Windows。
+蓝牙只列已配对设备，`canConnect/canDisconnect` 表示本机后端支持的操作；不支持的
+设备管理和新配对交给系统设置，电量未知时省略 `batteryPercent`。
+关闭的无线电仍以 `available=true, enabled=false` 出现在 `radios[]`，可请求重新开启；
+硬件禁用或状态未知的无线电其 `available=false`。关闭时不扫描设备，`devices[]` 为空。
+已成功读取无线电、但已配对设备列表读取失败时，保留 `radios[]`，信封 `available=true`
+且现有 `error` 报告失败，不能据此把空 `devices[]` 当成没有配对设备。
+无线电本身读取被拒绝、取消或超时仍报告不可用，不沿用旧身份。字段和 API v2 保持兼容。
+
+这些主题与原生控制中心共享同一设备采样，不因增加组件重复扫描。音频主题最短
+1000 ms，其余最短 2000 ms；隐藏与卸载遵循订阅生命周期，Wi-Fi/蓝牙无消费者时
+立即释放订阅。`available=false` 时不返回伪造的 0 值；逐设备也须检查 `available`。
+离线预览使用固定设备、网络和电量，不访问真实硬件；empty 预览使用空设备列表，
+麦克风状态为不可用。
 
 `audio.output.analysis` 使用独立 WASAPI loopback 线程。默认 value 返回 128 点
 `waveform`、64 个 `spectrum` bin、`rms/peak/silent/deviceChanged`、不透明
@@ -1902,7 +2007,8 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `calendar.create`、`calendar.update`、`calendar.remove`、网络请求
 任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
 `system.openSettings`、有界剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
-范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
+范围的 `filesystem.pickOpen/pickSave/pickFolder`。设备与电源扩展见下节；
+旧任务继续使用既有契约。基础任务对应
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.notification.lifecycle`、`task.notification.schedule`、
 `task.notification.structured`、`task.notification.actions`、
@@ -1937,6 +2043,83 @@ local muteTask = task.start("audio.output.setMute", { muted = true })
 `audioEnumeratorUnavailable`、`audioEndpointUnavailable`、`audioVolumeUnavailable`、
 `audioControlRejected`、`permissionRevoked` 和 `canceled`。该权限不授予非默认设备、
 逐进程音频会话、默认设备切换或系统音频策略控制。
+
+#### 设备与电源写任务（宿主 1.0.8.0 起）
+
+以下十九项是 API v2 的增量任务，成功值统一为 `SnowAcceptedTaskValue`
+（`{ accepted = true }`），不改变上面两个输出音量任务的参数和结果契约。
+依赖这些任务的组件设置 `minHostVersion: "1.0.8.0"`，并检测对应 feature 或任务的
+`system.capabilities(name).hostAvailable`；同版本早期构建也可能尚无这些能力。
+每组需要独立申请表中的写权限，已有读取权限和 `audio.output.control` 均不隐含新权限。
+
+| 任务 | 严格参数 | 权限／feature |
+| --- | --- | --- |
+| `audio.output.selectDevice` | `{ endpointId: string }` | `audio.devices.control`／`task.audio.devices.control` |
+| `audio.input.selectDevice` | `{ endpointId: string }` | 同上 |
+| `audio.input.setVolume` | `{ volume: number }`，有限值由宿主截断到 0–1 | `audio.input.control`／`task.audio.input.control` |
+| `audio.input.setMute` | `{ muted: boolean }` | 同上 |
+| `system.display.setBrightness` | `{ monitorId: string, brightness: number }`，有限数值 0–100 | `system.display.control`／`task.system.display.control` |
+| `network.wifi.setRadio` | `{ interfaceId: string, enabled: boolean }` | `network.wifi.control`／`task.network.wifi.control` |
+| `network.wifi.scan` | `{ interfaceId: string }` | 同上 |
+| `network.wifi.connect` | `{ interfaceId, networkId?, profileName?, ssid?, hidden?, security? }`，见下文 | 同上 |
+| `network.wifi.disconnect` | `{ interfaceId: string }` | 同上 |
+| `network.wifi.forget` | `{ interfaceId: string, profileName: string }` | 同上，另需宿主确认 |
+| `bluetooth.setRadio` | `{ radioId: string, enabled: boolean }` | `bluetooth.control`／`task.bluetooth.control` |
+| `bluetooth.connect` | `{ deviceId: string }` | 同上 |
+| `bluetooth.disconnect` | `{ deviceId: string }` | 同上 |
+| `system.power.setPlan` | `{ planId: string }` | `system.power.control`／`task.system.power.control` |
+| `system.power.setMode` | `{ mode: "balanced" / "efficiency" / "performance" }` | 同上 |
+| `system.power.lock` | 无参数 | `system.power.action`／`task.system.power.action` |
+| `system.power.sleep` | 无参数，另需宿主确认 | 同上 |
+| `system.power.restart` | 无参数，另需宿主确认 | 同上 |
+| `system.power.shutdown` | 无参数，另需宿主确认 | 同上 |
+
+所有 ID 必须是对应读取主题返回的非空字符串。所有十九项，包括主动无线扫描，都要求
+当前可信用户手势；定时回调、采样回调和组件自行声称的手势不能提交写操作。参数必须保留
+真实 Lua 数字／布尔类型；未知键、字符串代替数字、`password`、`hostConfirmed`、任意 XML
+或系统命令都不接受。参数类型／格式错误在 `task.start` 同步抛出 Lua 错误，可用 `pcall`
+捕获；已创建任务的异步失败则由 `task.done` 报告。新任务默认每个实例同时一项；
+`audio.input.setVolume` 与 `system.display.setBrightness` 允许最多四项待处理请求，
+共享服务合并同一实例、同一目标的连续调节，旧任务会收到取消结果。组件仍应限制提交频率，
+并以最新任务和真实回读更新界面。原有输出音量任务的并发与参数契约不变。
+
+`network.wifi.connect` 必填 `interfaceId`，且 `networkId`、`profileName`、`ssid` 三者
+必须且只能提供一个非空字符串。`ssid` 是至多 32 字节的 UTF-8 字符串；直接指定它时必须
+提供 `security = "open" / "wpa2" / "wpa3"`。`hidden` 为可选布尔值。使用 `networkId`
+时宿主重新解析真实安全类型，不信任组件声称的安全性。保存的 `profileName` 使用现有凭据；
+组件应先订阅 `network.wifi`，取得近期缓存中的 interface／network ID；宿主用该缓存中的
+真实 SSID 和安全类型显示提示。缺少缓存或目标已消失时返回 `networkGone`，不能通过组件
+自报网络名称绕过校验。
+新网络所需密码由宿主对话框收集。开放网络不收集密码，不支持的认证交给系统设置。
+密码与确认结果不会进入 Lua、`task.done`、参数、日志或配置。忘记网络与睡眠／重启／关机
+还需宿主显示目标和操作并取得确认，组件不能绕过或定制确认内容。
+
+设备控制成功以实际执行和后端回读为依据，调用 `task.start` 返回任务 ID 只表示任务已创建；
+最新状态从原有读取主题获取，组件不要立即把请求值当成成功状态。扫描等待 Windows 的
+扫描完成通知，结果由后续 `network.wifi` 更新提供。锁屏／睡眠／重启／关机的 `accepted`
+仅表示 Windows 接受请求，不能证明电脑已进入目标状态；进程退出后也可能没有完成事件。
+真实设备消失、策略拒绝、不支持和读回不匹配会失败。通用失败包括 `permissionDenied`、
+`userGestureRequired`、`invalidArguments`、`permissionRevoked`、`canceled`；设备失败可包括
+`notPresent`、`unavailable`、`actionUnsupported`、`systemSettingsRequired`、`stateMismatch`
+和 `timeout`。宿主无法提供提示时返回 `confirmationUnavailable`，用户关闭或拒绝提示返回
+`userCanceled`；任务取消使用 `canceled`。不要解析平台错误数字或把未识别错误当成功。
+
+设备选择只接受相应方向的活动端点，并同时修改 console、multimedia、communications 默认
+角色；Windows 策略接口不可用时返回 `actionUnsupported`。麦克风音量／静音作用于执行时
+默认 multimedia 输入端点。亮度受显示器 WMI／DDC 支持限制。蓝牙连接／断开仅面向支持的
+已配对经典音频设备，必须检查 `canConnect/canDisconnect`，不能据此发起配对或通用 BLE
+连接。`setMode` 在系统支持且计划兼容时同时设置 AC／电池模式；没有休眠任务，重启／关机
+不会强制关闭其他应用。
+
+取消任务、组件销毁／重载、撤权和宿主关闭会清理未完成操作及确认。确认返回后宿主再次核验
+实例和授权，迟到结果不交给新实例。取消或超时不能撤销已经提交的系统动作，也不能保证
+强制中断同步驱动调用。预览在调用设备服务和宿主提示之前返回确定性模拟结果，不扫描网络、
+更改设备、收集密码或执行电源动作；预览成功不代表硬件验收。
+
+缺少对应 feature 时隐藏写入口；若用户点击设置入口，可在同一次可信手势中检查
+`system.openSettings` 的宿主支持和授权，再打开 `audio/display/network/bluetooth/power`
+中的对应页面。该降级入口也不可用时只显示读取状态。先发布包含完整契约的宿主，再发布
+依赖新任务的官方社区组件，不能只凭版本号或原生控制中心可用来判断 Lua 支持。
 
 `system.openSettings` 要求 `shell.launch` 和当前可信用户手势，只接受宿主固定枚举的
 `page`：`notifications/audio/display/network/bluetooth/power/storage/apps/personalization`。
@@ -2285,6 +2468,22 @@ update 另需宿主事件 `id` 和正整数 `expectedRevision`，remove 只接�
 进入日历服务前完成边界检查。新增和更新不要求手势；删除必须从直接指针动作或菜单
 命令的可信调用栈启动：
 
+系列任务为 `calendar.series.create`、`calendar.series.update`、
+`calendar.series.remove`，要求 `calendar.write` 和
+`task.calendar.series` capability。create/update 使用上述事件字段，另需平铺的
+`kind`（`dates`、`weekly`、`monthly`）、`dates`（ISO 数组）、`startDate`、
+`endDate`（空字符串表示永不结束）、`interval`（1–99）、`weekdays`（1=周日，
+1–7 数组）和 `monthDay`（0 表示月末，或 1–31）；`date` 为开始日期。
+dates 模式接收 1–366 个去重日期；weekly/monthly 以开始日期所在周/月为间隔起点，
+起止日期均包含当日，短月份没有指定日期时跳过。update/remove 另需系列 `id`
+和正整数 `expectedRevision`，remove 需要可信手势。`calendar.seriesById(id)`
+需要 `calendar.read` 和 `calendar.series` capability，返回系列规则、修订号及
+以原定日期为身份的单次改动；找不到时返回 nil。`calendar.events` 中系列实例增加
+`seriesId`、`occurrenceDate`、`occurrenceOverride`。现有 `calendar.update/remove`
+继续作用于一个实例。修改整个系列会保留仍匹配新规则的单次改动，移除不再匹配的改动。
+调用方应在规则变化导致改动丢失前向用户确认。API 仍为 v2；旧宿主缺少上述 capability
+时，组件应保持原有单日编辑界面。官方组件应在支持这些 capability 的宿主发布后发布。
+
 ```lua
 local updateId, err = task.start("calendar.update", {
     id = item.id,
@@ -2304,6 +2503,33 @@ local updateId, err = task.start("calendar.update", {
 其他稳定错误包括 `not_found`、`title_required`、`text_too_long`、`invalid_date`、
 `invalid_time`、`invalid_reminder`、`event_limit`、`save_failed`、
 `permissionDenied`、`userGestureRequired` 和 `previewReadOnly`。
+
+`location.current`（可选 capability `task.location.current`）要求用户授予 `location.read`，
+并且从直接指针、键盘或菜单动作的可信手势调用。宿主必须处于前台，Windows 系统位置服务和
+应用位置权限必须允许访问。它在 UI 线程调用 Windows `Geolocator.RequestAccessAsync`，获准后
+异步读取位置，不调用第三方 IP 定位服务。每个实例最多一个在途请求。
+
+```lua
+if widget.hasFeature("task.location.current") and widget.hasPermission("location.read") then
+    local id, err = task.start("location.current", { timeoutMs = 15000, maximumAgeMs = 300000 })
+end
+```
+
+两个参数都必须为整数：`timeoutMs` 为 1000–30000，默认 10000；`maximumAgeMs` 为
+0–3600000，默认 300000。位置读取的超时不包含 Windows 用户授权对话框的等待时间。
+完成事件的成功 `value` 为 `{ latitude, longitude, accuracyMeters, timestampMs, source }`；
+时间戳为 UTC Unix 毫秒，精度为米。`source` 为 `satellite/wifi/cellular/ip/default/obfuscated/unknown`。
+Windows 自身可能返回 IP 或默认位置；组件不能把这些来源写成精确 GPS，应显示来源和精度，
+并提供城市选择。位置不会自动写入宿主持久化存储；组件只应保存其功能所需的数据。
+
+错误包括 `permissionDenied`、`userGestureRequired`、`foregroundRequired`、`locationDenied`、
+`locationUnavailable`、`locationTimeout`、`permissionRevoked` 和 `canceled`。
+预览返回 `previewUnavailable`，不会访问系统定位或弹出授权。取消、权限撤销和实例销毁
+会取消 Windows 异步操作，迟到的结果不再交付到组件。API 仍为 v2 的增量扩展；依赖该功能
+的官方社区组件应在支持该 capability 的宿主发布后发布。新宿主上的权限拒绝或定位不可用
+可降级到城市选择。旧宿主和同版本早期构建的清单校验器不认识 `location.read`，即使它
+声明为可选权限也会拒绝加载；依赖此权限的组件必须声明 `task.location.current` 为
+required feature，不能承诺这些构建能够加载。低于组件 `minHostVersion` 的宿主也会拒绝加载。
 
 `network.request` 要求 `network.internet`，支持 HTTP/HTTPS 的 `GET/HEAD/POST/PUT/PATCH/DELETE`、
 有界自定义请求头和请求体，但仍不启用 WinHTTP Cookie 或系统认证。默认可访问公网、本机和局域网服务，
@@ -2405,6 +2631,15 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 - `draw.marqueeText({key, x, y, width, height, text, size?, color?, bold?,
   speed?, gap?, alpha?, font?}) -> scrolling`
 - `draw.measureText(text, size?, maxWidth?, bold?, font?)`
+
+  返回原有 `width`、`height` 行框度量。支持 `draw.textInkMetrics` 的宿主在
+  渲染时还返回可选 `ink={left,top,width,height}`：相对于同参数 `draw.text`
+  原点的可见字形边界，单位与绘制坐标一致。`left`、`top` 可为负，宽高非负；
+  空串及纯空白的边界为零，无法测量时省略 `ink`。字体留白使行框中心不一定等于
+  字形中心；需要对齐字形顶部或中心时使用 `ink`。像素微调可能带来少量栅格差异。
+  此增量不改变调用参数或原有宽高字段；依赖它的组件应声明
+  `draw.textInkMetrics`，同版本早期构建也可能缺少该 feature。
+
 - `draw.rect(...)`、`draw.strokeRect(...)`、`draw.line(...)`、`draw.circle(...)`
 - `draw.arc(cx, cy, radius, startDegrees, sweepDegrees, thickness?, color?, alpha?)`
 - `draw.path(commands, options?)`
@@ -2900,8 +3135,10 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 在 setup 或打开面板的 event 中创建 `ui.datePicker(options)`，不要在 view 中重建。
 `key` 为 1–80 字节的实例内唯一标识；`todayDate` 为当前本地 ISO 日期。
-`mode` 为 `single`（默认）或 `range`；value 分别为 ISO 字符串或
-`{startDate,endDate}`。`minDate/maxDate` 为包含端点的日期边界，
+`mode` 为 `single`（默认）、`range` 或 `multiple`；value 分别为 ISO 字符串、
+`{startDate,endDate}` 或按升序排列的 ISO 日期数组。multiple 最多选择 366 天，
+点选日期切换选中状态，确认后返回排序数组；需要额外检测 `ui.datePicker.multiple`
+capability。`minDate/maxDate` 为包含端点的日期边界，
 `disabledDates` 最多 366 项；范围不能跨越禁用日期。`firstDayOfWeek` 为 1（周日）至 7。
 只支持公历日粒度，不隐式创建日程或改变宿主日程选中日期。
 
@@ -3043,3 +3280,7 @@ annotations retain `holidays={}` and `holidaysAvailable=false`. These legacy
 fields cannot enable holiday display and must not be treated as data coverage.
 Old stored holiday choices are ignored. The built-in month-calendar consumes
 only secondary dates. Disabling annotations never changes events.
+
+`glass-transparent` uses light/white content (`contentTheme=0`), neutral low-opacity tint,
+blur and edge reflections. Use the tool bundled with a supporting host; older
+tools reject this appearance. Lua API and schema versions remain unchanged.

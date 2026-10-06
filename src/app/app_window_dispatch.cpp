@@ -272,8 +272,14 @@ LRESULT CALLBACK DesktopApp::InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
 
 LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (hwnd == floatingDockInputHwnd_ && floatingDockHost_ &&
+        floatingDockHost_->mergedPresentationActive &&
+        !floatingDockHost_->mergedPresentation.inputEnabled &&
+        ((msg >= WM_KEYFIRST && msg <= WM_KEYLAST) || msg == WM_IME_STARTCOMPOSITION ||
+            msg == WM_IME_COMPOSITION || msg == WM_IME_CHAR || msg == WM_CONTEXTMENU)) return 0;
     auto focusedSearchWidget =
         [this]() -> ScrollingItemWidget* {
+        if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused()) return view;
         for (auto& container : containers_)
         {
             auto* searchable =
@@ -296,13 +302,13 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         if (widgetEngine_ &&
             widgetEngine_->HasFocusedHostInput())
         {
-            widgetEngine_->ClearHostInputComposition();
+            widgetEngine_->BeginHostInputComposition();
             UpdateHostInputImePosition();
             return 0;
         }
         if (auto* searchable = focusedSearchWidget())
         {
-            searchable->ClearSearchComposition();
+            searchable->BeginSearchComposition();
             UpdateHostInputImePosition();
             return 0;
         }
@@ -446,6 +452,9 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case WM_KEYDOWN:
     {
+        if ((widgetEngine_&&widgetEngine_->IsHostInputComposing()) ||
+            (focusedSearchWidget()&&focusedSearchWidget()->IsSearchComposing()))
+            return DefWindowProcW(hwnd,msg,wp,lp);
         const bool repeated =
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
         if (TryHandlePageNavigationKey(wp, repeated))
@@ -520,6 +529,15 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         if (ch >= 0x20 && ch != 0x7F)
         {
+            if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
+            {
+                view->AppendSearchChar(ch);
+                popupScrollOffset_ = 0;
+                ResetCollectionPopupAnimationCache();
+                UpdateHostInputImePosition();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
             for (auto& c : containers_)
             {
                 auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());

@@ -28,6 +28,7 @@
 #include "widget_author_preview.h"
 #include "native_component_preview_export.h"
 #include "steam_runtime_startup.h"
+#include "taskbar_hook/taskbar_symbol_resolver.h"
 
 #include <commctrl.h>
 
@@ -350,8 +351,27 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
  * @param showCommand 窗口显示方式（SW_SHOWNORMAL 等）
  * @return 应用程序退出码
  */
+namespace
+{
+const ULONGLONG startupFeedbackBegan = GetTickCount64();
+void ShowStartupFailure(const snowdesktop::operation_feedback::Failure& failure)
+{
+    using namespace snowdesktop::steam_runtime::startup;
+    const auto phase = HostChannel().CurrentPhase();
+    // A supervising launcher reports exits during its 60-second wait. Once
+    // that wait expires (or startup was already confirmed), this host owns UI.
+    if (phase == Phase::AwaitingHost || phase == Phase::Ready ||
+        GetTickCount64() - startupFeedbackBegan >= 60000)
+        snowdesktop::operation_feedback::Show(failure);
+    else
+        WriteDiagnosticLogEntry((failure.detail + L" (error " +
+            std::to_wstring(failure.error) + L")").c_str(), DiagnosticLogLevel::Error);
+}
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
     snowdesktop::steam_runtime::startup::Begin();
     // Helpers and deployment discovery may access settings before Run.
     // Conservatively prohibit automatic downgrade from this boundary.
@@ -362,17 +382,30 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         return *result;
 
     if (snowdesktop::settings_ipc::IsSettingsProcessCommand())
+    {
+        // The settings child bypasses the desktop's later initialization. It
+        // still needs crash evidence, without starting a second desktop host.
+        SetUnhandledExceptionFilter(CrashHandler);
+        InstallCrashHandler();
         return snowdesktop::settings_ipc::RunSettingsProcess(instance);
+    }
 
     if (snowdesktop::deployment::TryHandlePackagedAutoStartQueryCommand())
         return 0;
+
+    /* 处理特殊命令行开关：仅恢复资源管理器图标后立即退出 */
+    if (commandLine != nullptr && wcsstr(commandLine, L"--restore-explorer-icons") != nullptr)
+    {
+        RestoreExplorerIconLayerNow();
+        return 0;
+    }
 
     if (snowdesktop::deployment::HasInvalidRuntimeDeploymentContext())
     {
         const auto& context =
             snowdesktop::deployment::GetRuntimeDeploymentContext();
-        OutputDebugStringA(("SnowDesktop: invalid runtime deployment "
-            "context: " + context.error + "\n").c_str());
+        Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
+        ShowStartupFailure({"app.operation.startFailed", Utf8ToWide(context.error), ERROR_INVALID_DATA});
         return ERROR_INVALID_DATA;
     }
 
@@ -403,13 +436,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         return static_cast<int>(result.error);
     }
 
-    /* 处理特殊命令行开关：仅恢复资源管理器图标后立即退出 */
-    if (commandLine != nullptr && wcsstr(commandLine, L"--restore-explorer-icons") != nullptr)
-    {
-        RestoreExplorerIconLayerNow();
-        return 0;
-    }
-
     const DWORD predecessor =
         snowdesktop::single_instance::
             ParseRestartPredecessorProcessId(
@@ -418,6 +444,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         !snowdesktop::single_instance::WaitForRestartPredecessor(
             predecessor, 30000))
     {
+        InitializeStartupLocale();
+        ShowStartupFailure({"app.operation.startFailed", L"Previous process did not exit", ERROR_TIMEOUT});
         return ERROR_TIMEOUT;
     }
 
@@ -495,7 +523,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         swprintf_s(diagnostic,
             L"SnowDesktop: single-instance lock failed (error %lu).\n",
             singleInstance.LastError());
-        OutputDebugStringW(diagnostic);
+        InitializeStartupLocale();
+        ShowStartupFailure({"app.operation.startFailed", diagnostic, singleInstance.LastError()});
         return static_cast<int>(singleInstance.LastError());
     }
     if (acquisition !=
@@ -556,6 +585,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         WriteDiagnosticLogEntry(L"Application run returned; releasing host resources");
     }
     WriteDiagnosticLogEntry(L"Application host resources released");
+    if (result != 0 && result != ERROR_CANCELLED)
+        ShowStartupFailure({"app.operation.startFailed",
+            GetDataFilePath(L"SnowDesktop.log"), static_cast<DWORD>(result)});
+
 
     /* 正常退出时清除崩溃计数器，避免残留记录影响后续启动 */
     if (result == 0)

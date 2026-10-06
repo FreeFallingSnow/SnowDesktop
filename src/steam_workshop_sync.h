@@ -26,6 +26,10 @@ struct SteamWorkshopInstallFailure
 struct SteamWorkshopSubscriptionSnapshot
 {
     bool authoritative = false;
+    bool partial = false;
+    // Only explicit unsubscribe operations accepted by Steam can populate
+    // this list. Missing identities in a partial scan are never confirmation.
+    std::vector<std::string> confirmedUnsubscribedPublishedFileIds;
     std::string activeSteamAccountId;
     std::vector<std::string> subscribedPublishedFileIds;
     std::vector<std::string> explicitlyUnsubscribedPublishedFileIds;
@@ -38,7 +42,14 @@ struct SteamWorkshopSubscriptionSnapshot
     std::unordered_map<std::string, std::filesystem::path> preparedArtifacts;
     std::vector<std::string> preparationErrors;
     std::vector<SteamWorkshopInstallFailure> discoveryFailures;
+    std::string warning;
     std::string error;
+
+    bool CanSynchronize() const
+    {
+        return authoritative || partial ||
+            !confirmedUnsubscribedPublishedFileIds.empty();
+    }
 };
 
 using SteamWorkshopSubscriptionHistory =
@@ -72,6 +83,7 @@ struct SteamWorkshopSyncResult
     int installed = 0;
     int updated = 0;
     int uninstalled = 0;
+    std::vector<std::string> warnings;
     std::vector<std::string> errors;
     std::vector<SteamWorkshopInstallFailure> installFailures;
 
@@ -87,6 +99,10 @@ BuildSteamWorkshopPackageAssociations(
     const SteamWorkshopSubscriptionSnapshot& snapshot);
 void ResolveSteamWorkshopSubscriptionRemovals(
     SteamWorkshopSubscriptionSnapshot& snapshot,
+    const SteamWorkshopSubscriptionHistory& history,
+    const std::vector<InstalledPackage>& installed = {});
+std::vector<std::string> BuildSteamWorkshopSubscriptionHistory(
+    const SteamWorkshopSubscriptionSnapshot& snapshot,
     const SteamWorkshopSubscriptionHistory& history);
 SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
     const std::vector<InstalledPackage>& installed,

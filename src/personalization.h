@@ -12,6 +12,7 @@
 #include <cmath>
 #include <string>
 #include "panel_gradient.h"
+#include "edge_light_settings.h"
 
 constexpr int kAppearancePresetDark = 0;
 constexpr int kAppearancePresetLight = 1;
@@ -23,6 +24,7 @@ constexpr int kAppearancePresetAcrylicLight = 11;
 // Reserved for the system taskbar UI; intentionally omitted from global
 // component preset lists.
 constexpr int kAppearancePresetTaskbarTransparent = 12;
+constexpr int kAppearancePresetGlassTransparent = 13;
 
 // Compact four-theme selection shared by independent overlay surfaces.
 constexpr int kFourThemeDark = 0;
@@ -64,6 +66,7 @@ constexpr int FourThemeSelectionFromAppearancePreset(int presetId)
     {
     case kAppearancePresetLight:
         return kFourThemeLight;
+    case kAppearancePresetGlassTransparent:
     case kAppearancePresetGlassDark:
     case kAppearancePresetAcrylicDark:
         return kFourThemeAcrylicDark;
@@ -144,6 +147,7 @@ struct PersonalizationSettings
 
     /** @brief Edge-highlight intensity, stored in [0.0, 1.0]. */
     float widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+    snowdesktop::EdgeLightSettings edgeLight;
 
     /**
      * @brief 渐变底部末端 Alpha
@@ -167,6 +171,9 @@ struct PersonalizationSettings
 
     /** Scrollable native storage title bars; independent of theme presets. */
     bool scrollableTitleBarOnTop = false;
+
+    /** Move/resize pointer feedback for widget handles; independent of themes. */
+    bool widgetTransformCursors = true;
 
     /** Lua desktop widget semantic row height in page CU. */
     float luaWidgetContentRowHeight = 28.0f;
@@ -233,6 +240,7 @@ struct PersonalizationSettings
     static PersonalizationSettings LightPreset();
     static PersonalizationSettings GlassDarkPreset();
     static PersonalizationSettings GlassLightPreset();
+    static PersonalizationSettings GlassTransparentPreset();
     static PersonalizationSettings AcrylicDarkPreset();
     static PersonalizationSettings AcrylicLightPreset();
 };
@@ -242,6 +250,9 @@ int NormalizeAppearancePresetId(int presetId);
 
 /** @brief 根据预设 ID 创建纯色、毛玻璃、亚克力或自定义主题。 */
 PersonalizationSettings MakeAppearancePreset(int presetId);
+
+/** Apply current material defaults without changing independent layout/interaction preferences. */
+void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId);
 
 /** @brief 根据预设 ID 创建针对快捷搜索可读性优化的外观主题。 */
 PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId);

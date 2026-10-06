@@ -7,6 +7,7 @@
 #include "../layout_storage.h"
 #include "../page_navigation_rules.h"
 #include "../settings_update_rules.h"
+#include "../theme_library_settings.h"
 
 #include <cstring>
 #include <cwctype>
@@ -750,6 +751,10 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.itemFontSizeCu = itemFontSizeCu_;
     desktop.listItemFontSizeCu = listItemFontSizeCu_;
     desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
+    desktop.desktopTitleLines = desktopTitleLines_;
+    desktop.largeFolderTitleLines = largeFolderTitleLines_;
+    desktop.scrollingTitleLines = scrollingTitleLines_;
+    desktop.titleEllipsis = titleEllipsis_;
     desktop.shortcutArrowMode = shortcutArrowMode_;
     desktop.iconBeautify = iconBeautifySettings_;
     const bool generalSynchronized =
@@ -957,6 +962,11 @@ public:
             // retain their commit side effects and old-value comparisons.
             const auto& general = snapshot.values.general;
             app_.generalSettings_.animationMode = general.animationMode;
+            if (app_.generalSettings_.statusBar != general.statusBar)
+            {
+                app_.generalSettings_.statusBar = general.statusBar;
+                app_.SyncStatusBar();
+            }
             app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
             app_.generalSettings_.animationSpeed = general.animationSpeed;
             app_.generalSettings_.animationFrameLimit = general.animationFrameLimit;
@@ -964,6 +974,8 @@ public:
             app_.generalSettings_.animationOnBattery = general.animationOnBattery;
             app_.generalSettings_.quickNavigationAppearance = general.quickNavigationAppearance;
             app_.generalSettings_.collectionPopupAppearance = general.collectionPopupAppearance;
+            app_.generalSettings_.globalQuickNavigationAppearance = general.globalQuickNavigationAppearance;
+            app_.generalSettings_.globalCollectionPopupAppearance = general.globalCollectionPopupAppearance;
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyAnimationPreferences();
@@ -976,6 +988,7 @@ public:
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             if (app_.dockSettings_.systemTaskbarFollowPersonalization)
                 app_.RefreshSystemTaskbarAppearance(false);
             app_.InvalidateAllWidgetSlots();
@@ -994,6 +1007,7 @@ public:
                 app_.dockSettings_.systemTaskbarAlignment;
             app_.dockSettings_ = snapshot.values.dock;
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyAnimationPreferences();
             if (app_.widgetEngine_)
@@ -1016,6 +1030,11 @@ public:
         }
         if (HasSettingsDomain(domains, SettingsDomain::Desktop))
         {
+            app_.desktopTitleLines_ = std::clamp(snapshot.values.desktop.desktopTitleLines, 1, 2);
+            app_.largeFolderTitleLines_ = std::clamp(snapshot.values.desktop.largeFolderTitleLines, 1, 2);
+            app_.scrollingTitleLines_ = std::clamp(snapshot.values.desktop.scrollingTitleLines, 1, 2);
+            app_.titleEllipsis_ = snapshot.values.desktop.titleEllipsis;
+            app_.InvalidateAllWidgetSlots();
             app_.PreviewIconSpacing(
                 snapshot.values.desktop.iconSpacingScale);
             app_.PreviewItemIconSize(
@@ -1052,6 +1071,14 @@ public:
         {
             app_.navigationSettings_ = snapshot.values.navigation;
             app_.ApplyNavigationHotkey();
+            app_.EnsureQuickNavTextFormats();
+            app_.EnsureQuickNavigationSearchEdit();
+            if (app_.quickNavigationOpen_)
+            {
+                app_.RefreshQuickNavigationTypedResults();
+                app_.PositionQuickNavigationWindow();
+                app_.InvalidateQuickNavigationWindow();
+            }
             return snowdesktop::SettingsActionResult::Success(domains);
         }
         if (domains == SettingsDomain::General &&
@@ -1059,6 +1086,7 @@ public:
                 app_.generalSettings_, snapshot.values.general))
         {
             app_.generalSettings_ = snapshot.values.general;
+            app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             app_.ApplyDesktopPassthroughHotkey();
             return snowdesktop::SettingsActionResult::Success(domains);
@@ -1070,6 +1098,7 @@ public:
         {
             app_.dockSettings_ = snapshot.values.dock;
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyFloatingDockHotkey();
             return snowdesktop::SettingsActionResult::Success(domains);
@@ -1077,7 +1106,9 @@ public:
 
         DockSettings requestedDockSettings = snapshot.values.dock;
         NormalizeDockSettings(requestedDockSettings);
-        if (HasSettingsDomain(domains, SettingsDomain::Dock))
+        const bool dockCommitted = HasSettingsDomain(domains, SettingsDomain::Dock);
+        const bool generalCommitted = HasSettingsDomain(domains, SettingsDomain::General);
+        if (dockCommitted)
         {
             const bool autoHideChanged =
                 app_.dockSettings_.systemTaskbarAutoHide !=
@@ -1107,43 +1138,61 @@ public:
             }
         }
 
+        const bool dockEnabledChanged = generalCommitted &&
+            app_.generalSettings_.dockEnabled != snapshot.values.general.dockEnabled;
+        const bool languageChanged = generalCommitted && std::strcmp(
+            app_.generalSettings_.language, snapshot.values.general.language) != 0;
+        // Publish both domain mirrors before any layout, surface or hotkey
+        // observes a desktop-style preset. Shell request rejection above must
+        // still leave both mirrors untouched.
+        if (dockCommitted) app_.dockSettings_ = requestedDockSettings;
+        if (generalCommitted) app_.generalSettings_ = snapshot.values.general;
+
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             app_.RefreshSystemTaskbarAppearance(false);
             app_.InvalidateAllWidgetSlots();
         }
-        if (HasSettingsDomain(domains, SettingsDomain::Dock))
+        if (dockCommitted)
         {
-            app_.dockSettings_ = requestedDockSettings;
             app_.ApplyPersistentDockHostAppearance();
-            app_.ApplyAnimationPreferences();
-            if (app_.widgetEngine_)
-                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
-            app_.ApplyFloatingDockHotkey();
-            app_.UpdateLayoutWorkArea();
-            app_.LayoutItems();
-            app_.SaveLayoutSlots();
-            app_.InvalidateDragStaticScene();
-            app_.RefreshSystemTaskbarAppearance(true);
+            // A combined commit runs these shared effects in General below,
+            // including Dock entry restoration before the single layout pass.
+            if (!generalCommitted)
+            {
+                app_.SyncStatusBar();
+                app_.ApplyAnimationPreferences();
+                if (app_.widgetEngine_)
+                    app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
+                app_.ApplyFloatingDockHotkey();
+                app_.UpdateLayoutWorkArea();
+                app_.LayoutItems();
+                app_.SaveLayoutSlots();
+                app_.InvalidateDragStaticScene();
+                app_.RefreshSystemTaskbarAppearance(true);
+            }
         }
         if (HasSettingsDomain(domains, SettingsDomain::Navigation))
         {
             app_.navigationSettings_ = snapshot.values.navigation;
             app_.ApplyNavigationHotkey();
+            app_.EnsureQuickNavTextFormats();
+            app_.EnsureQuickNavigationSearchEdit();
+            if (app_.quickNavigationOpen_)
+            {
+                app_.RefreshQuickNavigationTypedResults();
+                app_.PositionQuickNavigationWindow();
+                app_.InvalidateQuickNavigationWindow();
+            }
         }
-        if (HasSettingsDomain(domains, SettingsDomain::General))
+        if (generalCommitted)
         {
-            const bool dockEnabledChanged =
-                app_.generalSettings_.dockEnabled !=
-                    snapshot.values.general.dockEnabled;
-            const bool languageChanged = std::strcmp(
-                app_.generalSettings_.language,
-                snapshot.values.general.language) != 0;
-            app_.generalSettings_ = snapshot.values.general;
+            app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
             app_.ApplyAnimationPreferences();
@@ -1163,8 +1212,11 @@ public:
                     (void)app_.settingsController_->SynchronizeDesktop(
                         std::move(desktop));
                 }
+            }
+            if (dockCommitted || dockEnabledChanged)
+            {
                 app_.UpdateLayoutWorkArea();
-                if (!app_.generalSettings_.dockEnabled)
+                if (dockEnabledChanged && !app_.generalSettings_.dockEnabled)
                     app_.RestoreDockEntriesToDesktop();
                 app_.LayoutItems();
                 app_.SaveLayoutSlots();
@@ -1174,9 +1226,15 @@ public:
             app_.ApplyCollectionPopupAppearance();
             if (languageChanged)
                 app_.ApplyLanguageChange();
+            if (dockCommitted)
+                app_.RefreshSystemTaskbarAppearance(true);
         }
         if (HasSettingsDomain(domains, SettingsDomain::Category))
         {
+            const bool collectionPolicyChanged = app_.categorySettings_.collectProgramsEnabled !=
+                snapshot.values.category.collectProgramsEnabled ||
+                GetProgramCategoryExtensions(app_.categorySettings_) !=
+                    GetProgramCategoryExtensions(snapshot.values.category);
             app_.categorySettings_ = snapshot.values.category;
             NormalizeCategorySettings(app_.categorySettings_);
             for (auto& container : app_.containers_)
@@ -1191,10 +1249,26 @@ public:
                              dynamic_cast<FileGroup*>(container.get()))
                     group->InvalidateHostedView();
             }
+            if (collectionPolicyChanged)
+            {
+                app_.ApplyAutoCollectFileCategoryWidgets();
+                app_.LayoutItems();
+                app_.RebuildContainersAndItems();
+                app_.SaveLayoutSlots();
+            }
+            if (app_.dockFolderPopupContainer_)
+                app_.dockFolderPopupContainer_->InvalidateFilterCache();
+            app_.InvalidateCollectionPopupContent();
+            app_.InvalidateFloatingPopupWindow(false);
         }
         if (HasSettingsDomain(domains, SettingsDomain::Desktop))
         {
             const auto& desktop = snapshot.values.desktop;
+            app_.desktopTitleLines_ = std::clamp(desktop.desktopTitleLines, 1, 2);
+            app_.largeFolderTitleLines_ = std::clamp(desktop.largeFolderTitleLines, 1, 2);
+            app_.scrollingTitleLines_ = std::clamp(desktop.scrollingTitleLines, 1, 2);
+            app_.titleEllipsis_ = desktop.titleEllipsis;
+            app_.InvalidateAllWidgetSlots();
             app_.SetIconSpacing(desktop.iconSpacingScale);
             app_.SetItemIconSize(desktop.itemIconSizeScale);
             app_.SetItemFontSize(desktop.itemFontSizeCu);
@@ -1215,9 +1289,10 @@ public:
         const snowdesktop::SettingsRoute& route) override
     {
         // Windows owns these taskbar values. Reconcile them whenever the
-        // already-open settings window enters the Taskbar route; reopening the
-        // window is not the only path that can expose this page.
-        if (route.page == snowdesktop::SettingsPage::Taskbar)
+        // already-open settings window enters either route that exposes them;
+        // reopening the window is not the only way to reveal those controls.
+        if (route.page == snowdesktop::SettingsPage::Taskbar ||
+            route.page == snowdesktop::SettingsPage::DesktopStyle)
             app_.SyncSystemTaskbarSettingsFromWindows();
         return snowdesktop::SettingsActionResult::Success();
     }
@@ -1232,6 +1307,14 @@ public:
             break;
         case Action::RegisterHotkeys:
             app_.ApplyNavigationHotkey();
+            app_.EnsureQuickNavTextFormats();
+            app_.EnsureQuickNavigationSearchEdit();
+            if (app_.quickNavigationOpen_)
+            {
+                app_.RefreshQuickNavigationTypedResults();
+                app_.PositionQuickNavigationWindow();
+                app_.InvalidateQuickNavigationWindow();
+            }
             app_.ApplyDesktopPassthroughHotkey();
             app_.ApplyFloatingDockHotkey();
             break;
@@ -1305,7 +1388,7 @@ public:
         {
             const std::wstring path = GetDataDirectoryPath();
             if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
-                    app_.controlHwnd_, path, nullptr))
+                    app_.controlHwnd_, path, nullptr, SW_SHOWNORMAL, false))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.backup.error.openLocation"));
@@ -1364,7 +1447,7 @@ public:
                       L"SnowDesktop/blob/main/THIRD_PARTY_NOTICES.md";
             }
             if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
-                    app_.controlHwnd_, target.wstring(), nullptr))
+                    app_.controlHwnd_, target.wstring(), nullptr, SW_SHOWNORMAL, false))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.about.link.openFailed"));
@@ -1663,6 +1746,7 @@ void DesktopApp::TryShowPendingSettingsWindow()
 
     const snowdesktop::SettingsRoute route =
         settingsWindowOpenRequest_.Route();
+    CloseQuickNavigation(false);
     const bool shown = settingsWindow_ && settingsWindow_->Open(route);
     if (shown)
     {
@@ -1726,7 +1810,9 @@ void DesktopApp::TryShowPendingSettingsWindow()
         message += L": ";
         message += settingsWindow_->LastError();
     }
-    WriteDiagnosticLogEntry(message.c_str());
+    WriteDiagnosticLogEntry(message.c_str(), DiagnosticLogLevel::Error);
+    settingsWindowOpenRequest_.Cancel();
+    snowdesktop::operation_feedback::Report({"settings.process.startFailed", message});
 }
 
 /**
@@ -1736,6 +1822,7 @@ void DesktopApp::LoadNavigationSettingsAndApply()
 {
     NavigationSettings settings;
     LoadNavigationSettings(GetNavigationSettingsPath().c_str(), settings);
+    snowdesktop::themes::RestoreBuiltinQuickPanel(settings, generalSettings_, CurrentPersonalization());
     navigationSettings_ = settings;
     ApplyNavigationHotkey();
 }
@@ -1899,6 +1986,8 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    snowdesktop::app_fonts::Select(settings.font, std::filesystem::path(GetExecutableDirectoryPath()) / L"Assets", GetDataDirectoryPath());
+    SyncStatusBar();
     snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
     if (widgetEngine_) widgetEngine_->SetCalendarDisplayPreferences(generalSettings_.calendarDisplay);
     ApplyAnimationPreferences();
@@ -1935,7 +2024,7 @@ void DesktopApp::ApplyQuickNavigationAppearance()
     const PersonalizationSettings globalAppearance = CurrentPersonalization();
     const PersonalizationSettings appearance = snowdesktop::ResolveSurfaceTheme(
         generalSettings_.quickNavigationAppearance, globalAppearance,
-        generalSettings_.quickNavTheme, true);
+        generalSettings_.quickNavTheme, true, &generalSettings_.globalQuickNavigationAppearance);
     quickNavLightTheme_ = appearance.contentTheme == 1;
     quickNavGlassTheme_ = appearance.glassEnabled;
     quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
@@ -1950,7 +2039,7 @@ void DesktopApp::ApplyCollectionPopupAppearance()
 
     collectionPopupAppearance_ = snowdesktop::ResolveSurfaceTheme(
         generalSettings_.collectionPopupAppearance, globalAppearance,
-        generalSettings_.collectionPopupTheme, false);
+        generalSettings_.collectionPopupTheme, false, &generalSettings_.globalCollectionPopupAppearance);
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =
@@ -2042,6 +2131,10 @@ void DesktopApp::LoadCategorySettingsAndApply()
                      dynamic_cast<FileGroup*>(c.get()))
             group->InvalidateHostedView();
     }
+    if (auto* mapping = dynamic_cast<FolderMapping*>(dockFolderPopupContainer_.get()))
+        mapping->InvalidateFilterCache();
+    InvalidateCollectionPopupContent();
+    InvalidateFloatingPopupWindow(false);
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -2127,13 +2220,17 @@ void DesktopApp::ApplyLanguageChange()
     if (titleChanged)
         SaveLayoutSlots();
     if (quickNavigationOpen_)
+    {
+        RefreshQuickNavigationTypedResults();
         InvalidateQuickNavigationWindow();
+    }
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
 void DesktopApp::ToggleDesktopIconsVisibility()
 {
+    if (layoutScrollSave_.Pending()) SaveLayoutSlots();
     desktopIconsHidden_ = !desktopIconsHidden_;
     // The control-window timer also maintains the Explorer taskbar hook and
     // the blurred desktop background. Keep it alive while icons are hidden.

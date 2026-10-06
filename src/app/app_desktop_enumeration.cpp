@@ -657,6 +657,11 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         }
         HideExplorerIcons();
         UpdateHostInputImePosition();
+        // WM_DESTROY retired persistent Dock hosts and their merged frame.
+        // Bind the complete strip to the replacement HWND before the topology
+        // signature is committed; an unchanged follow-up cannot repair it.
+        LayoutItems();
+        SyncStatusBar();
     }
     else if (hwnd_ && IsWindow(hwnd_))
     {

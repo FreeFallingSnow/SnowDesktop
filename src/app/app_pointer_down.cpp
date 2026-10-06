@@ -3,6 +3,7 @@
 #include "../quick_navigation_rules.h"
 #include "../widget_scroll_rules.h"
 #include "../animation_settings.h"
+#include "categorized_popup_scope.h"
 
 // Primary-button press handling and drag-source initialization.
 
@@ -14,7 +15,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (middleButtonWidgetMove_) return;
     // Popup/Dock hosts do not activate on clicks, so the EDIT may never
     // receive WM_KILLFOCUS. Finish before hit testing can change its target.
-    if (renameEdit_ != nullptr)
+    if (renameController_.IsActive())
         CommitRename(false);
     keyboardNavVisualFocus_ = false;
     ClearPopupMouseDownItem();
@@ -206,6 +207,45 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     pendingCtrlToggleWidgetItem_ = nullptr;
     marqueeRect_ = MakeRect(pt.x, pt.y, pt.x, pt.y);
 
+    if (IsCollectionPopupInteractive())
+    {
+        auto* view = GetCategorizedPopupView();
+        if (view)
+        {
+            const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+            const RECT frame = GetCategorizedPopupFrame(popup);
+            CategorizedPopupScope scope(view, frame);
+            const RECT search = view->GetSearchBoxRect();
+            if (!IsRectEmptyRect(search) && PtInRect(&search, pt))
+            {
+                for (auto& candidate : containers_)
+                    if (auto* other = dynamic_cast<ScrollingItemWidget*>(candidate.get()); other && other != view)
+                        other->SetSearchFocused(false);
+                view->BeginSearchPointerSelection(pt, (wp & MK_SHIFT) != 0);
+                FocusDesktopInputWindow();
+                mouseDownHit_ = nullptr;
+                SetCapture(interactionCaptureHwnd);
+                UpdateHostInputImePosition();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            if (view->BeginCategoryTabDrag(pt))
+            {
+                view->SetSearchFocused(false);
+                view->GetWidgetData()->activeCategoryId = view->CategoryIdAtPoint(pt);
+                popupScrollOffset_ = 0;
+                if (auto* categories = dynamic_cast<FileCategories*>(view)) categories->InvalidateCategoryCache();
+                else if (auto* folder = dynamic_cast<FolderMapping*>(view)) folder->InvalidateFilterCache();
+                mouseDownHit_ = nullptr;
+                SetCapture(interactionCaptureHwnd);
+                ResetCollectionPopupAnimationCache();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            view->SetSearchFocused(false);
+        }
+    }
+
     // 外部点击先关闭集合弹窗，但保留本次按下事件，继续命中弹窗下方的真实目标。
     if (IsCollectionPopupInteractive() &&
         popupWidgetIndex_ < widgets_.size())
@@ -247,6 +287,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (HandlePageNavClick(pt)) return;
 
     bool ctrl = (wp & MK_CONTROL) != 0;
+    const bool shift = (wp & MK_SHIFT) != 0;
 
     if (IsCollectionPopupInteractive())
     {
@@ -366,8 +407,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             }
             bool clickedPopupItem = false;
             for (size_t i = 0;
-                 i < dockFolderPopupWidget_.
-                    folderEntries.size(); ++i)
+                 i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
             {
                 RECT itemRect =
                     GetCollectionPopupItemRect(popup, i);
@@ -382,21 +422,37 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
                 auto& entries =
                     dockFolderPopupWidget_.folderEntries;
-                ClearSelection();
-                if (ctrl)
+                const size_t entryIndex = GetPopupFolderEntryIndex(dockFolderPopupWidget_, i);
+                const std::wstring selectionScope = GetPopupSelectionScope();
+                const std::wstring selectionKey = L"folder:" +
+                    dockFolderPopupWidget_.id + L":" +
+                    ToUpperInvariant(entries[entryIndex].fullPath);
+                if (shift)
                 {
-                    entries[i].selected =
-                        !entries[i].selected;
+                    if (ctrl) ClearSelectionOutsideWidget(static_cast<size_t>(-1));
+                    ExtendPointerSelection(selectionScope,
+                        GetPopupSelectionTargets(), selectionKey, ctrl);
                 }
-                else if (!entries[i].selected)
+                else if (ctrl)
                 {
+                    ClearSelection();
+                    entries[entryIndex].selected =
+                        !entries[entryIndex].selected;
+                }
+                else if (!entries[entryIndex].selected)
+                {
+                    ClearSelection();
                     for (auto& entry : entries)
                         entry.selected = false;
-                    entries[i].selected = true;
+                    entries[entryIndex].selected = true;
                 }
+                else
+                    ClearSelection();
+                if (!shift)
+                    selectionController_.RememberAnchor(selectionScope, selectionKey);
                 popupMouseDownItem_ =
                     std::make_unique<FolderEntryIcon>(
-                        &entries[i],
+                        &entries[entryIndex],
                         dockFolderPopupContainer_.get(),
                         this);
                 popupMouseDownItem_->SetBounds(itemRect);
@@ -499,7 +555,16 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
             if (itemIndex != static_cast<size_t>(-1))
             {
-                if (ctrl)
+                const std::wstring selectionScope = GetPopupSelectionScope();
+                const std::wstring selectionKey =
+                    L"item:" + ToUpperInvariant(items_[itemIndex].layoutKey);
+                if (shift)
+                {
+                    if (ctrl) ClearSelectionOutsideWidget(popupWidgetIndex_);
+                    ExtendPointerSelection(selectionScope,
+                        GetPopupSelectionTargets(), selectionKey, ctrl);
+                }
+                else if (ctrl)
                 {
                     ClearSelectionOutsideWidget(popupWidgetIndex_);
                     ToggleSelection(static_cast<int>(itemIndex));
@@ -512,6 +577,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 {
                     ClearSelectionOutsideWidget(popupWidgetIndex_);
                 }
+                if (!shift)
+                    selectionController_.RememberAnchor(selectionScope, selectionKey);
                 WidgetContainer* wc = nullptr;
                 for (auto& c : containers_)
                 {
@@ -997,7 +1064,15 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
             if (memberItem)
             {
-                if (ctrl)
+                const std::wstring selectionScope = GetWidgetSelectionScope(wi);
+                const std::wstring selectionKey = GetItemSelectionKey(memberItem);
+                if (shift)
+                {
+                    if (ctrl) ClearSelectionOutsideWidget(wi);
+                    ExtendPointerSelection(selectionScope,
+                        GetWidgetSelectionTargets(wi), selectionKey, ctrl);
+                }
+                else if (ctrl)
                 {
                     ClearSelectionOutsideWidget(wi);
                     if (memberItem->IsSelected())
@@ -1014,6 +1089,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 {
                     ClearSelectionOutsideWidget(wi);
                 }
+                if (!shift)
+                    selectionController_.RememberAnchor(selectionScope, selectionKey);
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = memberItem;
                 SetCapture(hwnd_);
@@ -1146,6 +1223,12 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     : L"";
                 if (!id.empty())
                 {
+                    if (categorized && categorized->BeginCategoryTabDrag(pt))
+                    {
+                        mouseDownWidgetIndex_ = wi;
+                        mouseDownHit_ = nullptr;
+                        SetCapture(hwnd_);
+                    }
                     DesktopWidget* categorizedData =
                         &widgets_[wi];
                     if (auto* fileGroup =
@@ -1249,7 +1332,15 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (hit)
     {
         DesktopItem* di = hit->GetDesktopItem();
-        if (ctrl)
+        const std::wstring selectionScope = L"desktop:" + di->gridCell.pageId;
+        const std::wstring selectionKey = GetItemSelectionKey(hit);
+        if (shift)
+        {
+            if (ctrl) ClearSelectionOutsideDesktop();
+            ExtendPointerSelection(selectionScope,
+                GetDesktopSelectionTargets(di->gridCell.pageId), selectionKey, ctrl);
+        }
+        else if (ctrl)
         {
             ClearSelectionOutsideDesktop();
             size_t hitIndex = (di && !di->layoutKey.empty())
@@ -1269,6 +1360,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             ClearSelectionOutsideDesktop();
         }
+        if (!shift)
+            selectionController_.RememberAnchor(selectionScope, selectionKey);
     }
     else if (!ctrl)
         ClearSelection();

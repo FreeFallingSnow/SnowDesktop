@@ -14,7 +14,8 @@ namespace
 {
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-constexpr std::uint32_t Version = 24;
+// Font settings extend the snapshot; restart state queries the host's active font.
+constexpr std::uint32_t Version = 31;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;
@@ -128,13 +129,21 @@ struct Channel::Impl
     }
     void Fail() noexcept
     {
-        connected = false;
+        {
+            std::lock_guard lock(mutex);
+            connected = false;
+        }
         writeReady.notify_all();
         Signal();
     }
     void Close() noexcept
     {
-        connected = false;
+        {
+            // Change the wait predicate under the writer's mutex. An atomic
+            // store alone can lose the notification just before it waits.
+            std::lock_guard lock(mutex);
+            connected = false;
+        }
         writeReady.notify_all();
         for (auto* worker : {&reader, &writer})
         {
@@ -194,10 +203,11 @@ struct Channel::Impl
         auto header = Pack(Magic, Version, kind, static_cast<std::uint32_t>(data.size()), id);
         header.insert(header.end(), data.begin(), data.end());
         {
-            std::lock_guard lock(mutex);
+            std::unique_lock lock(mutex);
             if (!connected || !writePipe || outgoing.size() >= MaximumQueuedItems ||
                 header.size() > MaximumQueuedBytes - outgoingBytes)
             {
+                lock.unlock();
                 Fail();
                 throw ProtocolError("settings process disconnected or stalled");
             }

@@ -224,6 +224,9 @@ void DesktopApp::OpenDockFolderPopupAt(
     dockFolderPopupWidget_.listMode =
         entry.listMode;
     dockFolderPopupWidget_.fanPopup = entry.fanPopup;
+    dockFolderPopupWidget_.showSearchBox = entry.showSearchBox;
+    dockFolderPopupWidget_.showFileCategories = entry.showFileCategories;
+    dockFolderPopupWidget_.categoryTabOrder = entry.categoryTabOrder;
     dockFolderPopupWidget_.detailShowModified =
         entry.detailShowModified;
     dockFolderPopupWidget_.detailShowType =
@@ -272,6 +275,10 @@ void DesktopApp::OpenDockFolderPopupAt(
                     itemKeys;
             dockFolderPopupWidget_.listMode =
                 widgets_[widgetIndex].listMode;
+            dockFolderPopupWidget_.showSearchBox = widgets_[widgetIndex].showSearchBox;
+            dockFolderPopupWidget_.showFileCategories = widgets_[widgetIndex].showFileCategories;
+            dockFolderPopupWidget_.categoryTabOrder = widgets_[widgetIndex].categoryTabOrder;
+            dockFolderPopupWidget_.activeCategoryId = widgets_[widgetIndex].activeCategoryId;
             dockFolderPopupWidget_.fanPopup = widgets_[widgetIndex].fanPopup;
             dockFolderPopupWidget_.showDetails =
                 widgets_[widgetIndex].showDetails;
@@ -392,6 +399,33 @@ void DesktopApp::OpenDockFolderPopupAt(
 void DesktopApp::StartCollectionPopupAnimation(
     bool reverseClosingAnimation)
 {
+    std::vector<RECT> previousDockTitles;
+    if (hwnd_ && IsWindow(hwnd_))
+    {
+        for (const auto& container : containers_)
+        {
+            auto* dock = dynamic_cast<DockContainer*>(container.get());
+            if (!dock || IsDockHostedByPersistentHost(dock))
+                continue;
+            const RECT title = dock->GetHoveredTitleBounds(lastMousePoint_);
+            if (!IsRectEmpty(&title))
+                previousDockTitles.push_back(title);
+        }
+    }
+    const auto refreshDockTitles = [&]() {
+        // Popup state suppresses Dock titles even when the pointer stays still.
+        // Refresh each host's title region as well as its rendered pixels.
+        for (const auto& host : persistentDockHosts_)
+            if (host && !IsRectEmpty(&host->tooltipRect))
+                UpdateFloatingDockWindowBounds(*host);
+        InvalidateDockRects();
+        // Desktop-hosted Dock titles extend beyond the Dock body, so repaint
+        // their old bounds explicitly instead of waiting for WM_MOUSEMOVE.
+        for (const RECT& title : previousDockTitles)
+            if (!PresentDesktopForegroundComposition(title))
+                InvalidateRect(hwnd_, &title, FALSE);
+    };
+
     const DesktopWidget* widget = GetOpenPopupWidget();
     popupAnimation_.Configure(
         snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
@@ -403,6 +437,7 @@ void DesktopApp::StartCollectionPopupAnimation(
     {
         popupAnimation_.ShowImmediately();
         ResetCollectionPopupAnimationCache();
+        refreshDockTitles();
         return;
     }
     // The snapshot visual belongs to the shared topmost popup host. Materialize
@@ -421,6 +456,7 @@ void DesktopApp::StartCollectionPopupAnimation(
         UpdateCollectionPopupCompositionAnimation();
         EnsureUiAnimationFrame();
     }
+    refreshDockTitles();
     wchar_t message[240]{};
     swprintf_s(message,
         L"Popup animation prepared: driver=%s cacheMs=%.2f folder=%d fan=%d items=%llu",
@@ -477,6 +513,12 @@ void DesktopApp::InvalidateCollectionPopupAnimation(
 
 void DesktopApp::FinalizeCloseCollectionPopup()
 {
+    if (auto* view = GetCategorizedPopupView())
+    {
+        view->EndCategoryTabDrag(false);
+        view->EndSearchPointerSelection();
+        view->SetSearchFocused(false);
+    }
     auto pendingOpen =
         std::move(pendingCollectionPopupOpen_);
     pendingCollectionPopupOpen_.reset();
@@ -522,6 +564,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupPageId_.clear();
     popupCategoryId_.clear();
     popupRect_ = {};
+    InvalidateDockRects();
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_) &&
         !IsRectEmptyRect(dirty))
@@ -530,6 +573,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
         InvalidateRect(hwnd_, &dirty, FALSE);
     }
     UpdateFloatingPopupWindowBounds(true);
+    ApplyFloatingDockLayerPolicy();
     if (pendingOpen && hwnd_ && IsWindow(hwnd_))
     {
         const size_t widgetIndex =

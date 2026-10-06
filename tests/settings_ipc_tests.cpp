@@ -1,7 +1,9 @@
 #include "settings_ipc_channel.h"
 #include "settings_ipc_values.h"
+#include "status_bar_appearance.h"
 #include "winui/home_about_ipc_values.h"
 #include "large_icon_edit_rules.h"
+#include "large_icon_preset_rules.h"
 #include "settings_process.h"
 #include "shell_extension_service.h"
 
@@ -37,7 +39,87 @@ HANDLE CurrentProcessHandle()
 
 void TestCodec()
 {
+    snowdesktop::PageLayoutSnapshot pages;
+    pages.revision = 123;
+    pages.monitorCount = 1;
+    pages.editable = true;
+    snowdesktop::PageLayoutEntry page;
+    page.id = L"__page:2";
+    page.name = L"工作 \U0001F30F & Play";
+    page.guideCount = 1;
+    page.widgetCount = 2;
+    pages.pages.push_back(page);
+    Check(Unpack<snowdesktop::PageLayoutSnapshot>(Pack(pages)) == pages,
+        "settings IPC must preserve custom page names, guide counts and mutation availability");
+    const snowdesktop::PageRemovalImpact removal{true, 2, 3, 1};
+    const auto decodedRemoval = Unpack<snowdesktop::PageRemovalImpact>(Pack(removal));
+    Check(decodedRemoval.valid && decodedRemoval.itemCount == 2 && decodedRemoval.widgetCount == 3 &&
+        decodedRemoval.addedPageCount == 1 && decodedRemoval.RequiresConfirmation(),
+        "the deletion confirmation must receive the host's real content and capacity impact");
+    snowdesktop::SettingsHostActions::Request companion;
+    companion.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
+    companion.value = L"taskbar-dock";
+    companion.desktopStyleDockPosition = DockPosition::Right;
+    companion.desktopStyleDockAttached = true;
+    const auto companionWire = Unpack<snowdesktop::SettingsHostActions::Request>(Pack(companion));
+    Check(companionWire.action == companion.action && companionWire.value == companion.value &&
+        companionWire.desktopStyleDockPosition == DockPosition::Right && companionWire.desktopStyleDockAttached,
+        "preset position and form survive the settings-process action transport together");
+    DockSettings dockSpace;
+    dockSpace.reserveScreenSpace = true;
+    dockSpace.lastMonitorUseHomeSize = false;
+    dockSpace.mergedBarHeight = 64;
+    Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
+        "system Dock space reservation must cross the settings-process boundary");
+    const auto styleRoute = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::DesktopStyle);
+    const auto restoredRoute = Unpack<snowdesktop::SettingsRoute>(Pack(styleRoute));
+    Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
+        "desktop style navigation retains its appended page identity across IPC");
     GeneralSettings extensions;
+    // Each option must independently reach the desktop host from settings.
+    for (int flags = 0; flags < 4; ++flags)
+    {
+        extensions.contextMenuExpandQuickActions = (flags & 1) != 0;
+        extensions.contextMenuHidePageManagement = (flags & 2) != 0;
+        const auto restored = Unpack<GeneralSettings>(Pack(extensions));
+        Check(restored.contextMenuExpandQuickActions == extensions.contextMenuExpandQuickActions &&
+            restored.contextMenuHidePageManagement == extensions.contextMenuHidePageManagement,
+            "independent context-menu options cross the settings-process boundary");
+    }
+    extensions.statusBar.enabled = true;
+    extensions.statusBar.position = DockPosition::Left;
+    extensions.statusBar.monitorScope = DockMonitorScope::All;
+    extensions.statusBar.pinnedTrayItems = {"guid:test"};
+    extensions.statusBar.menu = false;
+    extensions.statusBar.quickSearch = false;
+    extensions.statusBar.leftOrder = {"quickSearch", "menu"};
+    std::reverse(extensions.statusBar.rightOrder.begin(), extensions.statusBar.rightOrder.end());
+    extensions.statusBar.noWindow.enabled = true;
+    extensions.statusBar.noWindow.theme.mode = snowdesktop::kStatusBarThemeTransparentDarkText;
+    extensions.statusBar.legacyShellUi.enabled = true;
+    extensions.statusBar.legacyShellUi.theme.mode = 5;
+    extensions.statusBar.maximizedWindow.enabled = true;
+    extensions.statusBar.maximizedWindow.theme.mode = -1;
+    extensions.statusBar.legacyVisibleWindow.theme.mode = 4;
+    extensions.statusBar.legacyVisibleWindow.theme.customized = true;
+    extensions.statusBar.legacyVisibleWindow.theme.appearance.widgetAlpha = .37f;
+    Check(Unpack<GeneralSettings>(Pack(extensions)).statusBar == extensions.statusBar,
+        "settings process must preserve new active rules and retired scene data across its wire boundary");
+    snowdesktop::VisitStatusBarAppearanceRules([&](const char*, auto member) {
+        for (const bool enabled : {false, true})
+        {
+            auto changed = extensions;
+            (changed.statusBar.*member).enabled = enabled;
+            (changed.statusBar.*member).theme.mode = snowdesktop::kStatusBarThemeTransparentLightText;
+            Check(Unpack<GeneralSettings>(Pack(changed)).statusBar == changed.statusBar,
+                "both active scene overrides and transparent themes survive IPC without changing legacy data");
+        }
+    });
+    snowdesktop::VisitStatusBarFlags([&](const char*, auto member) {
+        auto changed = extensions; changed.statusBar.*member = !(changed.statusBar.*member);
+        Check(Unpack<GeneralSettings>(Pack(changed)).statusBar == changed.statusBar,
+            "each status bar flag must survive the settings process boundary in both states");
+    });
     extensions.shellExtensions = {true, {{"handler:{test}", "compress", "压缩", snowdesktop::shell_extensions::Placement::Root}}};
     extensions.shellExtensions.hidden = {{"verb:sevenzip", snowdesktop::shell_extensions::Context::Folder},
         {"verb:editor", snowdesktop::shell_extensions::Context::Desktop}};
@@ -76,6 +158,29 @@ void TestCodec()
     Check(restoredGuide.generation == 71 && restoredGuide.revision == 9 &&
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");
+    NavigationSettings navigation; navigation.lastCollapsed = true; navigation.layout.collapsedWidth = 700; navigation.colors["searchText"] = "#123456"; navigation.prefixes[0] = "applications";
+    navigation.engines.push_back({"custom","Custom","custom","https://example.com/?q={query}"});
+    Check(Unpack<NavigationSettings>(Pack(navigation)) == navigation,"all navigation settings survive the private process boundary");
+    Check(Unpack<snowdesktop::SettingsRoute>(Pack(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::QuickNavigation,"quickNav.layout.iconSize"))).page == snowdesktop::SettingsPage::QuickNavigation,"the appended navigation page crosses private IPC");
+    Check(!CategorySettings{}.collectProgramsEnabled, "program collection is disabled by default");
+    for (const bool enabled : {false, true})
+    {
+        CategorySettings categories;
+        categories.tabFontSize = 18.5f;
+        categories.collectProgramsEnabled = enabled;
+        categories.rules = {{L"programs", L"程序 Programs", L"EXE LNK URL"},
+            {L"documents", L"资料 Documents", L"PDF DOCX", false}};
+        const auto restored = Unpack<CategorySettings>(Pack(categories));
+        Check(restored.collectProgramsEnabled == enabled && restored.tabFontSize == categories.tabFontSize &&
+            restored.rules.size() == categories.rules.size() &&
+            restored.rules[0].id == categories.rules[0].id && restored.rules[0].customLabel == categories.rules[0].customLabel &&
+            restored.rules[0].extensions == categories.rules[0].extensions &&
+            restored.rules[1].id == categories.rules[1].id && restored.rules[1].customLabel == categories.rules[1].customLabel &&
+            restored.rules[1].extensions == categories.rules[1].extensions,
+            "category rules retain text across private IPC");
+        Check(restored.rules[0].enabled && !restored.rules[1].enabled,
+            "both program collection states preserve category identity, labels, extensions and font size across private IPC");
+    }
     // These types exercise Unicode paths, optional values, wide counters and
     // nested metadata used by settings and component editor snapshots.
     using Value = std::tuple<std::wstring, std::uint64_t,
@@ -125,6 +230,8 @@ void TestCodec()
     settings.values.dock.appearancePreset = kAppearancePresetGlassLight;
     settings.values.dock.customAppearance.widgetBgR = .2f;
     settings.values.dock.floatingEdgeSwipeBlockFullscreen = false;
+    settings.values.dock.edgeRevealGesture = 1;
+    settings.values.dock.showWindowPreviews = false;
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
     settings.values.dock.launchEffect = 2;
@@ -137,17 +244,53 @@ void TestCodec()
     settings.values.dock.systemTaskbarShellUi.enabled = true;
     settings.values.dock.systemTaskbarShellUi.appearance.widgetEdgeHighlightWidth = 3.5f;
     settings.values.desktop.iconBeautify.filterTintR = 0.123f;
+    settings.values.desktop.iconBeautify.preset = snowdesktop::IconBeautifyPreset::FrostedGlass;
+    settings.values.desktop.iconBeautify.glassEnabled = true;
+    settings.values.desktop.iconBeautify.glassBlurRadius = 28.0f;
+    settings.values.desktop.iconBeautify.edgeHighlightEnabled = true;
+    settings.values.desktop.iconBeautify.edgeHighlightWidth = 1.7f;
+    settings.values.desktop.iconBeautify.edgeHighlightStrength = .65f;
     settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
     settings.values.personalization.panelGradient.enabled = true;
     settings.values.personalization.showGroupTabCounts = true;
     settings.values.personalization.scrollableTitleBarOnTop = true;
+    settings.values.personalization.widgetTransformCursors = false;
     settings.values.personalization.popupHoverOpen = true;
     settings.values.personalization.popupHoverDelayMs = 1700.0f;
     settings.values.personalization.showCategoryTabCounts = false;
     settings.values.personalization.panelGradient.angle = 213;
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
+    settings.values.general.font = {"user-package", "中文 Family"};
+    settings.values.desktop.itemFontWeight = 600;
+    settings.values.desktop.desktopTitleLines = 1;
+    settings.values.desktop.largeFolderTitleLines = 2;
+    settings.values.desktop.scrollingTitleLines = 1;
+    settings.values.desktop.titleEllipsis = false;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.general.font == settings.values.general.font &&
+        restored.values.desktop.itemFontWeight == 600.f &&
+        restored.values.desktop.desktopTitleLines == 1 &&
+        restored.values.desktop.largeFolderTitleLines == 2 &&
+        restored.values.desktop.scrollingTitleLines == 1 && !restored.values.desktop.titleEllipsis,
+        "font choice, title limits and direct truncation cross settings IPC without rewriting the original weight");
+    Check(restored.values.desktop.iconBeautify.preset == snowdesktop::IconBeautifyPreset::FrostedGlass &&
+        restored.values.desktop.iconBeautify.glassEnabled && restored.values.desktop.iconBeautify.glassBlurRadius == 28.0f &&
+        restored.values.desktop.iconBeautify.edgeHighlightEnabled && restored.values.desktop.iconBeautify.edgeHighlightWidth == 1.7f &&
+        restored.values.desktop.iconBeautify.edgeHighlightStrength == .65f,
+        "glass, blur and directional reflection survive the settings process boundary");
+    for (const auto preset : {snowdesktop::IconBeautifyPreset::FrostedGlassDark, snowdesktop::IconBeautifyPreset::FrostedGlassLight})
+    {
+        auto variant = settings;
+        variant.values.desktop.iconBeautify.preset = preset;
+        const auto received = Unpack<snowdesktop::SettingsSnapshot>(Pack(variant));
+        Check(received.values.desktop.iconBeautify.preset == preset &&
+            received.values.desktop.iconBeautify.edgeHighlightWidth == 1.7f &&
+            received.values.desktop.iconBeautify.glassBlurRadius == 28.f,
+            "new glass preset IDs and editable values survive settings IPC unchanged");
+    }
+    Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
+        "hover reveal and disabled task thumbnails survive settings IPC");
     Check(!restored.values.dock.floatingEdgeSwipeBlockFullscreen,
         "an explicit fullscreen gesture opt-out survives IPC despite the enabled default");
     Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
@@ -166,6 +309,8 @@ void TestCodec()
             restored.values.personalization.popupHoverDelayMs == 1700.0f &&
             !restored.values.personalization.showCategoryTabCounts,
         "group tab counts cross the settings process boundary independently from category counts");
+    Check(!restored.values.personalization.widgetTransformCursors,
+        "disabling component transform cursors survives the settings process boundary despite the enabled default");
     for (const int style : {5, 6})
     {
         auto menuSettings = settings;
@@ -205,6 +350,7 @@ void TestCodec()
     large.frameWidths = {100, 212, 324, 436}; large.frameHeights = {100, 213};
     auto defaults = snowdesktop::LargeIconConfig{}; defaults.radius = 27; defaults.titleSize = 15;
     large.defaultConfig = snowdesktop::EncodeLargeIconConfig(defaults); large.imageWidth = 64; large.imageHeight = 48;
+    large.itemCount = 3; large.anyFill = true; large.mixedFields = {"backgroundStyle", "effect"};
     const auto largeCopy = Unpack<snowdesktop::LargeIconSettingsSnapshot>(Pack(large));
     Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
         largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&
@@ -212,7 +358,8 @@ void TestCodec()
         largeCopy.frameWidth == 436 && largeCopy.frameHeight == 213 && largeCopy.frameColumns == 4 && largeCopy.frameRows == 2 &&
         largeCopy.unitScale == 1.5 && largeCopy.durationScale == 2 && largeCopy.frameLimit == 30 && !largeCopy.animations && largeCopy.neutral == large.neutral &&
         largeCopy.frameWidths == large.frameWidths && largeCopy.frameHeights == large.frameHeights &&
-        largeCopy.defaultConfig == large.defaultConfig && largeCopy.imageWidth == 64 && largeCopy.imageHeight == 48,
+        largeCopy.defaultConfig == large.defaultConfig && largeCopy.imageWidth == 64 && largeCopy.imageHeight == 48 &&
+        largeCopy.itemCount == 3 && largeCopy.anyFill && largeCopy.mixedFields == large.mixedFields,
         "large-icon editing guards, Unicode references and thumbnail provenance survive private IPC");
     WidgetSettingsSnapshot widget;
     widget.widgetId = L"music-1";
@@ -319,9 +466,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 10 had no guide return destination in SettingsRoute.
+        // Version 25 omitted the no-window scene rule.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{10},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{25},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
@@ -330,7 +477,7 @@ void TestRetiredUpdateProtocol()
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers without guide return routes disconnect before dispatch");
+            "settings peers without the no-window rule disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);
@@ -470,6 +617,59 @@ void TestLargeIconEditing()
     Check(CheckRequest(edit, request, true) == "largeIcon.stale", "deletion, conversion or editor teardown invalidates old requests");
     request.action = "read";
     Check(CheckRequest(edit, request, true).empty(), "reopening may establish a fresh session after re-unlock");
+
+    // The real batch editor sends a field patch, not a cloned first-item config.
+    // Protect distinct Steam covers, imported foregrounds and untouched spans.
+    LargeIconConfig first, second;
+    first.backgroundStyle = -2; first.content = 2; first.cachedCover = "steam-first.png";
+    second.backgroundStyle = 9; second.foregroundContent = 1; second.foregroundImage = "second.png";
+    second.columns = 3; second.opacity = .4; second.gradient.enabled = true;
+    auto draft = first; draft.backgroundStyle = -1;
+    const auto preserved = second;
+    Check(Patch(second, draft, {"backgroundStyle"}) && second.backgroundStyle == -1 &&
+        second.foregroundImage == preserved.foregroundImage && second.columns == 3 && second.opacity == .4 && second.gradient == preserved.gradient,
+        "batch background change preserves each item's resources, size and custom settings");
+    Check(Patch(first, draft, {"backgroundStyle"}) && first.cachedCover == "steam-first.png" && first.content == 2,
+        "switching Steam background preserves the item's own retained cover source");
+    draft.opacity = .4;
+    Check(Patch(second, draft, {"opacity"}) && second.opacity == .4,
+        "an explicitly selected field applies even when equal to the reference item's value");
+    Check(!Patch(second, draft, {"cachedCover"}) && !Patch(second, draft, {"unknown"}),
+        "batch patches cannot overwrite asset ownership or introduce unknown fields");
+    auto fill = first; fill.backgroundStyle = -2;
+    draft.effect = 2;
+    Check(!Patch(fill, draft, {"effect"}), "batch dynamic-title selection rejects any image-fill target");
+    auto legacyCustom = second;
+    legacyCustom.backgroundStyle = -3; legacyCustom.defaultBackground = 2;
+    legacyCustom.defaultSolidColor = 0x123456; legacyCustom.defaultSolidOpacity = .7;
+    snowdesktop::large_icon_preset_rules::PrepareForEditing(legacyCustom, 0, false, 0);
+    draft.opacity = .25;
+    Check(Patch(legacyCustom, draft, {"opacity"}) && legacyCustom.backgroundStyle == 9 &&
+        legacyCustom.manualColor == 0x123456 && legacyCustom.opacity == .25 && legacyCustom.foregroundImage == "second.png",
+        "batch editing a legacy custom background reaches its visible settings without losing its own color or image");
+
+    Item a{first, {1, 1}}, b{second, {3, 1}};
+    const std::vector<Change<Item, std::pair<int, int>>> changes{{&a, draft, {2, 2}}, {&b, draft, {2, 2}}};
+    Check(!StoreMany(changes, false, persist) && a.largeIcon == first && b.largeIcon == second,
+        "unlock loss rejects the entire batch before persistence");
+    Check(!StoreMany(changes, true, [] { return false; }) && a.largeIcon == first && b.largeIcon == second &&
+        a.gridSpan == std::pair{1, 1} && b.gridSpan == std::pair{3, 1},
+        "failed batch persistence restores every appearance and span");
+    Check(!StoreMany(changes, true, []() -> bool { throw std::runtime_error("batch write failed"); }) &&
+        a.largeIcon == first && b.largeIcon == second, "exceptional batch persistence rolls back every target");
+    const auto writesBeforeBatch = writes;
+    Check(StoreMany(changes, true, persist) && writes == writesBeforeBatch + 1 && a.largeIcon == draft && b.largeIcon == draft,
+        "one successful batch stores all targets in a single persistence operation");
+    const std::vector<Change<Item, std::pair<int, int>>> restore{{&a, {}, {1, 1}}, {&b, {}, {1, 1}}};
+    Check(StoreMany(restore, false, persist) && !a.largeIcon && !b.largeIcon,
+        "batch return to ordinary icons remains possible after losing unlock");
+    edit = {L"first", 12, 1, draft}; edit.keys = {L"first", L"second"}; edit.previews.emplace(L"second", draft);
+    Check(Contains(edit, L"second") && !Contains(edit, L"other"), "session membership is the captured batch rather than live selection");
+    request = {L"first", 12, 1, "preview", EncodeLargeIconConfig(draft), {}, {"backgroundStyle"}};
+    const auto requestCopy = settings_ipc::Unpack<LargeIconSettingsRequest>(settings_ipc::Pack(request));
+    Check(requestCopy.fields == request.fields && requestCopy.key == request.key, "batch field intent reaches the host through private IPC");
+    Check(CheckRequest(edit, request, false) == "largeIcon.locked" && !edit.preview && edit.previews.empty(),
+        "unlock loss clears all batch previews");
 }
 
 int RunSettingsIpcTests()

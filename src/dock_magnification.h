@@ -11,6 +11,7 @@
 namespace snowdesktop::dock_magnification
 {
 constexpr float kFocusScale = 1.28f;
+constexpr float kSingleFocusScale = 1.12f;
 constexpr float kFirstNeighborScale = 1.14f;
 constexpr float kSecondNeighborScale = 1.05f;
 constexpr float kInfluenceRadiusInItems = 3.0f;
@@ -23,6 +24,8 @@ inline float ResolveFocusScale(
 {
     if (!animationsEnabled || effect == 0)
         return 1.0f;
+    if (effect == 1)
+        return kSingleFocusScale;
     return std::isfinite(configuredScale)
         ? std::clamp(configuredScale, 1.0f, 2.0f)
         : kFocusScale;
@@ -37,11 +40,22 @@ inline float ScaleGrowthMultiplier(float focusScale) noexcept
 inline constexpr bool ShouldSuppressMagnification(
     bool itemDragActive,
     bool widgetMoveActive,
-    bool widgetResizeActive)
+    bool widgetResizeActive,
+    bool inputAvailable = true)
 {
-    return itemDragActive ||
+    // The same semantic hover drives title placement. Disabling the optional
+    // growth effect, or merging its chrome, must not disable that hover.
+    return !inputAvailable || itemDragActive ||
         widgetMoveActive ||
         widgetResizeActive;
+}
+
+// Shared full-width chrome does not pin the Dock's magnification to an edge.
+// Its icons use the same centered growth and displacement as an island Dock.
+inline constexpr bool UsesEdgeAnchoredMagnification(
+    bool edgeAttached, bool mergedWithStatusBar)
+{
+    return edgeAttached && !mergedWithStatusBar;
 }
 
 inline int FocusSwitchHysteresisPixels(int itemPitch)
@@ -163,10 +177,127 @@ private:
     float progress_ = 0.0f;
 };
 
+// Animate only entry/exit amplitude. Pointer movement transfers that amplitude
+// between adjacent icons without shrinking the Dock at every semantic switch.
+class SingleFocusAnimation
+{
+public:
+    static constexpr double kDurationMilliseconds = 80.0;
+    void SetTarget(RECT target, double now, double durationScale, int pointerAxis)
+    {
+        if (!IsRectEmpty(&target)) pointerAxis_ = pointerAxis;
+        if (EqualRect(&target, &requested_)) return;
+        Advance(now);
+        requested_ = target;
+        const double speed = std::isfinite(durationScale) ? std::max(0.01, durationScale) : 1.0;
+        if (!IsRectEmpty(&target))
+        {
+            current_ = target;
+            if (animating_ && to_ == 1.0f) return;
+        }
+        Begin(IsRectEmpty(&target) ? 0.0f : 1.0f, now, kDurationMilliseconds * speed);
+    }
+
+    void Advance(double now)
+    {
+        if (!animating_) return;
+        const float progress = static_cast<float>(std::clamp((now - started_) / duration_, 0.0, 1.0));
+        amount_ = InterpolateScale(from_, to_, progress);
+        if (progress < 1.0f) return;
+        animating_ = false;
+        if (to_ == 0.0f)
+            current_ = requested_;
+    }
+
+    bool IsAnimating() const { return animating_; }
+    const RECT& CurrentRect() const { return current_; }
+    int PointerAxis() const { return pointerAxis_; }
+    float Scale() const { return 1.0f + (kSingleFocusScale - 1.0f) * amount_; }
+
+private:
+    void Begin(float to, double now, double duration)
+    {
+        from_ = amount_; to_ = to; started_ = now; duration_ = duration;
+        animating_ = from_ != to_;
+    }
+    RECT current_{}, requested_{};
+    float amount_ = 0.0f, from_ = 0.0f, to_ = 0.0f;
+    double started_ = 0.0, duration_ = kDurationMilliseconds;
+    int pointerAxis_ = 0;
+    bool animating_ = false;
+};
+
 inline int GrowthForScale(float scale, int baseIconSize)
 {
     return std::max(0, static_cast<int>(std::round(
         std::max(1, baseIconSize) * (std::max(1.0f, scale) - 1.0f))));
+}
+
+// The two icons surrounding the pointer share one fixed growth budget. Packing
+// with that same integer budget keeps gaps and both Dock ends stable, including
+// odd-pixel growth and unequal distances across separators.
+struct SingleFocusGeometry
+{
+    RECT leading{}, trailing{};
+    int leadingGrowth = 0, trailingGrowth = 0;
+    bool vertical = false;
+
+    int Center(const RECT& rect) const
+    { return vertical ? (rect.top + rect.bottom) / 2 : (rect.left + rect.right) / 2; }
+
+    int GrowthFor(const RECT& rect) const
+    {
+        if (!IsRectEmpty(&leading) && EqualRect(&rect, &leading)) return leadingGrowth;
+        if (!IsRectEmpty(&trailing) && EqualRect(&rect, &trailing)) return trailingGrowth;
+        return 0;
+    }
+
+    float ScaleFor(const RECT& rect, int baseIconSize) const
+    { return 1.0f + static_cast<float>(GrowthFor(rect)) / std::max(1, baseIconSize); }
+
+    int AxisShiftFor(const RECT& rect) const
+    {
+        int precedingGrowth = 0;
+        const int center = Center(rect);
+        if (!IsRectEmpty(&leading) && center > Center(leading)) precedingGrowth += leadingGrowth;
+        if (!IsRectEmpty(&trailing) && center > Center(trailing)) precedingGrowth += trailingGrowth;
+        return precedingGrowth + GrowthFor(rect) / 2 - (leadingGrowth + trailingGrowth) / 2;
+    }
+};
+
+inline SingleFocusGeometry ResolveSingleFocusGeometry(
+    const std::vector<RECT>& candidates, bool vertical,
+    int pointerAxis, int baseIconSize, float focusScale)
+{
+    SingleFocusGeometry result;
+    result.vertical = vertical;
+    for (const RECT& candidate : candidates)
+    {
+        if (IsRectEmpty(&candidate)) continue;
+        const int center = result.Center(candidate);
+        if (center <= pointerAxis)
+        {
+            if (IsRectEmpty(&result.leading) || center > result.Center(result.leading))
+                result.leading = candidate;
+        }
+        else if (IsRectEmpty(&result.trailing) || center < result.Center(result.trailing))
+            result.trailing = candidate;
+    }
+    const int growth = GrowthForScale(focusScale, baseIconSize);
+    if (IsRectEmpty(&result.leading))
+    {
+        result.leading = result.trailing;
+        result.trailing = {};
+    }
+    else if (!IsRectEmpty(&result.trailing))
+    {
+        const float progress = static_cast<float>(pointerAxis - result.Center(result.leading)) /
+            static_cast<float>(result.Center(result.trailing) - result.Center(result.leading));
+        result.trailingGrowth = static_cast<int>(std::lround(
+            static_cast<float>(growth) * SmoothStep(progress)));
+    }
+    if (!IsRectEmpty(&result.leading)) result.leadingGrowth = growth - result.trailingGrowth;
+    return result;
 }
 
 inline float ScaleForAxisDistance(
@@ -205,7 +336,8 @@ inline float ScaleForEffect(
     if (effect == 0)
         return 1.0f;
     if (effect == 1)
-        return focused ? ResolveFocusScale(effect, focusScale, true) : 1.0f;
+        return focused ? (std::isfinite(focusScale) ?
+            std::clamp(focusScale, 1.0f, kSingleFocusScale) : kSingleFocusScale) : 1.0f;
     return ScaleForAxisDistance(centerDistance, itemPitch, focusScale);
 }
 
@@ -292,6 +424,19 @@ inline int SingleFocusAxisShift(
         ? -(growth / 2) : growth - growth / 2;
 }
 
+inline int IslandAxisShift(
+    int effect, int baseCenter, int focusCenter, int pointerAxis,
+    int itemPitch, int baseIconSize, float focusScale)
+{
+    if (effect == 0)
+        return 0;
+    if (effect == 1)
+        return SingleFocusAxisShift(
+            baseCenter - focusCenter, baseIconSize, focusScale);
+    return AxisShiftForDistance(
+        baseCenter - pointerAxis, itemPitch, baseIconSize, focusScale);
+}
+
 inline int PackedAxisShift(
     const std::vector<float>& scales, size_t index,
     int baseIconSize, bool towardPositiveAxis)
@@ -323,7 +468,7 @@ inline int PackedAxisShift(
 
 inline RECT MagnifyRect(
     RECT base, DockPosition position, float scale, int baseIconSize,
-    int axisShift = 0)
+    int axisShift = 0, bool centered = false)
 {
     const bool vertical = position == DockPosition::Left ||
         position == DockPosition::Right;
@@ -336,6 +481,12 @@ inline RECT MagnifyRect(
 
     const int leadingGrowth = growth / 2;
     const int trailingGrowth = growth - leadingGrowth;
+    if (centered)
+    {
+        base.left -= leadingGrowth; base.right += trailingGrowth;
+        base.top -= leadingGrowth; base.bottom += trailingGrowth;
+        return base;
+    }
     switch (position)
     {
     case DockPosition::Top:
@@ -409,7 +560,7 @@ inline RECT AnchorTooltipBounds(
 
 inline RECT ExpandInteractionBounds(
     RECT bounds, DockPosition position, int baseIconSize,
-    float focusScale = kFocusScale)
+    float focusScale = kFocusScale, bool centered = false)
 {
     const int growth = GrowthForScale(focusScale, baseIconSize);
     if (growth == 0)
@@ -417,6 +568,15 @@ inline RECT ExpandInteractionBounds(
     const int axisPadding = std::max(1,
         MaximumAxisShift(baseIconSize, focusScale) +
         (growth + 1) / 2);
+    if (centered)
+    {
+        const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+        bounds.left -= vertical ? growth / 2 : axisPadding;
+        bounds.right += vertical ? growth - growth / 2 : axisPadding;
+        bounds.top -= vertical ? axisPadding : growth / 2;
+        bounds.bottom += vertical ? axisPadding : growth - growth / 2;
+        return bounds;
+    }
     switch (position)
     {
     case DockPosition::Top:
@@ -446,9 +606,16 @@ inline RECT ExpandInteractionBounds(
 
 inline RECT ExpandPerpendicularBounds(
     RECT bounds, DockPosition position, int baseIconSize,
-    float focusScale = kFocusScale)
+    float focusScale = kFocusScale, bool centered = false)
 {
     const int growth = GrowthForScale(focusScale, baseIconSize);
+    if (centered)
+    {
+        const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
+        if (vertical) { bounds.left -= growth / 2; bounds.right += growth - growth / 2; }
+        else { bounds.top -= growth / 2; bounds.bottom += growth - growth / 2; }
+        return bounds;
+    }
     switch (position)
     {
     case DockPosition::Top:

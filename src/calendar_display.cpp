@@ -1,10 +1,12 @@
 #include "calendar_display.h"
 #include "calendar_service.h"
+#include "l10n.h"
 #include <windows.h>
 #include <icu.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <memory>
 
 #pragma comment(lib, "icu.lib")
@@ -46,6 +48,16 @@ std::string Format(UDateFormat* format, UDate date, bool separateWeekday = false
             Utf8(text + weekday.beginIndex, count - weekday.beginIndex);
     return U_SUCCESS(status) ? Utf8(text, count) : std::string{};
 }
+std::string LocalizeRocEra(std::string value, std::string_view language)
+{
+    const auto era = Locale::Instance().TrWForLanguage(
+        L10N_KEY("settings.calendar.rocEra"), std::string(language));
+    if (era.empty() || era == L"settings.calendar.rocEra") return value;
+    const auto* source = "Taiwan";
+    const auto at = value.find(source);
+    if (at != std::string::npos) value.replace(at, std::strlen(source), Utf8(reinterpret_cast<const UChar*>(era.data()), static_cast<int>(era.size())));
+    return value;
+}
 }
 
 std::vector<DisplayOption> CalendarOptions(std::string_view language)
@@ -54,6 +66,17 @@ std::vector<DisplayOption> CalendarOptions(std::string_view language)
     const auto locale = LocaleId(language);
     for (auto id : calendars)
     {
+        if (std::string_view(id) == "roc")
+        {
+            const auto label = Locale::Instance().TrWForLanguage(
+                L10N_KEY("settings.calendar.rocName"), std::string(language));
+            if (!label.empty() && label != L"settings.calendar.rocName")
+            {
+                result.push_back({id, label});
+                continue;
+            }
+            // Keep ICU's usable name when language resources are unavailable.
+        }
         UErrorCode status = U_ZERO_ERROR;
         const std::string source = "en@calendar=" + std::string(id);
         UChar label[128]{};
@@ -81,6 +104,9 @@ std::vector<DayAnnotation> Annotate(const std::string& from, const std::string& 
     FormatPtr shortFormat(usable ? udat_open(UDAT_PATTERN, UDAT_PATTERN, locale.c_str(), u"UTC", -1,
         yearOnly ? u"Gy" : u"MMMd", -1, &status) : nullptr, udat_close);
     status = U_ZERO_ERROR;
+    FormatPtr monthFormat(usable ? udat_open(UDAT_PATTERN, UDAT_PATTERN, locale.c_str(), u"UTC", -1,
+        u"Gy MMM", -1, &status) : nullptr, udat_close);
+    status = U_ZERO_ERROR;
     FormatPtr fullFormat(usable ? udat_open(UDAT_NONE, UDAT_FULL, locale.c_str(), u"UTC", -1,
         nullptr, 0, &status) : nullptr, udat_close);
     std::vector<DayAnnotation> result;
@@ -102,18 +128,43 @@ std::vector<DayAnnotation> Annotate(const std::string& from, const std::string& 
             item.era = ucal_get(calendar.get(), UCAL_ERA, &status);
             item.leapMonth = ucal_get(calendar.get(), UCAL_IS_LEAP_MONTH, &status) != 0;
             item.secondary = Format(shortFormat.get(), instant);
+            item.monthHeading = Format(monthFormat.get(), instant);
             if (p.calendar == "chinese")
             {
                 static constexpr const char* lunarDays[] = {"", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"}; // l10n-allow: intrinsic Chinese lunar notation
                 static constexpr const char* months[] = {"", "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月"}; // l10n-allow: intrinsic Chinese lunar notation
+                static constexpr const char* stems[] = {"甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"}; // l10n-allow: intrinsic sexagenary notation
+                static constexpr const char* branches[] = {"子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"}; // l10n-allow: intrinsic sexagenary notation
                 const bool traditional = language == "zh-TW" || language == "zh-HK";
                 if (item.day >= 1 && item.day <= 30 && item.month >= 1 && item.month <= 12)
+                {
+                    const auto monthName = std::string(item.leapMonth ? (traditional ? "閏" : "闰") : "") + // l10n-allow: intrinsic Chinese lunar leap-month notation
+                        (traditional && item.month == 12 ? "臘月" : months[item.month]); // l10n-allow: intrinsic Chinese lunar notation
                     item.secondary = item.day == 1
-                        ? std::string(item.leapMonth ? (traditional ? "閏" : "闰") : "") + // l10n-allow: intrinsic Chinese lunar notation
-                            (traditional && item.month == 12 ? "臘月" : months[item.month]) // l10n-allow: intrinsic Chinese lunar notation
+                        ? monthName
                         : lunarDays[item.day];
+                    if (language == "zh-CN" || traditional)
+                    {
+                        const int cycleYear = ucal_get(calendar.get(), UCAL_YEAR, &status);
+                        if (cycleYear >= 1)
+                            item.monthHeading = std::string(stems[(cycleYear - 1) % 10]) +
+                                branches[(cycleYear - 1) % 12] + "年 " + monthName; // l10n-allow: intrinsic Chinese sexagenary year
+                    }
+                }
             }
             item.fullDate = Format(fullFormat.get(), instant, true);
+            if (p.calendar == "chinese" && (language == "zh-CN" || language == "zh-TW" || language == "zh-HK"))
+            {
+                const auto prefix = item.fullDate.find_first_not_of("0123456789");
+                if (prefix != std::string::npos && prefix > 0)
+                    item.fullDate.erase(0, prefix);
+            }
+            if (p.calendar == "roc")
+            {
+                item.secondary = LocalizeRocEra(std::move(item.secondary), language);
+                item.monthHeading = LocalizeRocEra(std::move(item.monthHeading), language);
+                item.fullDate = LocalizeRocEra(std::move(item.fullDate), language);
+            }
             item.calendarAvailable = U_SUCCESS(status) && !item.secondary.empty();
         }
         result.push_back(std::move(item));

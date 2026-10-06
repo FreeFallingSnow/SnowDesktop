@@ -18,14 +18,12 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Configure
-        run: cmake --preset tests
-
       - name: Build Release targets
-        run: cmake --build --preset release
-
-      - name: Build core test targets
-        run: cmake --build --preset core-tests
+        shell: cmd
+        run: |
+          call scripts\powershell_runtime.bat
+          if errorlevel 1 exit /b 2
+          "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts/build_entry.ps1 -Action ide
 
       - name: Run core CTest suite
-        run: ctest --preset core-tests
+        run: scripts/test.bat core

@@ -25,7 +25,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         dragDropController_.IsTransportActive() ||
         widgetAction_ != WidgetAction::None || largeIconGesture_ ||
         middleButtonWidgetMove_ || detailColumnResizeActive_ ||
-        luaWidgetPanelMouseDown_ || renameEdit_ || GetCapture() ||
+        luaWidgetPanelMouseDown_ || renameController_.IsActive() || GetCapture() ||
         HasActiveContextMenuSession() ||
         (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
         ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
@@ -468,14 +468,23 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
             now, kCollectionPopupDwellDelayMs))
         return false;
 
-    size_t widgetIndex = candidate;
-    TraceCollectionPopupDwell(
-        L"open-ready", L"candidate",
-        lastMousePoint_, widgetIndex);
-    CancelCollectionPopupDwell();
-    OpenCollectionPopupAt(widgetIndex, lastMousePoint_);
-    UpdateWindow(hwnd_);
-    return true;
+    // Keep the outgoing pixels and native completion token alive. The dwell
+    // timer stays armed while closing, and each poll rechecks the current drag
+    // and candidate instead of queuing an open into the close callback.
+    return snowdesktop::popup_animation_rules::OpenAfterClose(
+        popupAnimation_, GetOpenPopupWidget() != nullptr,
+        [this] {
+            pendingCollectionPopupOpen_.reset();
+            BeginCollectionPopupClose(false);
+        },
+        [this, candidate] {
+            TraceCollectionPopupDwell(
+                L"open-ready", L"candidate",
+                lastMousePoint_, candidate);
+            CancelCollectionPopupDwell();
+            OpenCollectionPopupAt(candidate, lastMousePoint_);
+            UpdateWindow(hwnd_);
+        });
 }
 
 void DesktopApp::UpdateCollectionGroupTabDwell(
@@ -1208,6 +1217,6 @@ ShowDockFolderPopupContextMenu(
     RestoreDesktopWindowLayer();
     if (snowdesktop::right_click_contract::
             ShouldRestoreInteractionFocusAfterMenu(
-                false, renameEdit_ != nullptr))
+                false, renameController_.IsActive()))
         RestoreInteractionInputFocus();
 }

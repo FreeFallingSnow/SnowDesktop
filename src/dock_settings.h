@@ -57,6 +57,17 @@ struct SystemTaskbarTargetAppearance
     bool suppressTaskbar = false;
 };
 
+inline void ConfigureSystemTaskbarTargetProtection(
+    SystemTaskbarTargetAppearance& target,
+    bool suppressionRequested, bool protectActivation, bool hasDock) noexcept
+{
+    // Permanent hiding follows Dock placement. Passive activation from a
+    // minimized application can reach any taskbar, including screens without
+    // a Dock; intentional shell-panel access still releases that protection.
+    target.suppressTaskbar = suppressionRequested && hasDock;
+    target.protectAutoHideActivation = protectActivation && !target.shellPanelVisible;
+}
+
 struct DockSettings : DockLayoutSettings
 {
     bool operator==(const DockSettings&) const = default;
@@ -67,9 +78,10 @@ struct DockSettings : DockLayoutSettings
     UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
+    int edgeRevealGesture = 0; // 0=swipe, 1=hover; preserve existing swipe preferences.
     bool floatingEdgeSwipeBlockFullscreen = true;
-    // Legacy persisted fields kept for layout compatibility. Running
-    // applications and hover previews are now unconditional Dock features.
+    // Running applications remain enabled; task thumbnails are optional.
+    // Keep the persisted names for compatibility with existing preferences.
     bool showRunningApps = true;
     bool showWindowPreviews = true;
     bool followComponentAppearance = true;
@@ -96,7 +108,7 @@ struct DockSettings : DockLayoutSettings
 
 inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
 {
-    return settings.showWindowsButton || settings.suppressSystemTaskbar;
+    return settings.showWindowsButton;
 }
 
 inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
@@ -104,7 +116,11 @@ inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
 {
     // floatingShortcutMode enables a summon hotkey; it does not replace the
     // ordinary bottom Dock. Appearance preferences are independent as well.
-    return dockEnabled && settings.position == DockPosition::Bottom && autoHideEnabled;
+    // Permanent hiding temporarily enables Shell auto-hide while preserving
+    // the user's original preference for restoration. Protect that override
+    // too, including taskbars on monitors without a Dock.
+    return dockEnabled && settings.position == DockPosition::Bottom &&
+        (autoHideEnabled || settings.suppressSystemTaskbar);
 }
 
 inline PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)
@@ -115,12 +131,26 @@ inline PersonalizationSettings ResolveDockAppearance(const DockSettings& setting
     return value;
 }
 
+inline void SelectDockAppearance(DockSettings& settings, bool followGlobal,
+    int preset, const PersonalizationSettings& global)
+{
+    if (!followGlobal && preset == kAppearancePresetCustom &&
+        (settings.followComponentAppearance || settings.appearancePreset != kAppearancePresetCustom))
+    {
+        settings.customAppearance = ResolveDockAppearance(settings, global);
+        settings.customAppearance.backgroundPreset = kAppearancePresetCustom;
+    }
+    settings.followComponentAppearance = followGlobal;
+    if (!followGlobal) settings.appearancePreset = preset;
+}
+
 inline void NormalizeDockSettings(DockSettings& settings) noexcept
 {
     switch (settings.appearancePreset)
     {
     case kAppearancePresetDark: case kAppearancePresetLight:
     case kAppearancePresetGlassDark: case kAppearancePresetGlassLight:
+    case kAppearancePresetGlassTransparent:
     case kAppearancePresetAcrylicDark: case kAppearancePresetAcrylicLight:
     case kAppearancePresetCustom: break;
     default: settings.appearancePreset = kAppearancePresetCustom; break;
@@ -129,6 +159,7 @@ inline void NormalizeDockSettings(DockSettings& settings) noexcept
     settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(settings.hoverScale);
     settings.launchEffect = snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect);
     settings.windowEffect = snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect);
+    settings.edgeRevealGesture = settings.edgeRevealGesture == 1 ? 1 : 0;
     snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
         settings.showRunningApps,
         settings.showWindowPreviews);
@@ -142,7 +173,17 @@ bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();
 bool RequestWindowsSystemLightThemeEnabled(bool enabled);
 bool RestartWindowsExplorer();
-PersonalizationSettings MakeTransparentTaskbarAppearance();
+inline PersonalizationSettings MakeTransparentTaskbarAppearance()
+{
+    auto appearance = PersonalizationSettings::DarkPreset();
+    appearance.widgetBgR = appearance.widgetBgG = appearance.widgetBgB = 0.f;
+    appearance.widgetBorderR = appearance.widgetBorderG = appearance.widgetBorderB = 0.f;
+    appearance.widgetAlpha = appearance.widgetBorderAlpha = appearance.gradientEndA = 0.f;
+    appearance.widgetEdgeHighlightEnabled = false;
+    appearance.backgroundPreset = kAppearancePresetTaskbarTransparent;
+    appearance.glassEnabled = appearance.acrylicEnabled = false;
+    return appearance;
+}
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState();
 bool IsClassicSystemTaskbar();

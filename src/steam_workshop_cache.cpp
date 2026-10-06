@@ -4,6 +4,7 @@
  */
 
 #include "steam_workshop_cache.h"
+#include "bounded_file_query.h"
 
 #include <windows.h>
 
@@ -291,12 +292,10 @@ std::optional<DWORD> ReadRegistryDword(HKEY root, const wchar_t* subKey,
 std::filesystem::path NormalizePath(const std::filesystem::path& input)
 {
     std::error_code error;
-    auto result = std::filesystem::weakly_canonical(input, error);
-    if (error)
-    {
-        error.clear();
-        result = std::filesystem::absolute(input, error);
-    }
+    // Library discovery/de-duplication must not open every configured drive.
+    // In particular weakly_canonical can wait indefinitely on an offline SMB
+    // mapping. Content validation still checks actual filesystem identities.
+    const auto result = std::filesystem::absolute(input, error);
     return error ? input.lexically_normal() : result.lexically_normal();
 }
 
@@ -326,20 +325,17 @@ std::string ReadSteamActiveUserAccountId()
         ? std::to_string(*activeUser) : std::string{};
 }
 
-std::vector<std::filesystem::path> DiscoverSteamLibraryRoots(
-    std::uint32_t appId, std::string& error)
+namespace
 {
-    error.clear();
-    std::wstring steamPath = ReadRegistryString(HKEY_CURRENT_USER,
-        L"Software\\Valve\\Steam", L"SteamPath");
-    if (steamPath.empty())
-        steamPath = ReadRegistryString(HKEY_LOCAL_MACHINE,
-            L"Software\\WOW6432Node\\Valve\\Steam", L"InstallPath");
-    if (steamPath.empty())
-    {
-        error = "Steam installation path is unavailable";
-        return {};
-    }
+struct LibraryDiscovery
+{
+    std::vector<std::filesystem::path> libraries;
+    std::string error;
+};
+
+std::vector<std::filesystem::path> DiscoverLibraries(
+    const std::wstring& steamPath, std::uint32_t appId, std::string& error)
+{
 
     std::vector<std::filesystem::path> libraries;
     std::unordered_set<std::wstring> seen;
@@ -401,7 +397,7 @@ std::vector<std::filesystem::path> DiscoverSteamLibraryRoots(
     return libraries;
 }
 
-SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
+SteamWorkshopLocalCache ReadLocalCache(
     const std::vector<std::filesystem::path>& libraryRoots,
     std::uint32_t appId)
 {
@@ -419,7 +415,20 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
             (L"appworkshop_" + std::to_wstring(appId) + L".acf");
         std::error_code filesystemError;
         if (!std::filesystem::is_regular_file(manifest, filesystemError))
+        {
+            std::error_code libraryError;
+            const bool libraryAvailable = std::filesystem::is_directory(library, libraryError);
+            const bool missingManifest = !filesystemError ||
+                filesystemError == std::errc::no_such_file_or_directory;
+            if (!libraryAvailable || libraryError || !missingManifest)
+            {
+                invalidManifest = true;
+                AppendError(result.error, "cannot access Steam Workshop library: " +
+                    (libraryError ? libraryError.message() :
+                        filesystemError ? filesystemError.message() : "library directory is unavailable"));
+            }
             continue;
+        }
         foundManifest = true;
 
         VdfObject root;
@@ -520,13 +529,106 @@ SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
     }
 
     result.authoritative = foundManifest && !invalidManifest;
-    if (!foundManifest)
+    if (!foundManifest && result.error.empty())
         result.error = "Steam Workshop cache is unavailable";
     result.subscribedPublishedFileIds.assign(
         subscribed.begin(), subscribed.end());
     for (auto& [publishedFileId, contentDirectory] : ready)
         result.readyItems.push_back(
             { std::move(publishedFileId), std::move(contentDirectory) });
+    return result;
+}
+}
+
+std::vector<std::filesystem::path> DiscoverSteamLibraryRoots(
+    std::uint32_t appId, std::string& error)
+{
+    error.clear();
+    auto steamPath = ReadRegistryString(HKEY_CURRENT_USER,
+        L"Software\\Valve\\Steam", L"SteamPath");
+    if (steamPath.empty())
+        steamPath = ReadRegistryString(HKEY_LOCAL_MACHINE,
+            L"Software\\WOW6432Node\\Valve\\Steam", L"InstallPath");
+    if (steamPath.empty())
+    {
+        error = "Steam installation path is unavailable";
+        return {};
+    }
+    auto& queries = BoundedFileQuery<LibraryDiscovery>::ForProcess();
+    const auto job = queries.Request(PathKey(steamPath) + L":" + std::to_wstring(appId),
+        [steamPath, appId] {
+            LibraryDiscovery result;
+            result.libraries = DiscoverLibraries(steamPath, appId, result.error);
+            return result;
+        });
+    auto result = queries.Wait(job,
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(500));
+    if (!result)
+    {
+        error = "Steam library metadata query timed out";
+        return {NormalizePath(steamPath)};
+    }
+    error = std::move(result->error);
+    return std::move(result->libraries);
+}
+
+SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(
+    const std::vector<std::filesystem::path>& libraryRoots,
+    std::uint32_t appId)
+{
+    auto& queries = BoundedFileQuery<SteamWorkshopLocalCache>::ForProcess();
+    std::vector<BoundedFileQuery<SteamWorkshopLocalCache>::Ticket> jobs;
+    jobs.reserve(libraryRoots.size());
+    // Start every root before waiting so a stalled first root cannot prevent
+    // healthy local libraries from being queried within the same budget.
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(500);
+    for (const auto& library : libraryRoots)
+        jobs.push_back(queries.Request(PathKey(library) + L":" + std::to_wstring(appId),
+            [library, appId] { return ReadLocalCache({library}, appId); }));
+
+    SteamWorkshopLocalCache result;
+    bool complete = true;
+    std::set<std::string> subscribed;
+    std::map<std::string, std::filesystem::path> ready;
+    for (std::size_t index = 0; index < jobs.size(); ++index)
+    {
+        const auto cache = queries.Wait(jobs[index], deadline);
+        const auto utf8 = libraryRoots[index].generic_u8string();
+        const std::string library(utf8.begin(), utf8.end());
+        if (!cache)
+        {
+            complete = false;
+            result.skippedLibraries.push_back(library + ": library query timed out");
+            continue;
+        }
+        if (!cache->error.empty() && cache->error != "Steam Workshop cache is unavailable")
+        {
+            complete = false;
+            result.skippedLibraries.push_back(library + ": " + cache->error);
+        }
+        // Only a fully parsed individual library contributes identities and
+        // downloads. A corrupt manifest cannot contaminate healthy results.
+        if (!cache->authoritative) continue;
+        result.authoritative = true;
+        subscribed.insert(cache->subscribedPublishedFileIds.begin(),
+            cache->subscribedPublishedFileIds.end());
+        for (const auto& item : cache->readyItems)
+            ready[item.publishedFileId] = item.contentDirectory;
+    }
+    // Successfully parsed local manifests remain the subscription authority.
+    // Skipping an unusable root must not permanently disable unsubscribe sync
+    // for the usable libraries. With no readable manifest, preserve packages.
+    result.partial = result.authoritative && !complete;
+    if (!result.authoritative && !result.partial)
+    {
+        for (const auto& skipped : result.skippedLibraries)
+            AppendError(result.error, skipped);
+        if (result.error.empty()) result.error = "Steam Workshop cache is unavailable";
+    }
+    result.subscribedPublishedFileIds.assign(subscribed.begin(), subscribed.end());
+    for (auto& [id, directory] : ready)
+        result.readyItems.push_back({std::move(id), std::move(directory)});
     return result;
 }
 }

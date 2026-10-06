@@ -4,12 +4,15 @@
 #include "large_icon_render_rules.h"
 #include "large_icon_motion.h"
 #include "icon_bitmap_pixels.h"
+#include "icon_hbitmap_pixels.h"
 #include "icon_beautify.h"
 #include "large_icon_transform.h"
 #include "large_icon_settings_rules.h"
 #include "large_icon_visibility_rules.h"
+#include "large_icon_shape_geometry.h"
 
 #include <iostream>
+#include <cstring>
 
 namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
@@ -28,6 +31,7 @@ void Check(bool condition, const char* message)
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
 }
+#include "icon_hbitmap_cases.h"
 } // namespace
 
 int main(int argc, char** argv)
@@ -36,8 +40,106 @@ int main(int argc, char** argv)
     if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
     if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
     failures += RunLargeIconAssetTests();
+    TestIconBitmapRowOrder();
     using namespace snowdesktop::large_icon_render_rules;
     snowdesktop::LargeIconConfig config;
+    {
+        // Production layout codec must preserve the silhouette without
+        // changing grid spans or the user's saved corner rounding.
+        for (int shape = 0; shape <= 5; ++shape)
+        {
+            auto c = config; c.shape = shape; c.columns = 4; c.rows = 2; c.radiusPercent = 35;
+            JsonValue value; snowdesktop::LargeIconConfig restored;
+            Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), value) &&
+                snowdesktop::DecodeLargeIconConfig(value, restored) && restored == c,
+                "shape, grid allocation and rounding survive the production layout codec");
+            value.object.erase("shape");
+            Check(snowdesktop::DecodeLargeIconConfig(value, restored) && restored.shape == 0 && restored.radiusPercent == 35,
+                "old layouts keep their rounded rectangle and saved radius");
+        }
+        auto invalid = config; invalid.shape = 6;
+        Check(!snowdesktop::ValidateLargeIconConfig(invalid) && snowdesktop::EncodeLargeIconConfig(invalid).empty(),
+            "unknown shape values cannot enter persisted layouts");
+        invalid.shape = -1;
+        Check(!snowdesktop::ValidateLargeIconConfig(invalid), "negative shape values are rejected");
+        for (int direction = 0; direction < 4; ++direction)
+        {
+            auto flag = config; flag.shape = 3; flag.flagDirection = direction;
+            JsonValue value; snowdesktop::LargeIconConfig restored;
+            Check(ParseJson(snowdesktop::EncodeLargeIconConfig(flag), value) &&
+                snowdesktop::DecodeLargeIconConfig(value, restored) && restored == flag,
+                "every swallowtail direction survives save and reload");
+            value.object.erase("flagDirection");
+            Check(snowdesktop::DecodeLargeIconConfig(value, restored) && restored.flagDirection == 0,
+                "existing flags retain their right-facing notch when the direction field is absent");
+        }
+        for (int direction : {-1, 4})
+        {
+            auto flag = config; flag.flagDirection = direction;
+            Check(!snowdesktop::ValidateLargeIconConfig(flag), "invalid swallowtail directions cannot enter layouts");
+        }
+        auto flag = config; flag.shape = 3;
+        Check(snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::FlagDirection, flag),
+            "flags expose the swallowtail direction control");
+        flag.shape = 2;
+        Check(!snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::FlagDirection, flag),
+            "other shapes hide the inapplicable swallowtail control");
+        auto hexagon = config; hexagon.shape = 5; hexagon.regularHexagon = true;
+        JsonValue hexagonValue; snowdesktop::LargeIconConfig restoredHexagon;
+        Check(ParseJson(snowdesktop::EncodeLargeIconConfig(hexagon), hexagonValue) &&
+            snowdesktop::DecodeLargeIconConfig(hexagonValue, restoredHexagon) && restoredHexagon == hexagon,
+            "regular hexagons preserve their grid span and equal-edge preference across save and reload");
+        hexagonValue.object.erase("regularHexagon");
+        Check(snowdesktop::DecodeLargeIconConfig(hexagonValue, restoredHexagon) && !restoredHexagon.regularHexagon,
+            "old hexagons retain their free proportions when the regular-hexagon field is absent");
+        Check(snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::RegularHexagon, hexagon),
+            "hexagons expose the optional equal-edge control");
+        hexagon.shape = 4;
+        Check(!snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::RegularHexagon, hexagon),
+            "other silhouettes hide the inapplicable regular-hexagon control");
+        hexagon.shape = 5;
+        for (const RECT allocation : {RECT{40, 60, 440, 260}, RECT{60, 40, 260, 440}})
+        {
+            const auto frame = snowdesktop::large_icon_shape::Frame(hexagon, allocation);
+            const auto repeated = snowdesktop::large_icon_shape::Frame(hexagon, frame);
+            Check(EqualRect(&frame, &repeated) && frame.left >= allocation.left && frame.top >= allocation.top &&
+                frame.right <= allocation.right && frame.bottom <= allocation.bottom &&
+                std::abs(frame.left + frame.right - allocation.left - allocation.right) <= 1 &&
+                std::abs(frame.top + frame.bottom - allocation.top - allocation.bottom) <= 1,
+                "regular-hexagon fitting stays centered, inside its allocation and stable across repeated frame resolution");
+            const auto outline = snowdesktop::large_icon_shape::Outline(5, D2D1::RectF(
+                float(frame.left), float(frame.top), float(frame.right), float(frame.bottom)));
+            float shortest = 10000, longest = 0;
+            for (size_t i = 0; i < outline.size(); ++i)
+            {
+                const auto a = outline[i], b = outline[(i + 1) % outline.size()];
+                const float length = std::hypot(b.x - a.x, b.y - a.y);
+                shortest = std::min(shortest, length); longest = std::max(longest, length);
+            }
+            Check(outline.size() == 6 && longest - shortest < .6f,
+                "regular hexagons retain equal edge lengths within integer-pixel fitting tolerance in wide and tall allocations");
+        }
+        for (int shape : {1, 2})
+        {
+            const auto wide = snowdesktop::large_icon_shape::Frame(shape, {40, 60, 440, 260});
+            const auto tall = snowdesktop::large_icon_shape::Frame(shape, {60, 40, 260, 440});
+            Check(wide.left == 140 && wide.right == 340 && wide.top == 60 && wide.bottom == 260 &&
+                tall.left == 60 && tall.right == 260 && tall.top == 140 && tall.bottom == 340,
+                "squares and circles remain centered and equal-sided in wide and tall grid allocations");
+        }
+        auto square = config; square.shape = 1; square.radiusPercent = 35;
+        Check(Radius(square, 200, 200, 1) == 35 &&
+            snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::Radius, square),
+            "rounded squares retain adjustable corner rounding");
+        square.followComponentRadius = true;
+        Check(Radius(ResolveComponentRadius(square, 18), 200, 200, 1) == 18,
+            "rounded squares can inherit component corner rounding");
+        square.shape = 2; square.followComponentRadius = false; square.radiusPercent = 0;
+        Check(Radius(square, 200, 200, 1) == 100 &&
+            !snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::Radius, square) &&
+            !snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::RadiusFollow, square),
+            "circles keep their full radius and hide irrelevant corner controls");
+    }
     {
         auto c = config;
         c.followComponentRadius = true; c.radiusPercent = 75;
@@ -141,7 +243,7 @@ int main(int argc, char** argv)
         // lifecycle shared by both ordinary foreground and image-fill icons.
         for (int effect : {3, 4, 5}) for (bool fill : {false, true})
         {
-            auto c = config; c.backgroundStyle = fill ? -2 : -5;
+            auto c = config; c.backgroundStyle = fill ? -2 : -1;
             const auto locked = c;
             Check(!presets::ApplyEffect(c, effect, false) && c == locked, "locked edits cannot select new effects");
             Check(presets::ApplyEffect(c, effect, true), "new effects support foreground and fill sources");
@@ -321,14 +423,14 @@ int main(int argc, char** argv)
         }
         c.content = 2;
         Check(presets::DefaultEffect(c) == 3, "Steam fill has the same zoom default as local image fill");
-        c.backgroundStyle = -5;
+        c.backgroundStyle = -1;
         Check(presets::DefaultEffect(c) == 2, "Steam foreground resets use title according to current mode rather than item type");
         JsonValue legacy; snowdesktop::LargeIconConfig loaded;
         Check(ParseJson("{\"version\":2}", legacy) && snowdesktop::DecodeLargeIconConfig(legacy, loaded) && loaded.effect == 0,
             "new creation defaults never enable effects in existing layouts missing the effect field");
     }
-    Check(config.columns == 1 && config.rows == 1 && config.backgroundStyle == -5, "new large icons occupy one cell with neutral preset");
-    Check(DefaultBackground(config, 0x008800, true, 0x0112ff).color == 0xe8ecf4, "neutral default never auto-selects detected plate color");
+    Check(config.columns == 1 && config.rows == 1 && config.backgroundStyle == -1, "new non-Steam large icons occupy one cell and follow component backgrounds");
+    Check(!presets::ApplyBackground(config, -5, true, true), "retired default cannot be selected from either authoring entry");
     config.columns = 4; config.rows = 3; config.radiusPercent = 78;
     config.gradient.enabled = true; config.gradient.angle = 234; config.gradientOpacity = .4;
     config.titleWeight = 800; config.titleColor = 0x123456; config.autoTitleDirection = false; config.titleDirection = 1;

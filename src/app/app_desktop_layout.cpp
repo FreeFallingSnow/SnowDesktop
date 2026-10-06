@@ -1,5 +1,7 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "startup_diagnostics.h"
+#include "../animation_settings.h"
 #include "../widgets/lua_logical_slot.h"
 
 // Desktop-item layout and container rebuild.
@@ -138,6 +140,12 @@ void DesktopApp::RebuildContainersAndItems()
     ClearPopupDragTarget();
     ClearPopupMouseDownItem();
 
+    std::vector<DockContainer::PresentationState> dockPresentationStates;
+    dockPresentationStates.reserve(dockAreas_.size());
+    for (const auto& container : containers_)
+        if (const auto* dock = dynamic_cast<const DockContainer*>(container.get()))
+            dockPresentationStates.push_back(dock->CapturePresentationState());
+
     floatingDockContainer_ = nullptr;
     for (const auto& host : persistentDockHosts_)
         if (host)
@@ -231,8 +239,33 @@ void DesktopApp::RebuildContainersAndItems()
         for (const RECT& dockArea : dockAreas_)
         {
             if (!IsRectEmptyRect(dockArea))
-                containers_.push_back(
-                    std::make_unique<DockContainer>(this, &dockEntries_, dockArea));
+            {
+                auto dock = std::make_unique<DockContainer>(this, &dockEntries_, dockArea);
+                const auto previous = std::find_if(
+                    dockPresentationStates.begin(), dockPresentationStates.end(),
+                    [&](const DockContainer::PresentationState& state) {
+                        return EqualRect(&state.reservedArea, &dockArea) != FALSE;
+                    });
+                if (previous != dockPresentationStates.end() &&
+                    dock->RestorePresentationState(*previous))
+                {
+                    wchar_t phase[512]{};
+                    swprintf_s(phase,
+                        L"Dock magnification retained across runtime rebuild: "
+                        L"area=[%ld,%ld,%ld,%ld] focus=[%ld,%ld,%ld,%ld] "
+                        L"waveScale=%.3f singleScale=%.3f animating=%d pointer=%ld,%ld",
+                        dockArea.left, dockArea.top, dockArea.right, dockArea.bottom,
+                        previous->focusRect.left, previous->focusRect.top,
+                        previous->focusRect.right, previous->focusRect.bottom,
+                        previous->entry.FocusScale(snowdesktop::dock_magnification::
+                            ResolveFocusScale(dockSettings_.hoverEffect, dockSettings_.hoverScale,
+                                snowdesktop::animation::RuntimeAnimationsEnabled())),
+                        previous->single.Scale(), dock->IsMagnificationAnimating() ? 1 : 0,
+                        lastMousePoint_.x, lastMousePoint_.y);
+                    snowdesktop::dock_taskbar_diagnostics::Record(phase);
+                }
+                containers_.push_back(std::move(dock));
+            }
         }
     }
     // Every Dock is rendered by its display's persistent top-level Host.

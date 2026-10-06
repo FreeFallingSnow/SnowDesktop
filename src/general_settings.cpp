@@ -91,6 +91,10 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.pageNavigationKeyboardEnabled = val;
     if (ReadBoolField(text, "widgetDeveloperToolsEnabled", val))
         settings.widgetDeveloperToolsEnabled = val;
+    if (ReadBoolField(text, "contextMenuExpandQuickActions", val))
+        settings.contextMenuExpandQuickActions = val;
+    if (ReadBoolField(text, "contextMenuHidePageManagement", val))
+        settings.contextMenuHidePageManagement = val;
     int hotkeyValue = 0;
     if (ReadIntField(text, "desktopPassthroughHotkeyModifiers",
         hotkeyValue))
@@ -144,6 +148,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     // of the independent surface themes. New installations default to follow.
     settings.quickNavigationAppearance = {};
     settings.collectionPopupAppearance = {};
+    settings.globalQuickNavigationAppearance = {};
+    settings.globalCollectionPopupAppearance = {};
     settings.quickNavigationAppearance.mode = -2;
     settings.collectionPopupAppearance.mode = -2;
     JsonValue appearanceDocument;
@@ -152,6 +158,20 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.quickNavigationAppearance)) return false;
     if (const auto* value = appearanceDocument.Find("collectionPopupAppearance"))
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.collectionPopupAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("globalQuickNavigationAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalQuickNavigationAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("globalCollectionPopupAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalCollectionPopupAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("statusBar"))
+        if (!snowdesktop::DecodeStatusBarSettings(*value, settings.statusBar)) return false;
+    if (const auto* font = appearanceDocument.Find("font"))
+    {
+        if (!font->IsObject()) return false;
+        const auto* package = font->Find("package");
+        const auto* family = font->Find("family");
+        if (!package || !package->IsString() || !family || !family->IsString()) return false;
+        settings.font = {package->string, family->string};
+    }
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     ReadIntField(text, "animationMode", settings.animationMode);
     ReadIntField(text, "popupAnimationEffect", settings.popupAnimationEffect);
@@ -171,17 +191,41 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
 {
     const auto quickAppearance = snowdesktop::EncodeSurfaceTheme(settings.quickNavigationAppearance);
     const auto popupAppearance = snowdesktop::EncodeSurfaceTheme(settings.collectionPopupAppearance);
-    if (quickAppearance.empty() || popupAppearance.empty()) return false;
+    const auto globalQuickAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalQuickNavigationAppearance);
+    const auto globalPopupAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalCollectionPopupAppearance);
+    const auto statusBar = snowdesktop::EncodeStatusBarSettings(settings.statusBar);
+    if (quickAppearance.empty() || popupAppearance.empty() || globalQuickAppearance.empty() ||
+        globalPopupAppearance.empty() || statusBar.empty()) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     auto calendar = settings.calendarDisplay;
     snowdesktop::calendar::Normalize(calendar);
+    const auto quote = [](std::string_view text) {
+        std::string result = "\"";
+        constexpr char hex[] = "0123456789abcdef";
+        for (const unsigned char c : text)
+        {
+            if (c == '"' || c == '\\') { result += '\\'; result += static_cast<char>(c); }
+            else if (c < 0x20) { result += "\\u00"; result += hex[c >> 4]; result += hex[c & 15]; }
+            else result += static_cast<char>(c);
+        }
+        return result + '"';
+    };
     file << "{\n";
+    file << "  \"font\": {\"package\":" << quote(settings.font.package)
+         << ",\"family\":" << quote(settings.font.family) << "},\n";
+    file << "  \"statusBar\": " << statusBar << ",\n";
     file << "  \"shellExtensions\": " << snowdesktop::shell_extensions::WritePreferences(settings.shellExtensions) << ",\n";
+    file << "  \"contextMenuExpandQuickActions\": "
+         << (settings.contextMenuExpandQuickActions ? "true" : "false") << ",\n";
+    file << "  \"contextMenuHidePageManagement\": "
+         << (settings.contextMenuHidePageManagement ? "true" : "false") << ",\n";
     file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";
     file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
     file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";
     file << "  \"collectionPopupAppearance\": " << popupAppearance << ",\n";
+    file << "  \"globalQuickNavigationAppearance\": " << globalQuickAppearance << ",\n";
+    file << "  \"globalCollectionPopupAppearance\": " << globalPopupAppearance << ",\n";
     file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
     file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
     file << "  \"animationSpeed\": " << snowdesktop::animation::NormalizeSpeed(settings.animationSpeed) << ",\n";

@@ -73,6 +73,7 @@ struct PublishedItem
     std::string metadata;
     std::string previewUrl;
     std::vector<std::string> tags;
+    std::vector<std::string> additionalPreviewFilenames;
     std::uint64_t subscriptions = 0;
     std::uint64_t favorites = 0;
     std::uint64_t views = 0;
@@ -109,8 +110,21 @@ struct PublishProgress
     bool submitStarted = false;
 };
 
+enum class WorkshopContentKind { Widget, Theme };
 struct PublishRequest
 {
+    WorkshopContentKind contentKind = WorkshopContentKind::Widget;
+    // Journal an uncertain creation only at the actual remote-create boundary.
+    std::function<bool()> prepareCreateItem;
+    // A newly allocated ID must be durably recorded before any upload starts.
+    std::function<bool(std::uint64_t)> persistCreatedItem;
+    std::function<bool(const std::filesystem::path&, const std::filesystem::path&)> validateStagedArtifacts;
+    std::function<bool(const std::vector<std::filesystem::path>&)> validateStagedPreviews;
+    std::vector<std::filesystem::path> additionalPreviews;
+    // Only this theme's generated images may be replaced on an update.
+    std::string managedPreviewPrefix;
+    // Previous remote identity, verified from the owned item's metadata.
+    std::string previousManagedPreviewPrefix;
     std::filesystem::path package;
     bool updateContent = true;
     std::optional<std::filesystem::path> preview;
@@ -147,6 +161,7 @@ public:
     SteamStatus Status() const;
     std::optional<PublishedPage> ListPublished(
         std::uint32_t page, CoreError& error);
+    std::optional<PublishedItem> FindItem(std::uint64_t id, CoreError& error);
     std::optional<WorkshopEulaStatus> GetEulaStatus(CoreError& error);
     bool SetSubscribed(std::uint64_t publishedFileId, bool subscribed,
         std::chrono::seconds timeout, CoreError& error);

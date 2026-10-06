@@ -124,7 +124,10 @@ bool DesktopApp::QueueShellFileOperation(
         ShellFileOperationUiCompletion{
             false, std::move(completion) };
     if (!result)
+    {
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"Queue allocation", ERROR_NOT_ENOUGH_MEMORY});
         return false;
+    }
 
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),
@@ -140,6 +143,7 @@ bool DesktopApp::QueueShellFileOperation(
     if (!queued)
     {
         delete result;
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"File operation queue unavailable", ERROR_NOT_READY});
         return false;
     }
     ++shellFileOperationInFlight_;
@@ -167,7 +171,10 @@ bool DesktopApp::QueueShellDrop(
         ShellFileOperationUiCompletion{
             false, std::move(completion) };
     if (!result)
+    {
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"Queue allocation", ERROR_NOT_ENOUGH_MEMORY});
         return false;
+    }
 
     snowdesktop::ShellDropRequest request;
     request.sources = std::move(sourcePaths);
@@ -189,6 +196,7 @@ bool DesktopApp::QueueShellDrop(
     if (!queued)
     {
         delete result;
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"File operation queue unavailable", ERROR_NOT_READY});
         return false;
     }
     ++shellFileOperationInFlight_;
@@ -237,7 +245,10 @@ bool DesktopApp::QueueAsyncShellDrop(
         ShellFileOperationUiCompletion{
             false, std::move(completion) };
     if (!result)
+    {
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"Queue allocation", ERROR_NOT_ENOUGH_MEMORY});
         return false;
+    }
 
     ComPtr<IStream> dataStream;
     HRESULT marshalResult = CoMarshalInterThreadInterfaceInStream(
@@ -302,6 +313,7 @@ bool DesktopApp::QueueAsyncShellDrop(
         // Enqueue consumes the marshal packets and balances StartOperation on
         // every rejection path.
         delete result;
+        snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"File operation queue unavailable", ERROR_NOT_READY});
         return false;
     }
     ++shellFileOperationInFlight_;
@@ -514,7 +526,27 @@ bool DesktopApp::QueueFolderRead(const std::wstring& path)
     }, [this, key, path, version](auto snapshot) {
         folderReadsPending_.erase(key);
         if (folderReadVersions_[key] != version) { QueueFolderRead(path); return; }
-        if (snapshot) ApplyFolderRefresh(*snapshot);
+        const bool deferModel = dragSession_.HasContext() ||
+            dragDropController_.IsTransportActive() || mouseDown_;
+        folderReadDelivery_.Deliver(key, version, std::move(snapshot), deferModel,
+            [this](auto& ready) {
+                // Only first-loading destination content may change mid-drag.
+                // A populated/source popup and a drop already committing keep
+                // their item pointers until the normal model fence is released.
+                if (!dockFolderPopupOpen_ || !dockFolderPopupLoading_ ||
+                    dragSession_.Source() == dockFolderPopupContainer_.get() ||
+                    !(dragSession_.IsActive() || dragDropController_.IsExternalDragActive()) ||
+                    !((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON)) & 0x8000))
+                    return;
+                const auto folder = ready.folders.find(
+                    snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath));
+                if (folder == ready.folders.end()) return;
+                RefreshDockFolderPopup(&folder->second);
+                POINT point{};
+                if (GetCursorPos(&point) && ScreenToClient(hwnd_, &point))
+                    RefreshDwellDragTarget(point);
+            },
+            [this](auto& ready) { ApplyFolderRefresh(ready); });
     }, hwnd_, kBackgroundShellReadyMessage))
     {
         folderReadsPending_.erase(key);
@@ -748,7 +780,7 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
     // Commit on the UI thread only, using the same revision/interaction fences
     // as normal refresh. The worker must not overwrite edits made after timeout.
     if (exitRequested_ || !initialShellReadPending_ || reloading_ ||
-        compositionPaintInProgress_ || mouseDown_ || renameEdit_ ||
+        compositionPaintInProgress_ || mouseDown_ || renameController_.IsActive() ||
         HasActiveContextMenuSession() || shellFileOperationInFlight_ > 0 ||
         !pendingRenames_.empty() || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive())

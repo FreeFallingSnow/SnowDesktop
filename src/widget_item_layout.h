@@ -168,6 +168,19 @@ inline Layout ResolveList(RECT viewport, int minimumRowHeight,
     return result;
 }
 
+// A fixed large-folder grid keeps its saved row/column capacity while its
+// complete icon/title rows become shorter. Keep each row's original center;
+// freed title space becomes a full inner gap and half as much at each edge.
+inline Layout CompressFixedGridRows(Layout layout, int savedTitleHeight)
+{
+    if (layout.scrolling || savedTitleHeight <= 0) return layout;
+    const int reduction = std::min(savedTitleHeight, layout.vertical.cell - 1);
+    layout.vertical.cell -= reduction;
+    layout.vertical.gap += reduction;
+    layout.vertical.edge += reduction / 2;
+    return layout;
+}
+
 inline int AxisCellStart(const Axis& axis, int index)
 {
     const int clamped = std::max(0, index);

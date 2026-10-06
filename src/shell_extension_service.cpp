@@ -529,47 +529,60 @@ struct MenuService::Impl
             {
                 std::lock_guard lock(mutex);
                 const bool initial = !catalogue.revision;
-                std::vector<Registration> changed;
-                for (const auto &old : catalogue.rows)
-                    if (std::none_of(value.rows.begin(), value.rows.end(), [&](const auto &r) { return r.id == old.id && r.revision == old.revision; })) changed.push_back(old);
-                for (const auto &next : value.rows)
-                    if (std::none_of(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == next.id && r.revision == next.revision; })) changed.push_back(next);
-                for (const auto &a : catalogue.associations)
-                    if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
-                catalogue = std::move(value); scanning = false; catalogueDirty = true;
-                sourcePending |= inspected;
-                if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); failedSources.clear(); }
-                if (!initial && !changed.empty())
+                if (!initial && value.revision == catalogue.revision)
                 {
-                    // Unknown providers also retain observed type/scope evidence,
-                    // so an affected registration change retires stale switches.
-                    std::erase_if(observed, [&](const auto &pair) {
-                        const auto &item = pair.second;
-                        return std::any_of(changed.begin(), changed.end(), [&](const auto &r) {
-                            if (!(r.contexts & item.contexts)) return false;
-                            const auto all = [](const auto &types) { return types.empty() || std::find(types.begin(), types.end(), L"*") != types.end(); };
-                            return r.id == item.id || all(r.types) || all(item.types) ||
-                                std::any_of(item.types.begin(), item.types.end(), [&](const auto &t) { return std::find(r.types.begin(), r.types.end(), t) != r.types.end(); });
-                        });
-                    });
-                    if (inspected) typesRequested = true;
+                    // The scanner hashes the complete registration inventory.
+                    // Keep existing associations and observed icons when only a
+                    // registry notification repeated the same inventory. Forced
+                    // discovery and source queries remain queued independently.
+                    scanning = false;
+                    sourcePending |= inspected;
+                    MenuTrace("catalogue", "unchanged");
                 }
-                for (auto &[key, row] : rows)
-                    if (!initial && std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return DependsOn(r, row.request, row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u)); }))
+                else
+                {
+                    std::vector<Registration> changed;
+                    for (const auto &old : catalogue.rows)
+                        if (std::none_of(value.rows.begin(), value.rows.end(), [&](const auto &r) { return r.id == old.id && r.revision == old.revision; })) changed.push_back(old);
+                    for (const auto &next : value.rows)
+                        if (std::none_of(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == next.id && r.revision == next.revision; })) changed.push_back(next);
+                    for (const auto &a : catalogue.associations)
+                        if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
+                    catalogue = std::move(value); scanning = false; catalogueDirty = true;
+                    sourcePending |= inspected;
+                    if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); failedSources.clear(); }
+                    if (!initial && !changed.empty())
                     {
-                        row.invalid = true; ++row.dependency; row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
-                        affected.push_back(row.request);
-                        if (std::any_of(discovery.begin(), discovery.end(), [&](const auto &r) { return SelectionKey(r) == key; })) Queue(row.request, QueryPriority::Inspect, true);
+                        // Unknown providers also retain observed type/scope evidence,
+                        // so an affected registration change retires stale switches.
+                        std::erase_if(observed, [&](const auto &pair) {
+                            const auto &item = pair.second;
+                            return std::any_of(changed.begin(), changed.end(), [&](const auto &r) {
+                                if (!(r.contexts & item.contexts)) return false;
+                                const auto all = [](const auto &types) { return types.empty() || std::find(types.begin(), types.end(), L"*") != types.end(); };
+                                return r.id == item.id || all(r.types) || all(item.types) ||
+                                    std::any_of(item.types.begin(), item.types.end(), [&](const auto &t) { return std::find(r.types.begin(), r.types.end(), t) != r.types.end(); });
+                            });
+                        });
+                        if (inspected) typesRequested = true;
                     }
-                for (auto &[key, row] : rows)
-                    if (row.view.snapshot)
-                    {
-                        auto resolved = row.request;
-                        resolved.context = row.request.background ? (row.request.context == Context::Desktop ? Context::Desktop : Context::FolderBackground) : row.view.contexts == 2 ? Context::Folder : Context::File;
-                        Associate(catalogue, resolved, *row.view.snapshot);
-                    }
-                RebuildAvailable();
-                MenuTrace("catalogue", changed.empty() ? "unchanged" : "dependencies_changed", 0, static_cast<unsigned>(affected.size()));
+                    for (auto &[key, row] : rows)
+                        if (!initial && std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return DependsOn(r, row.request, row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u)); }))
+                        {
+                            row.invalid = true; ++row.dependency; row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
+                            affected.push_back(row.request);
+                            if (std::any_of(discovery.begin(), discovery.end(), [&](const auto &r) { return SelectionKey(r) == key; })) Queue(row.request, QueryPriority::Inspect, true);
+                        }
+                    for (auto &[key, row] : rows)
+                        if (row.view.snapshot)
+                        {
+                            auto resolved = row.request;
+                            resolved.context = row.request.background ? (row.request.context == Context::Desktop ? Context::Desktop : Context::FolderBackground) : row.view.contexts == 2 ? Context::Folder : Context::File;
+                            Associate(catalogue, resolved, *row.view.snapshot);
+                        }
+                    RebuildAvailable();
+                    MenuTrace("catalogue", changed.empty() ? "unchanged" : "dependencies_changed", 0, static_cast<unsigned>(affected.size()));
+                }
             }
             for (const auto &request : affected) cache.Erase(request);
             if (!affected.empty()) Session::ReleaseIdleWorker();

@@ -31,7 +31,12 @@ bool IsWidgetLayoutFocus(std::string_view focusId) noexcept
 {
     return focusId == "personalization.cornerRadius" ||
         focusId == "personalization.barHeight" ||
-        focusId == "personalization.scrollableTitleBarOnTop" ||
+        focusId == "personalization.widgetTransformCursors";
+}
+
+bool IsWidgetBehaviorFocus(std::string_view focusId) noexcept
+{
+    return focusId == "personalization.scrollableTitleBarOnTop" ||
         focusId == "personalization.popupHoverOpen" ||
         focusId == "personalization.popupHoverDelayMs" ||
         focusId == "personalization.showGroupTabCounts";
@@ -43,6 +48,7 @@ bool IsDesktopIconAppearanceFocus(std::string_view focusId) noexcept
         focusId == "desktop.itemFontSize" ||
         focusId == "desktop.listFontSize" ||
         focusId == "desktop.fontWeight" ||
+        focusId == "desktop.titleLines" || focusId == "desktop.largeFolderTitleLines" || focusId == "desktop.scrollingTitleLines" ||
         focusId == "desktop.shortcutArrow";
 }
 
@@ -71,6 +77,30 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
+        route.focusId == "personalization.savedThemes") route.page = SettingsPage::ThemeManager;
+    if (route.page == SettingsPage::General &&
+        (route.focusId.starts_with("general.quickNavigation") || route.focusId == "general.hotkeys"))
+        route.page = SettingsPage::QuickNavigation;
+    if (route.page == SettingsPage::QuickNavigation &&
+        (route.focusId == "personalization.quickNavigationTheme" || route.focusId == "personalization.quickNavTheme" ||
+         route.focusId == "quickNav.layout" || route.focusId.starts_with("quickNav.layout.") ||
+         route.focusId.starts_with("quickNav.color.") || route.focusId.starts_with("quickNav.colors.")))
+        route.page = SettingsPage::AppearanceTheme;
+    // Preserve old search and host links after relocating behavior controls.
+    if ((route.page == SettingsPage::Personalization ||
+         route.page == SettingsPage::AppearanceWidgets) &&
+        IsWidgetBehaviorFocus(route.focusId))
+        route.page = SettingsPage::WidgetBehavior;
+    if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
+        route.focusId == "personalization.statusBarTheme")
+    {
+        route.page = SettingsPage::StatusBar;
+        route.focusId = "statusBar.theme";
+    }
+    if (route.page == SettingsPage::StatusBar &&
+        (route.focusId == "statusBar.shellUi" || route.focusId == "statusBar.visibleWindow"))
+        route.focusId = "statusBar.theme";
     if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
         route.focusId == "personalization.contextMenu") route.page = SettingsPage::ContextMenu;
     if (route.page == SettingsPage::Home)
@@ -194,6 +224,13 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
          route.page == SettingsPage::AppearanceWidgets) &&
         (route.focusId == "desktop.spacing" || route.focusId == "desktop.iconSpacing"))
         route.page = SettingsPage::AppearanceWidgets;
+    if ((route.page == SettingsPage::AppearanceTheme && route.focusId == "personalization.dockAppearance") ||
+        (route.page == SettingsPage::AnimationPerformance &&
+         (route.focusId == "animation.hover" || route.focusId == "animation.hoverScale" ||
+          route.focusId == "animation.launch" || route.focusId == "animation.window")))
+        route.page = SettingsPage::Dock;
+    if (route.page == SettingsPage::Dock && route.focusId == "dock.suppressSystemTaskbar")
+    { route.page = SettingsPage::Taskbar; route.focusId = "taskbar.displayMode"; }
     return route;
 }
 
@@ -224,6 +261,11 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::LargeIcon:
     case SettingsPage::Calendar:
     case SettingsPage::ContextMenu:
+    case SettingsPage::StatusBar:
+    case SettingsPage::DesktopStyle:
+    case SettingsPage::WidgetBehavior:
+    case SettingsPage::ThemeManager:
+    case SettingsPage::QuickNavigation:
         break;
     default:
         return false;
@@ -266,6 +308,11 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::LargeIcon: return "large-icon";
     case SettingsPage::Calendar: return "calendar";
     case SettingsPage::ContextMenu: return "context-menu";
+    case SettingsPage::StatusBar: return "status-bar";
+    case SettingsPage::DesktopStyle: return "desktop-style";
+    case SettingsPage::WidgetBehavior: return "widget-behavior";
+    case SettingsPage::ThemeManager: return "theme-manager";
+    case SettingsPage::QuickNavigation: return "quick-navigation";
     }
     return "home";
 }

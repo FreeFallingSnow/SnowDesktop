@@ -11,6 +11,24 @@
 namespace snowdesktop
 {
 
+struct PageVisualSizing
+{
+    int marginX, marginY, pitchWidth, pitchHeight;
+};
+
+inline PageVisualSizing ResolvePageVisualSizing(int width, int height, int columns, int rows)
+{
+    columns = std::max(1, columns); rows = std::max(1, rows);
+    const float scale = std::max(0.1f, std::min(
+        static_cast<float>(width) / static_cast<float>(columns * kCellWidth),
+        static_cast<float>(height) / static_cast<float>(rows * kMinCellHeight)));
+    const int marginX = std::max(1, static_cast<int>(std::round(kGridMarginX * scale)));
+    const int marginY = std::max(1, static_cast<int>(std::round(kGridMarginY * scale)));
+    return {marginX, marginY,
+        std::max(1, static_cast<int>(std::round(static_cast<float>(std::max(columns, width - marginX * 2)) / static_cast<float>(columns)))),
+        std::max(1, static_cast<int>(std::round(static_cast<float>(std::max(rows, height - marginY * 2)) / static_cast<float>(rows))))};
+}
+
 struct PageItemVisualMetrics
 {
     float layoutScale = 1.0f;
@@ -172,6 +190,21 @@ inline PageItemVisualMetrics ResolvePageItemVisualMetrics(
         std::max(2, static_cast<int>(std::round(
             4.0f * result.layoutScale)));
     return result;
+}
+
+// Native containers reserve a little breathing room around one visible line.
+// Keep the page's icon/font sizing; changing title lines must not enlarge icons.
+inline PageItemVisualMetrics ResolveWidgetTitleMetrics(
+    PageItemVisualMetrics metrics, int titleLines)
+{
+    if (titleLines == 1)
+    {
+        const int previousHeight = metrics.titleHeight;
+        metrics.titleHeight = std::max(1, static_cast<int>(std::ceil(
+            metrics.fontSize * 7.0f / 6.0f * 1.35f)));
+        metrics.minimumGridHeight += metrics.titleHeight - previousHeight;
+    }
+    return metrics;
 }
 
 } // namespace snowdesktop

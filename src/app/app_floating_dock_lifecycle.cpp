@@ -1,4 +1,5 @@
 #include "app.h"
+#include <algorithm>
 
 // Floating-Dock hotkey and edge-swipe lifecycle.
 
@@ -88,11 +89,15 @@ void DesktopApp::UnregisterFloatingDockHotkey()
     floatingDockEdgeSwipeHwnd_ = nullptr;
     floatingDockEdgeSwipeDetector_.Reset();
     floatingDockPointerButtonsDown_ = 0;
+    floatingDockExternalPointerDrag_.Reset();
 }
 
 void DesktopApp::ApplyFloatingDockHotkey()
 {
     UnregisterFloatingDockHotkey();
+    if (!dockSettings_.showWindowPreviews) HideDockWindowPreview();
+    for (const auto& host : persistentDockHosts_)
+        if (host) host->edgeHoverRequested = false;
 
     const bool edgeSwipeEnabled =
         snowdesktop::dock_settings_rules::
@@ -105,10 +110,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
             dockSettings_.floatingShortcutMode,
             edgeSwipeEnabled);
 
-    // Passive drag reveal belongs only to summon-only mode. Clearing it here
-    // keeps a settings toggle from leaving a Host effectively floating after
-    // ordinary desktop visibility has been restored.
-    if (!dockSettings_.showOnlyWhenSummoned)
+    // A settings apply starts a fresh passive session in either display mode.
     {
         bool passiveStateChanged = false;
         for (const auto& host : persistentDockHosts_)
@@ -198,8 +200,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
 bool DesktopApp::UpdatePassiveDragRevealHosts(
     POINT cursorScreen)
 {
-    if (desktopPassthroughActive_ || !generalSettings_.dockEnabled ||
-        !dockSettings_.showOnlyWhenSummoned)
+    if (desktopPassthroughActive_ || !generalSettings_.dockEnabled)
     {
         return false;
     }
@@ -208,7 +209,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
     const bool internalDragActive =
         dragSession_.IsActive();
     const bool oleDragActive =
-        dragDropController_.IsTransportActive();
+        dragDropController_.IsTransportActive() || floatingDockExternalPointerDrag_.Active();
     const bool dragRevealActive =
         internalDragActive || oleDragActive;
     bool passiveDragRevealedThisSample = false;
@@ -242,6 +243,10 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 &dockScreenRect,
                 virtualLeft_, virtualTop_);
         }
+        const bool merged = host.container->IsMergedWithStatusBar();
+        RECT edgeScreenRect = dockScreenRect;
+        if (merged && statusBar_)
+            if (const auto strip = statusBar_->MergedStripBounds(host.monitor)) edgeScreenRect = *strip;
 
         UINT dpiX = 96;
         UINT dpiY = 96;
@@ -262,7 +267,7 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 IsPointInDockEdgeProjection(
                     cursorScreen,
                     monitorInfo.rcMonitor,
-                    dockScreenRect,
+                    edgeScreenRect,
                     dockSettings_.position,
                     edgeBand);
         const bool passiveDragRevealRequested =
@@ -270,13 +275,14 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 ShouldPassivelyRevealDockForDragAtEdge(
                     pointerInEdgeProjection,
                     internalDragActive,
-                    oleDragActive);
+                    oleDragActive) || host.edgeHoverRequested;
+        host.edgeHoverRequested = false;
         const bool pointerInEdgeCorridor =
             snowdesktop::floating_dock_rules::
                 IsPointInDockEdgeCorridor(
                     cursorScreen,
                     monitorInfo.rcMonitor,
-                    dockScreenRect,
+                    edgeScreenRect,
                     dockSettings_.position);
 
         bool previewAssociated = false;
@@ -297,9 +303,18 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
         const bool associatedSurfaceActive =
             collectionPopupDockHost_ == &host ||
             quickNavigationDockHost_ == &host ||
-            previewAssociated;
+            previewAssociated ||
+            snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
+                snowdesktop::modern_menu::ActiveRootWindow(), host.hwnd) ||
+            snowdesktop::floating_dock_rules::IsMenuOwnedByDock(
+                shellPopupTrackerOwnerHwnd_.load(std::memory_order_acquire), host.hwnd);
         const bool keepPassiveDragReveal =
-            associatedSurfaceActive ||
+            associatedSurfaceActive || pointerInEdgeCorridor ||
+            PtInRect(&dockScreenRect, cursorScreen) ||
+            (merged && ((statusBar_ && statusBar_->HasInteractionSession(host.monitor)) ||
+                pointerInEdgeCorridor ||
+                snowdesktop::floating_dock_rules::IsPointInMergedDockInteraction(
+                    cursorScreen, dockScreenRect, edgeScreenRect))) ||
             (dragRevealActive &&
                 pointerInEdgeCorridor);
         const bool leaveDelayElapsed =
@@ -384,12 +399,46 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
     return passiveDragRevealedThisSample;
 }
 
+bool DesktopApp::DismissMergedDockBackground(PersistentDockHost& host, POINT desktopPoint, POINT screenPoint)
+{
+    if (!host.active || !host.container || !host.container->IsMergedWithStatusBar() ||
+        !host.mergedPresentation.inputEnabled || !statusBar_ ||
+        dragSession_.IsActive() || dragDropController_.IsTransportActive()) return false;
+    const auto& dock = *host.container;
+    if (dock.IsWindowsButtonPoint(desktopPoint) || dock.IsSearchPoint(desktopPoint) ||
+        dock.EntryAtPoint(desktopPoint) || dock.RunningItemAtPoint(desktopPoint) ||
+        dock.FrequentItemAtPoint(desktopPoint)) return false;
+    // Called from the actual Dock HWND's down message, not from a global
+    // pointer sample: overlapping popup controls keep their own input route.
+    return statusBar_->DismissMergedBackground(host.monitor, screenPoint);
+}
+
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
+    // Poll only cheap, already-owned surface state. Hold release does not
+    // require another physical button-down or a fullscreen/window scan.
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        if (!ownedHost || !ownedHost->active || !ownedHost->container ||
+            !ownedHost->container->IsMergedWithStatusBar()) continue;
+        auto& host = *ownedHost;
+        const bool held = statusBar_ && statusBar_->HasInteractionSession(host.monitor);
+        if (held != host.mergedInteractionHeld)
+        {
+            host.mergedInteractionHeld = held;
+            if (!held && host.mergedCloseAfterInteraction)
+            {
+                host.mergedCloseAfterInteraction = false;
+                CloseFloatingDock(host, FloatingDockCloseFocusPolicy::PreserveCurrent);
+            }
+            UpdatePersistentDockHostVisibility(host);
+        }
+    }
     if (desktopPassthroughActive_)
     {
         floatingDockEdgeSwipeDetector_.Reset();
         floatingDockPointerButtonsDown_ = 0;
+        floatingDockExternalPointerDrag_.Reset();
         return;
     }
     constexpr UINT leftButtonBit = 1u << 0;
@@ -450,16 +499,26 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         desktopPoint.y -= virtualTop_;
     }
 
+    GUITHREADINFO dragGui{sizeof(dragGui)};
+    const bool haveDragGui = GetGUIThreadInfo(0, &dragGui) != FALSE;
+    DWORD dragSourceProcess = 0;
+    GetWindowThreadProcessId(haveDragGui && dragGui.hwndCapture ? dragGui.hwndCapture : GetForegroundWindow(),
+        &dragSourceProcess);
+    floatingDockExternalPointerDrag_.Update(cursor, (buttonsDown & (leftButtonBit | rightButtonBit)) != 0,
+        dragSourceProcess != 0 && dragSourceProcess != GetCurrentProcessId(),
+        (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0 || (haveDragGui && (dragGui.flags & GUI_INMOVESIZE)),
+        GetSystemMetrics(SM_CXDRAG), GetSystemMetrics(SM_CYDRAG));
+
     // Passive drag reveal must run before the legacy button/drag early return
     // below. An ordinary pointer still needs the existing edge-swipe gesture,
     // which starts a manual floating session and remains visible until closed.
     const bool passiveDragRevealedThisSample =
         UpdatePassiveDragRevealHosts(cursor);
 
-    if (floatingDockVisible_ && pointerPressed &&
+    if ((floatingDockVisible_ || statusBar_) && pointerPressed &&
         !passiveDragRevealedThisSample)
     {
-        if (leftButtonPressed &&
+        if (floatingDockVisible_ && leftButtonPressed &&
             TryActivateDockPopupFromMenuPointerPress(
                 desktopPoint,
                 cursor,
@@ -500,7 +559,55 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 DockAssociatedPopupInteractionRect(
                     popupAnchoredToDock_,
                     floatingPopupCollectionRegion_);
-        if (!IsPointOnPromotedDock(desktopPoint) &&
+        const bool onBar = statusBar_ && statusBar_->ContainsPoint(cursor);
+        const bool onPanel = systemPanel_ && systemPanel_->ContainsPoint(cursor);
+        bool onOwnedMenu = false;
+        const HWND menu = snowdesktop::modern_menu::ActiveRootWindow();
+        if (menu && statusBarMenuOwner_ && GetWindow(menu, GW_OWNER) == statusBarMenuOwner_)
+        {
+            HWND target = GetAncestor(WindowFromPoint(cursor), GA_ROOT);
+            for (unsigned depth = 0; target && depth < 16; ++depth, target = GetWindow(target, GW_OWNER))
+                if (target == menu) { onOwnedMenu = true; break; }
+        }
+        const bool onNavigation = quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar &&
+            PtInRect(&quickNavigationInteractionRect, desktopPoint);
+        bool barSession = false;
+        bool onRevealedDockSurface = false;
+        for (const auto& ownedHost : persistentDockHosts_)
+        {
+            if (!ownedHost || !ownedHost->active || !ownedHost->container || !statusBar_) continue;
+            auto& host = *ownedHost;
+            const bool merged = host.container->IsMergedWithStatusBar();
+            const bool heldMerged = merged && host.promoted && statusBar_->HasInteractionSession(host.monitor);
+            const bool separateReveal = !merged && statusBar_->HasTemporaryReveal(host.monitor);
+            if (!heldMerged && !separateReveal) continue;
+            barSession = barSession || heldMerged;
+            const bool ownSurface = (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
+                (statusBar_ && statusBar_->ContainsTrayMenuPoint(host.monitor, cursor)) ||
+                (onPanel && systemPanel_->IsOpenForMonitor(host.monitor)) ||
+                (onOwnedMenu && statusBarMenuMonitor_ == host.monitor) ||
+                (onNavigation && statusBarQuickNavigationMonitor_ == host.monitor) ||
+                (IsWindowVisible(host.hwnd) && PtInRect(&host.dockRect, desktopPoint));
+            onRevealedDockSurface = onRevealedDockSurface || (separateReveal && host.promoted && ownSurface);
+            if (!ownSurface && !dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+            {
+                // Preserve the outside down even while the owned popup is
+                // fading out. Release this monitor's promotion after its hold
+                // ends; a second button-down is neither required nor invented.
+                if (heldMerged)
+                {
+                    host.mergedCloseAfterInteraction = true;
+                    host.mergedInteractionHeld = true;
+                }
+                else statusBar_->DismissTemporaryReveal(host.monitor);
+                CancelStatusBarActivation(host.monitor, false);
+            }
+        }
+        // The bar and its owned surface are one interaction session with the
+        // merged Dock. Its own dismissal logic releases this hold; the global
+        // pointer sampler must not tear the owner down between down and up.
+        if (floatingDockVisible_ && !barSession && !onBar && !onRevealedDockSurface &&
+            !IsPointOnPromotedDock(desktopPoint) &&
             snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(
                     dragSession_.IsActive() ||
@@ -631,15 +738,21 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             cursor, monitorInfo.rcMonitor,
             dockSettings_.position,
             GetTickCount(), edgeBand,
-            requiredTravel);
-    const PersistentDockHost* targetHost =
+            requiredTravel,
+            snowdesktop::floating_dock_rules::kEdgeSwipeMaximumDurationMs,
+            dockSettings_.edgeRevealGesture == 1);
+    PersistentDockHost* targetHost =
         FindPersistentDockHost(dock);
     if (triggered &&
         (!targetHost ||
             !IsPersistentDockHostPromoted(*targetHost)))
     {
-        WriteDiagnosticLogEntry(
-            L"Floating Dock edge swipe received");
-        ShowFloatingDock(monitor);
+        WriteDiagnosticLogEntry(L"Floating Dock edge gesture received");
+        if (dockSettings_.showOnlyWhenSummoned && dockSettings_.edgeRevealGesture == 1 && targetHost)
+        {
+            targetHost->edgeHoverRequested = true;
+            UpdatePassiveDragRevealHosts(cursor);
+        }
+        else ShowFloatingDock(monitor);
     }
 }

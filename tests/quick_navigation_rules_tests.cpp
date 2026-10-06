@@ -1,7 +1,9 @@
 #include "navigation_settings.h"
+#include "quick_navigation_query.h"
 #include "quick_navigation_animation_rules.h"
 #include "quick_navigation_genie_rules.h"
 #include "quick_navigation_rules.h"
+#include "app/quick_navigation_theme.h"
 
 #include <cmath>
 #include <fstream>
@@ -630,8 +632,8 @@ void TestGenieTranslucentContentCoverage()
                     const auto matrix = navigation::GenieProjection(window, dock, edge,
                         collapsed, width, height, index, -3200.25, -1500.75);
                     const auto band = navigation::GenieBandClip(matrix, index, edge);
-                    // Intersect the parent clip with the child bitmap, matching
-                    // the actual renderer, including its float clip coordinates.
+                    // Check continuous geometry separately from raster clips:
+                    // mathematical adjacency alone cannot prove pixel coverage.
                     const double left = std::max(0.0,
                         matrix.sourceX + static_cast<double>(static_cast<float>(band.left)));
                     const double top = std::max(0.0,
@@ -703,6 +705,101 @@ void TestGenieTranslucentContentCoverage()
     }
 }
 
+void TestGenieDestinationPixelCoverage()
+{
+    namespace genie = snowdesktop::dock_genie;
+    namespace navigation = snowdesktop::quick_navigation_animation_rules;
+    constexpr int hostWidth = 5200, hostHeight = 3600;
+    int unboundedPoleCases = 0;
+    for (const int dpi : {96, 144, 192})
+    for (const bool compact : {false, true})
+    for (const auto edge : {genie::Edge::Bottom, genie::Edge::Top,
+            genie::Edge::Left, genie::Edge::Right})
+    {
+        const double width = (compact ? 640.0 : 860.0) * dpi / 96;
+        const double height = (compact ? 52.0 : 637.0) * dpi / 96;
+        const genie::Rect window{-2381.0, -1017.0,
+            -2381.0 + width, -1017.0 + height};
+        const genie::Rect targets[] = {{-1280.0, 450.0, -1216.0, 514.0},
+            {-2100.0, -1280.0, -2036.0, -1216.0},
+            {-2980.0, -480.0, -2916.0, -416.0},
+            {780.0, -180.0, 844.0, -116.0}};
+        std::vector<double> stages;
+        for (int frame = 0; frame <= 240; ++frame) stages.push_back(frame / 240.0);
+        // Old float-projected joins straddled pixel centers at these phases.
+        for (double stage : {0.0001, 0.0004, 0.0026, 0.0047, 0.0298, 0.0456,
+                0.0608, 0.111, 0.2022, 0.2096, 0.2994, 0.5603}) stages.push_back(stage);
+        for (const auto& dock : targets)
+        for (const double collapsed : stages)
+        {
+            const bool vertical = genie::Vertical(edge);
+            double previousEnd = 0.0;
+            double firstBegin = 0.0;
+            std::vector<int> coverage(vertical ? hostHeight : hostWidth, 0);
+            for (std::size_t band = 0; band < genie::StripCount; ++band)
+            {
+                const auto clip = navigation::GenieRasterBandClip(window, dock,
+                    edge, collapsed, width, height, band, -3200.0, -1500.0,
+                    hostWidth, hostHeight);
+                const double begin = vertical ? clip.top : clip.left;
+                const double end = vertical ? clip.bottom : clip.right;
+                const auto projection = navigation::GenieProjection(window, dock, edge,
+                    collapsed, width, height, band, -3200.0, -1500.0);
+                const auto crop = navigation::GenieSourceBandClip(projection, clip, edge,
+                    width, height);
+                const double sourceAxis = vertical ? height : width;
+                const double sourceBegin = vertical ? projection.sourceY : projection.sourceX;
+                const double perspective = vertical ? projection.m24 : projection.m14;
+                const auto denominator = [&](double value) {
+                    return (value - sourceBegin) * perspective + projection.m44;
+                };
+                if (denominator(0.0) <= 0.0 || denominator(sourceAxis) <= 0.0)
+                    ++unboundedPoleCases;
+                const double cropBegin = vertical ? crop.top : crop.left;
+                const double cropEnd = vertical ? crop.bottom : crop.right;
+                Check(cropBegin >= 0.0 && cropEnd <= sourceAxis && cropEnd >= cropBegin &&
+                        denominator(cropBegin) >= 0.249 && denominator(cropEnd) >= 0.249,
+                    "cropped Genie intermediates must stay inside the texture and positive perspective branch");
+                const auto firstPoint = projection.Map(vertical ? width * 0.5 : cropBegin,
+                    vertical ? cropBegin : height * 0.5);
+                const auto lastPoint = projection.Map(vertical ? width * 0.5 : cropEnd,
+                    vertical ? cropEnd : height * 0.5);
+                const double mappedBegin = vertical ? firstPoint.y : firstPoint.x;
+                const double mappedEnd = vertical ? lastPoint.y : lastPoint.x;
+                Check(std::isfinite(mappedBegin) && std::isfinite(mappedEnd),
+                    "cropped Genie source endpoints must produce finite output coordinates");
+                if (end > begin && cropBegin > 0.0 && band != 0)
+                    Check(mappedBegin <= begin - 0.5,
+                        "source filtering margin must cover the snapped destination band's leading edge");
+                if (end > begin && cropEnd < sourceAxis && band + 1 != genie::StripCount)
+                    Check(mappedEnd >= end + 0.5,
+                        "source filtering margin must cover the snapped destination band's trailing edge");
+                Check(begin == std::floor(begin) && end == std::floor(end),
+                    "Genie internal raster clips must align to physical pixels at every DPI");
+                Check(end >= begin,
+                    "subpixel Genie bands may be empty but must not invert");
+                if (band == 0) firstBegin = begin;
+                else Check(begin == previousEnd,
+                    "adjacent destination clips must share exactly the same pixel boundary");
+                previousEnd = end;
+                const int first = std::max(0, static_cast<int>(begin));
+                const int last = std::min(static_cast<int>(coverage.size()),
+                    static_cast<int>(end));
+                for (int pixel = first; pixel < last; ++pixel) ++coverage[pixel];
+            }
+            for (std::size_t pixel = 0; pixel < coverage.size(); ++pixel)
+            {
+                const double center = static_cast<double>(pixel) + 0.5;
+                const bool inside = center >= firstBegin && center < previousEnd;
+                Check(coverage[pixel] == (inside ? 1 : 0),
+                    "each Genie output pixel must be covered once, preventing cracks and alpha stripes");
+            }
+        }
+    }
+    Check(unboundedPoleCases > 0,
+        "coverage fixtures must reproduce full-texture homographies crossing the perspective pole");
+}
+
 void TestDeactivateRules()
 {
     Check(!rules::ShouldCloseOnDeactivate(
@@ -712,10 +809,32 @@ void TestDeactivateRules()
             false),
         "activation outside quick navigation must close it");
 
+    // Task View may send WA_INACTIVE before GetForegroundWindow stops naming
+    // the search window. The close reason must veto focus restoration itself.
+    Check(!rules::ShouldRestoreDesktopFocusOnClose(false, true, false, true),
+        "Shell deactivation must not reactivate the desktop even with stale foreground");
+    Check(!rules::ShouldRestoreDesktopFocusOnClose(true, true, true, true),
+        "switching from search to another panel must not focus the desktop between them");
+    Check(!rules::ShouldRestoreDesktopFocusOnClose(true, true, false, false),
+        "a foreground switch during close must preserve the external focus");
+    Check(rules::ShouldRestoreDesktopFocusOnClose(true, true, false, true),
+        "explicit search dismissal may return keyboard control to the visible desktop");
+    Check(!rules::ShouldRestoreDesktopFocusOnClose(true, false, false, true),
+        "closing search on the native desktop must not activate the software desktop");
+
     Check(!rules::ShouldOpenFromDockSearchPress(true),
         "the Dock search press that dismissed Quick Navigation must not reopen it");
     Check(rules::ShouldOpenFromDockSearchPress(false),
         "a fresh Dock search press opens Quick Navigation");
+    using DockAction = rules::DockSearchPressAction;
+    Check(rules::ResolveDockSearchPressAction(false, true, true) == DockAction::Open,
+        "Dock search opens a closed panel");
+    Check(rules::ResolveDockSearchPressAction(true, true, true) == DockAction::Close,
+        "a same-monitor Dock closes the panel regardless of its original invocation source");
+    Check(rules::ResolveDockSearchPressAction(true, false, true) == DockAction::Relocate,
+        "a Dock on a different monitor relocates an open panel");
+    Check(rules::ResolveDockSearchPressAction(true, false, false) == DockAction::Close,
+        "an unavailable target Dock cannot strand an open panel");
 
 }
 
@@ -761,8 +880,171 @@ void TestAnimatedPointerHitRules()
 }
 }
 
+
+void TestExtendedSearchAndConfiguration()
+{
+    namespace query = snowdesktop::quick_navigation_query;
+    NavigationSettings settings;
+    Check(!settings.lastCollapsed && settings.layout.expandedWidth == 860 && settings.layout.collapsedWidth == 640,
+        "legacy and new settings default to the expanded panel dimensions");
+    for (const RECT work : {RECT{0, 0, 1920, 1040}, RECT{-1920, -120, 0, 920}, RECT{80, 60, 1280, 860}})
+    {
+        const RECT initial = rules::PlacePanel(work, 640, 376, 24);
+        Check(initial.left + initial.right == work.left + work.right && initial.top + initial.bottom == work.top + work.bottom,
+            "a reopened compact panel centers its actual dimensions in the selected work area including negative monitor coordinates");
+        const RECT grown = rules::PlacePanel(work, 640, 640, 24, initial.top, 100);
+        Check(grown.top == initial.top && grown.bottom <= work.bottom - 24,
+            "results grow below the opening search-bar anchor and scroll before exceeding a short monitor work area");
+        const RECT limited = rules::PlacePanel(work, 4000, 3000, 24, work.bottom);
+        Check(limited.left >= work.left + 24 && limited.right <= work.right - 24 && limited.top >= work.top + 24 && limited.bottom <= work.bottom - 24,
+            "oversized panels and stale anchors remain inside the target monitor work area");
+    }
+    const wchar_t* prefixes[] = {L"app",L"file",L"web",L"set",L"run",L"="};
+    for (size_t i = 0; i < std::size(prefixes); ++i)
+    {
+        const auto scope = query::ResolvePrefix(settings,prefixes[i]);
+        Check(i == 1 ? !scope : scope && scope->type == static_cast<QuickNavigationSearchType>(i + 1),"active prefixes select their type and file stays a composite keyword");
+    }
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"file",false,false) == query::SubmitIntent::ActivateResult,"file never creates a separate search chip");
+    Check(ValidateNavigationSearchConfiguration(settings) && query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"=",false,false) == query::SubmitIntent::ConfirmPrefix,
+        "equals is a valid calculator default confirmed by Enter");
+    Check(!query::ResolvePrefix(settings,L"calc"), "the former calculator default remains an ordinary composite query");
+    auto invalidSymbol = settings; invalidSymbol.prefixes[0] = "=";
+    Check(!ValidateNavigationSearchConfiguration(invalidSymbol), "equals is reserved for the calculator type");
+    invalidSymbol = settings; invalidSymbol.engines[0].prefix = "=";
+    Check(!ValidateNavigationSearchConfiguration(invalidSymbol), "engines cannot reuse the calculator symbol");
+    auto legacy = settings; legacy.prefixes[1] = "web";
+    Check(ValidateNavigationSearchConfiguration(legacy),"the retained file-prefix slot does not conflict with active types");
+    legacy.engines.front().prefix = "file";
+    Check(query::ResolvePrefix(legacy,L"file")->engine == "bing","a custom engine may reuse the retired file prefix");
+    Check(query::ResolvePrefix(settings,L" APP ")->type == QuickNavigationSearchType::App,"prefix input tolerates surrounding whitespace and case");
+    const auto partial = query::PrefixCandidates(settings, L" AP ");
+    Check(partial.size() == 1 && partial[0].scope.type == QuickNavigationSearchType::App && partial[0].prefix == "app",
+        "partial prefixes produce case-insensitive completion candidates without locking the scope");
+    Check(!query::ResolvePrefix(settings, L"ap"), "suggestions never implicitly lock a partially typed prefix");
+    Check(query::PrefixCandidates(settings, L"application").empty() && query::PrefixCandidates(settings, L"app editor").empty() &&
+        query::PrefixCandidates(settings, L"文件").empty() && query::PrefixCandidates(settings, L"").empty(),
+        "ordinary queries and blank input are not prefix suggestions");
+    const auto engineCandidate = query::PrefixCandidates(settings, L"goo");
+    Check(engineCandidate.size() == 1 && engineCandidate[0].scope.engine == "google" && engineCandidate[0].prefix == "google",
+        "engine suggestions preserve the selected engine when completed");
+    Check(query::PrefixCandidates(settings, L"file").empty(), "retired file scope is absent from prefix suggestions");
+    auto overlapping = settings;
+    overlapping.prefixes[0] = "apps";
+    overlapping.engines.front().prefix = "app";
+    const auto ordered = query::PrefixCandidates(overlapping, L"app");
+    Check(ordered.size() == 2 && ordered[0].scope.engine == "bing" && ordered[1].scope.type == QuickNavigationSearchType::App,
+        "exact engine keywords precede longer type-prefix completions");
+    Check(!query::ResolvePrefix(settings,L"app editor") && !query::ResolvePrefix(settings,L"unknown") && !query::ResolvePrefix(settings,L"application"),"ordinary queries never implicitly select a search type");
+    const auto google = query::ResolvePrefix(settings,L"google");
+    Check(google && google->type == QuickNavigationSearchType::Web && google->engine == "google","engine prefixes retain the chosen engine");
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",true,false) == query::SubmitIntent::Composition,"IME confirmation outranks both prefix locking and activation");
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,false) == query::SubmitIntent::ConfirmPrefix,"Enter confirms only an exact unscoped prefix");
+    Check(query::GetSubmitIntent(settings,QuickNavigationSearchType::App,L"app",false,false) == query::SubmitIntent::ActivateResult && query::GetSubmitIntent(settings,QuickNavigationSearchType::All,L"app",false,true) == query::SubmitIntent::ActivateResult,"typed queries and open menus never relock their query as a prefix");
+    Check(query::EncodeQuery(L"中文 &+#/\U0001F600") == "%E4%B8%AD%E6%96%87%20%26%2B%23%2F%F0%9F%98%80","web queries are encoded as UTF-8 bytes including CJK, punctuation and supplementary characters");
+    Check(query::SearchUrl(settings.engines.front(),L"a&b") == "https://www.bing.com/search?q=a%26b","engine substitution cannot turn a keyword into extra URL parameters");
+    auto invalid = settings; invalid.engines[0].prefix = "app"; Check(!ValidateNavigationSearchConfiguration(invalid),"engine and type prefixes cannot collide");
+    invalid = settings; invalid.prefixes[0] = invalid.prefixes[2]; Check(!ValidateNavigationSearchConfiguration(invalid),"type prefixes must be unique");
+    for (const auto* url : {"file:///a/{query}","https://example.com/search", "http://{query}","https:///search?q={query}","https://example.com/a b?q={query}"})
+    { invalid = settings; invalid.engines[0].url = url; Check(!ValidateNavigationSearchConfiguration(invalid),"invalid search templates are rejected before persistence"); }
+    settings.lastCollapsed = true; settings.layout.iconSize = 64; settings.layout.collapsedWidth = 720;
+    settings.colors["searchBg"] = "#123456"; settings.colors["resultBorder"] = "#FF000080";
+    settings.colors["resultFill"] = "#FFFFFF00"; settings.prefixes[0] = "apps";
+    settings.engines.push_back({"example","Example \"search\"","example","https://example.com/?q={query}"});
+    const auto path = MakeTemporarySettingsPath(); NavigationSettings loaded;
+    Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && settings == loaded,"layout, colors, scopes and custom engines round trip with escaped names");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << "{\"enabled\":true,\"modifiers\":3,\"virtualKey\":32}"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && !loaded.lastCollapsed && loaded.colors.empty() && loaded.layout == QuickNavigationLayout{},"missing new fields use defaults even when reusing a previously populated object");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"defaultCollapsed":true})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.lastCollapsed, "the former opening preference seeds remembered state without losing existing choices");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"defaultCollapsed":true,"lastCollapsed":false})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && !loaded.lastCollapsed, "the last recorded expansion state takes precedence over the obsolete opening preference");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"layout":{"expandedWidth":900,"cornerRadius":16,"searchRadius":10,"tabRadius":8,"itemRadius":10}})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.layout.cornerRadius == 8 && loaded.layout.searchRadius == 6 && loaded.layout.expandedWidth == 900,
+        "the previous trial's default radii migrate without losing customized widths");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"layoutVersion":1,"layout":{"iconSize":48,"expandedWidth":900}})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.layout.iconSize == 56 && loaded.layout.expandedWidth == 900,
+        "the previous trial's default icon size migrates while customized widths survive");
+    settings.layout.iconSize = 48;
+    settings.layout.cornerRadius = 16;
+    Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && loaded.layout.cornerRadius == 16 && loaded.layout.iconSize == 48,
+        "explicit radii in the current layout version survive persistence");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"prefixes":["app","file","web","set","run","calc"]})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.prefixes.back() == "=", "the previous trial calculator default migrates to equals");
+    { std::ofstream old(path,std::ios::binary | std::ios::trunc); old << R"({"prefixes":["app","file","web","set","run","math"]})"; }
+    Check(LoadNavigationSettings(path.c_str(),loaded) && loaded.prefixes.back() == "math", "other customized calculator prefixes survive migration");
+    settings.prefixes.back() = "calc";
+    Check(SaveNavigationSettings(path.c_str(),settings) && LoadNavigationSettings(path.c_str(),loaded) && loaded.prefixes.back() == "calc",
+        "explicitly saved current calculator overrides are never migrated");
+    DeleteFileW(path.c_str());
+    invalid = settings; invalid.prefixes[0] = "web"; invalid.layout.iconSize = 999; NormalizeNavigationSettings(invalid);
+    Check(invalid.prefixes == NavigationSettings{}.prefixes && invalid.layout.iconSize == 96 && invalid.colors == settings.colors,"invalid search config is reset without losing independent appearance overrides");
+    const auto command = query::ParseCommand(L"\"C:\\Program Files\\Example\\app.exe\" --flag \"two words\"");
+    Check(command && command->target == L"C:\\Program Files\\Example\\app.exe" && command->parameters == L"--flag \"two words\"","Run preserves quoted full paths and exact argument quoting");
+    Check(!query::ParseCommand(L"\"unclosed") && !query::ParseCommand(L"\"app.exe\"argument") && !query::ParseCommand(L""),"malformed command targets are never executed");
+    Check(query::ParseCommand(L"https://example.com/a?q=b&x=c")->parameters.empty(),"URI parameters remain part of the Shell target");
+    Check(query::ParseCommand(L"editor.exe https://example.com/a?q=b")->target == L"editor.exe" &&
+        query::ParseCommand(L"cmd /c start https://example.com")->parameters == L"/c start https://example.com",
+        "URL parameters do not turn a program command into a URI target");
+    Check(query::ParseCommand(L"ms-settings:display")->target == L"ms-settings:display", "non-hierarchical Shell URIs remain complete targets");
+    Check(query::ParseCommand(L"cmd /c echo a | more")->parameters == L"/c echo a | more","an explicit command interpreter retains pipeline syntax");
+    SetEnvironmentVariableW(L"SNOWDESKTOP_QUERY_TEST",L"C:\\Program Files\\Example");
+    const auto environment = query::ParseCommand(L"\"%SNOWDESKTOP_QUERY_TEST%\\app.exe\" --path \"%SNOWDESKTOP_QUERY_TEST%\"");
+    Check(environment && environment->target == L"C:\\Program Files\\Example\\app.exe" && environment->parameters == L"--path \"C:\\Program Files\\Example\"","environment expansion covers targets and parameters before parsing");
+    SetEnvironmentVariableW(L"SNOWDESKTOP_QUERY_TEST",nullptr);
+    query::Calculator calculator;
+    for (const auto& [expression,expected] : std::vector<std::pair<std::wstring,double>>{{L"2+3*4",14},{L"(2+3)*4",20},{L"2^3^2",512},{L"-2^2",-4},{L"2^-2",.25},{L".5 + 50%",1},{L"(-3 + +5) / 2",1},{L"(12.5 + 7.5) * 3 ^ 2 + 50%",180.5}})
+    { const auto result = calculator.Evaluate(expression); Check(result.error == query::CalculationError::None && std::abs(result.value - expected) < 1e-9,"calculator respects precedence, signs, right-associative powers and percentages"); }
+    Check(calculator.Evaluate(L"1/0").error == query::CalculationError::DivisionByZero,"division by zero is distinguished from syntax errors");
+    Check(calculator.Evaluate(L"10^9999").error == query::CalculationError::NonFinite && calculator.Evaluate(L"(-1)^.5").error == query::CalculationError::NonFinite,"overflow and non-real results never produce copyable infinity or NaN");
+    for (const auto* expression : {L"",L"2+",L"(1+2",L"1.2.3",L"2foo",L"()"}) Check(calculator.Evaluate(expression).error == query::CalculationError::Invalid,"invalid expressions display a specific syntax error");
+    Check(calculator.Evaluate(std::wstring(140,L'-') + L"1").error == query::CalculationError::Invalid,"deep recursive expressions are bounded");
+}
+
+void TestResultColorOpacity()
+{
+    NavigationSettings settings;
+    for (bool light : {false,true})
+    {
+        const auto initial = ResolveQuickNavTheme(light,settings);
+        Check(initial.resultFill.alpha == 0.f && initial.resultBorder.alpha == 0.f &&
+            initial.iconPlateFill.alpha == 0.f && initial.iconPlateBorder.alpha == 0.f,
+            "unselected result and icon-plate colors default to transparency in both appearances");
+        auto borderOnly = settings; borderOnly.colors["resultBorder"] = "#FF000080";
+        const auto themed = ResolveQuickNavTheme(light,borderOnly);
+        const auto border = ToD2DColor(themed.resultBorder);
+        Check(border.r == 1.f && border.g == 0.f && border.b == 0.f && std::abs(border.a - 128.f / 255.f) < .00001f &&
+            ToD2DColor(themed.resultFill).a == 0.f && ToD2DColor(themed.iconPlateFill).a == 0.f,
+            "border-only RGBA changes draw a translucent red outline without introducing any result or icon background");
+        borderOnly.colors["resultFill"] = "#FFFFFF00";
+        borderOnly.colors["selectedFill"] = "#12345640";
+        borderOnly.colors["itemHoverFill"] = "#12345680";
+        const auto states = ResolveQuickNavTheme(light,borderOnly);
+        Check(states.resultFill.alpha == 0.f && states.selectedFill.alpha == 64.f / 255.f && states.itemHoverFill.alpha == 128.f / 255.f,
+            "normal, selected and hovered fills retain independent explicit alpha values");
+        for (const auto& [key, field] : kQuickNavColorFields)
+        {
+            NavigationSettings single; single.colors[key] = "#12345680";
+            const auto resolved = ResolveQuickNavTheme(light,single);
+            Check((resolved.*field).rgb == RGB(0x12,0x34,0x56) && (resolved.*field).alpha == 128.f / 255.f,
+                "every exposed palette role preserves its RGB and opacity");
+            for (const auto& [other, otherField] : kQuickNavColorFields)
+                if (std::string_view(other) != key) Check(resolved.*otherField == initial.*otherField,
+                    "changing one palette role cannot change another role");
+        }
+    }
+    snowdesktop::RgbaColor color;
+    Check(snowdesktop::DecodeRgbaColor("#123456",color) && color.alpha == 1.f,
+        "legacy RGB colors remain opaque");
+    Check(snowdesktop::EncodeRgbaColor(0x12,0x34,0x56,0x80) == "#12345680" &&
+        !snowdesktop::DecodeRgbaColor("#1234567",color) && !snowdesktop::DecodeRgbaColor("#123456GG",color) &&
+        !snowdesktop::DecodeRgbaColor("12345680",color), "RGBA codec has explicit channel order and rejects malformed values");
+}
+
 int main()
 {
+    TestResultColorOpacity();
+    TestExtendedSearchAndConfiguration();
     TestViewModePersistenceValues();
     TestExtendedNavigationKeyNames();
     TestViewModeFilePersistence();
@@ -774,6 +1056,7 @@ int main()
     TestAnimationRules();
     TestAnimationEffects();
     TestGenieTranslucentContentCoverage();
+    TestGenieDestinationPixelCoverage();
     TestDeactivateRules();
     TestSearchEditKeyboardRouting();
     TestAnimatedPointerHitRules();

@@ -1,6 +1,7 @@
 #pragma once
 #include "large_icon_config.h"
 #include <functional>
+#include <map>
 
 namespace snowdesktop
 {
@@ -11,6 +12,7 @@ struct LargeIconSettingsRequest
     std::string action; // read, preview, commit, cancel, import, refresh
     std::string config;
     std::wstring path;
+    std::vector<std::string> fields; // Internal editor patch: explicitly changed settings.
 };
 
 struct LargeIconSettingsSnapshot
@@ -33,6 +35,9 @@ struct LargeIconSettingsSnapshot
     std::string config, error, defaultConfig;
     int imageWidth = 0, imageHeight = 0;
     bool loading = false;
+    int itemCount = 1;
+    bool anyFill = false;
+    std::vector<std::string> mixedFields;
 };
 
 using LargeIconSettingsAction = std::function<LargeIconSettingsSnapshot(LargeIconSettingsRequest)>;
@@ -41,5 +46,7 @@ struct LargeIconEditSession
     std::wstring key;
     std::uint64_t token = 0, revision = 1;
     std::optional<LargeIconConfig> preview;
+    std::vector<std::wstring> keys;
+    std::map<std::wstring, LargeIconConfig> previews;
 };
 }

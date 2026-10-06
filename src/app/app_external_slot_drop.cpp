@@ -167,11 +167,6 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         }
         if (widget->type != destination.widgetType ||
             widget->sourceFolderPath != destination.folderPath) return false;
-        if (widget->type == DesktopWidgetType::FileCategories &&
-            ((!owned && preview.action == DropAction::Link) ||
-             std::any_of(paths.begin(), paths.end(), [](const auto& path) {
-                 return _wcsicmp(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-             }))) return false;
         preview.targetWidget = widget;
         preview.landings.clear();
         for (size_t index = 0; index < paths.size(); ++index)
@@ -189,6 +184,17 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
     }
     else if (preview.pinMaterializedItemsToDock)
     {
+        // Native desktop files already have a Shell identity. Pin that identity
+        // without generating another .lnk or taking ownership of the original.
+        // This common commit boundary also handles asynchronous Explorer drops.
+        if (!owned && CanPinExistingDesktopPaths(paths))
+        {
+            if (!AddMaterializedItemsToDock(paths, preview.dockInsertIndex, true)) return false;
+            SaveLayoutSlots();
+            RequestShellRefresh();
+            if (completion) completion(true);
+            return true;
+        }
         auto* dock = GetDockContainer();
         if (!dock || !dock->HasCapacity(paths.size())) return false;
         const auto action = preview.action;

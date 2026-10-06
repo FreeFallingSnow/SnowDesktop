@@ -81,6 +81,19 @@ public:
                     channel.Notify("widgets.picked", id, selected);
             });
         });
+        channel_.Bind<void, Token, Token, std::filesystem::path, std::string, std::string>("widgets.export",
+            [weak, &channel](Token id, Token generation, std::filesystem::path projectRoot,
+                std::string packageId, std::string version) {
+                const auto state = weak.lock();
+                if (!state || state->closed || !state->options.exportDevelopmentPackage)
+                { channel.Notify("widgets.exported", id, std::optional<WidgetsPageHostOperationResult>{}); return; }
+                state->options.exportDevelopmentPackage(generation, std::move(projectRoot),
+                    std::move(packageId), std::move(version),
+                    [weak, &channel, id](std::optional<WidgetsPageHostOperationResult> result) {
+                        if (auto live = weak.lock(); live && !live->closed && channel.Connected())
+                            channel.Notify("widgets.exported", id, result);
+                    });
+            });
         channel_.Bind<void, Token, Token, WidgetInstallConfirmationRequest>("widgets.confirm",
             [weak, &channel](Token id, Token generation, WidgetInstallConfirmationRequest request) {
                 const auto state = weak.lock();
@@ -265,6 +278,7 @@ struct BackendServer::Impl
     std::unique_ptr<BackupDataPageBackend> backup;
     Completions<bool> confirmations;
     Completions<Path> pickers;
+    Completions<std::optional<WidgetsPageHostOperationResult>> exports;
 
     template<class... A> void Notify(const char* name, const A&... args) noexcept
     { try { if (channel.Connected()) channel.Notify(name, args...); } catch (...) {} }
@@ -280,6 +294,7 @@ struct BackendServer::Impl
         channel.Bind<Return>("options." #Name, [this] { return options.Name ? options.Name() : Return{}; });
         SD_OPTION(searchInput, SettingsSearchIndexInput)
         SD_OPTION(startupConflict, GeneralStartupConflict)
+        SD_OPTION(appliedFont, app_fonts::Selection)
         SD_OPTION(advancedFeatureStatus, GeneralAdvancedFeatureStatus)
         SD_OPTION(developerToolsVisible, bool)
         SD_OPTION(debugVisible, bool)
@@ -323,24 +338,49 @@ struct BackendServer::Impl
         channel.Bind<std::optional<std::vector<calendar::CalendarEvent>>, Token>("calendar.events", [this](Token generation) -> std::optional<std::vector<calendar::CalendarEvent>> {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
-            return engine->RuntimeCalendarEvents("0001-01-01", "9999-12-31");
+            return engine->RuntimeCalendarSingleEvents();
         });
         channel.Bind<calendar::MutationResult, Token, calendar::CalendarEvent, bool>("calendar.mutate", [this](Token generation, calendar::CalendarEvent event, bool remove) -> calendar::MutationResult {
             const auto current = controller.Snapshot();
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
             if (remove)
             {
-                const auto events = engine->RuntimeCalendarEvents("0001-01-01", "9999-12-31");
-                const auto found = std::find_if(events.begin(), events.end(), [&](const auto& item) { return item.id == event.id; });
-                if (found == events.end()) return {false, event.id, 0, "not_found"};
+                const auto found = engine->RuntimeCalendarEventById(event.id);
+                if (!found) return {false, event.id, 0, "not_found"};
                 if (found->revision != event.revision) return {false, event.id, found->revision, "conflict"};
-                return engine->RuntimeCalendarRemove(event.id);
+                return engine->RuntimeCalendarRemove(event.id, event.revision);
             }
             if (event.id.empty()) return engine->RuntimeCalendarCreate(std::move(event));
             return engine->RuntimeCalendarUpdate(event.id, event.revision, event);
         });
+        channel.Bind<std::optional<std::vector<calendar::CalendarSeries>>, Token>("calendar.series", [this](Token generation) -> std::optional<std::vector<calendar::CalendarSeries>> {
+            const auto current = controller.Snapshot();
+            if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
+            return engine->RuntimeCalendarSeries();
+        });
+        channel.Bind<std::optional<calendar::CalendarEvent>, Token, std::string>("calendar.occurrence", [this](Token generation, std::string id) -> std::optional<calendar::CalendarEvent> {
+            const auto current = controller.Snapshot();
+            if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
+            return engine->RuntimeCalendarEventById(id);
+        });
+        channel.Bind<calendar::MutationResult, Token, calendar::CalendarSeries, bool>("calendar.series.mutate", [this](Token generation, calendar::CalendarSeries series, bool remove) -> calendar::MutationResult {
+            const auto current = controller.Snapshot();
+            if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
+            if (remove) return engine->RuntimeCalendarSeriesRemove(series.id, series.revision);
+            if (series.id.empty()) return engine->RuntimeCalendarSeriesCreate(std::move(series));
+            return engine->RuntimeCalendarSeriesUpdate(series.id, series.revision, std::move(series));
+        });
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
+        });
+        channel.Bind<PageRemovalImpact, std::wstring>("pages.removal.analyze", [this](auto id) {
+            return options.pageLayoutPage.analyzeRemoval ? options.pageLayoutPage.analyzeRemoval(id) : PageRemovalImpact{};
+        });
+        channel.Bind<PageLayoutOperationResult, Token, std::wstring, std::wstring>("pages.rename", [this](Token revision, auto id, auto name) {
+            return options.pageLayoutPage.renamePage ? options.pageLayoutPage.renamePage(revision, id, name) : PageLayoutOperationResult{};
+        });
+        channel.Bind<PageLayoutOperationResult, Token, std::wstring>("pages.remove", [this](Token revision, auto id) {
+            return options.pageLayoutPage.removePage ? options.pageLayoutPage.removePage(revision, id) : PageLayoutOperationResult{};
         });
         channel.Bind<LargeIconSettingsSnapshot, LargeIconSettingsRequest>("largeIcon.edit", [this](auto request) {
             return options.largeIconSettings ? options.largeIconSettings(std::move(request)) : LargeIconSettingsSnapshot{};
@@ -368,6 +408,8 @@ struct BackendServer::Impl
             return widgets && widgets->Invoke(generation, std::move(request));
         });
         channel.Bind<void>("widgets.Close", [this] { if (widgets) widgets->Close(); widgets.reset(); });
+        channel.Bind<void, Token, std::optional<WidgetsPageHostOperationResult>>("widgets.exported",
+            [this](Token id, auto result) { exports.Complete(id, std::move(result)); });
         channel.Bind<void, Token, Path>("widgets.picked", [this](Token id, Path path) { pickers.Complete(id, std::move(path)); });
         channel.Bind<void, Token, bool>("widgets.confirmed", [this](Token id, bool answer) { confirmations.Complete(id, answer); });
 
@@ -412,6 +454,11 @@ struct BackendServer::Impl
         configured.pickPackage = [this](Token generation, auto done) {
             const auto id = pickers.Add(std::move(done)); Notify("widgets.pick", id, generation);
         };
+        configured.exportDevelopmentPackage = [this](Token generation, std::filesystem::path projectRoot,
+            std::string packageId, std::string version, auto done) {
+            const auto id = exports.Add(std::move(done));
+            Notify("widgets.export", id, generation, projectRoot, packageId, version);
+        };
         configured.confirmInstall = [this](Token generation, auto request, auto done) {
             const auto id = confirmations.Add(std::move(done)); Notify("widgets.confirm", id, generation, request);
         };
@@ -441,6 +488,7 @@ struct BackendServer::Impl
         backup.reset();
         confirmations.Cancel();
         pickers.Cancel();
+        exports.Cancel();
     }
 };
 
@@ -463,6 +511,7 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.Name = [&channel] { return channel.Call<Return>("options." #Name); };
     SD_REMOTE_OPTION(searchInput, SettingsSearchIndexInput)
     SD_REMOTE_OPTION(startupConflict, GeneralStartupConflict)
+    SD_REMOTE_OPTION(appliedFont, app_fonts::Selection)
     SD_REMOTE_OPTION(advancedFeatureStatus, GeneralAdvancedFeatureStatus)
     SD_REMOTE_OPTION(developerToolsVisible, bool)
     SD_REMOTE_OPTION(debugVisible, bool)
@@ -479,7 +528,13 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     };
     options.calendarPage.events = [&channel](Token generation) { return channel.Call<std::optional<std::vector<calendar::CalendarEvent>>>("calendar.events", generation); };
     options.calendarPage.mutate = [&channel](Token generation, calendar::CalendarEvent event, bool remove) { return channel.Call<calendar::MutationResult>("calendar.mutate", generation, event, remove); };
+    options.calendarPage.series = [&channel](Token generation) { return channel.Call<std::optional<std::vector<calendar::CalendarSeries>>>("calendar.series", generation); };
+    options.calendarPage.occurrence = [&channel](Token generation, std::string id) { return channel.Call<std::optional<calendar::CalendarEvent>>("calendar.occurrence", generation, id); };
+    options.calendarPage.mutateSeries = [&channel](Token generation, calendar::CalendarSeries series, bool remove) { return channel.Call<calendar::MutationResult>("calendar.series.mutate", generation, series, remove); };
     options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
+    options.pageLayoutPage.analyzeRemoval = [&channel](const std::wstring& id) { return channel.Call<PageRemovalImpact>("pages.removal.analyze", id); };
+    options.pageLayoutPage.renamePage = [&channel](Token revision, const std::wstring& id, const std::wstring& name) { return channel.Call<PageLayoutOperationResult>("pages.rename", revision, id, name); };
+    options.pageLayoutPage.removePage = [&channel](Token revision, const std::wstring& id) { return channel.Call<PageLayoutOperationResult>("pages.remove", revision, id); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
     };

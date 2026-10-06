@@ -6,7 +6,9 @@
 #include <windows.h>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -127,6 +129,86 @@ bool PumpMessagesUntil(
     return predicate();
 }
 
+void TestRoundedCoverageEquivalence()
+{
+    // Keep the original signed-distance expression as a numerical reference.
+    // Exact equality protects partial alpha at corners, straight edges and
+    // inset outlines when skipping the two-dimensional norm elsewhere.
+    const auto reference = [](float x, float y, float left, float top,
+        float right, float bottom, float radius) {
+        const float halfWidth = std::max(0.0f, (right - left) * 0.5f);
+        const float halfHeight = std::max(0.0f, (bottom - top) * 0.5f);
+        if (halfWidth <= 0.0f || halfHeight <= 0.0f) return 0.0f;
+        const float r = std::clamp(radius, 0.0f,
+            std::min(halfWidth, halfHeight));
+        const float qx = std::fabs(x - (left + right) * 0.5f) -
+            (halfWidth - r);
+        const float qy = std::fabs(y - (top + bottom) * 0.5f) -
+            (halfHeight - r);
+        const float distance =
+            std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) +
+            std::min(std::max(qx, qy), 0.0f) - r;
+        return std::clamp(0.5f - distance, 0.0f, 1.0f);
+    };
+    for (float left : {-10.25f, 0.0f, 12.5f})
+    for (float width : {-1.0f, 0.0f, 0.25f, 1.0f, 20.0f, 680.0f})
+    for (float height : {0.0f, 0.75f, 20.0f, 550.0f})
+    for (float radius : {-1.0f, 0.0f, 0.25f, 6.0f, 1000.0f})
+    for (int yi = -8; yi <= 80; ++yi)
+    for (int xi = -8; xi <= 80; ++xi)
+    {
+        const float top = -3.75f;
+        const float right = left + width;
+        const float bottom = top + height;
+        const float x = left + width * xi / 72.0f;
+        const float y = top + height * yi / 72.0f;
+        Expect(snowdesktop::component_preview::detail::RoundedRectangleCoverage(
+            x, y, left, top, right, bottom, radius) ==
+            reference(x, y, left, top, right, bottom, radius),
+            "optimized coverage exactly retains rounded surface alpha");
+    }
+}
+
+void TestPreviewFrameMemoryBudget()
+{
+    using namespace snowdesktop::component_preview;
+    Window window;
+    int renders = 0;
+    const RECT anchor{120, 100, 280, 420};
+    const auto show = [&](int id) {
+        Model model;
+        model.title = L"Memory budget preview";
+        Card card;
+        card.title = L"Budgeted component";
+        card.previewWidth = 640;
+        card.previewHeight = 480;
+        card.cacheKey = L"budget-" + std::to_wstring(id);
+        card.render = [&](int width, int height, UINT,
+                const StagePlacement&, const ApplySettings&, bool) {
+            ++renders;
+            return SolidBitmap(width, height, 0xff204080u);
+        };
+        model.cards.push_back(std::move(card));
+        Expect(window.Show(model, anchor, nullptr, 96, false,
+                {}, {}, snowdesktop::modern_menu::Appearance::OpaqueDark),
+            "budgeted preview renders through the production window");
+        Expect(window.CardFrameCacheBytesForTesting() <= 32ull * 1024 * 1024,
+            "full-resolution preview history stays within 32 MiB");
+    };
+    for (int id = 0; id < 40; ++id) show(id);
+    const int coldRenders = renders;
+    show(39);
+    show(38);
+    Expect(renders == coldRenders,
+        "recent full-resolution previews remain warm after budget eviction");
+    show(0);
+    Expect(renders == coldRenders + 1,
+        "an evicted old preview is regenerated on demand");
+    window.Close();
+    Expect(window.CardFrameCacheBytesForTesting() == 0,
+        "closing a reusable preview releases all cached frame pixels");
+}
+
 } // namespace
 
 void RunWidgetBackgroundCacheTests();
@@ -135,6 +217,8 @@ void RunScrollContentClipTests();
 
 int wmain()
 {
+    TestRoundedCoverageEquivalence();
+    TestPreviewFrameMemoryBudget();
     TestWidgetClipFactoryReplacement();
     RunWidgetBackgroundCacheTests();
     RunWidgetTextLayoutCacheTests();

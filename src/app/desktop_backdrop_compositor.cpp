@@ -16,6 +16,8 @@
 #include "popup_window_pair_z_order.h"
 #include "../dock_genie_rules.h"
 #include "../quick_navigation_genie_rules.h"
+#include "../popup_round_geometry.h"
+#include "../large_icon_shape_geometry.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
@@ -197,12 +199,12 @@ struct GaussianBlurEffect : winrt::implements<GaussianBlurEffect,
     winrt::hstring effectName = L"SnowDesktopBackdropBlur";
 };
 
-/** @brief CompositionPath 对不可变 D2D 路径的原生适配。 */
+/** @brief CompositionPath 对不可变 D2D 几何（路径或圆形）的原生适配。 */
 struct BackdropGeometrySource : winrt::implements<BackdropGeometrySource,
     winrt::Windows::Graphics::IGeometrySource2D,
     ABI::Windows::Graphics::IGeometrySource2DInterop>
 {
-    explicit BackdropGeometrySource(winrt::com_ptr<ID2D1PathGeometry> geometry)
+    explicit BackdropGeometrySource(winrt::com_ptr<ID2D1Geometry> geometry)
         : geometry_(std::move(geometry))
     {
     }
@@ -325,12 +327,18 @@ struct DesktopBackdropCompositor::Impl
         RECT frame{};
         RECT regionFrame{};
         std::uintptr_t ownerKey = 0;
-        int cornerRadius = 0;
+        float cornerRadius = 0;
+        float regionCornerRadius = 0;
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
         wuc::CompositionGeometricClip clip{nullptr};
         bool seen = false;
+        int iconShape = -1;
+        SIZE iconSize{};
+        int largeIconShape = -1;
+        int largeIconFlagDirection = 0;
+        SIZE largeIconSize{};
     };
 
     HWND contentWindow = nullptr;
@@ -349,7 +357,7 @@ struct DesktopBackdropCompositor::Impl
     std::vector<GenieOutlinePoint> genieOutline;
     RECT geniePanelFrame{};
     SIZE genieHostSize{};
-    int genieCornerRadius = 0;
+    float genieCornerRadius = 0;
     bool genieVertical = true;
     float genieSourceOpacity = 1.0f;
     float genieOpacity = 1.0f;
@@ -358,6 +366,7 @@ struct DesktopBackdropCompositor::Impl
     bool collectingFrame = false;
     bool blurFactoriesDirty = false;
     bool available = false;
+    bool transformedRegionDirty = false;
     bool popupMode = false;
     bool popupTopmost = false;
     bool visible = true;
@@ -552,15 +561,10 @@ struct DesktopBackdropCompositor::Impl
             return false;
         for (const PanelVisual& panel : panels)
         {
-            // The CompositionRoundedRectangleGeometry below supplies the
-            // antialiased clip. Limit this helper HWND only to each panel's
-            // rectangular bounds so a binary GDI region cannot cut off the
-            // partially covered pixels along the rounded edge.
-            HRGN frameRegion = CreateRectRgn(
-                panel.regionFrame.left,
-                panel.regionFrame.top,
-                panel.regionFrame.right + 1,
-                panel.regionFrame.bottom + 1);
+            // Composition owns the AA contour. The outward region preserves
+            // its coverage but excludes the fully transparent outer corners.
+            HRGN frameRegion = snowdesktop::popup_round_geometry::CreateWindowFence(
+                panel.regionFrame, panel.regionCornerRadius);
             if (!frameRegion)
             {
                 DeleteObject(panelRegion);
@@ -1099,12 +1103,24 @@ void DesktopBackdropCompositor::ShowPopupWindowPair(
 void DesktopBackdropCompositor::HidePopupWindowPair(
     HWND contentWindow)
 {
+    // Hiding through SWP_NOACTIVATE can retain keyboard focus in this window
+    // or one of its EDIT children. Release only that hidden window's focus;
+    // never activate a replacement window or disturb another focus owner.
+    const auto releaseHiddenFocus = [contentWindow] {
+        if (!contentWindow || !IsWindow(contentWindow) ||
+            IsWindowVisible(contentWindow))
+            return;
+        const HWND focus = GetFocus();
+        if (focus && (focus == contentWindow || IsChild(contentWindow, focus)))
+            SetFocus(nullptr);
+    };
     const bool contentValid =
         contentWindow && IsWindow(contentWindow);
     if (!impl_)
     {
         if (contentValid)
             ShowWindow(contentWindow, SW_HIDE);
+        releaseHiddenFocus();
         return;
     }
 
@@ -1157,6 +1173,9 @@ void DesktopBackdropCompositor::HidePopupWindowPair(
         // region cannot expose an intermediate glass frame.
         impl_->SetAnimationPathRegionExpanded(false);
     }
+    // WM_KILLFOCUS is synchronous and may close/reset the owner. Keep this as
+    // the final operation: no access to this/impl_ after releasing owned focus.
+    releaseHiddenFocus();
 }
 
 void DesktopBackdropCompositor::SetVisualTransform(
@@ -1472,7 +1491,8 @@ bool DesktopBackdropCompositor::AddPanel(
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
-    const int cornerKey = std::max(0, static_cast<int>(std::lround(cornerRadius)));
+    const auto rounded = snowdesktop::popup_round_geometry::Resolve(frame, cornerRadius);
+    const float resolvedRadius = rounded.radiusX;
     const int blurKey = std::clamp(static_cast<int>(std::lround(blurRadius)), 0, 48);
 
     try
@@ -1489,7 +1509,7 @@ bool DesktopBackdropCompositor::AddPanel(
             Impl::PanelVisual panel{};
             panel.frame = frame;
             panel.ownerKey = ownerKey;
-            panel.cornerRadius = cornerKey;
+            panel.cornerRadius = resolvedRadius;
             panel.blurRadius = blurKey;
             panel.visual = impl_->compositor.CreateSpriteVisual();
             panel.geometry = impl_->compositor.CreateRoundedRectangleGeometry();
@@ -1519,7 +1539,8 @@ bool DesktopBackdropCompositor::AddPanel(
             existing->blurRadius = blurKey;
             existing->visual.Brush(impl_->CreateBlurBrush(blurKey));
         }
-        existing->cornerRadius = cornerKey;
+        existing->cornerRadius = resolvedRadius;
+        existing->regionCornerRadius = resolvedRadius;
         existing->visual.Offset(wfn::float3{
             static_cast<float>(frame.left), static_cast<float>(frame.top), 0.0f });
         const wfn::float2 panelSize{
@@ -1528,7 +1549,7 @@ bool DesktopBackdropCompositor::AddPanel(
         existing->visual.Size(panelSize);
         existing->geometry.Size(panelSize);
         existing->geometry.CornerRadius(wfn::float2{
-            static_cast<float>(cornerKey), static_cast<float>(cornerKey) });
+            resolvedRadius, resolvedRadius });
         // AddPanel represents an ordinarily rendered, visible panel. A
         // floating-Dock hand-off can temporarily set an existing panel to
         // zero opacity; reusing that same rectangle on the next desktop paint
@@ -1555,6 +1576,121 @@ bool DesktopBackdropCompositor::AddPanel(
     }
 }
 
+bool DesktopBackdropCompositor::HasPanelContaining(const RECT& frame) const
+{
+    return std::any_of(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
+        return panel.iconShape < 0 && panel.largeIconShape < 0 && panel.seen &&
+            frame.left >= panel.frame.left && frame.top >= panel.frame.top &&
+            frame.right <= panel.frame.right && frame.bottom <= panel.frame.bottom;
+    });
+}
+
+bool DesktopBackdropCompositor::RemoveIconPanel(const RECT& frame, std::uintptr_t ownerKey)
+{
+    const auto found = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& panel) {
+        return panel.iconShape >= 0 &&
+            snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                panel.ownerKey, panel.frame, ownerKey, frame);
+    });
+    if (found == impl_->panels.end()) return false;
+    try
+    {
+        impl_->root.Children().Remove(found->visual);
+        found->visual.Brush(nullptr);
+        impl_->panels.erase(found);
+        impl_->blurFactoriesDirty = true;
+        // The enclosing EndFrame submits geometry and retirement together.
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.remove_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
+    snowdesktop::IconBeautifyShape shape, float blurRadius, std::uintptr_t ownerKey)
+{
+    if (!AddPanel(frame, 0.0f, blurRadius, ownerKey)) return false;
+    try
+    {
+        auto panel = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& value) {
+            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                value.ownerKey, value.frame, ownerKey, frame);
+        });
+        if (panel == impl_->panels.end()) return false;
+        const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
+        if (panel->iconShape != static_cast<int>(shape) ||
+            panel->iconSize.cx != size.cx || panel->iconSize.cy != size.cy)
+        {
+            if (!impl_->genieGeometryFactory)
+                winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                    impl_->genieGeometryFactory.put()));
+            winrt::com_ptr<ID2D1PathGeometry> path;
+            winrt::check_hresult(impl_->genieGeometryFactory->CreatePathGeometry(path.put()));
+            winrt::com_ptr<ID2D1GeometrySink> sink;
+            winrt::check_hresult(path->Open(sink.put()));
+            const auto& outline = snowdesktop::icon_beautify::ShapeOutline(shape);
+            auto point = [&](const auto& p) { return D2D1::Point2F(p.x * static_cast<float>(size.cx), p.y * static_cast<float>(size.cy)); };
+            sink->BeginFigure(point(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
+            for (size_t i = 1; i < outline.size(); ++i) sink->AddLine(point(outline[i]));
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            winrt::check_hresult(sink->Close());
+            auto geometry = impl_->compositor.CreatePathGeometry();
+            geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(path))));
+            panel->clip.Geometry(geometry);
+            panel->iconShape = static_cast<int>(shape); panel->iconSize = size;
+        }
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
+    int shape, float cornerRadius, float blurRadius, std::uintptr_t ownerKey, int flagDirection)
+{
+    if (!AddPanel(frame, cornerRadius, blurRadius, ownerKey)) return false;
+    try
+    {
+        auto panel = std::find_if(impl_->panels.begin(), impl_->panels.end(), [&](const auto& value) {
+            return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                value.ownerKey, value.frame, ownerKey, frame);
+        });
+        if (panel == impl_->panels.end()) return false;
+        if (shape <= 1)
+        {
+            if (panel->largeIconShape >= 0) panel->clip.Geometry(panel->geometry);
+            panel->largeIconShape = -1;
+            return true;
+        }
+        const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
+        if (panel->largeIconShape == shape && panel->largeIconFlagDirection == flagDirection &&
+            panel->largeIconSize.cx == size.cx && panel->largeIconSize.cy == size.cy)
+            return true;
+        if (!impl_->genieGeometryFactory)
+            winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, impl_->genieGeometryFactory.put()));
+        const auto mask = snowdesktop::large_icon_shape::Geometry(impl_->genieGeometryFactory.get(), shape,
+            D2D1::RectF(0, 0, static_cast<float>(size.cx), static_cast<float>(size.cy)), cornerRadius, flagDirection);
+        if (!mask) return false;
+        winrt::com_ptr<ID2D1Geometry> source; source.copy_from(mask.Get());
+        auto geometry = impl_->compositor.CreatePathGeometry();
+        geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+        panel->clip.Geometry(geometry);
+        panel->largeIconShape = shape; panel->largeIconFlagDirection = flagDirection; panel->largeIconSize = size;
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
 bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
     const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame)
 {
@@ -1569,6 +1705,15 @@ bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
             matrix._21, matrix._22, matrix._23, matrix._24,
             matrix._31, matrix._32, matrix._33, matrix._34,
             matrix._41, matrix._42, matrix._43, matrix._44 });
+        // A projected/folded quad is not an axis-aligned rounded rectangle.
+        // Use its conservative rectangle until the ordinary pose returns.
+        const bool translated = matrix._11 == 1 && matrix._22 == 1 && matrix._33 == 1 && matrix._44 == 1 &&
+            matrix._12 == 0 && matrix._13 == 0 && matrix._14 == 0 && matrix._21 == 0 && matrix._23 == 0 &&
+            matrix._24 == 0 && matrix._31 == 0 && matrix._32 == 0 && matrix._34 == 0 && matrix._43 == 0;
+        const float regionRadius = translated ? found->cornerRadius : 0.f;
+        if (!EqualRect(&found->regionFrame, &projectedFrame) || found->regionCornerRadius != regionRadius)
+            impl_->transformedRegionDirty = true;
+        found->regionCornerRadius = regionRadius;
         found->regionFrame = projectedFrame;
         return true;
     }
@@ -1680,16 +1825,41 @@ bool DesktopBackdropCompositor::SetVisualOpacity(
     }
 }
 
+void DesktopBackdropCompositor::SetVisualTranslation(float x, float y)
+{
+    if (!impl_ || !impl_->available || !impl_->root) return;
+    try
+    {
+        impl_->root.Offset(wfn::float3{x, y, 0.f});
+        impl_->SetAnimationPathRegionExpanded(std::abs(x) > 0.001f || std::abs(y) > 0.001f);
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+    }
+}
+
 void DesktopBackdropCompositor::CommitVisualChanges()
 {
     if (impl_)
+    {
+        if (impl_->transformedRegionDirty)
+        {
+            impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+        }
         impl_->RequestCommit();
+    }
 }
 
 bool DesktopBackdropCompositor::
 CommitVisualChangesAndNotify(
     HWND notifyWindow, UINT message, WPARAM token)
 {
+    if (impl_ && impl_->transformedRegionDirty)
+    {
+        if (!impl_->SyncPanelWindowRegion()) return false;
+        impl_->transformedRegionDirty = false;
+    }
     return impl_ && impl_->RequestCommitAndNotify(
         notifyWindow, message, token);
 }

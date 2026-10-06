@@ -387,6 +387,10 @@ void DesktopApp::RefreshDockRunningWindows(
         return;
     }
     PruneDockPendingCloseWindows();
+    const DWORD observedWindowStateTick = dockWindowListChangedTick_.load();
+    if (observedWindowStateTick != dockRunningWindowsStateTick_)
+        dockWindowAppIds_.Invalidate();
+    dockWindowAppIds_.Retain([](HWND window) { return IsWindow(window) != FALSE; });
     struct DockWindowTarget
     {
         std::wstring key;
@@ -512,12 +516,9 @@ void DesktopApp::RefreshDockRunningWindows(
             }
             const std::wstring appUserModelId = context->owner->GetDockWindowAppUserModelIdAsync(window);
 
-            DWORD cloaked = 0;
-            const bool isCloaked = SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
-                &cloaked, sizeof(cloaked))) && cloaked != 0;
             int score = DockWindowsShareActivationGroup(
                 window, context->scoringForeground) ? 1000 : 0;
-            if (!isCloaked) score += 100;
+            score += 100;
             if (!IsIconic(window)) score += 20;
             if (!GetWindow(window, GW_OWNER)) score += 10;
 
@@ -543,7 +544,7 @@ void DesktopApp::RefreshDockRunningWindows(
                 target.score = score;
             }
 
-            if (isCloaked || pathIt->second.empty()) return TRUE;
+            if (pathIt->second.empty()) return TRUE;
             bool fixed = false;
             for (const DockAppIdentity& identity : *context->fixedIdentities)
             {
@@ -796,8 +797,7 @@ void DesktopApp::RefreshDockRunningWindows(
     }
     dockRunningWindowsForegroundTick_ =
         dockForegroundChangedTick_.load();
-    dockRunningWindowsStateTick_ =
-        dockWindowListChangedTick_.load();
+    dockRunningWindowsStateTick_ = observedWindowStateTick;
     dockRunningWindowsRefreshTick_ = GetTickCount();
 }
 
@@ -1356,23 +1356,29 @@ void DesktopApp::UpdateDockWindowActivationState(
 std::wstring DesktopApp::GetDockWindowAppUserModelIdAsync(HWND window)
 {
     DWORD process = 0;
-    GetWindowThreadProcessId(window, &process);
-    std::wstring cached;
-    if (const auto found = dockWindowAppIds_.find(window);
-        found != dockWindowAppIds_.end() && found->second.first == process)
-        cached = found->second.second;
-    shellVisualWork_.Submit(L"window-appid:" + std::to_wstring(reinterpret_cast<UINT_PTR>(window)) +
-        L":" + std::to_wstring(process), [window, process] {
-            DWORD current = 0;
-            GetWindowThreadProcessId(window, &current);
-            return current == process ? QueryDockWindowAppUserModelId(window) : std::wstring{};
-        }, [this, window, process](std::wstring id) {
-            DWORD current = 0;
-            GetWindowThreadProcessId(window, &current);
-            if (current != process) return;
-            std::erase_if(dockWindowAppIds_, [](const auto& entry) { return !IsWindow(entry.first); });
-            dockWindowAppIds_[window] = {process, std::move(id)};
-            dockRunningWindowsRefreshTick_ = 0;
-        }, hwnd_, kBackgroundShellReadyMessage);
-    return cached;
+    const DWORD thread = GetWindowThreadProcessId(window, &process);
+    if (!process || !thread) return {};
+    const auto version = std::to_wstring(process) + L":" + std::to_wstring(thread);
+    const auto request = dockWindowAppIds_.ReadOrSubmit(window, version,
+        [this, window, process, thread, version](std::uint64_t ticket) {
+            shellVisualWork_.Submit(L"window-appid:" + std::to_wstring(reinterpret_cast<UINT_PTR>(window)) +
+            L":" + version + L":" + std::to_wstring(ticket), [window, process, thread] {
+                DWORD current = 0;
+                const DWORD currentThread = GetWindowThreadProcessId(window, &current);
+                return current == process && currentThread == thread
+                    ? QueryDockWindowAppUserModelId(window) : std::wstring{};
+            }, [this, window, process, thread, ticket](std::wstring id) {
+                DWORD current = 0;
+                const DWORD currentThread = GetWindowThreadProcessId(window, &current);
+                if (current != process || currentThread != thread) return;
+                const auto lifetime = id.empty() ? std::chrono::seconds(5)
+                    : std::chrono::seconds(30);
+                const auto changed = dockWindowAppIds_.PublishWithLifetimeChanged(
+                    window, ticket, std::move(id), lifetime);
+                // Identical completions must not invalidate the ten-second
+                // fallback clock and form an enumerate/query/enumerate loop.
+                if (changed && *changed) dockRunningWindowsRefreshTick_ = 0;
+            }, hwnd_, kBackgroundShellReadyMessage);
+        });
+    return request.sameSourceVersion ? request.value.value_or(L"") : std::wstring{};
 }

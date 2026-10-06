@@ -88,6 +88,17 @@ struct WidgetsPageBackendOptions
         std::uint64_t generation,
         PackagePickerCompletion completion)> pickPackage;
 
+    using PackageExportCompletion = std::function<void(
+        std::optional<WidgetsPageHostOperationResult> result)>;
+    /** Settings-process-owned save dialog and background archive export.
+     * Empty completion means the user cancelled the save dialog. */
+    std::function<void(
+        std::uint64_t generation,
+        std::filesystem::path projectRoot,
+        std::string packageId,
+        std::string version,
+        PackageExportCompletion completion)> exportDevelopmentPackage;
+
     /** Used only for package source/scope expansion after a rejected attempt. */
     std::function<void(
         std::uint64_t generation,

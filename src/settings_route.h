@@ -38,6 +38,11 @@ enum class SettingsPage : std::uint8_t
     LargeIcon,
     Calendar,
     ContextMenu,
+    StatusBar,
+    DesktopStyle,
+    WidgetBehavior,
+    QuickNavigation,
+    ThemeManager,
 };
 
 /**

@@ -1,4 +1,5 @@
 #pragma once
+#include "edge_light_settings.h"
 
 #include <d2d1_1.h>
 #include <windows.h>
@@ -52,9 +53,9 @@ enum class WallpaperPosition
 WallpaperPosition WallpaperPositionFromLegacySettings(
     int wallpaperStyle, bool tileWallpaper);
 
-inline constexpr std::size_t AcrylicNoiseSize = 64;
-using AcrylicNoisePixels = std::array<std::uint32_t,
-    AcrylicNoiseSize * AcrylicNoiseSize>;
+inline constexpr std::size_t AcrylicNoiseSize = 256;
+inline constexpr float AcrylicNoiseOpacity = 0.02f;
+using AcrylicNoisePixels = std::vector<std::uint32_t>;
 
 /** Decode an author-selected image and composite any transparency to opaque. */
 Wallpaper LoadWallpaperImage(const std::filesystem::path& path);
@@ -85,8 +86,8 @@ Wallpaper RenderWallpaperRegion(const Wallpaper& source,
 Wallpaper CropWallpaper(const Wallpaper& source, const RECT& sourceBounds,
     const RECT& targetBounds);
 
-/** Generate the same fixed acrylic texture used by live widget panels. */
-AcrylicNoisePixels GenerateAcrylicNoise(bool lightTheme);
+/** Shared opaque WinUI grayscale texture; the text theme does not alter it. */
+const AcrylicNoisePixels& GenerateAcrylicNoise(bool lightTheme);
 
 /** Draw the sharp wallpaper and, when requested, its clipped blurred layer. */
 bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
@@ -97,13 +98,15 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
 void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, bool lightTheme, POINT pixelOrigin = {});
 
-/** Resolve the additive reflection color from straight material RGB/opacity. */
+/** Resolve the reflection hue from straight material RGB/opacity. */
 D2D1_COLOR_F ResolveEdgeHighlightReflection(
     D2D1_COLOR_F material, float effectStrength);
 
-/** Add a normal-driven bevel reflection from straight material RGB/opacity. */
+/** Draw the shared parameter-driven rim and inner seam over the backdrop. */
+enum class HighlightEdge { All, Top, Bottom, Left, Right };
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength);
+    float effectStrength, const EdgeLightSettings& edgeLight = {},
+    HighlightEdge edge = HighlightEdge::All);
 
 } // namespace snowdesktop::widget_preview

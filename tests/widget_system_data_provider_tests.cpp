@@ -1,6 +1,10 @@
 #include "widget_system_data_provider.h"
 #include "widget_gpu_usage.h"
+#include "widget_gpu_presentation.h"
+#include "widget_gpu_counter_buffer.h"
+#include "widget_gpu_identity.h"
 #include "widget_storage_usage.h"
+#include "system_power_status.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -35,8 +39,123 @@ void Check(bool condition, const char* message)
     }
 }
 
+void TestPowerStatusTruth()
+{
+    using snowdesktop::DecodeSystemPowerStatus;
+    const auto unknown = DecodeSystemPowerStatus(255, 255, 100, 0);
+    Check(!unknown.batteryPresent && !unknown.charging && !unknown.batteryPercent && !unknown.onAC,
+        "unknown battery flags must not become a charging/full battery or a confirmed absent battery");
+    for (const auto flags : {128, 136})
+    {
+        const auto absent = DecodeSystemPowerStatus(static_cast<std::uint8_t>(flags), 1, 100, 0);
+        Check(absent.batteryPresent == false && absent.onAC == true && !absent.charging && !absent.batteryPercent,
+            "no-battery bit overrides both charging and a stale percentage");
+    }
+    for (const auto percent : {101, 254, 255})
+        Check(!DecodeSystemPowerStatus(1, 1, static_cast<std::uint8_t>(percent), 0).batteryPercent,
+            "invalid battery percentages must not be clamped into a full battery");
+    const auto charging = DecodeSystemPowerStatus(9, 1, 100, 1);
+    Check(charging.batteryPresent == true && charging.charging == true && charging.batteryPercent == 100u && charging.saver,
+        "the real charging bit remains authoritative at 100 percent");
+    const auto full = DecodeSystemPowerStatus(1, 1, 100, 0);
+    const auto limited = DecodeSystemPowerStatus(1, 1, 80, 0);
+    Check(full.charging == false && full.onAC == true && full.batteryPercent == 100u &&
+        limited.charging == false && limited.onAC == true && limited.batteryPercent == 80u,
+        "AC online must preserve the distinction between charged and charge-limited states");
+    const auto offline = DecodeSystemPowerStatus(0, 0, 0, 0);
+    Check(offline.onAC == false && offline.charging == false && offline.batteryPercent == 0u,
+        "a measured empty battery is valid data");
+    for (const auto ac : {2, 254, 255})
+    {
+        const auto value = DecodeSystemPowerStatus(8, static_cast<std::uint8_t>(ac), 50, 255);
+        Check(!value.onAC && value.charging == true && !value.saver,
+            "unknown AC/saver bytes must not override a known charging flag");
+    }
+}
+
+void TestGpuPhysicalIdentity()
+{
+    using namespace snowdesktop::widget_runtime;
+    const auto entry = [](std::uint64_t luid, std::wstring key, bool render, bool indirect) {
+        WidgetGpuTopologyEntry result;
+        result.adapter.luid = luid; result.adapter.id = WidgetGpuAdapterId(luid);
+        result.adapter.name = "Same GPU model"; result.adapter.dedicatedMemoryBytes = 12000;
+        result.identity = {std::move(key), true, render, indirect};
+        return result;
+    };
+    // OS-query boundary fixture from the reported machine: three DXGI LUIDs
+    // have the same complete hardware PnP key, two are indirect display-only.
+    // Resolve is the production topology path, before PDH and Lua serialization.
+    auto render = entry(91543, L"pci/model/physical-a/device parameters", true, false);
+    auto aliasA = entry(134772, render.identity.physicalKey, false, true);
+    auto aliasB = entry(133730, render.identity.physicalKey, false, true);
+    auto twin = entry(97207, L"pci/model/physical-b/device parameters", true, false);
+    WidgetGpuIdentityInventory inventory;
+    auto adapters = inventory.Resolve({aliasA, twin, aliasB, render});
+    Check(adapters.size() == 2 && adapters[0].id == "adapter-91543" && adapters[1].id == "adapter-97207" &&
+        adapters[0].aliasIds == std::vector<std::string>{"adapter-133730", "adapter-134772"} && adapters[1].aliasIds.empty(),
+        "proven physical aliases collapse while a second real same-model GPU remains distinct and selectable");
+    Check(adapters[0].dedicatedMemoryBytes == 12000 && !adapters[0].usageAvailable,
+        "canonical capacity is not multiplied by logical alias count and unknown usage does not become idle");
+    aliasA.adapter.usageAvailable = true; aliasA.adapter.usagePercent = 90;
+    const auto reordered = inventory.Resolve({render, aliasB, twin, aliasA});
+    Check(reordered.size() == 2 && reordered[0].id == "adapter-91543" && !reordered[0].usageAvailable &&
+        reordered[0].aliasIds == adapters[0].aliasIds,
+        "enumeration order and a valid alias counter never replace the render-capable representative");
+
+    WidgetGpuMemoryAccumulator dedicated, shared;
+    dedicated.AddSample(L"luid_0x0_0x16597_phys_0", 100);
+    dedicated.AddSample(L"luid_0x0_0x20e74_phys_0", 900);
+    shared.AddSample(L"luid_0x0_0x16597_phys_0", 20);
+    Check(ApplyWidgetGpuMemory(adapters, dedicated, shared) && adapters[0].dedicatedUsedBytes == 100 &&
+        adapters[0].sharedUsedBytes == 20 && !adapters[1].dedicatedUsageAvailable,
+        "PDH remains owned by the canonical LUID without summing aliases or borrowing values for a real twin");
+
+    const auto refreshed = inventory.Resolve({twin, render});
+    Check(refreshed.size() == 2 && refreshed[1].aliasIds == reordered[0].aliasIds,
+        "known aliases remain migratable when their logical DXGI records disappear during the sampler lifetime");
+    auto replacement = entry(200000, render.identity.physicalKey, true, false);
+    const auto replaced = inventory.Resolve({replacement, twin});
+    Check(replaced[0].id == "adapter-200000" && replaced[0].aliasIds ==
+        std::vector<std::string>{"adapter-133730", "adapter-134772", "adapter-91543"},
+        "a verified same-physical replacement exposes the previous canonical ID as an alias");
+
+    auto unknown = aliasA; unknown.identity.physicalKey.clear();
+    auto linked = aliasB; linked.identity.physicalKey.clear();
+    // Failed PnP/count queries and multi-physical adapters enter Resolve with
+    // no key; matching names/capacity/vendor must never substitute identity.
+    const auto uncertain = inventory.Resolve({render, unknown, linked, twin});
+    Check(uncertain.size() == 4 && uncertain[0].aliasIds == std::vector<std::string>{"adapter-200000"},
+        "unknown or linked physical mappings remain separate and currently independent IDs cannot also be aliases");
+    WidgetGpuIdentityInventory fresh;
+    const auto reset = fresh.Resolve({render});
+    Check(reset.size() == 1 && reset[0].aliasIds.empty(),
+        "a fresh sampling session must not invent migration evidence from an earlier session");
+}
+
 void TestGpuEngineUsageAggregation()
 {
+    {
+        using namespace snowdesktop::widget_runtime;
+        WidgetGpuAdapterDataSnapshot gpu; gpu.id = "luid-a"; gpu.luid = 1; gpu.name = "Discrete GPU"; gpu.usageAvailable = true;
+        auto alias = gpu; alias.id = "alias"; alias.usageAvailable = false;
+        auto twin = gpu; twin.id = "luid-b"; twin.luid = 2;
+        auto repeated = gpu; repeated.id = "duplicate-source";
+        const auto visible = PresentGpuAdapters({alias, gpu, repeated, twin, alias});
+        Check(visible.size() == 2 && visible[0].id == "luid-a" && visible[1].id == "luid-b",
+            "GPU presentation merges aliases and duplicate LUIDs but retains two usable cards of the same model");
+        Check(PresentGpuAdapters({alias, alias}).size() == 1, "unavailable GPU aliases remain one explicit unavailable entry");
+        twin.usageAvailable = false;
+        const auto partial = PresentGpuAdapters({gpu, twin});
+        Check(partial.size() == 2 && partial[1].id == "luid-b" && !partial[1].usageAvailable,
+            "a distinct same-model GPU remains selectable when its counters are unavailable");
+        gpu.usageAvailable = false;
+        Check(PresentGpuAdapters({gpu, twin}).size() == 2,
+            "warming same-model adapters must not collapse by name");
+        gpu.id.clear(); twin.id.clear();
+        Check(PresentGpuAdapters({gpu, twin}).size() == 2,
+            "empty strings are not equal GPU identities when their LUIDs differ");
+    }
     using snowdesktop::widget_runtime::WidgetGpuUsageAccumulator;
     WidgetGpuUsageAccumulator usage;
     // These are PDH boundary samples consumed by SampleGpu, not per-adapter
@@ -74,7 +193,7 @@ void TestGpuEngineUsageAggregation()
         L"luid_0x0_0x12ab_phys_0_eng_4294967296_engtype_3D",
         L"luid_0x100000000_0x12ab_phys_0_eng_0_engtype_3D",
         L"luid_0x0_0x12ab_phys_0_eng_0junk_engtype_3D",
-        L"luid_0x0_0x12ab_phys_0_eng_0_engtype_" })
+        L"luid_0x0_0x12ab_phys_0_eng_0_engtype" })
         usage.AddSample(malformed, 100.0);
     usage.AddSample(nullptr, 100.0);
     Check(usage.UsagePercent(0x12ab) == 80.0,
@@ -96,6 +215,98 @@ void TestGpuEngineUsageAggregation()
     Check(snowdesktop::widget_runtime::WidgetGpuAdapterId(0x1000012abull) !=
             snowdesktop::widget_runtime::WidgetGpuAdapterId(0x12ab),
         "adapter identities must retain the full session LUID");
+    const auto engines = usage.Engines(0x12ab);
+    Check(engines.size() == 5 && engines.front().physical == 0 && engines.front().index == 0 &&
+        engines.front().type == L"3D" && engines.front().samples == 3 && engines.front().rawTotal == 120 &&
+        engines.front().usagePercent == 100,
+        "diagnostic engine details retain the unclamped sum and exact engine behind the displayed maximum");
+
+    // Actual PDH instance names from Intel Graphics; these rows are valid
+    // even though Windows supplies no display type after the final marker.
+    WidgetGpuUsageAccumulator unnamed;
+    constexpr auto noType = L"pid_4_luid_0x00000000_0x0001B650_phys_0_eng_10_engtype_";
+    unnamed.AddSample(noType, 0);
+    Check(unnamed.UsagePercent(0x1b650) == 0,
+        "an unnamed numbered engine is a valid idle measurement, not unavailable");
+    unnamed.AddSample(noType, 35);
+    unnamed.AddSample(L"pid_20_luid_0x00000000_0x0001B650_phys_0_eng_10_engtype_", 45);
+    unnamed.AddSample(L"pid_4_luid_0x00000000_0x0001B650_phys_0_eng_11_engtype_", 60);
+    unnamed.AddSample(L"pid_4_luid_0x00000000_0x0001B650_phys_0_eng_2_engtype_3D", 25);
+    const auto unnamedDetails = unnamed.Engines(0x1b650);
+    Check(unnamed.UsagePercent(0x1b650) == 80 && unnamedDetails.size() == 3 &&
+        unnamedDetails[1].index == 10 && unnamedDetails[1].type.empty() &&
+        unnamedDetails[1].rawTotal == 80 && unnamedDetails[1].samples == 3,
+        "unnamed engines preserve distinct numeric identities and participate in the busiest-engine result");
+}
+
+void TestGpuCounterValidityAndReuse()
+{
+    using namespace snowdesktop::widget_runtime;
+    WidgetGpuMemoryAccumulator dedicated, shared;
+    dedicated.AddSample(L"luid_0x0_0x12ab_phys_0", 1024);
+    dedicated.AddSample(L"luid_0x0_0x12ab_phys_1", 512);
+    shared.AddSample(L"luid_0x1_0x12ab_phys_0", 0);
+    for (const auto* malformed : {L"_Total", L"luid_0x100000000_0x12ab_phys_0",
+        L"luid_0x0_0x12ab_phys_-1", L"luid_0x0_0x12ab_phys_0trailer"})
+        dedicated.AddSample(malformed, 999999);
+    dedicated.AddSample(L"luid_0x0_0x12ab_phys_0", -1);
+    std::vector<WidgetGpuAdapterDataSnapshot> adapters(3);
+    adapters[0].luid = 0x12ab; adapters[1].luid = 0x1000012abull; adapters[2].luid = 5;
+    Check(!ApplyWidgetGpuMemory(adapters, dedicated, shared) &&
+        adapters[0].dedicatedUsageAvailable && adapters[0].dedicatedUsedBytes == 1536 &&
+        !adapters[0].sharedUsageAvailable && !adapters[1].dedicatedUsageAvailable &&
+        adapters[1].sharedUsageAvailable && adapters[1].sharedUsedBytes == 0 &&
+        !adapters[2].dedicatedUsageAvailable && !adapters[2].sharedUsageAvailable,
+        "one missing memory counter must not discard the other or borrow it from another adapter");
+    shared.AddSample(L"luid_0x0_0x12ab_phys_0", 256);
+    Check(ApplyWidgetGpuMemory(adapters, dedicated, shared) && adapters[0].sharedUsedBytes == 256,
+        "complete-memory availability requires both values on the same LUID");
+    WidgetGpuMemoryAccumulator overflow;
+    for (unsigned i = 0; i < 3; ++i)
+        overflow.AddSample(L"luid_0x0_0x12ab_phys_0", std::numeric_limits<std::int64_t>::max());
+    overflow.AddSample(L"luid_0x0_0x12ab_phys_0", 0);
+    Check(!overflow.UsageBytes(0x12ab), "overflow remains unavailable instead of wrapping or being revived by another row");
+    ApplyWidgetGpuMemory(adapters, overflow, shared);
+    Check(!adapters[0].dedicatedUsageAvailable && adapters[0].sharedUsageAvailable,
+        "counter failure invalidates only its own previous sample");
+
+    // Exercise the exact buffer routine used by all six PDH formatted/raw
+    // arrays. The fake changes only the OS return sizes/statuses, including
+    // Windows' documented unreliable size after an undersized-buffer call.
+    WidgetGpuCounterBuffer buffer;
+    DWORD required = 64;
+    unsigned calls = 0, probes = 0;
+    void* previous = nullptr;
+    const auto read = [&](DWORD* bytes, DWORD* count, void* values) -> PDH_STATUS {
+        ++calls;
+        if (!values) { ++probes; *bytes = required; return PDH_MORE_DATA; }
+        if (*bytes < required) { *bytes = 1; return PDH_MORE_DATA; }
+        previous = values; *count = 2; *bytes = required;
+        static_cast<std::uint64_t*>(values)[0] = 42;
+        return ERROR_SUCCESS;
+    };
+    Check(buffer.ReadArray(read) == ERROR_SUCCESS && buffer.Count() == 2 &&
+        buffer.Items<std::uint64_t>()[0] == 42 && calls == 2 && probes == 1 && buffer.Growths() == 1,
+        "initial counter array probes, allocates and reads the actual result");
+    const auto* allocated = previous;
+    calls = probes = 0;
+    Check(buffer.ReadArray(read) == ERROR_SUCCESS && calls == 1 && probes == 0 &&
+        previous == allocated && buffer.Growths() == 1, "stable topology reuses the allocation without another size probe");
+    calls = probes = 0; required = 128;
+    Check(buffer.ReadArray(read) == ERROR_SUCCESS && buffer.Count() == 2 && calls == 3 && probes == 1 && buffer.Growths() == 2,
+        "growing instance lists re-probe with null rather than trusting the unusable returned size");
+    Check(buffer.ReadArray([](DWORD*, DWORD*, void*) { return PDH_CSTATUS_NO_INSTANCE; }) == PDH_CSTATUS_NO_INSTANCE &&
+        buffer.Count() == 0, "missing counters cannot reuse stale array entries from the previous interval");
+    calls = 0;
+    const auto unstable = [&](DWORD* bytes, DWORD*, void* values) -> PDH_STATUS {
+        ++calls; *bytes = values ? 1 : 256; return PDH_MORE_DATA;
+    };
+    Check(buffer.ReadArray(unstable) == PDH_MORE_DATA && buffer.Count() == 0 && calls == 6,
+        "a continuously changing provider has a bounded retry budget");
+    Check(!WidgetGpuResumed(1000, 900, 61000, 60900) &&
+        WidgetGpuResumed(1000, 900, 61000, 1900) &&
+        !WidgetGpuResumed(0, 0, 61000, 1000),
+        "resume detection distinguishes actual suspend from a long sampling interval or the first sample");
 }
 
 void TestNetworkInterfaceTrafficDeltas()
@@ -719,19 +930,91 @@ void TestStopAll()
             provider.DrainChangedTopics().empty(),
         "StopAll must synchronously release the worker and pending changes");
 }
+
+void TestIndependentConsumerLifetime()
+{
+    // Production entry used by the widget broker and native desktop bars.
+    // Removing the faster/native consumer must not stop a widget's sampling,
+    // and closing widgets must not tear down the application's remaining demand.
+    WidgetSystemDataProvider provider;
+    Check(provider.StartTopic("system.cpu", 1000ms), "widget demand starts");
+    Check(provider.StartTopic("statusBar", "system.cpu", 250ms), "bar demand starts");
+    Check(provider.StartTopic("controlCenter", "system.cpu", 500ms), "panel demand starts");
+    Check(provider.ActiveTopicCount() == 1 &&
+            provider.EffectiveInterval("system.cpu") == 250ms,
+        "multiple consumers must share one fastest schedule");
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (provider.ResourceHistory("system.cpu").empty() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(10ms);
+    Check(!provider.ResourceHistory("system.cpu").empty(), "shared sampler publishes native chart history");
+    provider.RemoveConsumer("statusBar");
+    Check(provider.Running() && provider.EffectiveInterval("system.cpu") == 500ms,
+        "removing the fastest consumer must restore the next interval");
+    Check(!provider.ResourceHistory("system.cpu").empty(), "remaining consumers retain shared history");
+    provider.RemoveConsumer("widgets");
+    Check(provider.Running() && provider.ActiveTopicCount() == 1,
+        "widget engine shutdown must preserve native consumers");
+    Check(!provider.StopTopic("system.cpu"), "a removed consumer cannot stop another");
+    provider.RemoveConsumer("controlCenter");
+    Check(!provider.Running() && provider.ActiveTopicCount() == 0,
+        "the final consumer releases the worker");
+    Check(provider.ResourceHistory("system.cpu").empty(), "the final consumer releases chart history");
+    Check(!provider.StartTopic("", "system.cpu", 1000ms) &&
+            !provider.StartTopic("statusBar", "unknown", 1000ms),
+        "invalid demand must not create resources");
 }
+
+void TestResourceHistory()
+{
+    using snowdesktop::widget_runtime::WidgetResourceHistory;
+    WidgetResourceHistory history;
+    history.Append("cpu", {}, {1000, 0., {}});
+    history.Append("cpu", {}, {1050, 25., {}});
+    auto points = history.Read("cpu");
+    Check(points.size() == 1 && points[0].primary == 25., "fast consumers retain at most one latest point per second");
+    history.Append("cpu", {}, {2000, {}, {}});
+    history.Append("cpu", {}, {3000, 0., {}});
+    points = history.Read("cpu");
+    Check(points.size() == 3 && !points[1].primary && points[2].primary == 0., "invalid readings remain gaps and valid zero remains data");
+    history.Append("cpu", {}, {4000, std::numeric_limits<double>::quiet_NaN(), -1.});
+    Check(!history.Read("cpu").back().primary && !history.Read("cpu").back().secondary,
+        "NaN and negative readings cannot poison graph geometry");
+    for (int i = 5; i <= 100; ++i) history.Append("cpu", {}, {i * 1000, 30., {}});
+    points = history.Read("cpu");
+    Check(points.size() == 61 && points.front().timestampMs == 40000,
+        "history is time-bounded to one minute regardless of subscription duration");
+    history.Append("cpu", {}, {300000, 50., {}});
+    Check(history.Read("cpu").size() == 1, "resume does not retain a misleading old curve");
+    history.Append("cpu", {}, {1000, 10., {}});
+    Check(history.Read("cpu").size() == 1 && history.Read("cpu")[0].primary == 10., "clock rollback begins a new timeline");
+    history.Append("gpu", "a", {1000, 10., {}}); history.Append("gpu", "b", {1000, 80., {}});
+    history.Retain("gpu", {"b"});
+    Check(history.Read("gpu", "a").empty() && history.Read("gpu", "b")[0].primary == 80. && !history.Read("cpu").empty(),
+        "GPU topology changes remove only the absent adapter's history");
+    history.Clear("gpu");
+    Check(history.Read("gpu", "b").empty() && !history.Read("cpu").empty(), "topic teardown does not erase other resources");
+}
+}
+
+void TestSystemControls();
 
 int main()
 {
+    TestSystemControls();
     TestNetworkInterfaceTrafficDeltas();
     TestPhysicalDiskBusyTime();
+    TestGpuPhysicalIdentity();
     TestGpuEngineUsageAggregation();
+    TestPowerStatusTruth();
+    TestGpuCounterValidityAndReuse();
     TestCurrentDisplayMatching();
     TestSampledDataEnvelopeDebounce();
     TestMediaArtworkTransitionDropsUnconfirmedImage();
     TestNetworkStatusDebounce();
     TestTopicLifecycleAndSampling();
     TestStopAll();
+    TestIndependentConsumerLifetime();
+    TestResourceHistory();
     std::cout << "widget system data provider tests passed\n";
     return 0;
 }

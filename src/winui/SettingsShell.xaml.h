@@ -7,7 +7,9 @@
 #include "backup_data_page_presenter.h"
 #include "animation_performance_page_presenter.h"
 #include "desktop_page_presenter.h"
+#include "desktop_style_page_presenter.h"
 #include "dock_page_presenter.h"
+#include "status_bar_page_presenter.h"
 #include "general_page_presenter.h"
 #include "calendar_page_presenter.h"
 #include "context_menu_page_presenter.h"
@@ -53,12 +55,16 @@ struct SettingsShellProgress
 
 struct SettingsShellDialogRequest
 {
+    struct PreviewImage { std::wstring title, path; };
     std::uint64_t generation = 0;
     std::wstring title;
     std::wstring message;
     std::wstring primaryButtonText;
     std::wstring closeButtonText;
     bool destructive = false;
+    bool defaultClose = false;
+    std::wstring previewImagePath;
+    std::vector<PreviewImage> previewImages;
 };
 
 /**
@@ -234,6 +240,8 @@ private:
     void RenderBreadcrumb();
     void RenderPageCards(bool forcePageCards = false);
     void EnsurePresentersForPage(snowdesktop::SettingsPage page);
+    void ApplyDesktopStyle(std::string preset, bool animations,
+        DockPosition companionPosition = DockPosition::Bottom, bool companionAttached = false);
     [[nodiscard]] bool EnsureWidgetSettingsPresenter() noexcept;
     void RenderConditionalPages();
     void RenderAgentSkillUpdateBadge();
@@ -303,7 +311,9 @@ private:
     std::unique_ptr<snowdesktop::winui::PersonalizationPagePresenter>
         personalizationPage_;
     std::unique_ptr<snowdesktop::winui::DesktopPagePresenter> desktopPage_;
+    std::unique_ptr<snowdesktop::winui::DesktopStylePagePresenter> desktopStylePage_;
     std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
+    std::unique_ptr<snowdesktop::winui::StatusBarPagePresenter> statusBarPage_;
     std::unique_ptr<snowdesktop::winui::AnimationPerformancePagePresenter> animationPage_;
     std::unique_ptr<snowdesktop::winui::HomeAboutPagePresenter>
         homeAboutPage_;
@@ -336,6 +346,7 @@ private:
     std::uint64_t searchRequestId_ = 0;
     std::uint64_t progressGeneration_ = 0;
     std::optional<snowdesktop::SettingsRoute> renderedPageRoute_;
+    double dockPageOffset_ = 0, statusPageOffset_ = 0;
     double largeIconParentOffset_ = 0;
     bool restoreLargeIconParent_ = false;
     winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> largeIconParentFocus_;
@@ -349,6 +360,7 @@ private:
     bool updatingSearch_ = false;
     bool focusSearchWhenPaneOpens_ = false;
     bool sessionActive_ = false;
+    bool desktopStyleDockEnabled_ = false;
     bool closed_ = false;
     bool agentSkillUpdateAvailable_ = false;
     std::optional<bool> navigationIconsHighContrast_;

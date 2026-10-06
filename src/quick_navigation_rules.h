@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <cwctype>
 #include <string>
 #include <string_view>
@@ -49,6 +50,25 @@ QuickNavigationDesktopViewModeGlyph(
         return menu_fluent_glyphs::
             kQuickNavigationTileView;
     }
+}
+
+inline RECT PlacePanel(RECT work, int width, int height, int margin,
+    std::optional<int> fixedTop = std::nullopt, int minimumHeight = 1)
+{
+    const int workWidth = std::max<LONG>(1, work.right - work.left);
+    const int workHeight = std::max<LONG>(1, work.bottom - work.top);
+    margin = std::clamp(margin, 0, std::min(workWidth, workHeight) / 8);
+    width = std::clamp(width, 1, workWidth - 2 * margin);
+    height = std::clamp(height, 1, workHeight - 2 * margin);
+    const int left = work.left + (workWidth - width) / 2;
+    // Grow results below the opening header anchor, using scrolling when
+    // the remaining work area is shorter than the requested content height.
+    minimumHeight = std::clamp(minimumHeight, 1, height);
+    const int top = fixedTop ? std::clamp(*fixedTop,
+        static_cast<int>(work.top) + margin, static_cast<int>(work.bottom) - margin - minimumHeight) :
+        work.top + (workHeight - height) / 2;
+    height = std::min(height, static_cast<int>(work.bottom) - margin - top);
+    return {left, top, left + width, top + height};
 }
 
 inline int TabStripLabelStart(
@@ -349,10 +369,23 @@ constexpr bool ShouldCloseOnDeactivate(
     return !activatedWithinInteractionSurface;
 }
 
+constexpr bool ShouldRestoreDesktopFocusOnClose(bool explicitDismissal,
+    bool desktopVisible, bool pendingHandoff, bool searchHasForeground)
+{
+    return explicitDismissal && desktopVisible && !pendingHandoff && searchHasForeground;
+}
+
 constexpr bool ShouldOpenFromDockSearchPress(
     bool dismissedBySamePress)
 {
     return !dismissedBySamePress;
+}
+
+enum class DockSearchPressAction { Open, Close, Relocate };
+constexpr DockSearchPressAction ResolveDockSearchPressAction(bool panelOpen, bool sameMonitor, bool targetDockAvailable)
+{
+    if (!panelOpen) return DockSearchPressAction::Open;
+    return !sameMonitor && targetDockAvailable ? DockSearchPressAction::Relocate : DockSearchPressAction::Close;
 }
 
 constexpr bool ShouldRouteSearchEditKeyToResults(

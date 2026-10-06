@@ -2,6 +2,29 @@
 
 namespace snowdesktop::desktop_keyboard_rules
 {
+enum class PopupEscapeAction
+{
+    None,
+    CloseQuickNavigation,
+    CloseLuaPanel,
+    KeepLuaPanel,
+    CloseCollectionPopup,
+};
+
+// Both native keyboard dispatch and OLE continuation dismiss the frontmost
+// popup before cancelling a held gesture. Non-dismissible panels consume Esc.
+constexpr PopupEscapeAction ResolvePopupEscapeAction(
+    bool quickNavigationOpen, bool luaPanelOpen,
+    bool luaPanelDismissOnEscape, bool collectionPopupOpen)
+{
+    if (quickNavigationOpen) return PopupEscapeAction::CloseQuickNavigation;
+    if (luaPanelOpen)
+        return luaPanelDismissOnEscape
+            ? PopupEscapeAction::CloseLuaPanel : PopupEscapeAction::KeepLuaPanel;
+    if (collectionPopupOpen) return PopupEscapeAction::CloseCollectionPopup;
+    return PopupEscapeAction::None;
+}
+
 // Normalize only exact file-command aliases; AltGr and Win chords must not
 // accidentally run clipboard or deletion commands.
 constexpr unsigned int NormalizeFileCommandKey(

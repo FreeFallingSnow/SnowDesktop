@@ -16,6 +16,7 @@ inline constexpr int kCurrentSchemaVersion = 1;
 struct PageRecord
 {
     std::string id;
+    std::optional<std::string> name;
     std::optional<int> columns;
     std::optional<int> rows;
 };
@@ -50,6 +51,7 @@ struct WidgetRecord
     std::string packageSourceExternalItemId;
     std::string packageSourceUrl;
     std::string activeCategory;
+    std::vector<std::string> categoryTabOrder;
     int scrollOffset = 0;
     int tabScrollOffset = 0;
     int folderSortMode = -1;
@@ -97,6 +99,9 @@ struct DockRecord
     std::vector<std::string> folderItems;
     bool listMode = false;
     bool fanPopup = false;
+    bool showSearchBox = false;
+    bool showFileCategories = false;
+    std::vector<std::string> categoryTabOrder;
     bool detailShowModified = false;
     bool detailShowType = false;
     bool detailShowSize = false;
@@ -123,6 +128,10 @@ struct Document
     std::optional<float> itemFontSize;
     std::optional<float> listItemFontSize;
     std::optional<float> itemFontWeight;
+    std::optional<int> desktopTitleLines;
+    std::optional<int> largeFolderTitleLines;
+    std::optional<int> scrollingTitleLines;
+    std::optional<bool> titleEllipsis;
     std::optional<float> iconSpacing;
     std::optional<float> componentSpacing;
     std::optional<float> iconSizeScale;
@@ -131,6 +140,13 @@ struct Document
     std::optional<int> shortcutArrowMode;
     std::optional<bool> iconBeautifyEnabled;
     std::optional<int> iconBeautifyPreset;
+    std::optional<bool> iconBeautifyGlassEnabled;
+    std::optional<float> iconBeautifyGlassBlurRadius;
+    std::optional<bool> iconBeautifyEdgeHighlightEnabled;
+    std::optional<float> iconBeautifyEdgeHighlightWidth;
+    std::optional<float> iconBeautifyEdgeHighlightStrength;
+    std::optional<EdgeLightSettings> iconBeautifyEdgeLight;
+
     std::optional<int> iconBeautifyMode;
     std::optional<float> iconBeautifyBgOpacity;
     std::optional<bool> iconBeautifyGradientEnabled;

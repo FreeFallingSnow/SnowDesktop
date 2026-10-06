@@ -1519,8 +1519,9 @@ void FileGroup::ApplyMarqueeSelection(
         source->ApplyMarqueeSelection(contentRect);
 }
 
-bool FileGroup::TryScrollTabs(POINT pt, int delta)
+bool FileGroup::TryScrollTabs(POINT pt, int delta, bool* changed)
 {
+    if (changed) *changed = false;
     if (!data_ || !app_) return false;
     RECT sourceTabs = FileGroupSourceTabsRect(this);
     if (!IsRectEmptyRect(sourceTabs) &&
@@ -1541,19 +1542,20 @@ bool FileGroup::TryScrollTabs(POINT pt, int delta)
                     TotalTabWidth(widths),
                     sourceTabs.right -
                         sourceTabs.left);
+        if (changed) *changed = old != data_->tabScrollOffset;
         if (old != data_->tabScrollOffset)
         {
             InvalidateHostedView();
             InvalidateRect(app_->hwnd_, nullptr, FALSE);
             return true;
         }
-        return false;
+        return true;
     }
 
     auto* source = GetActiveSourceContainer();
     if (!source) return false;
     HostedFileSourceScope hosted(this, source);
-    return hosted && source->TryScrollTabs(pt, delta);
+    return hosted && source->TryScrollTabs(pt, delta, changed);
 }
 
 WidgetHit FileGroup::HitTestWidget(POINT pt) const
@@ -1891,7 +1893,17 @@ void FileGroup::OnItemsDropped(
     }
 
     auto* source = GetActiveSourceContainer();
-    if (!source) return;
+    if (!source)
+    {
+        const auto& session = app_->dragSession_.SourceList();
+        DragSourceList sources = !session.Empty() && app_->dragSession_.Source() == origin
+            ? session : app_->BuildDragSourceList(sourceItems, origin);
+        const auto preview = app_->BuildDropPreviewList(sources, this, targetSlot, region,
+            mods, app_->dragSession_.CurrentPoint());
+        // Conversion and execution may replace this empty group's runtime view.
+        app_->ExecuteDropPipeline(sources, preview);
+        return;
+    }
     DesktopApp* app = app_;
     DragSourceList sourceList;
     DropPreviewList preview;
@@ -1982,6 +1994,7 @@ void FileGroup::DrawContent(
             Item* item = slot->GetItem();
             bool isDirectory = false;
             bool iconIsMediaThumbnail = false;
+            bool drawTitle = true;
             int sysIconIndex = -1;
             ListItemDetails details;
             if (auto* desktop =
@@ -1991,6 +2004,7 @@ void FileGroup::DrawContent(
                     desktop->GetDesktopItem();
                 if (sourceItem)
                 {
+                    drawTitle = !app_->IsRenamingItem(sourceItem);
                     sysIconIndex =
                         sourceItem->sysIconIndex;
                     iconIsMediaThumbnail =
@@ -2008,6 +2022,7 @@ void FileGroup::DrawContent(
                     folder->GetFolderEntry();
                 if (sourceEntry)
                 {
+                    drawTitle = !app_->IsRenamingItem(sourceEntry);
                     isDirectory =
                         sourceEntry->isDirectory;
                     sysIconIndex =
@@ -2032,7 +2047,7 @@ void FileGroup::DrawContent(
                     item->GetTitle(),
                     item->IsSelected(),
                     iconIsMediaThumbnail,
-                    {}, nullptr, details);
+                    {}, nullptr, details, std::nullopt, drawTitle);
             else
             {
                 const bool hovered =

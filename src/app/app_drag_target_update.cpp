@@ -310,8 +310,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         }
 
         for (size_t i = 0;
-             i < dockFolderPopupWidget_.
-                folderEntries.size(); ++i)
+             i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
         {
             RECT itemRect =
                 GetCollectionPopupItemRect(popup, i);
@@ -323,7 +322,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 continue;
 
             FolderEntry& entry =
-                dockFolderPopupWidget_.folderEntries[i];
+                dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(dockFolderPopupWidget_, i)];
             if (snowdesktop::popup_drag_rules::
                     CanHandoffToItem(
                         true, entry.selected) &&
@@ -371,8 +370,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         HitRegion nearestRegion =
             HitRegion::SortAfter;
         for (size_t i = 0;
-            i < dockFolderPopupWidget_.
-                folderEntries.size(); ++i)
+            i < GetPopupItemCount(dockFolderPopupWidget_); ++i)
         {
             const RECT itemRect =
                 GetCollectionPopupItemRect(

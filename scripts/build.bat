@@ -1,44 +1,71 @@
 @echo off
 setlocal
-cd /d "%~dp0.."
+call "%~dp0powershell_runtime.bat"
+if errorlevel 1 exit /b 2
+rem SHIFT also changes %%0; preserve the entry point before consuming arguments.
+set "SNOWDESKTOP_BUILD_SCRIPT_DIR=%~dp0"
+cd /d "%SNOWDESKTOP_BUILD_SCRIPT_DIR%.."
+
+rem Shared-directory collaboration commands reuse the standard build below.
+if /i "%~1"=="watch" goto localwait
+if /i "%~1"=="resource" goto resource
+if /i "%~1"=="ready-and-wait" goto collaboration
+if /i "%~1"=="repair" goto collaboration
+if /i "%~1"=="repair-abandon" goto collaboration
+if /i "%~1"=="begin" goto collaboration
+if /i "%~1"=="finish" goto collaboration
+if /i "%~1"=="status" goto collaboration
+if /i "%~1"=="recover" goto collaboration
+if /i "%~1"=="ready" goto collaboration
+if /i "%~1"=="wait" goto collaboration
+if /i "%~1"=="check" goto collaboration
+if /i "%~1"=="plan" goto collaboration
+
+if /i "%~1"=="claim" goto collaboration
+
+if /i "%~1"=="commit" goto collaboration
+
+if /i "%~1"=="issue" goto collaboration
 
 set "RELOAD_SHELL="
+set "CLOSE_APPLICATION="
 if /i "%~1"=="--reload-shell" (
     set "RELOAD_SHELL=1"
     shift
 )
+if /i "%~1"=="--close-application" (
+    set "CLOSE_APPLICATION=1"
+    shift
+)
+if defined RELOAD_SHELL if defined CLOSE_APPLICATION exit /b 2
 if not "%~1"=="" (
-    echo Usage: scripts\build.bat [--reload-shell]
+    echo Usage: scripts\build.bat [--reload-shell ^| --close-application]
+    echo Collaboration: scripts\build.bat begin ID ^| finish ID -Batch BATCH ^| status ^| recover -Batch BATCH
     exit /b 2
 )
 
-if defined RELOAD_SHELL (
-    echo WARNING: --reload-shell stops SnowDesktop and restarts Explorer.
-    taskkill /f /im SnowDesktop.exe >nul 2>&1
-    tasklist /fi "IMAGENAME eq explorer.exe" /nh 2>nul | find /i "explorer.exe" >nul
-    if not errorlevel 1 (
-        taskkill /f /im explorer.exe >nul 2>&1
-        timeout /t 2 /nobreak >nul
-        rem Launch Explorer detached: Start-Process creates the process without
-        rem inheriting this script's console/pipe handles, so captured build
-        rem output pipelines reach EOF instead of hanging forever.
-        powershell -NoProfile -Command "Start-Process explorer.exe"
-    )
-    goto configure
-)
+set "RELOAD_SHELL_ARG="
+if defined RELOAD_SHELL set "RELOAD_SHELL_ARG=-ReloadShell"
+if defined CLOSE_APPLICATION set "RELOAD_SHELL_ARG=-CloseApplication"
+rem Acquire execution authority before any preflight/process action or output write.
+if defined SNOWDESKTOP_EXECUTION_TOKEN goto leased
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action release %RELOAD_SHELL_ARG%
+exit /b %ERRORLEVEL%
+:leased
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_entry.ps1 -Action verify
+if %ERRORLEVEL% NEQ 0 exit /b 2
 
-tasklist /fi "IMAGENAME eq SnowDesktop.exe" /nh 2>nul | find /i "SnowDesktop.exe" >nul
-if not errorlevel 1 (
-    echo Build preflight stopped: SnowDesktop.exe is running.
-    echo Exit SnowDesktop normally before building.
-    exit /b 3
+if defined RELOAD_SHELL (
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -ReloadShell
+) else (
+  if defined CLOSE_APPLICATION (
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1" -CloseApplication
+  ) else (
+    "%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_preflight.ps1"
+  )
 )
-powershell -NoProfile -Command "$expected=@([IO.Path]::GetFullPath('.build\Release\SnowDesktop.Runtime\SnowDesktopTaskbarHook.dll'),[IO.Path]::GetFullPath('.build\Release\SnowDesktopTaskbarHook.dll')); try { $loaded=@(Get-Process -Name explorer -ErrorAction Stop ^| ForEach-Object { $_.Modules } ^| Where-Object { $expected -contains $_.FileName }).Count -ne 0 } catch { $loaded=$true }; if ($loaded) { exit 1 }"
-if not errorlevel 1 (
-    echo Build preflight stopped: Explorer still has the Release build's SnowDesktopTaskbarHook.dll loaded.
-    echo Run scripts\build.bat --reload-shell only when an Explorer restart is acceptable.
-    exit /b 3
-)
+rem PowerShell startup failures can return a negative exit code.
+if %ERRORLEVEL% NEQ 0 exit /b 3
 
 :configure
 echo === Configuring CMake (Release preset) ===
@@ -74,7 +101,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === Arranging private runtime directory ===
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build\Release"
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\arrange_build_output.ps1 -BuildOutput "%CD%\.build\Release"
 if %ERRORLEVEL% NEQ 0 (
     echo Build output arrangement FAILED
     exit /b 1
@@ -96,3 +123,15 @@ echo.
 echo For a version release, run scripts\release.bat to open the unified release center.
 echo Agent and automation usage is available through scripts\release.bat COMMAND.
 exit /b 0
+
+:localwait
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_runtime.ps1" watch %*
+exit /b %ERRORLEVEL%
+
+:collaboration
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File scripts\build_manager.ps1 %*
+exit /b %ERRORLEVEL%
+
+:resource
+"%SNOWDESKTOP_ENTRY_POWERSHELL%" -NoProfile -File "%SNOWDESKTOP_BUILD_SCRIPT_DIR%build_runtime.ps1" resource %*
+exit /b %ERRORLEVEL%

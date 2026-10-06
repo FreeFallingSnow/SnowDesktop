@@ -685,7 +685,8 @@ void DesktopApp::RefreshDockFolderPopup(
         [this](const auto& path) { QueueFolderRead(path); },
         [this](const auto& folder) {
             EnumerateFolderMappingEntries(dockFolderPopupWidget_, true, &folder);
-            if (dockFolderPopupAvailable_ && ApplyPendingFolderPlacements(
+            if (dockFolderPopupAvailable_ && !dragSession_.HasContext() &&
+                !dragDropController_.IsTransportActive() && ApplyPendingFolderPlacements(
                     dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
                 CommitDockFolderPopupStateToSource();
         }, targetPending);
@@ -717,9 +718,10 @@ void DesktopApp::RefreshDockFolderPopup(
             dockFolderPopupWidget_.sourceFolderPath;
         WriteDiagnosticLogEntry(message.c_str());
     }
-    dockFolderPopupContainer_ =
-        std::make_unique<FolderMapping>(
-            &dockFolderPopupWidget_, this);
+    if (!dockFolderPopupContainer_)
+        dockFolderPopupContainer_ =
+            std::make_unique<FolderMapping>(
+                &dockFolderPopupWidget_, this);
     dockFolderPopupContainer_->InvalidateFilterCache();
     // Compare against the real layout, not the bounds frozen by the loading
     // snapshot. A first listing that enlarges the frame needs its own reveal;
@@ -825,6 +827,8 @@ CommitDockFolderPopupStateToSource()
                 dockFolderPopupWidget_.itemKeys;
             source.listMode =
                 dockFolderPopupWidget_.listMode;
+            source.categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
+            source.activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
             source.fanPopup = dockFolderPopupWidget_.fanPopup;
             source.showDetails =
                 dockFolderPopupWidget_.showDetails;

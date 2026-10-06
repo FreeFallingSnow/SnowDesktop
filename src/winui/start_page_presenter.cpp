@@ -187,9 +187,14 @@ struct StartPagePresenter::Impl
         {
             const auto& group = GroupFor(Find(row->topic)->section);
             const wchar_t* asset = group.asset;
+            const wchar_t* glyph = group.glyph;
             switch (row->topic)
             {
             case Topic::Startup: asset = L"general.svg"; break;
+            case Topic::DesktopStyle: asset = L"desktop-style.svg"; glyph = L"\xE7F4"; break;
+            case Topic::Taskbar: asset = L"taskbar.svg"; break;
+            case Topic::StatusBarEnable: case Topic::StatusBarContents:
+                asset = L"status-bar.svg"; glyph = L"\xE737"; break;
             case Topic::Grid: case Topic::Move: asset = L"pages.svg"; break;
             case Topic::WidgetLayout: asset = L"appearance-widgets.svg"; break;
             case Topic::Icons: asset = L"appearance-desktop-icons.svg"; break;
@@ -202,7 +207,7 @@ struct StartPagePresenter::Impl
             case Topic::Backup: asset = L"backup.svg"; break;
             default: break;
             }
-            row->icon.Content(Icon(asset, group.glyph, highContrast));
+            row->icon.Content(Icon(asset, glyph, highContrast));
         }
     }
     void PopulateLessons()

@@ -202,6 +202,10 @@ constexpr UINT kContextPreviewLuaWidgetFirst = 41440;
 constexpr UINT kContextPagePrev = 41407;
 constexpr UINT kContextPageNext = 41408;
 constexpr UINT kContextPageAdd = 41409;
+constexpr UINT kContextPageRename = 41554;
+constexpr UINT kContextPageDelete = 41555;
+constexpr UINT kContextPageNameInput = 41556;
+constexpr UINT kContextPageRenameCancel = 41557;
 constexpr UINT kContextPinFirstPage = 41410;
 constexpr UINT kContextPinLastPage = 41411;
 constexpr UINT kContextGridRecommended169First = 41414;
@@ -229,6 +233,7 @@ constexpr UINT kContextLuaLogicalSlotRemove = 41815;
 constexpr UINT kContextWidgetOpenComponentPanel = 41816;
 constexpr UINT kContextDockPinMoveToDock = 41817;
 constexpr UINT kContextDockCreateMapping = 41818;
+constexpr UINT kContextDockPinCurrentFolder = 41819;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
@@ -332,6 +337,7 @@ constexpr UINT_PTR kNativeDragHoverRecoveryTimerId = 25;
 constexpr UINT_PTR kLargeIconRetryTimerId = 26;
 constexpr UINT_PTR kRenameClickTimerId = 27;
 constexpr UINT_PTR kPopupHoverTimerId = 28;
+constexpr UINT_PTR kLayoutScrollSaveTimerId = 29;
 constexpr UINT kPopupHoverPollIntervalMs = 50;
 constexpr UINT kNativeDragHoverRecoveryIntervalMs = 50;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;

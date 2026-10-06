@@ -148,7 +148,7 @@ private:
         const auto flush = [weak](auto const&, auto const&) { if (auto self = weak.lock(); self && !self->syncing_) self->Flush(); };
         slider.PointerReleased(flush); slider.PointerCaptureLost(flush); slider.KeyUp(flush); slider.LostFocus(flush);
         number.KeyUp(flush); number.LostFocus(flush);
-        sync_.push_back([this, read, slider, number] { slider.Value(read(value_)); number.Value(read(value_)); });
+        sync_.push_back([this, read, slider, number] { slider.Value(read(value_)); presenter_controls::SyncNumberBoxValue(number, read(value_)); });
         Row(key, pair, [weak, write, defaultValue] {
             if (auto self = weak.lock()) self->Apply([&](auto& v) { write(v, defaultValue); }, true);
         }, level);

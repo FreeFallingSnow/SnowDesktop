@@ -166,7 +166,10 @@ void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
         quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
             GetQuickNavigationMaxScrollOffset(quickNavigationRect_));
         if (quickNavigationOpen_)
+        {
+            if (quickNavigationCollapsed_) PositionQuickNavigationWindow();
             InvalidateQuickNavigationWindow();
+        }
     }
 }
 
@@ -174,6 +177,7 @@ void DesktopApp::RefreshQuickNavigationAppResults()
 {
     quickNavigationAppResultIndices_.clear();
     const std::wstring query = GetQuickNavigationEffectiveSearchText();
+    if (quickNavigationSearchType_ != QuickNavigationSearchType::All && quickNavigationSearchType_ != QuickNavigationSearchType::App) return;
     if (query.empty())
         return;
     if (IsLuaLogicalSlotPickerOpen() &&
@@ -354,6 +358,7 @@ DesktopApp::QuickNavigationContentModel
 DesktopApp::BuildQuickNavigationContentModel() const
 {
     QuickNavigationContentModel model;
+    if (quickNavigationSearchType_ != QuickNavigationSearchType::All && quickNavigationSearchType_ != QuickNavigationSearchType::File) return model;
     std::unordered_set<std::wstring> seenDesktop;
     std::unordered_set<std::wstring> dockDesktopKeys;
     for (const DockEntry& dockEntry : dockEntries_)

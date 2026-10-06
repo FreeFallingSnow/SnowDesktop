@@ -30,6 +30,7 @@ enum class OutstandingOperationKind : std::uint8_t
     Search,
     WorkshopUnsubscribe,
     SourceSynchronization,
+    PackageExport,
 };
 
 struct OutstandingOperationIdentity

@@ -7,7 +7,8 @@ local o, labels = ...
 assert(type(o) == "table" and type(o.key) == "string" and #o.key > 0 and #o.key <= 80,
     "ui.datePicker requires a stable key (1-80 bytes)")
 local range = o.mode == "range"
-assert(o.mode == nil or o.mode == "single" or range, "invalid date picker mode")
+local multiple = o.mode == "multiple"
+assert(o.mode == nil or o.mode == "single" or range or multiple, "invalid date picker mode")
 local function leap(y) return y % 4 == 0 and (y % 100 ~= 0 or y % 400 == 0) end
 local function days(y,m)
     if m == 2 then return leap(y) and 29 or 28 end
@@ -39,13 +40,35 @@ local function allowed(s) return parts(s) ~= nil and s >= low and s <= high and 
 local firstDay = o.firstDayOfWeek or 1
 assert(firstDay >= 1 and firstDay <= 7 and firstDay == math.floor(firstDay), "invalid firstDayOfWeek")
 local key=o.key..":"
-local self={startDate="",endDate="",year=1,month=1}
+local self={startDate="",endDate="",selectedDates={},year=1,month=1}
 local committed
 local function output()
+    if multiple then
+        local result={}
+        for _,date in ipairs(self.selectedDates) do result[#result+1]=date end
+        return result
+    end
     return range and {startDate=self.startDate,endDate=self.endDate} or self.startDate
 end
-local function copy(v) return type(v)=="table" and {startDate=v.startDate,endDate=v.endDate} or v end
+local function copy(v)
+    if multiple then
+        local result={}
+        for _,date in ipairs(v) do result[#result+1]=date end
+        return result
+    end
+    return type(v)=="table" and {startDate=v.startDate,endDate=v.endDate} or v
+end
 function self:validation()
+    if multiple then
+        if #self.selectedDates==0 and o.allowClear~=false then return nil end
+        if #self.selectedDates==0 or #self.selectedDates>366 then return labels.invalid end
+        local previous=""
+        for _,date in ipairs(self.selectedDates) do
+            if not allowed(date) or date<=previous then return labels.invalid end
+            previous=date
+        end
+        return nil
+    end
     if self.startDate=="" and (not range or self.endDate=="") and o.allowClear ~= false then return nil end
     if not allowed(self.startDate) or (range and not allowed(self.endDate)) then return labels.invalid end
     if range then
@@ -59,22 +82,30 @@ function self:value() return copy(committed) end
 function self:draftValue() return output() end
 function self:setValue(v)
     local a,b=self.startDate,self.endDate
-    if range then
+    local oldDates=self.selectedDates
+    if multiple then
+        assert(type(v)=="table", "multiple value requires a date array")
+        self.selectedDates={}
+        for _,date in ipairs(v) do self.selectedDates[#self.selectedDates+1]=date end
+        table.sort(self.selectedDates)
+    elseif range then
         assert(type(v)=="table", "range value requires startDate/endDate")
         self.startDate,self.endDate=v.startDate or "",v.endDate or ""
     else self.startDate,self.endDate=v or "","" end
     local err=self:validation()
-    if err then self.startDate,self.endDate=a,b; return false,err end
+    if err then self.startDate,self.endDate=a,b; self.selectedDates=oldDates; return false,err end
     committed=output()
-    self.year,self.month=parts(self.startDate ~= "" and self.startDate or o.todayDate)
+    self.year,self.month=parts(multiple and (self.selectedDates[1] or o.todayDate) or
+        (self.startDate ~= "" and self.startDate or o.todayDate))
     return true
 end
-local initial=o.value or (range and {startDate="",endDate=""} or "")
+local initial=o.value or (multiple and {} or (range and {startDate="",endDate=""} or ""))
 -- A required picker may start empty; that is an invalid draft, not a fabricated date.
 if not self:setValue(initial) then
-    self.startDate=type(initial)=="table" and (initial.startDate or "") or initial
-    self.endDate=type(initial)=="table" and (initial.endDate or "") or ""
-    committed=range and {startDate="",endDate=""} or ""
+    self.startDate=not multiple and (type(initial)=="table" and (initial.startDate or "") or initial) or ""
+    self.endDate=not multiple and (type(initial)=="table" and (initial.endDate or "") or "") or ""
+    self.selectedDates={}
+    committed=multiple and {} or (range and {startDate="",endDate=""} or "")
     self.year,self.month=parts(o.todayDate)
 end
 local function commit(result)
@@ -100,12 +131,21 @@ function self:handle(e)
     elseif id=="today" then self.year,self.month=parts(o.todayDate)
     elseif id=="clear" and o.allowClear~=false then
         self.startDate,self.endDate="",""
+        self.selectedDates={}
         if o.needConfirm==false then commit(result) end
     elseif id=="confirm" then commit(result)
     elseif id:sub(1,4)=="day:" then
         local s=id:sub(5)
         if allowed(s) then
-            if range and self.startDate~="" and self.endDate=="" and allowed(self.startDate) then
+            if multiple then
+                local found
+                for i,date in ipairs(self.selectedDates) do if date==s then found=i; break end end
+                if found then table.remove(self.selectedDates,found)
+                elseif #self.selectedDates<366 then
+                    self.selectedDates[#self.selectedDates+1]=s
+                    table.sort(self.selectedDates)
+                end
+            elseif range and self.startDate~="" and self.endDate=="" and allowed(self.startDate) then
                 self.endDate=s
                 if s<self.startDate then self.startDate,self.endDate=s,self.startDate end
             else self.startDate=s; self.endDate="" end
@@ -135,8 +175,11 @@ function self:view(options)
             validationState=bad and "error" or "none",validationMessage=bad and labels.invalid or "",
             accessibility={label=label}})
     end
-    local fields={input("start",self.startDate,range and labels.startDate or labels.date)}
-    if range then fields[#fields+1]=input("end",self.endDate,labels.endDate) end
+    local fields={}
+    if not multiple then
+        fields={input("start",self.startDate,range and labels.startDate or labels.date)}
+        if range then fields[#fields+1]=input("end",self.endDate,labels.endDate) end
+    end
     local months={}
     for m=1,12 do months[m]={key=tostring(m),value=tostring(m),label=tostring(m)} end
     local nav={button("previous",labels.previous,self.year>1 or self.month>1),
@@ -157,14 +200,20 @@ function self:view(options)
         else
             local s=iso(self.year,self.month,d)
             local selected=s==self.startDate or (range and self.endDate~="" and s>=self.startDate and s<=self.endDate)
+            if multiple then
+                selected=false
+                for _,date in ipairs(self.selectedDates) do if date==s then selected=true; break end end
+            end
             local cell=button("day:"..s,tostring(d),allowed(s),selected)
             cell.accessibility.label=s
             cells[#cells+1]=cell
         end
     end
-    local children={view.row({key=key.."inputs",height=r,gap=r*0.25,children=fields}),
-        view.row({key=key.."nav",height=r,gap=r*0.25,children=nav}),
-        view.grid({key=key.."grid",columns=7,height=r*7+r*0.12*6,gap=r*0.12,children=cells})}
+    local children={}
+    if not multiple then children[#children+1]=view.row({key=key.."inputs",height=r,gap=r*0.25,children=fields}) end
+    children[#children+1]=view.row({key=key.."nav",height=r,gap=r*0.25,children=nav})
+    children[#children+1]=
+        view.grid({key=key.."grid",columns=7,height=r*7+r*0.12*6,gap=r*0.12,children=cells})
     local err=self:validation()
     if err then children[#children+1]=text("error",err) end
     local footer={button("today",labels.today)}

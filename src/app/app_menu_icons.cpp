@@ -101,18 +101,6 @@ snowdesktop::MenuQuickIcon ResolveQuickIcon(UINT_PTR command)
     return MenuQuickIcon::FontGlyph;
 }
 
-bool IsWindowsAppLightThemeEnabled()
-{
-    DWORD value = 1;
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-            L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr,
-            &value, &size) != ERROR_SUCCESS)
-        return true;
-    return value != 0;
-}
-
 bool TryGetTaskbarRectAtPoint(POINT screenPoint, RECT& taskbarRect)
 {
     HWND window = WindowFromPoint(screenPoint);
@@ -328,9 +316,8 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
     const PersonalizationSettings appearance = CurrentPersonalization();
     menuAppearanceStyle_ = std::clamp(
         appearance.contextMenuStyle, 0, 6);
-    menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightTheme(
-        static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_),
-        IsWindowsAppLightThemeEnabled());
+    menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
+        static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_));
 }
 
 void DesktopApp::SetMenuItemIcon(
@@ -572,7 +559,12 @@ UINT DesktopApp::ShowModernMenu(
         onHover,
     std::function<void(UINT, const std::wstring&,
         std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged,
-    const snowdesktop::shell_extensions::Request* shellRequest)
+    const snowdesktop::shell_extensions::Request* shellRequest,
+    std::function<HWND()> zOrderCompanion,
+    bool forceTopmost,
+    UINT textInputSubmitCommand, UINT textInputCancelCommand,
+    std::function<void(UINT,
+        std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu)
 {
     if (!rootMenu)
         return 0;
@@ -626,7 +618,8 @@ UINT DesktopApp::ShowModernMenu(
                     item.iconFont = icon->fontAwesome
                         ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
                         : snowdesktop::modern_menu::IconFont::FluentRegular;
-                    item.quickAction = icon->quickAction;
+                    item.quickAction = icon->quickAction &&
+                        !generalSettings_.contextMenuExpandQuickActions;
                     item.inlineAction = icon->inlineAction;
                     item.inlineGroup = icon->inlineGroup;
                     item.compactInlineAction =
@@ -655,22 +648,43 @@ UINT DesktopApp::ShowModernMenu(
         snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
     options.onCommand = std::move(onCommand);
     options.onTextChanged = std::move(onTextChanged);
+    options.textInputSubmitCommand = textInputSubmitCommand;
+    options.textInputCancelCommand = textInputCancelCommand;
+    options.onPrepareSubmenu = std::move(onPrepareSubmenu);
     options.onHover = std::move(onHover);
+    options.zOrderCompanion = std::move(zOrderCompanion);
     ConfigureModernMenuEventPump(options);
+    RECT popupSourceBounds{};
     const bool floatingPopupHostVisible =
         ShouldShowFloatingPopupWindow() &&
         floatingPopupHwnd_ &&
         IsWindow(floatingPopupHwnd_) &&
-        IsWindowVisible(floatingPopupHwnd_);
-    const bool floatingDockHostWindowVisible =
-        floatingDockHost_ &&
-        floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_) &&
-        IsWindowVisible(floatingDockHwnd_);
+        IsWindowVisible(floatingPopupHwnd_) &&
+        (owner == floatingPopupHwnd_ ||
+            (GetWindowRect(floatingPopupHwnd_, &popupSourceBounds) && PtInRect(&popupSourceBounds, screenPoint)));
+    // A pointer can select another monitor while a menu is being prepared.
+    // Bind Z-order ownership to the actual source surface, not the last
+    // globally selected Dock. The menu keeps this HWND for its whole session.
+    const PersistentDockHost* menuDockHost = nullptr;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active || !host->container || !host->hwnd ||
+            !IsWindow(host->hwnd) || !IsWindowVisible(host->hwnd)) continue;
+        RECT inputBounds = host->container->GetInteractiveBounds();
+        OffsetRect(&inputBounds, virtualLeft_, virtualTop_);
+        // The side controls belong to the same merged strip as the center
+        // Dock. Its native menu owner must stay above both windows, while
+        // Options::owner still restores keyboard focus to the bar itself.
+        const bool mergedBarSource = host->container->IsMergedWithStatusBar() &&
+            statusBar_ && owner == statusBar_->InteractionWindow(host->monitor);
+        if (owner == host->hwnd || mergedBarSource || PtInRect(&inputBounds, screenPoint))
+        { menuDockHost = host.get(); break; }
+    }
+    const bool floatingDockHostWindowVisible = menuDockHost != nullptr;
     const bool floatingDockHostEffectivelyFloating =
-        floatingDockHost_ &&
-        IsPersistentDockHostEffectivelyFloating(
-            *floatingDockHost_);
+        menuDockHost &&
+        (menuDockHost->container->IsMergedWithStatusBar() ||
+            IsPersistentDockHostEffectivelyFloating(*menuDockHost));
     const HWND zOrderOwner =
         snowdesktop::floating_popup_rules::
             ResolveMenuZOrderOwner(
@@ -678,7 +692,7 @@ UINT DesktopApp::ShowModernMenu(
                 floatingPopupHwnd_,
                 floatingDockHostWindowVisible,
                 floatingDockHostEffectivelyFloating,
-                floatingDockHwnd_);
+                menuDockHost ? menuDockHost->hwnd : nullptr);
     if (floatingDockHostWindowVisible &&
         !floatingDockHostEffectivelyFloating)
     {
@@ -694,6 +708,11 @@ UINT DesktopApp::ShowModernMenu(
         // host, while Options::owner still receives focus after dismissal.
         options.topmost = true;
         options.zOrderOwner = zOrderOwner;
+    }
+    if (forceTopmost)
+    {
+        options.topmost = true;
+        options.zOrderOwner = owner;
     }
     if (placeAwayFromTaskbar)
     {
@@ -768,6 +787,10 @@ UINT DesktopApp::ShowModernMenu(
             });
         extensions->Attach(items, options, kContextMoreCommand);
     }
+    // A status-bar session may use a floating host as its native z-order owner.
+    // Retain that exact owner so hiding a different monitor never dismisses it.
+    if (statusBarMenuOwner_ == owner && statusBarMenuMonitor_)
+        statusBarMenuOwner_ = options.zOrderOwner ? options.zOrderOwner : options.owner;
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
     if (result.command == kContextManageMenuCommand)

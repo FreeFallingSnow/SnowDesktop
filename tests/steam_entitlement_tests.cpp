@@ -265,8 +265,11 @@ int wmain(int argc, wchar_t** argv)
         while (service.Current().state == State::Checking &&
             std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        Check(service.Current().failure == Failure::StorageError && !service.IsRegistered(),
-            "ownership without a saved cache does not report successful activation");
+        Check(service.Current().failure == Failure::StorageError && service.IsRegistered() &&
+                service.Current().state == State::Registered,
+            "a live ownership response unlocks this session despite cache failure");
+        Service reopened(fixture, fixture, blockedCache);
+        Check(!reopened.IsRegistered(), "failed cache persistence never creates a future offline entitlement");
     }
     {
         Service refunded(notOwnedFixture, notOwnedFixture, cache);

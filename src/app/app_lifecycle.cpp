@@ -1,4 +1,5 @@
 #include "app.h"
+#include "categorized_popup_scope.h"
 #include "dock_platform_helpers.h"
 #include "../desktop_keyboard_rules.h"
 #include "../widget_engine_settings_backend.h"
@@ -12,6 +13,11 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    if(systemDataProvider_)systemDataProvider_->Controls()->SetWake({});
+    systemPanel_.reset();
+    CancelStatusBarActivation();
+    dockAppBars_.reset();
+    statusBar_.reset();
     // The shared service is constructed before the caches its asynchronous
     // scans use. Stop it before CRT static destruction reverses that order.
     snowdesktop::shell_extensions::SharedMenuService().Shutdown();
@@ -744,6 +750,13 @@ void DesktopApp::UpdateHostInputImePosition()
     bool hasCaret = widgetEngine_ &&
         widgetEngine_->GetFocusedHostInputCaretRect(caret);
     if (!hasCaret)
+        if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
+        {
+            const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+            CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));
+            hasCaret = view->GetSearchCaretRect(caret);
+        }
+    if (!hasCaret)
     {
         for (const auto& container : containers_)
         {
@@ -1063,6 +1076,9 @@ void DesktopApp::CompleteExitRequest()
 {
     if (exitRequested_) return;
     exitRequested_ = true;
+    // A confirmation may be pumping messages inside task dispatch. Invalidate
+    // tasks now, keeping the engine alive until that modal stack has unwound.
+    if (widgetEngine_) widgetEngine_->BeginTaskShutdown();
     WriteDiagnosticLogEntry((L"Application exit begin: pid=" +
         std::to_wstring(GetCurrentProcessId()) + L" restart=" +
         std::to_wstring(preparedRestart_ != nullptr)).c_str());

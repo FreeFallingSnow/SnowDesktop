@@ -16,6 +16,20 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    using snowdesktop::desktop_keyboard_rules::PopupEscapeAction;
+    using snowdesktop::desktop_keyboard_rules::ResolvePopupEscapeAction;
+    Check(ResolvePopupEscapeAction(false, false, false, true) ==
+            PopupEscapeAction::CloseCollectionPopup,
+        "Esc dismisses a Dock or collection popup before the caller cancels its held drag");
+    Check(ResolvePopupEscapeAction(false, false, false, false) == PopupEscapeAction::None,
+        "without a popup Esc remains available to cancel the drag");
+    Check(ResolvePopupEscapeAction(true, true, true, true) ==
+            PopupEscapeAction::CloseQuickNavigation,
+        "quick navigation receives Esc before underlying panels and collections");
+    Check(ResolvePopupEscapeAction(false, true, true, true) == PopupEscapeAction::CloseLuaPanel,
+        "a foreground dismissible Lua panel closes before the underlying collection");
+    Check(ResolvePopupEscapeAction(false, true, false, true) == PopupEscapeAction::KeepLuaPanel,
+        "a non-dismissible Lua panel consumes Esc without cancelling the drag beneath it");
     using snowdesktop::desktop_keyboard_rules::NormalizeFileCommandKey;
     Check(NormalizeFileCommandKey('D', true, false, false, false) == 0x2E,
         "Ctrl+D uses the same deletion entry as Delete");

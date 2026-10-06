@@ -1,6 +1,7 @@
 #include "large_icon_renderer.h"
 #include "icon_loading_placeholder.h"
 #include "preview_png_writer.h"
+#include "large_icon_shape_geometry.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <d2d1helper.h>
@@ -72,10 +73,13 @@ struct Canvas
         return image;
     }
     std::vector<unsigned> Draw(const snowdesktop::LargeIconConfig& config, const snowdesktop::large_icon_renderer::View& view,
-        const snowdesktop::large_icon_transform::Card* transform = nullptr)
+        const snowdesktop::large_icon_transform::Card* transform = nullptr, bool placement = false, bool valid = true,
+        const RECT* gridAllocation = nullptr)
     {
         target->BeginDraw(); target->Clear(D2D1::ColorF(0, 0.f));
-        if (transform)
+        if (placement)
+            snowdesktop::large_icon_renderer::DrawPlacementPreview(target.Get(), config, view.frame, view.scale, valid, gridAllocation);
+        else if (transform)
             Check(snowdesktop::large_icon_renderer::DrawCard3D(device.Get(), fonts.Get(), config, view, *transform, card), "production 3D draw accepted");
         else snowdesktop::large_icon_renderer::DrawFrame(target.Get(), fonts.Get(), config, view);
         Require(target->EndDraw(), "production draw");
@@ -130,6 +134,158 @@ void Save(const char* directory, const char* name, const std::vector<unsigned>& 
     std::string error;
     const bool saved = snowdesktop::preview_png::Save(std::filesystem::path(directory) / name, Canvas::width, Canvas::height, pixels, error);
     Check(saved, error.c_str());
+}
+
+void CheckShapes(Canvas& canvas, const char* outputDirectory)
+{
+    // Exercise the actual card renderer on unequal grid dimensions. These
+    // pixels catch ellipse stretching, lost rounding, and rectangular material
+    // or effect layers leaking outside a nonrectangular silhouette.
+    snowdesktop::LargeIconConfig config;
+    config.backgroundStyle = -2; config.radiusPercent = 35;
+    snowdesktop::large_icon_renderer::View view;
+    view.frame = {40, 60, 440, 260};
+    auto image = canvas.Image(64, 64); view.bitmap = image.Get();
+    const char* names[]{"shape-rounded-rectangle.png", "shape-rounded-square.png", "shape-circle.png",
+        "shape-flag.png", "shape-diamond.png", "shape-hexagon.png"};
+    for (int shape = 0; shape <= 5; ++shape)
+    {
+        config.shape = shape; config.effect = 0; view.hover = 0; view.selected = false;
+        const auto pixels = canvas.Draw(config, view);
+        Check(Red(Pixel(pixels, 240, 160)), "every silhouette keeps the central image visible");
+        if (shape != 3) Check(Pixel(pixels, 40, 60) == 0, "rounded and polygonal silhouettes leave their outer corner transparent");
+        if (shape == 1 || shape == 2)
+        {
+            const auto bounds = RedBounds(pixels);
+            Check(bounds.left == 140 && bounds.right == 340 && bounds.top == 60 && bounds.bottom == 260,
+                "rendered square and circle have equal width and height inside a wide allocation");
+            Check(Pixel(pixels, 145, 65) == 0, "square corners remain rounded and circle corners remain transparent");
+            Check(Red(Pixel(pixels, 150, 85)) == (shape == 1), "rounded square is visibly distinct from a circle");
+        }
+        if (shape == 3)
+            Check(Pixel(pixels, 410, 160) == 0 && Red(Pixel(pixels, 410, 80)),
+                "flag silhouette has a transparent swallowtail notch and retains its upper tip");
+        if (shape == 4 || shape == 5)
+            Check(Pixel(pixels, 80, 80) == 0, "diamond and hexagon clip their slanted corners");
+        Save(outputDirectory, names[shape], pixels);
+        const POINT handle{428, 246};
+        const auto offset = snowdesktop::large_icon_shape::ResizePointerOffset(view.frame, handle);
+        const auto atRest = snowdesktop::large_icon_shape::ResizeExtent(handle, offset);
+        const auto moved = snowdesktop::large_icon_shape::ResizeExtent({handle.x + 60, handle.y + 40}, offset);
+        Check(atRest.x == 439 && atRest.y == 259 && moved.x == 499 && moved.y == 299,
+            "grabbing the fixed handle preserves the initial grid extent and applies only pointer movement");
+        const auto preview = canvas.Draw(config, view, nullptr, true);
+        Check(Pixel(preview, 240, 160) != 0, "blue placement preview retains visible fill in every shape");
+        if (shape == 1 || shape == 2)
+        {
+            Check(Pixel(preview, 80, 160) == 0 && Pixel(preview, 145, 65) == 0,
+                "square and circle previews preserve their unstretched contour and unfilled grid margins");
+            Check((Pixel(preview, 339, 160) >> 24) > 200,
+                "blue placement outline stays legible above its translucent fill");
+        }
+        if (shape == 3)
+            Check(Pixel(preview, 410, 160) == 0 && (Pixel(preview, 410, 80) >> 24) > 45,
+                "flag preview distinguishes its notch from the occupied grid area");
+        if (shape == 4 || shape == 5)
+            Check(Pixel(preview, 80, 80) == 0, "polygon previews preserve unfilled margins outside their contour");
+        Save(outputDirectory, (std::string("preview-") + names[shape]).c_str(), preview);
+        if (shape != 0)
+        {
+            const RECT grid{20, 40, 460, 280};
+            const auto layered = canvas.Draw(config, view, nullptr, true, true, &grid);
+            const auto blocked = canvas.Draw(config, view, nullptr, true, false, &grid);
+            Check(Pixel(layered, 15, 50) == 0 && (Pixel(layered, 20, 50) >> 24) > 45 &&
+                Pixel(layered, 25, 160) == 0 && Pixel(layered, 460, 160) == 0 &&
+                (Pixel(layered, 240, 160) >> 24) > 45,
+                "special-shape preview marks padded grid corners without a full outer border or fill");
+            for (const POINT corner : {POINT{20, 50}, POINT{460, 50}, POINT{20, 270}, POINT{460, 270}})
+                Check((Pixel(layered, corner.x, corner.y) >> 24) > 45,
+                    "all four corner brackets remain visible at the actual occupied grid bounds");
+            const auto validEdge = Pixel(layered, 460, 50), blockedEdge = Pixel(blocked, 460, 50);
+            Check((validEdge & 255) > ((validEdge >> 16) & 255) &&
+                ((blockedEdge >> 16) & 255) > (blockedEdge & 255),
+                "occupied grid corner brackets use blue for valid placement and red for blocked placement");
+            Save(outputDirectory, (std::string("grid-preview-") + names[shape]).c_str(), layered);
+            Save(outputDirectory, (std::string("blocked-grid-preview-") + names[shape]).c_str(), blocked);
+        }
+        config.effect = 4; view.hover = 1; view.selected = true;
+        const auto glow = canvas.Draw(config, view);
+        if (shape == 3)
+            Check(Pixel(glow, 410, 160) == 0, "edge glow and selection follow the flag notch");
+        else if (shape >= 1)
+            Check(Pixel(glow, 80, 80) == 0, "edge glow and selection leave transparent corners clear");
+        config.backgroundStyle = 9; config.effect = 0; view.hover = 0; view.selected = false;
+        view.bitmap = nullptr;
+        view.drawBackground = [](ID2D1RenderTarget* target, RECT rect, float, float opacity) {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            Require(target->CreateSolidColorBrush(D2D1::ColorF(0x204080, opacity), &brush), "shape material fixture");
+            target->FillRectangle(D2D1::RectF(float(rect.left), float(rect.top), float(rect.right), float(rect.bottom)), brush.Get());
+        };
+        if (shape >= 2)
+        {
+            const auto material = canvas.Draw(config, view);
+            Check(Pixel(material, shape == 3 ? 410 : 80, shape == 3 ? 160 : 80) == 0 && Pixel(material, 240, 160) != 0,
+                "component material callback is masked by the same silhouette as the image");
+            if (shape == 3) Check(Pixel(material, 410, 160) == 0, "component material does not refill the flag notch");
+        }
+        view.drawBackground = {}; view.bitmap = image.Get(); config.backgroundStyle = -2;
+    }
+    config.shape = 2; config.radiusPercent = 0; view.frame = {140, 10, 340, 350};
+    const auto circle = canvas.Draw(config, view);
+    const auto bounds = RedBounds(circle);
+    Check(bounds.left == 140 && bounds.right == 340 && bounds.top == 80 && bounds.bottom == 280,
+        "circle remains round and centered in a tall allocation even with a zero saved radius");
+
+    config.shape = 3; config.effect = 0; view.frame = {40, 60, 440, 260};
+    const POINT notches[]{{410, 160}, {70, 160}, {240, 75}, {240, 245}};
+    const POINT tips[]{{410, 80}, {70, 80}, {70, 75}, {70, 245}};
+    const char* directions[]{"right", "left", "up", "down"};
+    for (int direction = 0; direction < 4; ++direction)
+    {
+        config.flagDirection = direction;
+        const auto pixels = canvas.Draw(config, view);
+        const auto preview = canvas.Draw(config, view, nullptr, true);
+        const auto blocked = canvas.Draw(config, view, nullptr, true, false);
+        const auto notch = notches[direction], tip = tips[direction];
+        Check(Pixel(pixels, notch.x, notch.y) == 0 && Red(Pixel(pixels, tip.x, tip.y)),
+            "each flag direction removes the requested edge notch and preserves its corner tip");
+        Check(Pixel(preview, notch.x, notch.y) == 0 && (Pixel(preview, tip.x, tip.y) >> 24) > 45 &&
+            Pixel(blocked, notch.x, notch.y) == 0 && (Pixel(blocked, tip.x, tip.y) >> 24) > 45,
+            "valid and blocked flag previews show both grid occupancy and the chosen notch direction");
+        Save(outputDirectory, (std::string("flag-") + directions[direction] + ".png").c_str(), pixels);
+        Save(outputDirectory, (std::string("preview-flag-") + directions[direction] + ".png").c_str(), preview);
+        config.effect = 4; view.hover = 1; view.selected = true;
+        Check(Pixel(canvas.Draw(config, view), notch.x, notch.y) == 0,
+            "selection and glow do not fill any of the four flag notches");
+        config.effect = 0; view.hover = 0; view.selected = false;
+        // Negative control for the reported regression: the former rectangular
+        // placeholder visibly filled this notch with the same grid allocation.
+        auto legacy = config; legacy.shape = 0; legacy.radius = 0; legacy.radiusPercent = 0;
+        Check((Pixel(canvas.Draw(legacy, view, nullptr, true), notch.x, notch.y) >> 24) > 45,
+            "the preview regression fixture distinguishes the former rectangular footprint");
+    }
+    config = {}; config.shape = 5; config.regularHexagon = true; config.backgroundStyle = -2;
+    view = {}; view.frame = {40, 60, 440, 260}; view.bitmap = image.Get();
+    for (const bool tall : {false, true})
+    {
+        if (tall) view.frame = {140, 10, 340, 350};
+        const auto frame = snowdesktop::large_icon_shape::Frame(config, view.frame);
+        const auto pixels = canvas.Draw(config, view);
+        const auto hexagonBounds = RedBounds(pixels);
+        Check(std::abs((hexagonBounds.right - hexagonBounds.left) - (frame.right - frame.left)) <= 2 &&
+            std::abs((hexagonBounds.bottom - hexagonBounds.top) - (frame.bottom - frame.top)) <= 2,
+            "production rendering fits the regular hexagon without stretching its equal-edge frame");
+        const auto preview = canvas.Draw(config, view, nullptr, true);
+        const POINT margin = tall ? POINT{240, 25} : POINT{75, 160};
+        Check(Pixel(pixels, margin.x, margin.y) == 0 && Pixel(preview, margin.x, margin.y) == 0 &&
+            (Pixel(preview, 240, 160) >> 24) > 45,
+            "regular-hexagon preview shows its entire grid allocation and stronger fitted silhouette");
+        if (!tall)
+        {
+            Save(outputDirectory, "shape-regular-hexagon.png", pixels);
+            Save(outputDirectory, "preview-shape-regular-hexagon.png", preview);
+        }
+    }
 }
 
 void CheckNewEffects(Canvas& canvas, const char* outputDirectory)
@@ -326,6 +482,7 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
     {
         Canvas canvas;
         CheckLoadingPlaceholder(canvas, outputDirectory);
+        CheckShapes(canvas, outputDirectory);
         snowdesktop::LargeIconConfig config;
         snowdesktop::large_icon_renderer::View view;
         view.frame = {100, 60, 300, 260}; view.name = L"SnowDesktop";

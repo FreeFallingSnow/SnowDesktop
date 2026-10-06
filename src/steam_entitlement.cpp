@@ -689,7 +689,14 @@ struct Service::Impl
                 validUntil = record.validUntil;
             }
             else
+            {
+                // Steam's live ownership response is authoritative. Failure to
+                // persist its offline cache must not deny this verified session.
                 failure = Failure::StorageError;
+                state = State::Registered;
+                registered = true;
+                validUntil = record.validUntil;
+            }
         }
         else if (response.outcome == BridgeOutcome::NotOwned)
         {

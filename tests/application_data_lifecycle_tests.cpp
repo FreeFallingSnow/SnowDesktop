@@ -3,6 +3,7 @@
 #include "full_data_backup.h"
 #include "large_icon_backup.h"
 #include "layout_storage.h"
+#include "page_management_rules.h"
 #include "json_value.h"
 #include "widget_package.h"
 #include "widget_removal.h"
@@ -310,6 +311,9 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             saved.showFrequentItems = true;
             saved.keepWhenDesktopHidden = true;
             saved.allowDesktopContentOverlap = true;
+            saved.reserveScreenSpace = position % 2 == 0;
+            saved.lastMonitorUseHomeSize = attached;
+            saved.mergedBarHeight = 48 + position * 8;
             saved.showOnlyWhenSummoned = true;
             saved.frequentItemCount = 7;
             saved.thicknessScale = 0.73f;
@@ -326,7 +330,7 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             Expect(layout::LoadDocument(primary, restored).status == layout::LoadStatus::LoadedPrimary &&
                     restored.dockEnabled == attached && restored.dockLayout &&
                     *restored.dockLayout == saved,
-                "all four Dock edges and both forms survive a layout backup round trip");
+                "all Dock edges, forms and both screen-reservation choices survive a layout backup round trip");
 
             Expect(contents.find("customAppearance") == std::string::npos &&
                     contents.find("floatingHotkey") == std::string::npos &&
@@ -347,12 +351,21 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
     Expect(layout::ParseDocument("{\"dockEnabled\":true}", legacy) &&
             legacy.dockEnabled == true && !legacy.dockLayout,
         "old layout backups preserve their switch without inventing Dock geometry");
+    Expect(layout::ParseDocument(R"({"dockLayout":{"edgeAttached":true}})", legacy) &&
+            legacy.dockLayout && !legacy.dockLayout->reserveScreenSpace &&
+            legacy.dockLayout->lastMonitorUseHomeSize && legacy.dockLayout->mergedBarHeight == 48,
+        "legacy Dock layouts do not opt into screen reservation when the field is absent");
     for (const char* malformed : {
              R"({"dockLayout":false})",
              R"({"dockLayout":{"position":4}})",
              R"({"dockLayout":{"position":1.5}})",
              R"({"dockLayout":{"monitorScope":-1}})",
              R"({"dockLayout":{"edgeAttached":1}})",
+             R"({"dockLayout":{"reserveScreenSpace":1}})",
+             R"({"dockLayout":{"lastMonitorUseHomeSize":1}})",
+             R"({"dockLayout":{"mergedBarHeight":31}})",
+             R"({"dockLayout":{"mergedBarHeight":97}})",
+             R"({"dockLayout":{"mergedBarHeight":48.5}})",
              R"({"dockLayout":{"frequentItemCount":0}})",
              R"({"dockLayout":{"thicknessScale":0.1}})"})
     {
@@ -401,6 +414,22 @@ void TestInitializationExperiment(const std::filesystem::path& root)
 
 void TestLayoutReset(const std::filesystem::path& root)
 {
+    {
+        using namespace snowdesktop::layout_storage;
+        const auto path = root / L"glass-icon-roundtrip.json";
+        Expect(SaveDocument(path, R"({"iconBeautifyPreset":6,"iconBeautifyGlassEnabled":true,"iconBeautifyGlassBlurRadius":28,"iconBeautifyEdgeHighlightEnabled":true,"iconBeautifyEdgeHighlightWidth":1.7,"iconBeautifyEdgeHighlightStrength":0.65})"),
+            "save glass icon customization in isolated layout data");
+        Document loaded;
+        Expect(LoadDocument(path, loaded).status == LoadStatus::LoadedPrimary &&
+            loaded.iconBeautifyPreset == 6 && loaded.iconBeautifyGlassEnabled == true &&
+            loaded.iconBeautifyGlassBlurRadius == 28.0f && loaded.iconBeautifyEdgeHighlightEnabled == true &&
+            loaded.iconBeautifyEdgeHighlightWidth == 1.7f && loaded.iconBeautifyEdgeHighlightStrength == .65f,
+            "glass icon settings survive the real layout file loading boundary");
+        Expect(SaveDocument(path, "{}") && LoadDocument(path, loaded).status == LoadStatus::LoadedPrimary &&
+            !loaded.iconBeautifyGlassEnabled && !loaded.iconBeautifyEdgeHighlightEnabled,
+            "legacy layouts leave new glass and reflection flags unset");
+    }
+
     namespace layout = snowdesktop::layout_storage;
     const auto data = root / L"layout-reset" / L"data";
     const auto primary = data / L"SnowDesktop.layout.json";
@@ -428,6 +457,7 @@ void TestLayoutReset(const std::filesystem::path& root)
     const std::vector<std::filesystem::path> retained = {
         L"SnowDesktop.general.json", L"SnowDesktop.dock.json",
         L"SnowDesktop.calendar.json", L"SnowDesktop.widget-notifications.json",
+        L"SnowDesktop.calendar-series.json",
         L"SnowDesktop.widget-file-handles.json", L"widgets/packages.json",
         L"widgets/installed/demo/main.lua", L"large-icons/user.png",
         L"DropContent/user.txt"};
@@ -970,12 +1000,18 @@ int main()
         Expect(ParseJson(R"({"version":2})", legacyValue) && snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) &&
             legacy.columns == 2 && legacy.rows == 2 && legacy.backgroundStyle == -3,
             "omitted legacy span and style do not adopt new creation defaults");
-        for (const int preset : {-5, -4})
+        for (const int preset : {-5, -4, -3, -2, -1, 1, 9})
         {
             auto modern = snowdesktop::LargeIconConfig{}; modern.backgroundStyle = preset;
+            modern.foregroundContent = 1; modern.foregroundImage = "kept-foreground.png";
+            modern.radiusPercent = 37; modern.effect = 4;
             Expect(ParseJson(snowdesktop::EncodeLargeIconConfig(modern), legacyValue) &&
+                snowdesktop::DecodeLargeIconConfig(legacyValue, legacy), "existing background config remains decodable");
+            if (preset == -5) modern.backgroundStyle = 1;
+            Expect(legacy == modern, "retired neutral migrates only to light theme while other styles and per-item settings are preserved");
+            Expect(ParseJson(snowdesktop::EncodeLargeIconConfig(legacy), legacyValue) &&
                 snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy == modern,
-                "neutral and plate presets survive restart with one-cell desired spans");
+                "migrated light theme is stable on subsequent saves and restarts");
         }
         Expect(ParseJson(R"({"version":2,"titleDirection":1,"themeColor":true,"themeGradient":true})", legacyValue) &&
             snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.fillScale == 1 && !legacy.autoTitleDirection &&
@@ -1015,11 +1051,50 @@ int main()
             typedLayout.dockEntries.size() == 1 &&
             !typedLayout.componentSpacing.has_value(),
         "legacy schema and reordered fields decode into one typed document");
+    Expect(!typedLayout.pages[0].name, "legacy layouts leave custom page names unset");
+    {
+        using namespace snowdesktop::layout_storage;
+        const auto namedPath = root / L"layout-storage" / L"named-pages.json";
+        const std::string named = R"({"pages":[{"id":"__page:1","name":"工作 🌏 & Play","columns":4,"rows":3},{"id":"__page:2","columns":4,"rows":3}]})";
+        Document savedNames;
+        Expect(SaveDocument(namedPath, named, &layoutError) &&
+                LoadDocument(namedPath, savedNames).status == LoadStatus::LoadedPrimary && savedNames.pages.size() == 2 &&
+                savedNames.pages[0].name == "工作 🌏 & Play" && !savedNames.pages[1].name,
+            "custom page names survive the real validated layout store while unnamed pages stay optional");
+        Expect(!ParseDocument(R"({"pages":[{"id":"a","name":4}]})", savedNames, &layoutError),
+            "a malformed page name must not be accepted as valid layout data");
+        std::vector<std::string> runtimePages{"__page:1", "__page:2"};
+        const auto before = runtimePages;
+        const bool committed = snowdesktop::page_management::Commit(
+            [&] { runtimePages.pop_back(); },
+            [&] { return SaveDocument(namedPath, R"({"pages":[{"id":4}]})", &layoutError); },
+            [&] { runtimePages = before; });
+        Expect(!committed && runtimePages == before && LoadDocument(namedPath, savedNames).status == LoadStatus::LoadedPrimary &&
+                savedNames.pages.size() == 2 && savedNames.pages[0].name == "工作 🌏 & Play",
+            "failed page persistence rolls back candidate runtime state and preserves the previous disk layout");
+    }
     // Opt-in group ownership must survive restart; older/manual groups retain
     // their previous behavior. The production parser and validated disk store
     // are exercised, using only this test's isolated temporary layout directory.
     Expect(!typedLayout.widgets[0].dissolveWhenSingle,
         "legacy groups default to retaining their wrapper");
+    // Protect restart behavior through the actual layout store, including
+    // the movable All tab and the default ordering of older layouts.
+    snowdesktop::layout_storage::Document categoryTabs;
+    const std::string categoryTabsText = R"({"widgets":[{"id":"files","page":"page-a","x":0,"y":0,"type":"fileCategories","categoryTabOrder":["programs","others","all","folders"]}]})";
+    const auto categoryTabsPath = root / L"layout-storage" / L"category-tabs.layout.json";
+    Expect(snowdesktop::layout_storage::SaveDocument(categoryTabsPath, categoryTabsText, &layoutError),
+        "custom tab order saves through the production layout store");
+    Expect(snowdesktop::layout_storage::LoadDocument(categoryTabsPath, categoryTabs).status ==
+            snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            categoryTabs.widgets.size() == 1 && categoryTabs.widgets.front().categoryTabOrder ==
+                std::vector<std::string>({"programs", "others", "all", "folders"}),
+        "restart preserves the position of All and program category tabs");
+    Expect(typedLayout.widgets[0].categoryTabOrder.empty(), "old layouts keep their default category tab order");
+    Expect(!snowdesktop::layout_storage::ParseDocument(
+        R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"categoryTabOrder":[3]}]})", categoryTabs, &layoutError) &&
+            layoutError.find("categoryTabOrder[0]") != std::string::npos,
+        "invalid category tab identities cannot replace a saved layout");
     const std::string pairLayoutText = R"({"widgets":[
         {"id":"automatic","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":true},
         {"id":"manual","page":"page-a","x":4,"y":0,"type":"collectionGroup","dissolveWhenSingle":false}]})";
@@ -1071,13 +1146,33 @@ int main()
         "component spacing, icon size, and the legacy global Collection titleless mode decode as optional migration settings");
     snowdesktop::layout_storage::Document legacyFontLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
-            "{\"itemFontSize\":18,\"listItemFontSize\":16}",
+            "{\"itemFontSize\":18,\"listItemFontSize\":16,\"itemFontWeight\":600}",
             legacyFontLayout, &layoutError) &&
             legacyFontLayout.itemFontSize.value_or(0.0f) == 18.0f &&
             legacyFontLayout.listItemFontSize.value_or(0.0f) == 16.0f &&
             !legacyFontLayout.itemFontSizeCu.has_value() &&
-            !legacyFontLayout.listItemFontSizeCu.has_value(),
-        "legacy point font fields remain available as migration inputs");
+            !legacyFontLayout.listItemFontSizeCu.has_value() &&
+            legacyFontLayout.itemFontWeight.value_or(0.f) == 600.f &&
+            !legacyFontLayout.desktopTitleLines.has_value() &&
+            !legacyFontLayout.largeFolderTitleLines.has_value() &&
+            !legacyFontLayout.scrollingTitleLines.has_value() &&
+            !legacyFontLayout.titleEllipsis.has_value(),
+        "legacy font weight remains unchanged and absent title limits/overflow retain the host's defaults");
+    const std::string titleSettingsText =
+        "{\"itemFontWeight\":600,\"desktopTitleLines\":1,"
+        "\"largeFolderTitleLines\":2,\"scrollingTitleLines\":1,\"titleEllipsis\":false}";
+    const auto titleSettingsPath = root / L"title-settings.json";
+    snowdesktop::layout_storage::Document titleSettingsLayout;
+    Expect(snowdesktop::layout_storage::SaveDocument(
+            titleSettingsPath, titleSettingsText, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(titleSettingsPath, titleSettingsLayout).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            titleSettingsLayout.itemFontWeight.value_or(0.f) == 600.f &&
+            titleSettingsLayout.desktopTitleLines.value_or(0) == 1 &&
+            titleSettingsLayout.largeFolderTitleLines.value_or(0) == 2 &&
+            titleSettingsLayout.scrollingTitleLines.value_or(0) == 1 &&
+            titleSettingsLayout.titleEllipsis.has_value() && !*titleSettingsLayout.titleEllipsis,
+        "restart retains title limits and direct truncation alongside the original weight");
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"
@@ -1170,7 +1265,8 @@ int main()
     }
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"folder-a\","
-            "\"listMode\":true,\"detailShowModified\":true,"
+            "\"listMode\":true,\"showSearchBox\":true,\"showFileCategories\":true,"
+            "\"categoryTabOrder\":[\"folders\",\"all\"],\"detailShowModified\":true,"
             "\"detailShowType\":false,\"detailShowSize\":true,"
             "\"detailModifiedPosition\":0.24,"
             "\"detailTypePosition\":0.58,"
@@ -1178,6 +1274,9 @@ int main()
             dockPopupLayout, &layoutError) &&
             dockPopupLayout.dockEntries.size() == 1 &&
             dockPopupLayout.dockEntries[0].listMode &&
+            dockPopupLayout.dockEntries[0].showSearchBox &&
+            dockPopupLayout.dockEntries[0].showFileCategories &&
+            dockPopupLayout.dockEntries[0].categoryTabOrder == std::vector<std::string>({"folders", "all"}) &&
             dockPopupLayout.dockEntries[0].detailShowModified &&
             !dockPopupLayout.dockEntries[0].detailShowType &&
             dockPopupLayout.dockEntries[0].detailShowSize &&
@@ -1588,6 +1687,8 @@ int main()
         "403e9f91-33dd-4c20-9b11-c476074e3a3a",
         "\"system.storage.read\", \"system.display.read\", "
         "\"audio.output.read\", \"audio.output.analyze\", "
+        "\"audio.devices.read\", \"audio.input.read\", "
+        "\"network.wifi.read\", \"bluetooth.read\", "
         "\"audio.output.control\", \"app.discovery\", \"app.launch\", "
         "\"shell.launch\", \"network.internet\", \"network.local\", "
         "\"notification.post\", \"clipboard.read\", "
@@ -2402,6 +2503,8 @@ int main()
         "{ \"source\": \"complete-backup-modified\" }\n";
     const std::string originalCalendar =
         "{ \"schemaVersion\": 1, \"events\": [] }\n";
+    const std::string originalCalendarSeries =
+        "{ \"schemaVersion\": 1, \"series\": [] }\n";
     const std::string originalNotificationSchedules =
         "{ \"schemaVersion\": 1, \"entries\": [] }\n";
     Write(fullBackupData / L"SnowDesktop.layout.json",
@@ -2410,6 +2513,8 @@ int main()
         "{ \"language\": \"zh-CN\" }\n");
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         originalCalendar);
+    Write(fullBackupData / L"SnowDesktop.calendar-series.json",
+        originalCalendarSeries);
     Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
         originalNotificationSchedules);
     Write(fullBackupData / L"widgets" / L"installed" /
@@ -2534,6 +2639,8 @@ int main()
         Read(createdFullBackup.backup.data /
             L"SnowDesktop.calendar.json") == originalCalendar &&
         Read(createdFullBackup.backup.data /
+            L"SnowDesktop.calendar-series.json") == originalCalendarSeries &&
+        Read(createdFullBackup.backup.data /
             L"SnowDesktop.widget-notifications.json") ==
                 originalNotificationSchedules,
         "complete backup preserves layout, settings, calendar, widget notifications, packages, and storage");
@@ -2642,6 +2749,8 @@ int main()
         modifiedLayout);
     Write(fullBackupData / L"SnowDesktop.calendar.json",
         "{ \"schemaVersion\": 1, \"events\": [1] }\n");
+    Write(fullBackupData / L"SnowDesktop.calendar-series.json",
+        "{ \"schemaVersion\": 1, \"series\": [1] }\n");
     Write(fullBackupData / L"SnowDesktop.widget-notifications.json",
         "{ \"schemaVersion\": 1, \"entries\": [1] }\n");
     std::stop_source committedRestoreStop;
@@ -2666,6 +2775,8 @@ int main()
             originalLayout &&
         Read(fullBackupData / L"SnowDesktop.calendar.json") ==
             originalCalendar &&
+        Read(fullBackupData / L"SnowDesktop.calendar-series.json") ==
+            originalCalendarSeries &&
         Read(fullBackupData / L"SnowDesktop.widget-notifications.json") ==
             originalNotificationSchedules,
         "complete backup atomically restores layout, calendar, and widget notification schedules on the next startup");

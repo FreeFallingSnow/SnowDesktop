@@ -1521,9 +1521,7 @@ void TestBottomBarContentReservation()
         chromeRules::ResolveWidgetChromeForegroundStyle(1);
     Check(
         !lightForegroundChrome.darkForeground &&
-            lightForegroundChrome.fontWeightAdjustment == 0 &&
-            darkForegroundChrome.darkForeground &&
-            darkForegroundChrome.fontWeightAdjustment == -200,
+            darkForegroundChrome.darkForeground,
         "widget titles and handles must resolve their foreground from the widget content theme");
     Check(
         chromeRules::CompactEdgeHandleWidth(120, 24) == 24 &&

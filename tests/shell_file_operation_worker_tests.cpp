@@ -1,3 +1,5 @@
+#include "operation_feedback.h"
+#include "shell_file_operation_progress.h"
 #include "shell_file_operation_worker.h"
 #include "external_drop_resources.h"
 #include "item_location.h"
@@ -49,6 +51,44 @@ std::filesystem::path CreateTemporaryDirectory()
     Expect(length != 0 && length < MAX_PATH,
         "temporary fixture paths normalize 8.3 aliases before Shell comparisons");
     return std::filesystem::path(longPath);
+}
+
+std::string ReadContents(const std::filesystem::path& path);
+
+// A failed first file must be reported even when a later file succeeds.
+void TestFileFailureFeedback()
+{
+    const auto root = CreateTemporaryDirectory();
+    const auto missing = root / L"missing.txt";
+    const auto source = root / L"source.txt";
+    const auto copied = root / L"copied.txt";
+    std::ofstream(source) << "source preserved";
+    std::vector<snowdesktop::operation_feedback::Failure> failures;
+    snowdesktop::operation_feedback::SetReporter([&](const auto& failure) { failures.push_back(failure); });
+    snowdesktop::ShellFileOperationRequest request;
+    request.exactFileCopies.push_back({missing.wstring(), (root / L"missing-copy.txt").wstring()});
+    request.exactFileCopies.push_back({source.wstring(), copied.wstring()});
+    const bool succeeded = snowdesktop::ShellFileOperationWorker::Execute(request);
+    auto skipped = Microsoft::WRL::Make<snowdesktop::DropFileProgress>();
+    skipped->Record(COPYENGINE_S_USER_IGNORED, nullptr, nullptr);
+    const bool skipIsCancellation = skipped->failure == HRESULT_FROM_WIN32(ERROR_CANCELLED) &&
+        !skipped->completed;
+    snowdesktop::operation_feedback::Report({"app.operation.fileFailed", L"skipped",
+        static_cast<DWORD>(skipped->failure)});
+    snowdesktop::operation_feedback::SetReporter({});
+    const bool reported = !succeeded && failures.size() == 1 &&
+        failures.front().error == ERROR_FILE_NOT_FOUND &&
+        failures.front().detail.find(missing.wstring()) != std::wstring::npos;
+    const bool preserved = ReadContents(source) == "source preserved" &&
+        ReadContents(copied) == "source preserved";
+    std::error_code cleanupError;
+    std::filesystem::remove_all(root, cleanupError);
+    // Expect exits on failure: remove isolated files before evaluating either
+    // a positive run or the deliberate missing-notification negative control.
+    Expect(reported, "a real file-copy failure reports its target and Win32 error once");
+    Expect(skipIsCancellation, "the Shell user's Skip result is cancellation, not an unexplained copy failure");
+    Expect(preserved, "partial failure preserves the successful copy and original source");
+    Expect(!cleanupError, "local feedback fixtures are removed");
 }
 
 // DND-04: real STA worker -> per-item outputs -> production content cleanup.
@@ -473,6 +513,14 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 2)
     {
         const std::wstring mode(argv[1]);
+        if (mode == L"--failure-feedback-tests")
+        {
+            // CopyFile and progress-result classification use only isolated
+            // local files, so unavailable network providers are irrelevant.
+            TestFileFailureFeedback();
+            std::cout << "local file-operation feedback tests passed\n";
+            return 0;
+        }
         if (mode == L"--query-network-connections") return QueryConnections();
         if (mode == L"--probe-ready") return Ready;
         if (mode == L"--probe-unavailable") return Unavailable;

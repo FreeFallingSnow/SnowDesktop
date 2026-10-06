@@ -6,6 +6,7 @@
 
 #include <windows.h>
 #include <d2d1_1.h>
+#include "../icon_beautify.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -99,6 +100,15 @@ public:
     bool AddPanel(
         const RECT& frame, float cornerRadius, float blurRadius,
         std::uintptr_t ownerKey = 0);
+    // Host-private icon regions share the same native blur backend.
+    bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
+        float blurRadius, std::uintptr_t ownerKey);
+    // Host-private large-icon silhouettes use the same geometry as the card.
+    bool AddLargeIconPanel(const RECT& frame, int shape, float cornerRadius,
+        float blurRadius, std::uintptr_t ownerKey, int flagDirection = 0);
+    bool HasPanelContaining(const RECT& frame) const;
+    bool RemoveIconPanel(const RECT& frame, std::uintptr_t ownerKey);
+
     /** @brief Apply a local card matrix and its projected window region in this frame's transaction. */
     bool SetPanelTransform(std::uintptr_t ownerKey,
         const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame);
@@ -110,6 +120,8 @@ public:
     bool SetPanelOpacity(const RECT& frame, float opacity);
     /** @brief 修改根视觉透明度；由 CommitVisualChanges 统一提交。 */
     bool SetVisualOpacity(float opacity);
+    // Translation stays inside the stable popup allocation; no AppBar movement.
+    void SetVisualTranslation(float x, float y);
     /** @brief 立即提交同线程所有 backdrop 目标的共享视觉事务，不等待 GPU 完成。 */
     void CommitVisualChanges();
     /**

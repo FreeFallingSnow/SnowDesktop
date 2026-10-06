@@ -514,6 +514,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         msg == systemTaskbarTaskViewStateMsg_)
     {
         const bool visible = wp != 0;
+        statusBarTaskViewTransition_.Observe(visible,
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
         if (systemTaskbarTaskViewActive_ != visible)
         {
             systemTaskbarTaskViewActive_ = visible;
@@ -525,6 +527,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
     {
         NotifySystemTaskbarCreated();
+        statusBarTaskViewTransition_.Reset();
         systemTaskbarBackdropRefreshTick_ = 0;
         systemTaskbarTaskViewActive_ = false;
         systemTaskbarWindows_.clear();
@@ -585,6 +588,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_SETTINGCHANGE:
     {
+        if (wp == SPI_SETWORKAREA)
+            ScheduleDisplayTopologyRefresh();
         ApplyAnimationPreferences(true);
         const wchar_t* settingArea =
             reinterpret_cast<const wchar_t*>(lp);
@@ -790,9 +795,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     // Revalidate against the new snapshot without losing the last confirmed
     // section/pinned identity while asynchronous Shell queries are pending.
     if (!incremental) InvalidateDockShellMetadata();
-    // A persisted Dock pin is user layout. A missing-path observation can be
-    // stale by the time it reaches the UI or reflect a disconnected drive.
-    // Only the virtual Recycle Bin follows desktop enumeration here.
+    // Enumeration alone is not deletion evidence. PruneDockShellMetadata queues
+    // a separate local-file confirmation, fenced by this refresh revision.
+    // The virtual Recycle Bin follows desktop enumeration directly.
     std::erase_if(dockEntries_, [this, snapshot](const DockEntry& entry) {
         if (snapshot && snapshot->desktopIncremental) return false;
         if (entry.type != DockEntryType::DesktopItem)
@@ -1172,20 +1177,15 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
             if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey) &&
                 snowdesktop::shell_icon_request::Matches(result->requestKey, item))
             {
-                if (result->bitmap)
-                {
-                    if (item.iconBitmap) { EraseD2DIconCacheForBitmap(item.iconBitmap); DeleteObject(item.iconBitmap); }
-                    item.iconBitmap = result->bitmap;
-                    item.iconBitmapSize = result->bitmapSize;
-                    item.iconIsMediaThumbnail =
-                        result->iconIsMediaThumbnail;
-                    result->bitmap = nullptr;
-                }
+                snowdesktop::shell_icon_request::ApplyBitmap(item, result->phase,
+                    result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
+                    [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
                 matched = true;
                 if (result->sysIconIndex >= 0) item.sysIconIndex = result->sysIconIndex;
                 if (!result->typeName.empty()) item.typeName = result->typeName;
                 snowdesktop::shell_icon_request::ApplyPresentation(item, result->phase,
                     result->isShortcut, result->isApplicationShortcut);
+                if (result->phase == IconLoadPhase::Shortcut) item.shortcutTarget = result->shortcutTarget;
                 if (result->phase == IconLoadPhase::Phase1)
                 {
                     IconLoadTask phase2;
@@ -1220,20 +1220,15 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath) &&
                     snowdesktop::shell_icon_request::Matches(result->requestKey, entry))
                 {
-                    if (result->bitmap)
-                    {
-                        if (entry.iconBitmap) { EraseD2DIconCacheForBitmap(entry.iconBitmap); DeleteObject(entry.iconBitmap); }
-                        entry.iconBitmap = result->bitmap;
-                        entry.iconBitmapSize = result->bitmapSize;
-                        entry.iconIsMediaThumbnail =
-                            result->iconIsMediaThumbnail;
-                        result->bitmap = nullptr;
-                    }
+                    snowdesktop::shell_icon_request::ApplyBitmap(entry, result->phase,
+                        result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
+                        [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
                     matched = true;
                     if (result->sysIconIndex >= 0) entry.sysIconIndex = result->sysIconIndex;
                     if (!result->typeName.empty()) entry.typeName = result->typeName;
                     snowdesktop::shell_icon_request::ApplyPresentation(entry, result->phase,
                         result->isShortcut, result->isApplicationShortcut);
+                    if (result->phase == IconLoadPhase::Shortcut) entry.shortcutTarget = result->shortcutTarget;
                     if (result->phase == IconLoadPhase::Phase1)
                     {
                         IconLoadTask phase2;
@@ -1280,6 +1275,38 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         }
     }
 
+    if (matched && result->phase == IconLoadPhase::Shortcut)
+    {
+        bool membershipChanged = false;
+        if (result->isDesktopItem)
+        {
+            for (size_t index = 0; index < widgets_.size(); ++index)
+            {
+                if (widgets_[index].type != DesktopWidgetType::FileCategories) continue;
+                FileCategories categories(&widgets_[index], this);
+                membershipChanged = categories.PruneUncollectableItems() || membershipChanged;
+                if (widgets_[index].autoCollect)
+                    membershipChanged = CollectFileCategoryWidget(index, false) || membershipChanged;
+            }
+        }
+        if (membershipChanged)
+        {
+            RefreshCollectedKeysCache();
+            LayoutItems();
+            RebuildContainersAndItems();
+            SaveLayoutSlots();
+        }
+        for (auto& container : containers_)
+        {
+            ScrollingItemWidget* view = dynamic_cast<ScrollingItemWidget*>(container.get());
+            if (auto* group = dynamic_cast<FileGroup*>(container.get())) view = group->GetActiveSourceContainer();
+            if (auto* categories = dynamic_cast<FileCategories*>(view)) categories->InvalidateCategoryCache();
+            if (auto* mapping = dynamic_cast<FolderMapping*>(view)) mapping->InvalidateFilterCache();
+        }
+        if (auto* mapping = dynamic_cast<FolderMapping*>(dockFolderPopupContainer_.get())) mapping->InvalidateFilterCache();
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
+    }
     if (!matched && result->bitmap)
         DeleteObject(result->bitmap);
     return matched;
