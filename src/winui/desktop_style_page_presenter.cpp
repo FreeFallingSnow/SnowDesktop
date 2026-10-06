@@ -633,8 +633,10 @@ struct DesktopStylePagePresenter::Impl
         const auto divider = [&] {
             auto line = mux::Markup::XamlReader::Load(
                 LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />)").as<muxc::Border>();
-            line.Width(vertical ? 28 : 1); line.Height(vertical ? 1 : 28);
-            line.Margin({5, 5, 5, 5});
+            const double separatorExtent = merged ? std::min(28., iconExtent) : 28.;
+            line.Width(vertical ? separatorExtent : 1); line.Height(vertical ? 1 : separatorExtent);
+            line.Margin(merged ? (vertical ? mux::Thickness{0, 5, 0, 5} : mux::Thickness{5, 0, 5, 0}) :
+                mux::Thickness{5, 5, 5, 5});
             line.HorizontalAlignment(mux::HorizontalAlignment::Center);
             line.VerticalAlignment(mux::VerticalAlignment::Center);
             items.Children().Append(line);
@@ -667,7 +669,7 @@ struct DesktopStylePagePresenter::Impl
         return status;
     }
     muxc::Grid PreviewStatusBar(const StatusBarSettings& settings, bool merged,
-        const mux::UIElement& dockContent = nullptr, int mergedHeight = 48)
+        const mux::UIElement& dockContent = nullptr, int mergedHeightDip = 48)
     {
         // Demonstrate the controls using the real item builder. Performance
         // metrics clutter the miniature; suppress them only in this local copy.
@@ -692,7 +694,7 @@ struct DesktopStylePagePresenter::Impl
         {
             if (merged && item.key == "quickSearch") continue;
             muxc::Grid cell;
-            const bool twoLineClock = StatusBarUsesTwoLineClock(merged, static_cast<float>(mergedHeight), 1.f);
+            const bool twoLineClock = StatusBarUsesTwoLineClock(merged, static_cast<float>(mergedHeightDip), 1.f);
             cell.Height(merged && item.key == "clock" && twoLineClock ? 40 : 32);
             if (item.key == "controlCenter")
             {
