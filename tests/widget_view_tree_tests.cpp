@@ -1,11 +1,11 @@
-#include "widget_view_lua.h"
-#include "widget_date_picker_lua.h"
-#include "widget_time_picker_lua.h"
-#include "widget_duration_picker_lua.h"
-#include "widget_view_tree.h"
-#include "widget_surface_theme.h"
-#include "widget_button_fill.h"
-#include "widget_resource_lua.h"
+#include "widget/view/widget_view_lua.h"
+#include "widget/view/widget_date_picker_lua.h"
+#include "widget/view/widget_time_picker_lua.h"
+#include "widget/view/widget_duration_picker_lua.h"
+#include "widget/view/widget_view_tree.h"
+#include "widget/view/widget_surface_theme.h"
+#include "widget/view/widget_button_fill.h"
+#include "widget/data/widget_resource_lua.h"
 
 #include <cmath>
 #include <cstdlib>

@@ -1,5 +1,5 @@
-#include "widget_task_broker.h"
-#include "widget_trusted_gesture.h"
+#include "widget/tasks/widget_task_broker.h"
+#include "widget/permissions/widget_trusted_gesture.h"
 
 #include <cstdlib>
 #include <iostream>

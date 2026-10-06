@@ -1,5 +1,5 @@
 #include "gpu_diagnostics.h"
-#include "widget_package.h"
+#include "widget/packages/widget_package.h"
 #include <windows.h>
 #include <algorithm>
 #include <chrono>

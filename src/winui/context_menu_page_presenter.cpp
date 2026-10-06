@@ -1,9 +1,9 @@
 #include "pch.h"
 #include "context_menu_page_presenter.h"
 #include "settings_presenter_controls.h"
-#include "../modern_menu_appearance_rules.h"
-#include "../shell_extension_service.h"
-#include "../shell_extension_management.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
+#include "shell/shell_extension_service.h"
+#include "shell/shell_extension_management.h"
 #include <array>
 #include <cwctype>
 #include <set>

@@ -1,5 +1,5 @@
 #include "build_tool_test_support.h"
-#include "json_value.h"
+#include "common/json_value.h"
 #include <algorithm>
 #include <atomic>
 #include <fstream>

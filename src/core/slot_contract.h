@@ -20,7 +20,7 @@
 #include <cstdint>
 #include <string_view>
 
-#include "../types.h"
+#include "common/types.h"
 
 namespace snowdesktop::slot_contract
 {

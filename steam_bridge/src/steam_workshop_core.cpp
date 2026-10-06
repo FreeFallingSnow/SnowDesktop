@@ -8,7 +8,7 @@
 
 #include "steam_app_identity.h"
 #include "steam_workshop_core.h"
-#include "../../src/theme_preview_parts.h"
+#include "../../src/theme/theme_preview_parts.h"
 #include "publish_lifecycle.h"
 #include "workshop_upload_validation.h"
 

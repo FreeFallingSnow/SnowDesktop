@@ -1,4 +1,4 @@
-#include "widget_view_accessibility.h"
+#include "widget/view/widget_view_accessibility.h"
 
 #include <algorithm>
 #include <cstdlib>

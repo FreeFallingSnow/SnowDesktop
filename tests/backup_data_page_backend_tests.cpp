@@ -109,9 +109,9 @@ int main(int argc, char** argv)
              {"SetNotice(BackupDataNoticeSeverity::Success"}},
             {"src/winui/backup_data_page_backend.cpp", "void Deactivate() noexcept", "BackupDataPageBackend::BackupDataPageBackend(",
              {".join(", "WaitForSingleObject("}},
-            {"src/app/app_settings_apply.cpp", "DesktopApp::SetTemporaryGridInitialization",
+            {"src/app/lifecycle/app_settings_apply.cpp", "DesktopApp::SetTemporaryGridInitialization",
              "class DesktopApp::SettingsHostActionsAdapter", {"ClearLayoutAndStorage", "remove_all"}},
-            {"src/windows_desktop_layout.cpp", "", "",
+            {"src/desktop/windows_desktop_layout.cpp", "", "",
              {"->SelectAndPositionItems(", "->SetCurrentFolderFlags(", "->SetViewModeAndIconSize(", "LVM_SETITEMPOSITION"}},
         }), "backup data ownership boundaries");
 

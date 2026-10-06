@@ -3,12 +3,12 @@
 #include "backup_data_page_backend.h"
 #include "backup_operation_control.h"
 
-#include "../atomic_file.h"
-#include "../data_paths.h"
-#include "../deployment_context.h"
-#include "../full_data_backup.h"
-#include "../json_value.h"
-#include "../layout_storage.h"
+#include "data/atomic_file.h"
+#include "data/data_paths.h"
+#include "platform/deployment_context.h"
+#include "data/full_data_backup.h"
+#include "common/json_value.h"
+#include "data/layout_storage.h"
 
 #include <shellapi.h>
 

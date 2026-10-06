@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../settings_ipc_values.h"
+#include "settings/settings_ipc_values.h"
 #include "home_about_ipc_values.h"
 #include "settings_window_host.h"
 

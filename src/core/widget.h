@@ -18,11 +18,11 @@
  */
 
 #pragma once
-#include "../text_input_state.h"
+#include "ui/input/text_input_state.h"
 #include "item.h"
 #include "container.h"
 #include "slot.h"
-#include "../item_visual_metrics.h"
+#include "layout/item_visual_metrics.h"
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -34,7 +34,7 @@
 #include <unordered_map>
 #include <vector>
 #include <memory>
-#include "../scroll_content_clip.h"
+#include "ui/render/scroll_content_clip.h"
 
 struct DesktopWidget;
 struct CategorySettings;

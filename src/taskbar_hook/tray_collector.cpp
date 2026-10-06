@@ -1,5 +1,5 @@
 #include "tray_protocol.h"
-#include "../tray_icon_pixels.h"
+#include "../system/tray/tray_icon_pixels.h"
 #include <commctrl.h>
 #include <memory>
 #include <new>

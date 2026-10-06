@@ -1,7 +1,7 @@
 #pragma once
-#include "../system_controls.h"
-#include "../status_bar.h"
-#include "../widget_system_data_provider.h"
+#include "system/controls/system_controls.h"
+#include "system/status_bar/status_bar.h"
+#include "widget/data/widget_system_data_provider.h"
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <memory>
 

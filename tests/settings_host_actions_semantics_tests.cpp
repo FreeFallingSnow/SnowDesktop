@@ -62,13 +62,13 @@ int main(int argc, char** argv)
 
     const std::filesystem::path root(argv[1]);
     const std::string source = ReadFile(
-        root / "src" / "app" / "app_settings_apply.cpp");
+        root / "src/app/lifecycle/app_settings_apply.cpp");
     const std::string pageGrid = ReadFile(
-        root / "src" / "app" / "app_page_grid.cpp");
+        root / "src/app/layout/app_page_grid.cpp");
     const std::string run = ReadFile(
-        root / "src" / "app" / "app_run.cpp");
+        root / "src/app/lifecycle/app_run.cpp");
     const std::string controllerHeader = ReadFile(
-        root / "src" / "settings_controller.h");
+        root / "src/settings/settings_controller.h");
     const std::string hostHeader = ReadFile(
         root / "src" / "winui" / "settings_window_host.h");
     const std::string host = ReadFile(

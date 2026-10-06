@@ -1,7 +1,7 @@
 #include "pch.h"
 #include "calendar_page_presenter.h"
 #include "settings_presenter_controls.h"
-#include "../l10n.h"
+#include "common/l10n.h"
 #include <charconv>
 #include <cstdio>
 #include <winrt/Windows.Globalization.h>

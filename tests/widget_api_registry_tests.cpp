@@ -1,8 +1,8 @@
-#include "widget_api_registry.h"
-#include "widget_api_contract_json.h"
-#include "widget_permission_state.h"
-#include "widget_system_contract_json.h"
-#include "json_value.h"
+#include "widget/api/widget_api_registry.h"
+#include "widget/api/widget_api_contract_json.h"
+#include "widget/permissions/widget_permission_state.h"
+#include "widget/api/widget_system_contract_json.h"
+#include "common/json_value.h"
 
 #include <algorithm>
 #include <cstdlib>

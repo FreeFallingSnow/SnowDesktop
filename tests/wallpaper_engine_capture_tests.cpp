@@ -1,5 +1,5 @@
-#include "app/wallpaper_engine_capture.h"
-#include "deployment_context.h"
+#include "../src/app/features/wallpaper_engine_capture.h"
+#include "platform/deployment_context.h"
 
 #include <atomic>
 #include <chrono>

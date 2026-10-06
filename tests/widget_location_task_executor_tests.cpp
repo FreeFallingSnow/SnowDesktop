@@ -1,5 +1,5 @@
-#include "widget_location_task_executor.h"
-#include "widget_task_broker.h"
+#include "widget/tasks/widget_location_task_executor.h"
+#include "widget/tasks/widget_task_broker.h"
 #include <cstdlib>
 #include <iostream>
 #include <limits>

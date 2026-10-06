@@ -19,6 +19,8 @@ add_library(SnowDesktopSteamWorkshopCore STATIC
 target_compile_features(SnowDesktopSteamWorkshopCore PUBLIC cxx_std_20)
 target_include_directories(SnowDesktopSteamWorkshopCore PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(SnowDesktopSteamWorkshopCore PRIVATE
+    "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(SnowDesktopSteamWorkshopCore PUBLIC
     SnowDesktopSteamAppIdentity)
 
@@ -30,9 +32,9 @@ add_library(SnowDesktopWorkshopManagerSupport STATIC
     src/workshop_localization.cpp
     src/workshop_project.cpp
     src/theme_workshop_publish.cpp
-    "${CMAKE_SOURCE_DIR}/src/theme_library.cpp"
-    "${CMAKE_SOURCE_DIR}/src/personalization.cpp"
-    "${CMAKE_SOURCE_DIR}/src/atomic_file.cpp")
+    "${CMAKE_SOURCE_DIR}/src/theme/theme_library.cpp"
+    "${CMAKE_SOURCE_DIR}/src/theme/personalization.cpp"
+    "${CMAKE_SOURCE_DIR}/src/data/atomic_file.cpp")
 target_compile_features(SnowDesktopWorkshopManagerSupport PUBLIC cxx_std_20)
 target_include_directories(SnowDesktopWorkshopManagerSupport PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

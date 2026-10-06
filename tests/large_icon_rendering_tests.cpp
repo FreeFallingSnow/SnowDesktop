@@ -1,7 +1,7 @@
-#include "large_icon_renderer.h"
-#include "icon_loading_placeholder.h"
-#include "preview_png_writer.h"
-#include "large_icon_shape_geometry.h"
+#include "icons/large_icon_renderer.h"
+#include "icons/icon_loading_placeholder.h"
+#include "ui/preview/preview_png_writer.h"
+#include "icons/large_icon_shape_geometry.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <d2d1helper.h>

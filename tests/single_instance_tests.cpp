@@ -1,6 +1,6 @@
-#include "single_instance.h"
-#include "steam_runtime_context.h"
-#include "pending_window_message.h"
+#include "platform/single_instance.h"
+#include "steam/steam_runtime_context.h"
+#include "platform/pending_window_message.h"
 
 #include <windows.h>
 

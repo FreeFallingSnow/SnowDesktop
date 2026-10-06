@@ -1,7 +1,7 @@
 #pragma once
 #include "general_page_presenter.h"
-#include "../calendar_service.h"
-#include "../calendar_display.h"
+#include "system/calendar/calendar_service.h"
+#include "system/calendar/calendar_display.h"
 
 namespace snowdesktop::winui
 {

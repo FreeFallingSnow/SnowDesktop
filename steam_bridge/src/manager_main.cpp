@@ -25,7 +25,7 @@
 #include "steam_workshop_core.h"
 #include "workshop_localization.h"
 #include "workshop_project.h"
-#include "resource.h"
+#include "resources/resource.h"
 
 #include <algorithm>
 #include <array>

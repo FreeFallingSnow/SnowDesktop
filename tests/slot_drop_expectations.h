@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/slot_contract.h"
+#include "../src/core/slot_contract.h"
 
 #include <array>
 

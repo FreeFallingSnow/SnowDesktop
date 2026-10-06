@@ -1,0 +1,891 @@
+#include "app/app.h"
+#include "desktop/desktop_input_activation.h"
+#include "shell/shell_extension_menu_presentation.h"
+#include "ui/menu/menu_icon_render.h"
+#include "ui/menu/menu_label.h"
+#include "ui/menu/modern_menu.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
+#include "widget/packages/widget_package_image_cache.h"
+#include "app/popup/popup_window_pair_z_order.h"
+
+#include <sstream>
+
+// Converts the existing HMENU command model into fully custom popup windows.
+
+namespace
+{
+
+bool TranslateLegacyBuiltinGlyph(
+    const wchar_t* glyph, std::wstring& translated)
+{
+    if (!glyph || glyph[0] == L'\0' || glyph[1] != L'\0')
+        return false;
+    const wchar_t* fluent = nullptr;
+    switch (glyph[0])
+    {
+    case 0xE494: fluent = L"\uF41C"; break; // folder add
+    case 0xF002: fluent = L"\uF68F"; break; // search
+    case 0xF00A: fluent = L"\uF462"; break; // grid
+    case 0xF00C: fluent = L"\uF294"; break; // checkmark
+    case 0xF00D: fluent = L"\uF369"; break; // dismiss
+    case 0xF013: fluent = L"\uF6A9"; break; // settings
+    case 0xF017: fluent = L"\uF21D"; break; // calendar clock
+    case 0xF019: fluent = L"\uF150"; break; // download
+    case 0xF021: fluent = L"\uF13D"; break; // refresh
+    case 0xF023: fluent = L"\uE78F"; break; // lock
+    case 0xF031: fluent = L"\uF7E4"; break; // font
+    case 0xF032: fluent = L"\uF7A4"; break; // bold
+    case 0xF03A: fluent = L"\uF4ED"; break; // list
+    case 0xF044: fluent = L"\uF669"; break; // rename
+    case 0xF067: fluent = L"\uF109"; break; // add
+    case 0xF068: fluent = L"\uEBD0"; break; // subtract
+    case 0xF06E: fluent = L"\uE5F2"; break; // eye
+    case 0xF070: fluent = L"\uE5F5"; break; // eye off
+    case 0xF073: fluent = L"\uF21D"; break; // calendar
+    case 0xF07B: fluent = L"\uF418"; break; // folder
+    case 0xF07C: fluent = L"\uF42E"; break; // folder open
+    case 0xF08D: fluent = L"\uF601"; break; // pin
+    case 0xF08E: fluent = L"\uF582"; break; // open
+    case 0xF09C: fluent = L"\uE795"; break; // lock open
+    case 0xF0AE: fluent = L"\uF4ED"; break; // list/checklist
+    case 0xF0B2: fluent = L"\uF8E5"; break; // move
+    case 0xF0C4: fluent = L"\uF33A"; break; // cut
+    case 0xF0C5: fluent = L"\uF32B"; break; // copy
+    case 0xF0CA: fluent = L"\uE6CA"; break; // grouped list
+    case 0xF0EA: fluent = L"\uF2D5"; break; // paste
+    case 0xF108: fluent = L"\uF359"; break; // desktop
+    case 0xF12E: fluent = L"\uE9E9"; break; // puzzle piece
+    case 0xF141: fluent = L"\uE824"; break; // more horizontal
+    case 0xF15B: fluent = L"\uF378"; break; // document
+    case 0xF15D: fluent = L"\uF802"; break; // sort ascending
+    case 0xF160: fluent = L"\uF803"; break; // sort descending
+    case 0xF177: fluent = L"\uF15B"; break; // arrow left
+    case 0xF178: fluent = L"\uF181"; break; // arrow right
+    case 0xF1B3: fluent = L"\uF2F1"; break; // collections
+    case 0xF1D8: fluent = L"\uF699"; break; // send
+    case 0xF1DE: fluent = L"\uF587"; break; // options
+    case 0xF2ED: fluent = L"\uF34C"; break; // delete
+    case 0xF2F1: fluent = L"\uF13D"; break; // restart
+    case 0xF337: fluent = L"\uEC45"; break; // spacing
+    case 0xF35D: fluent = L"\uF582"; break; // open
+    case 0xF53F: fluent = L"\uF2F5"; break; // color
+    case 0xF58D: fluent = L"\uF8CB"; break; // layout/list
+    case 0xF802: fluent = L"\uF418"; break; // folder category
+    default: return false;
+    }
+    translated = fluent;
+    return true;
+}
+
+snowdesktop::MenuQuickIcon ResolveQuickIcon(UINT_PTR command)
+{
+    using snowdesktop::MenuQuickIcon;
+    if (command == kContextPasteCommand)
+        return MenuQuickIcon::Paste;
+    if (command == kContextNewMenu)
+        return MenuQuickIcon::NewItem;
+    if (command == kContextRefreshCommand)
+        return MenuQuickIcon::Refresh;
+    if (command == kContextCutCommand)
+        return MenuQuickIcon::Cut;
+    if (command == kContextCopyCommand)
+        return MenuQuickIcon::Copy;
+    if (command == kContextRenameCommand ||
+        command == kContextWidgetRename)
+        return MenuQuickIcon::Rename;
+    if (command == kContextDeleteCommand ||
+        command == kContextWidgetDelete)
+        return MenuQuickIcon::Delete;
+    if (command == kContextWidgetEdit)
+        return MenuQuickIcon::Settings;
+    return MenuQuickIcon::FontGlyph;
+}
+
+bool TryGetTaskbarRectAtPoint(POINT screenPoint, RECT& taskbarRect)
+{
+    HWND window = WindowFromPoint(screenPoint);
+    while (window)
+    {
+        wchar_t className[64]{};
+        GetClassNameW(window, className,
+            static_cast<int>(std::size(className)));
+        if (wcscmp(className, L"Shell_TrayWnd") == 0 ||
+            wcscmp(className, L"Shell_SecondaryTrayWnd") == 0)
+        {
+            return GetWindowRect(window, &taskbarRect) != FALSE;
+        }
+        window = GetParent(window);
+    }
+    return false;
+}
+
+enum class TrayEdge
+{
+    Bottom,
+    Top,
+    Left,
+    Right,
+};
+
+TrayEdge ResolveTrayEdge(
+    const RECT& surface, const MONITORINFO& monitorInfo)
+{
+    const int surfaceWidth = surface.right - surface.left;
+    const int surfaceHeight = surface.bottom - surface.top;
+    const int monitorWidth =
+        monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left;
+    const int monitorHeight =
+        monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top;
+    if (surfaceWidth >= monitorWidth / 2 &&
+        surfaceWidth >= surfaceHeight)
+    {
+        return surface.top + surface.bottom >=
+                monitorInfo.rcMonitor.top + monitorInfo.rcMonitor.bottom
+            ? TrayEdge::Bottom : TrayEdge::Top;
+    }
+    if (surfaceHeight >= monitorHeight / 2 &&
+        surfaceHeight > surfaceWidth)
+    {
+        return surface.left + surface.right >=
+                monitorInfo.rcMonitor.left + monitorInfo.rcMonitor.right
+            ? TrayEdge::Right : TrayEdge::Left;
+    }
+
+    // A small top-level surface is the Windows hidden-icons flyout.  Follow
+    // the taskbar edge reserved by the work area; Windows 11 uses the bottom
+    // edge when an auto-hidden taskbar leaves no work-area inset.
+    if (monitorInfo.rcWork.bottom < monitorInfo.rcMonitor.bottom)
+        return TrayEdge::Bottom;
+    if (monitorInfo.rcWork.top > monitorInfo.rcMonitor.top)
+        return TrayEdge::Top;
+    if (monitorInfo.rcWork.right < monitorInfo.rcMonitor.right)
+        return TrayEdge::Right;
+    if (monitorInfo.rcWork.left > monitorInfo.rcMonitor.left)
+        return TrayEdge::Left;
+    return TrayEdge::Bottom;
+}
+
+void PlaceMenuAwayFromTraySurface(
+    snowdesktop::modern_menu::Options& options,
+    POINT screenPoint,
+    const RECT& surface,
+    const MONITORINFO& monitorInfo,
+    int gap)
+{
+    switch (ResolveTrayEdge(surface, monitorInfo))
+    {
+    case TrayEdge::Bottom:
+    {
+        const int edge = std::min(
+            surface.top, monitorInfo.rcWork.bottom) - gap;
+        options.rootPlacement =
+            snowdesktop::modern_menu::RootPlacement::AboveAnchorRect;
+        options.anchorRect = {
+            screenPoint.x, edge, screenPoint.x + 1, edge };
+        break;
+    }
+    case TrayEdge::Top:
+    {
+        const int edge = std::max(
+            surface.bottom, monitorInfo.rcWork.top) + gap;
+        options.rootPlacement =
+            snowdesktop::modern_menu::RootPlacement::BelowAnchorRect;
+        options.anchorRect = {
+            screenPoint.x, edge, screenPoint.x + 1, edge };
+        break;
+    }
+    case TrayEdge::Right:
+    {
+        const int edge = std::min(
+            surface.left, monitorInfo.rcWork.right) - gap;
+        options.rootPlacement =
+            snowdesktop::modern_menu::RootPlacement::LeftOfAnchorRect;
+        options.anchorRect = {
+            edge, screenPoint.y, edge, screenPoint.y + 1 };
+        break;
+    }
+    case TrayEdge::Left:
+    {
+        const int edge = std::max(
+            surface.right, monitorInfo.rcWork.left) + gap;
+        options.rootPlacement =
+            snowdesktop::modern_menu::RootPlacement::RightOfAnchorRect;
+        options.anchorRect = {
+            edge, screenPoint.y, edge, screenPoint.y + 1 };
+        break;
+    }
+    }
+}
+
+void ConfigureTrayMenuPlacement(
+    snowdesktop::modern_menu::Options& options,
+    POINT screenPoint,
+    const RECT* capturedTraySurface)
+{
+    HMONITOR monitor = MonitorFromPoint(
+        screenPoint, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+    if (!GetMonitorInfoW(monitor, &monitorInfo))
+        return;
+
+    const int gap = std::max(1, MulDiv(
+        8, static_cast<int>(options.dpi), USER_DEFAULT_SCREEN_DPI));
+    if (capturedTraySurface)
+    {
+        PlaceMenuAwayFromTraySurface(options, screenPoint,
+            *capturedTraySurface, monitorInfo, gap);
+        return;
+    }
+    RECT taskbar{};
+    if (TryGetTaskbarRectAtPoint(screenPoint, taskbar))
+    {
+        PlaceMenuAwayFromTraySurface(options, screenPoint,
+            taskbar, monitorInfo, gap);
+        return;
+    }
+
+    // Overflow trays and auto-hidden taskbars may not expose a taskbar HWND at
+    // the click point.  In that case, place the menu away from the nearest
+    // monitor edge and still keep an eight-pixel gap from the work area.
+    const RECT& work = monitorInfo.rcWork;
+    const int leftDistance = std::abs(screenPoint.x - work.left);
+    const int rightDistance = std::abs(work.right - screenPoint.x);
+    const int topDistance = std::abs(screenPoint.y - work.top);
+    const int bottomDistance = std::abs(work.bottom - screenPoint.y);
+    const int nearest = std::min({
+        leftDistance, rightDistance, topDistance, bottomDistance });
+    if (nearest == bottomDistance)
+    {
+        const int edge = work.bottom - gap;
+        options.rootPlacement =
+            snowdesktop::modern_menu::RootPlacement::AboveAnchorRect;
+        options.anchorRect = {
+            screenPoint.x, edge, screenPoint.x + 1, edge };
+    }
+    else if (nearest == topDistance)
+    {
+        const int edge = work.top + gap;
+        options.rootPlacement =
+            snowdesktop::modern_menu::RootPlacement::BelowAnchorRect;
+        options.anchorRect = {
+            screenPoint.x, edge, screenPoint.x + 1, edge };
+    }
+    else if (nearest == rightDistance)
+    {
+        const int edge = work.right - gap;
+        options.rootPlacement =
+            snowdesktop::modern_menu::RootPlacement::LeftOfAnchorRect;
+        options.anchorRect = {
+            edge, screenPoint.y, edge, screenPoint.y + 1 };
+    }
+    else
+    {
+        const int edge = work.left + gap;
+        options.rootPlacement =
+            snowdesktop::modern_menu::RootPlacement::RightOfAnchorRect;
+        options.anchorRect = {
+            edge, screenPoint.y, edge, screenPoint.y + 1 };
+    }
+}
+
+} // namespace
+
+void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
+{
+    ClearMenuIcons();
+
+    UINT dpi = USER_DEFAULT_SCREEN_DPI;
+    HMONITOR monitor = MonitorFromPoint(
+        screenPoint, MONITOR_DEFAULTTONEAREST);
+    UINT dpiX = 0;
+    UINT dpiY = 0;
+    if (monitor && SUCCEEDED(GetDpiForMonitor(
+            monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) &&
+        dpiY > 0)
+    {
+        dpi = dpiY;
+    }
+    else if (hwnd_)
+    {
+        const UINT windowDpi = GetDpiForWindow(hwnd_);
+        if (windowDpi > 0)
+            dpi = windowDpi;
+    }
+
+    menuIconDpi_ = dpi;
+    const PersonalizationSettings appearance = CurrentPersonalization();
+    menuAppearanceStyle_ = std::clamp(
+        appearance.contextMenuStyle, 0, 6);
+    menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
+        static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_));
+}
+
+void DesktopApp::SetMenuItemIcon(
+    HMENU menu, UINT_PTR command, const wchar_t* text,
+    MenuIconFont font, snowdesktop::menu_icon::BuiltinIcon builtinIcon)
+{
+    if (!menu || !text || !*text)
+        return;
+
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+
+        MenuIconEntry* entry = nullptr;
+        for (auto& existing : menuIconPool_)
+        {
+            if (existing->menu == menu &&
+                existing->position == static_cast<UINT>(i))
+            {
+                entry = existing.get();
+                break;
+            }
+        }
+        if (!entry)
+        {
+            auto created = std::make_unique<MenuIconEntry>();
+            created->menu = menu;
+            created->position = static_cast<UINT>(i);
+            entry = created.get();
+            menuIconPool_.push_back(std::move(created));
+        }
+
+        entry->glyph.clear();
+        entry->builtinIcon = builtinIcon;
+        if (entry->imageBitmap)
+        {
+            DeleteObject(entry->imageBitmap);
+            entry->imageBitmap = nullptr;
+        }
+        entry->fontAwesome = font == MenuIconFont::FontAwesomeSolid;
+        if (!entry->quickAction)
+        {
+            entry->quickIcon = command == kContextMoreCommand
+                ? snowdesktop::MenuQuickIcon::Open
+                : snowdesktop::MenuQuickIcon::FontGlyph;
+        }
+        if (font == MenuIconFont::BuiltinFluentFromLegacy &&
+            !TranslateLegacyBuiltinGlyph(text, entry->glyph))
+        {
+            // A yet-unmapped built-in remains readable using the old font.
+            entry->glyph = text;
+            entry->fontAwesome = true;
+        }
+        else if (font != MenuIconFont::BuiltinFluentFromLegacy)
+        {
+            entry->glyph = text;
+        }
+        return;
+    }
+}
+
+void DesktopApp::SetMenuItemImage(HMENU menu, UINT_PTR command,
+    const snowdesktop::widget_runtime::PackageImageSource& source)
+{
+    if (!menu || source.pixels.empty()) return;
+    const snowdesktop::menu_icon::ImageSourceView sourceView{
+        source.pixels.data(), source.pixels.size(), source.width,
+        source.height, source.stride,
+    };
+    const auto metrics = snowdesktop::menu_icon::ResolveMetrics(menuIconDpi_,
+        snowdesktop::modern_menu::appearance_rules::IsWin10Style(
+            static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_)));
+    HBITMAP bitmap = snowdesktop::menu_icon::CreateImageBitmap(
+        sourceView, metrics.iconFontHeight);
+    if (!bitmap) return;
+
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+
+        MenuIconEntry* entry = nullptr;
+        for (auto& existing : menuIconPool_)
+        {
+            if (existing->menu == menu &&
+                existing->position == static_cast<UINT>(i))
+            {
+                entry = existing.get();
+                break;
+            }
+        }
+        if (!entry)
+        {
+            auto created = std::make_unique<MenuIconEntry>();
+            created->menu = menu;
+            created->position = static_cast<UINT>(i);
+            entry = created.get();
+            menuIconPool_.push_back(std::move(created));
+        }
+        entry->glyph.clear();
+        if (entry->imageBitmap) DeleteObject(entry->imageBitmap);
+        entry->imageBitmap = bitmap;
+        entry->builtinIcon = snowdesktop::menu_icon::BuiltinIcon::None;
+        return;
+    }
+    DeleteObject(bitmap);
+}
+
+void DesktopApp::SetMenuItemQuickAction(
+    HMENU menu, UINT_PTR command)
+{
+    if (!menu)
+        return;
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+        for (auto& entry : menuIconPool_)
+        {
+            if (entry->menu == menu &&
+                entry->position == static_cast<UINT>(i))
+            {
+                entry->quickAction = true;
+                entry->quickIcon = ResolveQuickIcon(command);
+                return;
+            }
+        }
+        auto entry = std::make_unique<MenuIconEntry>();
+        entry->menu = menu;
+        entry->position = static_cast<UINT>(i);
+        entry->quickAction = true;
+        entry->quickIcon = ResolveQuickIcon(command);
+        menuIconPool_.push_back(std::move(entry));
+        return;
+    }
+}
+
+void DesktopApp::SetMenuItemInlineAction(
+    HMENU menu, UINT_PTR command, UINT group, bool compact,
+    bool horizontalScroll)
+{
+    if (!menu)
+        return;
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+        for (auto& entry : menuIconPool_)
+        {
+            if (entry->menu == menu &&
+                entry->position == static_cast<UINT>(i))
+            {
+                entry->inlineAction = true;
+                entry->inlineGroup = group;
+                entry->compactInlineAction = compact;
+                entry->horizontalScrollAction = horizontalScroll;
+                return;
+            }
+        }
+        auto entry = std::make_unique<MenuIconEntry>();
+        entry->menu = menu;
+        entry->position = static_cast<UINT>(i);
+        entry->inlineAction = true;
+        entry->inlineGroup = group;
+        entry->compactInlineAction = compact;
+        entry->horizontalScrollAction = horizontalScroll;
+        menuIconPool_.push_back(std::move(entry));
+        return;
+    }
+}
+
+void DesktopApp::SetMenuItemTextInput(
+    HMENU menu, UINT_PTR command, const std::wstring& text)
+{
+    if (!menu)
+        return;
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_ID | MIIM_SUBMENU;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+        if (probe.wID != command &&
+            reinterpret_cast<UINT_PTR>(probe.hSubMenu) != command)
+            continue;
+        for (auto& entry : menuIconPool_)
+        {
+            if (entry->menu == menu &&
+                entry->position == static_cast<UINT>(i))
+            {
+                entry->textInput = true;
+                entry->inputText = text;
+                return;
+            }
+        }
+        auto entry = std::make_unique<MenuIconEntry>();
+        entry->menu = menu;
+        entry->position = static_cast<UINT>(i);
+        entry->textInput = true;
+        entry->inputText = text;
+        menuIconPool_.push_back(std::move(entry));
+        return;
+    }
+}
+
+UINT DesktopApp::ShowModernMenu(
+    HMENU rootMenu, POINT screenPoint, HWND owner,
+    bool placeOutsideDock, bool placeAwayFromTaskbar,
+    const RECT* capturedTraySurface,
+    std::function<bool(UINT,
+        std::vector<snowdesktop::modern_menu::Item>&)> onCommand,
+    std::function<void(const snowdesktop::modern_menu::HoverInfo&)>
+        onHover,
+    std::function<void(UINT, const std::wstring&,
+        std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged,
+    const snowdesktop::shell_extensions::Request* shellRequest,
+    std::function<HWND()> zOrderCompanion,
+    bool forceTopmost,
+    UINT textInputSubmitCommand, UINT textInputCancelCommand,
+    std::function<void(UINT,
+        std::vector<snowdesktop::modern_menu::Item>&)> onPrepareSubmenu)
+{
+    if (!rootMenu)
+        return 0;
+
+    std::function<std::vector<snowdesktop::modern_menu::Item>(HMENU)>
+        buildItems;
+    buildItems = [&](HMENU menu) {
+        std::vector<snowdesktop::modern_menu::Item> result;
+        const int count = GetMenuItemCount(menu);
+        result.reserve(static_cast<size_t>(std::max(0, count)));
+        for (int i = 0; i < count; ++i)
+        {
+            MENUITEMINFOW probe{ sizeof(probe) };
+            probe.fMask = MIIM_FTYPE | MIIM_STATE | MIIM_ID |
+                MIIM_SUBMENU | MIIM_STRING;
+            if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+                continue;
+
+            std::vector<wchar_t> label(
+                static_cast<size_t>(probe.cch) + 1, L'\0');
+            if (probe.cch > 0)
+            {
+                MENUITEMINFOW textInfo{ sizeof(textInfo) };
+                textInfo.fMask = MIIM_STRING;
+                textInfo.dwTypeData = label.data();
+                textInfo.cch = static_cast<UINT>(label.size());
+                GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE,
+                    &textInfo);
+            }
+
+            snowdesktop::modern_menu::Item item;
+            item.command = probe.wID;
+            auto menuLabel = snowdesktop::DecodeMenuLabel(label.data());
+            item.label = std::move(menuLabel.text);
+            item.accessKey = menuLabel.accessKey;
+            item.enabled =
+                (probe.fState & (MFS_DISABLED | MFS_GRAYED)) == 0;
+            item.checked = (probe.fState & MFS_CHECKED) != 0;
+            item.separator = (probe.fType & MFT_SEPARATOR) != 0;
+            if (probe.hSubMenu)
+                item.children = buildItems(probe.hSubMenu);
+
+            for (const auto& icon : menuIconPool_)
+            {
+                if (icon->menu == menu &&
+                    icon->position == static_cast<UINT>(i))
+                {
+                    item.glyph = icon->glyph;
+                    item.image = icon->imageBitmap;
+                    item.builtinIcon = icon->builtinIcon;
+                    item.iconFont = icon->fontAwesome
+                        ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
+                        : snowdesktop::modern_menu::IconFont::FluentRegular;
+                    item.quickAction = icon->quickAction &&
+                        !generalSettings_.contextMenuExpandQuickActions;
+                    item.inlineAction = icon->inlineAction;
+                    item.inlineGroup = icon->inlineGroup;
+                    item.compactInlineAction =
+                        icon->compactInlineAction;
+                    item.horizontalScrollAction =
+                        icon->horizontalScrollAction;
+                    item.textInput = icon->textInput;
+                    item.inputText = icon->inputText;
+                    item.quickIcon = icon->quickIcon;
+                    break;
+                }
+            }
+            result.push_back(std::move(item));
+        }
+        return result;
+    };
+
+    std::vector<snowdesktop::modern_menu::Item> items =
+        buildItems(rootMenu);
+    snowdesktop::modern_menu::Options options;
+    options.owner = owner;
+    options.anchor = screenPoint;
+    options.dpi = menuIconDpi_;
+    options.lightTheme = menuLightTheme_;
+    options.appearance = static_cast<
+        snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
+    options.onCommand = std::move(onCommand);
+    options.onTextChanged = std::move(onTextChanged);
+    options.textInputSubmitCommand = textInputSubmitCommand;
+    options.textInputCancelCommand = textInputCancelCommand;
+    options.onPrepareSubmenu = std::move(onPrepareSubmenu);
+    options.onHover = std::move(onHover);
+    options.zOrderCompanion = std::move(zOrderCompanion);
+    ConfigureModernMenuEventPump(options);
+    RECT popupSourceBounds{};
+    const bool floatingPopupHostVisible =
+        ShouldShowFloatingPopupWindow() &&
+        floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_) &&
+        IsWindowVisible(floatingPopupHwnd_) &&
+        (owner == floatingPopupHwnd_ ||
+            (GetWindowRect(floatingPopupHwnd_, &popupSourceBounds) && PtInRect(&popupSourceBounds, screenPoint)));
+    // A pointer can select another monitor while a menu is being prepared.
+    // Bind Z-order ownership to the actual source surface, not the last
+    // globally selected Dock. The menu keeps this HWND for its whole session.
+    const PersistentDockHost* menuDockHost = nullptr;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active || !host->container || !host->hwnd ||
+            !IsWindow(host->hwnd) || !IsWindowVisible(host->hwnd)) continue;
+        RECT inputBounds = host->container->GetInteractiveBounds();
+        OffsetRect(&inputBounds, virtualLeft_, virtualTop_);
+        // The side controls belong to the same merged strip as the center
+        // Dock. Its native menu owner must stay above both windows, while
+        // Options::owner still restores keyboard focus to the bar itself.
+        const bool mergedBarSource = host->container->IsMergedWithStatusBar() &&
+            statusBar_ && owner == statusBar_->InteractionWindow(host->monitor);
+        if (owner == host->hwnd || mergedBarSource || PtInRect(&inputBounds, screenPoint))
+        { menuDockHost = host.get(); break; }
+    }
+    const bool floatingDockHostWindowVisible = menuDockHost != nullptr;
+    const bool floatingDockHostEffectivelyFloating =
+        menuDockHost &&
+        (menuDockHost->container->IsMergedWithStatusBar() ||
+            IsPersistentDockHostEffectivelyFloating(*menuDockHost));
+    const HWND zOrderOwner =
+        snowdesktop::floating_popup_rules::
+            ResolveMenuZOrderOwner(
+                floatingPopupHostVisible,
+                floatingPopupHwnd_,
+                floatingDockHostWindowVisible,
+                floatingDockHostEffectivelyFloating,
+                menuDockHost ? menuDockHost->hwnd : nullptr);
+    if (floatingDockHostWindowVisible &&
+        !floatingDockHostEffectivelyFloating)
+    {
+        WriteDiagnosticLogEntry(
+            L"Desktop-band Dock excluded from modern menu Z-order ownership");
+    }
+    if (zOrderOwner)
+    {
+        // The shared popup host and floating Dock live in the topmost band.
+        // Joining that band is insufficient because its internal order can
+        // still leave a menu below its source surface. Make the menu an owned
+        // popup of the active floating host so Windows keeps it above that
+        // host, while Options::owner still receives focus after dismissal.
+        options.topmost = true;
+        options.zOrderOwner = zOrderOwner;
+    }
+    if (forceTopmost)
+    {
+        options.topmost = true;
+        options.zOrderOwner = owner;
+    }
+    if (placeAwayFromTaskbar)
+    {
+        options.topmost = true;
+        ConfigureTrayMenuPlacement(
+            options, screenPoint, capturedTraySurface);
+    }
+    else if (placeOutsideDock && hwnd_ && IsWindow(hwnd_))
+    {
+        POINT clientPoint = screenPoint;
+        ScreenToClient(hwnd_, &clientPoint);
+        if (DockContainer* dock = GetDockContainerAtPoint(clientPoint))
+        {
+            RECT dockRect = dock->GetInteractiveBounds();
+            POINT corners[] = {
+                { dockRect.left, dockRect.top },
+                { dockRect.right, dockRect.bottom },
+            };
+            MapWindowPoints(hwnd_, nullptr, corners, 2);
+            options.anchorRect = {
+                corners[0].x, corners[0].y,
+                corners[1].x, corners[1].y,
+            };
+            switch (dockSettings_.position)
+            {
+            case DockPosition::Top:
+                options.rootPlacement = snowdesktop::modern_menu::
+                    RootPlacement::BelowAnchorRect;
+                break;
+            case DockPosition::Left:
+                options.rootPlacement = snowdesktop::modern_menu::
+                    RootPlacement::RightOfAnchorRect;
+                break;
+            case DockPosition::Right:
+                options.rootPlacement = snowdesktop::modern_menu::
+                    RootPlacement::LeftOfAnchorRect;
+                break;
+            case DockPosition::Bottom:
+            default:
+                options.rootPlacement = snowdesktop::modern_menu::
+                    RootPlacement::AboveAnchorRect;
+                break;
+            }
+        }
+    }
+    if (zOrderOwner)
+    {
+        std::wostringstream line;
+        line << L"ModernMenuHostContext host=" << zOrderOwner
+             << L" popupHost=" << (floatingPopupHostVisible ? 1 : 0)
+             << L" shellDepth=" << shellPopupMenuLayerDepth_
+             << L" requestedPopupTopmost="
+             << (snowdesktop::floating_popup_rules::ShouldBeTopmost(
+                    true, shellPopupMenuLayerDepth_) ? 1 : 0)
+             << L" popupBackdropAvailable="
+             << (collectionPopupBackdropCompositor_.IsAvailable() ? 1 : 0)
+             << L" popupGlass=" << (collectionPopupGlassTheme_ ? 1 : 0)
+             << L" pid=" << GetCurrentProcessId();
+        WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
+    }
+    snowdesktop::shell_extensions::AddMoreManagementAction(
+        items, kContextMoreCommand, kContextManageMenuCommand, _LW("app.menu.manage_context_menu"));
+    snowdesktop::shell_extensions::MoveMoreToBottom(items, kContextMoreCommand);
+    std::unique_ptr<snowdesktop::shell_extensions::Presentation> extensions;
+    if (shellRequest)
+    {
+        extensions = std::make_unique<snowdesktop::shell_extensions::Presentation>(*shellRequest, generalSettings_.shellExtensions,
+            _LW("settings.contextMenu.loading"),
+            _LW("settings.contextMenu.failed"), snowdesktop::shell_extensions::SharedMenuService(),
+            [owner = controlHwnd_](bool succeeded) {
+                if (!succeeded && owner) PostMessageW(owner, RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable"), 0, 0);
+            });
+        extensions->Attach(items, options, kContextMoreCommand);
+    }
+    // A status-bar session may use a floating host as its native z-order owner.
+    // Retain that exact owner so hiding a different monitor never dismisses it.
+    if (statusBarMenuOwner_ == owner && statusBarMenuMonitor_)
+        statusBarMenuOwner_ = options.zOrderOwner ? options.zOrderOwner : options.owner;
+    const snowdesktop::modern_menu::Result result =
+        snowdesktop::modern_menu::Show(items, options);
+    if (result.command == kContextManageMenuCommand)
+    {
+        if (shellRequest) snowdesktop::shell_extensions::SharedMenuService().Manage(*shellRequest);
+        // Let the caller finish restoring its popup/desktop focus before the
+        // settings window opens. Reuse the existing pending-route dispatcher.
+        settingsWindowOpenRequest_.Request(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::ContextMenu, "contextMenu.extensions"));
+        if (!controlHwnd_ || !SetTimer(controlHwnd_, kSettingsWindowRetryTimerId, 1, nullptr))
+            TryShowPendingSettingsWindow();
+        return 0;
+    }
+    if (extensions && extensions->Invoke(result.command, screenPoint)) return 0;
+
+    return result.command;
+}
+
+void DesktopApp::ConfigureModernMenuEventPump(
+    snowdesktop::modern_menu::Options& options)
+{
+    options.owner = snowdesktop::desktop_input_activation::ResolveMenuOwner(
+        options.owner, hwnd_, inputHwnd_, floatingDockInputHwnd_,
+        floatingDockKeyboardSessionActive_ && floatingDockVisible_);
+    BeginDesktopInteractionTrace(L"menu-configure");
+    TraceDesktopInteraction(L"menu-focus-owner", options.owner, 0, 0, 0, true);
+    options.eventPump.scheduledWorkHandle =
+        uiAnimationScheduler_.WaitHandle();
+    options.eventPump.dispatchScheduledWork = [this]() {
+        uiAnimationScheduler_.DispatchDue();
+    };
+    options.eventPump.flushPresentation = [this]() {
+        FlushPendingCompositionCommit();
+        FlushPendingQuickNavigationCompositionCommit();
+    };
+    options.eventPump.traceDiagnostic = [this](const std::wstring& message) {
+        WriteDiagnosticLogEntry(
+            message.c_str(), DiagnosticLogLevel::Debug);
+        // Menu checkpoints share the click trace's window/composition state.
+        TraceDesktopInteraction(L"menu-checkpoint");
+    };
+    options.zOrderFloor = [this]() -> HWND {
+        HWND floor = nullptr;
+        // All visible DockHosts participate, including desktop-band hosts
+        // temporarily raised by Show Desktop or a window transition. Sample
+        // again after dispatch/presentation so a later promotion is covered.
+        for (const auto& host : persistentDockHosts_)
+        {
+            if (host && host->active && host->hwnd &&
+                IsWindowVisible(host->hwnd) &&
+                (!floor || snowdesktop::popup_window_pair_z_order::IsAbove(
+                    host->hwnd, floor)))
+                floor = host->hwnd;
+        }
+        return floor;
+    };
+}
+
+void DesktopApp::PreserveModernMenuHostZOrder(
+    HWND host, WINDOWPOS& position)
+{
+    const HWND menu = snowdesktop::modern_menu::ActiveRootWindow();
+    const UINT requestedFlags = position.flags;
+    if (!snowdesktop::popup_window_pair_z_order::PreserveOwnedMenuZOrder(
+            host, menu, position))
+    {
+        return;
+    }
+
+    // Repeated paints request the same operation. Log once per observed
+    // request/session rather than synchronously writing on every mouse move.
+    static HWND lastMenu = nullptr;
+    static HWND lastHost = nullptr;
+    static HWND lastInsertAfter = nullptr;
+    static UINT lastFlags = 0;
+    if (menu == lastMenu && host == lastHost &&
+        position.hwndInsertAfter == lastInsertAfter &&
+        requestedFlags == lastFlags)
+    {
+        return;
+    }
+    lastMenu = menu;
+    lastHost = host;
+    lastInsertAfter = position.hwndInsertAfter;
+    lastFlags = requestedFlags;
+    std::wostringstream line;
+    line << L"ModernMenuHostGuard menu=" << menu << L" host=" << host
+         << L" requestedInsertAfter=" << position.hwndInsertAfter
+         << L" requestedFlags=0x" << std::hex << requestedFlags
+         << L" appliedFlags=0x" << position.flags << std::dec
+         << L" shellDepth=" << shellPopupMenuLayerDepth_;
+    WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
+}
+
+void DesktopApp::ClearMenuIcons()
+{
+    menuIconPool_.clear();
+}

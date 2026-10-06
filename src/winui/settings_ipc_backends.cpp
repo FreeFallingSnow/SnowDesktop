@@ -1,7 +1,7 @@
 #include "settings_ipc_backends.h"
 #include "settings_ipc_values.h"
-#include "../l10n.h"
-#include "../widget_engine.h"
+#include "common/l10n.h"
+#include "widget/runtime/widget_engine.h"
 
 #include <shellapi.h>
 #include <unordered_map>

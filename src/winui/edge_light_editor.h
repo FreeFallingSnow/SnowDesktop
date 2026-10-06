@@ -1,6 +1,6 @@
 #pragma once
 #include "settings_presenter_controls.h"
-#include "../edge_light_settings.h"
+#include "theme/edge_light_settings.h"
 #include <winrt/Windows.UI.Text.h>
 
 namespace snowdesktop::winui

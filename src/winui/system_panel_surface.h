@@ -1,5 +1,5 @@
 #pragma once
-#include "../personalization.h"
+#include "theme/personalization.h"
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <span>
 

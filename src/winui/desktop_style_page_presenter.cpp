@@ -2,10 +2,11 @@
 #include "desktop_style_page_presenter.h"
 #include "merged_bar_height_editor.h"
 #include "settings_presenter_controls.h"
-#include "../desktop_style_presets.h"
-#include "../dock_collection_icon_rules.h"
-#include "../status_bar_view.h"
-#include "../status_bar_layout.h"
+#include "desktop/desktop_style_presets.h"
+#include "dock/dock_collection_icon_rules.h"
+#include "dock/merged_dock_presentation.h"
+#include "system/status_bar/status_bar_view.h"
+#include "system/status_bar/status_bar_layout.h"
 
 #include <array>
 #include <cmath>
@@ -573,13 +574,13 @@ struct DesktopStylePagePresenter::Impl
             muxc::Grid::SetRow(presetCards[index].item, index / columns);
         }
     }
-    mux::UIElement PreviewCollection(bool highContrast)
+    mux::UIElement PreviewCollection(bool highContrast, int extent = 40)
     {
         auto group = PreviewSurface();
-        group.Width(40); group.Height(40);
+        group.Width(extent); group.Height(extent);
         group.CornerRadius({9, 9, 9, 9});
         muxc::Canvas content;
-        const auto layout = dock_collection_icon_rules::CalculateLayout({0, 0, 40, 40});
+        const auto layout = dock_collection_icon_rules::CalculateLayout({0, 0, extent, extent});
         const std::array<std::pair<std::wstring_view, std::wstring_view>, 4> icons{{
             {L"browser", L"\xE774"}, {L"mail", L"\xE715"},
             {L"media", L"\xE714"}, {L"terminal", L"\xE756"}}};
@@ -595,7 +596,7 @@ struct DesktopStylePagePresenter::Impl
         group.Child(content);
         return group;
     }
-    muxc::StackPanel PreviewApps(const DockSettings& settings, bool highContrast, bool nativeTaskbar = false)
+    muxc::StackPanel PreviewApps(const DockSettings& settings, bool highContrast, bool nativeTaskbar = false, bool merged = false)
     {
         const auto position = nativeTaskbar ? nativeTaskbarPosition : settings.position;
         const bool vertical = position == DockPosition::Left || position == DockPosition::Right;
@@ -604,10 +605,14 @@ struct DesktopStylePagePresenter::Impl
         items.Spacing(3);
         items.HorizontalAlignment(mux::HorizontalAlignment::Center);
         items.VerticalAlignment(mux::VerticalAlignment::Center);
-        const double extent = nativeTaskbar ? 40 : 48;
+        const int spacing = static_cast<int>(std::round(12 * ClampDockScale(settings.thicknessScale)));
+        const int mergedIconSize = static_cast<int>(std::round((settings.mergedBarHeight -
+            2 * MergedDockVerticalPadding(settings.mergedBarHeight, spacing)) * ClampDockScale(settings.thicknessScale)));
+        const double iconExtent = nativeTaskbar ? 30 : merged ? mergedIconSize : 40;
+        const double extent = nativeTaskbar ? 40 : merged ? iconExtent + spacing : 48;
         const auto append = [&](const mux::UIElement& icon, bool running = false) {
             muxc::Grid cell;
-            cell.Width(extent); cell.Height(extent);
+            cell.Width(extent); cell.Height(merged ? settings.mergedBarHeight : extent);
             cell.Children().Append(icon);
             if (running)
             {
@@ -623,29 +628,31 @@ struct DesktopStylePagePresenter::Impl
         };
         const auto app = [&](std::wstring_view name, std::wstring_view fallback, bool running = false) {
             const auto asset = L"ms-appx:///Assets/Settings/Icons/preview-" + std::wstring(name) + L".svg";
-            append(PreviewAppIcon(asset, fallback, highContrast, nativeTaskbar ? 30 : 40), running);
+            append(PreviewAppIcon(asset, fallback, highContrast, iconExtent), running);
         };
         const auto divider = [&] {
             auto line = mux::Markup::XamlReader::Load(
                 LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />)").as<muxc::Border>();
-            line.Width(vertical ? 28 : 1); line.Height(vertical ? 1 : 28);
-            line.Margin({5, 5, 5, 5});
+            const double separatorExtent = merged ? std::min(28., iconExtent) : 28.;
+            line.Width(vertical ? separatorExtent : 1); line.Height(vertical ? 1 : separatorExtent);
+            line.Margin(merged ? (vertical ? mux::Thickness{0, 5, 0, 5} : mux::Thickness{5, 0, 5, 0}) :
+                mux::Thickness{5, 5, 5, 5});
             line.HorizontalAlignment(mux::HorizontalAlignment::Center);
             line.VerticalAlignment(mux::VerticalAlignment::Center);
             items.Children().Append(line);
         };
         if (nativeTaskbar || ShowDockWindowsButton(settings))
         {
-            append(PreviewStartIcon(nativeTaskbar ? 24 : 28, highContrast));
+            append(PreviewStartIcon(nativeTaskbar ? 24 : iconExtent * .7, highContrast));
             if (!nativeTaskbar) divider();
         }
         app(L"browser", L"\xE774", true);
         app(nativeTaskbar ? L"mail" : L"terminal", nativeTaskbar ? L"\xE715" : L"\xE756", true);
-        if (!nativeTaskbar) { append(PreviewCollection(highContrast)); divider(); }
+        if (!nativeTaskbar) { append(PreviewCollection(highContrast, static_cast<int>(iconExtent))); divider(); }
         app(L"folder", L"\xE8B7");
         if (!nativeTaskbar)
         {
-            append(PreviewGlyph(L"\xE721", 26));
+            append(PreviewGlyph(L"\xE721", iconExtent * .65));
             app(L"trash", L"\xE74D");
         }
         return items;
@@ -662,7 +669,7 @@ struct DesktopStylePagePresenter::Impl
         return status;
     }
     muxc::Grid PreviewStatusBar(const StatusBarSettings& settings, bool merged,
-        const mux::UIElement& dockContent = nullptr)
+        const mux::UIElement& dockContent = nullptr, int mergedHeightDip = 48)
     {
         // Demonstrate the controls using the real item builder. Performance
         // metrics clutter the miniature; suppress them only in this local copy.
@@ -687,7 +694,8 @@ struct DesktopStylePagePresenter::Impl
         {
             if (merged && item.key == "quickSearch") continue;
             muxc::Grid cell;
-            cell.Height(merged ? 44 : 32);
+            const bool twoLineClock = StatusBarUsesTwoLineClock(merged, static_cast<float>(mergedHeightDip), 1.f);
+            cell.Height(merged && item.key == "clock" && twoLineClock ? 40 : 32);
             if (item.key == "controlCenter")
             {
                 muxc::StackPanel controls;
@@ -701,7 +709,7 @@ struct DesktopStylePagePresenter::Impl
             else if (!item.text.empty())
             {
                 muxc::TextBlock text;
-                text.Text(item.key == "clock" ? StatusBarClockDisplay(item.text, merged) : item.text);
+                text.Text(item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text);
                 text.FontSize(12);
                 text.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
                 text.TextAlignment(mux::TextAlignment::Center);
@@ -778,14 +786,14 @@ struct DesktopStylePagePresenter::Impl
         bar.Margin(inset);
         if (dockBar)
         {
-            const auto apps = PreviewApps(settings, highContrast);
+            const auto apps = PreviewApps(settings, highContrast, false, merged);
             if (island)
             {
                 apps.Measure({2000, 2000});
                 if (vertical) { bar.Height(apps.DesiredSize().Height + 20); bar.VerticalAlignment(mux::VerticalAlignment::Center); }
                 else { bar.Width(apps.DesiredSize().Width + 20); bar.HorizontalAlignment(mux::HorizontalAlignment::Center); }
             }
-            bar.Child(merged ? PreviewStatusBar(values.statusBar, true, apps).as<mux::UIElement>() :
+            bar.Child(merged ? PreviewStatusBar(values.statusBar, true, apps, settings.mergedBarHeight).as<mux::UIElement>() :
                 FitPreviewContent(apps, mux::HorizontalAlignment::Center).as<mux::UIElement>());
         }
         else bar.Child(PreviewStatusBar(values.statusBar, false));

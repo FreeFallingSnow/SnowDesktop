@@ -3,7 +3,7 @@
 #include "taskbar_classic_appearance.h"
 #include "taskbar_material_render.h"
 #include "taskbar_hook_lifecycle.h"
-#include "../taskbar_monitor.h"
+#include "../platform/taskbar_monitor.h"
 
 #include <commctrl.h>
 #include <dwmapi.h>

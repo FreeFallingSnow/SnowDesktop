@@ -2,8 +2,8 @@
 
 #include "SettingsShell.g.h"
 
-#include "../settings_controller.h"
-#include "../settings_search_index.h"
+#include "settings/settings_controller.h"
+#include "settings/settings_search_index.h"
 #include "backup_data_page_presenter.h"
 #include "animation_performance_page_presenter.h"
 #include "desktop_page_presenter.h"

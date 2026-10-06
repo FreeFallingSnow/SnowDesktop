@@ -1,4 +1,4 @@
-#include "winui/hotkey_recorder_rules.h"
+#include "../src/winui/hotkey_recorder_rules.h"
 
 #include <iostream>
 

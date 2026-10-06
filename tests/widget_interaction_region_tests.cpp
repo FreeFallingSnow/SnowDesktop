@@ -1,4 +1,4 @@
-#include "widget_interaction_region.h"
+#include "widget/view/widget_interaction_region.h"
 
 #include <cstdlib>
 #include <cmath>

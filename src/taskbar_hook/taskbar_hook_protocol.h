@@ -4,8 +4,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include "../panel_gradient.h"
-#include "../edge_light_settings.h"
+#include "../theme/panel_gradient.h"
+#include "../theme/edge_light_settings.h"
 #include "taskbar_autohide_trace.h"
 #include "taskbar_autohide_adapter.h"
 

@@ -1,5 +1,5 @@
-#include "steam_entitlement.h"
-#include "diagnostic_log.h"
+#include "steam/steam_entitlement.h"
+#include "diagnostics/diagnostic_log.h"
 
 #include <windows.h>
 

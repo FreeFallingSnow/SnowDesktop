@@ -1,9 +1,9 @@
-#include "../settings_process.h"
-#include "../settings_ipc_services.h"
+#include "settings/settings_process.h"
+#include "settings/settings_ipc_services.h"
 #include "settings_ipc_backends.h"
 #include "settings_ipc_values.h"
-#include "../l10n.h"
-#include "../diagnostic_log.h"
+#include "common/l10n.h"
+#include "diagnostics/diagnostic_log.h"
 
 #include <commctrl.h>
 #include <ole2.h>

@@ -2,10 +2,10 @@
 
 #include "windows_compat.h"
 
-#include "../settings_controller.h"
-#include "../shell_extension_service.h"
-#include "../large_icon_settings.h"
-#include "../settings_search_index.h"
+#include "settings/settings_controller.h"
+#include "shell/shell_extension_service.h"
+#include "icons/large_icon_settings.h"
+#include "settings/settings_search_index.h"
 #include "backup_data_page_backend.h"
 #include "general_page_presenter.h"
 #include "calendar_page_presenter.h"

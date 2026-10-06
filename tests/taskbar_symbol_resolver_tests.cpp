@@ -1,7 +1,7 @@
-#include "taskbar_hook/taskbar_symbol_resolver.h"
-#include "taskbar_hook/taskbar_hook_protocol.h"
-#include "taskbar_hook/taskbar_autohide_rules.h"
-#include "tray_modern_bootstrap.h"
+#include "../src/taskbar_hook/taskbar_symbol_resolver.h"
+#include "../src/taskbar_hook/taskbar_hook_protocol.h"
+#include "../src/taskbar_hook/taskbar_autohide_rules.h"
+#include "system/tray/tray_modern_bootstrap.h"
 #include <shellapi.h>
 #include <fstream>
 #include <iostream>

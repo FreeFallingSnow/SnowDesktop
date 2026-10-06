@@ -1,4 +1,4 @@
-#include "widget_author_test.h"
+#include "widget/authoring/widget_author_test.h"
 #include "test_temporary_directory.h"
 
 #include <cstdlib>

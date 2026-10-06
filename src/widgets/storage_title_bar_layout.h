@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../types.h"
-#include "../widget_visibility_rules.h"
+#include "common/types.h"
+#include "widget/runtime/widget_visibility_rules.h"
 #include "widget_chrome_rules.h"
 
 namespace snowdesktop::storage_title_bar

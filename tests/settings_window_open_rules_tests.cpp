@@ -1,8 +1,8 @@
-#include "settings_window_open_rules.h"
-#include "usage_guide.h"
-#include "usage_guide_panel.h"
-#include "usage_guide_settings.h"
-#include "json_value.h"
+#include "settings/settings_window_open_rules.h"
+#include "platform/usage_guide.h"
+#include "platform/usage_guide_panel.h"
+#include "platform/usage_guide_settings.h"
+#include "common/json_value.h"
 #include <windows.h>
 
 #include <algorithm>
@@ -220,30 +220,24 @@ int main(int argc, char** argv)
     if (argc == 2)
     {
         const std::string source = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "settings_window.cpp");
+            std::filesystem::path(argv[1]) / "src/settings/settings_window.cpp");
         const std::string header = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "settings_window.h");
+            std::filesystem::path(argv[1]) / "src/settings/settings_window.h");
         const std::string host = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "winui" /
                 "settings_window_host.cpp");
         const std::string appRun = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_run.cpp");
+            std::filesystem::path(argv[1]) / "src/app/lifecycle/app_run.cpp");
         const std::string appSettings = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_settings_apply.cpp");
+            std::filesystem::path(argv[1]) / "src/app/lifecycle/app_settings_apply.cpp");
         const std::string dockTracking = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_dock_window_tracking.cpp");
+            std::filesystem::path(argv[1]) / "src/app/dock/app_dock_window_tracking.cpp");
         const std::string dockControl = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_dock_window_control.cpp");
+            std::filesystem::path(argv[1]) / "src/app/dock/app_dock_window_control.cpp");
         const std::string floatingPopup = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_floating_popup_window.cpp");
+            std::filesystem::path(argv[1]) / "src/app/popup/app_floating_popup_window.cpp");
         const std::string tray = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_tray.cpp");
+            std::filesystem::path(argv[1]) / "src/app/tray/app_tray.cpp");
         Check(!source.empty(), "settings window source is readable");
         Check(!header.empty() && !host.empty() && !appRun.empty() &&
                 !appSettings.empty() && !dockTracking.empty() &&
@@ -422,8 +416,7 @@ int main(int argc, char** argv)
             "the WinUI host retains durable close flushing and the application has no frame-render loop for settings");
 
         const std::string pageGridSource = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_page_grid.cpp");
+            std::filesystem::path(argv[1]) / "src/app/layout/app_page_grid.cpp");
         const std::size_t previewBegin = pageGridSource.find(
             "void DesktopApp::PreviewIconSpacing(float value)");
         const std::size_t previewEnd = pageGridSource.find(

@@ -2,12 +2,12 @@
 
 #include "widget_settings_presenter.h"
 
-#include "../personalization.h"
+#include "theme/personalization.h"
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
 #include "appearance_sections.h"
-#include "../theme_library_settings.h"
-#include "../widget_theme_selection.h"
+#include "theme/theme_library_settings.h"
+#include "widget/runtime/widget_theme_selection.h"
 #include "edge_light_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>

@@ -1,7 +1,7 @@
-#include "theme_library_settings.h"
-#include "json_value.h"
-#include "winui/theme_edit_state.h"
-#include "app/quick_navigation_theme.h"
+#include "theme/theme_library_settings.h"
+#include "common/json_value.h"
+#include "../src/winui/theme_edit_state.h"
+#include "../src/app/navigation/quick_navigation_theme.h"
 
 #include <algorithm>
 #include <fstream>

@@ -1,4 +1,4 @@
-#include "widget_package_image_cache.h"
+#include "widget/packages/widget_package_image_cache.h"
 
 #include <cstdlib>
 #include <filesystem>

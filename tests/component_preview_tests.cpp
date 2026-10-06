@@ -1,7 +1,7 @@
-#include "component_preview.h"
-#include "widget_clip_geometry.h"
+#include "ui/preview/component_preview.h"
+#include "widget/view/widget_clip_geometry.h"
 #include <wincodec.h>
-#include "widget_preview_scene.h"
+#include "widget/preview/widget_preview_scene.h"
 
 #include <windows.h>
 

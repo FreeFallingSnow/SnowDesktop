@@ -1,6 +1,6 @@
-#include "virtual_file_drop.h"
-#include "external_drop_content.h"
-#include "clipboard_file_operation.h"
+#include "drag_drop/virtual_file_drop.h"
+#include "drag_drop/external_drop_content.h"
+#include "drag_drop/clipboard_file_operation.h"
 
 #include <windows.h>
 #include <shlobj.h>

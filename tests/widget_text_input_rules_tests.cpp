@@ -1,5 +1,5 @@
-#include "widget_text_input_rules.h"
-#include "text_input_state.h"
+#include "widget/view/widget_text_input_rules.h"
+#include "ui/input/text_input_state.h"
 
 #include <dwrite.h>
 #include <cmath>

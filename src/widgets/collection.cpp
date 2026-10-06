@@ -11,21 +11,21 @@
  * 一个普通项目；兼容的项目拖拽期间临时恢复"全部"按钮供悬停展开。
  */
 
-#include "widget.h"
-#include "slot.h"
-#include "item.h"
-#include "types.h"
-#include "app.h"
-#include "drop_model.h"
-#include "widget_preview_scene.h"
-#include "../item_render_layer_rules.h"
-#include "../collection_titleless_rules.h"
-#include "../widget_item_layout.h"
+#include "core/widget.h"
+#include "core/slot.h"
+#include "core/item.h"
+#include "common/types.h"
+#include "app/app.h"
+#include "core/drop_model.h"
+#include "widget/preview/widget_preview_scene.h"
+#include "layout/item_render_layer_rules.h"
+#include "layout/collection_titleless_rules.h"
+#include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
-#include "../l10n.h"
+#include "common/l10n.h"
 
 
 static RECT CollectionItemRect(Collection* widget, size_t linearIndex);

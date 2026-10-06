@@ -1,5 +1,5 @@
-#include "json_value.h"
-#include "l10n.h"
+#include "common/json_value.h"
+#include "common/l10n.h"
 
 #include <windows.h>
 

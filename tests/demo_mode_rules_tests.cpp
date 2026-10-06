@@ -1,6 +1,6 @@
-#include "demo_mode_rules.h"
-#include "demo_collection_rules.h"
-#include "demo_asset_paths.h"
+#include "platform/demo_mode_rules.h"
+#include "platform/demo_collection_rules.h"
+#include "platform/demo_asset_paths.h"
 
 #include <array>
 #include <iostream>

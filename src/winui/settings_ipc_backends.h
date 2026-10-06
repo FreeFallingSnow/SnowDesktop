@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../settings_ipc_channel.h"
+#include "settings/settings_ipc_channel.h"
 #include "settings_window_host.h"
 
 namespace snowdesktop::settings_ipc

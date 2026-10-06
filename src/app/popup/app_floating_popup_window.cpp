@@ -1,0 +1,1420 @@
+#include "app/app.h"
+#include "drag_drop/drag_input_rules.h"
+#include "popup_window_pair_z_order.h"
+#include "layout/popup_round_geometry.h"
+#include "theme/flat_glass_rim.h"
+
+#include <array>
+#include <bit>
+#include <sstream>
+
+namespace
+{
+constexpr UINT_PTR kPopupMouseLeaveTimerId = 1;
+constexpr UINT kPopupMouseLeavePollIntervalMs = 50;
+
+RECT UnionRects(const RECT& first, const RECT& second)
+{
+    if (IsRectEmpty(&first))
+        return second;
+    if (IsRectEmpty(&second))
+        return first;
+    RECT result{};
+    UnionRect(&result, &first, &second);
+    return result;
+}
+
+struct MenuHostZOrderSnapshot
+{
+    HWND menu = nullptr;
+    HWND host = nullptr;
+    HWND menuPrevious = nullptr;
+    HWND menuNext = nullptr;
+    HWND hostPrevious = nullptr;
+    HWND hostNext = nullptr;
+    LONG_PTR menuExStyle = 0;
+    LONG_PTR hostExStyle = 0;
+    bool menuAboveHost = false;
+
+    bool operator==(const MenuHostZOrderSnapshot& other) const
+    {
+        return menu == other.menu &&
+            host == other.host &&
+            menuPrevious == other.menuPrevious &&
+            menuNext == other.menuNext &&
+            hostPrevious == other.hostPrevious &&
+            hostNext == other.hostNext &&
+            menuExStyle == other.menuExStyle &&
+            hostExStyle == other.hostExStyle &&
+            menuAboveHost == other.menuAboveHost;
+    }
+};
+
+MenuHostZOrderSnapshot CaptureMenuHostZOrder(HWND host)
+{
+    MenuHostZOrderSnapshot snapshot;
+    snapshot.menu = snowdesktop::modern_menu::ActiveRootWindow();
+    if (!snapshot.menu || !host || !IsWindow(host))
+        return snapshot;
+
+    snapshot.host = host;
+    snapshot.menuPrevious = GetWindow(snapshot.menu, GW_HWNDPREV);
+    snapshot.menuNext = GetWindow(snapshot.menu, GW_HWNDNEXT);
+    snapshot.hostPrevious = GetWindow(host, GW_HWNDPREV);
+    snapshot.hostNext = GetWindow(host, GW_HWNDNEXT);
+    snapshot.menuExStyle =
+        GetWindowLongPtrW(snapshot.menu, GWL_EXSTYLE);
+    snapshot.hostExStyle = GetWindowLongPtrW(host, GWL_EXSTYLE);
+    for (HWND current = snapshot.menu; current;
+         current = GetWindow(current, GW_HWNDNEXT))
+    {
+        if (current == host)
+        {
+            snapshot.menuAboveHost = true;
+            break;
+        }
+    }
+    return snapshot;
+}
+
+void TraceMenuHostZOrderTransition(
+    const wchar_t* stage,
+    const MenuHostZOrderSnapshot& before,
+    const MenuHostZOrderSnapshot& after,
+    bool force = false)
+{
+    if ((!before.menu && !after.menu) ||
+        (!force && before == after))
+    {
+        return;
+    }
+
+    const MenuHostZOrderSnapshot& current =
+        after.menu ? after : before;
+    std::wostringstream line;
+    line << L"FloatingPopupZOrder stage=" << stage
+         << L" menu=" << current.menu
+         << L" host=" << current.host
+         << L" beforeAbove=" << (before.menuAboveHost ? 1 : 0)
+         << L" afterAbove=" << (after.menuAboveHost ? 1 : 0)
+         << L" menuTopmost="
+         << ((current.menuExStyle & WS_EX_TOPMOST) ? 1 : 0)
+         << L" hostTopmost="
+         << ((current.hostExStyle & WS_EX_TOPMOST) ? 1 : 0)
+         << L" menuPrev=" << current.menuPrevious
+         << L" menuNext=" << current.menuNext
+         << L" hostPrev=" << current.hostPrevious
+         << L" hostNext=" << current.hostNext;
+    WriteDiagnosticLogEntry(
+        line.str().c_str(), DiagnosticLogLevel::Debug);
+}
+
+}
+
+bool DesktopApp::IsCollectionPopupHostedByFloatingWindow() const
+{
+    return snowdesktop::floating_popup_rules::HostsCollectionPopup(
+        GetOpenPopupWidget() != nullptr);
+}
+
+bool DesktopApp::IsLuaPanelHostedByFloatingWindow() const
+{
+    return snowdesktop::floating_popup_rules::HostsLuaPanel(
+        !luaWidgetPanelRequest_.widgetId.empty());
+}
+
+bool DesktopApp::ShouldShowFloatingPopupWindow() const
+{
+    return snowdesktop::floating_popup_rules::ShouldShow(
+        IsCollectionPopupHostedByFloatingWindow(),
+        IsLuaPanelHostedByFloatingWindow());
+}
+
+LRESULT CALLBACK DesktopApp::FloatingPopupMouseHookProc(
+    int code, WPARAM message, LPARAM data)
+{
+    if (code == HC_ACTION &&
+        (message == WM_LBUTTONDOWN ||
+         message == WM_RBUTTONDOWN ||
+         message == WM_MBUTTONDOWN ||
+         message == WM_XBUTTONDOWN))
+    {
+        const auto* event =
+            reinterpret_cast<const MSLLHOOKSTRUCT*>(data);
+        const HWND notificationWindow =
+            floatingPopupMouseHookNotificationWindow_.load();
+        const std::uint32_t generation =
+            floatingPopupMouseHookActiveGeneration_.load();
+        if (event && generation != 0 &&
+            notificationWindow &&
+            IsWindow(notificationWindow))
+        {
+            static_assert(sizeof(LPARAM) == sizeof(std::uint64_t),
+                "SnowDesktop popup input payload requires the supported x64 build");
+            const std::uint64_t screenPointPayload =
+                snowdesktop::floating_popup_rules::
+                    PackScreenPoint(event->pt);
+            PostMessageW(
+                notificationWindow,
+                kFloatingPopupExternalPointerMessage,
+                static_cast<WPARAM>(generation),
+                std::bit_cast<LPARAM>(screenPointPayload));
+        }
+    }
+    return CallNextHookEx(nullptr, code, message, data);
+}
+
+bool DesktopApp::StartFloatingPopupOutsideClickMonitor()
+{
+    if (floatingPopupMouseHook_)
+        return true;
+    if (!floatingPopupHwnd_ ||
+        !IsWindow(floatingPopupHwnd_))
+        return false;
+
+    ++floatingPopupMouseHookGeneration_;
+    if (floatingPopupMouseHookGeneration_ == 0)
+        ++floatingPopupMouseHookGeneration_;
+    floatingPopupMouseHookActiveGeneration_.store(
+        floatingPopupMouseHookGeneration_);
+    floatingPopupMouseHookNotificationWindow_.store(
+        floatingPopupHwnd_);
+    if (floatingPopupMouseHook_.Start(
+            instance_, &DesktopApp::FloatingPopupMouseHookProc))
+        return true;
+
+    floatingPopupMouseHookNotificationWindow_.store(nullptr);
+    floatingPopupMouseHookActiveGeneration_.store(0);
+    WriteDiagnosticLogEntry(
+        L"Floating popup outside-click hook FAILED");
+    return false;
+}
+
+void DesktopApp::StopFloatingPopupOutsideClickMonitor()
+{
+    floatingPopupMouseHookNotificationWindow_.store(nullptr);
+    if (!floatingPopupMouseHook_)
+    {
+        floatingPopupMouseHook_.Stop();
+        floatingPopupMouseHookActiveGeneration_.store(0);
+        return;
+    }
+    ++floatingPopupMouseHookGeneration_;
+    if (floatingPopupMouseHookGeneration_ == 0)
+        ++floatingPopupMouseHookGeneration_;
+    floatingPopupMouseHook_.Stop();
+    floatingPopupMouseHookActiveGeneration_.store(0);
+}
+
+void DesktopApp::AdvanceFloatingPopupContentGeneration()
+{
+    popupMouseLeaveController_.Reset();
+    ++floatingPopupMouseHookGeneration_;
+    if (floatingPopupMouseHookGeneration_ == 0)
+        ++floatingPopupMouseHookGeneration_;
+    if (floatingPopupMouseHook_)
+    {
+        // A low-level pointer notification is queued asynchronously. Keep it
+        // tied to the popup contents that existed at the physical button-down
+        // so it cannot dismiss a Lua panel created by that same click.
+        floatingPopupMouseHookActiveGeneration_.store(
+            floatingPopupMouseHookGeneration_);
+    }
+}
+
+void DesktopApp::HandleFloatingPopupExternalPointerDown(
+    std::uint32_t generation,
+    std::uint64_t screenPointPayload)
+{
+    if (!snowdesktop::floating_popup_rules::
+            IsCurrentPointerNotification(
+                generation,
+                floatingPopupMouseHookGeneration_) ||
+        !ShouldShowFloatingPopupWindow())
+        return;
+
+    const POINT screenPoint =
+        snowdesktop::floating_popup_rules::
+            UnpackScreenPoint(screenPointPayload);
+    POINT desktopPoint = screenPoint;
+    const bool hasDesktopPoint =
+        hwnd_ && IsWindow(hwnd_) &&
+        ScreenToClient(hwnd_, &desktopPoint);
+    const bool pointOnHostedPopup =
+        hasDesktopPoint &&
+        snowdesktop::floating_popup_rules::
+            IsPointOnHostedPopupSurface(
+                desktopPoint,
+                floatingPopupCollectionRegion_,
+                floatingPopupLuaPanelRegion_);
+    HWND targetWindow = WindowFromPoint(screenPoint);
+    if (!targetWindow && !pointOnHostedPopup)
+        return;
+    const DWORD currentProcessId = GetCurrentProcessId();
+    const auto belongsToInternalSurface =
+        [this, currentProcessId](HWND window) {
+            DWORD processId = 0;
+            if (window)
+                GetWindowThreadProcessId(window, &processId);
+            return snowdesktop::floating_popup_rules::
+                IsInternalPointerTarget(
+                    processId != 0 &&
+                        processId == currentProcessId,
+                    IsSettingsApplicationWindow(window));
+        };
+    // The desktop renderer is a child of Explorer's WorkerW. Test the direct
+    // hit first so an in-process desktop/Dock click does not inherit the
+    // external process identity of its shell-owned root.
+    bool targetBelongsToInternalSurface =
+        pointOnHostedPopup ||
+        belongsToInternalSurface(targetWindow);
+    if (!targetBelongsToInternalSurface)
+    {
+        targetBelongsToInternalSurface =
+            belongsToInternalSurface(
+                GetAncestor(targetWindow, GA_ROOTOWNER));
+    }
+    const bool dragActive =
+        dragSession_.IsActive() ||
+        dragDropController_.IsExternalDragActive();
+    // Every status bar is a separate HWND and never enters Dock pointer-down
+    // handling. Use the clicked monitor, not the popup's source monitor: both
+    // merged side controls and independent bars are outside this collection.
+    // Keep Dock's own HWND internal so its folder button toggles on release.
+    const HMONITOR hitMonitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONULL);
+    const bool statusBarOutsideCollection = !pointOnHostedPopup && targetWindow &&
+        statusBar_ && hitMonitor && targetWindow == statusBar_->InteractionWindow(hitMonitor);
+    const bool dismissCollection =
+        snowdesktop::floating_popup_rules::
+            ShouldDismissForExternalPointerDown(
+                IsCollectionPopupHostedByFloatingWindow(),
+                targetBelongsToInternalSurface && !statusBarOutsideCollection,
+                dragActive);
+    const bool dismissLuaPanel =
+        snowdesktop::floating_popup_rules::
+            ShouldDismissLuaPanelForExternalPointerDown(
+                IsLuaPanelHostedByFloatingWindow(),
+                luaWidgetPanelRequest_.dismissOnOutside,
+                targetBelongsToInternalSurface,
+                dragActive);
+    if (dismissCollection || dismissLuaPanel)
+    {
+        wchar_t message[320]{};
+        swprintf_s(
+            message,
+            L"Popup input trace: external-pointer generation=%u current=%u target=%p owned=%d collection=%d lua=%d dismissCollection=%d dismissLua=%d",
+            generation,
+            floatingPopupMouseHookGeneration_,
+            targetWindow,
+            targetBelongsToInternalSurface ? 1 : 0,
+            IsCollectionPopupHostedByFloatingWindow() ? 1 : 0,
+            IsLuaPanelHostedByFloatingWindow() ? 1 : 0,
+            dismissCollection ? 1 : 0,
+            dismissLuaPanel ? 1 : 0);
+        WriteDiagnosticLogEntry(message);
+    }
+    if (dismissCollection)
+    {
+        pendingCollectionPopupOpen_.reset();
+        CloseCollectionPopup();
+    }
+    if (dismissLuaPanel)
+    {
+        CloseLuaWidgetPanel(
+            luaWidgetPanelRequest_.widgetId,
+            "external-pointer");
+    }
+}
+
+RECT DesktopApp::CalculateFloatingPopupWindowBounds() const
+{
+    RECT bounds{};
+    if (IsCollectionPopupHostedByFloatingWindow())
+    {
+        if (const DesktopWidget* popup = GetOpenPopupWidget())
+        {
+            bounds = InflateCopy(
+                GetCollectionPopupRect(*popup), 6);
+        }
+    }
+    if (IsLuaPanelHostedByFloatingWindow())
+    {
+        RECT panelBounds{};
+        if (luaWidgetPanelRequest_.modal && hwnd_ && IsWindow(hwnd_))
+            GetClientRect(hwnd_, &panelBounds);
+        else
+            panelBounds = InflateCopy(GetLuaWidgetPanelRect(), 6);
+        bounds = UnionRects(bounds, panelBounds);
+    }
+    return bounds;
+}
+
+bool DesktopApp::CreateFloatingPopupWindow()
+{
+    if (floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
+        return true;
+    if (!instance_)
+        return false;
+
+    floatingPopupHwnd_ = CreateWindowExW(
+        snowdesktop::floating_popup_rules::kWindowExStyle,
+        kFloatingPopupWindowClassName,
+        L"SnowDesktopFloatingPopup",
+        WS_POPUP,
+        0, 0, 1, 1,
+        nullptr, nullptr, instance_, this);
+    if (!floatingPopupHwnd_)
+        return false;
+
+    const BOOL disableTransitions = TRUE;
+    DwmSetWindowAttribute(
+        floatingPopupHwnd_,
+        DWMWA_TRANSITIONS_FORCEDISABLED,
+        &disableTransitions,
+        sizeof(disableTransitions));
+
+    OleDragDropAdapter* adapter = EnsureOleDragDropAdapter();
+    floatingPopupDropTargetRegistered_ = adapter &&
+        SUCCEEDED(RegisterDragDrop(
+            floatingPopupHwnd_,
+            static_cast<IDropTarget*>(adapter)));
+    return true;
+}
+
+HRESULT DesktopApp::SyncFloatingPopupCompositionRootZOrder()
+{
+    if (!floatingPopupDcompVisual_)
+        return E_UNEXPECTED;
+
+    const std::array<IDCompositionVisual2*, 2> bottomToTop{
+        snowdesktop::widget_composition_layer_rules::
+                BelongsToCompositionRoot(
+                    popupAnimationOverlay_.host,
+                    UiCompositionAnimationHost::FloatingPopup)
+            ? popupAnimationOverlay_.visual.Get() : nullptr,
+        snowdesktop::widget_composition_layer_rules::
+                BelongsToCompositionRoot(
+                    luaWidgetPanelAnimationOverlay_.host,
+                    UiCompositionAnimationHost::FloatingPopup)
+            ? luaWidgetPanelAnimationOverlay_.visual.Get() : nullptr,
+    };
+
+    std::array<bool, 2> removedFromRoot{};
+    const auto restoreRemovedPrefix = [&](std::size_t end) {
+        IDCompositionVisual2* predecessor = nullptr;
+        HRESULT restoreHr = S_OK;
+        for (std::size_t index = 0; index < end; ++index)
+        {
+            IDCompositionVisual2* visual = bottomToTop[index];
+            if (!visual || !removedFromRoot[index])
+                continue;
+            const HRESULT hr =
+                floatingPopupDcompVisual_->AddVisual(
+                    visual, TRUE, predecessor);
+            if (SUCCEEDED(hr))
+                predecessor = visual;
+            else if (SUCCEEDED(restoreHr))
+                restoreHr = hr;
+        }
+        return restoreHr;
+    };
+
+    for (std::size_t index = 0;
+         index < bottomToTop.size(); ++index)
+    {
+        IDCompositionVisual2* visual = bottomToTop[index];
+        if (visual)
+        {
+            const HRESULT hr =
+                floatingPopupDcompVisual_->RemoveVisual(visual);
+            if (FAILED(hr))
+            {
+                const HRESULT restoreHr =
+                    restoreRemovedPrefix(index);
+                if (FAILED(restoreHr))
+                {
+                    wchar_t message[176]{};
+                    wsprintfW(
+                        message,
+                        L"Floating popup root z-order rollback FAILED "
+                        L"hr=0x%08X after remove hr=0x%08X",
+                        static_cast<unsigned>(restoreHr),
+                        static_cast<unsigned>(hr));
+                    WriteDiagnosticLogEntry(message);
+                }
+                return hr;
+            }
+            removedFromRoot[index] = true;
+        }
+    }
+
+    IDCompositionVisual2* predecessor = nullptr;
+    std::array<bool, 2> attachedToRoot{};
+    HRESULT addFailure = S_OK;
+    for (std::size_t index = 0;
+         index < bottomToTop.size(); ++index)
+    {
+        IDCompositionVisual2* visual = bottomToTop[index];
+        if (!visual)
+            continue;
+        const HRESULT hr = floatingPopupDcompVisual_->AddVisual(
+            visual, TRUE, predecessor);
+        if (FAILED(hr))
+        {
+            if (SUCCEEDED(addFailure))
+                addFailure = hr;
+            continue;
+        }
+        attachedToRoot[index] = true;
+        predecessor = visual;
+    }
+
+    if (FAILED(addFailure))
+    {
+        predecessor = nullptr;
+        HRESULT restoreHr = S_OK;
+        for (std::size_t index = 0;
+             index < bottomToTop.size(); ++index)
+        {
+            IDCompositionVisual2* visual = bottomToTop[index];
+            if (!visual)
+                continue;
+            if (attachedToRoot[index])
+            {
+                predecessor = visual;
+                continue;
+            }
+            const HRESULT hr =
+                floatingPopupDcompVisual_->AddVisual(
+                    visual, TRUE, predecessor);
+            if (SUCCEEDED(hr))
+            {
+                attachedToRoot[index] = true;
+                predecessor = visual;
+            }
+            else if (SUCCEEDED(restoreHr))
+            {
+                restoreHr = hr;
+            }
+        }
+        if (FAILED(restoreHr))
+        {
+            wchar_t message[176]{};
+            wsprintfW(
+                message,
+                L"Floating popup root z-order reattach FAILED "
+                L"hr=0x%08X after add hr=0x%08X",
+                static_cast<unsigned>(restoreHr),
+                static_cast<unsigned>(addFailure));
+            WriteDiagnosticLogEntry(message);
+        }
+        return addFailure;
+    }
+    return S_OK;
+}
+
+void DesktopApp::ResetFloatingPopupCompositionResources()
+{
+    if (floatingPopupDcompVisual_)
+        floatingPopupDcompVisual_->SetContent(nullptr);
+    floatingPopupDcompSurface_.Reset();
+    floatingPopupCompWidth_ = 0;
+    floatingPopupCompHeight_ = 0;
+}
+
+void DesktopApp::RecoverFloatingPopupCompositionFailure(
+    const wchar_t* stage, HRESULT hr)
+{
+    if (RequestGraphicsDeviceRecovery(stage, hr))
+        return;
+    wchar_t message[208]{};
+    wsprintfW(
+        message,
+        L"FloatingPopup %s FAILED hr=0x%08X; resetting composition surface",
+        stage ? stage : L"Render",
+        static_cast<unsigned>(hr));
+    WriteDiagnosticLogEntry(message);
+    ResetFloatingPopupCompositionResources();
+    if (!floatingPopupCompositionRenderRecoveryPending_ &&
+        floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_))
+    {
+        floatingPopupCompositionRenderRecoveryPending_ = true;
+        InvalidateRect(
+            floatingPopupHwnd_, nullptr, FALSE);
+    }
+}
+
+void DesktopApp::DestroyFloatingPopupWindow()
+{
+    StopFloatingPopupOutsideClickMonitor();
+    ForgetLuaWidgetPanelCapture(floatingPopupHwnd_);
+    collectionPopupBackdropCompositor_.Reset();
+    if (floatingPopupDropTargetRegistered_ &&
+        floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
+    {
+        RevokeDragDrop(floatingPopupHwnd_);
+    }
+    floatingPopupDropTargetRegistered_ = false;
+    ResetFloatingPopupCompositionResources();
+    floatingPopupDcompVisual_.Reset();
+    floatingPopupDcompTarget_.Reset();
+    floatingPopupWindowBounds_ = {};
+    floatingPopupCollectionRegion_ = {};
+    floatingPopupLuaPanelRegion_ = {};
+    floatingPopupModalRegion_ = false;
+    floatingPopupCompositionRenderRecoveryPending_ = false;
+    if (floatingPopupHwnd_ && IsWindow(floatingPopupHwnd_))
+        DestroyWindow(floatingPopupHwnd_);
+    floatingPopupHwnd_ = nullptr;
+}
+
+HRESULT DesktopApp::CreateOrResizeFloatingPopupCompositionSurface()
+{
+    if (!dcompDevice_ || !floatingPopupHwnd_ ||
+        !IsWindow(floatingPopupHwnd_))
+        return E_UNEXPECTED;
+
+    RECT client{};
+    GetClientRect(floatingPopupHwnd_, &client);
+    const UINT width = static_cast<UINT>(
+        std::max<LONG>(1, client.right - client.left));
+    const UINT height = static_cast<UINT>(
+        std::max<LONG>(1, client.bottom - client.top));
+
+    if (!floatingPopupDcompTarget_)
+    {
+        HRESULT hr = dcompDevice_->CreateTargetForHwnd(
+            floatingPopupHwnd_, FALSE,
+            &floatingPopupDcompTarget_);
+        if (FAILED(hr))
+            return hr;
+    }
+    if (!floatingPopupDcompVisual_)
+    {
+        HRESULT hr = dcompDevice_->CreateVisual(
+            &floatingPopupDcompVisual_);
+        if (FAILED(hr) || !floatingPopupDcompVisual_)
+            return FAILED(hr) ? hr : E_FAIL;
+        hr = floatingPopupDcompTarget_->SetRoot(
+            floatingPopupDcompVisual_.Get());
+        if (FAILED(hr))
+            return hr;
+    }
+    if (floatingPopupDcompSurface_ &&
+        floatingPopupCompWidth_ == width &&
+        floatingPopupCompHeight_ == height)
+        return S_OK;
+
+    ComPtr<IDCompositionSurface> surface;
+    HRESULT hr = dcompDevice_->CreateSurface(
+        width, height,
+        DXGI_FORMAT_B8G8R8A8_UNORM,
+        DXGI_ALPHA_MODE_PREMULTIPLIED,
+        &surface);
+    if (FAILED(hr) || !surface)
+        return FAILED(hr) ? hr : E_FAIL;
+    hr = floatingPopupDcompVisual_->SetContent(surface.Get());
+    if (FAILED(hr))
+        return hr;
+    floatingPopupDcompSurface_ = std::move(surface);
+    floatingPopupCompWidth_ = width;
+    floatingPopupCompHeight_ = height;
+    return S_OK;
+}
+
+bool DesktopApp::RenderFloatingPopupCompositionFrame()
+{
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
+    if (!ShouldShowFloatingPopupWindow() ||
+        IsRectEmpty(&floatingPopupWindowBounds_) ||
+        floatingPopupCompositionPaintInProgress_)
+        return false;
+
+    floatingPopupCompositionPaintInProgress_ = true;
+    struct PaintScope final
+    {
+        bool& active;
+        ~PaintScope() { active = false; }
+    } paintScope{ floatingPopupCompositionPaintInProgress_ };
+
+    // Coalesce arriving folder/icons before BeginDraw on the host surface.
+    // The animated child keeps its native timeline while only its pixels change.
+    RefreshCollectionPopupAnimationContent();
+    HRESULT hr = CreateOrResizeFloatingPopupCompositionSurface();
+    if (FAILED(hr) || !floatingPopupDcompSurface_)
+    {
+        RecoverFloatingPopupCompositionFailure(
+            L"CreateOrResize",
+            FAILED(hr) ? hr : E_FAIL);
+        return false;
+    }
+
+    ID2D1DeviceContext* rawContext = nullptr;
+    POINT updateOffset{};
+    hr = floatingPopupDcompSurface_->BeginDraw(
+        nullptr, __uuidof(ID2D1DeviceContext),
+        reinterpret_cast<void**>(&rawContext),
+        &updateOffset);
+    if (FAILED(hr) || !rawContext)
+    {
+        RecoverFloatingPopupCompositionFailure(
+            L"BeginDraw",
+            FAILED(hr) ? hr : E_FAIL);
+        return false;
+    }
+
+    ComPtr<ID2D1DeviceContext> context;
+    context.Attach(rawContext);
+    context->SetDpi(96.0f, 96.0f);
+    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+    context->SetTransform(
+        D2D1::Matrix3x2F::Translation(
+            static_cast<float>(
+                updateOffset.x -
+                floatingPopupWindowBounds_.left),
+            static_cast<float>(
+                updateOffset.y -
+                floatingPopupWindowBounds_.top)));
+    context->SetAntialiasMode(
+        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+
+    brushCache_.clear();
+    brushCacheContext_ = context.Get();
+    renderingFloatingPopup_ = true;
+    DrawDynamicOverlays(context.Get(), false);
+    renderingFloatingPopup_ = false;
+    context->SetTransform(D2D1::Matrix3x2F::Identity());
+    context.Reset();
+    brushCache_.clear();
+    brushCacheContext_ = nullptr;
+
+    hr = floatingPopupDcompSurface_->EndDraw();
+    if (FAILED(hr))
+    {
+        RecoverFloatingPopupCompositionFailure(
+            L"EndDraw", hr);
+        return false;
+    }
+
+    // A panel callback or a re-entrant provider wake may request a desktop
+    // widget update while this popup surface owns BeginDraw. The queue defers
+    // that work; consume it only after the popup surface has left Draw state.
+    // A widget-local retry must not prevent the popup frame from presenting.
+    const bool deferredWidgetsFlushed =
+        FlushPendingDesktopWidgetComposition() &&
+        FlushPendingWidgetMarqueeComposition() &&
+        SyncWidgetMarqueeCompositionVisibility();
+    if (!deferredWidgetsFlushed && hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    if (!CommitCompositionAnimationFrame())
+    {
+        RecoverFloatingPopupCompositionFailure(
+            L"Queue Commit", E_FAIL);
+        return false;
+    }
+    floatingPopupCompositionRenderRecoveryPending_ = false;
+    return true;
+}
+
+bool DesktopApp::PresentFloatingPopupComposition()
+{
+    if (!ShouldShowFloatingPopupWindow())
+        return true;
+    if (!floatingPopupHwnd_ ||
+        !IsWindow(floatingPopupHwnd_))
+        return false;
+    if (floatingPopupCompositionPaintInProgress_)
+    {
+        InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+        return true;
+    }
+    if (!RenderFloatingPopupCompositionFrame())
+        return false;
+    ValidateRect(floatingPopupHwnd_, nullptr);
+    return FlushPendingCompositionCommit();
+}
+
+void DesktopApp::InvalidateFloatingPopupWindow(
+    bool immediatePresent)
+{
+    if (!ShouldShowFloatingPopupWindow() ||
+        !floatingPopupHwnd_ ||
+        !IsWindow(floatingPopupHwnd_) ||
+        !IsWindowVisible(floatingPopupHwnd_))
+        return;
+    InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+    if (immediatePresent &&
+        !floatingPopupCompositionPaintInProgress_)
+        UpdateWindow(floatingPopupHwnd_);
+}
+
+void DesktopApp::ApplyFloatingPopupLayerPolicy()
+{
+    if (!floatingPopupHwnd_ ||
+        !IsWindow(floatingPopupHwnd_) ||
+        !IsWindowVisible(floatingPopupHwnd_))
+        return;
+    const bool shouldBeTopmost =
+        snowdesktop::floating_popup_rules::ShouldBeTopmost(
+            true, shellPopupMenuLayerDepth_);
+    const MenuHostZOrderSnapshot menuZOrderBefore =
+        CaptureMenuHostZOrder(floatingPopupHwnd_);
+    HWND preserveAboveWindow =
+        snowdesktop::modern_menu::ActiveRootWindow();
+    if (preserveAboveWindow &&
+        GetWindow(preserveAboveWindow, GW_OWNER) !=
+            floatingPopupHwnd_)
+    {
+        preserveAboveWindow = nullptr;
+    }
+    HWND insertAfter = shouldBeTopmost
+        ? HWND_TOPMOST : HWND_NOTOPMOST;
+    if (popupAnchoredToDock_ && collectionPopupDockHost_ &&
+        collectionPopupDockHost_->active &&
+        collectionPopupDockHost_->hwnd &&
+        IsWindowVisible(collectionPopupDockHost_->hwnd) &&
+        snowdesktop::popup_window_pair_z_order::IsTopmost(
+            collectionPopupDockHost_->hwnd) == shouldBeTopmost)
+    {
+        const auto& dockHost = *collectionPopupDockHost_;
+        const HWND next = GetWindow(dockHost.hwnd, GW_HWNDNEXT);
+        insertAfter = dockHost.backdrop.IsBackdropWindow(next)
+            ? next : dockHost.hwnd;
+        if (dockHost.container &&
+            dockHost.container->IsMergedWithStatusBar() && statusBar_)
+            if (const HWND stripBottom =
+                    statusBar_->MergedPresentationBottomWindow(
+                        dockHost.monitor))
+                insertAfter = stripBottom;
+    }
+    if (!collectionPopupBackdropCompositor_.IsAvailable())
+    {
+        if (insertAfter == HWND_TOPMOST ||
+            insertAfter == HWND_NOTOPMOST)
+            snowdesktop::popup_window_pair_z_order::MaintainContentBand(
+                floatingPopupHwnd_, shouldBeTopmost, preserveAboveWindow);
+        else
+            snowdesktop::popup_window_pair_z_order::Apply(
+                floatingPopupHwnd_, nullptr, insertAfter,
+                shouldBeTopmost, POINT{}, SIZE{}, preserveAboveWindow);
+    }
+    else
+        collectionPopupBackdropCompositor_.SetPopupWindowPairZOrder(
+            floatingPopupHwnd_, insertAfter,
+            shouldBeTopmost, preserveAboveWindow);
+    ApplyDragPreviewLayerPolicy();
+    TraceMenuHostZOrderTransition(
+        L"apply-layer-policy", menuZOrderBefore,
+        CaptureMenuHostZOrder(floatingPopupHwnd_));
+}
+
+void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
+{
+    if (!collectionPopupBackdropCompositor_.IsAvailable())
+        return;
+
+    if (popupAnimationCompositorDriven_ &&
+        popupAnimation_.IsAnimating())
+    {
+        collectionPopupBackdropCompositor_.SetVisible(
+            ShouldShowFloatingPopupWindow() &&
+            floatingPopupHwnd_ &&
+            IsWindowVisible(floatingPopupHwnd_));
+        collectionPopupBackdropCompositor_.CommitVisualChanges();
+        return;
+    }
+
+    const auto visual = popupAnimation_.GetVisual();
+    POINT anchor{
+        (popupRect_.left + popupRect_.right) / 2,
+        (popupRect_.top + popupRect_.bottom) / 2,
+    };
+    if (popupHasAnchor_)
+    {
+        anchor.x = std::clamp(
+            popupAnchorPoint_.x, popupRect_.left, popupRect_.right);
+        anchor.y = std::clamp(
+            popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
+    }
+    collectionPopupBackdropCompositor_.SetVisualTransform(
+        visual.scale, visual.visible ? visual.opacity : 0.0f,
+        static_cast<float>(
+            anchor.x - floatingPopupWindowBounds_.left),
+        static_cast<float>(
+            anchor.y - floatingPopupWindowBounds_.top));
+    collectionPopupBackdropCompositor_.SetVisible(
+        visual.visible && ShouldShowFloatingPopupWindow() &&
+        floatingPopupHwnd_ &&
+        IsWindowVisible(floatingPopupHwnd_));
+    // Explicitly submit the same logical frame as the content. Relying on
+    // WUC's implicit commit cycle can leave the glass behind a busy UI thread.
+    collectionPopupBackdropCompositor_.CommitVisualChanges();
+}
+
+void DesktopApp::UpdateCollectionPopupBackdrop()
+{
+    const DesktopWidget* popup = GetOpenPopupWidget();
+    if (!collectionPopupGlassTheme_ || (popup && UsesCollectionPopupFan(*popup)))
+    {
+        collectionPopupBackdropCompositor_.Reset();
+        return;
+    }
+    if (!floatingPopupHwnd_ || !IsWindow(floatingPopupHwnd_))
+    {
+        collectionPopupBackdropCompositor_.Reset();
+        return;
+    }
+    if (!popup || IsRectEmpty(&floatingPopupWindowBounds_))
+    {
+        collectionPopupBackdropCompositor_.SetVisible(false);
+        return;
+    }
+
+    const bool topmost =
+        snowdesktop::floating_popup_rules::ShouldBeTopmost(
+            true, shellPopupMenuLayerDepth_);
+    const MenuHostZOrderSnapshot menuZOrderBefore =
+        CaptureMenuHostZOrder(floatingPopupHwnd_);
+    const wchar_t* zOrderStage =
+        collectionPopupBackdropCompositor_.IsAvailable()
+            ? L"backdrop-reattach" : L"backdrop-initialize";
+    if (!collectionPopupBackdropCompositor_.IsAvailable())
+    {
+        const bool initiallyVisible =
+            IsWindowVisible(floatingPopupHwnd_) != FALSE &&
+            popupAnimation_.GetVisual().visible;
+        if (!collectionPopupBackdropCompositor_.InitializePopup(
+                floatingPopupHwnd_, topmost, initiallyVisible))
+        {
+            std::wstring message =
+                L"Collection popup native backdrop unavailable: ";
+            message += collectionPopupBackdropCompositor_.LastError();
+            WriteDiagnosticLogEntry(message.c_str());
+            return;
+        }
+        WriteDiagnosticLogEntry(
+            L"Collection popup native CompositionBackdropBrush initialized");
+    }
+    else
+    {
+        collectionPopupBackdropCompositor_.SetPopupTopmost(topmost);
+        collectionPopupBackdropCompositor_.Reattach(
+            floatingPopupHwnd_);
+    }
+    TraceMenuHostZOrderTransition(
+        zOrderStage, menuZOrderBefore,
+        CaptureMenuHostZOrder(floatingPopupHwnd_));
+
+    RECT panel = GetCollectionPopupRect(*popup);
+    OffsetRect(
+        &panel,
+        -floatingPopupWindowBounds_.left,
+        -floatingPopupWindowBounds_.top);
+    const float cornerRadius = 18.0f *
+        GetCollectionPopupLayoutMetrics(*popup).scale;
+    collectionPopupBackdropCompositor_.BeginFrame(true);
+    collectionPopupBackdropCompositor_.AddPanel(
+        panel, cornerRadius, collectionPopupBlurRadius_,
+        reinterpret_cast<std::uintptr_t>(this));
+    // Include geometry and the current pose in one backdrop transaction.
+    collectionPopupBackdropCompositor_.EndFrame(false);
+    ApplyCollectionPopupBackdropAnimationFrame();
+}
+
+void DesktopApp::UpdateFloatingPopupWindowBounds(
+    bool immediatePresent)
+{
+    SyncPopupMouseLeaveTimer();
+    if (!ShouldShowFloatingPopupWindow())
+    {
+        StopFloatingPopupOutsideClickMonitor();
+        collectionPopupBackdropCompositor_.HidePopupWindowPair(
+            floatingPopupHwnd_);
+        floatingPopupWindowBounds_ = {};
+        floatingPopupCollectionRegion_ = {};
+        floatingPopupLuaPanelRegion_ = {};
+        floatingPopupModalRegion_ = false;
+        return;
+    }
+    if (!CreateFloatingPopupWindow())
+    {
+        WriteDiagnosticLogEntry(
+            L"Floating popup window creation FAILED");
+        return;
+    }
+    StartFloatingPopupOutsideClickMonitor();
+
+    const RECT nextBounds =
+        CalculateFloatingPopupWindowBounds();
+    if (IsRectEmpty(&nextBounds))
+        return;
+    const bool wasVisible =
+        IsWindowVisible(floatingPopupHwnd_) != FALSE;
+    const bool boundsChanged =
+        !EqualRect(&nextBounds, &floatingPopupWindowBounds_);
+
+    RECT nextCollectionRegion{};
+    if (IsCollectionPopupHostedByFloatingWindow())
+    {
+        if (const DesktopWidget* popup = GetOpenPopupWidget())
+            nextCollectionRegion = GetCollectionPopupRect(*popup);
+    }
+    RECT nextLuaPanelRegion{};
+    const bool nextModalRegion =
+        IsLuaPanelHostedByFloatingWindow() &&
+        luaWidgetPanelRequest_.modal;
+    if (IsLuaPanelHostedByFloatingWindow())
+    {
+        nextLuaPanelRegion = nextModalRegion
+            ? nextBounds : GetLuaWidgetPanelRect();
+    }
+    const bool regionChanged =
+        !EqualRect(
+            &nextCollectionRegion,
+            &floatingPopupCollectionRegion_) ||
+        !EqualRect(
+            &nextLuaPanelRegion,
+            &floatingPopupLuaPanelRegion_) ||
+        nextModalRegion != floatingPopupModalRegion_;
+
+    floatingPopupWindowBounds_ = nextBounds;
+    floatingPopupCollectionRegion_ = nextCollectionRegion;
+    floatingPopupLuaPanelRegion_ = nextLuaPanelRegion;
+    floatingPopupModalRegion_ = nextModalRegion;
+
+    if (boundsChanged)
+    {
+        const auto rebaseAnimationOverlay =
+            [&](UiCompositionAnimationOverlay& overlay) {
+                if (!overlay.active || !overlay.visual ||
+                    overlay.host !=
+                        UiCompositionAnimationHost::FloatingPopup)
+                {
+                    return;
+                }
+                // Overlay bounds stay in desktop coordinates, while their
+                // visual offsets are local to the shared popup HWND. When a
+                // closing popup leaves an opening popup behind, the host
+                // shrinks from A union B to B. Rebase every surviving child
+                // before moving the host so it keeps the same screen position
+                // instead of being shifted outside the new window region.
+                const POINT offset =
+                    snowdesktop::floating_popup_rules::
+                        AnimationVisualOffset(
+                            overlay.bounds, nextBounds);
+                overlay.visual->SetOffsetX(
+                    static_cast<float>(offset.x));
+                overlay.visual->SetOffsetY(
+                    static_cast<float>(offset.y));
+            };
+        rebaseAnimationOverlay(popupAnimationOverlay_);
+        rebaseAnimationOverlay(
+            luaWidgetPanelAnimationOverlay_);
+    }
+
+    const bool topmost =
+        snowdesktop::floating_popup_rules::ShouldBeTopmost(
+            true, shellPopupMenuLayerDepth_);
+    if (!wasVisible || boundsChanged)
+    {
+        const MenuHostZOrderSnapshot menuZOrderBefore =
+            CaptureMenuHostZOrder(floatingPopupHwnd_);
+        const BOOL positioned = SetWindowPos(
+            floatingPopupHwnd_,
+            topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+            nextBounds.left + virtualLeft_,
+            nextBounds.top + virtualTop_,
+            std::max<LONG>(
+                1, nextBounds.right - nextBounds.left),
+            std::max<LONG>(
+                1, nextBounds.bottom - nextBounds.top),
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER |
+                (wasVisible && snowdesktop::popup_window_pair_z_order::IsTopmost(
+                    floatingPopupHwnd_) == topmost ? SWP_NOZORDER : 0) |
+                (wasVisible ? SWP_SHOWWINDOW : 0));
+        TraceMenuHostZOrderTransition(
+            positioned
+                ? L"bounds-set-window-pos"
+                : L"bounds-set-window-pos-failed",
+            menuZOrderBefore,
+            CaptureMenuHostZOrder(floatingPopupHwnd_),
+            positioned == FALSE);
+    }
+    else
+    {
+        ApplyFloatingPopupLayerPolicy();
+    }
+
+    UpdateCollectionPopupBackdrop();
+
+    if (!wasVisible || boundsChanged || regionChanged)
+    {
+        HRGN windowRegion = CreateRectRgn(0, 0, 0, 0);
+        auto appendRegion = [&](RECT desktopRect, float radius) {
+            if (!windowRegion || IsRectEmpty(&desktopRect))
+                return;
+            OffsetRect(
+                &desktopRect,
+                -floatingPopupWindowBounds_.left,
+                -floatingPopupWindowBounds_.top);
+            HRGN added = snowdesktop::popup_round_geometry::CreateWindowFence(
+                desktopRect, radius, 0, static_cast<float>(snowdesktop::flat_glass_rim::kPanelOverdraw));
+            if (added)
+            {
+                CombineRgn(
+                    windowRegion, windowRegion,
+                    added, RGN_OR);
+                DeleteObject(added);
+            }
+        };
+        const auto* popup = GetOpenPopupWidget();
+        appendRegion(floatingPopupCollectionRegion_, popup ?
+            18.f * GetCollectionPopupLayoutMetrics(*popup).scale : 18.f);
+        appendRegion(
+            floatingPopupLuaPanelRegion_,
+            floatingPopupModalRegion_ ? 0.f : 18.f);
+        if (windowRegion &&
+            !SetWindowRgn(
+                floatingPopupHwnd_, windowRegion, FALSE))
+            DeleteObject(windowRegion);
+    }
+
+    const bool rendered = immediatePresent
+        ? PresentFloatingPopupComposition()
+        : false;
+    if (!rendered)
+        InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+
+    if (snowdesktop::floating_popup_rules::ShouldRevealHost(
+            wasVisible, immediatePresent))
+    {
+        const MenuHostZOrderSnapshot menuZOrderBefore =
+            CaptureMenuHostZOrder(floatingPopupHwnd_);
+        const BOOL positioned = SetWindowPos(
+            floatingPopupHwnd_,
+            topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE |
+                SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        TraceMenuHostZOrderTransition(
+            positioned
+                ? L"reveal-set-window-pos"
+                : L"reveal-set-window-pos-failed",
+            menuZOrderBefore,
+            CaptureMenuHostZOrder(floatingPopupHwnd_),
+            positioned == FALSE);
+        ApplyCollectionPopupBackdropAnimationFrame();
+        wchar_t message[224]{};
+        wsprintfW(
+            message,
+            L"Floating popup shown rect=(%ld,%ld)-(%ld,%ld) topmost=%d",
+            nextBounds.left + virtualLeft_,
+            nextBounds.top + virtualTop_,
+            nextBounds.right + virtualLeft_,
+            nextBounds.bottom + virtualTop_,
+            topmost != false);
+        WriteDiagnosticLogEntry(message);
+    }
+    else if (boundsChanged && !immediatePresent)
+    {
+        InvalidateFloatingPopupWindow(false);
+    }
+    if (popupAnchoredToDock_ && collectionPopupDockHost_)
+    {
+        ApplyFloatingDockLayerPolicy();
+        ApplyFloatingPopupLayerPolicy();
+    }
+    ApplyDragPreviewLayerPolicy();
+    SyncPopupMouseLeaveTimer();
+}
+
+void DesktopApp::SyncPopupMouseLeaveTimer()
+{
+    const bool shouldPoll = personalizationSettings_.popupCloseOnMouseLeave &&
+        IsCollectionPopupInteractive() && floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_);
+    if (shouldPoll)
+    {
+        if (!popupMouseLeaveTimerArmed_)
+            popupMouseLeaveTimerArmed_ = SetTimer(floatingPopupHwnd_,
+                kPopupMouseLeaveTimerId, kPopupMouseLeavePollIntervalMs, nullptr) != 0;
+    }
+    else
+    {
+        if (popupMouseLeaveTimerArmed_ && floatingPopupHwnd_)
+            KillTimer(floatingPopupHwnd_, kPopupMouseLeaveTimerId);
+        popupMouseLeaveTimerArmed_ = false;
+        popupMouseLeaveController_.Reset();
+    }
+}
+
+void DesktopApp::UpdatePopupCloseOnMouseLeave(POINT point)
+{
+    if (!personalizationSettings_.popupCloseOnMouseLeave ||
+        !IsCollectionPopupInteractive())
+    {
+        popupMouseLeaveController_.Reset();
+        return;
+    }
+    const bool pointerInside = IsPointInsideOpenPopup(point);
+    if (!popupMouseLeaveController_.Observe(
+            floatingPopupMouseHookGeneration_, pointerInside))
+        return;
+
+    // OLE transport can outlive the logical drag during a synchronous Drop.
+    // Its retained context must block dismissal until the commit is detached.
+    const bool dragging = dragSession_.IsActive() ||
+        widgetAction_ == WidgetAction::Move ||
+        widgetAction_ == WidgetAction::Resize || largeIconGesture_;
+    const HWND dialogOwner = ShellDialogOwnerHwnd();
+    const bool pointerPressed = GetCapture() || mouseDown_ ||
+        dragSession_.HasContext() || middleButtonWidgetMove_ ||
+        widgetAction_ != WidgetAction::None ||
+        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+            GetAsyncKeyState(VK_MBUTTON)) & 0x8000);
+    const bool interactionBusy = HasActiveContextMenuSession() ||
+        renameController_.IsActive() ||
+        detailColumnResizeActive_ || luaWidgetPanelMouseDown_ ||
+        (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
+        snowdesktop::floating_popup_rules::ShouldBlockMouseLeaveForPointerPress(
+            dragging, pointerPressed);
+    if (!snowdesktop::floating_popup_rules::ShouldCloseOnMouseLeave(
+            personalizationSettings_.popupCloseOnMouseLeave,
+            IsCollectionPopupInteractive(), pointerInside, interactionBusy))
+        return;
+
+    // Hiding the source HWND must not emit capture loss that cancels a native
+    // drag. The existing close transition snapshots a Dock-folder source and
+    // detaches only the outgoing popup target; keep the drag selection intact.
+    popupMouseLeaveController_.Reset();
+    if (dragging && !dragDropController_.IsTransportActive() &&
+        GetCapture() == floatingPopupHwnd_ && hwnd_ && IsWindow(hwnd_))
+        SetCapture(hwnd_);
+    CloseCollectionPopup(!dragging);
+}
+
+void DesktopApp::PaintFloatingPopupWindow(HWND hwnd)
+{
+    PAINTSTRUCT paint{};
+    HDC dc = BeginPaint(hwnd, &paint);
+    if (!dc)
+        return;
+    const bool rendered =
+        ShouldShowFloatingPopupWindow() &&
+        RenderFloatingPopupCompositionFrame();
+    EndPaint(hwnd, &paint);
+    if (ShouldShowFloatingPopupWindow() && !rendered)
+        InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+POINT DesktopApp::FloatingPopupClientToDesktop(
+    POINT point) const
+{
+    if (floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_) &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        ClientToScreen(floatingPopupHwnd_, &point);
+        ScreenToClient(hwnd_, &point);
+    }
+    return point;
+}
+
+LRESULT DesktopApp::HandleFloatingPopupMessage(
+    HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    struct NativeMenuPresentationScope final
+    {
+        DesktopApp& app;
+        ~NativeMenuPresentationScope()
+        {
+            app.FlushNativeMenuPresentation();
+        }
+    } nativeMenuPresentationScope{ *this };
+
+    auto desktopPoint = [&]() {
+        return FloatingPopupClientToDesktop(
+            POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+    };
+    auto desktopLParam = [&]() {
+        const POINT point = desktopPoint();
+        return MAKELPARAM(point.x, point.y);
+    };
+    auto latestDesktopPointer = [&]() {
+        const bool nativeDragActive =
+            snowdesktop::drag_input_rules::IsNativeDragActive(
+                dragSession_.IsActive(),
+                dragDropController_.IsTransportActive());
+        const bool primaryButtonDown =
+            (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) & 0x8000) != 0;
+        POINT point{};
+        if (snowdesktop::drag_input_rules::
+                ShouldSampleFloatingWindowPointer(
+                    nativeDragActive, primaryButtonDown) &&
+            GetCursorPos(&point) && hwnd_ && IsWindow(hwnd_) &&
+            ScreenToClient(hwnd_, &point))
+        {
+            return point;
+        }
+        return desktopPoint();
+    };
+
+    switch (msg)
+    {
+    case WM_WINDOWPOSCHANGING:
+        if (lp)
+            PreserveModernMenuHostZOrder(
+                hwnd, *reinterpret_cast<WINDOWPOS*>(lp));
+        break;
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    case kFloatingPopupExternalPointerMessage:
+        HandleFloatingPopupExternalPointerDown(
+            static_cast<std::uint32_t>(wp),
+            std::bit_cast<std::uint64_t>(lp));
+        return 0;
+    case WM_NCHITTEST:
+        return ShouldShowFloatingPopupWindow()
+            ? HTCLIENT : HTTRANSPARENT;
+    case WM_SETCURSOR:
+        return HandleMessage(hwnd_, msg, wp, lp);
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        PaintFloatingPopupWindow(hwnd);
+        return 0;
+    case WM_MOUSEMOVE:
+    {
+        TRACKMOUSEEVENT tracking{ sizeof(tracking) };
+        tracking.dwFlags = TME_LEAVE;
+        tracking.hwndTrack = hwnd;
+        TrackMouseEvent(&tracking);
+        handlingFloatingPopupInput_ = true;
+        bool dragPreviewSynced = false;
+        OnMouseMoveAt(
+            wp, latestDesktopPointer(),
+            &dragPreviewSynced);
+        handlingFloatingPopupInput_ = false;
+        UpdateFloatingPopupWindowBounds(false);
+        PresentPointerInteractionFrame(
+            dragPreviewSynced);
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+    {
+        POINT cursor{};
+        if (GetCursorPos(&cursor) &&
+            WindowFromPoint(cursor) == hwnd)
+            return 0;
+        OnMouseLeave();
+        return 0;
+    }
+    case WM_TIMER:
+        if (wp == kPopupMouseLeaveTimerId)
+        {
+            SyncPopupMouseLeaveTimer();
+            POINT point{};
+            if (popupMouseLeaveTimerArmed_ && hwnd_ && IsWindow(hwnd_) &&
+                GetCursorPos(&point) && ScreenToClient(hwnd_, &point))
+                UpdatePopupCloseOnMouseLeave(point);
+            return 0;
+        }
+        break;
+    case WM_LBUTTONDOWN:
+        handlingFloatingPopupInput_ = true;
+        OnLeftButtonDown(wp, desktopLParam());
+        handlingFloatingPopupInput_ = false;
+        InvalidateFloatingPopupWindow(true);
+        return 0;
+    case WM_LBUTTONUP:
+        handlingFloatingPopupInput_ = true;
+        OnLeftButtonUpAt(wp, desktopPoint());
+        handlingFloatingPopupInput_ = false;
+        UpdateFloatingPopupWindowBounds();
+        return 0;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE) CancelRenameClick();
+        ForgetLuaWidgetPanelCapture(hwnd);
+        {
+            const HWND currentCapture = GetCapture();
+            const HWND nextCapture =
+                reinterpret_cast<HWND>(lp);
+            const bool shouldCancel =
+                snowdesktop::floating_popup_rules::
+                    ShouldCancelPointerPressForHostMessage(
+                        msg == WM_CANCELMODE,
+                        hwnd,
+                        currentCapture,
+                        IsOwnedPointerCaptureWindow(
+                            currentCapture),
+                        IsOwnedPointerCaptureWindow(
+                            nextCapture));
+            if (!shouldCancel)
+                return 0;
+        }
+        if (CanCancelPointerPressAfterCaptureLoss())
+        {
+            CancelPointerPressWithoutCaptureRelease();
+        }
+        return 0;
+    case WM_LBUTTONDBLCLK:
+    {
+        handlingFloatingPopupInput_ = true;
+        const LRESULT result =
+            HandleMessage(hwnd_, msg, wp, desktopLParam());
+        handlingFloatingPopupInput_ = false;
+        InvalidateFloatingPopupWindow(true);
+        return result;
+    }
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONDBLCLK:
+        OnMiddleButtonDown(wp, desktopLParam());
+        return 0;
+    case WM_MBUTTONUP:
+        OnMiddleButtonUpAt(wp, desktopPoint());
+        return 0;
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONDBLCLK:
+        OnRightButtonDown(nullptr);
+        return 0;
+    case WM_RBUTTONUP:
+        OnRightButtonUp(desktopLParam());
+        UpdateFloatingPopupWindowBounds();
+        return 0;
+    case WM_MOUSEWHEEL:
+        handlingFloatingPopupInput_ = true;
+        OnMouseWheel(wp, lp);
+        handlingFloatingPopupInput_ = false;
+        return 0;
+    case WM_DPICHANGED:
+        // This reusable no-activate host is positioned in physical desktop
+        // pixels by UpdateFloatingPopupWindowBounds. Moving it to a monitor
+        // with another DPI therefore emits WM_DPICHANGED during the owning
+        // SetWindowPos call. Applying the suggested rectangle would scale the
+        // model-owned bounds a second time, while closing here interrupts the
+        // newly published popup. Preserve the content and let the outer bounds
+        // update submit the target monitor's frame after SetWindowPos returns.
+        InvalidateFloatingPopupWindow(false);
+        return 0;
+    case WM_DISPLAYCHANGE:
+        CloseCollectionPopup(false);
+        CloseLuaWidgetPanel(L"", "display-change");
+        return 0;
+    case WM_CLOSE:
+        CloseCollectionPopup(false);
+        CloseLuaWidgetPanel(L"", "window-close");
+        return 0;
+    case WM_DESTROY:
+        popupMouseLeaveTimerArmed_ = false;
+        popupMouseLeaveController_.Reset();
+        StopFloatingPopupOutsideClickMonitor();
+        if (floatingPopupHwnd_ == hwnd)
+            floatingPopupHwnd_ = nullptr;
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}

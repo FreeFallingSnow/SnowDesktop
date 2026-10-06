@@ -1,10 +1,10 @@
-#include "taskbar_hook/taskbar_native.h"
-#include "taskbar_hook/taskbar_classic_surface.h"
-#include "taskbar_hook/taskbar_classic_appearance.h"
-#include "taskbar_hook/taskbar_material_render.h"
-#include "taskbar_hook/taskbar_connection.h"
-#include "dock_settings.h"
-#include "taskbar_monitor.h"
+#include "../src/taskbar_hook/taskbar_native.h"
+#include "../src/taskbar_hook/taskbar_classic_surface.h"
+#include "../src/taskbar_hook/taskbar_classic_appearance.h"
+#include "../src/taskbar_hook/taskbar_material_render.h"
+#include "../src/taskbar_hook/taskbar_connection.h"
+#include "dock/dock_settings.h"
+#include "platform/taskbar_monitor.h"
 #include <dwmapi.h>
 #include <array>
 #include <iostream>

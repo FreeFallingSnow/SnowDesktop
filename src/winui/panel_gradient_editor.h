@@ -1,6 +1,6 @@
 #pragma once
 #include "settings_presenter_controls.h"
-#include "../panel_gradient.h"
+#include "theme/panel_gradient.h"
 #include <winrt/Windows.UI.Text.h>
 
 namespace snowdesktop::winui

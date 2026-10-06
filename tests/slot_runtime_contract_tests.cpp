@@ -1,40 +1,41 @@
-#include "core/container.h"
-#include "core/drag_source_rebind.h"
-#include "core/drag_session.h"
-#include "core/drag_target_resolver.h"
-#include "core/item.h"
-#include "core/owned_transient_drag_target.h"
-#include "core/slot.h"
+#include "../src/core/container.h"
+#include "../src/core/drag_source_rebind.h"
+#include "../src/core/drag_session.h"
+#include "../src/core/drag_target_resolver.h"
+#include "../src/core/item.h"
+#include "../src/core/owned_transient_drag_target.h"
+#include "../src/core/slot.h"
 #include "slot_drop_expectations.h"
-#include "external_drop_content.h"
-#include "app/drag_drop_controller.h"
-#include "app/pending_drop_completion.h"
-#include "app/new_item_placement.h"
-#include "shell_new_item_capture.h"
-#include "app/ole_drag_drop_adapter.h"
-#include "app/popup_dwell_controller.h"
-#include "app/rename_controller.h"
-#include "app/rename_click_controller.h"
-#include "app/rename_notification_tracker.h"
-#include "app/rename_model_update.h"
-#include "app/shell_refresh_snapshot.h"
-#include "app/folder_read_retries.h"
-#include "app/folder_read_delivery.h"
-#include "app/dock_folder_popup_read.h"
-#include "dock_refresh_cache.h"
-#include "app/dock_icon_work.h"
-#include "app/initial_icon_bitmap.h"
-#include "icon_hbitmap_pixels.h"
-#include "app/startup_shell_read.h"
-#include "background_work.h"
-#include "app/shell_icon_request.h"
-#include "app/shell_icon_work.h"
-#include "app/selection_controller.h"
-#include "app/tray_icon_controller.h"
-#include "app/tray_notification_window.h"
-#include "constants.h"
-#include "drag_input_rules.h"
-#include "ole_drag_rules.h"
+#include "drag_drop/external_drop_content.h"
+#include "../src/app/drag_drop/drag_drop_controller.h"
+#include "../src/app/drag_drop/pending_drop_completion.h"
+#include "../src/app/layout/new_item_placement.h"
+#include "shell/shell_new_item_capture.h"
+#include "../src/app/drag_drop/ole_drag_drop_adapter.h"
+#include "../src/app/popup/popup_dwell_controller.h"
+#include "../src/app/input/rename_controller.h"
+#include "../src/app/input/rename_click_controller.h"
+#include "../src/app/input/rename_notification_tracker.h"
+#include "../src/app/input/rename_model_update.h"
+#include "../src/app/shell/shell_refresh_snapshot.h"
+#include "../src/app/shell/folder_read_retries.h"
+#include "../src/app/shell/folder_read_delivery.h"
+#include "../src/app/dock/dock_folder_popup_read.h"
+#include "dock/dock_refresh_cache.h"
+#include "../src/app/dock/dock_icon_work.h"
+#include "../src/app/shell/initial_icon_bitmap.h"
+#include "icons/icon_hbitmap_pixels.h"
+#include "../src/app/lifecycle/startup_shell_read.h"
+#include "common/background_work.h"
+#include "../src/app/shell/shell_icon_request.h"
+#include "../src/app/shell/shell_icon_work.h"
+#include "../src/app/input/selection_controller.h"
+#include "../src/app/tray/tray_icon_controller.h"
+#include "../src/app/tray/tray_notification_window.h"
+#include "common/constants.h"
+#include "drag_drop/drag_input_rules.h"
+#include "layout/floating_popup_rules.h"
+#include "drag_drop/ole_drag_rules.h"
 
 #include <propsys.h>
 #include <propkey.h>
@@ -1857,6 +1858,13 @@ void TestOwnedTransientDragTargetBoundsMemberWrappers()
             factoryCalls == 10004,
         "10000 container generations must replace the previous epoch without accumulating handoff wrappers");
 
+    DragDropController popupTransport(session);
+    popupTransport.BeginSelfDrag();
+    Check(!snowdesktop::floating_popup_rules::
+            ShouldBlockMouseLeaveForPointerPress(
+                session.IsActive(), session.HasContext()),
+        "an active popup OLE drag must allow mouse-leave dismissal while retaining its drag context");
+
     Item* committedTargetItem =
         session.TargetSlot()->GetItem();
     session.DeactivateForDrop();
@@ -1866,6 +1874,11 @@ void TestOwnedTransientDragTargetBoundsMemberWrappers()
             session.TargetSlot()->GetItem() ==
                 committedTargetItem,
         "deactivating for a synchronous drop must retain the transient target until the commit context is detached");
+    Check(popupTransport.IsTransportActive() &&
+            snowdesktop::floating_popup_rules::
+                ShouldBlockMouseLeaveForPointerPress(
+                    session.IsActive(), session.HasContext()),
+        "a committing popup drop must block mouse-leave dismissal even while the OLE transport remains active");
     session.UpdateTarget(
         nullptr, nullptr, HitRegion::None);
     target.Reset();
@@ -1873,6 +1886,7 @@ void TestOwnedTransientDragTargetBoundsMemberWrappers()
             target.Get() == nullptr &&
             target.OwnedItemCount() == 0,
         "popup teardown must detach an inactive drop context before destroying the transient target");
+    popupTransport.EndSelfDrag();
     session.End();
 }
 

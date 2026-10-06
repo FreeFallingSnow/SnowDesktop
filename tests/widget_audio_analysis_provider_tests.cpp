@@ -1,4 +1,4 @@
-#include "widget_audio_analysis_provider.h"
+#include "widget/data/widget_audio_analysis_provider.h"
 
 #include <algorithm>
 #include <atomic>

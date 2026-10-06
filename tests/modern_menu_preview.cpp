@@ -1,6 +1,6 @@
-#include "modern_menu.h"
-#include "modern_menu_appearance_rules.h"
-#include "resource.h"
+#include "ui/menu/modern_menu.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
+#include "resources/resource.h"
 
 #include <windows.h>
 

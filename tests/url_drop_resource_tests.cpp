@@ -1,5 +1,5 @@
-#include "../src/url_drop_resource.h"
-#include "../src/url_drop_download_worker.h"
+#include "../src/drag_drop/url_drop_resource.h"
+#include "../src/drag_drop/url_drop_download_worker.h"
 
 #include <iostream>
 #include <string>

@@ -1,5 +1,5 @@
-#include "widget_permission_state.h"
-#include "widget_permission_broker.h"
+#include "widget/permissions/widget_permission_state.h"
+#include "widget/permissions/widget_permission_broker.h"
 
 #include <cstdlib>
 #include <iostream>

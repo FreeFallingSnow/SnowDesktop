@@ -1,78 +1,78 @@
 #include "test_source_boundary.h"
-#include "layout_scroll_save.h"
-#include "layout_scroll_save_rules.h"
-#include "dock_magnification.h"
-#include "desktop_hover_rules.h"
-#include "dock_launch_animation.h"
-#include "dock_rename_layout.h"
-#include "rename_edit_layout.h"
-#include "dock_drop_rules.h"
-#include "dock_pin_cleanup.h"
+#include "layout/layout_scroll_save.h"
+#include "layout/layout_scroll_save_rules.h"
+#include "dock/dock_magnification.h"
+#include "desktop/desktop_hover_rules.h"
+#include "dock/dock_launch_animation.h"
+#include "dock/dock_rename_layout.h"
+#include "ui/input/rename_edit_layout.h"
+#include "dock/dock_drop_rules.h"
+#include "dock/dock_pin_cleanup.h"
 #include <fstream>
-#include "dock_folder_rules.h"
-#include "dock_refresh_cache.h"
-#include "dock_process_snapshot.h"
-#include "bounded_lru_cache.h"
-#include "slow_call_limiter.h"
-#include "icon_row_index.h"
+#include "dock/dock_folder_rules.h"
+#include "dock/dock_refresh_cache.h"
+#include "dock/dock_process_snapshot.h"
+#include "common/bounded_lru_cache.h"
+#include "diagnostics/slow_call_limiter.h"
+#include "icons/icon_row_index.h"
 #include <memory>
-#include "item_location.h"
-#include "dock_collection_icon_rules.h"
-#include "collection_popup_layout.h"
-#include "folder_sort_rules.h"
-#include "shell_item_visibility.h"
-#include "shell_file_operation_worker.h"
-#include "popup_drag_rules.h"
-#include "item_layout_rules.h"
-#include "item_title_layout.h"
-#include "item_render_layer_rules.h"
-#include "dock_window_rules.h"
-#include "dock_window_preview.h"
-#include "dock_window_transition.h"
-#include "dock_genie_rules.h"
-#include "dock_snapshot_warmup.h"
-#include "dock_snapshot_warmup_rules.h"
-#include "dock_app_identity_rules.h"
-#include "app/dock_running_app_pin_rules.h"
-#include "app/dock_explorer_pin.h"
-#include "page_navigation_rules.h"
-#include "page_layout_settings.h"
-#include "page_management_rules.h"
-#include "dock_settings_rules.h"
-#include "bar_settings_rules.h"
-#include "dock_settings.h"
-#include "desktop_item_reference_migration.h"
-#include "app/desktop_backdrop_update_rules.h"
-#include "app/desktop_passthrough_indicator.h"
-#include "app/native_menu_presentation_rules.h"
-#include "app/popup_window_pair_z_order.h"
-#include "desktop_window_discovery_rules.h"
-#include "desktop_keyboard_rules.h"
-#include "floating_dock_rules.h"
-#include "system_panel_placement.h"
-#include "status_bar_appbar.h"
-#include "merged_dock_presentation.h"
-#include "status_bar_layout.h"
-#include "status_bar_presentation.h"
-#include "status_bar_interaction.h"
-#include "floating_popup_rules.h"
-#include "drag_visual_rules.h"
-#include "ole_drag_rules.h"
-#include "drag_input_rules.h"
-#include "display_topology_refresh.h"
-#include "item_visual_metrics.h"
-#include "collection_titleless_rules.h"
-#include "layout_spacing_rules.h"
-#include "grid_spacing_rules.h"
-#include "windows_desktop_layout_rules.h"
-#include "windows_desktop_layout.h"
-#include "widget_item_layout.h"
-#include "app/grid_geometry.h"
-#include "app/layout_reload.h"
-#include "taskbar_hook/taskbar_autohide_trace.h"
-#include "taskbar_hook/taskbar_autohide_rules.h"
-#include "taskbar_hook/taskbar_hook_lifecycle.h"
-#include "taskbar_hook/taskbar_symbol_resolver.h"
+#include "layout/item_location.h"
+#include "dock/dock_collection_icon_rules.h"
+#include "layout/collection_popup_layout.h"
+#include "layout/folder_sort_rules.h"
+#include "shell/shell_item_visibility.h"
+#include "shell/shell_file_operation_worker.h"
+#include "layout/popup_drag_rules.h"
+#include "layout/item_layout_rules.h"
+#include "layout/item_title_layout.h"
+#include "layout/item_render_layer_rules.h"
+#include "dock/dock_window_rules.h"
+#include "dock/dock_window_preview.h"
+#include "dock/dock_window_transition.h"
+#include "dock/dock_genie_rules.h"
+#include "dock/dock_snapshot_warmup.h"
+#include "dock/dock_snapshot_warmup_rules.h"
+#include "dock/dock_app_identity_rules.h"
+#include "../src/app/dock/dock_running_app_pin_rules.h"
+#include "../src/app/dock/dock_explorer_pin.h"
+#include "layout/page_navigation_rules.h"
+#include "layout/page_layout_settings.h"
+#include "layout/page_management_rules.h"
+#include "dock/dock_settings_rules.h"
+#include "settings/bar_settings_rules.h"
+#include "dock/dock_settings.h"
+#include "desktop/desktop_item_reference_migration.h"
+#include "../src/app/render/desktop_backdrop_update_rules.h"
+#include "../src/app/input/desktop_passthrough_indicator.h"
+#include "../src/app/menus/native_menu_presentation_rules.h"
+#include "../src/app/popup/popup_window_pair_z_order.h"
+#include "desktop/desktop_window_discovery_rules.h"
+#include "desktop/desktop_keyboard_rules.h"
+#include "dock/floating_dock_rules.h"
+#include "system/panel/system_panel_placement.h"
+#include "system/status_bar/status_bar_appbar.h"
+#include "dock/merged_dock_presentation.h"
+#include "system/status_bar/status_bar_layout.h"
+#include "system/status_bar/status_bar_presentation.h"
+#include "system/status_bar/status_bar_interaction.h"
+#include "layout/floating_popup_rules.h"
+#include "drag_drop/drag_visual_rules.h"
+#include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/drag_input_rules.h"
+#include "desktop/display_topology_refresh.h"
+#include "layout/item_visual_metrics.h"
+#include "layout/collection_titleless_rules.h"
+#include "layout/layout_spacing_rules.h"
+#include "layout/grid_spacing_rules.h"
+#include "desktop/windows_desktop_layout_rules.h"
+#include "desktop/windows_desktop_layout.h"
+#include "widget/runtime/widget_item_layout.h"
+#include "../src/app/layout/grid_geometry.h"
+#include "../src/app/layout/layout_reload.h"
+#include "../src/taskbar_hook/taskbar_autohide_trace.h"
+#include "../src/taskbar_hook/taskbar_autohide_rules.h"
+#include "../src/taskbar_hook/taskbar_hook_lifecycle.h"
+#include "../src/taskbar_hook/taskbar_symbol_resolver.h"
 
 int RunTaskbarSymbolResolverTests();
 std::optional<int> TryRunTaskbarSymbolTestHelper();
@@ -5048,6 +5048,22 @@ int main(int argc, char** argv)
             floatingPopup::ShouldShow(false, true) &&
             !floatingPopup::ShouldShow(false, false),
         "the shared popup host must remain visible while either hosted layer is open");
+    Check(floatingPopup::ShouldCloseOnMouseLeave(true, true, false, false),
+        "an idle storage popup closes on an actual pointer exit when opted in");
+    Check(!floatingPopup::ShouldCloseOnMouseLeave(false, true, false, false),
+        "the default opt-out keeps storage popups open on pointer exit");
+    Check(!floatingPopup::ShouldCloseOnMouseLeave(true, false, false, false),
+        "a Lua-only shared host or an already closing storage popup is not dismissed");
+    Check(!floatingPopup::ShouldCloseOnMouseLeave(true, true, true, false),
+        "a native leave message inside popup content does not dismiss it");
+    Check(!floatingPopup::ShouldCloseOnMouseLeave(true, true, false, true),
+        "pointer exit preserves a popup used by a rename, dialog or menu");
+    Check(!floatingPopup::ShouldBlockMouseLeaveForPointerPress(true, true) &&
+            !floatingPopup::ShouldBlockMouseLeaveForPointerPress(true, false),
+        "native/OLE/widget dragging permits popup exit even with capture or buttons held");
+    Check(floatingPopup::ShouldBlockMouseLeaveForPointerPress(false, true) &&
+            !floatingPopup::ShouldBlockMouseLeaveForPointerPress(false, false),
+        "pending clicks and selection presses keep their popup until a drag is established");
     Check(floatingPopup::ShouldRevealHost(false, true) &&
             !floatingPopup::ShouldRevealHost(false, false) &&
             !floatingPopup::ShouldRevealHost(true, true) &&
@@ -6005,6 +6021,24 @@ int main(int argc, char** argv)
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");
+    {
+        const DockSettings defaults;
+        Check(!defaults.singleClickLaunchItems,
+            "upgrading without a single-click preference must retain double-click launching");
+        Check(rules::ShouldWaitForDockLaunchDoubleClick(
+                defaults.singleClickLaunchItems, rules::DockClickAction::Launch),
+            "closed apps in both pinned and frequent areas must wait for a double click by default");
+        Check(!rules::ShouldWaitForDockLaunchDoubleClick(
+                true, rules::DockClickAction::Launch),
+            "opting in must launch apps and files in both areas on the first release");
+        for (const bool enabled : {false, true})
+        {
+            for (const auto action : {rules::DockClickAction::Activate,
+                    rules::DockClickAction::Minimize, rules::DockClickAction::Restore})
+                Check(!rules::ShouldWaitForDockLaunchDoubleClick(enabled, action),
+                    "running applications must keep immediate window commands in either area");
+        }
+    }
     Check(identityRules::MatchesRunningApp(
             DockAppIdentityKind::Executable,
             L"C:\\APPS\\EDITOR.EXE", L"", L"",
@@ -7617,68 +7651,68 @@ int main(int argc, char** argv)
             // merely requesting it unregisters dismissal using the old layout
             // when leaving temporary grid initialization (Dock off -> on).
             // This is a negative boundary, not proof of desktop interaction.
-            {"src/app/app_settings_apply.cpp", "snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings(",
+            {"src/app/lifecycle/app_settings_apply.cpp", "snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings(",
              "snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(",
              {"ApplyFloatingDockHotkey(", "SynchronizeGeneral(", "SynchronizeDesktop(",
               "SynchronizeDock(", "SynchronizeReloadedLayoutSettings("}},
-            {"src/app/app_lifecycle.cpp", "bool DesktopApp::CreateDesktopInputWindow(",
+            {"src/app/lifecycle/app_lifecycle.cpp", "bool DesktopApp::CreateDesktopInputWindow(",
              "void DesktopApp::AttachInputWindowToDesktopHost(", {"WS_CHILD | WS_VISIBLE"}},
-            {"src/app/app_dock_window_tracking.cpp", "void DesktopApp::RefreshDockForegroundState()",
+            {"src/app/dock/app_dock_window_tracking.cpp", "void DesktopApp::RefreshDockForegroundState()",
              "void DesktopApp::RefreshDockRunningWindows(",
              {"EnumWindows(", "QueryDock", "RefreshDockRunningWindows(", "InvalidateDockContainers("}},
             // Negative architecture boundary: attaching external input queues
             // turns native foreground activation into an unbounded wait. The
             // injected request tests above do not exercise that Win32 hazard.
-            {"src/app/app_dock_window_tracking.cpp", "", "", {"AttachThreadInput("}},
-            {"src/app/app_widget_placement.cpp", "", "", {"RebuildContainersAndItems("}},
-            {"src/app/app_floating_dock_lifecycle.cpp", "", "", {"SetWindowsHookExW("}},
-            {"src/app/app_floating_popup_window.cpp", "", "", {"SetWindowsHookExW(", "CloseFloatingDock("}},
-            {"src/app/app_floating_dock_lifecycle.cpp", "bool DesktopApp::UpdatePassiveDragRevealHosts(",
+            {"src/app/dock/app_dock_window_tracking.cpp", "", "", {"AttachThreadInput("}},
+            {"src/app/widgets/app_widget_placement.cpp", "", "", {"RebuildContainersAndItems("}},
+            {"src/app/dock/app_floating_dock_lifecycle.cpp", "", "", {"SetWindowsHookExW("}},
+            {"src/app/popup/app_floating_popup_window.cpp", "", "", {"SetWindowsHookExW(", "CloseFloatingDock("}},
+            {"src/app/dock/app_floating_dock_lifecycle.cpp", "bool DesktopApp::UpdatePassiveDragRevealHosts(",
              "void DesktopApp::UpdateFloatingDockEdgeSwipe()",
              {"ShowFloatingDock(", "BeginFloatingDockKeyboardSession(", "SetForegroundWindow(",
               "RefocusFloatingDockKeyboardSession(", "EnsureFloatingDockInputWindow("}},
-            {"src/app/app_floating_dock_window.cpp", "void DesktopApp::ApplyMergedDockPresentationFrame(",
+            {"src/app/dock/app_floating_dock_window.cpp", "void DesktopApp::ApplyMergedDockPresentationFrame(",
              "void DesktopApp::ResetMergedDockPresentation(",
              {"RefreshDockState(", "SyncStatusBar(", "UpdateFloatingDockWindowBounds(",
               "StartAnimation(", "ABM_", "MonitorFullscreenSource("}},
             // The 2026-09-28 crash recursively evaluated Dock hit bounds through
             // this visibility query. Keep session reads independent of geometry.
-            {"src/status_bar.cpp", "bool StatusBar::HasInteractionSession(",
+            {"src/system/status_bar/status_bar.cpp", "bool StatusBar::HasInteractionSession(",
              "bool StatusBar::HasTrayMenuSession(", {"dockStateProvider(", "GetInteractiveBounds("}},
-            {"src/app/app_popup_lifecycle.cpp", "void DesktopApp::FinalizeCloseCollectionPopup()",
+            {"src/app/popup/app_popup_lifecycle.cpp", "void DesktopApp::FinalizeCloseCollectionPopup()",
              "void DesktopApp::ClearDockFolderPopupEntries()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow(",
               "RenderFloatingDockCompositionFrame(", "floatingDockBackdropCompositor_", "floatingDockHwnd_"}},
-            {"src/app/app_popup_transition.cpp", "void DesktopApp::RefreshDockFolderPopupGeometry(",
+            {"src/app/popup/app_popup_transition.cpp", "void DesktopApp::RefreshDockFolderPopupGeometry(",
              "CommitDockFolderPopupStateToSource()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow("}},
             // Updating pixels must never replace the visual or its native
             // timelines. These negative boundaries cover the GPU bridge that
             // cannot be exercised by the pure animation dispatch tests.
-            {"src/app/app_composition_animation_overlay.cpp", "bool DesktopApp::UpdateCompositionAnimationOverlayContent(",
+            {"src/app/render/app_composition_animation_overlay.cpp", "bool DesktopApp::UpdateCompositionAnimationOverlayContent(",
              "bool DesktopApp::PrepareCompositionAnimationOverlay(",
              {"ResetCompositionAnimationOverlay(", "SetContent(", "SetScaleX(", "SetScaleY(",
               "SetOpacity(", "AnimateCompositionAnimationOverlay(", "CreateSurface(", "WaitForCommitCompletion("}},
-            {"src/app/app_popup_geometry.cpp", "void DesktopApp::RefreshCollectionPopupAnimationContent(",
+            {"src/app/popup/app_popup_geometry.cpp", "void DesktopApp::RefreshCollectionPopupAnimationContent(",
              "void DesktopApp::InvalidateCollectionPopupContent(",
              {"ResetCollectionPopupAnimationCache(", "PrepareCollectionPopupAnimationCache(",
               "StartCollectionPopupCompositionAnimation(", "EnsureUiAnimationFrame(", ".Cancel("}},
-            {"src/app/app_popup_geometry.cpp", "bool DesktopApp::UsesCollectionPopupFan(",
+            {"src/app/popup/app_popup_geometry.cpp", "bool DesktopApp::UsesCollectionPopupFan(",
              "bool DesktopApp::UsesCollectionPopupList(",
              {"popupAnimationCompositorDriven_", "popupAnimationOverlay_"}},
-            {"src/app/app_scroll_interaction.cpp", "void DesktopApp::OnMouseWheel(",
+            {"src/app/input/app_scroll_interaction.cpp", "void DesktopApp::OnMouseWheel(",
              "", {"SaveLayoutSlots(", "WriteFile(", "FlushFileBuffers("}},
-            {"src/app/dock_platform_helpers.h", "", "", {"swThumbnailWnd", "PROME-TASKBAR"}},
-            {"src/app/app_drag_target_update.cpp", "void DesktopApp::ResolveCurrentDragTargetAt(",
+            {"src/app/dock/dock_platform_helpers.h", "", "", {"swThumbnailWnd", "PROME-TASKBAR"}},
+            {"src/app/drag_drop/app_drag_target_update.cpp", "void DesktopApp::ResolveCurrentDragTargetAt(",
              "void DesktopApp::RefreshDragTargetAt(",
              {"UpdateDragPageNavigation(", "Dwell", "ShowDragHintWindow", "Present", "DoDragDrop"}},
             // Turning a page is a view change, not an ownership/layout commit.
-            {"src/app/app_drag_target_update.cpp", "bool DesktopApp::UpdateDragPageNavigation(",
+            {"src/app/drag_drop/app_drag_target_update.cpp", "bool DesktopApp::UpdateDragPageNavigation(",
              "", {"MigrateSelectedItems", "MoveSelectedItems", "SaveLayoutSlots(", "UpdateDragGroupOrigin("}},
-            {"src/app/app_pointer_context.cpp", "bool DesktopApp::HandlePageNavClick(",
+            {"src/app/input/app_pointer_context.cpp", "bool DesktopApp::HandlePageNavClick(",
              "bool DesktopApp::ShowHostInputContextMenu(",
              {"MigrateSelectedItems", "MoveSelectedItems", "SaveLayoutSlots(", "UpdateDragGroupOrigin("}},
-            {"src/app/app_ole_drop_session.cpp", "HRESULT DesktopApp::HandleOleDrop(",
+            {"src/app/drag_drop/app_ole_drop_session.cpp", "HRESULT DesktopApp::HandleOleDrop(",
              "HRESULT DesktopApp::HandleOleQueryContinueDrag(", {"dragDropController_.EndSelfDrag();"}},
         }), "Dock and drag source boundaries");
 

@@ -8,13 +8,13 @@
  * 同时负责处理选中态、悬停态、渐变底色、标题显示、缩放手柄等交互细节。
  */
 
-#include "widget.h"
-#include "../widget_title_layout.h"
-#include "../widget_clip_geometry.h"
+#include "core/widget.h"
+#include "widget/view/widget_title_layout.h"
+#include "widget/view/widget_clip_geometry.h"
 #include "widget_chrome_rules.h"
-#include "types.h"
-#include "app.h"
-#include "widget_preview_scene.h"
+#include "common/types.h"
+#include "app/app.h"
+#include "widget/preview/widget_preview_scene.h"
 
 namespace
 {

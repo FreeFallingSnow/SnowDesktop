@@ -1,0 +1,813 @@
+#include "app/app.h"
+#include "desktop/desktop_hover_rules.h"
+#include "app/popup/popup_window_pair_z_order.h"
+#include "app/dock/dock_taskbar_diagnostics.h"
+#include "shell/shell_context_menu_invoke.h"
+#include "shell/shell_context_menu_site.h"
+#include "shell/shell_new_item_capture.h"
+#include "shell/shell_popup_menu_tracker.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
+
+// Shell New menu, desktop host restoration and protected-icon handling.
+
+DesktopApp::ShellPopupMenuLayerGuard::
+ShellPopupMenuLayerGuard(DesktopApp& app)
+    : app_(app),
+      active_(!app.ShouldKeepFloatingPopupTopmostForShellMenu())
+{
+    if (active_)
+        app_.BeginShellPopupMenuLayer();
+}
+
+DesktopApp::ShellPopupMenuLayerGuard::
+~ShellPopupMenuLayerGuard()
+{
+    if (active_)
+        app_.EndShellPopupMenuLayer();
+}
+
+UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
+    HMENU menu,
+    UINT flags,
+    POINT screenPoint,
+    HWND owner)
+{
+    if (!menu || !owner || !IsWindow(owner))
+        return 0;
+
+    // Resolve from the same current preference as the custom menu. New/other
+    // Shell menus can also reach this entry without first preparing menu icons.
+    const bool lightTheme = snowdesktop::modern_menu::appearance_rules::IsLightThemeForCurrentWindows(
+        static_cast<snowdesktop::modern_menu::Appearance>(
+            std::clamp(CurrentPersonalization().contextMenuStyle, 0, 6)));
+
+    HWND dockOwner = nullptr;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active || !host->container || !host->hwnd ||
+            !IsWindow(host->hwnd) || !IsWindowVisible(host->hwnd) ||
+            !IsDockContainerInteractionVisible(host->container)) continue;
+        RECT inputBounds = host->container->GetInteractiveBounds();
+        OffsetRect(&inputBounds, virtualLeft_, virtualTop_);
+        const bool mergedBarSource = host->container->IsMergedWithStatusBar() &&
+            statusBar_ && owner == statusBar_->InteractionWindow(host->monitor);
+        if (owner == host->hwnd || mergedBarSource || PtInRect(&inputBounds, screenPoint))
+        { dockOwner = host->hwnd; break; }
+    }
+
+    // The native menu loop must share the Shell context menu's STA. Keep
+    // widget and composition deadlines running through the existing modal
+    // animation pump instead of moving TrackPopupMenuEx to another thread.
+    snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+        uiAnimationScheduler_, [this]() {
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        });
+    if (!pump.IsAvailable())
+        WriteDiagnosticLogEntry(L"Shell menu animation pump unavailable");
+
+    shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
+    const UINT command = snowdesktop::shell_popup_menu_tracker::Track(
+        menu, flags, screenPoint, owner,
+        ShouldKeepFloatingPopupTopmostForShellMenu(),
+        shellPopupTrackerOwnerHwnd_, shellPopupTrackerCancelRequested_, lightTheme, dockOwner);
+    shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
+    return command;
+}
+
+BOOL DesktopApp::InvokeShellMenuCommand(
+    IContextMenu* menu, CMINVOKECOMMANDINFOEX& invoke,
+    snowdesktop::ShellContextMenuSite* site)
+{
+    if (!menu)
+        return FALSE;
+
+    // The tracker has already destroyed its foreground window. The tray
+    // control is hidden and NOACTIVATE; reuse the persistent input proxy so
+    // elevation/extension dialogs have an activatable owner that outlives
+    // InvokeCommand, including verbs that open a modeless window.
+    const HWND owner = inputHwnd_ && IsWindow(inputHwnd_)
+        ? inputHwnd_ : ShellDialogOwnerHwnd();
+    invoke.hwnd = owner;
+    if (site)
+        site->SetInvocationOwner(owner);
+
+    snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+        uiAnimationScheduler_, [this]() {
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
+        });
+    if (!pump.IsAvailable())
+        WriteDiagnosticLogEntry(L"Shell invocation animation pump unavailable");
+
+    const bool foregroundReady = FocusKeyboardWindow(
+        owner, true, L"Shell command owner");
+    wchar_t message[224]{};
+    swprintf_s(message,
+        L"Shell command begin owner=%p foregroundReady=%d animationPump=%d verb=%p",
+        owner, foregroundReady, pump.IsAvailable(), invoke.lpVerb);
+    WriteDiagnosticLogEntry(message);
+    const BOOL result = SafeInvokeCommand(
+        menu, reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+    WriteDiagnosticLogEntry(L"Shell command returned");
+    return result;
+}
+
+void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
+    bool folderOnly, std::wstring desktopFilesWidgetId)
+{
+    ComPtr<IContextMenu> ctxMenu;
+    if (FAILED(CoCreateInstance(CLSID_NewMenu, nullptr, CLSCTX_INPROC_SERVER,
+        IID_IContextMenu, reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
+        return;
+
+    ComPtr<IShellExtInit> shellExtInit;
+    if (FAILED(ctxMenu.As(&shellExtInit)) || !shellExtInit)
+        return;
+
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHParseDisplayName(targetDir.c_str(), nullptr, &pidl, 0, nullptr)) || pidl == nullptr)
+        return;
+
+    HRESULT hr = shellExtInit->Initialize(pidl, nullptr, 0);
+    ILFree(pidl);
+    if (FAILED(hr)) return;
+
+    if (!desktopFilesWidgetId.empty())
+    {
+        const size_t target = FindWidgetIndexById(desktopFilesWidgetId);
+        if (target >= widgets_.size() ||
+            widgets_[target].type != DesktopWidgetType::FileCategories) return;
+        auto capture = std::make_shared<snowdesktop::ShellNewItemCapture>(
+            targetDir, std::move(desktopFilesWidgetId), widgets_[target].itemKeys.size(),
+            hwnd_, kShellChangeMessage);
+        if (FAILED(snowdesktop::AttachShellNewItemCapture(ctxMenu.Get(), capture)))
+        {
+            WriteDiagnosticLogEntry(L"New-menu item ownership site unavailable");
+            MessageBeep(MB_ICONWARNING);
+            return;
+        }
+        pendingNewItemCaptures_.push_back(std::move(capture));
+    }
+
+    HMENU tmpMenu = CreatePopupMenu();
+    if (!tmpMenu) return;
+    hr = ctxMenu->QueryContextMenu(tmpMenu, 0, 1, 0x7FFF, CMF_NORMAL);
+    if (FAILED(hr)) { DestroyMenu(tmpMenu); return; }
+
+    HMENU newSub = GetSubMenu(tmpMenu, 0);
+    if (!newSub) { DestroyMenu(tmpMenu); return; }
+
+    ctxMenu.As(&newMenuContextMenu_);
+    const HWND menuOwner = ShellDialogOwnerHwnd();
+    SetForegroundWindow(menuOwner);
+    UINT cmd = 0;
+    if (folderOnly)
+    {
+        // Resolve the canonical Shell verb, never a localized label or a
+        // position that a third-party New-menu extension can reorder.
+        if (newMenuContextMenu_)
+            newMenuContextMenu_->HandleMenuMsg(WM_INITMENUPOPUP,
+                reinterpret_cast<WPARAM>(newSub), 0);
+        cmd = snowdesktop::FindNewFolderCommand(ctxMenu.Get(), newSub);
+        if (!cmd) MessageBeep(MB_ICONWARNING);
+    }
+    else
+    {
+        ShellPopupMenuLayerGuard shellMenuLayer(*this);
+        cmd = TrackShellPopupMenuWithDesktopPump(
+            newSub,
+            TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
+            screenPoint, menuOwner);
+    }
+    newMenuContextMenu_.Reset();
+
+    if (cmd != 0 && cmd >= 1)
+    {
+        CMINVOKECOMMANDINFOEX invoke{};
+        invoke.cbSize = sizeof(invoke);
+        invoke.fMask = CMIC_MASK_UNICODE;
+        invoke.hwnd = ShellDialogOwnerHwnd();
+        invoke.lpVerb = MAKEINTRESOURCEA(cmd - 1);
+        invoke.lpVerbW = MAKEINTRESOURCEW(cmd - 1);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, targetDir, invocationDirectoryA);
+        invoke.nShow = SW_SHOWNORMAL;
+        InvokeShellMenuCommand(ctxMenu.Get(), invoke);
+    }
+
+    for (int i = GetMenuItemCount(tmpMenu) - 1; i >= 0; --i)
+    {
+        if (GetSubMenu(tmpMenu, i) == nullptr)
+            RemoveMenu(tmpMenu, i, MF_BYPOSITION);
+    }
+    DestroyMenu(tmpMenu);
+    RestoreDesktopWindowLayer();
+    RestoreInteractionInputFocus();
+}
+
+/**
+ * @brief 通过 Shell IContextMenu 显示桌面的系统背景右键菜单。
+ *        使用 desktopFolder_->CreateViewObject 获取桌面文件夹的
+ *        IContextMenu 接口，显示系统提供的背景菜单（如显示设置、个性化等）。
+ * @param screenPoint 菜单弹出的屏幕坐标。
+ */
+void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
+{
+    // Shell initialization can pump desktop paints before TrackPopupMenuEx.
+    // Keep their content commits and hover state covered for the whole handoff.
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
+    ComPtr<IShellFolder> backgroundFolder = desktopFolder_;
+    if (snowdesktop::debug_profile::Enabled())
+    {
+        PIDLIST_ABSOLUTE raw = nullptr;
+        if (FAILED(SHParseDisplayName(snowdesktop::desktop_source::Directory().c_str(), nullptr, &raw, 0, nullptr))) return;
+        Pidl folderId(raw);
+        if (FAILED(desktopFolder_->BindToObject(raw, nullptr, IID_PPV_ARGS(&backgroundFolder)))) return;
+    }
+    const HWND menuOwner = ShellDialogOwnerHwnd();
+    snowdesktop::ShellContextMenuSite menuSite;
+    menuSite.Initialize(backgroundFolder.Get(), menuOwner);
+    HWND shellOwner = menuSite.HostWindow()
+        ? menuSite.HostWindow() : menuOwner;
+    ComPtr<IContextMenu> contextMenu;
+    HRESULT hr = backgroundFolder->CreateViewObject(shellOwner, IID_IContextMenu,
+        reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+    if (FAILED(hr) || !contextMenu)
+        return;
+    menuSite.Attach(contextMenu.Get());
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+
+    constexpr UINT kFirstCmd = 1;
+    constexpr UINT kLastCmd = 0x7FFF;
+    hr = contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd,
+        CMF_NORMAL | CMF_SYNCCASCADEMENU);
+    if (FAILED(hr)) { DestroyMenu(menu); RestoreDesktopWindowLayer(); return; }
+
+    contextMenu.As(&activeContextMenu2_);
+    contextMenu.As(&activeContextMenu3_);
+
+    SetForegroundWindow(menuOwner);
+    UINT cmd = TrackShellPopupMenuWithDesktopPump(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint, menuOwner);
+
+    activeContextMenu2_.Reset();
+    activeContextMenu3_.Reset();
+
+    if (cmd != 0)
+    {
+        const std::wstring invocationDirectory =
+            snowdesktop::DesktopShellInvocationDirectory();
+        CMINVOKECOMMANDINFOEX invoke{};
+        invoke.cbSize = sizeof(invoke);
+        invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
+        invoke.hwnd = ShellDialogOwnerHwnd();
+        invoke.lpVerb = MAKEINTRESOURCEA(cmd - kFirstCmd);
+        invoke.lpVerbW = MAKEINTRESOURCEW(cmd - kFirstCmd);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, invocationDirectory, invocationDirectoryA);
+        invoke.nShow = SW_SHOWNORMAL;
+        invoke.ptInvoke = screenPoint;
+        InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);
+        RequestShellRefresh();
+    }
+    DestroyMenu(menu);
+    RestoreDesktopWindowLayer();
+    if (cmd == 0)
+        RestoreInteractionInputFocus();
+}
+
+/**
+ * @brief 恢复桌面窗口的 Z 序层次位置。
+ *        菜单弹出后可能改变窗口 Z 序，此方法将窗口恢复到正确的位置。
+ *        有父窗口时置顶（HWND_TOP），无父窗口时置底（HWND_BOTTOM）。
+ */
+void DesktopApp::RestoreDesktopWindowLayer()
+{
+    BeginDesktopInteractionTrace(L"restore-layer");
+    ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
+    if (!hwnd_ || !IsWindow(hwnd_))
+        return;
+    POINT origin{ virtualLeft_, virtualTop_ };
+    HWND parent = GetParent(hwnd_);
+    if (parent)
+    {
+        ScreenToClient(parent, &origin);
+        SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+    }
+    else
+    {
+        SetWindowPos(hwnd_, HWND_BOTTOM, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
+    }
+    TraceDesktopInteraction(L"restore-layer-done", hwnd_, 0, 0, 0, true);
+}
+
+void DesktopApp::ApplyFloatingDockLayerPolicy()
+{
+    for (const auto& host : persistentDockHosts_)
+        if (host)
+            ApplyFloatingDockLayerPolicy(*host);
+}
+
+void DesktopApp::ApplyFloatingDockLayerPolicy(
+    PersistentDockHost& host)
+{
+    if (!host.active || !host.hwnd ||
+        !IsWindow(host.hwnd))
+        return;
+    if (dockWindowTransitionLayerUpdateActive_)
+        return;
+    const bool wasTopmost =
+        snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd);
+    dockWindowTransitionLayerUpdateActive_ = true;
+    struct LayerUpdateScope final
+    {
+        bool& active;
+        ~LayerUpdateScope() { active = false; }
+    } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
+    const bool merged = host.container && host.container->IsMergedWithStatusBar();
+    if (merged)
+    {
+        // The visible merged strip is one topmost surface. Summon/hover policy
+        // still owns its visibility; menu holds never move it between bands.
+        host.mergedPresentation.topmost = true;
+        host.mergedPresentation.insertAfter = host.hwnd;
+        // Merged chrome belongs to the bar; the center has no separate glass
+        // pair. Reapplying TOPMOST would raise it above a side-control menu
+        // before that menu's message pump repairs its order on the next turn.
+        snowdesktop::popup_window_pair_z_order::MaintainContentBand(host.hwnd, true);
+        if (statusBar_ && host.mergedPresentationActive)
+            statusBar_->ApplyMergedDockPresentation(host.monitor, host.mergedPresentation);
+        // Continue through the shared search/window-animation ordering below.
+    }
+    const HWND transitionWindow = dockWindowTransition_
+        ? dockWindowTransition_->GetPresentationWindow() : nullptr;
+    const HWND navigationWindow =
+        quickNavigationInvocationSource_ == QuickNavigationInvocationSource::DockSearch &&
+        quickNavigationAnimation_.IsAnimating()
+            ? quickNavigationHwnd_ : nullptr;
+    RECT dockBounds{};
+    const bool hasDockBounds = GetWindowRect(host.hwnd, &dockBounds) != FALSE;
+    const auto intersectsPresentation = [&dockBounds, hasDockBounds](HWND window) {
+        RECT bounds{}, overlap{};
+        return hasDockBounds && window && IsWindow(window) &&
+            GetWindowRect(window, &bounds) &&
+            IntersectRect(&overlap, &bounds, &dockBounds);
+    };
+    const bool intersectsTransition = intersectsPresentation(transitionWindow);
+    const bool intersectsNavigation = intersectsPresentation(navigationWindow);
+    if ((intersectsTransition || intersectsNavigation) && ShouldShowPersistentDockHost(host) &&
+        IsWindowVisible(host.hwnd))
+    {
+        // Borrow the presentation band without changing the Dock's summon,
+        // input or focus state. Always move the content/backdrop as a pair.
+        if (!merged) host.backdrop.SetPopupWindowPairZOrder(
+            host.hwnd, HWND_TOPMOST, true);
+        if (!wasTopmost)
+            snowdesktop::dock_taskbar_diagnostics::Record(
+                L"dock-promoted-for-animation", host.hwnd);
+        const HWND nextWindow = GetWindow(host.hwnd, GW_HWNDNEXT);
+        HWND pairEnd = host.backdrop.IsBackdropWindow(nextWindow)
+            ? nextWindow : host.hwnd;
+        if (merged && statusBar_)
+            if (const HWND stripBottom = statusBar_->MergedPresentationBottomWindow(host.monitor)) pairEnd = stripBottom;
+        // An already-topmost pair deliberately does not raise itself above
+        // menus on policy refresh. Lower the transition below its complete
+        // pair instead of inserting it between the content and glass helper.
+        if (intersectsTransition &&
+            snowdesktop::popup_window_pair_z_order::IsTopmost(pairEnd) &&
+            !snowdesktop::popup_window_pair_z_order::IsAbove(
+                pairEnd, transitionWindow))
+        {
+            SetWindowPos(transitionWindow, pairEnd, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                    SWP_NOOWNERZORDER);
+        }
+        if (intersectsNavigation &&
+            snowdesktop::popup_window_pair_z_order::IsTopmost(pairEnd) &&
+            !snowdesktop::popup_window_pair_z_order::IsAbove(pairEnd, navigationWindow))
+        {
+            // Quick Navigation has a separate glass HWND. Lower its complete
+            // pair, only when necessary, so another Dock already above it is
+            // never crossed while processing a later host. Reordering leaves
+            // keyboard focus alone; the native edit is transparent in motion.
+            quickNavBackdropCompositor_.SetPopupWindowPairZOrder(
+                navigationWindow, pairEnd, true);
+        }
+        ApplyDragPreviewLayerPolicy();
+        return;
+    }
+    if (merged) { ApplyDragPreviewLayerPolicy(); return; }
+    // Retain the floating band until the last closing frame, without feeding
+    // presentation visibility back into ShouldShowPersistentDockHost.
+    const bool hostsCollectionPopup =
+        popupAnchoredToDock_ && collectionPopupDockHost_ == &host &&
+        (popupAnimation_.IsInteractive() || !popupAnimation_.IsHidden()) &&
+        ShouldShowFloatingPopupWindow();
+    const bool promoted = IsPersistentDockHostEffectivelyFloating(host) ||
+        hostsCollectionPopup ||
+        (host.mergedPresentationActive && host.mergedAnimation.IsClosing());
+    const bool systemShowDesktopGuard =
+        systemShowDesktopDockLayerGuardActive_ &&
+        ShouldShowPersistentDockHost(host);
+
+    if (!promoted && !systemShowDesktopGuard)
+    {
+        // A desktop-band Dock is still a top-level no-activate window. Place
+        // it immediately above Explorer's desktop host and therefore below
+        // every ordinary application, while preserving the same HWND and
+        // compositor resources used by floating mode.
+        HWND insertAfter = nullptr;
+        const HWND desktopHost =
+            desktopWindows_.host && IsWindow(desktopWindows_.host)
+                ? desktopWindows_.host : nullptr;
+        if (desktopHost)
+        {
+            insertAfter = GetWindow(desktopHost, GW_HWNDPREV);
+            while (insertAfter)
+            {
+                wchar_t className[96]{};
+                GetClassNameW(
+                    insertAfter, className,
+                    static_cast<int>(std::size(className)));
+                if (!IsPersistentDockHostWindow(insertAfter) &&
+                    _wcsicmp(
+                        className,
+                        L"SnowDesktopBackdropWindow") != 0)
+                {
+                    break;
+                }
+                insertAfter = GetWindow(
+                    insertAfter, GW_HWNDPREV);
+            }
+        }
+        host.backdrop.SetPopupWindowPairZOrder(
+            host.hwnd,
+            // HWND_TOP keeps an already-topmost content window in its band.
+            // If Explorer's desktop anchor is unavailable, explicitly demote.
+            insertAfter ? insertAfter : HWND_NOTOPMOST,
+            false);
+        if (wasTopmost)
+            snowdesktop::dock_taskbar_diagnostics::Record(
+                L"dock-returned-to-desktop-band", host.hwnd);
+        return;
+    }
+
+    const bool shouldBeTopmost = systemShowDesktopGuard ||
+        snowdesktop::floating_dock_rules::
+            ShouldFloatingDockBeTopmost(
+                promoted,
+                shellPopupMenuLayerDepth_);
+    host.backdrop.SetPopupWindowPairZOrder(
+        host.hwnd,
+        shouldBeTopmost
+            ? HWND_TOPMOST : HWND_NOTOPMOST,
+        shouldBeTopmost);
+    if (wasTopmost != shouldBeTopmost)
+        snowdesktop::dock_taskbar_diagnostics::Record(
+            systemShowDesktopGuard ? L"dock-show-desktop-band" : L"dock-normal-layer-policy",
+            host.hwnd);
+    ApplyDragPreviewLayerPolicy();
+}
+
+bool DesktopApp::ShouldKeepFloatingPopupTopmostForShellMenu() const
+{
+    const bool fullscreenDock = floatingDockHost_ && floatingDockHost_->active &&
+        floatingDockHost_->promoted && floatingDockHost_->hwnd &&
+        IsWindowVisible(floatingDockHost_->hwnd) && statusBar_ &&
+        statusBar_->IsFullscreen(floatingDockHost_->monitor);
+    // Demoting a fullscreen-summoned Dock also leaves its native Shell menu
+    // behind a topmost fullscreen application. The tracker must join the same
+    // band, just like a menu opened from the floating collection popup.
+    return fullscreenDock || (IsCollectionPopupHostedByFloatingWindow() &&
+        floatingPopupHwnd_ &&
+        IsWindow(floatingPopupHwnd_) &&
+        IsWindowVisible(floatingPopupHwnd_));
+}
+
+void DesktopApp::BeginShellPopupMenuLayer()
+{
+    // Flush the frame that opened the native menu before its tracking thread
+    // takes pointer capture. The desktop pump remains live for the session.
+    FlushPendingCompositionCommit();
+    FlushPendingQuickNavigationCompositionCommit();
+    ++shellPopupMenuLayerDepth_;
+    if (shellPopupMenuLayerDepth_ == 1)
+    {
+        if (shellHoverTraceActive_)
+            FlushShellHoverTrace();
+        BeginShellHoverTrace();
+    }
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::MenuBegin);
+    ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
+}
+
+void DesktopApp::EndShellPopupMenuLayer()
+{
+    RecordShellHoverTrace(
+        ShellHoverTraceEvent::MenuEnd);
+    if (shellPopupMenuLayerDepth_ > 0)
+        --shellPopupMenuLayerDepth_;
+    else
+        shellPopupMenuLayerDepth_ = 0;
+    if (shellPopupMenuLayerDepth_ == 0)
+        shellHoverTraceMenuEndTick_ = GetTickCount64();
+    ApplyFloatingDockLayerPolicy();
+    ApplyFloatingPopupLayerPolicy();
+    // A verb may have activated an external dialog or application. Restore
+    // Dock keyboard ownership only while the foreground still belongs to us.
+    DWORD foregroundProcess = 0;
+    if (const HWND foreground = GetForegroundWindow())
+        GetWindowThreadProcessId(foreground, &foregroundProcess);
+    if (foregroundProcess == GetCurrentProcessId())
+        RefocusFloatingDockKeyboardSession();
+    if (shellPopupMenuLayerDepth_ == 0)
+    {
+        ReconcileDesktopHoverState(
+            snowdesktop::desktop_hover_rules::
+                ShellPopupCloseReconcileMode());
+    }
+    FlushPendingCompositionCommit();
+    FlushPendingQuickNavigationCompositionCommit();
+}
+
+/**
+ * @brief 判断指定桌面项是否为受保护的系统图标。
+ *        通过比较 CLSID 判断是否为此电脑、用户文件、网络、
+ *        控制面板或回收站等系统图标。
+ * @param item 要检查的桌面项。
+ * @return 如果是受保护的系统图标返回 true，否则返回 false。
+ */
+bool DesktopApp::IsProtectedDesktopIcon(const DesktopItem& item) const
+{
+    std::wstring clsid = !item.desktopIconClsid.empty()
+        ? item.desktopIconClsid
+        : ExtractClsidText(item.parsingName);
+    return clsid == kDesktopIconClsidThisPC ||
+        clsid == kDesktopIconClsidUserFiles ||
+        clsid == kDesktopIconClsidNetwork ||
+        clsid == kDesktopIconClsidControlPanel ||
+        clsid == kDesktopIconClsidRecycleBin;
+}
+
+/**
+ * @brief 对指定的文件夹路径显示 Shell 右键菜单。
+ *        解析路径的 PIDL，绑定到 IShellFolder，通过 CreateViewObject
+ *        获取 IContextMenu 接口后弹出系统右键菜单。
+ * @param folderPath  目标文件夹的路径。
+ * @param screenPoint 菜单弹出的屏幕坐标。
+ */
+void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
+{
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
+    const HWND menuOwner = ShellDialogOwnerHwnd();
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHParseDisplayName(folderPath.c_str(), nullptr, &pidl, 0, nullptr)))
+        return;
+
+    IShellFolder* parentFolder = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    if (FAILED(SHBindToParent(pidl, IID_IShellFolder,
+        reinterpret_cast<void**>(&parentFolder), &child)))
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    IShellFolder* folder = nullptr;
+    HRESULT bindHr = parentFolder->BindToObject(child, nullptr, IID_IShellFolder, reinterpret_cast<void**>(&folder));
+    parentFolder->Release();
+    if (FAILED(bindHr) || folder == nullptr)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    snowdesktop::ShellContextMenuSite menuSite;
+    menuSite.Initialize(folder, menuOwner);
+    HWND shellOwner = menuSite.HostWindow()
+        ? menuSite.HostWindow() : menuOwner;
+    ComPtr<IContextMenu> contextMenu;
+    HRESULT hr = folder->CreateViewObject(shellOwner, IID_IContextMenu, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
+    if (SUCCEEDED(hr) && contextMenu)
+        menuSite.Attach(contextMenu.Get());
+    folder->Release();
+    if (FAILED(hr) || !contextMenu)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu) { ILFree(pidl); return; }
+
+    constexpr UINT kFirstCmd = 1;
+    constexpr UINT kLastCmd = 0x7FFF;
+    if (FAILED(contextMenu->QueryContextMenu(menu, 0,
+            kFirstCmd, kLastCmd,
+            CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME |
+                CMF_SYNCCASCADEMENU)))
+    {
+        DestroyMenu(menu);
+        RestoreDesktopWindowLayer();
+        ILFree(pidl);
+        return;
+    }
+
+    contextMenu.As(&activeContextMenu2_);
+    contextMenu.As(&activeContextMenu3_);
+
+    SetForegroundWindow(menuOwner);
+    UINT command = TrackShellPopupMenuWithDesktopPump(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+        screenPoint, menuOwner);
+
+    activeContextMenu2_.Reset();
+    activeContextMenu3_.Reset();
+
+    if (command != 0)
+    {
+        CMINVOKECOMMANDINFOEX invoke{};
+        invoke.cbSize = sizeof(invoke);
+        invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
+        invoke.hwnd = ShellDialogOwnerHwnd();
+        invoke.lpVerb = MAKEINTRESOURCEA(command - kFirstCmd);
+        invoke.lpVerbW = MAKEINTRESOURCEW(command - kFirstCmd);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, folderPath, invocationDirectoryA);
+        invoke.nShow = SW_SHOWNORMAL;
+        invoke.ptInvoke = screenPoint;
+        InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);
+        RequestShellRefresh();
+    }
+
+    DestroyMenu(menu);
+    RestoreDesktopWindowLayer();
+    if (command == 0)
+        RestoreInteractionInputFocus();
+    ILFree(pidl);
+}
+
+void DesktopApp::
+ShowShellItemContextMenuForPath(
+    const std::wstring& itemPath,
+    POINT screenPoint)
+{
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
+    const HWND menuOwner = ShellDialogOwnerHwnd();
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHParseDisplayName(
+            itemPath.c_str(), nullptr,
+            &pidl, 0, nullptr)) ||
+        !pidl)
+        return;
+
+    IShellFolder* parentFolder = nullptr;
+    PCUITEMID_CHILD child = nullptr;
+    if (FAILED(SHBindToParent(
+            pidl, IID_IShellFolder,
+            reinterpret_cast<void**>(
+                &parentFolder),
+            &child)) ||
+        !parentFolder)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    snowdesktop::ShellContextMenuSite menuSite;
+    menuSite.Initialize(parentFolder, menuOwner);
+    HWND shellOwner = menuSite.HostWindow()
+        ? menuSite.HostWindow() : menuOwner;
+    ComPtr<IContextMenu> contextMenu;
+    const HRESULT hr =
+        parentFolder->GetUIObjectOf(
+            shellOwner, 1, &child,
+            IID_IContextMenu, nullptr,
+            reinterpret_cast<void**>(
+                contextMenu.
+                    GetAddressOf()));
+    if (SUCCEEDED(hr) && contextMenu)
+        menuSite.Attach(contextMenu.Get());
+    parentFolder->Release();
+    if (FAILED(hr) || !contextMenu)
+    {
+        ILFree(pidl);
+        return;
+    }
+
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+    {
+        ILFree(pidl);
+        return;
+    }
+    constexpr UINT kFirstCmd = 1;
+    constexpr UINT kLastCmd = 0x7FFF;
+    if (FAILED(
+            contextMenu->QueryContextMenu(
+                menu, 0, kFirstCmd,
+                kLastCmd,
+                CMF_NORMAL |
+                    CMF_EXPLORE |
+                    CMF_CANRENAME |
+                    CMF_SYNCCASCADEMENU)))
+    {
+        DestroyMenu(menu);
+        ILFree(pidl);
+        return;
+    }
+
+    contextMenu.As(
+        &activeContextMenu2_);
+    contextMenu.As(
+        &activeContextMenu3_);
+    SetForegroundWindow(menuOwner);
+    const UINT command =
+        TrackShellPopupMenuWithDesktopPump(
+            menu,
+            TPM_RETURNCMD |
+                TPM_RIGHTBUTTON,
+            screenPoint,
+            menuOwner);
+    activeContextMenu2_.Reset();
+    activeContextMenu3_.Reset();
+
+    if (command >= kFirstCmd &&
+        command <= kLastCmd)
+    {
+        const UINT commandOffset =
+            command - kFirstCmd;
+        if (IsShellDeleteCommand(
+                contextMenu.Get(), commandOffset))
+        {
+            DestroyMenu(menu);
+            RestoreDesktopWindowLayer();
+            ILFree(pidl);
+            std::vector<snowdesktop::ShellFileOperationStep> steps;
+            steps.push_back({
+                FO_DELETE,
+                { itemPath },
+                {},
+                static_cast<FILEOP_FLAGS>(
+                    FOF_ALLOWUNDO |
+                    FOF_NOCONFIRMATION) });
+            QueueShellFileOperation(
+                std::move(steps),
+                [this](bool succeeded) {
+                    if (!succeeded)
+                        return;
+                    RequestShellRefresh();
+
+                });
+            return;
+        }
+        const std::wstring invocationDirectory =
+            snowdesktop::ShellInvocationDirectoryForItem(itemPath);
+        CMINVOKECOMMANDINFOEX invoke{};
+        invoke.cbSize = sizeof(invoke);
+        invoke.fMask =
+            CMIC_MASK_UNICODE |
+            CMIC_MASK_PTINVOKE;
+        invoke.hwnd =
+            ShellDialogOwnerHwnd();
+        invoke.lpVerb =
+            MAKEINTRESOURCEA(
+                commandOffset);
+        invoke.lpVerbW =
+            MAKEINTRESOURCEW(
+                commandOffset);
+        std::string invocationDirectoryA;
+        snowdesktop::SetShellInvocationDirectory(
+            invoke, invocationDirectory, invocationDirectoryA);
+        invoke.nShow = SW_SHOWNORMAL;
+        invoke.ptInvoke = screenPoint;
+        InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);
+        for (size_t i = 0;
+            i < widgets_.size(); ++i)
+        {
+            if (widgets_[i].type ==
+                DesktopWidgetType::
+                    FolderMapping)
+                RefreshFolderMappingWidget(
+                    i);
+        }
+        RequestShellRefresh();
+
+    }
+
+    DestroyMenu(menu);
+    RestoreDesktopWindowLayer();
+    if (command == 0)
+        RestoreInteractionInputFocus();
+    ILFree(pidl);
+}

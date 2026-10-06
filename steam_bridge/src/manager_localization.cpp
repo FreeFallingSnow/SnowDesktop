@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "manager_localization.h"
-#include "language_fallback.h"
+#include "common/language_fallback.h"
 
 #include "bridge_json.h"
 

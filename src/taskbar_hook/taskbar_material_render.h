@@ -1,7 +1,7 @@
 #pragma once
 #include "taskbar_hook_protocol.h"
-#include "../flat_glass_rim.h"
-#include "../taskbar_monitor.h"
+#include "../theme/flat_glass_rim.h"
+#include "../platform/taskbar_monitor.h"
 #include <d2d1.h>
 #include <wrl/client.h>
 #include <array>

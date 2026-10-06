@@ -1,4 +1,4 @@
-#include "widget_setting_rules.h"
+#include "widget/settings/widget_setting_rules.h"
 
 #include <cmath>
 #include <cstdlib>

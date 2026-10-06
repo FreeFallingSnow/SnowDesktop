@@ -1,11 +1,11 @@
-#include "general_settings.h"
-#include "personalization.h"
-#include "dock_gradient_storage.h"
-#include "taskbar_appearance.h"
-#include "status_bar_appearance.h"
-#include "widget_appearance_presets.h"
-#include "item_title_layout.h"
-#include "winui/font_picker_search.h"
+#include "settings/general_settings.h"
+#include "theme/personalization.h"
+#include "dock/dock_gradient_storage.h"
+#include "theme/taskbar_appearance.h"
+#include "system/status_bar/status_bar_appearance.h"
+#include "widget/view/widget_appearance_presets.h"
+#include "layout/item_title_layout.h"
+#include "../src/winui/font_picker_search.h"
 
 #include <windows.h>
 #include <d2d1.h>
@@ -1058,9 +1058,12 @@ int main(int argc, char** argv)
     savedAppearance.widgetTransformCursors = false;
     Check(!savedAppearance.popupHoverOpen,
         "popup hover opening defaults off for new profiles");
+    Check(!savedAppearance.popupCloseOnMouseLeave,
+        "new profiles keep popups open when the pointer leaves by default");
     Check(savedAppearance.popupHoverDelayMs == 600.0f,
         "new profiles retain the original 600 ms hover delay");
     savedAppearance.popupHoverOpen = true;
+    savedAppearance.popupCloseOnMouseLeave = true;
     savedAppearance.popupHoverDelayMs = 1200.0f;
     savedAppearance.showCategoryTabCounts = false;
     savedAppearance.edgeLight.direction = 127.f;
@@ -1088,6 +1091,7 @@ int main(int argc, char** argv)
             loadedAppearance.scrollableTitleBarOnTop &&
             !loadedAppearance.widgetTransformCursors &&
             loadedAppearance.popupHoverOpen &&
+            loadedAppearance.popupCloseOnMouseLeave &&
             loadedAppearance.popupHoverDelayMs == 1200.0f &&
             !loadedAppearance.showCategoryTabCounts &&
             !loadedAppearance.glassEnabled && loadedAppearance.panelGradient == savedAppearance.panelGradient &&
@@ -1105,6 +1109,7 @@ int main(int argc, char** argv)
             appearance.scrollableTitleBarOnTop = enabled;
             appearance.widgetTransformCursors = enabled;
             appearance.popupHoverOpen = enabled;
+            appearance.popupCloseOnMouseLeave = enabled;
             appearance.popupHoverDelayMs = 1400.0f;
             appearance.showCategoryTabCounts = !enabled;
             loadedAppearance.showGroupTabCounts = !enabled;
@@ -1114,6 +1119,7 @@ int main(int argc, char** argv)
                     loadedAppearance.scrollableTitleBarOnTop == enabled &&
                     loadedAppearance.widgetTransformCursors == enabled &&
                     loadedAppearance.popupHoverOpen == enabled &&
+                    loadedAppearance.popupCloseOnMouseLeave == enabled &&
                     loadedAppearance.popupHoverDelayMs == 1400.0f &&
                     loadedAppearance.showCategoryTabCounts == !enabled,
                 "group count preference survives material preset refresh independently from category counts");
@@ -1212,6 +1218,7 @@ int main(int argc, char** argv)
     migratedGlass.scrollableTitleBarOnTop = true;
     migratedGlass.widgetTransformCursors = false;
     migratedGlass.popupHoverOpen = true;
+    migratedGlass.popupCloseOnMouseLeave = true;
     migratedGlass.popupHoverDelayMs = 2200.0f;
     migratedGlass.panelGradient = savedAppearance.panelGradient;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
@@ -1219,6 +1226,7 @@ int main(int argc, char** argv)
             !migratedGlass.scrollableTitleBarOnTop &&
             migratedGlass.widgetTransformCursors &&
             !migratedGlass.popupHoverOpen &&
+            !migratedGlass.popupCloseOnMouseLeave &&
             migratedGlass.popupHoverDelayMs == 600.0f &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==

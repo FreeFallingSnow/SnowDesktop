@@ -1,4 +1,4 @@
-#include "drop_image_data.h"
+#include "drag_drop/drop_image_data.h"
 #include "test_temporary_directory.h"
 
 #include <windows.h>

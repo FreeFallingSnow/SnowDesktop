@@ -1,0 +1,267 @@
+/**
+ * @file general_settings.cpp
+ * @brief 通用设置的实现
+ * @details 提供通用设置 JSON 文件的路径获取、加载、保存。
+ */
+
+#include "general_settings.h"
+#include "data/data_paths.h"
+
+#include <shlwapi.h>
+
+#include <algorithm>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+
+namespace
+{
+    bool ReadBoolField(const std::string& text, const char* field, bool& out)
+    {
+        std::string marker = "\"" + std::string(field) + "\"";
+        size_t p = text.find(marker);
+        if (p == std::string::npos) return false;
+        p = text.find(':', p);
+        if (p == std::string::npos) return false;
+        p = text.find_first_not_of(" \t\r\n", p + 1);
+        if (p == std::string::npos) return false;
+        if (text.compare(p, 4, "true") == 0) { out = true; return true; }
+        if (text.compare(p, 5, "false") == 0) { out = false; return true; }
+        return false;
+    }
+
+    bool ReadIntField(const std::string& text, const char* field, int& out)
+    {
+        std::string marker = "\"" + std::string(field) + "\"";
+        size_t p = text.find(marker);
+        if (p == std::string::npos) return false;
+        p = text.find(':', p);
+        if (p == std::string::npos) return false;
+        p = text.find_first_not_of(" \t\r\n", p + 1);
+        if (p == std::string::npos) return false;
+        try { out = std::stoi(text.substr(p)); return true; }
+        catch (...) { return false; }
+    }
+
+    bool ReadStringField(const std::string& text, const char* field, char* out, size_t outSize)
+    {
+        if (!out || outSize == 0) return false;
+        std::string marker = "\"" + std::string(field) + "\"";
+        size_t p = text.find(marker);
+        if (p == std::string::npos) return false;
+        p = text.find(':', p);
+        if (p == std::string::npos) return false;
+        p = text.find('"', p + 1);
+        if (p == std::string::npos) return false;
+        size_t end = text.find('"', p + 1);
+        if (end == std::string::npos) return false;
+        std::string value = text.substr(p + 1, end - p - 1);
+        const size_t copyLength = std::min(value.size(), outSize - 1);
+        std::memcpy(out, value.data(), copyLength);
+        out[copyLength] = '\0';
+        return true;
+    }
+
+}
+
+std::wstring GetGeneralSettingsPath()
+{
+    return GetDataFilePath(L"SnowDesktop.general.json");
+}
+
+bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    std::string text = ss.str();
+    if (text.empty()) return false;
+
+    bool val = false;
+    if (ReadBoolField(text, "softwareDesktopEnabled", val))
+        settings.softwareDesktopEnabled = val;
+    if (ReadBoolField(text, "demoModeEnabled", val))
+        settings.demoModeEnabled = val;
+    if (ReadBoolField(text, "doubleClickHideDesktop", val))
+        settings.doubleClickHideDesktop = val;
+    if (ReadBoolField(text, "desktopPassthroughHotkeyEnabled", val))
+        settings.desktopPassthroughHotkeyEnabled = val;
+    if (ReadBoolField(text, "pageNavigationKeyboardEnabled", val))
+        settings.pageNavigationKeyboardEnabled = val;
+    if (ReadBoolField(text, "widgetDeveloperToolsEnabled", val))
+        settings.widgetDeveloperToolsEnabled = val;
+    if (ReadBoolField(text, "contextMenuExpandQuickActions", val))
+        settings.contextMenuExpandQuickActions = val;
+    if (ReadBoolField(text, "contextMenuHidePageManagement", val))
+        settings.contextMenuHidePageManagement = val;
+    int hotkeyValue = 0;
+    if (ReadIntField(text, "desktopPassthroughHotkeyModifiers",
+        hotkeyValue))
+    {
+        settings.desktopPassthroughHotkeyModifiers =
+            static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadIntField(text, "desktopPassthroughHotkeyVirtualKey",
+        hotkeyValue) &&
+        hotkeyValue > 0 && hotkeyValue <= 0xFF)
+    {
+        settings.desktopPassthroughHotkeyVirtualKey =
+            static_cast<UINT>(hotkeyValue);
+    }
+    if (ReadIntField(text, "pageNavigationPreviousModifiers",
+            hotkeyValue))
+    {
+        settings.pageNavigationPreviousModifiers =
+            static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadIntField(text, "pageNavigationPreviousVirtualKey",
+            hotkeyValue) && hotkeyValue >= 0 && hotkeyValue <= 0xFF)
+    {
+        settings.pageNavigationPreviousVirtualKey =
+            static_cast<UINT>(hotkeyValue);
+    }
+    if (ReadIntField(text, "pageNavigationNextModifiers",
+            hotkeyValue))
+    {
+        settings.pageNavigationNextModifiers =
+            static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadIntField(text, "pageNavigationNextVirtualKey",
+            hotkeyValue) && hotkeyValue >= 0 && hotkeyValue <= 0xFF)
+    {
+        settings.pageNavigationNextVirtualKey =
+            static_cast<UINT>(hotkeyValue);
+    }
+    int theme = 0;
+    if (ReadIntField(text, "quickNavTheme", theme))
+    {
+        if (theme >= 4) theme -= 2;
+        settings.quickNavTheme = std::clamp(theme, 0, 3);
+    }
+    if (ReadIntField(text, "collectionPopupTheme", theme))
+        settings.collectionPopupTheme = std::clamp(theme, 0, 3);
+    // Preserve the previous conditional override until the user chooses one
+    // of the independent surface themes. New installations default to follow.
+    settings.quickNavigationAppearance = {};
+    settings.collectionPopupAppearance = {};
+    settings.globalQuickNavigationAppearance = {};
+    settings.globalCollectionPopupAppearance = {};
+    settings.quickNavigationAppearance.mode = -2;
+    settings.collectionPopupAppearance.mode = -2;
+    JsonValue appearanceDocument;
+    if (!ParseJson(text, appearanceDocument)) return false;
+    if (const auto* value = appearanceDocument.Find("quickNavigationAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.quickNavigationAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("collectionPopupAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.collectionPopupAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("globalQuickNavigationAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalQuickNavigationAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("globalCollectionPopupAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.globalCollectionPopupAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("statusBar"))
+        if (!snowdesktop::DecodeStatusBarSettings(*value, settings.statusBar)) return false;
+    if (const auto* font = appearanceDocument.Find("font"))
+    {
+        if (!font->IsObject()) return false;
+        const auto* package = font->Find("package");
+        const auto* family = font->Find("family");
+        if (!package || !package->IsString() || !family || !family->IsString()) return false;
+        settings.font = {package->string, family->string};
+    }
+    ReadStringField(text, "language", settings.language, sizeof(settings.language));
+    ReadIntField(text, "animationMode", settings.animationMode);
+    ReadIntField(text, "popupAnimationEffect", settings.popupAnimationEffect);
+    ReadIntField(text, "animationSpeed", settings.animationSpeed);
+    ReadIntField(text, "animationFrameLimit", settings.animationFrameLimit);
+    ReadBoolField(text, "animationEnergySaver", settings.animationEnergySaver);
+    ReadBoolField(text, "animationOnBattery", settings.animationOnBattery);
+    if (const auto* v = appearanceDocument.Find("calendarEnabled"); v && v->IsBoolean()) settings.calendarDisplay.enabled = v->boolean;
+    if (const auto* v = appearanceDocument.Find("calendarType"); v && v->IsString()) settings.calendarDisplay.calendar = v->string;
+    snowdesktop::calendar::Normalize(settings.calendarDisplay);
+    settings.shellExtensions = snowdesktop::shell_extensions::ReadPreferences(appearanceDocument.Find("shellExtensions"));
+    NormalizeGeneralAnimationSettings(settings);
+    return true;
+}
+
+bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
+{
+    const auto quickAppearance = snowdesktop::EncodeSurfaceTheme(settings.quickNavigationAppearance);
+    const auto popupAppearance = snowdesktop::EncodeSurfaceTheme(settings.collectionPopupAppearance);
+    const auto globalQuickAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalQuickNavigationAppearance);
+    const auto globalPopupAppearance = snowdesktop::EncodeSurfaceTheme(settings.globalCollectionPopupAppearance);
+    const auto statusBar = snowdesktop::EncodeStatusBarSettings(settings.statusBar);
+    if (quickAppearance.empty() || popupAppearance.empty() || globalQuickAppearance.empty() ||
+        globalPopupAppearance.empty() || statusBar.empty()) return false;
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    auto calendar = settings.calendarDisplay;
+    snowdesktop::calendar::Normalize(calendar);
+    const auto quote = [](std::string_view text) {
+        std::string result = "\"";
+        constexpr char hex[] = "0123456789abcdef";
+        for (const unsigned char c : text)
+        {
+            if (c == '"' || c == '\\') { result += '\\'; result += static_cast<char>(c); }
+            else if (c < 0x20) { result += "\\u00"; result += hex[c >> 4]; result += hex[c & 15]; }
+            else result += static_cast<char>(c);
+        }
+        return result + '"';
+    };
+    file << "{\n";
+    file << "  \"font\": {\"package\":" << quote(settings.font.package)
+         << ",\"family\":" << quote(settings.font.family) << "},\n";
+    file << "  \"statusBar\": " << statusBar << ",\n";
+    file << "  \"shellExtensions\": " << snowdesktop::shell_extensions::WritePreferences(settings.shellExtensions) << ",\n";
+    file << "  \"contextMenuExpandQuickActions\": "
+         << (settings.contextMenuExpandQuickActions ? "true" : "false") << ",\n";
+    file << "  \"contextMenuHidePageManagement\": "
+         << (settings.contextMenuHidePageManagement ? "true" : "false") << ",\n";
+    file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";
+    file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
+    file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";
+    file << "  \"collectionPopupAppearance\": " << popupAppearance << ",\n";
+    file << "  \"globalQuickNavigationAppearance\": " << globalQuickAppearance << ",\n";
+    file << "  \"globalCollectionPopupAppearance\": " << globalPopupAppearance << ",\n";
+    file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
+    file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
+    file << "  \"animationSpeed\": " << snowdesktop::animation::NormalizeSpeed(settings.animationSpeed) << ",\n";
+    file << "  \"animationFrameLimit\": " << snowdesktop::animation::NormalizeFrameLimit(settings.animationFrameLimit) << ",\n";
+    file << "  \"animationEnergySaver\": " << (settings.animationEnergySaver ? "true" : "false") << ",\n";
+    file << "  \"animationOnBattery\": " << (settings.animationOnBattery ? "true" : "false") << ",\n";
+    file << "  \"softwareDesktopEnabled\": "
+         << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
+    file << "  \"demoModeEnabled\": "
+         << (settings.demoModeEnabled ? "true" : "false") << ",\n";
+    file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << ",\n";
+    file << "  \"desktopPassthroughHotkeyEnabled\": "
+         << (settings.desktopPassthroughHotkeyEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"desktopPassthroughHotkeyModifiers\": "
+         << settings.desktopPassthroughHotkeyModifiers << ",\n";
+    file << "  \"desktopPassthroughHotkeyVirtualKey\": "
+         << settings.desktopPassthroughHotkeyVirtualKey << ",\n";
+    file << "  \"pageNavigationKeyboardEnabled\": "
+         << (settings.pageNavigationKeyboardEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"pageNavigationPreviousModifiers\": "
+         << settings.pageNavigationPreviousModifiers << ",\n";
+    file << "  \"pageNavigationPreviousVirtualKey\": "
+         << settings.pageNavigationPreviousVirtualKey << ",\n";
+    file << "  \"pageNavigationNextModifiers\": "
+         << settings.pageNavigationNextModifiers << ",\n";
+    file << "  \"pageNavigationNextVirtualKey\": "
+         << settings.pageNavigationNextVirtualKey << ",\n";
+    file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
+    file << "  \"collectionPopupTheme\": "
+         << settings.collectionPopupTheme << ",\n";
+    file << "  \"widgetDeveloperToolsEnabled\": "
+         << (settings.widgetDeveloperToolsEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"language\": \"" << settings.language << "\"\n";
+    file << "}\n";
+    return true;
+}

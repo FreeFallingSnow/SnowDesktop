@@ -1,11 +1,11 @@
-#include "settings_ipc_channel.h"
-#include "settings_ipc_values.h"
-#include "status_bar_appearance.h"
-#include "winui/home_about_ipc_values.h"
-#include "large_icon_edit_rules.h"
-#include "large_icon_preset_rules.h"
-#include "settings_process.h"
-#include "shell_extension_service.h"
+#include "settings/settings_ipc_channel.h"
+#include "settings/settings_ipc_values.h"
+#include "system/status_bar/status_bar_appearance.h"
+#include "../src/winui/home_about_ipc_values.h"
+#include "icons/large_icon_edit_rules.h"
+#include "icons/large_icon_preset_rules.h"
+#include "settings/settings_process.h"
+#include "shell/shell_extension_service.h"
 
 #include <atomic>
 #include <future>
@@ -71,6 +71,12 @@ void TestCodec()
     dockSpace.mergedBarHeight = 64;
     Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
         "system Dock space reservation must cross the settings-process boundary");
+    for (const bool enabled : {true, false})
+    {
+        dockSpace.singleClickLaunchItems = enabled;
+        Check(Unpack<DockSettings>(Pack(dockSpace)).singleClickLaunchItems == enabled,
+            "enabling and disabling single-click launch must reach the desktop host through settings IPC");
+    }
     const auto styleRoute = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::DesktopStyle);
     const auto restoredRoute = Unpack<snowdesktop::SettingsRoute>(Pack(styleRoute));
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
@@ -256,6 +262,7 @@ void TestCodec()
     settings.values.personalization.scrollableTitleBarOnTop = true;
     settings.values.personalization.widgetTransformCursors = false;
     settings.values.personalization.popupHoverOpen = true;
+    settings.values.personalization.popupCloseOnMouseLeave = true;
     settings.values.personalization.popupHoverDelayMs = 1700.0f;
     settings.values.personalization.showCategoryTabCounts = false;
     settings.values.personalization.panelGradient.angle = 213;
@@ -306,6 +313,7 @@ void TestCodec()
     Check(restored.values.personalization.showGroupTabCounts &&
             restored.values.personalization.scrollableTitleBarOnTop &&
             restored.values.personalization.popupHoverOpen &&
+            restored.values.personalization.popupCloseOnMouseLeave &&
             restored.values.personalization.popupHoverDelayMs == 1700.0f &&
             !restored.values.personalization.showCategoryTabCounts,
         "group tab counts cross the settings process boundary independently from category counts");

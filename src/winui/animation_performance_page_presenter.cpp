@@ -1,8 +1,8 @@
 #include "pch.h"
 #include "animation_performance_page_presenter.h"
 #include "settings_presenter_controls.h"
-#include "../animation_settings.h"
-#include "../l10n.h"
+#include "settings/animation_settings.h"
+#include "common/l10n.h"
 
 #include <array>
 #include <chrono>

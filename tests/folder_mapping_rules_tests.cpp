@@ -1,4 +1,4 @@
-#include "folder_mapping_rules.h"
+#include "layout/folder_mapping_rules.h"
 
 #include <iostream>
 #include <string>

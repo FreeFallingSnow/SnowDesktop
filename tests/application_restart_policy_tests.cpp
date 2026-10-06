@@ -1,8 +1,8 @@
-#include "application_crash_watchdog.h"
-#include "application_restart_policy.h"
-#include "app/startup_cancellation.h"
-#include "app/startup_diagnostics.h"
-#include "shell_call_diagnostics.h"
+#include "platform/application_crash_watchdog.h"
+#include "platform/application_restart_policy.h"
+#include "../src/app/lifecycle/startup_cancellation.h"
+#include "../src/app/lifecycle/startup_diagnostics.h"
+#include "shell/shell_call_diagnostics.h"
 
 #include <iostream>
 #include <string>

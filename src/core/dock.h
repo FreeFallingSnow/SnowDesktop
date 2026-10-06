@@ -2,8 +2,8 @@
 
 #include "container.h"
 #include "item.h"
-#include "types.h"
-#include "../dock_magnification.h"
+#include "common/types.h"
+#include "dock/dock_magnification.h"
 
 #include <memory>
 #include <vector>
@@ -132,6 +132,7 @@ public:
     std::vector<RECT> GetOcclusionRects(POINT pointer) const;
     bool ContainsInteractivePoint(POINT pt) const;
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
+    int GetElementIconSize(const RECT& baseRect, const RECT& visualRect) const;
     RECT GetVisualPanelBounds(POINT pointer) const;
     RECT GetHoveredTitleBounds(POINT pointer) const;
     RECT GetDesktopItemVisualRect(

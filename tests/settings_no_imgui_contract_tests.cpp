@@ -129,14 +129,14 @@ int main(int argc, char** argv)
     {
         const std::filesystem::path repository(argv[1]);
         TestSettingsEngineHasNoImGui(
-            ReadText(repository / "src/widget_engine.h"),
-            ReadText(repository / "src/widget_engine.cpp"));
+            ReadText(repository / "src/widget/runtime/widget_engine.h"),
+            ReadText(repository / "src/widget/runtime/widget_engine.cpp"));
         TestBuildTargetBoundary(
             ReadText(repository / "CMakeLists.txt"),
             ReadText(repository / "steam_bridge/CMakeLists.txt"),
             ReadText(repository / "steam_bridge/src/manager_main.cpp"));
         TestDeclarativeV2Boundary(
-            ReadText(repository / "src/widget_public_api.inc"),
+            ReadText(repository / "src/widget/api/widget_public_api.inc"),
             ReadText(repository /
                 "src/winui/widget_settings_presenter.cpp"));
     }

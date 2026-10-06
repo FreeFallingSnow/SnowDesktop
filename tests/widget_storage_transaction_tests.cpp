@@ -1,5 +1,5 @@
-#include "widget_storage_transaction.h"
-#include "widget_storage_value.h"
+#include "widget/storage/widget_storage_transaction.h"
+#include "widget/storage/widget_storage_value.h"
 
 #include <cstdlib>
 #include <iostream>

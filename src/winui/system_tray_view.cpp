@@ -1,8 +1,8 @@
 #include "pch.h"
 #include "system_tray_view.h"
-#include "../l10n.h"
-#include "../tray_order.h"
-#include "../tray_presentation.h"
+#include "common/l10n.h"
+#include "system/tray/tray_order.h"
+#include "system/tray/tray_presentation.h"
 #include <cmath>
 #include <robuffer.h>
 #include <winrt/Windows.Storage.Streams.h>

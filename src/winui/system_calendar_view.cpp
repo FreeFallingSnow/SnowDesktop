@@ -1,6 +1,6 @@
 #include "pch.h"
 #include "system_calendar_view.h"
-#include "../l10n.h"
+#include "common/l10n.h"
 #include <cstdio>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Windows.Globalization.h>

@@ -1,7 +1,7 @@
-#include "website_icon.h"
-#include "shortcut_icon_resource.h"
-#include "atomic_file.h"
-#include "preview_png_writer.h"
+#include "icons/website_icon.h"
+#include "icons/shortcut_icon_resource.h"
+#include "data/atomic_file.h"
+#include "ui/preview/preview_png_writer.h"
 #include <shlobj.h>
 #include <wincodec.h>
 #include <wrl/client.h>

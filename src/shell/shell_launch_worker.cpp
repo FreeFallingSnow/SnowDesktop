@@ -1,0 +1,623 @@
+#include "navigation/quick_navigation_query.h"
+#include "shell_launch_worker.h"
+#include "platform/operation_feedback.h"
+#include "shell_context_menu_invoke.h"
+#include "shell_launch_process.h"
+#include "shell_launch_execution.h"
+#include "shell_open_command.h"
+
+#include <optional>
+
+#include <objbase.h>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <shlwapi.h>
+#include <wrl/client.h>
+
+#include <cstring>
+#include <iterator>
+#include <utility>
+
+namespace snowdesktop
+{
+namespace
+{
+
+using Microsoft::WRL::ComPtr;
+
+bool ExecutableManifestRequestsAdministrator(
+    const std::wstring& executablePath)
+{
+    if (executablePath.empty())
+        return false;
+    const wchar_t* extension = PathFindExtensionW(executablePath.c_str());
+    if (!extension || _wcsicmp(extension, L".exe") != 0)
+        return false;
+
+    ACTCTXW context{};
+    context.cbSize = sizeof(context);
+    context.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;
+    context.lpSource = executablePath.c_str();
+    context.lpResourceName = CREATEPROCESS_MANIFEST_RESOURCE_ID;
+    const HANDLE activationContext = CreateActCtxW(&context);
+    if (activationContext == INVALID_HANDLE_VALUE)
+        return false;
+
+    ACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION runLevel{};
+    SIZE_T writtenOrRequired = 0;
+    const bool queried = QueryActCtxW(
+        0,
+        activationContext,
+        nullptr,
+        RunlevelInformationInActivationContext,
+        &runLevel,
+        sizeof(runLevel),
+        &writtenOrRequired) != FALSE;
+    ReleaseActCtx(activationContext);
+    return queried &&
+        (runLevel.RunLevel == ACTCTX_RUN_LEVEL_REQUIRE_ADMIN ||
+         runLevel.RunLevel == ACTCTX_RUN_LEVEL_HIGHEST_AVAILABLE);
+}
+
+bool SafeInvokeContextMenu(
+    IContextMenu* contextMenu,
+    LPCMINVOKECOMMANDINFO invoke)
+{
+    __try
+    {
+        const HRESULT result = contextMenu ? contextMenu->InvokeCommand(invoke) : E_POINTER;
+        if (FAILED(result)) SetLastError(static_cast<DWORD>(result));
+        return SUCCEEDED(result);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        SetLastError(ERROR_UNHANDLED_EXCEPTION);
+        return false;
+    }
+}
+
+std::optional<bool> InvokeShellItemOpen(
+    HWND owner,
+    PCIDLIST_ABSOLUTE absolutePidl,
+    int showCommand)
+{
+    if (!absolutePidl)
+        return std::nullopt;
+
+    ComPtr<IShellFolder> parentFolder;
+    PCUITEMID_CHILD child = nullptr;
+    if (FAILED(SHBindToParent(
+            absolutePidl,
+            IID_PPV_ARGS(parentFolder.GetAddressOf()),
+            &child)) ||
+        !parentFolder || !child)
+    {
+        return std::nullopt;
+    }
+
+    const HWND validOwner = owner && IsWindow(owner) ? owner : nullptr;
+    ComPtr<IContextMenu> contextMenu;
+    if (FAILED(parentFolder->GetUIObjectOf(
+            validOwner,
+            1,
+            &child,
+            IID_IContextMenu,
+            nullptr,
+            reinterpret_cast<void**>(
+                contextMenu.GetAddressOf()))) ||
+        !contextMenu)
+    {
+        return std::nullopt;
+    }
+
+    // A supported handler owns the attempt, including failure. Falling back
+    // after a rejected invocation could load a full menu or execute twice.
+    const bool opened = shell_open_command::Invoke(contextMenu.Get(), validOwner, showCommand);
+    const DWORD error = GetLastError();
+    contextMenu.Reset();
+    parentFolder.Reset();
+    SetLastError(error);
+    return opened;
+}
+
+bool ExecuteShellOpen(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl,
+    int showCommand,
+    ULONG launchMask)
+{
+    if (path.empty() && !absolutePidl)
+        return false;
+
+    // Paths from mapped folders, widget actions and navigation do not always
+    // carry a PIDL. Resolve them here in the helper so they receive the same
+    // restricted Open query as desktop and Dock items. In particular, neither
+    // a directory nor a .lnk should implicitly prepare a full context menu.
+    PIDLIST_ABSOLUTE parsedPidl = nullptr;
+    if (!absolutePidl)
+    {
+        SHParseDisplayName(path.c_str(), nullptr, &parsedPidl, 0, nullptr);
+        absolutePidl = parsedPidl;
+    }
+    const auto opened = InvokeShellItemOpen(owner, absolutePidl, showCommand);
+    if (opened.has_value())
+    {
+        const DWORD error = GetLastError();
+        CoTaskMemFree(parsedPidl);
+        SetLastError(error);
+        return *opened;
+    }
+
+    // Protocols or Shell objects without IContextMenu still use their
+    // registered Open handler. No fallback follows a supported failed command.
+    SHELLEXECUTEINFOW executeInfo{};
+    executeInfo.cbSize = sizeof(executeInfo);
+    executeInfo.fMask = launchMask | SEE_MASK_FLAG_NO_UI;
+    executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
+    executeInfo.lpVerb = L"open";
+    executeInfo.lpFile = path.empty() ? nullptr : path.c_str();
+    if (absolutePidl)
+    {
+        executeInfo.fMask |= SEE_MASK_IDLIST;
+        executeInfo.lpIDList = const_cast<PIDLIST_ABSOLUTE>(absolutePidl);
+    }
+    executeInfo.nShow = showCommand;
+    const bool executed = ShellExecuteExW(&executeInfo) != FALSE;
+    const DWORD error = GetLastError();
+    CoTaskMemFree(parsedPidl);
+    SetLastError(error);
+    return executed;
+}
+
+} // namespace
+
+bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showCommand)
+{
+    if (!contextMenu)
+        return false;
+    // CMF_NORMAL initializes unrelated extensions (including ones that can
+    // deadlock in DllMain). Default activation must request only its verbs.
+    HMENU menu = CreatePopupMenu();
+    if (!menu)
+        return false;
+
+    constexpr UINT firstCommand = 1;
+    constexpr UINT lastCommand = 0x7FFF;
+    const HRESULT queryResult = contextMenu->QueryContextMenu(
+        menu,
+        0,
+        firstCommand,
+        lastCommand,
+        CMF_DEFAULTONLY | CMF_OPTIMIZEFORINVOKE);
+
+    if (FAILED(queryResult))
+    {
+        DestroyMenu(menu);
+        SetLastError(static_cast<DWORD>(queryResult));
+        return false;
+    }
+
+    UINT_PTR openOffset = static_cast<UINT_PTR>(-1);
+    if (SUCCEEDED(queryResult))
+    {
+        const UINT commandCount = HRESULT_CODE(queryResult);
+        for (UINT offset = 0; offset < commandCount; ++offset)
+        {
+            wchar_t verb[64]{};
+            if (SUCCEEDED(contextMenu->GetCommandString(
+                    offset,
+                    GCS_VERBW,
+                    nullptr,
+                    reinterpret_cast<LPSTR>(verb),
+                    static_cast<UINT>(std::size(verb)))) &&
+                _wcsicmp(verb, L"open") == 0)
+            {
+                openOffset = offset;
+                break;
+            }
+        }
+
+        if (openOffset == static_cast<UINT_PTR>(-1))
+        {
+            const UINT defaultCommand = GetMenuDefaultItem(
+                menu, FALSE, 0);
+            if (defaultCommand >= firstCommand &&
+                defaultCommand <= lastCommand)
+            {
+                openOffset = defaultCommand - firstCommand;
+            }
+        }
+    }
+
+    CMINVOKECOMMANDINFOEX invoke{};
+    invoke.cbSize = sizeof(invoke);
+    // This STA belongs to a short-lived helper. Finish Shell/DDE handoff
+    // before it exits; the desktop does not wait for this call.
+    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE | CMIC_MASK_NOASYNC | CMIC_MASK_FLAG_NO_UI;
+    invoke.hwnd = owner && IsWindow(owner) ? owner : nullptr;
+    if (openOffset != static_cast<UINT_PTR>(-1))
+    {
+        invoke.lpVerb = MAKEINTRESOURCEA(openOffset);
+        invoke.lpVerbW = MAKEINTRESOURCEW(openOffset);
+    }
+    else
+    {
+        invoke.lpVerb = "open";
+        invoke.lpVerbW = L"open";
+    }
+    const std::wstring invocationDirectory =
+        DesktopShellInvocationDirectory();
+    std::string invocationDirectoryA;
+    SetShellInvocationDirectory(
+        invoke, invocationDirectory, invocationDirectoryA);
+    invoke.nShow = showCommand;
+
+    const bool opened = SafeInvokeContextMenu(
+        contextMenu,
+        reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+    const DWORD error = GetLastError();
+    DestroyMenu(menu);
+    SetLastError(error);
+    return opened;
+}
+
+namespace
+{
+bool DispatchShellOpen(HWND owner, const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl, int showCommand,
+    shell_launch_process::Action action, bool reportDispatchFailure = true)
+{
+    try
+    {
+        shell_launch_process::Request request;
+        request.owner = owner;
+        request.path = path;
+        request.showCommand = showCommand;
+        request.action = action;
+        if (absolutePidl)
+        {
+            const UINT size = ILGetSize(absolutePidl);
+            if (!size || size > 65536)
+            {
+                if (reportDispatchFailure)
+                    operation_feedback::Report({"app.operation.openFailed", path, ERROR_INVALID_DATA});
+                return false;
+            }
+            const auto* data = reinterpret_cast<const unsigned char*>(absolutePidl);
+            request.absolutePidl.assign(data, data + size);
+        }
+        return static_cast<bool>(shell_launch_process::Start(request, 120000, reportDispatchFailure));
+    }
+    catch (...)
+    {
+        if (reportDispatchFailure)
+            operation_feedback::Report({"app.operation.openFailed", path, ERROR_UNHANDLED_EXCEPTION});
+        return false;
+    }
+}
+} // namespace
+
+ShellLaunchWorker::ShellLaunchWorker()
+    : ShellLaunchWorker(&ShellLaunchWorker::Execute)
+{
+}
+
+ShellLaunchWorker::ShellLaunchWorker(Executor executor)
+    : state_(std::make_shared<State>(std::move(executor)))
+{
+}
+
+ShellLaunchWorker::~ShellLaunchWorker()
+{
+    Stop();
+}
+
+bool ShellLaunchWorker::Enqueue(
+    HWND owner,
+    std::wstring path,
+    int showCommand)
+{
+    if (path.empty())
+        return false;
+
+    Task task;
+    task.owner = owner;
+    task.path = std::move(path);
+    task.showCommand = showCommand;
+    return EnqueueTask(std::move(task));
+}
+
+bool ShellLaunchWorker::EnqueueShellItem(
+    HWND owner,
+    std::wstring path,
+    PCIDLIST_ABSOLUTE absolutePidl,
+    int showCommand)
+{
+    if (path.empty() || !absolutePidl)
+        return false;
+
+    const UINT pidlSize = ILGetSize(absolutePidl);
+    if (pidlSize == 0)
+        return false;
+
+    Task task;
+    task.owner = owner;
+    task.path = std::move(path);
+    task.showCommand = showCommand;
+    try
+    {
+        task.absolutePidl.resize(pidlSize);
+    }
+    catch (...)
+    {
+        return false;
+    }
+    std::memcpy(
+        task.absolutePidl.data(), absolutePidl, pidlSize);
+    return EnqueueTask(std::move(task));
+}
+
+bool ShellLaunchWorker::EnqueueTask(Task task)
+{
+    if (!state_ || !state_->executor)
+        return false;
+
+    auto state = state_;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->stopping)
+            return false;
+        try
+        {
+            state->tasks.push_back(std::move(task));
+            if (!thread_.joinable())
+                thread_ = std::thread(&ShellLaunchWorker::Run, state);
+        }
+        catch (...)
+        {
+            if (!state->tasks.empty())
+                state->tasks.pop_back();
+            return false;
+        }
+    }
+    state->cv.notify_one();
+    return true;
+}
+
+void ShellLaunchWorker::Stop()
+{
+    if (!state_)
+        return;
+
+    auto state = state_;
+    bool joinWorker = false;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (!state->stopping)
+        {
+            state->stopping = true;
+            state->tasks.clear();
+        }
+        joinWorker = !state->executing;
+    }
+    state->cv.notify_all();
+
+    if (!thread_.joinable())
+        return;
+    if (joinWorker)
+        thread_.join();
+    else
+        thread_.detach();
+}
+
+bool ShellLaunchWorker::Execute(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl,
+    int showCommand)
+{
+    return DispatchShellOpen(owner, path, absolutePidl, showCommand,
+        shell_launch_process::Action::Open);
+}
+
+bool ShellLaunchWorker::ExecuteInteractive(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl,
+    int showCommand, bool reportDispatchFailure)
+{
+    return DispatchShellOpen(owner, path, absolutePidl, showCommand,
+        shell_launch_process::Action::OpenWithShortcutPolicy, reportDispatchFailure);
+}
+
+bool ShellLaunchWorker::ExecuteRunAsAdministrator(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE,
+    int showCommand)
+{
+    return DispatchShellOpen(owner, path, nullptr, showCommand,
+        shell_launch_process::Action::RunAs);
+}
+
+bool shell_launch_process::ExecuteRequest(const Request& request)
+{
+    return ExecuteRequestWithApi(request, ExecutionApi{});
+}
+
+bool shell_launch_process::ExecuteRequestWithApi(
+    const Request& request, const ExecutionApi& api)
+{
+    const auto& path = request.path;
+    if (path.empty() && request.absolutePidl.empty())
+        return false;
+    const HWND validOwner = IsLaunchOwner(request.owner)
+        ? request.owner : nullptr;
+    if (request.action == Action::RunCommand)
+    {
+        const auto command = quick_navigation_query::ParseCommand(path);
+        if (!command) return false;
+        SHELLEXECUTEINFOW info{};
+        info.cbSize = sizeof(info);
+        info.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
+        info.hwnd = validOwner;
+        info.lpFile = command->target.c_str();
+        info.lpParameters = command->parameters.empty() ? nullptr : command->parameters.c_str();
+        info.nShow = request.showCommand;
+        api.allow(ASFW_ANY);
+        return api.execute(&info) != FALSE;
+    }
+    const bool runAs = request.action == Action::RunAs ||
+        (request.action == Action::OpenWithShortcutPolicy &&
+            ShellLaunchWorker::ShortcutRequestsAdministrator(path));
+    if (!runAs)
+    {
+        const auto pidl = request.absolutePidl.empty() ? nullptr :
+            reinterpret_cast<PCIDLIST_ABSOLUTE>(request.absolutePidl.data());
+        api.allow(ASFW_ANY);
+        const auto open = api.open ? api.open : &ExecuteShellOpen;
+        return open(validOwner, path, pidl, request.showCommand,
+            SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE);
+    }
+    SHELLEXECUTEINFOW executeInfo{};
+    executeInfo.cbSize = sizeof(executeInfo);
+    executeInfo.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
+    executeInfo.hwnd = validOwner;
+    executeInfo.lpVerb = L"runas";
+    executeInfo.lpFile = path.c_str();
+    executeInfo.nShow = request.showCommand;
+    // Shortcut/manifest inspection can take time. Refresh the handoff only
+    // after it finishes, immediately before entering the consent broker.
+    // Do not reactivate the desktop if the user has switched to another app.
+    const HWND foreground = api.foreground();
+    DWORD foregroundProcess = 0, ownerProcess = 0;
+    if (foreground) GetWindowThreadProcessId(foreground, &foregroundProcess);
+    if (validOwner) GetWindowThreadProcessId(validOwner, &ownerProcess);
+    const BOOL activated = validOwner && ownerProcess == foregroundProcess
+        ? api.activate(validOwner) : FALSE;
+    const BOOL granted = api.allow(ASFW_ANY);
+    wchar_t diagnostic[256]{};
+    swprintf_s(diagnostic,
+        L"SnowDesktop: elevation owner=%p foreground=%p activated=%d granted=%d.\n",
+        validOwner, foreground, activated, granted);
+    OutputDebugStringW(diagnostic);
+    return api.execute(&executeInfo) != FALSE;
+}
+
+bool ShellLaunchWorker::ShortcutRequestsAdministrator(
+    const std::wstring& path)
+{
+    if (path.empty())
+        return false;
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    if (!extension || _wcsicmp(extension, L".lnk") != 0)
+        return false;
+
+    constexpr CLSID shellLinkClsid{
+        0x00021401, 0x0000, 0x0000,
+        { 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 }
+    };
+    ComPtr<IShellLinkW> shellLink;
+    if (FAILED(CoCreateInstance(
+            shellLinkClsid, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(shellLink.GetAddressOf()))) ||
+        !shellLink)
+    {
+        return false;
+    }
+
+    ComPtr<IPersistFile> persistFile;
+    if (FAILED(shellLink.As(&persistFile)) || !persistFile ||
+        FAILED(persistFile->Load(path.c_str(), STGM_READ)))
+    {
+        return false;
+    }
+
+    ComPtr<IShellLinkDataList> dataList;
+    DWORD flags = 0;
+    if (SUCCEEDED(shellLink.As(&dataList)) && dataList &&
+        SUCCEEDED(dataList->GetFlags(&flags)) &&
+        (flags & SLDF_RUNAS_USER) != 0)
+    {
+        return true;
+    }
+
+    wchar_t targetPath[32768]{};
+    if (FAILED(shellLink->GetPath(
+            targetPath,
+            static_cast<int>(std::size(targetPath)),
+            nullptr,
+            SLGP_RAWPATH)) ||
+        targetPath[0] == L'\0')
+    {
+        return false;
+    }
+
+    wchar_t expandedPath[32768]{};
+    const DWORD expandedLength = ExpandEnvironmentStringsW(
+        targetPath,
+        expandedPath,
+        static_cast<DWORD>(std::size(expandedPath)));
+    const std::wstring executablePath =
+        expandedLength > 0 && expandedLength <= std::size(expandedPath)
+        ? expandedPath
+        : targetPath;
+    return ExecutableManifestRequestsAdministrator(executablePath);
+}
+
+void ShellLaunchWorker::Run(const std::shared_ptr<State>& state)
+{
+    const HRESULT comResult = CoInitializeEx(
+        nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(comResult))
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->tasks.clear();
+        state->stopping = true;
+        return;
+    }
+
+    for (;;)
+    {
+        Task task;
+        {
+            std::unique_lock<std::mutex> lock(state->mutex);
+            state->cv.wait(lock, [&] {
+                return state->stopping || !state->tasks.empty();
+            });
+            if (state->stopping && state->tasks.empty())
+                break;
+            task = std::move(state->tasks.front());
+            state->tasks.pop_front();
+            state->executing = true;
+        }
+
+        try
+        {
+            const auto absolutePidl = task.absolutePidl.empty()
+                ? nullptr
+                : reinterpret_cast<PCIDLIST_ABSOLUTE>(
+                    task.absolutePidl.data());
+            state->executor(
+                task.owner,
+                task.path,
+                absolutePidl,
+                task.showCommand);
+        }
+        catch (...)
+        {
+            // A failing injected/custom executor must not terminate the
+            // worker or discard subsequent user launch requests.
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->executing = false;
+        }
+    }
+
+    CoUninitialize();
+}
+
+} // namespace snowdesktop

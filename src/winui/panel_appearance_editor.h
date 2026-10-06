@@ -2,7 +2,7 @@
 #include "appearance_sections.h"
 #include "edge_light_editor.h"
 #include "panel_gradient_editor.h"
-#include "../personalization.h"
+#include "theme/personalization.h"
 #include <unordered_map>
 
 namespace snowdesktop::winui

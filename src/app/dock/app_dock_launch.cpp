@@ -1,0 +1,439 @@
+#include "app/app.h"
+#include "app/shell/shell_icon_request.h"
+#include "dock_platform_helpers.h"
+#include "dock_running_app_pin_rules.h"
+#include "settings/animation_settings.h"
+#include "shell/shell_launch_execution.h"
+
+// Dock launch animation, item activation and application identity resolution.
+
+bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
+{
+    if (!hwnd_ || !IsWindow(hwnd_) ||
+        itemIndex >= items_.size() ||
+        !generalSettings_.dockEnabled ||
+        dockSettings_.launchEffect == 0 ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
+        return false;
+
+    const std::wstring key =
+        DockItemWindowKey(items_[itemIndex]);
+    if (key.empty())
+        return false;
+
+    const bool fixed =
+        std::any_of(dockEntries_.begin(), dockEntries_.end(),
+            [&](const DockEntry& entry) {
+                return entry.type ==
+                        DockEntryType::DesktopItem &&
+                    ToUpperInvariant(entry.reference) == key;
+            });
+    bool frequent = false;
+    if (!fixed)
+    {
+        const std::vector<size_t> frequentItems =
+            GetFrequentDockItemIndices();
+        frequent = std::find(
+            frequentItems.begin(), frequentItems.end(),
+            itemIndex) != frequentItems.end();
+    }
+    if (!fixed && !frequent)
+        return false;
+
+    dockLaunchBounces_[key] = {
+        snowdesktop::dock_launch_animation::
+            MonotonicTimeMilliseconds(),
+        false,
+        nullptr
+    };
+    EnsureUiAnimationFrame();
+    UpdateFloatingDockWindowBounds(false);
+    InvalidateDockLaunchBounceRects();
+    return true;
+}
+
+float DesktopApp::GetDockLaunchBounceOffset(
+    size_t itemIndex, int iconSize) const
+{
+    if (itemIndex >= items_.size() || dockSettings_.launchEffect != 1 ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
+        return 0.0f;
+    const auto found = dockLaunchBounces_.find(
+        DockItemWindowKey(items_[itemIndex]));
+    if (found == dockLaunchBounces_.end())
+        return 0.0f;
+    return snowdesktop::dock_launch_animation::
+        OffsetPixels(
+            snowdesktop::dock_launch_animation::AdvanceElapsed(
+                found->second.elapsedMs,
+                snowdesktop::dock_launch_animation::
+                    MonotonicTimeMilliseconds() - found->second.startTimeMs,
+                snowdesktop::animation::RuntimeDurationScale()),
+            iconSize);
+}
+
+float DesktopApp::GetDockLaunchPulseScale(size_t itemIndex) const
+{
+    if (itemIndex >= items_.size() || dockSettings_.launchEffect != 2 ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
+        return 1.0f;
+    const auto found = dockLaunchBounces_.find(
+        DockItemWindowKey(items_[itemIndex]));
+    if (found == dockLaunchBounces_.end())
+        return 1.0f;
+    return snowdesktop::dock_launch_animation::PulseScale(
+        snowdesktop::dock_launch_animation::AdvanceElapsed(
+            found->second.elapsedMs,
+            snowdesktop::dock_launch_animation::MonotonicTimeMilliseconds() -
+                found->second.startTimeMs,
+            snowdesktop::animation::RuntimeDurationScale()));
+}
+
+void DesktopApp::OnDockLaunchBounceTimer()
+{
+    if (dockLaunchBounces_.empty())
+    {
+        return;
+    }
+
+    const double now =
+        snowdesktop::dock_launch_animation::
+            MonotonicTimeMilliseconds();
+
+    // Include the previous frame before removing completed bounces so their
+    // last translated pixels are cleared by the same coalesced paint.
+    InvalidateDockLaunchBounceRects();
+
+    if (!generalSettings_.dockEnabled || dockSettings_.launchEffect == 0 ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
+    {
+        dockLaunchBounces_.clear();
+        UpdateFloatingDockWindowBounds(false);
+        return;
+    }
+
+    const size_t previousBounceCount = dockLaunchBounces_.size();
+    for (auto bounce = dockLaunchBounces_.begin();
+        bounce != dockLaunchBounces_.end();)
+    {
+        const size_t itemIndex =
+            FindItemIndexByKey(bounce->first);
+        const double elapsed =
+            snowdesktop::dock_launch_animation::AdvanceElapsed(
+                bounce->second.elapsedMs, now - bounce->second.startTimeMs,
+                snowdesktop::animation::RuntimeDurationScale());
+        bounce->second.elapsedMs = elapsed;
+        bounce->second.startTimeMs = now;
+        if (itemIndex >= items_.size() ||
+            elapsed >=
+                static_cast<double>(
+                    snowdesktop::dock_launch_animation::
+                        kMaximumDurationMs))
+        {
+            bounce = dockLaunchBounces_.erase(bounce);
+            continue;
+        }
+
+        if (elapsed >=
+                static_cast<double>(
+                    snowdesktop::dock_launch_animation::
+                        kMinimumDurationMs))
+        {
+            const bool knownRunning =
+                GetDockWindowVisualState(itemIndex) !=
+                    DockWindowVisualState::Closed;
+            HWND foreground = GetAncestor(
+                GetForegroundWindow(), GA_ROOT);
+            bool launchedWindowIsForeground = false;
+            if (!knownRunning &&
+                foreground &&
+                foreground !=
+                    bounce->second.observedForeground)
+            {
+                bounce->second.observedForeground =
+                    foreground;
+                launchedWindowIsForeground =
+                    DockWindowMatchesAppIdentity(
+                        foreground,
+                        ResolveDockAppIdentity(
+                            itemIndex));
+            }
+            if (knownRunning ||
+                launchedWindowIsForeground)
+            {
+                bounce->second.stopRequested = true;
+            }
+        }
+        if (bounce->second.stopRequested &&
+            snowdesktop::dock_launch_animation::
+                IsRestingPoint(elapsed))
+        {
+            bounce = dockLaunchBounces_.erase(bounce);
+            continue;
+        }
+        ++bounce;
+    }
+
+    // Retire the visual envelope even when the last item disappeared. The
+    // item-based invalidation below has no remaining item in that case.
+    if (dockLaunchBounces_.size() != previousBounceCount)
+        UpdateFloatingDockWindowBounds(false);
+    InvalidateDockLaunchBounceRects();
+}
+
+void DesktopApp::InvalidateDockLaunchBounceRects()
+{
+    bool invalidateFloatingDock = false;
+    for (const auto& [key, _] : dockLaunchBounces_)
+    {
+        const size_t itemIndex = FindItemIndexByKey(key);
+        if (itemIndex >= items_.size())
+            continue;
+        for (const auto& container : containers_)
+        {
+            auto* dock = dynamic_cast<DockContainer*>(
+                container.get());
+            if (!dock)
+                continue;
+            RECT dirty = dock->GetDesktopItemVisualRect(
+                itemIndex, lastMousePoint_);
+            if (IsRectEmptyRect(dirty))
+                continue;
+            const int shortSide = std::max<LONG>(
+                1,
+                std::min(
+                    dirty.right - dirty.left,
+                    dirty.bottom - dirty.top));
+            const int padding = std::max(
+                4,
+                static_cast<int>(std::ceil(
+                    static_cast<double>(shortSide) * 0.42)));
+            InflateRect(&dirty, padding, padding);
+            if (IsDockHostedByPersistentHost(dock))
+            {
+                invalidateFloatingDock = true;
+            }
+            else if (hwnd_ && IsWindow(hwnd_))
+            {
+                InvalidateRect(hwnd_, &dirty, FALSE);
+            }
+        }
+    }
+    if (invalidateFloatingDock)
+        InvalidateFloatingDockWindow(false);
+}
+
+HWND DesktopApp::ShellLaunchOwnerHwnd(HWND requested) const
+{
+    return snowdesktop::shell_launch_process::ResolveLaunchOwner(
+        requested, hwnd_, inputHwnd_);
+}
+
+bool DesktopApp::LaunchPathWithShortcutPolicy(
+    HWND owner, const std::wstring& path)
+{
+    return snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+        ShellLaunchOwnerHwnd(owner), path, nullptr);
+}
+
+bool DesktopApp::LaunchDesktopItem(
+    size_t itemIndex, bool animateDockLaunch)
+{
+    if (itemIndex >= items_.size() || items_[itemIndex].parsingName.empty())
+        return false;
+    if (animateDockLaunch)
+    {
+        const DockAppIdentity identity =
+            ResolveDockAppIdentity(itemIndex);
+        if (snowdesktop::dock_window_rules::
+                ShouldSuppressDockWindowCommand(
+                    IsDockAppClosePending(identity)))
+            return false;
+    }
+    if (dockWindowTransition_ &&
+        dockWindowTransition_->IsActive())
+    {
+        dockWindowTransition_->Cancel();
+    }
+    if (animateDockLaunch)
+        DismissDockWindowPreviewUntilLeave();
+    const bool wasClosed =
+        GetDockWindowVisualState(itemIndex) ==
+            DockWindowVisualState::Closed;
+    const DesktopItem& item = items_[itemIndex];
+    // Resolve shortcuts and invoke Shell handlers in a separate process.
+    // Even a worker-thread loader-lock deadlock can poison the whole host;
+    // one helper per launch also keeps later opens out of a blocked queue.
+    const bool launchAccepted =
+        snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+            ShellLaunchOwnerHwnd(), item.parsingName,
+            item.absolutePidl.get());
+    if (!launchAccepted)
+        return false;
+    RecordDockItemUsage(itemIndex);
+    if (animateDockLaunch && wasClosed)
+        StartDockLaunchBounce(itemIndex);
+    return true;
+}
+
+DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
+{
+    if (itemIndex >= items_.size()) return {};
+    const DesktopItem& item = items_[itemIndex];
+    const std::wstring key = DockItemWindowKey(item);
+    if (key.empty() || item.parsingName.empty() || !item.desktopIconClsid.empty())
+        return {};
+
+    const auto path = item.parsingName;
+    const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
+    const auto stamp = snowdesktop::shell_icon_request::Stamp(item);
+    const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
+    if (cached.fresh) return cached.value.value_or(DockAppIdentity{});
+
+    shellVisualWork_.Submit(L"dock-identity:" + cacheKey + L"\n" + std::to_wstring(cached.ticket),
+        [path] { return ReadDockAppIdentity(path); },
+        [this, key, cacheKey, path, stamp, ticket = cached.ticket](DockAppIdentity identity) {
+            const auto current = std::find_if(items_.begin(), items_.end(), [&](const auto& item) {
+                return DockItemWindowKey(item) == key && item.parsingName == path;
+            });
+            if (current == items_.end() || snowdesktop::shell_icon_request::Stamp(*current) != stamp) return;
+            if (!dockAppIdentityCache_.Publish(cacheKey, ticket, std::move(identity))) return;
+            dockRunningWindowsRefreshTick_ = 0;
+        }, hwnd_, kBackgroundShellReadyMessage);
+    return cached.value.value_or(DockAppIdentity{});
+}
+
+DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
+{
+    DockAppIdentity identity;
+    identity.sourceParsingName = path;
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    if (extension && _wcsicmp(extension, L".exe") == 0)
+    {
+        identity.kind = DockAppIdentityKind::Executable;
+        identity.executablePath = NormalizeDockExecutablePath(path);
+    }
+    else if (extension && _wcsicmp(extension, L".url") == 0)
+    {
+        identity.steamAppId = ParseDockSteamAppId(path);
+        if (!identity.steamAppId.empty())
+        {
+            identity.kind = DockAppIdentityKind::Steam;
+            identity.appUserModelId = L"STEAM://RUNGAMEID/" + identity.steamAppId;
+            identity.steamInstallDirectory =
+                FindDockSteamAppInstallDirectory(identity.steamAppId);
+        }
+    }
+    else if (extension && _wcsicmp(extension, L".lnk") == 0)
+    {
+        ComPtr<IShellLinkW> shellLink;
+        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&shellLink))) && shellLink)
+        {
+            ComPtr<IPersistFile> persistFile;
+            if (SUCCEEDED(shellLink.As(&persistFile)) &&
+                SUCCEEDED(persistFile->Load(path.c_str(), STGM_READ)))
+            {
+                wchar_t target[32768]{};
+                if (SUCCEEDED(shellLink->GetPath(target,
+                        static_cast<int>(std::size(target)), nullptr, 0)) && target[0])
+                {
+                    const wchar_t* targetExtension = PathFindExtensionW(target);
+                    if (targetExtension && _wcsicmp(targetExtension, L".exe") == 0)
+                    {
+                        wchar_t arguments[32768]{};
+                        if (snowdesktop::shortcut_application_rules::IsExplorerExecutable(target) &&
+                            (FAILED(shellLink->GetArguments(arguments,
+                                static_cast<int>(std::size(arguments)))) ||
+                             !snowdesktop::shortcut_application_rules::Trim(arguments).empty()))
+                            return identity;
+                        identity.kind = DockAppIdentityKind::Executable;
+                        identity.executablePath = NormalizeDockExecutablePath(target);
+                    }
+                }
+
+                // Squirrel EXE shortcuts identify a stable launcher whose
+                // short-lived process may be gone before window discovery.
+                ComPtr<IPropertyStore> propertyStore;
+                if (SUCCEEDED(shellLink.As(&propertyStore)))
+                    identity.appUserModelId = ReadDockAppUserModelId(propertyStore.Get());
+                if (identity.appUserModelId.empty())
+                    identity.appUserModelId = ToUpperInvariant(ReadDockShellItemStringProperty(
+                        path, PKEY_AppUserModel_ID));
+
+                if (identity.kind != DockAppIdentityKind::Executable)
+                {
+                    std::wstring targetParsingPath;
+                    if (propertyStore)
+                        targetParsingPath = ReadDockStringProperty(
+                            propertyStore.Get(), PKEY_Link_TargetParsingPath);
+                    if (targetParsingPath.empty())
+                        targetParsingPath = ReadDockShellItemStringProperty(
+                            path, PKEY_Link_TargetParsingPath);
+
+                    const bool looksLikeAppUserModelId = !targetParsingPath.empty() &&
+                        targetParsingPath.find(L'\\') == std::wstring::npos &&
+                        targetParsingPath.find(L'/') == std::wstring::npos &&
+                        targetParsingPath.find(L':') == std::wstring::npos;
+                    if (!target[0] && looksLikeAppUserModelId)
+                    {
+                        identity.kind = DockAppIdentityKind::Applications;
+                        identity.appUserModelId = ToUpperInvariant(targetParsingPath);
+                    }
+                }
+
+                if (identity.kind != DockAppIdentityKind::Executable)
+                {
+                    PIDLIST_ABSOLUTE targetPidl = nullptr;
+                    if (SUCCEEDED(shellLink->GetIDList(&targetPidl)) && targetPidl)
+                    {
+                        // AppsFolder links for desktop applications may expose
+                        // only an application ID through IShellLink::GetPath.
+                        // Resolve their registered executable on this Shell
+                        // worker so the pin still tracks windows without IDs.
+                        const auto application = snowdesktop::dock_running_app_pin::
+                            ReadApplicationIdentity(targetPidl);
+                        if (!application.executablePath.empty() &&
+                            !(snowdesktop::shortcut_application_rules::IsExplorerExecutable(
+                                application.executablePath) &&
+                              !snowdesktop::shortcut_application_rules::Trim(application.arguments).empty()))
+                        {
+                            identity.kind = DockAppIdentityKind::Executable;
+                            identity.executablePath = NormalizeDockExecutablePath(
+                                application.executablePath);
+                        }
+                        if (identity.appUserModelId.empty())
+                            identity.appUserModelId = ToUpperInvariant(
+                                application.appUserModelId);
+                        PWSTR parsingName = nullptr;
+                        if (identity.kind != DockAppIdentityKind::Executable &&
+                            SUCCEEDED(SHGetNameFromIDList(targetPidl,
+                                SIGDN_DESKTOPABSOLUTEPARSING, &parsingName)) && parsingName)
+                        {
+                            const std::wstring targetName(parsingName);
+                            const std::wstring upper = ToUpperInvariant(targetName);
+                            const size_t appsFolder = upper.find(L"APPSFOLDER\\");
+                            if (appsFolder != std::wstring::npos)
+                            {
+                                identity.kind = DockAppIdentityKind::Applications;
+                                identity.appUserModelId = ToUpperInvariant(targetName.substr(
+                                    appsFolder + std::wstring(L"APPSFOLDER\\").size()));
+                            }
+                            else if (IsApplicationsShellLinkTarget(
+                                    shellLink.Get(), path))
+                            {
+                                identity.kind = DockAppIdentityKind::Applications;
+                                if (identity.appUserModelId.empty())
+                                    identity.appUserModelId = upper;
+                            }
+                        }
+                        if (parsingName) CoTaskMemFree(parsingName);
+                        CoTaskMemFree(targetPidl);
+                    }
+                }
+            }
+        }
+    }
+
+    return identity;
+}

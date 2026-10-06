@@ -1,8 +1,8 @@
-#include "large_icon_assets.h"
-#include "large_icon_steam.h"
-#include "http_runtime.h"
-#include "preview_png_writer.h"
-#include "atomic_file.h"
+#include "icons/large_icon_assets.h"
+#include "icons/large_icon_steam.h"
+#include "platform/http_runtime.h"
+#include "ui/preview/preview_png_writer.h"
+#include "data/atomic_file.h"
 #include <objbase.h>
 #include <shlobj.h>
 #include <wincodec.h>

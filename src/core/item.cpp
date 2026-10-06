@@ -9,8 +9,8 @@
  */
 
 #include "item.h"
-#include "types.h"
-#include "app.h"
+#include "common/types.h"
+#include "app/app.h"
 
 // ── DesktopIcon ──────────────────────────────────────────────
 

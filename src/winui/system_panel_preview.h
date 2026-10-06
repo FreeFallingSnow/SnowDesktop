@@ -1,6 +1,6 @@
 #pragma once
-#include "../native_component_preview_export.h"
-#include "../personalization.h"
+#include "ui/preview/native_component_preview_export.h"
+#include "theme/personalization.h"
 namespace snowdesktop::winui
 {
 native_component_preview::Result ExportSystemPanelPreview(

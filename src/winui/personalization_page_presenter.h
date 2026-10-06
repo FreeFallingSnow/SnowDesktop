@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../settings_controller.h"
+#include "settings/settings_controller.h"
 #include "theme_library_actions.h"
-#include "../shell_extension_service.h"
+#include "shell/shell_extension_service.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 

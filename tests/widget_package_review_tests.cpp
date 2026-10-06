@@ -1,4 +1,4 @@
-#include "winui/widget_package_review.h"
+#include "../src/winui/widget_package_review.h"
 #include "test_temporary_directory.h"
 
 #include <fstream>

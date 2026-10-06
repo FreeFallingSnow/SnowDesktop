@@ -1,5 +1,5 @@
-#include "text_input_window.h"
-#include "app_font.h"
+#include "ui/input/text_input_window.h"
+#include "ui/render/app_font.h"
 #include <commctrl.h>
 #include <wrl/client.h>
 #include <UIAutomation.h>

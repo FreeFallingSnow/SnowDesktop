@@ -1,10 +1,10 @@
-#include "ui_animation_scheduler.h"
-#include "ui_animation_scheduler_rules.h"
-#include "animation_settings.h"
-#include "popup_animation_rules.h"
-#include "status_bar_shell_shortcut.h"
-#include "status_bar_activation.h"
-#include "system_panel_transition.h"
+#include "ui/render/ui_animation_scheduler.h"
+#include "ui/render/ui_animation_scheduler_rules.h"
+#include "settings/animation_settings.h"
+#include "layout/popup_animation_rules.h"
+#include "system/status_bar/status_bar_shell_shortcut.h"
+#include "system/status_bar/status_bar_activation.h"
+#include "system/panel/system_panel_transition.h"
 
 #include <windows.h>
 

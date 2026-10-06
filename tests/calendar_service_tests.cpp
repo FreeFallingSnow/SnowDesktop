@@ -1,7 +1,7 @@
-#include "calendar_service.h"
-#include "calendar_display.h"
-#include "l10n.h"
-#include "system_calendar_editor_state.h"
+#include "system/calendar/calendar_service.h"
+#include "system/calendar/calendar_display.h"
+#include "common/l10n.h"
+#include "system/calendar/system_calendar_editor_state.h"
 
 #include <windows.h>
 

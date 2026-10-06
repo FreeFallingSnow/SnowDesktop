@@ -2,7 +2,9 @@
 
 [简体中文](./README.md) | [English](./README.en.md)
 
-Keep your Windows desktop tidy and make it your own. Automatically group desktop files by type, keep apps and folders together, and use Dock to launch apps and switch windows. Add useful widgets, glass themes, and a separate layout for each monitor to suit the way you work.
+**A desktop that looks good and works well.**
+
+SnowDesktop is a Windows desktop organization and personalization app built around components. Use different components to organize apps and files and view your schedule, then combine them with Dock, Quick Navigation and appearance settings to make things easier to find, everyday actions more convenient, and the desktop more to your taste.
 
 ## 📦 Installation
 
@@ -21,34 +23,53 @@ Both editions provide the full core SnowDesktop experience.
 | Feature | Microsoft Store | Steam |
 | --- | --- | --- |
 | Desktop organization | ✓ Included | ✓ Included |
-| Dock and quick navigation | ✓ Included | ✓ Included |
-| Built-in widgets | ✓ Included | ✓ Included |
+| Dock and Quick Navigation | ✓ Included | ✓ Included |
+| Built-in components | ✓ Included | ✓ Included |
 | Steam Workshop | — Not included | ✓ Included |
-| Premium features | — Not included | ✓ Included |
+| Advanced features | — Not included | ✓ Included |
 | Updates and fixes | Published with each version update | More timely updates, optional testing channels |
 
-With the Steam edition, you can find and install community widgets through Steam Workshop. The currently supported premium feature is **large app icons**.
+With the Steam edition, you can find and install community components through Steam Workshop. The currently supported advanced feature is **large software icons**.
 
 See the [official edition comparison](https://snowdesktop.com/compare/) for details.
 
 ## ✨ Feature Highlights
 
-- 🖥️ **Give every display its own layout**: Arrange different content on each display and set the grid rows and columns for each page. Adjust icon spacing and widget positions to suit your needs. When you need more room, add pages and flip through them to reach more content.
-- 🗂️ **Put files and shortcuts where they truly belong**:
-  - **Collections**: Group frequently used apps and shortcuts by purpose, so your desktop tools are easy to find.
-  - **Collection groups**: Switch between collections with tabs, keeping tools for work, study, or entertainment in the same desktop area.
-  - **Desktop file categories**: Automatically group desktop files by type, making documents, images, and other content easier to find.
-  - **Folder mapping**: Show the contents of frequently used folders on your desktop, so you can view and manage files without repeatedly opening folder windows.
-  - **File groups**: Bring desktop files and several folders together, and search across them to find the files you need.
-- 🚀 **Reach applications and windows from one place**: Dock can attach to any edge of the screen, or appear as a floating Dock only when needed. Add apps, folder stacks, and collections; see running programs; and use window previews to activate, minimize, or close windows.
-- 🔎 **Quick Navigation**: Quick Navigation finds desktop items and installed apps by name. Install and run Everything on your PC to also search the files it has indexed.
-- 🧩 **Use practical widgets on the desktop**:
-  - **Built-in widgets**: SnowDesktop includes analog and digital clocks, a monthly calendar, schedules, reminders, system monitoring, media controls, notes, a Pomodoro timer, an RSS reader, quick launchers, and more.
-  - **Widget management and Lua extensions**: Install widgets from local packages, enable or disable them, apply updates, and switch back to a retained older version. You can also write your own widgets in Lua.
-- 🎨 **Personalization**:
-  - **Themes and styles**: Choose light or dark themes, and adjust widget and Dock colors, transparency, rounded corners, and backgrounds with glass or acrylic effects.
-  - **System taskbar**: Adjust taskbar colors, transparency, and glass effects.
-- 💾 **Backup and migration**: Back up and restore SnowDesktop layouts, settings, widget packages, and widget data.
+### Keep your apps in order, however many you have
+
+Use a Collection component to organize office, design, gaming and other apps by purpose, so you do not have to search through a screen full of icons. When you have more groups, use a Collection Group component to bring several Collections together. Switch between tabs to access different groups of apps in the same area of your desktop.
+
+Use the Desktop Files component to display documents, images and other files by type. For folders you use often, Folder Mapping displays their contents directly on the desktop. View reference material and open documents without repeatedly navigating into folders; the files stay in their original locations.
+
+### Everyday shortcuts, close at hand
+
+Put frequently used apps and folders in Dock and dock it at the edge of the screen. When you need it, bring Dock to the foreground with a keyboard shortcut or an edge trigger to access your usual content above other windows.
+
+Dock features smooth, lively animations that add movement to app launches and to minimizing and restoring windows.
+
+### Type what you want to find
+
+Use Quick Navigation to find apps, desktop items and organized files by name, without looking through icons one by one. Connect Everything to also search the local files it has indexed.
+
+Besides finding apps and files, Quick Navigation lets you start web searches, find settings and perform simple calculations, reducing the steps needed to find an entry point or switch tools.
+
+### Keep useful information in view
+
+Use the Schedule, ToDo List and Sticky Note components to keep today's plans, tasks and temporary notes on your desktop, ready to see when you return to it.
+
+You can also add clocks, Month Calendar, Media Controls, System Monitor and other components to check the time, control music or follow system activity. Combine and arrange them as needed, keeping only what you use.
+
+### Practical, and pleasing to look at
+
+Use Icon beautification to give app icons a consistent style, combining background colors, glass textures and color filters so icons from different apps work better with your wallpaper. For a more prominent layout, turn your favorite apps into Large software icons, choose their shapes or use your own images.
+
+Adjust the colors, transparency and frosted glass effects of Collections, Dock, the Status bar and desktop components to coordinate the whole desktop. Save styles you like as a Theme, switch whenever you want, and import or export themes without adjusting everything again.
+
+### Find more inspiration in Steam Workshop
+
+Subscribe to community-made components and themes through Steam Workshop to add new tools and decorations to your desktop or try different looks.
+
+If you have an idea of your own, AI can help turn it into a component. SnowDesktop provides a component creation Skill for use with AI coding tools that support Skills. AI can assist with describing requirements, generating the component, previewing and adjusting it, checking and packaging it, and publishing it to Workshop after your confirmation.
 
 ## 🛠️ Build
 

@@ -1,7 +1,7 @@
 #pragma once
-#include "../status_bar.h"
+#include "system/status_bar/status_bar.h"
 #include "system_calendar_view.h"
-#include "../ui_animation_scheduler.h"
+#include "ui/render/ui_animation_scheduler.h"
 #include <memory>
 
 namespace snowdesktop::winui

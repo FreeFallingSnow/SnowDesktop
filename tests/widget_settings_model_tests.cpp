@@ -1,4 +1,4 @@
-#include "widget_settings_model.h"
+#include "widget/settings/widget_settings_model.h"
 
 #include <cstdlib>
 #include <iostream>

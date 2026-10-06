@@ -3,14 +3,14 @@
 #include "widgets_page_backend.h"
 #include "widgets_page_backend_state.h"
 #include "widget_package_review.h"
-#include "../diagnostic_log.h"
+#include "diagnostics/diagnostic_log.h"
 #include "source_search_worker.h"
-#include "../theme_library_settings.h"
+#include "theme/theme_library_settings.h"
 
-#include "../utils.h"
-#include "../widget_engine.h"
-#include "../widget_permission_broker.h"
-#include "../steam_workshop_sync.h"
+#include "common/utils.h"
+#include "widget/runtime/widget_engine.h"
+#include "widget/permissions/widget_permission_broker.h"
+#include "steam/steam_workshop_sync.h"
 #include "authoring_toolchain.h"
 
 #include <algorithm>

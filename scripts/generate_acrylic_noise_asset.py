@@ -11,7 +11,7 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     source = root / "third_party/microsoft-ui-xaml/NoiseAsset_256X256_PNG.png"
-    target = root / "src/acrylic_noise_asset.h"
+    target = root / "src/ui/render/acrylic_noise_asset.h"
     data = source.read_bytes()
     expected_hash = "4f2aa94a2e345a32dae689176b86c644bef87081ff9daef8c77417731862031b"
     if hashlib.sha256(data).hexdigest() != expected_hash:

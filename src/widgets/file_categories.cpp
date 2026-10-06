@@ -7,26 +7,26 @@
  * 所有桌面级散文件会自动收集到"全部"分类下，并按扩展名归入对应类别。
  */
 
-#include "widget.h"
-#include "slot.h"
-#include "types.h"
-#include "app.h"
+#include "core/widget.h"
+#include "core/slot.h"
+#include "common/types.h"
+#include "app/app.h"
 #include "collection_group_rules.h"
-#include "drop_model.h"
-#include "search_match.h"
+#include "core/drop_model.h"
+#include "navigation/search_match.h"
 #include "widget_chrome_rules.h"
-#include "widget_preview_scene.h"
-#include "../menu_fluent_glyphs.h"
-#include "../item_render_layer_rules.h"
-#include "../widget_item_layout.h"
-#include "../category_collection_rules.h"
-#include "../desktop_category_item_rules.h"
+#include "widget/preview/widget_preview_scene.h"
+#include "ui/menu/menu_fluent_glyphs.h"
+#include "layout/item_render_layer_rules.h"
+#include "widget/runtime/widget_item_layout.h"
+#include "layout/category_collection_rules.h"
+#include "desktop/desktop_category_item_rules.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <unordered_set>
-#include "../l10n.h"
+#include "common/l10n.h"
 
 static RECT FileCategoryItemRect(FileCategories* widget, size_t linearIndex);
 static snowdesktop::widget_item_layout::Layout FileCategoryLocalLayout(

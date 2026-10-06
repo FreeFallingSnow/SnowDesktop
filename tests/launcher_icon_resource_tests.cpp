@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <iostream>
 
-#include "resource.h"
+#include "resources/resource.h"
 
 namespace
 {

@@ -6,11 +6,11 @@
 #include "package_tool.h"
 #include "preview_cache.h"
 #include "publish_lifecycle.h"
-#include "steam_app_identity.h"
-#include "steam_child_environment.h"
-#include "steam_workshop_cache.h"
-#include "steam_workshop_sync.h"
-#include "steam_workshop_watch_thread.h"
+#include "../steam_bridge/src/steam_app_identity.h"
+#include "steam/steam_child_environment.h"
+#include "steam/steam_workshop_cache.h"
+#include "steam/steam_workshop_sync.h"
+#include "steam/steam_workshop_watch_thread.h"
 #include "workshop_localization.h"
 #include "workshop_project.h"
 #include "workshop_upload_validation.h"
@@ -33,9 +33,9 @@
 #include <string>
 #include <vector>
 #include <stdexcept>
-#include "data_paths.h"
-#include "steam_workshop_source.h"
-#include "bounded_file_query.h"
+#include "data/data_paths.h"
+#include "steam/steam_workshop_source.h"
+#include "common/bounded_file_query.h"
 #include <future>
 #include <cwctype>
 

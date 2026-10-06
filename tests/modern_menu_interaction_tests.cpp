@@ -1,10 +1,10 @@
-#include "modern_menu.h"
-#include "modern_menu_appearance_rules.h"
-#include "shell_extension_menu_presentation.h"
-#include "menu_label.h"
-#include "desktop_input_activation.h"
-#include "status_bar_interaction.h"
-#include "floating_dock_rules.h"
+#include "ui/menu/modern_menu.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
+#include "shell/shell_extension_menu_presentation.h"
+#include "ui/menu/menu_label.h"
+#include "desktop/desktop_input_activation.h"
+#include "system/status_bar/status_bar_interaction.h"
+#include "dock/floating_dock_rules.h"
 
 #include <windows.h>
 #include <windowsx.h>

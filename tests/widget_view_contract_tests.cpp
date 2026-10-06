@@ -1,6 +1,6 @@
-#include "widget_view_contract.h"
-#include "widget_view_contract_json.h"
-#include "json_value.h"
+#include "widget/api/widget_view_contract.h"
+#include "widget/api/widget_view_contract_json.h"
+#include "common/json_value.h"
 
 #include <algorithm>
 #include <cstdlib>

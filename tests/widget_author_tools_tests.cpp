@@ -1,15 +1,15 @@
-#include "widget_author_permissions.h"
-#include "widget_package.h"
-#include "widget_catalog_refresh.h"
-#include "widget_package_file_export.h"
-#include "widget_api_registry.h"
+#include "widget/authoring/widget_author_permissions.h"
+#include "widget/packages/widget_package.h"
+#include "widget/packages/widget_catalog_refresh.h"
+#include "widget/packages/widget_package_file_export.h"
+#include "widget/api/widget_api_registry.h"
 #include "gpu_diagnostics.h"
-#include "widget_gpu_lua.h"
+#include "widget/data/widget_gpu_lua.h"
 extern "C" {
 #include <lauxlib.h>
 #include <lualib.h>
 }
-#include "json_value.h"
+#include "common/json_value.h"
 #include "test_temporary_directory.h"
 #include <fstream>
 #include <limits>

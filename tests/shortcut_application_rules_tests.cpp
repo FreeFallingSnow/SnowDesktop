@@ -1,10 +1,10 @@
-#include "shortcut_application_rules.h"
-#include "category_collection_rules.h"
-#include "desktop_category_item_rules.h"
-#include "shortcut_category_target.h"
-#include "empty_group_drop_rules.h"
-#include "shortcut_icon_resource.h"
-#include "large_icon_steam.h"
+#include "shell/shortcut_application_rules.h"
+#include "layout/category_collection_rules.h"
+#include "desktop/desktop_category_item_rules.h"
+#include "shell/shortcut_category_target.h"
+#include "drag_drop/empty_group_drop_rules.h"
+#include "icons/shortcut_icon_resource.h"
+#include "icons/large_icon_steam.h"
 
 #include <windows.h>
 #include <objbase.h>

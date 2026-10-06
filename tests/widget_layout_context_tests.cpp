@@ -1,7 +1,7 @@
-#include "widget_layout_context.h"
-#include "widget_ui_metrics.h"
-#include "font_cu_rules.h"
-#include "desktop_display_settings.h"
+#include "widget/runtime/widget_layout_context.h"
+#include "widget/view/widget_ui_metrics.h"
+#include "ui/render/font_cu_rules.h"
+#include "desktop/desktop_display_settings.h"
 
 #include <iostream>
 

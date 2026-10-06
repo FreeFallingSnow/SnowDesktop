@@ -1,8 +1,8 @@
 #include "pch.h"
 
 #include "SettingsShell.xaml.h"
-#include "../app_font.h"
-#include "../usage_guide.h"
+#include "ui/render/app_font.h"
+#include "platform/usage_guide.h"
 #if __has_include("SettingsShell.g.cpp")
 #include "SettingsShell.g.cpp"
 #endif
@@ -2797,7 +2797,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "personalization.scrollableTitleBarOnTop",
                 "personalization.showGroupTabCounts",
                 "personalization.popupHoverOpen",
-                "personalization.popupHoverDelayMs"});
+                "personalization.popupHoverDelayMs",
+                "personalization.popupCloseOnMouseLeave"});
             personalizationPage_->Activate();
         }
         break;

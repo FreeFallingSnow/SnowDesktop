@@ -3,20 +3,20 @@
  * @brief 文件组组件：托管桌面文件分类与映射文件夹。
  */
 
-#include "widget.h"
-#include "slot.h"
-#include "../core/transient_drag_slot.h"
-#include "types.h"
-#include "app.h"
-#include "drop_model.h"
+#include "core/widget.h"
+#include "core/slot.h"
+#include "core/transient_drag_slot.h"
+#include "common/types.h"
+#include "app/app.h"
+#include "core/drop_model.h"
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
-#include "../menu_fluent_glyphs.h"
-#include "../search_match.h"
-#include "widget_preview_scene.h"
-#include "../l10n.h"
-#include "../item_render_layer_rules.h"
-#include "../widget_item_layout.h"
+#include "ui/menu/menu_fluent_glyphs.h"
+#include "navigation/search_match.h"
+#include "widget/preview/widget_preview_scene.h"
+#include "common/l10n.h"
+#include "layout/item_render_layer_rules.h"
+#include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 
 #include <algorithm>

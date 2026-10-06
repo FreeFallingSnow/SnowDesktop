@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../core/container.h"
-#include "../core/slot.h"
-#include "../widget_engine.h"
+#include "core/container.h"
+#include "core/slot.h"
+#include "widget/runtime/widget_engine.h"
 
 #include <functional>
 #include <optional>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../settings_ipc_codec.h"
+#include "settings/settings_ipc_codec.h"
 #include "home_about_page_model.h"
 
 // Shared by the settings process and codec regression tests. This status model

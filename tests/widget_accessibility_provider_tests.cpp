@@ -1,8 +1,8 @@
 #include <ole2.h>
 #include <UIAutomation.h>
 
-#include "widget_accessibility_provider.h"
-#include "widget_accessibility_events.h"
+#include "widget/view/widget_accessibility_provider.h"
+#include "widget/view/widget_accessibility_events.h"
 
 #include <oleauto.h>
 #include <wrl/client.h>

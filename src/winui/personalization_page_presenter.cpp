@@ -8,7 +8,7 @@
 #include "panel_appearance_editor.h"
 #include "font_picker_search.h"
 #include "quick_navigation_options.h"
-#include "../theme_library_settings.h"
+#include "theme/theme_library_settings.h"
 #include "theme_library_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -238,6 +238,9 @@ struct PersonalizationPagePresenter::Impl
     SettingRow popupHoverOpenRow;
     winrt::event_token popupHoverOpenToken{};
     ContinuousControl popupHoverDelayMs;
+    muxc::ToggleSwitch popupCloseOnMouseLeave{nullptr};
+    SettingRow popupCloseOnMouseLeaveRow;
+    winrt::event_token popupCloseOnMouseLeaveToken{};
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -653,6 +656,11 @@ struct PersonalizationPagePresenter::Impl
             100.0, 1.0, kDefaultPopupHoverDelayMs);
         SetUnit(popupHoverDelayMs, L"ms");
         behaviorCard.content.Children().Append(popupHoverDelayMs.row.root);
+        popupCloseOnMouseLeave = muxc::ToggleSwitch{};
+        popupCloseOnMouseLeave.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        popupCloseOnMouseLeaveRow.Initialize(popupCloseOnMouseLeave);
+        popupCloseOnMouseLeaveRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        behaviorCard.content.Children().Append(popupCloseOnMouseLeaveRow.root);
     }
 
     void InitializeNavigationCard(muxc::Button& button, muxc::TextBlock& title, muxc::TextBlock& description)
@@ -1019,6 +1027,14 @@ struct PersonalizationPagePresenter::Impl
                         settings.popupHoverOpen = enabled;
                     });
             });
+        popupCloseOnMouseLeaveToken = popupCloseOnMouseLeave.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = popupCloseOnMouseLeave.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.popupCloseOnMouseLeave = enabled;
+                    });
+            });
         widgetTransformCursorsToken = widgetTransformCursors.Toggled(
             [this](const auto&, const auto&) {
                 const bool enabled = widgetTransformCursors.IsOn();
@@ -1198,6 +1214,7 @@ struct PersonalizationPagePresenter::Impl
         edgeLightEditor->SetValue(settings.edgeLight);
         showGroupTabCounts.IsOn(settings.showGroupTabCounts);
         popupHoverOpen.IsOn(settings.popupHoverOpen);
+        popupCloseOnMouseLeave.IsOn(settings.popupCloseOnMouseLeave);
         topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
         widgetTransformCursors.IsOn(settings.widgetTransformCursors);
         contentThemeCombo.SelectedIndex(
@@ -1587,6 +1604,12 @@ struct PersonalizationPagePresenter::Impl
             popupHoverOpen, popupHoverOpenRow.label.Text());
         SetContinuousText(popupHoverDelayMs,
             "app.settings.popup_hover_delay", L"Hover delay");
+        popupCloseOnMouseLeaveRow.SetText(
+            L("app.settings.popup_close_on_mouse_leave", L"Close popups when the pointer leaves"),
+            L("app.settings.popup_close_on_mouse_leave_hint",
+                L"Close collection and Dock folder popups after the pointer moves out, including while dragging. Keep them open during renaming or context menu actions."));
+        muxa::AutomationProperties::SetName(
+            popupCloseOnMouseLeave, popupCloseOnMouseLeaveRow.label.Text());
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         const auto explain = [](auto& row, const std::wstring& text) { row.help.Text(text); row.help.Visibility(mux::Visibility::Visible); };
@@ -1761,6 +1784,8 @@ struct PersonalizationPagePresenter::Impl
             return showGroupTabCounts;
         if (id == "personalization.popupHoverOpen")
             return popupHoverOpen;
+        if (id == "personalization.popupCloseOnMouseLeave")
+            return popupCloseOnMouseLeave;
         if (id == "personalization.popupHoverDelayMs")
         {
             if (!popupHoverOpen.IsOn()) return popupHoverOpen;
@@ -1874,6 +1899,7 @@ struct PersonalizationPagePresenter::Impl
             contextMenuCombo.SelectionChanged(contextMenuToken);
             showGroupTabCounts.Toggled(showGroupTabCountsToken);
             popupHoverOpen.Toggled(popupHoverOpenToken);
+            popupCloseOnMouseLeave.Toggled(popupCloseOnMouseLeaveToken);
             topTitleBarToggle.Toggled(topTitleBarToken);
             widgetTransformCursors.Toggled(widgetTransformCursorsToken);
         }
