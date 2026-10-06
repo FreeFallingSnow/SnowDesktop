@@ -89,7 +89,6 @@ local function status(m,c)
         local message=a.error=="auth" and c.auth_error or c[a.error] or c.network
         return a.data and c.stale.." · "..message or message
     end
-    if m.preview then return c.sample end
     if a.updated then return time.format(a.updated,{dateStyle="short",timeStyle="short"}) end
     return c.key_missing
 end
@@ -113,27 +112,18 @@ local function card(x,y,w,h,colors,radius)
     draw.rect(x,y,w,h,colors.card,radius,0.54)
     draw.strokeRect(x,y,w,h,colors.border,radius,radius*0.065,0.20)
 end
-local function bubble(x,y,w,h,colors,r,wide,row,tailFraction)
+local function bubble(x,y,w,h,colors,r,row)
     local right,bottom=x+w,y+h;local k=r*0.55228475
     local path={{op="move",x=x+r,y=y},{op="line",x=right-r,y=y},
         {op="cubic",x1=right-r+k,y1=y,x2=right,y2=y+r-k,x=right,y=y+r}}
     local function add(command) path[#path+1]=command end
-    if wide then
-        local cy=y+h*0.42
-        add({op="line",x=right,y=cy-row*0.30})
-        add({op="cubic",x1=right,y1=cy-row*0.12,x2=right+row*0.28,y2=cy-row*0.03,x=right+row*0.48,y=cy+row*0.03})
-        add({op="quadratic",x1=right+row*0.56,y1=cy+row*0.08,x=right+row*0.46,y=cy+row*0.13})
-        add({op="cubic",x1=right+row*0.20,y1=cy+row*0.23,x2=right,y2=cy+row*0.17,x=right,y=cy+row*0.33})
-    end
     add({op="line",x=right,y=bottom-r})
     add({op="cubic",x1=right,y1=bottom-r+k,x2=right-r+k,y2=bottom,x=right-r,y=bottom})
-    if not wide then
-        local cx=x+w*tailFraction
-        add({op="line",x=cx+row*0.34,y=bottom})
-        add({op="cubic",x1=cx+row*0.24,y1=bottom,x2=cx+row*0.21,y2=bottom+row*0.30,x=cx+row*0.20,y=bottom+row*0.42})
-        add({op="quadratic",x1=cx+row*0.18,y1=bottom+row*0.50,x=cx+row*0.12,y=bottom+row*0.44})
-        add({op="cubic",x1=cx-row*0.10,y1=bottom+row*0.18,x2=cx-row*0.20,y2=bottom,x=cx-row*0.34,y=bottom})
-    end
+    local cx=x+w*0.50
+    add({op="line",x=cx+row*0.34,y=bottom})
+    add({op="cubic",x1=cx+row*0.24,y1=bottom,x2=cx+row*0.21,y2=bottom+row*0.30,x=cx+row*0.20,y=bottom+row*0.42})
+    add({op="quadratic",x1=cx+row*0.18,y1=bottom+row*0.50,x=cx+row*0.12,y=bottom+row*0.44})
+    add({op="cubic",x1=cx-row*0.10,y1=bottom+row*0.18,x2=cx-row*0.20,y2=bottom,x=cx-row*0.34,y=bottom})
     add({op="line",x=x+r,y=bottom})
     add({op="cubic",x1=x+r-k,y1=bottom,x2=x,y2=bottom-r+k,x=x,y=bottom-r})
     add({op="line",x=x,y=y+r})
@@ -144,33 +134,49 @@ local function bubble(x,y,w,h,colors,r,wide,row,tailFraction)
 end
 local function hero(x,y,w,h,m,c,colors,size)
     local data=m.client.data;local pad=size*0.65
-    text(x+pad,y+pad*0.55,data and data.kind=="quota" and c.remaining or c.total,size*0.56,colors.secondary,w-pad*2,false,size)
+    local inner=w-pad*2
+    local rhythm=math.min(size,h/3.75)
+    -- The lighter heading sits nearer the top; the heavy amount has more room
+    -- below it. Status has its own row instead of competing with the heading.
+    local groupTop=y+math.max(0,(h-rhythm*(data and 3.75 or 2.75))*0.5)
+    text(x+pad,groupTop+rhythm*0.34,data and data.kind=="quota" and c.remaining or c.total,size*0.48,colors.secondary,inner,false,rhythm*0.65)
+    local label=badge(data,c)
+    local showBadge=data~=nil
+    local labelWidth=math.min(inner,draw.measureText(label,size*0.36,0,true).width+size*0.56)
+    local labelHeight=rhythm*0.68
+    local statusY=groupTop+rhythm*2.78
+    local available=label==c.available
+    if showBadge then
+        draw.rect(x+pad,statusY,labelWidth,labelHeight,available and colors.green or colors.orange,size*0.24,0.11)
+        fitted(x+pad+size*0.28,statusY,label,size*0.36,available and colors.green or colors.orange,labelWidth-size*0.56,true,labelHeight)
+    end
     local amount=c.unknown
     if data then
         if data.unlimited then amount=c.unlimited
         elseif data.kind=="balance" then amount=money(data.remaining,data.currency)
         elseif data.windows[1] then amount=data.currency and money(data.windows[1].remaining,data.currency) or number(data.windows[1].percent).."%" end
     end
-    fitted(x+pad,y+h*0.35,amount,size*1.3,colors.blue,w-pad*2,true,size*1.8)
-    local label=badge(data,c)
-    local labelWidth=math.min(w-pad*2,draw.measureText(label,size*0.42,0,true).width+size*0.65)
-    local by=y+h-size*0.94
-    draw.rect(x+pad,by,labelWidth,size*0.66,label==c.available and colors.green or colors.orange,size*0.25,0.12)
-    text(x+pad+size*0.3,by+size*0.03,label,size*0.42,label==c.available and colors.green or colors.orange,labelWidth-size*0.45,true,size*0.64)
-    if data and data.currency then
-        local unitWidth=draw.measureText(data.currency,size*0.4,0,false).width+size*0.12
-        text(x+w-pad-unitWidth,by,data.currency,size*0.4,colors.secondary,unitWidth,false,size*0.66)
+    local showCurrency=data and data.currency and (not showBadge or inner-labelWidth>=size*1.7)
+    local unitWidth=showCurrency and draw.measureText(data.currency,size*0.37,0,false).width+size*0.12 or 0
+    local amountWidth=inner
+    local amountSize=size*1.20
+    local measured=draw.measureText(amount,amountSize,0,true)
+    if measured.width>amountWidth*0.94 then amountSize=amountSize*amountWidth*0.94/measured.width end
+    text(x+pad,groupTop+rhythm*1.06,amount,amountSize,colors.blue,amountWidth,true,rhythm*1.55)
+    if showCurrency then
+        text(x+w-pad-unitWidth,statusY,data.currency,size*0.37,colors.secondary,unitWidth,false,labelHeight)
     end
 end
-local function details(x,y,w,h,m,c,colors,row,stack)
+local function details(x,y,w,h,m,c,colors,row,stack,embedded)
     local data=m.client.data;if not data or h<=0 then return end
     local gap=row*0.35
     if data.kind=="balance" or data.unlimited then
         local metrics=data.metrics or {};local count=math.min(2,#metrics)
-        stack=stack or w/row<6
+        stack=stack or w/row<4.5
+        local inset=embedded and 0 or row*0.65
         local metricWidth=stack and w or count>0 and (w-gap*(count-1))/count or w
-        local valueWidth=stack and metricWidth*0.48-row*0.65 or metricWidth-row*1.3
-        local valueSize=row*(stack and 0.72 or 0.83)
+        local valueWidth=metricWidth-inset*2
+        local valueSize=stack and math.min(row*0.64,((h-gap*(count-1))/math.max(1,count))*0.48) or row*0.83
         -- Paired amounts share one fitted font size and one visible ink center.
         for i=1,count do
             local measured=draw.measureText(money(metrics[i].value,data.currency),valueSize,0,true)
@@ -181,96 +187,94 @@ local function details(x,y,w,h,m,c,colors,row,stack)
             local ch=stack and (h-gap*(count-1))/count or h
             local cx=stack and x or x+(i-1)*(cw+gap)
             local cy=stack and y+(i-1)*(ch+gap) or y
-            card(cx,cy,cw,ch,colors,row*0.34)
+            if not embedded then card(cx,cy,cw,ch,colors,row*0.34) end
             if stack then
-                local ty=cy+(ch-row*0.9)*0.5
-                fitted(cx+row*0.65,ty,c[metrics[i].key] or c.used,row*0.40,colors.secondary,cw*0.49-row*0.65,false,row*0.9)
-                text(cx+cw*0.52,ty,money(metrics[i].value,data.currency),valueSize,i==1 and colors.orange or colors.purple,valueWidth,true,row*0.9)
+                fitted(cx+inset,cy+ch*0.04,c[metrics[i].key] or c.used,row*0.34,colors.secondary,valueWidth,false,ch*0.32)
+                text(cx+inset,cy+ch*0.50,money(metrics[i].value,data.currency),valueSize,i==1 and colors.orange or colors.purple,valueWidth,true,ch*0.40)
             else
-                text(cx+row*0.65,cy+row*0.30,c[metrics[i].key] or c.used,row*0.43,colors.secondary,cw-row*1.3,false,row*0.85)
-                text(cx+row*0.65,cy+row*1.03,money(metrics[i].value,data.currency),valueSize,i==1 and colors.orange or colors.purple,valueWidth,true,row*1.2)
+                fitted(cx+inset,cy+row*0.15,c[metrics[i].key] or c.used,row*0.40,colors.secondary,cw-inset*2,false,row*0.62)
+                text(cx+inset,cy+row*0.72,money(metrics[i].value,data.currency),valueSize,i==1 and colors.orange or colors.purple,valueWidth,true,row)
+                if embedded and i<count then
+                    local dividerX=cx+cw+gap*0.5
+                    draw.line(dividerX,cy+row*0.15,dividerX,cy+ch-row*0.15,row*0.025,colors.border,0.22)
+                end
             end
         end
     else
         local windows=data.windows or {};local count=#windows;if count==0 then return end
-        local rh=math.min(row*1.75,(h-gap*(count-1))/count)
+        local rh=math.min(row*2.25,(h-gap*(count-1))/count)
         for i,item in ipairs(windows) do
             local cy=y+(i-1)*(rh+gap);local label=c[item.key] or c.quota
-            text(x,cy,label,row*0.44,colors.secondary,w*0.42,false,rh*0.52)
+            fitted(x,cy+rh*0.04,label,row*0.40,colors.secondary,w,false,rh*0.28)
             local value=data.currency and money(item.remaining,data.currency).." / "..money(item.total,data.currency) or number(item.remaining).." / "..number(item.total)
-            fitted(x+w*0.45,cy,value,row*0.46,colors.primary,w*0.55,true,rh*0.52)
-            local py=cy+rh*0.64;local ph=row*0.16
+            fitted(x,cy+rh*0.33,value,row*0.65,colors.primary,w,true,rh*0.42)
+            local py=cy+rh*0.86;local ph=row*0.12
             draw.rect(x,py,w,ph,colors.border,ph*0.5,0.3)
             if item.percent>0 then draw.rect(x,py,w*item.percent/100,ph,colors.blue,ph*0.5,0.94) end
         end
     end
 end
 local function render(_context,m)
-    local c=copy();local colors=palette();local w,h=layout.contentWidth(),layout.contentHeight()
-    local whaleMode=storage.get("mode")~="data";local short=math.min(w,h)
-    local row=whaleMode and short*0.095 or ui.metrics().layoutRowHeight
+    local c=copy();local colors=palette();local outerWidth,outerHeight=layout.contentWidth(),layout.contentHeight()
+    local whaleMode=storage.get("mode")~="data"
+    local w,h=outerWidth,outerHeight
+    local row=ui.metrics().layoutRowHeight
+    -- Keep one intentional portrait composition. Extreme spans gain margins
+    -- rather than stretching the amount or scattering actions across a wide row.
+    if whaleMode then
+        w=math.min(w,h*0.82);h=math.min(h,w/0.70)
+        row=math.min(w,h)*0.095
+    else
+        w=math.min(w,row*9.2);h=math.min(h,row*10.4)
+    end
+    local ox,oy=(outerWidth-w)*0.5,(outerHeight-h)*0.5
     local pad=row*0.60;local cfg=config()
     -- Uncommitted provider/URL previews must not label another account's data.
     if not m.preview and cfg.identity~=m.client.identity then m={client={error="configure"},preview=false} end
     local name=providers.presets[cfg.provider].name
+    if cfg.provider=="openrouter_key" then name="OpenRouter" end -- The body already identifies the key quota.
     if cfg.provider=="custom" then name=cfg.label and cfg.label~="" and tostring(cfg.label) or c.custom end
     local titleWidth=w-pad*2-row*2.10
-    if cfg.provider=="deepseek" then fitted(pad,pad*0.55,name,row*0.56,colors.blue,titleWidth,true,row*0.85)
-    else text(pad,pad*0.55,name,row*0.56,colors.blue,titleWidth,true,row*0.85) end
-    region("refresh",w-pad-row*2.05,pad*0.55,row*0.85,row*0.85,c.refresh)
-    draw.fa("",w-pad-row*1.88,pad*0.55+row*0.17,row*0.52,colors.primary)
-    region("settings",w-pad-row*1.00,pad*0.55,row*0.85,row*0.85,c.settings)
-    draw.fa("",w-pad-row*0.83,pad*0.55+row*0.17,row*0.52,colors.primary)
-    local top=pad*0.55+row*1.42;local bottom=h-pad-row*(whaleMode and 1 or 1.9)
+    fitted(ox+pad,oy+pad*0.55,name,row*0.56,colors.blue,titleWidth,true,row*0.85)
+    region("refresh",ox+w-pad-row*2.05,oy+pad*0.55,row*0.85,row*0.85,c.refresh)
+    draw.fa("",ox+w-pad-row*1.88,oy+pad*0.55+row*0.17,row*0.52,colors.primary)
+    region("settings",ox+w-pad-row*1.00,oy+pad*0.55,row*0.85,row*0.85,c.settings)
+    draw.fa("",ox+w-pad-row*0.83,oy+pad*0.55+row*0.17,row*0.52,colors.primary)
+    local top=oy+pad*0.55+row*1.42
+    local footerY=oy+h-pad-row*0.50
+    local statusY=footerY-row*1.10
+    local bottom=statusY-row*0.34
     if whaleMode then
-        local wide=w/h>1.45
-        local narrow=w/h<0.68
-        local bx,by,bw,bh=pad,top,w-pad*2,h*0.34
-        local ix,iy,iw,ih=w*0.34,top+bh+short*0.025,w*0.63,bottom-top-bh-short*0.025
-        if wide then bw=w*0.50;bh=bottom-top;ix=w*0.56;iy=top;iw=w*0.40;ih=bottom-top end
-        if narrow then ix=pad;iy=top+bh+row*0.50;iw=w-pad*2;ih=bottom-iy-row*1.25 end
-        bubble(bx,by,bw,bh,colors,row*0.45,wide,row,narrow and 0.50 or 0.70);hero(bx,by,bw,bh,m,c,colors,row)
-        local imageSide=math.min(iw,ih)
-        if not wide then
-            local buttonY=narrow and iy+imageSide+row*0.25 or iy+ih*0.58
-            local buttonWidth=narrow and w-pad*2 or w*0.29
-            local bw=math.min(buttonWidth,draw.measureText(c.show_details,row*0.42,0,false).width+row*0.55)
-            draw.rect(pad,buttonY,bw,row,colors.blue,row*0.35,0.12)
-            region("mode.data",pad,buttonY,bw,row,c.show_details)
-            fitted(pad+row*0.25,buttonY,c.show_details,row*0.42,colors.blue,bw-row*0.50,false,row)
-        end
-        local imageX=ix+(iw-imageSide)*(narrow and 0.5 or 1)
-        local imageY=wide and iy+(ih-imageSide)*0.5 or iy
+        local bx,by,bw,bh=ox+pad,top,w-pad*2,row*3.90
+        bubble(bx,by,bw,bh,colors,row*0.45,row);hero(bx,by,bw,bh,m,c,colors,row)
+        local imageTop=top+bh+row*0.42
+        local imageSide=math.min(w-pad*2,bottom-imageTop)
+        local imageX=ox+(w-imageSide)*0.5
+        local imageY=imageTop
         region("whale",imageX,imageY,imageSide,imageSide,c.refresh)
         local shrink=interaction.isPressed("whale") and 0.95 or 1
         draw.imageFit(whale,imageX+imageSide*(1-shrink)*0.5,imageY+imageSide*(1-shrink)*0.5,imageSide*shrink,imageSide*shrink,"contain","center",1)
     else
-        local available=bottom-top;local wide=w/h>2.0
-        local hh=math.min(row*4.1,available*0.58);local hx,hy,hw=pad,top,w-pad*2
-        if wide then hw=w*0.46-pad;hh=available end
-        card(hx,hy,hw,hh,colors,row*0.4);hero(hx,hy,hw,hh,m,c,colors,row)
-        if wide then details(w*0.5,top,w*0.5-pad,available,m,c,colors,row,true)
-        else details(pad,top+hh+row*0.4,w-pad*2,math.max(0,available-hh-row*0.4),m,c,colors,row) end
+        local available=bottom-top
+        local bodyWidth=w-pad*2;local innerPad=row*0.65
+        card(ox+pad,top,bodyWidth,available,colors,row*0.45)
+        local hasDetails=m.client.data and (#(m.client.data.metrics or {})>0 or #(m.client.data.windows or {})>0)
+        local stacked=m.client.data and m.client.data.kind=="balance" and (bodyWidth-innerPad*2)/row<4.5
+        local hh=hasDetails and math.min(row*(stacked and 3.0 or 3.75),available*0.64) or available
+        hero(ox+pad,top,bodyWidth,hh,m,c,colors,row)
+        local split=top+hh
+        if hasDetails then draw.line(ox+pad+innerPad,split,ox+w-pad-innerPad,split,row*0.025,colors.border,0.22) end
+        details(ox+pad+innerPad,split+row*0.15,bodyWidth-innerPad*2,math.max(0,available-hh-row*0.30),m,c,colors,row,false,true)
     end
-    local footerY=h-pad-row*0.5
-    local footerX=pad
-    if not whaleMode then
-        local bw=draw.measureText(c.back_to_whale,row*0.40,0,false).width+row*0.45
-        bw=math.min(bw,w-pad*2-row*1.4)
-        draw.rect(pad,footerY,bw,row*0.80,colors.blue,row*0.28,0.12)
-        region("mode.whale",pad,footerY,bw,row*0.80,c.back_to_whale)
-        fitted(pad+row*0.20,footerY,c.back_to_whale,row*0.40,colors.blue,bw-row*0.40,false,row*0.80)
-        text(pad,footerY-row*1.15,status(m,c),row*0.40,m.client.error and colors.orange or colors.secondary,w-pad*2,false,row*0.80)
-    elseif w/h>1.45 then
-        local bw=draw.measureText(c.show_details,row*0.40,0,false).width+row*0.5
-        draw.rect(pad,footerY,bw,row*0.80,colors.blue,row*0.28,0.12)
-        region("mode.data",pad,footerY,bw,row*0.80,c.show_details)
-        fitted(pad+row*0.25,footerY,c.show_details,row*0.40,colors.blue,bw-row*0.50,false,row*0.80)
-        footerX=pad+bw+row*0.30
-    end
-    if whaleMode then text(footerX,footerY,status(m,c),row*0.40,m.client.error and colors.orange or colors.secondary,w-pad-row*1.4-footerX,false,row*0.80) end
-    region("console",w-pad-row,footerY,row,row*0.8,c.console)
-    draw.fa("",w-pad-row*0.78,footerY+row*0.13,row*0.42,colors.secondary)
+    local action=whaleMode and c.show_details or c.back_to_whale
+    local actionId=whaleMode and "mode.data" or "mode.whale"
+    local buttonWidth=math.min(draw.measureText(action,row*0.40,0,false).width+row*0.60,w-pad*2-row*1.4)
+    draw.rect(ox+pad,footerY,buttonWidth,row*0.80,colors.blue,row*0.28,0.12)
+    region(actionId,ox+pad,footerY,buttonWidth,row*0.80,action)
+    fitted(ox+pad+row*0.30,footerY,action,row*0.40,colors.blue,buttonWidth-row*0.60,false,row*0.80)
+    fitted(ox+pad,statusY,status(m,c),row*0.37,m.client.error and colors.orange or colors.secondary,w-pad*2,false,row*0.80)
+    region("console",ox+w-pad-row,footerY,row,row*0.8,c.console)
+    draw.fa("",ox+w-pad-row*0.78,footerY+row*0.13,row*0.42,colors.secondary)
 end
 local function setup(context)
     local m={preview=context.preview==true}
