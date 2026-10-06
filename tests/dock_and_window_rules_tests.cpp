@@ -7730,7 +7730,7 @@ int main(int argc, char** argv)
             {"src/app/lifecycle/app_lifecycle.cpp", "bool DesktopApp::CreateDesktopInputWindow(",
              "void DesktopApp::AttachInputWindowToDesktopHost(", {"WS_CHILD | WS_VISIBLE"}},
             {"src/app/dock/app_dock_window_tracking.cpp", "void DesktopApp::RefreshDockForegroundState()",
-             "void DesktopApp::RefreshDockRunningWindows(",
+             "void DesktopApp::HandleDockWindowListChanged(",
              {"EnumWindows(", "QueryDock", "RefreshDockRunningWindows(", "InvalidateDockContainers("}},
             // Negative architecture boundary: attaching external input queues
             // turns native foreground activation into an unbounded wait. The
