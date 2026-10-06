@@ -175,6 +175,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_layout.cpp
     src/dock/dock_appbar.cpp
     src/dock/dock_appbar.h
+    src/dock/dock_running_animation.h
     src/app/features/app_status_bar.cpp
     src/system/status_bar/status_bar_view.cpp
     src/system/status_bar/status_bar_view.h

@@ -403,11 +403,14 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize)
 {
     if (!ctx) return;
+    const float presence = app.presence.Amount();
+    if (presence <= 0.0f) return;
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
         kDockSpacing * ClampDockScale(dockSettings_.thicknessScale))));
-    const int iconSize = requestedIconSize > 0 ? requestedIconSize :
+    const int baseIconSize = requestedIconSize > 0 ? requestedIconSize :
         std::max(1, static_cast<int>(std::min(
             rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
+    const int iconSize = std::max(1, static_cast<int>(std::lround(baseIconSize * presence)));
     RECT iconRect{
         rect.left + (rect.right - rect.left - iconSize) / 2,
         rect.top + (rect.bottom - rect.top - iconSize) / 2,
@@ -424,9 +427,9 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawDemoIdentityIcon(ctx, identity, iconRect);
     }
     else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
-        DrawIconBitmap(ctx, bitmap, iconRect, 1.0f, reinterpret_cast<std::uintptr_t>(&app));
+        DrawIconBitmap(ctx, bitmap, iconRect, presence, reinterpret_cast<std::uintptr_t>(&app));
     else
-        DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);
+        DrawPlaceholderIcon(ctx, -1, iconRect, presence, true);
     if (state == 2)
     {
         DrawDockSelectionIndicator(ctx, iconRect, lt);
@@ -469,7 +472,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
             indicator.red,
             indicator.green,
             indicator.blue,
-            indicator.alpha);
+            indicator.alpha * presence);
     if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
     if (app.minimized)
     {

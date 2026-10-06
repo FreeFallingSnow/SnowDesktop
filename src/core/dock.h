@@ -187,6 +187,7 @@ private:
     int ItemPitch() const;
     int ScaledSpacing() const;
     int ScaledSeparatorGap() const;
+    float RunningSlotUnits() const;
     int EdgeMargin() const;
     std::vector<RECT> GetLeadingMagnificationRects() const;
     std::vector<RECT> GetTrailingMagnificationRects() const;

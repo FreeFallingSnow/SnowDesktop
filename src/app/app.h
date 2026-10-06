@@ -26,6 +26,7 @@
 #include "app/shell/shell_icon_work.h"
 #include "app/shell/shell_icon_request.h"
 #include "dock/dock_refresh_cache.h"
+#include "dock/dock_running_animation.h"
 #include "common/bounded_lru_cache.h"
 #include "icons/icon_row_index.h"
 #include "app/dock/dock_icon_work.h"
@@ -341,6 +342,7 @@ struct DockWindowInfo
 
 struct DockRunningAppInfo
 {
+    snowdesktop::dock_running_animation::Presence presence;
     std::wstring identityKey;
     std::wstring title;
     std::wstring executablePath;
@@ -1385,16 +1387,17 @@ private:
         HWND target, bool restored, bool foreground);
     bool HandleDockClickRelease(POINT point);
     void ToggleWindowsStartMenu();
-    DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
+    DockAppIdentity ResolveDockAppIdentity(size_t itemIndex, bool* pending = nullptr);
     void InvalidateDockShellMetadata();
     void PruneDockShellMetadata();
     static DockAppIdentity ReadDockAppIdentity(const std::wstring& path);
-    std::wstring GetDockWindowAppUserModelIdAsync(HWND window);
+    std::wstring GetDockWindowAppUserModelIdAsync(HWND window, bool* pending = nullptr);
     snowdesktop::dock_refresh_cache::Cache<std::wstring, HWND> dockWindowAppIds_;
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
     void RefreshDockForegroundState();
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
+    bool AdvanceDockRunningAnimations(double nowMilliseconds);
     void PruneDockPendingCloseWindows();
     bool IsDockWindowClosePending(HWND window);
     bool IsDockAppClosePending(const DockAppIdentity& identity);
@@ -3399,6 +3402,7 @@ private:
     snowdesktop::UiScheduleToken luaPanelAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken quickNavigationAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockBounceAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken dockRunningAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockMagnificationAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken pointerRecoveryFrameToken_ = 0;
@@ -3689,6 +3693,7 @@ private:
     snowdesktop::dock_refresh_cache::Cache<DockAppIdentity> dockAppIdentityCache_;
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
     std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
+    bool dockRunningAppsInitialized_ = false;
     std::unordered_map<HWND, ULONGLONG> dockPendingCloseWindows_;
     using DockWindowActivationObservation =
         snowdesktop::dock_window_rules::DockWindowActivationObservation;

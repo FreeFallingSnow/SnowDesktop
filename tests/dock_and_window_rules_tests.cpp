@@ -4,6 +4,7 @@
 #include "dock/dock_magnification.h"
 #include "desktop/desktop_hover_rules.h"
 #include "dock/dock_launch_animation.h"
+#include "dock/dock_running_animation.h"
 #include "dock/dock_rename_layout.h"
 #include "ui/input/rename_edit_layout.h"
 #include "dock/dock_drop_rules.h"
@@ -1730,6 +1731,81 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    {
+        namespace presence = snowdesktop::dock_running_animation;
+        presence::Presence item;
+        item.SetVisible(true, 1000.0, true);
+        Check(item.Amount() == 0.0f && item.IsAnimating() && !item.Interactive(),
+            "a newly discovered running app starts without changing Dock length or accepting a tiny hit target");
+        float previous = item.Amount();
+        for (int frame = 1; frame <= 22; ++frame)
+        {
+            item.Advance(1000.0 + frame * 10.0);
+            Check(item.Amount() >= previous && item.Amount() <= 1.0f,
+                "entrance increases icon scale and slot occupancy monotonically without overshoot");
+            previous = item.Amount();
+        }
+        Check(item.Amount() == 1.0f && !item.IsAnimating() && item.Interactive(),
+            "entrance settles at the normal interactive slot and leaves no perpetual animation");
+        item.SetVisible(false, 1220.0, true);
+        Check(!item.Interactive() && item.Amount() == 1.0f && !item.IsHidden(),
+            "a closed app immediately stops accepting input but keeps its presentation for the exit");
+        item.Advance(1330.0);
+        Check(std::abs(item.Amount() - 0.5f) < 0.0001f,
+            "exit shrinks the retained presentation and axis share together");
+        const float reversal = item.Amount();
+        item.SetVisible(true, 1330.0, true);
+        Check(item.Amount() == reversal,
+            "reopening during exit reverses from the currently drawn scale without a size jump");
+        item.Advance(1440.0);
+        Check(item.Amount() == 1.0f && !item.IsAnimating(),
+            "a reversed transition reaches its new target in proportion to the remaining distance");
+        item.SetVisible(false, 1440.0, true);
+        item.Advance(1660.0);
+        Check(item.IsHidden() && item.Amount() == 0.0f,
+            "the bitmap and retired slot may be removed only after exit reaches zero occupancy");
+
+        item.SetVisible(true, 2000.0, false);
+        Check(item.Amount() == 1.0f && !item.IsAnimating(),
+            "initial discovery and disabled animations show the full slot immediately");
+        item.SetVisible(false, 2000.0, false);
+        Check(item.IsHidden(), "disabled animations remove a closed app immediately");
+        item.SetVisible(true, 3000.0, true, 2.0);
+        item.Advance(3220.0);
+        const float midpoint = item.Amount();
+        item.SetVisible(true, 3220.0, true, 2.0);
+        item.Advance(3440.0);
+        Check(std::abs(midpoint - 0.5f) < 0.0001f && item.Amount() == 1.0f,
+            "global animation speed is honored and rediscovery does not restart an entrance");
+
+        // At either endpoint the animated layout must exactly match the old
+        // full-slot layout, including folders and an absent running section.
+        for (std::size_t fixed : {0U, 2U})
+            for (std::size_t frequent : {0U, 3U})
+                for (std::size_t folders : {0U, 1U})
+                    for (std::size_t running : {0U, 1U, 4U})
+                        Check(presence::ScrollableExtent(fixed, frequent, folders,
+                                static_cast<float>(running), 64, 16) ==
+                            snowdesktop::dock_folder_rules::SharedScrollableExtent(
+                                fixed, running, frequent, folders, 64, 16),
+                            "animated layout endpoints retain the established group and overflow geometry");
+        Check(presence::ScrollableExtent(2, 0, 0, 0.0f, 64, 16) == 128 &&
+                presence::ScrollableExtent(2, 0, 0, 0.5f, 64, 16) == 168 &&
+                presence::ScrollableExtent(2, 0, 0, 1.0f, 64, 16) == 208,
+            "first/last running app animates both its slot width and the new group separator");
+        Check(presence::ScrollableExtent(0, 0, 0, 0.001f, 64, 16) == 0 &&
+                presence::ScrollableExtent(2, 0, 0, 0.001f, 64, 16) == 128 &&
+                presence::ScrollableExtent(2, 0, 0, 0.999f, 64, 16) == 208,
+            "adding or retiring the first running slot causes no endpoint jump in width or separator space");
+
+        Check(identityRules::ShouldDeferUnpinnedWindow(true, false, true, false) &&
+                identityRules::ShouldDeferUnpinnedWindow(false, true, false, false),
+            "a first window must not become an unpinned app while a relevant identity is still unknown");
+        Check(!identityRules::ShouldDeferUnpinnedWindow(false, false, true, false) &&
+                !identityRules::ShouldDeferUnpinnedWindow(true, false, false, false) &&
+                !identityRules::ShouldDeferUnpinnedWindow(true, true, true, true),
+            "known mismatches, executable-only pins and existing presentations are not withheld by identity queries");
+    }
     // Focus/geometry fixtures, including WinComp's background windows, run on
     // isolated desktops. This executable never tests IME composition and must
     // not connect those desktops to the user's input-desktop CTF monitor.

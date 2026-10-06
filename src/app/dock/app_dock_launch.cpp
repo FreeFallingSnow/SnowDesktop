@@ -276,8 +276,9 @@ bool DesktopApp::LaunchDesktopItem(
     return true;
 }
 
-DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
+DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex, bool* pending)
 {
+    if (pending) *pending = false;
     if (itemIndex >= items_.size()) return {};
     const DesktopItem& item = items_[itemIndex];
     const std::wstring key = DockItemWindowKey(item);
@@ -288,6 +289,7 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
     const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
     const auto stamp = snowdesktop::shell_icon_request::Stamp(item);
     const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
+    if (pending) *pending = !cached.fresh && !cached.sameSourceVersion;
     if (cached.fresh) return cached.value.value_or(DockAppIdentity{});
 
     shellVisualWork_.Submit(L"dock-identity:" + cacheKey + L"\n" + std::to_wstring(cached.ticket),

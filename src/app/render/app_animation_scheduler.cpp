@@ -320,6 +320,19 @@ void DesktopApp::EnsureUiAnimationFrame()
                 });
     }
 
+    if (!dockRunningAnimationFrameToken_ &&
+        std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
+            [](const auto& app) { return app.presence.IsAnimating(); }))
+    {
+        dockRunningAnimationFrameToken_ = uiAnimationScheduler_.StartAnimation(
+            snowdesktop::UiAnimationSurface::FloatingDock,
+            [this](double nowMilliseconds) {
+                const bool keep = AdvanceDockRunningAnimations(nowMilliseconds);
+                if (!keep) dockRunningAnimationFrameToken_ = 0;
+                return keep;
+            });
+    }
+
     const DWORD pageElapsed = pageNotifyActive_
         ? GetTickCount() - pageNotifyStartTick_
         : 0;
@@ -480,6 +493,7 @@ void DesktopApp::CancelUiAnimationFrame()
         &luaPanelAnimationFrameToken_,
         &quickNavigationAnimationFrameToken_,
         &dockBounceAnimationFrameToken_,
+        &dockRunningAnimationFrameToken_,
         &dockMagnificationAnimationFrameToken_,
         &pageNotifyAnimationFrameToken_,
         &pointerRecoveryFrameToken_,

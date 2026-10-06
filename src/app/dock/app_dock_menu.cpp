@@ -210,6 +210,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
 
     const DockRunningAppInfo running =
         dockUnpinnedRunningApps_[runningIndex];
+    if (!running.presence.Interactive()) return;
     const bool explorer = snowdesktop::shortcut_application_rules::
         IsExplorerExecutable(running.executablePath) &&
         snowdesktop::dock_explorer_pin::IsFolderWindow(running.window);
@@ -268,7 +269,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             (explorer && !snowdesktop::dock_explorer_pin::IsFolderWindow(running.window)) ||
             std::none_of(dockUnpinnedRunningApps_.begin(),
                 dockUnpinnedRunningApps_.end(), [&](const auto& current) {
-                    return current.identityKey == running.identityKey;
+                    return current.presence.Interactive() && current.identityKey == running.identityKey;
                 }) || dragSession_.HasContext() ||
             dragDropController_.IsTransportActive())
             return;

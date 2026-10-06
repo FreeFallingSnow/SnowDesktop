@@ -287,17 +287,8 @@ QueryDockProcessAncestorExecutablePaths(
     return paths;
 }
 
-inline std::wstring QueryDockWindowAppUserModelId(HWND window)
+inline std::wstring QueryDockProcessAppUserModelId(DWORD processId)
 {
-    ComPtr<IPropertyStore> propertyStore;
-    if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&propertyStore))))
-    {
-        std::wstring appUserModelId = ReadDockAppUserModelId(propertyStore.Get());
-        if (!appUserModelId.empty()) return appUserModelId;
-    }
-
-    DWORD processId = 0;
-    GetWindowThreadProcessId(window, &processId);
     if (!processId) return {};
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
     if (!process) return {};
@@ -312,6 +303,19 @@ inline std::wstring QueryDockWindowAppUserModelId(HWND window)
     }
     CloseHandle(process);
     return appUserModelId;
+}
+
+inline std::wstring QueryDockWindowAppUserModelId(HWND window)
+{
+    ComPtr<IPropertyStore> propertyStore;
+    if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&propertyStore))))
+    {
+        std::wstring appUserModelId = ReadDockAppUserModelId(propertyStore.Get());
+        if (!appUserModelId.empty()) return appUserModelId;
+    }
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    return QueryDockProcessAppUserModelId(processId);
 }
 
 inline HBITMAP CreateDockShellIconBitmap(

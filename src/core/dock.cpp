@@ -26,6 +26,7 @@ std::wstring DockRunningItem::GetTitle() const
         return L"";
     const DockRunningAppInfo& running =
         app_->dockUnpinnedRunningApps_[runningIndex_];
+    if (!running.presence.Interactive()) return L"";
     if (!app_->generalSettings_.demoModeEnabled ||
         !app_->demoIdentityAssetsAvailable_)
         return running.title;
@@ -37,7 +38,8 @@ std::wstring DockRunningItem::GetTitle() const
 
 std::wstring DockRunningItem::GetPath() const
 {
-    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size()
+    return app_ && runningIndex_ < app_->dockUnpinnedRunningApps_.size() &&
+        app_->dockUnpinnedRunningApps_[runningIndex_].presence.Interactive()
         ? app_->dockUnpinnedRunningApps_[runningIndex_].executablePath : L"";
 }
 
@@ -548,6 +550,15 @@ int DockContainer::ScaledSeparatorGap() const
     return std::max(1, static_cast<int>(std::round(kDockSeparatorGap * scale)));
 }
 
+float DockContainer::RunningSlotUnits() const
+{
+    float units = 0.0f;
+    if (app_)
+        for (const auto& running : app_->dockUnpinnedRunningApps_)
+            units += running.presence.Amount();
+    return units;
+}
+
 int DockContainer::EdgeMargin() const
 {
     if (app_)
@@ -581,25 +592,24 @@ bool DockContainer::HasCapacity(size_t additional) const
 RECT DockContainer::GetBounds() const
 {
     const size_t count = entries_ ? entries_->size() : 0;
-    const size_t runningCount = app_
-        ? app_->dockUnpinnedRunningApps_.size() : 0;
+    const float runningUnits = RunningSlotUnits();
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const size_t fixedCount = SortableEntryCount();
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
-    const int nonEmptyGroupCount = static_cast<int>(fixedCount > 0) +
-        static_cast<int>(runningCount > 0) + static_cast<int>(frequentCount > 0);
-    const int separatorCount = nonEmptyGroupCount +
-        static_cast<int>(showWindowsButton);
+    const float separatorUnits = static_cast<float>(fixedCount > 0) +
+        snowdesktop::dock_running_animation::GroupAmount(runningUnits) +
+        static_cast<float>(frequentCount > 0) + static_cast<float>(showWindowsButton);
     const bool vertical = IsVertical();
     const int iconSize = ItemIconSize();
     const int slotLength = ItemPitch();
     const int spacing = ScaledSpacing();
     const int separatorGap = ScaledSeparatorGap();
     const int desiredLength = static_cast<int>(
-        (count + runningCount + frequentCount + 1 +
+        (count + frequentCount + 1 +
             static_cast<size_t>(showWindowsButton)) * slotLength) + spacing +
-        separatorCount * separatorGap;
+        snowdesktop::dock_running_animation::AxisLength(runningUnits, slotLength) +
+        snowdesktop::dock_running_animation::AxisLength(separatorUnits, separatorGap);
     const int areaWidth = std::max(1, static_cast<int>(area_.right - area_.left));
     const int areaHeight = std::max(1, static_cast<int>(area_.bottom - area_.top));
     const int maxLength = std::max(1,
@@ -668,6 +678,8 @@ std::vector<RECT> DockContainer::GetLeadingMagnificationRects() const
     for (const auto& item : runningItems_)
     {
         if (!item) continue;
+        if (!app_ || item->GetRunningIndex() >= app_->dockUnpinnedRunningApps_.size() ||
+            !app_->dockUnpinnedRunningApps_[item->GetRunningIndex()].presence.Interactive()) continue;
         const RECT bounds = item->GetBounds();
         if (!IsRectEmpty(&bounds))
             candidates.push_back(bounds);
@@ -1609,23 +1621,16 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds) const
     const size_t count = entries_ ? entries_->size() : 0;
     const bool hasRecycleBin = count > 0 && app_ &&
         app_->IsRecycleBinDockEntry(entries_->back());
-    const size_t runningCount = app_
-        ? app_->dockUnpinnedRunningApps_.size() : 0;
+    const float runningUnits = RunningSlotUnits();
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
-    const bool hasMainItems = SortableEntryCount() > 0 ||
-        runningCount > 0 || frequentCount > 0;
+    const float mainAmount = (SortableEntryCount() > 0 || frequentCount > 0)
+        ? 1.0f : snowdesktop::dock_running_animation::GroupAmount(runningUnits);
     const bool hasFolders = FolderEntryCount() > 0;
+    const int mainGap = snowdesktop::dock_running_animation::AxisLength(mainAmount, ScaledSeparatorGap());
     const int trailingLength = IsEdgeAttached()
-        ? static_cast<int>(
-            snowdesktop::dock_folder_rules::
-                EdgeAttachedTrailingReserve(
-                    FolderEntryCount(),
-                    1 + static_cast<size_t>(hasRecycleBin),
-                    hasMainItems,
-                    ItemPitch(), ScaledSeparatorGap()))
-        : static_cast<int>(1 + hasRecycleBin) * ItemPitch() +
-            (hasMainItems && !hasFolders ? ScaledSeparatorGap() : 0);
+        ? static_cast<int>(FolderEntryCount() + 1 + static_cast<size_t>(hasRecycleBin)) * ItemPitch() + mainGap
+        : static_cast<int>(1 + hasRecycleBin) * ItemPitch() + (!hasFolders ? mainGap : 0);
     if (IsVertical())
     {
         viewport.top += halfGap + leadingLength;
@@ -1645,18 +1650,11 @@ int DockContainer::GetMaxScrollOffset(const RECT& bounds) const
 {
     const size_t fixedCount = SortableEntryCount();
     const size_t folderCount = FolderEntryCount();
-    const size_t runningCount = app_
-        ? app_->dockUnpinnedRunningApps_.size() : 0;
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
-    const long long contentExtent =
-        snowdesktop::dock_folder_rules::
-            ScrollableExtentForLayout(
-                IsEdgeAttached(),
-                fixedCount, runningCount,
-                frequentCount, folderCount,
-                ItemPitch(),
-                ScaledSeparatorGap());
+    const long long contentExtent = snowdesktop::dock_running_animation::ScrollableExtent(
+        fixedCount, frequentCount, IsEdgeAttached() ? 0 : folderCount,
+        RunningSlotUnits(), ItemPitch(), ScaledSeparatorGap());
     const RECT viewport = GetScrollViewport(bounds);
     const int viewportExtent = std::max(0, IsVertical()
         ? static_cast<int>(viewport.bottom - viewport.top)
@@ -1718,28 +1716,33 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         app_->IsRecycleBinDockEntry(entries_->back());
     const size_t runningCount = app_
         ? app_->dockUnpinnedRunningApps_.size() : 0;
+    const float runningUnits = RunningSlotUnits();
+    const float runningAmount = snowdesktop::dock_running_animation::GroupAmount(runningUnits);
     std::vector<size_t> frequentIndices = app_
         ? app_->GetFrequentDockItemIndices() : std::vector<size_t>{};
     const size_t frequentCount = frequentIndices.size();
     const int slotLength = ItemPitch();
     const int halfGap = ScaledSpacing() / 2;
     const int separatorGap = ScaledSeparatorGap();
+    const int runningGap = snowdesktop::dock_running_animation::AxisLength(runningAmount, separatorGap);
+    const int runningAxisLength = snowdesktop::dock_running_animation::AxisLength(runningUnits, slotLength);
+    const int runningAxisAdjustment = runningAxisLength - static_cast<int>(runningCount) * slotLength;
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const size_t leadingControlSlots = showWindowsButton ? 1 : 0;
     const int leadingControlOffset = showWindowsButton ? separatorGap : 0;
     int groupOffset = 0;
     if (runningCount > 0 && fixedCount > 0)
-        groupOffset += separatorGap;
+        groupOffset += runningGap;
     const int runningOffset = groupOffset;
     if (frequentCount > 0 && (fixedCount > 0 || runningCount > 0))
-        groupOffset += separatorGap;
+        groupOffset += fixedCount > 0 ? separatorGap : runningGap;
     const int frequentOffset = groupOffset;
     const bool hasPreFolderItems =
         fixedCount > 0 || runningCount > 0 ||
         frequentCount > 0;
     const int folderOffset = groupOffset +
         (folderCount > 0 && hasPreFolderItems
-            ? separatorGap : 0);
+            ? (fixedCount > 0 || frequentCount > 0 ? separatorGap : runningGap) : 0);
 
     auto makeCell = [&](size_t visualIndex, int axisOffset) {
         RECT cell{};
@@ -1811,7 +1814,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
             fixedCount + runningCount +
                 frequentCount + folderIndex +
                 leadingControlSlots,
-            folderOffset + leadingControlOffset);
+            folderOffset + leadingControlOffset + runningAxisAdjustment);
     };
 
     slots.reserve(count + runningCount + frequentCount + 1);
@@ -1832,11 +1835,17 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         slots.push_back(std::move(slot));
     }
 
+    float precedingRunningUnits = 0.0f;
     for (size_t i = 0; i < runningCount; ++i)
     {
         const size_t slotIndex = count + i;
-        RECT cell = makeCell(fixedCount + i + leadingControlSlots,
-            runningOffset + leadingControlOffset);
+        const int begin = snowdesktop::dock_running_animation::AxisLength(precedingRunningUnits, slotLength);
+        precedingRunningUnits += app_->dockUnpinnedRunningApps_[i].presence.Amount();
+        const int end = snowdesktop::dock_running_animation::AxisLength(precedingRunningUnits, slotLength);
+        RECT cell = makeCell(fixedCount + leadingControlSlots,
+            runningOffset + leadingControlOffset + begin);
+        if (IsVertical()) cell.bottom = cell.top + end - begin;
+        else cell.right = cell.left + end - begin;
         auto slot = std::make_unique<Slot>(this, cell, slotIndex);
         auto item = std::make_unique<DockRunningItem>(app_, this, i);
         item->SetBounds(cell);
@@ -1850,7 +1859,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         const size_t slotIndex = count + runningCount + i;
         RECT cell = makeCell(
             fixedCount + runningCount + i + leadingControlSlots,
-            frequentOffset + leadingControlOffset);
+            frequentOffset + leadingControlOffset + runningAxisAdjustment);
         auto slot = std::make_unique<Slot>(this, cell, slotIndex);
         auto item = std::make_unique<DockFrequentItem>(
             app_, this, frequentIndices[i]);
@@ -2332,9 +2341,10 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     drawScrollablePass(false);
     drawScrollablePass(true);
 
+    const float runningAmount = snowdesktop::dock_running_animation::GroupAmount(RunningSlotUnits());
     auto drawSeparatorBetween = [&](
         const RECT& precedingBounds,
-        const RECT& followingBounds) {
+        const RECT& followingBounds, float opacity = 1.0f) {
         if (IsRectEmpty(&precedingBounds) ||
             IsRectEmpty(&followingBounds))
             return;
@@ -2343,7 +2353,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         const RECT followingVisual = visualRectFor(followingBounds);
         ComPtr<ID2D1SolidColorBrush> separatorBrush;
         context->CreateSolidColorBrush(
-            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f), &separatorBrush);
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f * opacity) :
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f * opacity), &separatorBrush);
         if (!separatorBrush) return;
         if (IsVertical())
         {
@@ -2378,7 +2389,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     if (fixedCount > 0 && !runningItems_.empty())
         drawSeparatorBetween(
             slots[fixedCount - 1]->GetBounds(),
-            runningItems_.front()->GetBounds());
+            runningItems_.front()->GetBounds(), runningAmount);
     if ((fixedCount > 0 || !runningItems_.empty()) && !frequentItems_.empty())
     {
         const RECT preceding =
@@ -2387,7 +2398,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                 : slots[fixedCount - 1]->GetBounds();
         drawSeparatorBetween(
             preceding,
-            frequentItems_.front()->GetBounds());
+            frequentItems_.front()->GetBounds(), fixedCount > 0 ? 1.0f : runningAmount);
     }
     if (!IsEdgeAttached() &&
         hasScrollableItems && folderCount > 0 &&
@@ -2403,7 +2414,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
                         GetBounds());
         drawSeparatorBetween(
             preceding,
-            slots[folderBegin]->GetBounds());
+            slots[folderBegin]->GetBounds(),
+            fixedCount > 0 || !frequentItems_.empty() ? 1.0f : runningAmount);
     }
     if (overflowMaskPushed)
         context->PopLayer();
@@ -2460,18 +2472,20 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             following = slots[folderBegin]->GetBounds();
         }
         const RECT followingVisual = visualRectFor(following);
+        const float separatorAmount = fixedCount > 0 || !frequentItems_.empty()
+            ? 1.0f : runningAmount;
         ComPtr<ID2D1SolidColorBrush> separatorBrush;
         context->CreateSolidColorBrush(
             lt ? D2D1::ColorF(
-                0.0f, 0.0f, 0.0f, 0.18f)
+                0.0f, 0.0f, 0.0f, 0.18f * separatorAmount)
                : D2D1::ColorF(
-                1.0f, 1.0f, 1.0f, 0.28f),
+                1.0f, 1.0f, 1.0f, 0.28f * separatorAmount),
             &separatorBrush);
         if (separatorBrush)
         {
             const float halfSeparatorGap =
                 static_cast<float>(
-                    ScaledSeparatorGap()) * 0.5f;
+                    ScaledSeparatorGap()) * separatorAmount * 0.5f;
             if (IsVertical())
             {
                 const float y =
@@ -2949,6 +2963,8 @@ DockRunningItem* DockContainer::RunningItemAtPoint(POINT pt) const
     for (const auto& item : runningItems_)
     {
         if (!item) continue;
+        if (!app_ || item->GetRunningIndex() >= app_->dockUnpinnedRunningApps_.size() ||
+            !app_->dockUnpinnedRunningApps_[item->GetRunningIndex()].presence.Interactive()) continue;
         RECT bounds = item->GetBounds();
         if (IsFocusedElementRect(bounds, pt)) return item.get();
     }

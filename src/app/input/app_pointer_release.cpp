@@ -756,7 +756,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     {
         const auto running = std::find_if(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& app) {
-                return app.identityKey == runningAppKey;
+                return app.presence.Interactive() && app.identityKey == runningAppKey;
             });
         if (running != dockUnpinnedRunningApps_.end())
         {

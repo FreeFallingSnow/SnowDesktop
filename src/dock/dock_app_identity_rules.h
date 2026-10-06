@@ -16,6 +16,15 @@ enum class DockAppIdentityKind
 namespace snowdesktop::dock_app_identity_rules
 {
 
+// Unknown metadata is not a confirmed mismatch. Existing presentations stay
+// visible while a replacement query is pending; only new candidates wait.
+constexpr bool ShouldDeferUnpinnedWindow(bool windowIdentityPending,
+    bool fixedIdentityPending, bool hasApplicationPins, bool alreadyVisible)
+{
+    return !alreadyVisible && (fixedIdentityPending ||
+        (windowIdentityPending && hasApplicationPins));
+}
+
 inline bool IsPathInsideDirectory(
     const std::wstring& path, const std::wstring& directory)
 {
