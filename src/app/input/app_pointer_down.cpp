@@ -665,8 +665,19 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
             {
                 if (!ctrl) ClearSelection();
-                dockItem->SetSelected(true);
                 dockPressedEntry_ = dockItem->GetEntryIndex();
+                // Popup toggles and single-click launches are actions, so do
+                // not flash a selection indicator while the button is held.
+                // The pressed item still seeds dragging without selection.
+                if (dockPressedEntry_ < dockEntries_.size())
+                {
+                    const DockEntry& entry = dockEntries_[dockPressedEntry_];
+                    if (ctrl ||
+                        (!dockSettings_.singleClickLaunchItems &&
+                            !IsLogicalDockEntryType(entry.type) &&
+                            !IsFolderDockEntry(entry)))
+                        dockItem->SetSelected(true);
+                }
                 if (dockPressedEntry_ < dockEntries_.size() &&
                     IsLogicalDockEntryType(dockEntries_[dockPressedEntry_].type))
                 {
@@ -741,7 +752,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
             {
                 if (!ctrl) ClearSelection();
-                frequentItem->SetSelected(true);
+                if (ctrl || !dockSettings_.singleClickLaunchItems)
+                    frequentItem->SetSelected(true);
                 dockPressedFrequentItem_ = frequentItem->GetItemIndex();
                 if (dockPressedFrequentItem_ < items_.size())
                 {
