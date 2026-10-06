@@ -204,6 +204,29 @@ void CheckDockRefreshContinuity()
     }
     using snowdesktop::dock_refresh_cache::Cache;
     {
+        // A single task-window event must not requeue Shell identity reads
+        // for every other running window. Keep UI identity during refinement.
+        Cache<std::wstring, std::uintptr_t> cache;
+        unsigned requests = 0;
+        const auto read = [&](std::uintptr_t window) {
+            return cache.ReadOrSubmit(window, L"pid:thread", [&](std::uint64_t ticket) {
+                ++requests;
+                cache.Publish(window, ticket, L"known.app");
+            });
+        };
+        for (std::uintptr_t window = 1; window <= 128; ++window) read(window);
+        const auto retired = cache.Read(7, L"pid:thread");
+        cache.Invalidate(7);
+        Check(!cache.Publish(7, retired.ticket, L"late.app"),
+            "targeted window invalidation rejects a retired in-flight completion before another read");
+        const auto refining = cache.Read(7, L"pid:thread");
+        Check(!refining.fresh && refining.sameSourceVersion && refining.value == L"known.app",
+            "the changed window retains visible identity while its replacement is queued");
+        for (std::uintptr_t window = 1; window <= 128; ++window) read(window);
+        Check(requests == 129 && cache.Read(8, L"pid:thread").fresh,
+            "one task-window event revalidates one identity instead of all 128 running windows");
+    }
+    {
         Cache<int> pixels;
         const auto request = pixels.Read(L"mapped", L"96");
         Check(pixels.Publish(L"mapped", request.ticket, 11, false) &&

@@ -1395,6 +1395,7 @@ private:
     snowdesktop::dock_refresh_cache::Cache<std::wstring, HWND> dockWindowAppIds_;
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
     void RefreshDockForegroundState();
+    void HandleDockWindowListChanged(HWND window, DWORD event);
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
     bool AdvanceDockRunningAnimations(double nowMilliseconds);

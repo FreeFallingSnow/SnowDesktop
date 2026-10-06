@@ -4,6 +4,7 @@
 #include "app/shell/initial_icon_bitmap.h"
 #include "drag_drop/drag_input_rules.h"
 #include "settings/animation_settings.h"
+#include "diagnostics/performance_trace.h"
 
 // Running-window discovery, visual state and activation behavior.
 
@@ -373,6 +374,47 @@ void DesktopApp::RefreshDockForegroundState()
         InvalidateDockRects();
 }
 
+void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
+{
+    snowdesktop::performance::Scope performanceScope("dock", "running.notification");
+    if (!window) return;
+    const auto tracks = [window](const auto& state) {
+        return state.window == window ||
+            std::find(state.trackedWindows.begin(), state.trackedWindows.end(), window) !=
+                state.trackedWindows.end();
+    };
+    const bool tracked = std::any_of(dockRunningWindows_.begin(), dockRunningWindows_.end(),
+            [&](const auto& pair) { return tracks(pair.second); }) ||
+        std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(), tracks);
+    // Focus/minimize feedback already has a cheap tracked-state path. A new
+    // foreground window still gets immediate discovery if its show was missed.
+    const bool stateOnly = event == EVENT_SYSTEM_FOREGROUND ||
+        event == EVENT_SYSTEM_MINIMIZESTART || event == EVENT_SYSTEM_MINIMIZEEND;
+    if (tracked && stateOnly)
+    {
+        return;
+    }
+    if (!tracked && !IsDockTaskWindow(window)) return;
+
+    if (tracked && (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_SHOW))
+    {
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(window, &process);
+        const auto identity = dockWindowAppIds_.PeekValue(window,
+            std::to_wstring(process) + L":" + std::to_wstring(thread));
+        // Repeated show events for an already identified task do not change
+        // its membership. Unknown metadata can still receive a targeted retry.
+        if (identity && !identity->empty())
+        {
+            RefreshDockForegroundState();
+            return;
+        }
+    }
+    dockWindowAppIds_.Invalidate(window);
+    dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+    RefreshDockRunningWindows();
+}
+
 void DesktopApp::RefreshDockRunningWindows(
     bool invalidateChanged, HWND preferredWindow)
 {
@@ -387,10 +429,9 @@ void DesktopApp::RefreshDockRunningWindows(
     {
         return;
     }
+    snowdesktop::performance::Scope performanceScope("dock", "running.discovery");
     PruneDockPendingCloseWindows();
     const DWORD observedWindowStateTick = dockWindowListChangedTick_.load();
-    if (observedWindowStateTick != dockRunningWindowsStateTick_)
-        dockWindowAppIds_.Invalidate();
     dockWindowAppIds_.Retain([](HWND window) { return IsWindow(window) != FALSE; });
     struct DockWindowTarget
     {
@@ -1459,6 +1500,7 @@ std::wstring DesktopApp::GetDockWindowAppUserModelIdAsync(HWND window, bool* pen
 
 bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
 {
+    snowdesktop::performance::Scope performanceScope("dock", "running.animation");
     // Item wrappers may also be retained between button down and the drag
     // threshold. Rebuilding animated slots in that interval invalidates them.
     if (mouseDown_ || snowdesktop::drag_input_rules::ShouldDeferModelReload(

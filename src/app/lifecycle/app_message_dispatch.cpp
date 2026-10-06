@@ -1225,9 +1225,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         HandleDockForegroundInteractionChanged();
         return 0;
     case kDockWindowListChangedMessage:
-        if (generalSettings_.dockEnabled && !reloading_ &&
-            dockWindowListChangedTick_.load() != dockRunningWindowsStateTick_)
-            RefreshDockRunningWindows();
+        if (generalSettings_.dockEnabled && !reloading_)
+            HandleDockWindowListChanged(reinterpret_cast<HWND>(lp), static_cast<DWORD>(wp));
         return 0;
     case kSteamWorkshopSubscriptionReadyMessage:
         PollSteamWorkshopSubscriptions();

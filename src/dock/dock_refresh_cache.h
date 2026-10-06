@@ -116,6 +116,14 @@ public:
 
     void Invalidate() { ++generation_; }
 
+    // Window notifications invalidate only that window. Preserve the visible
+    // value and reject any completion belonging to the retired request.
+    void Invalidate(const Key& key)
+    {
+        const auto found = entries_.find(key);
+        if (found != entries_.end()) found->second.generation = 0;
+    }
+
     template<class Predicate>
     void Retain(Predicate keep)
     {
