@@ -609,6 +609,12 @@ void DesktopApp::SyncStatusBar()
                  snowdesktop::DrawStatusBarEdge(context, frame, appearance, scale, generalSettings_.statusBar.position);
                 brushCache_.clear(); brushCacheContext_ = nullptr;
              });
+        statusBar_->SetPointerPressed([this] {
+            ClearSelection();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidatePersistentDockHosts();
+            InvalidateFloatingPopupWindow();
+        });
         statusBar_->SetTrayDragHandlers([this](const auto& changed) {
             if (!settingsController_) return;
             auto settings = settingsController_->Snapshot()->values.general;

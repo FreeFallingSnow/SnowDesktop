@@ -963,7 +963,8 @@ struct StatusBar::Impl
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
                 self->ClearHover();
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
-                if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN, doubleClick) == StatusBarAction::Dismiss)
+                if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN, doubleClick,
+                    self->owner.pointerPressed) == StatusBarAction::Dismiss)
                 {
                     self->DismissSurfaces();
                     return 0;
@@ -1146,6 +1147,7 @@ struct StatusBar::Impl
     std::function<bool(std::string_view, POINT)> dropOutside;
     TrayDragFeedback dragFeedback;
     std::function<void(bool)> dockChanged;
+    std::function<void()> pointerPressed;
     std::function<StatusBarDockState(HMONITOR)> dockStateProvider;
     std::function<bool(HMONITOR)> interactionSessionProvider;
     std::function<PersonalizationSettings(HMONITOR)> mergedAppearanceProvider;
@@ -1348,6 +1350,7 @@ bool StatusBar::DismissMergedBackground(HMONITOR monitor, POINT screen)
         POINT local = screen;
         ScreenToClient(window->hwnd, &local);
         if (HitTestStatusBarItems(window->items, local)) return false;
+        window->interaction.Press(window->items, local, false, false, impl_->pointerPressed);
         window->DismissSurfaces();
         return true;
     }
@@ -1474,6 +1477,7 @@ void StatusBar::DismissTemporaryReveal(HMONITOR monitor)
     }
 }
 void StatusBar::SetGraphicsFailureHandler(std::function<void(HRESULT)> handler) { impl_->graphicsFailure = std::move(handler); }
+void StatusBar::SetPointerPressed(std::function<void()> pressed) { impl_->pointerPressed = std::move(pressed); }
 void StatusBar::SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider)
 {
     impl_->sceneProvider = std::move(provider);

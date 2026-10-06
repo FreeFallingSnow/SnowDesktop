@@ -84,8 +84,12 @@ struct StatusBarInteraction
         }
         focused.reset();
     }
-    StatusBarAction Press(const std::vector<StatusBarItem>& items, POINT point, bool right, bool doubleClick = false)
+    StatusBarAction Press(const std::vector<StatusBarItem>& items, POINT point, bool right, bool doubleClick = false,
+        const std::function<void()>& pointerPressed = {})
     {
+        // Notify before any blank-area, double-click or native tray early return.
+        // These no-activate surfaces cannot clear host selection via focus loss.
+        if (pointerPressed) pointerPressed();
         const auto hit = HitTestStatusBarItems(items, point);
         // A Task View double-click is one opening request. Do not re-arm its
         // second release while Shell may be taking over the foreground.

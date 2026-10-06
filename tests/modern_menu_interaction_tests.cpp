@@ -405,6 +405,8 @@ struct StatusBarKeyboardProbe
     std::vector<snowdesktop::StatusBarItem> items;
     std::vector<snowdesktop::StatusBarInvocation> invoked;
     unsigned paints = 0, dismissals = 0, defaultKeys = 0;
+    bool selected = true;
+    unsigned pointerPresses = 0;
     static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM key, LPARAM bits)
     {
         auto* self = reinterpret_cast<StatusBarKeyboardProbe*>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -412,6 +414,15 @@ struct StatusBarKeyboardProbe
         {
             self = static_cast<StatusBarKeyboardProbe*>(reinterpret_cast<CREATESTRUCTW*>(bits)->lpCreateParams);
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+        }
+        if (self && (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK || message == WM_RBUTTONDOWN))
+        {
+            const POINT point{GET_X_LPARAM(bits), GET_Y_LPARAM(bits)};
+            const bool doubleClick = message == WM_LBUTTONDBLCLK && self->input.IsDoubleClickTarget(self->items, point);
+            if (self->input.Press(self->items, point, message == WM_RBUTTONDOWN, doubleClick,
+                [&] { self->selected = false; ++self->pointerPresses; }) == snowdesktop::StatusBarAction::Dismiss)
+                ++self->dismissals;
+            return 0;
         }
         // The native bar uses this exact dispatcher and target resolver. Only
         // drawing / foreign-app invocation / dismissal effects are recorded.
@@ -513,6 +524,40 @@ void CheckStatusBarKeyboardMessages()
     SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
     Expect(probe.invoked.size() == 7, "a hidden IME control cannot respond to context clicks");
     Expect(SetKeyboardState(saved) != FALSE, "thread-local key state is restored");
+    // A real no-activate bar used to keep desktop/Dock selection because tray
+    // and blank presses bypass action activation. Record only the host effect;
+    // use the production press state machine and native down messages below.
+    probe.items = {menu, icon};
+    const auto dismissals = probe.dismissals;
+    unsigned expectedPresses = 0;
+    for (const auto point : {POINT{16, 16}, POINT{80, 16}, POINT{112, 16}})
+        for (const UINT message : {WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_LBUTTONDBLCLK})
+        {
+            probe.selected = true;
+            SendMessageW(window, message, 0, MAKELPARAM(point.x, point.y));
+            Expect(!probe.selected && probe.pointerPresses == ++expectedPresses,
+                "built-in, tray and blank native presses clear host selection exactly once at button-down");
+            probe.input.CancelPointer();
+            Expect(!probe.selected, "capture cancellation cannot restore selection cleared at button-down");
+        }
+    Expect(probe.dismissals == dismissals + 2,
+        "blank left/double presses retain dismissal while right presses retain their context path");
+    probe.selected = true;
+    SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(16, 16));
+    SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(16, 16));
+    Expect(probe.selected && probe.pointerPresses == expectedPresses,
+        "hover and an unpaired release do not clear host selection");
+    StatusBarItem taskView = menu;
+    taskView.action = StatusBarAction::TaskView;
+    probe.items = {taskView};
+    SendMessageW(window, WM_LBUTTONDOWN, 0, MAKELPARAM(16, 16));
+    Expect(probe.input.Release(probe.items, {16, 16}, false).accepted,
+        "first Task View press remains armed after clearing selection");
+    probe.selected = true;
+    SendMessageW(window, WM_LBUTTONDBLCLK, 0, MAKELPARAM(16, 16));
+    Expect(!probe.selected && probe.pointerPresses == expectedPresses + 2 &&
+        !probe.input.Release(probe.items, {16, 16}, false).accepted,
+        "Task View double-click clears selection without rearming the suppressed second activation");
     DestroyWindow(window);
     UnregisterClassW(definition.lpszClassName, definition.hInstance);
 }

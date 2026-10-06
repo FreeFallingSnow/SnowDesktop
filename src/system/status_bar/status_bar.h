@@ -109,6 +109,9 @@ public:
     // glass target and complete screen-space coverage before icons inherit it.
     bool HasMergedGlassBackdrop(HMONITOR monitor, const RECT& screenFrame) const;
     void SetDockChanged(std::function<void(bool geometry)> changed);
+    // Host-private selection boundary for pointer presses, including tray icons
+    // and merged blank background. Does not activate the no-activate bar.
+    void SetPointerPressed(std::function<void()> pressed);
     // Application-owned window observations; must not enable taskbar effects.
     void SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider);
     void SetGraphicsFailureHandler(std::function<void(HRESULT)> handler);
