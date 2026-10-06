@@ -85,15 +85,15 @@ int main(int argc, char** argv)
             Forbid(source, token, "guide preferences and desktop mutations belong to the host");
         // Negative architecture contract: the practice command may publish an
         // instruction, but must never perform the menu lesson for the user.
-        const auto practice = ReadSource(root, "src/app/app_usage_guide.cpp");
+        const auto practice = ReadSource(root, "src/app/features/app_usage_guide.cpp");
         const auto guide = ReadSource(root, "src/winui/start_page_presenter.cpp");
         for (const auto token : {"InvokeHostAction(", "SettingsUpdateMode::", "SaveExpanded("})
             Forbid(guide, token, "guide controls delegate explicit actions rather than applying settings themselves");
-        const auto overlay = ReadSource(root, "src/app/app_overlay_render.cpp");
+        const auto overlay = ReadSource(root, "src/app/render/app_overlay_render.cpp");
         for (const auto token : {"ActivePopupBounds(", "ActivePreviewBounds(", "GetOcclusionRects("})
             Forbid(overlay, token, "a manually positioned reference must not move to avoid menus or desktop objects");
         Forbid(practice, "SnowDesktop.onboarding.json", "permanent help cannot read or write old tutorial progress");
-        for (const auto path : {"src/app/app_drop_execution.cpp", "src/app/app_pointer_release.cpp", "src/app/app_widget_grouping.cpp"})
+        for (const auto path : {"src/app/drag_drop/app_drop_execution.cpp", "src/app/input/app_pointer_release.cpp", "src/app/widgets/app_widget_grouping.cpp"})
         {
             const auto interactions = ReadSource(root, path);
             for (const auto token : {"RecordOnboarding", "GeometryCommitted(", "SaveOnboarding("})

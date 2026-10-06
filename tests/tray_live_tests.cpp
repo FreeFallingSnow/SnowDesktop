@@ -1,10 +1,10 @@
 // Real production Service + Explorer collector. Only deployment-path lookup and
 // diagnostic output are replaced; the fixture is a separate hidden process.
 // This opt-in test does not operate SnowDesktop or third-party application UI.
-#include "tray_service.h"
-#include "diagnostic_log.h"
-#include "tray_modern_bootstrap.h"
-#include "taskbar_hook/taskbar_symbol_resolver.h"
+#include "system/tray/tray_service.h"
+#include "diagnostics/diagnostic_log.h"
+#include "system/tray/tray_modern_bootstrap.h"
+#include "../src/taskbar_hook/taskbar_symbol_resolver.h"
 #include <windowsx.h>
 #include <filesystem>
 #include <iostream>

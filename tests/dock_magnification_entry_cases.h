@@ -1,4 +1,4 @@
-#include "desktop_hover_rules.h"
+#include "desktop/desktop_hover_rules.h"
 
 // Exercise the production timeline and geometry with a controlled clock.
 // This protects against full-size first frames and pointer samples restarting

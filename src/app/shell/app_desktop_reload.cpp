@@ -1,0 +1,1320 @@
+#include "app/app.h"
+#include "shell_icon_request.h"
+#include "app/lifecycle/startup_diagnostics.h"
+#include "diagnostics/performance_capture.h"
+#include "diagnostics/performance_trace.h"
+#include "drag_drop/drag_input_rules.h"
+#include "layout/popup_icon_load_rules.h"
+
+// SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
+// 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
+static std::wstring FormatSidString(PSID sid)
+{
+    if (!sid) return {};
+    const auto* raw = static_cast<const BYTE*>(sid);
+    const BYTE revision = raw[0];
+    const BYTE count = raw[1];
+    std::wstring text = L"S-";
+    text += std::to_wstring(revision);
+    text += L"-";
+    ULONGLONG authority = 0;
+    for (int i = 0; i < 6; ++i)
+        authority = (authority << 8) | raw[2 + i];
+    text += std::to_wstring(authority);
+    const BYTE* subAuthority = raw + 8;
+    for (BYTE i = 0; i < count; ++i)
+    {
+        const DWORD value =
+            (static_cast<DWORD>(subAuthority[i * 4])) |
+            (static_cast<DWORD>(subAuthority[i * 4 + 1]) << 8) |
+            (static_cast<DWORD>(subAuthority[i * 4 + 2]) << 16) |
+            (static_cast<DWORD>(subAuthority[i * 4 + 3]) << 24);
+        text += L"-";
+        text += std::to_wstring(value);
+    }
+    return text;
+}
+
+// 当前用户 SID 字符串（空表示获取失败）。
+static std::wstring CurrentUserSidString()
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return {};
+    std::wstring sidString;
+    DWORD size = 0;
+    // 第一次调用用于查询所需缓冲区大小，仅接受缓冲区不足错误。
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size == 0)
+    {
+        CloseHandle(token);
+        return {};
+    }
+    std::vector<BYTE> buffer(size);
+    if (GetTokenInformation(token, TokenUser,
+            buffer.data(), size, &size))
+    {
+        const auto* user =
+            reinterpret_cast<TOKEN_USER*>(buffer.data());
+        sidString = FormatSidString(user->User.Sid);
+    }
+    CloseHandle(token);
+    return sidString;
+}
+
+// 当前用户在各固定盘上的回收站目录列表。
+static std::vector<std::wstring> EnumerateRecycleBinDirectories()
+{
+    std::vector<std::wstring> directories;
+    const std::wstring sidString = CurrentUserSidString();
+    if (sidString.empty())
+        return directories;
+    wchar_t root[] = L"A:\\";
+    for (wchar_t drive = L'A'; drive <= L'Z'; ++drive)
+    {
+        root[0] = drive;
+        if (GetDriveTypeW(root) != DRIVE_FIXED)
+            continue;
+        const std::wstring dir =
+            std::wstring(root) + L"$Recycle.Bin\\" + sidString;
+        const DWORD attrs = GetFileAttributesW(dir.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES &&
+            (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0)
+            directories.push_back(dir);
+    }
+    return directories;
+}
+
+/**
+ * @brief 轻量检测回收站是否非空。
+ * @details 仅需空/满两种图标状态，用 FindFirstFile 查找任意 $R 数据文件，
+ *          找到第一个即返回，不遍历全部条目；万级条目时耗时毫秒级，
+ *          远快于必须全量统计的 SHQueryRecycleBinW。
+ *          注意按 $R 而非 $I 判定：清空回收站时 $R 必被删除，
+ *          而 $I 元数据可能作为孤儿残留，不能作为“有内容”信号。
+ */
+static bool RecycleBinContainsItems()
+{
+    for (const auto& dir : EnumerateRecycleBinDirectories())
+    {
+        WIN32_FIND_DATAW findData{};
+        HANDLE find = FindFirstFileW(
+            (dir + L"\\$R*").c_str(), &findData);
+        if (find != INVALID_HANDLE_VALUE)
+        {
+            FindClose(find);
+            return true;
+        }
+    }
+    return false;
+}
+
+// Explorer change tracking, desktop reload and asynchronous icon completion.
+
+void DesktopApp::RegisterShellChangeNotifications()
+{
+    if (shellChangeRegId_ != 0)
+    {
+        SHChangeNotifyDeregister(shellChangeRegId_);
+        shellChangeRegId_ = 0;
+    }
+    if (!recycleBinPidl_.get())
+    {
+        PIDLIST_ABSOLUTE rbPidl = nullptr;
+        if (SUCCEEDED(SHGetSpecialFolderLocation(nullptr, CSIDL_BITBUCKET, &rbPidl)))
+            recycleBinPidl_.reset(rbPidl);
+    }
+    shellChangeRegId_ = RegisterDesktopShellNotifications(hwnd_,
+        kShellChangeMessage, desktopPidl_.get(), recycleBinPidl_.get());
+    folderNotifications_.Clear();
+    SyncFolderChangeNotifications();
+    if (shellReloadPending_)
+        SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+}
+
+void DesktopApp::SyncFolderChangeNotifications()
+{
+    if (exitRequested_) return;
+    std::vector<std::wstring> paths;
+    if (snowdesktop::debug_profile::Enabled())
+        paths.push_back(snowdesktop::desktop_source::Directory());
+    for (const auto& widget : widgets_)
+        if (widget.type == DesktopWidgetType::FolderMapping)
+            paths.push_back(widget.sourceFolderPath);
+    if (dockFolderPopupOpen_)
+        paths.push_back(dockFolderPopupWidget_.sourceFolderPath);
+    const auto added = folderNotifications_.Sync(hwnd_, kFolderChangeMessage,
+        kFolderSubscriptionReadyMessage, paths);
+    // Close the gap between the preceding enumeration and registration.
+    if (!added.empty()) RequestFolderRefresh(added);
+}
+
+/**
+ * @brief 异步检测回收站空/满状态，状态切换时触发桌面刷新。
+ * @details 检测在后台线程执行；queryInFlight 防止并发查询堆叠，
+ *          并记录单次耗时供轮询间隔自适应调整。
+ */
+void DesktopApp::CheckRecycleBinStatus()
+{
+    const auto pollState = recycleBinPollState_;
+    if (pollState->queryInFlight.exchange(true))
+        return;
+    const HWND target = hwnd_;
+    std::thread([target, pollState] {
+        const DWORD64 started = GetTickCount64();
+        const bool hasItems = RecycleBinContainsItems();
+        pollState->lastQueryDurationMs.store(
+            static_cast<DWORD>(GetTickCount64() - started));
+        const int64_t previous =
+            pollState->hasItems.exchange(hasItems ? 1 : 0);
+        if (previous >= 0 &&
+            previous != (hasItems ? 1 : 0) &&
+            IsWindow(target))
+            PostMessageW(target, kShellChangeMessage, 0, 0);
+        pollState->queryInFlight = false;
+    }).detach();
+}
+
+void DesktopApp::StartRecycleBinWatcher()
+{
+    if (recycleBinWatcherActive_.load())
+        return;
+    StopRecycleBinWatcher();
+    if (!recycleBinWatcherStopEvent_)
+        recycleBinWatcherStopEvent_ =
+            CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!recycleBinWatcherStopEvent_)
+        return;
+    recycleBinWatcherActive_ = true;
+    recycleBinWatcherThread_ = CreateThread(nullptr, 0,
+        &DesktopApp::RecycleBinWatcherThreadProc, this, 0, nullptr);
+    if (!recycleBinWatcherThread_)
+    {
+        CloseHandle(recycleBinWatcherStopEvent_);
+        recycleBinWatcherStopEvent_ = nullptr;
+        recycleBinWatcherActive_ = false;
+    }
+}
+
+void DesktopApp::StopRecycleBinWatcher()
+{
+    if (recycleBinWatcherStopEvent_)
+    {
+        SetEvent(recycleBinWatcherStopEvent_);
+        if (recycleBinWatcherThread_)
+        {
+            // 监听线程收到停止事件后会在一个事件循环内退出；
+            // 超时则放弃等待并跳过 CloseHandle，避免监听线程仍在使用
+            // 已关闭句柄（句柄重用/use-after-free 风险），
+            // 让线程自然退出后由系统回收线程资源。
+            if (WaitForSingleObject(
+                    recycleBinWatcherThread_, 2000) == WAIT_OBJECT_0)
+            {
+                CloseHandle(recycleBinWatcherThread_);
+            }
+            recycleBinWatcherThread_ = nullptr;
+        }
+        CloseHandle(recycleBinWatcherStopEvent_);
+        recycleBinWatcherStopEvent_ = nullptr;
+    }
+    recycleBinWatcherActive_ = false;
+}
+
+DWORD WINAPI DesktopApp::RecycleBinWatcherThreadProc(LPVOID param)
+{
+    auto* self = static_cast<DesktopApp*>(param);
+
+    // 当前用户 SID 下的回收站目录（所有固定盘）。
+    std::vector<std::wstring> directories =
+        EnumerateRecycleBinDirectories();
+    if (directories.empty() ||
+        !self->recycleBinWatcherStopEvent_)
+        return 0; // 无目录可监视，仅靠轮询兜底
+
+    struct WatchEntry
+    {
+        HANDLE dir = nullptr;
+        HANDLE event = nullptr;
+        OVERLAPPED overlapped{};
+        std::vector<BYTE> buffer;
+    };
+    std::vector<WatchEntry> watches;
+    for (const auto& dir : directories)
+    {
+        WatchEntry entry;
+        entry.dir = CreateFileW(dir.c_str(), FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+            nullptr);
+        if (entry.dir == INVALID_HANDLE_VALUE || !entry.dir)
+            continue;
+        entry.event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!entry.event)
+        {
+            CloseHandle(entry.dir);
+            continue;
+        }
+        entry.overlapped.hEvent = entry.event;
+        entry.buffer.resize(64 * 1024);
+        if (!ReadDirectoryChangesW(entry.dir,
+                entry.buffer.data(),
+                static_cast<DWORD>(entry.buffer.size()), TRUE,
+                FILE_NOTIFY_CHANGE_FILE_NAME |
+                    FILE_NOTIFY_CHANGE_DIR_NAME |
+                    FILE_NOTIFY_CHANGE_SIZE |
+                    FILE_NOTIFY_CHANGE_LAST_WRITE,
+                nullptr, &entry.overlapped, nullptr))
+        {
+            CloseHandle(entry.event);
+            CloseHandle(entry.dir);
+            continue;
+        }
+        watches.push_back(std::move(entry));
+    }
+    if (watches.empty())
+        return 0;
+
+    std::vector<HANDLE> waitHandles;
+    waitHandles.reserve(watches.size() + 1);
+    DWORD64 lastTriggerTick = 0;
+    for (;;)
+    {
+        waitHandles.clear();
+        waitHandles.push_back(self->recycleBinWatcherStopEvent_);
+        for (const auto& watch : watches)
+            waitHandles.push_back(watch.event);
+        const DWORD waitResult = WaitForMultipleObjects(
+            static_cast<DWORD>(waitHandles.size()),
+            waitHandles.data(), FALSE, INFINITE);
+        if (waitResult == WAIT_FAILED ||
+            waitResult == WAIT_TIMEOUT)
+            break;
+        const DWORD index = waitResult - WAIT_OBJECT_0;
+        if (index == 0)
+            break; // 停止事件
+        const size_t watchIndex = index - 1;
+        if (watchIndex >= watches.size())
+            break;
+        DWORD bytesReturned = 0;
+        if (GetOverlappedResult(
+                watches[watchIndex].dir,
+                &watches[watchIndex].overlapped,
+                &bytesReturned, FALSE))
+        {
+            // 合并 500ms 内的连续事件，避免批量删除时查询风暴。
+            const DWORD64 now = GetTickCount64();
+            if (now - lastTriggerTick >= 500)
+            {
+                lastTriggerTick = now;
+                self->CheckRecycleBinStatus();
+            }
+        }
+        ResetEvent(watches[watchIndex].event);
+        if (!ReadDirectoryChangesW(
+                watches[watchIndex].dir,
+                watches[watchIndex].buffer.data(),
+                static_cast<DWORD>(
+                    watches[watchIndex].buffer.size()),
+                TRUE,
+                FILE_NOTIFY_CHANGE_FILE_NAME |
+                    FILE_NOTIFY_CHANGE_DIR_NAME |
+                    FILE_NOTIFY_CHANGE_SIZE |
+                    FILE_NOTIFY_CHANGE_LAST_WRITE,
+                nullptr, &watches[watchIndex].overlapped,
+                nullptr))
+            break; // 监听失败：退出，轮询兜底
+    }
+    for (auto& watch : watches)
+    {
+        if (watch.event) CloseHandle(watch.event);
+        if (watch.dir) CloseHandle(watch.dir);
+    }
+    return 0;
+}
+
+// ── 过滤与键值 ───────────────────────────────────────────────
+
+/**
+ * @brief 获取稳定的布局键值，优先级：桌面图标 CLSID > 文件路径 > 解析名称。
+ * @param pidl 绝对 PIDL。
+ * @param parsingName 解析名称。
+ * @param desktopIconClsid 桌面图标 CLSID。
+ * @return 规范化为大写的布局键。
+ */
+std::wstring DesktopApp::GetStableLayoutKey(
+    PCIDLIST_ABSOLUTE pidl,
+    const std::wstring& parsingName,
+    const std::wstring& desktopIconClsid)
+{
+    if (!desktopIconClsid.empty())
+        return ToUpperInvariant(desktopIconClsid);
+
+    wchar_t path[MAX_PATH]{};
+    if (SHGetPathFromIDListW(pidl, path) && path[0] != L'\0')
+        return ToUpperInvariant(path);
+
+    return ToUpperInvariant(parsingName);
+}
+
+/**
+ * @brief 给快捷方式的位图左下角绘制小箭头图标。
+ * @param bitmap 目标位图。
+ * @param bitmapSize 位图尺寸。
+ */
+void DesktopApp::ApplyShortcutArrowToBitmap(HBITMAP bitmap, SIZE bitmapSize)
+{
+    if (!bitmap) return;
+    SHSTOCKICONINFO sii{};
+    sii.cbSize = sizeof(sii);
+    if (FAILED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &sii)) || !sii.hIcon)
+        return;
+    HDC hdc = CreateCompatibleDC(nullptr);
+    HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(hdc, bitmap));
+    int arrowSz = static_cast<int>(bitmapSize.cy * 30.0 / 64.0 + 0.5);
+    if (arrowSz < 10) arrowSz = 10;
+    int arrowX = static_cast<int>(bitmapSize.cx * 5.0 / 64.0 + 0.5);
+    int arrowY = bitmapSize.cy - arrowSz;
+    DrawIconEx(hdc, arrowX, arrowY, sii.hIcon, arrowSz, arrowSz, 0, nullptr, DI_NORMAL);
+    SelectObject(hdc, oldBmp);
+    DeleteDC(hdc);
+    DestroyIcon(sii.hIcon);
+}
+
+
+// ── 控件窗口 ──────────────────────────────────────────
+
+/**
+ * @brief 控件窗口的消息处理函数（静态回调），将消息转发到 HandleControlMessage。
+ * @param hwnd 窗口句柄。
+ * @param msg 消息 ID。
+ * @param wp wParam。
+ * @param lp lParam。
+ * @return 消息处理结果。
+ */
+LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    DesktopApp* app = nullptr;
+    if (msg == WM_NCCREATE)
+    {
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+        app = static_cast<DesktopApp*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+    }
+    else
+    {
+        app = reinterpret_cast<DesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+    if (app) return app->HandleControlMessage(hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/**
+ * @brief 处理控件窗口的消息：任务栏重启、托盘回调、定时器、命令、关闭、销毁等。
+ * @param hwnd 窗口句柄。
+ * @param msg 消息 ID。
+ * @param wp wParam。
+ * @param lp lParam。
+ * @return 消息处理结果。
+ */
+LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    static const UINT menuUnavailable = RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable");
+    if (menuUnavailable && msg == menuUnavailable)
+    {
+        ShowBalloonNotification(_LW("settings.contextMenu.page"), _LW("settings.contextMenu.commandUnavailable"));
+        return 0;
+    }
+    if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
+    {
+        return snowdesktop::performance::HandleControlMessage(
+            hwnd, msg, wp, lp, +[](void* context) {
+                auto* app = static_cast<DesktopApp*>(context);
+                snowdesktop::performance::Scope sample("profiler", "sample.widgets");
+                using snowdesktop::performance::Value;
+                if (app->widgetEngine_)
+                {
+                    app->widgetEngine_->RecordPerformanceResources();
+                    for (const auto& widget : app->widgetEngine_->GetWidgets())
+                    {
+                        if (widget.quota)
+                            Value("widget.memory", "lua_bytes", widget.widgetId,
+                                static_cast<double>(widget.quota->memoryBytes));
+                        Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
+                        Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
+                        Value("widget.state", "timers", widget.widgetId,
+                            static_cast<double>(widget.namedTimers.Size()));
+                        Value("widget.state", "animation_requests", widget.widgetId,
+                            static_cast<double>(widget.animationFrames.Size()));
+                        Value("widget.package", widget.packageId, widget.widgetId, 1);
+                    }
+                }
+                double hiddenBytes = 0;
+                std::size_t hiddenResident = 0;
+                for (const auto& [id, item] : app->desktopWidgetCompositionItems_)
+                {
+                    const double mainBytes = item.surface
+                        ? static_cast<double>(item.width) * item.height * 4 : 0;
+                    const double totalBytes = static_cast<double>(
+                        app->GetDesktopWidgetSurfaceBytes(id));
+                    Value("widget.memory", "surface_bgra_bytes_estimate", id, mainBytes);
+                    Value("widget.memory", "marquee_surface_bgra_bytes_estimate", id,
+                        totalBytes - mainBytes);
+                    Value("widget.composition", "surface_visible", id, item.visible ? 1 : 0);
+                    Value("widget.composition", "surface_resident", id, item.surface ? 1 : 0);
+                    Value("widget.memory", "hidden_surface_bgra_bytes_estimate", id,
+                        item.visible ? 0 : totalBytes);
+                    if (!item.visible)
+                    {
+                        hiddenBytes += totalBytes;
+                        if (totalBytes != 0) ++hiddenResident;
+                    }
+                }
+                Value("composition.memory", "hidden_surface_bgra_bytes_estimate", {}, hiddenBytes);
+                Value("composition.memory", "hidden_surface_instance_count", {},
+                    static_cast<double>(hiddenResident));
+                Value("composition.memory", "surface_reclaim_count", {},
+                    static_cast<double>(app->widgetSurfaceReclaimCount_));
+                Value("composition.memory", "surface_reclaimed_bytes", {},
+                    static_cast<double>(app->widgetSurfaceReclaimedBytes_));
+                const auto recordBackdrop = [](const DesktopBackdropCompositor& backdrop,
+                    const std::wstring& owner) {
+                    Value("backdrop.state", "available", owner, backdrop.IsAvailable() ? 1 : 0);
+                    Value("backdrop.state", "panels", owner,
+                        static_cast<double>(backdrop.PanelCount()));
+                    Value("backdrop.state", "blur_factories", owner,
+                        static_cast<double>(backdrop.BlurFactoryCount()));
+                };
+                recordBackdrop(app->desktopBackdropCompositor_, L"desktop");
+                recordBackdrop(app->collectionPopupBackdropCompositor_, L"collection_popup");
+                recordBackdrop(app->quickNavBackdropCompositor_, L"quick_navigation");
+                for (const auto& host : app->persistentDockHosts_)
+                    if (host)
+                        recordBackdrop(host->backdrop, L"dock:" + std::to_wstring(
+                            reinterpret_cast<std::uintptr_t>(host.get())));
+            }, this);
+    }
+    if (msg == WM_DESTROY)
+        snowdesktop::performance::Shutdown();
+    struct NativeMenuPresentationScope final
+    {
+        DesktopApp& app;
+        ~NativeMenuPresentationScope()
+        {
+            app.FlushNativeMenuPresentation();
+        }
+    } nativeMenuPresentationScope{ *this };
+
+    LRESULT shellMenuResult = 0;
+    if (HandleShellContextMenuMessage(
+            msg, wp, lp, shellMenuResult))
+        return shellMenuResult;
+
+    if (systemTaskbarTaskViewStateMsg_ &&
+        msg == systemTaskbarTaskViewStateMsg_)
+    {
+        const bool visible = wp != 0;
+        statusBarTaskViewTransition_.Observe(visible,
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+        if (systemTaskbarTaskViewActive_ != visible)
+        {
+            systemTaskbarTaskViewActive_ = visible;
+            systemTaskbarWindowStateChangedTick_.fetch_add(1,
+                std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    if (taskbarRestartMsg_ && msg == taskbarRestartMsg_)
+    {
+        NotifySystemTaskbarCreated();
+        statusBarTaskViewTransition_.Reset();
+        systemTaskbarBackdropRefreshTick_ = 0;
+        systemTaskbarTaskViewActive_ = false;
+        systemTaskbarWindows_.clear();
+        RestartSystemTaskbarShellVisibilityDetectors();
+        systemTaskbarWindowStateChangedTick_.fetch_add(1,
+            std::memory_order_relaxed);
+        DWORD currentExplorerProcessId = 0;
+        if (HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr))
+            GetWindowThreadProcessId(taskbar, &currentExplorerProcessId);
+        // Explorer can broadcast TaskbarCreated more than once while its shell
+        // windows settle. Rebuild the desktop pipeline once per Explorer PID.
+        if (!currentExplorerProcessId ||
+            currentExplorerProcessId != desktopHostExplorerProcessId_)
+            explorerDesktopRecreatePending_ = true;
+        RecoverDesktopHostAfterExplorerRestart();
+        return 0;
+    }
+    switch (msg)
+    {
+    case kBackgroundShellReadyMessage:
+        PollInitialShellRead();
+        DrainBackgroundShellWork();
+        return 0;
+    case kLargeIconAssetsReadyMessage:
+        ProcessLargeIconAssets();
+        return 0;
+    case kForegroundInteractionChangedMessage:
+        HandleDockForegroundInteractionChanged();
+        return 0;
+    case kShellFileOperationCompletedMessage:
+        OnShellFileOperationCompleted(lp);
+        return 0;
+    case kWebsiteIconReadyMessage:
+        OnWebsiteIconReady();
+        return 0;
+    case kUrlDropDownloadCompletedMessage:
+        OnUrlDropDownloadCompleted(lp);
+        return 0;
+    case kSteamEntitlementChangedMessage:
+        UpdateLargeIconHover();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (settingsWindow_)
+            settingsWindow_->RefreshGeneralRuntimeState();
+        return 0;
+    case kWidgetAudioAnalysisWakeMessage:
+        if (widgetEngine_)
+            widgetEngine_->OnAudioAnalysisWake();
+        return 0;
+    case kWidgetTaskWakeMessage:
+        if (widgetEngine_)
+            widgetEngine_->OnTaskWake();
+        return 0;
+    case kActivateExistingInstanceMessage:
+        ShowSettingsWindow();
+        return 0;
+    case WM_DISPLAYCHANGE:
+        ScheduleDisplayTopologyRefresh();
+        return 0;
+    case WM_SETTINGCHANGE:
+    {
+        if (wp == SPI_SETWORKAREA)
+            ScheduleDisplayTopologyRefresh();
+        ApplyAnimationPreferences(true);
+        const wchar_t* settingArea =
+            reinterpret_cast<const wchar_t*>(lp);
+        const bool traySettings = settingArea &&
+            _wcsicmp(settingArea, L"TraySettings") == 0;
+        const bool immersiveColor = settingArea &&
+            _wcsicmp(settingArea, L"ImmersiveColorSet") == 0;
+        if (!traySettings && !immersiveColor)
+            break;
+
+        if (traySettings || immersiveColor)
+            SyncSystemTaskbarSettingsFromWindows();
+        if (immersiveColor)
+            ApplyPersistentDockHostAppearance();
+        if (traySettings)
+        {
+            ScheduleDisplayTopologyRefresh();
+        }
+        RefreshSystemTaskbarAppearance(false);
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
+    }
+    case WM_THEMECHANGED:
+        RefreshSystemTaskbarAppearance(false);
+        ApplyPersistentDockHostAppearance();
+        if (hwnd_ && IsWindow(hwnd_))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
+    case WM_DEVICECHANGE:
+        switch (wp)
+        {
+        case DBT_DEVNODES_CHANGED:
+        case DBT_CONFIGCHANGED:
+        case DBT_DEVICEARRIVAL:
+        case DBT_DEVICEREMOVECOMPLETE:
+            ScheduleDisplayTopologyRefresh();
+            break;
+        default:
+            break;
+        }
+        return TRUE;
+    case kTrayCallbackMessage:
+        OnTrayCallback(lp);
+        return 0;
+    case WM_TIMER:
+        OnTimer(wp);
+        return 0;
+    case kDesktopPassthroughExitMessage:
+        if (desktopPassthroughIndicator_.OwnsWindow(reinterpret_cast<HWND>(wp)))
+            EndDesktopPassthrough();
+        return 0;
+    case WM_HOTKEY:
+        if (settingsWindow_ &&
+            settingsWindow_->IsHotkeyCaptureActive())
+        {
+            settingsWindow_->CaptureRegisteredHotkey(
+                LOWORD(lp), HIWORD(lp));
+            return 0;
+        }
+        if (static_cast<int>(wp) == kQuickNavigationHotkeyId)
+        {
+            ToggleQuickNavigation();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kFloatingDockHotkeyId)
+        {
+            ToggleFloatingDock();
+            return 0;
+        }
+        if (static_cast<int>(wp) ==
+            kDesktopPassthroughHotkeyId)
+        {
+            ToggleDesktopPassthrough();
+            return 0;
+        }
+        break;
+    case WM_COMMAND:
+        return 0;
+    case WM_CLOSE:
+        RequestExit();
+        return 0;
+    case WM_DESTROY:
+        KillTimer(hwnd, kDisplayTopologyRefreshTimerId);
+        if (floatingDockHotkeyHwnd_ == hwnd)
+        {
+            floatingDockHotkeyHwnd_ = nullptr;
+            floatingDockHotkeyRegistered_ = false;
+        }
+        if (desktopPassthroughHotkeyHwnd_ == hwnd)
+        {
+            EndDesktopPassthrough(false);
+            desktopPassthroughHotkeyHwnd_ = nullptr;
+            desktopPassthroughHotkeyRegistered_ = false;
+        }
+        if (floatingDockEdgeSwipeHwnd_ == hwnd)
+        {
+            floatingDockEdgeSwipeHwnd_ = nullptr;
+            floatingDockEdgeSwipeDetector_.Reset();
+        }
+        controlHwnd_ = nullptr;
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+/**
+ * @brief 重新加载桌面项，可选择是否重新从磁盘读取布局。
+ * @param reloadLayoutFromDisk 是否重新加载布局文件。
+ */
+void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
+    snowdesktop::shell_refresh::Snapshot* snapshot)
+{
+    layoutReload_.Request(reloadLayoutFromDisk);
+    if (!snapshot)
+    {
+        if (!initialShellReadPending_)
+        {
+            BeginIconLoadGeneration();
+            shellMetadataCache_ = {};
+            InvalidateDockShellMetadata();
+            for (auto& item : items_) item.iconState = IconState::Loading;
+            for (auto& widget : widgets_)
+                for (auto& entry : widget.folderEntries) entry.iconState = IconState::Loading;
+        }
+        RequestShellRefresh();
+        if (initialShellReadPending_) StartInitialShellRead();
+        return;
+    }
+    extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
+    const bool deferForDrag =
+        snowdesktop::drag_input_rules::ShouldDeferModelReload(
+            dragSession_.HasContext(),
+            dragDropController_.IsTransportActive());
+    if (shellFileOperationInFlight_ > 0 || deferForDrag || !pendingRenames_.empty())
+    {
+        shellReloadPending_ = true;
+        shellRefreshScope_.Full();
+        // OLE clears mouseDown_ before entering its nested loop, so the Shell
+        // debounce timer can no longer use that field as a drag-lifetime
+        // proxy. Keep one pending reload alive until both native and OLE drag
+        // ownership have ended.
+        if ((deferForDrag || !pendingRenames_.empty()) && hwnd_ && IsWindow(hwnd_))
+        {
+            SetTimer(hwnd_, kShellChangeTimerId,
+                kShellChangeDebounceMs, nullptr);
+        }
+        return;
+    }
+    if (reloading_) return;
+    const bool incremental = snapshot && snapshot->desktopIncremental;
+    snowdesktop::startup_diagnostics::Scope startup(
+        incremental ? L"ReloadItems.partial" : L"ReloadItems.complete",
+        initialShellReadPending_, snapshot ? snapshot->desktopItems.size() : items_.size());
+    snowdesktop::startup_diagnostics::Scope model(L"ReloadItems.model");
+    if (!incremental) shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
+    ClearPopupDragTarget();
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kShellChangeTimerId);
+    shellReloadPending_ = false;
+    shellRefreshScope_.Full();
+    reloading_ = true;
+    ULONGLONG stageStarted = GetTickCount64();
+    extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
+    // A partial startup snapshot can arrive while a disk reload is queued.
+    // It must consume that request by loading, never just clear its flag.
+    reloadLayoutFromDisk = layoutReload_.ApplyPendingRead(
+        [this] { ReloadLayoutStateFromDisk(); });
+    if (!reloadLayoutFromDisk)
+    {
+        for (auto& widget : widgets_)
+        {
+            if (widget.type == DesktopWidgetType::FolderMapping)
+            {
+                if (!snapshot)
+                    EnumerateFolderMappingEntries(widget);
+                else if (const auto folder = snapshot->folders.find(
+                        snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath));
+                    folder != snapshot->folders.end())
+                    EnumerateFolderMappingEntries(widget, true, &folder->second);
+                else if (!incremental)
+                    QueueFolderRead(widget.sourceFolderPath);
+            }
+        }
+    }
+    snowdesktop::startup_diagnostics::Call(L"LoadDesktopItems", [&] {
+        LoadDesktopItems(snapshot, reloadLayoutFromDisk);
+    });
+    if (!desktopItemsReady_ && !incremental)
+    {
+        // A failed initial read is not an empty desktop. Preserve the loaded
+        // placement records and let the existing Shell refresh path retry.
+        reloading_ = false;
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
+        RequestShellRefresh();
+        return;
+    }
+    snowdesktop::startup_diagnostics::Call(L"InitializeGridFromWindows", [&] { InitializeGridFromWindows(); });
+    // Revalidate against the new snapshot without losing the last confirmed
+    // section/pinned identity while asynchronous Shell queries are pending.
+    if (!incremental) InvalidateDockShellMetadata();
+    // Enumeration alone is not deletion evidence. PruneDockShellMetadata queues
+    // a separate local-file confirmation, fenced by this refresh revision.
+    // The virtual Recycle Bin follows desktop enumeration directly.
+    std::erase_if(dockEntries_, [this, snapshot](const DockEntry& entry) {
+        if (snapshot && snapshot->desktopIncremental) return false;
+        if (entry.type != DockEntryType::DesktopItem)
+            return false;
+        if (IsRecycleBinDockEntry(entry))
+            return FindItemIndexByKey(entry.reference) == static_cast<size_t>(-1);
+
+        return false;
+    });
+    PruneDockShellMetadata();
+    if (!incremental) NormalizeDockRecycleBinPosition();
+    RefreshCollectedKeysCache();
+    if (!incremental && !generalSettings_.dockEnabled && !dockEntries_.empty())
+        RestoreDockEntriesToDesktop();
+    if (!incremental) ApplyAutoCollectFileCategoryWidgets();
+    if (snapshot) snapshot->modelMs = GetTickCount64() - stageStarted;
+    model.Finish();
+    stageStarted = GetTickCount64();
+    snowdesktop::startup_diagnostics::Scope placement(L"ReloadItems.assignSlots");
+
+    // Mark widgets as used
+    std::unordered_set<std::wstring> usedSlots;
+    if (incremental)
+        for (const auto& [key, record] : layoutRecords_)
+            if (record.hasGrid && FindItemIndexByKey(key) == static_cast<size_t>(-1))
+                MarkGridArea(usedSlots, record.cell, record.span);
+    for (const auto& w : widgets_)
+        if (!IsGroupedWidget(w))
+            MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
+
+    // Mark items with valid existing positions as used; flag unslotted items
+    std::unordered_set<std::wstring> placedKeys;
+    for (auto& item : items_)
+    {
+        if (item.name.empty()) continue;
+        if (IsItemInAnyWidget(item)) continue;
+
+        auto* page = item.gridCell.pageId.empty()
+            ? nullptr
+            : FindGridPage(gridPages_, item.gridCell.pageId);
+        if (page == nullptr)
+        {
+            // Item belongs to a page not currently visible — mark its slots as used
+            const std::wstring& pid = item.gridCell.pageId;
+            if (!pid.empty() && savedPageColumns_.count(pid) && savedPageRows_.count(pid))
+            {
+                int cols = savedPageColumns_[pid];
+                int rows = savedPageRows_[pid];
+                if (item.gridCell.column >= 0 && item.gridCell.row >= 0 &&
+                    item.gridCell.column + item.gridSpan.columns <= cols &&
+                    item.gridCell.row + item.gridSpan.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, item.gridCell, item.gridSpan) &&
+                    !placedKeys.contains(item.layoutKey))
+                {
+                    MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+                    placedKeys.insert(item.layoutKey);
+                }
+            }
+            continue;
+        }
+
+        if (item.largeIcon)
+        {
+            item.gridSpan = {std::clamp(item.largeIcon->columns, 1, page->columns), std::clamp(item.largeIcon->rows, 1, page->rows)};
+            item.gridCell.column = std::clamp(item.gridCell.column, 0, page->columns - item.gridSpan.columns);
+            item.gridCell.row = std::clamp(item.gridCell.row, 0, page->rows - item.gridSpan.rows);
+        }
+        bool validSlot = page != nullptr &&
+            item.gridCell.column + item.gridSpan.columns <= page->columns &&
+            item.gridCell.row + item.gridSpan.rows <= page->rows &&
+            !AreGridSlotsMarked(usedSlots, item.gridCell, item.gridSpan) &&
+            !placedKeys.contains(item.layoutKey);
+
+        if (validSlot)
+        {
+            MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
+            placedKeys.insert(item.layoutKey);
+        }
+        else
+        {
+            item.gridCell = {};
+            if (!item.largeIcon) item.gridSpan = {1, 1};
+        }
+    }
+
+    // Assign free cells to unslotted items
+    std::vector<DesktopItem*> unslotted;
+    for (auto& item : items_)
+    {
+        if (!item.name.empty() && !IsItemInAnyWidget(item) && item.gridCell.pageId.empty())
+            unslotted.push_back(&item);
+    }
+
+    std::sort(unslotted.begin(), unslotted.end(), [](const DesktopItem* a, const DesktopItem* b) {
+        bool aDesk = !a->desktopIconClsid.empty();
+        bool bDesk = !b->desktopIconClsid.empty();
+        if (aDesk != bDesk) return aDesk;
+        return ToUpperInvariant(a->name) < ToUpperInvariant(b->name);
+    });
+
+    // Track newly created virtual pages for overflow items
+    std::unordered_map<std::wstring, int> overflowSlots;
+    // Build quick-lookup of page IDs currently visible in gridPages_
+    std::unordered_set<std::wstring> visiblePageIds2;
+    for (const auto& gp : gridPages_)
+        visiblePageIds2.insert(gp.id);
+
+    for (auto* item : unslotted)
+    {
+        GridCell freeCell;
+        if (TryFindFreeCell(item->gridSpan, usedSlots, freeCell))
+        {
+            item->gridCell = freeCell;
+            MarkGridArea(usedSlots, freeCell, item->gridSpan);
+            continue;
+        }
+
+        // Search all saved pages that aren't currently visible
+        bool placedInSavedPage = false;
+        for (const auto& pageId : savedPageIds_)
+        {
+            if (visiblePageIds2.count(pageId)) continue;
+            if (!savedPageColumns_.count(pageId) || !savedPageRows_.count(pageId)) continue;
+            int cols = savedPageColumns_[pageId];
+            int rows = savedPageRows_[pageId];
+            int capacity = std::max(1, cols * rows);
+            for (int slot = 0; slot < capacity; ++slot)
+            {
+                GridCell candidate;
+                candidate.pageId = pageId;
+                candidate.column = slot / std::max(1, rows);
+                candidate.row    = slot % std::max(1, rows);
+                if (candidate.column + item->gridSpan.columns <= cols &&
+                    candidate.row + item->gridSpan.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, candidate, item->gridSpan))
+                {
+                    item->gridCell = candidate;
+                    MarkGridArea(usedSlots, candidate, item->gridSpan);
+                    placedInSavedPage = true;
+                    break;
+                }
+            }
+            if (placedInSavedPage) break;
+        }
+        if (placedInSavedPage) continue;
+
+        // Try previously-created overflow pages
+        bool placedInNewPage = false;
+        for (auto& [pageId, nextSlot] : overflowSlots)
+        {
+            int cols = savedPageColumns_.count(pageId) ? savedPageColumns_[pageId] : 1;
+            int rows = savedPageRows_.count(pageId) ? savedPageRows_[pageId] : 1;
+            int capacity = std::max(1, cols * rows);
+            for (int slot = nextSlot; slot < capacity; ++slot)
+            {
+                GridCell candidate;
+                candidate.pageId = pageId;
+                candidate.column = slot / std::max(1, rows);
+                candidate.row    = slot % std::max(1, rows);
+                if (candidate.column + item->gridSpan.columns <= cols &&
+                    candidate.row + item->gridSpan.rows <= rows &&
+                    !AreGridSlotsMarked(usedSlots, candidate, item->gridSpan))
+                {
+                    item->gridCell = candidate;
+                    MarkGridArea(usedSlots, candidate, item->gridSpan);
+                    nextSlot = slot + 1;
+                    placedInNewPage = true;
+                    break;
+                }
+            }
+            if (placedInNewPage) break;
+        }
+        if (placedInNewPage) continue;
+
+        // No space anywhere — create a new virtual page on the last monitor
+        if (!gridPages_.empty())
+        {
+            std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
+            GridPage& lastPage = gridPages_[monitorOrder.back()];
+
+            std::wstring newPageId = GeneratePageId();
+            RememberSavedPageId(newPageId);
+            savedPageColumns_[newPageId] = lastPage.columns;
+            savedPageRows_[newPageId]    = lastPage.rows;
+
+            item->gridCell.pageId = newPageId;
+            item->gridCell.column = 0;
+            item->gridCell.row    = 0;
+            if (item->largeIcon)
+                item->gridSpan = {std::clamp(item->largeIcon->columns, 1, lastPage.columns), std::clamp(item->largeIcon->rows, 1, lastPage.rows)};
+            MarkGridArea(usedSlots, item->gridCell, item->gridSpan);
+            overflowSlots[newPageId] = 1;
+        }
+    }
+
+    // Loading new files may add virtual overflow pages, while deleting files
+    // may remove the last usable offset. Refresh the runtime page mapping in
+    // this same reload pass instead of waiting for the next manual refresh.
+    placement.Finish();
+    snowdesktop::startup_diagnostics::Call(L"ApplyPageMapping", [&] { ApplyPageMapping(); });
+    LayoutItems();
+    snowdesktop::startup_diagnostics::Call(L"ApplyPendingPlacement", [&] { ApplyPendingPlacement(); });
+    UpdateCutState();
+
+    // Prune desktop-backed widget itemKeys that no longer exist (file was deleted from outside).
+    // FolderMapping keys are mapped-folder paths, not desktop layout keys.
+    std::unordered_set<std::wstring> allKeys;
+    for (auto& item : items_)
+        if (!item.layoutKey.empty())
+            allKeys.insert(ToUpperInvariant(item.layoutKey));
+    for (auto& w : widgets_)
+    {
+        if (incremental) break; // Unobserved keys remain valid until a complete read.
+        if (w.type == DesktopWidgetType::FolderMapping)
+            continue;
+        auto it = std::remove_if(w.itemKeys.begin(), w.itemKeys.end(),
+            [&](const std::wstring& key) {
+                return allKeys.count(ToUpperInvariant(key)) == 0;
+            });
+        w.itemKeys.erase(it, w.itemKeys.end());
+    }
+
+    if (snapshot) snapshot->layoutMs = GetTickCount64() - stageStarted;
+    stageStarted = GetTickCount64();
+    if (!layoutReload_.Pending())
+        snowdesktop::startup_diagnostics::Call(L"SaveLayoutSlots", [&] { SaveLayoutSlots(); });
+    if (snapshot) snapshot->saveMs = GetTickCount64() - stageStarted;
+    stageStarted = GetTickCount64();
+    RebuildContainersAndItems();
+    if (snapshot) snapshot->rebuildMs = GetTickCount64() - stageStarted;
+    reloading_ = false;
+    if (!snapshot)
+        RefreshDockRunningWindows(false);
+    stageStarted = GetTickCount64();
+    if (widgetEngine_)
+        snowdesktop::startup_diagnostics::Call(L"NotifyDesktopChanged", [&] {
+            widgetEngine_->NotifyDesktopChanged("reload");
+        });
+    if (snapshot) snapshot->notifyMs = GetTickCount64() - stageStarted;
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    // Also drains a disk reload performed by StartInitialShellRead. Ordinary
+    // Shell refreshes must not reset an active floating Dock input session.
+    if (!incremental && snapshot && snapshot->desktopComplete)
+        layoutReload_.MarkCompleteModel();
+    const auto synchronized = layoutReload_.ApplyAfterRebuild(
+        [this] { return SynchronizeReloadedLayoutSettings(); });
+    if (synchronized == snowdesktop::layout_reload::SynchronizeResult::Succeeded)
+    {
+        const ULONGLONG saveStarted = GetTickCount64();
+        const bool saved = SaveLayoutSlots();
+        if (snapshot) snapshot->saveMs += GetTickCount64() - saveStarted;
+        CompleteLayoutRestore(saved
+            ? snowdesktop::SettingsActionResult::Success()
+            : snowdesktop::SettingsActionResult::Failure(
+                  _LW("settings.backup.restoreLayout.commitFailed")));
+    }
+    else if (synchronized == snowdesktop::layout_reload::SynchronizeResult::Failed)
+    {
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
+    }
+}
+
+void DesktopApp::EnqueueIconLoad(IconLoadTask task)
+{
+    const bool dockFolderPopupTask =
+        !task.isDesktopItem &&
+        task.widgetId == kDockFolderPopupWidgetId;
+    if (task.requestedSize <= 0)
+    {
+        if (task.isDesktopItem)
+        {
+            task.requestedSize = GetMaximumShellIconBitmapSize();
+        }
+        else
+        {
+            std::wstring pageId;
+            if (task.widgetId == kDockFolderPopupWidgetId &&
+                dockFolderPopupOpen_)
+            {
+                pageId = popupPageId_;
+            }
+            else
+            {
+                for (const auto& widget : widgets_)
+                {
+                    if (widget.id == task.widgetId)
+                    {
+                        pageId = widget.gridCell.pageId;
+                        break;
+                    }
+                }
+            }
+            task.requestedSize = GetShellIconBitmapSizeForPage(pageId);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+        if (dockFolderPopupTask)
+            task.popupGeneration =
+                dockFolderPopupIconGeneration_;
+        if (task.requestKey.empty())
+        {
+            const std::wstring& identity = task.isDesktopItem
+                ? task.layoutKey : task.folderPath;
+            task.requestKey = std::to_wstring(task.serial) + L"\n" +
+                (task.isDesktopItem ? L"D\n" : L"F\n") +
+                task.widgetId + L"\n" +
+                ToUpperInvariant(identity) + L"\n" +
+                (task.phase == IconLoadPhase::Phase1
+                    ? L"1" : L"2") + L"\n" +
+                std::to_wstring(task.requestedSize) + L"\n" +
+                std::to_wstring(task.popupGeneration);
+        }
+        // Bulk enumeration supplies stamps directly. Rare producers such as
+        // rename completion can resolve against the already-updated UI model.
+        if (task.sourceStamp.empty())
+        {
+            if (task.isDesktopItem)
+            {
+                for (const auto& item : items_)
+                    if (item.layoutKey == task.layoutKey)
+                        { task.sourceStamp = snowdesktop::shell_icon_request::Stamp(item); break; }
+            }
+            else
+            {
+                const auto stamp = [&](const DesktopWidget& widget) {
+                    if (widget.id != task.widgetId) return;
+                    for (const auto& entry : widget.folderEntries)
+                        if (entry.fullPath == task.folderPath)
+                            { task.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry); break; }
+                };
+                if (dockFolderPopupTask) stamp(dockFolderPopupWidget_);
+                else for (const auto& widget : widgets_) stamp(widget);
+            }
+        }
+        task.requestKey += task.sourceStamp;
+        if (!iconLoaderPendingKeys_.insert(task.requestKey).second)
+            return;
+
+    }
+    QueueIconTask(std::move(task));
+}
+
+bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
+{
+    auto* result = reinterpret_cast<IconLoadResult*>(lParam);
+    if (!result) return false;
+
+    std::unique_ptr<IconLoadResult> resultGuard(result);
+    std::uint64_t currentPopupGeneration = 0;
+    {
+        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
+        iconLoaderPendingKeys_.erase(result->requestKey);
+        currentPopupGeneration =
+            dockFolderPopupIconGeneration_;
+    }
+    const bool dockFolderPopupResult =
+        !result->isDesktopItem &&
+        result->widgetId == kDockFolderPopupWidgetId;
+    if (result->serial != iconLoadSerial_ ||
+        snowdesktop::popup_icon_load_rules::ShouldRejectResult(
+            dockFolderPopupResult,
+            result->popupGeneration,
+            currentPopupGeneration))
+    {
+        if (result->bitmap) DeleteObject(result->bitmap);
+        result->bitmap = nullptr;
+        return false;
+    }
+    bool matched = false;
+
+    if (result->isDesktopItem)
+    {
+        for (auto& item : items_)
+        {
+            if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey) &&
+                snowdesktop::shell_icon_request::Matches(result->requestKey, item))
+            {
+                snowdesktop::shell_icon_request::ApplyBitmap(item, result->phase,
+                    result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
+                    [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
+                matched = true;
+                if (result->sysIconIndex >= 0) item.sysIconIndex = result->sysIconIndex;
+                if (!result->typeName.empty()) item.typeName = result->typeName;
+                snowdesktop::shell_icon_request::ApplyPresentation(item, result->phase,
+                    result->isShortcut, result->isApplicationShortcut);
+                if (result->phase == IconLoadPhase::Shortcut) item.shortcutTarget = result->shortcutTarget;
+                if (result->phase == IconLoadPhase::Phase1)
+                {
+                    IconLoadTask phase2;
+                    phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(item);
+                    phase2.serial = result->serial;
+                    phase2.layoutKey = item.layoutKey;
+                    phase2.absolutePidl.reset(ILClone(item.absolutePidl.get()));
+                    phase2.sysIconIndex = item.sysIconIndex;
+                    phase2.parsingName = item.parsingName;
+                    phase2.isDesktopItem = true;
+                    phase2.phase = IconLoadPhase::Phase2;
+                    EnqueueIconLoad(std::move(phase2));
+                }
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                if (quickNavigationOpen_)
+                    InvalidateQuickNavigationWindow();
+                break;
+            }
+        }
+    }
+    else
+    {
+        auto applyFolderResult =
+            [&](DesktopWidget& widget,
+                bool dockFolderPopup) -> bool
+        {
+            if (widget.id != result->widgetId ||
+                widget.sourceFolderPath.empty())
+                return false;
+            for (auto& entry : widget.folderEntries)
+            {
+                if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath) &&
+                    snowdesktop::shell_icon_request::Matches(result->requestKey, entry))
+                {
+                    snowdesktop::shell_icon_request::ApplyBitmap(entry, result->phase,
+                        result->bitmap, result->bitmapSize, result->iconIsMediaThumbnail,
+                        [this](HBITMAP bitmap) { EraseD2DIconCacheForBitmap(bitmap); });
+                    matched = true;
+                    if (result->sysIconIndex >= 0) entry.sysIconIndex = result->sysIconIndex;
+                    if (!result->typeName.empty()) entry.typeName = result->typeName;
+                    snowdesktop::shell_icon_request::ApplyPresentation(entry, result->phase,
+                        result->isShortcut, result->isApplicationShortcut);
+                    if (result->phase == IconLoadPhase::Shortcut) entry.shortcutTarget = result->shortcutTarget;
+                    if (result->phase == IconLoadPhase::Phase1)
+                    {
+                        IconLoadTask phase2;
+                        phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
+                        phase2.serial = result->serial;
+                        phase2.widgetId = widget.id;
+                        phase2.folderPath = entry.fullPath;
+                        phase2.sysIconIndex = entry.sysIconIndex;
+                        phase2.isDesktopItem = false;
+                        phase2.phase = IconLoadPhase::Phase2;
+                        EnqueueIconLoad(std::move(phase2));
+                    }
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    if (quickNavigationOpen_)
+                        InvalidateQuickNavigationWindow();
+                    if (dockFolderPopup)
+                    {
+                        InvalidateCollectionPopupContent();
+                        InvalidateDragStaticScene();
+                        InvalidateFloatingPopupWindow(false);
+                    }
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        bool popupMatched = false;
+        if (dockFolderPopupOpen_ &&
+            result->widgetId ==
+                kDockFolderPopupWidgetId)
+        {
+            popupMatched = applyFolderResult(
+                dockFolderPopupWidget_, true);
+        }
+        if (!popupMatched)
+        {
+            for (auto& widget : widgets_)
+            {
+                if (applyFolderResult(
+                        widget, false))
+                    break;
+            }
+        }
+    }
+
+    if (matched && result->phase == IconLoadPhase::Shortcut)
+    {
+        bool membershipChanged = false;
+        if (result->isDesktopItem)
+        {
+            for (size_t index = 0; index < widgets_.size(); ++index)
+            {
+                if (widgets_[index].type != DesktopWidgetType::FileCategories) continue;
+                FileCategories categories(&widgets_[index], this);
+                membershipChanged = categories.PruneUncollectableItems() || membershipChanged;
+                if (widgets_[index].autoCollect)
+                    membershipChanged = CollectFileCategoryWidget(index, false) || membershipChanged;
+            }
+        }
+        if (membershipChanged)
+        {
+            RefreshCollectedKeysCache();
+            LayoutItems();
+            RebuildContainersAndItems();
+            SaveLayoutSlots();
+        }
+        for (auto& container : containers_)
+        {
+            ScrollingItemWidget* view = dynamic_cast<ScrollingItemWidget*>(container.get());
+            if (auto* group = dynamic_cast<FileGroup*>(container.get())) view = group->GetActiveSourceContainer();
+            if (auto* categories = dynamic_cast<FileCategories*>(view)) categories->InvalidateCategoryCache();
+            if (auto* mapping = dynamic_cast<FolderMapping*>(view)) mapping->InvalidateFilterCache();
+        }
+        if (auto* mapping = dynamic_cast<FolderMapping*>(dockFolderPopupContainer_.get())) mapping->InvalidateFilterCache();
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
+    }
+    if (!matched && result->bitmap)
+        DeleteObject(result->bitmap);
+    return matched;
+}
+
+/**
+ * @brief 枚举桌面文件夹中的所有项，构建 DesktopItem 列表，包含图标、布局键和网格位置。
+ *
+ * 会依据 Windows“隐藏的项目”设置过滤隐藏项，同时过滤非桌面路径项，
+ * 并为 .lnk 文件检测快捷方式箭头。
+ */

@@ -1,4 +1,4 @@
-#include "settings_update_rules.h"
+#include "settings/settings_update_rules.h"
 #include "../src/winui/number_box_update_rules.h"
 
 #include <cstdlib>

@@ -1,0 +1,910 @@
+#include "steam_workshop_source.h"
+#include "common/bounded_file_query.h"
+
+#include "data/data_paths.h"
+#include "common/json_value.h"
+#include "steam_app_identity.h"
+#include "steam_child_environment.h"
+#include "steam_workshop_cache.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <string_view>
+#include <thread>
+#include <unordered_set>
+
+namespace snowdesktop::widget
+{
+namespace
+{
+constexpr std::size_t kMaximumBridgeOutputBytes = 16u * 1024u * 1024u;
+constexpr UINT kBridgeFailureExitCode = 5;
+constexpr UINT kBridgeTimeoutExitCode = 6;
+
+struct UniqueHandle
+{
+    HANDLE value = nullptr;
+
+    UniqueHandle() = default;
+    explicit UniqueHandle(HANDLE handle) : value(handle) {}
+    ~UniqueHandle()
+    {
+        if (value && value != INVALID_HANDLE_VALUE) CloseHandle(value);
+    }
+    UniqueHandle(const UniqueHandle&) = delete;
+    UniqueHandle& operator=(const UniqueHandle&) = delete;
+    UniqueHandle(UniqueHandle&& other) noexcept : value(other.value)
+    {
+        other.value = nullptr;
+    }
+    UniqueHandle& operator=(UniqueHandle&& other) noexcept
+    {
+        if (this == &other) return *this;
+        if (value && value != INVALID_HANDLE_VALUE) CloseHandle(value);
+        value = other.value;
+        other.value = nullptr;
+        return *this;
+    }
+};
+
+std::wstring QuoteArgument(std::wstring_view argument)
+{
+    std::wstring result = L"\"";
+    std::size_t backslashes = 0;
+    for (const wchar_t character : argument)
+    {
+        if (character == L'\\')
+        {
+            ++backslashes;
+            continue;
+        }
+        if (character == L'\"')
+        {
+            result.append(backslashes * 2 + 1, L'\\');
+            result.push_back(L'\"');
+            backslashes = 0;
+            continue;
+        }
+        result.append(backslashes, L'\\');
+        backslashes = 0;
+        result.push_back(character);
+    }
+    result.append(backslashes * 2, L'\\');
+    result.push_back(L'\"');
+    return result;
+}
+
+std::wstring BuildCommandLine(const std::filesystem::path& executable,
+    const std::vector<std::wstring>& arguments)
+{
+    std::wstring commandLine = QuoteArgument(executable.wstring());
+    for (const auto& argument : arguments)
+    {
+        commandLine.push_back(L' ');
+        commandLine += QuoteArgument(argument);
+    }
+    return commandLine;
+}
+
+const JsonValue* JsonField(const JsonValue& object, std::string_view key,
+    JsonValue::Type type)
+{
+    const JsonValue* value = object.Find(key);
+    return value && value->type == type ? value : nullptr;
+}
+
+std::optional<std::string> JsonString(const JsonValue& object,
+    std::string_view key)
+{
+    const JsonValue* value = JsonField(object, key, JsonValue::Type::String);
+    return value ? std::optional<std::string>(value->string) : std::nullopt;
+}
+
+std::optional<bool> JsonBoolean(const JsonValue& object,
+    std::string_view key)
+{
+    const JsonValue* value = JsonField(object, key, JsonValue::Type::Boolean);
+    return value ? std::optional<bool>(value->boolean) : std::nullopt;
+}
+
+std::optional<std::uint32_t> JsonUint32(const JsonValue& object,
+    std::string_view key)
+{
+    const JsonValue* value = JsonField(
+        object, key, JsonValue::Type::Number);
+    if (!value || !std::isfinite(value->number) ||
+        value->number < 0.0 || std::floor(value->number) != value->number ||
+        value->number > static_cast<double>(
+            std::numeric_limits<std::uint32_t>::max()))
+        return std::nullopt;
+    return static_cast<std::uint32_t>(value->number);
+}
+
+bool DigitsOnly(std::string_view value)
+{
+    return !value.empty() && std::all_of(value.begin(), value.end(),
+        [](unsigned char character) { return std::isdigit(character) != 0; });
+}
+
+bool SplitExternalItemId(const std::string& externalItemId,
+    std::string& publishedFileId, std::string& ownerSteamId)
+{
+    const std::size_t separator = externalItemId.find('@');
+    publishedFileId = externalItemId.substr(0, separator);
+    ownerSteamId = separator == std::string::npos
+        ? std::string{} : externalItemId.substr(separator + 1);
+    return DigitsOnly(publishedFileId) &&
+        (ownerSteamId.empty() || DigitsOnly(ownerSteamId));
+}
+
+std::string BoundExternalItemId(std::string_view publishedFileId,
+    std::string_view ownerSteamId)
+{
+    if (ownerSteamId.empty()) return std::string(publishedFileId);
+    return std::string(publishedFileId) + '@' + std::string(ownerSteamId);
+}
+
+bool HasReparsePoint(const std::filesystem::path& path)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+bool ContainsReparsePoint(const std::filesystem::path& absolutePath)
+{
+    std::filesystem::path current = absolutePath.root_path();
+    for (const auto& component : absolutePath.relative_path())
+    {
+        current /= component;
+        const DWORD attributes = GetFileAttributesW(current.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES ||
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+            return true;
+    }
+    return false;
+}
+
+std::string LowerAscii(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char character)
+        {
+            return static_cast<char>(std::tolower(character));
+        });
+    return value;
+}
+
+bool QueryMatches(const PackageManifest& manifest, const PackageQuery& query)
+{
+    if (query.text.empty()) return true;
+    const std::string needle = LowerAscii(query.text);
+    for (const std::string* field : {
+        &manifest.name, &manifest.description, &manifest.author,
+        &manifest.slug })
+        if (LowerAscii(*field).find(needle) != std::string::npos)
+            return true;
+    return false;
+}
+
+std::optional<std::wstring> Utf8ToWide(std::string_view value)
+{
+    if (value.empty()) return std::wstring{};
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        value.data(), static_cast<int>(value.size()), nullptr, 0);
+    if (length <= 0) return std::nullopt;
+    std::wstring result(static_cast<std::size_t>(length), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        value.data(), static_cast<int>(value.size()),
+        result.data(), length) != length)
+        return std::nullopt;
+    return result;
+}
+}
+
+struct SteamWorkshopSource::BridgeResult
+{
+    DWORD exitCode = std::numeric_limits<DWORD>::max();
+    std::string output;
+    JsonValue finalObject;
+};
+
+SteamWorkshopSource::SteamWorkshopSource()
+    : SteamWorkshopSource(std::filesystem::path(
+        GetExecutableDirectoryPath()) / L"SnowDesktopSteamBridge.exe")
+{
+}
+
+SteamWorkshopSource::SteamWorkshopSource(
+    std::filesystem::path bridgeExecutable)
+    : bridgeExecutable_(std::move(bridgeExecutable)),
+      validationPaths_(PackagePaths::ForCurrentDeployment())
+{
+}
+
+std::string SteamWorkshopSource::ProviderId() const
+{
+    return "steam-workshop";
+}
+
+ProviderCapabilities SteamWorkshopSource::Capabilities() const
+{
+    return { true, true, false, true, false, true };
+}
+
+bool SteamWorkshopSource::RunBridge(
+    const std::vector<std::wstring>& arguments, int timeoutSeconds,
+    BridgeResult& result, std::string& error) const
+{
+    result = {};
+    std::error_code filesystemError;
+    if (!std::filesystem::is_regular_file(
+        bridgeExecutable_, filesystemError))
+    {
+        error = "SnowDesktopSteamBridge.exe is missing";
+        return false;
+    }
+    if (HasReparsePoint(bridgeExecutable_))
+    {
+        error = "Steam bridge executable cannot be a reparse point";
+        return false;
+    }
+
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.bInheritHandle = TRUE;
+    HANDLE readRaw = nullptr;
+    HANDLE writeRaw = nullptr;
+    if (!CreatePipe(&readRaw, &writeRaw, &security, 0))
+    {
+        error = "cannot create the Steam bridge output pipe";
+        return false;
+    }
+    UniqueHandle readPipe(readRaw);
+    UniqueHandle writePipe(writeRaw);
+    if (!SetHandleInformation(readPipe.value, HANDLE_FLAG_INHERIT, 0))
+    {
+        error = "cannot protect the Steam bridge output pipe";
+        return false;
+    }
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = writePipe.value;
+    startup.hStdError = writePipe.value;
+    PROCESS_INFORMATION process{};
+    std::wstring commandLine = BuildCommandLine(
+        bridgeExecutable_, arguments);
+    const std::wstring workingDirectory =
+        bridgeExecutable_.parent_path().wstring();
+    std::vector<wchar_t> environment =
+        snowdesktop::BuildSnowDesktopSteamChildEnvironment();
+    if (environment.empty())
+    {
+        error = "cannot build the Steam bridge environment";
+        return false;
+    }
+    if (!CreateProcessW(bridgeExecutable_.c_str(), commandLine.data(),
+        nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+        environment.data(), workingDirectory.c_str(), &startup, &process))
+    {
+        error = "cannot start SnowDesktopSteamBridge.exe";
+        return false;
+    }
+    UniqueHandle processHandle(process.hProcess);
+    UniqueHandle threadHandle(process.hThread);
+    writePipe = UniqueHandle{};
+
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(std::max(1, timeoutSeconds));
+    while (true)
+    {
+        DWORD available = 0;
+        if (!PeekNamedPipe(readPipe.value, nullptr, 0, nullptr,
+            &available, nullptr))
+        {
+            if (WaitForSingleObject(processHandle.value, 0) == WAIT_OBJECT_0)
+                break;
+            error = "cannot read Steam bridge output";
+            return false;
+        }
+        if (available > 0)
+        {
+            std::array<char, 8192> buffer{};
+            DWORD read = 0;
+            if (!ReadFile(readPipe.value, buffer.data(),
+                std::min<DWORD>(available,
+                    static_cast<DWORD>(buffer.size())), &read, nullptr))
+            {
+                error = "cannot read Steam bridge output";
+                return false;
+            }
+            if (result.output.size() + read > kMaximumBridgeOutputBytes)
+            {
+                TerminateProcess(processHandle.value, kBridgeFailureExitCode);
+                WaitForSingleObject(processHandle.value, 5000);
+                error = "Steam bridge output exceeded its safety limit";
+                return false;
+            }
+            result.output.append(buffer.data(), read);
+            continue;
+        }
+        if (WaitForSingleObject(processHandle.value, 0) == WAIT_OBJECT_0)
+            break;
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            TerminateProcess(processHandle.value, kBridgeTimeoutExitCode);
+            WaitForSingleObject(processHandle.value, 5000);
+            error = "Steam bridge operation timed out";
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!GetExitCodeProcess(processHandle.value, &result.exitCode))
+    {
+        error = "cannot read Steam bridge exit code";
+        return false;
+    }
+
+    std::size_t end = result.output.size();
+    bool parsed = false;
+    while (end > 0)
+    {
+        while (end > 0 && (result.output[end - 1] == '\r' ||
+            result.output[end - 1] == '\n')) --end;
+        const std::size_t newline = end == 0 ? std::string::npos :
+            result.output.rfind('\n', end - 1);
+        const std::size_t begin = newline == std::string::npos
+            ? 0 : newline + 1;
+        const std::string_view line(
+            result.output.data() + begin, end - begin);
+        std::string parseError;
+        if (!line.empty() && ParseJson(
+            line, result.finalObject, &parseError) &&
+            result.finalObject.IsObject())
+        {
+            parsed = true;
+            break;
+        }
+        if (begin == 0) break;
+        end = begin - 1;
+    }
+    if (!parsed)
+    {
+        error = "Steam bridge returned no valid JSON result";
+        return false;
+    }
+    if (result.exitCode == 0 &&
+        JsonBoolean(result.finalObject, "ok").value_or(false))
+        return true;
+
+    if (const JsonValue* errorObject = JsonField(
+        result.finalObject, "error", JsonValue::Type::Object))
+        if (const auto message = JsonString(*errorObject, "message"))
+            error = *message;
+    if (error.empty())
+        if (const auto reason = JsonString(result.finalObject, "reason"))
+            error = *reason;
+    if (error.empty())
+        error = "Steam bridge exited with code " +
+            std::to_string(result.exitCode);
+    return false;
+}
+
+ProviderStatus SteamWorkshopSource::Status()
+{
+    const auto now = std::chrono::steady_clock::now();
+    {
+        // A just-closed search may still finish while a reopened page queries
+        // the same retained provider. Never hold this lock across filesystem I/O.
+        std::lock_guard lock(statusMutex_);
+        if (statusCheckedAt_.time_since_epoch().count() != 0 &&
+            now - statusCheckedAt_ < (cachedStatus_.available
+                ? std::chrono::seconds(300) : std::chrono::seconds(5)))
+            return cachedStatus_;
+    }
+    auto& queries = BoundedFileQuery<ProviderStatus>::ForProcess();
+    const auto job = queries.Request(bridgeExecutable_.lexically_normal().native(),
+        [bridge = bridgeExecutable_] () -> ProviderStatus {
+            std::error_code filesystemError;
+            if (!std::filesystem::is_regular_file(bridge, filesystemError) ||
+                filesystemError || HasReparsePoint(bridge))
+                return {false, "SnowDesktopSteamBridge.exe is missing"};
+
+            std::string discoveryError;
+            const auto libraries = DiscoverSteamLibraryRoots(
+                snowdesktop::kSnowDesktopSteamAppId, discoveryError);
+            const auto cache = ReadSteamWorkshopLocalCache(
+                libraries, snowdesktop::kSnowDesktopSteamAppId);
+            if (cache.authoritative || cache.partial)
+                return {true, "Steam Workshop subscriptions are available"};
+            if (discoveryError.empty()) discoveryError = cache.error;
+            if (discoveryError.empty())
+                discoveryError = "Steam Workshop cache is unavailable";
+            return {false, std::move(discoveryError)};
+        });
+    const auto status = queries.Wait(job,
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(1500));
+    const ProviderStatus result = status.value_or(
+        ProviderStatus{false, "Steam Workshop availability query timed out"});
+    {
+        std::lock_guard lock(statusMutex_);
+        cachedStatus_ = result;
+        statusCheckedAt_ = std::chrono::steady_clock::now();
+    }
+    return result;
+}
+
+std::optional<SteamWorkshopSource::ResolvedItem>
+SteamWorkshopSource::ResolveInstalledFolder(
+    const std::string& publishedFileId, const std::string& ownerSteamId,
+    const std::filesystem::path& folder, std::string& error,
+    PackageManifest* detectedManifest, const PackagePaths& validationPaths)
+{
+    std::error_code filesystemError;
+    const auto absoluteFolder = std::filesystem::absolute(
+        folder, filesystemError);
+    if (filesystemError || absoluteFolder.empty() ||
+        ContainsReparsePoint(absoluteFolder))
+    {
+        error = "Steam Workshop install folder is unsafe or unavailable";
+        return std::nullopt;
+    }
+    const auto canonicalFolder = std::filesystem::canonical(
+        absoluteFolder, filesystemError);
+    if (filesystemError ||
+        !std::filesystem::is_directory(canonicalFolder, filesystemError) ||
+        HasReparsePoint(canonicalFolder))
+    {
+        error = "Steam Workshop install folder is unsafe or unavailable";
+        return std::nullopt;
+    }
+
+    std::filesystem::path artifact;
+    std::size_t entryCount = 0;
+    for (std::filesystem::directory_iterator iterator(
+        canonicalFolder, std::filesystem::directory_options::none,
+        filesystemError), end;
+        !filesystemError && iterator != end; iterator.increment(filesystemError))
+    {
+        ++entryCount;
+        const auto& entry = *iterator;
+        std::error_code entryError;
+        if (_wcsicmp(entry.path().filename().c_str(),
+                L"package.snowwidget") == 0 &&
+            entry.is_regular_file(entryError) && !entryError &&
+            !entry.is_symlink(entryError) && !entryError &&
+            !HasReparsePoint(entry.path()))
+            artifact = entry.path();
+    }
+    if (filesystemError || entryCount != 1 || artifact.empty())
+    {
+        error = "Workshop content must contain exactly one package.snowwidget file";
+        return std::nullopt;
+    }
+
+    WidgetPackageManager validationManager(validationPaths);
+    PackageManifest manifest;
+    const ValidationReport validation =
+        validationManager.ValidateArchive(artifact, &manifest);
+    if (detectedManifest) *detectedManifest = manifest;
+    if (!validation.Ok())
+    {
+        error = "Workshop component package failed validation: " +
+            validation.ToJson();
+        return std::nullopt;
+    }
+    PackageDetails details;
+    details.manifest = std::move(manifest);
+    details.source = { "steam-workshop",
+        BoundExternalItemId(publishedFileId, ownerSteamId) };
+    details.versions.push_back(details.manifest.version);
+    return ResolvedItem{ std::move(details), artifact };
+}
+
+std::optional<SteamWorkshopSource::ResolvedItem>
+SteamWorkshopSource::ResolveCurrent(const std::string& externalItemId,
+    bool verifyOwner, std::string& error) const
+{
+    std::string publishedFileId;
+    std::string expectedOwner;
+    if (!SplitExternalItemId(
+        externalItemId, publishedFileId, expectedOwner))
+    {
+        error = "invalid Steam Workshop external item identity";
+        return std::nullopt;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (resolvedCache_ &&
+        resolvedCacheCheckedAt_.time_since_epoch().count() != 0 &&
+        now - resolvedCacheCheckedAt_ < std::chrono::seconds(30))
+    {
+        std::string cachedPublishedFileId;
+        std::string cachedOwner;
+        std::error_code filesystemError;
+        if (SplitExternalItemId(
+                resolvedCache_->details.source.externalItemId,
+                cachedPublishedFileId, cachedOwner) &&
+            cachedPublishedFileId == publishedFileId &&
+            (!verifyOwner || expectedOwner.empty() ||
+                cachedOwner == expectedOwner) &&
+            std::filesystem::is_regular_file(
+                resolvedCache_->artifact, filesystemError) &&
+            !filesystemError)
+        {
+            error.clear();
+            return resolvedCache_;
+        }
+    }
+
+    BridgeResult listResult;
+    if (!RunBridge({ L"workshop", L"list-subscribed", L"--details" },
+        40, listResult, error))
+        return std::nullopt;
+    const JsonValue* items = JsonField(
+        listResult.finalObject, "items", JsonValue::Type::Array);
+    const auto appId = JsonUint32(listResult.finalObject, "appId");
+    if (!items ||
+        JsonUint32(listResult.finalObject, "protocolVersion") != 1u ||
+        !appId || *appId != snowdesktop::kSnowDesktopSteamAppId)
+    {
+        error = "Steam bridge returned an incompatible subscription result";
+        return std::nullopt;
+    }
+    for (const JsonValue& item : items->array)
+    {
+        if (!item.IsObject() ||
+            JsonString(item, "publishedFileId").value_or("") !=
+                publishedFileId)
+            continue;
+        const JsonValue* details = JsonField(
+            item, "details", JsonValue::Type::Object);
+        if (!details || JsonUint32(*details, "result") != 1u ||
+            JsonUint32(*details, "consumerAppId") != appId ||
+            JsonBoolean(*details, "banned").value_or(true))
+        {
+            error = "Steam Workshop item is banned or unavailable";
+            return std::nullopt;
+        }
+        const std::string ownerSteamId =
+            JsonString(*details, "ownerSteamId").value_or("");
+        if (!DigitsOnly(ownerSteamId) ||
+            (verifyOwner && !expectedOwner.empty() &&
+                ownerSteamId != expectedOwner))
+        {
+            error = "Steam Workshop item owner identity changed";
+            return std::nullopt;
+        }
+        if (JsonBoolean(item, "needsUpdate").value_or(true) ||
+            JsonBoolean(item, "downloading").value_or(false) ||
+            JsonBoolean(item, "downloadPending").value_or(false))
+        {
+            error = "Steam Workshop item is still downloading or needs an update";
+            return std::nullopt;
+        }
+        const JsonValue* installInfo = JsonField(
+            item, "installInfo", JsonValue::Type::Object);
+        const auto folder = installInfo
+            ? JsonString(*installInfo, "folder") : std::nullopt;
+        const auto wideFolder = folder ? Utf8ToWide(*folder) : std::nullopt;
+        if (!installInfo ||
+            !JsonBoolean(*installInfo, "available").value_or(false) ||
+            !wideFolder || wideFolder->empty())
+        {
+            error = "Steam Workshop item has not finished installing";
+            return std::nullopt;
+        }
+        auto resolved = ResolveInstalledFolder(
+            publishedFileId, ownerSteamId, *wideFolder, error, nullptr, validationPaths_);
+        if (resolved)
+        {
+            resolvedCache_ = *resolved;
+            resolvedCacheCheckedAt_ = now;
+        }
+        return resolved;
+    }
+    error = "Steam Workshop item is not subscribed";
+    return std::nullopt;
+}
+
+SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
+    const PackageQuery& query, std::string& error)
+{
+    SteamWorkshopSubscriptionSnapshot snapshot;
+    snapshot.activeSteamAccountId = ReadSteamActiveUserAccountId();
+    std::string discoveryError;
+    const auto libraries = DiscoverSteamLibraryRoots(
+        snowdesktop::kSnowDesktopSteamAppId, discoveryError);
+    const auto cache = ReadSteamWorkshopLocalCache(
+        libraries, snowdesktop::kSnowDesktopSteamAppId);
+    snapshot.authoritative = cache.authoritative && discoveryError.empty();
+    snapshot.partial = cache.partial ||
+        (cache.authoritative && !discoveryError.empty());
+    for (const auto& skipped : cache.skippedLibraries)
+    {
+        if (!snapshot.warning.empty()) snapshot.warning += " | ";
+        snapshot.warning += skipped;
+    }
+    if (!discoveryError.empty())
+    {
+        if (!snapshot.warning.empty()) snapshot.warning += " | ";
+        snapshot.warning += discoveryError;
+    }
+    snapshot.subscribedPublishedFileIds =
+        cache.subscribedPublishedFileIds;
+    if (!snapshot.CanSynchronize())
+    {
+        error = discoveryError.empty() ? cache.error : discoveryError;
+        if (error.empty()) error = "Steam Workshop cache is unavailable";
+        snapshot.error = error;
+        return snapshot;
+    }
+
+    // Validating package.snowwidget also traverses library files. Keep the
+    // entire read-only batch independently owned and share it across searches,
+    // regardless of their keywords. A stalled archive cannot hold cancellation.
+    auto& packageQueries = BoundedFileQuery<SteamWorkshopSubscriptionSnapshot>::ForProcess();
+    std::wstring validationKey = bridgeExecutable_.lexically_normal().native();
+    for (const auto& item : cache.readyItems)
+    {
+        validationKey += L"\n" + Utf8ToWide(item.publishedFileId).value() + L":" +
+            item.contentDirectory.lexically_normal().native();
+    }
+    const auto job = packageQueries.Request(std::move(validationKey),
+        [paths = validationPaths_, items = cache.readyItems] {
+            SteamWorkshopSubscriptionSnapshot validated;
+            for (const auto& item : items)
+            {
+                std::error_code themeError;
+                if (std::filesystem::is_regular_file(item.contentDirectory / L"package.snowtheme", themeError) &&
+                    !std::filesystem::exists(item.contentDirectory / L"package.snowwidget", themeError) && !themeError)
+                    continue; // Theme artifacts belong to the host theme installer.
+                std::string itemError;
+                PackageManifest detectedManifest;
+                auto resolved = ResolveInstalledFolder(
+                    item.publishedFileId, {}, item.contentDirectory, itemError,
+                    &detectedManifest, paths);
+                if (!resolved)
+                {
+                    const std::string packageId = detectedManifest.id.empty()
+                        ? "steam-workshop:" + item.publishedFileId
+                        : detectedManifest.id;
+                    validated.discoveryFailures.push_back({packageId,
+                        item.publishedFileId, std::move(detectedManifest),
+                        std::move(itemError)});
+                    continue;
+                }
+                validated.localArtifacts[item.publishedFileId] = resolved->artifact;
+                validated.installable.push_back(std::move(resolved->details));
+            }
+            return validated;
+        });
+    auto validated = packageQueries.Wait(job,
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(500));
+    if (!validated)
+    {
+        // Package readiness is independent of subscriptions already read
+        // from ACF. A slow archive must not block local unsubscribe sync.
+        if (!snapshot.warning.empty()) snapshot.warning += " | ";
+        snapshot.warning += "Steam Workshop package validation query timed out; packages skipped";
+        error.clear();
+        return snapshot;
+    }
+    snapshot.localArtifacts = std::move(validated->localArtifacts);
+    snapshot.discoveryFailures = std::move(validated->discoveryFailures);
+    std::size_t matched = 0;
+    for (auto& details : validated->installable)
+    {
+        details.manifest = LocalizePackageManifest(std::move(details.manifest), query.locale);
+        if (!QueryMatches(details.manifest, query)) continue;
+        if (matched++ < query.offset) continue;
+        if (snapshot.installable.size() < query.limit)
+            snapshot.installable.push_back(std::move(details));
+    }
+    error.clear();
+    return snapshot;
+}
+
+SteamWorkshopSubscriptionSnapshot
+SteamWorkshopSource::QuerySubscriptionsOnline(
+    const PackageQuery& query, std::string& error)
+{
+    SteamWorkshopSubscriptionSnapshot snapshot;
+    snapshot.activeSteamAccountId = ReadSteamActiveUserAccountId();
+    BridgeResult listResult;
+    if (!RunBridge({ L"workshop", L"list-subscribed", L"--details" },
+        40, listResult, error))
+    {
+        snapshot.error = error;
+        return snapshot;
+    }
+    const JsonValue* items = JsonField(
+        listResult.finalObject, "items", JsonValue::Type::Array);
+    const auto appId = JsonUint32(listResult.finalObject, "appId");
+    if (!items ||
+        JsonUint32(listResult.finalObject, "protocolVersion") != 1u ||
+        !appId || *appId != snowdesktop::kSnowDesktopSteamAppId)
+    {
+        error = "Steam bridge returned an incompatible subscription result";
+        snapshot.error = error;
+        return snapshot;
+    }
+
+    snapshot.authoritative = true;
+    std::size_t matched = 0;
+    for (const JsonValue& item : items->array)
+    {
+        if (!item.IsObject()) continue;
+        const std::string publishedFileId =
+            JsonString(item, "publishedFileId").value_or("");
+        if (!DigitsOnly(publishedFileId)) continue;
+        snapshot.subscribedPublishedFileIds.push_back(publishedFileId);
+
+        const JsonValue* details = JsonField(
+            item, "details", JsonValue::Type::Object);
+        if (details && (JsonUint32(*details, "result") != 1u ||
+            JsonUint32(*details, "consumerAppId") != appId ||
+            JsonBoolean(*details, "banned").value_or(true)))
+            continue;
+        const bool needsUpdate =
+            JsonBoolean(item, "needsUpdate").value_or(false);
+        const bool downloading =
+            JsonBoolean(item, "downloading").value_or(false);
+        const bool downloadPending =
+            JsonBoolean(item, "downloadPending").value_or(false);
+        const JsonValue* installInfo = JsonField(
+            item, "installInfo", JsonValue::Type::Object);
+        const auto folder = installInfo
+            ? JsonString(*installInfo, "folder") : std::nullopt;
+        const auto wideFolder = folder ? Utf8ToWide(*folder) : std::nullopt;
+        const bool ready = !needsUpdate && !downloading &&
+            !downloadPending && installInfo &&
+            JsonBoolean(*installInfo, "available").value_or(false) &&
+            wideFolder && !wideFolder->empty();
+        if (!ready)
+            continue;
+
+        if (!details) continue;
+        const std::string ownerSteamId =
+            JsonString(*details, "ownerSteamId").value_or("");
+        if (!DigitsOnly(ownerSteamId)) continue;
+
+        std::string itemError;
+        PackageManifest detectedManifest;
+        auto resolved = ResolveInstalledFolder(
+            publishedFileId, ownerSteamId, *wideFolder, itemError,
+            &detectedManifest, validationPaths_);
+        if (!resolved)
+        {
+            const std::string packageId = detectedManifest.id.empty()
+                ? "steam-workshop:" + publishedFileId
+                : detectedManifest.id;
+            snapshot.discoveryFailures.push_back({ packageId,
+                BoundExternalItemId(publishedFileId, ownerSteamId),
+                std::move(detectedManifest), std::move(itemError) });
+            continue;
+        }
+        snapshot.localArtifacts[publishedFileId] = resolved->artifact;
+        resolved->details.manifest = LocalizePackageManifest(
+            std::move(resolved->details.manifest), query.locale);
+        if (!QueryMatches(resolved->details.manifest, query)) continue;
+        if (matched++ < query.offset) continue;
+        if (snapshot.installable.size() < query.limit)
+            snapshot.installable.push_back(std::move(resolved->details));
+    }
+    std::sort(snapshot.subscribedPublishedFileIds.begin(),
+        snapshot.subscribedPublishedFileIds.end());
+    error.clear();
+    return snapshot;
+}
+
+bool SteamWorkshopSource::Unsubscribe(
+    const std::string& externalItemId, std::string& error) const
+{
+    std::string publishedFileId;
+    std::string ownerSteamId;
+    if (!SplitExternalItemId(
+            externalItemId, publishedFileId, ownerSteamId))
+    {
+        error = "invalid Steam Workshop external item identity";
+        return false;
+    }
+    BridgeResult result;
+    return RunBridge({ L"workshop", L"unsubscribe", L"--item",
+        Utf8ToWide(publishedFileId).value() }, 30, result, error);
+}
+
+std::vector<PackageDetails> SteamWorkshopSource::Query(
+    const PackageQuery& query, std::string& error)
+{
+    auto snapshot = QuerySubscriptions(query, error);
+    return std::move(snapshot.installable);
+}
+
+std::optional<PackageDetails> SteamWorkshopSource::GetDetails(
+    const std::string& externalItemId, std::string& error)
+{
+    auto resolved = ResolveCurrent(externalItemId, true, error);
+    if (!resolved) return std::nullopt;
+    return std::move(resolved->details);
+}
+
+std::optional<PackageArtifact> SteamWorkshopSource::Materialize(
+    const std::string& externalItemId, const std::string& version,
+    const std::filesystem::path& destination, std::string& error)
+{
+    auto resolved = ResolveCurrent(externalItemId, true, error);
+    if (!resolved) return std::nullopt;
+    if (resolved->details.manifest.version != version)
+    {
+        error = "Steam Workshop currently exposes a different package version";
+        return std::nullopt;
+    }
+    std::error_code filesystemError;
+    std::filesystem::copy_file(resolved->artifact, destination,
+        std::filesystem::copy_options::overwrite_existing, filesystemError);
+    if (filesystemError)
+    {
+        error = "cannot copy the Workshop artifact into staging: " +
+            filesystemError.message();
+        return std::nullopt;
+    }
+    WidgetPackageManager validationManager(
+        PackagePaths::ForCurrentDeployment());
+    PackageManifest copiedManifest;
+    const ValidationReport copiedValidation =
+        validationManager.ValidateArchive(destination, &copiedManifest);
+    if (!copiedValidation.Ok() ||
+        copiedManifest.id != resolved->details.manifest.id ||
+        copiedManifest.version != version)
+    {
+        std::filesystem::remove(destination, filesystemError);
+        error = "staged Workshop artifact failed validation: " +
+            copiedValidation.ToJson();
+        return std::nullopt;
+    }
+    const std::string sha256 =
+        WidgetPackageManager::Sha256File(destination);
+    if (sha256.empty())
+    {
+        std::filesystem::remove(destination, filesystemError);
+        error = "cannot hash the staged Workshop artifact";
+        return std::nullopt;
+    }
+    return PackageArtifact{ destination,
+        resolved->details.manifest.id, version, sha256 };
+}
+
+std::vector<PackageUpdate> SteamWorkshopSource::CheckUpdates(
+    const std::vector<PackageVersionRef>& installed, std::string& error)
+{
+    PackageQuery query;
+    query.limit = std::numeric_limits<std::size_t>::max();
+    const auto available = Query(query, error);
+    if (!error.empty()) return {};
+    std::vector<PackageUpdate> updates;
+    for (const auto& current : installed)
+    {
+        const auto found = std::find_if(available.begin(), available.end(),
+            [&](const PackageDetails& item)
+            {
+                return item.manifest.id == current.packageId &&
+                    WidgetPackageValidator::IsNewerSemVer(
+                        item.manifest.version, current.version);
+            });
+        if (found != available.end())
+            updates.push_back({ current, *found });
+    }
+    return updates;
+}
+}

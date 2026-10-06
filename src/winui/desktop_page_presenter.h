@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../settings_controller.h"
+#include "settings/settings_controller.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 

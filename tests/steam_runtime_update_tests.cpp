@@ -1,10 +1,10 @@
-#include "steam_runtime_flush.h"
-#include "auto_start_rules.h"
-#include "data_path_policy.h"
-#include "steam_runtime_context.h"
-#include "steam_runtime_manager.h"
-#include "steam_runtime_publish.h"
-#include "steam_runtime_startup.h"
+#include "steam/steam_runtime_flush.h"
+#include "platform/auto_start_rules.h"
+#include "data/data_path_policy.h"
+#include "steam/steam_runtime_context.h"
+#include "steam/steam_runtime_manager.h"
+#include "steam/steam_runtime_publish.h"
+#include "steam/steam_runtime_startup.h"
 
 #include <windows.h>
 #include <bcrypt.h>

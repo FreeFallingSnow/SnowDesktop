@@ -1,7 +1,7 @@
-#include "performance_capture.h"
-#include "performance_trace.h"
-#include "json_value.h"
-#include "lua_runtime.h"
+#include "diagnostics/performance_capture.h"
+#include "diagnostics/performance_trace.h"
+#include "common/json_value.h"
+#include "widget/runtime/lua_runtime.h"
 
 extern "C" {
 #include <lauxlib.h>

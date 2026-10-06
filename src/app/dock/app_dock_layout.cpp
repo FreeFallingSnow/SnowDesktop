@@ -1,0 +1,307 @@
+#include "app/app.h"
+#include "system/status_bar/status_bar_appbar.h"
+#include <algorithm>
+#include <numeric>
+
+// Dock container lookup, invalidation and work-area reservation.
+
+DockContainer* DesktopApp::GetDockContainer() const
+{
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get())) return dock;
+    return nullptr;
+}
+
+DockContainer* DesktopApp::GetDockContainerAtPoint(POINT point) const
+{
+    for (const auto& container : containers_)
+    {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
+        if (!IsDockContainerInteractionVisible(dock))
+            continue;
+        if (dock->ContainsInteractivePoint(point)) return dock;
+    }
+    return nullptr;
+}
+
+void DesktopApp::InvalidateDockContainers()
+{
+    for (const auto& container : containers_)
+    {
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+            dock->InvalidateSlots();
+    }
+}
+
+bool DesktopApp::SynchronizeDockContainerAreas()
+{
+    const size_t dockContainerCount = static_cast<size_t>(std::count_if(
+        containers_.begin(), containers_.end(), [](const auto& container) {
+            return dynamic_cast<DockContainer*>(container.get()) != nullptr;
+        }));
+    if (dockContainerCount != dockAreas_.size())
+        return false;
+
+    size_t areaIndex = 0;
+    for (const auto& container : containers_)
+    {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock) continue;
+        dock->SetReservedArea(dockAreas_[areaIndex++]);
+    }
+    return true;
+}
+
+void DesktopApp::InvalidateDockRects(BOOL erase)
+{
+    if (floatingDockHostActive_)
+        InvalidatePersistentDockHosts(true);
+    if (!hwnd_) return;
+    for (const auto& container : containers_)
+    {
+        auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (!dock ||
+            IsDockHostedByPersistentHost(dock))
+            continue;
+        const RECT bounds = dock->GetInteractiveBounds();
+        InvalidateRect(hwnd_, &bounds, erase);
+    }
+}
+
+void DesktopApp::PrepareDockBackdropForDragTransition()
+{
+    // RemovePanel changes the helper HWND region and submits WinComp
+    // immediately. Doing that before the first drag paint creates a frame in
+    // which the Dock content still exists but its glass panel is already gone.
+    // Reconcile every panel in the next paint instead: BeginFrame/EndFrame can
+    // then replace the old hover geometry and new drag geometry atomically.
+    desktopBackdropFullCollectionPending_ = true;
+}
+
+int DesktopApp::GetGridPageItemIconSize(const GridPage& page) const
+{
+    return GetPageItemVisualMetrics(page).iconSize;
+}
+
+int DesktopApp::GetDockPageItemIconSize(const GridPage& page) const
+{
+    if (!dockSettings_.lastMonitorUseHomeSize) return GetGridPageItemIconSize(page);
+    const auto order = BuildMonitorRenderOrder();
+    if (order.empty() || order.back() >= gridPages_.size() ||
+        gridPages_[order.back()].monitorId != page.monitorId || savedPageIds_.size() < order.size())
+        return GetGridPageItemIconSize(page);
+    GridPage home = page;
+    home.id = savedPageIds_[order.size() - 1];
+    if (const auto found = savedPageColumns_.find(home.id); found != savedPageColumns_.end()) home.columns = found->second;
+    if (const auto found = savedPageRows_.find(home.id); found != savedPageRows_.end()) home.rows = found->second;
+    const RECT area = IsRectEmpty(&home.visualWorkArea) ? home.workArea : home.visualWorkArea;
+    const auto sizing = snowdesktop::ResolvePageVisualSizing(
+        static_cast<int>(area.right - area.left), static_cast<int>(area.bottom - area.top), home.columns, home.rows);
+    home.itemPitchWidth = sizing.pitchWidth;
+    home.itemPitchHeight = sizing.pitchHeight;
+    return GetGridPageItemIconSize(home);
+}
+
+void DesktopApp::ApplyDockWorkAreaReservation()
+{
+    if (dockWorkAreaReservationApplied_)
+    {
+        const UINT previousEdge = dockWorkAreaReservationPosition_ == DockPosition::Left ? ABE_LEFT :
+            dockWorkAreaReservationPosition_ == DockPosition::Right ? ABE_RIGHT :
+            dockWorkAreaReservationPosition_ == DockPosition::Top ? ABE_TOP : ABE_BOTTOM;
+        for (const RECT& reserved : dockReservedAreas_)
+            for (auto& page : gridPages_)
+            {
+                RECT overlap{};
+                if (!IntersectRect(&overlap, &reserved, &page.bounds)) continue;
+                page.workArea = snowdesktop::RestoreAppBarWorkArea(page.workArea, reserved, previousEdge);
+                break;
+            }
+    }
+
+    dockAreas_.clear();
+    dockReservedAreas_.clear();
+    dockWorkAreaReservationApplied_ = false;
+    SyncStatusBar();
+    // Undoing a previous Dock reservation can expand a cached page past the
+    // Shell AppBar edge. Reapply the registered strip before placing any
+    // separate/island Dock, including the asynchronous merged-to-island turn.
+    if (statusBar_)
+        for (auto& page : gridPages_)
+        {
+            RECT screen = page.bounds; OffsetRect(&screen, virtualLeft_, virtualTop_);
+            RECT work = page.workArea; OffsetRect(&work, virtualLeft_, virtualTop_);
+            work = statusBar_->AvailableWorkArea(MonitorFromRect(&screen, MONITOR_DEFAULTTONULL), work);
+            OffsetRect(&work, -virtualLeft_, -virtualTop_); page.workArea = work;
+        }
+    if (!generalSettings_.dockEnabled || gridPages_.empty())
+    {
+        if (dockAppBars_) dockAppBars_->Configure({});
+        return;
+    }
+    const bool reserveSystemWorkArea = dockSettings_.reserveScreenSpace && !dockSettings_.showOnlyWhenSummoned;
+    if (reserveSystemWorkArea && !dockAppBars_)
+        dockAppBars_ = std::make_unique<snowdesktop::DockAppBars>([this] { ScheduleDisplayTopologyRefresh(); });
+    std::vector<snowdesktop::DockAppBarReservation> registrations;
+    const UINT edge = dockSettings_.position == DockPosition::Left ? ABE_LEFT :
+        dockSettings_.position == DockPosition::Right ? ABE_RIGHT :
+        dockSettings_.position == DockPosition::Top ? ABE_TOP : ABE_BOTTOM;
+
+    const bool reserveDesktopWorkArea =
+        snowdesktop::dock_settings_rules::
+            ShouldReserveDesktopWorkArea(
+                dockSettings_.showOnlyWhenSummoned,
+                dockSettings_.allowDesktopContentOverlap);
+
+    std::vector<size_t> targetPages = BuildMonitorRenderOrder();
+    if (targetPages.empty())
+    {
+        targetPages.resize(gridPages_.size());
+        std::iota(targetPages.begin(), targetPages.end(), size_t{ 0 });
+    }
+    if (targetPages.size() > 1)
+    {
+        switch (dockSettings_.monitorScope)
+        {
+        case DockMonitorScope::Last:
+            targetPages.erase(targetPages.begin(), targetPages.end() - 1);
+            break;
+        case DockMonitorScope::First:
+            targetPages.erase(targetPages.begin() + 1, targetPages.end());
+            break;
+        case DockMonitorScope::All:
+        default:
+            break;
+        }
+    }
+
+    const bool vertical = dockSettings_.position == DockPosition::Left ||
+        dockSettings_.position == DockPosition::Right;
+
+    for (size_t pageIndex : targetPages)
+    {
+        if (pageIndex >= gridPages_.size()) continue;
+        GridPage& targetPage = gridPages_[pageIndex];
+        RECT screen = targetPage.bounds;
+        OffsetRect(&screen, virtualLeft_, virtualTop_);
+        if (statusBar_)
+        {
+            if (auto merged = statusBar_->MergedDockArea(MonitorFromRect(&screen, MONITOR_DEFAULTTONULL)))
+            {
+                OffsetRect(&*merged, -virtualLeft_, -virtualTop_);
+                dockAreas_.push_back(*merged);
+                // rcWork already excludes this system-approved AppBar. Do not
+                // reserve the same strip again for the Dock or desktop grid.
+                ApplyIconSpacingToPage(targetPage);
+                continue;
+            }
+        }
+        const RECT originalWorkArea = targetPage.workArea;
+        const int width = std::max(1, static_cast<int>(
+            originalWorkArea.right - originalWorkArea.left));
+        const int height = std::max(1, static_cast<int>(
+            originalWorkArea.bottom - originalWorkArea.top));
+        const int edgeExtent = vertical ? width : height;
+        auto reserveEdge = [&](GridPage& page, int reserved, RECT* dockArea) {
+            page.workArea = originalWorkArea;
+            RECT area{};
+            switch (dockSettings_.position)
+            {
+            case DockPosition::Top:
+                area = RECT{ originalWorkArea.left, originalWorkArea.top,
+                    originalWorkArea.right, originalWorkArea.top + reserved };
+                page.workArea.top = area.bottom;
+                break;
+            case DockPosition::Left:
+                area = RECT{ originalWorkArea.left, originalWorkArea.top,
+                    originalWorkArea.left + reserved, originalWorkArea.bottom };
+                page.workArea.left = area.right;
+                break;
+            case DockPosition::Right:
+                area = RECT{ originalWorkArea.right - reserved, originalWorkArea.top,
+                    originalWorkArea.right, originalWorkArea.bottom };
+                page.workArea.right = area.left;
+                break;
+            case DockPosition::Bottom:
+            default:
+                area = RECT{ originalWorkArea.left, originalWorkArea.bottom - reserved,
+                    originalWorkArea.right, originalWorkArea.bottom };
+                page.workArea.bottom = area.top;
+                break;
+            }
+            if (dockArea) *dockArea = area;
+        };
+
+        // Match each Dock copy to the icon grid of its own display. This also
+        // keeps mixed-resolution monitors from inheriting another screen's size.
+        GridPage bestPage = targetPage;
+        int bestReserved = 1;
+        int bestError = INT_MAX;
+        for (int reserved = 1; reserved < edgeExtent; ++reserved)
+        {
+            GridPage candidate = targetPage;
+            reserveEdge(candidate, reserved, nullptr);
+            ApplyIconSpacingToPage(candidate);
+            const int componentMargin = GetComponentEdgeMargin(
+                candidate, vertical);
+            const float dockScale = ClampDockScale(dockSettings_.thicknessScale);
+            const int scaledIconSize = std::max(1, static_cast<int>(std::round(
+                GetDockPageItemIconSize(candidate) * dockScale)));
+            const int scaledSpacing = std::max(1, static_cast<int>(std::round(
+                kDockSpacing * dockScale)));
+            const int edgeDistance = componentMargin;
+            const int innerGap = 0;
+            const int panelThickness = scaledIconSize + scaledSpacing * 2;
+            const int desiredReservation = dockSettings_.edgeAttached
+                ? panelThickness + innerGap
+                : panelThickness + edgeDistance + innerGap;
+            const int error = std::abs(desiredReservation - reserved);
+            if (error < bestError)
+            {
+                bestError = error;
+                bestReserved = reserved;
+                bestPage = candidate;
+                if (error == 0) break;
+            }
+        }
+
+        targetPage = bestPage;
+        RECT dockArea{};
+        reserveEdge(targetPage, bestReserved, &dockArea);
+        const auto dockMonitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL);
+        if (reserveSystemWorkArea && !(statusBar_ && statusBar_->MergesDock(dockMonitor)))
+        {
+            snowdesktop::DockAppBarReservation request{dockMonitor, screen, edge, bestReserved};
+            registrations.push_back(request);
+            if (auto approved = dockAppBars_->Approved(request))
+            {
+                dockArea = *approved;
+                OffsetRect(&dockArea, -virtualLeft_, -virtualTop_);
+                targetPage.workArea = snowdesktop::ConstrainStatusBarWorkArea(originalWorkArea, dockArea, edge);
+            }
+        }
+        ApplyIconSpacingToPage(targetPage);
+        if (!IsRectEmptyRect(dockArea)) dockAreas_.push_back(dockArea);
+        if (reserveDesktopWorkArea)
+        {
+            const RECT removed = snowdesktop::AppBarReservedWorkArea(originalWorkArea, targetPage.workArea, edge);
+            if (!IsRectEmpty(&removed)) dockReservedAreas_.push_back(removed);
+        }
+
+        // DockContainer geometry still comes from dockArea when overlap is
+        // allowed. Only restore the icon/widget work area so desktop content
+        // may occupy the same edge strip without removing the Dock itself.
+        if (!reserveDesktopWorkArea)
+        {
+            targetPage.workArea = originalWorkArea;
+            ApplyIconSpacingToPage(targetPage);
+        }
+    }
+    dockWorkAreaReservationApplied_ =
+        !dockReservedAreas_.empty();
+    if (dockWorkAreaReservationApplied_)
+        dockWorkAreaReservationPosition_ =
+            dockSettings_.position;
+    if (dockAppBars_) dockAppBars_->Configure(registrations);
+}

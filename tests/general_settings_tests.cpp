@@ -1,11 +1,11 @@
-#include "general_settings.h"
-#include "personalization.h"
-#include "dock_gradient_storage.h"
-#include "taskbar_appearance.h"
-#include "status_bar_appearance.h"
-#include "widget_appearance_presets.h"
-#include "item_title_layout.h"
-#include "winui/font_picker_search.h"
+#include "settings/general_settings.h"
+#include "theme/personalization.h"
+#include "dock/dock_gradient_storage.h"
+#include "theme/taskbar_appearance.h"
+#include "system/status_bar/status_bar_appearance.h"
+#include "widget/view/widget_appearance_presets.h"
+#include "layout/item_title_layout.h"
+#include "../src/winui/font_picker_search.h"
 
 #include <windows.h>
 #include <d2d1.h>

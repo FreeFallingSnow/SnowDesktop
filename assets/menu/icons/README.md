@@ -43,7 +43,7 @@ disabled items retain the renderer's reduced opacity. Secondary icons layer the
 original Filled and Regular geometry.
 Each SVG contains provenance metadata; `sources.json` records asset hashes.
 
-The 128 × 128 PNG counterparts are embedded as RCDATA by `src/resource.rc`.
+The 128 × 128 PNG counterparts are embedded as RCDATA by `src/resources/resource.rc`.
 WIC area downsampling produces premultiplied bitmaps at the menu's physical
 icon size (18 DIP, or 16 DIP in compact menus). Runtime uses no filesystem
 assets or preview-directory paths. The renderer caches a bounded number of

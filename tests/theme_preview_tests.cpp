@@ -1,9 +1,9 @@
-#include "theme_preview.h"
-#include "json_value.h"
-#include "theme_workshop_tags.h"
-#include "winui/theme_edit_state.h"
-#include "theme_workshop.h"
-#include "preview_png_writer.h"
+#include "theme/theme_preview.h"
+#include "common/json_value.h"
+#include "theme/theme_workshop_tags.h"
+#include "../src/winui/theme_edit_state.h"
+#include "theme/theme_workshop.h"
+#include "ui/preview/preview_png_writer.h"
 #include <windows.h>
 #include <algorithm>
 #include <array>

@@ -1,6 +1,6 @@
-#include "namespace_menu_actions.h"
-#include "right_click_contract.h"
-#include "app/shell_item_action_rules.h"
+#include "shell/namespace_menu_actions.h"
+#include "ui/menu/right_click_contract.h"
+#include "../src/app/shell/shell_item_action_rules.h"
 
 #include <iostream>
 #include <string>

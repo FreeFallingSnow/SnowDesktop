@@ -1,6 +1,6 @@
-#include "auto_start_manager.h"
-#include "deployment_context.h"
-#include "diagnostic_log.h"
+#include "platform/auto_start_manager.h"
+#include "platform/deployment_context.h"
+#include "diagnostics/diagnostic_log.h"
 
 #include <windows.h>
 #include <sddl.h>

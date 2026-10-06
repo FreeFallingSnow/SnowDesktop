@@ -1,4 +1,4 @@
-#include "../app_font.h"
+#include "ui/render/app_font.h"
 /**
  * @file widget_base.cpp
  * @brief Widget 基类、容器布局、滚动列表、组件 Chrome 绘制、滚动条绘制及组件工厂的实现。
@@ -12,24 +12,24 @@
  * - DrawScrollbarAt：被多个组件共享的滚动条绘制工具函数。
  * - CreateWidget：组件工厂函数，根据 DesktopWidgetType 创建对应的具体组件实例。
  */
-#include "widget.h"
-#include "../widget_clip_geometry.h"
-#include "types.h"
-#include "constants.h"
-#include "utils.h"
-#include "app.h"
+#include "core/widget.h"
+#include "widget/view/widget_clip_geometry.h"
+#include "common/types.h"
+#include "common/constants.h"
+#include "common/utils.h"
+#include "app/app.h"
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
 #include "storage_title_bar_layout.h"
-#include "../menu_fluent_glyphs.h"
-#include "widget_preview_scene.h"
-#include "../widget_item_layout.h"
-#include "../widget_scroll_rules.h"
-#include "../category_collection_rules.h"
-#include "../desktop_category_item_rules.h"
+#include "ui/menu/menu_fluent_glyphs.h"
+#include "widget/preview/widget_preview_scene.h"
+#include "widget/runtime/widget_item_layout.h"
+#include "widget/view/widget_scroll_rules.h"
+#include "layout/category_collection_rules.h"
+#include "desktop/desktop_category_item_rules.h"
 #include <d2d1_1.h>
 #include <wrl/client.h>
-#include "../l10n.h"
+#include "common/l10n.h"
 #include <algorithm>
 #include <cmath>
 

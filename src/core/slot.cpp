@@ -13,8 +13,8 @@
 #include "slot.h"
 #include "container.h"
 #include "item.h"
-#include "l10n.h"
-#include "constants.h"
+#include "common/l10n.h"
+#include "common/constants.h"
 #include <wrl/client.h>
 #include <algorithm>
 #include <cassert>

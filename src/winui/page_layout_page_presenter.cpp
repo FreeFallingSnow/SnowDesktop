@@ -2,7 +2,7 @@
 
 #include "page_layout_page_presenter.h"
 #include "settings_presenter_controls.h"
-#include "../page_management_rules.h"
+#include "layout/page_management_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 

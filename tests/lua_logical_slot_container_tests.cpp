@@ -1,10 +1,10 @@
-#include "widgets/lua_logical_slot.h"
-#include "logical_slot_picker_rules.h"
-#include "logical_slot_pointer_rules.h"
-#include "logical_slot_keyboard_rules.h"
+#include "../src/widgets/lua_logical_slot.h"
+#include "layout/logical_slot_picker_rules.h"
+#include "layout/logical_slot_pointer_rules.h"
+#include "layout/logical_slot_keyboard_rules.h"
 
-#include "core/item.h"
-#include "core/drag_session.h"
+#include "../src/core/item.h"
+#include "../src/core/drag_session.h"
 
 #include <array>
 #include <cstdlib>

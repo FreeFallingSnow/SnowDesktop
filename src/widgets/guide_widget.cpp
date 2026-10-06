@@ -3,9 +3,9 @@
  * @brief GuideWidget —— 新页面欢迎卡片的实现
  */
 
-#include "widget.h"
-#include "app.h"
-#include "../l10n.h"
+#include "core/widget.h"
+#include "app/app.h"
+#include "common/l10n.h"
 
 #include <algorithm>
 

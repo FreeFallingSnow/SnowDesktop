@@ -1,6 +1,6 @@
-#include "auto_start_rules.h"
-#include "auto_start_elevation.h"
-#include "deployment_context.h"
+#include "platform/auto_start_rules.h"
+#include "platform/auto_start_elevation.h"
+#include "platform/deployment_context.h"
 
 #include <cstdlib>
 #include <iostream>

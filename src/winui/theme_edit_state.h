@@ -1,5 +1,5 @@
 #pragma once
-#include "../theme_library.h"
+#include "theme/theme_library.h"
 #include <algorithm>
 
 namespace snowdesktop::winui::theme_controls

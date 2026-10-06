@@ -1,5 +1,5 @@
-#include "popup_animation_rules.h"
-#include "app/popup_dwell_controller.h"
+#include "layout/popup_animation_rules.h"
+#include "../src/app/popup/popup_dwell_controller.h"
 
 #include <cmath>
 #include <cstdlib>

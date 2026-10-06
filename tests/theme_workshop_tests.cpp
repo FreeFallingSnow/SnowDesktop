@@ -1,10 +1,10 @@
-#include "theme_workshop.h"
-#include "theme_preview.h"
+#include "theme/theme_workshop.h"
+#include "theme/theme_preview.h"
 #include "bridge_json.h"
-#include "atomic_file.h"
-#include "theme_workshop_tags.h"
-#include "theme_bridge_availability_cache.h"
-#include "widget_theme_selection.h"
+#include "data/atomic_file.h"
+#include "theme/theme_workshop_tags.h"
+#include "theme/theme_bridge_availability_cache.h"
+#include "widget/runtime/widget_theme_selection.h"
 #include <iostream>
 #include <thread>
 #include <future>

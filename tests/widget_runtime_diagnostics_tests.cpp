@@ -1,4 +1,4 @@
-#include "widget_runtime_diagnostics.h"
+#include "widget/runtime/widget_runtime_diagnostics.h"
 
 #include <cstdlib>
 #include <iostream>

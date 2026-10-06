@@ -4,7 +4,7 @@
 #pragma once
 
 #include "steam_workshop_core.h"
-#include "../../src/theme_package_limits.h"
+#include "../../src/theme/theme_package_limits.h"
 
 #include <algorithm>
 #include <cwctype>

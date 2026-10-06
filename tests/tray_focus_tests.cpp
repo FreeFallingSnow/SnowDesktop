@@ -1,6 +1,6 @@
 #include <windows.h>
 #include <commctrl.h>
-#include "taskbar_hook/tray_protocol.h"
+#include "../src/taskbar_hook/tray_protocol.h"
 #include <iostream>
 #include <memory>
 #include <cstdlib>
@@ -41,7 +41,7 @@ BOOL WINAPI Set(HWND window)
 #define WindowFromPoint foreground_fixture::Pointed
 #define MenuRetentionSession FixtureMenuRetentionSession
 #define SnowDesktopTrayHookProc FixtureTrayHookProc
-#include "tray_focus.h"
+#include "system/tray/tray_focus.h"
 #include "../src/taskbar_hook/tray_collector.cpp"
 #undef SnowDesktopTrayHookProc
 #undef RestoreFocus
@@ -51,7 +51,7 @@ BOOL WINAPI Set(HWND window)
 #undef SetForegroundWindow
 #undef AllowSetForegroundWindow
 #undef GetForegroundWindow
-#include "status_bar_interaction.h"
+#include "system/status_bar/status_bar_interaction.h"
 
 namespace
 {

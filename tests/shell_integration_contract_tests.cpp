@@ -69,12 +69,12 @@ int main(int argc, char** argv)
         return 2;
     }
     const std::filesystem::path root(argv[1]);
-    const auto utils = ReadSource(root, "src/utils.cpp");
-    const auto lifecycle = ReadSource(root, "src/app/app_lifecycle.cpp");
-    const auto settings = ReadSource(root, "src/app/app_settings_apply.cpp");
-    const auto startup = ReadSource(root, "src/app/startup_animation.cpp");
+    const auto utils = ReadSource(root, "src/common/utils.cpp");
+    const auto lifecycle = ReadSource(root, "src/app/lifecycle/app_lifecycle.cpp");
+    const auto settings = ReadSource(root, "src/app/lifecycle/app_settings_apply.cpp");
+    const auto startup = ReadSource(root, "src/app/lifecycle/startup_animation.cpp");
     const auto hook = ReadSource(root, "src/taskbar_hook/taskbar_hook.cpp");
-    const auto facade = ReadSource(root, "src/settings_window.cpp");
+    const auto facade = ReadSource(root, "src/settings/settings_window.cpp");
     const auto presenter = ReadSource(root, "src/winui/dock_page_presenter.cpp");
     const auto settingsHost = ReadSource(root, "src/winui/settings_window_host.cpp");
 

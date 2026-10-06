@@ -1,9 +1,9 @@
-#include "tray_service.h"
-#include "tray_order.h"
-#include "tray_menu_placement.h"
-#include "status_bar_notification.h"
-#include "status_bar_input_method.h"
-#include "status_bar_input_method_identity.h"
+#include "system/tray/tray_service.h"
+#include "system/tray/tray_order.h"
+#include "system/tray/tray_menu_placement.h"
+#include "system/status_bar/status_bar_notification.h"
+#include "system/status_bar/status_bar_input_method.h"
+#include "system/status_bar/status_bar_input_method_identity.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>

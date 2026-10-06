@@ -7,8 +7,8 @@
 #include "panel_appearance_editor.h"
 #include "merged_bar_height_editor.h"
 
-#include "../dock_settings.h"
-#include "../taskbar_appearance.h"
+#include "dock/dock_settings.h"
+#include "theme/taskbar_appearance.h"
 #include "theme_library_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>

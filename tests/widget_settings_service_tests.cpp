@@ -1,4 +1,4 @@
-#include "widget_settings_service.h"
+#include "widget/settings/widget_settings_service.h"
 
 #include <cstdlib>
 #include <iostream>

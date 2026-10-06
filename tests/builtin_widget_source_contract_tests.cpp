@@ -1,5 +1,5 @@
 #include "test_source_boundary.h"
-#include "../src/json_value.h"
+#include "../src/common/json_value.h"
 #include <regex>
 #include <array>
 #include <algorithm>
@@ -238,14 +238,14 @@ int main(int argc, char** argv)
         {"widgets/sticky-note/main.lua", "", "", {"storage.set(\"textColor\""}},
         {"widgets/media-controls/main.lua", "", "",
          {"task.start(\"app.search\"", "type = \"appSearch\"", "data.subscribe(\"app.indexStatus\""}},
-        {"src/widget_engine.cpp", "bool WidgetEngine::LoadWidget(", "void WidgetEngine::RenderAll(",
+        {"src/widget/runtime/widget_engine.cpp", "bool WidgetEngine::LoadWidget(", "void WidgetEngine::RenderAll(",
          {"legacyContract", "currentContract ?"}},
-        {"src/widget_engine.cpp", "", "", {"lua_WidgetSetTimer", "lua_WidgetCancelTimer", "lua_WidgetEditText"}},
-        {"src/widget_engine.cpp", "static ID2D1Bitmap1* LoadImageBitmap(",
+        {"src/widget/runtime/widget_engine.cpp", "", "", {"lua_WidgetSetTimer", "lua_WidgetCancelTimer", "lua_WidgetEditText"}},
+        {"src/widget/runtime/widget_engine.cpp", "static ID2D1Bitmap1* LoadImageBitmap(",
          "static ID2D1Bitmap1* LoadRuntimeImageBitmap(", {"CreateDecoderFromFilename"}},
-        {"src/widget_engine.cpp", "static std::optional<std::wstring> ResolveResourceHandlePath(",
+        {"src/widget/runtime/widget_engine.cpp", "static std::optional<std::wstring> ResolveResourceHandlePath(",
          "static std::optional<std::wstring> CurrentPackageResourcePath(", {"ResolveCurrentPackageAsset"}},
-        {"src/widget_engine.cpp", "static int lua_ResourceExists(", "static int lua_ResourceImage(", {"is_regular_file"}},
+        {"src/widget/runtime/widget_engine.cpp", "static int lua_ResourceExists(", "static int lua_ResourceImage(", {"is_regular_file"}},
         {"widgets/pomodoro/main.lua", "", "", {"red * 299", "green * 587", "blue * 114"}},
     }), "built-in resource, render and legacy-API source boundaries");
     std::cout << "Built-in manifest/publication data and source boundaries passed; no widget event or VM execution was tested\n";

@@ -108,7 +108,7 @@ The affected files are:
 - `src/taskbar_dynamic/ShellViewCoordinator.idl`
 - `src/taskbar_hook/taskview_visibility.h`
 - portions of `src/taskbar_hook/taskbar_hook.cpp`
-- portions of `src/app/desktop_backdrop_compositor.cpp`
+- portions of `src/app/render/desktop_backdrop_compositor.cpp`
 
 The complete GPL v3 license text is retained in the repository root `LICENSE`.
 The upstream source and history remain available at the pinned TranslucentTB
@@ -116,7 +116,7 @@ commit linked above.
 
 ## DeskMakeover-derived shape geometry
 
-`src/icon_beautify.cpp` adapts normalized shape control points and continuous
+`src/icons/icon_beautify.cpp` adapts normalized shape control points and continuous
 corner geometry from DeskMakeover's `dm-icon-core` shape catalog. The upstream
 visual-language reference is available at
 <https://github.com/nicepkg/deskmakeover/blob/main/docs/specs/02-visual-language.md>
@@ -147,7 +147,7 @@ SOFTWARE.
 
 ## OpenHarmony GraphicsEffect-derived rim calculations
 
-`src/flat_glass_rim.h` contains modified CPU adaptations of the SDF edge-light,
+`src/theme/flat_glass_rim.h` contains modified CPU adaptations of the SDF edge-light,
 opposing fan-mask and exponential inner-shadow calculations from OpenHarmony
 GraphicsEffect at commit `da8e11652a705ea2141c35de1a1fff501148740e`.
 Copyright (c) 2025-2026 Huawei Device Co., Ltd. SnowDesktop modified these
@@ -157,7 +157,7 @@ implementation. The source paths and adaptation boundaries are documented in
 `third_party/graphics-effect/README.md`. The Apache-2.0 license is reproduced
 below so release packages containing this notices file retain the full text.
 
-`src/flat_glass_rim.h` 包含上述官方边缘光、对向扇区遮罩和指数内阴影计算的修改版。
+`src/theme/flat_glass_rim.h` 包含上述官方边缘光、对向扇区遮罩和指数内阴影计算的修改版。
 SnowDesktop 于 2026 年将其移植到现有透明度遮罩并独立调校视觉参数，未声称与荣耀
 MagicAnimation 使用相同实现。来源和移植边界见上述 README；完整许可证附于本文末尾。
 

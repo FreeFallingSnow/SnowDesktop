@@ -1,10 +1,10 @@
-#include "widget_system_data_provider.h"
-#include "widget_gpu_usage.h"
-#include "widget_gpu_presentation.h"
-#include "widget_gpu_counter_buffer.h"
-#include "widget_gpu_identity.h"
-#include "widget_storage_usage.h"
-#include "system_power_status.h"
+#include "widget/data/widget_system_data_provider.h"
+#include "widget/data/widget_gpu_usage.h"
+#include "widget/data/widget_gpu_presentation.h"
+#include "widget/data/widget_gpu_counter_buffer.h"
+#include "widget/data/widget_gpu_identity.h"
+#include "widget/storage/widget_storage_usage.h"
+#include "system/controls/system_power_status.h"
 
 #include <chrono>
 #include <cstdlib>

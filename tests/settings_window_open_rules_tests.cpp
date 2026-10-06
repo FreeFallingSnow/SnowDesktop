@@ -1,8 +1,8 @@
-#include "settings_window_open_rules.h"
-#include "usage_guide.h"
-#include "usage_guide_panel.h"
-#include "usage_guide_settings.h"
-#include "json_value.h"
+#include "settings/settings_window_open_rules.h"
+#include "platform/usage_guide.h"
+#include "platform/usage_guide_panel.h"
+#include "platform/usage_guide_settings.h"
+#include "common/json_value.h"
 #include <windows.h>
 
 #include <algorithm>

@@ -1,5 +1,5 @@
-#include "widget_filesystem_handle_store.h"
-#include "widget_filesystem_drop.h"
+#include "widget/tasks/widget_filesystem_handle_store.h"
+#include "widget/tasks/widget_filesystem_drop.h"
 
 #include <windows.h>
 

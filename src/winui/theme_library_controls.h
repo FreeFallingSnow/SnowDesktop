@@ -2,8 +2,8 @@
 #include "theme_library_actions.h"
 #include "theme_edit_state.h"
 #include "appearance_sections.h"
-#include "../theme_library_settings.h"
-#include "../theme_workshop_tags.h"
+#include "theme/theme_library_settings.h"
+#include "theme/theme_workshop_tags.h"
 #include <winrt/Windows.UI.Xaml.Interop.h>
 #include <winrt/Windows.System.h>
 #include <atomic>

@@ -8,7 +8,7 @@
 #include "panel_appearance_editor.h"
 #include "font_picker_search.h"
 #include "quick_navigation_options.h"
-#include "../theme_library_settings.h"
+#include "theme/theme_library_settings.h"
 #include "theme_library_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>

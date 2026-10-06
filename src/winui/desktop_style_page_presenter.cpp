@@ -2,10 +2,10 @@
 #include "desktop_style_page_presenter.h"
 #include "merged_bar_height_editor.h"
 #include "settings_presenter_controls.h"
-#include "../desktop_style_presets.h"
-#include "../dock_collection_icon_rules.h"
-#include "../status_bar_view.h"
-#include "../status_bar_layout.h"
+#include "desktop/desktop_style_presets.h"
+#include "dock/dock_collection_icon_rules.h"
+#include "system/status_bar/status_bar_view.h"
+#include "system/status_bar/status_bar_layout.h"
 
 #include <array>
 #include <cmath>

@@ -1,6 +1,6 @@
-#include "graphics_device_recovery.h"
-#include "widget_composition_layer_rules.h"
-#include "widget_surface_retention.h"
+#include "ui/render/graphics_device_recovery.h"
+#include "widget/view/widget_composition_layer_rules.h"
+#include "widget/view/widget_surface_retention.h"
 #include "test_source_boundary.h"
 
 #include <cstdlib>
@@ -311,7 +311,7 @@ int main(int argc, char** argv)
                 retireChildren < retireParents,
             "shared parent reset must own marquee cache retirement before clearing parents");
         Check(snowdesktop::test::CheckSourceBoundaries(root, {
-            {"src/app/app_widget_composition.cpp",
+            {"src/app/widgets/app_widget_composition.cpp",
              "bool DesktopApp::FlushPendingDesktopWidgetComposition()",
              "bool DesktopApp::HasDesktopWidgetComposition(",
              {"desktopWidgetCompositionItems_.erase(",

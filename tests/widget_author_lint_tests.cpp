@@ -1,4 +1,4 @@
-#include "widget_author_lint.h"
+#include "widget/authoring/widget_author_lint.h"
 #include "test_temporary_directory.h"
 
 #include <chrono>

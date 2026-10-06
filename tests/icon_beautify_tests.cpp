@@ -1,4 +1,4 @@
-#include "icon_beautify.h"
+#include "icons/icon_beautify.h"
 
 #include <algorithm>
 #include <array>

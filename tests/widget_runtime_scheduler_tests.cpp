@@ -1,5 +1,5 @@
-#include "widget_runtime_scheduler.h"
-#include "widget_invalidation_batch.h"
+#include "widget/runtime/widget_runtime_scheduler.h"
+#include "widget/runtime/widget_invalidation_batch.h"
 
 #include <cstdlib>
 #include <iostream>

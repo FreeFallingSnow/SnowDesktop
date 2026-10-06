@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../settings_controller.h"
+#include "settings/settings_controller.h"
 #include "hotkey_recorder.h"
 #include "start_page_presenter.h"
 #include "../../steam_bridge/src/steam_connection_feedback.h"

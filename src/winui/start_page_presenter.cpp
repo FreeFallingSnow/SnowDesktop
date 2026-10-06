@@ -1,6 +1,6 @@
 #include "pch.h"
 #include "start_page_presenter.h"
-#include "../usage_guide_settings.h"
+#include "platform/usage_guide_settings.h"
 #include <algorithm>
 #include <cmath>
 

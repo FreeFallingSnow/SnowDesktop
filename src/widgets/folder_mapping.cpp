@@ -8,27 +8,27 @@
  * 拖放排序和滚动等功能。
  */
 
-#include "widget.h"
-#include "folder_mapping_rules.h"
-#include "slot.h"
-#include "item.h"
-#include "types.h"
-#include "app.h"
+#include "core/widget.h"
+#include "layout/folder_mapping_rules.h"
+#include "core/slot.h"
+#include "core/item.h"
+#include "common/types.h"
+#include "app/app.h"
 #include "collection_group_rules.h"
-#include "../menu_fluent_glyphs.h"
-#include "drop_model.h"
-#include "search_match.h"
+#include "ui/menu/menu_fluent_glyphs.h"
+#include "core/drop_model.h"
+#include "navigation/search_match.h"
 #include "widget_chrome_rules.h"
-#include "widget_preview_scene.h"
-#include "../category_settings.h"
-#include "../item_render_layer_rules.h"
-#include "../widget_item_layout.h"
+#include "widget/preview/widget_preview_scene.h"
+#include "settings/category_settings.h"
+#include "layout/item_render_layer_rules.h"
+#include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <unordered_set>
-#include "../l10n.h"
+#include "common/l10n.h"
 
 static RECT FolderMappingItemRect(FolderMapping* widget, size_t linearIndex);
 

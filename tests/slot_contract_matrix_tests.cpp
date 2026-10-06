@@ -1,4 +1,4 @@
-#include "core/slot_contract.h"
+#include "../src/core/slot_contract.h"
 #include "slot_drop_expectations.h"
 
 #include <array>

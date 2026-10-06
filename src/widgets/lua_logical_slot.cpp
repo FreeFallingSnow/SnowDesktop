@@ -1,6 +1,6 @@
 #include "lua_logical_slot.h"
 
-#include "../core/item.h"
+#include "core/item.h"
 
 #include <algorithm>
 #include <cmath>

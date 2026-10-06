@@ -1,10 +1,10 @@
 #include "theme_workshop_publish.h"
 #include "bridge_json.h"
 #include "steam_app_identity.h"
-#include "../../src/theme_library.h"
-#include "../../src/theme_workshop_tags.h"
-#include "../../src/theme_preview_parts.h"
-#include "../../src/atomic_file.h"
+#include "../../src/theme/theme_library.h"
+#include "../../src/theme/theme_workshop_tags.h"
+#include "../../src/theme/theme_preview_parts.h"
+#include "../../src/data/atomic_file.h"
 #include <windows.h>
 #include <bcrypt.h>
 #include <charconv>

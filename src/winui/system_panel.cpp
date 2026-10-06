@@ -5,12 +5,12 @@
 #include "system_resource_view.h"
 #include "system_panel_surface.h"
 #include "winui_runtime.h"
-#include "../tray_service.h"
-#include "../widget_system_data_provider.h"
-#include "../app/desktop_backdrop_compositor.h"
-#include "../l10n.h"
-#include "../quick_navigation_animation_rules.h"
-#include "../animation_settings.h"
+#include "system/tray/tray_service.h"
+#include "widget/data/widget_system_data_provider.h"
+#include "app/render/desktop_backdrop_compositor.h"
+#include "common/l10n.h"
+#include "navigation/quick_navigation_animation_rules.h"
+#include "settings/animation_settings.h"
 #include <cmath>
 
 namespace snowdesktop::winui

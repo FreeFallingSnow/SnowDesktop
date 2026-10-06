@@ -1,8 +1,8 @@
 #pragma once
 #include "settings_presenter_controls.h"
 #include "appearance_sections.h"
-#include "../app/quick_navigation_theme.h"
-#include "../quick_navigation_query.h"
+#include "app/navigation/quick_navigation_theme.h"
+#include "navigation/quick_navigation_query.h"
 #include <memory>
 #include <map>
 #include <cstdio>

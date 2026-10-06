@@ -1,4 +1,4 @@
-#include "widget_secret_store.h"
+#include "widget/storage/widget_secret_store.h"
 
 #include <windows.h>
 

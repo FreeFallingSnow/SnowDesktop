@@ -595,22 +595,22 @@ int main(int argc, char** argv)
             ReadText(root / "scripts/README.md"),
             ReadText(root / "packaging/README.md"));
         TestRuntimeResolution(
-            ReadText(root / "src/deployment_context.h"),
-            ReadText(root / "src/deployment_context.cpp"),
+            ReadText(root / "src/platform/deployment_context.h"),
+            ReadText(root / "src/platform/deployment_context.cpp"),
             ReadText(root / "src/main.cpp"),
-            ReadText(root / "src/app/wallpaper_engine_capture.cpp"),
+            ReadText(root / "src/app/features/wallpaper_engine_capture.cpp"),
             ReadText(root / "scripts/build.bat"),
             ReadText(root / "scripts/build_debug.bat"));
         TestAutoStartTransitionManifest(
             ReadText(root / "packaging/AppxManifest.xml.in"));
         TestOwnedRuntimeStaging(
-            ReadText(root / "src/app/app_drop_data_extraction.cpp"),
-            ReadText(root / "src/widget_package.cpp"),
+            ReadText(root / "src/app/drag_drop/app_drop_data_extraction.cpp"),
+            ReadText(root / "src/widget/packages/widget_package.cpp"),
             ReadText(root / "tools/snowwidget/main.cpp"),
             ReadText(root / "steam_bridge/src/package_tool.cpp"),
             ReadText(root / "steam_bridge/src/steam_workshop_core.cpp"),
             ReadText(root / "steam_bridge/src/manager_main.cpp"),
-            ReadText(root / "src/steam_workshop_source.cpp"),
+            ReadText(root / "src/steam/steam_workshop_source.cpp"),
             ReadText(root / "steam_bridge/src/workshop_project.cpp"));
     }
 

@@ -1,8 +1,8 @@
 #include "pch.h"
 #include "system_resource_view.h"
-#include "../status_bar_presentation.h"
-#include "../widget_gpu_presentation.h"
-#include "../l10n.h"
+#include "system/status_bar/status_bar_presentation.h"
+#include "widget/data/widget_gpu_presentation.h"
+#include "common/l10n.h"
 #include <winrt/Microsoft.UI.Xaml.Shapes.h>
 #include <cmath>
 #include <array>

@@ -1,6 +1,6 @@
 #pragma once
-#include "../status_bar_settings.h"
-#include "../tray_service.h"
+#include "system/status_bar/status_bar_settings.h"
+#include "system/tray/tray_service.h"
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <functional>
 #include <memory>

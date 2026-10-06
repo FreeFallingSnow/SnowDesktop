@@ -97,7 +97,7 @@ set(SNOWDESKTOP_LEGAL_COPYRIGHT
 set(SNOWDESKTOP_EXE_VERSION_RESOURCE
     "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktop.version.rc")
 configure_file(
-    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${CMAKE_SOURCE_DIR}/src/resources/version.rc.in"
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
     @ONLY)
 
@@ -109,7 +109,7 @@ set(SNOWDESKTOP_LEGAL_COPYRIGHT
 set(SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE
     "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktopLauncher.version.rc")
 configure_file(
-    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${CMAKE_SOURCE_DIR}/src/resources/version.rc.in"
     "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}"
     @ONLY)
 
@@ -121,7 +121,7 @@ set(SNOWDESKTOP_LEGAL_COPYRIGHT
 set(SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE
     "${SNOWDESKTOP_VERSION_RESOURCE_DIR}/SnowDesktopTaskbarHook.version.rc")
 configure_file(
-    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${CMAKE_SOURCE_DIR}/src/resources/version.rc.in"
     "${SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE}"
     @ONLY)
 
@@ -135,239 +135,239 @@ set(SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION "2.4.0")
 set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
 
 set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
-    src/system_controls.cpp
-    src/system_control_windows.cpp
-    src/system_control_audio.cpp
-    src/system_control_power.cpp
-    src/system_control_brightness.cpp
-    src/system_control_wifi.cpp
-    src/system_control_bluetooth.cpp
-    src/system_control_media.cpp
-    src/system_control_quick_actions.cpp)
+    src/system/controls/system_controls.cpp
+    src/system/controls/system_control_windows.cpp
+    src/system/controls/system_control_audio.cpp
+    src/system/controls/system_control_power.cpp
+    src/system/controls/system_control_brightness.cpp
+    src/system/controls/system_control_wifi.cpp
+    src/system/controls/system_control_bluetooth.cpp
+    src/system/controls/system_control_media.cpp
+    src/system/controls/system_control_quick_actions.cpp)
 set(SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES
     dxva2 wlanapi powrprof setupapi oleaut32 wbemuuid)
 
 set(SNOWDESKTOP_SOURCES
     ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}
     src/main.cpp
-    src/auto_start_manager.cpp
-    src/auto_start_manager.h
-    src/auto_start_elevation.cpp
-    src/auto_start_elevation.h
-    src/auto_start_rules.h
-    src/application_crash_watchdog.cpp
-    src/desktop_namespace_registry.cpp
-    src/desktop_namespace_registry.h
-    src/icon_beautify.cpp
-    src/app/app_bitmap_cache.cpp
-    src/app/app_background_menu.cpp
-    src/app/app_animation_scheduler.cpp
-    src/app/app_clipboard_interaction.cpp
-    src/app/app_composition_animation_overlay.cpp
-    src/app/app_container_navigation.cpp
-    src/app/app_data_object.cpp
-    src/app/app_desktop_enumeration.cpp
-    src/app/app_desktop_foreground_composition.cpp
-    src/app/app_desktop_layout.cpp
-    src/app/app_desktop_reload.cpp
-    src/app/app_dock_drop.cpp
-    src/app/app_dock_launch.cpp
-    src/app/app_dock_layout.cpp
-    src/dock_appbar.cpp
-    src/dock_appbar.h
-    src/app/app_status_bar.cpp
-    src/status_bar_view.cpp
-    src/status_bar_view.h
-    src/status_bar_preview.cpp
-    src/status_bar_preview.h
-    src/status_bar.cpp
-    src/status_bar_input_method.cpp
-    src/status_bar_input_method.h
-    src/status_bar_notification.cpp
-    src/status_bar_notification.h
-    src/tray_service.cpp
-    src/tray_menu_placement.cpp
-    src/tray_menu_placement.h
-    src/native_tooltip.cpp
-    src/native_tooltip.h
-    src/native_tooltip_content.h
-    src/native_tooltip_state.h
-    src/native_control_geometry.h
-    src/tray_model.cpp
-    src/tray_service.h
-    src/tray_focus.h
+    src/platform/auto_start_manager.cpp
+    src/platform/auto_start_manager.h
+    src/platform/auto_start_elevation.cpp
+    src/platform/auto_start_elevation.h
+    src/platform/auto_start_rules.h
+    src/platform/application_crash_watchdog.cpp
+    src/desktop/desktop_namespace_registry.cpp
+    src/desktop/desktop_namespace_registry.h
+    src/icons/icon_beautify.cpp
+    src/app/render/app_bitmap_cache.cpp
+    src/app/menus/app_background_menu.cpp
+    src/app/render/app_animation_scheduler.cpp
+    src/app/input/app_clipboard_interaction.cpp
+    src/app/render/app_composition_animation_overlay.cpp
+    src/app/popup/app_container_navigation.cpp
+    src/app/drag_drop/app_data_object.cpp
+    src/app/shell/app_desktop_enumeration.cpp
+    src/app/render/app_desktop_foreground_composition.cpp
+    src/app/layout/app_desktop_layout.cpp
+    src/app/shell/app_desktop_reload.cpp
+    src/app/dock/app_dock_drop.cpp
+    src/app/dock/app_dock_launch.cpp
+    src/app/dock/app_dock_layout.cpp
+    src/dock/dock_appbar.cpp
+    src/dock/dock_appbar.h
+    src/app/features/app_status_bar.cpp
+    src/system/status_bar/status_bar_view.cpp
+    src/system/status_bar/status_bar_view.h
+    src/system/status_bar/status_bar_preview.cpp
+    src/system/status_bar/status_bar_preview.h
+    src/system/status_bar/status_bar.cpp
+    src/system/status_bar/status_bar_input_method.cpp
+    src/system/status_bar/status_bar_input_method.h
+    src/system/status_bar/status_bar_notification.cpp
+    src/system/status_bar/status_bar_notification.h
+    src/system/tray/tray_service.cpp
+    src/system/tray/tray_menu_placement.cpp
+    src/system/tray/tray_menu_placement.h
+    src/ui/render/native_tooltip.cpp
+    src/ui/render/native_tooltip.h
+    src/ui/render/native_tooltip_content.h
+    src/ui/render/native_tooltip_state.h
+    src/ui/render/native_control_geometry.h
+    src/system/tray/tray_model.cpp
+    src/system/tray/tray_service.h
+    src/system/tray/tray_focus.h
     src/taskbar_hook/tray_protocol.h
-    src/status_bar.h
-    src/status_bar_shell_shortcut.h
-    src/status_bar_interaction.h
-    src/status_bar_settings.h
-    src/status_bar_appbar.h
-    src/app/app_dock_menu.cpp
-    src/app/app_dock_model.cpp
-    src/app/app_dock_render.cpp
-    src/app/app_dock_window_control.cpp
-    src/app/app_dock_window_tracking.cpp
-    src/app/app_drag_hint_window.cpp
-    src/app/app_drag_lifecycle.cpp
-    src/app/app_drag_preview_window.cpp
-    src/app/app_drag_target_update.cpp
-    src/drop_data_url.cpp
-    src/drop_data_url.h
-    src/drop_image_data.cpp
-    src/drop_image_data.h
-    src/drop_text_rules.cpp
-    src/drop_text_rules.h
-    src/app/app_drop_data_extraction.cpp
-    src/external_drop_content.cpp
-    src/app/app_url_drop_download.cpp
-    src/app/app_website_icon.cpp
-    src/website_icon.cpp
-    src/app/app_drop_execution.cpp
-    src/app/app_external_slot_drop.cpp
-    src/app/app_drop_preview.cpp
-    src/app/app_drop_render.cpp
-    src/app/app_floating_dock_interaction.cpp
-    src/app/app_floating_dock_lifecycle.cpp
-    src/app/app_floating_dock_render.cpp
-    src/app/app_floating_dock_window.cpp
-    src/app/app_floating_popup_window.cpp
-    src/app/app_graphics_device.cpp
-    src/app/app_glass_render.cpp
-    src/app/app_grid_drag.cpp
-    src/app/app_grid_placement.cpp
-    src/app/app_hit_testing.cpp
-    src/app/app_icon_loader.cpp
-    src/app/app_icon_render.cpp
-    src/app/app_item_sorting.cpp
-    src/app/app_item_menu.cpp
-    src/app/app_keyboard_input.cpp
-    src/app/app_keyboard_navigation.cpp
-    src/app/app_layout.cpp
-    src/app/app_large_icons.cpp
-    src/app/app_large_icon_interaction.cpp
-    src/large_icon_assets.cpp
-    src/large_icon_renderer.cpp
-    src/app/app_lifecycle.cpp
-    src/app/app_lua_panel.cpp
-    src/app/app_lua_panel_render.cpp
-    src/app/app_lua_bridge.cpp
-    src/app/app_menu_icons.cpp
-    src/app/app_message_dispatch.cpp
-    src/shell_context_menu_site.cpp
-    src/windows_desktop_layout.cpp
-    src/shell_launch_worker.cpp
-    src/shell_launch_process.cpp
-    src/shell_extension_menu.cpp
-    src/shell_extension_menu_cache.cpp
-    src/shell_extension_catalogue.cpp
-    src/shell_extension_service.cpp
-    src/shell_file_operation_worker.cpp
-    src/app/app_navigation_render.cpp
-    src/app/app_ole_drop_routing.cpp
-    src/app/app_ole_drop_session.cpp
-    src/app/app_overlay_render.cpp
-    src/app/app_page_grid.cpp
-    src/app/app_paint.cpp
-    src/app/app_pointer_context.cpp
-    src/app/app_pointer_down.cpp
-    src/app/app_pointer_move.cpp
-    src/app/app_pointer_release.cpp
-    src/app/app_popup_geometry.cpp
-    src/app/app_popup_dwell_interaction.cpp
-    src/app/app_popup_lifecycle.cpp
-    src/app/app_popup_render.cpp
-    src/app/app_popup_transition.cpp
-    src/app/app_quick_navigation_interaction.cpp
-    src/app/app_quick_navigation_features.cpp
-    src/app/app_quick_navigation_preview.cpp
-    src/app/app_theme_preview.cpp
-    src/app/app_quick_navigation_layout.cpp
-    src/app/app_quick_navigation_messages.cpp
-    src/app/app_quick_navigation_model.cpp
-    src/app/app_quick_navigation_render.cpp
-    src/app/app_quick_navigation_window.cpp
-    src/app/app_rename_begin.cpp
-    src/app/app_rename_commit.cpp
-    src/app/app_rename_editor.cpp
-    src/app/app_rename_target.cpp
-    src/app/app_render_geometry.cpp
-    src/app/app_render_primitives.cpp
-    src/app/app_run.cpp
-    src/app/app_usage_guide.cpp
-    src/usage_guide.cpp
-    src/usage_guide.h
-    src/app/app_shell_context_menu.cpp
-    src/app/app_shell_file_operation.cpp
-    src/app/app_shell_menu.cpp
-    src/app/app_scene_render.cpp
-    src/app/app_scroll_interaction.cpp
-    src/app/app_selection_interaction.cpp
-    src/app/app_settings_apply.cpp
-    src/app/desktop_passthrough_indicator.cpp
-    src/app/app_text_render.cpp
-    src/app/app_taskbar_integration.cpp
-    src/app/app_steam_workshop.cpp
-    src/app/app_timer_dispatch.cpp
-    src/app/app_tray.cpp
-    src/app/app_window_dispatch.cpp
-    src/app/app_widget_context_menu.cpp
-    src/app/app_widget_grouping.cpp
-    src/app/app_widget_marquee_composition.cpp
-    src/app/app_widget_composition.cpp
-    src/app/app_widget_placement.cpp
-    src/app/app_widget_refresh.cpp
-    src/app/drag_drop_controller.cpp
-    src/app/drag_render_cache.cpp
-    src/app/ole_drag_drop_adapter.cpp
-    src/app/tray_icon_controller.cpp
-    src/app/widget_notification_presenter.cpp
-    src/app/desktop_backdrop_compositor.cpp
-    src/app/startup_animation.cpp
-    src/app/wallpaper_engine_capture.cpp
-    src/atomic_file.cpp
-    src/dock_window_preview.cpp
-    src/dock_window_transition.cpp
+    src/system/status_bar/status_bar.h
+    src/system/status_bar/status_bar_shell_shortcut.h
+    src/system/status_bar/status_bar_interaction.h
+    src/system/status_bar/status_bar_settings.h
+    src/system/status_bar/status_bar_appbar.h
+    src/app/dock/app_dock_menu.cpp
+    src/app/dock/app_dock_model.cpp
+    src/app/dock/app_dock_render.cpp
+    src/app/dock/app_dock_window_control.cpp
+    src/app/dock/app_dock_window_tracking.cpp
+    src/app/drag_drop/app_drag_hint_window.cpp
+    src/app/drag_drop/app_drag_lifecycle.cpp
+    src/app/drag_drop/app_drag_preview_window.cpp
+    src/app/drag_drop/app_drag_target_update.cpp
+    src/drag_drop/drop_data_url.cpp
+    src/drag_drop/drop_data_url.h
+    src/drag_drop/drop_image_data.cpp
+    src/drag_drop/drop_image_data.h
+    src/drag_drop/drop_text_rules.cpp
+    src/drag_drop/drop_text_rules.h
+    src/app/drag_drop/app_drop_data_extraction.cpp
+    src/drag_drop/external_drop_content.cpp
+    src/app/drag_drop/app_url_drop_download.cpp
+    src/app/features/app_website_icon.cpp
+    src/icons/website_icon.cpp
+    src/app/drag_drop/app_drop_execution.cpp
+    src/app/drag_drop/app_external_slot_drop.cpp
+    src/app/drag_drop/app_drop_preview.cpp
+    src/app/drag_drop/app_drop_render.cpp
+    src/app/dock/app_floating_dock_interaction.cpp
+    src/app/dock/app_floating_dock_lifecycle.cpp
+    src/app/dock/app_floating_dock_render.cpp
+    src/app/dock/app_floating_dock_window.cpp
+    src/app/popup/app_floating_popup_window.cpp
+    src/app/render/app_graphics_device.cpp
+    src/app/render/app_glass_render.cpp
+    src/app/layout/app_grid_drag.cpp
+    src/app/layout/app_grid_placement.cpp
+    src/app/input/app_hit_testing.cpp
+    src/app/render/app_icon_loader.cpp
+    src/app/render/app_icon_render.cpp
+    src/app/layout/app_item_sorting.cpp
+    src/app/menus/app_item_menu.cpp
+    src/app/input/app_keyboard_input.cpp
+    src/app/input/app_keyboard_navigation.cpp
+    src/app/layout/app_layout.cpp
+    src/app/features/app_large_icons.cpp
+    src/app/features/app_large_icon_interaction.cpp
+    src/icons/large_icon_assets.cpp
+    src/icons/large_icon_renderer.cpp
+    src/app/lifecycle/app_lifecycle.cpp
+    src/app/widgets/app_lua_panel.cpp
+    src/app/widgets/app_lua_panel_render.cpp
+    src/app/widgets/app_lua_bridge.cpp
+    src/app/menus/app_menu_icons.cpp
+    src/app/lifecycle/app_message_dispatch.cpp
+    src/shell/shell_context_menu_site.cpp
+    src/desktop/windows_desktop_layout.cpp
+    src/shell/shell_launch_worker.cpp
+    src/shell/shell_launch_process.cpp
+    src/shell/shell_extension_menu.cpp
+    src/shell/shell_extension_menu_cache.cpp
+    src/shell/shell_extension_catalogue.cpp
+    src/shell/shell_extension_service.cpp
+    src/shell/shell_file_operation_worker.cpp
+    src/app/render/app_navigation_render.cpp
+    src/app/drag_drop/app_ole_drop_routing.cpp
+    src/app/drag_drop/app_ole_drop_session.cpp
+    src/app/render/app_overlay_render.cpp
+    src/app/layout/app_page_grid.cpp
+    src/app/render/app_paint.cpp
+    src/app/input/app_pointer_context.cpp
+    src/app/input/app_pointer_down.cpp
+    src/app/input/app_pointer_move.cpp
+    src/app/input/app_pointer_release.cpp
+    src/app/popup/app_popup_geometry.cpp
+    src/app/popup/app_popup_dwell_interaction.cpp
+    src/app/popup/app_popup_lifecycle.cpp
+    src/app/popup/app_popup_render.cpp
+    src/app/popup/app_popup_transition.cpp
+    src/app/navigation/app_quick_navigation_interaction.cpp
+    src/app/navigation/app_quick_navigation_features.cpp
+    src/app/navigation/app_quick_navigation_preview.cpp
+    src/app/features/app_theme_preview.cpp
+    src/app/navigation/app_quick_navigation_layout.cpp
+    src/app/navigation/app_quick_navigation_messages.cpp
+    src/app/navigation/app_quick_navigation_model.cpp
+    src/app/navigation/app_quick_navigation_render.cpp
+    src/app/navigation/app_quick_navigation_window.cpp
+    src/app/input/app_rename_begin.cpp
+    src/app/input/app_rename_commit.cpp
+    src/app/input/app_rename_editor.cpp
+    src/app/input/app_rename_target.cpp
+    src/app/render/app_render_geometry.cpp
+    src/app/render/app_render_primitives.cpp
+    src/app/lifecycle/app_run.cpp
+    src/app/features/app_usage_guide.cpp
+    src/platform/usage_guide.cpp
+    src/platform/usage_guide.h
+    src/app/shell/app_shell_context_menu.cpp
+    src/app/shell/app_shell_file_operation.cpp
+    src/app/shell/app_shell_menu.cpp
+    src/app/render/app_scene_render.cpp
+    src/app/input/app_scroll_interaction.cpp
+    src/app/input/app_selection_interaction.cpp
+    src/app/lifecycle/app_settings_apply.cpp
+    src/app/input/desktop_passthrough_indicator.cpp
+    src/app/render/app_text_render.cpp
+    src/app/features/app_taskbar_integration.cpp
+    src/app/features/app_steam_workshop.cpp
+    src/app/lifecycle/app_timer_dispatch.cpp
+    src/app/tray/app_tray.cpp
+    src/app/lifecycle/app_window_dispatch.cpp
+    src/app/widgets/app_widget_context_menu.cpp
+    src/app/widgets/app_widget_grouping.cpp
+    src/app/widgets/app_widget_marquee_composition.cpp
+    src/app/widgets/app_widget_composition.cpp
+    src/app/widgets/app_widget_placement.cpp
+    src/app/widgets/app_widget_refresh.cpp
+    src/app/drag_drop/drag_drop_controller.cpp
+    src/app/drag_drop/drag_render_cache.cpp
+    src/app/drag_drop/ole_drag_drop_adapter.cpp
+    src/app/tray/tray_icon_controller.cpp
+    src/app/widgets/widget_notification_presenter.cpp
+    src/app/render/desktop_backdrop_compositor.cpp
+    src/app/lifecycle/startup_animation.cpp
+    src/app/features/wallpaper_engine_capture.cpp
+    src/data/atomic_file.cpp
+    src/dock/dock_window_preview.cpp
+    src/dock/dock_window_transition.cpp
     src/core/item.cpp
     src/core/drag_target_resolver.cpp
     src/core/dock.cpp
     src/core/slot.cpp
     src/core/container.cpp
     src/core/desktop.cpp
-    src/data_paths.cpp
-    src/virtual_file_drop.cpp
-    src/virtual_file_drop.h
-    src/url_drop_download_worker.cpp
-    src/url_drop_download_worker.h
-    src/url_drop_resource.cpp
-    src/url_drop_resource.h
-    src/steam_runtime_context.cpp
-    src/steam_runtime_context.h
-    src/steam_entitlement.cpp
-    src/steam_entitlement.h
-    src/calendar_service.cpp
-    src/calendar_display.cpp
-    src/full_data_backup.cpp
-    src/portable_data_migration.cpp
-    src/single_instance.cpp
-    src/debug_profile.cpp
-    src/deployment_context.cpp
-    src/shortcut_icon_resource.cpp
-    src/shortcut_icon_resource.h
-    src/utils.cpp
-    src/operation_feedback.cpp
-    src/desktop_display_settings.h
-    src/settings_controller.cpp
-    src/settings_controller.h
-    src/settings_route.cpp
-    src/settings_route.h
-    src/settings_search_index.cpp
-    src/settings_search_index.h
-    src/settings_store_native.cpp
-    src/settings_window.cpp
-    src/settings_ipc_channel.cpp
-    src/settings_ipc_services.cpp
-    src/settings_ipc_widget_service.cpp
-    src/settings_process.cpp
+    src/data/data_paths.cpp
+    src/drag_drop/virtual_file_drop.cpp
+    src/drag_drop/virtual_file_drop.h
+    src/drag_drop/url_drop_download_worker.cpp
+    src/drag_drop/url_drop_download_worker.h
+    src/drag_drop/url_drop_resource.cpp
+    src/drag_drop/url_drop_resource.h
+    src/steam/steam_runtime_context.cpp
+    src/steam/steam_runtime_context.h
+    src/steam/steam_entitlement.cpp
+    src/steam/steam_entitlement.h
+    src/system/calendar/calendar_service.cpp
+    src/system/calendar/calendar_display.cpp
+    src/data/full_data_backup.cpp
+    src/data/portable_data_migration.cpp
+    src/platform/single_instance.cpp
+    src/diagnostics/debug_profile.cpp
+    src/platform/deployment_context.cpp
+    src/icons/shortcut_icon_resource.cpp
+    src/icons/shortcut_icon_resource.h
+    src/common/utils.cpp
+    src/platform/operation_feedback.cpp
+    src/desktop/desktop_display_settings.h
+    src/settings/settings_controller.cpp
+    src/settings/settings_controller.h
+    src/settings/settings_route.cpp
+    src/settings/settings_route.h
+    src/settings/settings_search_index.cpp
+    src/settings/settings_search_index.h
+    src/settings/settings_store_native.cpp
+    src/settings/settings_window.cpp
+    src/settings/settings_ipc_channel.cpp
+    src/settings/settings_ipc_services.cpp
+    src/settings/settings_ipc_widget_service.cpp
+    src/settings/settings_process.cpp
     src/winui/settings_ipc_backends.cpp
     src/winui/settings_process_entry.cpp
     src/winui/App.idl
@@ -384,18 +384,18 @@ set(SNOWDESKTOP_SOURCES
     src/winui/status_bar_page_presenter.cpp
     src/winui/desktop_style_page_presenter.cpp
     src/winui/desktop_style_page_presenter.h
-    src/native_ui_scene.cpp
-    src/native_ui_scene.h
-    src/system_panel.cpp
-    src/system_control_prompt.cpp
-    src/system_panel.h
-    src/system_panel_model.cpp
-    src/system_panel_model.h
-    src/system_calendar_editor.cpp
-    src/system_calendar_editor.h
-    src/system_calendar_editor_state.h
-    src/system_panel_preview.cpp
-    src/system_panel_preview.h
+    src/ui/render/native_ui_scene.cpp
+    src/ui/render/native_ui_scene.h
+    src/system/panel/system_panel.cpp
+    src/system/controls/system_control_prompt.cpp
+    src/system/panel/system_panel.h
+    src/system/panel/system_panel_model.cpp
+    src/system/panel/system_panel_model.h
+    src/system/calendar/system_calendar_editor.cpp
+    src/system/calendar/system_calendar_editor.h
+    src/system/calendar/system_calendar_editor_state.h
+    src/system/panel/system_panel_preview.cpp
+    src/system/panel/system_panel_preview.h
     src/winui/status_bar_page_presenter.h
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h
@@ -439,93 +439,93 @@ set(SNOWDESKTOP_SOURCES
     src/winui/xaml_metadata_provider_bridge.cpp
     src/winui/xaml_type_info_bridge.cpp
     src/winui/xaml_type_info_impl_bridge.cpp
-    src/ui_animation_scheduler.cpp
-    src/personalization.cpp
-    src/personalization_path.cpp
-    src/theme_library.cpp
-    src/theme_preview.cpp
-    src/theme_workshop.cpp
-    src/dock_settings.cpp
+    src/ui/render/ui_animation_scheduler.cpp
+    src/theme/personalization.cpp
+    src/theme/personalization_path.cpp
+    src/theme/theme_library.cpp
+    src/theme/theme_preview.cpp
+    src/theme/theme_workshop.cpp
+    src/dock/dock_settings.cpp
     src/taskbar_hook/taskbar_symbol_resolver.cpp
-    src/navigation_settings.cpp
-    src/general_settings.cpp
-    src/app_font.cpp
-    src/category_settings.cpp
-    src/component_preview.cpp
-    src/native_component_preview_export.cpp
-    src/preview_png_writer.cpp
-    src/widget_author_preview.cpp
-    src/widget_preview_stage.cpp
-    src/widget_preview_scene.cpp
-    src/widget_preview_scene_model.cpp
-    src/l10n.cpp
-    src/item_location.cpp
-    src/layout_storage.cpp
-    src/menu_icon_render.cpp
-    src/menu_builtin_icon.cpp
-    src/modern_menu.cpp
-    src/search_match.cpp
-    src/everything_search.cpp
-    src/quick_navigation_everything_search.cpp
-    src/quick_navigation_search_async.cpp
-    src/lua_runtime.cpp
-    src/widget_api_registry.cpp
-    src/widget_package_image_cache.cpp
-    src/widget_l10n_format.cpp
-    src/widget_time.cpp
-    src/widget_preview_context.cpp
-    src/widget_data_broker.cpp
-    src/widget_task_broker.cpp
-    src/widget_location_task_executor.cpp
-    src/widget_notification_runtime.cpp
-    src/widget_notification_schedule_store.cpp
-    src/widget_media_task_executor.cpp
-    src/widget_audio_output_task_executor.cpp
-    src/widget_system_control_tasks.cpp
-    src/widget_clipboard_task_executor.cpp
-    src/widget_filesystem_handle_store.cpp
-    src/widget_filesystem_task_executor.cpp
-    src/widget_filesystem_watch_service.cpp
-    src/widget_app_task_executor.cpp
-    src/widget_system_settings.cpp
-    src/widget_system_data_provider.cpp
-    src/widget_gpu_sampler.cpp
-    src/widget_audio_analysis_provider.cpp
-    src/widget_draw_geometry.cpp
-    src/widget_background_cache.cpp
-    src/widget_interaction_region.cpp
-    src/widget_accessibility_events.cpp
-    src/widget_accessibility_provider.cpp
-    src/widget_view_accessibility.cpp
-    src/widget_view_contract.cpp
-    src/widget_view_tree.cpp
-    src/widget_view_lua.cpp
-    src/widget_text_input_rules.cpp
-    src/widget_storage_transaction.cpp
-    src/widget_storage_value.cpp
-    src/widget_storage_write_budget.cpp
-    src/widget_secret_store.cpp
-    src/widget_settings_model.h
-    src/widget_settings_service.cpp
-    src/widget_settings_service.h
-    src/widget_engine_settings_backend.cpp
-    src/widget_engine_settings_backend.h
-    src/widget_setting_rules.cpp
-    src/widget_logical_slot.cpp
-    src/widget_lua_lifecycle.cpp
-    src/widget_runtime_diagnostics.cpp
-    src/performance_capture.cpp
-    src/widget_runtime_scheduler.cpp
-    src/widget_engine.cpp
-    src/widget_permission_broker.cpp
-    src/widget_permission_state.cpp
-    src/widget_package.cpp
-    src/widget_package_paths.cpp
-    src/steam_workshop_cache.cpp
-    src/steam_workshop_source.cpp
-    src/steam_workshop_sync.cpp
-    src/system_snapshot.cpp
-    src/http_runtime.cpp
+    src/navigation/navigation_settings.cpp
+    src/settings/general_settings.cpp
+    src/ui/render/app_font.cpp
+    src/settings/category_settings.cpp
+    src/ui/preview/component_preview.cpp
+    src/ui/preview/native_component_preview_export.cpp
+    src/ui/preview/preview_png_writer.cpp
+    src/widget/authoring/widget_author_preview.cpp
+    src/widget/preview/widget_preview_stage.cpp
+    src/widget/preview/widget_preview_scene.cpp
+    src/widget/preview/widget_preview_scene_model.cpp
+    src/common/l10n.cpp
+    src/layout/item_location.cpp
+    src/data/layout_storage.cpp
+    src/ui/menu/menu_icon_render.cpp
+    src/ui/menu/menu_builtin_icon.cpp
+    src/ui/menu/modern_menu.cpp
+    src/navigation/search_match.cpp
+    src/navigation/everything_search.cpp
+    src/navigation/quick_navigation_everything_search.cpp
+    src/navigation/quick_navigation_search_async.cpp
+    src/widget/runtime/lua_runtime.cpp
+    src/widget/api/widget_api_registry.cpp
+    src/widget/packages/widget_package_image_cache.cpp
+    src/widget/runtime/widget_l10n_format.cpp
+    src/widget/runtime/widget_time.cpp
+    src/widget/preview/widget_preview_context.cpp
+    src/widget/data/widget_data_broker.cpp
+    src/widget/tasks/widget_task_broker.cpp
+    src/widget/tasks/widget_location_task_executor.cpp
+    src/widget/tasks/widget_notification_runtime.cpp
+    src/widget/tasks/widget_notification_schedule_store.cpp
+    src/widget/tasks/widget_media_task_executor.cpp
+    src/widget/tasks/widget_audio_output_task_executor.cpp
+    src/widget/tasks/widget_system_control_tasks.cpp
+    src/widget/tasks/widget_clipboard_task_executor.cpp
+    src/widget/tasks/widget_filesystem_handle_store.cpp
+    src/widget/tasks/widget_filesystem_task_executor.cpp
+    src/widget/tasks/widget_filesystem_watch_service.cpp
+    src/widget/tasks/widget_app_task_executor.cpp
+    src/widget/settings/widget_system_settings.cpp
+    src/widget/data/widget_system_data_provider.cpp
+    src/widget/data/widget_gpu_sampler.cpp
+    src/widget/data/widget_audio_analysis_provider.cpp
+    src/widget/view/widget_draw_geometry.cpp
+    src/widget/view/widget_background_cache.cpp
+    src/widget/view/widget_interaction_region.cpp
+    src/widget/view/widget_accessibility_events.cpp
+    src/widget/view/widget_accessibility_provider.cpp
+    src/widget/view/widget_view_accessibility.cpp
+    src/widget/api/widget_view_contract.cpp
+    src/widget/view/widget_view_tree.cpp
+    src/widget/view/widget_view_lua.cpp
+    src/widget/view/widget_text_input_rules.cpp
+    src/widget/storage/widget_storage_transaction.cpp
+    src/widget/storage/widget_storage_value.cpp
+    src/widget/storage/widget_storage_write_budget.cpp
+    src/widget/storage/widget_secret_store.cpp
+    src/widget/settings/widget_settings_model.h
+    src/widget/settings/widget_settings_service.cpp
+    src/widget/settings/widget_settings_service.h
+    src/widget/settings/widget_engine_settings_backend.cpp
+    src/widget/settings/widget_engine_settings_backend.h
+    src/widget/settings/widget_setting_rules.cpp
+    src/widget/runtime/widget_logical_slot.cpp
+    src/widget/runtime/widget_lua_lifecycle.cpp
+    src/widget/runtime/widget_runtime_diagnostics.cpp
+    src/diagnostics/performance_capture.cpp
+    src/widget/runtime/widget_runtime_scheduler.cpp
+    src/widget/runtime/widget_engine.cpp
+    src/widget/permissions/widget_permission_broker.cpp
+    src/widget/permissions/widget_permission_state.cpp
+    src/widget/packages/widget_package.cpp
+    src/widget/packages/widget_package_paths.cpp
+    src/steam/steam_workshop_cache.cpp
+    src/steam/steam_workshop_source.cpp
+    src/steam/steam_workshop_sync.cpp
+    src/system/system_snapshot.cpp
+    src/platform/http_runtime.cpp
     src/widgets/widget_base.cpp
     src/widgets/collection.cpp
     src/widgets/collection_group.cpp
@@ -715,6 +715,7 @@ if (MSVC)
         OUTPUT_NAME "SnowDesktopTaskbarHook")
     target_compile_features(SnowDesktopTaskbarHook PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopTaskbarHook PRIVATE
+        src
         src/taskbar_hook
         third_party/minhook/include
         "${CPPWINRT_OUTPUT_DIR}"
@@ -789,6 +790,10 @@ endif()
 
 set_source_files_properties(src/winui/App.xaml PROPERTIES
     VS_XAML_TYPE "ApplicationDefinition")
+set_source_files_properties(
+    src/resources/resource.rc
+    src/resources/app_icon.rc
+    PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/src/resources")
 set_source_files_properties(src/winui/SettingsShell.xaml PROPERTIES
     VS_XAML_TYPE "Page")
 set_source_files_properties(
@@ -813,9 +818,12 @@ endfunction()
 
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
-    src/resource.rc
+    src/resources/resource.rc
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
+source_group(TREE "${CMAKE_SOURCE_DIR}/src" PREFIX "Source" FILES
+    ${SNOWDESKTOP_SOURCES}
+    src/resources/resource.rc)
 snowdesktop_enable_native_window_compatibility(SnowDesktop)
 
 # Error messages must survive a missing or damaged distribution/lang tree.
@@ -838,12 +846,12 @@ file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/launcher_messages.h
     CONTENT "${SNOWDESKTOP_LAUNCHER_MESSAGES}" @ONLY)
 
 add_executable(SnowDesktopLauncher WIN32
-    src/steam_launcher_main.cpp
-    src/steam_runtime_context.cpp
-    src/steam_runtime_manager.cpp
-    src/steam_runtime_manager.h
-    src/steam_runtime_context.h
-    src/app_icon.rc
+    src/steam/steam_launcher_main.cpp
+    src/steam/steam_runtime_context.cpp
+    src/steam/steam_runtime_manager.cpp
+    src/steam/steam_runtime_manager.h
+    src/steam/steam_runtime_context.h
+    src/resources/app_icon.rc
     "${SNOWDESKTOP_LAUNCHER_VERSION_RESOURCE}")
 target_compile_features(SnowDesktopLauncher PRIVATE cxx_std_20)
 target_include_directories(SnowDesktopLauncher PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -993,20 +1001,20 @@ string(JSON SNOWDESKTOP_WIDGET_SKILL_REVISION GET
 add_executable(snowwidget
     tools/snowwidget/main.cpp
     tools/snowwidget/gpu_diagnostics.cpp
-    src/widget_gpu_sampler.cpp
-    src/widget_author_lint.cpp
-    src/widget_author_permissions.cpp
-    src/widget_author_test.cpp
-    src/widget_api_contract_json.cpp
-    src/widget_api_registry.cpp
-    src/widget_logical_slot.cpp
-    src/lua_runtime.cpp
-    src/widget_package.cpp
-    src/widget_permission_broker.cpp
-    src/widget_permission_state.cpp
-    src/widget_system_contract_json.cpp
-    src/widget_view_contract.cpp
-    src/widget_view_contract_json.cpp)
+    src/widget/data/widget_gpu_sampler.cpp
+    src/widget/authoring/widget_author_lint.cpp
+    src/widget/authoring/widget_author_permissions.cpp
+    src/widget/authoring/widget_author_test.cpp
+    src/widget/api/widget_api_contract_json.cpp
+    src/widget/api/widget_api_registry.cpp
+    src/widget/runtime/widget_logical_slot.cpp
+    src/widget/runtime/lua_runtime.cpp
+    src/widget/packages/widget_package.cpp
+    src/widget/permissions/widget_permission_broker.cpp
+    src/widget/permissions/widget_permission_state.cpp
+    src/widget/api/widget_system_contract_json.cpp
+    src/widget/api/widget_view_contract.cpp
+    src/widget/api/widget_view_contract_json.cpp)
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 target_include_directories(snowwidget PRIVATE src)
 target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32 pdh dxgi)
@@ -1056,7 +1064,7 @@ if (SNOWDESKTOP_STEAMWORKS_SDK_ROOT)
         COMMENT "Embedding the permitted Steamworks runtime for the Agent Skill Workshop CLI...")
 endif()
 
-add_library(SnowDesktopTextInput STATIC src/text_input_window.cpp src/text_input_accessibility.cpp)
+add_library(SnowDesktopTextInput STATIC src/ui/input/text_input_window.cpp src/ui/input/text_input_accessibility.cpp)
 target_include_directories(SnowDesktopTextInput PUBLIC src)
 target_compile_features(SnowDesktopTextInput PUBLIC cxx_std_20)
 target_compile_definitions(SnowDesktopTextInput PRIVATE
@@ -1183,17 +1191,17 @@ if (BUILD_TESTING)
         application_data_lifecycle
         SOURCES
             tests/application_data_lifecycle_tests.cpp
-            src/atomic_file.cpp
-            src/full_data_backup.cpp
-            src/layout_storage.cpp
-            src/widget_logical_slot.cpp
-            src/widget_package.cpp
-            src/widget_permission_broker.cpp
-            src/widget_permission_state.cpp
-            src/portable_data_migration.cpp
-            src/single_instance.cpp
-            src/debug_profile.cpp
-            src/steam_runtime_context.cpp
+            src/data/atomic_file.cpp
+            src/data/full_data_backup.cpp
+            src/data/layout_storage.cpp
+            src/widget/runtime/widget_logical_slot.cpp
+            src/widget/packages/widget_package.cpp
+            src/widget/permissions/widget_permission_broker.cpp
+            src/widget/permissions/widget_permission_state.cpp
+            src/data/portable_data_migration.cpp
+            src/platform/single_instance.cpp
+            src/diagnostics/debug_profile.cpp
+            src/steam/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt ole32 shell32 user32 version
         LABELS core integration data)
@@ -1203,10 +1211,10 @@ if (BUILD_TESTING)
         single_instance
         SOURCES
             tests/single_instance_tests.cpp
-            src/atomic_file.cpp
-            src/single_instance.cpp
-            src/debug_profile.cpp
-            src/steam_runtime_context.cpp
+            src/data/atomic_file.cpp
+            src/platform/single_instance.cpp
+            src/diagnostics/debug_profile.cpp
+            src/steam/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 user32 version
         LABELS core contract integration deployment steam)
@@ -1216,7 +1224,7 @@ if (BUILD_TESTING)
         http_security
         SOURCES
             tests/http_security_tests.cpp
-            src/http_runtime.cpp
+            src/platform/http_runtime.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES shlwapi winhttp ws2_32
         LABELS core contract security)
@@ -1232,7 +1240,7 @@ if (BUILD_TESTING)
         lua_runtime
         SOURCES
             tests/lua_runtime_tests.cpp
-            src/lua_runtime.cpp
+            src/widget/runtime/lua_runtime.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS core contract lua widget)
@@ -1242,10 +1250,10 @@ if (BUILD_TESTING)
         widget_api_registry
         SOURCES
             tests/widget_api_registry_tests.cpp
-            src/widget_api_contract_json.cpp
-            src/widget_api_registry.cpp
-            src/widget_permission_state.cpp
-            src/widget_system_contract_json.cpp
+            src/widget/api/widget_api_contract_json.cpp
+            src/widget/api/widget_api_registry.cpp
+            src/widget/permissions/widget_permission_state.cpp
+            src/widget/api/widget_system_contract_json.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS core contract lua widget)
@@ -1255,7 +1263,7 @@ if (BUILD_TESTING)
         widget_l10n_format
         SOURCES
             tests/widget_l10n_format_tests.cpp
-            src/widget_l10n_format.cpp
+            src/widget/runtime/widget_l10n_format.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract l10n lua widget)
 
@@ -1264,7 +1272,7 @@ if (BUILD_TESTING)
         widget_time
         SOURCES
             tests/widget_time_tests.cpp
-            src/widget_time.cpp
+            src/widget/runtime/widget_time.cpp
         INCLUDE_DIRECTORIES src
         LABELS integration contract l10n lua time widget)
 
@@ -1272,7 +1280,7 @@ if (BUILD_TESTING)
         SnowDesktopWidgetLocationTaskExecutorTests
         widget_location_task_executor
         SOURCES tests/widget_location_task_executor_tests.cpp
-            src/widget_location_task_executor.cpp src/widget_task_broker.cpp
+            src/widget/tasks/widget_location_task_executor.cpp src/widget/tasks/widget_task_broker.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES windowsapp user32
         LABELS contract permission widget location)
@@ -1283,9 +1291,9 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_runtime_diagnostics_tests.cpp
             tests/performance_capture_tests.cpp
-            src/widget_runtime_diagnostics.cpp
-            src/performance_capture.cpp
-            src/lua_runtime.cpp
+            src/widget/runtime/widget_runtime_diagnostics.cpp
+            src/diagnostics/performance_capture.cpp
+            src/widget/runtime/lua_runtime.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua pdh psapi user32
         LABELS contract widget)
@@ -1295,7 +1303,7 @@ if (BUILD_TESTING)
         widget_preview_context
         SOURCES
             tests/widget_preview_context_tests.cpp
-            src/widget_preview_context.cpp
+            src/widget/preview/widget_preview_context.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua preview widget)
 
@@ -1318,7 +1326,7 @@ if (BUILD_TESTING)
         widget_data_broker
         SOURCES
             tests/widget_data_broker_tests.cpp
-            src/widget_data_broker.cpp
+            src/widget/data/widget_data_broker.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract data lua widget)
 
@@ -1327,7 +1335,7 @@ if (BUILD_TESTING)
         widget_task_broker
         SOURCES
             tests/widget_task_broker_tests.cpp
-            src/widget_task_broker.cpp
+            src/widget/tasks/widget_task_broker.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lifecycle task lua widget)
 
@@ -1336,7 +1344,7 @@ if (BUILD_TESTING)
         widget_notification_runtime
         SOURCES
             tests/widget_notification_runtime_tests.cpp
-            src/widget_notification_runtime.cpp
+            src/widget/tasks/widget_notification_runtime.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lifecycle task lua widget)
 
@@ -1345,7 +1353,7 @@ if (BUILD_TESTING)
         widget_notification_schedule_store
         SOURCES
             tests/widget_notification_schedule_store_tests.cpp
-            src/widget_notification_schedule_store.cpp
+            src/widget/tasks/widget_notification_schedule_store.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lifecycle storage task lua widget)
 
@@ -1354,7 +1362,7 @@ if (BUILD_TESTING)
         widget_media_task_executor
         SOURCES
             tests/widget_media_task_executor_tests.cpp
-            src/widget_media_task_executor.cpp
+            src/widget/tasks/widget_media_task_executor.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES windowsapp
         LABELS integration media task lua widget)
@@ -1364,7 +1372,7 @@ if (BUILD_TESTING)
         widget_audio_output_task_executor
         SOURCES
             tests/widget_audio_output_task_executor_tests.cpp
-            src/widget_audio_output_task_executor.cpp
+            src/widget/tasks/widget_audio_output_task_executor.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
         LABELS contract audio task lua widget)
@@ -1374,7 +1382,7 @@ if (BUILD_TESTING)
         widget_clipboard_task_executor
         SOURCES
             tests/widget_clipboard_task_executor_tests.cpp
-            src/widget_clipboard_task_executor.cpp
+            src/widget/tasks/widget_clipboard_task_executor.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES gdi32 ole32 shell32 windowscodecs
         LABELS contract clipboard task lua widget)
@@ -1384,8 +1392,8 @@ if (BUILD_TESTING)
         widget_filesystem_handle_store
         SOURCES
             tests/widget_filesystem_handle_store_tests.cpp
-            src/widget_filesystem_handle_store.cpp
-            src/atomic_file.cpp
+            src/widget/tasks/widget_filesystem_handle_store.cpp
+            src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt
         LABELS contract filesystem security task lua widget)
@@ -1395,8 +1403,8 @@ if (BUILD_TESTING)
         widget_filesystem_task_executor
         SOURCES
             tests/widget_filesystem_task_executor_tests.cpp
-            src/widget_filesystem_task_executor.cpp
-            src/atomic_file.cpp
+            src/widget/tasks/widget_filesystem_task_executor.cpp
+            src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 windowscodecs
         LABELS contract filesystem security task lua widget)
@@ -1406,7 +1414,7 @@ if (BUILD_TESTING)
         widget_filesystem_watch_service
         SOURCES
             tests/widget_filesystem_watch_service_tests.cpp
-            src/widget_filesystem_watch_service.cpp
+            src/widget/tasks/widget_filesystem_watch_service.cpp
         INCLUDE_DIRECTORIES src
         LABELS integration filesystem security data lua widget)
 
@@ -1415,7 +1423,7 @@ if (BUILD_TESTING)
         widget_app_task_executor
         SOURCES
             tests/widget_app_task_executor_tests.cpp
-            src/widget_app_task_executor.cpp
+            src/widget/tasks/widget_app_task_executor.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract app task lua widget)
 
@@ -1424,7 +1432,7 @@ if (BUILD_TESTING)
         widget_system_settings
         SOURCES
             tests/widget_system_settings_tests.cpp
-            src/widget_system_settings.cpp
+            src/widget/settings/widget_system_settings.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract system task lua widget)
 
@@ -1434,9 +1442,9 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_system_data_provider_tests.cpp
             tests/system_controls_tests.cpp
-            src/widget_system_control_tasks.cpp
-            src/widget_system_data_provider.cpp
-            src/widget_gpu_sampler.cpp
+            src/widget/tasks/widget_system_control_tasks.cpp
+            src/widget/data/widget_system_data_provider.cpp
+            src/widget/data/widget_gpu_sampler.cpp
             ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES} advapi32 dxgi dxguid iphlpapi ole32 pdh propsys runtimeobject shcore user32 windowsapp windowscodecs
@@ -1447,7 +1455,7 @@ if (BUILD_TESTING)
         widget_audio_analysis_provider
         SOURCES
             tests/widget_audio_analysis_provider_tests.cpp
-            src/widget_audio_analysis_provider.cpp
+            src/widget/data/widget_audio_analysis_provider.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
         LABELS contract data audio widget)
@@ -1466,7 +1474,7 @@ if (BUILD_TESTING)
         widget_package_image_cache
         SOURCES
             tests/widget_package_image_cache_tests.cpp
-            src/widget_package_image_cache.cpp
+            src/widget/packages/widget_package_image_cache.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 windowscodecs
         LABELS contract resource render widget)
@@ -1476,8 +1484,8 @@ if (BUILD_TESTING)
         widget_lua_lifecycle
         SOURCES
             tests/widget_lua_lifecycle_tests.cpp
-            src/widget_lua_lifecycle.cpp
-            src/lua_runtime.cpp
+            src/widget/runtime/widget_lua_lifecycle.cpp
+            src/widget/runtime/lua_runtime.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS contract lifecycle lua widget)
@@ -1487,7 +1495,7 @@ if (BUILD_TESTING)
         widget_runtime_scheduler
         SOURCES
             tests/widget_runtime_scheduler_tests.cpp
-            src/widget_runtime_scheduler.cpp
+            src/widget/runtime/widget_runtime_scheduler.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua widget)
 
@@ -1496,8 +1504,8 @@ if (BUILD_TESTING)
         widget_permission_state
         SOURCES
             tests/widget_permission_state_tests.cpp
-            src/widget_permission_broker.cpp
-            src/widget_permission_state.cpp
+            src/widget/permissions/widget_permission_broker.cpp
+            src/widget/permissions/widget_permission_state.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt
         LABELS core contract security widget)
@@ -1507,7 +1515,7 @@ if (BUILD_TESTING)
         application_restart_policy
         SOURCES
             tests/application_restart_policy_tests.cpp
-            src/application_crash_watchdog.cpp
+            src/platform/application_crash_watchdog.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract recovery)
 
@@ -1523,9 +1531,9 @@ if (BUILD_TESTING)
         calendar_service
         SOURCES
             tests/calendar_service_tests.cpp
-            src/calendar_service.cpp
-    src/calendar_display.cpp
-            src/l10n.cpp
+            src/system/calendar/calendar_service.cpp
+    src/system/calendar/calendar_display.cpp
+            src/common/l10n.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -1536,7 +1544,7 @@ if (BUILD_TESTING)
         localization_contract
         SOURCES
             tests/localization_contract_tests.cpp
-            src/l10n.cpp
+            src/common/l10n.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract l10n)
@@ -1547,10 +1555,10 @@ if (BUILD_TESTING)
         SOURCES
             tests/general_settings_tests.cpp
             tests/theme_library_tests.cpp
-            src/theme_library.cpp
-            src/general_settings.cpp
-            src/app_font.cpp
-            src/personalization.cpp
+            src/theme/theme_library.cpp
+            src/settings/general_settings.cpp
+            src/ui/render/app_font.cpp
+            src/theme/personalization.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES dwrite d2d1 windowscodecs gdi32 ole32
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -1562,10 +1570,10 @@ if (BUILD_TESTING)
         SOURCES
             tests/theme_preview_tests.cpp
             tests/theme_workshop_tests.cpp
-            src/theme_preview.cpp
-            src/theme_workshop.cpp
-            src/preview_png_writer.cpp
-            src/widget_preview_stage.cpp
+            src/theme/theme_preview.cpp
+            src/theme/theme_workshop.cpp
+            src/ui/preview/preview_png_writer.cpp
+            src/widget/preview/widget_preview_stage.cpp
         INCLUDE_DIRECTORIES src steam_bridge/src
         LINK_LIBRARIES SnowDesktopWorkshopManagerSupport d2d1 d3d11 dxguid windowscodecs ole32 shlwapi
         COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktop>"
@@ -1584,7 +1592,7 @@ if (BUILD_TESTING)
         SnowDesktopSettingsWindowOpenRulesTests
         settings_window_open_rules
         SOURCES tests/settings_window_open_rules_tests.cpp
-            src/usage_guide.cpp src/atomic_file.cpp src/settings_route.cpp
+            src/platform/usage_guide.cpp src/data/atomic_file.cpp src/settings/settings_route.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract settings)
@@ -1621,8 +1629,8 @@ if (BUILD_TESTING)
         steam_entitlement
         SOURCES
             tests/steam_entitlement_tests.cpp
-            src/atomic_file.cpp
-            src/steam_entitlement.cpp
+            src/data/atomic_file.cpp
+            src/steam/steam_entitlement.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES crypt32
         COMMAND_ARGUMENTS
@@ -1649,8 +1657,8 @@ if (BUILD_TESTING)
         steam_runtime_update
         SOURCES
             tests/steam_runtime_update_tests.cpp
-            src/steam_runtime_context.cpp
-            src/steam_runtime_manager.cpp
+            src/steam/steam_runtime_context.cpp
+            src/steam/steam_runtime_manager.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopLauncher>"
         LINK_LIBRARIES bcrypt shell32
@@ -1663,13 +1671,13 @@ if (BUILD_TESTING)
         SOURCES
             tests/settings_controller_tests.cpp
             tests/settings_ipc_tests.cpp
-            src/settings_ipc_channel.cpp
-            src/settings_ipc_services.cpp
-            src/settings_ipc_widget_service.cpp
-            src/settings_process.cpp
-            src/widget_setting_rules.cpp
-            src/settings_controller.cpp
-            src/settings_route.cpp
+            src/settings/settings_ipc_channel.cpp
+            src/settings/settings_ipc_services.cpp
+            src/settings/settings_ipc_widget_service.cpp
+            src/settings/settings_process.cpp
+            src/widget/settings/widget_setting_rules.cpp
+            src/settings/settings_controller.cpp
+            src/settings/settings_route.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract settings)
 
@@ -1685,8 +1693,8 @@ if (BUILD_TESTING)
         settings_search_index
         SOURCES
             tests/settings_search_index_tests.cpp
-            src/settings_search_index.cpp
-            src/settings_route.cpp
+            src/settings/settings_search_index.cpp
+            src/settings/settings_route.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract l10n navigation settings)
 
@@ -1696,7 +1704,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/winui_settings_navigation_tests.cpp
             src/winui/settings_shell_navigation.cpp
-            src/settings_route.cpp
+            src/settings/settings_route.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract navigation settings ui winui)
@@ -1748,8 +1756,8 @@ if (BUILD_TESTING)
         auto_start_rules
         SOURCES tests/auto_start_rules_tests.cpp
             tests/auto_start_manager_tests.cpp
-            src/auto_start_manager.cpp
-            src/auto_start_elevation.cpp
+            src/platform/auto_start_manager.cpp
+            src/platform/auto_start_elevation.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES taskschd ole32 oleaut32 advapi32 shell32
         LABELS contract rules settings startup)
@@ -1821,15 +1829,15 @@ if (BUILD_TESTING)
         slot_runtime_contract
         SOURCES
             tests/slot_runtime_contract_tests.cpp
-            src/external_drop_content.cpp
-            src/app_icon.rc
-            src/app/drag_drop_controller.cpp
-            src/app/ole_drag_drop_adapter.cpp
-            src/app/tray_icon_controller.cpp
+            src/drag_drop/external_drop_content.cpp
+            src/resources/app_icon.rc
+            src/app/drag_drop/drag_drop_controller.cpp
+            src/app/drag_drop/ole_drag_drop_adapter.cpp
+            src/app/tray/tray_icon_controller.cpp
             src/core/drag_target_resolver.cpp
             src/core/slot.cpp
             src/core/container.cpp
-            src/l10n.cpp
+            src/common/l10n.cpp
         INCLUDE_DIRECTORIES src src/core
         LINK_LIBRARIES advapi32 d2d1 ole32 shell32 user32 uuid
         LABELS core contract interaction slot integration shell)
@@ -1846,7 +1854,7 @@ if (BUILD_TESTING)
         widget_interaction_region
         SOURCES
             tests/widget_interaction_region_tests.cpp
-            src/widget_interaction_region.cpp
+            src/widget/view/widget_interaction_region.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract interaction lua widget)
 
@@ -1855,7 +1863,7 @@ if (BUILD_TESTING)
         widget_draw_geometry
         SOURCES
             tests/widget_draw_geometry_tests.cpp
-            src/widget_draw_geometry.cpp
+            src/widget/view/widget_draw_geometry.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract render lua widget)
 
@@ -1864,12 +1872,12 @@ if (BUILD_TESTING)
         widget_view_accessibility
         SOURCES
             tests/widget_view_accessibility_tests.cpp
-            src/widget_view_accessibility.cpp
-            src/widget_view_contract.cpp
-            src/widget_view_tree.cpp
-            src/widget_view_lua.cpp
-            src/widget_interaction_region.cpp
-            src/widget_logical_slot.cpp
+            src/widget/view/widget_view_accessibility.cpp
+            src/widget/api/widget_view_contract.cpp
+            src/widget/view/widget_view_tree.cpp
+            src/widget/view/widget_view_lua.cpp
+            src/widget/view/widget_interaction_region.cpp
+            src/widget/runtime/widget_logical_slot.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS accessibility contract layout lua widget)
@@ -1879,8 +1887,8 @@ if (BUILD_TESTING)
         widget_accessibility_provider
         SOURCES
             tests/widget_accessibility_provider_tests.cpp
-            src/widget_accessibility_events.cpp
-            src/widget_accessibility_provider.cpp
+            src/widget/view/widget_accessibility_events.cpp
+            src/widget/view/widget_accessibility_provider.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 oleaut32 uiautomationcore user32
         LABELS accessibility contract integration widget)
@@ -1890,20 +1898,20 @@ if (BUILD_TESTING)
         widget_view_contract
         SOURCES
             tests/widget_view_contract_tests.cpp
-            src/widget_view_contract.cpp
+            src/widget/api/widget_view_contract.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract layout lua widget)
     target_sources(SnowDesktopWidgetViewContractTests PRIVATE
-        src/widget_view_contract_json.cpp)
+        src/widget/api/widget_view_contract_json.cpp)
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorLintTests
         widget_author_lint
         SOURCES
             tests/widget_author_lint_tests.cpp
-            src/widget_author_lint.cpp
-            src/widget_api_registry.cpp
-            src/widget_view_contract.cpp
+            src/widget/authoring/widget_author_lint.cpp
+            src/widget/api/widget_api_registry.cpp
+            src/widget/api/widget_view_contract.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS authoring contract lua widget)
@@ -1913,8 +1921,8 @@ if (BUILD_TESTING)
         widget_author_test_runner
         SOURCES
             tests/widget_author_test_tests.cpp
-            src/widget_author_test.cpp
-            src/lua_runtime.cpp
+            src/widget/authoring/widget_author_test.cpp
+            src/widget/runtime/lua_runtime.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS authoring contract lua security widget)
@@ -1926,13 +1934,13 @@ if (BUILD_TESTING)
             tests/widget_author_tools_tests.cpp
             tests/widget_package_review_tests.cpp
             tools/snowwidget/gpu_diagnostics.cpp
-            src/widget_gpu_sampler.cpp
-            src/widget_author_permissions.cpp
-            src/widget_api_registry.cpp
-            src/widget_logical_slot.cpp
-            src/widget_package.cpp
-            src/widget_permission_broker.cpp
-            src/widget_permission_state.cpp
+            src/widget/data/widget_gpu_sampler.cpp
+            src/widget/authoring/widget_author_permissions.cpp
+            src/widget/api/widget_api_registry.cpp
+            src/widget/runtime/widget_logical_slot.cpp
+            src/widget/packages/widget_package.cpp
+            src/widget/permissions/widget_permission_broker.cpp
+            src/widget/permissions/widget_permission_state.cpp
         INCLUDE_DIRECTORIES src tools/snowwidget
         LINK_LIBRARIES SnowDesktopLua bcrypt ole32 pdh dxgi
         LABELS authoring contract data permission security widget)
@@ -1976,11 +1984,11 @@ if (BUILD_TESTING)
         widget_view_tree
         SOURCES
             tests/widget_view_tree_tests.cpp
-            src/widget_view_contract.cpp
-            src/widget_view_tree.cpp
-            src/widget_view_lua.cpp
-            src/widget_interaction_region.cpp
-            src/widget_logical_slot.cpp
+            src/widget/api/widget_view_contract.cpp
+            src/widget/view/widget_view_tree.cpp
+            src/widget/view/widget_view_lua.cpp
+            src/widget/view/widget_interaction_region.cpp
+            src/widget/runtime/widget_logical_slot.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         LABELS contract interaction layout lua widget)
@@ -1990,7 +1998,7 @@ if (BUILD_TESTING)
         widget_text_input_rules
         SOURCES
             tests/widget_text_input_rules_tests.cpp
-            src/widget_text_input_rules.cpp
+            src/widget/view/widget_text_input_rules.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES dwrite
         LABELS contract interaction lua widget)
@@ -2008,8 +2016,8 @@ if (BUILD_TESTING)
         widget_storage_transaction
         SOURCES
             tests/widget_storage_transaction_tests.cpp
-            src/widget_storage_transaction.cpp
-            src/widget_storage_value.cpp
+            src/widget/storage/widget_storage_transaction.cpp
+            src/widget/storage/widget_storage_value.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua storage widget)
 
@@ -2018,7 +2026,7 @@ if (BUILD_TESTING)
         widget_storage_write_budget
         SOURCES
             tests/widget_storage_write_budget_tests.cpp
-            src/widget_storage_write_budget.cpp
+            src/widget/storage/widget_storage_write_budget.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua storage widget)
 
@@ -2027,7 +2035,7 @@ if (BUILD_TESTING)
         widget_setting_rules
         SOURCES
             tests/widget_setting_rules_tests.cpp
-            src/widget_setting_rules.cpp
+            src/widget/settings/widget_setting_rules.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua settings widget)
 
@@ -2036,7 +2044,7 @@ if (BUILD_TESTING)
         widget_settings_model
         SOURCES
             tests/widget_settings_model_tests.cpp
-            src/widget_setting_rules.cpp
+            src/widget/settings/widget_setting_rules.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract lua settings widget)
 
@@ -2045,8 +2053,8 @@ if (BUILD_TESTING)
         widget_settings_service
         SOURCES
             tests/widget_settings_service_tests.cpp
-            src/widget_settings_service.cpp
-            src/widget_setting_rules.cpp
+            src/widget/settings/widget_settings_service.cpp
+            src/widget/settings/widget_setting_rules.cpp
         INCLUDE_DIRECTORIES src
         LABELS core contract lua security settings storage widget)
 
@@ -2055,8 +2063,8 @@ if (BUILD_TESTING)
         widget_engine_settings_backend
         SOURCES
             tests/widget_engine_settings_backend_tests.cpp
-            src/widget_setting_rules.cpp
-            src/widget_storage_value.cpp
+            src/widget/settings/widget_setting_rules.cpp
+            src/widget/storage/widget_storage_value.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopLua
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -2067,7 +2075,7 @@ if (BUILD_TESTING)
         widget_secret_store
         SOURCES
             tests/widget_secret_store_tests.cpp
-            src/widget_secret_store.cpp
+            src/widget/storage/widget_secret_store.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt crypt32
         LABELS contract lua security storage widget)
@@ -2084,7 +2092,7 @@ if (BUILD_TESTING)
         widget_logical_slot
         SOURCES
             tests/widget_logical_slot_tests.cpp
-            src/widget_logical_slot.cpp
+            src/widget/runtime/widget_logical_slot.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract lua storage widget)
 
@@ -2096,7 +2104,7 @@ if (BUILD_TESTING)
             src/widgets/lua_logical_slot.cpp
             src/core/slot.cpp
             src/core/container.cpp
-            src/l10n.cpp
+            src/common/l10n.cpp
         INCLUDE_DIRECTORIES src src/core third_party/lua
         LINK_LIBRARIES d2d1 user32
         LABELS contract interaction lua slot widget)
@@ -2120,7 +2128,7 @@ if (BUILD_TESTING)
         desktop_namespace_registry
         SOURCES
             tests/desktop_namespace_registry_tests.cpp
-            src/desktop_namespace_registry.cpp
+            src/desktop/desktop_namespace_registry.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES advapi32 ole32 shell32 shlwapi
         LABELS core rules shell)
@@ -2137,7 +2145,7 @@ if (BUILD_TESTING)
         quick_navigation_rules
         SOURCES
             tests/quick_navigation_rules_tests.cpp
-            src/navigation_settings.cpp
+            src/navigation/navigation_settings.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopPinyinData
         LABELS rules navigation)
@@ -2147,7 +2155,7 @@ if (BUILD_TESTING)
         quick_navigation_search_async
         SOURCES
             tests/quick_navigation_search_async_tests.cpp
-            src/quick_navigation_search_async.cpp
+            src/navigation/quick_navigation_search_async.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES
             user32
@@ -2159,11 +2167,11 @@ if (BUILD_TESTING)
         SOURCES
             tests/shortcut_application_rules_tests.cpp
             tests/website_icon_tests.cpp
-            src/shortcut_icon_resource.cpp
-            src/website_icon.cpp
-            src/http_runtime.cpp
-            src/atomic_file.cpp
-            src/preview_png_writer.cpp
+            src/icons/shortcut_icon_resource.cpp
+            src/icons/website_icon.cpp
+            src/platform/http_runtime.cpp
+            src/data/atomic_file.cpp
+            src/ui/preview/preview_png_writer.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES advapi32 ole32 shell32 shlwapi uuid windowscodecs winhttp ws2_32 xmllite
         LABELS rules shell)
@@ -2182,12 +2190,12 @@ if (BUILD_TESTING)
             tests/icon_render_rules_tests.cpp
             tests/large_icon_assets_tests.cpp
             tests/large_icon_rendering_tests.cpp
-            src/shortcut_icon_resource.cpp
-            src/large_icon_renderer.cpp
-            src/large_icon_assets.cpp
-            src/icon_beautify.cpp
-            src/preview_png_writer.cpp
-            src/atomic_file.cpp
+            src/icons/shortcut_icon_resource.cpp
+            src/icons/large_icon_renderer.cpp
+            src/icons/large_icon_assets.cpp
+            src/icons/icon_beautify.cpp
+            src/ui/preview/preview_png_writer.cpp
+            src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
         LABELS rules shell ui)
@@ -2209,7 +2217,7 @@ if (BUILD_TESTING)
         icon_beautify
         SOURCES
             tests/icon_beautify_tests.cpp
-            src/icon_beautify.cpp
+            src/icons/icon_beautify.cpp
         INCLUDE_DIRECTORIES src
         LABELS rules icon ui)
 
@@ -2218,7 +2226,7 @@ if (BUILD_TESTING)
         item_location
         SOURCES
             tests/item_location_tests.cpp
-            src/item_location.cpp
+            src/layout/item_location.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid
         LABELS integration shell)
@@ -2228,8 +2236,8 @@ if (BUILD_TESTING)
         virtual_file_drop
         SOURCES
             tests/virtual_file_drop_tests.cpp
-            src/virtual_file_drop.cpp
-            src/external_drop_content.cpp
+            src/drag_drop/virtual_file_drop.cpp
+            src/drag_drop/external_drop_content.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 user32
         LABELS contract interaction shell)
@@ -2239,7 +2247,7 @@ if (BUILD_TESTING)
         url_drop_resource
         SOURCES
             tests/url_drop_resource_tests.cpp
-            src/url_drop_resource.cpp
+            src/drag_drop/url_drop_resource.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract interaction security)
 
@@ -2248,7 +2256,7 @@ if (BUILD_TESTING)
         drop_data_url
         SOURCES
             tests/drop_data_url_tests.cpp
-            src/drop_data_url.cpp
+            src/drag_drop/drop_data_url.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract interaction security)
 
@@ -2257,7 +2265,7 @@ if (BUILD_TESTING)
         drop_text_rules
         SOURCES
             tests/drop_text_rules_tests.cpp
-            src/drop_text_rules.cpp
+            src/drag_drop/drop_text_rules.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract interaction security)
 
@@ -2266,7 +2274,7 @@ if (BUILD_TESTING)
         drop_image_data
         SOURCES
             tests/drop_image_data_tests.cpp
-            src/drop_image_data.cpp
+            src/drag_drop/drop_image_data.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES gdi32 ole32 user32 windowscodecs
         LABELS contract interaction security)
@@ -2275,13 +2283,13 @@ if (BUILD_TESTING)
         SnowDesktopShellContextMenuInvokeTests
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
-            src/shell_extension_menu.cpp
-            src/shell_extension_menu_cache.cpp
-    src/shell_extension_catalogue.cpp
-    src/shell_extension_service.cpp
-            src/shell_context_menu_site.cpp
-            src/settings_process.cpp
-            src/settings_ipc_channel.cpp
+            src/shell/shell_extension_menu.cpp
+            src/shell/shell_extension_menu_cache.cpp
+    src/shell/shell_extension_catalogue.cpp
+    src/shell/shell_extension_service.cpp
+            src/shell/shell_context_menu_site.cpp
+            src/settings/settings_process.cpp
+            src/settings/settings_ipc_channel.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid version
         LABELS integration contract shell)
@@ -2298,8 +2306,8 @@ if (BUILD_TESTING)
         shell_launch_worker
         SOURCES
             tests/shell_launch_worker_tests.cpp
-            src/shell_launch_worker.cpp
-            src/shell_launch_process.cpp
+            src/shell/shell_launch_worker.cpp
+            src/shell/shell_launch_process.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 uuid
         LABELS integration shell interaction)
@@ -2309,9 +2317,9 @@ if (BUILD_TESTING)
         shell_file_operation_worker
         SOURCES
             tests/shell_file_operation_worker_tests.cpp
-            src/item_location.cpp
-            src/shell_file_operation_worker.cpp
-            src/external_drop_content.cpp
+            src/layout/item_location.cpp
+            src/shell/shell_file_operation_worker.cpp
+            src/drag_drop/external_drop_content.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32
         LABELS integration shell interaction)
@@ -2346,15 +2354,15 @@ if (BUILD_TESTING)
             tests/desktop_backdrop_compositor_tests.cpp
             tests/tray_model_tests.cpp
             tests/tray_live_tests.cpp
-            src/tray_model.cpp
-            src/tray_service.cpp
-            src/tray_menu_placement.cpp
-            src/app/desktop_backdrop_compositor.cpp
-            src/icon_beautify.cpp
-            src/l10n.cpp
-            src/dock_window_preview.cpp
-            src/dock_window_transition.cpp
-            src/ui_animation_scheduler.cpp
+            src/system/tray/tray_model.cpp
+            src/system/tray/tray_service.cpp
+            src/system/tray/tray_menu_placement.cpp
+            src/app/render/desktop_backdrop_compositor.cpp
+            src/icons/icon_beautify.cpp
+            src/common/l10n.cpp
+            src/dock/dock_window_preview.cpp
+            src/dock/dock_window_transition.cpp
+            src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 runtimeobject shell32 shcore shlwapi user32 windowsapp winhttp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -2382,7 +2390,7 @@ if (BUILD_TESTING)
         ui_animation_scheduler
         SOURCES
             tests/ui_animation_scheduler_tests.cpp
-            src/ui_animation_scheduler.cpp
+            src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES user32
         LABELS rules animation)
@@ -2392,9 +2400,9 @@ if (BUILD_TESTING)
         menu_icon_render
         SOURCES
             tests/menu_icon_render_tests.cpp
-            src/menu_icon_render.cpp
-            src/menu_builtin_icon.cpp
-            src/resource.rc
+            src/ui/menu/menu_icon_render.cpp
+            src/ui/menu/menu_builtin_icon.cpp
+            src/resources/resource.rc
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES gdi32 ole32 user32 windowscodecs
         LABELS contract ui)
@@ -2405,9 +2413,9 @@ if (BUILD_TESTING)
         SOURCES
             tests/modern_menu_interaction_tests.cpp
             tests/tray_focus_tests.cpp
-            src/menu_icon_render.cpp
-            src/menu_builtin_icon.cpp
-            src/modern_menu.cpp
+            src/ui/menu/menu_icon_render.cpp
+            src/ui/menu/menu_builtin_icon.cpp
+            src/ui/menu/modern_menu.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES comctl32 gdi32 imm32 ole32 user32 windowscodecs
         LABELS integration ui)
@@ -2421,13 +2429,13 @@ if (BUILD_TESTING)
             tests/widget_background_cache_tests.cpp
             tests/widget_text_layout_cache_tests.cpp
             tests/scroll_content_clip_tests.cpp
-            src/widget_background_cache.cpp
-            src/component_preview.cpp
-            src/menu_icon_render.cpp
-            src/menu_builtin_icon.cpp
-            src/widget_preview_stage.cpp
-            src/widget_preview_scene.cpp
-            src/widget_preview_scene_model.cpp
+            src/widget/view/widget_background_cache.cpp
+            src/ui/preview/component_preview.cpp
+            src/ui/menu/menu_icon_render.cpp
+            src/ui/menu/menu_builtin_icon.cpp
+            src/widget/preview/widget_preview_stage.cpp
+            src/widget/preview/widget_preview_scene.cpp
+            src/widget/preview/widget_preview_scene_model.cpp
         INCLUDE_DIRECTORIES src src/core
         LINK_LIBRARIES advapi32 d2d1 d3d11 dwrite dxgi dxguid gdi32 ole32 user32 uuid windowscodecs
         LABELS integration ui preview)
@@ -2437,7 +2445,7 @@ if (BUILD_TESTING)
         widget_preview_stage
         SOURCES
             tests/widget_preview_stage_tests.cpp
-            src/widget_preview_stage.cpp
+            src/widget/preview/widget_preview_stage.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 d3d11 dxgi dxguid gdi32 ole32 windowscodecs
         LABELS contract render ui preview)
@@ -2447,7 +2455,7 @@ if (BUILD_TESTING)
         wallpaper_engine_capture
         SOURCES
             tests/wallpaper_engine_capture_tests.cpp
-            src/app/wallpaper_engine_capture.cpp
+            src/app/features/wallpaper_engine_capture.cpp
         INCLUDE_DIRECTORIES src src/app
         LINK_LIBRARIES d3d11 dxgi user32
         LABELS contract integration render preview)
@@ -2458,14 +2466,14 @@ if (BUILD_TESTING)
         SOURCES
             tests/steam_workshop_manager_tests.cpp
             steam_bridge/src/preview_cache.cpp
-            src/steam_workshop_cache.cpp
-            src/steam_workshop_source.cpp
-            src/steam_workshop_sync.cpp
-            src/widget_package.cpp
-            src/widget_package_paths.cpp
-            src/widget_logical_slot.cpp
-            src/widget_permission_broker.cpp
-            src/widget_permission_state.cpp
+            src/steam/steam_workshop_cache.cpp
+            src/steam/steam_workshop_source.cpp
+            src/steam/steam_workshop_sync.cpp
+            src/widget/packages/widget_package.cpp
+            src/widget/packages/widget_package_paths.cpp
+            src/widget/runtime/widget_logical_slot.cpp
+            src/widget/permissions/widget_permission_broker.cpp
+            src/widget/permissions/widget_permission_state.cpp
         INCLUDE_DIRECTORIES steam_bridge/src src
         LINK_LIBRARIES
             SnowDesktopWorkshopManagerSupport
@@ -2488,10 +2496,10 @@ if (BUILD_TESTING)
     # CTest; run the target explicitly when reviewing the modern popup menu.
     add_executable(SnowDesktopModernMenuPreview WIN32 EXCLUDE_FROM_ALL
         tests/modern_menu_preview.cpp
-        src/menu_icon_render.cpp
-        src/menu_builtin_icon.cpp
-        src/modern_menu.cpp
-        src/resource.rc)
+        src/ui/menu/menu_icon_render.cpp
+        src/ui/menu/menu_builtin_icon.cpp
+        src/ui/menu/modern_menu.cpp
+        src/resources/resource.rc)
     set_target_properties(SnowDesktopModernMenuPreview PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
         ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"

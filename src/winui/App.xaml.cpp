@@ -1,9 +1,9 @@
 #include "pch.h"
 
 #include "App.xaml.h"
-#include "../app_font.h"
-#include "../data_paths.h"
-#include "../general_settings.h"
+#include "ui/render/app_font.h"
+#include "data/data_paths.h"
+#include "settings/general_settings.h"
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 
 namespace winrt::SnowDesktop::implementation

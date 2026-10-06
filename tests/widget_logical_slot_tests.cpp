@@ -1,4 +1,4 @@
-#include "widget_logical_slot_manifest.h"
+#include "widget/api/widget_logical_slot_manifest.h"
 
 #include <cstdlib>
 #include <iostream>

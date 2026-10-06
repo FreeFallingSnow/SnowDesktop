@@ -1,5 +1,5 @@
 #pragma once
-#include "widget_gpu_sampler.h"
+#include "widget/data/widget_gpu_sampler.h"
 #include <filesystem>
 #include <span>
 #include <string>

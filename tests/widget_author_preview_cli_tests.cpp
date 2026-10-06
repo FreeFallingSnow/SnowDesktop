@@ -2,7 +2,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 #include "test_temporary_directory.h"
-#include "json_value.h"
+#include "common/json_value.h"
 
 #include <algorithm>
 #include <array>

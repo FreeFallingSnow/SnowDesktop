@@ -1,7 +1,7 @@
 #include "test_source_boundary.h"
 #include "../src/winui/widgets_page_backend_state.h"
 #include "../src/winui/source_search_worker.h"
-#include "../src/bounded_file_query.h"
+#include "../src/common/bounded_file_query.h"
 
 #include <chrono>
 #include <future>

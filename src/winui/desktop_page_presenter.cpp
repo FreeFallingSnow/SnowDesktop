@@ -5,10 +5,10 @@
 #include "appearance_sections.h"
 #include "settings_presenter_controls.h"
 
-#include "../constants.h"
-#include "../font_weight_rules.h"
-#include "../layout_spacing_rules.h"
-#include "../icon_beautify.h"
+#include "common/constants.h"
+#include "ui/render/font_weight_rules.h"
+#include "layout/layout_spacing_rules.h"
+#include "icons/icon_beautify.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Windows.System.h>

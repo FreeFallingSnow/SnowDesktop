@@ -3,10 +3,10 @@
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
 #include "edge_light_editor.h"
-#include "../large_icon_settings_rules.h"
-#include "../large_icon_preset_rules.h"
-#include "../large_icon_edit_rules.h"
-#include "../large_icon_title_measure.h"
+#include "icons/large_icon_settings_rules.h"
+#include "icons/large_icon_preset_rules.h"
+#include "icons/large_icon_edit_rules.h"
+#include "icons/large_icon_title_measure.h"
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.System.h>
 

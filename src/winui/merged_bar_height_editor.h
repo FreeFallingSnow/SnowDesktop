@@ -4,7 +4,7 @@
 #include <cmath>
 #include "dock_page_presenter.h"
 #include "settings_presenter_controls.h"
-#include "../bar_settings_rules.h"
+#include "settings/bar_settings_rules.h"
 
 namespace snowdesktop::winui
 {

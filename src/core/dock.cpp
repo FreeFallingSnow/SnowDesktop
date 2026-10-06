@@ -1,14 +1,14 @@
-#include "../app_font.h"
+#include "ui/render/app_font.h"
 #include "dock.h"
 
-#include "app.h"
-#include "constants.h"
-#include "../dock_magnification.h"
-#include "../status_bar_appearance.h"
-#include "../animation_settings.h"
+#include "app/app.h"
+#include "common/constants.h"
+#include "dock/dock_magnification.h"
+#include "system/status_bar/status_bar_appearance.h"
+#include "settings/animation_settings.h"
 #include "slot.h"
-#include "../l10n.h"
-#include "../item_location.h"
+#include "common/l10n.h"
+#include "layout/item_location.h"
 
 #include <algorithm>
 #include <cmath>

@@ -1,9 +1,9 @@
-#include "navigation_settings.h"
-#include "quick_navigation_query.h"
-#include "quick_navigation_animation_rules.h"
-#include "quick_navigation_genie_rules.h"
-#include "quick_navigation_rules.h"
-#include "app/quick_navigation_theme.h"
+#include "navigation/navigation_settings.h"
+#include "navigation/quick_navigation_query.h"
+#include "navigation/quick_navigation_animation_rules.h"
+#include "navigation/quick_navigation_genie_rules.h"
+#include "navigation/quick_navigation_rules.h"
+#include "../src/app/navigation/quick_navigation_theme.h"
 
 #include <cmath>
 #include <fstream>

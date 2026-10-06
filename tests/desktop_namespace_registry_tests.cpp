@@ -1,4 +1,4 @@
-#include "desktop_namespace_registry.h"
+#include "desktop/desktop_namespace_registry.h"
 
 #include <iostream>
 #include <string>

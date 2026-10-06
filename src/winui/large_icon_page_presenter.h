@@ -1,5 +1,5 @@
 #pragma once
-#include "../large_icon_settings.h"
+#include "icons/large_icon_settings.h"
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <memory>
 

@@ -1,9 +1,9 @@
-#include "operation_feedback.h"
-#include "shell_launch_worker.h"
-#include "app/dock_explorer_pin.h"
-#include "shell_launch_process.h"
-#include "shell_open_command.h"
-#include "shell_launch_execution.h"
+#include "platform/operation_feedback.h"
+#include "shell/shell_launch_worker.h"
+#include "../src/app/dock/dock_explorer_pin.h"
+#include "shell/shell_launch_process.h"
+#include "shell/shell_open_command.h"
+#include "shell/shell_launch_execution.h"
 
 #include <array>
 #include <chrono>

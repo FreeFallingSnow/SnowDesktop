@@ -1,7 +1,7 @@
-#include "settings_controller.h"
-#include "settings_ipc_services.h"
-#include "settings_ipc_values.h"
-#include "desktop_style_presets.h"
+#include "settings/settings_controller.h"
+#include "settings/settings_ipc_services.h"
+#include "settings/settings_ipc_values.h"
+#include "desktop/desktop_style_presets.h"
 
 #include <array>
 #include <cstring>

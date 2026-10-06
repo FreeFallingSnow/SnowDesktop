@@ -1,4 +1,4 @@
-#include "winui/settings_shell_navigation.h"
+#include "../src/winui/settings_shell_navigation.h"
 
 #include <cstdlib>
 #include <iostream>

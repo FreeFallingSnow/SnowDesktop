@@ -1,11 +1,11 @@
 #include "pch.h"
 #include "system_control_view.h"
 #include "system_panel_surface.h"
-#include "../widget_system_data_provider.h"
-#include "../l10n.h"
-#include "../system_control_feedback.h"
-#include "../system_control_wifi_presentation.h"
-#include "../status_bar_battery.h"
+#include "widget/data/widget_system_data_provider.h"
+#include "common/l10n.h"
+#include "system/controls/system_control_feedback.h"
+#include "system/controls/system_control_wifi_presentation.h"
+#include "system/status_bar/status_bar_battery.h"
 #include <shellapi.h>
 #include <robuffer.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>

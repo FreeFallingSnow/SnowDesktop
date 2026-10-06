@@ -1,10 +1,10 @@
 #include "pch.h"
 #include "status_bar_page_presenter.h"
 #include "settings_presenter_controls.h"
-#include "../status_bar_shell_shortcut.h"
+#include "system/status_bar/status_bar_shell_shortcut.h"
 #include "panel_appearance_editor.h"
 #include "theme_library_controls.h"
-#include "../status_bar_appearance.h"
+#include "system/status_bar/status_bar_appearance.h"
 #include "merged_bar_height_editor.h"
 
 namespace snowdesktop::winui

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../settings_route.h"
+#include "settings/settings_route.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 

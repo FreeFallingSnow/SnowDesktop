@@ -1,7 +1,7 @@
-#include "app/desktop_backdrop_compositor.h"
-#include "app/desktop_backdrop_update_rules.h"
-#include "popup_round_geometry.h"
-#include "large_icon_shape_geometry.h"
+#include "../src/app/render/desktop_backdrop_compositor.h"
+#include "../src/app/render/desktop_backdrop_update_rules.h"
+#include "layout/popup_round_geometry.h"
+#include "icons/large_icon_shape_geometry.h"
 
 #include <roapi.h>
 #include <d2d1_1helper.h>

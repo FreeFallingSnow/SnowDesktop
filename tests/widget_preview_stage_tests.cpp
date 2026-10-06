@@ -1,6 +1,6 @@
-#include "widget_preview_stage.h"
-#include "appearance_edge_presets.h"
-#include "popup_round_geometry.h"
+#include "widget/preview/widget_preview_stage.h"
+#include "theme/appearance_edge_presets.h"
+#include "layout/popup_round_geometry.h"
 #include <d2d1_1helper.h>
 #include <d3d11.h>
 #include <dxgi.h>

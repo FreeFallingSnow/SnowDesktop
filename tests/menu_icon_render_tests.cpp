@@ -1,7 +1,7 @@
-#include "menu_icon_render.h"
-#include "modern_menu_scroll_hint.h"
-#include "menu_fluent_glyphs.h"
-#include "resource.h"
+#include "ui/menu/menu_icon_render.h"
+#include "ui/menu/modern_menu_scroll_hint.h"
+#include "ui/menu/menu_fluent_glyphs.h"
+#include "resources/resource.h"
 
 #include <algorithm>
 #include <array>

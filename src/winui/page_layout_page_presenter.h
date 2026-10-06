@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../page_layout_settings.h"
+#include "layout/page_layout_settings.h"
 
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.h>

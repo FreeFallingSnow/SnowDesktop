@@ -1,4 +1,4 @@
-#include "widget_clipboard_task_executor.h"
+#include "widget/tasks/widget_clipboard_task_executor.h"
 
 #include <chrono>
 #include <condition_variable>

@@ -2,8 +2,8 @@
 
 #include "container.h"
 #include "item.h"
-#include "types.h"
-#include "../dock_magnification.h"
+#include "common/types.h"
+#include "dock/dock_magnification.h"
 
 #include <memory>
 #include <vector>

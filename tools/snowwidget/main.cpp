@@ -1,10 +1,10 @@
-#include "widget_package.h"
-#include "widget_author_lint.h"
-#include "widget_author_permissions.h"
-#include "widget_author_test.h"
-#include "widget_api_contract_json.h"
-#include "widget_system_contract_json.h"
-#include "widget_view_contract_json.h"
+#include "widget/packages/widget_package.h"
+#include "widget/authoring/widget_author_lint.h"
+#include "widget/authoring/widget_author_permissions.h"
+#include "widget/authoring/widget_author_test.h"
+#include "widget/api/widget_api_contract_json.h"
+#include "widget/api/widget_system_contract_json.h"
+#include "widget/api/widget_view_contract_json.h"
 #include "gpu_diagnostics.h"
 
 #include <windows.h>

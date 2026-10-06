@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../settings_controller.h"
-#include "../usage_guide.h"
+#include "settings/settings_controller.h"
+#include "platform/usage_guide.h"
 #include "home_about_page_model.h"
-#include "../settings_search_index.h"
+#include "settings/settings_search_index.h"
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <memory>
 

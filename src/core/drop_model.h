@@ -19,8 +19,8 @@
 #include "item.h"
 #include "slot_contract.h"
 #include "widget.h"
-#include "types.h"
-#include "utils.h"
+#include "common/types.h"
+#include "common/utils.h"
 
 #include <algorithm>
 #include <string>

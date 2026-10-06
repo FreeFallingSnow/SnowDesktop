@@ -1,5 +1,5 @@
-#include "settings_search_index.h"
-#include "settings_search_catalog.h"
+#include "settings/settings_search_index.h"
+#include "settings/settings_search_catalog.h"
 
 #include <cstdlib>
 #include <algorithm>

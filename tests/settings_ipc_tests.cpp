@@ -1,11 +1,11 @@
-#include "settings_ipc_channel.h"
-#include "settings_ipc_values.h"
-#include "status_bar_appearance.h"
-#include "winui/home_about_ipc_values.h"
-#include "large_icon_edit_rules.h"
-#include "large_icon_preset_rules.h"
-#include "settings_process.h"
-#include "shell_extension_service.h"
+#include "settings/settings_ipc_channel.h"
+#include "settings/settings_ipc_values.h"
+#include "system/status_bar/status_bar_appearance.h"
+#include "../src/winui/home_about_ipc_values.h"
+#include "icons/large_icon_edit_rules.h"
+#include "icons/large_icon_preset_rules.h"
+#include "settings/settings_process.h"
+#include "shell/shell_extension_service.h"
 
 #include <atomic>
 #include <future>

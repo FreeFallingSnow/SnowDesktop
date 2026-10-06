@@ -1,0 +1,2059 @@
+/**
+ * @file widget_engine.h
+ * @brief 桌面小部件引擎 —— 负责 Lua 小部件的生命周期管理、沙箱执行与渲染调度
+ *
+ * WidgetEngine 是 SnowDesktop 中小部件子系统的核心模块。它维护一组 Lua 小部件实例，
+ * 每个实例运行在独立的沙箱环境中，通过受限的 Lua API 与宿主交互。引擎提供以下核心能力：
+ *
+ * - 小部件加载/卸载/重载（基于文件监视的按需加载）
+ * - Lua 沙箱隔离（受限环境、权限检查、安全 API 注册）
+ * - 跨小部件渲染调度（基于 Direct2D 的合成与绘制）
+ * - 桌面项目快照、文件打开/揭示、右键菜单等宿主回调桥接
+ * - 运行时日志、错误收集与诊断
+ * - 内联文本编辑请求的管理
+ * - 小部件主题色自定义
+ *
+ * 设计要点：
+ * - 所有 Lua 执行均阻留在引擎线程，回调通过函数指针桥接到外部
+ * - 沙箱采用独立 lua_State，预注册只读/受限 API，防止越权
+ * - 渲染通过 D2DState 结构管理资源，支持逐小部件独立绘制
+ */
+#pragma once
+#include "ui/input/text_input_state.h"
+
+#include <windows.h>
+#include <d2d1_1.h>
+#include <dwrite.h>
+#include <wrl/client.h>
+#include "theme/personalization.h"
+#include "widget/view/widget_surface_theme.h"
+#include "system/system_snapshot.h"
+#include "platform/http_runtime.h"
+#include "system/calendar/calendar_service.h"
+#include "system/calendar/calendar_display.h"
+#include "widget/packages/widget_package.h"
+#include "steam/steam_workshop_sync.h"
+#include "lua_runtime.h"
+#include "widget_layout_context.h"
+#include "widget_runtime_diagnostics.h"
+#include "widget_runtime_health.h"
+#include "widget_host_state.h"
+#include "widget_runtime_scheduler.h"
+#include "widget_invalidation_batch.h"
+#include "widget_lua_lifecycle.h"
+#include "widget/data/widget_data_broker.h"
+#include "widget/tasks/widget_task_broker.h"
+#include "widget/tasks/widget_location_task_executor.h"
+#include "widget/tasks/widget_notification_runtime.h"
+#include "widget/tasks/widget_notification_schedule_store.h"
+#include "widget/tasks/widget_media_task_executor.h"
+#include "widget/tasks/widget_audio_output_task_executor.h"
+#include "widget/tasks/widget_system_control_tasks.h"
+#include "widget/tasks/widget_clipboard_task_executor.h"
+#include "widget/tasks/widget_filesystem_handle_store.h"
+#include "widget/tasks/widget_filesystem_task_executor.h"
+#include "widget/tasks/widget_filesystem_watch_service.h"
+#include "widget/tasks/widget_app_task_executor.h"
+#include "widget/permissions/widget_trusted_gesture.h"
+#include "widget/data/widget_system_data_provider.h"
+#include "widget/data/widget_audio_analysis_provider.h"
+#include "widget/view/widget_interaction_region.h"
+#include "widget/view/widget_view_tree.h"
+#include "widget/view/widget_view_accessibility.h"
+#include "widget/view/widget_accessibility_snapshot.h"
+#include "widget/view/widget_text_input_rules.h"
+#include "widget/storage/widget_storage_write_budget.h"
+#include "widget/storage/widget_secret_store.h"
+
+namespace snowdesktop::widget_menu { struct Entry; }
+
+namespace snowdesktop::widget_runtime
+{
+struct PackageImageSource;
+class WidgetEngineSettingsBackend;
+}
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
+}
+
+#include <string>
+#include <string_view>
+#include <vector>
+#include <functional>
+#include <chrono>
+#include <atomic>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <unordered_map>
+#include <unordered_set>
+
+using Microsoft::WRL::ComPtr;
+
+struct D2DState;
+
+/**
+ * @struct LuaWidgetManifest
+ * @brief 小部件清单元数据，解析自小部件目录下的清单文件
+ *
+ * 清单文件定义了小部件的名称、版本、描述、默认栅格尺寸及其声明的权限列表。
+ * 引擎在加载小部件时读取该结构，用于权限校验和 UI 布局。
+ */
+struct LuaWidgetManifest
+{
+    struct SettingCondition
+    {
+        std::string key;
+        std::string operation;
+        std::vector<std::string> values;
+    };
+    struct Setting
+    {
+        std::string key;
+        std::string label;
+        std::string description;
+        std::string group;
+        std::string validationMessage;
+        std::string dependsOn;
+        std::string type;
+        std::string defaultValue;
+        std::string searchKey;
+        std::string binding;
+        std::string access = "read";
+        std::string emptyLabel;
+        std::string noResultsLabel;
+        double minValue = 0.0;
+        double maxValue = 100.0;
+        double stepValue = 1.0;
+        int minLength = -1;
+        int maxLength = -1;
+        bool required = false;
+        std::optional<SettingCondition> showWhen;
+        std::optional<SettingCondition> enabledWhen;
+        std::vector<std::string> options;
+        std::vector<std::string> optionLabels;
+        std::vector<std::string> defaultValues;
+        std::vector<std::string> extensions;
+    };
+    struct SettingGroup
+    {
+        std::string id;
+        std::string label;
+        std::string description;
+        bool collapsible = false;
+        bool defaultExpanded = true;
+    };
+    struct SettingPreset
+    {
+        std::string id;
+        std::string label;
+        std::unordered_map<std::string, std::string> values;
+        std::unordered_map<std::string, std::vector<std::string>>
+            arrayValues;
+        bool isDefault = false;
+    };
+    bool hasManifest = false;          ///< 是否存在清单文件
+    int schemaVersion = 0;             ///< 组件包清单版本
+    std::string packageId;             ///< 不可变组件包 UUID
+    std::string slug;                  ///< 人类可读短名称
+    int apiVersion = 0;                ///< Lua 宿主 API 契约版本
+    int dataVersion = 1;               ///< 实例存储结构版本
+    bool confirmRemoval = false;       ///< 删除实例前由宿主确认数据丢失
+    std::string name;                  ///< 小部件显示名称
+    std::string nameKey;               ///< 小部件名称翻译键
+    std::string version;               ///< 版本号字符串
+    std::string description;           ///< 功能描述文本
+    std::string descriptionKey;        ///< 小部件描述翻译键
+    std::vector<std::string> titleKeys; ///< 脚本可管理的本地化标题键
+    std::unordered_map<std::string,
+        std::unordered_map<std::string, std::string>> locales; ///< 组件自带的多语言文本
+    int defaultColumns = 1;            ///< 默认占据列数（桌面栅格）
+    int defaultRows = 1;               ///< 默认占据行数（桌面栅格）
+    int minColumns = 1;                ///< 最少占据列数
+    int minRows = 1;                   ///< 最少占据行数
+    int maxColumns = 0;                ///< 最多占据列数，0 表示不限制
+    int maxRows = 0;                   ///< 最多占据行数，0 表示不限制
+    int refreshIntervalMs = 0;          ///< manifest 声明的自动刷新间隔（ms），0 = 不自动刷新
+    std::vector<std::string> networkDomains; ///< 可选的精确公网域名收窄范围
+    std::vector<std::string> requiredFeatures; ///< 激活前必须满足的 v2 宿主特性
+    std::vector<std::string> optionalFeatures; ///< 可由脚本探测并降级的 v2 宿主特性
+    std::unordered_map<std::string, snowdesktop::widget::PackageResource>
+        resources; ///< v2 清单声明的包内图片和私有字体
+    /// v2 清单声明的宿主管理逻辑槽位。
+    snowdesktop::widget_runtime::LogicalSlotDeclarations logicalSlots;
+    std::vector<Setting> settings;        ///< 宿主生成的声明式设置
+    std::vector<SettingGroup> settingGroups; ///< 声明式设置分组
+    std::vector<SettingPreset> presets;   ///< 宿主生成的声明式预设
+    std::string publisher;
+    std::string minHostVersion;
+    std::string preview;
+    std::string previewIntroduction;
+    std::string previewIntroductionKey;
+    /// Preview-only storage values supplied by the component author.
+    /// They are visible through storage.get() but never persisted.
+    std::unordered_map<std::string, std::string> previewStorage;
+    /// Maps preview storage names to keys in the manifest locale catalogs.
+    std::unordered_map<std::string, std::string> previewStorageKeys;
+    std::vector<snowdesktop::widget::PreviewVariant> previewVariants;
+    std::string entry;
+    std::string signature;
+    bool signatureValid = true;
+    std::vector<std::string> permissions; ///< 必需权限列表
+    std::vector<std::string> optionalPermissions; ///< 可拒绝并降级的权限列表
+};
+
+/**
+ * @struct LuaDesktopItemInfo
+ * @brief 桌面项目基本信息，由宿主提供给 Lua 沙箱的快照条目
+ *
+ * 当 Lua 脚本调用桌面查询 API 时，宿主通过回调返回该项目列表，
+ * 用于支持小部件内的文件浏览、快速启动等功能。
+ */
+struct LuaDesktopItemInfo
+{
+    std::string id;         ///< 项目唯一标识符
+    std::string title;      ///< 项目显示标题
+    std::string path;       ///< 项目完整路径
+    std::string source;     ///< 来源标识（如 "desktop", "startmenu", "custom"）
+    std::string type;       ///< 项目类型（如 "file", "folder", "shortcut"）
+    bool selected = false;  ///< 当前是否处于选中状态
+};
+
+/**
+ * @struct LuaWidgetMenuItem
+ * @brief 右键菜单项定义，由 Lua 脚本动态生成
+ *
+ * Lua 小部件可通过回调返回该结构数组，向宿主注册自定义的上下文菜单项。
+ */
+struct LuaWidgetMenuItem
+{
+    std::string label;         ///< 菜单项显示文本
+    std::string icon;          ///< 可选图标字符
+    std::string iconFont = "fa"; ///< "fa" 或 "fluent"
+    std::string imageResourceName; ///< 包内 image resource 名称
+    bool enabled = true;       ///< 是否可用（灰显）
+    bool checked = false;      ///< 是否显示选中标记
+    bool separator = false;    ///< 是否为分隔线（为 true 时忽略其他字段）
+    bool elementContext = false;
+    std::string actionId;
+    std::string targetKey;
+    std::string surface = "desktop";
+    snowdesktop::widget_runtime::InteractionValue contextValue;
+    std::uint64_t runtimeToken = 0;
+    std::vector<LuaWidgetMenuItem> children; ///< 子菜单；仅叶子项投递动作
+};
+
+/**
+ * @struct WidgetLogEntry
+ * @brief 日志条目，记录小部件运行时的单条日志信息
+ *
+ * 用于诊断面板日志展示，包含日志键名、级别和消息内容。
+ */
+using WidgetLogEntry = snowdesktop::widget_runtime::LogEntry;
+
+/**
+ * @struct WidgetDiagnosticEntry
+ * @brief 诊断条目，描述单个小部件的完整诊断快照
+ *
+ * 用于调试面板展示，汇总小部件的标识、路径、权限、错误状态及日志。
+ * 由 GetWidgetDiagnostics() 收集返回。
+ */
+struct WidgetDiagnosticEntry
+{
+    std::wstring widgetId;              ///< 小部件实例 ID
+    std::string name;                   ///< 小部件名称
+    std::wstring scriptPath;            ///< 脚本文件路径
+    std::string packageId;
+    std::string packageVersion;
+    bool valid = false;                 ///< 是否成功加载并处于有效状态
+    bool hasManifest = false;           ///< 是否包含清单文件
+    std::vector<std::string> permissions; ///< 已授予的权限列表
+    std::string lastError;              ///< 最近一次错误信息
+    std::vector<WidgetLogEntry> logs;   ///< 运行时日志列表
+    std::size_t memoryBytes = 0;
+    std::size_t memoryLimit = 0;
+    double lastCallbackMs = 0.0;
+    bool executionQuotaExceeded = false;
+    bool memoryQuotaExceeded = false;
+    bool circuitOpen = false;
+    std::vector<snowdesktop::widget_runtime::ViewInspectionNode>
+        desktopViewNodes;
+    std::vector<snowdesktop::widget_runtime::ViewInspectionNode>
+        auxiliaryViewNodes;
+    std::string auxiliarySurface;
+};
+
+/**
+ * @struct LuaInlineTextEditRequest
+ * @brief 内联文本编辑请求，由 Lua 脚本发起，宿主编排文本输入
+ *
+ * 当 Lua 小部件需要就地编辑文本时（如重命名文件），引擎通过回调将此结构
+ * 传递给宿主，由宿主显示内联输入框并将结果写回存储。
+ */
+struct LuaInlineTextEditRequest
+{
+    std::wstring widgetId;   ///< 发起请求的小部件 ID
+    std::string storageKey;  ///< 存储键名，宿主完成编辑后通过该键写回
+    std::string text;        ///< 初始文本内容
+    RECT localRect{};        ///< 输入框在小部件本地坐标系中的位置和尺寸
+    bool multiline = false;  ///< 是否支持多行输入
+    bool selectAll = true;   ///< 是否自动全选文本
+    bool liveUpdate = false; ///< 输入过程中是否实时写回存储
+    int textColor = 0x000000; ///< 文本颜色（ARGB 格式，默认黑色）
+    int backgroundColor = 0xFFFFFF; ///< 编辑框背景颜色（RGB，默认白色）
+    float fontSize = 15.0f;  ///< 编辑框字号（像素，默认 15）
+};
+
+struct LuaWidgetPanelRequest
+{
+    std::wstring widgetId;
+    std::wstring title;
+    std::string surface = "panel";
+    std::string placement = "auto";
+    RECT anchorRect{};
+    bool hasAnchor = false;
+    bool showHeader = true;
+    int width = 520;
+    int height = 620;
+    bool dismissOnOutside = true;
+    bool dismissOnEscape = true;
+    bool modal = false;
+};
+
+enum class LuaWidgetFilePickerKind
+{
+    OpenFile,
+    SaveFile,
+    Folder,
+};
+
+struct LuaWidgetFilePickerRequest
+{
+    LuaWidgetFilePickerKind kind = LuaWidgetFilePickerKind::OpenFile;
+    snowdesktop::widget_runtime::WidgetFilesystemHandleAccess access =
+        snowdesktop::widget_runtime::WidgetFilesystemHandleAccess::Read;
+    std::vector<std::wstring> extensions;
+    std::wstring suggestedName;
+    bool multiple = false;
+};
+
+struct LuaWidgetFilePickerResult
+{
+    std::filesystem::path path;
+    bool canceled = false;
+    std::string error;
+
+    explicit operator bool() const noexcept
+    {
+        return !path.empty() && !canceled && error.empty();
+    }
+    std::vector<std::filesystem::path> paths;
+};
+
+enum class LuaWidgetPreviewDataState
+{
+    Ready,
+    Empty,
+    Loading,
+    Error,
+    Stale,
+    PermissionDenied,
+};
+
+struct LuaWidgetSurfaceContext
+{
+    UINT dpiX = USER_DEFAULT_SCREEN_DPI;
+    UINT dpiY = USER_DEFAULT_SCREEN_DPI;
+    RECT monitorBounds{};
+    RECT workArea{};
+    bool monitorAvailable = false;
+    bool primaryMonitor = false;
+};
+
+/** Initial host environment for an unpacked authoring preview. */
+struct LuaWidgetAuthorPreviewConfiguration
+{
+    LuaWidgetTheme theme;
+    LuaWidgetSurfaceContext surface;
+    RECT bounds{};
+    int columns = 1;
+    int rows = 1;
+    int cellWidth = 92;
+    int cellHeight = 116;
+    int gap = 8;
+    int barHeight = 24;
+    DWRITE_FONT_WEIGHT fontWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
+    LuaWidgetPreviewDataState dataState =
+        LuaWidgetPreviewDataState::Ready;
+};
+
+struct LuaWidgetContextState
+{
+    LuaWidgetSurfaceContext surface;
+    bool visible = false;
+    bool preview = false;
+    bool focused = false;
+    bool selected = false;
+};
+
+struct LuaWidgetDataSnapshot
+{
+    struct FilesystemWatchEvent
+    {
+        std::string kind;
+        std::string name;
+        std::string oldName;
+        std::string handle;
+        std::string itemKind;
+    };
+
+    std::string topic;
+    bool available = false;
+    bool stale = true;
+    bool warmingUp = false;
+    std::int64_t timestampMs = 0;
+    std::string error;
+    snowdesktop::widget_runtime::WidgetCpuDataSnapshot cpu;
+    snowdesktop::widget_runtime::WidgetMemoryDataSnapshot memory;
+    snowdesktop::widget_runtime::WidgetProcessSummaryDataSnapshot
+        processSummary;
+    snowdesktop::widget_runtime::WidgetPowerDataSnapshot power;
+    snowdesktop::widget_runtime::WidgetNetworkStatusDataSnapshot
+        networkStatus;
+    snowdesktop::widget_runtime::WidgetNetworkTrafficDataSnapshot
+        networkTraffic;
+    snowdesktop::widget_runtime::WidgetGpuDataSnapshot gpu;
+    snowdesktop::widget_runtime::WidgetStorageVolumesDataSnapshot
+        storageVolumes;
+    snowdesktop::widget_runtime::WidgetStorageIoDataSnapshot storageIo;
+    snowdesktop::widget_runtime::WidgetDisplayTopologyDataSnapshot
+        displayTopology;
+    snowdesktop::widget_runtime::WidgetDisplayDataSnapshot displayCurrent;
+    snowdesktop::widget_runtime::WidgetAudioOutputDefaultDataSnapshot
+        audioOutputDefault;
+    snowdesktop::widget_runtime::WidgetAudioOutputVolumeDataSnapshot
+        audioOutputVolume;
+    JsonValue systemControl;
+    snowdesktop::widget_runtime::WidgetAudioAnalysisDataSnapshot
+        audioAnalysis;
+    snowdesktop::widget_runtime::WidgetMediaSessionsDataSnapshot
+        mediaSessions;
+    snowdesktop::widget_runtime::WidgetMediaCurrentDataSnapshot
+        mediaCurrent;
+    snowdesktop::widget_runtime::WidgetMediaTimelineDataSnapshot
+        mediaTimeline;
+    snowdesktop::widget_runtime::WidgetMediaArtworkDataSnapshot
+        mediaArtwork;
+    std::vector<LuaDesktopItemInfo> desktopItems;
+    std::uint64_t desktopRevision = 0;
+    std::string desktopChangeReason;
+    std::vector<snowdesktop::calendar::CalendarEvent> calendarEvents;
+    std::string calendarSelectedDate;
+    std::string calendarRangeStart;
+    std::string calendarRangeEnd;
+    std::uint64_t calendarRevision = 0;
+    bool calendarTruncated = false;
+    std::string appIndexState;
+    std::uint64_t appIndexRevision = 0;
+    std::vector<FilesystemWatchEvent> filesystemWatchEvents;
+    std::uint64_t filesystemWatchRevision = 0;
+    bool filesystemWatchOverflow = false;
+};
+
+struct LuaApplicationCatalogSnapshot
+{
+    std::string state = "unavailable";
+    std::vector<snowdesktop::widget_runtime::WidgetAppCatalogEntry> entries;
+};
+
+/**
+ * @struct LuaWidget
+ * @brief 运行时小部件实例的完整状态描述
+ *
+ * 引擎内部维护一组 LuaWidget 实例，每个实例对应一个已加载的 Lua 小部件脚本。
+ * 该结构包含了小部件的标识信息、清单元数据、已授予的权限集、Lua 引用、
+ * 有效性标志、主题配置、文件时间戳及最后一次渲染的边界矩形。
+ *
+ * @note ref 字段存储 Lua 注册表引用（LUA_NOREF 表示无效），
+ *       用于在沙箱 lua_State 中快速定位小部件的主环境表。
+ */
+struct LuaWidget
+{
+    struct ApplicationReference
+    {
+        std::string catalogId;
+        std::string launchTarget;
+        std::uint64_t catalogRevision = 0;
+        std::string title;
+        std::string source;
+        std::string type;
+        bool persistent = false;
+        bool available = true;
+    };
+
+    struct ItemReference
+    {
+        std::string target;
+        std::string sourceTask;
+        std::uint64_t revision = 0;
+        std::string title;
+        std::string source;
+        std::string type;
+        std::string referenceKind = "filesystem.reference";
+        bool persistent = false;
+        bool available = true;
+    };
+
+    struct HostControl
+    {
+        enum class Type { Button, Toggle, Input, Scroll };
+        Type type = Type::Button;
+        std::string id;
+        std::string surface = "desktop";
+        std::string storageKey;
+        RECT rect{};
+        std::optional<RECT> clipRect;
+        bool value = false;
+        bool enabled = true;
+        bool focusable = true;
+        bool readOnly = false;
+        bool controlled = false;
+        bool numeric = false;
+        bool selectAll = true;
+        std::optional<snowdesktop::widget_runtime::ViewTextSelection>
+            selection;
+        bool liveUpdate = false;
+        bool multiline = false;
+        std::string controlledText;
+        std::string placeholder;
+        snowdesktop::widget_runtime::InteractionAction changeAction;
+        snowdesktop::widget_runtime::InteractionAction
+            selectionChangeAction;
+        snowdesktop::widget_runtime::InteractionAction focusAction;
+        snowdesktop::widget_runtime::InteractionAction blurAction;
+        snowdesktop::widget_runtime::InteractionAction submitAction;
+        float minimum = 0.0f;
+        float maximum = 1.0f;
+        float step = 0.01f;
+        float fontSize = 15.0f;
+        snowdesktop::widget_runtime::ViewEdgeInsets padding{ 8.0f };
+        int contentHeight = 0;
+        int viewportHeight = 0;
+        int contentWidth = 0;
+        int viewportWidth = 0;
+        bool horizontal = false;
+        bool selectPopup = false;
+        int initialScrollOffset = 0;
+        std::size_t maximumUtf8Bytes = 0;
+    };
+
+    struct VariableVirtualMeasurement
+    {
+        float extent = 0.0f;
+        std::uint64_t lastUsed = 0;
+        std::string itemKey;
+    };
+
+    struct VariableVirtualState
+    {
+        std::size_t itemCount = 0;
+        float estimatedItemSize = 0.0f;
+        float mainGap = 0.0f;
+        bool horizontal = false;
+        std::uint64_t layoutRevision = 0;
+        std::uint64_t sequence = 0;
+        std::unordered_map<std::size_t, VariableVirtualMeasurement>
+            measurements;
+    };
+
+    struct LogicalSlotPointerDrag
+    {
+        std::string sourceSlotId;
+        std::string targetSlotId;
+        std::string itemId;
+        std::size_t sourceIndex = 0;
+        std::size_t targetIndex = 0;
+        POINT start{};
+        RECT sourceBounds{};
+        RECT indicatorBounds{};
+        bool moved = false;
+    };
+
+    struct LogicalSlotFocus
+    {
+        std::string slotId;
+        std::string itemId;
+    };
+
+    struct NativeMarqueeText
+    {
+        std::string key;
+        D2D1_RECT_F viewport{};
+        ComPtr<IDWriteTextLayout> layout;
+        float originX = 0.0f;
+        float originY = 0.0f;
+        float textWidth = 0.0f;
+        float textHeight = 0.0f;
+        float speed = 24.0f;
+        float gap = 24.0f;
+        float offset = 0.0f;
+        int color = 0xFFFFFF;
+        float alpha = 1.0f;
+        bool scrolling = false;
+    };
+
+    struct NativeMarqueeSurface
+    {
+        ComPtr<ID2D1Device> commandDevice;
+        ComPtr<ID2D1CommandList> staticCommands;
+        std::vector<NativeMarqueeText> marquees;
+        std::vector<NativeMarqueeText> pendingMarquees;
+        std::chrono::steady_clock::time_point lastAdvance{};
+        bool collecting = false;
+        bool framePending = false;
+        bool requiresLuaRender = true;
+        bool compositionManaged = false;
+    };
+    std::wstring widgetId;               ///< 小部件实例唯一 ID
+    std::string packageId;                ///< 组件包 UUID
+    std::filesystem::path packageRoot;    ///< 已校验组件包根目录
+    lua_State* state = nullptr;           ///< Per-instance Lua VM
+    std::unique_ptr<LuaRuntimeQuota> quota; ///< VM memory/instruction accounting
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetStorageWriteBudget>
+        storageWriteBudget;                ///< Persistent commit rate accounting
+    std::string name;                    ///< 小部件名称
+    std::wstring filePath;               ///< Lua 脚本文件的完整路径
+    LuaWidgetManifest manifest;          ///< 从清单文件解析的元数据
+    std::unordered_map<std::string, std::string>
+        packageImageContentKeys;         ///< Resource name to decoded image content digest
+    std::unordered_set<std::string> permissions; ///< 已授予的权限集合
+    int ref = LUA_NOREF;                 ///< Lua 注册表引用，LUA_NOREF 表示无效
+    bool valid = false;                  ///< 是否已成功加载且可执行
+    bool customStyle = false;            ///< 是否启用了自定义主题样式
+    bool followPersonalizationDefault = false; ///< 尚未保存外观状态时是否默认跟随全局
+    bool hasBackgroundLayer = false;     ///< 是否声明桌面装饰背景层
+    LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
+    LuaWidgetPreviewDataState previewDataState =
+        LuaWidgetPreviewDataState::Ready; ///< 作者预览的确定性数据状态
+    LuaWidgetSurfaceContext surfaceContext; ///< 当前显示器、工作区与 DPI 摘要
+    std::vector<LuaWidgetManifest::Setting> scriptSettings; ///< Lua 顶层声明式设置
+    std::vector<LuaWidgetManifest::SettingGroup> scriptSettingGroups; ///< Lua 顶层设置分组
+    std::vector<LuaWidgetManifest::SettingPreset> scriptPresets; ///< Lua 顶层声明式预设
+    FILETIME lastModified = {};          ///< 脚本文件最后修改时间，用于变更检测
+    RECT lastBounds{};                   ///< 最后一次渲染时的边界矩形
+    RECT panelBounds{};                  ///< 最后一次面板渲染时的边界矩形
+    int lastColumns = 1;
+    int lastRows = 1;
+    snowdesktop::widget_runtime::LayoutMetrics layoutMetrics;
+    bool desktopVisible = false;
+    bool keepRuntimeActiveForHiddenPage = false;
+    bool hostVisible = false;
+    bool usesSystemSnapshot = false;
+    bool usesMediaSnapshot = false;
+    double lastCallbackMs = 0.0;
+    snowdesktop::widget_runtime::RuntimeHealth health;
+    std::chrono::steady_clock::time_point notificationWindow{};
+    std::uint32_t notificationsInWindow = 0;
+    UINT_PTR refreshTimerId = 0;        ///< 宿主统一截止时间队列分配的周期令牌（0 = 未开）
+    UINT_PTR namedTimerId = 0;          ///< v2 schedule 命名计划共用的下一次唤醒令牌
+    UINT_PTR animationTimerId = 0;      ///< animation.requestFrame 共用的单次下一帧令牌
+    snowdesktop::widget_runtime::NamedTimerSchedule namedTimers;
+    snowdesktop::widget_runtime::AnimationFrameRequests animationFrames;
+    std::vector<HostControl> hostControls;
+    snowdesktop::widget_runtime::DeferredHostInputFocus
+        deferredHostInputFocus;
+    std::unordered_map<std::string, int> scrollOffsets;
+    std::unordered_map<std::string, int> panelScrollOffsets;
+    std::unordered_map<std::string, VariableVirtualState>
+        variableVirtualStates;
+    std::unordered_map<std::string, VariableVirtualState>
+        panelVariableVirtualStates;
+    std::unordered_map<std::uint64_t, std::string> dataSubscriptions;
+    std::unordered_set<std::uint64_t> taskIds;
+    std::unordered_map<std::string, ApplicationReference>
+        applicationReferences;
+    std::unordered_map<std::string, ItemReference> itemReferences;
+    snowdesktop::widget_runtime::LogicalSlotModel logicalSlots;
+    snowdesktop::widget_runtime::LogicalSlotHistory logicalSlotHistory;
+    std::optional<LogicalSlotPointerDrag> logicalSlotPointerDrag;
+    std::optional<LogicalSlotFocus> logicalSlotFocus;
+    std::string viewKeyboardFocusKey;
+    bool viewFocusCueVisible = false;
+    snowdesktop::widget_runtime::WidgetInteractionRegions interactionRegions;
+    std::optional<snowdesktop::widget_runtime::ViewNode> viewTree;
+    snowdesktop::widget_runtime::ViewTransitionRuntime viewTransitions;
+    bool viewTransitionFramePending = false;
+    bool viewIndeterminateProgressActive = false;
+    NativeMarqueeSurface desktopMarquee;
+    std::string panelViewKeyboardFocusKey;
+    bool panelViewFocusCueVisible = false;
+    snowdesktop::widget_runtime::WidgetInteractionRegions
+        panelInteractionRegions;
+    std::optional<snowdesktop::widget_runtime::ViewNode> panelViewTree;
+    snowdesktop::widget_runtime::ViewTransitionRuntime panelViewTransitions;
+    bool panelViewTransitionFramePending = false;
+    bool panelIndeterminateProgressActive = false;
+    NativeMarqueeSurface panelMarquee;
+    std::string panelSurface = "panel";
+    bool panelActive = false;
+    bool panelInitialKeyboardFocusPending = false;
+    bool panelFrameOpen = false;
+    std::string backgroundLayerError;
+    std::uint64_t runtimeToken = 0;
+    bool preview = false;
+    std::unordered_map<std::string, std::string> previewStorage;
+    snowdesktop::widget_runtime::WidgetLuaLifecycle lifecycle;
+};
+
+/**
+ * @struct WidgetErrorEntry
+ * @brief 错误条目，记录引擎或小部件运行时产生的单条错误
+ *
+ * 用于 GetWidgetErrors() 返回，供外部诊断 UI 展示。
+ */
+struct WidgetErrorEntry
+{
+    std::string key;      ///< 错误键名，用于去重或归类
+    std::string message;  ///< 错误描述信息
+};
+
+/** Host-only geometry and policy snapshot for one committed slotSurface. */
+struct LogicalSlotHostSurface
+{
+    struct ItemRegion
+    {
+        std::string itemId;
+        RECT bounds{};
+    };
+
+    std::wstring widgetId;
+    std::string slotId;
+    snowdesktop::widget_runtime::LogicalSlotKind kind =
+        snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+    std::uint64_t revision = 0;
+    std::size_t capacity = 1;
+    std::size_t itemCount = 0;
+    bool allowClear = true;
+    std::vector<std::string> accepts;
+    std::string replacePolicy;
+    snowdesktop::widget_runtime::ViewStyle dropStyle;
+    RECT bounds{};
+    std::vector<ItemRegion> items;
+};
+
+struct LogicalSlotPickerRequest
+{
+    std::wstring widgetId;
+    std::string slotId;
+    snowdesktop::widget_runtime::LogicalSlotKind kind =
+        snowdesktop::widget_runtime::LogicalSlotKind::Binding;
+    std::vector<std::string> accepts;
+    std::string referenceType;
+    std::size_t targetIndex = 0;
+};
+
+class WidgetEngine
+{
+public:
+    /**
+     * @brief 默认构造函数
+     */
+    WidgetEngine() = default;
+
+    /**
+     * @brief 析构函数，释放所有小部件实例和 Lua 状态
+     */
+    ~WidgetEngine();
+
+    // Set before Init. Preview engines never attach live application services.
+    void SetSystemDataProvider(std::shared_ptr<
+        snowdesktop::widget_runtime::WidgetSystemDataProvider> provider);
+
+    /**
+     * @brief 初始化引擎
+     * @param d2dContext Direct2D 设备上下文指针
+     * @param dwriteFactory DirectWrite 工厂接口指针
+     * @return 初始化成功返回 true，否则返回 false
+     */
+    bool Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFactory);
+    /** Initialize a render-only engine without live services or disk state. */
+    bool InitPreview(ID2D1DeviceContext* d2dContext,
+        IDWriteFactory* dwriteFactory);
+    bool IsPreviewOnly() const { return previewOnly_; }
+    // Host-internal device lifecycle; does not reload Lua or change the widget API.
+    void ResetGraphicsResources(ID2D1DeviceContext* context);
+
+    /**
+     * @brief 关闭引擎，释放所有资源，卸载所有已加载的小部件
+     */
+    void Shutdown();
+    // Stop queued device work without destroying objects used by modal callbacks.
+    void BeginTaskShutdown();
+
+    using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
+    using ApplicationSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
+    using ApplicationCatalogProvider =
+        std::function<LuaApplicationCatalogSnapshot()>;
+    using ApplicationIndexStatusProvider = std::function<std::string()>;
+    using EverythingSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
+    using WidgetSelectedProvider = std::function<bool(const std::wstring&)>;
+    using SelectedWidgetPackageProvider = std::function<std::wstring()>;
+    using WidgetTitleCallback = std::function<void(const std::wstring&, const std::wstring&)>;
+    using InvalidateCallback = std::function<void(const std::wstring&,
+        const std::optional<RECT>&, std::string_view)>;
+    using NativeMarqueeSyncCallback = std::function<bool(
+        const std::wstring&, const std::vector<LuaWidget::NativeMarqueeText>&,
+        bool)>;
+    using DesktopPathAction = std::function<bool(const std::wstring&)>;
+    using DesktopRefreshCallback = std::function<void()>;
+    using InlineTextEditCallback = std::function<void(const LuaInlineTextEditRequest&)>;
+    using WidgetPanelOpenCallback = std::function<void(const LuaWidgetPanelRequest&)>;
+    using WidgetPanelCloseCallback = std::function<void(const std::wstring&)>;
+    using HostInputFocusCallback = std::function<void()>;
+    using NotifyCallback = std::function<bool(
+        const snowdesktop::widget_runtime::WidgetNotificationHostRequest&)>;
+    using FilePickerCallback = std::function<LuaWidgetFilePickerResult(
+        const LuaWidgetFilePickerRequest&)>;
+    using LogicalSlotPickerCallback =
+        std::function<bool(const LogicalSlotPickerRequest&)>;
+    using WidgetTimerRequestCallback = std::function<UINT_PTR(const std::wstring& widgetId, UINT intervalMs)>;
+    using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
+    using AudioAnalysisWakeCallback = std::function<void()>;
+    using TaskWakeCallback = std::function<void()>;
+    using SystemControlPromptCallback = std::function<snowdesktop::system_control::Result(
+        snowdesktop::system_control::Request&, const std::wstring&, std::function<bool()>)>;
+    void SetSystemControlPromptCallback(SystemControlPromptCallback callback) { systemControlPromptCallback_ = std::move(callback); }
+
+    /** @brief 设置桌面快照提供者回调 */
+    void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
+    /** @brief 设置选中项提供者回调 */
+    void SetSelectionProvider(DesktopSnapshotProvider provider) { selectionProvider_ = std::move(provider); }
+    /** @brief 设置组件选中状态提供者回调 */
+    void SetWidgetSelectedProvider(WidgetSelectedProvider provider) { widgetSelectedProvider_ = std::move(provider); }
+    /** @brief 设置当前唯一选中组件的包 UUID 提供者 */
+    void SetSelectedWidgetPackageProvider(
+        SelectedWidgetPackageProvider provider)
+    {
+        selectedWidgetPackageProvider_ = std::move(provider);
+    }
+    void SetApplicationSearchProvider(ApplicationSearchProvider provider) { applicationSearchProvider_ = std::move(provider); }
+    void SetApplicationCatalogProvider(ApplicationCatalogProvider provider)
+    {
+        applicationCatalogProvider_ = std::move(provider);
+    }
+    void SetApplicationIndexStatusProvider(
+        ApplicationIndexStatusProvider provider)
+    {
+        applicationIndexStatusProvider_ = std::move(provider);
+    }
+    void SetApplicationLaunchCallback(DesktopPathAction callback)
+    {
+        applicationLaunchCallback_ = std::move(callback);
+    }
+    void SetEverythingSearchProvider(EverythingSearchProvider provider) { everythingSearchProvider_ = std::move(provider); }
+    /** @brief 设置小部件标题变更回调 */
+    void SetWidgetTitleCallback(WidgetTitleCallback callback) { setWidgetTitleCallback_ = std::move(callback); }
+    /** @brief 设置失效回调（请求宿主重绘） */
+    void SetInvalidateCallback(InvalidateCallback callback) { invalidateCallback_ = std::move(callback); }
+    /** @brief 设置桌面合成器滚动文字同步回调。 */
+    void SetNativeMarqueeSyncCallback(NativeMarqueeSyncCallback callback)
+    {
+        nativeMarqueeSyncCallback_ = std::move(callback);
+    }
+    /** @brief 设置桌面文件打开回调 */
+    void SetDesktopOpenCallback(DesktopPathAction callback) { desktopOpenCallback_ = std::move(callback); }
+    /** @brief 设置桌面文件揭示回调（在资源管理器中定位） */
+    void SetDesktopRevealCallback(DesktopPathAction callback) { desktopRevealCallback_ = std::move(callback); }
+    /** @brief 设置桌面刷新回调 */
+    void SetDesktopRefreshCallback(DesktopRefreshCallback callback) { desktopRefreshCallback_ = std::move(callback); }
+    /** @brief 设置内联文本编辑回调 */
+    void SetInlineTextEditCallback(InlineTextEditCallback callback) { inlineTextEditCallback_ = std::move(callback); }
+    /** @brief 设置宿主绘制输入框取得键盘焦点时的回调 */
+    void SetHostInputFocusCallback(HostInputFocusCallback callback) { hostInputFocusCallback_ = std::move(callback); }
+    /** @brief 设置打开组件设置面板回调 */
+    void SetOpenWidgetSettingsCallback(WidgetTitleCallback callback) { openWidgetSettingsCallback_ = std::move(callback); }
+    void SetOpenWidgetPanelCallback(WidgetPanelOpenCallback callback) { openWidgetPanelCallback_ = std::move(callback); }
+    void SetCloseWidgetPanelCallback(WidgetPanelCloseCallback callback) { closeWidgetPanelCallback_ = std::move(callback); }
+    /** @brief 设置系统通知回调 */
+    void SetNotifyCallback(NotifyCallback callback) { notifyCallback_ = std::move(callback); }
+    /** @brief 将宿主通知操作按钮回传给创建该通知的组件实例。 */
+    void OnNotificationAction(std::string_view notificationId,
+        std::string_view actionId);
+    /** @brief 设置由可信用户动作触发的系统文件选择器回调 */
+    void SetFilePickerCallback(FilePickerCallback callback)
+    {
+        filePickerCallback_ = std::move(callback);
+    }
+    void SetLogicalSlotPickerCallback(LogicalSlotPickerCallback callback)
+    {
+        logicalSlotPickerCallback_ = std::move(callback);
+    }
+    /** @brief 设置组件刷新截止时间请求回调（宿主返回统一调度令牌） */
+    void SetWidgetTimerRequestCallback(WidgetTimerRequestCallback callback) { widgetTimerRequestCallback_ = std::move(callback); }
+    /** @brief 设置组件独立刷新定时器关闭回调 */
+    void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
+    /** @brief 设置音频分析线程发布新快照时的 UI 线程唤醒回调。 */
+    void SetAudioAnalysisWakeCallback(AudioAnalysisWakeCallback callback);
+    void SetTaskWakeCallback(TaskWakeCallback callback);
+    /** @brief 主宿主窗口重建后，将组件刷新与命名定时器重新绑定到新 HWND。 */
+    void RebindHostTimers();
+
+    /**
+     * @brief 确保小部件已加载到沙箱中
+     * @param widgetId 小部件实例 ID
+     * @param scriptPath Lua 脚本文件路径
+     * @return 加载成功或已存在返回 true，否则返回 false
+     */
+    bool EnsureWidgetLoaded(const std::wstring& widgetId, const std::wstring& scriptPath);
+    /** Load an isolated, side-effect-free instance for the component picker. */
+    bool EnsureWidgetPreviewLoaded(const std::wstring& widgetId,
+        const std::wstring& packageId,
+        const std::unordered_map<std::string, std::string>&
+            storageOverrides = {});
+    /** Validate and load an unpacked development package without installing it. */
+    bool EnsureWidgetDirectoryPreviewLoaded(const std::wstring& widgetId,
+        const std::filesystem::path& packageRoot,
+        const std::unordered_map<std::string, std::string>&
+            storageOverrides = {},
+        const LuaWidgetAuthorPreviewConfiguration*
+            previewConfiguration = nullptr);
+
+    /**
+     * @brief 卸载指定小部件实例
+     * @param widgetId 要卸载的小部件 ID
+     */
+    void UnloadWidget(const std::wstring& widgetId);
+    void DeleteWidgetInstance(const std::wstring& widgetId);
+    bool RequiresRemovalConfirmation(const std::wstring& widgetId,
+        const std::wstring& packageId);
+    void RevokeFilesystemHandlesForPackage(
+        const std::string& packageId);
+
+    /**
+     * @brief 重新加载指定小部件实例
+     * @param widgetId 要重新加载的小部件 ID
+     * @return 重载成功返回 true，否则返回 false
+     */
+    bool ReloadWidget(const std::wstring& widgetId);
+    bool RetryWidget(const std::wstring& widgetId,
+        const std::wstring& packageId);
+    snowdesktop::widget_runtime::WidgetHostState GetWidgetHostState(
+        const std::wstring& widgetId,
+        const std::wstring& packageId) const;
+    /** Return a load/render failure without consulting the installed registry. */
+    std::optional<snowdesktop::widget_runtime::WidgetHostState>
+        GetWidgetRuntimeFailure(const std::wstring& widgetId) const;
+    void NotifyLanguageChanged(const std::wstring& widgetId);
+
+    /**
+     * @brief 渲染所有已加载的小部件
+     * @param context Direct2D 设备上下文
+     */
+    void RenderAll(ID2D1DeviceContext* context);
+
+    /**
+     * @brief 渲染指定小部件实例
+     * @param widgetId 小部件实例 ID
+     * @param scriptPath Lua 脚本路径
+     * @param context Direct2D 设备上下文
+     * @param bounds 小部件在桌面栅格中的边界矩形
+     */
+    void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
+        ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
+    /** Render the optional decorative layer above the host material tint. */
+    bool RenderWidgetBackgroundLayer(const std::wstring& widgetId,
+        ID2D1DeviceContext* context, RECT bounds, int columns, int rows,
+        float inheritedBlurRadius, float cornerRadius);
+    /** Synchronize semantic visibility of one widget's desktop surface. */
+    void SetWidgetDesktopVisible(
+        const std::wstring& widgetId, bool visible,
+        bool keepRuntimeActive = false);
+    /** Hide or show the desktop surface of every loaded non-preview widget. */
+    void SetAllWidgetDesktopVisible(bool visible);
+    // Applies host-owned presentation settings without changing Lua callbacks,
+    // accessibility context, named timers, or pending data refresh requests.
+    void ApplyHostAnimationPreferences();
+    bool RenderWidgetPanel(const std::wstring& widgetId,
+        ID2D1DeviceContext* context, RECT bounds,
+        std::string_view surface = "panel");
+    void TickRuntime();
+    /** @brief 在 UI 线程消费一次已合并的音频分析更新。 */
+    void OnAudioAnalysisWake();
+    void OnTaskWake();
+    /**
+     * @brief 处理宿主转发的组件调度截止时间到期
+     * @param widgetId 触发刷新的小部件实例 ID
+     * @param timerId 宿主触发的调度令牌
+     *
+     * 同时处理旧 manifest.refreshIntervalMs 周期刷新和 v2 schedule 命名计划。
+     * 命名定时器只为最近一次到期时间申请单次宿主唤醒，避免全局轮询全部组件。
+     */
+    void OnWidgetTimer(const std::wstring& widgetId, UINT_PTR timerId);
+
+    /**
+     * @brief 查询指定小部件是否启用了自定义主题样式
+     * @param widgetId 小部件实例 ID
+     * @return 启用了自定义主题返回 true，否则返回 false
+     */
+    bool HasCustomStyle(const std::wstring& widgetId) const;
+    /** Return whether the loaded widget declares a desktop background layer. */
+    bool HasBackgroundLayer(const std::wstring& widgetId) const;
+
+    /**
+     * @brief 触发小部件的打开回调
+     * @param widgetId 小部件实例 ID
+     */
+    void InvokeOpen(const std::wstring& widgetId,
+        bool trustedGesture = false);
+
+    /**
+     * @brief 触发小部件被选中的回调
+     * @param widgetId 小部件实例 ID
+     */
+    void InvokeSelected(const std::wstring& widgetId);
+
+    /**
+     * @brief 触发小部件的点击回调
+     * @param widgetId 小部件实例 ID
+     * @param x 点击位置的 x 坐标
+     * @param y 点击位置的 y 坐标
+     */
+    void InvokeClick(const std::wstring& widgetId, int x, int y);
+
+    /**
+     * @brief 触发小部件的鼠标事件回调
+     * @param widgetId 小部件实例 ID
+     * @param callbackName 回调函数名称
+     * @param x 鼠标 x 坐标
+     * @param y 鼠标 y 坐标
+     * @param button 鼠标按钮编号（0=左键, 1=右键, 2=中键）
+     * @param delta 滚轮滚动量
+     */
+    void InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,
+        int button = 0, int delta = 0);
+    bool HasFileDropTarget(const std::wstring& widgetId, int x, int y) const;
+    struct FileDropTarget
+    {
+        std::wstring widgetId;
+        std::string packageId;
+        std::string targetKey;
+        std::uint64_t runtimeToken = 0;
+        snowdesktop::widget_runtime::InteractionAction action;
+    };
+    std::optional<FileDropTarget> CaptureFileDropTarget(
+        const std::wstring& widgetId, int x, int y) const;
+    bool InvokeFileDrop(const std::wstring& widgetId, int x, int y,
+        const std::vector<std::wstring>& paths);
+    bool InvokeFileDrop(const FileDropTarget& target,
+        const std::vector<std::wstring>& paths);
+    bool HasInteractionPointerCapture(const std::wstring& widgetId,
+        std::string_view surface = "desktop") const;
+    void CancelInteractionPointerPress(std::string_view surface = {});
+
+    /**
+     * @brief 获取指定小部件的右键菜单项列表
+     * @param widgetId 小部件实例 ID
+     * @return 菜单项数组
+     */
+    std::vector<LuaWidgetMenuItem> GetContextMenu(
+        const std::wstring& widgetId, int x = -1, int y = -1,
+        std::string_view surface = "desktop",
+        bool componentScopeOnly = false);
+
+    void InvokeMenu(const std::wstring& widgetId,
+        const LuaWidgetMenuItem& menuItem);
+
+    /**
+     * @brief 通知引擎桌面内容已变更
+     * @param reason 变更原因描述字符串
+     */
+    void NotifyDesktopChanged(const std::string& reason);
+    void NotifyCalendarChanged(const std::string& reason);
+
+    /**
+     * @brief 读取 Lua 脚本中的布尔标志值
+     * @param scriptPath Lua 脚本文件路径
+     * @param flag 标志名称
+     * @param defaultVal 默认值（脚本中无定义时使用）
+     * @return 布尔标志值
+     */
+    bool ReadBoolFlag(const std::wstring& scriptPath, const char* flag, bool defaultVal) const;
+
+    /** Resolve the selected host material recipe while retaining custom values. */
+    bool ReadCustomAppearance(const std::wstring& widgetId,
+        PersonalizationSettings& appearance) const;
+
+    /** Reads stored/script material values for custom appearance resolution. */
+    bool ReadCustomColors(const std::wstring& widgetId,
+        float& bgR, float& bgG, float& bgB, float& alpha,
+        float& borderR, float& borderG, float& borderB, float& borderAlpha,
+        float& borderWidth, bool& edgeHighlightEnabled,
+        float& edgeHighlightWidth, float& edgeHighlightStrength,
+        float& gradientEndA,
+        bool& glassEnabled, bool& acrylicEnabled,
+        snowdesktop::PanelGradient* panelGradient = nullptr,
+        snowdesktop::EdgeLightSettings* edgeLight = nullptr,
+        bool includeStoredValues = true) const;
+
+    /**
+     * @brief 获取所有小部件运行时的错误条目列表
+     * @return 错误条目数组
+     */
+    std::vector<WidgetErrorEntry> GetWidgetErrors() const;
+
+    /**
+     * @brief 获取所有小部件的完整诊断信息列表
+     * @return 诊断条目数组
+     */
+    std::vector<WidgetDiagnosticEntry> GetWidgetDiagnostics() const;
+    // Internal UI-thread probe callback; does no work while capture is off.
+    void RecordPerformanceResources() const noexcept;
+    std::string GetSystemSnapshotError() const;
+
+    /**
+     * @brief 清除所有运行时错误记录
+     */
+    void ClearWidgetErrors();
+
+    /** @brief 获取所有已加载的小部件列表（只读引用） */
+    const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
+
+    /**
+     * @brief 枚举菜单可用组件，复用未变化清单的本地化元数据
+     * @return 按组件 ID 排序的名称、搜索文本及来源
+     */
+    static std::vector<snowdesktop::widget_menu::Entry> ListAvailableMenuEntries();
+
+    /**
+     * @brief 获取小部件的显示名称
+     * @param filename 小部件文件名
+     * @return 显示名称字符串
+     */
+    static std::wstring GetWidgetDisplayName(const std::wstring& filename);
+    /** @brief 判断标题是否为清单中任一语言的默认组件名。 */
+    static bool IsWidgetDefaultName(const std::wstring& filename,
+        const std::wstring& title);
+
+    /**
+     * @brief 获取小部件的清单元数据
+     * @param filename 小部件文件名
+     * @return 解析后的清单元数据
+     */
+    static LuaWidgetManifest GetWidgetManifest(const std::wstring& filename);
+
+    /**
+     * @brief 获取小部件在桌面栅格中的默认跨列/跨行数
+     * @param filename 小部件文件名
+     * @param columns 输出：默认列数
+     * @param rows 输出：默认行数
+     * @return 成功读取返回 true
+     */
+    static bool GetWidgetDefaultSpan(const std::wstring& filename, int& columns, int& rows);
+    static bool InstallWidgetPackage(const std::wstring& manifestPath,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false,
+        snowdesktop::widget::InstalledPackage* installed = nullptr);
+    bool InstallAndVerifyWidgetPackage(const std::wstring& path,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    static snowdesktop::widget::ProviderStatus GetStaticWidgetCatalogStatus(
+        const std::filesystem::path& catalogPath);
+    static void RegisterWidgetPackageSource(
+        std::shared_ptr<snowdesktop::widget::IWidgetPackageSource> source);
+    static bool ConfigureStaticWidgetCatalog(
+        const std::filesystem::path& catalogPath, std::string& error);
+    static std::vector<snowdesktop::widget::PackageSourceInfo>
+        ListWidgetPackageSources();
+    /** Internal host snapshot: retain providers through an asynchronous page close. */
+    static std::vector<std::shared_ptr<snowdesktop::widget::IWidgetPackageSource>>
+        SnapshotWidgetPackageSourceProviders();
+    static std::vector<snowdesktop::widget::PackageDetails>
+        QueryWidgetPackageSource(const std::string& providerId,
+            const snowdesktop::widget::PackageQuery& query,
+            std::string& error);
+    static bool IsSteamWorkshopBridgeAvailable();
+    static bool UnsubscribeSteamWorkshopItem(
+        const std::string& externalItemId, std::string& error);
+    static snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
+        QuerySteamWorkshopSubscriptions(const std::string& locale);
+    static snowdesktop::widget::SteamWorkshopSubscriptionHistory
+        GetSteamWorkshopSubscriptionHistory();
+    static void PrepareSteamWorkshopSubscriptionArtifacts(
+        snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
+        const std::vector<snowdesktop::widget::InstalledPackage>& installed,
+        const std::filesystem::path& stagingRoot);
+    static std::unordered_map<std::string, std::string>
+        CachedSteamWorkshopPackageAssociations();
+    static std::vector<snowdesktop::widget::SteamWorkshopInstallFailure>
+        CachedSteamWorkshopInstallFailures();
+    snowdesktop::widget::SteamWorkshopSyncResult
+        ApplySteamWorkshopSubscriptions(
+            const snowdesktop::widget::SteamWorkshopSubscriptionSnapshot&
+                snapshot);
+    bool InstallAndVerifyWidgetPackageFromSource(
+        const std::string& providerId, const std::string& externalItemId,
+        const std::string& version, std::wstring& error,
+        bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    int ApplySafeWidgetPackageUpdates(const std::string& providerId,
+        std::string& report);
+    static std::vector<snowdesktop::widget::PackageDetails>
+        QueryStaticWidgetCatalog(const std::filesystem::path& catalogPath,
+            const snowdesktop::widget::PackageQuery& query,
+            std::string& error);
+    bool InstallAndVerifyStaticWidgetPackage(
+        const std::filesystem::path& catalogPath,
+        const std::string& externalItemId, const std::string& version,
+        std::wstring& error, bool allowSourceChange = false,
+        bool allowPermissionExpansion = false);
+    static snowdesktop::widget::PackagePaths GetWidgetPackagePaths();
+    // Owner-thread discovery for package UI; does not reload live Lua instances.
+    static bool RefreshWidgetPackages(std::string& error);
+    static std::vector<snowdesktop::widget::InstalledPackage>
+        ListWidgetPackages();
+    static std::vector<snowdesktop::widget::InvalidPackage>
+        ListInvalidWidgetPackages();
+    static std::optional<snowdesktop::widget::InstalledPackage>
+        GetWidgetPackage(const std::wstring& packageId);
+    static bool SetWidgetPermissionDecision(
+        const std::wstring& packageId,
+        snowdesktop::widget::PermissionDecisionState state,
+        const std::vector<std::string>& grantedPermissions,
+        const std::vector<std::string>& grantedNetworkDomains,
+        std::string& error);
+    bool ApplyWidgetPermissionDecision(
+        const std::wstring& packageId,
+        snowdesktop::widget::PermissionDecisionState state,
+        const std::vector<std::string>& grantedPermissions,
+        const std::vector<std::string>& grantedNetworkDomains,
+        std::string& error);
+    static std::optional<snowdesktop::widget::PackageSourceRef>
+        GetWidgetPackageSource(const std::wstring& packageId);
+    static bool IsWidgetPackageAvailable(const std::wstring& packageId);
+    static bool IsWidgetPackageInstalled(const std::wstring& packageId);
+    static bool SetWidgetPackageEnabled(const std::string& packageId,
+        bool enabled, std::string& error);
+    static bool CreateWidgetDevelopmentProject(const std::string& packageId,
+        std::filesystem::path& projectRoot, std::string& error);
+    static bool SetWidgetDevelopmentOverride(const std::string& packageId,
+        bool active, std::string& error);
+    static bool RollbackWidgetPackage(const std::string& packageId,
+        const std::string& version, std::string& error);
+    static bool UninstallWidgetPackage(const std::string& packageId,
+        std::string& error);
+
+    /**
+     * @brief 检查小部件是否拥有指定运行时权限
+     * @param widgetId 小部件实例 ID
+     * @param permission 权限名称
+     * @return 拥有权限返回 true，否则返回 false
+     */
+    bool RuntimeHasPermission(const std::wstring& widgetId, const char* permission) const;
+    void ActivateWidgetState(const std::wstring& widgetId);
+
+    /**
+     * @brief 记录运行时错误
+     * @param widgetId 小部件实例 ID
+     * @param message 错误消息
+     */
+    void RuntimeRecordError(const std::wstring& widgetId, const std::string& message);
+
+    snowdesktop::widget_runtime::DataSubscriptionResult
+        RuntimeSubscribeData(
+            const std::wstring& widgetId, std::string topic,
+            std::chrono::milliseconds maxAge,
+            snowdesktop::widget_runtime::DataHiddenPolicy whenHidden,
+            std::string rangeStart = {}, std::string rangeEnd = {},
+            std::string scopeHandle = {},
+            snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
+                audioAnalysis = {}, std::string eventId = {});
+    bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
+    std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
+        std::uint64_t subscriptionId, bool includeGpuDetails = false) const;
+
+    /**
+     * @brief 添加一条运行时日志
+     * @param widgetId 小部件实例 ID
+     * @param level 日志级别
+     * @param message 日志消息
+     */
+    void RuntimeAddLog(const std::wstring& widgetId, const std::string& level, const std::string& message);
+
+    /**
+     * @brief 获取当前桌面项目快照
+     * @return 桌面项目信息列表
+     */
+    std::vector<LuaDesktopItemInfo> RuntimeDesktopItems() const;
+
+    /**
+     * @brief 获取当前桌面选中项快照
+     * @return 选中项信息列表
+     */
+    std::vector<LuaDesktopItemInfo> RuntimeDesktopSelection() const;
+    std::vector<LuaDesktopItemInfo> RuntimeApplicationSearch(const std::string& query, int maxResults) const;
+    std::vector<LuaDesktopItemInfo> RuntimeEverythingSearch(const std::string& query, int maxResults) const;
+    void SetCalendarDisplayPreferences(snowdesktop::calendar::DisplayPreferences preferences);
+    const snowdesktop::calendar::DisplayPreferences& CalendarDisplayPreferences() const { return calendarDisplay_; }
+    const std::vector<snowdesktop::calendar::DayAnnotation>& RuntimeCalendarAnnotations(const std::string& from, const std::string& to);
+    std::string RuntimeCalendarSelectedDate() const;
+    bool RuntimeCalendarSetSelectedDate(
+        const std::string& date);
+    std::optional<snowdesktop::calendar::DateInfo>
+        RuntimeCalendarDateInfo(
+            const std::string& date) const;
+    std::optional<std::string> RuntimeCalendarAddDays(
+        const std::string& date, int offset) const;
+    std::vector<snowdesktop::calendar::CalendarEvent>
+        RuntimeCalendarEvents(
+            const std::string& fromDate,
+            const std::string& toDate) const;
+    std::vector<snowdesktop::calendar::CalendarEvent>
+        RuntimeCalendarSingleEvents() const;
+    std::optional<snowdesktop::calendar::CalendarEvent>
+        RuntimeCalendarEventById(const std::string& id) const;
+    std::optional<snowdesktop::calendar::CalendarSeries>
+        RuntimeCalendarSeriesById(const std::string& id) const;
+    std::vector<snowdesktop::calendar::CalendarSeries>
+        RuntimeCalendarSeries() const;
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesCreate(
+        snowdesktop::calendar::CalendarSeries series);
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesUpdate(
+        const std::string& id, int expectedRevision,
+        snowdesktop::calendar::CalendarSeries series);
+    snowdesktop::calendar::MutationResult RuntimeCalendarSeriesRemove(
+        const std::string& id, int expectedRevision);
+    snowdesktop::calendar::MutationResult
+        RuntimeCalendarCreate(
+            snowdesktop::calendar::CalendarEvent event);
+    snowdesktop::calendar::MutationResult
+        RuntimeCalendarUpdate(
+            const std::string& id,
+            int expectedRevision,
+            snowdesktop::calendar::CalendarEvent event);
+    snowdesktop::calendar::MutationResult
+        RuntimeCalendarRemove(const std::string& id, int expectedRevision = 0);
+
+    /**
+     * @brief 通过宿主打开指定路径
+     * @param path 要打开的路径
+     * @return 宿主接受打开请求时返回 true
+     */
+    bool RuntimeOpenDesktopPath(const std::wstring& path);
+
+    /**
+     * @brief 通过宿主在文件管理器中定位指定路径
+     * @param path 要揭示的路径
+     * @return 操作成功返回 true
+     */
+    bool RuntimeRevealDesktopPath(const std::wstring& path);
+    std::optional<std::wstring> RuntimeResolveItemReference(
+        const std::wstring& widgetId, std::uint64_t ownerToken,
+        const std::string& reference) const;
+    /** Resolve one opaque reference for host-owned declarative rendering. */
+    std::optional<std::wstring> RuntimeResolveViewReference(
+        const std::wstring& widgetId,
+        const std::string& reference) const;
+    std::optional<snowdesktop::widget_runtime::LogicalSlotSnapshot>
+        RuntimeLogicalSlotSnapshot(const std::wstring& widgetId,
+            std::uint64_t ownerToken, std::string_view slotId,
+            snowdesktop::widget_runtime::LogicalSlotKind kind) const;
+    std::optional<LogicalSlotHostSurface> RuntimeLogicalSlotSurface(
+        const std::wstring& widgetId, std::string_view slotId) const;
+    bool RuntimeBindHostLogicalSlot(const std::wstring& widgetId,
+        std::string_view slotId,
+        snowdesktop::widget_runtime::LogicalSlotItem candidate,
+        std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error,
+        std::string_view source = "host.drop");
+    bool RuntimeOpenHostLogicalSlotPicker(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        std::string& error);
+    bool RuntimeRemoveHostLogicalSlotItem(const std::wstring& widgetId,
+        std::string_view slotId, std::string_view itemId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error,
+        std::string_view source = "host.menu");
+    bool RuntimeMoveHostLogicalSlotItem(const std::wstring& widgetId,
+        std::string_view slotId, std::string_view itemId,
+        std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error,
+        std::string_view source = "host.menu");
+    bool RuntimeTransferHostLogicalSlotItem(
+        const std::wstring& widgetId, std::string_view sourceSlotId,
+        std::string_view itemId, std::string_view targetSlotId,
+        std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error,
+        std::string_view source = "host.pointer");
+    bool RuntimeCanUndoHostLogicalSlot(const std::wstring& widgetId) const;
+    bool RuntimeCanRedoHostLogicalSlot(const std::wstring& widgetId) const;
+    bool RuntimeUndoHostLogicalSlot(const std::wstring& widgetId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeRedoHostLogicalSlot(const std::wstring& widgetId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeBindLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        std::string_view reference,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeClearLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeRemoveLogicalSlotItem(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        std::string_view itemId,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeMoveLogicalSlotItem(const std::wstring& widgetId,
+        std::uint64_t ownerToken, std::string_view slotId,
+        std::string_view itemId, std::size_t targetIndex,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeCanUndoLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken) const;
+    bool RuntimeCanRedoLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken) const;
+    bool RuntimeUndoLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    bool RuntimeRedoLogicalSlot(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
+        snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string& error);
+    std::optional<std::wstring> RuntimeResolvePackageAsset(
+        const std::wstring& widgetId, const std::wstring& relativePath) const;
+    std::optional<std::wstring> RuntimeResolvePackageResource(
+        const std::wstring& widgetId, std::string_view name,
+        std::string_view expectedType) const;
+    std::optional<std::string> RuntimeResolvePackageImageContentKey(
+        const std::wstring& widgetId, std::string_view name) const;
+    const snowdesktop::widget_runtime::PackageImageSource*
+        RuntimeFindPackageImageSource(const std::wstring& widgetId,
+            std::string_view name) const noexcept;
+
+    /**
+     * @brief 请求宿主刷新桌面内容
+     */
+    void RuntimeRefreshDesktop();
+
+    /**
+     * @brief 设置小部件标题
+     * @param widgetId 小部件实例 ID
+     * @param title 新标题
+     */
+    void RuntimeSetWidgetTitle(const std::wstring& widgetId, const std::wstring& title);
+
+    /**
+     * @brief 请求宿主重绘画布
+     */
+    void RuntimeInvalidateHost(const std::wstring& widgetId = {},
+        std::optional<RECT> dirtyRect = std::nullopt,
+        std::string_view surface = {});
+    /** Notify a component that a host-owned setting has changed. */
+    bool RuntimeNotifySettingsChanged(const std::wstring& widgetId,
+        std::vector<std::string> keys, bool preview);
+    bool RuntimeSubmitNativeMarquee(const std::wstring& widgetId,
+        LuaWidget::NativeMarqueeText marquee, std::string& error);
+    bool RuntimeSubmitInteractionRegion(const std::wstring& widgetId,
+        snowdesktop::widget_runtime::InteractionRegion region,
+        std::string& error);
+    bool RuntimeInteractionHovered(const std::wstring& widgetId,
+        std::string_view key) const;
+    bool RuntimeInteractionPressed(const std::wstring& widgetId,
+        std::string_view key) const;
+    bool RuntimeInteractionFocused(const std::wstring& widgetId,
+        std::string_view key) const;
+    void UpdateInteractionHover(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop");
+    void ClearInteractionHover(std::string_view surface = {});
+    std::string InteractionCursorAt(const std::wstring& widgetId,
+        int x, int y, std::string_view surface = "desktop") const;
+    bool RuntimeCanWriteWidgetStorage(
+        const std::wstring& widgetId) const;
+
+    void ReloadStorage();
+    // Host-only session switch. Retire all loaded instances before calling.
+    void SetInitializationExperimentStoragePath(const std::wstring& path);
+
+    /**
+     * @brief 获取小部件的持久化存储值
+     * @param widgetId 小部件实例 ID
+     * @param key 存储键名
+     * @return 存储的字符串值，键不存在返回空字符串
+     */
+    std::string RuntimeGetStorageValue(const std::wstring& widgetId, const std::string& key) const;
+    /** Return a typed default for settings whose public storage type is not string. */
+    bool RuntimeGetTypedSettingDefault(const std::wstring& widgetId,
+        const std::string& key,
+        snowdesktop::widget_runtime::InteractionValue& value) const;
+    /** Return true when key is a host-managed password setting. */
+    bool RuntimeGetSecretReference(const std::wstring& widgetId,
+        const std::string& key, std::string& reference) const;
+    /** Return true when key is a host-managed file or folder handle setting. */
+    bool RuntimeGetFilesystemSettingHandle(const std::wstring& widgetId,
+        const std::string& key, std::string& handle) const;
+    bool RuntimeIsFilesystemSettingHandleValue(
+        const std::wstring& widgetId, std::string_view handle) const;
+    std::vector<std::string> RuntimeFilesystemSettingKeys(
+        const std::wstring& widgetId) const;
+    /** Return true when key is a host-managed entity reference setting. */
+    bool RuntimeIsEntityReferenceSetting(const std::wstring& widgetId,
+        const std::string& key) const;
+    std::vector<std::string> RuntimeSecretStorageKeys(
+        const std::wstring& widgetId) const;
+
+    /**
+     * @brief 设置小部件的持久化存储值
+     * @param widgetId 小部件实例 ID
+     * @param key 存储键名
+     * @param value 要存储的值
+     */
+    void RuntimeSetStorageValue(const std::wstring& widgetId, const std::string& key, const std::string& value);
+
+    /**
+     * @brief 发起内联文本编辑请求
+     * @param request 编辑请求参数
+     */
+    void RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& request);
+
+    /**
+     * @brief 获取小部件的当前主题配置
+     * @param widgetId 小部件实例 ID
+     * @return 主题配置
+     */
+    LuaWidgetTheme RuntimeGetWidgetTheme(const std::wstring& widgetId) const;
+
+    /**
+     * @brief 设置小部件的自定义主题
+     * @param widgetId 小部件实例 ID
+     * @param theme 主题配置
+     */
+    void SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetTheme& theme);
+    void SetPanelTheme(const PersonalizationSettings& appearance);
+
+    /** Store host layout context for one widget without mutating an active
+     * callback belonging to another widget. The context is also applied to a
+     * pending package load so top-level code and setup() see the target span.
+     */
+    void SetWidgetLayoutMetrics(const std::wstring& widgetId,
+        int columns, int rows, int cellWidth, int cellHeight,
+        int gapY, int barHeight,
+        DWRITE_FONT_WEIGHT fontWeight, float semanticCuScale,
+        const snowdesktop::widget_runtime::SemanticUiMetricTokens&
+            semanticUiMetrics);
+    void SetWidgetSurfaceContext(const std::wstring& widgetId,
+        const LuaWidgetSurfaceContext& context);
+    LuaWidgetContextState RuntimeGetWidgetContextState(
+        const std::wstring& widgetId) const;
+    void RuntimeOpenWidgetSettings(const std::wstring& widgetId);
+    void RuntimeOpenWidgetPanel(const std::wstring& widgetId,
+        std::wstring title, int width, int height);
+    void RuntimeOpenWidgetDialog(const std::wstring& widgetId,
+        std::wstring title, int width, int height,
+        bool dismissOnOutside, bool dismissOnEscape);
+    bool RuntimeOpenWidgetPopover(const std::wstring& widgetId,
+        std::wstring title, std::string anchorKey,
+        std::string placement, int width, int height,
+        bool dismissOnOutside, bool dismissOnEscape);
+    void RuntimeCloseWidgetPanel(const std::wstring& widgetId);
+
+    /**
+     * @brief 发送系统通知
+     * @param title 通知标题
+     * @param message 通知内容
+     */
+    void RuntimeNotify(const std::wstring& widgetId,
+        const std::wstring& title, const std::wstring& message);
+    std::string RuntimePostNotification(const std::wstring& widgetId,
+        const std::wstring& title, const std::wstring& message);
+    std::string RuntimeAdmitNotification(const std::wstring& widgetId);
+    CpuSnapshot RuntimeGetCpuSnapshot(const std::wstring& widgetId);
+    MemorySnapshot RuntimeGetMemorySnapshot(const std::wstring& widgetId);
+    BatterySnapshot RuntimeGetBatterySnapshot(const std::wstring& widgetId);
+    NetworkSnapshot RuntimeGetNetworkSnapshot(const std::wstring& widgetId);
+    GpuSnapshot RuntimeGetGpuSnapshot(const std::wstring& widgetId);
+    MediaSnapshot RuntimeGetMediaSnapshot(const std::wstring& widgetId);
+    bool RuntimeMediaPlayPause();
+    bool RuntimeMediaNext();
+    bool RuntimeMediaPrevious();
+    snowdesktop::widget_runtime::TaskStartResult RuntimeStartTask(
+        const std::wstring& widgetId, std::uint64_t ownerToken,
+        std::string name,
+        std::unordered_map<std::string, std::string> arguments = {});
+    bool RuntimeCancelTask(
+        const std::wstring& widgetId, std::uint64_t ownerToken,
+        std::uint64_t taskId);
+    bool RuntimeSetTimer(const std::wstring& widgetId,
+        const std::string& name, int intervalMs, bool repeat,
+        snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
+            snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue);
+    bool RuntimeSetTimerAt(const std::wstring& widgetId,
+        const std::string& name, std::int64_t epochMilliseconds,
+        snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
+            snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue);
+    bool RuntimeSetTimeline(const std::wstring& widgetId,
+        const std::string& name,
+        std::vector<snowdesktop::widget_runtime::
+            NamedTimerSchedule::TimelineEntry> entries,
+        snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy,
+        bool reloadAtEnd);
+    bool RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name);
+    std::string RuntimeRequestAnimationFrame(
+        const std::wstring& widgetId, const std::string& name);
+    bool RuntimeCancelAnimationFrame(
+        const std::wstring& widgetId, const std::string& name);
+    int RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options);
+    bool RuntimeHttpCancel(const std::wstring& widgetId, int requestId);
+    void RuntimeRegisterHostControl(const std::wstring& widgetId, LuaWidget::HostControl control);
+    bool RuntimeRegisterV2HostControl(const std::wstring& widgetId,
+        LuaWidget::HostControl control, std::string& error);
+    bool RuntimeFocusHostInput(const std::wstring& widgetId,
+        const std::string& id, const char* source = "pointer");
+    bool RuntimeFocusViewTarget(const std::wstring& widgetId,
+        const std::string& id, const char* source = "programmatic");
+    void ResolveDeferredHostInputFocus(
+        const std::wstring& widgetId, std::string_view surface);
+    bool RuntimeFocusHostInputFromTrustedGesture(
+        const std::wstring& widgetId, const std::string& id,
+        std::string& error);
+    bool RuntimeBlurHostInputFromTrustedGesture(
+        const std::wstring& widgetId, const std::string& id,
+        std::string& error);
+    bool RuntimeGetFocusedHostInput(const std::wstring& widgetId, const std::string& id,
+        std::wstring& text, size_t& cursor, size_t& selectionAnchor,
+        std::wstring& compositionText, size_t& compositionCursor) const;
+    bool RuntimeConsumeHostInputCaretVisibilityRequest(
+        const std::wstring& widgetId, const std::string& id);
+    bool RuntimeIsWidgetSelected(const std::wstring& widgetId) const;
+    std::vector<LuaWidgetAccessibilitySnapshot>
+        RuntimeAccessibilitySnapshots() const;
+    bool RuntimeSetAccessibilityFocus(const std::wstring& widgetId,
+        const std::string& nodeKey);
+    bool RuntimePerformAccessibilityAction(
+        const LuaWidgetAccessibilityActionRequest& request);
+    std::wstring RuntimeSelectedWidgetPackageId() const;
+    bool HandleHostInputKey(WPARAM key);
+    bool DispatchHostViewKeyEvent(WPARAM key, bool pressed, bool repeated,
+        bool ctrl, bool shift, bool alt);
+    void ClearHostViewKeyState() noexcept;
+    bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,
+        bool ctrl, bool shift, bool alt,
+        std::string_view surface = "desktop", bool repeated = false);
+    bool HandleHostInputChar(wchar_t ch);
+    bool SetHostInputComposition(
+        const std::wstring& text, size_t cursor);
+    bool CommitHostInputComposition(const std::wstring& text);
+    void ClearHostInputComposition();
+    void BeginHostInputComposition();
+    bool IsHostInputComposing() const { return focusedHostInput_.active && focusedHostInput_.composing; }
+    bool HasFocusedHostInput() const;
+    bool GetFocusedHostInputCaretRect(RECT& rect) const;
+    bool IsHostInputAt(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop") const;
+    bool PrepareHostInputContextMenu(const std::wstring& widgetId,
+        int x, int y, std::string_view surface,
+        bool clipboardHasText,
+        snowdesktop::widget_runtime::HostInputContextMenuState& state);
+    bool ExecuteHostInputEditCommand(
+        snowdesktop::widget_runtime::HostInputEditCommand command,
+        const char* source = "contextMenu");
+    bool IsFocusedHostInputAt(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop") const;
+    bool HandleHostInputPointerMove(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop");
+    bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y,
+        std::string_view surface = "desktop");
+    void BlurHostInput(bool cancel = false);
+    int RuntimeGetScrollOffset(const std::wstring& widgetId,
+        const std::string& id, std::string_view surface = {}) const;
+    bool RuntimeHasScrollOffset(const std::wstring& widgetId,
+        const std::string& id, std::string_view surface = {}) const;
+    bool RuntimeComputeVariableVirtualRange(const std::wstring& widgetId,
+        const std::string& id, std::size_t itemCount,
+        float estimatedItemSize, float mainGap, float viewportExtent,
+        bool horizontal,
+        std::uint64_t layoutRevision, std::size_t overscan,
+        std::size_t initialScrollIndex,
+        snowdesktop::widget_runtime::ViewVirtualRange& range,
+        std::string& error, std::string_view surface = {}) const;
+    void RuntimeSetScrollOffset(const std::wstring& widgetId,
+        const std::string& id, int offset, std::string_view surface = {});
+    bool RuntimeScrollView(const std::wstring& widgetId,
+        const std::string& id, int value, bool relative,
+        int& offset, int& maximum, bool& changed, std::string& error,
+        std::string_view surface = {});
+    bool RuntimeScrollViewToIndex(const std::wstring& widgetId,
+        const std::string& id, std::size_t itemIndex,
+        std::string_view alignment, int& offset, int& maximum,
+        bool& changed, std::string& error,
+        std::string_view surface = {});
+    bool HandleHostUiPointer(const std::wstring& widgetId, int x, int y,
+        int delta, bool wheel, std::string_view surface = "desktop");
+    std::vector<LuaWidget::HostControl> GetScrollControls(
+        const std::wstring& widgetId,
+        std::string_view surface = "desktop") const;
+    bool IsHostScrollbarDragging(
+        const std::wstring& widgetId,
+        std::string_view surface = "desktop") const;
+    void CloseWidgetPanelSurface(const std::wstring& widgetId,
+        std::string_view surface = {});
+
+private:
+    friend class snowdesktop::widget_runtime::WidgetEngineSettingsBackend;
+
+    std::unordered_map<std::string, std::string>&
+        WidgetSettingsPersistentStorageForBackend() noexcept;
+    const std::unordered_map<std::string, std::string>&
+        WidgetSettingsPersistentStorageForBackend() const noexcept;
+    bool PersistWidgetSettingsStorageForBackend();
+
+    void BeginHostLogicalSlotPointer(
+        LuaWidget& widget, int x, int y);
+    bool UpdateHostLogicalSlotPointer(
+        LuaWidget& widget, int x, int y);
+    bool EndHostLogicalSlotPointer(
+        const std::wstring& widgetId);
+    void DrawHostViewInteractionOverlays(
+        const LuaWidget& widget,
+        const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
+        std::string_view focusedKey, bool drawLogicalSlotDrag);
+    bool VerifyInstalledWidgetPackage(const std::string& packageId,
+        const std::optional<std::string>& previousVersion,
+        std::wstring& error);
+    size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
+        const std::wstring& widgetId, int x, int y) const;
+    bool HandleHostScrollbarPointer(
+        const std::wstring& widgetId, int x, int y,
+        std::string_view surface, bool finish);
+
+    /**
+     * @brief 内部加载小部件脚本到沙箱
+     * @param path Lua 脚本文件路径
+     * @param widgetId 小部件实例 ID
+     * @return 加载成功返回 true
+     */
+    bool LoadWidget(const std::wstring& path, const std::wstring& widgetId,
+        bool preview = false,
+        const std::unordered_map<std::string, std::string>*
+            previewStorageOverrides = nullptr,
+        const std::filesystem::path* packageRootOverride = nullptr,
+        const LuaWidgetAuthorPreviewConfiguration*
+            previewConfiguration = nullptr);
+    bool IsPreviewWidget(const std::wstring& widgetId) const;
+
+    /**
+     * @brief 向 Lua 状态机注册绘制 API
+     * @param L Lua 状态机指针
+     */
+    void RegisterDrawAPI(lua_State* L);
+
+    /**
+     * @brief 推入一个安全的沙箱环境表
+     * @param L Lua 状态机指针
+     * @param widget 小部件引用信息
+     */
+    void PushSafeEnvironment(lua_State* L, const LuaWidget& widget);
+
+    /**
+     * @brief 按 ID 查找小部件在内部数组中的索引
+     * @param widgetId 小部件实例 ID
+     * @return 找到返回索引，否则返回 -1
+     */
+    int FindWidget(const std::wstring& widgetId) const;
+    void RecordWidgetHostFailure(const std::wstring& widgetId,
+        const std::string& message, bool quotaExceeded = false,
+        bool circuitOpen = false);
+    void RuntimeRecordSuccess(const std::wstring& widgetId);
+    void InvokeSimpleCallback(LuaWidget& widget, const char* callbackName);
+    bool InitializeWidgetLifecycle(LuaWidget& widget);
+    bool InvokeLifecycleEvent(LuaWidget& widget, const char* kind,
+        const std::function<void(lua_State*)>& pushFields);
+    void DispatchHostLogicalSlotChange(LuaWidget& widget,
+        const snowdesktop::widget_runtime::LogicalSlotChange& change,
+        std::string_view source);
+    void RefreshLogicalSlotAvailability();
+    void DispatchInteractionAction(LuaWidget& widget,
+        const std::string& targetKey, const char* eventName,
+        int x, int y, int button, int delta, int clickCount = 0,
+        bool includeRetired = false, const char* source = "pointer",
+        int keyboardStepDirection = 0,
+        std::optional<float> requestedControlValue = std::nullopt,
+        std::optional<std::vector<std::string>> requestedSelectedKeys =
+            std::nullopt, std::string_view surface = "desktop");
+    void DispatchHostInputChange(const std::wstring& widgetId,
+        const std::string& targetKey,
+        const snowdesktop::widget_runtime::InteractionAction& action,
+        const std::wstring& previousText, const std::wstring& text,
+        bool numeric, float minimum, float maximum,
+        bool committed, bool cancelled, const char* source);
+    void DispatchHostInputSelectionChange(const std::wstring& widgetId,
+        const std::string& targetKey,
+        const snowdesktop::widget_runtime::InteractionAction& action,
+        const std::wstring& text,
+        size_t previousAnchor, size_t previousCursor,
+        size_t anchor, size_t cursor, const char* source);
+    void DispatchHostInputAction(const std::wstring& widgetId,
+        const std::string& targetKey,
+        const snowdesktop::widget_runtime::InteractionAction& action,
+        const char* eventName, const std::wstring& text,
+        bool cancelled, const char* source);
+    void DispatchInteractionTransition(LuaWidget& widget,
+        const snowdesktop::widget_runtime::InteractionHoverTransition& transition,
+        int x, int y, std::string_view surface = "desktop");
+    void DisposeWidgetLifecycle(LuaWidget& widget, const char* reason);
+    void InitializeWidgetDataBroker();
+    void ApplyWidgetDataBrokerActions();
+    void DrainAudioAnalysisChanges();
+    void ReconcileFilesystemWatches();
+    void DrainFilesystemWatchCompletions();
+    void ReleaseWidgetDataSubscriptions(LuaWidget& widget);
+    void InitializeWidgetTaskBroker();
+    void ApplyWidgetTaskBrokerActions();
+    void LoadNotificationSchedules();
+    bool SaveNotificationSchedules();
+    void RestoreNotificationSchedules(LuaWidget& widget);
+    void RemoveNotificationSchedules(const std::wstring& widgetId);
+    void ReleaseWidgetTasks(LuaWidget& widget,
+        snowdesktop::widget_runtime::TaskBrokerCancelReason reason);
+    void EnsureSystemSnapshotServiceStarted();
+    void ApplyWidgetHostVisibility(LuaWidget& widget, bool visible);
+    void RescheduleNamedTimer(LuaWidget& widget);
+    bool ScheduleAnimationFrame(LuaWidget& widget);
+    void StopAnimationFrames(LuaWidget& widget);
+    bool SyncNativeMarqueeComposition(
+        LuaWidget& widget, bool reducedMotion);
+    void ClearNativeMarqueeComposition(LuaWidget& widget);
+    bool hostAnimationPreferencesKnown_ = false;
+    bool hostAnimationsEnabled_ = true;
+    double hostAnimationDurationScale_ = 1.0;
+    int hostAnimationFrameLimit_ = 0;
+
+    std::optional<LuaWidgetTheme> panelTheme_;
+    D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
+    ComPtr<ID2D1DeviceContext> d2dContext_;            ///< Direct2D 设备上下文
+    ComPtr<IDWriteFactory> dwriteFactory_;             ///< DirectWrite 工厂接口
+    std::vector<LuaWidget> widgets_;                   ///< 已加载的小部件实例列表
+    std::unordered_map<std::wstring,
+        snowdesktop::widget_runtime::WidgetHostState>
+        widgetHostFailures_;
+    DesktopSnapshotProvider desktopSnapshotProvider_;  ///< 桌面快照提供者回调
+    DesktopSnapshotProvider selectionProvider_;        ///< 当前选中项提供者回调
+    WidgetSelectedProvider widgetSelectedProvider_;    ///< 当前组件选中状态提供者回调
+    SelectedWidgetPackageProvider
+        selectedWidgetPackageProvider_; ///< 当前唯一选中组件包 UUID
+    ApplicationSearchProvider applicationSearchProvider_; ///< Windows 应用搜索提供者回调
+    ApplicationCatalogProvider applicationCatalogProvider_;
+    ApplicationIndexStatusProvider applicationIndexStatusProvider_;
+    EverythingSearchProvider everythingSearchProvider_; ///< Everything 搜索提供者回调
+    WidgetTitleCallback setWidgetTitleCallback_;       ///< 设置小部件标题的回调
+    WidgetTitleCallback openWidgetSettingsCallback_;   ///< 打开小部件设置面板的回调
+    WidgetPanelOpenCallback openWidgetPanelCallback_;
+    WidgetPanelCloseCallback closeWidgetPanelCallback_;
+    InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调
+    snowdesktop::widget_runtime::WidgetInvalidationBatch invalidationBatch_;
+    NativeMarqueeSyncCallback nativeMarqueeSyncCallback_;
+    DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
+    DesktopPathAction applicationLaunchCallback_;      ///< 启动已解析应用引用的回调
+    DesktopPathAction desktopRevealCallback_;          ///< 在资源管理器中定位路径的回调
+    DesktopRefreshCallback desktopRefreshCallback_;    ///< 刷新桌面的回调
+    InlineTextEditCallback inlineTextEditCallback_;    ///< 内联文本编辑请求的回调
+    HostInputFocusCallback hostInputFocusCallback_;    ///< 让隐藏桌面输入窗口取得键盘焦点的回调
+    NotifyCallback notifyCallback_;                     ///< 系统通知回调
+    FilePickerCallback filePickerCallback_;             ///< 系统文件选择器回调
+    LogicalSlotPickerCallback logicalSlotPickerCallback_;
+    WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
+    WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
+    AudioAnalysisWakeCallback audioAnalysisWakeCallback_;
+    TaskWakeCallback taskWakeCallback_;
+    SystemControlPromptCallback systemControlPromptCallback_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetSystemControlTasks> systemControlTasks_;
+    bool applyingTaskBrokerActions_ = false;
+    bool taskWakePending_ = false;
+    std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetDataBroker>
+        dataBroker_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetTaskBroker>
+        taskBroker_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetNotificationCenter>
+        notificationCenter_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetNotificationScheduleStore>
+        notificationScheduleStore_;
+    std::filesystem::path notificationSchedulePath_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetLocationTaskExecutor> locationTaskExecutor_;
+    std::unordered_map<std::uint64_t, snowdesktop::widget_runtime::LocationResult> locationTaskCompletions_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetMediaTaskExecutor>
+        mediaTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetAudioOutputTaskExecutor>
+        audioOutputTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetClipboardTaskExecutor>
+        clipboardTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetFilesystemHandleStore>
+        filesystemHandleStore_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetSecretStore>
+        secretStore_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetFilesystemTaskExecutor>
+        filesystemTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetFilesystemWatchService>
+        filesystemWatchService_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetAppTaskExecutor>
+        appTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetAppTaskExecutor>
+        desktopTaskExecutor_;
+    std::unique_ptr<
+        snowdesktop::widget_runtime::WidgetExternalSearchTaskExecutor>
+        externalItemTaskExecutor_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetAppSearchCompletion>
+        appSearchCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetAppSearchCompletion>
+        itemSearchCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::calendar::MutationResult>
+        calendarMutationCompletions_;
+    std::unordered_map<std::uint64_t, std::string>
+        notificationTaskCompletions_;
+    std::unordered_map<std::uint64_t, HttpResponse>
+        networkTaskCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetClipboardTaskCompletion>
+        clipboardTaskCompletions_;
+    std::unordered_map<std::uint64_t,
+        std::vector<snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>>
+        filesystemPickerCompletions_;
+    std::unordered_map<std::uint64_t,
+        snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion>
+        filesystemTaskCompletions_;
+    std::unordered_map<std::uint64_t, std::string>
+        filesystemTaskHandles_;
+    struct FilesystemWatchBinding
+    {
+        snowdesktop::widget_runtime::WidgetFilesystemHandleOwner owner;
+        std::filesystem::path directory;
+        std::string sourceHandle;
+        snowdesktop::widget_runtime::WidgetFilesystemHandleAccess access =
+            snowdesktop::widget_runtime::WidgetFilesystemHandleAccess::Read;
+        std::vector<LuaWidgetDataSnapshot::FilesystemWatchEvent> events;
+        std::uint64_t revision = 0;
+        std::int64_t timestampMs = 0;
+        bool desiredActive = false;
+        bool preview = false;
+        bool available = false;
+        bool warmingUp = true;
+        bool overflow = false;
+        std::string error;
+    };
+    std::unordered_map<std::uint64_t, FilesystemWatchBinding>
+        filesystemWatchBindings_;
+    std::unordered_map<std::uint64_t, int> networkTaskRequests_;
+    std::unordered_map<int, std::uint64_t> networkRequestTasks_;
+    snowdesktop::widget_runtime::WidgetTrustedGestureState
+        trustedGestureState_;
+    const snowdesktop::widget_runtime::HostInputSubmitFocusScope*
+        hostInputSubmitFocus_ = nullptr;
+    std::uint64_t nextWidgetRuntimeToken_ = 0;
+    std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
+        widgetSystemDataProvider_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>
+        widgetAudioAnalysisProvider_;
+    std::uint64_t desktopDataRevision_ = 0;
+    std::int64_t desktopDataTimestampMs_ = 0;
+    std::string desktopDataChangeReason_ = "initial";
+    std::uint64_t calendarEventsRevision_ = 0;
+    std::uint64_t calendarSelectionRevision_ = 0;
+    std::uint64_t appIndexRevision_ = 0;
+    std::unique_ptr<
+        snowdesktop::calendar::CalendarService>
+        calendarService_;
+    snowdesktop::calendar::DisplayPreferences calendarDisplay_;
+    std::string calendarAnnotationCacheKey_;
+    std::vector<snowdesktop::calendar::DayAnnotation> calendarAnnotationCache_;
+    bool pendingCalendarSelectionChange_ = false;
+    bool pendingCalendarEventsChange_ = false;
+    bool systemSnapshotServiceStarted_ = false;
+    std::atomic<bool> systemSnapshotChanged_{ false };
+    std::atomic<bool> mediaSnapshotChanged_{ false };
+    std::unique_ptr<AsyncHttpService> httpService_;
+    bool previewOnly_ = false;
+    struct FocusedHostInput
+    {
+        snowdesktop::text_input::History history;
+        bool active = false;
+        std::wstring widgetId;
+        std::string id;
+        std::string surface = "desktop";
+        std::string storageKey;
+        snowdesktop::widget_runtime::InteractionAction changeAction;
+        snowdesktop::widget_runtime::InteractionAction focusAction;
+        snowdesktop::widget_runtime::InteractionAction blurAction;
+        snowdesktop::widget_runtime::InteractionAction submitAction;
+        std::wstring text;
+        std::wstring originalText;
+        std::wstring modelText;
+        std::optional<std::wstring> deferredModelText;
+        size_t cursor = 0;
+        size_t selectionAnchor = 0;
+        std::optional<snowdesktop::widget_runtime::ViewTextSelection>
+            controlledSelection;
+        snowdesktop::widget_runtime::InteractionAction
+            selectionChangeAction;
+        size_t pointerSelectionStartCursor = 0;
+        size_t pointerSelectionStartAnchor = 0;
+        std::wstring compositionText;
+        std::wstring duplicateImeResult;
+        bool composing = false;
+        bool deferredSelection = false;
+        size_t compositionCursor = 0;
+        wchar_t pendingHighSurrogate = 0;
+        bool pointerSelecting = false;
+        bool controlled = false;
+        bool readOnly = false;
+        bool numeric = false;
+        bool liveUpdate = true;
+        bool multiline = false;
+        snowdesktop::widget_runtime::HostInputCaretVisibilityRequest
+            caretVisibility;
+        float minimum = 0.0f;
+        float maximum = 1.0f;
+        float step = 0.01f;
+        std::size_t maximumUtf8Bytes = 0;
+    };
+    FocusedHostInput focusedHostInput_;
+    struct HostScrollbarDrag
+    {
+        bool active = false;
+        std::wstring widgetId;
+        std::string id;
+        std::string surface = "desktop";
+        bool horizontal = false;
+        int pointerStart = 0;
+        int offsetStart = 0;
+    };
+    HostScrollbarDrag hostScrollbarDrag_;
+    struct PressedViewKeyTarget
+    {
+        std::wstring widgetId;
+        std::string nodeKey;
+        std::string surface = "desktop";
+    };
+    std::unordered_map<WPARAM, PressedViewKeyTarget>
+        pressedViewKeyTargets_;
+};

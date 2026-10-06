@@ -1,0 +1,686 @@
+#include "widget_filesystem_task_executor.h"
+
+#include "data/atomic_file.h"
+
+#include <windows.h>
+#include <wincodec.h>
+#include <wrl/client.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <iterator>
+#include <sstream>
+#include <system_error>
+#include <utility>
+
+namespace snowdesktop::widget_runtime
+{
+namespace
+{
+constexpr std::uint64_t kWindowsToUnixEpochTicks =
+    116444736000000000ULL;
+
+std::string WideToUtf8(std::wstring_view value)
+{
+    if (value.empty()) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+        value.data(), static_cast<int>(value.size()), nullptr, 0,
+        nullptr, nullptr);
+    if (size <= 0) return {};
+    std::string result(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+            value.data(), static_cast<int>(value.size()), result.data(),
+            size, nullptr, nullptr) != size)
+        return {};
+    return result;
+}
+
+bool IsValidUtf8(std::string_view value)
+{
+    if (value.empty()) return true;
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        value.data(), static_cast<int>(value.size()), nullptr, 0) > 0;
+}
+
+bool CheckPathWithoutReparsePoints(const std::filesystem::path& path,
+    bool allowMissingLeaf, std::string& error)
+{
+    error.clear();
+    if (path.empty() || !path.is_absolute())
+    {
+        error = "invalidReference";
+        return false;
+    }
+    const auto normalized = path.lexically_normal();
+    std::filesystem::path current = normalized.root_path();
+    for (const auto& component : normalized.relative_path())
+    {
+        current /= component;
+        const DWORD attributes = GetFileAttributesW(current.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD code = GetLastError();
+            if (allowMissingLeaf && current == normalized &&
+                (code == ERROR_FILE_NOT_FOUND ||
+                    code == ERROR_PATH_NOT_FOUND))
+                return true;
+            error = code == ERROR_ACCESS_DENIED
+                ? "accessDenied" : "notFound";
+            return false;
+        }
+        if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            error = "reparsePointDenied";
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string MakeRevision(std::uint64_t size, const FILETIME& modified,
+    WidgetFilesystemHandleKind kind)
+{
+    ULARGE_INTEGER timestamp{};
+    timestamp.LowPart = modified.dwLowDateTime;
+    timestamp.HighPart = modified.dwHighDateTime;
+    std::ostringstream output;
+    output << "r1-" << std::hex << std::setw(16) << std::setfill('0')
+        << timestamp.QuadPart << '-' << std::setw(16) << size << '-'
+        << (kind == WidgetFilesystemHandleKind::Folder ? 'd' : 'f');
+    return output.str();
+}
+
+bool ReadMetadata(const std::filesystem::path& path,
+    WidgetFilesystemMetadata& metadata, std::string& error)
+{
+    error.clear();
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard,
+            &attributes))
+    {
+        error = GetLastError() == ERROR_ACCESS_DENIED
+            ? "accessDenied" : "notFound";
+        return false;
+    }
+    if ((attributes.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+    {
+        error = "reparsePointDenied";
+        return false;
+    }
+    const bool folder = (attributes.dwFileAttributes &
+        FILE_ATTRIBUTE_DIRECTORY) != 0;
+    metadata = {};
+    metadata.kind = folder ? WidgetFilesystemHandleKind::Folder
+                           : WidgetFilesystemHandleKind::File;
+    metadata.path = path;
+    metadata.name = WideToUtf8(path.filename().wstring());
+    if (metadata.name.empty() && !path.filename().empty())
+    {
+        error = "invalidName";
+        return false;
+    }
+    metadata.size = folder ? 0 :
+        (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) |
+            attributes.nFileSizeLow;
+    ULARGE_INTEGER timestamp{};
+    timestamp.LowPart = attributes.ftLastWriteTime.dwLowDateTime;
+    timestamp.HighPart = attributes.ftLastWriteTime.dwHighDateTime;
+    metadata.modifiedMs = timestamp.QuadPart >= kWindowsToUnixEpochTicks
+        ? static_cast<std::int64_t>((timestamp.QuadPart -
+            kWindowsToUnixEpochTicks) / 10000ULL)
+        : 0;
+    metadata.readOnly = (attributes.dwFileAttributes &
+        FILE_ATTRIBUTE_READONLY) != 0;
+    metadata.revision = MakeRevision(
+        metadata.size, attributes.ftLastWriteTime, metadata.kind);
+    return true;
+}
+
+WidgetFilesystemTaskRunResult RunStat(
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
+{
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    std::string error;
+    if (!CheckPathWithoutReparsePoints(request.path, false, error))
+        return { false, {}, {}, {}, 0, false, std::move(error) };
+    WidgetFilesystemMetadata metadata;
+    if (!ReadMetadata(request.path, metadata, error))
+        return { false, {}, {}, {}, 0, false, std::move(error) };
+    WidgetFilesystemTaskRunResult result;
+    result.ok = true;
+    result.metadata = std::move(metadata);
+    return result;
+}
+
+WidgetFilesystemTaskRunResult RunImage(
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
+{
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    using Microsoft::WRL::ComPtr;
+    const auto fail = [](std::string error) {
+        WidgetFilesystemTaskRunResult result;
+        result.error = std::move(error);
+        return result;
+    };
+    const auto path = request.name.empty() ? request.path :
+        request.path / std::filesystem::path(std::u8string_view(
+            reinterpret_cast<const char8_t*>(request.name.data()), request.name.size()));
+    std::string error;
+    if (!CheckPathWithoutReparsePoints(path, false, error))
+        return fail(error);
+
+    // Pin every ancestor without FILE_SHARE_DELETE. A directory cannot be
+    // replaced with a junction between authorization and WIC decoding.
+    struct PinnedPath
+    {
+        std::vector<HANDLE> handles;
+        ~PinnedPath() { for (HANDLE handle : handles) CloseHandle(handle); }
+    } pinned;
+    auto current = path.root_path();
+    for (const auto& part : path.relative_path())
+    {
+        if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+        current /= part;
+        const bool leaf = current == path;
+        HANDLE handle = CreateFileW(current.c_str(),
+            leaf ? GENERIC_READ : FILE_READ_ATTRIBUTES,
+            leaf ? FILE_SHARE_READ : FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+            return fail(GetLastError() == ERROR_ACCESS_DENIED ?
+                "accessDenied" : "imageOpenFailed");
+        pinned.handles.push_back(handle);
+        BY_HANDLE_FILE_INFORMATION info{};
+        if (!GetFileInformationByHandle(handle, &info))
+            return fail("imageOpenFailed");
+        if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+            return fail("reparsePointDenied");
+        if (leaf && (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            return fail("notFile");
+        if (leaf && ((static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) |
+                info.nFileSizeLow) > 64 * 1024 * 1024)
+            return fail("fileTooLarge");
+    }
+    if (pinned.handles.empty()) return fail("notFile");
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(initialized)) return fail("imageDecodeFailed");
+    struct ComScope { ~ComScope() { CoUninitialize(); } } com;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateDecoderFromFileHandle(
+            reinterpret_cast<ULONG_PTR>(pinned.handles.back()), nullptr,
+            WICDecodeMetadataCacheOnDemand, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)))
+        return fail("imageDecodeFailed");
+    UINT width = 0, height = 0;
+    if (FAILED(frame->GetSize(&width, &height)) || !width || !height ||
+        width > 32768 || height > 32768 ||
+        static_cast<std::uint64_t>(width) * height > 64 * 1024 * 1024)
+        return fail("imageDimensionsInvalid");
+
+    // EXIF orientation is applied to the first frame, including mirrored photos.
+    USHORT orientation = 1;
+    ComPtr<IWICMetadataQueryReader> metadata;
+    if (SUCCEEDED(frame->GetMetadataQueryReader(&metadata)))
+    {
+        for (const wchar_t* query : { L"/app1/ifd/{ushort=274}",
+                L"/ifd/{ushort=274}" })
+        {
+            PROPVARIANT value{};
+            const HRESULT read = metadata->GetMetadataByName(query, &value);
+            if (SUCCEEDED(read) && value.vt == VT_UI2) orientation = value.uiVal;
+            PropVariantClear(&value);
+            if (SUCCEEDED(read)) break;
+        }
+    }
+    constexpr WICBitmapTransformOptions transforms[] = {
+        WICBitmapTransformRotate0, WICBitmapTransformRotate0,
+        WICBitmapTransformFlipHorizontal, WICBitmapTransformRotate180,
+        WICBitmapTransformFlipVertical,
+        static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate90 |
+            WICBitmapTransformFlipHorizontal),
+        WICBitmapTransformRotate90,
+        static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate270 |
+            WICBitmapTransformFlipHorizontal),
+        WICBitmapTransformRotate270 };
+    ComPtr<IWICBitmapSource> source;
+    if (FAILED(frame.As(&source))) return fail("imageDecodeFailed");
+    if (orientation >= 2 && orientation <= 8)
+    {
+        ComPtr<IWICBitmapFlipRotator> rotated;
+        if (FAILED(factory->CreateBitmapFlipRotator(&rotated)) ||
+            FAILED(rotated->Initialize(source.Get(), transforms[orientation])) ||
+            FAILED(rotated.As(&source)) || FAILED(source->GetSize(&width, &height)))
+            return fail("imageDecodeFailed");
+    }
+    const double scale = std::min(1.0,
+        static_cast<double>(request.maxDimension) / std::max(width, height));
+    const UINT outputWidth = std::max<UINT>(1, static_cast<UINT>(std::lround(width * scale)));
+    const UINT outputHeight = std::max<UINT>(1, static_cast<UINT>(std::lround(height * scale)));
+    if (outputWidth != width || outputHeight != height)
+    {
+        ComPtr<IWICBitmapScaler> scaler;
+        if (FAILED(factory->CreateBitmapScaler(&scaler)) ||
+            FAILED(scaler->Initialize(source.Get(), outputWidth, outputHeight,
+                WICBitmapInterpolationModeFant)) || FAILED(scaler.As(&source)))
+            return fail("imageDecodeFailed");
+    }
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeMedianCut)))
+        return fail("imageDecodeFailed");
+    auto pixels = std::make_shared<WidgetRuntimeImagePixels>();
+    pixels->width = outputWidth;
+    pixels->height = outputHeight;
+    pixels->stride = outputWidth * 4;
+    pixels->bgraPremultiplied.resize(static_cast<std::size_t>(pixels->stride) * outputHeight);
+    if (FAILED(converter->CopyPixels(nullptr, pixels->stride,
+            static_cast<UINT>(pixels->bgraPremultiplied.size()),
+            pixels->bgraPremultiplied.data()))) return fail("imageDecodeFailed");
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    WidgetFilesystemTaskRunResult result;
+    if (!ReadMetadata(path, result.metadata, error)) return fail(error);
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    result.resourceToken = MakeWidgetRuntimeImageToken("filesystem", *pixels);
+    result.image = std::move(pixels);
+    result.ok = !result.resourceToken.empty();
+    if (!result.ok) result.error = "imageDecodeFailed";
+    return result;
+}
+
+WidgetFilesystemTaskRunResult RunList(
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
+{
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    std::string error;
+    if (!CheckPathWithoutReparsePoints(request.path, false, error))
+        return { false, {}, {}, {}, 0, false, std::move(error) };
+    WidgetFilesystemMetadata folder;
+    if (!ReadMetadata(request.path, folder, error))
+        return { false, {}, {}, {}, 0, false, std::move(error) };
+    if (folder.kind != WidgetFilesystemHandleKind::Folder)
+        return { false, {}, {}, {}, 0, false, "notFolder" };
+
+    std::vector<WidgetFilesystemMetadata> entries;
+    std::error_code filesystemError;
+    for (std::filesystem::directory_iterator iterator(request.path,
+            std::filesystem::directory_options::none, filesystemError), end;
+        !filesystemError && iterator != end;
+        iterator.increment(filesystemError))
+    {
+        if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+        if (entries.size() >=
+            WidgetFilesystemTaskExecutor::MaximumDirectoryEntries)
+            return { false, {}, {}, {}, 0, false,
+                "directoryTooLarge" };
+        WidgetFilesystemMetadata entry;
+        std::string metadataError;
+        if (!ReadMetadata(iterator->path(), entry, metadataError))
+        {
+            if (metadataError == "reparsePointDenied" ||
+                metadataError == "notFound")
+                continue;
+            return { false, {}, {}, {}, 0, false,
+                std::move(metadataError) };
+        }
+        entries.push_back(std::move(entry));
+    }
+    if (filesystemError)
+        return { false, {}, {}, {}, 0, false, "listFailed" };
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    std::sort(entries.begin(), entries.end(), [](const auto& left,
+        const auto& right) {
+            return left.path.filename().wstring() <
+                right.path.filename().wstring();
+        });
+
+    WidgetFilesystemTaskRunResult result;
+    result.ok = true;
+    result.metadata = std::move(folder);
+    if (request.offset < entries.size())
+    {
+        const std::size_t end = std::min(entries.size(),
+            request.offset + request.limit);
+        result.items.insert(result.items.end(),
+            std::make_move_iterator(entries.begin() +
+                static_cast<std::ptrdiff_t>(request.offset)),
+            std::make_move_iterator(entries.begin() +
+                static_cast<std::ptrdiff_t>(end)));
+        result.nextOffset = end;
+        result.hasMore = end < entries.size();
+    }
+    else
+    {
+        result.nextOffset = request.offset;
+    }
+    return result;
+}
+
+WidgetFilesystemTaskRunResult RunRead(
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
+{
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    std::string error;
+    if (!CheckPathWithoutReparsePoints(request.path, false, error))
+        return { false, {}, {}, {}, 0, false, std::move(error) };
+    WidgetFilesystemMetadata metadata;
+    if (!ReadMetadata(request.path, metadata, error))
+        return { false, {}, {}, {}, 0, false, std::move(error) };
+    if (metadata.kind != WidgetFilesystemHandleKind::File)
+        return { false, {}, {}, {}, 0, false, "notFile" };
+    if (metadata.size > request.maxBytes ||
+        metadata.size > WidgetFilesystemTaskExecutor::MaximumTextBytes)
+        return { false, {}, {}, {}, 0, false, "fileTooLarge" };
+
+    std::ifstream file(request.path, std::ios::binary);
+    if (!file)
+        return { false, {}, {}, {}, 0, false, "readFailed" };
+    std::string text;
+    text.reserve(static_cast<std::size_t>(metadata.size));
+    std::array<char, 16 * 1024> chunk{};
+    while (file)
+    {
+        if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+        // Detect growth without reading past the authorized limit plus one byte.
+        const auto bytes = std::min(chunk.size(), request.maxBytes + 1 - text.size());
+        file.read(chunk.data(), static_cast<std::streamsize>(bytes));
+        text.append(chunk.data(), static_cast<std::size_t>(file.gcount()));
+        if (text.size() > request.maxBytes)
+            return { false, {}, {}, {}, 0, false, "fileChanged" };
+    }
+    if (file.bad())
+        return { false, {}, {}, {}, 0, false, "readFailed" };
+    if (text.size() != metadata.size)
+        return { false, {}, {}, {}, 0, false, "fileChanged" };
+    WidgetFilesystemMetadata after;
+    if (!ReadMetadata(request.path, after, error) ||
+        after.revision != metadata.revision)
+        return { false, {}, {}, {}, 0, false, "fileChanged" };
+    if (request.encoding == "utf8" &&
+        (text.find('\0') != std::string::npos || !IsValidUtf8(text)))
+        return { false, {}, {}, {}, 0, false, "invalidEncoding" };
+
+    WidgetFilesystemTaskRunResult result;
+    result.ok = true;
+    result.metadata = std::move(after);
+    result.text = std::move(text);
+    result.encoding = request.encoding;
+    return result;
+}
+
+WidgetFilesystemTaskRunResult RunWrite(
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
+{
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    std::string error;
+    if (!CheckPathWithoutReparsePoints(request.path, true, error))
+        return { false, {}, {}, {}, 0, false, std::move(error) };
+    WidgetFilesystemMetadata before;
+    const DWORD existingAttributes = GetFileAttributesW(
+        request.path.c_str());
+    const bool exists = existingAttributes != INVALID_FILE_ATTRIBUTES;
+    if (exists)
+    {
+        if (!ReadMetadata(request.path, before, error))
+            return { false, {}, {}, {}, 0, false, std::move(error) };
+        if (before.kind != WidgetFilesystemHandleKind::File)
+            return { false, {}, {}, {}, 0, false, "notFile" };
+    }
+    else if (GetLastError() != ERROR_FILE_NOT_FOUND &&
+        GetLastError() != ERROR_PATH_NOT_FOUND)
+    {
+        return { false, {}, {}, {}, 0, false, "writeFailed" };
+    }
+    if (!request.expectedRevision.empty() &&
+        (!exists || before.revision != request.expectedRevision))
+        return { false, {}, {}, {}, 0, false, "conflict" };
+
+    // Cancellation is advisory after this boundary: the atomic replacement
+    // must finish its backup/rollback protocol once entered. A canceled reply
+    // cannot promise that no durable write occurred.
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    if (!atomic_file::WriteAll(request.path, request.text, {}, &error))
+        return { false, {}, {}, {}, 0, false, "writeFailed" };
+    WidgetFilesystemMetadata after;
+    if (!ReadMetadata(request.path, after, error))
+        return { false, {}, {}, {}, 0, false, "writeVerificationFailed" };
+    WidgetFilesystemTaskRunResult result;
+    result.ok = true;
+    result.metadata = std::move(after);
+    return result;
+}
+}
+
+WidgetFilesystemTaskExecutor::WidgetFilesystemTaskExecutor(
+    Runner runner, NowProvider nowProvider, CooperativeRunner cooperativeRunner)
+    : runner_(std::move(cooperativeRunner)), nowProvider_(std::move(nowProvider))
+{
+    if (!runner_ && runner)
+        runner_ = [legacy = std::move(runner)](const auto& request, std::stop_token) {
+            return legacy(request);
+        };
+    if (!runner_) runner_ = RunSystemAction;
+    if (!nowProvider_)
+        nowProvider_ = [] { return Clock::now(); };
+}
+
+WidgetFilesystemTaskExecutor::~WidgetFilesystemTaskExecutor()
+{
+    {
+        std::scoped_lock lock(mutex_);
+        stopping_ = true;
+    }
+    if (worker_.joinable())
+    {
+        worker_.request_stop();
+        condition_.notify_all();
+        worker_.join();
+    }
+}
+
+WidgetFilesystemTaskStartResult WidgetFilesystemTaskExecutor::Start(
+    std::uint64_t id, std::string instanceId,
+    WidgetFilesystemTaskRequest request)
+{
+    if (id == 0 || instanceId.empty() || !ValidateRequest(request))
+        return { false, "invalidArguments" };
+    const auto now = nowProvider_();
+    std::scoped_lock lock(mutex_);
+    if (stopping_ || active_.contains(id))
+        return { false, "taskExecutorUnavailable" };
+    if (request.action == "filesystem.write")
+    {
+        if (const auto last = lastWrites_.find(instanceId);
+            last != lastWrites_.end() && now >= last->second &&
+            now - last->second < MinimumWriteInterval)
+            return { false, "rateLimited" };
+        lastWrites_.insert_or_assign(instanceId, now);
+    }
+    auto stop = std::make_shared<std::stop_source>();
+    try
+    {
+        active_.insert(id);
+        requestStops_.emplace(id, stop);
+        requests_.push_back({ id, std::move(instanceId), std::move(request), std::move(stop) });
+    }
+    catch (...)
+    {
+        active_.erase(id);
+        requestStops_.erase(id);
+        throw;
+    }
+    if (!worker_.joinable())
+    {
+        worker_ = std::jthread(
+            [this](std::stop_token stopToken) {
+                WorkerMain(stopToken);
+            });
+    }
+    condition_.notify_one();
+    return { true, {} };
+}
+
+bool WidgetFilesystemTaskExecutor::Cancel(std::uint64_t id)
+{
+    std::shared_ptr<std::stop_source> stop;
+    {
+        std::scoped_lock lock(mutex_);
+        if (!active_.contains(id)) return false;
+        canceled_.insert(id);
+        stop = requestStops_.at(id);
+    }
+    // Stop callbacks execute inline. Never invoke them under the executor lock.
+    stop->request_stop();
+    condition_.notify_all();
+    return true;
+}
+
+void WidgetFilesystemTaskExecutor::SetCompletionCallback(
+    CompletionCallback callback)
+{
+    std::scoped_lock lock(mutex_);
+    completionCallback_ = std::move(callback);
+}
+
+void WidgetFilesystemTaskExecutor::ForgetInstance(
+    std::string_view instanceId)
+{
+    std::scoped_lock lock(mutex_);
+    lastWrites_.erase(std::string(instanceId));
+}
+
+std::vector<WidgetFilesystemTaskCompletion>
+WidgetFilesystemTaskExecutor::DrainCompletions()
+{
+    std::scoped_lock lock(mutex_);
+    return std::exchange(completions_, {});
+}
+
+std::size_t WidgetFilesystemTaskExecutor::ActiveCount() const
+{
+    std::scoped_lock lock(mutex_);
+    return active_.size();
+}
+
+bool WidgetFilesystemTaskExecutor::SupportsAction(
+    std::string_view action) noexcept
+{
+    return action == "filesystem.stat" || action == "filesystem.list" ||
+        action == "filesystem.read" || action == "filesystem.write" ||
+        action == "filesystem.image";
+}
+
+bool WidgetFilesystemTaskExecutor::IsDirectChildName(std::string_view name) noexcept
+{
+    return !name.empty() && name.size() <= 1024 && IsValidUtf8(name) &&
+        name != "." && name != ".." && name.back() != '.' && name.back() != ' ' &&
+        name.find_first_of("/\\:<>\"|?*") == std::string_view::npos &&
+        std::none_of(name.begin(), name.end(), [](unsigned char c) { return c < 32; });
+}
+
+bool WidgetFilesystemTaskExecutor::ValidateRequest(
+    const WidgetFilesystemTaskRequest& request) noexcept
+{
+    if (!SupportsAction(request.action) || request.path.empty() ||
+        !request.path.is_absolute() ||
+        (request.encoding != "utf8" && request.encoding != "binary"))
+        return false;
+    if (request.action == "filesystem.stat")
+        return request.text.empty() && request.expectedRevision.empty();
+    if (request.action == "filesystem.image")
+        return (request.name.empty() || IsDirectChildName(request.name)) &&
+            request.maxDimension >= 1 && request.maxDimension <= 2048;
+    if (request.action == "filesystem.list")
+        return request.text.empty() && request.expectedRevision.empty() &&
+            request.limit >= 1 && request.limit <= MaximumListLimit &&
+            request.offset <= MaximumListOffset;
+    if (request.action == "filesystem.read")
+        return request.text.empty() && request.expectedRevision.empty() &&
+            request.maxBytes >= 1 && request.maxBytes <= MaximumTextBytes;
+    return request.text.size() <= MaximumTextBytes &&
+        (request.encoding == "binary" ||
+            (request.text.find('\0') == std::string::npos &&
+                IsValidUtf8(request.text))) &&
+        request.expectedRevision.size() <= 64;
+}
+
+WidgetFilesystemTaskRunResult
+WidgetFilesystemTaskExecutor::RunSystemAction(
+    const WidgetFilesystemTaskRequest& request, std::stop_token stopToken)
+{
+    if (stopToken.stop_requested()) return { false, {}, {}, {}, 0, false, "canceled" };
+    if (!ValidateRequest(request))
+        return { false, {}, {}, {}, 0, false, "invalidArguments" };
+    WidgetFilesystemTaskRunResult result;
+    if (request.action == "filesystem.stat") result = RunStat(request, stopToken);
+    else if (request.action == "filesystem.list") result = RunList(request, stopToken);
+    else if (request.action == "filesystem.read") result = RunRead(request, stopToken);
+    else if (request.action == "filesystem.image") result = RunImage(request, stopToken);
+    else result = RunWrite(request, stopToken);
+    if (result.ok) result.metadata.handle = request.handle;
+    return result;
+}
+
+void WidgetFilesystemTaskExecutor::WorkerMain(
+    std::stop_token stopToken)
+{
+    while (!stopToken.stop_requested())
+    {
+        QueuedRequest request;
+        bool canceledBeforeRun = false;
+        {
+            std::unique_lock lock(mutex_);
+            condition_.wait(lock, [&] {
+                return stopToken.stop_requested() || !requests_.empty();
+            });
+            if (stopToken.stop_requested()) break;
+            request = std::move(requests_.front());
+            requests_.pop_front();
+            canceledBeforeRun = canceled_.contains(request.id);
+        }
+
+        WidgetFilesystemTaskRunResult result;
+        try
+        {
+            std::stop_callback shutdownSignal(stopToken, [stop = request.stop] { stop->request_stop(); });
+            if (!canceledBeforeRun) result = runner_(request.request, request.stop->get_token());
+        }
+        catch (...)
+        {
+            result = { false, {}, {}, {}, 0, false,
+                "filesystemTaskFailed" };
+        }
+        CompletionCallback notify;
+        {
+            std::scoped_lock lock(mutex_);
+            if (canceled_.erase(request.id) > 0)
+                result = { false, {}, {}, {}, 0, false, "canceled" };
+            active_.erase(request.id);
+            requestStops_.erase(request.id);
+            WidgetFilesystemTaskCompletion completion{ request.id,
+                std::move(request.request.action), result.ok,
+                std::move(result.metadata), std::move(result.items),
+                std::move(result.text), result.nextOffset,
+                result.hasMore, std::move(result.error) };
+            completion.encoding = std::move(result.encoding);
+            completion.grantHandles = request.request.grantHandles;
+            completion.image = std::move(result.image);
+            completion.resourceToken = std::move(result.resourceToken);
+            completions_.push_back(std::move(completion));
+            if (!stopping_) notify = completionCallback_;
+        }
+        // Never call host code under the executor lock. The posted UI message
+        // may immediately drain results or start the latest queued photo.
+        if (notify) { try { notify(); } catch (...) {} }
+    }
+}
+}
