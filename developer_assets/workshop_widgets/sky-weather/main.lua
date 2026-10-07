@@ -1,6 +1,8 @@
 local weather=module.require("modules/weather.lua")
 local json=module.require("modules/json.lua")
 local cities=module.require("modules/cities.lua")
+-- Reserve the fixed controls plus three complete city results in the panel.
+local cityPanelRows=16
 local skies={sky=resource.image("sky"),cloudy=resource.image("cloudy"),rain=resource.image("rain"),
     snow=resource.image("snow"),fog=resource.image("fog"),night=resource.image("night")}
 local weekdayKeys={"lua_widget.sky_weather.sun_day","lua_widget.sky_weather.mon_day",
@@ -303,7 +305,8 @@ local function render(_context,m)
     text(w-p-math.min(measure.width,noteWidth),h-short*0.077,note,foot,colors.secondary,noteWidth)
 end
 local function panel(_context,m)
-    local row=ui.metrics().layoutRowHeight
+    -- The host can constrain the requested panel to the monitor work area.
+    local row=math.min(ui.metrics().layoutRowHeight,layout.contentHeight()/cityPanelRows)
     local colors={field="surface",border="border",selected="surfaceVariant",accent="info"}
     local function label(key,value,size,height,secondary,bold)
         return view.text({key=key,text=value,width="fill",height=height or row*0.75,fontSize=size,
@@ -450,7 +453,10 @@ local function event(_context,m,e)
     elseif e.kind=="action" then
         local id=e.id
         if id=="keyboard" then if e.key~="Enter" and e.key~="Space" then return end;id=e.value end
-        if id=="cities" or id=="cities.empty" then widget.openPanel({title=l10n.tr("lua_widget.sky_weather.choose_city"),width=440,height=520})
+        if id=="cities" or id=="cities.empty" then
+            local row=ui.metrics().layoutRowHeight
+            widget.openPanel({title=l10n.tr("lua_widget.sky_weather.choose_city"),
+                width=math.max(440,math.ceil(row*10+36)),height=math.max(520,math.ceil(row*cityPanelRows+74))})
         elseif id=="refresh" and not m.preview then m.weather:refresh(true)
         elseif id=="settings" then widget.openSettings()
         elseif id=="choose" and not m.preview then choose(m,e.value)
