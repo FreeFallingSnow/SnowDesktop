@@ -761,6 +761,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     shellReloadPending_ = false;
     shellRefreshScope_.Full();
     reloading_ = true;
+    dataCleanupWorker_.Cancel();
     ULONGLONG stageStarted = GetTickCount64();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     // A partial startup snapshot can arrive while a disk reload is queued.
@@ -1064,6 +1065,13 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     {
         CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
             _LW("settings.backup.restoreLayout.commitFailed")));
+    }
+    if (!incremental && desktopItemsReady_ && (!snapshot || snapshot->desktopComplete) &&
+        !layoutReload_.Pending() && synchronized != snowdesktop::layout_reload::SynchronizeResult::Failed)
+    {
+        dataCleanupHasCompleteModel_ = true;
+        SynchronizeLargeIconAssets();
+        ScheduleDataCleanup();
     }
 }
 

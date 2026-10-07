@@ -3225,6 +3225,7 @@ void TestNewItemsRetainTheirDesktopFilesOwner()
     }
 }
 
+int RunDropStagingTests();
 int wmain(int argc, wchar_t** argv)
 {
     if (argc == 4 && std::wstring(argv[1]) == L"--register-notification-shortcut")
@@ -3263,6 +3264,7 @@ int wmain(int argc, wchar_t** argv)
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
     TestExternalDropContentRegressions();
+    failures += RunDropStagingTests();
     TestExternalContentSelectionMatrix();
     TestExternalResolutionAndSessionMatrix();
     TestDragDropControllerOwnsTransportTransitions();

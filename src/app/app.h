@@ -22,6 +22,7 @@
 #include "platform/operation_feedback.h"
 #include "ui/render/graphics_device_recovery.h"
 #include "common/background_work.h"
+#include "data/data_cleanup.h"
 #include "platform/single_instance.h"
 #include "app/shell/shell_icon_work.h"
 #include "app/shell/shell_icon_request.h"
@@ -1785,6 +1786,10 @@ private:
     void RequestLargeIconAsset(size_t index, bool refresh = false, std::filesystem::path importPath = {}, int variant = 0,
         std::vector<std::wstring> importKeys = {});
     void ProcessLargeIconAssets();
+    void SynchronizeLargeIconAssets();
+    void ScheduleDataCleanup();
+    bool dataCleanupHasCompleteModel_ = false;
+    snowdesktop::data_cleanup::Worker dataCleanupWorker_;
     void UpdateLargeIconHover();
     bool HandleLargeIconPointerDown(POINT point);
     bool HandleLargeIconPointerMove(POINT point);

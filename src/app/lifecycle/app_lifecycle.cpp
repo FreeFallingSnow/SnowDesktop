@@ -13,6 +13,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    dataCleanupWorker_.Stop();
     if(systemDataProvider_)systemDataProvider_->Controls()->SetWake({});
     systemPanel_.reset();
     CancelStatusBarActivation();
@@ -1076,6 +1077,7 @@ void DesktopApp::CompleteExitRequest()
 {
     if (exitRequested_) return;
     exitRequested_ = true;
+    dataCleanupWorker_.Stop();
     // A confirmation may be pumping messages inside task dispatch. Invalidate
     // tasks now, keeping the engine alive until that modal stack has unwound.
     if (widgetEngine_) widgetEngine_->BeginTaskShutdown();

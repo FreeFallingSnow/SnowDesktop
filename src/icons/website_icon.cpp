@@ -1,4 +1,5 @@
 #include "website_icon.h"
+#include "shortcut_icon_resource.h"
 #include "data/atomic_file.h"
 #include "platform/http_runtime.h"
 #include "shell/shortcut_application_rules.h"
@@ -452,5 +453,81 @@ bool Apply(const Shortcut& shortcut, const std::filesystem::path& icon)
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, shortcut.path.c_str());
     SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, shortcut.path.c_str(), nullptr);
     return true;
+}
+std::size_t CollectUnused(const std::filesystem::path& directory,
+    const std::vector<std::filesystem::path>& shortcuts, std::stop_token stop)
+{
+    const DWORD attributes = GetFileAttributesW(directory.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return 0;
+    std::vector<std::filesystem::path> retained;
+    std::vector<std::filesystem::path> observed = shortcuts;
+    for (const auto& path : shortcuts)
+    {
+        if (path.empty()) continue;
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD error = GetLastError();
+            if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) return 0;
+            continue;
+        }
+        if (!(attributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE)) return 0;
+        std::error_code error;
+        for (std::filesystem::directory_iterator it(path, error), end; !error && it != end; it.increment(error))
+        {
+            if (stop.stop_requested()) return 0;
+            observed.push_back(it->path());
+        }
+        if (error) return 0;
+    }
+    for (const auto& shortcut : observed)
+    {
+        if (stop.stop_requested()) return 0;
+        const auto extension = shortcut.extension().wstring();
+        if (_wcsicmp(extension.c_str(), L".lnk") != 0 && _wcsicmp(extension.c_str(), L".url") != 0 &&
+            _wcsicmp(extension.c_str(), L".website") != 0) continue;
+        const DWORD shortcutAttributes = GetFileAttributesW(shortcut.c_str());
+        if (shortcutAttributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD error = GetLastError();
+            if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) continue;
+            return 0; // An unreadable shortcut is not proof that its icon is unused.
+        }
+        if (shortcutAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE)) return 0;
+        std::string contents;
+        if (!atomic_file::ReadAll(shortcut, contents)) return 0;
+        if (_wcsicmp(extension.c_str(), L".website") == 0)
+        {
+            if (const auto resource = shortcut_icon_resource::ReadInternetShortcutIconResource(shortcut.wstring()))
+                retained.push_back(std::filesystem::path(resource->path).lexically_normal());
+        }
+        else
+            for (const auto& resource : shortcut_icon_resource::ReadLocalIconResources(shortcut.wstring()))
+                retained.push_back(std::filesystem::path(resource.path).lexically_normal());
+    }
+    std::error_code error;
+    std::vector<std::filesystem::path> candidates;
+    for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end; it.increment(error))
+    {
+        const auto path = it->path();
+        const auto name = path.filename().wstring();
+        if (name.size() != 42 || _wcsicmp(path.extension().c_str(), L".ico") != 0) continue;
+        GUID guid{};
+        if (FAILED(CLSIDFromString(path.stem().c_str(), &guid))) continue;
+        if (std::none_of(retained.begin(), retained.end(), [&](const auto& live) {
+                return _wcsicmp(live.c_str(), path.lexically_normal().c_str()) == 0;
+            })) candidates.push_back(path);
+    }
+    if (error) return 0;
+    std::size_t removed = 0;
+    for (const auto& path : candidates)
+    {
+        if (stop.stop_requested()) break;
+        const DWORD fileAttributes = GetFileAttributesW(path.c_str());
+        if (fileAttributes == INVALID_FILE_ATTRIBUTES || (fileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) continue;
+        if (DeleteFileW(path.c_str())) ++removed;
+    }
+    return removed;
 }
 }

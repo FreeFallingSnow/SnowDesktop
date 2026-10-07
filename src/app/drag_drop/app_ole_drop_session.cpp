@@ -141,7 +141,6 @@ public:
 
     ~StagedDropPathLease()
     {
-        if (keep_) return;
         for (const auto& path : paths_)
             (void)DeleteFileW(path.c_str());
     }
@@ -150,16 +149,8 @@ public:
     StagedDropPathLease& operator=(
         const StagedDropPathLease&) = delete;
 
-    // Dock links and logical-slot references use the staged path as their
-    // durable backing file instead of copying it to another destination.
-    void Keep() noexcept
-    {
-        keep_ = true;
-    }
-
 private:
     std::vector<std::wstring> paths_;
-    bool keep_ = false;
 };
 
 }
@@ -939,14 +930,14 @@ HRESULT DesktopApp::HandleOleDrop(
         dataObject && !sourceUsesAsyncMode
             ? GetDropPaths(dataObject) : std::vector<std::wstring>();
     bool forceCopyDrop = false;
-    std::unique_ptr<StagedDropPathLease> stagedDropPathLease;
+    std::shared_ptr<StagedDropPathLease> stagedDropPathLease;
     const auto adoptStagedDropPaths =
         [&dropPaths, &stagedDropPathLease](
             std::vector<std::wstring> paths) {
             if (paths.empty()) return false;
             try
             {
-                auto lease = std::make_unique<StagedDropPathLease>(
+                auto lease = std::make_shared<StagedDropPathLease>(
                     paths);
                 dropPaths = std::move(paths);
                 stagedDropPathLease = std::move(lease);
@@ -2130,13 +2121,18 @@ HRESULT DesktopApp::HandleOleDrop(
         if (auto* logicalSlot =
                 dynamic_cast<LuaLogicalSlotContainer*>(target))
         {
-            const bool committed = logicalSlot->CommitItems(
-                sourceItems,
-                dragSession_.TargetContainer()
-                    ? dragSession_.TargetSlot() : nullptr,
-                targetRegion);
-            if (committed && stagedDropPathLease)
-                stagedDropPathLease->Keep();
+            bool committed = false;
+            if (stagedDropPathLease)
+            {
+                ExternalSlotDestination destination;
+                destination.luaWidgetId = logicalSlot->WidgetId();
+                destination.luaSlotId = logicalSlot->SlotId();
+                destination.insertIndex = logicalSlot->GetDropInsertIndex(dragSession_.TargetSlot(), targetRegion);
+                committed = CommitExternalSlotPaths(destination, dropPaths, true, true,
+                    [lease = stagedDropPathLease](bool) {}, true, {});
+            }
+            else committed = logicalSlot->CommitItems(sourceItems,
+                dragSession_.TargetContainer() ? dragSession_.TargetSlot() : nullptr, targetRegion);
             EndDragSession();
             InvalidateRect(hwnd_, nullptr, FALSE);
             *effect = committed ? DROPEFFECT_COPY : DROPEFFECT_NONE;
@@ -2193,14 +2189,12 @@ HRESULT DesktopApp::HandleOleDrop(
             bool executed = ExecuteDropPipeline(
                 sourceList,
                 desktopPreview,
-                sourceSupportsAsync
-                    ? std::move(asyncCompletion)
-                    : FileOperationCompletion{},
+                [lease = stagedDropPathLease, completion = std::move(asyncCompletion)](bool succeeded) {
+                    if (completion) completion(succeeded);
+                },
                 !sourceSupportsAsync);
             if (executed)
             {
-                if (stagedDropPathLease)
-                    stagedDropPathLease->Keep();
                 EndDragSession();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 *effect = mappingEffect;
@@ -2243,9 +2237,9 @@ HRESULT DesktopApp::HandleOleDrop(
             DwmFlush();
         bool executed = ExecuteDropPipeline(
             sourceList, preview,
-            sourceSupportsAsync
-                ? std::move(asyncCompletion)
-                : FileOperationCompletion{},
+            [lease = stagedDropPathLease, completion = std::move(asyncCompletion)](bool succeeded) {
+                if (completion) completion(succeeded);
+            },
             !sourceSupportsAsync);
         if (executed)
         {

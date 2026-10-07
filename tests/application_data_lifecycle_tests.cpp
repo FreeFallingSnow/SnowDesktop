@@ -723,8 +723,10 @@ void TestWidgetRemoval(const std::filesystem::path& root)
         "catalog publication and reload preserve the removal declaration");
 }
 
+int RunDataCleanupTests();
 int main()
 {
+    failures += RunDataCleanupTests();
     // PIDs are reused across runs, and a previous interrupted cleanup can
     // leave an installed version behind. Never reuse or delete that tree.
     GUID runId{};

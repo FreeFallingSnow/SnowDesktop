@@ -74,6 +74,19 @@ bool AutomaticImageName(std::wstring_view name)
         return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f');
     }) && decimal(name.substr(separator + 1));
 }
+bool ImportedImageName(std::wstring_view name)
+{
+    if (!name.starts_with(L"import-") || !name.ends_with(L".png")) return false;
+    name.remove_prefix(7); name.remove_suffix(4);
+    return !name.empty() && name.size() <= 16 && std::all_of(name.begin(), name.end(), [](wchar_t c) {
+        return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f');
+    });
+}
+std::string RawSourcePrefix(const LargeIconAssetRequest& r)
+{
+    return "raw-" + Hash(r.parsingName + L":" + std::to_wstring(r.sourceStamp) + L":" +
+        std::to_wstring(r.sourceIconIndex) + L":thumbnail4") + "-";
+}
 std::filesystem::path SteamDirectory()
 {
     wchar_t buffer[32768]{};
@@ -327,6 +340,9 @@ struct LargeIconAssets::Impl
     std::unordered_map<std::string, Cached> cache;
     std::vector<std::weak_ptr<LargeIconAsset>> allocations;
     std::unordered_set<std::string> retained;
+    std::vector<std::string> sourcePrefixes;
+    bool sourcesKnown = false, collectionRequested = false;
+    std::uint64_t referencesRevision = 0;
     std::unordered_map<std::string, std::filesystem::file_time_type> lastUse;
     std::vector<LargeIconAssetResult> completed;
     std::array<std::stop_source, 2> cancellation;
@@ -363,18 +379,23 @@ struct LargeIconAssets::Impl
 
     void CollectDisk()
     {
-        std::unique_lock collector(diskCollectionMutex, std::try_to_lock);
-        if (!collector.owns_lock()) return;
+        std::unique_lock collector(diskCollectionMutex);
+        const DWORD directoryAttributes = GetFileAttributesW(directory.c_str());
+        if (directoryAttributes == INVALID_FILE_ATTRIBUTES || (directoryAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) return;
         std::unordered_set<std::string> pinned;
+        std::vector<std::string> prefixes;
+        bool collectOrphans = false;
+        std::uint64_t revision = 0;
         decltype(lastUse) touched;
         {
             std::lock_guard lock(mutex);
             if (stopped) return;
             pinned = PinnedReferencesLocked(); touched = lastUse;
+            prefixes = sourcePrefixes; collectOrphans = sourcesKnown; revision = referencesRevision;
         }
         // Scan and sort on the worker without blocking the desktop's request,
         // cancellation or completion mutex on a large cache directory.
-        struct File { std::filesystem::path path; std::uint64_t bytes; std::filesystem::file_time_type touched; };
+        struct File { std::filesystem::path path; std::uint64_t bytes; std::filesystem::file_time_type touched; bool automatic; std::string source; };
         std::vector<File> candidates;
         std::uint64_t total = 0;
         std::error_code ec;
@@ -382,27 +403,68 @@ struct LargeIconAssets::Impl
         {
             if (!it->is_regular_file(ec)) continue;
             const auto wideName = it->path().filename().wstring();
-            if (!AutomaticImageName(wideName)) continue;
+            const bool automatic = AutomaticImageName(wideName);
+            std::wstring auxiliary;
+            if (wideName.ends_with(L".failure")) auxiliary = wideName.substr(0, wideName.size() - 8);
+            else if (wideName.ends_with(L".download"))
+            {
+                const auto suffix = wideName.rfind(L".png-");
+                if (suffix != wideName.npos)
+                {
+                    const auto generation = std::wstring_view(wideName).substr(suffix + 5, wideName.size() - suffix - 14);
+                    if (!generation.empty() && std::all_of(generation.begin(), generation.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }))
+                        auxiliary = wideName.substr(0, suffix + 4);
+                }
+            }
+            if (!AutomaticImageName(auxiliary)) auxiliary.clear();
+            if (!automatic && !ImportedImageName(wideName) && auxiliary.empty()) continue;
             std::string name;
             name.reserve(wideName.size());
             for (wchar_t c : wideName) name.push_back(static_cast<char>(c));
             const auto bytes = it->file_size(ec);
             if (ec) break;
-            total += bytes;
-            if (!pinned.contains(name)) candidates.push_back({it->path(), bytes,
-                touched.contains(name) ? touched.at(name) : it->last_write_time(ec)});
+            if (automatic) total += bytes;
+            candidates.push_back({it->path(), bytes,
+                touched.contains(name) ? touched.at(name) : it->last_write_time(ec), automatic,
+                {auxiliary.begin(), auxiliary.end()}});
+        }
+        if (ec) return; // An incomplete directory read is not deletion evidence.
+        std::unordered_set<std::string> owned = pinned;
+        for (const auto& file : candidates)
+        {
+            const auto name = file.path.filename().string();
+            if (std::any_of(prefixes.begin(), prefixes.end(), [&](const auto& prefix) { return name.starts_with(prefix); }))
+                owned.insert(name);
+        }
+        // Preview names encode the source name and its write stamp. Preserve all
+        // sizes of a live source, and discard previews of retired generations.
+        std::vector<std::string> previewPrefixes;
+        for (const auto& name : owned)
+        {
+            if (name.starts_with("preview-") || name.empty()) continue;
+            const auto stamp = std::filesystem::last_write_time(directory / Wide(name), ec);
+            if (!ec) previewPrefixes.push_back("preview-" + Hash(Wide(name) + std::to_wstring(stamp.time_since_epoch().count())) + "-");
+            ec.clear();
         }
         std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.touched < b.touched; });
         for (const auto& file : candidates)
         {
-            if (total <= limits.automaticDiskBytes) break;
             const auto name = file.path.filename().string();
+            const bool live = owned.contains(name) || (!file.source.empty() &&
+                (owned.contains(file.source) || std::any_of(prefixes.begin(), prefixes.end(), [&](const auto& prefix) { return file.source.starts_with(prefix); }))) ||
+                std::any_of(previewPrefixes.begin(), previewPrefixes.end(),
+                [&](const auto& prefix) { return name.starts_with(prefix); });
+            if (live || (!collectOrphans && (total <= limits.automaticDiskBytes || !file.automatic))) continue;
             // Recheck immediately before deletion: an instance may have begun
             // using this source while the unlocked directory scan was running.
             std::lock_guard lock(mutex);
-            if (stopped) return;
-            if (PinnedReferencesLocked().contains(name)) continue;
-            if (std::filesystem::remove(file.path, ec)) { total -= file.bytes; lastUse.erase(name); }
+            if (stopped || revision != referencesRevision) return;
+            const auto currentPinned = PinnedReferencesLocked();
+            if (currentPinned.contains(name) || (!file.source.empty() && currentPinned.contains(file.source))) continue;
+            const auto attributes = GetFileAttributesW(file.path.c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) continue;
+            if (std::filesystem::remove(file.path, ec)) { if (file.automatic) total -= file.bytes; lastUse.erase(name); }
+            ec.clear();
         }
     }
 
@@ -441,8 +503,7 @@ struct LargeIconAssets::Impl
         // Request is called by the desktop paint path. Only inspect the Shell
         // model here; disk access belongs to the workers. The icon index also
         // changes when a Shell association changes without touching the file.
-        return "raw-" + Hash(r.parsingName + L":" + std::to_wstring(r.sourceStamp) + L":" +
-            std::to_wstring(r.sourceIconIndex) + L":thumbnail4") + "-" + std::to_string(r.pixels) + ".png";
+        return RawSourcePrefix(r) + std::to_string(r.pixels) + ".png";
     }
     std::shared_ptr<LargeIconAsset> Load(const LargeIconAssetRequest& r, std::stop_token stop, std::string& error)
     {
@@ -546,7 +607,15 @@ struct LargeIconAssets::Impl
             std::string key; LargeIconAssetRequest request; std::stop_token requestStop;
             {
                 std::unique_lock lock(mutex);
-                if (!condition.wait(lock, stop, [&] { return stopped || !queue.empty(); }) || stopped) break;
+                if (!condition.wait(lock, stop, [&] { return stopped || !queue.empty() || collectionRequested; }) || stopped) break;
+                if (queue.empty())
+                {
+                    collectionRequested = false;
+                    lock.unlock();
+                    try { CollectDisk(); } catch (...) { /* Retry on the next ownership update. */ }
+                    Notify();
+                    continue;
+                }
                 key = std::move(queue.front()); queue.pop_front(); request = pending.at(key).request;
                 requestStop = pending.at(key).cancellation.get_token();
             }
@@ -692,5 +761,21 @@ void LargeIconAssets::RetainReferences(std::vector<std::string> references)
 {
     std::lock_guard lock(impl_->mutex);
     impl_->retained = {references.begin(), references.end()};
+    ++impl_->referencesRevision;
+}
+void LargeIconAssets::RetainSources(std::vector<LargeIconAssetRequest> sources)
+{
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->stopped) return;
+    impl_->sourcePrefixes.clear();
+    for (const auto& source : sources)
+    {
+        if (!source.parsingName.empty()) impl_->sourcePrefixes.push_back(RawSourcePrefix(source));
+        if (source.appId) impl_->sourcePrefixes.push_back("steam-" + std::to_string(source.appId) + "-");
+    }
+    impl_->sourcesKnown = true;
+    ++impl_->referencesRevision;
+    impl_->collectionRequested = true;
+    impl_->condition.notify_one();
 }
 }

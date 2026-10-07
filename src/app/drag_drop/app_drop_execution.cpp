@@ -7,6 +7,7 @@
 #include "desktop/desktop_category_item_rules.h"
 #include "drag_drop/empty_group_drop_rules.h"
 #include "shell/shortcut_category_target.h"
+#include "drag_drop/drop_staging.h"
 
 // Internal and file-backed drop-plan execution.
 
@@ -655,6 +656,9 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
 {
     std::vector<std::wstring> paths = sourceList.FilePaths();
     if (paths.empty()) return false;
+    // A Dock link cannot point to an OLE scratch file that is about to expire.
+    if (action == DropAction::Link && std::any_of(paths.begin(), paths.end(),
+            snowdesktop::drop_staging::Contains)) action = DropAction::Copy;
     if (createdPathsBySource)
         createdPathsBySource->clear();
 

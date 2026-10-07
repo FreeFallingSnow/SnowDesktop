@@ -28,4 +28,7 @@ std::string ConvertToIco(std::span<const std::byte> image);
 std::filesystem::path Fetch(const std::wstring& url,
     const std::filesystem::path& directory, std::stop_token stop);
 bool Apply(const Shortcut& shortcut, const std::filesystem::path& icon);
+// A complete desktop/folder snapshot. Only generated GUID ICOs are owned here.
+std::size_t CollectUnused(const std::filesystem::path& directory,
+    const std::vector<std::filesystem::path>& shortcuts, std::stop_token stop = {});
 }

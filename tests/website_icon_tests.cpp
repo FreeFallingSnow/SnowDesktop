@@ -150,6 +150,28 @@ int RunWebsiteIconTests()
     MakeLink(linkPath, L"C:\\Tools\\tool.exe", L"https://example.com");
     Check(site::ReadUrl(linkPath).empty(), "do not treat arbitrary URL arguments as browser shortcuts");
 
+    const auto managed = root / L"website-icons";
+    const auto desktop = root / L"desktop";
+    fs::create_directories(managed); fs::create_directories(desktop);
+    const auto oldIcon = managed / L"{11111111-1111-1111-1111-111111111111}.ico";
+    const auto newIcon = managed / L"{22222222-2222-2222-2222-222222222222}.ico";
+    const auto linkIcon = managed / L"{33333333-3333-3333-3333-333333333333}.ico";
+    const auto personalIcon = managed / L"personal.ico";
+    for (const auto& path : {oldIcon, newIcon, linkIcon, personalIcon}) atomic_file::WriteAll(path, ico);
+    const auto activeUrl = desktop / L"active.url";
+    atomic_file::WriteAll(activeUrl, original);
+    const auto oldSnapshot = site::Capture(activeUrl);
+    Check(oldSnapshot && site::Apply(*oldSnapshot, oldIcon), "assign the first generated website icon");
+    const auto newSnapshot = site::Capture(activeUrl);
+    Check(newSnapshot && site::Apply(*newSnapshot, newIcon), "repeated fetch replaces the shortcut icon reference");
+    const auto activeLink = desktop / L"active.lnk";
+    Check(MakeLink(activeLink, L"C:\\Browser\\chrome.exe", L"--app=https://example.com", linkIcon.c_str()), "create a second live icon owner");
+    const auto count = site::CollectUnused(managed, {desktop});
+    Check(count == 1 && !fs::exists(oldIcon) && fs::exists(newIcon) && fs::exists(linkIcon) && fs::exists(personalIcon),
+        "collection reclaims a superseded GUID icon and preserves URL/link references and non-generated files");
+    fs::remove(activeUrl); fs::remove(activeLink);
+    Check(site::CollectUnused(managed, {desktop}) == 2 && !fs::exists(newIcon) && !fs::exists(linkIcon) && fs::exists(personalIcon),
+        "deleting the last website shortcuts releases their generated icons");
     if (root.parent_path() == fs::temp_directory_path() && root.filename().wstring().starts_with(L"SnowDesktop-website-icon-")) fs::remove_all(root);
     return failures;
 }

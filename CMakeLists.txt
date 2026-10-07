@@ -222,6 +222,8 @@ set(SNOWDESKTOP_SOURCES
     src/drag_drop/external_drop_content.cpp
     src/app/drag_drop/app_url_drop_download.cpp
     src/app/features/app_website_icon.cpp
+    src/app/features/app_data_cleanup.cpp
+    src/data/data_cleanup.cpp
     src/icons/website_icon.cpp
     src/app/drag_drop/app_drop_execution.cpp
     src/app/drag_drop/app_external_slot_drop.cpp
@@ -1192,6 +1194,8 @@ if (BUILD_TESTING)
         application_data_lifecycle
         SOURCES
             tests/application_data_lifecycle_tests.cpp
+            tests/data/data_cleanup_tests.cpp
+            src/data/data_cleanup.cpp
             src/data/atomic_file.cpp
             src/data/full_data_backup.cpp
             src/data/layout_storage.cpp
@@ -1830,6 +1834,7 @@ if (BUILD_TESTING)
         slot_runtime_contract
         SOURCES
             tests/slot_runtime_contract_tests.cpp
+            tests/drag_drop/drop_staging_tests.cpp
             src/drag_drop/external_drop_content.cpp
             src/resources/app_icon.rc
             src/app/drag_drop/drag_drop_controller.cpp

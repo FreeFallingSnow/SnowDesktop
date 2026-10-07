@@ -528,10 +528,8 @@ void TestOwnedRuntimeStaging(const std::string& dropExtraction,
     const std::string& workshopManager, const std::string& workshopSource,
     const std::string& workshopProjects)
 {
-    Check(dropExtraction.find("GetTempPathW") == std::string::npos &&
-            dropExtraction.find("GetDataSubdirectoryPath(L\"DropContent\")") !=
-                std::string::npos,
-        "non-file drop content is materialized only below the SnowDesktop data root");
+    Check(dropExtraction.find("GetDataSubdirectoryPath(L\"DropContent\")") == std::string::npos,
+        "transient non-file drop payloads must never be persisted below the user data root");
     Check(widgetPackages.find("temp_directory_path") == std::string::npos &&
             widgetPackages.find("CreateStagingPath(\"validation\")") !=
                 std::string::npos,

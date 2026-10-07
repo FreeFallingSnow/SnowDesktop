@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "drag_drop/external_drop_content.h"
+#include "drag_drop/drop_staging.h"
 #include "drag_drop/drop_data_url.h"
 #include "drag_drop/drop_image_data.h"
 #include "drag_drop/drop_text_rules.h"
@@ -15,8 +16,8 @@ namespace
 {
 std::filesystem::path DropContentDirectory()
 {
-    const std::filesystem::path root(
-        GetDataSubdirectoryPath(L"DropContent"));
+    const auto root = snowdesktop::drop_staging::Directory();
+    if (root.empty()) return {};
     const DWORD attributes = GetFileAttributesW(root.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES ||
         (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
@@ -601,7 +602,7 @@ std::vector<std::wstring> DesktopApp::TryExtractImageFromDataObject(
 /**
  * @brief 从数据对象中提取文本并保存为 UTF-8 .txt 文件
  * @param dataObject COM 数据对象
- * @return data 目录中的持久 .txt 文件路径列表
+ * @return 本次拖放的临时 .txt 文件路径列表，提交完成后清理
  */
 std::vector<std::wstring> DesktopApp::TryExtractTextFromDataObject(
     const DropReferenceSnapshot& snapshot)
