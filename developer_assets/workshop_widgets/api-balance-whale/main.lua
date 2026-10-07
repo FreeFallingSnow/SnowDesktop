@@ -112,18 +112,27 @@ local function card(x,y,w,h,colors,radius)
     draw.rect(x,y,w,h,colors.card,radius,0.54)
     draw.strokeRect(x,y,w,h,colors.border,radius,radius*0.065,0.20)
 end
-local function bubble(x,y,w,h,colors,r,row)
+local function bubble(x,y,w,h,colors,r,row,pointRight)
     local right,bottom=x+w,y+h;local k=r*0.55228475
     local path={{op="move",x=x+r,y=y},{op="line",x=right-r,y=y},
         {op="cubic",x1=right-r+k,y1=y,x2=right,y2=y+r-k,x=right,y=y+r}}
     local function add(command) path[#path+1]=command end
+    if pointRight then
+        local cy=y+h*0.32
+        add({op="line",x=right,y=cy-row*0.30})
+        add({op="cubic",x1=right,y1=cy-row*0.12,x2=right+row*0.28,y2=cy-row*0.03,x=right+row*0.48,y=cy+row*0.03})
+        add({op="quadratic",x1=right+row*0.56,y1=cy+row*0.08,x=right+row*0.46,y=cy+row*0.13})
+        add({op="cubic",x1=right+row*0.20,y1=cy+row*0.23,x2=right,y2=cy+row*0.17,x=right,y=cy+row*0.33})
+    end
     add({op="line",x=right,y=bottom-r})
     add({op="cubic",x1=right,y1=bottom-r+k,x2=right-r+k,y2=bottom,x=right-r,y=bottom})
-    local cx=x+w*0.50
-    add({op="line",x=cx+row*0.34,y=bottom})
-    add({op="cubic",x1=cx+row*0.24,y1=bottom,x2=cx+row*0.21,y2=bottom+row*0.30,x=cx+row*0.20,y=bottom+row*0.42})
-    add({op="quadratic",x1=cx+row*0.18,y1=bottom+row*0.50,x=cx+row*0.12,y=bottom+row*0.44})
-    add({op="cubic",x1=cx-row*0.10,y1=bottom+row*0.18,x2=cx-row*0.20,y2=bottom,x=cx-row*0.34,y=bottom})
+    if not pointRight then
+        local cx=x+w*0.50
+        add({op="line",x=cx+row*0.34,y=bottom})
+        add({op="cubic",x1=cx+row*0.24,y1=bottom,x2=cx+row*0.21,y2=bottom+row*0.30,x=cx+row*0.20,y=bottom+row*0.42})
+        add({op="quadratic",x1=cx+row*0.18,y1=bottom+row*0.50,x=cx+row*0.12,y=bottom+row*0.44})
+        add({op="cubic",x1=cx-row*0.10,y1=bottom+row*0.18,x2=cx-row*0.20,y2=bottom,x=cx-row*0.34,y=bottom})
+    end
     add({op="line",x=x+r,y=bottom})
     add({op="cubic",x1=x+r-k,y1=bottom,x2=x,y2=bottom-r+k,x=x,y=bottom-r})
     add({op="line",x=x,y=y+r})
@@ -219,13 +228,13 @@ local function render(_context,m)
     local whaleMode=storage.get("mode")~="data"
     local w,h=outerWidth,outerHeight
     local row=ui.metrics().layoutRowHeight
-    -- Keep one intentional portrait composition. Extreme spans gain margins
-    -- rather than stretching the amount or scattering actions across a wide row.
+    -- Leave normal spans usable; only extreme ratios gain outer margins.
+    -- Information controls keep the semantic row unit when width changes.
     if whaleMode then
-        w=math.min(w,h*0.82);h=math.min(h,w/0.70)
-        row=math.min(w,h)*0.095
+        w=math.min(w,h*1.70);h=math.min(h,w/0.45)
+        row=math.min(w*0.11,h*0.076)
     else
-        w=math.min(w,row*9.2);h=math.min(h,row*10.4)
+        w=math.min(w,h*1.70);h=math.min(h,row*12.5)
     end
     local ox,oy=(outerWidth-w)*0.5,(outerHeight-h)*0.5
     local pad=row*0.60;local cfg=config()
@@ -245,12 +254,17 @@ local function render(_context,m)
     local statusY=footerY-row*1.10
     local bottom=statusY-row*0.34
     if whaleMode then
-        local bx,by,bw,bh=ox+pad,top,w-pad*2,row*3.90
-        bubble(bx,by,bw,bh,colors,row*0.45,row);hero(bx,by,bw,bh,m,c,colors,row)
-        local imageTop=top+bh+row*0.42
-        local imageSide=math.min(w-pad*2,bottom-imageTop)
-        local imageX=ox+(w-imageSide)*0.5
-        local imageY=imageTop
+        local wide=w/h>1.35
+        local bx,by,bw,bh=ox+pad,top,w-pad*2,row*3.10
+        if wide then bw=(w-pad*3)*0.46;bh=bottom-top end
+        bubble(bx,by,bw,bh,colors,row*0.45,row,wide);hero(bx,by,bw,bh,m,c,colors,row)
+        local imageTop=wide and top or top+bh+row*0.30
+        local imageLeft=wide and bx+bw+row*0.90 or ox+pad
+        local imageWidth=wide and ox+w-pad-imageLeft or w-pad*2
+        local imageHeight=bottom-imageTop
+        local imageSide=math.min(imageWidth,imageHeight)
+        local imageX=imageLeft+(imageWidth-imageSide)*0.5
+        local imageY=imageTop+(imageHeight-imageSide)*0.5
         region("whale",imageX,imageY,imageSide,imageSide,c.refresh)
         local shrink=interaction.isPressed("whale") and 0.95 or 1
         draw.imageFit(whale,imageX+imageSide*(1-shrink)*0.5,imageY+imageSide*(1-shrink)*0.5,imageSide*shrink,imageSide*shrink,"contain","center",1)
@@ -258,13 +272,20 @@ local function render(_context,m)
         local available=bottom-top
         local bodyWidth=w-pad*2;local innerPad=row*0.65
         card(ox+pad,top,bodyWidth,available,colors,row*0.45)
-        local hasDetails=m.client.data and (#(m.client.data.metrics or {})>0 or #(m.client.data.windows or {})>0)
-        local stacked=m.client.data and m.client.data.kind=="balance" and (bodyWidth-innerPad*2)/row<4.5
-        local hh=hasDetails and math.min(row*(stacked and 3.0 or 3.75),available*0.64) or available
-        hero(ox+pad,top,bodyWidth,hh,m,c,colors,row)
-        local split=top+hh
-        if hasDetails then draw.line(ox+pad+innerPad,split,ox+w-pad-innerPad,split,row*0.025,colors.border,0.22) end
-        details(ox+pad+innerPad,split+row*0.15,bodyWidth-innerPad*2,math.max(0,available-hh-row*0.30),m,c,colors,row,false,true)
+        if w/h>1.40 then
+            local split=ox+pad+bodyWidth*0.48
+            hero(ox+pad,top,bodyWidth*0.48,available,m,c,colors,row)
+            draw.line(split,top+innerPad,split,bottom-innerPad,row*0.025,colors.border,0.22)
+            details(split+innerPad,top+innerPad,bodyWidth*0.52-innerPad*2,available-innerPad*2,m,c,colors,row,true,true)
+        else
+            local hasDetails=m.client.data and (#(m.client.data.metrics or {})>0 or #(m.client.data.windows or {})>0)
+            local stacked=m.client.data and m.client.data.kind=="balance" and (bodyWidth-innerPad*2)/row<4.5
+            local hh=hasDetails and math.min(row*(stacked and 3.0 or 3.75),available*0.64) or available
+            hero(ox+pad,top,bodyWidth,hh,m,c,colors,row)
+            local split=top+hh
+            if hasDetails then draw.line(ox+pad+innerPad,split,ox+w-pad-innerPad,split,row*0.025,colors.border,0.22) end
+            details(ox+pad+innerPad,split+row*0.15,bodyWidth-innerPad*2,math.max(0,available-hh-row*0.30),m,c,colors,row,false,true)
+        end
     end
     local action=whaleMode and c.show_details or c.back_to_whale
     local actionId=whaleMode and "mode.data" or "mode.whale"

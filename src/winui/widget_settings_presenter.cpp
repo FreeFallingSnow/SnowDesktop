@@ -228,6 +228,7 @@ struct WidgetFieldControl
 
     muxc::TextBox text{nullptr};
     muxc::PasswordBox password{nullptr};
+    muxc::TextCommandBarFlyout passwordFlyout{nullptr};
     muxc::ToggleSwitch toggle{nullptr};
     muxc::Grid numericEditors{nullptr};
     muxc::Slider slider{nullptr};
@@ -250,6 +251,7 @@ struct WidgetFieldControl
 
     winrt::event_token textChanged{};
     winrt::event_token passwordChanged{};
+    winrt::event_token passwordFlyoutClosed{};
     winrt::event_token lostFocus{};
     winrt::event_token keyDown{};
     winrt::event_token toggled{};
@@ -1303,12 +1305,25 @@ struct WidgetSettingsPresenter::Impl
             mux::HorizontalAlignment::Stretch);
         field.password.PasswordRevealMode(
             muxc::PasswordRevealMode::Peek);
+        // Give island-hosted password controls the native text-command menu.
+        // WinUI owns clipboard handling and omits unsafe password commands.
+        field.passwordFlyout = muxc::TextCommandBarFlyout{};
+        field.password.ContextFlyout(field.passwordFlyout);
         field.idleCommitTimer = mux::DispatcherTimer{};
-        field.idleCommitTimer.Interval(std::chrono::milliseconds(650));
+        field.idleCommitTimer.Interval(std::chrono::milliseconds(100));
         field.idleCommitTick = field.idleCommitTimer.Tick(
             [this, &field](const auto&, const auto&) {
                 field.idleCommitTimer.Stop();
-                (void)CommitPassword(field);
+                // A context menu temporarily owns keyboard focus. Wait for
+                // dismissal and focus restoration before finalizing a draft.
+                if (field.password.FocusState() == mux::FocusState::Unfocused &&
+                    !field.passwordFlyout.IsOpen())
+                    (void)CommitPassword(field);
+            });
+        field.passwordFlyoutClosed = field.passwordFlyout.Closed(
+            [&field](const auto&, const auto&) {
+                if (field.password.FocusState() == mux::FocusState::Unfocused)
+                    field.idleCommitTimer.Start();
             });
         field.passwordChanged = field.password.PasswordChanged(
             [this, &field](const auto&, const auto&) {
@@ -1316,12 +1331,11 @@ struct WidgetSettingsPresenter::Impl
                 field.passwordDirty = true;
                 field.draftError.clear();
                 RefreshFieldValidation(field);
-                field.idleCommitTimer.Stop();
-                field.idleCommitTimer.Start();
             });
         field.lostFocus = field.password.LostFocus(
-            [this, &field](const auto&, const auto&) {
-                (void)CommitPassword(field);
+            [&field](const auto&, const auto&) {
+                field.idleCommitTimer.Stop();
+                field.idleCommitTimer.Start();
             });
         field.keyDown = field.password.KeyDown(
             [this, &field](const auto&,
@@ -2104,7 +2118,12 @@ struct WidgetSettingsPresenter::Impl
         }
         if (field.password)
         {
-            if (!field.passwordDirty)
+            field.password.PlaceholderText(state.opaque.configured
+                ? L("app.settings.widget.configured", L"Configured")
+                : L("app.settings.widget.not_configured", L"Not configured"));
+            if (!field.passwordDirty &&
+                field.password.FocusState() == mux::FocusState::Unfocused &&
+                !field.passwordFlyout.IsOpen())
             {
                 field.synchronizing = true;
                 field.password.Password(L"");
@@ -2582,7 +2601,17 @@ struct WidgetSettingsPresenter::Impl
     {
         if (field.idleCommitTimer) field.idleCommitTimer.Stop();
         if (!field.passwordDirty)
+        {
+            if (field.password &&
+                field.password.FocusState() == mux::FocusState::Unfocused &&
+                !field.passwordFlyout.IsOpen())
+            {
+                field.synchronizing = true;
+                field.password.Password(L"");
+                field.synchronizing = false;
+            }
             return UnchangedResult();
+        }
         if (!CanFinalizeField(field) || !field.password)
         {
             return {wr::WidgetSettingMutationStatus::Disabled,
@@ -2600,9 +2629,16 @@ struct WidgetSettingsPresenter::Impl
         {
             if (result.Succeeded())
             {
-                current->second->synchronizing = true;
-                current->second->password.Password(L"");
-                current->second->synchronizing = false;
+                // Keep the user's masked draft while the control owns focus;
+                // a successful Enter must not truncate subsequent editing.
+                if (current->second->password.FocusState() ==
+                        mux::FocusState::Unfocused &&
+                    !current->second->passwordFlyout.IsOpen())
+                {
+                    current->second->synchronizing = true;
+                    current->second->password.Password(L"");
+                    current->second->synchronizing = false;
+                }
             }
             else
             {
@@ -3206,6 +3242,11 @@ struct WidgetSettingsPresenter::Impl
                 field.text.TextChanged(field.textChanged);
             if (field.password && HasToken(field.passwordChanged))
                 field.password.PasswordChanged(field.passwordChanged);
+            if (field.passwordFlyout)
+            {
+                if (HasToken(field.passwordFlyoutClosed))
+                    field.passwordFlyout.Closed(field.passwordFlyoutClosed);
+            }
             if (field.text && HasToken(field.lostFocus))
                 field.text.LostFocus(field.lostFocus);
             if (field.password && HasToken(field.lostFocus))
@@ -3214,6 +3255,7 @@ struct WidgetSettingsPresenter::Impl
                 field.text.KeyDown(field.keyDown);
             if (field.password && HasToken(field.keyDown))
                 field.password.KeyDown(field.keyDown);
+            if (field.passwordFlyout) field.passwordFlyout.Hide();
             if (field.toggle && HasToken(field.toggled))
                 field.toggle.Toggled(field.toggled);
             if (field.slider && HasToken(field.sliderChanged))

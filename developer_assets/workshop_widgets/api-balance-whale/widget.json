@@ -8,14 +8,14 @@
   "minHostVersion": "1.0.9.0",
   "author": "SnowDesktop",
   "license": "MIT",
-  "name": "Balance Whale",
+  "name": "Little Whale Balance Checker",
   "nameKey": "lua_widget.api_balance_whale.name",
   "version": "1.0.0",
   "description": "View API balances and key quotas in whale or data mode.",
   "descriptionKey": "lua_widget.api_balance_whale.description",
   "locales": {
     "zh-CN": {
-      "lua_widget.api_balance_whale.name": "余额小鲸",
+      "lua_widget.api_balance_whale.name": "小鲸鱼余额查询",
       "lua_widget.api_balance_whale.description": "查看 API 余额与密钥额度，支持小鲸与纯数据模式。",
       "lua_widget.api_balance_whale.total": "可用余额",
       "lua_widget.api_balance_whale.remaining": "剩余额度",
@@ -78,7 +78,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "返回小鲸"
     },
     "zh-TW": {
-      "lua_widget.api_balance_whale.name": "餘額小鯨",
+      "lua_widget.api_balance_whale.name": "小鯨魚餘額查詢",
       "lua_widget.api_balance_whale.description": "查看 API 餘額與金鑰額度，支援小鯨與純資料模式。",
       "lua_widget.api_balance_whale.total": "可用餘額",
       "lua_widget.api_balance_whale.remaining": "剩餘額度",
@@ -141,7 +141,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "返回小鯨"
     },
     "en-US": {
-      "lua_widget.api_balance_whale.name": "Balance Whale",
+      "lua_widget.api_balance_whale.name": "Little Whale Balance Checker",
       "lua_widget.api_balance_whale.description": "View API balances and key quotas in whale or data mode.",
       "lua_widget.api_balance_whale.total": "Available balance",
       "lua_widget.api_balance_whale.remaining": "Remaining quota",
@@ -204,7 +204,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "Back to whale"
     },
     "ja-JP": {
-      "lua_widget.api_balance_whale.name": "残高クジラ",
+      "lua_widget.api_balance_whale.name": "小さなクジラの残高確認",
       "lua_widget.api_balance_whale.description": "クジラまたはデータ表示で API 残高とキーの利用枠を確認。",
       "lua_widget.api_balance_whale.total": "利用可能残高",
       "lua_widget.api_balance_whale.remaining": "残り枠",
@@ -267,7 +267,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "クジラに戻る"
     },
     "ko-KR": {
-      "lua_widget.api_balance_whale.name": "잔액 고래",
+      "lua_widget.api_balance_whale.name": "아기 고래 잔액 조회",
       "lua_widget.api_balance_whale.description": "고래 또는 데이터 모드로 API 잔액과 키 한도를 확인하세요.",
       "lua_widget.api_balance_whale.total": "사용 가능 잔액",
       "lua_widget.api_balance_whale.remaining": "남은 한도",
@@ -330,7 +330,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "고래로 돌아가기"
     },
     "de-DE": {
-      "lua_widget.api_balance_whale.name": "Guthabenwal",
+      "lua_widget.api_balance_whale.name": "Kleiner Wal – Guthabenabfrage",
       "lua_widget.api_balance_whale.description": "API-Guthaben und Schlüsselkontingente als Walfigur oder Daten anzeigen.",
       "lua_widget.api_balance_whale.total": "Verfügbares Guthaben",
       "lua_widget.api_balance_whale.remaining": "Restkontingent",
@@ -393,7 +393,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "Zurück zum Wal"
     },
     "fr-FR": {
-      "lua_widget.api_balance_whale.name": "Baleine du solde",
+      "lua_widget.api_balance_whale.name": "Solde de la petite baleine",
       "lua_widget.api_balance_whale.description": "Consultez les soldes API et quotas des clés avec une baleine ou des données.",
       "lua_widget.api_balance_whale.total": "Solde disponible",
       "lua_widget.api_balance_whale.remaining": "Quota restant",
@@ -456,7 +456,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "Retour à la baleine"
     },
     "es-ES": {
-      "lua_widget.api_balance_whale.name": "Ballena del saldo",
+      "lua_widget.api_balance_whale.name": "Consulta de saldo de la ballenita",
       "lua_widget.api_balance_whale.description": "Consulta saldos de API y cuotas de claves con una ballena o datos.",
       "lua_widget.api_balance_whale.total": "Saldo disponible",
       "lua_widget.api_balance_whale.remaining": "Cuota restante",
@@ -519,7 +519,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "Volver a la ballena"
     },
     "es-419": {
-      "lua_widget.api_balance_whale.name": "Ballena del saldo",
+      "lua_widget.api_balance_whale.name": "Consulta de saldo de la ballenita",
       "lua_widget.api_balance_whale.description": "Consulta saldos de API y cuotas de claves con una ballena o datos.",
       "lua_widget.api_balance_whale.total": "Saldo disponible",
       "lua_widget.api_balance_whale.remaining": "Cuota restante",
@@ -582,7 +582,7 @@
       "lua_widget.api_balance_whale.back_to_whale": "Volver a la ballena"
     },
     "pt-BR": {
-      "lua_widget.api_balance_whale.name": "Baleia do saldo",
+      "lua_widget.api_balance_whale.name": "Consulta de saldo da baleinha",
       "lua_widget.api_balance_whale.description": "Veja saldos de API e cotas das chaves com uma baleia ou dados.",
       "lua_widget.api_balance_whale.total": "Saldo disponível",
       "lua_widget.api_balance_whale.remaining": "Cota restante",
