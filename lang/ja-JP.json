@@ -2563,5 +2563,7 @@
   "app.settings.popup_close_on_mouse_leave": "マウスポインターが離れたらポップアップを閉じる",
   "app.settings.popup_close_on_mouse_leave_hint": "コレクションや Dock フォルダーのポップアップからマウスポインターが離れると、ドラッグ中でも自動的に閉じます。名前の変更や右クリックメニューの操作中は開いたままにします。",
   "settings.dock.singleClickLaunchItems": "固定・よく使うエリアのアイコンをシングルクリックで起動",
-  "settings.dock.singleClickLaunchItems.description": "固定エリアとよく使うエリアのアプリやファイルのアイコンをシングルクリックで起動または開きます。既定ではオフです。フォルダーとコレクションのポップアップ動作は変わりません。"
+  "settings.dock.singleClickLaunchItems.description": "固定エリアとよく使うエリアのアプリやファイルのアイコンをシングルクリックで起動または開きます。既定ではオフです。フォルダーとコレクションのポップアップ動作は変わりません。",
+  "app.settings.widget.show_password": "キーを表示",
+  "app.settings.widget.hide_password": "キーを隠す"
 }

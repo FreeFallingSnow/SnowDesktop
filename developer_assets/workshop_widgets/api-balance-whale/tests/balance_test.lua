@@ -73,6 +73,25 @@ return {
         assert(not complete(2) and #requests==3)
         assert(complete(3) and m.data.remaining==43.16)
     end,
+    ["Saved settings immediately replace requests and unblock stable-reference key edits"]=function()
+        local m,c,requests,canceled,clock,complete=model();m:refresh(false);complete(1);clock(7000)
+        m:refresh(true);m:complete({taskId=2,ok=false,error="httpStatus",status=401})
+        assert(m.blocked and m:settingsChanged({"key_deepseek"}) and #requests==3 and not m.data)
+        assert(m:settingsChanged({"interval"}) and canceled[1]==3 and not complete(3))
+        assert(complete(4) and m.data.remaining==43.16)
+        assert(not m:settingsChanged({"mode","lowBalance","key_moonshot"}) and #requests==4)
+        c.identity="custom:new-endpoint";c.provider="custom";c.url="https://api.example.com/balance"
+        assert(m:settingsChanged({"provider","endpoint"}) and #requests==5 and not m.data)
+    end,
+    ["A host start exception leaves setup recoverable when saved settings change"]=function()
+        local m,_,requests,_,_,complete=model()
+        local start=m.deps.start
+        m.deps.start=function()error("header secret descriptor is invalid")end
+        assert(not m:refresh(false) and m.error=="configure" and not m.loading)
+        m.deps.start=start
+        assert(m:settingsChanged({"key_deepseek"}) and #requests==1 and complete(1))
+        assert(m.data.remaining==43.16 and not m.error)
+    end,
     ["Network failures mark stale data and back off; authorization failure pauses until manual retry or key change"]=function()
         local m,_,requests,_,clock,complete=model();m:refresh(false);complete(1);clock(7000);m:refresh(true)
         m:complete({taskId=2,ok=false,error="httpStatus",status=429})

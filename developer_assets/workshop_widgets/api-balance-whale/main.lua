@@ -333,11 +333,7 @@ local function event(_context,m,e)
         if e.taskId==m.openTask then m.openTask=nil end
         if not m.preview then m.client:complete(e) end
     elseif e.kind=="settings.changed" and not e.preview and not m.preview then
-        local cfg=config()
-        for _,key in ipairs(e.keys or {}) do
-            if key=="key_"..cfg.provider or key=="interval" then m.client:reset();break end -- Replacement preserves the opaque reference.
-        end
-        m.client:refresh(false)
+        m.client:settingsChanged(e.keys)
     elseif (e.kind=="schedule" and e.id=="balance.tick") or (e.kind=="visibility" and e.visible) then
         if not m.preview then m.client:refresh(false) end
     elseif e.kind=="action" then

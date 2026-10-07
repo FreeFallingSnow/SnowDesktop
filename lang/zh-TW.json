@@ -2563,5 +2563,7 @@
   "app.settings.popup_close_on_mouse_leave": "滑鼠移出彈出視窗時關閉",
   "app.settings.popup_close_on_mouse_leave_hint": "滑鼠移出集合或 Dock 資料夾的彈出視窗後自動關閉，拖曳時同樣適用；重新命名和右鍵選單操作期間保持開啟。",
   "settings.dock.singleClickLaunchItems": "固定區和常用區圖示按一下啟動",
-  "settings.dock.singleClickLaunchItems.description": "按一下固定區和常用區的應用程式、檔案圖示即可啟動或開啟。預設關閉；資料夾和集合仍使用原有的彈出方式。"
+  "settings.dock.singleClickLaunchItems.description": "按一下固定區和常用區的應用程式、檔案圖示即可啟動或開啟。預設關閉；資料夾和集合仍使用原有的彈出方式。",
+  "app.settings.widget.show_password": "顯示金鑰",
+  "app.settings.widget.hide_password": "隱藏金鑰"
 }

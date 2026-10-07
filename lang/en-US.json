@@ -2563,5 +2563,7 @@
   "app.settings.popup_close_on_mouse_leave": "Close popups when the pointer leaves",
   "app.settings.popup_close_on_mouse_leave_hint": "Close collection and Dock folder popups after the pointer moves out, including while dragging. Keep them open during renaming or context menu actions.",
   "settings.dock.singleClickLaunchItems": "Launch pinned and frequent icons with a single click",
-  "settings.dock.singleClickLaunchItems.description": "Single-click app and file icons in the pinned and frequent areas to launch or open them. Off by default; folders and collections keep their popup behavior."
+  "settings.dock.singleClickLaunchItems.description": "Single-click app and file icons in the pinned and frequent areas to launch or open them. Off by default; folders and collections keep their popup behavior.",
+  "app.settings.widget.show_password": "Show key",
+  "app.settings.widget.hide_password": "Hide key"
 }

@@ -18,6 +18,7 @@ function M.new(deps)
         elseif status==429 then self.error="rate"
         elseif status and status>=500 then self.error="server"
         elseif code=="invalid_data" then self.error="invalid_data"
+        elseif code=="invalidArguments" then self.error="configure"
         else self.error="network" end
         self.failures=math.min(5,self.failures+1)
         self.nextAttempt=self.deps.monotonic()+math.min(900000,60000*2^(self.failures-1))
@@ -39,9 +40,20 @@ function M.new(deps)
         self.lastAttempt=now;self.error=nil
         local args={url=cfg.url,method="GET",headers={Accept="application/json",["Content-Type"]="application/json"},timeoutMs=15000,cacheSeconds=0,maxBytes=131072}
         args.headers[cfg.header or "Authorization"]={secretRef=cfg.secretRef,prefix=cfg.rawAuth and "" or "Bearer "}
-        local id,err=self.deps.start(args)
+        -- A host-side argument error must not destroy setup or the settings listener.
+        local ok,id,err=pcall(self.deps.start,args)
+        if not ok then self:fail("invalidArguments");return false end
         if not id then self:fail(err);return false end
         self.request=id;self.loading=true;return true
+    end
+    function self:settingsChanged(keys)
+        local cfg=self.deps.config()
+        for _,key in ipairs(keys or {}) do
+            if key=="key_"..cfg.provider or key=="interval" then self:reset();break end
+        end
+        -- Replacements keep the same opaque reference; an explicit reset also
+        -- cancels old requests and clears authorization/backoff gates immediately.
+        return self:refresh(false)
     end
     function self:complete(event)
         if self.disposed or not self.request or event.taskId~=self.request then return false end

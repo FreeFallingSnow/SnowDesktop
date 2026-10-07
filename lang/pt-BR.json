@@ -2563,5 +2563,7 @@
   "app.settings.popup_close_on_mouse_leave": "Fechar pop-ups ao retirar o ponteiro",
   "app.settings.popup_close_on_mouse_leave_hint": "Fecha os pop-ups de coleções e pastas do Dock quando o ponteiro sai deles, inclusive ao arrastar. Eles permanecem abertos ao renomear ou usar o menu de contexto.",
   "settings.dock.singleClickLaunchItems": "Abrir ícones fixados e frequentes com um único clique",
-  "settings.dock.singleClickLaunchItems.description": "Clique uma vez nos ícones de aplicativos e arquivos das áreas de itens fixados e frequentes para iniciá-los ou abri-los. Desativado por padrão; pastas e coleções mantêm o comportamento de pop-up."
+  "settings.dock.singleClickLaunchItems.description": "Clique uma vez nos ícones de aplicativos e arquivos das áreas de itens fixados e frequentes para iniciá-los ou abri-los. Desativado por padrão; pastas e coleções mantêm o comportamento de pop-up.",
+  "app.settings.widget.show_password": "Mostrar chave",
+  "app.settings.widget.hide_password": "Ocultar chave"
 }

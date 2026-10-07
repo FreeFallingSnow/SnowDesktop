@@ -2563,5 +2563,7 @@
   "app.settings.popup_close_on_mouse_leave": "Popups schließen, wenn der Mauszeiger sie verlässt",
   "app.settings.popup_close_on_mouse_leave_hint": "Popups von Sammlungen und Dock-Ordnern schließen, sobald der Mauszeiger sie verlässt, auch beim Ziehen. Beim Umbenennen oder Verwenden des Kontextmenüs bleiben sie geöffnet.",
   "settings.dock.singleClickLaunchItems": "Angeheftete und häufig verwendete Symbole mit einem Klick öffnen",
-  "settings.dock.singleClickLaunchItems.description": "App- und Dateisymbole im angehefteten und häufig verwendeten Bereich mit einem Klick starten oder öffnen. Standardmäßig deaktiviert; Ordner und Sammlungen behalten ihr bisheriges Popup-Verhalten."
+  "settings.dock.singleClickLaunchItems.description": "App- und Dateisymbole im angehefteten und häufig verwendeten Bereich mit einem Klick starten oder öffnen. Standardmäßig deaktiviert; Ordner und Sammlungen behalten ihr bisheriges Popup-Verhalten.",
+  "app.settings.widget.show_password": "Schlüssel anzeigen",
+  "app.settings.widget.hide_password": "Schlüssel verbergen"
 }

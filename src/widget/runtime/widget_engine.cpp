@@ -5543,7 +5543,7 @@ static int lua_DataSubscribe(lua_State* state)
     return 1;
 }
 
-static int lua_TaskStart(lua_State* state)
+static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* state)
 {
     if (lua_gettop(state) < 1 || lua_gettop(state) > 2)
         return luaL_error(state,
@@ -6994,8 +6994,8 @@ static int lua_TaskStart(lua_State* state)
                         std::string::npos ||
                     valueSuffix.find_first_of("\r\n\0", 0, 3) !=
                         std::string::npos ||
-                    !IsValidUtf8Local(valuePrefix) ||
-                    !IsValidUtf8Local(valueSuffix)))
+                    (!valuePrefix.empty() && !IsValidUtf8Local(valuePrefix)) ||
+                    (!valueSuffix.empty() && !IsValidUtf8Local(valueSuffix))))
             {
                 descriptorError =
                     "secret header affixes must be valid single-line UTF-8";
@@ -7095,9 +7095,10 @@ static int lua_TaskStart(lua_State* state)
                             descriptorError))
                     {
                         lua_pop(state, 3);
-                        return luaL_error(state,
+                        lua_pushfstring(state,
                             "task.start: network.request header secret descriptor is invalid: %s",
                             descriptorError.c_str());
+                        return -1;
                     }
                     headerBytes += arguments[fieldPrefix + "prefix"].size() +
                         arguments[fieldPrefix + "suffix"].size();
@@ -7148,9 +7149,10 @@ static int lua_TaskStart(lua_State* state)
                     MaximumBodyBytes, false, descriptorError))
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                lua_pushfstring(state,
                     "task.start: network.request body secret descriptor is invalid: %s",
                     descriptorError.c_str());
+                return -1;
             }
         }
         else
@@ -7497,6 +7499,14 @@ static int lua_TaskStart(lua_State* state)
     }
     lua_pushinteger(state, static_cast<lua_Integer>(result.id));
     return 1;
+}
+
+static int lua_TaskStart(lua_State* state)
+{
+    const int result = LuaTaskStartWithDeferredSecretError(state);
+    // Lua uses longjmp in this build. Finish the secret descriptor parser's
+    // C++ string/container lifetimes before raising its validation error.
+    return result < 0 ? lua_error(state) : result;
 }
 
 static int lua_TaskCancel(lua_State* state)

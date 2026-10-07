@@ -2563,5 +2563,7 @@
   "app.settings.popup_close_on_mouse_leave": "마우스 포인터가 벗어나면 팝업 닫기",
   "app.settings.popup_close_on_mouse_leave_hint": "마우스 포인터가 컬렉션이나 Dock 폴더 팝업 밖으로 나가면 드래그 중에도 자동으로 닫습니다. 이름 변경 또는 우클릭 메뉴 조작 중에는 열린 상태를 유지합니다.",
   "settings.dock.singleClickLaunchItems": "고정 및 자주 사용하는 영역 아이콘을 한 번 클릭하여 실행",
-  "settings.dock.singleClickLaunchItems.description": "고정 영역과 자주 사용하는 영역의 앱 및 파일 아이콘을 한 번 클릭하여 실행하거나 엽니다. 기본값은 꺼짐이며, 폴더와 모음의 기존 팝업 동작은 유지됩니다."
+  "settings.dock.singleClickLaunchItems.description": "고정 영역과 자주 사용하는 영역의 앱 및 파일 아이콘을 한 번 클릭하여 실행하거나 엽니다. 기본값은 꺼짐이며, 폴더와 모음의 기존 팝업 동작은 유지됩니다.",
+  "app.settings.widget.show_password": "키 표시",
+  "app.settings.widget.hide_password": "키 숨기기"
 }

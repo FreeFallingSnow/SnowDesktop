@@ -1066,6 +1066,168 @@ end})
     }
 }
 
+void CheckSecretHeaderDescriptors(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root)
+{
+    const auto source = root / L"secret-header-widget";
+    Check(std::filesystem::create_directory(source),
+        "secret header fixture directory is created");
+    Write(source / L"widget.json", R"json({
+  "schemaVersion":2, "apiVersion":2, "dataVersion":1,
+  "id":"20c61a97-ff4a-4fb2-9957-d3f8119db890",
+  "slug":"secret-header-fixture", "version":"1.0.0", "entry":"main.lua",
+  "minHostVersion":"1.0.9.0", "name":"Secret header fixture",
+  "author":"SnowDesktop", "license":"MIT",
+  "defaultSize":{"columns":2,"rows":1}, "permissions":[],
+  "requiredFeatures":["draw.immediate","lifecycle.model","task.network.request","task.network.secretReference"]
+})json");
+    Write(source / L"main.lua", R"lua(
+return widget.define({
+    setup = function()
+        local reference = "secret:v1:" .. string.rep("a", 32)
+        local valid = {
+            {secretRef=reference, prefix="Bearer "},
+            {secretRef=reference},
+            {secretRef=reference, prefix="", suffix=""},
+            {secretRef=reference, prefix="Bearer ", suffix=""},
+            {secretRef=reference, suffix=" token"},
+            {secretRef=reference, prefix=string.char(0xE4,0xBB,0xA4), suffix="="},
+            {secretRef=reference, prefix="", suffix=string.char(0xE4,0xBB,0xA4)},
+        }
+        -- Exercise production Lua parsing without resolving a real secret or
+        -- granting internet permission, so every valid case reaches the broker.
+        local function start(descriptor)
+            return pcall(task.start, "network.request", {
+                url="https://api.example.com/balance",
+                headers={Authorization=descriptor}, cacheSeconds=0,
+            })
+        end
+        for index, descriptor in ipairs(valid) do
+            local ok, id, err = start(descriptor)
+            assert(ok and id == nil and err == "permissionDenied",
+                "valid secret header " .. index .. ": " .. tostring(id))
+        end
+        for _, affix in ipairs({"\r", "\n", "\0", string.char(0xFF),
+            string.char(0xC3), string.rep("x", 16385), 42, false}) do
+            for _, key in ipairs({"prefix", "suffix"}) do
+                local descriptor = {secretRef=reference}
+                descriptor[key] = affix
+                local ok, err = start(descriptor)
+                assert(not ok and tostring(err):find("header secret descriptor is invalid", 1, true),
+                    "invalid secret header affix accepted: " .. key)
+            end
+        end
+        for _, descriptor in ipairs({{secretRef="invalid"},
+            {secretRef=reference, prefix=false}, {secretRef=reference, suffix=42}}) do
+            local ok, err = pcall(task.start, "network.request", {
+                url="https://api.example.com/balance", method="POST", body=descriptor,
+            })
+            assert(not ok and tostring(err):find("body secret descriptor is invalid", 1, true),
+                "invalid body secret descriptor accepted")
+        end
+        return {}
+    end,
+    render = function()
+        draw.rect(0, 0, layout.contentWidth(), layout.contentHeight(), 0x18243C)
+    end,
+})
+)lua");
+    const auto output = root / L"secret-headers.png";
+    const auto [code, json] = Run(snowwidget,
+        {L"preview", source.wstring(), output.wstring(),
+            L"--host", host.wstring()});
+    Check(code == 0 && json.find("\"ok\":true") != std::string::npos &&
+            std::filesystem::is_regular_file(output),
+        "production Lua accepts optional empty secret header affixes and rejects invalid affixes");
+}
+
+void CheckWhaleSettingsChanges(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root,
+    const std::filesystem::path& repository)
+{
+    const auto original = repository / L"developer_assets" /
+        L"workshop_widgets" / L"api-balance-whale";
+    const auto source = root / L"whale-settings-widget";
+    Check(std::filesystem::create_directory(source),
+        "whale settings fixture directory is created");
+    CopyManifestAndPreview(original, source);
+    for (const auto* directory : {L"modules", L"assets"})
+        std::filesystem::copy(original / directory, source / directory,
+            std::filesystem::copy_options::recursive |
+                std::filesystem::copy_options::overwrite_existing);
+    std::ifstream input(original / L"main.lua", std::ios::binary);
+    const std::string entry((std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    Check(!entry.empty() && !input.bad(), "production whale entry is read");
+    // Keep the production entry, modules and settings event handler. Only
+    // external storage and task outcomes are controlled; no real key is used.
+    const std::string prefix = R"lua(
+local hostWidget = widget
+local reference = "secret:v1:" .. string.rep("a", 32)
+local values = {key_deepseek=reference, key_moonshot=reference, interval=300}
+local requests, canceled, fault = {}, {}, true
+local storage = {get=function(key) return values[key] end, set=function(key,value) values[key]=value end}
+local schedule = {every=function() end, cancel=function() end}
+local task = {
+    start=function(name,args)
+        assert(name == "network.request")
+        if fault then error("header secret descriptor is invalid") end
+        requests[#requests+1] = args
+        return #requests
+    end,
+    cancel=function(id) canceled[#canceled+1]=id end,
+}
+local widget = {define=function(spec) return spec end,
+    hasPermission=function() return true end, invalidate=function() end}
+local component = (function()
+)lua";
+    const std::string suffix = R"lua(
+end)()
+return hostWidget.define({
+    setup=function()
+        local model = component.setup({preview=false})
+        assert(model.client.error == "configure" and not model.client.loading)
+        fault = false
+        local function changed(keys,preview)
+            component.event({},model,{kind="settings.changed",keys=keys,preview=preview or false})
+        end
+        changed({"key_deepseek"})
+        assert(model.client.loading and #requests == 1)
+        component.event({},model,{kind="task.complete",taskId=1,ok=false,status=401})
+        assert(model.client.blocked)
+        changed({"key_deepseek"})
+        assert(model.client.loading and not model.client.blocked and #requests == 2)
+        changed({"interval"})
+        assert(#requests == 3 and canceled[1] == 2)
+        component.event({},model,{kind="task.complete",taskId=2,ok=true,value={status=200,body="{}"}})
+        assert(model.client.loading and model.client.error == nil)
+        component.event({},model,{kind="task.complete",taskId=3,ok=true,value={status=200,
+            body='{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"43.16","topped_up_balance":"40","granted_balance":"3.16"}]}'}})
+        assert(model.client.data.remaining == 43.16 and not model.client.loading)
+        changed({"mode","lowBalance"})
+        assert(#requests == 3 and model.client.data.remaining == 43.16)
+        values.provider = "moonshot"
+        changed({"provider"})
+        assert(#requests == 4 and not model.client.data and model.client.loading)
+        changed({"key_moonshot"},true)
+        assert(#requests == 4 and canceled[2] == nil)
+        component.dispose({},model)
+        assert(canceled[2] == 4 and model.client.disposed)
+        return {}
+    end,
+    render=function() end,
+})
+)lua";
+    Write(source / L"main.lua", prefix + entry + suffix);
+    const auto output = root / L"whale-settings.png";
+    const auto [code, json] = Run(snowwidget,
+        {L"preview", source.wstring(), output.wstring(),
+            L"--host", host.wstring()});
+    Check(code == 0 && json.find("\"ok\":true") != std::string::npos &&
+            std::filesystem::is_regular_file(output),
+        "production whale survives task start errors and applies saved settings without restarting");
+}
+
 std::filesystem::path CreateEnvironmentFixture(
     const std::filesystem::path& root)
 {
@@ -2691,6 +2853,8 @@ int wmain(int argc, wchar_t** argv) try
         CheckSystemMonitorMenu(snowwidget, host, temporary.path, monitorSource);
         CheckRemindersInteraction(snowwidget, host, temporary.path, repository);
         CheckTextInkMetrics(snowwidget, host, temporary.path);
+        CheckSecretHeaderDescriptors(snowwidget, host, temporary.path);
+        CheckWhaleSettingsChanges(snowwidget, host, temporary.path, repository);
 
         const auto environmentSource =
             CreateEnvironmentFixture(temporary.path);
