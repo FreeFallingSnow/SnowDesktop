@@ -379,8 +379,8 @@ void WriteSamplingPattern(const std::filesystem::path& path, bool transparent)
         SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) &&
         SUCCEEDED(frame->Initialize(nullptr)) && SUCCEEDED(frame->SetSize(side, side)),
         "create PNG sampling pattern");
-    WICPixelFormatGUID format = GUID_WICPixelFormat32bppRGBA;
-    Check(SUCCEEDED(frame->SetPixelFormat(&format)) && format == GUID_WICPixelFormat32bppRGBA &&
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    Check(SUCCEEDED(frame->SetPixelFormat(&format)) && format == GUID_WICPixelFormat32bppBGRA &&
         SUCCEEDED(frame->WritePixels(side, side * 4, static_cast<UINT>(pixels.size()), pixels.data())) &&
         SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit()),
         "write exact stripe coverage and alpha to PNG");
