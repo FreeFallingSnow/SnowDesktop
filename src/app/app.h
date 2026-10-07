@@ -1132,7 +1132,7 @@ private:
     /** @brief 将用户保存的网格尺寸应用到各页面上。 */
     void ApplySavedGridDimensions();
     /** @brief 根据图标间距比例重新计算页面单元格与间距。 @param page 网格页面引用 */
-    void ApplyIconSpacingToPage(GridPage& page);
+    void ApplyIconSpacingToPage(GridPage& page) const;
     /** @brief 执行网格布局，为每个桌面项计算槽位位置。 */
     void LayoutItems();
     /** @brief 重建容器（网格、部件）和面向对象项列表。 */
@@ -1329,7 +1329,9 @@ private:
     void PaintFloatingPopupWindow(HWND hwnd);
     POINT FloatingPopupClientToDesktop(POINT point) const;
     int GetGridPageItemIconSize(const GridPage& page) const;
+    GridPage ResolveDockSizingPage(const GridPage& page) const;
     int GetDockPageItemIconSize(const GridPage& page) const;
+    int GetDockPageEdgeMargin(const GridPage& page, bool vertical) const;
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);

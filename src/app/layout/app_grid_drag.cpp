@@ -242,7 +242,7 @@ void DesktopApp::ApplySavedGridDimensions()
  * @brief 根据固定行列数与图标间距比例重新计算页面布局。
  * @param page 目标网格页面。
  */
-void DesktopApp::ApplyIconSpacingToPage(GridPage& page)
+void DesktopApp::ApplyIconSpacingToPage(GridPage& page) const
 {
     page.columns = std::max(1, page.columns);
     page.rows = std::max(1, page.rows);

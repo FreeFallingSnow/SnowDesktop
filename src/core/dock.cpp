@@ -569,7 +569,7 @@ int DockContainer::EdgeMargin() const
         };
         const GridPage* page = app_->GridPageFromPoint(center);
         if (page)
-            return app_->GetComponentEdgeMargin(*page, IsVertical());
+            return app_->GetDockPageEdgeMargin(*page, IsVertical());
     }
     return IsVertical() ? kGridMarginX : kGridMarginY;
 }
