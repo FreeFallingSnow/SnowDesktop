@@ -92,6 +92,12 @@ public:
     void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
+    // Dock full redraws collect plain panel data until their content surface
+    // is ready. No live visual, native region, or seen flag changes here, so
+    // another target's shared-controller commit cannot publish this candidate.
+    bool BeginStagedFrame();
+    bool ApplyStagedFrame();
+    void DiscardStagedFrame();
     /**
      * @brief 注册或更新一个圆角玻璃面板。
      * @param ownerKey 非零时作为跨几何变化保持稳定的面板身份；零值保留

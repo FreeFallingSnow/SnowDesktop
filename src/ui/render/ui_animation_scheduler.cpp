@@ -230,6 +230,8 @@ void UiAnimationScheduler::CancelAll()
 {
     frameEntries_.clear();
     timerEntries_.clear();
+    pendingPresentations_.clear();
+    ++presentationCancellation_;
     nextFrameMilliseconds_ = 0.0;
     lastDeliveredFrameMilliseconds_ = 0.0;
     lastPresentationMilliseconds_ = 0.0;
@@ -249,8 +251,9 @@ void UiAnimationScheduler::DispatchDue()
     struct DispatchGuard
     {
         bool& active;
-        ~DispatchGuard() { active = false; }
-    } guard{dispatching_};
+        bool& advancing;
+        ~DispatchGuard() { advancing = false; active = false; }
+    } guard{dispatching_, advancingFrame_};
 
     const double now = MonotonicMilliseconds();
     std::vector<UiScheduleToken> dueTimers;
@@ -325,6 +328,7 @@ void UiAnimationScheduler::DispatchDue()
             frameTokens.push_back(token);
 
         const double workStart = MonotonicMilliseconds();
+        advancingFrame_ = true;
         for (UiScheduleToken token : frameTokens)
         {
             auto found = frameEntries_.find(token);
@@ -343,6 +347,18 @@ void UiAnimationScheduler::DispatchDue()
             }
             if (!keep)
                 frameEntries_.erase(token);
+        }
+        advancingFrame_ = false;
+        // Keep dispatching_ guarded while presenting: a paint or native menu
+        // can run a nested message loop, but cannot reenter this snapshot.
+        auto presentations = std::move(pendingPresentations_);
+        pendingPresentations_.clear();
+        const auto cancellation = presentationCancellation_;
+        for (auto& presentation : presentations)
+        {
+            if (presentationCancellation_ != cancellation) break;
+            try { presentation.callback(); }
+            catch (...) {}
         }
         const double frameWork =
             MonotonicMilliseconds() - workStart;
@@ -366,6 +382,25 @@ void UiAnimationScheduler::DispatchDue()
     }
 
     ArmNextWakeup();
+}
+
+void UiAnimationScheduler::RequestFramePresentation(
+    const void* owner, std::function<void()> callback)
+{
+    if (!callback) return;
+    if (!advancingFrame_)
+    {
+        callback();
+        return;
+    }
+    auto existing = std::find_if(pendingPresentations_.begin(),
+        pendingPresentations_.end(), [owner](const auto& entry) {
+            return entry.owner == owner;
+        });
+    if (existing == pendingPresentations_.end())
+        pendingPresentations_.push_back({owner, std::move(callback)});
+    else
+        existing->callback = std::move(callback);
 }
 
 void UiAnimationScheduler::SetSoftwareRendering(bool softwareRendering)

@@ -1,5 +1,17 @@
 #include "app/app.h"
 
+namespace
+{
+struct ImmediateDockPaintDeferral
+{
+    bool& deferred;
+    bool previous;
+    explicit ImmediateDockPaintDeferral(bool& value) : deferred(value), previous(value)
+    { deferred = true; }
+    ~ImmediateDockPaintDeferral() { deferred = previous; }
+};
+}
+
 // Floating-Dock visibility, pointer mapping and interaction state.
 
 void DesktopApp::ShowFloatingDock(
@@ -198,9 +210,16 @@ void DesktopApp::CloseFloatingDock(
     host.passivelyRevealed = false;
     host.passiveRevealTick = 0;
     host.passiveLeaveStartTick = 0;
+    host.windowRegionPending = true;
     RefreshFloatingDockVisibilityState();
-    if (statusBar_) statusBar_->RefreshDockState(host.monitor);
-    UpdatePersistentDockHostVisibility(host);
+    // Visibility can prepare an animated reveal/hide and request its own
+    // immediate paint. Publish just once after the close state is complete,
+    // still before restoring keyboard focus below.
+    {
+        ImmediateDockPaintDeferral defer(host.immediatePaintDeferred);
+        if (statusBar_) statusBar_->RefreshDockState(host.monitor);
+        UpdatePersistentDockHostVisibility(host);
+    }
     InvalidateFloatingDockWindow(host, true);
     if (endKeyboardSession)
         EndFloatingDockKeyboardSession(focusPolicy);
@@ -248,6 +267,7 @@ void DesktopApp::CloseAllFloatingDocks(
             host->passivelyRevealed = false;
             host->passiveRevealTick = 0;
             host->passiveLeaveStartTick = 0;
+            host->windowRegionPending = true;
         }
     }
     RefreshFloatingDockVisibilityState();
@@ -255,8 +275,11 @@ void DesktopApp::CloseAllFloatingDocks(
     {
         if (!host)
             continue;
-        if (statusBar_) statusBar_->RefreshDockState(host->monitor);
-        UpdatePersistentDockHostVisibility(*host);
+        {
+            ImmediateDockPaintDeferral defer(host->immediatePaintDeferred);
+            if (statusBar_) statusBar_->RefreshDockState(host->monitor);
+            UpdatePersistentDockHostVisibility(*host);
+        }
         InvalidateFloatingDockWindow(*host, true);
     }
     if (endKeyboardSession)
@@ -347,7 +370,7 @@ void DesktopApp::InvalidateFloatingDockWindow(
         // immediate 必须同步 UpdateWindow。历史回归：f29a882 曾改成
         // floatingDockPointerPresentPending_ + EnsureUiAnimationFrame()，
         // 导致浮动 Dock hover 和拖放反馈晚一帧；仅当合成绘制重入时才允许兜底。
-        if (immediate)
+        if (immediate && !host.immediatePaintDeferred)
         {
             if (!host.compositionPaintInProgress)
                 UpdateWindow(host.hwnd);

@@ -531,6 +531,94 @@ int RunDesktopBackdropCompositorTests()
             WaitForCommit(otherContent.handle, 1),
         "the shared controller completes an initial backdrop transaction");
 
+    {
+        // Real hidden WinComp targets and native regions. Only content raster
+        // success/failure is substituted; the shared commit remains production.
+        const RECT oldPanel{12, 12, 92, 92}, retiredPanel{120, 12, 180, 72};
+        const RECT candidate{200, 100, 300, 200}, exclusion{230, 130, 250, 150};
+        glass.BeginFrame(true);
+        check(glass.AddPanel(oldPanel, 8, 24, 101) && glass.AddPanel(retiredPanel, 8, 24, 102),
+            "staging fixture installs two live glass panels");
+        glass.EndFrame();
+        const HWND helper = FindOwnedBackdrop(glass);
+        HRGN previous = CreateRectRgn(0, 0, 0, 0), observed = CreateRectRgn(0, 0, 0, 0);
+        if (!check(helper && previous && observed && GetWindowRgn(helper, previous) != ERROR,
+                "staging fixture reads only its own hidden helper region"))
+        {
+            if (previous) DeleteObject(previous);
+            if (observed) DeleteObject(observed);
+            return failures;
+        }
+        check(glass.BeginStagedFrame() && glass.AddPanel(candidate, 12, 18, 101),
+            "Dock candidate collects new geometry under the stable owner");
+        glass.SetOcclusionRect(exclusion);
+        check(glass.PanelCount() == 2 && glass.HasPanelContaining(candidate) && !glass.HasPanelContaining(oldPanel),
+            "icon inheritance sees candidate geometry while the two live panels remain retained");
+        // CommitNeeded and explicit commits share this compositor. Either can
+        // run while candidate pixels are unfinished (or EndDraw has failed).
+        check(otherGlass.CommitVisualChangesAndNotify(otherContent.handle, kCommitCompleted, 110) &&
+                WaitForCommit(otherContent.handle, 110),
+            "another target really commits while Dock candidate preparation is incomplete");
+        check(GetWindowRgn(helper, observed) != ERROR && EqualRgn(previous, observed) && glass.PanelCount() == 2,
+            "the shared commit cannot publish candidate geometry, exclusion, or panel retirement");
+        glass.DiscardStagedFrame(); // Production EndDraw/SetContent failure exit.
+        check(glass.HasPanelContaining(oldPanel) && glass.HasPanelContaining(retiredPanel) &&
+                !glass.HasPanelContaining(candidate) && glass.BlurFactoryCount() == 1,
+            "discarding failed content preserves the complete old glass and its resources");
+
+        check(glass.BeginStagedFrame() && glass.AddPanel(candidate, 12, 18, 101),
+            "a later complete content frame can prepare the same owner again");
+        glass.SetOcclusionRect(exclusion);
+        check(glass.ApplyStagedFrame() && glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1,
+            "successful application updates the owner and retires omitted panels and factories together");
+        check(GetWindowRgn(helper, observed) != ERROR && PtInRegion(observed, 210, 110) &&
+                !PtInRegion(observed, 40, 40) && !PtInRegion(observed, 240, 140),
+            "successful publication applies candidate geometry and exclusion to the native region");
+        check(glass.BeginStagedFrame() && glass.AddIconPanel({10, 110, 70, 170},
+                snowdesktop::IconBeautifyShape::ContinuousRounded, 24, 103),
+            "a glass-disabled Dock can stage its independent icon glass");
+        check(glass.SetPanelOpacity({10, 110, 70, 170}, 0.4f),
+            "icon opacity is part of the candidate data");
+        glass.DiscardStagedFrame();
+        check(glass.PanelCount() == 1 && glass.HasPanelContaining(candidate),
+            "aborted icon collection does not remove the completed parent glass");
+        check(glass.BeginStagedFrame() && glass.AddIconPanel({10, 110, 70, 170},
+                snowdesktop::IconBeautifyShape::Circle, 24, 103) &&
+                glass.SetPanelOpacity({10, 110, 70, 170}, 0.4f) &&
+                glass.SetPanelTransform(103, D2D1::Matrix4x4F::Translation(100, 0, 0), {110, 110, 170, 170}) &&
+                glass.ApplyStagedFrame(),
+            "successful icon publication replays shape, opacity and projected region");
+        check(glass.PanelCount() == 1 && GetWindowRgn(helper, observed) != ERROR &&
+                PtInRegion(observed, 140, 140) && !PtInRegion(observed, 40, 140),
+            "staged transformed icon fences its new footprint and retires the old panel");
+        check(glass.BeginStagedFrame() && glass.ApplyStagedFrame() && glass.PanelCount() == 0,
+            "a successful empty frame retires glass when material is disabled");
+        check(glass.BeginStagedFrame() && glass.AddLargeIconPanel(candidate, 1, 12, 18, 104) &&
+                glass.HasPanelContaining(candidate),
+            "a rounded large card supplies enclosing glass while still staged");
+        snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(glass,
+            candidate, snowdesktop::IconBeautifyShape::Circle, 24, 1, 105, false);
+        check(glass.ApplyStagedFrame() && glass.PanelCount() == 1,
+            "staged card inheritance prevents a second overlapping icon blur");
+        glass.BeginFrame(true);
+        check(glass.AddPanel(oldPanel, 8, 24, 101), "negative control restores the old panel");
+        glass.EndFrame();
+        GetWindowRgn(helper, previous);
+        glass.BeginFrame(true);
+        check(glass.AddPanel(candidate, 12, 18, 101), "negative control prepares through the old live collection");
+        glass.EndFrame(false);
+        check(otherGlass.CommitVisualChangesAndNotify(otherContent.handle, kCommitCompleted, 111) &&
+                WaitForCommit(otherContent.handle, 111),
+            "negative control really flushes the shared controller through another target");
+        check(GetWindowRgn(helper, observed) != ERROR && !EqualRgn(previous, observed) &&
+                !glass.HasPanelContaining(oldPanel) && glass.HasPanelContaining(candidate),
+            "negative control: delaying explicit Commit alone still leaks live candidate geometry");
+        glass.BeginFrame(true);
+        glass.EndFrame();
+        DeleteObject(previous);
+        DeleteObject(observed);
+    }
+
     // Exercise the production popup sequence after file-count/layout changes:
     // move the content HWND, reattach, collect geometry, then commit its pose.
     // These checks protect sizing, retained identity and controller liveness;

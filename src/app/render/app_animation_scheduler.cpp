@@ -280,12 +280,11 @@ void DesktopApp::EnsureUiAnimationFrame()
                     auto* dock = dynamic_cast<DockContainer*>(container.get());
                     if (!dock || !dock->AdvanceMagnificationAnimation(nowMilliseconds))
                         continue;
-                    if (auto* host = FindPersistentDockHost(dock))
+                    if (FindPersistentDockHost(dock))
                     {
                         // Refresh the title/input region and backdrop together
                         // with the changing icon and panel geometry.
-                        UpdateFloatingDockWindowBounds(*host, false);
-                        InvalidateFloatingDockWindow(*host, true);
+                        RequestDockAnimationPresentation(*dock);
                     }
                     else
                     {
@@ -297,8 +296,7 @@ void DesktopApp::EnsureUiAnimationFrame()
                     }
                     keep = keep || dock->IsMagnificationAnimating();
                 }
-                if (!IsRectEmpty(&desktopDirty) && hwnd_ && IsWindow(hwnd_))
-                    (void)PresentDesktopForegroundComposition(desktopDirty);
+                RequestDesktopDockAnimationPresentation(desktopDirty);
                 if (!keep)
                     dockMagnificationAnimationFrameToken_ = 0;
                 return keep;
@@ -483,6 +481,31 @@ void DesktopApp::EnsureUiAnimationFrame()
                     return keep;
                 });
     }
+}
+
+void DesktopApp::RequestDockAnimationPresentation(DockContainer& dock)
+{
+    auto* host = FindPersistentDockHost(&dock);
+    if (!host) return;
+    const HWND window = host->hwnd;
+    // Only use the address as a batch key. Resolve the HWND again at flush:
+    // another callback can rebuild containers or retire a monitor's Host.
+    uiAnimationScheduler_.RequestFramePresentation(host, [this, window] {
+        if (auto* current = FindPersistentDockHost(window))
+            UpdateFloatingDockWindowBounds(*current, true);
+    });
+}
+
+void DesktopApp::RequestDesktopDockAnimationPresentation(const RECT& dirty)
+{
+    if (IsRectEmpty(&dirty)) return;
+    UnionRect(&dockAnimationDesktopDirty_, &dockAnimationDesktopDirty_, &dirty);
+    uiAnimationScheduler_.RequestFramePresentation(this, [this] {
+        const RECT bounds = dockAnimationDesktopDirty_;
+        dockAnimationDesktopDirty_ = {};
+        if (!IsRectEmpty(&bounds) && hwnd_ && IsWindow(hwnd_))
+            (void)PresentDesktopForegroundComposition(bounds);
+    });
 }
 
 void DesktopApp::CancelUiAnimationFrame()

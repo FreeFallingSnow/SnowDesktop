@@ -1537,11 +1537,8 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
     for (const auto& container : containers_)
         if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
         {
-            if (auto* host = FindPersistentDockHost(dock))
-            {
-                UpdateFloatingDockWindowBounds(*host, false);
-                InvalidateFloatingDockWindow(*host, true);
-            }
+            if (FindPersistentDockHost(dock))
+                RequestDockAnimationPresentation(*dock);
             else
             {
                 RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
@@ -1552,7 +1549,7 @@ bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
     if (!IsRectEmpty(&desktopDirty) && hwnd_ && IsWindow(hwnd_))
     {
         InflateRect(&desktopDirty, 4, 4);
-        (void)PresentDesktopForegroundComposition(desktopDirty);
+        RequestDesktopDockAnimationPresentation(desktopDirty);
     }
     return keep;
 }

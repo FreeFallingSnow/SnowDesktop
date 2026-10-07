@@ -100,6 +100,11 @@ public:
     /** @brief 由 UI 消息循环在 waitable timer 就绪时调用。 */
     void DispatchDue();
 
+    // Within one animation snapshot, prepare every state before presenting
+    // each owner once. Outside that snapshot (pointer/drag feedback), present
+    // synchronously. This never adds another timer or delays to the next frame.
+    void RequestFramePresentation(const void* owner, std::function<void()> callback);
+
     void SetSoftwareRendering(bool softwareRendering);
     void RefreshDisplayRate();
 
@@ -151,6 +156,14 @@ private:
     bool softwareRendering_ = false;
     bool diagnosticsEnabled_ = false;
     bool dispatching_ = false;
+    bool advancingFrame_ = false;
+    struct PendingPresentation
+    {
+        const void* owner = nullptr;
+        std::function<void()> callback;
+    };
+    std::vector<PendingPresentation> pendingPresentations_;
+    std::uint64_t presentationCancellation_ = 0;
     std::uint64_t requestedFrames_ = 0;
     std::uint64_t deliveredFrames_ = 0;
     std::uint64_t skippedFrames_ = 0;

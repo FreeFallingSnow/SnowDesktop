@@ -10,6 +10,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 
 namespace
 {
@@ -594,6 +595,106 @@ int main()
         "independent animation surfaces advance from one frame timestamp");
     Check(!scheduler.HasScheduledWork(),
         "completed frame callbacks leave no active request");
+
+    {
+        // Production batch boundary; substitute only model state and pixels.
+        // Closing one item while hover settles must present both final states
+        // once, without coupling the two animation lifetimes.
+        UiAnimationScheduler batch;
+        int dockOwner = 0, secondDockOwner = 0;
+        int hover = 0, presence = 0, paints = 0, secondPaints = 0;
+        int paintedHover = 0, paintedPresence = 0;
+        const auto request = [&] {
+            batch.RequestFramePresentation(&dockOwner, [&] {
+                ++paints;
+                paintedHover = hover;
+                paintedPresence = presence;
+                batch.DispatchDue(); // Paint/native-menu reentry is guarded.
+            });
+        };
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++hover;
+            request();
+            return hover < 2;
+        });
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++presence;
+            request();
+            return false;
+        });
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            batch.RequestFramePresentation(&secondDockOwner, [&] { ++secondPaints; });
+            return false;
+        });
+        WaitAndDispatch(batch);
+        Check(paints == 1 && secondPaints == 1 && paintedHover == 1 && paintedPresence == 1,
+            "one Dock presents both latest states once, independently of other Dock owners");
+        Check(batch.HasScheduledWork(), "presence completion cannot stop the hover track");
+        WaitAndDispatch(batch);
+        Check(paints == 2 && paintedHover == 2 && paintedPresence == 1 && !batch.HasScheduledWork(),
+            "the surviving hover track presents its terminal frame and then stops");
+        request();
+        Check(paints == 3,
+            "same-bounds content or immediate pointer feedback presents synchronously outside an animation snapshot");
+
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) -> bool {
+            request();
+            throw std::runtime_error("failed model callback after invalidation");
+        });
+        WaitAndDispatch(batch);
+        Check(paints == 4 && !batch.HasScheduledWork(),
+            "a failed animation callback cannot strand its pending terminal presentation");
+
+        // Shell modal pump uses the same end-of-snapshot presentation boundary.
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++hover; request(); return false;
+        });
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++presence; request(); return false;
+        });
+        UiAnimationScheduler::MessagePumpScope pump(batch, [&] {
+            Check(paintedHover == hover && paintedPresence == presence,
+                "modal presentation flush observes both updated animation states");
+        });
+        Check(pump.IsAvailable(), "batch regression creates the real message-only Shell pump");
+        const ULONGLONG deadline = GetTickCount64() + 3000;
+        while (batch.HasScheduledWork() && GetTickCount64() < deadline)
+        {
+            MSG message{};
+            if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+            else MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        Check(paints == 5 && !batch.HasScheduledWork(),
+            "a nested Shell loop coalesces the two Dock tracks before flushing");
+
+        int cancelledPaints = 0;
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            batch.RequestFramePresentation(&dockOwner, [&] { batch.CancelAll(); });
+            batch.RequestFramePresentation(&secondDockOwner, [&] { ++cancelledPaints; });
+            return false;
+        });
+        WaitAndDispatch(batch);
+        Check(cancelledPaints == 0 && !batch.HasScheduledWork(),
+            "cancellation during presentation prevents later owners from publishing a retired batch");
+
+        int oldHover = 0, oldPresence = 0, oldPaints = 0;
+        bool oldMixedFrame = false;
+        UiAnimationScheduler eager;
+        const auto oldPaint = [&] {
+            ++oldPaints;
+            oldMixedFrame |= oldHover != oldPresence;
+        };
+        eager.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++oldHover; oldPaint(); return false;
+        });
+        eager.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++oldPresence; oldPaint(); return false;
+        });
+        WaitAndDispatch(eager);
+        Check(oldPaints == 2 && oldMixedFrame,
+            "negative control: presenting inside each track exposes a mixed frame and duplicate paint");
+    }
 
     {
         // Protect against replaying an old pose after a slow component update.

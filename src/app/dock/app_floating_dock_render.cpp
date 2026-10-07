@@ -4,6 +4,7 @@
 #include "diagnostics/performance_trace.h"
 #include "drag_drop/drag_input_rules.h"
 #include "desktop/desktop_hover_rules.h"
+#include "app/popup/popup_window_pair_z_order.h"
 
 // Floating-Dock paint and window-message dispatch.
 
@@ -33,6 +34,19 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         renderingPersistentDockHost_
     };
     renderingPersistentDockHost_ = &host;
+    const auto revision = ++host.presentationRevision;
+    const std::wstring diagnosticOwner = snowdesktop::performance::Enabled()
+        ? std::to_wstring(reinterpret_cast<UINT_PTR>(host.hwnd)) : std::wstring{};
+    snowdesktop::performance::Scope presentationScope("dock", "floating.presentation", diagnosticOwner, revision);
+    const bool recoveringBackdrop = host.backdropRecoveryPending;
+    if (recoveringBackdrop)
+    {
+        host.backdropRecoveryPending = false;
+        // Recreate only after an actual backend failure, never on ordinary
+        // animation geometry changes. Keep the helper hidden until ready.
+        (void)host.backdrop.InitializePopup(host.hwnd,
+            snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd), false);
+    }
 
     const bool preserveExistingFrame =
         host.frameReady && host.dcompSurface &&
@@ -89,7 +103,16 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     brushCache_.clear();
     brushCacheContext_ = context.Get();
     renderingFloatingDock_ = true;
-    host.backdrop.BeginFrame(true);
+    const bool stagedBackdrop = host.backdrop.BeginStagedFrame();
+    struct BackdropCandidateScope
+    {
+        DesktopBackdropCompositor& backdrop;
+        ~BackdropCandidateScope() { backdrop.DiscardStagedFrame(); }
+    } backdropCandidateScope{host.backdrop};
+    RECT guideLocal = host.guideOcclusionRect;
+    if (!IsRectEmpty(&guideLocal))
+        OffsetRect(&guideLocal, -host.sourceRect.left, -host.sourceRect.top);
+    if (stagedBackdrop) host.backdrop.SetOcclusionRect(guideLocal);
     if (host.container)
     {
         snowdesktop::startup_diagnostics::Call(L"Dock.DrawChrome", [&] {
@@ -100,7 +123,6 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         });
     }
     DrawDynamicOverlays(context.Get());
-    host.backdrop.EndFrame();
     renderingFloatingDock_ = false;
 
     context->SetTransform(
@@ -150,6 +172,41 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         RecoverFloatingDockCompositionFailure(
             host, L"Queue Commit", E_FAIL);
         return false;
+    }
+    if (!ApplyFloatingDockWindowRegion(host))
+    {
+        RecoverFloatingDockCompositionFailure(host, L"Window region", E_FAIL, true);
+        return false;
+    }
+    // Both backends now have complete candidate data. Publish from this same
+    // synchronous presentation endpoint, including native/menu message loops;
+    // do not leave content queued until the outer message pump returns.
+    // These independent devices cannot guarantee one common DWM display frame.
+    if (!FlushPendingCompositionCommit()) return false;
+    if (stagedBackdrop)
+    {
+        snowdesktop::performance::Scope backdropScope("dock", "floating.backdrop_apply", diagnosticOwner, revision);
+        if (!host.backdrop.ApplyStagedFrame())
+        {
+            std::wstring message = L"Floating Dock backdrop candidate failed: " + host.backdrop.LastError();
+            WriteDiagnosticLogEntry(message.c_str());
+            host.backdropRecoveryPending = true;
+            RecoverFloatingDockCompositionFailure(host, L"Backdrop candidate", E_FAIL, true);
+            return false;
+        }
+    }
+    if (recoveringBackdrop && host.backdrop.IsAvailable())
+    {
+        host.backdrop.SetVisible(IsWindowVisible(host.hwnd) != FALSE);
+        ApplyFloatingDockLayerPolicy(host);
+    }
+    if (snowdesktop::performance::Enabled())
+    {
+        snowdesktop::performance::Value("dock", "floating.frame_ready", diagnosticOwner, 1, revision);
+        snowdesktop::performance::Value("dock", "floating.topmost", diagnosticOwner,
+            snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd) ? 1 : 0, revision);
+        snowdesktop::performance::Value("dock", "floating.visible", diagnosticOwner,
+            IsWindowVisible(host.hwnd) ? 1 : 0, revision);
     }
     host.frameReady = true;
     host.compositionRenderRecoveryPending =

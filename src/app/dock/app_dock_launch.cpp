@@ -108,11 +108,12 @@ void DesktopApp::OnDockLaunchBounceTimer()
         !snowdesktop::animation::RuntimeAnimationsEnabled())
     {
         dockLaunchBounces_.clear();
-        UpdateFloatingDockWindowBounds(false);
+        for (const auto& container : containers_)
+            if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                RequestDockAnimationPresentation(*dock);
         return;
     }
 
-    const size_t previousBounceCount = dockLaunchBounces_.size();
     for (auto bounce = dockLaunchBounces_.begin();
         bounce != dockLaunchBounces_.end();)
     {
@@ -176,8 +177,9 @@ void DesktopApp::OnDockLaunchBounceTimer()
 
     // Retire the visual envelope even when the last item disappeared. The
     // item-based invalidation below has no remaining item in that case.
-    if (dockLaunchBounces_.size() != previousBounceCount)
-        UpdateFloatingDockWindowBounds(false);
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+            RequestDockAnimationPresentation(*dock);
     InvalidateDockLaunchBounceRects();
 }
 

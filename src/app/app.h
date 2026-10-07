@@ -798,6 +798,10 @@ private:
         ComPtr<IDCompositionEffectGroup> mergedOpacity;
         bool compositionRenderRecoveryPending = false;
         bool compositionPaintInProgress = false;
+        bool immediatePaintDeferred = false;
+        bool windowRegionPending = false;
+        bool backdropRecoveryPending = false;
+        std::uint64_t presentationRevision = 0;
         bool dropTargetRegistered = false;
         DesktopBackdropCompositor backdrop;
         ComPtr<IDCompositionTarget> dcompTarget;
@@ -890,6 +894,8 @@ private:
     [[nodiscard]] bool RequestRestart();
     /** @brief 确保各个独立 UI 动画轨道均已启动。 */
     void EnsureUiAnimationFrame();
+    void RequestDockAnimationPresentation(DockContainer& dock);
+    void RequestDesktopDockAnimationPresentation(const RECT& dirty);
     /** @brief 取消所有应用内 UI 动画轨道。 */
     void CancelUiAnimationFrame();
     /** @brief 在 OLE 嵌套拖拽循环中同步呈现本次命中反馈。 */
@@ -1271,6 +1277,7 @@ private:
     void InvalidateFloatingDockWindow(
         PersistentDockHost& host,
         bool immediate = false);
+    bool ApplyFloatingDockWindowRegion(PersistentDockHost& host);
     void InvalidatePersistentDockHosts(bool immediate = false);
     HRESULT CreateOrResizeFloatingDockCompositionSurface(
         PersistentDockHost& host,
@@ -3410,6 +3417,7 @@ private:
     snowdesktop::UiScheduleToken dockBounceAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockRunningAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockMagnificationAnimationFrameToken_ = 0;
+    RECT dockAnimationDesktopDirty_{};
     snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken pointerRecoveryFrameToken_ = 0;
     bool compositionCommitPending_ = false;
