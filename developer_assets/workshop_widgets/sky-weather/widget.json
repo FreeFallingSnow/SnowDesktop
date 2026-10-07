@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Sky Weather",
   "nameKey": "lua_widget.sky_weather.name",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Current weather and a five-day forecast with global city search and system location.",
   "descriptionKey": "lua_widget.sky_weather.description",
   "locales": {
