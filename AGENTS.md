@@ -583,6 +583,12 @@
   的旧宿主时追加 `-RestartHost`。同步成功后，新发现且验证通过的开发组件 UUID 默认激活为开发来源；
   已保存的停用决定与旧注册表中的现存候选选择保持不变。必须核对当前来源和权限状态后再交付实机验证；
   仅同步或默认激活不等于桌面交互已验证。
+- 官方社区组件发布或更新 Steam Workshop 前，必须先同步到目标构建的
+  `data/widgets/dev/<slug>/`。Workshop Manager 的本地项目及发布 CLI 的 `--source` 必须绑定该 dev
+  目录，并显式传入同一构建的 `--data-directory`；不得把 `developer_assets/workshop_widgets/<slug>/`
+  源码目录登记为发布来源。发布前从 dev 目录生成计划，核对包版本、哈希、预览及现有工坊条目 ID。
+- 若曾误绑源码目录，将既有 PublishedFileId、发布版本、哈希、时间和发布偏好迁移到对应的 dev
+  项目，移除重复的源码目录项目登记；保留组件 UUID 和原工坊条目，不重新创建条目。
 - CMake 的组件构建步骤使用覆盖式 `copy_directory`，不会删除输出目录中已经失去源码对应项的旧
   子目录，因此重新编译本身不能清掉误放过的内置组件。若 `widgets/<slug>/` 已不存在，但
   `.build/<Configuration>/widgets/<slug>/` 仍存在，应先核对二者的绝对路径和清单 UUID，只移走或删除
