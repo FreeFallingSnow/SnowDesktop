@@ -496,6 +496,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/data/widget_audio_analysis_provider.cpp
     src/widget/view/widget_draw_geometry.cpp
     src/widget/view/widget_background_cache.cpp
+    src/widget/view/widget_image_sampling.cpp
     src/widget/view/widget_interaction_region.cpp
     src/widget/view/widget_accessibility_events.cpp
     src/widget/view/widget_accessibility_provider.cpp
@@ -2433,9 +2434,11 @@ if (BUILD_TESTING)
         SOURCES
             tests/component_preview_tests.cpp
             tests/widget_background_cache_tests.cpp
+            tests/widget/widget_image_sampling_tests.cpp
             tests/widget_text_layout_cache_tests.cpp
             tests/scroll_content_clip_tests.cpp
             src/widget/view/widget_background_cache.cpp
+            src/widget/view/widget_image_sampling.cpp
             src/ui/preview/component_preview.cpp
             src/ui/menu/menu_icon_render.cpp
             src/ui/menu/menu_builtin_icon.cpp

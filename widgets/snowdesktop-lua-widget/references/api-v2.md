@@ -1071,6 +1071,9 @@ UIA VirtualizedItem，
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
 `view.image`。图片节点的 `style.cornerRadius` 同时裁切位图内容和节点表面；半径最大按
 节点短边的一半处理，因此可用正方形节点和半边长半径显示圆形图片。
+`linear` 是默认平滑模式：宿主在大幅缩小不可变图片时先做高质量预滤波，按实际像素尺寸
+缓存缩图，计入 DPI、变换和源图裁切；`nearest` 保留原始最近邻采样，适合像素画。
+这项质量改进不新增 API 或 feature，旧宿主仍接受相同参数并沿用原有平滑质量。
 `referenceIcon` 使用相同的 `alt/fit/alignment/interpolation`，但以当前
 组件实例从宿主搜索、文件引用任务或逻辑槽位获得的 1–128 字节 opaque `reference`
 代替图片资源句柄；宿主在异步 Shell 图标缓存就绪后重绘，不在渲染热路径同步解码，
@@ -2694,6 +2697,7 @@ feature，并且只能在桌面 surface 的 `render()` 中调用。`key` 必须�
   范围均为 `0–1`，默认以中心 `(0.5, 0.5)` 旋转。探测并声明
   `draw.imageFit.roundedClip` 后，可传入非负 `cornerRadius`；宿主将它裁到目标短边的一半，
   用抗锯齿圆角几何裁切最终图片，省略或传入 0 时保持原有矩形绘制。
+  默认 `linear` 与 `draw.image`、`view.image` 使用相同的平滑缩图缓存；`nearest` 不做预滤波。
 - `shadow` 的 blur 为 `0–64`，最多产生 16 层宿主受控的柔和衰减；它不是任意
   shader 或无界高斯效果。圆角不能超过短边一半，偏移和扩散后的区域仍受坐标预算约束。
 - `sparkline` 接受 1–512 个有限数值。`min/max` 必须成对提供且严格递增；省略时宿主

@@ -212,6 +212,7 @@ void TestPreviewFrameMemoryBudget()
 } // namespace
 
 void RunWidgetBackgroundCacheTests();
+void RunWidgetImageSamplingTests();
 void RunWidgetTextLayoutCacheTests();
 void RunScrollContentClipTests();
 
@@ -221,6 +222,7 @@ int wmain()
     TestPreviewFrameMemoryBudget();
     TestWidgetClipFactoryReplacement();
     RunWidgetBackgroundCacheTests();
+    RunWidgetImageSamplingTests();
     RunWidgetTextLayoutCacheTests();
     RunScrollContentClipTests();
     using namespace snowdesktop::component_preview;

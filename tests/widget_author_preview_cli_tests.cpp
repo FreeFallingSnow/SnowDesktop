@@ -351,6 +351,116 @@ RgbaBitmap ReadPng(const std::filesystem::path& path)
     return bitmap;
 }
 
+void Write(const std::filesystem::path& path, std::string_view text);
+
+void WriteSamplingPattern(const std::filesystem::path& path, bool transparent)
+{
+    using Microsoft::WRL::ComPtr;
+    constexpr UINT side = 512;
+    std::vector<std::uint8_t> pixels(side * side * 4);
+    for (UINT y = 0; y < side; ++y)
+        for (UINT x = 0; x < side; ++x)
+        {
+            const auto i = (y * side + x) * 4;
+            const auto white = static_cast<std::uint8_t>(x % 8 == 0 ? 255 : 0);
+            pixels[i] = pixels[i + 1] = pixels[i + 2] = white;
+            pixels[i + 3] = transparent ? white : 255;
+        }
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICStream> stream;
+    ComPtr<IWICBitmapEncoder> encoder;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    Check(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateStream(&stream)) &&
+        SUCCEEDED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE)) &&
+        SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) &&
+        SUCCEEDED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) &&
+        SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) &&
+        SUCCEEDED(frame->Initialize(nullptr)) && SUCCEEDED(frame->SetSize(side, side)),
+        "create PNG sampling pattern");
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppRGBA;
+    Check(SUCCEEDED(frame->SetPixelFormat(&format)) && format == GUID_WICPixelFormat32bppRGBA &&
+        SUCCEEDED(frame->WritePixels(side, side * 4, static_cast<UINT>(pixels.size()), pixels.data())) &&
+        SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit()),
+        "write exact stripe coverage and alpha to PNG");
+}
+
+void TestImageDownsampling(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root)
+{
+    // Exercise the production Lua/API entry points and inspect native PNGs.
+    // Every 16-pixel source footprint contains two white columns, independently
+    // predicting 32/255 coverage. Old direct linear rendering yields 128/255.
+    const auto source = root / L"sampling-widget";
+    Check(std::filesystem::create_directory(source), "create isolated sampling widget");
+    WriteSamplingPattern(source / L"stripes.png", false);
+    WriteSamplingPattern(source / L"alpha.png", true);
+    Write(source / L"widget.json", R"json({
+      "schemaVersion":2,"apiVersion":2,"dataVersion":1,
+      "id":"bba70e48-bccc-4d75-9425-bff0a93f7d78",
+      "slug":"image-sampling-fixture","version":"1.0.0","entry":"main.lua",
+      "name":"Image sampling fixture","description":"Small image quality regression",
+      "author":"SnowDesktop","license":"MIT","minHostVersion":"1.0.5.0",
+      "defaultSize":{"columns":2,"rows":1},
+      "requiredFeatures":["draw.immediate","draw.advanced","resource.package",
+        "view.tree.core","view.flex.layout","view.image","view.image.tint"],
+      "resources":{"stripes":{"type":"image","path":"stripes.png"},
+        "alpha":{"type":"image","path":"alpha.png"}}
+    })json");
+    for (const bool declarative : { false, true })
+    {
+        Write(source / L"main.lua", declarative ? R"lua(
+local stripes, alpha = resource.image("stripes"), resource.image("alpha")
+return widget.define({
+  view = function()
+    return view.row({width="fill", height="fill", padding=8, gap=8, children={
+      view.image({key="linear",source=stripes,alt="",width=32,height=32}),
+      view.image({key="nearest",source=stripes,alt="",width=32,height=32,interpolation="nearest"}),
+      view.image({key="tint",source=alpha,alt="",width=32,height=32,tint=0xff0000}),
+    }})
+  end,
+})
+)lua" : R"lua(
+local stripes = resource.image("stripes")
+return widget.define({render=function()
+  draw.image(stripes,8,8,32,32)
+  draw.imageFit(stripes,48,8,32,32,"contain","center",1,"linear")
+  draw.imageFit(stripes,88,8,32,32,"contain","center",1,"nearest")
+end})
+)lua");
+        const auto output = root / (declarative ? L"sampling-view.png" : L"sampling-draw.png");
+        const auto [code, result] = Run(snowwidget, {L"preview", source.wstring(), output.wstring(),
+            L"--host", host.wstring(), L"--dpi", L"96", L"--content-only"});
+        Check(code == 0 && result.find("\"ok\":true") != std::string::npos,
+            "production image sampling preview succeeds");
+        const auto png = ReadPng(output);
+        for (UINT y = 12; y < 36; ++y)
+            for (UINT x = 12; x < 36; ++x)
+            {
+                const auto smooth = PixelAt(png, x, y);
+                Check(std::abs(int(smooth[0]) - 32) <= 4 &&
+                    std::abs(int(smooth[1]) - 32) <= 4 && smooth[3] == 255,
+                    "default image smooth mode preserves fine stripe coverage");
+                const auto next = PixelAt(png, x + 40, y);
+                if (declarative)
+                    Check((next[0] == 0 || next[0] == 255) && next[3] == 255,
+                        "view nearest keeps point samples");
+                else
+                    Check(std::abs(int(next[0]) - 32) <= 4 && next[3] == 255,
+                        "imageFit linear shares the high-quality shrinking path");
+                const auto last = PixelAt(png, x + 80, y);
+                if (declarative)
+                    Check(last[0] > 245 && last[1] < 4 && last[2] < 4 &&
+                        std::abs(int(last[3]) - 32) <= 4,
+                        "view tint preserves downsampled transparent coverage");
+                else
+                    Check((last[0] == 0 || last[0] == 255) && last[3] == 255,
+                        "imageFit nearest keeps point samples");
+            }
+    }
+}
+
 RgbaBitmap CheckOpaquePreview(const std::filesystem::path& path,
     UINT expectedWidth, UINT expectedHeight)
 {
@@ -2807,6 +2917,7 @@ int wmain(int argc, wchar_t** argv) try
     }
     if (suite == L"runtime" || suite == L"all")
     {
+        TestImageDownsampling(snowwidget, host, temporary.path);
         const auto pomodoroOutput = temporary.path / L"pomodoro.png";
         const auto pomodoroSource = repository / L"widgets" / L"pomodoro";
         const auto [pomodoroExit, pomodoroJson] = Run(snowwidget, {
