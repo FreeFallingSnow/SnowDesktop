@@ -16,7 +16,7 @@ SnowDesktop **官方社区组件**，不随宿主作为内置组件分发。默�
 
 ## 官方 API 依据
 
-核对日期：2026-10-06。只使用厂商直接公开的查询接口，不调用推理接口，不读取 DSH 本地数据库，不按 Token 或定价估算费用。
+核对日期：2026-10-06；DeepSeek 字段含义于 2026-10-07 复核。只使用厂商直接公开的查询接口，不调用推理接口，不读取 DSH 本地数据库，不按 Token 或定价估算费用。
 
 | 预设 | 官方文档 | GET 查询及显示字段 |
 | --- | --- | --- |
@@ -27,6 +27,8 @@ SnowDesktop **官方社区组件**，不随宿主作为内置组件分发。默�
 | Kimi / Moonshot 国际 | [Check balance](https://platform.kimi.ai/docs/api/balance) | `https://api.moonshot.ai/v1/users/me/balance`；同样字段，USD。国内和国际 Key 独立，不能混用。 |
 | StepFun / 阶跃星辰 | [获取账户信息](https://platform.stepfun.com/docs/zh/api-reference/accounts/get) | `https://api.stepfun.com/v1/accounts`；`object: account`、`balance/total_cash_balance/total_voucher_balance`。该接口页面未标明币种，显示原始数值，**不擅自加人民币符号**。 |
 | Novita AI | [User balance info](https://docs.novita.ai/api-reference/basic-get-user-balance) | `https://api.novita.ai/openapi/v1/billing/balance/detail`；`availableBalance/cashBalance/creditLimit` 按文档除以 10000 转为 USD，信用额度与现金分别标记。 |
+
+DeepSeek 的明细显示“充值余额”和“赠送余额”：分别对应 `topped_up_balance` 与尚未过期的 `granted_balance`，属于当前余额构成，不表示历史累计充值或累计赠送。DeepSeek details show current top-up and granted balances, not historical cumulative deposits or grants.
 
 所有预设使用 HTTPS 和 `Authorization: Bearer <secret>`。Novita 请求同时发送文档规定的 `Content-Type: application/json`。响应上限 128 KiB、超时 15 秒、带密钥请求不缓存；宿主限制密钥跨源重定向。
 
