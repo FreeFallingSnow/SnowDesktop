@@ -166,9 +166,9 @@ int RunWebsiteIconTests()
     Check(newSnapshot && site::Apply(*newSnapshot, newIcon), "repeated fetch replaces the shortcut icon reference");
     const auto activeLink = desktop / L"active.lnk";
     Check(MakeLink(activeLink, L"C:\\Browser\\chrome.exe", L"--app=https://example.com", linkIcon.c_str()), "create a second live icon owner");
-    const auto count = site::CollectUnused(managed, {desktop});
+    const auto count = site::CollectUnused(managed, {desktop, L"::{645FF040-5081-101B-9F08-00AA002F954E}", L"widget-id"});
     Check(count == 1 && !fs::exists(oldIcon) && fs::exists(newIcon) && fs::exists(linkIcon) && fs::exists(personalIcon),
-        "collection reclaims a superseded GUID icon and preserves URL/link references and non-generated files");
+        "collection skips Shell namespace/widget identifiers, reclaims a superseded GUID icon and preserves live resources");
     fs::remove(activeUrl); fs::remove(activeLink);
     Check(site::CollectUnused(managed, {desktop}) == 2 && !fs::exists(newIcon) && !fs::exists(linkIcon) && fs::exists(personalIcon),
         "deleting the last website shortcuts releases their generated icons");

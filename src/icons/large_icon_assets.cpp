@@ -424,9 +424,11 @@ struct LargeIconAssets::Impl
             const auto bytes = it->file_size(ec);
             if (ec) break;
             if (automatic) total += bytes;
+            std::string source;
+            for (wchar_t c : auxiliary) source.push_back(static_cast<char>(c)); // Validated ASCII cache name.
             candidates.push_back({it->path(), bytes,
                 touched.contains(name) ? touched.at(name) : it->last_write_time(ec), automatic,
-                {auxiliary.begin(), auxiliary.end()}});
+                std::move(source)});
         }
         if (ec) return; // An incomplete directory read is not deletion evidence.
         std::unordered_set<std::string> owned = pinned;

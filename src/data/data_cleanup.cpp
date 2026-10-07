@@ -65,6 +65,17 @@ bool SafeDirectory(const std::filesystem::path& path)
     return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) &&
         !(attributes & FILE_ATTRIBUTE_REPARSE_POINT);
 }
+bool SafeSubdirectory(const std::filesystem::path& data, const std::filesystem::path& directory)
+{
+    auto cursor = data;
+    for (const auto& component : directory.lexically_relative(data))
+    {
+        if (component == L"..") return false;
+        cursor /= component;
+        if (!SafeDirectory(cursor)) return false;
+    }
+    return true;
+}
 std::vector<std::filesystem::path> Entries(const std::filesystem::path& directory)
 {
     if (!SafeDirectory(directory)) return {};
@@ -79,7 +90,7 @@ bool OwnerExited(std::wstring_view name, std::wstring_view prefix)
     if (!name.starts_with(prefix)) return false;
     name.remove_prefix(prefix.size());
     const auto separator = name.find(L'-');
-    if (separator == name.npos || !separator) return false;
+    if (separator == name.npos || !separator || separator > 10) return false;
     const auto digits = name.substr(0, separator);
     if (!std::all_of(digits.begin(), digits.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; })) return false;
     const auto pid = std::wcstoul(std::wstring(digits).c_str(), nullptr, 10);
@@ -123,6 +134,8 @@ std::size_t Collect(const std::filesystem::path& data,
             if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) canCollectLegacy = false;
             continue;
         }
+        if (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
+        { canCollectLegacy = false; continue; }
         std::string text; JsonValue document;
         if (!atomic_file::ReadAll(path, text) || !ParseJson(text, document)) { canCollectLegacy = false; continue; }
         ReadJsonPaths(document, protectedPaths);
@@ -158,7 +171,7 @@ std::size_t Collect(const std::filesystem::path& data,
     if (canCollectLegacy)
     {
         const auto legacy = data / L"DropContent";
-        for (const auto& path : Entries(legacy))
+        for (const auto& path : SafeSubdirectory(data, legacy) ? Entries(legacy) : std::vector<std::filesystem::path>{})
         {
             if (stop.stop_requested()) return removed;
             const DWORD attributes = GetFileAttributesW(path.c_str());
@@ -168,7 +181,8 @@ std::size_t Collect(const std::filesystem::path& data,
             });
             if (!referenced && DeleteFileW(path.c_str())) ++removed;
         }
-        std::error_code error; std::filesystem::remove(legacy, error); // Empty only.
+        if (SafeSubdirectory(data, legacy))
+        { std::error_code error; std::filesystem::remove(legacy, error); } // Empty only.
     }
     // Process-owned publish/package/initialization scratch trees. Names without
     // a recognizable owner remain untouched, as do live or inaccessible owners.
@@ -177,7 +191,7 @@ std::size_t Collect(const std::filesystem::path& data,
             {data / L"SteamWorkshopManager" / L"staging" / L"uploads", L"upload-"},
             {data / L"SteamWorkshopManager" / L"staging" / L"packages", L"package-"},
             {data / L"initialization-experiments", L"session-"}})
-        for (const auto& path : Entries(directory))
+        for (const auto& path : SafeSubdirectory(data, directory) ? Entries(directory) : std::vector<std::filesystem::path>{})
         {
             if (stop.stop_requested()) return removed;
             if (OwnerExited(path.filename().wstring(), prefix) && drop_staging::RemoveTree(path)) ++removed;
@@ -187,7 +201,7 @@ std::size_t Collect(const std::filesystem::path& data,
     struct Dump { std::filesystem::path path; std::filesystem::file_time_type modified; std::uint64_t bytes; };
     std::vector<Dump> dumps;
     for (const auto& directory : {data / L"crashdumps", data / L"crashdumps" / L"wer"})
-        for (const auto& path : Entries(directory))
+        for (const auto& path : SafeSubdirectory(data, directory) ? Entries(directory) : std::vector<std::filesystem::path>{})
         {
             const auto name = path.filename().wstring();
             if (_wcsicmp(path.extension().c_str(), L".dmp") != 0 ||

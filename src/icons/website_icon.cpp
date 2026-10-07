@@ -457,13 +457,14 @@ bool Apply(const Shortcut& shortcut, const std::filesystem::path& icon)
 std::size_t CollectUnused(const std::filesystem::path& directory,
     const std::vector<std::filesystem::path>& shortcuts, std::stop_token stop)
 {
-    const DWORD attributes = GetFileAttributesW(directory.c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return 0;
+    const DWORD directoryAttributes = GetFileAttributesW(directory.c_str());
+    if (directoryAttributes == INVALID_FILE_ATTRIBUTES || (directoryAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) return 0;
     std::vector<std::filesystem::path> retained;
-    std::vector<std::filesystem::path> observed = shortcuts;
+    std::vector<std::filesystem::path> observed;
     for (const auto& path : shortcuts)
     {
-        if (path.empty()) continue;
+        if (path.empty() || !path.is_absolute()) continue;
+        observed.push_back(path);
         const DWORD attributes = GetFileAttributesW(path.c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES)
         {

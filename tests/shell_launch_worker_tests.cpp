@@ -326,6 +326,7 @@ void TestIsolatedFolderActivation()
                 Check(child != nullptr, "folder activation must observe helper completion");
                 bool visible = false;
                 bool completed = false;
+                bool currentFolderMatches = false;
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
                 while (child && std::chrono::steady_clock::now() < deadline)
                 {
@@ -335,15 +336,22 @@ void TestIsolatedFolderActivation()
                     if (completed)
                     {
                         visible = false;
+                        currentFolderMatches = false;
                         visitFolderWindows([&](IWebBrowser2* browser) {
                             SHANDLE_PTR handle = 0;
                             if (SUCCEEDED(browser->get_HWND(&handle)))
                             {
                                 const HWND window = reinterpret_cast<HWND>(handle);
                                 visible = visible || (IsWindowVisible(window) && !IsIconic(window));
+                                if (IsWindowVisible(window) && !IsIconic(window))
+                                    if (const auto current = snowdesktop::dock_explorer_pin::ReadCurrentFolder(window))
+                                        currentFolderMatches |= SameFolder(folder, current->path) &&
+                                            current->name == std::filesystem::path(folder).filename().wstring();
                             }
                         });
-                        if (visible) break;
+                        // Explorer's outer window can precede its visible Shell
+                        // view. Observe both identities within the same deadline.
+                        if (visible && currentFolderMatches) break;
                     }
                     pumpMessages();
                 }
@@ -353,24 +361,15 @@ void TestIsolatedFolderActivation()
                     GetExitCodeProcess(child, &result);
                     CloseHandle(child);
                 }
-                if (!completed || !visible || result != ERROR_SUCCESS)
+                if (!completed || !visible || !currentFolderMatches || result != ERROR_SUCCESS)
                     std::cerr << "Folder activation kind=" << kind << " attempt=" << attempt
                               << " completed=" << completed << " result=" << result
-                              << " visible=" << visible << '\n';
+                              << " visible=" << visible << " folderMatches=" << currentFolderMatches << '\n';
                 Check(completed && result == ERROR_SUCCESS,
                     "folder activation helper must complete successfully");
                 Check(visible, attempt == 0 ? "first folder activation must show Explorer" :
                     attempt == 1 ? "reopening an existing folder must keep Explorer visible" :
                     "reopening a minimized folder must restore visible Explorer");
-                bool currentFolderMatches = false;
-                visitFolderWindows([&](IWebBrowser2* browser) {
-                    SHANDLE_PTR handle = 0;
-                    if (SUCCEEDED(browser->get_HWND(&handle)))
-                        if (const auto current = snowdesktop::dock_explorer_pin::ReadCurrentFolder(
-                                reinterpret_cast<HWND>(handle)))
-                            currentFolderMatches |= SameFolder(folder, current->path) &&
-                                current->name == std::filesystem::path(folder).filename().wstring();
-                });
                 Check(currentFolderMatches,
                     "Explorer pin discovery must read the exact visible fixture folder, including Unicode and spaces");
             }
