@@ -1312,7 +1312,7 @@ struct WidgetSettingsPresenter::Impl
     void RefreshPasswordReveal(WidgetFieldControl& field)
     {
         const bool hasDraft = !field.password.Password().empty();
-        field.passwordReveal.IsEnabled(field.enabled && hasDraft);
+        field.passwordReveal.IsEnabled(field.password.IsEnabled() && hasDraft);
         if (!hasDraft)
         {
             field.password.PasswordRevealMode(muxc::PasswordRevealMode::Hidden);
