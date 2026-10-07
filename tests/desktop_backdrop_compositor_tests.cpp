@@ -540,6 +540,10 @@ int RunDesktopBackdropCompositorTests()
         check(glass.AddPanel(oldPanel, 8, 24, 101) && glass.AddPanel(retiredPanel, 8, 24, 102),
             "staging fixture installs two live glass panels");
         glass.EndFrame();
+        glass.BeginFrame(false);
+        check(!glass.BeginStagedFrame() && glass.PanelCount() == 2,
+            "candidate collection rejects a busy live collector before content BeginDraw");
+        glass.EndFrame();
         const HWND helper = FindOwnedBackdrop(glass);
         HRGN previous = CreateRectRgn(0, 0, 0, 0), observed = CreateRectRgn(0, 0, 0, 0);
         if (!check(helper && previous && observed && GetWindowRgn(helper, previous) != ERROR,

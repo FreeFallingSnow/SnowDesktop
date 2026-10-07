@@ -6,6 +6,8 @@
 #include "desktop/desktop_hover_rules.h"
 #include "app/popup/popup_window_pair_z_order.h"
 
+#include <utility>
+
 // Floating-Dock paint and window-message dispatch.
 
 bool DesktopApp::RenderFloatingDockCompositionFrame(
@@ -23,15 +25,19 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         bool& active;
         PersistentDockHost*& renderingHost;
         PersistentDockHost* previousHost;
+        bool& renderingFloating;
+        bool previousFloating;
         ~FloatingPaintScope()
         {
             active = false;
             renderingHost = previousHost;
+            renderingFloating = previousFloating;
         }
     } paintScope{
         host.compositionPaintInProgress,
         renderingPersistentDockHost_,
-        renderingPersistentDockHost_
+        renderingPersistentDockHost_,
+        renderingFloatingDock_, renderingFloatingDock_
     };
     renderingPersistentDockHost_ = &host;
     const auto revision = ++host.presentationRevision;
@@ -51,6 +57,24 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     const bool preserveExistingFrame =
         host.frameReady && host.dcompSurface &&
         host.dcompVisual;
+    const bool stagedBackdrop = host.backdrop.BeginStagedFrame();
+    struct BackdropCandidateScope
+    {
+        DesktopBackdropCompositor& backdrop;
+        ~BackdropCandidateScope() { backdrop.DiscardStagedFrame(); }
+    } backdropCandidateScope{host.backdrop};
+    // An available backend refusing collection must never fall through to
+    // AddPanel's ordinary live path while the content surface is unfinished.
+    if (!stagedBackdrop && host.backdrop.IsAvailable())
+    {
+        host.backdropRecoveryPending = true;
+        RecoverFloatingDockCompositionFailure(host, L"Backdrop collection busy", E_UNEXPECTED, preserveExistingFrame);
+        return false;
+    }
+    RECT guideLocal = host.guideOcclusionRect;
+    if (!IsRectEmpty(&guideLocal))
+        OffsetRect(&guideLocal, -host.sourceRect.left, -host.sourceRect.top);
+    if (stagedBackdrop) host.backdrop.SetOcclusionRect(guideLocal);
     ComPtr<IDCompositionSurface> frameSurface;
     HRESULT hr = snowdesktop::startup_diagnostics::Call(L"Dock.CreateOrResizeSurface", [&] {
         return CreateOrResizeFloatingDockCompositionSurface(host, frameSurface);
@@ -83,6 +107,16 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         return false;
     }
 
+    struct SurfaceDrawScope
+    {
+        IDCompositionSurface* surface;
+        HRESULT Finish() noexcept
+        {
+            auto* pending = std::exchange(surface, nullptr);
+            return pending ? pending->EndDraw() : S_OK;
+        }
+        ~SurfaceDrawScope() { (void)Finish(); }
+    } surfaceDrawScope{frameSurface.Get()};
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
     context->SetDpi(96.0f, 96.0f);
@@ -103,26 +137,29 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     brushCache_.clear();
     brushCacheContext_ = context.Get();
     renderingFloatingDock_ = true;
-    const bool stagedBackdrop = host.backdrop.BeginStagedFrame();
-    struct BackdropCandidateScope
+    try
     {
-        DesktopBackdropCompositor& backdrop;
-        ~BackdropCandidateScope() { backdrop.DiscardStagedFrame(); }
-    } backdropCandidateScope{host.backdrop};
-    RECT guideLocal = host.guideOcclusionRect;
-    if (!IsRectEmpty(&guideLocal))
-        OffsetRect(&guideLocal, -host.sourceRect.left, -host.sourceRect.top);
-    if (stagedBackdrop) host.backdrop.SetOcclusionRect(guideLocal);
-    if (host.container)
-    {
-        snowdesktop::startup_diagnostics::Call(L"Dock.DrawChrome", [&] {
-            host.container->DrawChrome(context.Get(), lastMousePoint_);
-        });
-        snowdesktop::startup_diagnostics::Call(L"Dock.DrawContents", [&] {
-            host.container->DrawContents(context.Get());
-        });
+        if (host.container)
+        {
+            snowdesktop::startup_diagnostics::Call(L"Dock.DrawChrome", [&] {
+                host.container->DrawChrome(context.Get(), lastMousePoint_);
+            });
+            snowdesktop::startup_diagnostics::Call(L"Dock.DrawContents", [&] {
+                host.container->DrawContents(context.Get());
+            });
+        }
+        DrawDynamicOverlays(context.Get());
     }
-    DrawDynamicOverlays(context.Get());
+    catch (...)
+    {
+        context.Reset();
+        brushCache_.clear();
+        brushCacheContext_ = nullptr;
+        const HRESULT finish = surfaceDrawScope.Finish();
+        RecoverFloatingDockCompositionFailure(host, L"Draw candidate",
+            FAILED(finish) ? finish : E_FAIL, preserveExistingFrame && replacingSurface);
+        return false;
+    }
     renderingFloatingDock_ = false;
 
     context->SetTransform(
@@ -131,7 +168,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 
-    hr = snowdesktop::startup_diagnostics::Call(L"Dock.EndDraw", [&] { return frameSurface->EndDraw(); });
+    hr = snowdesktop::startup_diagnostics::Call(L"Dock.EndDraw", [&] { return surfaceDrawScope.Finish(); });
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
@@ -425,7 +462,6 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
         UpdateFloatingDockWindowBounds(host);
-        InvalidateFloatingDockWindow(host, true);
         return 0;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
@@ -483,7 +519,6 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
         UpdateFloatingDockWindowBounds(host);
-        InvalidateFloatingDockWindow(host, true);
         return 0;
     case WM_DPICHANGED:
         // Dock geometry is also already expressed in physical desktop pixels.
