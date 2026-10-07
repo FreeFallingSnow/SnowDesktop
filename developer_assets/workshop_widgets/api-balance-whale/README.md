@@ -14,6 +14,8 @@ SnowDesktop **官方社区组件**，不随宿主作为内置组件分发。默�
 
 预览金额使用隔离样本，样本说明保留在组件介绍中；组件画面采用实际运行的更新时间样式，不额外渲染“预览示例”字样。样本不会复制成新实例的真实余额。未配置真实密钥时显示未知和设置提示。
 
+显示采用统一的蓝色余额重点与半透明内卡片。币种与余额标题同排，余量状态独立占一行；明细金额采用相同字号与可见字形中心。小鲸模式将正常更新时间并入底栏，保留更多插画空间；完整日期可悬浮查看。数据模式将余额与明细组成一张卡片，窄版明细纵排，较宽时左右分区；错误提示保持独立一行，过长时截断并可悬浮查看全文。
+
 ## 官方 API 依据
 
 核对日期：2026-10-06；DeepSeek 字段含义于 2026-10-07 复核。只使用厂商直接公开的查询接口，不调用推理接口，不读取 DSH 本地数据库，不按 Token 或定价估算费用。
@@ -62,3 +64,5 @@ Official community widget, shipped separately from SnowDesktop. Whale mode is th
 Presets cover the documented DeepSeek, OpenRouter account/key, Moonshot CN/international, StepFun and Novita GET APIs listed above. The OpenRouter account endpoint requires a Management Key; a normal key can query its own spending limit. StepFun's reference does not identify a currency, so its amounts are shown without a currency symbol. Custom HTTPS GET JSON queries accept explicit documented paths, units and authentication headers. Missing or malformed values never become a fabricated zero balance.
 
 Automated package checks and isolated CLI previews are distinct from real-key network and desktop interaction acceptance. The MIT upstream excludes its assets; this package uses a new generated illustration and retains code attribution.
+
+The visual hierarchy uses a blue balance amount, translucent internal cards, a currency aligned with the heading, and a separate availability line. Detail amounts share their font size and visible glyph center. Whale mode keeps normal update times in the footer to leave more room for the illustration; hover shows the full date. Data mode groups balance and details in one card, stacking narrow details and dividing wider layouts into columns. Errors have a separate line with ellipsis and a full-message tooltip.
