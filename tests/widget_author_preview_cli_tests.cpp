@@ -418,6 +418,8 @@ return widget.define({
       view.image({key="linear",source=stripes,alt="",width=32,height=32}),
       view.image({key="nearest",source=stripes,alt="",width=32,height=32,interpolation="nearest"}),
       view.image({key="tint",source=alpha,alt="",width=32,height=32,tint=0xff0000}),
+      view.image({key="tint-opacity",source=alpha,alt="",width=32,height=32,
+        tint=0xff0000,style={opacity=0.5}}),
     }})
   end,
 })
@@ -452,9 +454,15 @@ end})
                         "imageFit linear shares the high-quality shrinking path");
                 const auto last = PixelAt(png, x + 80, y);
                 if (declarative)
+                {
                     Check(last[0] > 245 && last[1] < 4 && last[2] < 4 &&
                         std::abs(int(last[3]) - 32) <= 4,
                         "view tint preserves downsampled transparent coverage");
+                    const auto faded = PixelAt(png, x + 120, y);
+                    Check(faded[0] > 245 && faded[1] < 4 && faded[2] < 4 &&
+                        std::abs(int(faded[3]) - 16) <= 4,
+                        "view tint applies node opacity once without darkening its color");
+                }
                 else
                     Check((last[0] == 0 || last[0] == 255) && last[3] == 255,
                         "imageFit nearest keeps point samples");

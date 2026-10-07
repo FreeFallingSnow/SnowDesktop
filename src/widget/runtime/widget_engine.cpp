@@ -18366,13 +18366,15 @@ static void DrawWidgetViewBitmap(D2DState* state,
                 CLSID_D2D1ColorMatrix, &tintEffect)) && tintEffect)
         {
             const D2D1_COLOR_F tint = D2D1::ColorF(*imageTint);
+            // PREMULTIPLIED mode unpremultiplies the input and premultiplies
+            // the matrix output. Supply constant straight RGB and scale only
+            // alpha; putting RGB in the alpha row would multiply alpha twice.
             const D2D1_MATRIX_5X4_F matrix = {
                 0.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 0.0f,
-                tint.r * opacity, tint.g * opacity,
-                    tint.b * opacity, opacity,
-                0.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, opacity,
+                tint.r, tint.g, tint.b, 0.0f,
             };
             tintEffect->SetInput(0, bitmap);
             if (SUCCEEDED(tintEffect->SetValue(
