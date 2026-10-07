@@ -414,7 +414,7 @@ void TestImageDownsampling(const std::filesystem::path& snowwidget,
 local stripes, alpha = resource.image("stripes"), resource.image("alpha")
 return widget.define({
   view = function()
-    return view.row({width="fill", height="fill", padding=8, gap=8, children={
+    return view.row({key="sampling-root",width="fill",height="fill",padding=8,gap=8,children={
       view.image({key="linear",source=stripes,alt="",width=32,height=32}),
       view.image({key="nearest",source=stripes,alt="",width=32,height=32,interpolation="nearest"}),
       view.image({key="tint",source=alpha,alt="",width=32,height=32,tint=0xff0000}),
@@ -432,6 +432,7 @@ end})
         const auto output = root / (declarative ? L"sampling-view.png" : L"sampling-draw.png");
         const auto [code, result] = Run(snowwidget, {L"preview", source.wstring(), output.wstring(),
             L"--host", host.wstring(), L"--dpi", L"96", L"--content-only"});
+        if (code != 0) std::cerr << result << '\n';
         Check(code == 0 && result.find("\"ok\":true") != std::string::npos,
             "production image sampling preview succeeds");
         const auto png = ReadPng(output);
