@@ -2232,6 +2232,21 @@ void TestOleDropButtonStateEndsWithEachGesture()
     Check(handler.lastKeyState == (MK_RBUTTON | MK_SHIFT),
         "the first observed drag button must survive a button-free over and retain release modifiers");
 
+    for (const DWORD button : {DWORD{MK_LBUTTON}, DWORD{MK_RBUTTON}})
+    {
+        const DWORD otherButtons =
+            (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON) & ~button;
+        adapter->DragEnter(nullptr, button | MK_ALT, {}, &effect);
+        adapter->DragOver(otherButtons | MK_CONTROL, {}, &effect);
+        adapter->Drop(nullptr, otherButtons | MK_SHIFT, {}, &effect);
+        Check(handler.lastKeyState == (button | MK_SHIFT),
+            "buttons pressed later must not change left/right drop semantics or retain stale modifiers");
+    }
+    adapter->DragEnter(nullptr, 0, {}, &effect);
+    adapter->Drop(nullptr, MK_LBUTTON | MK_CONTROL, {}, &effect);
+    Check(handler.lastKeyState == (MK_LBUTTON | MK_CONTROL),
+        "a drop with no earlier observed button must preserve its callback button and modifiers");
+
     handler.onDrop = [adapter] {
         DWORD nestedEffect = DROPEFFECT_COPY;
         adapter->DragEnter(nullptr, MK_RBUTTON, {}, &nestedEffect);

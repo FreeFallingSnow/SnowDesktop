@@ -1127,6 +1127,12 @@ void TestDragInputSampling()
         !dragInputRules::IsPointerGestureButtonDown(false, true, false, true, false) &&
         dragInputRules::IsPointerGestureButtonDown(true, false, true, true, false),
         "right drags must follow right-button release without borrowing the left button, while middle gestures retain precedence");
+    Check(!dragInputRules::IsItemDragRelease(true, false),
+        "left-up must retain a right drag even when its wParam reports the still-held right button");
+    Check(dragInputRules::IsItemDragRelease(true, true) &&
+        dragInputRules::IsItemDragRelease(false, false) &&
+        !dragInputRules::IsItemDragRelease(false, true),
+        "only release of the initiating item-drag button may finish the gesture, independent of other held buttons");
     Check(
         dragInputRules::IsMarqueePointerGesture(
             true, false, true, true, true,

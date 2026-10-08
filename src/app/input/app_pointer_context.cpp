@@ -470,7 +470,8 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     {
         if (dragSession_.IsActive())
         {
-            OnLeftButtonUpAt(MK_RBUTTON, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+            OnLeftButtonUpAt(MK_RBUTTON,
+                {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}, true);
             return;
         }
         CancelPointerPressWithoutCaptureRelease();

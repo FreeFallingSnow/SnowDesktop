@@ -1844,7 +1844,8 @@ private:
     /** @brief 清理弹窗临时按下项及所有指向它的交互裸指针。 */
     void ClearPopupMouseDownItem();
     /** @brief 处理鼠标左键释放消息。 @param wp WPARAM @param point 完整客户端坐标 */
-    void OnLeftButtonUpAt(WPARAM wp, POINT point);
+    void OnLeftButtonUpAt(WPARAM wp, POINT point,
+        bool rightButtonRelease = false);
     /** @brief 处理中键按下，在组件任意位置开始移动。 */
     void OnMiddleButtonDown(WPARAM wp, LPARAM lp);
     /** @brief 处理中键释放，完成组件移动。 */

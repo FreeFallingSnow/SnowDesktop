@@ -2,6 +2,7 @@
 #include "app/popup/categorized_popup_scope.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "desktop/desktop_hover_rules.h"
+#include "drag_drop/drag_input_rules.h"
 #include "steam/steam_app_identity.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
@@ -843,10 +844,12 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     return true;
 }
 
-void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
+void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
+    bool rightButtonRelease)
 {
     const bool rightDrop = rightButtonItemDrag_;
-    if (rightDrop && (wp & MK_RBUTTON) == 0) return;
+    if (!snowdesktop::drag_input_rules::IsItemDragRelease(
+            rightDrop, rightButtonRelease)) return;
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
