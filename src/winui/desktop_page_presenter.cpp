@@ -628,7 +628,6 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock categoryHint{nullptr};
     muxc::TextBlock categoryTypesHeading{nullptr};
     muxc::TextBlock addCategoryHeading{nullptr};
-    muxc::TextBlock saveCategoryHeading{nullptr};
     muxc::StackPanel categoryRulePanel{nullptr};
     std::vector<std::unique_ptr<RuleRow>> ruleRows;
     muxc::TextBox newCategoryLabel{nullptr};
@@ -637,12 +636,6 @@ struct DesktopPagePresenter::Impl
     muxc::Grid newCategoryNameActions{nullptr};
     SettingRow newCategoryLabelRow;
     SettingRow newCategoryExtensionsRow;
-    muxc::Button applyCategory{nullptr};
-    muxc::Button restoreCategory{nullptr};
-    SettingRow categoryActionsRow;
-    muxc::TextBlock categoryStatus{nullptr};
-    SettingRow categoryStatusRow;
-    mux::DispatcherTimer categoryStatusTimer{nullptr};
 
     std::uint64_t generation = 0;
     std::uint64_t desktopRevision = 0;
@@ -652,8 +645,6 @@ struct DesktopPagePresenter::Impl
     bool updatingControls = false;
     bool active = false;
     bool closed = false;
-    bool categoryDirty = false;
-    bool categoryDirtyKnown = false;
 
     winrt::event_token shortcutArrowToken{};
     winrt::event_token showCountsToken{};
@@ -666,9 +657,6 @@ struct DesktopPagePresenter::Impl
     winrt::event_token filterEnabledToken{};
     winrt::event_token outlineEnabledToken{};
     winrt::event_token addCategoryToken{};
-    winrt::event_token applyCategoryToken{};
-    winrt::event_token restoreCategoryToken{};
-    winrt::event_token categoryStatusTimerToken{};
 
     [[nodiscard]] std::wstring L(
         std::string_view key,
@@ -1022,7 +1010,6 @@ struct DesktopPagePresenter::Impl
         };
         categoryTypesHeading = makeSubsectionHeading();
         addCategoryHeading = makeSubsectionHeading();
-        saveCategoryHeading = makeSubsectionHeading();
         categoryHint = muxc::TextBlock{};
         categoryHint.Opacity(0.72);
         categoryHint.TextWrapping(mux::TextWrapping::Wrap);
@@ -1052,32 +1039,6 @@ struct DesktopPagePresenter::Impl
         categoryRulesCard.content.Children().Append(newCategoryLabelRow.root);
         categoryRulesCard.content.Children().Append(
             newCategoryExtensionsRow.root);
-
-        muxc::StackPanel categoryActions{};
-        categoryActions.Orientation(muxc::Orientation::Horizontal);
-        categoryActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        categoryActions.Spacing(8.0);
-        applyCategory = muxc::Button{};
-        restoreCategory = muxc::Button{};
-        applyCategory.VerticalAlignment(mux::VerticalAlignment::Center);
-        restoreCategory.VerticalAlignment(mux::VerticalAlignment::Center);
-        applyCategory.VerticalContentAlignment(mux::VerticalAlignment::Center);
-        restoreCategory.VerticalContentAlignment(
-            mux::VerticalAlignment::Center);
-        applyCategory.MinHeight(32.0);
-        restoreCategory.MinHeight(32.0);
-        applyCategory.Visibility(mux::Visibility::Collapsed);
-        restoreCategory.Visibility(mux::Visibility::Collapsed);
-        categoryActionsRow.Initialize(categoryActions);
-        categoryActionsRow.SetControlAlignment(
-            mux::HorizontalAlignment::Right);
-        saveCategoryHeading.Visibility(mux::Visibility::Collapsed);
-        categoryRulesCard.content.Children().Append(categoryActionsRow.root);
-        categoryStatus = muxc::TextBlock{};
-        categoryStatus.Opacity(0.72);
-        categoryStatusRow.Initialize(categoryStatus);
-        categoryStatusRow.root.Visibility(mux::Visibility::Collapsed);
-        categoryRulesCard.content.Children().Append(categoryStatusRow.root);
     }
 
     template <typename Edit>
@@ -1269,33 +1230,6 @@ struct DesktopPagePresenter::Impl
             });
         addCategoryToken = addCategory.Click(
             [this](const auto&, const auto&) { AddCategoryRule(); });
-        applyCategoryToken = applyCategory.Click(
-            [this](const auto&, const auto&) {
-                if (!closed && active && hasSnapshot &&
-                    actions.commitCategory)
-                {
-                    actions.commitCategory(generation);
-                }
-            });
-        restoreCategoryToken = restoreCategory.Click(
-            [this](const auto&, const auto&) {
-                UpdateCategory(SettingsUpdateMode::Commit,
-                    [](CategorySettings& settings) {
-                        settings = CategorySettings::Defaults();
-                    });
-            });
-        categoryStatusTimer = mux::DispatcherTimer{};
-        categoryStatusTimer.Interval(std::chrono::milliseconds(2500));
-        categoryStatusTimerToken = categoryStatusTimer.Tick(
-            [this](const auto&, const auto&) {
-                categoryStatusTimer.Stop();
-                if (!categoryDirty)
-                {
-                    categoryStatus.Text(L"");
-                    categoryStatusRow.root.Visibility(
-                        mux::Visibility::Collapsed);
-                }
-            });
     }
 
     std::wstring RuleLabel(const CategoryRule& rule) const
@@ -1751,9 +1685,6 @@ struct DesktopPagePresenter::Impl
         if (newGeneration)
         {
             CancelContinuousEdits();
-            categoryStatusTimer.Stop();
-            categoryDirty = false;
-            categoryDirtyKnown = false;
         }
         generation = snapshot.generation;
         const bool desktopEditActive = HasActiveDesktopEdit();
@@ -1786,29 +1717,6 @@ struct DesktopPagePresenter::Impl
             personalizationRevision =
                 snapshot.domainRevisions.personalization;
         }
-        const bool nextCategoryDirty = HasSettingsDomain(
-            snapshot.dirtyDomains, SettingsDomain::Category);
-        if (nextCategoryDirty)
-        {
-            categoryStatusTimer.Stop();
-            categoryStatus.Text(
-                L("app.settings.save_unsaved", L"Unsaved changes"));
-            categoryStatusRow.root.Visibility(mux::Visibility::Visible);
-        }
-        else if (categoryDirtyKnown && categoryDirty)
-        {
-            categoryStatus.Text(L("app.settings.saved", L"Saved"));
-            categoryStatusRow.root.Visibility(mux::Visibility::Visible);
-            categoryStatusTimer.Stop();
-            categoryStatusTimer.Start();
-        }
-        else if (!categoryStatusTimer.IsEnabled())
-        {
-            categoryStatus.Text(L"");
-            categoryStatusRow.root.Visibility(mux::Visibility::Collapsed);
-        }
-        categoryDirty = nextCategoryDirty;
-        categoryDirtyKnown = true;
         hasSnapshot = true;
         if (!desktopEditActive)
             UpdateConditionalStates();
@@ -1989,7 +1897,7 @@ struct DesktopPagePresenter::Impl
             L("app.settings.cancel", L"Cancel"));
 
         categoryHint.Text(L("app.settings.category_hint",
-            L"Changes to category rules are applied explicitly."));
+            L"Separate extensions with spaces, commas or semicolons. Changes take effect immediately."));
         collectProgramsRow.SetText(
             L("app.settings.collect_programs", L"Collect programs"),
             L("app.settings.collect_programs_hint", L"Allow file category widgets to collect programs and shortcuts. Off by default."));
@@ -1998,33 +1906,14 @@ struct DesktopPagePresenter::Impl
             L("app.settings.category_type", L"Category type"));
         addCategoryHeading.Text(
             L("app.settings.add_category", L"Add category type"));
-        saveCategoryHeading.Text(
-            L("app.settings.save_settings", L"Save settings"));
         newCategoryLabelRow.SetText(
             L("app.settings.category_name", L"Category name"));
         newCategoryExtensionsRow.SetText(
             L("app.settings.category_extensions", L"Extensions"));
         addCategory.Content(winrt::box_value(
             L("app.settings.add", L"Add")));
-        applyCategory.Content(winrt::box_value(
-            L("app.settings.apply", L"Apply")));
-        restoreCategory.Content(winrt::box_value(
-            L("app.settings.restore_default", L"Restore defaults")));
-        categoryActionsRow.SetText(
-            L("app.settings.category_rules", L"Category rules"));
-        categoryStatusRow.SetText(
-            L("app.settings.save_status", L"Save status"));
         muxa::AutomationProperties::SetName(addCategory,
             L("app.settings.add_category", L"Add category"));
-        muxa::AutomationProperties::SetName(applyCategory,
-            L("app.settings.apply", L"Apply"));
-        muxa::AutomationProperties::SetName(restoreCategory,
-            L("app.settings.restore_default", L"Restore defaults"));
-        if (categoryDirty)
-            categoryStatus.Text(
-                L("app.settings.save_unsaved", L"Unsaved changes"));
-        else if (categoryStatusTimer.IsEnabled())
-            categoryStatus.Text(L("app.settings.saved", L"Saved"));
         LocalizeRuleRows();
         UpdateConditionalStates();
         updatingControls = wasUpdating;
@@ -2098,7 +1987,7 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.iconBeautify.outlineColor")
             return appearanceTarget(outlineColor->editor.button);
         if (id == "desktop.categories" || id == "desktop.categoryRules")
-            return applyCategory;
+            return categoryRulesCard.root;
         if (id == "desktop.category.add") return newCategoryLabel;
         return nullptr;
     }
@@ -2151,11 +2040,6 @@ struct DesktopPagePresenter::Impl
         CloseEditors();
         try
         {
-            if (categoryStatusTimer)
-            {
-                categoryStatusTimer.Stop();
-                categoryStatusTimer.Tick(categoryStatusTimerToken);
-            }
             shortcutArrow.SelectionChanged(shortcutArrowToken);
             showCategoryTabCounts.Toggled(showCountsToken);
             collectPrograms.Toggled(collectProgramsToken);
@@ -2168,8 +2052,6 @@ struct DesktopPagePresenter::Impl
             filterEnabled.Toggled(filterEnabledToken);
             outlineEnabled.Toggled(outlineEnabledToken);
             addCategory.Click(addCategoryToken);
-            applyCategory.Click(applyCategoryToken);
-            restoreCategory.Click(restoreCategoryToken);
         }
         catch (...)
         {

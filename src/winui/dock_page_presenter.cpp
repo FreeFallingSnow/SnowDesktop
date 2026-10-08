@@ -2473,10 +2473,9 @@ struct DockPagePresenter::Impl
             fullscreenSwipeToggle, fullscreenSwipeRow.label.Text());
         allowDesktopContentOverlapRow.SetText(
             L("settings.dock.allowDesktopContentOverlap",
-                L"Allow Dock to overlap desktop content"),
+                L"Keep desktop content clear of Dock"),
             L("settings.dock.allowDesktopContentOverlap.description",
-                L"Stop reserving desktop layout space for the Dock, so it "
-                  "may cover content near the screen edge."));
+                L"Keep desktop icons and widgets clear of the Dock. Maximized windows are controlled separately."));
         showOnlyWhenSummonedRow.SetText(
             L("settings.dock.showOnlyWhenSummoned",
                 L"Show Dock only when summoned"),
@@ -2499,14 +2498,14 @@ struct DockPagePresenter::Impl
         mergedHeight->RefreshLocalizedText();
         muxa::AutomationProperties::SetName(taskbarSuppressToggle, suppressTaskbarRow.label.Text());
         reserveScreenSpaceRow.SetText(L("settings.dock.reserveScreenSpace", L"Reserve screen space"),
-            L("settings.dock.reserveScreenSpace.description", L"Keep maximized apps clear of the independent Dock. A merged bar reserves space automatically; summon-only mode reserves none. Desktop content spacing is a separate setting below."));
+            L("settings.dock.reserveScreenSpace.description", L"Keep maximized windows clear of the standalone Dock. A summon-only Dock reserves no space."));
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
         singleClickLaunchItemsRow.SetText(
             L("settings.dock.singleClickLaunchItems", L"Launch pinned and frequent icons with a single click"),
             L("settings.dock.singleClickLaunchItems.description",
-                L"Single-click app and file icons in the pinned and frequent areas to launch or open them. Off by default; folders and collections keep their popup behavior."));
+                L"When off, double-click to launch. Folders and collections keep their current opening behavior."));
         muxa::AutomationProperties::SetName(
             singleClickLaunchItems, singleClickLaunchItemsRow.label.Text());
         showFrequentItemsRow.SetText(L(

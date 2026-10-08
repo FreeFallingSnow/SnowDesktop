@@ -2255,7 +2255,7 @@ struct WidgetsPagePresenter::Impl
                 muxc::Button settings = MakeActionButton(
                     L("settings.widget.fields", L"Widget settings"),
                     L("settings.page.widget.description",
-                        L"Open this instance's declarative settings."));
+                        L"Adjust this widget's settings."));
                 HookClick(settings,
                     [this, instanceId = instance.instanceId](
                         const winrt::Windows::Foundation::IInspectable&,

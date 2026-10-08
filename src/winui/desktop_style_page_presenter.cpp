@@ -488,11 +488,11 @@ struct DesktopStylePagePresenter::Impl
             [this](int index) { EmitGeneral([index](auto& value) { value.statusBar.monitorScope = static_cast<DockMonitorScope>(index); }); }, BarEnabled);
 
         const auto animationCard = AddSection(style, "settings.animation.dock");
-        AddChoice(animationCard, "settings.animation.hover", "settings.animation.hover.description", "desktopStyle.animation.hover",
+        AddChoice(animationCard, "settings.animation.hover", {}, "desktopStyle.animation.hover",
             {"settings.animation.option.noMagnification", "settings.animation.option.singleIcon", "settings.animation.option.wave"},
             [](const auto&, const auto& value) { return animation::NormalizeHoverEffect(value.hoverEffect); },
             [this](int index) { EmitDock([index](auto& value) { value.hoverEffect = index; }); }, AnimationEnabled);
-        AddChoice(animationCard, "settings.animation.launch", "settings.animation.launch.description", "desktopStyle.animation.launch",
+        AddChoice(animationCard, "settings.animation.launch", {}, "desktopStyle.animation.launch",
             {"settings.animation.option.off", "settings.animation.option.bounce", "settings.animation.option.gentleScale"},
             [](const auto&, const auto& value) { return animation::NormalizeLaunchEffect(value.launchEffect); },
             [this](int index) { EmitDock([index](auto& value) { value.launchEffect = index; }); }, AnimationEnabled);

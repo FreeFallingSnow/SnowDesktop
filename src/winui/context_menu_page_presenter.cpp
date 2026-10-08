@@ -177,14 +177,13 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void Text()
     {
-        expandQuickActionsRow.SetText(L("settings.contextMenu.expandQuickActions"),
-            L("settings.contextMenu.expandQuickActions.description"));
+        expandQuickActionsRow.SetText(L("settings.contextMenu.expandQuickActions"));
         hidePageManagementRow.SetText(L("settings.contextMenu.hidePageManagement"),
             L("settings.contextMenu.hidePageManagement.description"));
         mux::Automation::AutomationProperties::SetName(expandQuickActions,
             L("settings.contextMenu.expandQuickActions"));
         mux::Automation::AutomationProperties::SetHelpText(expandQuickActions,
-            L("settings.contextMenu.expandQuickActions.description"));
+            expandQuickActionsRow.help.Text());
         mux::Automation::AutomationProperties::SetName(hidePageManagement,
             L("settings.contextMenu.hidePageManagement"));
         mux::Automation::AutomationProperties::SetHelpText(hidePageManagement,

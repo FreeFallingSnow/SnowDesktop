@@ -38,7 +38,7 @@ public:
         }
         if (appearanceOnly_)
         {
-            auto layout = Group("quickNav.layout", [this] {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
+            auto layout = Group("quickNav.layout", [this] {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});}, "quickNav.layout.pixelHint");
             AddNumber(layout, "expandedWidth", &QuickNavigationLayout::expandedWidth, 400, 1800);
             AddNumber(layout, "collapsedWidth", &QuickNavigationLayout::collapsedWidth, 360, 1400);
             AddNumber(layout, "maximumHeight", &QuickNavigationLayout::maximumHeight, 220, 1400);
@@ -116,7 +116,7 @@ public:
                         const std::string owner = key.starts_with("search") || key.starts_with("type") ? "search" : key.starts_with("tab") || key.starts_with("header") ? "navigation" : "results";
                         return owner == area;
                     });});
-                }));
+                }, "quickNav.colorHint.opacity"));
                 auto color = std::make_unique<Color>(); color->key = name;
                 color->editor = std::make_unique<presenter_controls::ColorFlyoutEditor>();
                 auto* current = color.get();
@@ -127,7 +127,7 @@ public:
                 current->editor->picker.IsAlphaEnabled(true);
                 current->editor->picker.IsAlphaSliderVisible(true);
                 current->editor->picker.IsAlphaTextInputVisible(true);
-                current->editor->SetText(L(std::string("quickNav.color.") + name), L(ColorHint(name)), L("app.settings.cancel"));
+                current->editor->SetText(L(std::string("quickNav.color.") + name), ColorHelp(name), L("app.settings.cancel"));
                 presenter_controls::AddRestoreDefaultAction(current->editor->row, L("app.settings.restore_default"), [this, name] {commit_([name](auto& value) {value.colors.erase(name);});});
                 colorGroups.at(area).Children().Append(current->editor->row.root);
                 focus_.emplace("quickNav.color." + name,current->editor->row.root);
@@ -165,7 +165,7 @@ public:
     {
         sync_ = true;
         for (const auto& [key, label] : labels_) label.Text(L(key));
-        for (const auto& [key, row] : rows_) row->SetText(L(key), key.starts_with("quickNav.layout.") ? L(LayoutHint(key)) : std::wstring{});
+        for (const auto& [key, row] : rows_) row->SetText(L(key), key == "quickNav.layout.visibleRows" ? L("quickNav.layout.rowsHint") : std::wstring{});
         for (const auto& [key, group] : groups_) group.Header(winrt::box_value(L(key)));
         if (!appearanceOnly_)
         {
@@ -175,7 +175,7 @@ public:
             addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));
             if (hasValues_) BuildEngines();
         }
-        for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), L(ColorHint(color->key)), L("app.settings.cancel"));
+        for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), ColorHelp(color->key), L("app.settings.cancel"));
         sync_ = false;
     }
     void Register(const std::function<void(std::string, const winrt::Microsoft::UI::Xaml::FrameworkElement&)>& registrar) const
@@ -199,18 +199,12 @@ private:
     struct Number {std::string key; int QuickNavigationLayout::*field; NumberBox box;};
     struct Color {std::string key; std::unique_ptr<presenter_controls::ColorFlyoutEditor> editor;};
     std::wstring L(std::string_view key) const {return localize_(key);}
-    static const char* ColorHint(std::string_view key)
+    std::wstring ColorHelp(std::string_view key) const
     {
         if (key == "resultFill" || key == "resultBorder" || key == "iconPlateFill" || key == "iconPlateBorder" ||
             key == "tabDefaultFill" || key == "tabDefaultStroke" || key == "tabActiveStroke" || key == "tabHoverStroke")
-            return "quickNav.colorHint.transparent";
-        return "quickNav.colorHint.opacity";
-    }
-    static const char* LayoutHint(std::string_view key)
-    {
-        if (key.ends_with("visibleRows")) return "quickNav.layout.rowsHint";
-        if (key.ends_with("labelLines")) return "quickNav.layout.linesHint";
-        return "quickNav.layout.pixelHint";
+            return L("quickNav.colorHint.transparent");
+        return {};
     }
     bool Accept(const NavigationSettings& candidate)
     {
@@ -244,12 +238,18 @@ private:
         if (!hint.empty()) {winrt::Microsoft::UI::Xaml::Controls::TextBlock text; text.Text(L(hint)); text.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap); text.Opacity(.68); panel.Children().Append(text); labels_.emplace_back(hint,text);}
         root_.Children().Append(card); focus_.emplace(key,panel); return panel;
     }
-    Panel Group(std::string key, std::function<void()> reset)
+    Panel Group(std::string key, std::function<void()> reset, std::string hint = {})
     {
         Panel panel; panel.Spacing(12); panel.Padding({20,8,20,16});
         winrt::Microsoft::UI::Xaml::Controls::Button button; presenter_controls::ConfigureRestoreDefaultButton(button,L("app.settings.restore_default"));
         button.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
         button.Click([reset](auto&&, auto&&) {reset();}); panel.Children().Append(button);
+        if (!hint.empty())
+        {
+            winrt::Microsoft::UI::Xaml::Controls::TextBlock text;
+            text.Text(L(hint)); text.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap); text.Opacity(.68);
+            panel.Children().Append(text); labels_.emplace_back(hint, text);
+        }
         winrt::Microsoft::UI::Xaml::Controls::Expander expander; expander.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
         expander.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch); expander.Header(winrt::box_value(L(key))); expander.Content(panel);
         if (appearanceOnly_) root_.Children().Append(expander);
