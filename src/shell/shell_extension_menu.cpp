@@ -883,33 +883,39 @@ struct Host
                 DisableOwned(source, item.hSubMenu, depth + 1);
         }
     }
-    void Invoke(UINT token, POINT point)
+    bool Stateful(UINT token)
+    {
+        const auto found = commands.find(token);
+        return found != commands.end() && !found->second.native &&
+            StatePairForVerb(Utf8(Verb(*found->second.source, found->second.offset + 1)));
+    }
+    HRESULT Invoke(UINT token, POINT point)
     {
         auto found = commands.find(token);
         if (found == commands.end() || invoked)
-            return;
+            return E_INVALIDARG;
         invoked = true;
         auto command = found->second;
         auto &source = *command.source;
-        if (source.metadataOnly) return;
+        if (source.metadataOnly) return E_ACCESSDENIED;
         if (source.nvidiaApplication)
         {
             // Recheck registration/security and the installed target at click.
             // A stale menu cannot launch an unregistered or blocked provider,
             // a replacement application, or a newly disabled default command.
-            if (!NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return;
+            if (!NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return E_ACCESSDENIED;
             auto current = NvidiaControlPanelApplication();
             int order = 1;
-            if (!current || FAILED(source.nvidiaApplication->Compare(current.Get(), SICHINT_CANONICAL, &order)) || order) return;
+            if (!current || FAILED(source.nvidiaApplication->Compare(current.Get(), SICHINT_CANONICAL, &order)) || order) return E_INVALIDARG;
             source.context.Reset();
             DestroyMenu(source.menu); source.menu = CreatePopupMenu();
             if (!source.menu || FAILED(current->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&source.context))) ||
-                FAILED(source.context->QueryContextMenu(source.menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return;
+                FAILED(source.context->QueryContextMenu(source.menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return E_FAIL;
             const auto refreshed = DefaultApplicationOpen(source.context.Get(), source.menu);
-            if (!refreshed) return;
+            if (!refreshed) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
             command.offset = *refreshed;
         }
-        else
+        else if (command.native || !shell_start_pin::CommandAction(source.context.Get(), command.offset))
         {
             source.site.Initialize(source.folder.Get(), window);
             source.site.Attach(source.context.Get());
@@ -924,13 +930,13 @@ struct Host
                 TrackPopupMenuEx(popup, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, window, nullptr);
             tracking = nullptr;
             if (!chosen)
-                return;
+                return HRESULT_FROM_WIN32(ERROR_CANCELLED);
             command.offset = chosen - 1;
         }
         // Keep application-owned file operations out of the native fallback.
         // Their desktop/Dock semantics are handled by the existing host menu.
         if (!source.nvidiaApplication && OwnedVerb(Verb(source, command.offset + 1)))
-            return;
+            return E_ACCESSDENIED;
         std::function<bool(HMENU, int)> enabled = [&](HMENU menu, int depth) {
             if (depth > 16)
                 return false;
@@ -948,7 +954,7 @@ struct Host
             return false;
         };
         if (!enabled(source.menu, 0))
-            return;
+            return E_ACCESSDENIED;
         // Exposed commands run in this supervised helper rather than in the
         // classic host menu. Start pinning still requires Explorer's thread,
         // and must use this live session's original shortcut, never its target.
@@ -957,8 +963,7 @@ struct Host
                     return startPin ? startPin(action, path, window, point) : E_NOTIMPL;
                 }))
         {
-            progress("Start pin result: " + std::to_string(static_cast<unsigned long>(*result)));
-            return; // A rejected/failed Start request must never invoke locally.
+            return *result; // A rejected/failed Start request must never invoke locally.
         }
         source.site.SetInvocationOwner(window);
         CMINVOKECOMMANDINFOEX invoke{};
@@ -971,7 +976,7 @@ struct Host
         invoke.ptInvoke = point;
         std::string ansi;
         SetShellInvocationDirectory(invoke, source.directory, ansi);
-        source.context->InvokeCommand(reinterpret_cast<CMINVOKECOMMANDINFO *>(&invoke));
+        return source.context->InvokeCommand(reinterpret_cast<CMINVOKECOMMANDINFO *>(&invoke));
     }
 };
 } // namespace
@@ -1002,6 +1007,7 @@ struct Session::Impl
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<Reply> reply;
+    std::set<UINT> statefulTokens;
     std::string stage;
     std::filesystem::path sampleDirectory;
     std::vector<std::filesystem::path> retiredSamples;
@@ -1055,6 +1061,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
         impl_->generation = generation;
         impl_->started = GetTickCount64();
         impl_->delivered = impl_->succeeded = false;
+        impl_->statefulTokens.clear();
         impl_->reply.reset();
         impl_->stage = "start helper";
         impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
@@ -1118,6 +1125,12 @@ std::optional<Reply> Session::Poll()
         return {};
     impl_->delivered = true;
     impl_->succeeded = impl_->reply->ok;
+    std::function<void(const std::vector<Entry> &)> identify = [&](const auto &entries) {
+        for (const auto &entry : entries)
+        { if (entry.token && !entry.native && StatePairForVerb(entry.key)) impl_->statefulTokens.insert(entry.token);
+          identify(entry.children); }
+    };
+    identify(impl_->reply->entries);
     MenuTrace("query", impl_->succeeded ? "success" : "failure", double(GetTickCount64() - impl_->started), static_cast<unsigned>(impl_->reply->entries.size()));
     return std::move(impl_->reply);
 }
@@ -1127,10 +1140,24 @@ void Session::Invoke(UINT token, POINT position)
         throw settings_ipc::ProtocolError("Shell command session is no longer available");
     MenuTiming timing("invoke_ack");
     AllowSetForegroundWindow(impl_->process->ProcessId());
-    // Request acknowledgement only queues the invocation; arbitrary extension
+    impl_->succeeded = false; // An invoked or failed session can never return to the query pool.
+    if (impl_->statefulTokens.contains(token))
+    {
+        // This STA is the service worker, never the desktop UI thread. Observe
+        // completion of these bounded state changes before retiring the cache.
+        const auto result = impl_->channel.CallWithTimeout<HRESULT>(12000, "menu.invoke-stateful",
+            token, position.x, position.y);
+        timing.Record("completed");
+        if (FAILED(result)) throw settings_ipc::ProtocolError("Shell state command failed: " +
+            std::to_string(static_cast<unsigned long>(result)));
+    }
+    // Request acknowledgement only queues arbitrary extension invocation;
     // code is dispatched afterwards, so this does not wait for a dialog.
-    impl_->channel.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y);
-    timing.Record("acknowledged");
+    else
+    {
+        impl_->channel.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y);
+        timing.Record("acknowledged");
+    }
     auto process = impl_->process;
     impl_->detached = true;
     std::thread([process] {
@@ -1179,6 +1206,16 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                 else host.Invoke(token, {x, y});
                 invokedAt = GetTickCount64();
             });
+        });
+        channel.Bind<HRESULT, UINT, LONG, LONG>("menu.invoke-stateful", [&](UINT token, LONG x, LONG y) {
+            if (invocationQueued || (!invoke && !host.Stateful(token))) return E_INVALIDARG;
+            invocationQueued = true;
+            dispatchedAt = GetTickCount64();
+            HRESULT execution = S_OK;
+            if (invoke) invoke(token, {x, y});
+            else execution = host.Invoke(token, {x, y});
+            invokedAt = GetTickCount64();
+            return execution;
         });
         MSG msg{};
         bool running = true;

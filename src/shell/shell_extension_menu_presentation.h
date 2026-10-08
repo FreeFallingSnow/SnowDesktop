@@ -88,9 +88,26 @@ class Presentation
     {
         if (source.paths.empty() || !service_.MenuEnabled(source_, prefs_)) return;
         auto view = service_.MenuDisplay(source_, prefs_);
+        initialRevision_ = view.revision;
         cached_ = std::move(view.snapshot);
         contexts_ = view.contexts;
-        service_.Query(source_);
+        refreshState_ = cached_ && std::any_of(cached_->entries.begin(), cached_->entries.end(), [](const auto &e) {
+            return StatePairForVerb(e.key) != nullptr;
+        });
+        for (int i = 0; i < 4; ++i)
+            for (const auto &id : EffectiveShownIds(prefs_, static_cast<Context>(i)))
+                refreshState_ |= StatePairForId(id) != nullptr;
+        if (cached_ && refreshState_)
+        {
+            // Pin state is external to the shortcut's timestamp. Display the
+            // ordinary warm rows immediately, but materialize state commands
+            // only from this opening's fresh native query.
+            std::erase_if(cached_->entries, [](const auto &e) { return StatePairForVerb(e.key) != nullptr; });
+        }
+        // Retire any prewarm already in flight as well: it may have captured
+        // external pin state before this opening.
+        if (refreshState_) service_.Invalidate(source_);
+        service_.Query(source_, QueryPriority::Menu, refreshState_);
     }
     ~Presentation()
     {
@@ -102,16 +119,20 @@ class Presentation
     {
         MoveMoreToBottom(items, moreCommand);
         if (cached_) Insert(items, Convert(cached_->entries), moreCommand);
-        else if (!source_.paths.empty() && service_.MenuEnabled(source_, prefs_))
+        if ((!cached_ || refreshState_) && !source_.paths.empty() && service_.MenuEnabled(source_, prefs_))
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
                 if (!canApply) return {};
                 auto view = service_.MenuDisplay(source_, prefs_);
-                if (!view.snapshot && view.pending) return {};
+                if (view.pending && (!view.snapshot || refreshState_)) return {};
                 auto updated = current;
-                if (view.snapshot)
+                if (view.snapshot && (!refreshState_ || (view.revision > initialRevision_ && view.error.empty())))
                 {
+                    const bool warm = cached_.has_value();
                     cached_ = std::move(view.snapshot); contexts_ = view.contexts;
-                    Insert(updated, Convert(cached_->entries), moreCommand);
+                    auto additions = cached_->entries;
+                    if (warm && refreshState_)
+                        std::erase_if(additions, [](const auto &e) { return !StatePairForVerb(e.key); });
+                    Insert(updated, Convert(additions), moreCommand);
                 }
                 // A completed empty/failed query also ends the one-shot poll.
                 return updated;
@@ -202,6 +223,8 @@ class Presentation
     std::map<UINT, CommandReference> commands_;
     std::set<UINT> converting_;
     std::optional<Reply> cached_;
+    bool refreshState_ = false;
+    std::uint64_t initialRevision_ = 0;
     std::vector<HBITMAP> images_;
 };
 } // namespace snowdesktop::shell_extensions

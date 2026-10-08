@@ -68,8 +68,9 @@ std::uint64_t Dependency(const Catalogue &catalogue, const Request &request, uns
 }
 bool Configured(const Preferences &prefs, const std::string &id, Context context)
 {
-    return std::any_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto &r) { return r.id == id && r.category == CategoryOf(context); }) ||
-        std::any_of(prefs.overrides.begin(), prefs.overrides.end(), [&](const auto &r) { return r.id == id && r.context == context && r.visibility != Visibility::Inherit; });
+    const auto key = StateVisibilityId(id);
+    return std::any_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto &r) { return StateVisibilityId(r.id) == key && r.category == CategoryOf(context); }) ||
+        std::any_of(prefs.overrides.begin(), prefs.overrides.end(), [&](const auto &r) { return StateVisibilityId(r.id) == key && r.context == context && r.visibility != Visibility::Inherit; });
 }
 }
 std::vector<Entry> VisibleSnapshot(const Preferences &prefs, const Reply &reply, unsigned contexts)
@@ -82,7 +83,9 @@ std::vector<Entry> VisibleSnapshot(const Preferences &prefs, const Reply &reply,
             if (contexts & (1u << i))
             {
                 const auto context = static_cast<Context>(i);
-                const auto &id = !entry.registration.empty() && Configured(prefs, entry.registration, context) ? entry.registration : entry.provider;
+                const auto *pair = StatePairForVerb(entry.key);
+                const auto id = pair ? std::string(pair->id) :
+                    !entry.registration.empty() && Configured(prefs, entry.registration, context) ? entry.registration : entry.provider;
                 hidden |= IsHidden(prefs, id, context);
             }
         if (entry.separator) { if (!result.empty() && !result.back().separator) result.push_back(entry); }
@@ -481,7 +484,26 @@ struct MenuService::Impl
             const auto token = current && reply.ok && !invoked ? ResolveCommand(executable, click.reference) : 0;
             if (token)
             {
+                if (!click.reference.empty() && StatePairForVerb(std::get<1>(click.reference.back()))) invoked = true;
                 try { job.work.invoke(token, click.point); succeeded = invoked = true; } catch (...) {}
+            }
+            // A stateful invocation has completed in the helper before invoke
+            // returns. Retire its pre-action snapshot for every menu variant.
+            if (token && !click.reference.empty() && StatePairForVerb(std::get<1>(click.reference.back())))
+            {
+                std::vector<Request> affected;
+                {
+                    std::lock_guard lock(mutex);
+                    for (auto &[key, row] : rows) if (row.request.paths == request.paths)
+                    {
+                        row.view.snapshot.reset(); row.bytes = 0; row.invalid = true;
+                        ++row.dependency; ++row.view.revision;
+                        affected.push_back(row.request);
+                    }
+                    RebuildAvailable();
+                    for (const auto &target : affected) Queue(target, QueryPriority::Menu, true);
+                }
+                for (const auto &target : affected) cache.Erase(target);
             }
             if (click.completed) click.completed(succeeded);
         }
@@ -873,6 +895,7 @@ void MenuService::Prewarm(const Request &request)
 }
 void MenuService::Configure(Preferences preferences)
 {
+    Normalize(preferences);
     {
         std::lock_guard lock(impl_->mutex);
         const bool enabled = impl_->AnyEnabled();

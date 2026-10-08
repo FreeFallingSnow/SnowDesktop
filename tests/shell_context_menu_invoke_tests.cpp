@@ -626,6 +626,7 @@ struct TemporaryVerb
     {
         if (verb) { RegCloseKey(verb); verb=nullptr; }
         for (const auto &path : owned) RegDeleteTreeW(HKEY_CURRENT_USER,path.c_str());
+        if (!owned.empty()) SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
         owned.clear();
     }
     static void Value(HKEY key, const wchar_t *name, const std::wstring &text)
@@ -665,11 +666,16 @@ struct TemporaryVerb
             constexpr wchar_t executable[]=L"notepad.exe \"%1\""; // Never invoked.
             const auto written=RegSetValueExW(command,nullptr,0,REG_SZ,reinterpret_cast<const BYTE*>(executable),sizeof(executable));
             RegCloseKey(command); Expect(written==ERROR_SUCCESS,"write private command metadata");
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
         }
         catch (...) { Clear(); throw; }
     }
     ~TemporaryVerb() { Clear(); }
-    void Disable() { Value(verb,L"LegacyDisable",L""); }
+    void Disable()
+    {
+        Value(verb,L"LegacyDisable",L"");
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    }
 };
 template<class Wait>
 void TestSystemPolicy(Wait wait, const std::filesystem::path &directory)
@@ -684,6 +690,9 @@ void TestSystemPolicy(Wait wait, const std::filesystem::path &directory)
     };
     {
         ext::Session visible(request); const auto reply=wait(visible);
+        if (!reply.ok || probe(reply.entries) == reply.entries.end())
+            std::cerr << "Private policy query: ok=" << reply.ok << ", error=" << reply.error
+                      << ", entries=" << reply.entries.size() << std::endl;
         Expect(reply.ok&&probe(reply.entries)!=reply.entries.end(),
             "system-enabled private verb appears through the actual Shell aggregate");
     }
@@ -1494,11 +1503,11 @@ void TestExposedStartPinHelper()
     });
     Expect(selected != reply->entries.end(), "Windows exposes a canonical Start command for the shortcut");
     const auto expected = _stricmp(selected->key.c_str(), "PinToStartScreen") == 0 ? pin::Action::Pin : pin::Action::Unpin;
-    const HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, session.ProcessId());
-    struct ProcessScope { HANDLE value; ~ProcessScope() { if (value) CloseHandle(value); } } process{child};
-    Expect(child != nullptr, "observe the supervised invocation process");
-    session.Invoke(selected->token, {123, 456});
-    PumpUntil([&] { return std::filesystem::exists(output); },
+    bool rejected = false;
+    try { session.Invoke(selected->token, {123, 456}); }
+    catch (const snowdesktop::settings_ipc::ProtocolError &) { rejected = true; }
+    Expect(rejected, "the final executor's failure reaches the stateful invocation caller");
+    Expect(std::filesystem::exists(output),
         "an exposed Start command must reach the Explorer executor rather than local InvokeCommand");
     std::ifstream file(output, std::ios::binary);
     const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
@@ -1507,8 +1516,123 @@ void TestExposedStartPinHelper()
             {reinterpret_cast<const std::byte *>(bytes.data()), bytes.size()});
     Expect(path == shortcut.wstring() && action == expected && ownerValid && x == 123 && y == 456,
         "the exposed menu preserves the original Unicode .lnk, action, helper owner and click position");
-    Expect(WaitForSingleObject(child, 10000) == WAIT_OBJECT_0,
-        "a rejected final Start execution returns and the supervised helper exits");
+}
+
+void TestPairedCommandVisibility()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Catalogue catalogue;
+    ext::Preferences legacy;
+    for (const auto &pair : ext::StateCommandPairs)
+    {
+        const auto forward = "verb:" + std::string(pair.forward), reverse = "verb:" + std::string(pair.reverse);
+        legacy.rules.push_back({forward, ext::Category::Objects, false});
+        legacy.rules.push_back({reverse, ext::Category::Objects, true});
+        legacy.overrides.push_back({forward, ext::Context::File, ext::Visibility::Hide});
+        legacy.overrides.push_back({reverse, ext::Context::File, ext::Visibility::Show});
+        for (const auto &verb : {pair.forward, pair.reverse})
+        {
+            ext::Registration row; row.id = "verb:" + std::string(verb); row.linked = true; row.contexts = 3;
+            row.display.key = verb; row.display.label = std::wstring(verb.begin(), verb.end());
+            catalogue.rows.push_back(row);
+        }
+        Expect(!ext::IsHidden(legacy, forward, ext::Context::File) && !ext::IsHidden(legacy, reverse, ext::Context::File),
+            "an opt-in from either legacy state variant applies to both, independently of record order");
+    }
+    const auto rows = ext::ManagementRows(catalogue, ext::Category::Objects);
+    Expect(rows.size() == 3, "Start, taskbar and Quick Access each have one paired management switch");
+    ext::Normalize(legacy);
+    Expect(legacy.rules.size() == 3 && legacy.overrides.size() == 3,
+        "legacy state aliases collapse to one authority per category and location");
+    for (const auto &row : rows)
+    {
+        Expect(row.members.size() == 1 && ext::ManagementCommon(legacy, row, ext::Category::Objects) == true,
+            "both discovered variants share the same management state");
+        ext::SetManagementCommon(legacy, row, ext::Category::Objects, false);
+        const auto *pair = ext::StatePairForId(row.id);
+        Expect(pair && ext::IsHidden(legacy, "verb:" + std::string(pair->forward), ext::Context::File) &&
+            ext::IsHidden(legacy, "verb:" + std::string(pair->reverse), ext::Context::Folder),
+            "the primary hide switch disables both variants and clears old object exceptions");
+        ext::SetManagementCommon(legacy, row, ext::Category::Objects, true);
+        ext::SetOverride(legacy, "verb:" + std::string(pair->reverse), ext::Context::File, ext::Visibility::Hide);
+        Expect(ext::IsHidden(legacy, "verb:" + std::string(pair->forward), ext::Context::File) &&
+            !ext::IsHidden(legacy, "verb:" + std::string(pair->reverse), ext::Context::Folder),
+            "paired location overrides preserve the independent file/folder scopes");
+    }
+    JsonValue saved;
+    Expect(ParseJson(ext::WritePreferences(legacy), saved) && ext::ReadPreferences(&saved) == legacy,
+        "the unified pair settings survive the real preferences serializer");
+    ext::Preferences isolated;
+    ext::SetCommon(isolated, "reg:folder\\shell\\pintohome", ext::Category::Objects, true);
+    Expect(!ext::IsHidden(isolated, "verb:unpinfromhome", ext::Context::Folder) &&
+        ext::IsHidden(isolated, "verb:other", ext::Context::Folder),
+        "proven static Windows aliases join their pair without enabling unrelated commands");
+    const auto forward = catalogue.rows.front().display;
+    auto changed = forward; changed.key = "UnpinFromStartScreen"; changed.provider = "verb:unpinfromstartscreen"; changed.token = 99;
+    ext::Reply fresh{true, {changed}, {}};
+    Expect(ext::ResolveCommand(fresh, ext::AppendReference({}, forward)) == 0,
+        "shared visibility must never resolve an old Pin click to the opposite Unpin action");
+}
+
+void TestPairedCommandRefresh()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory directory;
+    const auto target = directory.path / L"state.lnk";
+    std::ofstream(target) << "private scheduler target";
+    ext::Request request; request.paths = {target.wstring()};
+    std::atomic<bool> pinned = false, hold = false, completed = false, success = false;
+    std::atomic<int> queries = 0, invokes = 0;
+    ext::MenuService service(directory.path / L"cache", [&](const auto &) {
+        ++queries;
+        const bool state = pinned.load();
+        ext::Entry action; action.key = state ? "UnpinFromStartScreen" : "PinToStartScreen";
+        action.provider = state ? "verb:unpinfromstartscreen" : "verb:pintostartscreen";
+        action.label = state ? L"Unpin" : L"Pin"; action.token = state ? 42 : 41;
+        ext::Entry ordinary; ordinary.key = "inspect"; ordinary.provider = "verb:inspect"; ordinary.label = L"Inspect"; ordinary.token = 43;
+        return ext::QueryWork{[&, action, ordinary]() -> std::optional<ext::Reply> {
+            if (hold) return {}; return ext::Reply{true, {ordinary, action}, {}};
+        }, [&, state, token = action.token](UINT selected, POINT) {
+            if (selected != token || pinned.load() != state) throw std::runtime_error("wrong state token");
+            ++invokes; pinned = !state; hold = true; // Hold the post-action query, never the invocation.
+        }};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:pintostartscreen", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(request);
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "seed the pre-action menu snapshot");
+    pinned = true; hold = true; // State changes outside SnowDesktop, without changing the .lnk.
+    menu::Item more; more.command = 7; more.label = L"More";
+    ext::Presentation presentation(request, prefs, L"", L"", service, [&](bool ok) { success = ok; completed = true; });
+    std::vector<menu::Item> items{more}; menu::Options options;
+    presentation.Attach(items, options, 7);
+    Expect(items.size() == 2 && items.front().label == L"Inspect" && options.pollItems &&
+        std::none_of(items.begin(), items.end(), [](const auto &item) { return item.label == L"Pin"; }),
+        "warm ordinary commands appear immediately, but cached external pin state is never displayed");
+    PumpUntil([&] { return queries >= 2; }, "opening a warm paired menu forces a native state query");
+    Expect(!options.pollItems(items, true), "a held state query cannot reinsert the stale cached action");
+    hold = false;
+    PumpUntil([&] { return !service.View(request).pending; }, "fresh external state query completes");
+    const auto additions = options.pollItems(items, true);
+    Expect(additions && std::count_if(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Unpin"; }) == 1 &&
+        std::none_of(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Pin"; }),
+        "this opening materializes exactly the current Unpin state without duplicating ordinary rows");
+    const auto selected = std::find_if(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Unpin"; });
+    Expect(presentation.Invoke(selected->command, {0, 0}), "dispatch the freshly displayed state command");
+    PumpUntil([&] { return completed.load(); }, "state invocation completion is observed by the real service");
+    Expect(success && invokes == 1 && !pinned && !service.View(request).snapshot,
+        "a completed state change retires the pre-action memory snapshot before notifying its caller");
+    ext::MenuSnapshotCache disk(directory.path / L"cache");
+    Expect(!disk.Find(disk.Capture(request)), "the same pre-action disk snapshot is retired too");
+    hold = false;
+    PumpUntil([&] { const auto view = service.View(request); return !view.pending && view.snapshot.has_value(); },
+        "the post-action native query publishes the new Pin state");
+    const auto after = service.MenuDisplay(request, prefs);
+    Expect(after.snapshot && after.snapshot->entries.back().label == L"Pin" && invokes == 1,
+        "one Unpin action produces one freshly queried Pin state and no duplicate invocation");
 }
 
 void TestUnchangedCataloguePersistence()
@@ -2578,6 +2702,8 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-state-commands")
+        { TestPairedCommandVisibility(); TestPairedCommandRefresh(); TestExposedStartPinHelper(); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
@@ -2601,6 +2727,8 @@ int wmain(int argc, wchar_t **argv)
             TestSourceAttribution();
             TestExtensionSessions();
             TestExposedStartPinHelper();
+            TestPairedCommandVisibility();
+            TestPairedCommandRefresh();
             TestSnapshotPresentation();
             TestPendingCachedClick();
             TestQueryScheduler();
