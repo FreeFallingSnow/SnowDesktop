@@ -251,7 +251,7 @@ struct DesktopStylePagePresenter::Impl
             actions.updateDock(generation, SettingsUpdateMode::PreviewAndCommit, std::move(edit));
     }
     void AddToggle(const muxc::StackPanel& parent, const char* key,
-        const char* help, const char* focus, ReadToggle read,
+        std::string_view help, const char* focus, ReadToggle read,
         std::function<void(bool)> write, ReadToggle enabled = {})
     {
         auto toggle = std::make_unique<Toggle>();
@@ -271,7 +271,7 @@ struct DesktopStylePagePresenter::Impl
         toggles.push_back(std::move(toggle));
     }
     void AddDockToggle(const muxc::StackPanel& parent, const char* key,
-        const char* help, const char* focus, bool DockSettings::* member,
+        std::string_view help, const char* focus, bool DockSettings::* member,
         ReadToggle enabled = {})
     {
         AddToggle(parent, key, help, focus,
@@ -281,7 +281,7 @@ struct DesktopStylePagePresenter::Impl
             }, std::move(enabled));
     }
     void AddChoice(const muxc::StackPanel& parent, const char* key,
-        const char* help, const char* focus, std::vector<std::string> options,
+        std::string_view help, const char* focus, std::vector<std::string> options,
         ReadChoice read, std::function<void(int)> write, ReadToggle enabled = {})
     {
         auto choice = std::make_unique<Choice>();
