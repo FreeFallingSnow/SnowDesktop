@@ -685,6 +685,7 @@ struct MenuService::Impl
             if (!scan.valid() && scanRequested) { scanRequested = false; scanning = requested = true; }
         }
         if (requested) scan = std::async(std::launch::async, [read = readCatalogue] {
+            MenuTrace("catalogue", "scan.start");
             const HRESULT ole = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
             Catalogue result;
             try { result = read(); } catch (...) { MenuTrace("catalogue", "failure"); }
@@ -755,7 +756,11 @@ struct MenuService::Impl
                 }
                 if (inspectDesktop) { std::lock_guard lock(mutex); desktopInspection = false; }
             }
-            if (TakeMenuRegistryChanges()) { std::lock_guard lock(mutex); if (inspected || AnyEnabled()) scanRequested = true; }
+            if (TakeMenuRegistryChanges())
+            {
+                std::lock_guard lock(mutex);
+                if (inspected || AnyEnabled()) { scanRequested = true; MenuTrace("catalogue", "request.registry"); }
+            }
             RefreshCatalogue(cache);
             Catalogue typeCatalogue; bool discoverTypes = false;
             {
@@ -984,7 +989,7 @@ void MenuService::Configure(Preferences preferences)
         const bool desktop = !impl_->shown[static_cast<int>(Context::Desktop)].empty();
         impl_->preferences = std::move(preferences); impl_->configured = true;
         for (int i = 0; i < 4; ++i) impl_->shown[i] = EffectiveShownIds(impl_->preferences, static_cast<Context>(i));
-        if (!enabled && impl_->AnyEnabled()) impl_->scanRequested = true;
+        if (!enabled && impl_->AnyEnabled()) { impl_->scanRequested = true; MenuTrace("catalogue", "request.configure"); }
         if (!desktop && !impl_->shown[static_cast<int>(Context::Desktop)].empty()) impl_->startupWarm = true;
         for (auto &[key, row] : impl_->rows)
             if (row.queued && !row.inspection && row.priority != QueryPriority::Execute && !impl_->Enabled(row.request, row.view.contexts))
@@ -1001,6 +1006,7 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     std::lock_guard lock(impl_->mutex);
     if (refresh || !impl_->inspected)
     {
+        MenuTrace("catalogue", refresh ? "request.refresh" : "request.inspect");
         impl_->sourcePending = true;
         if (refresh) { impl_->sourceAttempts.clear(); impl_->sourceSelections.clear(); impl_->failedSources.clear(); }
         impl_->scanRequested = true; impl_->discoverRequested = true;

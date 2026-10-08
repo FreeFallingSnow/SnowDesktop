@@ -39,8 +39,9 @@ struct RegistryWatch
     // Waiting must not consume the notification before Changed() rearms it.
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::wstring path;
+    unsigned traceId = 0;
     bool armed = false;
-    RegistryWatch(HKEY hive, const wchar_t *subkey) : root(hive), path(subkey) { Arm(); }
+    RegistryWatch(HKEY hive, const wchar_t *subkey, unsigned id) : root(hive), path(subkey), traceId(id) { Arm(); }
     ~RegistryWatch()
     {
         if (key) RegCloseKey(key);
@@ -61,11 +62,14 @@ struct RegistryWatch
         ResetEvent(event);
         armed = RegNotifyChangeKeyValue(key, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET |
             REG_NOTIFY_THREAD_AGNOSTIC, event, TRUE) == ERROR_SUCCESS;
+        MenuTrace("registry.watch", !armed ? "failed" : existing == path ? "target" : "ancestor", 0, traceId);
     }
     bool Changed()
     {
         if (!armed) { Arm(); return false; }
-        if (armed && WaitForSingleObject(event, 0) == WAIT_TIMEOUT) return false;
+        const auto wait = WaitForSingleObject(event, 0);
+        if (wait == WAIT_TIMEOUT) return false;
+        MenuTrace("registry.change", wait == WAIT_OBJECT_0 ? "signal" : "wait_failure", 0, traceId);
         Arm();
         return true; // Failure is conservative: do not reuse stale state.
     }
@@ -83,11 +87,11 @@ struct CacheState
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\nvcplui.exe",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"})
-                watches.push_back(std::make_unique<RegistryWatch>(root, path));
+                watches.push_back(std::make_unique<RegistryWatch>(root, path, static_cast<unsigned>(watches.size())));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"));
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 8));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts"));
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", 9));
     }
     std::uint64_t Poll()
     {
