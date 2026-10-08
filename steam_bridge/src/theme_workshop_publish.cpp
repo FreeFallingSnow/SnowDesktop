@@ -86,10 +86,12 @@ std::string ThemeSha256(std::string_view bytes)
 {
     BCRYPT_ALG_HANDLE algorithm = nullptr; BCRYPT_HASH_HANDLE hash = nullptr;
     if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return {};
+    // Caller-owned storage must outlive BCryptDestroyHash on every return.
+    std::vector<UCHAR> storage;
     struct Cleanup { BCRYPT_ALG_HANDLE a; BCRYPT_HASH_HANDLE* h; ~Cleanup() { if (*h) BCryptDestroyHash(*h); BCryptCloseAlgorithmProvider(a, 0); } } cleanup{algorithm, &hash};
     DWORD size = 0, received = 0;
     if (BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&size), sizeof(size), &received, 0) < 0) return {};
-    std::vector<UCHAR> storage(size); std::array<UCHAR, 32> result{};
+    storage.resize(size); std::array<UCHAR, 32> result{};
     if (BCryptCreateHash(algorithm, &hash, storage.data(), size, nullptr, 0, 0) < 0 ||
         bytes.size() > std::numeric_limits<ULONG>::max() || BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<char*>(bytes.data())), static_cast<ULONG>(bytes.size()), 0) < 0 ||
         BCryptFinishHash(hash, result.data(), static_cast<ULONG>(result.size()), 0) < 0) return {};
