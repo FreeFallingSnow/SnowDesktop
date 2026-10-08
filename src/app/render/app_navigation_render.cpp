@@ -188,6 +188,13 @@ void DesktopApp::DrawPageNavHotEdgeHint(
     ID2D1DeviceContext* ctx)
 {
     if (!ctx) return;
+    struct BackdropLifetime
+    {
+        snowdesktop::desktop_backdrop_update_rules::TransientPanel& panel;
+        DesktopBackdropCompositor& compositor;
+        bool retained = false;
+        ~BackdropLifetime() { if (!retained) panel.Clear(compositor); }
+    } backdropLifetime{navHotEdgeHintBackdrop_, desktopBackdropCompositor_};
     const bool dragging =
         widgetAction_ == WidgetAction::Move ||
         dragSession_.IsActive() ||
@@ -245,7 +252,15 @@ void DesktopApp::DrawPageNavHotEdgeHint(
     snowdesktop::NativeTooltipTextLayout measured;
     snowdesktop::NativeTooltipLayoutOptions options;
     options.scale = scale;
-    if (SUCCEEDED(snowdesktop::MeasureNativeTooltip(dwriteFactory_.Get(), format.Get(), {}, message,
+    if (FAILED(snowdesktop::MeasureNativeTooltip(dwriteFactory_.Get(), format.Get(), {}, message,
         static_cast<float>(hint.right - hint.left), static_cast<float>(hint.bottom - hint.top), measured, options)))
-        DrawInlineTooltip(ctx, hint, measured, scale);
+        return;
+    if (collectionPopupAppearance_.glassEnabled && !snowdesktop::NativeTooltipHighContrast())
+    {
+        const float radius = snowdesktop::NativeTooltipCornerRadius(collectionPopupAppearance_,
+            static_cast<float>(hint.right - hint.left), static_cast<float>(hint.bottom - hint.top), scale);
+        backdropLifetime.retained = navHotEdgeHintBackdrop_.Update(desktopBackdropCompositor_,
+            hint, radius, collectionPopupAppearance_.glassBlurRadius);
+    }
+    DrawInlineTooltip(ctx, hint, measured, scale, false);
 }

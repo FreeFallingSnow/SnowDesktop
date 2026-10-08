@@ -118,8 +118,8 @@ public:
     /** @brief Apply a local card matrix and its projected window region in this frame's transaction. */
     bool SetPanelTransform(std::uintptr_t ownerKey,
         const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame);
-    /** @brief 立即移除指定矩形对应的玻璃面板并同步辅助窗口区域。 */
-    bool RemovePanel(const RECT& frame);
+    /** @brief 移除玻璃面板并同步区域；非零 ownerKey 定位稳定身份，零值按矩形查找。 */
+    bool RemovePanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */
     bool KeepPanel(const RECT& frame);
     /** @brief 修改指定面板透明度；由 CommitVisualChanges 统一提交。 */

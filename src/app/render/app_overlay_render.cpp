@@ -519,7 +519,8 @@ void DesktopApp::DrawPageNotify(
 }
 
 void DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
-    const snowdesktop::NativeTooltipTextLayout& measured, float scale)
+    const snowdesktop::NativeTooltipTextLayout& measured, float scale,
+    bool registerBackdrop)
 {
     if (!ctx || !measured.layout || IsRectEmptyRect(bounds)) return;
     const auto appearance = collectionPopupAppearance_;
@@ -533,7 +534,7 @@ void DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
     DrawWidgetPanelBackground(ctx, bounds, radius,
         D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
         D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
-        false, appearance.widgetBorderWidth * scale, &appearance, true, 0, scale);
+        false, appearance.widgetBorderWidth * scale, &appearance, registerBackdrop, 0, scale);
     snowdesktop::DrawNativeTooltipText(ctx, ToD2DRect(bounds), measured, appearance);
 }
 

@@ -221,6 +221,8 @@ void DesktopApp::DrawDesktopForeground(
     ID2D1DeviceContext* ctx,
     bool hiddenMode)
 {
+    if (hiddenMode)
+        navHotEdgeHintBackdrop_.Clear(desktopBackdropCompositor_);
     snowdesktop::performance::Scope performanceScope("dock", "desktop.foreground");
     for (const auto& container : containers_)
     {

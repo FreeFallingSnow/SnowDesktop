@@ -8,6 +8,46 @@
 namespace snowdesktop::desktop_backdrop_update_rules
 {
 
+// Pointer-following overlays retain one panel across partial desktop frames.
+// Their owner lives with the host, independently of each measured rectangle.
+class TransientPanel
+{
+public:
+    TransientPanel() = default;
+    TransientPanel(const TransientPanel&) = delete;
+    TransientPanel& operator=(const TransientPanel&) = delete;
+
+    template<class Compositor>
+    bool Update(Compositor& compositor, const RECT& frame,
+        float cornerRadius, float blurRadius)
+    {
+        if (IsRectEmpty(&frame))
+        {
+            Clear(compositor);
+            return false;
+        }
+        if (!compositor.AddPanel(frame, cornerRadius, blurRadius,
+                reinterpret_cast<std::uintptr_t>(this)))
+        {
+            Clear(compositor);
+            return false;
+        }
+        frame_ = frame;
+        return true;
+    }
+
+    template<class Compositor>
+    void Clear(Compositor& compositor)
+    {
+        if (!IsRectEmpty(&frame_))
+            (void)compositor.RemovePanel(frame_, reinterpret_cast<std::uintptr_t>(this));
+        frame_ = {};
+    }
+
+private:
+    RECT frame_{};
+};
+
 // An enclosing material may belong to another native target (the merged
 // status strip), so the icon compositor cannot discover it in its own panels.
 // Reconcile during the same frame even for partial collections, retiring an

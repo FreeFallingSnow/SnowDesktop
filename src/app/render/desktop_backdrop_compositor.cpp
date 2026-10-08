@@ -1869,18 +1869,16 @@ bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
     }
 }
 
-bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
+bool DesktopBackdropCompositor::RemovePanel(const RECT& frame, std::uintptr_t ownerKey)
 {
+    const auto matches = [&frame, ownerKey](const auto& panel) {
+        return ownerKey != 0 ? panel.ownerKey == ownerKey : EqualRect(&panel.frame, &frame) != FALSE;
+    };
     if (impl_->stagingFrame)
-        return std::erase_if(impl_->stagedPanels, [&](const auto& panel) {
-            return EqualRect(&panel.frame, &frame) != FALSE;
-        }) != 0;
+        return std::erase_if(impl_->stagedPanels, matches) != 0;
     if (!impl_->available || !impl_->root)
         return false;
-    auto existing = std::find_if(impl_->panels.begin(), impl_->panels.end(),
-        [&frame](const Impl::PanelVisual& panel) {
-            return EqualRect(&panel.frame, &frame) != FALSE;
-        });
+    auto existing = std::find_if(impl_->panels.begin(), impl_->panels.end(), matches);
     if (existing == impl_->panels.end())
         return false;
 
