@@ -16,6 +16,7 @@
 #include "settings/settings_process.h"
 #include "shell/shell_launch_process.h"
 #include "shell/shell_extension_menu.h"
+#include "shell/shell_start_pin.h"
 #include "diagnostics/crashlog.h"
 #include "platform/application_crash_watchdog.h"
 #include "platform/application_restart_policy.h"
@@ -377,7 +378,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     // Conservatively prohibit automatic downgrade from this boundary.
     snowdesktop::steam_runtime::startup::BeginDataAccess();
     if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
-    if (const auto result = snowdesktop::shell_extensions::TryRunHelper()) return *result;
+    if (const auto result = snowdesktop::shell_extensions::TryRunHelper({}, {},
+            [](snowdesktop::shell_start_pin::Action action, const std::wstring &path, HWND owner, POINT point) {
+                return snowdesktop::shell_start_pin::Invoke(
+                    snowdesktop::deployment::GetTaskbarHookPath(), action, path, owner, point);
+            })) return *result;
     if (const auto result = snowdesktop::shell_launch_process::TryRunCommand())
         return *result;
 

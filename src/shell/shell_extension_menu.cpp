@@ -7,6 +7,7 @@
 #include "settings/settings_process.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_context_menu_site.h"
+#include "shell_start_pin.h"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -265,6 +266,7 @@ struct Native
     ShellContextMenuSite site;
     HMENU menu = CreatePopupMenu();
     std::wstring directory;
+    std::vector<std::wstring> paths;
     bool metadataOnly = false;
     ComPtr<IShellItem> nvidiaApplication;
     ~Native()
@@ -290,6 +292,7 @@ struct Host
     bool invoked = false;
     size_t count = 0;
     bool fileAssociationsReady = false;
+    StartPinExecutor startPin;
     struct RegisteredIcon { std::wstring name, friendlyName, module; };
     std::map<Context, std::vector<RegisteredIcon>> registeredIcons;
     struct ResourceIcon
@@ -328,7 +331,7 @@ struct Host
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
-    Host()
+    explicit Host(StartPinExecutor executor) : startPin(std::move(executor))
     {
         WNDCLASSW cls{};
         cls.lpfnWndProc = Proc;
@@ -748,6 +751,7 @@ struct Host
             return {};
         auto native = std::make_unique<Native>();
         native->directory = directory;
+        native->paths = request.paths;
         std::unique_ptr<TemporaryMenuFile> warmFile;
         std::unique_ptr<Native> warmMenu;
         if (request.sourceClsid.empty() && !fileAssociationsReady && ResolveContext(request) == Context::Folder)
@@ -945,6 +949,17 @@ struct Host
         };
         if (!enabled(source.menu, 0))
             return;
+        // Exposed commands run in this supervised helper rather than in the
+        // classic host menu. Start pinning still requires Explorer's thread,
+        // and must use this live session's original shortcut, never its target.
+        if (const auto result = shell_start_pin::Route(source.context.Get(), command.offset, source.paths,
+                [&](shell_start_pin::Action action, const std::wstring &path) {
+                    return startPin ? startPin(action, path, window, point) : E_NOTIMPL;
+                }))
+        {
+            progress("Start pin result: " + std::to_string(static_cast<unsigned long>(*result)));
+            return; // A rejected/failed Start request must never invoke locally.
+        }
         source.site.SetInvocationOwner(window);
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
@@ -1124,7 +1139,7 @@ void Session::Invoke(UINT token, POINT position)
         process->Stop();
     }).detach();
 }
-std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke)
+std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, StartPinExecutor startPin)
 {
     if (!settings_ipc::IsSettingsProcessCommand(L"--shell-menu-helper"))
         return {};
@@ -1135,7 +1150,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke)
     {
         settings_ipc::Channel channel;
         settings_ipc::OpenInheritedSettingsChannel(channel, L"--shell-menu-helper");
-        Host host;
+        Host host(std::move(startPin));
         host.progress = [&](const auto &stage) { channel.Notify("menu.progress", stage); };
         bool invocationQueued = false;
         ULONGLONG lastQuery = GetTickCount64();

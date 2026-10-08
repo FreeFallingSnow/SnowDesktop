@@ -1449,6 +1449,68 @@ void PumpUntil(Condition condition, const char *message)
     Expect(condition(),message);
 }
 
+void TestExposedStartPinHelper()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace pin = snowdesktop::shell_start_pin;
+    TemporaryDirectory directory;
+    const auto output = directory.path / L"start-pin-result.bin";
+    // Exercise the real Session IPC, aggregate menu, token lookup and Host
+    // invocation. Substitute only the final Explorer call so no user pin changes.
+    struct Mode
+    {
+        explicit Mode(const std::filesystem::path &path)
+        {
+            ext::InvalidateMenuCache();
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_START_PIN", path.c_str());
+        }
+        ~Mode()
+        {
+            ext::InvalidateMenuCache();
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr);
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_START_PIN", nullptr);
+        }
+    } mode(output);
+    wchar_t target[32768]{};
+    Expect(GetModuleFileNameW(nullptr, target, static_cast<DWORD>(std::size(target))) != 0,
+        "isolated shortcut target is the test executable");
+    const auto shortcut = directory.path / L"微信 菜单验证.lnk";
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    Microsoft::WRL::ComPtr<IPersistFile> persist;
+    Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+        SUCCEEDED(link->SetPath(target)) && SUCCEEDED(link.As(&persist)) &&
+        SUCCEEDED(persist->Save(shortcut.c_str(), TRUE)), "create a private Unicode shortcut");
+    ext::Request request; request.paths = {shortcut.wstring()};
+    ext::Session session(request);
+    std::optional<ext::Reply> reply;
+    PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); },
+        "the production helper queries the shortcut menu");
+    Expect(reply->ok, "the real shortcut aggregate query succeeds");
+    const auto selected = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+        return entry.enabled && entry.token && !entry.native &&
+            (_stricmp(entry.key.c_str(), "PinToStartScreen") == 0 ||
+             _stricmp(entry.key.c_str(), "UnpinFromStartScreen") == 0);
+    });
+    Expect(selected != reply->entries.end(), "Windows exposes a canonical Start command for the shortcut");
+    const auto expected = _stricmp(selected->key.c_str(), "PinToStartScreen") == 0 ? pin::Action::Pin : pin::Action::Unpin;
+    const HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, session.ProcessId());
+    struct ProcessScope { HANDLE value; ~ProcessScope() { if (value) CloseHandle(value); } } process{child};
+    Expect(child != nullptr, "observe the supervised invocation process");
+    session.Invoke(selected->token, {123, 456});
+    PumpUntil([&] { return std::filesystem::exists(output); },
+        "an exposed Start command must reach the Explorer executor rather than local InvokeCommand");
+    std::ifstream file(output, std::ios::binary);
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const auto [path, action, ownerValid, x, y] = snowdesktop::settings_ipc::Unpack<
+        std::tuple<std::wstring, pin::Action, bool, LONG, LONG>>(
+            {reinterpret_cast<const std::byte *>(bytes.data()), bytes.size()});
+    Expect(path == shortcut.wstring() && action == expected && ownerValid && x == 123 && y == 456,
+        "the exposed menu preserves the original Unicode .lnk, action, helper owner and click position");
+    Expect(WaitForSingleObject(child, 10000) == WAIT_OBJECT_0,
+        "a rejected final Start execution returns and the supervised helper exits");
+}
+
 void TestUnchangedCataloguePersistence()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -2489,7 +2551,22 @@ int wmain(int argc, wchar_t **argv)
         };
         invoke=[path=std::filesystem::path(invocationPath)](UINT token,POINT){std::ofstream file(path);file<<token;};
     }
-    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(std::move(query),std::move(invoke))) return *helper;
+    wchar_t startPinPath[32768]{};
+    snowdesktop::shell_extensions::StartPinExecutor startPin;
+    if (GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_START_PIN", startPinPath, 32768))
+        startPin = [output = std::filesystem::path(startPinPath)](
+            snowdesktop::shell_start_pin::Action action, const std::wstring &path, HWND owner, POINT point) {
+            DWORD process = 0; GetWindowThreadProcessId(owner, &process);
+            const auto bytes = snowdesktop::settings_ipc::Pack(path, action,
+                process == GetCurrentProcessId(), point.x, point.y);
+            const auto temporary = std::filesystem::path(output.wstring() + L".tmp");
+            { std::ofstream file(temporary, std::ios::binary);
+              file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size())); }
+            std::filesystem::rename(temporary, output);
+            return E_ACCESSDENIED; // Deliberate final failure must still be handled.
+        };
+    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(
+            std::move(query), std::move(invoke), std::move(startPin))) return *helper;
 
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized)) return 1;
@@ -2500,6 +2577,7 @@ int wmain(int argc, wchar_t **argv)
         if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
@@ -2522,6 +2600,7 @@ int wmain(int argc, wchar_t **argv)
             TestManagementFilters();
             TestSourceAttribution();
             TestExtensionSessions();
+            TestExposedStartPinHelper();
             TestSnapshotPresentation();
             TestPendingCachedClick();
             TestQueryScheduler();

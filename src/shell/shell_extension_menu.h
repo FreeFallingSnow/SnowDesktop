@@ -1,6 +1,7 @@
 #pragma once
 #include "settings/settings_ipc_codec.h"
 #include "settings/shell_extension_settings.h"
+#include "shell_start_pin_protocol.h"
 #include <functional>
 #include <memory>
 #include <optional>
@@ -68,7 +69,10 @@ bool TakeMenuRegistryChanges();
 std::vector<HANDLE> MenuRegistryWaitHandles(bool &complete);
 using QueryExecutor = std::function<Reply(const Request &)>;
 using InvokeExecutor = std::function<void(UINT, POINT)>;
-std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {});
+// Private composition boundary: the host supplies its deployment-staged
+// Explorer transport; tests can substitute only that final execution boundary.
+using StartPinExecutor = std::function<HRESULT(shell_start_pin::Action, const std::wstring &, HWND, POINT)>;
+std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {}, StartPinExecutor startPin = {});
 Context ResolveContext(const Request &);
 std::vector<Entry> VisibleEntries(const Preferences &, const std::vector<Entry> &, const Request &);
 } // namespace snowdesktop::shell_extensions
