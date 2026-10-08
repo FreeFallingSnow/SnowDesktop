@@ -258,6 +258,10 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             snowdesktop::performance::Value("dock", "floating.focus_scale", diagnosticOwner,
                 focused ? static_cast<double>(focusedVisual.right - focusedVisual.left) /
                     std::max<LONG>(1, state.focusRect.right - state.focusRect.left) : 1.0, revision);
+            snowdesktop::performance::Value("dock", "floating.pointer_x", diagnosticOwner,
+                lastMousePoint_.x, revision);
+            snowdesktop::performance::Value("dock", "floating.pointer_y", diagnosticOwner,
+                lastMousePoint_.y, revision);
         }
         snowdesktop::performance::Value("dock", "floating.frame_ready", diagnosticOwner, 1, revision);
         snowdesktop::performance::Value("dock", "floating.topmost", diagnosticOwner,

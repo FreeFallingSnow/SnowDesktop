@@ -205,10 +205,23 @@ void DesktopApp::ReconcileDesktopHoverState(
             !passiveHoverCleared &&
             TryGetBaseDesktopHoverPointFromCursor(
                 baseCursorPoint);
+        POINT dockScreenPoint = cursorPoint;
+        const HWND dockHitWindow = !passiveHoverCleared &&
+            IsPointInPromotedDockLayer(cursorPoint) &&
+            ClientToScreen(hwnd_, &dockScreenPoint)
+                ? WindowFromPoint(dockScreenPoint) : nullptr;
+        const bool pointerOnActiveHoverSurface =
+            snowdesktop::desktop_hover_rules::IsActiveHoverSampleSurface(
+                pointerOnBaseDesktopSurface,
+                IsPersistentDockHostWindow(dockHitWindow) ||
+                    IsPersistentDockBackdropWindow(dockHitWindow),
+                dockHitWindow != nullptr);
+        const POINT activeCursorPoint = pointerOnBaseDesktopSurface
+            ? baseCursorPoint : cursorPoint;
         const bool pointerPositionChanged =
-            pointerOnBaseDesktopSurface &&
-            (baseCursorPoint.x != lastMousePoint_.x ||
-                baseCursorPoint.y != lastMousePoint_.y);
+            pointerOnActiveHoverSurface &&
+            (activeCursorPoint.x != lastMousePoint_.x ||
+                activeCursorPoint.y != lastMousePoint_.y);
         const bool widgetInteractionActive =
             middleButtonWidgetMove_ ||
             widgetAction_ != WidgetAction::None ||
@@ -224,7 +237,7 @@ void DesktopApp::ReconcileDesktopHoverState(
         const bool refreshActiveHover =
             snowdesktop::desktop_hover_rules::
                 ShouldRefreshActiveHoverFromSurfaceSample(
-                    pointerOnBaseDesktopSurface,
+                    pointerOnActiveHoverSurface,
                     passiveHoverCleared,
                     pointerPositionChanged,
                     passiveHoverAllowed,
@@ -233,9 +246,9 @@ void DesktopApp::ReconcileDesktopHoverState(
         if (activateHover || refreshActiveHover)
         {
             lastMousePoint_ = activateHover
-                ? cursorPoint : baseCursorPoint;
+                ? cursorPoint : activeCursorPoint;
             // A stale floating-Dock leave may have consumed tracking before
-            // the cursor reached the base desktop surface. Keep the title
+            // the cursor reached its final desktop or Dock point. Keep the title
             // HRGN synchronized with the repaired point before presenting so
             // an old visual/input island cannot outlive the hover state.
             if (refreshActiveHover)

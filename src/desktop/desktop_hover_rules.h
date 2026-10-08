@@ -165,7 +165,7 @@ constexpr bool ShouldActivateFromSurfaceSample(
 }
 
 constexpr bool ShouldRefreshActiveHoverFromSurfaceSample(
-    bool pointerOnBaseDesktopSurface,
+    bool pointerOnActiveHoverSurface,
     bool passiveHoverCleared,
     bool pointerPositionChanged,
     bool passiveHoverAllowed,
@@ -176,10 +176,20 @@ constexpr bool ShouldRefreshActiveHoverFromSurfaceSample(
         mode == ReconcileMode::AllowImmediateActivation ||
         (mode == ReconcileMode::AllowActivationAfterForegroundSettle &&
             foregroundSettled);
-    return pointerOnBaseDesktopSurface &&
+    return pointerOnActiveHoverSurface &&
         !passiveHoverCleared &&
         pointerPositionChanged &&
         passiveHoverAllowed &&
         activationAllowed;
+}
+
+constexpr bool IsActiveHoverSampleSurface(
+    bool pointerOnBaseDesktopSurface,
+    bool pointerOnDockSurface, bool pointerInDockLayer)
+{
+    // A preview/popup bridge is not a passive-hover acquisition surface.
+    // Dock content and its paired backdrop are, within their logical region.
+    return pointerOnBaseDesktopSurface ||
+        (pointerOnDockSurface && pointerInDockLayer);
 }
 }

@@ -1076,7 +1076,13 @@ void TestDesktopHoverDeactivation()
             hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
                 true, false, true, true,
                 ReconcileMode::AllowActivationAfterForegroundSettle, true),
-        "an active hover may follow a changed base-desktop sample after activation is allowed");
+        "an active hover may follow a changed desktop or Dock sample after activation is allowed");
+    Check(
+        hoverRules::IsActiveHoverSampleSurface(true, false, false) &&
+            hoverRules::IsActiveHoverSampleSurface(false, true, true) &&
+            !hoverRules::IsActiveHoverSampleSurface(false, true, false) &&
+            !hoverRules::IsActiveHoverSampleSurface(false, false, true),
+        "active hover sampling includes actual Dock input but excludes visual overdraw and unrelated popup bridges");
     Check(
         !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
             false, false, true, true,
