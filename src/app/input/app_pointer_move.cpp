@@ -220,12 +220,24 @@ void DesktopApp::OnMouseMoveAt(
                 (void)app.PresentQueuedDesktopWidgetComposition();
         }
     } widgetPointerBatch{ *this, desktopWidgetPointerBatchActive_ };
-    desktopWidgetPointerBatchActive_ = true;
+    // Only passive hover is a short transaction. A pressed move may enter
+    // DoDragDrop and pump nested messages until release; holding the batch
+    // across that loop would suppress component drawing for the whole drag.
+    const bool passivePointerMove = snowdesktop::desktop_hover_rules::
+        CanCoalescePassiveMouseMoves(
+            snowdesktop::desktop_hover_rules::ShouldResamplePassiveMouseMove(
+                mouseDown_, dragSession_.IsActive(),
+                widgetAction_ != WidgetAction::None || middleButtonWidgetMove_ ||
+                    detailColumnResizeActive_ || luaWidgetPanelMouseDown_),
+            (wp & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
+                MK_XBUTTON1 | MK_XBUTTON2)) != 0,
+            dragDropController_.IsTransportActive(), GetCapture() != nullptr);
+    desktopWidgetPointerBatchActive_ =
+        desktopWidgetPointerBatchActive_ || passivePointerMove;
     renameClickController_.Move(current, GetSystemMetrics(SM_CXDRAG),
         GetSystemMetrics(SM_CYDRAG));
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
-    (void)wp;
     const POINT tracePoint = current;
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))

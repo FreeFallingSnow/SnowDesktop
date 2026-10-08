@@ -149,7 +149,11 @@ std::size_t CoalesceQueuedMouseMoves(
 
     std::size_t coalesced = 0;
     Message next{};
-    while (peekNext(next))
+    // PeekMessage may dispatch sent messages and synthesize another move.
+    // A continuously replenished queue must still return to input dispatch
+    // and animation work, even when it never reaches an ordering barrier.
+    constexpr std::size_t maximumCoalescedMoves = 64;
+    while (coalesced < maximumCoalescedMoves && peekNext(next))
     {
         if (!ShouldCoalesceQueuedMouseMove(
                 latencySensitivePointerActive,
@@ -163,5 +167,14 @@ std::size_t CoalesceQueuedMouseMoves(
         ++coalesced;
     }
     return coalesced;
+}
+
+constexpr bool ShouldDrainAnotherMessage(
+    std::size_t processedMessages, double elapsedMs)
+{
+    // A count alone allows dozens of costly synchronous frames before the
+    // scheduler gets a turn. Keep the final hover frame/reveal animation
+    // progressing even while input continues to arrive.
+    return processedMessages < 64 && elapsedMs < 8.0;
 }
 }

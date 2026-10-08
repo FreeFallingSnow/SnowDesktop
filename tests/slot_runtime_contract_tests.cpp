@@ -1968,7 +1968,7 @@ void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
                     current.hwnd == mainWindow,
                     current.hwnd == floatingDock,
                     current.hwnd == floatingPopup);
-        coalesced += snowdesktop::drag_input_rules::
+        const std::size_t removed = snowdesktop::drag_input_rules::
             CoalesceQueuedMouseMoves(
                 nativeDragActive,
                 pointerSurface,
@@ -1990,12 +1990,28 @@ void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
                 [](const MSG& message) {
                     return message.message == WM_MOUSEMOVE;
                 });
+        Check(removed <= 64,
+            "each native pointer dispatch must return after at most 64 queued moves");
+        coalesced += removed;
         dispatched.push_back(current);
     }
 
     Check(nativeDragActive && moveOrdinal == 10000 &&
-            coalesced == 9996 && dispatched.size() == 7,
-        "a long native drag queue must collapse 10000 moves to one move per ordered segment");
+            coalesced + dispatched.size() == 10003 && dispatched.size() < 200,
+        "a long native drag queue must remove redundant moves without losing ordering barriers");
+    // Intermediate dispatches yield to the pump. Compare each segment's final
+    // observable point and barriers independently of its number of dispatches.
+    std::vector<MSG> segments;
+    for (const auto& message : dispatched)
+    {
+        if (!segments.empty() && message.message == WM_MOUSEMOVE &&
+            segments.back().message == WM_MOUSEMOVE &&
+            message.hwnd == segments.back().hwnd)
+            segments.back() = message;
+        else
+            segments.push_back(message);
+    }
+    dispatched = std::move(segments);
     Check(dispatched.size() == 7 &&
             dispatched[0].message == WM_MOUSEMOVE &&
             dispatched[0].hwnd == mainWindow &&
@@ -2046,7 +2062,7 @@ void TestQueuedPassiveHoverPreservesClicks()
         queue.pop_front();
         const bool passive = snowdesktop::desktop_hover_rules::CanCoalescePassiveMouseMoves(
             !pressed, (current.wParam & MK_LBUTTON) != 0, false, pressed);
-        snowdesktop::drag_input_rules::CoalesceQueuedMouseMoves(
+        const std::size_t removed = snowdesktop::drag_input_rules::CoalesceQueuedMouseMoves(
             passive, true, current,
             [&](MSG& next) { if (queue.empty()) return false; next = queue.front(); return true; },
             [&](MSG& next) { if (queue.empty()) return false; next = queue.front(); queue.pop_front(); return true; },
@@ -2054,16 +2070,72 @@ void TestQueuedPassiveHoverPreservesClicks()
                 return left.hwnd == right.hwnd && left.wParam == right.wParam;
             },
             [](const MSG& message) { return message.message == WM_MOUSEMOVE; });
+        Check(removed <= 64,
+            "passive hover coalescing must yield while a backlog remains");
         dispatched.push_back(current);
         if (current.message == WM_LBUTTONDOWN) pressed = true;
         if (current.message == WM_LBUTTONUP) pressed = false;
     }
+    Check(dispatched.size() < 200,
+        "passive hover must discard the redundant backlog before click dispatch");
+    std::vector<MSG> segments;
+    for (const auto& message : dispatched)
+    {
+        if (!segments.empty() && message.message == WM_MOUSEMOVE &&
+            message.wParam == 0 && segments.back().message == WM_MOUSEMOVE &&
+            segments.back().wParam == 0)
+            segments.back() = message;
+        else
+            segments.push_back(message);
+    }
+    dispatched = std::move(segments);
     Check(dispatched.size() == 8 &&
             dispatched[0].lParam == 3999 && dispatched[1].message == WM_TIMER &&
             dispatched[2].lParam == 7999 && dispatched[3].message == WM_LBUTTONDOWN &&
             dispatched[4].lParam == 8000 && dispatched[5].lParam == 8001 &&
             dispatched[6].message == WM_LBUTTONUP && dispatched[7].lParam == 10001,
         "10000 queued passive moves must reach timer and click barriers without discarding pressed input or the latest hover");
+}
+
+void TestContinuousPointerQueueYieldsToFrames()
+{
+    // Model User32/sent callbacks replenishing the queue during PeekMessage.
+    // The safety stop prevents a broken implementation hanging the test; it
+    // is far beyond the acceptable per-dispatch work budget.
+    MSG current{};
+    current.hwnd = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(1));
+    current.message = WM_MOUSEMOVE;
+    int produced = 0;
+    double elapsedMs = 0;
+    std::size_t dispatched = 0;
+    while (dispatched < 8 && snowdesktop::drag_input_rules::
+        ShouldDrainAnotherMessage(dispatched, elapsedMs))
+    {
+        const std::size_t removed = snowdesktop::drag_input_rules::CoalesceQueuedMouseMoves(
+            true, true, current,
+            [&](MSG& next) {
+                if (produced >= 4096) return false;
+                next = current;
+                next.lParam = produced + 1;
+                return true;
+            },
+            [&](MSG& next) {
+                next.lParam = ++produced;
+                return true;
+            },
+            [](const MSG& left, const MSG& right) { return left.hwnd == right.hwnd; },
+            [](const MSG& message) { return message.message == WM_MOUSEMOVE; });
+        Check(removed <= 64 && current.lParam == produced,
+            "a replenished mouse queue must return a current sample without waiting for producer silence");
+        ++dispatched;
+        // Two moderately expensive input presentations exhaust one frame's
+        // budget; animation work must get a turn even though input remains.
+        elapsedMs += 4.0;
+    }
+    Check(dispatched == 2 && produced == 128,
+        "continuous hover must yield to animation after 8ms rather than 64 costly dispatches");
+    Check(!snowdesktop::drag_input_rules::ShouldDrainAnotherMessage(64, 0.0),
+        "cheap input still needs a count bound when it never exhausts the clock budget");
 }
 
 void TestSelfOleReturnCancelsTransportBeforeNativeResume()
@@ -3396,6 +3468,7 @@ int wmain(int argc, wchar_t** argv)
     TestOwnedTransientDragTargetBoundsMemberWrappers();
     TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
     TestQueuedPassiveHoverPreservesClicks();
+    TestContinuousPointerQueueYieldsToFrames();
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestOleDropCompletionBoundaryMatrix();

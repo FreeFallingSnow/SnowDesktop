@@ -361,6 +361,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_MOUSEMOVE:
     {
+        snowdesktop::performance::Scope pointerScope("dock.input", "mouse.move");
         SelectPersistentDockHost(&host);
         floatingDockHoverHandoffPending_ = false;
         floatingDockHoverHandoffRect_ = {};

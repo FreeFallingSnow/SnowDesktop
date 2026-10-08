@@ -18,6 +18,7 @@
 #include "widget/data/widget_system_data_provider.h"
 
 #include "diagnostics/slow_call_limiter.h"
+#include "diagnostics/performance_trace.h"
 #include <commoncontrols.h>
 #include <imm.h>
 #include <new>
@@ -1675,7 +1676,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         // and again after every message lets a costly frame repeatedly jump
         // ahead of pointer feedback.
         unsigned processedMessages = 0;
-        while (!exitRequested_ && processedMessages < 64 &&
+        const double messageBatchStarted =
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+        while (!exitRequested_ &&
+            snowdesktop::drag_input_rules::ShouldDrainAnotherMessage(
+                processedMessages,
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
+                    messageBatchStarted) &&
             PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
@@ -1718,28 +1725,37 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     (msg.wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
                         MK_XBUTTON1 | MK_XBUTTON2)) != 0,
                     dragDropController_.IsTransportActive(), GetCapture() != nullptr);
-            snowdesktop::drag_input_rules::
-                CoalesceQueuedMouseMoves(
-                    latencySensitivePointerActive || passivePointerMove,
-                    pointerMessageSurface,
-                    msg,
-                    [](MSG& next) {
-                        return PeekMessageW(
-                            &next, nullptr, 0, 0,
-                            PM_NOREMOVE) != FALSE;
-                    },
-                    [](MSG& next) {
-                        return PeekMessageW(
-                            &next, nullptr, 0, 0,
-                            PM_REMOVE) != FALSE;
-                    },
-                    [passivePointerMove](const MSG& left, const MSG& right) {
-                        return left.hwnd == right.hwnd &&
-                            (!passivePointerMove || left.wParam == right.wParam);
-                    },
-                    [](const MSG& message) {
-                        return message.message == WM_MOUSEMOVE;
-                    });
+            if (msg.message == WM_MOUSEMOVE)
+            {
+                snowdesktop::performance::Scope coalescingScope(
+                    "desktop.input", "mouse.coalesce");
+                const std::size_t coalesced = snowdesktop::drag_input_rules::
+                    CoalesceQueuedMouseMoves(
+                        latencySensitivePointerActive || passivePointerMove,
+                        pointerMessageSurface,
+                        msg,
+                        [](MSG& next) {
+                            return PeekMessageW(
+                                &next, nullptr, 0, 0,
+                                PM_NOREMOVE) != FALSE;
+                        },
+                        [](MSG& next) {
+                            return PeekMessageW(
+                                &next, nullptr, 0, 0,
+                                PM_REMOVE) != FALSE;
+                        },
+                        [passivePointerMove](const MSG& left, const MSG& right) {
+                            return left.hwnd == right.hwnd &&
+                                (!passivePointerMove || left.wParam == right.wParam);
+                        },
+                        [](const MSG& message) {
+                            return message.message == WM_MOUSEMOVE;
+                        });
+                if (coalesced != 0)
+                    snowdesktop::performance::Value(
+                        "desktop.input", "mouse.coalesced", {},
+                        static_cast<double>(coalesced));
+            }
             const bool settingsMessageHandled = settingsWindow_ &&
                 (settingsWindow_->PreTranslateMessage(&msg) ||
                     settingsWindow_->ProcessTabNavigation(&msg));
