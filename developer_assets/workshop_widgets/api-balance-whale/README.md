@@ -1,6 +1,6 @@
 # 小鲸鱼余额查询 / Little Whale Balance Checker
 
-SnowDesktop **官方社区组件**，不随宿主作为内置组件分发。默认“小鲸陪伴”气泡布局，点底栏“查看明细”切换到纯数据卡片，点“返回小鲸”恢复；设置和右键菜单也可切换。一个实例查询一个厂商；添加多个实例可同时看多个账号或厂商。默认 3×3，最小 2×2。普通尺寸使用完整内容宽度；较宽时气泡与小鲸左右排列，数据模式将余额和明细分栏。只有明显异常的比例才保留外侧留白。需要支持加密密码与网络密钥引用的 SnowDesktop 1.0.9.0 或更新宿主，并通过清单 feature 检查。
+SnowDesktop **官方社区组件**，不随宿主作为内置组件分发。默认“小鲸陪伴”气泡布局，点底栏“查看明细”切换到纯数据卡片，点“返回小鲸”恢复；设置和右键菜单也可切换。一个实例查询一个厂商；添加多个实例可同时看多个账号或厂商。默认 3×3，最小 2×2。两种模式的内边距、间距、字号、图标、按钮、圆角和描边统一随实际宽高缩放；内容使用完整可用区域，并按宽高比例切换上下或左右排列。较宽时气泡与小鲸左右排列，数据模式将余额和明细分栏。需要支持加密密码与网络密钥引用的 SnowDesktop 1.0.9.0 或更新宿主，并通过清单 feature 检查。
 
 ## 使用
 
@@ -59,7 +59,7 @@ MiniMax、GLM/z.ai、Kimi Code、OpenCode Go 未列为首版固定预设：已�
 
 ## English
 
-Official community widget, shipped separately from SnowDesktop. Whale mode is the default; the footer's View details / Back to whale actions switch modes, as do settings and the context menu. Ordinary spans use the full content width. Wider layouts place the bubble beside the whale, or balance beside details; only extreme ratios gain outer margins. Preview samples are isolated and explained in the introduction; the rendered widget uses the same update-time presentation as runtime. Add separate instances for different accounts. Keys use host-encrypted password settings and opaque secret references; replacing a password cancels pending work and clears previous results. No plaintext key, disk balance cache, price table, billing estimate, DSH database, or inference request is used.
+Official community widget, shipped separately from SnowDesktop. Whale mode is the default; the footer's View details / Back to whale actions switch modes, as do settings and the context menu. Both modes scale padding, gaps, fonts, icons, buttons, radii and strokes from the actual surface dimensions. Content uses the full available surface, with stacked or side-by-side arrangements selected by aspect ratio. Wider layouts place the bubble beside the whale, or balance beside details. Preview samples are isolated and explained in the introduction; the rendered widget uses the same update-time presentation as runtime. Add separate instances for different accounts. Keys use host-encrypted password settings and opaque secret references; replacing a password cancels pending work and clears previous results. No plaintext key, disk balance cache, price table, billing estimate, DSH database, or inference request is used.
 
 Presets cover the documented DeepSeek, OpenRouter account/key, Moonshot CN/international, StepFun and Novita GET APIs listed above. The OpenRouter account endpoint requires a Management Key; a normal key can query its own spending limit. StepFun's reference does not identify a currency, so its amounts are shown without a currency symbol. Custom HTTPS GET JSON queries accept explicit documented paths, units and authentication headers. Missing or malformed values never become a fabricated zero balance.
 

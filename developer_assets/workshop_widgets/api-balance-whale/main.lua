@@ -217,11 +217,10 @@ local function render(_context,m)
     local c=copy();local colors=palette();local outerWidth,outerHeight=layout.contentWidth(),layout.contentHeight()
     local whaleMode=storage.get("mode")~="data"
     local w,h=outerWidth,outerHeight
-    local row=ui.metrics().layoutRowHeight
-    -- The illustration scales as one composition. Data mode keeps the host's
-    -- semantic row unit and centers only the information actually present.
-    w=math.min(w,h*1.70);h=math.min(h,w/0.45)
-    if whaleMode then row=math.min(w*0.112,h*0.068) end
+    -- Both modes scale as one composition. Padding, gaps, controls, fonts,
+    -- radii and strokes share this surface-derived unit; aspect ratio selects
+    -- stacked or side-by-side content across the full available surface.
+    local row=math.min(w*0.112,h*0.068)
     local ox,oy=(outerWidth-w)*0.5,(outerHeight-h)*0.5
     local pad=row*0.68;local cfg=config()
     -- Uncommitted provider/URL previews must not label another account's data.
