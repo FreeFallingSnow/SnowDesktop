@@ -858,6 +858,19 @@ void TestRegistryCatalogue()
     Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.name == L"Provider Shell.dll" &&
         find("reg:*\\shell\\library").application.name == L"Provider Shell.dll", "CLSID and rundll32 registrations identify the providing DLL rather than its generic host");
 
+    std::filesystem::remove(module);
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.id.empty() &&
+        find("reg:*\\shell\\library").application.id.empty(), "a fresh catalogue drops attribution when the registered module has been removed");
+    std::ofstream(module) << "metadata fixture restored";
+    put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}\\InprocServer32", nullptr, program.c_str());
+    put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}", nullptr, L"Updated provider");
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application == app &&
+        find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").display.label == L"Updated provider",
+        "a fresh catalogue observes changed provider registration and label");
+    Expect(find("reg:*\\shell\\library").application.name == L"Provider Shell.dll",
+        "a fresh catalogue rechecks previously missing command modules after their restoration");
 }
 
 void TestNvidiaCompatibility()

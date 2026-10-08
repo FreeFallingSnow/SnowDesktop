@@ -29,7 +29,7 @@ std::string Utf8(const std::wstring &s)
 struct Key
 {
     HKEY value = nullptr;
-    Key(HKEY root, const std::wstring &path) { RegOpenKeyExW(root, path.c_str(), 0, KEY_READ, &value); }
+    Key(HKEY root, const std::wstring &path, REGSAM access = KEY_READ) { RegOpenKeyExW(root, path.c_str(), 0, access, &value); }
     ~Key() { if (value) RegCloseKey(value); }
     Key(const Key &) = delete;
 };
@@ -60,14 +60,17 @@ std::vector<std::wstring> Values(HKEY root, const std::wstring &path)
 }
 std::wstring Read(HKEY root, const std::wstring &path, const wchar_t *name = nullptr)
 {
-    wchar_t text[32768]{}; DWORD bytes = sizeof(text);
-    if (RegGetValueW(root, path.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, text, &bytes)) return {};
+    if (!root) return {};
+    // RegGetValue terminates successful string reads. Preserve the empty-data
+    // case without clearing a 64 KiB buffer for every catalogue value.
+    wchar_t text[32768]; text[0] = 0; DWORD bytes = sizeof(text);
+    if (RegGetValueW(root, path.empty() ? nullptr : path.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, text, &bytes)) return {};
     return text;
 }
 bool Has(HKEY root, const std::wstring &path, const wchar_t *name)
 {
     DWORD bytes = 0;
-    return RegGetValueW(root, path.c_str(), name, RRF_RT_ANY, nullptr, nullptr, &bytes) == ERROR_SUCCESS;
+    return root && RegGetValueW(root, path.empty() ? nullptr : path.c_str(), name, RRF_RT_ANY, nullptr, nullptr, &bytes) == ERROR_SUCCESS;
 }
 bool Blocked(const std::wstring &clsid, HKEY user = HKEY_CURRENT_USER, HKEY machine = HKEY_LOCAL_MACHINE)
 {
@@ -267,13 +270,61 @@ struct Scanner
     HKEY classes;
     Catalogue result;
     std::map<std::string, size_t> ids;
+    // One inventory contains many registrations of the same provider. Reuse
+    // their metadata only within this scan; the next scan rechecks files,
+    // registration values and policy instead of retaining negative results.
+    struct HandlerMetadata { std::wstring label, module, icon; Application application; };
+    std::map<std::wstring, HandlerMetadata> handlers;
+    std::map<std::wstring, Application> commands, applications;
+    std::map<std::wstring, std::wstring> labels;
+    std::map<std::wstring, bool> policies;
+    std::map<std::wstring, Entry> images;
+    std::wstring Label(const std::wstring &text)
+    {
+        if (text.empty() || text.front() != L'@') return text;
+        const auto [it, inserted] = labels.try_emplace(text);
+        if (inserted) it->second = Localized(text);
+        return it->second;
+    }
+    bool IsBlocked(const std::wstring &clsid)
+    {
+        if (clsid.empty()) return false;
+        const auto [it, inserted] = policies.try_emplace(Lower(clsid));
+        if (inserted) it->second = Blocked(clsid);
+        return it->second;
+    }
+    Application ApplicationForModule(const std::wstring &module)
+    {
+        if (module.empty()) return {};
+        const auto [it, inserted] = applications.try_emplace(module);
+        if (inserted) it->second = ModuleApplication(module);
+        return it->second;
+    }
+    Application CommandApplication(const std::wstring &command)
+    {
+        if (command.empty()) return {};
+        const auto [it, inserted] = commands.try_emplace(command);
+        if (inserted) it->second = ApplicationForModule(CommandModule(command));
+        return it->second;
+    }
+    const HandlerMetadata &Handler(const std::wstring &clsid)
+    {
+        const auto [it, inserted] = handlers.try_emplace(Lower(clsid));
+        if (inserted && !clsid.empty())
+        {
+            auto &info = it->second;
+            const auto root = L"CLSID\\" + clsid;
+            info.module = Read(classes, root + L"\\InprocServer32");
+            const auto module = LocalModule(info.module);
+            info.application = module.empty() ? CommandApplication(Read(classes, root + L"\\LocalServer32")) : ApplicationForModule(module);
+            info.label = Read(classes, root);
+            info.icon = Read(classes, root + L"\\DefaultIcon");
+        }
+        return it->second;
+    }
     Application HandlerApplication(const std::wstring &clsid)
     {
-        if (clsid.empty()) return {};
-        const auto root = L"CLSID\\" + clsid;
-        auto module = LocalModule(Read(classes, root + L"\\InprocServer32"));
-        if (module.empty()) module = CommandModule(Read(classes, root + L"\\LocalServer32"));
-        return ModuleApplication(module);
+        return Handler(clsid).application;
     }
     void Add(Registration row, const std::wstring &icon)
     {
@@ -290,7 +341,13 @@ struct Scanner
             existing.systemEnabled |= row.systemEnabled;
             return;
         }
-        LoadIcon(row.display, icon);
+        if (!icon.empty())
+        {
+            const auto [image, inserted] = images.try_emplace(icon);
+            if (inserted) LoadIcon(image->second, icon);
+            row.display.width = image->second.width; row.display.height = image->second.height;
+            row.display.pixels = image->second.pixels;
+        }
         ids[row.id] = result.rows.size();
         result.rows.push_back(std::move(row));
     }
@@ -299,39 +356,43 @@ struct Scanner
         for (const auto &verb : Children(classes, root + L"\\shell"))
         {
             const auto path = root + L"\\shell\\" + verb;
-            const auto handler = Read(classes, path, L"ExplorerCommandHandler");
+            Key key(classes, path, KEY_QUERY_VALUE);
+            if (!key.value) continue;
+            Key commandKey(classes, path + L"\\command", KEY_QUERY_VALUE);
+            const auto handler = Read(key.value, L"", L"ExplorerCommandHandler");
             Registration row;
             row.kind = RegistrationKind::Verb;
             row.id = "reg:" + Utf8(Lower(path));
             row.contexts = contexts; row.types = types; row.sources = {path};
             row.verbs = {Utf8(Lower(verb))};
             if (!handler.empty()) row.verbs.push_back(Utf8(Lower(handler)));
-            row.systemEnabled = !Has(classes, path, L"LegacyDisable") && !Has(classes, path, L"ProgrammaticAccessOnly") && !Blocked(handler);
-            auto label = Read(classes, path, L"MUIVerb");
-            if (label.empty()) label = Read(classes, path);
+            row.systemEnabled = !Has(key.value, L"", L"LegacyDisable") && !Has(key.value, L"", L"ProgrammaticAccessOnly") && !IsBlocked(handler);
+            auto label = Read(key.value, L"", L"MUIVerb");
+            if (label.empty()) label = Read(key.value, L"");
             if (label.empty()) label = verb;
-            row.display.label = DecodeMenuLabel(Localized(label)).text;
-            const auto command = Read(classes, path + L"\\command");
-            const auto delegate = Read(classes, path + L"\\command", L"DelegateExecute");
+            row.display.label = DecodeMenuLabel(Label(label)).text;
+            const auto command = Read(commandKey.value, L"");
+            const auto delegate = Read(commandKey.value, L"", L"DelegateExecute");
+            const auto subCommands = Read(key.value, L"", L"SubCommands");
             row.application = !handler.empty() ? HandlerApplication(handler) :
-                !delegate.empty() ? HandlerApplication(delegate) : ModuleApplication(CommandModule(command));
+                !delegate.empty() ? HandlerApplication(delegate) : CommandApplication(command);
             // Never infer equivalence from the caption, verb alone, or a bare
             // SubCommands list. Keep arguments case-sensitive and compare the
             // complete payload rather than a collision-prone display hash.
             if (!command.empty() || !handler.empty() || !delegate.empty())
             {
                 const auto identity = settings_ipc::Pack(Lower(verb), command, Lower(handler), Lower(delegate),
-                    Read(classes, path, L"SubCommands"), Read(classes, path, L"ExtendedSubCommandsKey"));
+                    subCommands, Read(key.value, L"", L"ExtendedSubCommandsKey"));
                 row.commandIdentity.assign(reinterpret_cast<const char *>(identity.data()), identity.size());
             }
-            auto icon = Read(classes, path, L"Icon");
-            if (icon.empty() && !handler.empty()) icon = Read(classes, L"CLSID\\" + handler + L"\\InprocServer32");
+            auto icon = Read(key.value, L"", L"Icon");
+            if (icon.empty() && !handler.empty()) icon = Handler(handler).module;
             if (icon.empty())
             {
                 if (!command.empty()) { wchar_t exe[32768]{}; wcsncpy_s(exe, command.c_str(), _TRUNCATE); PathRemoveArgsW(exe); PathUnquoteSpacesW(exe); icon = exe; }
             }
             // Include values that affect applicability, not volatile registry write times.
-            row.revision = Hash(settings_ipc::Pack(Read(classes, path + L"\\command"), handler, Read(classes, path, L"AppliesTo"), Read(classes, path, L"MultiSelectModel"), Has(classes, path, L"Extended"), Read(classes, path, L"SubCommands")));
+            row.revision = Hash(settings_ipc::Pack(command, handler, Read(key.value, L"", L"AppliesTo"), Read(key.value, L"", L"MultiSelectModel"), Has(key.value, L"", L"Extended"), subCommands));
             Add(std::move(row), icon);
         }
         for (const auto &name : Children(classes, root + L"\\shellex\\ContextMenuHandlers"))
@@ -344,14 +405,12 @@ struct Scanner
             Registration row;
             row.kind = RegistrationKind::Handler; row.id = "clsid:" + Utf8(Lower(clsid));
             row.contexts = contexts; row.types = types; row.sources = {path}; row.verbs = {Utf8(Lower(clsid))};
-            row.systemEnabled = !Blocked(clsid);
-            auto label = Read(classes, L"CLSID\\" + clsid);
-            row.display.label = Localized(label.empty() ? name : label);
-            const auto module = Read(classes, L"CLSID\\" + clsid + L"\\InprocServer32");
-            row.application = HandlerApplication(clsid);
-            row.revision = Hash(settings_ipc::Pack(module));
-            auto icon = Read(classes, L"CLSID\\" + clsid + L"\\DefaultIcon");
-            Add(std::move(row), icon.empty() ? module : icon);
+            row.systemEnabled = !IsBlocked(clsid);
+            const auto &info = Handler(clsid);
+            row.display.label = Label(info.label.empty() ? name : info.label);
+            row.application = info.application;
+            row.revision = Hash(settings_ipc::Pack(info.module));
+            Add(std::move(row), info.icon.empty() ? info.module : info.icon);
         }
     }
     static std::wstring Attribute(IXMLDOMNode *node, const wchar_t *name)
