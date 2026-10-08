@@ -203,8 +203,9 @@ local function spectrumNode(model)
     end
 
     if plan.negate then values = spectrum.negate(values) end
+    -- Mirrored frequency bars should not draw a zero line across their gaps.
     local primary = view.barChart(properties(
-        "audio-spectrum.bars", values, false, 1))
+        "audio-spectrum.bars", values, false, plan.mirror and 0 or 1))
     if not plan.mirror then return primary end
 
     return view.stack({
