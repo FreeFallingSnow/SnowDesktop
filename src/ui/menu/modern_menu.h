@@ -80,6 +80,7 @@ struct Item
     /** 为行内按钮组按文字和图标预留宽度，避免短操作的翻译被截断。 */
     bool measureInlineAction = false;
     menu_icon::BuiltinIcon builtinIcon = menu_icon::BuiltinIcon::None;
+    friend bool operator==(const Item&, const Item&) = default;
 };
 
 struct HoverInfo
@@ -160,6 +161,11 @@ struct Options
     std::function<void(const HoverInfo&)> onHover;
     /** Poll deadlines even during cascades; return additions only when canApply is true. */
     std::function<std::optional<std::vector<Item>>(const std::vector<Item>&, bool canApply)> pollItems;
+    /** Internal multi-stream publication; absent preserves one-shot polling. */
+    std::function<bool()> pollItemsFinished;
+    /** Allow appended rows while hovering an unchanged, stationary prefix.
+     * The controller still validates layout and protects presses/cascades. */
+    bool pollItemsStablePrefix = false;
     /** Optional application event pump used by the nested modal loop. */
     EventPump eventPump;
     /** Applies only to the popup containing this command: Enter submits,

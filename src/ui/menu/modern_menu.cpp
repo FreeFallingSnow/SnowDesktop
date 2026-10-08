@@ -255,21 +255,42 @@ public:
 
         MSG message{};
         bool quitReceived = false;
+        std::optional<std::vector<Item>> pendingItems;
         while (!done_ && !quitReceived)
         {
             if (options_.pollItems)
             {
-                const bool canApply = popups_.size() == 1 && popups_.front()->hoveredItem < 0 &&
+                const bool canApply = popups_.size() == 1 &&
+                                      (popups_.front()->hoveredItem < 0 ||
+                                       (options_.pollItemsStablePrefix && popups_.front()->scrollOffset == 0)) &&
                                       !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
                                       !(GetAsyncKeyState(VK_LBUTTON) & 0x8000) &&
                                       !(GetAsyncKeyState(VK_RBUTTON) & 0x8000);
-                if (auto updated = options_.pollItems(rootItems_, canApply); updated && canApply)
+                if (!pendingItems)
+                    pendingItems = options_.pollItems(rootItems_, canApply);
+                bool stable = true;
+                const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;
+                if (pendingItems && hovered >= 0)
+                {
+                    const auto prefix = static_cast<size_t>(hovered) + 1;
+                    const auto &item = rootItems_[hovered];
+                    stable = options_.pollItemsStablePrefix && !item.quickAction && !item.inlineAction && !item.textInput &&
+                        pendingItems->size() >= prefix &&
+                        std::equal(rootItems_.begin(), rootItems_.begin() + prefix, pendingItems->begin()) &&
+                        std::none_of(pendingItems->begin() + prefix, pendingItems->end(), [](const auto &row) {
+                            return row.quickAction;
+                        });
+                }
+                if (pendingItems && canApply && stable)
                 {
                     const int selected = popups_.front()->keyboardItem;
                     const UINT selectedCommand = selected >= 0 && static_cast<size_t>(selected) < rootItems_.size()
                         ? rootItems_[selected].command : 0;
-                    rootItems_ = std::move(*updated);
+                    rootItems_ = std::move(*pendingItems);
+                    pendingItems.reset();
                     RefreshPopup(*popups_.front(), true);
+                    if (hovered >= 0)
+                        SetHoveredItem(*popups_.front(), hovered, false, false);
                     if (selectedCommand)
                         for (size_t i = 0; i < rootItems_.size(); ++i)
                             if (rootItems_[i].command == selectedCommand)
@@ -280,7 +301,8 @@ public:
                                 SetHoveredItem(*popups_.front(), static_cast<int>(i), true, false);
                                 break;
                             }
-                    options_.pollItems = {};
+                    if (!options_.pollItemsFinished || options_.pollItemsFinished())
+                        options_.pollItems = {};
                 }
             }
             const HANDLE scheduledWork =

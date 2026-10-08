@@ -91,23 +91,44 @@ class Presentation
         initialRevision_ = view.revision;
         cached_ = std::move(view.snapshot);
         contexts_ = view.contexts;
-        refreshState_ = cached_ && std::any_of(cached_->entries.begin(), cached_->entries.end(), [](const auto &e) {
-            return StatePairForVerb(e.key) != nullptr;
-        });
-        for (int i = 0; i < 4; ++i)
+        bool startShown = false, normalNeeded = false;
+        const unsigned candidates = contexts_ ? contexts_ : source.background || source.context == Context::Desktop
+            ? ContextBit(source.context == Context::Desktop ? Context::Desktop : Context::FolderBackground) : 3u;
+        for (int i = 0; i < 4; ++i) if (candidates & (1u << i))
             for (const auto &id : EffectiveShownIds(prefs_, static_cast<Context>(i)))
-                refreshState_ |= StatePairForId(id) != nullptr;
-        if (cached_ && refreshState_)
+            {
+                const auto *pair = StatePairForId(id);
+                if (pair && pair->id == "state:start-pin") startShown = true;
+                else { normalNeeded = true; refreshState_ |= pair != nullptr; }
+            }
+        startLane_ = startShown && !source.background && source.context != Context::Desktop && source.paths.size() == 1;
+        if (startShown && !startLane_) { normalNeeded = true; refreshState_ = true; }
+        if (cached_)
         {
             // Pin state is external to the shortcut's timestamp. Display the
             // ordinary warm rows immediately, but materialize state commands
             // only from this opening's fresh native query.
-            std::erase_if(cached_->entries, [](const auto &e) { return StatePairForVerb(e.key) != nullptr; });
+            std::erase_if(cached_->entries, [this](const auto &e) {
+                const auto *pair = StatePairForVerb(e.key);
+                return pair && (refreshState_ || (startLane_ && pair->id == "state:start-pin"));
+            });
         }
+        normalDone_ = !normalNeeded || (cached_.has_value() && !refreshState_);
         // Retire any prewarm already in flight as well: it may have captured
         // external pin state before this opening.
-        if (refreshState_) service_.Invalidate(source_);
-        service_.Query(source_, QueryPriority::Menu, refreshState_);
+        if (normalNeeded)
+        {
+            if (refreshState_) service_.Invalidate(source_);
+            service_.Query(source_, QueryPriority::Menu, refreshState_);
+        }
+        startDone_ = !startLane_;
+        if (startLane_)
+        {
+            startSource_ = source_; startSource_.startPinOnly = true;
+            startRevision_ = service_.View(startSource_).revision;
+            service_.Invalidate(startSource_);
+            service_.Query(startSource_, QueryPriority::Menu, true);
+        }
     }
     ~Presentation()
     {
@@ -119,30 +140,57 @@ class Presentation
     {
         MoveMoreToBottom(items, moreCommand);
         if (cached_) Insert(items, Convert(cached_->entries), moreCommand);
-        if ((!cached_ || refreshState_) && !source_.paths.empty() && service_.MenuEnabled(source_, prefs_))
+        if ((!normalDone_ || !startDone_) && !source_.paths.empty())
+        {
+            options.pollItemsFinished = [this] { return normalDone_ && startDone_; };
+            options.pollItemsStablePrefix = true;
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
                 if (!canApply) return {};
-                auto view = service_.MenuDisplay(source_, prefs_);
-                if (view.pending && (!view.snapshot || refreshState_)) return {};
                 auto updated = current;
-                if (view.snapshot && (!refreshState_ || (view.revision > initialRevision_ && view.error.empty())))
+                bool progressed = false;
+                if (!normalDone_)
                 {
-                    const bool warm = cached_.has_value();
-                    cached_ = std::move(view.snapshot); contexts_ = view.contexts;
-                    auto additions = cached_->entries;
-                    if (warm && refreshState_)
-                        std::erase_if(additions, [](const auto &e) { return !StatePairForVerb(e.key); });
-                    Insert(updated, Convert(additions), moreCommand);
+                    auto view = service_.MenuDisplay(source_, prefs_);
+                    if (!view.pending)
+                    {
+                        if (view.snapshot && (!refreshState_ || (view.revision > initialRevision_ && view.error.empty())))
+                        {
+                            auto additions = std::move(view.snapshot->entries);
+                            const bool warm = cached_.has_value();
+                            std::erase_if(additions, [&](const auto &e) {
+                                const auto *pair = StatePairForVerb(e.key);
+                                return (startLane_ && pair && pair->id == "state:start-pin") ||
+                                    (warm && refreshState_ && !pair);
+                            });
+                            Insert(updated, Convert(additions), moreCommand);
+                        }
+                        normalDone_ = progressed = true;
+                    }
                 }
-                // A completed empty/failed query also ends the one-shot poll.
-                return updated;
+                if (!startDone_)
+                {
+                    auto view = service_.MenuDisplay(startSource_, prefs_);
+                    if (!view.pending)
+                    {
+                        if (view.snapshot && view.revision > startRevision_ && view.error.empty())
+                            Insert(updated, Convert(view.snapshot->entries), moreCommand);
+                        startDone_ = progressed = true;
+                    }
+                }
+                // Each stream can publish independently; an empty/failed
+                // stream also completes, without waiting for other extensions.
+                if (progressed) return updated;
+                return {};
             };
+        }
     }
     bool Invoke(UINT command, POINT point)
     {
         const auto found = commands_.find(command);
         if (found == commands_.end()) return false;
-        service_.Execute(source_, found->second, point, completed_);
+        const auto *pair = found->second.empty() ? nullptr : StatePairForVerb(std::get<1>(found->second.back()));
+        service_.Execute(startLane_ && pair && pair->id == "state:start-pin" ? startSource_ : source_,
+            found->second, point, completed_);
         return true;
     }
 
@@ -216,6 +264,7 @@ class Presentation
     }
     Preferences prefs_;
     Request source_;
+    Request startSource_;
     MenuService &service_;
     std::function<void(bool)> completed_;
     unsigned contexts_ = 0;
@@ -224,7 +273,9 @@ class Presentation
     std::set<UINT> converting_;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
+    bool startLane_ = false, normalDone_ = true, startDone_ = true;
     std::uint64_t initialRevision_ = 0;
+    std::uint64_t startRevision_ = 0;
     std::vector<HBITMAP> images_;
 };
 } // namespace snowdesktop::shell_extensions

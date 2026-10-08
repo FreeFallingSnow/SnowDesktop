@@ -113,6 +113,7 @@ struct MenuService::Impl
         Key key; std::uint64_t sequence, dependency;
         MenuSnapshotCache::Ticket ticket; QueryWork work;
         std::uint64_t started;
+        bool startPinOnly = false;
     };
     struct SourceJob
     {
@@ -156,7 +157,7 @@ struct MenuService::Impl
         : directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r))
     {
         if (!factory) factory = [](const Request &request) {
-            auto session = std::make_shared<Session>(request);
+            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000);
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); }};
         };
         if (!readCatalogue) readCatalogue = [] { return ReadCatalogue(); };
@@ -183,6 +184,7 @@ struct MenuService::Impl
         for (int i = 0; i < 4; ++i) if (candidates & (1u << i))
             for (const auto &id : shown[i])
             {
+                if (request.startPinOnly && StateVisibilityId(id) != "state:start-pin") continue;
                 bool allowed = true;
                 for (int j = 0; contexts && j < 4; ++j)
                     if ((contexts & (1u << j)) && !shown[j].contains(id)) allowed = false;
@@ -199,9 +201,24 @@ struct MenuService::Impl
     {
         return std::any_of(shown.begin(), shown.end(), [](const auto &ids) { return !ids.empty(); });
     }
+    bool OnlyStartShown(const Request &request, unsigned contexts = 0) const
+    {
+        if (!configured || request.background || request.context == Context::Desktop || request.paths.size() != 1) return false;
+        bool start = false;
+        for (int i = 0; i < 2; ++i) if (!contexts || (contexts & (1u << i)))
+            for (const auto &id : shown[i])
+            {
+                if (StateVisibilityId(id) != "state:start-pin") return false;
+                start = true;
+            }
+        return start;
+    }
     void Queue(const Request &request, QueryPriority priority, bool force, unsigned delay = 0)
     {
         if (request.paths.empty() || request.paths.size() > 256) return;
+        // Opening/refreshing a Start-only popup is served by its dedicated
+        // request. Inspection and explicit execution still retain full queries.
+        if (priority == QueryPriority::Menu && !request.startPinOnly && OnlyStartShown(request)) return;
         if ((priority == QueryPriority::Menu || priority == QueryPriority::Prewarm) && !Enabled(request)) return;
         const auto key = SelectionKey(request);
         auto &row = rows[key]; row.request = request; row.request.catalogueOnly = false; row.used = ++clock;
@@ -378,6 +395,7 @@ struct MenuService::Impl
         if (!inspected || !sourcePending || scanning || scanRequested || !catalogue.revision) return {};
         for (const auto &[key, row] : rows)
         {
+            if (row.request.startPinOnly) continue;
             if (!row.view.snapshot || row.view.pending || row.invalid || row.expires <= MenuSnapshotCache::Now() || !Local(row.request)) continue;
             const bool missing = std::any_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto &entry) {
                 const auto found = observed.find(entry.registration.empty() ? entry.provider : entry.registration);
@@ -722,14 +740,21 @@ struct MenuService::Impl
                 if (!reply && GetTickCount64() - sourceJob->started >= 8000) reply = Reply{false, {}, "source query timeout"};
                 if (reply) { CompleteSource(*sourceJob, *reply); sourceJob.reset(); }
             }
-            while (running.size() + (sourceJob ? 1 : 0) < 2)
+            // Arbitrary extensions retain two supervised slots. Microsoft's
+            // Start handler has one reserved slot and never inherits a worker
+            // that has loaded third-party DLLs.
+            while (true)
             {
+                const auto startJobs = std::count_if(running.begin(), running.end(), [](const auto &job) {
+                    return job.startPinOnly;
+                });
+                const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs + (sourceJob ? 1 : 0);
                 Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
                     // Dispatch only one background sample at a time into the
                     // shared scheduler; interactive queries keep their priority.
-                    if (nextType < typeDiscovery.size())
+                    if (normalJobs < 2 && nextType < typeDiscovery.size())
                     {
                         const auto &target = typeDiscovery[nextType++];
                         Queue(target, QueryPriority::Inspect, typeBatchForce);
@@ -737,7 +762,9 @@ struct MenuService::Impl
                     }
                     auto best = rows.end(); const auto now = GetTickCount64();
                     for (auto it = rows.begin(); it != rows.end(); ++it)
-                        if (it->second.queued && it->second.due <= now && (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
+                        if (it->second.queued && it->second.due <= now &&
+                            (it->second.request.startPinOnly ? startJobs < 1 : normalJobs < 2) &&
+                            (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
                     if (best == rows.end()) break;
                     auto &row = best->second; key = best->first; request = row.request; priority = row.priority;
                     sequence = row.sequence; dependency = row.dependency; invalid = row.invalid; row.queued = false;
@@ -771,11 +798,13 @@ struct MenuService::Impl
                         MenuTrace("schedule", "snapshot_reused"); continue;
                     }
                 }
-                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64()};
+                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly};
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
-            if (!sourceJob && running.size() < 2)
+            if (!sourceJob && std::count_if(running.begin(), running.end(), [](const auto &job) {
+                    return !job.startPinOnly;
+                }) < 2)
                 if (auto job = NextSource())
                 {
                     job->started = GetTickCount64();
@@ -891,7 +920,9 @@ void MenuService::Prewarm(const Request &request)
     // Only the latest still-queued selection survives the stability window.
     for (auto &[key, row] : impl_->rows)
         if (row.queued && row.priority == QueryPriority::Prewarm && !row.inspection) row.queued = row.view.pending = false;
-    impl_->Queue(request, QueryPriority::Prewarm, false, 150);
+    auto target = request;
+    if (impl_->OnlyStartShown(request)) target.startPinOnly = true;
+    impl_->Queue(target, QueryPriority::Prewarm, false, 150);
 }
 void MenuService::Configure(Preferences preferences)
 {

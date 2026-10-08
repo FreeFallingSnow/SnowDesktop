@@ -18,6 +18,9 @@ struct Request
     Context context = Context::Automatic;
     // Private metadata query: never displayed or invoked as a menu session.
     std::wstring sourceClsid, sourceKey;
+    // Private executable query of Microsoft's Start handler, isolated from
+    // arbitrary extension discovery and its worker pool.
+    bool startPinOnly = false;
     friend bool operator==(const Request &, const Request &) = default;
 };
 struct Entry
@@ -83,7 +86,8 @@ template <> struct Fields<shell_extensions::Request>
 {
     template <class T> static auto Tie(T &v)
     {
-        return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey);
+        return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey,
+                        v.startPinOnly);
     }
 };
 template <> struct Fields<shell_extensions::Entry>

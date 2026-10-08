@@ -1205,6 +1205,13 @@ void TestExtensionSessions()
         ext::Session first(request,2500); Expect(wait(first).ok,"first concurrent query");
         ext::Session second(request,2500); Expect(wait(second).ok,"second concurrent query");
         Expect(first.ProcessId()!=second.ProcessId(),"active menu sessions never share a worker or command map");
+        bool refused = false;
+        try { ext::Session third(request, 2500); } catch (const snowdesktop::settings_ipc::ProtocolError &) { refused = true; }
+        Expect(refused, "arbitrary extensions retain their two-session limit");
+        auto start = request; start.startPinOnly = true;
+        ext::Session reserved(start, 2500); const auto direct = wait(reserved);
+        Expect(direct.ok && reserved.ProcessId() != first.ProcessId() && reserved.ProcessId() != second.ProcessId(),
+            "Start queries have an isolated reserved helper even while both ordinary slots are occupied");
     }
     ext::InvalidateMenuCache();
     {ext::Session session(request,2500);auto reply=wait(session);
@@ -1464,7 +1471,7 @@ void TestExposedStartPinHelper()
     namespace pin = snowdesktop::shell_start_pin;
     TemporaryDirectory directory;
     const auto output = directory.path / L"start-pin-result.bin";
-    // Exercise the real Session IPC, aggregate menu, token lookup and Host
+    // Exercise the real Session IPC, dedicated menu, token lookup and Host
     // invocation. Substitute only the final Explorer call so no user pin changes.
     struct Mode
     {
@@ -1491,11 +1498,12 @@ void TestExposedStartPinHelper()
         SUCCEEDED(link->SetPath(target)) && SUCCEEDED(link.As(&persist)) &&
         SUCCEEDED(persist->Save(shortcut.c_str(), TRUE)), "create a private Unicode shortcut");
     ext::Request request; request.paths = {shortcut.wstring()};
+    request.startPinOnly = true;
     ext::Session session(request);
     std::optional<ext::Reply> reply;
     PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); },
         "the production helper queries the shortcut menu");
-    Expect(reply->ok, "the real shortcut aggregate query succeeds");
+    Expect(reply->ok && reply->entries.size() == 1, "the real shortcut query exposes only its current Start command");
     const auto selected = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
         return entry.enabled && entry.token && !entry.native &&
             (_stricmp(entry.key.c_str(), "PinToStartScreen") == 0 ||
@@ -1584,15 +1592,16 @@ void TestPairedCommandRefresh()
     ext::Request request; request.paths = {target.wstring()};
     std::atomic<bool> pinned = false, hold = false, completed = false, success = false;
     std::atomic<int> queries = 0, invokes = 0;
-    ext::MenuService service(directory.path / L"cache", [&](const auto &) {
+    auto startRequest = request; startRequest.startPinOnly = true;
+    ext::MenuService service(directory.path / L"cache", [&](const auto &source) {
         ++queries;
         const bool state = pinned.load();
         ext::Entry action; action.key = state ? "UnpinFromStartScreen" : "PinToStartScreen";
         action.provider = state ? "verb:unpinfromstartscreen" : "verb:pintostartscreen";
         action.label = state ? L"Unpin" : L"Pin"; action.token = state ? 42 : 41;
         ext::Entry ordinary; ordinary.key = "inspect"; ordinary.provider = "verb:inspect"; ordinary.label = L"Inspect"; ordinary.token = 43;
-        return ext::QueryWork{[&, action, ordinary]() -> std::optional<ext::Reply> {
-            if (hold) return {}; return ext::Reply{true, {ordinary, action}, {}};
+        return ext::QueryWork{[&, action, ordinary, direct = source.startPinOnly]() -> std::optional<ext::Reply> {
+            if (hold) return {}; return ext::Reply{true, direct ? std::vector<ext::Entry>{action} : std::vector<ext::Entry>{ordinary, action}, {}};
         }, [&, state, token = action.token](UINT selected, POINT) {
             if (selected != token || pinned.load() != state) throw std::runtime_error("wrong state token");
             ++invokes; pinned = !state; hold = true; // Hold the post-action query, never the invocation.
@@ -1615,7 +1624,7 @@ void TestPairedCommandRefresh()
     PumpUntil([&] { return queries >= 2; }, "opening a warm paired menu forces a native state query");
     Expect(!options.pollItems(items, true), "a held state query cannot reinsert the stale cached action");
     hold = false;
-    PumpUntil([&] { return !service.View(request).pending; }, "fresh external state query completes");
+    PumpUntil([&] { return !service.View(startRequest).pending && service.View(startRequest).snapshot.has_value(); }, "fresh external state query completes");
     const auto additions = options.pollItems(items, true);
     Expect(additions && std::count_if(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Unpin"; }) == 1 &&
         std::none_of(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Pin"; }),
@@ -1628,11 +1637,79 @@ void TestPairedCommandRefresh()
     ext::MenuSnapshotCache disk(directory.path / L"cache");
     Expect(!disk.Find(disk.Capture(request)), "the same pre-action disk snapshot is retired too");
     hold = false;
-    PumpUntil([&] { const auto view = service.View(request); return !view.pending && view.snapshot.has_value(); },
+    PumpUntil([&] { const auto view = service.View(startRequest); return !view.pending && view.snapshot.has_value(); },
         "the post-action native query publishes the new Pin state");
-    const auto after = service.MenuDisplay(request, prefs);
+    const auto after = service.MenuDisplay(startRequest, prefs);
     Expect(after.snapshot && after.snapshot->entries.back().label == L"Pin" && invokes == 1,
         "one Unpin action produces one freshly queried Pin state and no duplicate invocation");
+}
+
+void TestStartQueryScheduling()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory directory;
+    ext::Request first, second, target;
+    first.paths = {(directory.path / L"first.lnk").wstring()};
+    second.paths = {(directory.path / L"second.lnk").wstring()};
+    target.paths = {(directory.path / L"target.lnk").wstring()};
+    for (const auto &request : {first, second, target}) std::ofstream(std::filesystem::path(request.paths.front())) << "isolated target";
+    std::atomic<bool> hold = true;
+    std::atomic<unsigned> ordinaryQueries = 0, startQueries = 0;
+    // Only the native process boundary is substituted. Exercise the production
+    // scheduler, popup bridge and cache with two deliberately stalled extensions.
+    ext::MenuService service(directory.path / L"cache", [&](const auto &request) {
+        const bool direct = request.startPinOnly;
+        if (direct) ++startQueries; else ++ordinaryQueries;
+        ext::Entry entry; entry.token = direct ? 1 : 2;
+        entry.key = direct ? "PinToStartScreen" : "inspect";
+        entry.provider = direct ? "verb:pintostartscreen" : "verb:inspect";
+        entry.label = direct ? L"Pin" : L"Inspect";
+        return ext::QueryWork{[&, direct, entry]() -> std::optional<ext::Reply> {
+            if (!direct && hold) return {}; return ext::Reply{true, {entry}, {}};
+        }, {}};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:pintostartscreen", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(first); service.Query(second);
+    PumpUntil([&] { return ordinaryQueries == 2; }, "occupy both ordinary extension slots");
+    // Model a target disappearing after selection: no cache ticket can be
+    // captured. The process-boundary substitute still completes, so lane
+    // accounting must remain correct without a persistent cache identity.
+    std::filesystem::remove(std::filesystem::path(target.paths.front()));
+    ext::Presentation presentation(target, prefs, L"", L"", service);
+    menu::Item builtin; builtin.command = 5; builtin.label = L"Open";
+    menu::Item more; more.command = 7; more.label = L"More";
+    std::vector<menu::Item> items{builtin, more}; menu::Options options;
+    presentation.Attach(items, options, 7);
+    auto start = target; start.startPinOnly = true;
+    PumpUntil([&] { return service.View(start).snapshot.has_value(); }, "the reserved Start query bypasses both stalled extensions");
+    const auto early = options.pollItems(items, true);
+    Expect(ordinaryQueries == 2 && startQueries == 1 && early && early->size() == 4 &&
+        std::count_if(early->begin(), early->end(), [](const auto &i) { return i.label == L"Pin"; }) == 1 &&
+        !options.pollItemsFinished(), "Start appears before the cold aggregate without ending its independent publication");
+    items = *early;
+    hold = false;
+    PumpUntil([&] { return service.View(target).snapshot.has_value(); }, "the cold aggregate can finish afterwards");
+    const auto late = options.pollItems(items, true);
+    Expect(late && options.pollItemsFinished() && late->back().command == 7 &&
+        std::count_if(late->begin(), late->end(), [](const auto &i) { return i.label == L"Pin"; }) == 1 &&
+        std::count_if(late->begin(), late->end(), [](const auto &i) { return i.label == L"Inspect"; }) == 1,
+        "later ordinary publication preserves the Start action and the footer without duplicates");
+    const auto previousOrdinary = ordinaryQueries.load();
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, false); service.Configure(prefs);
+    ext::Presentation onlyStart(target, prefs, L"", L"", service);
+    std::vector<menu::Item> fresh{more}; menu::Options freshOptions; onlyStart.Attach(fresh, freshOptions, 7);
+    PumpUntil([&] { return !service.View(start).pending && startQueries >= 2; }, "a new Start-only opening queries current state");
+    const auto state = freshOptions.pollItems(fresh, true);
+    Expect(state && freshOptions.pollItemsFinished() && ordinaryQueries == previousOrdinary,
+        "enabling only Start pinning never triggers an aggregate query on reopening");
+    service.Prewarm(first);
+    auto prewarmed = first; prewarmed.startPinOnly = true;
+    PumpUntil([&] { return service.View(prewarmed).snapshot.has_value(); }, "Start-only prewarming uses its dedicated request");
+    Expect(ordinaryQueries == previousOrdinary, "Start-only selection prewarming does not enumerate unrelated extensions");
 }
 
 void TestUnchangedCataloguePersistence()
@@ -2703,7 +2780,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-state-commands")
-        { TestPairedCommandVisibility(); TestPairedCommandRefresh(); TestExposedStartPinHelper(); }
+        { TestPairedCommandVisibility(); TestPairedCommandRefresh(); TestStartQueryScheduling(); TestExposedStartPinHelper(); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
@@ -2729,6 +2806,7 @@ int wmain(int argc, wchar_t **argv)
             TestExposedStartPinHelper();
             TestPairedCommandVisibility();
             TestPairedCommandRefresh();
+            TestStartQueryScheduling();
             TestSnapshotPresentation();
             TestPendingCachedClick();
             TestQueryScheduler();

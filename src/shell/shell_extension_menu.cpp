@@ -28,6 +28,7 @@ namespace
 {
 constexpr size_t kMaximumEntries = 2048;
 std::atomic<unsigned> sessions{0};
+std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 // Event probes are constant-time. No registry tree scan occurs on each click.
 // Watch the nearest existing ancestor too, so creating a Blocked key invalidates
@@ -702,9 +703,9 @@ struct Host
     Reply Query(const Request &request)
     {
         auto reply = QueryOnce(request);
-        if (request.sourceClsid.empty() && !catalogueInitialized && reply.ok)
+        if (request.background && request.sourceClsid.empty() && !catalogueInitialized && reply.ok)
         {
-            // The first aggregate primes Windows' packaged extension catalogue.
+            // The first background aggregate primes Windows' packaged extension catalogue.
             // On a cold process it can return success before Terminal and other
             // IExplorerCommand registrations become visible. Rebind once before
             // publishing that first menu; all tokens belong to this final query.
@@ -727,6 +728,8 @@ struct Host
                 return {};
         if (request.background && request.paths.size() != 1)
             return {};
+        if (request.startPinOnly && (request.background || request.catalogueOnly || request.paths.size() != 1 ||
+            !request.sourceClsid.empty() || !request.sourceKey.empty())) return {};
         std::vector<std::unique_ptr<Pidl>> pidls;
         std::vector<PCIDLIST_ABSOLUTE> raw;
         for (const auto &path : request.paths)
@@ -754,7 +757,7 @@ struct Host
         native->paths = request.paths;
         std::unique_ptr<TemporaryMenuFile> warmFile;
         std::unique_ptr<Native> warmMenu;
-        if (request.sourceClsid.empty() && !fileAssociationsReady && ResolveContext(request) == Context::Folder)
+        if (!request.startPinOnly && request.sourceClsid.empty() && !fileAssociationsReady && ResolveContext(request) == Context::Folder)
         {
             // File-menu initialization primes Shell association handlers before
             // folder-only extensions create windows from their DLL entry point.
@@ -772,13 +775,16 @@ struct Host
         }
         // Source probes only supply metadata for commands already returned by
         // the real aggregate. They never contribute displayed/executable items.
-        if (!request.sourceClsid.empty())
+        if (request.startPinOnly || !request.sourceClsid.empty())
         {
-            native->metadataOnly = true;
+            native->metadataOnly = !request.startPinOnly;
+            constexpr auto startHandler = L"{470C0EBD-5D73-4D58-9CED-E91E22E23282}";
+            if (request.startPinOnly && !HandlerEnabled(startHandler)) return Reply{true, {}, {}};
             CLSID clsid{};
-            if (FAILED(CLSIDFromString(request.sourceClsid.c_str(), &clsid))) return {};
+            if (FAILED(CLSIDFromString(request.startPinOnly ? startHandler : request.sourceClsid.c_str(), &clsid))) return {};
             if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&native->context))))
             {
+                if (request.startPinOnly) return {};
                 ComPtr<IExplorerCommand> command;
                 if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&command)))) return {};
                 ComPtr<IShellItemArray> selection;
@@ -798,10 +804,10 @@ struct Host
                     FAILED(selection->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data)))) return {};
             }
             HKEY type = nullptr;
-            RegOpenKeyExW(HKEY_CLASSES_ROOT, request.sourceKey.c_str(), 0, KEY_READ, &type);
+            if (!request.sourceKey.empty()) RegOpenKeyExW(HKEY_CLASSES_ROOT, request.sourceKey.c_str(), 0, KEY_READ, &type);
             ComPtr<IShellExtInit> initialize;
             const HRESULT initialized = SUCCEEDED(native->context.As(&initialize))
-                ? initialize->Initialize(request.background ? folderId.value : nullptr, data.Get(), type) : E_NOINTERFACE;
+                ? initialize->Initialize(request.background || request.startPinOnly ? folderId.value : nullptr, data.Get(), type) : E_NOINTERFACE;
             if (type) RegCloseKey(type);
             if (FAILED(initialized)) return {};
         }
@@ -855,9 +861,15 @@ struct Host
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
         Reply reply;
-        if (!request.background && ResolveContext(request) == Context::File) fileAssociationsReady = true;
+        if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
+            fileAssociationsReady = true;
         reply.entries = Read(*native, native->menu, "");
-        if (request.sourceClsid.empty())
+        if (request.startPinOnly)
+            std::erase_if(reply.entries, [](const auto &entry) {
+                const auto *pair = StatePairForVerb(entry.key);
+                return !pair || pair->id != "state:start-pin";
+            });
+        if (!request.startPinOnly && request.sourceClsid.empty())
             for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
         NvidiaCompatibility(request, reply);
         if (count >= kMaximumEntries)
@@ -1014,7 +1026,7 @@ struct Session::Impl
     ULONGLONG born = GetTickCount64(), started = 0;
     std::uint64_t generation = 0;
     DWORD timeout = 8000;
-    bool delivered = false, detached = false, succeeded = false;
+    bool delivered = false, detached = false, succeeded = false, startPinOnly = false;
     void RemoveRetiredSamples()
     {
         for (const auto &directory : retiredSamples)
@@ -1045,9 +1057,10 @@ thread_local std::vector<std::unique_ptr<Session::Impl>> Session::Impl::idle;
 Session::Session(const Request &request, DWORD queryTimeoutMs)
 {
     MenuTiming timing("helper_start");
-    if (sessions.fetch_add(1) >= 2)
+    auto &counter = request.startPinOnly ? startPinSessions : sessions;
+    if (counter.fetch_add(1) >= (request.startPinOnly ? 1u : 2u))
     {
-        sessions.fetch_sub(1);
+        counter.fetch_sub(1);
         throw settings_ipc::ProtocolError("too many Shell menus");
     }
     try
@@ -1055,9 +1068,13 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
         const auto generation = MenuCacheGeneration();
         auto &idle = Impl::idle;
         std::erase_if(idle, [=](const auto &worker) { return worker->generation != generation || !worker->process->Running() || GetTickCount64() - worker->born >= kWorkerLifetimeMs; });
-        const bool reused = !idle.empty();
-        if (reused) { impl_ = std::move(idle.back()); idle.pop_back(); }
+        const auto available = std::find_if(idle.begin(), idle.end(), [&](const auto &worker) {
+            return worker->startPinOnly == request.startPinOnly;
+        });
+        const bool reused = available != idle.end();
+        if (reused) { impl_ = std::move(*available); idle.erase(available); }
         else impl_ = std::make_unique<Impl>();
+        impl_->startPinOnly = request.startPinOnly;
         impl_->generation = generation;
         impl_->started = GetTickCount64();
         impl_->delivered = impl_->succeeded = false;
@@ -1082,12 +1099,13 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
     catch (...)
     {
         impl_.reset();
-        sessions.fetch_sub(1);
+        counter.fetch_sub(1);
         throw;
     }
 }
 Session::~Session()
 {
+    const bool startPinOnly = impl_->startPinOnly;
     if (impl_ && impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
         impl_->generation == Caches().generation)
     {
@@ -1104,11 +1122,14 @@ Session::~Session()
             // even if the next query has already acquired this worker.
             impl_->channel.Notify("menu.release");
             impl_->born = GetTickCount64();
-            if (Impl::idle.size() < 2) Impl::idle.push_back(std::move(impl_));
+            const auto pooled = std::count_if(Impl::idle.begin(), Impl::idle.end(), [=](const auto &worker) {
+                return worker->startPinOnly == startPinOnly;
+            });
+            if (pooled < (startPinOnly ? 1 : 2)) Impl::idle.push_back(std::move(impl_));
         }
         catch (...) { /* A disconnected worker is destroyed instead of pooled. */ }
     }
-    sessions.fetch_sub(1);
+    (startPinOnly ? startPinSessions : sessions).fetch_sub(1);
 }
 void Session::ReleaseIdleWorker() { Impl::idle.clear(); }
 DWORD Session::ProcessId() const noexcept { return impl_->process->ProcessId(); }

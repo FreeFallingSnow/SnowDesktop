@@ -2445,6 +2445,85 @@ int wmain()
             Expect(!aboveDock || expanded.bottom <= options.anchorRect.top + 16,
                    "growing a menu above the Dock keeps the Dock clear and scrolls additional rows");
         }
+    // Native popup regression: independent Shell streams may append below a
+    // stationary pointer. The original action must keep its screen bounds and
+    // click identity after both updates, while shifted footer updates wait.
+    for (const bool movesHoveredRow : {false, true})
+    {
+        auto incremental = options;
+        incremental.dpi = 96; incremental.anchor = {200, 200};
+        incremental.rootPlacement = snowdesktop::modern_menu::RootPlacement::Default;
+        incremental.onHover = {}; incremental.pollItemsStablePrefix = true;
+        unsigned phase = 0, streams = 0;
+        bool finished = false, waited = false, selected = false;
+        RECT original{}, after{}, initialWindow{};
+        incremental.onHover = [&](const auto &hover) {
+            if (hover.command != 8270) return;
+            if (!original.right) original = hover.itemScreenRect; else after = hover.itemScreenRect;
+        };
+        incremental.pollItemsFinished = [&] { return finished; };
+        incremental.pollItems = [&](const auto &current, bool canApply) -> std::optional<std::vector<Item>> {
+            const auto root = snowdesktop::modern_menu::ActiveRootWindow();
+            if (!phase++)
+            {
+                SendMessageW(root, WM_MOUSEMOVE, 0, MAKELPARAM(20, 20));
+                TRACKMOUSEEVENT tracking{sizeof(tracking), TME_CANCEL | TME_LEAVE, root, 0};
+                TrackMouseEvent(&tracking);
+                MSG leave{};
+                while (PeekMessageW(&leave, root, WM_MOUSELEAVE, WM_MOUSELEAVE, PM_REMOVE)) {}
+                return {};
+            }
+            if (!canApply) return {};
+            auto updated = current;
+            Item loaded; loaded.command = 8271 + streams; loaded.label = streams ? L"Ordinary" : L"Start";
+            if (movesHoveredRow)
+            {
+                GetWindowRect(root, &initialWindow);
+                updated.insert(updated.begin(), loaded);
+                finished = true;
+                // Queue the leave after the candidate is returned. The real
+                // controller must retain this rejected candidate until safe.
+                PostMessageW(root, WM_MOUSELEAVE, 0, 0);
+                gDriveMode = DriveMode::Script; gInputPosted = false;
+                SetTimer(owner, kDriveTimer, 10, nullptr);
+            }
+            else
+            {
+                updated.push_back(loaded);
+                if (++streams == 2)
+                {
+                    finished = true;
+                    PostMessageW(root, WM_LBUTTONDOWN, 0, MAKELPARAM(20, 20));
+                    PostMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(20, 20));
+                }
+            }
+            return updated;
+        };
+        incremental.eventPump = {};
+        incremental.eventPump.flushPresentation = [&] {
+            if (!movesHoveredRow || !finished || selected) return;
+            const auto root = snowdesktop::modern_menu::ActiveRootWindow();
+            RECT bounds{}; GetWindowRect(root, &bounds);
+            if (bounds.bottom - bounds.top == initialWindow.bottom - initialWindow.top) waited = true;
+            else
+            {
+                selected = true;
+                PostMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                PostMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+        };
+        gMenuScript = [&](HWND) { incremental.eventPump.flushPresentation(); };
+        Item stable; stable.command = 8270; stable.label = L"Open";
+        gWatchdogFired = false; SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = snowdesktop::modern_menu::Show({stable}, incremental);
+        KillTimer(owner, kWatchdogTimer); KillTimer(owner, kDriveTimer); gMenuScript = {};
+        if (!movesHoveredRow)
+            Expect(streams == 2 && !gWatchdogFired && result.command == 8270 && EqualRect(&original, &after),
+                "both independent updates appear under a stationary pointer without moving its original click target");
+        else
+            Expect(!gWatchdogFired && result.command == 8271 && waited,
+                "an update that shifts the pointed row remains pending until the pointer leaves");
+    }
     // Mouse input and async replacement share the real controller. A result
     // must wait while the user is pointing at or pressing the old More row.
     for (const bool pressed : {false, true})
