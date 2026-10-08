@@ -299,8 +299,10 @@ void TestTooltipPresentation()
         {
             DWRITE_TEXT_METRICS metrics{};
             measured.layout->GetMetrics(&metrics);
+            // Wrapped line-ending spaces can extend beyond the layout width;
+            // only formatted visible text must fit inside the content area.
             Check(measured.width <= 160.f * scale && measured.height <= 192.f * scale &&
-                metrics.widthIncludingTrailingWhitespace <= measured.width - measured.paddingX * 2.f + 1.f,
+                metrics.width <= measured.width - measured.paddingX * 2.f + 1.f,
                 "wrapped long translations stay within the constrained tooltip content width");
         }
     }

@@ -159,6 +159,7 @@ struct PersonalizationPagePresenter::Impl
     std::unique_ptr<ThemeLibraryControls> globalThemes, quickThemes, popupThemes, dockThemes, themeTransfers;
     muxc::StackPanel managementRoot;
     SettingsCard fontCard;
+    SettingsCard tooltipFontCard;
     SettingRow fontRow;
     SettingRow tooltipFontSizeRow;
     muxc::NumberBox tooltipFontSize;
@@ -567,7 +568,7 @@ struct PersonalizationPagePresenter::Impl
         InitializeNavigationCard(statusBarLink, statusBarLinkTitle, statusBarLinkDescription);
         InitializeNavigationCard(taskbarLink, taskbarLinkTitle, taskbarLinkDescription);
         InitializeNavigationCard(dockLink, dockLinkTitle, dockLinkDescription);
-        InitializeCard(fontCard, cardStyle, themeRoot);
+        InitializeCard(fontCard, cardStyle, widgetLayoutRoot);
         fontPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         fontPicker.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         fontPicker.MaxWidth(520.0);
@@ -596,6 +597,7 @@ struct PersonalizationPagePresenter::Impl
         fontPicker.Flyout(fontFlyout);
         fontRow.Initialize(fontPicker);
         fontCard.content.Children().Append(fontRow.root);
+        InitializeCard(tooltipFontCard, cardStyle, widgetLayoutRoot);
         tooltipFontSize.Minimum(kMinimumTooltipFontSize);
         tooltipFontSize.Maximum(kMaximumTooltipFontSize);
         tooltipFontSize.SmallChange(1);
@@ -623,7 +625,7 @@ struct PersonalizationPagePresenter::Impl
         muxc::Grid::SetColumn(tooltipFontSizeReset, 2);
         tooltipEditors.Children().Append(tooltipFontSizeReset);
         tooltipFontSizeRow.Initialize(tooltipEditors);
-        fontCard.content.Children().Append(tooltipFontSizeRow.root);
+        tooltipFontCard.content.Children().Append(tooltipFontSizeRow.root);
         fontRestart.IsClosable(false);
         fontRestart.IsOpen(false);
         fontRestart.Severity(muxc::InfoBarSeverity::Informational);
@@ -1503,11 +1505,13 @@ struct PersonalizationPagePresenter::Impl
 
         SetCardText(fontCard, "font.title", L"Interface font");
         fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
-        tooltipFontSizeRow.SetText(L("font.tooltipSize", L"Tooltip font size"), L("font.tooltipSizeHint"));
-        muxa::AutomationProperties::SetName(tooltipFontSize, tooltipFontSizeRow.label.Text());
-        muxa::AutomationProperties::SetName(tooltipFontSizeSlider, tooltipFontSizeRow.label.Text());
+        SetCardText(tooltipFontCard, "font.tooltipSize", L"Tooltip font size");
+        tooltipFontSizeRow.SetText(L("font.size", L"Font size"), L("font.tooltipSizeHint"));
+        const auto tooltipFontSizeLabel = L("font.tooltipSize", L"Tooltip font size");
+        muxa::AutomationProperties::SetName(tooltipFontSize, tooltipFontSizeLabel);
+        muxa::AutomationProperties::SetName(tooltipFontSizeSlider, tooltipFontSizeLabel);
         presenter_controls::ConfigureRestoreDefaultButton(tooltipFontSizeReset,
-            L("app.settings.restore_default", L"Restore default") + L" · " + std::wstring(tooltipFontSizeRow.label.Text()));
+            L("app.settings.restore_default", L"Restore default") + L" · " + tooltipFontSizeLabel);
         muxa::AutomationProperties::SetName(fontPicker, fontRow.label.Text());
         fontSearch.PlaceholderText(L("font.search", L"Search fonts"));
         muxa::AutomationProperties::SetName(fontSearch, fontSearch.PlaceholderText());

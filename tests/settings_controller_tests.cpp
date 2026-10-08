@@ -357,7 +357,7 @@ void TestRoutes()
         {
             const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(sourcePage, focus));
             Check(spacing.page == SettingsPage::AppearanceWidgets && spacing.focusId == focus,
-                "layout spacing links reach Widgets & layout while retaining their focus target");
+                "layout spacing links reach Interface & layout while retaining their focus target");
         }
     const SettingsRoute desktopBehavior = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Desktop));

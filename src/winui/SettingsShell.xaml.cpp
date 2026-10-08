@@ -466,8 +466,8 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.personalization.colors.description", L"Customize accents, surfaces and gradients."},
     LocalizedFallback{"settings.personalization.menu", L"Context menu"},
     LocalizedFallback{"settings.personalization.menu.description", L"Configure SnowDesktop context-menu appearance."},
-    LocalizedFallback{"settings.personalization.widgets", L"Widgets & layout"},
-    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust layout spacing, widget corners, title bars, category tabs and content row heights."},
+    LocalizedFallback{"settings.personalization.widgets", L"Interface & layout"},
+    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust interface fonts, tooltip font size and layout details."},
     LocalizedFallback{"settings.desktop.layout", L"Icon layout"},
     LocalizedFallback{"settings.desktop.layout.description", L"Adjust icon size, title and list fonts, and shortcut arrows."},
     LocalizedFallback{"settings.desktop.beautify", L"Icon beautification"},
@@ -2746,7 +2746,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
-                "personalization.font",
                 "personalization.backgroundColor",
                 "personalization.borderColor",
                 "personalization.widgetAlpha",
@@ -2778,6 +2777,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 personalizationPage_->WidgetLayoutContent());
             registerPersonalizationFocus({
+                "personalization.font",
+                "personalization.tooltipFontSize",
                 "personalization.cornerRadius",
                 "personalization.barHeight",
                 "personalization.luaWidgetRowHeight",

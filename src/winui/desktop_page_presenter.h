@@ -68,7 +68,7 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;
-    /** Shared layout spacing editor, hosted on Widgets & layout. */
+    /** Shared layout spacing editor, hosted on Interface & layout. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         LayoutSpacingContent() const noexcept;
     /** Icon rendering, typography, and shortcut-arrow controls. */

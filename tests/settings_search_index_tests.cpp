@@ -199,6 +199,12 @@ int main()
     const auto find = [&](std::string_view id) {return std::find_if(catalog.staticSettings.begin(),catalog.staticSettings.end(),[&](const auto& descriptor) {return descriptor.focusId == id;});};
     Check(find("personalization.savedThemes")->page == SettingsPage::ThemeManager,
         "theme management search targets the independent page");
+    for (const auto focus : {"personalization.font", "personalization.tooltipFontSize"})
+    {
+        const auto entry = find(focus);
+        Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::AppearanceWidgets,
+            "font search results open their independent cards on Interface & layout");
+    }
     Check(find("general.quickNavigation")->page == SettingsPage::QuickNavigation && find("personalization.quickNavigationTheme")->page == SettingsPage::AppearanceTheme,"the shared catalog preserves the theme location and routes navigation behavior to its page");
     Check(find("quickNav.layout.iconSize") != catalog.staticSettings.end() && find("quickNav.color.searchBg") != catalog.staticSettings.end(),"advanced navigation fields are indexed individually");
     Check(find("quickNav.layout.iconSize")->page == SettingsPage::AppearanceTheme && find("quickNav.color.searchBg")->page == SettingsPage::AppearanceTheme,
