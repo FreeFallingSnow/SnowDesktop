@@ -355,6 +355,7 @@ set(SNOWDESKTOP_SOURCES
     src/platform/single_instance.cpp
     src/diagnostics/debug_profile.cpp
     src/platform/deployment_context.cpp
+    src/platform/shell_overlay_window.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
     src/common/utils.cpp
@@ -1235,6 +1236,15 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES shlwapi winhttp ws2_32
         LABELS core contract security)
+
+    snowdesktop_add_test(
+        SnowDesktopShellOverlayWindowTests
+        shell_overlay_window
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/platform/shell_overlay_window_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS core integration window)
 
     add_test(NAME http_network_integration
         COMMAND $<TARGET_FILE:SnowDesktopHttpSecurityTests> --network)

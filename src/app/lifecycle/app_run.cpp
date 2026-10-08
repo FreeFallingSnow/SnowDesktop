@@ -7,6 +7,7 @@
 #include "startup_diagnostics.h"
 #include "data/data_paths.h"
 #include "platform/deployment_context.h"
+#include "platform/shell_overlay_window.h"
 #include "drag_drop/drag_input_rules.h"
 #include "steam/steam_app_identity.h"
 #include "steam/steam_child_environment.h"
@@ -613,7 +614,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         RegisterClassExW(&preview);
     }
 
-    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
+    hwnd_ = snowdesktop::CreateShellOverlayWindowEx(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         wc.lpszClassName, L"SnowDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance, this);

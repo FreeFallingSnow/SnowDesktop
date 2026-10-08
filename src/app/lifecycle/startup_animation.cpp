@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "startup_animation.h"
+#include "platform/shell_overlay_window.h"
 #include "diagnostics/diagnostic_log.h"
 #include "resources/resource.h"
 
@@ -454,7 +455,7 @@ void RunAnimation(HINSTANCE instance, HWND desktopHost, bool animate,
     actionClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     if (!RegisterClassExW(&actionClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         return;
-    WindowOwner window{ CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+    WindowOwner window{ snowdesktop::CreateShellOverlayWindowEx(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
         WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOREDIRECTIONBITMAP,
         kWindowClass, L"SnowDesktop", WS_POPUP,
         desktop.left, desktop.top, desktop.right - desktop.left, desktop.bottom - desktop.top,

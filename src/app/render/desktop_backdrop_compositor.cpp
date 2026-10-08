@@ -18,6 +18,7 @@
 #include "navigation/quick_navigation_genie_rules.h"
 #include "layout/popup_round_geometry.h"
 #include "icons/large_icon_shape_geometry.h"
+#include "platform/shell_overlay_window.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
@@ -975,9 +976,8 @@ bool DesktopBackdropCompositor::InitializeInternal(
     const DWORD extendedStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
         WS_EX_TRANSPARENT |
         (impl_->popupTopmost ? WS_EX_TOPMOST : 0);
-    const DWORD windowStyle = (popupMode ? WS_POPUP : WS_CHILD) |
-        (initiallyVisible ? WS_VISIBLE : 0);
-    impl_->backdropWindow = CreateWindowExW(
+    const DWORD windowStyle = popupMode ? WS_POPUP : WS_CHILD;
+    impl_->backdropWindow = snowdesktop::CreateShellOverlayWindowEx(
         extendedStyle,
         kBackdropWindowClassName, L"SnowDesktopBackdrop",
         windowStyle,

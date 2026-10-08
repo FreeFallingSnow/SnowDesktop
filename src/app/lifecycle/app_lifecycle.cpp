@@ -5,6 +5,7 @@
 #include "widget/settings/widget_engine_settings_backend.h"
 #include "widget/settings/widget_settings_service.h"
 #include "platform/http_runtime.h"
+#include "platform/shell_overlay_window.h"
 #include "shell/shell_extension_service.h"
 
 // Desktop host lifecycle.
@@ -827,7 +828,7 @@ bool DesktopApp::CreateDesktopOverlayWindow()
         ? desktopWindows_.host
         : GetDesktopWindow();
 
-    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
+    hwnd_ = snowdesktop::CreateShellOverlayWindowEx(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         L"SnowDesktopWindow", L"SnowDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance_, this);

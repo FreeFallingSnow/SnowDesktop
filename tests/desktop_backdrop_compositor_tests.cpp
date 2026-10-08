@@ -150,6 +150,9 @@ int CheckHiddenPopupKeyboardFocus()
         const HWND helper = FindOwnedBackdrop(glass);
         if (!check(glass.IsBackdropWindow(helper),
                 "focus checks address only this compositor's helper")) return;
+        check(GetPropW(helper, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE) &&
+                !IsWindowVisible(helper),
+            "a real popup backdrop receives its Shell exclusion before first show");
 
         enum class Case { Content, Child, DestroyedChild, Outside };
         for (const auto scenario : {Case::Content, Case::Child,
@@ -478,6 +481,8 @@ int RunDesktopBackdropCompositorTests()
         if (!check(startupGlass.IsBackdropWindow(helper),
                 "region fixture locates its exact owned helper before inspecting pixels"))
             return failures;
+        check(GetPropW(helper, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "the real startup backdrop is excluded from Shell fullscreen detection");
         HRGN region = CreateRectRgn(0, 0, 0, 0);
         check(startupGlass.IsBackdropWindow(helper) && region &&
                 GetWindowRgn(helper, region) != ERROR &&
@@ -658,6 +663,8 @@ int RunDesktopBackdropCompositorTests()
                 GetWindowRect(helper, &actual) &&
                 EqualRect(&actual, &placement),
             "the hidden glass HWND follows popup growth, shrinkage and movement");
+        check(GetPropW(helper, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "popup layout and target reattachment retain the Shell exclusion");
         HRGN region = CreateRectRgn(0, 0, 0, 0);
         check(region && GetWindowRgn(helper, region) != ERROR &&
                 PtInRegion(region, width - 1, height / 2) &&

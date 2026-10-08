@@ -3,6 +3,7 @@
 #include "popup_window_pair_z_order.h"
 #include "layout/popup_round_geometry.h"
 #include "theme/flat_glass_rim.h"
+#include "platform/shell_overlay_window.h"
 
 #include <array>
 #include <bit>
@@ -356,7 +357,7 @@ bool DesktopApp::CreateFloatingPopupWindow()
     if (!instance_)
         return false;
 
-    floatingPopupHwnd_ = CreateWindowExW(
+    floatingPopupHwnd_ = snowdesktop::CreateShellOverlayWindowEx(
         snowdesktop::floating_popup_rules::kWindowExStyle,
         kFloatingPopupWindowClassName,
         L"SnowDesktopFloatingPopup",

@@ -2,6 +2,7 @@
 #include "app/app.h"
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
+#include "platform/shell_overlay_window.h"
 
 void DesktopApp::StopQuickNavigationAnimationTimeline()
 {
@@ -53,7 +54,7 @@ bool DesktopApp::CreateQuickNavigationWindow()
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         return true;
 
-    quickNavigationHwnd_ = CreateWindowExW(
+    quickNavigationHwnd_ = snowdesktop::CreateShellOverlayWindowEx(
         WS_EX_TOOLWINDOW |
             (quickNavigationTopmost_ ? WS_EX_TOPMOST : 0) |
             WS_EX_NOREDIRECTIONBITMAP,

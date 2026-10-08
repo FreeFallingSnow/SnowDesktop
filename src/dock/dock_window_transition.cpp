@@ -4,6 +4,7 @@
 #include "dock_window_capture_isolation.h"
 #include "dock_snapshot_warmup.h"
 #include "dock_snapshot_warmup_rules.h"
+#include "platform/shell_overlay_window.h"
 
 #include <algorithm>
 #include <cmath>
@@ -322,7 +323,7 @@ bool DockWindowTransition::EnsureWindow()
     if (!instance_)
         return false;
 
-    hwnd_ = CreateWindowExW(
+    hwnd_ = snowdesktop::CreateShellOverlayWindowEx(
         kDockWindowTransitionExStyle,
         kDockWindowTransitionClassName,
         L"Dock Window Transition",
