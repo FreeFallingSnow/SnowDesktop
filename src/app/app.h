@@ -119,6 +119,7 @@ namespace snowdesktop::tray { struct Icon; }
 #include "common/constants.h"
 #include "resources/resource.h"
 #include "app/render/desktop_backdrop_compositor.h"
+#include "app/render/desktop_backdrop_update_rules.h"
 #include "app/drag_drop/drag_drop_controller.h"
 #include "app/layout/grid_geometry.h"
 #include "layout/layout_spacing_rules.h"
@@ -998,7 +999,8 @@ private:
     /** @brief 绘制添加组件操作提示。 */
     void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
     void DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
-        const snowdesktop::NativeTooltipTextLayout& measured, float scale = 1.f);
+        const snowdesktop::NativeTooltipTextLayout& measured, float scale = 1.f,
+        bool registerBackdrop = true);
     void DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* message);
     /** @brief 绘制组件面板背景（玻璃填充、色调与描边）。 */
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
@@ -3877,6 +3879,7 @@ private:
     int navHoverSide_ = 0;
     bool navHotEdgeHover_ = false;
     bool navHotEdgeHintVisible_ = false;
+    snowdesktop::desktop_backdrop_update_rules::TransientPanel navHotEdgeHintBackdrop_;
     snowdesktop::UiScheduleToken navHotEdgeHintToken_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
