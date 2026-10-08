@@ -1,4 +1,5 @@
 #include "shell/shell_context_menu_invoke.h"
+#include "shell/shell_start_pin.h"
 #include "shell/shell_extension_menu.h"
 #include "shell/shell_extension_catalogue.h"
 #include "shell/shell_extension_attribution.h"
@@ -35,6 +36,92 @@ void Expect(bool condition, const char* message)
     if (!condition)
     {
         throw std::runtime_error(message);
+    }
+}
+
+void TestStartPinRouting()
+{
+    namespace pin = snowdesktop::shell_start_pin;
+    // Only the native menu and Explorer execution are substituted. The real
+    // router must preserve the chosen shortcut, dispatch once, and never send
+    // another verb or invert an action whose state changed while the menu was open.
+    class Menu final : public Microsoft::WRL::RuntimeClass<
+        Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IContextMenu>
+    {
+    public:
+        std::wstring verb = L"PinToStartScreen";
+        bool ansiOnly = false;
+        IFACEMETHODIMP QueryContextMenu(HMENU, UINT, UINT, UINT, UINT) override { return E_NOTIMPL; }
+        IFACEMETHODIMP InvokeCommand(LPCMINVOKECOMMANDINFO) override { return E_ACCESSDENIED; }
+        IFACEMETHODIMP GetCommandString(UINT_PTR offset, UINT flags, UINT*, LPSTR output, UINT size) override
+        {
+            if (offset != 17 || !output || size <= verb.size()) return E_INVALIDARG;
+            if (flags == GCS_VERBW && !ansiOnly)
+            { wcscpy_s(reinterpret_cast<wchar_t*>(output), size, verb.c_str()); return S_OK; }
+            if (flags == GCS_VERBA)
+            { return WideCharToMultiByte(CP_ACP, 0, verb.c_str(), -1, output, static_cast<int>(size), nullptr, nullptr) ? S_OK : E_FAIL; }
+            return E_NOTIMPL;
+        }
+    };
+    auto context = Microsoft::WRL::Make<Menu>();
+    unsigned calls = 0;
+    const std::wstring shortcut = L"C:\\isolated\\微信.lnk";
+    const auto execute = [&](pin::Action action, const std::wstring& path) {
+        ++calls;
+        Expect(action == pin::Action::Pin && path == shortcut,
+            "Start pin dispatch preserves the selected Unicode shortcut rather than its executable target");
+        return E_ACCESSDENIED;
+    };
+    const auto result = pin::Route(context.Get(), 17, {shortcut}, execute);
+    Expect(result && *result == E_ACCESSDENIED && calls == 1,
+        "a selected Start command routes to Explorer exactly once and keeps failure handled without local fallback");
+    context->ansiOnly = true;
+    context->verb = L"pintostartscreen";
+    Expect(pin::Route(context.Get(), 17, {shortcut}, execute).has_value() && calls == 2,
+        "legacy ANSI canonical verbs also route Start pinning without caption matching");
+    Expect(pin::Route(context.Get(), 17, {}, execute) == E_INVALIDARG &&
+        pin::Route(context.Get(), 17, {shortcut, L"C:\\other.lnk"}, execute) == E_INVALIDARG && calls == 2,
+        "missing or ambiguous selections cannot pin an unrelated first item");
+    context->ansiOnly = false;
+    context->verb = L"open";
+    Expect(!pin::Route(context.Get(), 17, {shortcut}, execute) && calls == 2,
+        "ordinary and third-party Shell commands keep their existing local execution route");
+    context->verb = L"UnpinFromStartScreen";
+    Expect(pin::Route(context.Get(), 17, {shortcut}, [&](pin::Action action, const auto& path) {
+        return action == pin::Action::Unpin && path == shortcut ? S_OK : E_FAIL;
+    }) == S_OK, "unpin dispatch preserves the user's reverse action");
+    struct Popup { HMENU value = CreatePopupMenu(); ~Popup() { DestroyMenu(value); } } popup;
+    AppendMenuW(popup.value, MF_STRING, 18, L"A localized caption");
+    Expect(!pin::FindCommand(context.Get(), popup.value, pin::Action::Pin) &&
+        pin::FindCommand(context.Get(), popup.value, pin::Action::Unpin) == 17u,
+        "a pin whose state became unpin is not executed as an accidental reversal");
+    EnableMenuItem(popup.value, 18, MF_BYCOMMAND | MF_GRAYED);
+    Expect(!pin::FindCommand(context.Get(), popup.value, pin::Action::Unpin),
+        "Explorer rechecks current command availability before changing Start pins");
+
+    pin::Request request;
+    request.processId = 42;
+    request.token = 123;
+    wcscpy_s(request.path, shortcut.c_str());
+    Expect(pin::ValidRequest(request, 42, 123), "a bound absolute Start request is valid");
+    for (int mutation = 0; mutation < 10; ++mutation)
+    {
+        auto invalid = request;
+        switch (mutation)
+        {
+        case 0: invalid.magic = 0; break;
+        case 1: invalid.version = 2; break;
+        case 2: invalid.size = 0; break;
+        case 3: invalid.processId = 43; break;
+        case 4: invalid.token = 124; break;
+        case 5: invalid.action = static_cast<pin::Action>(2); break;
+        case 6: invalid.status = pin::Completed; break;
+        case 7: invalid.path[0] = L'\0'; break;
+        case 8: std::fill(std::begin(invalid.path), std::end(invalid.path), L'x'); break;
+        case 9: wcscpy_s(invalid.path, L"relative.lnk"); break;
+        }
+        Expect(!pin::ValidRequest(invalid, 42, 123),
+            "unbound, replayed, unsupported or malformed requests cannot enter Explorer pin execution");
     }
 }
 
@@ -462,6 +549,7 @@ void TestNativeCascadeOwnerThread()
 
 void RunTests()
 {
+    TestStartPinRouting();
     TestNativeMenuThemeScope();
     TestNativeCascadeOwnerThread();
     const std::wstring currentDirectory =

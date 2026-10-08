@@ -12,6 +12,7 @@
 #include "taskbar_native.h"
 #include "taskbar_hook_lifecycle.h"
 #include "taskview_visibility.h"
+#include "../shell/shell_start_pin_command.h"
 
 #include <windows.h>
 #include <commctrl.h>
@@ -1779,6 +1780,23 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
             }
         }
         if (!classic) StartTaskbarTapIfNeeded();
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+extern "C" __declspec(dllexport) LRESULT CALLBACK
+SnowDesktopStartPinHookProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && lParam)
+    {
+        const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (message->message == RegisterWindowMessageW(
+                snowdesktop::shell_start_pin::kMessage))
+        {
+            snowdesktop::shell_start_pin::Receive(
+                static_cast<DWORD>(message->wParam),
+                static_cast<std::uint64_t>(message->lParam));
+        }
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }

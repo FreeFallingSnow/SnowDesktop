@@ -7,6 +7,7 @@
 #include "app/shell/shell_item_action_rules.h"
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
+#include "shell/shell_start_pin.h"
 #include "shell/namespace_menu_actions.h"
 
 namespace { constexpr UINT kContextNamespaceActionFirst = 42000; }
@@ -1031,13 +1032,29 @@ void DesktopApp::ShowShellContextMenu(
     std::optional<size_t> dockMappingEntryIndex)
 {
     std::vector<LPCITEMIDLIST> pidls;
+    std::vector<std::wstring> invocationPaths;
+    const auto collectPath = [&invocationPaths](const DesktopItem& item) {
+        PWSTR path = nullptr;
+        if (SUCCEEDED(SHGetNameFromIDList(item.absolutePidl.get(),
+                SIGDN_FILESYSPATH, &path)) && path)
+            invocationPaths.emplace_back(path);
+        else
+            invocationPaths.emplace_back();
+        CoTaskMemFree(path);
+    };
     if (itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size())
     {
         for (const auto& item : items_)
             if (item.selected)
+            {
                 pidls.push_back(reinterpret_cast<LPCITEMIDLIST>(item.childPidl.get()));
+                collectPath(item);
+            }
         if (pidls.empty())
+        {
             pidls.push_back(reinterpret_cast<LPCITEMIDLIST>(items_[itemIndex].childPidl.get()));
+            collectPath(items_[itemIndex]);
+        }
     }
     if (pidls.empty()) return;
 
@@ -1184,7 +1201,24 @@ void DesktopApp::ShowShellContextMenu(
             invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);
+        const auto startPin = snowdesktop::shell_start_pin::Route(
+            ctxMenu.Get(), commandOffset, invocationPaths,
+            [&](auto action, const auto& path) {
+                snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+                    uiAnimationScheduler_, [this]() { FlushPendingCompositionCommit(); });
+                return snowdesktop::shell_start_pin::Invoke(
+                    snowdesktop::deployment::GetTaskbarHookPath(), action,
+                    path, invoke.hwnd, screenPoint);
+            });
+        if (startPin)
+        {
+            wchar_t message[96]{};
+            swprintf_s(message, L"Shell Start pin command result=0x%08lX",
+                static_cast<unsigned long>(*startPin));
+            WriteDiagnosticLogEntry(message);
+        }
+        else
+            InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);
         RequestShellRefresh();
     }
     DestroyMenu(menu);

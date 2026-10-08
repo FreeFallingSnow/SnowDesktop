@@ -4,6 +4,7 @@
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
+#include "shell/shell_start_pin.h"
 #include "shell/shell_new_item_capture.h"
 #include "shell/shell_popup_menu_tracker.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
@@ -791,7 +792,24 @@ ShowShellItemContextMenuForPath(
             invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);
+        const auto startPin = snowdesktop::shell_start_pin::Route(
+            contextMenu.Get(), commandOffset, std::vector<std::wstring>{itemPath},
+            [&](auto action, const auto& path) {
+                snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+                    uiAnimationScheduler_, [this]() { FlushPendingCompositionCommit(); });
+                return snowdesktop::shell_start_pin::Invoke(
+                    snowdesktop::deployment::GetTaskbarHookPath(), action,
+                    path, invoke.hwnd, screenPoint);
+            });
+        if (startPin)
+        {
+            wchar_t message[96]{};
+            swprintf_s(message, L"Shell Start pin command result=0x%08lX",
+                static_cast<unsigned long>(*startPin));
+            WriteDiagnosticLogEntry(message);
+        }
+        else
+            InvokeShellMenuCommand(contextMenu.Get(), invoke, &menuSite);
         for (size_t i = 0;
             i < widgets_.size(); ++i)
         {
