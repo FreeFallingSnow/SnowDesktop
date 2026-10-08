@@ -1,5 +1,10 @@
 #include "ole_drag_drop_adapter.h"
 
+namespace
+{
+constexpr DWORD kDragButtonMask = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON;
+}
+
 OleDragDropAdapter::OleDragDropAdapter(
     OleDragDropHandler* handler) noexcept
     : handler_(handler)
@@ -9,6 +14,7 @@ OleDragDropAdapter::OleDragDropAdapter(
 void OleDragDropAdapter::Detach() noexcept
 {
     handler_ = nullptr;
+    dragButtons_ = 0;
 }
 
 HRESULT STDMETHODCALLTYPE OleDragDropAdapter::QueryInterface(
@@ -43,6 +49,7 @@ ULONG STDMETHODCALLTYPE OleDragDropAdapter::Release()
 HRESULT STDMETHODCALLTYPE OleDragDropAdapter::DragEnter(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
+    dragButtons_ = keyState & kDragButtonMask;
     return handler_ ? handler_->HandleOleDragEnter(
         dataObject, keyState, point, effect) : E_UNEXPECTED;
 }
@@ -50,18 +57,28 @@ HRESULT STDMETHODCALLTYPE OleDragDropAdapter::DragEnter(
 HRESULT STDMETHODCALLTYPE OleDragDropAdapter::DragOver(
     DWORD keyState, POINTL point, DWORD* effect)
 {
+    if (dragButtons_ == 0)
+        dragButtons_ = keyState & kDragButtonMask;
     return handler_ ? handler_->HandleOleDragOver(
         keyState, point, effect) : E_UNEXPECTED;
 }
 
 HRESULT STDMETHODCALLTYPE OleDragDropAdapter::DragLeave()
 {
+    dragButtons_ = 0;
     return handler_ ? handler_->HandleOleDragLeave() : E_UNEXPECTED;
 }
 
 HRESULT STDMETHODCALLTYPE OleDragDropAdapter::Drop(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
+    // Shell targets receive a synthetic DragEnter/DragOver/Drop sequence from
+    // the handler. Entering with no mouse button can show the drag-action menu
+    // ("Open with / Cancel") instead of performing a normal left-button drop.
+    keyState |= dragButtons_;
+    // Consume before dispatch: a Shell message pump can reenter this adapter
+    // with a new drag, whose state must survive the outer handler's return.
+    dragButtons_ = 0;
     return handler_ ? handler_->HandleOleDrop(
         dataObject, keyState, point, effect) : E_UNEXPECTED;
 }
