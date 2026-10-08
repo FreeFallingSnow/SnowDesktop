@@ -2,6 +2,7 @@
 #include "../src/app/render/desktop_backdrop_update_rules.h"
 #include "layout/popup_round_geometry.h"
 #include "icons/large_icon_shape_geometry.h"
+#include "dock/dock_window_transition.h"
 
 #include <roapi.h>
 #include <d2d1_1helper.h>
@@ -71,6 +72,90 @@ HWND FindOwnedBackdrop(const DesktopBackdropCompositor& compositor)
     return query.helper;
 }
 
+struct OwnedTransitionQuery
+{
+    const DockWindowTransition* transition = nullptr;
+    HWND window = nullptr;
+};
+
+BOOL CALLBACK MatchOwnedTransition(HWND window, LPARAM parameter)
+{
+    auto& query = *reinterpret_cast<OwnedTransitionQuery*>(parameter);
+    DWORD process = 0;
+    if (GetWindowThreadProcessId(window, &process) == GetCurrentThreadId() &&
+        process == GetCurrentProcessId() && query.transition->IsPresentationWindow(window))
+    {
+        query.window = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+int CheckDockTransitionShellExclusion()
+{
+    int failures = 0;
+    const auto check = [&](bool value, const char* message) {
+        if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
+        return value;
+    };
+    const auto covers = [](RECT host, RECT monitor) {
+        return host.left <= monitor.left && host.top <= monitor.top &&
+            host.right >= monitor.right && host.bottom >= monitor.bottom;
+    };
+    const RECT monitor{0, 0, 1280, 720};
+    const std::array<RECT, 1> singleMonitor{monitor};
+    const RECT ordinary{20, 20, 900, 600};
+    const auto ordinaryHost = ResolveDockWindowNonFullscreenHostRect(ordinary, singleMonitor);
+    check(ordinaryHost && EqualRect(&*ordinaryHost, &ordinary),
+        "ordinary animation bounds remain unchanged");
+    check(!ResolveDockWindowNonFullscreenHostRect(monitor, {}),
+        "unknown monitor geometry fails closed to native animation");
+    const std::array<RECT, 2> aligned{{{0, 0, 1280, 720}, {1280, 0, 2560, 1080}}};
+    const auto alignedHost = ResolveDockWindowNonFullscreenHostRect({0, 0, 2560, 1080}, aligned);
+    check(alignedHost && !covers(*alignedHost, aligned[0]) && !covers(*alignedHost, aligned[1]),
+        "one pixel at a shared monitor edge prevents fullscreen coverage on both monitors");
+    const std::array<RECT, 2> staggered{{{-1280, -200, 0, 520}, {0, 0, 1280, 720}}};
+    check(!ResolveDockWindowNonFullscreenHostRect({-1280, -200, 1280, 720}, staggered),
+        "unsafe staggered monitor unions use native fallback rather than clipping substantial content");
+    // Called only on the private fixture desktop. Use the production HWND and
+    // host-bounds rule without capturing or minimizing an external application.
+    for (int generation = 0; generation < 2; ++generation)
+    {
+        DockWindowTransition transition;
+        if (!check(transition.Initialize(GetModuleHandleW(nullptr), nullptr, nullptr, nullptr),
+                "initialize the real Dock transition's native window")) continue;
+        OwnedTransitionQuery query{&transition};
+        EnumThreadWindows(GetCurrentThreadId(), MatchOwnedTransition,
+            reinterpret_cast<LPARAM>(&query));
+        if (!check(query.window && !IsWindowVisible(query.window) &&
+                GetPropW(query.window, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+                "each real Dock animation HWND is excluded before its first show")) continue;
+        RECT client{};
+        check(GetClientRect(query.window, &client) && client.right == 1 && client.bottom == 1,
+            "the Dock animation window starts as the production hidden 1x1 surface");
+        const RECT source{0, 0, 1280, 720}, dock{600, 660, 680, 720};
+        const RECT originalHost = ResolveDockWindowSnapshotHostRect(source, dock);
+        const auto protectedHost = ResolveDockWindowNonFullscreenHostRect(originalHost, singleMonitor);
+        if (!check(covers(originalHost, monitor) && protectedHost && !covers(*protectedHost, monitor),
+                "the original minimize union covers a monitor and its protected geometry cannot")) continue;
+        const RECT host = *protectedHost;
+        check(SetWindowPos(query.window, HWND_TOPMOST,
+                host.left, host.top, host.right - host.left, host.bottom - host.top,
+                SWP_NOACTIVATE) != FALSE && !IsWindowVisible(query.window) &&
+                GetPropW(query.window, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "fullscreen minimize host placement retains the exclusion before visibility");
+        ShowWindow(query.window, SW_SHOWNOACTIVATE);
+        check(IsWindowVisible(query.window) &&
+                GetPropW(query.window, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "showing the fullscreen-sized Dock animation surface retains its Shell role");
+        transition.Cancel();
+        check(!IsWindowVisible(query.window) &&
+                GetPropW(query.window, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "the production animation cleanup hides the surface and retains its exclusion");
+    }
+    return failures;
+}
+
 bool WaitForCommit(HWND window, WPARAM token)
 {
     const ULONGLONG deadline = GetTickCount64() + 3000;
@@ -117,6 +202,7 @@ int CheckHiddenPopupKeyboardFocus()
         // cannot interact with the user's input desktop or desktop host.
         if (!check(SetThreadDesktop(desktop) != FALSE,
                 "attach the focus test thread to its private desktop")) return;
+        failures += CheckDockTransitionShellExclusion();
         struct Apartment
         {
             HRESULT result = RoInitialize(RO_INIT_SINGLETHREADED);
@@ -769,6 +855,66 @@ int RunDesktopBackdropCompositorTests()
     glass.EndFrame();
     check(glass.PanelCount() == 0 && glass.BlurFactoryCount() == 0,
         "zero-opacity icons retire their retained blur even in a partial frame");
+
+    {
+        // Reproduce the page-edge tooltip's old partial-frame collection:
+        // geometry-only identities leave blur at every previous cursor point.
+        const std::array<RECT, 4> tooltipFrames{{
+            {20, 20, 140, 44}, {28, 70, 168, 106},
+            {30, 120, 210, 168}, {35, 180, 155, 204}}};
+        const HWND helper = FindOwnedBackdrop(glass);
+        HRGN region = CreateRectRgn(0, 0, 0, 0);
+        if (check(helper && region, "tooltip regression owns a hidden backdrop and region fixture"))
+        {
+            for (const RECT frame : tooltipFrames)
+            {
+                glass.BeginFrame(false);
+                check(glass.AddPanel(frame, 8.f, 16.f), "register the original geometry-only tooltip");
+                glass.EndFrame();
+            }
+            check(glass.PanelCount() == tooltipFrames.size() &&
+                    GetWindowRgn(helper, region) != ERROR && PtInRegion(region, 32, 32),
+                "the original partial update reproduces a brush trail at the first tooltip position");
+            glass.BeginFrame(true);
+            glass.EndFrame();
+
+            constexpr RECT unrelated{230, 140, 310, 220};
+            glass.BeginFrame(false);
+            check(glass.AddPanel(unrelated, 8.f, 16.f, 401), "preserve unrelated desktop glass");
+            glass.EndFrame();
+            snowdesktop::desktop_backdrop_update_rules::TransientPanel tooltip;
+            for (size_t iteration = 0; iteration < tooltipFrames.size(); ++iteration)
+            {
+                const RECT frame = tooltipFrames[iteration];
+                glass.BeginFrame(false);
+                check(tooltip.Update(glass, frame, 8.f, 16.f),
+                    "the production transient panel updates the pointer-following tooltip");
+                glass.EndFrame();
+                check(glass.PanelCount() == 2 && glass.BlurFactoryCount() == 1 &&
+                        GetWindowRgn(helper, region) != ERROR &&
+                        PtInRegion(region, frame.left + 12, frame.top + 12) &&
+                        PtInRegion(region, 250, 160) &&
+                        (iteration == 0 || !PtInRegion(region, 32, 32)),
+                    "moving or resizing a tooltip retires old blur bounds while retaining unrelated glass");
+            }
+            glass.BeginFrame(false);
+            tooltip.Clear(glass);
+            glass.EndFrame();
+            check(glass.PanelCount() == 1 && GetWindowRgn(helper, region) != ERROR &&
+                    !PtInRegion(region, 47, 192) && PtInRegion(region, 250, 160),
+                "hiding the tooltip clears its final partial-frame blur without removing other panels");
+            glass.BeginFrame(false);
+            check(tooltip.Update(glass, tooltipFrames.front(), 8.f, 16.f),
+                "the tooltip can restore its blur after being hidden");
+            tooltip.Update(glass, RECT{}, 8.f, 16.f);
+            glass.EndFrame();
+            check(glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1,
+                "an empty tooltip update also retires its retained material");
+            glass.BeginFrame(true);
+            glass.EndFrame();
+        }
+        if (region) DeleteObject(region);
+    }
 
     glass.Reset();
     check(otherGlass.SetVisualOpacity(0.5f),
