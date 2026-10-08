@@ -1101,20 +1101,20 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE |
                 SWP_NOACTIVATE);
+        RECT loggedRect{};
+        GetWindowRect(dockHostHwnd, &loggedRect);
+        wchar_t message[224]{};
+        wsprintfW(message,
+            L"Floating Dock shown rect=(%ld,%ld)-(%ld,%ld) exStyle=0x%08X topmost=%d",
+            loggedRect.left, loggedRect.top,
+            loggedRect.right, loggedRect.bottom,
+            static_cast<unsigned>(GetWindowLongPtrW(
+                dockHostHwnd, GWL_EXSTYLE)),
+            (GetWindowLongPtrW(
+                dockHostHwnd, GWL_EXSTYLE) &
+                WS_EX_TOPMOST) != 0);
+        WriteDiagnosticLogEntry(message);
     }
-    RECT loggedRect{};
-    GetWindowRect(dockHostHwnd, &loggedRect);
-    wchar_t message[224]{};
-    wsprintfW(message,
-        L"Floating Dock shown rect=(%ld,%ld)-(%ld,%ld) exStyle=0x%08X topmost=%d",
-        loggedRect.left, loggedRect.top,
-        loggedRect.right, loggedRect.bottom,
-        static_cast<unsigned>(GetWindowLongPtrW(
-            dockHostHwnd, GWL_EXSTYLE)),
-        (GetWindowLongPtrW(
-            dockHostHwnd, GWL_EXSTYLE) &
-            WS_EX_TOPMOST) != 0);
-    WriteDiagnosticLogEntry(message);
     if (!renderedResizeFrame)
         InvalidateFloatingDockWindow(
             host, immediatePresent);
