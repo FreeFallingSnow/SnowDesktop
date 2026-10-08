@@ -672,12 +672,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
             (foregroundChanged || windowStateRefreshDue ||
                 foregroundSettling)))
         {
-            const bool taskbarAppearanceApplied =
-                RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
+            RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
-            if (taskbarAppearanceApplied &&
-                hwnd_ && IsWindow(hwnd_))
-                InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }
     else if (timerId == kPopupHoverTimerId)

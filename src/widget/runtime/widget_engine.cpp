@@ -10341,8 +10341,54 @@ static ID2D1Bitmap1* LoadImageBitmap(
     ID2D1Bitmap1* result = bitmap.Get();
     if (s->imageCache.size() >= 128)
     {
-        s->imageSamplingCache.Clear();
-        s->imageCache.clear();
+        // Retain only a bounded small BGRA8 working set past the original
+        // 128-entry boundary. This estimates source pixels, not GPU residency.
+        constexpr std::size_t smallImageEntryLimit = 256;
+        constexpr std::uint64_t smallImagePixelByteLimit =
+            16ULL * 1024ULL * 1024ULL;
+        std::uint64_t estimatedPixelBytes = 0;
+        const auto addBgra8PixelBytes =
+            [&](ID2D1Bitmap1* cachedBitmap) -> bool {
+                if (!cachedBitmap || cachedBitmap->GetPixelFormat().format !=
+                        DXGI_FORMAT_B8G8R8A8_UNORM)
+                    return false;
+                const D2D1_SIZE_U pixels = cachedBitmap->GetPixelSize();
+                const std::uint64_t width = pixels.width;
+                const std::uint64_t height = pixels.height;
+                if (width == 0 || height == 0)
+                    return false;
+                // Divide before multiplying: a successful check proves
+                // width*height*4 <= 16MiB, so the uint64_t product is safe.
+                if (height > (smallImagePixelByteLimit / 4ULL) / width)
+                    return false;
+                const std::uint64_t pixelBytes = width * height * 4ULL;
+                // Running total never exceeds the limit; subtraction and
+                // addition remain safe even for adversarial bitmap sizes.
+                if (pixelBytes > smallImagePixelByteLimit -
+                        estimatedPixelBytes)
+                    return false;
+                estimatedPixelBytes += pixelBytes;
+                return true;
+            };
+        bool retainSmallWorkingSet =
+            s->imageCache.size() < smallImageEntryLimit &&
+            addBgra8PixelBytes(bitmap.Get());
+        if (retainSmallWorkingSet)
+        {
+            for (const auto& cached : s->imageCache)
+            {
+                if (!addBgra8PixelBytes(cached.second.Get()))
+                {
+                    retainSmallWorkingSet = false;
+                    break;
+                }
+            }
+        }
+        if (!retainSmallWorkingSet)
+        {
+            s->imageSamplingCache.Clear();
+            s->imageCache.clear();
+        }
     }
     s->imageCache[contentKey] = bitmap;
     return result;
