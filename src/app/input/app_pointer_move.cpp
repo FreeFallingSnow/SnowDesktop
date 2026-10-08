@@ -13,6 +13,8 @@
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    if (rightButtonItemDrag_ ||
+        (HasActiveContextMenuSession() && dragSession_.HasContext())) return;
     CancelPopupHover(true);
     CancelRenameClick();
     (void)wp;

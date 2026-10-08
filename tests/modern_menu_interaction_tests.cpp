@@ -1274,6 +1274,47 @@ int wmain()
         SetActiveWindow(owner);
         SetFocus(owner);
     }
+    // Right-drag decisions retain their source context, so their host cannot
+    // activate the input proxy from its normal press handler. Exercise the
+    // shared menu's real queue on a no-activate surface with no dismiss hook.
+    {
+        const HWND outside = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kOwnerClass, L"",
+            WS_POPUP | WS_VISIBLE, 20, 20, 20, 20,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(outside != nullptr, "a no-activate outside menu surface exists");
+        for (const UINT press : {WM_LBUTTONDOWN, WM_RBUTTONDOWN,
+                WM_MBUTTONDOWN, WM_XBUTTONDOWN})
+        {
+            gWatchdogFired = false;
+            HANDLE wake = CreateEventW(nullptr, FALSE, TRUE, nullptr);
+            Expect(wake != nullptr, "outside menu press driver event exists");
+            snowdesktop::modern_menu::Options outsideOptions;
+            outsideOptions.owner = owner;
+            outsideOptions.anchor = {80, 80};
+            outsideOptions.eventPump.scheduledWorkHandle = wake;
+            bool pressPosted = false;
+            outsideOptions.eventPump.dispatchScheduledWork = [&]() {
+                const WPARAM buttons = press == WM_LBUTTONDOWN ? MK_LBUTTON :
+                    press == WM_RBUTTONDOWN ? MK_RBUTTON :
+                    press == WM_MBUTTONDOWN ? MK_MBUTTON :
+                    MAKEWPARAM(MK_XBUTTON1, XBUTTON1);
+                pressPosted = PostMessageW(outside, press, buttons,
+                    MAKELPARAM(5, 5)) != FALSE;
+            };
+            SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+            const auto outsideResult = snowdesktop::modern_menu::Show(
+                adjustmentItems, outsideOptions);
+            KillTimer(owner, kWatchdogTimer);
+            CloseHandle(wake);
+            Expect(pressPosted && !gWatchdogFired &&
+                    outsideResult.command == 0 &&
+                    outsideResult.reason == snowdesktop::modern_menu::ExitReason::Cancelled &&
+                    !snowdesktop::modern_menu::IsActive(),
+                "each outside button closes a shared menu on a no-activate host without choosing a drop action");
+        }
+        DestroyWindow(outside);
+    }
     gDriveMode = DriveMode::Simple;
     gDrivePhase = 0;
     gInputPosted = false;

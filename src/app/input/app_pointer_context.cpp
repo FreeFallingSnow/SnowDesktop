@@ -183,8 +183,8 @@ void DesktopApp::OnRightButtonDown(
     POINT cursor{};
     if (quickNavigationOpen_ && GetCursorPos(&cursor))
     {
-        const POINT point{cursor.x - virtualLeft_, cursor.y - virtualTop_};
-        if (!PtInRect(&quickNavigationRect_, point)) CloseQuickNavigation(false);
+        const POINT quickNavigationPoint{cursor.x - virtualLeft_, cursor.y - virtualTop_};
+        if (!PtInRect(&quickNavigationRect_, quickNavigationPoint)) CloseQuickNavigation(false);
     }
     CancelPopupHover(true);
     CancelRenameClick();
@@ -415,6 +415,24 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 4, _LW("app.settings.cancel"));
 
+    POINT screenPoint = point;
+    ClientToScreen(hwnd_, &screenPoint);
+    PrepareMenuIconsForPoint(screenPoint);
+    SetMenuItemIcon(menu, 1, L"\uF0B2");
+    SetMenuItemIcon(menu, 2, snowdesktop::menu_fluent_glyphs::kCopy,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, 3, snowdesktop::menu_fluent_glyphs::kLinkAdd,
+        MenuIconFont::FluentRegular);
+    if (externalSource && dynamic_cast<DockContainer*>(target))
+    {
+        // Dock ingress maps a reference even when the source only offers copy.
+        for (const auto& choice : choices)
+            SetMenuItemIcon(menu, choice.command,
+                snowdesktop::menu_fluent_glyphs::kLinkAdd,
+                MenuIconFont::FluentRegular);
+    }
+    SetMenuItemIcon(menu, 4, L"\uF00D");
+
     // Retain source/target bindings while the menu pumps messages, with no
     // active pointer gesture that could update the destination or commit twice.
     dragSession_.DeactivateForDrop();
@@ -422,10 +440,9 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     mouseDownHit_ = nullptr;
     ReleaseCapturePreservingPointerState();
     CommitDragVisualEndBeforeShellOperation();
-    POINT screenPoint = point;
-    ClientToScreen(hwnd_, &screenPoint);
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
+    ClearMenuIcons();
     RestoreDesktopWindowLayer();
     for (const auto& choice : choices)
     {

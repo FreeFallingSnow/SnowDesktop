@@ -9,7 +9,10 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
-    if (rightButtonItemDrag_) return;
+    // Outside presses dismiss the shared menu before dispatch, but its drop
+    // context stays alive until the menu loop returns. Do not replace it.
+    if (rightButtonItemDrag_ ||
+        (HasActiveContextMenuSession() && dragSession_.HasContext())) return;
     CancelPopupHover(true);
     BeginRenameClick(wp, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
     dockPressedClosedCollectionPopup_ = false;

@@ -310,6 +310,23 @@ public:
                     quitReceived = true;
                     break;
                 }
+                const bool pointerPress =
+                    message.message == WM_LBUTTONDOWN ||
+                    message.message == WM_RBUTTONDOWN ||
+                    message.message == WM_MBUTTONDOWN ||
+                    message.message == WM_XBUTTONDOWN ||
+                    message.message == WM_NCLBUTTONDOWN ||
+                    message.message == WM_NCRBUTTONDOWN ||
+                    message.message == WM_NCMBUTTONDOWN ||
+                    message.message == WM_NCXBUTTONDOWN;
+                if (pointerPress && !IsPopupWindow(message.hwnd))
+                {
+                    // Desktop, Dock and popup hosts can use MA_NOACTIVATE,
+                    // so an outside press need not generate WM_ACTIVATE.
+                    // Close through the shared menu loop before the host
+                    // handles the click, retaining ordinary click routing.
+                    Cancel();
+                }
                 if (!HandleAccessKeyMessage(message))
                 {
                     TranslateMessage(&message);
