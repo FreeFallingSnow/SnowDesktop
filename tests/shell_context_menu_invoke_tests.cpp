@@ -1795,6 +1795,72 @@ void TestUnchangedCataloguePersistence()
         "unchanged scans retain associations for subsequent changed registration scans");
 }
 
+void TestIdleCatalogueInvalidation()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopCpuTest-" + directory.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } fixture{nullptr, path};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &fixture.key, &disposition) == ERROR_SUCCESS, "create isolated Classes notification fixture");
+    fixture.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(fixture.owned, "Classes notification fixture is newly owned by this test");
+    std::atomic<unsigned> scans = 0, version = 1;
+    ext::MenuService service(directory.path / L"cache", [&](const auto &) {
+        ext::Reply reply; reply.ok = true;
+        ext::Entry entry; entry.key = "cpu-test"; entry.provider = "verb:cpu-test";
+        entry.label = std::to_wstring(version.load()); reply.entries = {entry};
+        return ext::QueryWork{[reply] { return reply; }, {}};
+    }, [&] {
+        ext::Catalogue result; result.revision = version.load();
+        ext::Registration row; row.id = "reg:cpu-test"; row.contexts = 1;
+        row.types = {L"*"}; row.verbs = {"cpu-test"}; row.revision = result.revision;
+        row.display.label = std::to_wstring(result.revision); result.rows = {row};
+        ++scans; return result;
+    });
+    ext::Preferences prefs; ext::SetCommon(prefs, "reg:cpu-test", ext::Category::Objects, true);
+    service.Configure(prefs);
+    const auto target = directory.path / L"selected.cpu-test"; std::ofstream(target) << "fixture";
+    ext::Request request; request.paths = {target.wstring()};
+    service.Query(request);
+    PumpUntil([&] { return scans > 0 && service.View(request).snapshot.has_value(); }, "seed a current catalogue and menu");
+    service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; }, "initial settings discovery settles before registry notifications");
+    const auto baseline = scans.load();
+    auto notify = [&] {
+        const DWORD data = ++version;
+        Expect(RegSetValueExW(fixture.key, L"Sequence", 0, REG_DWORD,
+            reinterpret_cast<const BYTE *>(&data), sizeof(data)) == ERROR_SUCCESS, "emit real registry value notification");
+    };
+    notify();
+    PumpUntil([&] { return !service.View(request).snapshot.has_value(); }, "a registry notification retires the old menu snapshot");
+    Sleep(100);
+    Expect(scans == baseline, "an idle registry notification does not start a complete catalogue scan");
+    service.Query(request);
+    PumpUntil([&] { return scans > baseline && service.View(request).snapshot &&
+        service.View(request).snapshot->entries.front().label == L"2"; }, "the next menu query refreshes the stale catalogue and command snapshot");
+    const auto afterQuery = scans.load();
+    notify();
+    PumpUntil([&] { return !service.View(request).snapshot.has_value(); }, "a subsequent notification still retires the current snapshot");
+    Expect(scans == afterQuery, "a subsequent idle notification remains lazy");
+    service.Inspect();
+    PumpUntil([&] { return scans > afterQuery && !service.Inspect().scanning; }, "settings inspection refreshes the stale catalogue without an explicit refresh button");
+    service.Shutdown();
+    const auto file = directory.path / L"cache" / L"catalogue.bin";
+    std::ifstream input(file, std::ios::binary | std::ios::ate);
+    const auto length = input.tellg(); Expect(length > 0, "refreshed catalogue was persisted"); input.seekg(0);
+    snowdesktop::settings_ipc::Bytes bytes(static_cast<size_t>(length));
+    Expect(static_cast<bool>(input.read(reinterpret_cast<char *>(bytes.data()), bytes.size())), "read refreshed persisted catalogue");
+    const auto [schema, catalogue] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, ext::Catalogue>>(bytes);
+    Expect(schema == 4 && catalogue.revision == 3 && catalogue.rows.front().display.label == L"3",
+        "lazy refresh still publishes and persists changed registration metadata");
+}
+
 void TestCatalogueShutdown()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -2802,6 +2868,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
+            TestIdleCatalogueInvalidation();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
@@ -2811,6 +2878,7 @@ int wmain(int argc, wchar_t **argv)
         else
         {
             TestUnchangedCataloguePersistence();
+            TestIdleCatalogueInvalidation();
             TestCatalogueShutdown();
             RunTests();
             TestDeferredPopups();

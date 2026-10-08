@@ -144,7 +144,7 @@ struct MenuService::Impl
     std::array<std::set<std::string>, 4> shown;
     Request management;
     Key inspectedSelection;
-    bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false;
+    bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
     std::uint64_t clock = 0;
     HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     std::thread worker;
@@ -192,7 +192,7 @@ struct MenuService::Impl
                 const auto registration = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == id; });
                 // Unknown dynamic providers remain eligible; never infer their
                 // applicability from a caption or an incomplete observation.
-                if (registration == catalogue.rows.end() ||
+                if (catalogueStale || scanning || registration == catalogue.rows.end() ||
                     (registration->systemEnabled && DependsOn(*registration, request, candidates))) return true;
             }
         return false;
@@ -220,6 +220,11 @@ struct MenuService::Impl
         // request. Inspection and explicit execution still retain full queries.
         if (priority == QueryPriority::Menu && !request.startPinOnly && OnlyStartShown(request)) return;
         if ((priority == QueryPriority::Menu || priority == QueryPriority::Prewarm) && !Enabled(request)) return;
+        if (catalogueStale && !scanRequested)
+        {
+            scanRequested = true;
+            MenuTrace("catalogue", "request.stale_query");
+        }
         const auto key = SelectionKey(request);
         auto &row = rows[key]; row.request = request; row.request.catalogueOnly = false; row.used = ++clock;
         const auto now = GetTickCount64();
@@ -682,7 +687,7 @@ struct MenuService::Impl
         bool requested = false;
         {
             std::lock_guard lock(mutex);
-            if (!scan.valid() && scanRequested) { scanRequested = false; scanning = requested = true; }
+            if (!scan.valid() && scanRequested) { scanRequested = catalogueStale = false; scanning = requested = true; }
         }
         if (requested) scan = std::async(std::launch::async, [read = readCatalogue] {
             MenuTrace("catalogue", "scan.start");
@@ -759,7 +764,16 @@ struct MenuService::Impl
             if (TakeMenuRegistryChanges())
             {
                 std::lock_guard lock(mutex);
-                if (inspected || AnyEnabled()) { scanRequested = true; MenuTrace("catalogue", "request.registry"); }
+                // Classes notifications also include unrelated Shell caches.
+                // Retire snapshots immediately, but read the complete inventory
+                // only when a menu or its settings actually needs it again.
+                catalogueStale = true;
+                for (auto &[key, row] : rows)
+                {
+                    row.invalid = true; ++row.dependency; ++row.view.revision;
+                    row.view.snapshot.reset(); row.bytes = 0;
+                }
+                MenuTrace("catalogue", "stale.registry");
             }
             RefreshCatalogue(cache);
             Catalogue typeCatalogue; bool discoverTypes = false;
@@ -1004,6 +1018,11 @@ void MenuService::Manage(const Request &request)
 CatalogueView MenuService::Inspect(const Request &request, bool refresh)
 {
     std::lock_guard lock(impl_->mutex);
+    if (impl_->catalogueStale && !impl_->scanRequested)
+    {
+        impl_->scanRequested = true;
+        MenuTrace("catalogue", "request.stale_inspect");
+    }
     if (refresh || !impl_->inspected)
     {
         MenuTrace("catalogue", refresh ? "request.refresh" : "request.inspect");
