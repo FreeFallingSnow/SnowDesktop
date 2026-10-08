@@ -12,7 +12,7 @@ namespace shellCalls = snowdesktop::shell_call_diagnostics;
 // Quick-navigation rename, click handling, shortcuts and context menus.
 
 void DesktopApp::BeginQuickNavigationItemRename(
-    const std::wstring& name, bool isDirectory)
+    const std::wstring& name, const std::wstring& filePath, bool isDirectory)
 {
     if (renameInputWindow_ || name.empty() ||
         !quickNavigationOpen_ ||
@@ -93,19 +93,9 @@ void DesktopApp::BeginQuickNavigationItemRename(
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
 
-    int selectionEnd = -1;
-    if (!isDirectory)
-    {
-        const size_t dot =
-            name.find_last_of(L'.');
-        if (dot != std::wstring::npos &&
-            dot > 0 && dot + 1 < name.size())
-            selectionEnd =
-                static_cast<int>(dot);
-    }
     SendMessageW(
         renameInputWindow_, EM_SETSEL,
-        0, selectionEnd);
+        0, RenameInitialSelectionEnd(name, filePath, isDirectory));
     SetFocus(renameInputWindow_);
     InvalidateQuickNavigationWindow();
 }
@@ -136,6 +126,7 @@ BeginQuickNavigationDesktopItemRename(
     renameController_.BeginDesktopItem(itemIndex);
     BeginQuickNavigationItemRename(
         items_[itemIndex].name,
+        path,
         isDirectory);
     if (!renameController_.
             IsQuickNavigationPresentation())
@@ -160,7 +151,7 @@ BeginQuickNavigationFolderEntryRename(
     renameController_.BeginFolderEntry(
         widgetIndex, entryIndex);
     BeginQuickNavigationItemRename(
-        entry.name, entry.isDirectory);
+        entry.name, entry.fullPath, entry.isDirectory);
     if (!renameController_.
             IsQuickNavigationPresentation())
     {

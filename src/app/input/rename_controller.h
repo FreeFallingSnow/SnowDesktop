@@ -2,15 +2,30 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
+#include <windows.h>
 
 inline int RenameInitialSelectionEnd(
-    const std::wstring& name,
+    std::wstring_view name,
+    std::wstring_view filePath,
     bool isDirectory)
 {
     if (isDirectory || name.empty())
         return -1;
+
+    // Shell display names can already hide an extension (notably .lnk/.url).
+    // Only exclude a suffix when the editor contains the actual full filename;
+    // a dot in the remaining display name is part of the editable basename.
+    const std::size_t separator = filePath.find_last_of(L"\\/");
+    const auto fileName = separator == std::wstring_view::npos
+        ? filePath : filePath.substr(separator + 1);
+    if (fileName.size() != name.size() ||
+        CompareStringOrdinal(name.data(), static_cast<int>(name.size()),
+            fileName.data(), static_cast<int>(fileName.size()), TRUE) != CSTR_EQUAL)
+        return -1;
+
     const std::size_t dot = name.find_last_of(L'.');
-    if (dot == std::wstring::npos || dot == 0 ||
+    if (dot == std::wstring_view::npos || dot == 0 ||
         dot + 1 >= name.size())
         return -1;
     return static_cast<int>(dot);

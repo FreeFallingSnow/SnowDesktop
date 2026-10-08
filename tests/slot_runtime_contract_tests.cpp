@@ -76,6 +76,7 @@ void Check(bool condition, const std::string& message)
 #include "shell_icon_request_cases.h"
 #include "startup_icon_cases.h"
 #include "rename_click_cases.h"
+#include "app/rename_selection_cases.h"
 
 class ContractContainer final : public Container
 {
@@ -3480,6 +3481,7 @@ int wmain(int argc, wchar_t** argv)
     TestSelectionControllerCoversEveryRegisteredRange();
     TestPointerSelectionRangesAndScopedSelectAll();
     TestRenameControllerKeepsTargetsExclusive();
+    TestRenameSelectionUsesVisibleFileExtension();
     TestSlowRenameClicks();
     TestRenameControllerRejectsStaleFocusCommits();
     TestShellRefreshRejectsStaleSnapshots();

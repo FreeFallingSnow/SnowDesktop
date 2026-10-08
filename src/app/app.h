@@ -4630,7 +4630,7 @@ private:
     void BeginQuickNavigationFolderEntryRename(
         size_t widgetIndex, size_t entryIndex);
     void BeginQuickNavigationItemRename(
-        const std::wstring& name, bool isDirectory);
+        const std::wstring& name, const std::wstring& filePath, bool isDirectory);
     /** @} */
 
     /** @name 面向对象系统 */

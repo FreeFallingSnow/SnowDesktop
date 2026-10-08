@@ -65,6 +65,7 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
             widgets_[widgetIndex].folderEntries[memberIndex].name,
+            widgets_[widgetIndex].folderEntries[memberIndex].fullPath,
             widgets_[widgetIndex].folderEntries[memberIndex].isDirectory));
     SetFocus(renameInputWindow_);
     const size_t visibilityWidgetIndex =
@@ -292,6 +293,7 @@ BeginRenameDockFolderPopupEntry(
         renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
             entry.name,
+            entry.fullPath,
             entry.isDirectory));
     SetFocus(renameInputWindow_);
     InvalidateCollectionPopupContent();
