@@ -7,8 +7,10 @@
 #include "ui/input/low_level_mouse_hook.h"
 #include "shell_network_preflight.h"
 #include "shell_clipboard_cases.h"
+#include <wincodec.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -19,6 +21,7 @@
 #include <iterator>
 #include <string>
 #include <stdexcept>
+#include <set>
 
 namespace
 {
@@ -176,6 +179,123 @@ void TestTrackedDropResults()
     check(ShellFileOperationWorker::Execute(exact) && exact.result->outputs.size() == 1 &&
         !exact.result->outputs[0].referencesSource, "an exact shortcut copy does not retain the temporary source shortcut");
     worker.Stop();
+}
+
+// Real worker -> IFileOperation -> completion and feedback. The temporary
+// source uses the same 8.3 alias as browser drops; dot aliases also exercise
+// the regression on volumes where short names are disabled. No browser or
+// desktop data is needed to observe a successful copy being reported as E_FAIL.
+void TestTrackedDropPathAliases()
+{
+    using namespace snowdesktop;
+    namespace fs = std::filesystem;
+    const auto check = [](bool ok, const char* message) {
+        if (!ok) throw std::runtime_error(message);
+    };
+    check(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
+        "COM initializes for path-alias tracking");
+    struct ComCleanup { ~ComCleanup() { CoUninitialize(); } } comCleanup;
+    const auto root = CreateTemporaryDirectory();
+    struct Cleanup { fs::path root; ~Cleanup() { std::error_code ec; fs::remove_all(root, ec); } } cleanup{root};
+    std::vector<fs::path> aliases{root / L"."};
+    std::vector<wchar_t> shortPath(32768);
+    const DWORD length = GetShortPathNameW(root.c_str(), shortPath.data(),
+        static_cast<DWORD>(shortPath.size()));
+    if (length && length < shortPath.size() && _wcsicmp(shortPath.data(), root.c_str()) != 0)
+        aliases.emplace_back(shortPath.data());
+
+    const auto target = root / L"target";
+    fs::create_directory(target);
+    std::ofstream(target / L"text.txt", std::ios::binary) << "existing text";
+    std::ofstream(target / L"download.png", std::ios::binary) << "existing image";
+    const unsigned char png[]{
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x04, 0x00, 0x00, 0x00, 0xb5, 0x1c, 0x0c, 0x02,
+        0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54,
+        0x78, 0xda, 0x63, 0x64, 0xf8, 0x0f, 0x00, 0x01,
+        0x05, 0x01, 0x01, 0x27, 0x18, 0xe3, 0x66,
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+        0xae, 0x42, 0x60, 0x82,
+    };
+    const std::string imageBytes(reinterpret_cast<const char*>(png), sizeof(png));
+    std::vector<operation_feedback::Failure> failures;
+    operation_feedback::SetReporter([&](const auto& failure) { failures.push_back(failure); });
+    struct ReporterCleanup { ~ReporterCleanup() { operation_feedback::SetReporter({}); } } reporterCleanup;
+    ShellFileOperationWorker worker;
+    Microsoft::WRL::ComPtr<IWICImagingFactory> imaging;
+    check(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&imaging))), "image verification uses the real Windows decoder");
+    std::set<std::wstring> destinations;
+    size_t run = 0;
+    for (const auto& alias : aliases)
+    {
+        for (const UINT action : {FO_COPY, FO_MOVE})
+        {
+            const auto folderName = L"source-" + std::to_wstring(++run);
+            const auto sourceFolder = root / folderName;
+            fs::create_directories(sourceFolder / L"nested");
+            const std::string text = "\xef\xbb\xbf" "网络文字\r\n" + std::to_string(run);
+            std::ofstream(sourceFolder / L"text.txt", std::ios::binary) << text;
+            std::ofstream(sourceFolder / L"download.png", std::ios::binary) << imageBytes;
+            std::ofstream(sourceFolder / L"nested" / L"child.txt") << "recursive child";
+            auto result = std::make_shared<ShellFileOperationResult>();
+            ShellFileOperationRequest request;
+            request.result = result;
+            const std::vector<std::wstring> sources{
+                (alias / folderName / L"text.txt").wstring(),
+                (alias / folderName / L"download.png").wstring(),
+                (alias / folderName / L"nested").wstring()};
+            request.steps.push_back({action, sources, target.wstring(),
+                static_cast<FILEOP_FLAGS>(FOF_NO_UI | FOF_RENAMEONCOLLISION)});
+            std::promise<bool> finished;
+            auto future = finished.get_future();
+            check(worker.Enqueue(request, [&](bool ok) { finished.set_value(ok); }), "alias batch queues on the real STA worker");
+            check(future.wait_for(std::chrono::seconds(15)) == std::future_status::ready,
+                "alias batch completion has a bounded deadline");
+            const bool succeeded = future.get();
+            // Verify actual target contents before the success signal: the old
+            // implementation copied these files but emitted the false error.
+            check(static_cast<size_t>(std::distance(fs::directory_iterator(target), fs::directory_iterator{})) == 2 + run * 3,
+                "the real Shell operation creates every target before reporting completion");
+            check(succeeded && failures.empty() && result->outputs.size() == sources.size(),
+                "path-alias image/text drops report success once per root item without a false failure notification");
+            for (size_t index = 0; index < sources.size(); ++index)
+            {
+                const auto output = std::find_if(result->outputs.begin(), result->outputs.end(),
+                    [&](const auto& item) { return item.source == sources[index]; });
+                check(output != result->outputs.end() && !output->referencesSource &&
+                    destinations.insert(output->destination).second,
+                    "outputs retain original source aliases and distinct actual collision-renamed destinations");
+                const fs::path path(output->destination);
+                check(fs::equivalent(path.parent_path(), target) && fs::exists(fs::path(sources[index])) == (action == FO_COPY),
+                    "copy preserves sources, move removes sources and both publish under the requested target");
+                if (index == 0) check(ReadContents(path) == text, "UTF-8 dropped text retains all bytes");
+                else if (index == 1)
+                {
+                    check(ReadContents(path) == imageBytes, "image collision copies retain all bytes");
+                    Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+                    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+                    UINT width = 0, height = 0;
+                    std::array<BYTE, 4> pixels{};
+                    check(SUCCEEDED(imaging->CreateDecoderFromFilename(path.c_str(), nullptr,
+                        GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) &&
+                        SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(frame->GetSize(&width, &height)) &&
+                        width == 1 && height == 1 && SUCCEEDED(frame->CopyPixels(nullptr, 4, 4, pixels.data())),
+                        "dropped image actually decodes after copying or moving from a path alias");
+                }
+                else check(ReadContents(path / L"child.txt") == "recursive child",
+                    "recursive child contents survive while only the root directory claims an output");
+            }
+        }
+    }
+    check(ReadContents(target / L"text.txt") == "existing text" && ReadContents(target / L"download.png") == "existing image",
+        "collision handling does not overwrite existing user files");
+    check(static_cast<size_t>(std::distance(fs::directory_iterator(target), fs::directory_iterator{})) == 2 + run * 3,
+        "each submitted root produces one target without duplicate fallback files");
+    worker.Stop();
+    std::cout << "tracked path-alias batches=" << run << " (copy, move, image, UTF-8 text and recursive directories)\n";
 }
 
 void TestAsyncRenames(const std::filesystem::path& root)
@@ -513,6 +633,12 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 2)
     {
         const std::wstring mode(argv[1]);
+        if (mode == L"--tracked-path-alias-tests")
+        {
+            try { TestTrackedDropPathAliases(); }
+            catch (const std::exception& error) { Expect(false, error.what()); }
+            return 0;
+        }
         if (mode == L"--failure-feedback-tests")
         {
             // CopyFile and progress-result classification use only isolated
