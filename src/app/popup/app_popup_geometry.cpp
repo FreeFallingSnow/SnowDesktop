@@ -66,9 +66,11 @@ RECT DesktopApp::GetCategorizedPopupFrame(const RECT& popup) const
     }
     const int columns = std::max(1, (static_cast<int>(right - left) + metrics.gapX) /
         std::max(1, metrics.cellWidth + metrics.gapX));
-    const RECT first = GetItemIconRect(RECT{left, 0, left + metrics.cellWidth, metrics.cellHeight});
-    frame.left = first.left - inset;
-    frame.right = first.right + (columns - 1) * (metrics.cellWidth + metrics.gapX) + inset;
+    // Search and category controls share the outer grid labels' horizontal edges.
+    const RECT firstTitle = GetItemTextRect(
+        RECT{left, 0, left + metrics.cellWidth, metrics.cellHeight}, false);
+    frame.left = firstTitle.left - inset;
+    frame.right = firstTitle.right + (columns - 1) * (metrics.cellWidth + metrics.gapX) + inset;
     return frame;
 }
 
