@@ -206,6 +206,21 @@ void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
+    // Lua hover invalidations and native chrome can request the same child
+    // several times in one move. Draw the final state once, before returning
+    // to input dispatch; nested paints must not flush an intermediate state.
+    struct WidgetPointerBatch
+    {
+        DesktopApp& app;
+        bool previous;
+        ~WidgetPointerBatch()
+        {
+            app.desktopWidgetPointerBatchActive_ = previous;
+            if (!previous && !app.pendingDesktopWidgetCompositions_.empty())
+                (void)app.PresentQueuedDesktopWidgetComposition();
+        }
+    } widgetPointerBatch{ *this, desktopWidgetPointerBatchActive_ };
+    desktopWidgetPointerBatchActive_ = true;
     renameClickController_.Move(current, GetSystemMetrics(SM_CXDRAG),
         GetSystemMetrics(SM_CYDRAG));
     if (dragPreviewSynced)

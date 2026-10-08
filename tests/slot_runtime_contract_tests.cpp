@@ -34,6 +34,7 @@
 #include "../src/app/tray/tray_notification_window.h"
 #include "common/constants.h"
 #include "drag_drop/drag_input_rules.h"
+#include "desktop/desktop_hover_rules.h"
 #include "layout/floating_popup_rules.h"
 #include "layout/popup_animation_rules.h"
 #include "drag_drop/ole_drag_rules.h"
@@ -2014,6 +2015,57 @@ void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
         "move coalescing must preserve timer, Escape, cross-window, and button-up ordering barriers");
 }
 
+void TestQueuedPassiveHoverPreservesClicks()
+{
+    // Reproduce a hover backlog followed by real click input. Only queue
+    // access is replaced; production eligibility and coalescing run below.
+    const HWND window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(1));
+    std::deque<MSG> queue;
+    const auto append = [&](UINT kind, LPARAM ordinal, WPARAM buttons = 0) {
+        MSG message{};
+        message.hwnd = window;
+        message.message = kind;
+        message.lParam = ordinal;
+        message.wParam = buttons;
+        queue.push_back(message);
+    };
+    for (int index = 0; index < 4000; ++index) append(WM_MOUSEMOVE, index);
+    append(WM_TIMER, -1);
+    for (int index = 4000; index < 8000; ++index) append(WM_MOUSEMOVE, index);
+    append(WM_LBUTTONDOWN, -2, MK_LBUTTON);
+    append(WM_MOUSEMOVE, 8000, MK_LBUTTON);
+    append(WM_MOUSEMOVE, 8001, MK_LBUTTON);
+    append(WM_LBUTTONUP, -3);
+    for (int index = 8002; index < 10002; ++index) append(WM_MOUSEMOVE, index);
+
+    std::vector<MSG> dispatched;
+    bool pressed = false;
+    while (!queue.empty())
+    {
+        MSG current = queue.front();
+        queue.pop_front();
+        const bool passive = snowdesktop::desktop_hover_rules::CanCoalescePassiveMouseMoves(
+            !pressed, (current.wParam & MK_LBUTTON) != 0, false, pressed);
+        snowdesktop::drag_input_rules::CoalesceQueuedMouseMoves(
+            passive, true, current,
+            [&](MSG& next) { if (queue.empty()) return false; next = queue.front(); return true; },
+            [&](MSG& next) { if (queue.empty()) return false; next = queue.front(); queue.pop_front(); return true; },
+            [](const MSG& left, const MSG& right) {
+                return left.hwnd == right.hwnd && left.wParam == right.wParam;
+            },
+            [](const MSG& message) { return message.message == WM_MOUSEMOVE; });
+        dispatched.push_back(current);
+        if (current.message == WM_LBUTTONDOWN) pressed = true;
+        if (current.message == WM_LBUTTONUP) pressed = false;
+    }
+    Check(dispatched.size() == 8 &&
+            dispatched[0].lParam == 3999 && dispatched[1].message == WM_TIMER &&
+            dispatched[2].lParam == 7999 && dispatched[3].message == WM_LBUTTONDOWN &&
+            dispatched[4].lParam == 8000 && dispatched[5].lParam == 8001 &&
+            dispatched[6].message == WM_LBUTTONUP && dispatched[7].lParam == 10001,
+        "10000 queued passive moves must reach timer and click barriers without discarding pressed input or the latest hover");
+}
+
 void TestSelfOleReturnCancelsTransportBeforeNativeResume()
 {
     using snowdesktop::ole_drag_rules::SelfOleUnwindAction;
@@ -3343,6 +3395,7 @@ int wmain(int argc, wchar_t** argv)
     TestModelReloadDeferralCoversRetainedDragLifecycle();
     TestOwnedTransientDragTargetBoundsMemberWrappers();
     TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
+    TestQueuedPassiveHoverPreservesClicks();
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestOleDropCompletionBoundaryMatrix();

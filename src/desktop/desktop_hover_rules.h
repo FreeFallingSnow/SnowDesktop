@@ -60,6 +60,16 @@ constexpr bool ShouldResamplePassiveMouseMove(
         !widgetInteractionActive;
 }
 
+constexpr bool CanCoalescePassiveMouseMoves(
+    bool passiveHover, bool pointerButtonsDown,
+    bool transportActive, bool captureActive)
+{
+    // Pressed widget input and OLE retain their own sample/release ordering.
+    // Passive hover needs only the newest point in each consecutive segment.
+    return passiveHover && !pointerButtonsDown &&
+        !transportActive && !captureActive;
+}
+
 constexpr bool ShouldPresentRetainedMouseLeave(
     bool passiveHover,
     bool pointerPositionChanged)

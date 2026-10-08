@@ -724,6 +724,24 @@ inline UINT RemainingPointerFrameDelay(
         kPointerFrameIntervalMs - elapsed);
 }
 
+inline bool ShouldPresentDockPointerFrame(
+    ULONGLONG now, ULONGLONG lastPresent,
+    bool immediateInteraction, bool hoverOwnerChanged)
+{
+    // Crossing icons inside one Dock is continuous passive motion, so it
+    // shares the 8 ms budget. Enter/leave and drag feedback remain immediate.
+    return ShouldPresentPointerFrame(
+        now, lastPresent, immediateInteraction || hoverOwnerChanged);
+}
+
+inline bool ShouldPresentPointerHost(
+    bool presentAll, const void* hostOwner,
+    const void* previousHoverOwner, const void* hoverOwner)
+{
+    return presentAll || (hostOwner &&
+        (hostOwner == previousHoverOwner || hostOwner == hoverOwner));
+}
+
 inline bool ShouldCloseCollectionPopup(
     std::size_t openWidgetIndex,
     std::size_t clickedWidgetIndex,

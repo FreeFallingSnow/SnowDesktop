@@ -5490,6 +5490,33 @@ int main(int argc, char** argv)
             floatingDock::RemainingPointerFrameDelay(
                 100, 200) == 0,
         "a throttled Dock hover sample schedules its final tail frame at the remaining deadline");
+    ULONGLONG lastHoverPresent = 0;
+    unsigned hoverPresents = 0;
+    for (ULONGLONG tick = 1000; tick < 2000; ++tick)
+    {
+        // Every sample may select another icon in the same host. These are
+        // passive updates, not 1000 independent forced presentation requests.
+        if (floatingDock::ShouldPresentDockPointerFrame(
+                tick, lastHoverPresent, false, false))
+        {
+            lastHoverPresent = tick;
+            ++hoverPresents;
+        }
+    }
+    Check(hoverPresents == 125 && lastHoverPresent == 1992 &&
+            floatingDock::RemainingPointerFrameDelay(1999, lastHoverPresent) == 1 &&
+            floatingDock::ShouldPresentDockPointerFrame(2000, lastHoverPresent, false, false),
+        "a sustained 1000 Hz icon sweep stays within 125 synchronous Dock frames and retains its final deadline");
+    Check(floatingDock::ShouldPresentDockPointerFrame(1993, lastHoverPresent, true, false) &&
+            floatingDock::ShouldPresentDockPointerFrame(1993, lastHoverPresent, false, true),
+        "drag feedback and crossing Dock hosts must bypass passive throttling");
+    int previousDock = 0, currentDock = 0, unrelatedDock = 0;
+    Check(floatingDock::ShouldPresentPointerHost(false, &previousDock, &previousDock, &currentDock) &&
+            floatingDock::ShouldPresentPointerHost(false, &currentDock, &previousDock, &currentDock) &&
+            !floatingDock::ShouldPresentPointerHost(false, &unrelatedDock, &previousDock, &currentDock) &&
+            !floatingDock::ShouldPresentPointerHost(false, &currentDock, nullptr, nullptr) &&
+            floatingDock::ShouldPresentPointerHost(true, &unrelatedDock, nullptr, nullptr),
+        "passive pointer updates redraw only the entered and departed Dock hosts while drag feedback can redraw all hosts");
     Check(floatingDock::ShouldCloseCollectionPopup(
             3, 3),
         "clicking the collection that owns the open popup must close it");

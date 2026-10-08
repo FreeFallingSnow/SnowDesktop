@@ -141,10 +141,11 @@ constexpr bool NeedsForegroundPaint(PointerVisualLayer layer)
 constexpr bool ShouldDeferWidgetSurfaceDraw(
     bool desktopPaintInProgress,
     bool floatingDockPaintInProgress,
-    bool floatingPopupPaintInProgress)
+    bool floatingPopupPaintInProgress,
+    bool pointerBatchActive = false)
 {
     return desktopPaintInProgress || floatingDockPaintInProgress ||
-        floatingPopupPaintInProgress;
+        floatingPopupPaintInProgress || pointerBatchActive;
 }
 
 constexpr bool SurfaceIncludesDesktop(std::string_view surface)

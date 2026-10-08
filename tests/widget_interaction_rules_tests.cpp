@@ -965,6 +965,12 @@ void TestDesktopHoverDeactivation()
             !hoverRules::ShouldResamplePassiveMouseMove(
                 false, false, true),
         "only passive mouse moves may replace queued message coordinates with the live cursor");
+    Check(hoverRules::CanCoalescePassiveMouseMoves(true, false, false, false) &&
+            !hoverRules::CanCoalescePassiveMouseMoves(false, false, false, false) &&
+            !hoverRules::CanCoalescePassiveMouseMoves(true, true, false, false) &&
+            !hoverRules::CanCoalescePassiveMouseMoves(true, false, true, false) &&
+            !hoverRules::CanCoalescePassiveMouseMoves(true, false, false, true),
+        "passive queue coalescing must exclude pressed, captured and OLE input");
     Check(
         hoverRules::ShouldPresentRetainedMouseLeave(
             true, true) &&

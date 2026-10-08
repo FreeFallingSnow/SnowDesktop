@@ -203,8 +203,9 @@ int main(int argc, char** argv)
     Check(!rules::ShouldDeferWidgetSurfaceDraw(false, false, false) &&
             rules::ShouldDeferWidgetSurfaceDraw(true, false, false) &&
             rules::ShouldDeferWidgetSurfaceDraw(false, true, false) &&
-            rules::ShouldDeferWidgetSurfaceDraw(false, false, true),
-        "a widget child surface must wait for every host surface to leave BeginDraw");
+            rules::ShouldDeferWidgetSurfaceDraw(false, false, true) &&
+            rules::ShouldDeferWidgetSurfaceDraw(false, false, false, true),
+        "a widget child surface must wait for host BeginDraw and the final state of a pointer batch");
     Check(rules::SurfaceIncludesDesktop("") &&
             rules::SurfaceIncludesDesktop("desktop") &&
             !rules::SurfaceIncludesDesktop("panel") &&

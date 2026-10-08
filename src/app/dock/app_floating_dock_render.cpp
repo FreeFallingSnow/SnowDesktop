@@ -376,9 +376,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             &dragPreviewSynced);
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
-        // Passive hover is presented once below. Updating the title/input
-        // region must not synchronously redraw the same large DComp surface.
-        UpdateFloatingDockWindowBounds(host, false);
+        // The pointer presenter refreshes both region and pixels at its
+        // deadline. An invalidation here would bypass that limit and feed
+        // stationary region-generated moves back into WM_PAINT.
         PresentPointerInteractionFrame(
             dragPreviewSynced);
         return 0;

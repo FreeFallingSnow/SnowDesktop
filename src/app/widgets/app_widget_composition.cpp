@@ -120,25 +120,34 @@ bool DesktopApp::QueueDesktopWidgetComposition(
     }
 
     pendingDesktopWidgetCompositions_.insert(widgetId);
+    return PresentQueuedDesktopWidgetComposition();
+}
+
+bool DesktopApp::PresentQueuedDesktopWidgetComposition()
+{
     if (snowdesktop::widget_composition_layer_rules::
             ShouldDeferWidgetSurfaceDraw(
                 compositionPaintInProgress_,
                 IsAnyPersistentDockHostPainting(),
-                floatingPopupCompositionPaintInProgress_))
+                floatingPopupCompositionPaintInProgress_,
+                desktopWidgetPointerBatchActive_))
         return true;
-    if (!FlushPendingDesktopWidgetComposition())
-        return fail();
-    if (!FlushPendingWidgetMarqueeComposition() ||
-        !SyncWidgetMarqueeCompositionVisibility())
-        return fail();
-    if (!CommitCompositionAnimationFrame())
-        return fail();
-    return FlushPendingCompositionCommit();
+    if (FlushPendingDesktopWidgetComposition() &&
+        FlushPendingWidgetMarqueeComposition() &&
+        SyncWidgetMarqueeCompositionVisibility() &&
+        CommitCompositionAnimationFrame() &&
+        FlushPendingCompositionCommit())
+        return true;
+    desktopWidgetCompositionFailurePending_ = true;
+    if (hwnd_ && IsWindow(hwnd_))
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    return false;
 }
 
 bool DesktopApp::FlushPendingDesktopWidgetComposition()
 {
     if (graphicsDeviceRecovery_.Pending()) return false;
+    if (desktopWidgetPointerBatchActive_) return true;
     if (pendingDesktopWidgetCompositions_.empty())
     {
         if (SyncDesktopWidgetCompositionZOrder())

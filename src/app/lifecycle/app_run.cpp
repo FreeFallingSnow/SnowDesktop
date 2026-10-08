@@ -9,6 +9,7 @@
 #include "platform/deployment_context.h"
 #include "platform/shell_overlay_window.h"
 #include "drag_drop/drag_input_rules.h"
+#include "desktop/desktop_hover_rules.h"
 #include "steam/steam_app_identity.h"
 #include "steam/steam_child_environment.h"
 #include "steam/steam_runtime_startup.h"
@@ -1708,9 +1709,18 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         IsPersistentDockHostWindow(msg.hwnd),
                         floatingPopupHwnd_ != nullptr &&
                             msg.hwnd == floatingPopupHwnd_);
+            const bool passivePointerMove = snowdesktop::desktop_hover_rules::
+                CanCoalescePassiveMouseMoves(
+                    snowdesktop::desktop_hover_rules::ShouldResamplePassiveMouseMove(
+                        mouseDown_, dragSession_.IsActive(),
+                        widgetActionActive || middleButtonWidgetMove_ ||
+                            detailColumnResizeActive_ || luaWidgetPanelMouseDown_),
+                    (msg.wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
+                        MK_XBUTTON1 | MK_XBUTTON2)) != 0,
+                    dragDropController_.IsTransportActive(), GetCapture() != nullptr);
             snowdesktop::drag_input_rules::
                 CoalesceQueuedMouseMoves(
-                    latencySensitivePointerActive,
+                    latencySensitivePointerActive || passivePointerMove,
                     pointerMessageSurface,
                     msg,
                     [](MSG& next) {
@@ -1723,8 +1733,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                             &next, nullptr, 0, 0,
                             PM_REMOVE) != FALSE;
                     },
-                    [](const MSG& left, const MSG& right) {
-                        return left.hwnd == right.hwnd;
+                    [passivePointerMove](const MSG& left, const MSG& right) {
+                        return left.hwnd == right.hwnd &&
+                            (!passivePointerMove || left.wParam == right.wParam);
                     },
                     [](const MSG& message) {
                         return message.message == WM_MOUSEMOVE;

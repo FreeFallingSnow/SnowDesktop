@@ -1165,6 +1165,8 @@ private:
     /** @brief 同步呈现桌面拖动及浮动 Dock 指针反馈。 */
     void PresentPointerInteractionFrame(
         bool dragPreviewAlreadySynced = false);
+    void PresentFloatingDockPointerHosts(
+        const void* previousHoverOwner, bool presentAll);
     bool CreateDragPreviewWindow();
     void DestroyDragPreviewWindow();
     void HideDragPreviewWindow();
@@ -2862,6 +2864,7 @@ private:
     void ResetWidgetMarqueeComposition();
     bool QueueDesktopWidgetComposition(
         const std::wstring& widgetId);
+    bool PresentQueuedDesktopWidgetComposition();
     bool FlushPendingDesktopWidgetComposition();
     bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
@@ -3493,6 +3496,7 @@ private:
     bool compositionPaintInProgress_ = false;
     bool desktopWidgetCompositionFailurePending_ = false;
     bool desktopWidgetCompositionDrawInProgress_ = false;
+    bool desktopWidgetPointerBatchActive_ = false;
     bool hiddenWidgetSurfaceMaintenancePending_ = false;
     std::uint64_t widgetSurfaceReclaimCount_ = 0;
     std::uint64_t widgetSurfaceReclaimedBytes_ = 0;
@@ -4013,6 +4017,7 @@ private:
     /** @brief 浮动 Dock 被动 hover 最近一次同步提交时刻（8ms 限频用）。 */
     ULONGLONG floatingDockLastPointerPresentTick_ = 0;
     snowdesktop::UiScheduleToken floatingDockHoverTailToken_ = 0;
+    POINT floatingDockLastPointerPresentPoint_{ LONG_MIN, LONG_MIN };
     const void* floatingDockHoverTargetOwner_ = nullptr;
     size_t floatingDockHoverTargetIndex_ = 0;
     int floatingDockHoverTargetKind_ = 0;
