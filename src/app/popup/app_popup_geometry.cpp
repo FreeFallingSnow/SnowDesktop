@@ -10,6 +10,10 @@ bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
     return popupAnchoredToDock_ &&
         (widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping) &&
         (widget.showSearchBox || widget.showFileCategories) &&
+        // Empty sources have no search or category controls to lay out. Use
+        // the full source so filtering to no results keeps search accessible.
+        (widget.type == DesktopWidgetType::FolderMapping
+            ? !widget.folderEntries.empty() : !widget.itemKeys.empty()) &&
         !UsesCollectionPopupFan(widget);
 }
 
