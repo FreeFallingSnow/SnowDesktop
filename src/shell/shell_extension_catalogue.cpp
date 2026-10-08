@@ -279,6 +279,18 @@ struct Scanner
     std::map<std::wstring, std::wstring> labels;
     std::map<std::wstring, bool> policies;
     std::map<std::wstring, Entry> images;
+    std::map<std::wstring, std::vector<std::wstring>> associations;
+    const std::vector<std::wstring> &Associations(const std::wstring &type)
+    {
+        const auto [it, inserted] = associations.try_emplace(type);
+        if (inserted)
+        {
+            it->second.push_back(Read(classes, type));
+            if (classes == HKEY_CLASSES_ROOT)
+                it->second.push_back(Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + type + L"\\UserChoice", L"ProgId"));
+        }
+        return it->second;
+    }
     std::wstring Label(const std::wstring &text)
     {
         if (text.empty() || text.front() != L'@') return text;
@@ -508,9 +520,8 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
         for (const auto &type : row.types)
             if (!type.empty() && type.front() == L'.')
             {
-                associations.push_back(Read(classes, type));
-                if (classes == HKEY_CLASSES_ROOT)
-                    associations.push_back(Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + type + L"\\UserChoice", L"ProgId"));
+                const auto &values = scanner.Associations(type);
+                associations.insert(associations.end(), values.begin(), values.end());
             }
         row.revision = Hash(settings_ipc::Pack(row.revision, associations));
         row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity, row.application));
