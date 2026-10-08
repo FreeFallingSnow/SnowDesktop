@@ -57,6 +57,15 @@ constexpr bool IsPointerGestureButtonDown(
         rightButtonItemDrag ? rightButtonDown : primaryButtonDown;
 }
 
+constexpr bool IsItemDragRelease(
+    bool rightButtonItemDrag,
+    bool rightButtonRelease)
+{
+    // Button-up wParam describes buttons still held, not the released button.
+    // A left-up carrying MK_RBUTTON must not complete a right-button drag.
+    return rightButtonItemDrag == rightButtonRelease;
+}
+
 constexpr bool IsMarqueePointerGesture(
     bool marqueeActive,
     bool mouseDown,
