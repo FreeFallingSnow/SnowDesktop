@@ -463,7 +463,10 @@ struct MenuService::Impl
             if (!current)
             {
                 row.view.pending = false;
-                Queue(request, row.inspection ? QueryPriority::Inspect : QueryPriority::Menu, true);
+                // A Start action can retain the validated ordinary snapshot
+                // while retiring an older aggregate already in flight.
+                Queue(request, row.inspection ? QueryPriority::Inspect : QueryPriority::Menu,
+                    row.inspection || row.invalid || !row.view.snapshot);
             }
             if (current)
             {
@@ -509,11 +512,33 @@ struct MenuService::Impl
             // returns. Retire its pre-action snapshot for every menu variant.
             if (token && !click.reference.empty() && StatePairForVerb(std::get<1>(click.reference.back())))
             {
+                struct Retained
+                {
+                    Request request; Reply reply; Key identity;
+                    unsigned contexts; std::uint64_t dependency, written;
+                };
                 std::vector<Request> affected;
+                std::vector<Retained> retained;
+                const bool startAction = StatePairForVerb(std::get<1>(click.reference.back()))->id == "state:start-pin" &&
+                    request.paths.size() == 1;
                 {
                     std::lock_guard lock(mutex);
                     for (auto &[key, row] : rows) if (row.request.paths == request.paths)
                     {
+                        if (startAction && !row.request.startPinOnly && row.view.snapshot && !row.invalid &&
+                            !row.identity.empty() && row.expires > MenuSnapshotCache::Now())
+                        {
+                            auto ordinary = *row.view.snapshot;
+                            std::erase_if(ordinary.entries, [](const auto &entry) {
+                                const auto *pair = StatePairForVerb(entry.key);
+                                return pair && pair->id == "state:start-pin";
+                            });
+                            ++row.dependency; ++row.view.revision;
+                            row.bytes = settings_ipc::Pack(ordinary).size(); row.view.snapshot = ordinary;
+                            retained.push_back({row.request, std::move(ordinary), row.identity, row.view.contexts,
+                                row.dependency, row.expires - MenuSnapshotCache::LifetimeMs});
+                            continue;
+                        }
                         row.view.snapshot.reset(); row.bytes = 0; row.invalid = true;
                         ++row.dependency; ++row.view.revision;
                         affected.push_back(row.request);
@@ -522,6 +547,32 @@ struct MenuService::Impl
                     for (const auto &target : affected) Queue(target, QueryPriority::Menu, true);
                 }
                 for (const auto &target : affected) cache.Erase(target);
+                for (const auto &saved : retained)
+                {
+                    auto ticket = cache.Capture(saved.request);
+                    if (ticket && ticket.identity == saved.identity)
+                    {
+                        { std::lock_guard lock(mutex);
+                          ticket.dependency = Dependency(catalogue, saved.request, saved.contexts); }
+                        // Replace the disk row without extending the lifetime
+                        // of its ordinary commands or persisting the old pin.
+                        if (!cache.Store(cache.Begin(std::move(ticket)), saved.reply, saved.written)) cache.Erase(saved.request);
+                    }
+                    else
+                    {
+                        {
+                            std::lock_guard lock(mutex);
+                            auto &row = rows[SelectionKey(saved.request)];
+                            if (row.dependency == saved.dependency)
+                            {
+                                row.view.snapshot.reset(); row.bytes = 0; row.invalid = true;
+                                ++row.dependency; ++row.view.revision;
+                                Queue(saved.request, QueryPriority::Menu, true);
+                            }
+                        }
+                        cache.Erase(saved.request);
+                    }
+                }
             }
             if (click.completed) click.completed(succeeded);
         }

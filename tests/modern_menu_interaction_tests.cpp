@@ -2515,13 +2515,13 @@ int wmain()
         gMenuScript = [&](HWND) { incremental.eventPump.flushPresentation(); };
         Item stable; stable.command = 8270; stable.label = L"Open";
         gWatchdogFired = false; SetTimer(owner, kWatchdogTimer, 3000, nullptr);
-        const auto result = snowdesktop::modern_menu::Show({stable}, incremental);
+        const auto incrementalResult = snowdesktop::modern_menu::Show({stable}, incremental);
         KillTimer(owner, kWatchdogTimer); KillTimer(owner, kDriveTimer); gMenuScript = {};
         if (!movesHoveredRow)
-            Expect(streams == 2 && !gWatchdogFired && result.command == 8270 && EqualRect(&original, &after),
+            Expect(streams == 2 && !gWatchdogFired && incrementalResult.command == 8270 && EqualRect(&original, &after),
                 "both independent updates appear under a stationary pointer without moving its original click target");
         else
-            Expect(!gWatchdogFired && result.command == 8271 && waited,
+            Expect(!gWatchdogFired && incrementalResult.command == 8271 && waited,
                 "an update that shifts the pointed row remains pending until the pointer leaves");
     }
     // Mouse input and async replacement share the real controller. A result

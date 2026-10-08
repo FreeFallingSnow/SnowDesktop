@@ -1591,10 +1591,11 @@ void TestPairedCommandRefresh()
     std::ofstream(target) << "private scheduler target";
     ext::Request request; request.paths = {target.wstring()};
     std::atomic<bool> pinned = false, hold = false, completed = false, success = false;
-    std::atomic<int> queries = 0, invokes = 0;
+    std::atomic<int> queries = 0, ordinaryQueries = 0, invokes = 0;
     auto startRequest = request; startRequest.startPinOnly = true;
     ext::MenuService service(directory.path / L"cache", [&](const auto &source) {
         ++queries;
+        if (!source.startPinOnly) ++ordinaryQueries;
         const bool state = pinned.load();
         ext::Entry action; action.key = state ? "UnpinFromStartScreen" : "PinToStartScreen";
         action.provider = state ? "verb:unpinfromstartscreen" : "verb:pintostartscreen";
@@ -1632,16 +1633,20 @@ void TestPairedCommandRefresh()
     const auto selected = std::find_if(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Unpin"; });
     Expect(presentation.Invoke(selected->command, {0, 0}), "dispatch the freshly displayed state command");
     PumpUntil([&] { return completed.load(); }, "state invocation completion is observed by the real service");
-    Expect(success && invokes == 1 && !pinned && !service.View(request).snapshot,
-        "a completed state change retires the pre-action memory snapshot before notifying its caller");
+    const auto ordinaryView = service.View(request);
+    Expect(success && invokes == 1 && !pinned && ordinaryQueries == 1 && ordinaryView.snapshot &&
+        ordinaryView.snapshot->entries.size() == 1 && ordinaryView.snapshot->entries.front().label == L"Inspect",
+        "a Start state change retires the old pin while preserving ordinary rows without an aggregate query");
     ext::MenuSnapshotCache disk(directory.path / L"cache");
-    Expect(!disk.Find(disk.Capture(request)), "the same pre-action disk snapshot is retired too");
+    const auto ordinaryDisk = disk.Find(disk.Capture(request));
+    Expect(ordinaryDisk && ordinaryDisk->entries.size() == 1 && ordinaryDisk->entries.front().label == L"Inspect",
+        "the disk snapshot preserves ordinary rows and cannot restore the stale pin state");
     hold = false;
     PumpUntil([&] { const auto view = service.View(startRequest); return !view.pending && view.snapshot.has_value(); },
         "the post-action native query publishes the new Pin state");
     const auto after = service.MenuDisplay(startRequest, prefs);
-    Expect(after.snapshot && after.snapshot->entries.back().label == L"Pin" && invokes == 1,
-        "one Unpin action produces one freshly queried Pin state and no duplicate invocation");
+    Expect(after.snapshot && after.snapshot->entries.back().label == L"Pin" && invokes == 1 && ordinaryQueries == 1,
+        "one Unpin action produces one fresh Pin state without repeating aggregate enumeration or invocation");
 }
 
 void TestStartQueryScheduling()
