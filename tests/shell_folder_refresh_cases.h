@@ -47,47 +47,73 @@ void TestPopupTargetRebinding()
 void TestFolderFirstListing()
 {
     using namespace snowdesktop::dock_folder_popup_read;
-    using snowdesktop::popup_animation_rules::State;
+    using namespace snowdesktop::popup_animation_rules;
+    using snowdesktop::shell_refresh::FolderSnapshot;
     Check(HasFanContent(true, 0) && HasFanContent(true, 13) &&
         !HasFanContent(false, 0) && HasFanContent(false, 1),
         "a folder's pending/empty listing cannot downgrade its fan preference; empty collections retain their fallback");
-    State animation;
-    animation.Configure(false, 2.4);
-    animation.Open(100);
-    animation.Advance(400); // The loading label has already finished appearing.
-    Check(RevealFirstEntries(animation, true, 0, 13, true, true, 410) &&
-        animation.IsAnimating() && animation.GetVisual().progress == 0.0f,
-        "a delayed first folder listing must start a fan reveal instead of appearing fully unfolded");
-    animation.Advance(518);
-    Check(animation.GetVisual().progress > 0.49f && animation.GetVisual().progress < 0.51f,
-        "the entries get their own complete fan duration after the loading label");
-    Check(!RevealFirstEntries(animation, true, 13, 13, true, true, 520) &&
-        animation.GetVisual().progress > 0.49f,
-        "duplicate listings and later icon refreshes cannot restart a populated fan");
-    Check(!RevealFirstEntries(animation, false, 0, 13, true, true, 520) &&
-        !RevealFirstEntries(animation, true, 0, 0, true, true, 520) &&
-        !RevealFirstEntries(animation, true, 0, 13, false, true, 520) &&
-        !RevealFirstEntries(animation, true, 0, 13, true, false, 520),
-        "unchanged geometry, empty, failed and disabled-animation results cannot restart opening");
-    State grid;
-    grid.Open(100);
-    grid.Advance(190);
-    Check(RevealFirstEntries(grid, true, 0, 9, true, true, 200) &&
-        grid.IsAnimating() && grid.GetVisual().progress == 0.0f,
-        "a first grid listing that outgrows the loading frame cannot jump straight to full size");
-    grid.Advance(245);
-    Check(grid.GetVisual().progress > 0.49f && grid.GetVisual().progress < 0.51f,
-        "the enlarged grid has observable intermediate opening frames");
-    animation.Close(520);
-    Check(!RevealFirstEntries(animation, true, 0, 13, true, true, 540) && animation.IsClosing(),
-        "a late listing cannot reverse the user's close action");
-    animation.ResetHidden();
-    Check(!RevealFirstEntries(animation, true, 0, 13, true, true, 800) && animation.IsHidden(),
-        "late results cannot reopen a hidden fan");
-    animation.Open(900);
-    Check(RevealFirstEntries(animation, true, 0, 9, true, true, 920) &&
-        animation.IsAnimating() && animation.GetVisual().progress == 0.0f,
-        "reopening starts a fresh fan even after a prior delayed load and close");
+    // Exercise the production listing and content-refresh dispatch together for
+    // fan/grid scale and fade effects, including native and fallback animation.
+    for (const auto& effect : std::array<std::pair<bool, double>, 3>{{
+            {false, 2.4}, {false, 1.0}, {true, 1.0}}})
+    {
+        for (const bool native : {false, true})
+        {
+            State animation;
+            animation.Configure(effect.first, effect.second);
+            const auto duration = static_cast<std::uint64_t>(animation.DurationMilliseconds(true));
+            FolderSnapshot listing;
+            listing.path = L"C:\\popup";
+            listing.complete = true;
+            bool available = false, loading = true;
+            std::size_t count = 0;
+            int queued = 0, prepared = 0, retired = 0;
+            const auto refresh = [&](std::uint64_t now, bool compositor) {
+                Check(Refresh(listing.path, &listing, available, loading,
+                    [](const auto&) {}, [&](const auto& result) { count = result.entries.size(); }),
+                    "the current folder listing is accepted before refreshing popup content");
+                return RefreshContent(animation, now, compositor,
+                    [&] { ++queued; }, [&] { ++prepared; }, [&] { ++retired; });
+            };
+            animation.Open(100);
+            animation.Advance(100 + duration);
+            refresh(110 + duration, false); // The open popup is still empty.
+            listing.entries.resize(13);
+            Check(refresh(120 + duration, false) == ContentRefreshAction::Stable &&
+                count == 13 && available && !loading && !animation.IsAnimating() &&
+                animation.GetVisual().progress == 1.0f && animation.IsInteractive(),
+                "a completed empty popup accepts its first files without replaying opening");
+
+            animation.ResetHidden();
+            animation.Open(1000); // Only a user opening starts a fresh timeline.
+            count = 0;
+            queued = prepared = retired = 0;
+            const auto halfway = 1000 + duration / 2;
+            const auto action = refresh(halfway, native);
+            Check(count == 13 && animation.IsAnimating() && animation.IsInteractive() &&
+                action == (native ? ContentRefreshAction::ContinueCompositor :
+                    ContentRefreshAction::ContinueAnimation) &&
+                queued == (native ? 1 : 0) && prepared == (native ? 0 : 1) &&
+                retired == (native ? 0 : 1),
+                "first files refresh the existing native surface or fallback frame during opening");
+            animation.Advance(1000 + duration);
+            Check(!animation.IsAnimating() && animation.GetVisual().progress == 1.0f,
+                "first files retain the original opening deadline for fan, grid and fade effects");
+
+            animation.Close(2000);
+            count = 0;
+            refresh(2000 + duration / 2, native);
+            Check(count == 13 && animation.IsClosing() && !animation.IsInteractive(),
+                "a late first listing cannot reverse the user's close action");
+            animation.Advance(2000 + duration);
+            Check(animation.IsHidden() && !animation.IsAnimating(),
+                "closing still completes at its original deadline after files arrive");
+            count = 0;
+            Check(refresh(2010 + duration, false) == ContentRefreshAction::Stable &&
+                count == 13 && animation.IsHidden(),
+                "a late listing cannot reopen a hidden popup");
+        }
+    }
 }
 
 void TestFolderRefreshScopeAndReads()

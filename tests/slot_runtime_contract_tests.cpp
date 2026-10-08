@@ -35,6 +35,7 @@
 #include "common/constants.h"
 #include "drag_drop/drag_input_rules.h"
 #include "layout/floating_popup_rules.h"
+#include "layout/popup_animation_rules.h"
 #include "drag_drop/ole_drag_rules.h"
 
 #include <propsys.h>

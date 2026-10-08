@@ -1,7 +1,8 @@
 #pragma once
 
 #include "app/shell/shell_refresh_snapshot.h"
-#include "layout/popup_animation_rules.h"
+
+#include <cstddef>
 
 namespace snowdesktop::dock_folder_popup_read
 {
@@ -27,21 +28,6 @@ inline bool HasFanContent(bool folderMapping, std::size_t count)
 {
     // Folder loading/error/empty states have their own fan status label.
     return folderMapping || count != 0;
-}
-
-// The loading hint is not the entries' opening animation. When the first real
-// listing changes the presentation, reveal it even if the hint finished long ago.
-// Closing or hidden popups must never be reopened by a late directory result.
-inline bool RevealFirstEntries(popup_animation_rules::State& animation,
-    bool presentationChanged, std::size_t previousCount, std::size_t count, bool available,
-    bool animationsEnabled, std::uint64_t now)
-{
-    if (!presentationChanged || previousCount != 0 || count == 0 || !available ||
-        !animationsEnabled || !animation.IsInteractive())
-        return false;
-    animation.ResetHidden();
-    animation.Open(now);
-    return true;
 }
 
 // Availability comes from the directory read, not the independently queued
