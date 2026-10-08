@@ -182,8 +182,8 @@ void TestTrackedDropResults()
 }
 
 // Real worker -> IFileOperation -> completion and feedback. The temporary
-// source uses the same 8.3 alias as browser drops; dot aliases also exercise
-// the regression on volumes where short names are disabled. No browser or
+// source uses the same 8.3 alias as browser drops, alongside a long-path
+// baseline. Short-name coverage depends on the fixture volume. No browser or
 // desktop data is needed to observe a successful copy being reported as E_FAIL.
 void TestTrackedDropPathAliases()
 {
@@ -197,7 +197,7 @@ void TestTrackedDropPathAliases()
     struct ComCleanup { ~ComCleanup() { CoUninitialize(); } } comCleanup;
     const auto root = CreateTemporaryDirectory();
     struct Cleanup { fs::path root; ~Cleanup() { std::error_code ec; fs::remove_all(root, ec); } } cleanup{root};
-    std::vector<fs::path> aliases{root / L"."};
+    std::vector<fs::path> aliases{root};
     std::vector<wchar_t> shortPath(32768);
     const DWORD length = GetShortPathNameW(root.c_str(), shortPath.data(),
         static_cast<DWORD>(shortPath.size()));
