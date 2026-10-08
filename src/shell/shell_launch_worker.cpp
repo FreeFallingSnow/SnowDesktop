@@ -480,12 +480,33 @@ bool shell_launch_process::ExecuteRequestWithApi(
         return open(validOwner, path, pidl, request.showCommand,
             SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE);
     }
+    std::wstring executable = path;
+    std::wstring parameters;
+    if (_wcsicmp(PathFindExtensionW(path.c_str()), L".msi") == 0)
+    {
+        // MSI packages need the Installer executable's runas verb; the package
+        // association normally provides Open, not Run as administrator.
+        wchar_t systemDirectory[MAX_PATH]{};
+        const UINT length = GetSystemDirectoryW(systemDirectory,
+            static_cast<UINT>(std::size(systemDirectory)));
+        if (!length)
+            return false;
+        if (length >= std::size(systemDirectory))
+        {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return false;
+        }
+        executable.assign(systemDirectory, length);
+        executable += L"\\msiexec.exe";
+        parameters = L"/i \"" + path + L"\"";
+    }
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
     executeInfo.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
     executeInfo.hwnd = validOwner;
     executeInfo.lpVerb = L"runas";
-    executeInfo.lpFile = path.c_str();
+    executeInfo.lpFile = executable.c_str();
+    executeInfo.lpParameters = parameters.empty() ? nullptr : parameters.c_str();
     executeInfo.nShow = request.showCommand;
     // Shortcut/manifest inspection can take time. Refresh the handoff only
     // after it finishes, immediately before entering the consent broker.

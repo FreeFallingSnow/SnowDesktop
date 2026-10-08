@@ -44,6 +44,7 @@ struct ConsentBoundary
     HWND expectedOwner = nullptr;
     HWND invocationOwner = nullptr;
     std::wstring expectedPath;
+    std::wstring expectedParameters;
     int activations = 0;
     int invocations = 0;
     int unexpectedOpens = 0;
@@ -73,6 +74,7 @@ BOOL WINAPI ConsentExecute(SHELLEXECUTEINFOW* info)
         consent.foreground == consent.expectedOwner && info->lpVerb &&
         wcscmp(info->lpVerb, L"runas") == 0 &&
         info->lpFile && info->lpFile == consent.expectedPath &&
+        (info->lpParameters ? info->lpParameters : L"") == consent.expectedParameters &&
         (info->fMask & SEE_MASK_NOASYNC) && info->nShow == SW_SHOWNORMAL;
     if (consent.cancel) SetLastError(ERROR_CANCELLED);
     return !consent.cancel;
@@ -85,7 +87,8 @@ bool ConsentRejectOpen(HWND, const std::wstring&, PCIDLIST_ABSOLUTE, int, ULONG)
 }
 
 void CheckElevationDispatch(const std::wstring& path,
-    snowdesktop::shell_launch_process::Action action)
+    snowdesktop::shell_launch_process::Action action,
+    const std::wstring& executable = {}, const std::wstring& parameters = {})
 {
     namespace process = snowdesktop::shell_launch_process;
     // Independent off-screen test windows, never the user's desktop host.
@@ -105,7 +108,8 @@ void CheckElevationDispatch(const std::wstring& path,
         consent = {};
         consent.foreground = input;
         consent.expectedOwner = input;
-        consent.expectedPath = path;
+        consent.expectedPath = executable.empty() ? path : executable;
+        consent.expectedParameters = parameters;
         consent.cancel = cancel;
         const bool opened = process::ExecuteRequestWithApi(request, api);
         Check(opened == !cancel && consent.invocations == 1 && consent.foregroundConsent &&
@@ -113,7 +117,8 @@ void CheckElevationDispatch(const std::wstring& path,
             "elevated launch must hand foreground to consent once; cancellation must never retry");
     }
     consent = {};
-    consent.expectedPath = path;
+    consent.expectedPath = executable.empty() ? path : executable;
+    consent.expectedParameters = parameters;
     Check(process::ExecuteRequestWithApi(request, api) && consent.invocations == 1 &&
         consent.activations == 0,
         "a delayed elevated launch must not reactivate the owner after its process loses foreground");
@@ -127,6 +132,28 @@ void CheckElevationDispatch(const std::wstring& path,
     Check(!process::ExecuteRequestWithApi(request, api) && consent.unexpectedOpens == 1 &&
         consent.invocations == 0,
         "the consent probe must reject unexpected ordinary Open without invoking the real Shell");
+}
+
+void TestMsiAdministratorUsesSystemInstaller()
+{
+    // Exercise the real helper routing while substituting only the OS consent
+    // boundary. Direct runas on an MSI reproduces the reported 1155 failure.
+    // Known-folder lookup supplies the expected trusted target independently.
+    PWSTR systemDirectory = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(FOLDERID_System, 0, nullptr, &systemDirectory);
+    Check(SUCCEEDED(result) && systemDirectory,
+        "MSI regression must locate the Windows system folder");
+    if (FAILED(result) || !systemDirectory)
+        return;
+    const std::wstring installer = std::wstring(systemDirectory) + L"\\msiexec.exe";
+    CoTaskMemFree(systemDirectory);
+    for (const std::wstring path : {
+        L"C:\\MSI fixtures\\空安装包 & (test).msi",
+        L"C:\\MSI fixtures\\UPPERCASE.MSI" })
+    {
+        CheckElevationDispatch(path, snowdesktop::shell_launch_process::Action::RunAs,
+            installer, L"/i \"" + path + L"\"");
+    }
 }
 
 void TestLaunchOwnerSurvivesMenuDismissal()
@@ -1146,6 +1173,7 @@ int wmain(int argc, wchar_t** argv)
         TestAdministratorShortcutMetadataIsDetected();
         CheckElevationDispatch(L"explicit-administrator.exe",
             snowdesktop::shell_launch_process::Action::RunAs);
+        TestMsiAdministratorUsesSystemInstaller();
         if (argc == 3)
         {
             const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -1193,6 +1221,7 @@ int wmain(int argc, wchar_t** argv)
     TestLaunchOwnerSurvivesMenuDismissal();
     CheckElevationDispatch(L"explicit-administrator.exe",
         snowdesktop::shell_launch_process::Action::RunAs);
+    TestMsiAdministratorUsesSystemInstaller();
     TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
     TestRunCommandBoundary();
     TestHelperFailureReachesCaller();
