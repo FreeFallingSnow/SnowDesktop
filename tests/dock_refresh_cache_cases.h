@@ -237,9 +237,15 @@ void CheckDockRefreshContinuity()
         pixels.Invalidate();
         const auto changed = pixels.Read(L"mapped", L"96");
         Check(!pixels.Publish(L"mapped", request.ticket, 99) &&
-            pixels.Publish(L"mapped", changed.ticket, 33, false) &&
-            pixels.Read(L"mapped", L"96").value == 33,
-            "a refreshed folder accepts new local pixels while rejecting an obsolete Shell result");
+            !pixels.Publish(L"mapped", changed.ticket, 33, false) &&
+            pixels.Read(L"mapped", L"96").value == 22 &&
+            !pixels.Read(L"mapped", L"96").fresh,
+            "a folder refresh retains its final icon instead of flashing new provisional local pixels");
+        Check(pixels.Publish(L"mapped", changed.ticket, 44) &&
+            pixels.Read(L"mapped", L"96").value == 44 &&
+            pixels.Read(L"mapped", L"96").fresh &&
+            !pixels.Publish(L"mapped", changed.ticket, 33, false),
+            "the current Shell result replaces the retained icon and cannot be downgraded by late local pixels");
         pixels.Retain([](const auto&) { return false; });
         const auto recreated = pixels.Read(L"mapped", L"192");
         Check(recreated.ticket != changed.ticket && !recreated.value &&
@@ -251,6 +257,28 @@ void CheckDockRefreshContinuity()
         const auto retry = pixels.Read(L"mapped", L"192", now + std::chrono::seconds(5));
         Check(!retry.fresh && retry.ticket != recreated.ticket && retry.value == 55,
             "local pixels arriving after Shell failure preserve the refinement retry and visible icon");
+        Check(!pixels.Publish(L"mapped", retry.ticket, 66, false) &&
+            pixels.Read(L"mapped", L"192", now + std::chrono::seconds(5)).value == 55,
+            "retrying a failed refinement keeps the visible icon rather than replaying fast local pixels");
+        Check(pixels.PublishFailure(L"mapped", retry.ticket, std::chrono::seconds(5),
+                now + std::chrono::seconds(5)) &&
+            pixels.Read(L"mapped", L"192", now + std::chrono::seconds(9)).value == 55 &&
+            pixels.Read(L"mapped", L"192", now + std::chrono::seconds(9)).fresh,
+            "a failed refresh retains the existing icon while throttling the next refinement attempt");
+        const auto recovered = pixels.Read(L"mapped", L"192", now + std::chrono::seconds(10));
+        Check(!recovered.fresh && recovered.ticket != retry.ticket &&
+            pixels.Publish(L"mapped", recovered.ticket, 77) &&
+            pixels.Read(L"mapped", L"192", now + std::chrono::seconds(10)).value == 77,
+            "a successful later refinement replaces the icon retained through failed refreshes");
+        const auto resized = pixels.Read(L"mapped", L"384", now + std::chrono::seconds(11));
+        Check(!resized.fresh && !resized.sameSourceVersion && resized.value == 77 &&
+            !pixels.Publish(L"mapped", resized.ticket, 88, false) &&
+            pixels.Read(L"mapped", L"384", now + std::chrono::seconds(11)).value == 77 &&
+            pixels.Publish(L"mapped", resized.ticket, 99),
+            "a size change keeps the existing icon until the newly requested complete bitmap is ready");
+        const auto newSource = pixels.Read(L"other-folder", L"384", now + std::chrono::seconds(11));
+        Check(!newSource.value && pixels.Publish(L"other-folder", newSource.ticket, 11, false),
+            "a different folder still gets its first local pixels without borrowing another source's icon");
     }
     using snowdesktop::dock_refresh_cache::SourceKey;
     const auto key = SourceKey(L"PIN", L"C:\\DESKTOP\\EDITOR.LNK");
