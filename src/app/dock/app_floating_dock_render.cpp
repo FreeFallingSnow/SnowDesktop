@@ -245,9 +245,19 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             const RECT visual = host.container->GetVisualPanelBounds(lastMousePoint_);
             const bool vertical = dockSettings_.position == DockPosition::Left ||
                 dockSettings_.position == DockPosition::Right;
-            snowdesktop::performance::Value("dock", "floating.panel_scale", diagnosticOwner,
-                vertical ? static_cast<double>(visual.right - visual.left) / std::max<LONG>(1, base.right - base.left)
-                    : static_cast<double>(visual.bottom - visual.top) / std::max<LONG>(1, base.bottom - base.top), revision);
+            snowdesktop::performance::Value("dock", "floating.panel_axis_scale", diagnosticOwner,
+                vertical ? static_cast<double>(visual.bottom - visual.top) / std::max<LONG>(1, base.bottom - base.top)
+                    : static_cast<double>(visual.right - visual.left) / std::max<LONG>(1, base.right - base.left), revision);
+            const auto state = host.container->CapturePresentationState();
+            const bool focused = !IsRectEmpty(&state.focusRect);
+            const RECT focusedVisual = focused
+                ? host.container->GetElementVisualRect(state.focusRect, lastMousePoint_)
+                : RECT{};
+            snowdesktop::performance::Value("dock", "floating.focus_active", diagnosticOwner,
+                focused ? 1 : 0, revision);
+            snowdesktop::performance::Value("dock", "floating.focus_scale", diagnosticOwner,
+                focused ? static_cast<double>(focusedVisual.right - focusedVisual.left) /
+                    std::max<LONG>(1, state.focusRect.right - state.focusRect.left) : 1.0, revision);
         }
         snowdesktop::performance::Value("dock", "floating.frame_ready", diagnosticOwner, 1, revision);
         snowdesktop::performance::Value("dock", "floating.topmost", diagnosticOwner,
