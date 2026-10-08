@@ -177,10 +177,52 @@ local function dataSeriesAccessibility(hidden)
     }
 end
 
+local function centeredSpectrumNode(model, values, padding)
+    local width = math.max(0, layout.contentWidth() - padding * 2)
+    local height = math.max(0, layout.contentHeight() - padding * 2)
+    local slot = width / #values
+    local gap = math.min(2, slot * 0.2)
+    local children = {}
+    local style = {
+        background = model.color,
+        opacity = 0.94,
+        cornerRadius = 0,
+    }
+    for index, value in ipairs(values) do
+        -- One complete rectangle avoids a translucent seam where two
+        -- separately antialiased halves meet on a fractional pixel.
+        children[index] = view.box({
+            key = "audio-spectrum.centered.bar." .. index,
+            width = slot - gap,
+            height = height * value,
+            style = style,
+            accessibility = { hidden = true },
+        })
+    end
+    return view.row({
+        key = "audio-spectrum.centered",
+        width = "fill",
+        height = "fill",
+        padding = {
+            left = padding + gap * 0.5,
+            right = padding + gap * 0.5,
+            top = padding,
+            bottom = padding,
+        },
+        gap = gap,
+        alignItems = "center",
+        accessibility = dataSeriesAccessibility(false),
+        children = children,
+    })
+end
+
 local function spectrumNode(model)
     local padding = layout.vmin(5)
     local values = spectrum.display(model.values, model.barCount)
     local plan = spectrum.seriesPlan(model.alignment)
+    if plan.mirror then
+        return centeredSpectrumNode(model, values, padding)
+    end
     local function properties(key, seriesValues, hidden, trackOpacity)
         return {
             key = key,
@@ -203,21 +245,8 @@ local function spectrumNode(model)
     end
 
     if plan.negate then values = spectrum.negate(values) end
-    -- Mirrored frequency bars should not draw a zero line across their gaps.
-    local primary = view.barChart(properties(
-        "audio-spectrum.bars", values, false, plan.mirror and 0 or 1))
-    if not plan.mirror then return primary end
-
-    return view.stack({
-        key = "audio-spectrum.centered",
-        width = "fill",
-        height = "fill",
-        children = {
-            primary,
-            view.barChart(properties("audio-spectrum.reflection",
-                spectrum.negate(values), true, 0)),
-        },
-    })
+    return view.barChart(properties(
+        "audio-spectrum.bars", values, false, 1))
 end
 
 local function statusNode(status)
