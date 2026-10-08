@@ -162,7 +162,10 @@ struct PersonalizationPagePresenter::Impl
     SettingRow fontRow;
     SettingRow tooltipFontSizeRow;
     muxc::NumberBox tooltipFontSize;
+    muxc::Slider tooltipFontSizeSlider;
+    muxc::Button tooltipFontSizeReset;
     winrt::event_token tooltipFontSizeToken{};
+    winrt::event_token tooltipFontSizeSliderToken{}, tooltipFontSizeResetToken{};
     muxc::DropDownButton fontPicker;
     muxc::TextBlock fontPickerLabel;
     muxc::Flyout fontFlyout;
@@ -598,7 +601,28 @@ struct PersonalizationPagePresenter::Impl
         tooltipFontSize.SmallChange(1);
         tooltipFontSize.LargeChange(2);
         tooltipFontSize.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
-        tooltipFontSizeRow.Initialize(tooltipFontSize);
+        tooltipFontSize.Width(92);
+        tooltipFontSizeSlider.Minimum(kMinimumTooltipFontSize);
+        tooltipFontSizeSlider.Maximum(kMaximumTooltipFontSize);
+        tooltipFontSizeSlider.StepFrequency(1);
+        tooltipFontSizeSlider.MinWidth(120);
+        tooltipFontSizeSlider.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid tooltipEditors;
+        tooltipEditors.ColumnSpacing(8);
+        muxc::ColumnDefinition tooltipSliderColumn, tooltipNumberColumn, tooltipResetColumn;
+        tooltipSliderColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+        tooltipNumberColumn.Width(mux::GridLengthHelper::Auto());
+        tooltipResetColumn.Width(mux::GridLengthHelper::Auto());
+        tooltipEditors.ColumnDefinitions().Append(tooltipSliderColumn);
+        tooltipEditors.ColumnDefinitions().Append(tooltipNumberColumn);
+        tooltipEditors.ColumnDefinitions().Append(tooltipResetColumn);
+        tooltipEditors.Children().Append(tooltipFontSizeSlider);
+        muxc::Grid::SetColumn(tooltipFontSize, 1);
+        tooltipEditors.Children().Append(tooltipFontSize);
+        tooltipFontSizeReset.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid::SetColumn(tooltipFontSizeReset, 2);
+        tooltipEditors.Children().Append(tooltipFontSizeReset);
+        tooltipFontSizeRow.Initialize(tooltipEditors);
         fontCard.content.Children().Append(tooltipFontSizeRow.root);
         fontRestart.IsClosable(false);
         fontRestart.IsOpen(false);
@@ -863,9 +887,13 @@ struct PersonalizationPagePresenter::Impl
             fontSearch.Focus(mux::FocusState::Programmatic);
         });
         tooltipFontSizeToken = tooltipFontSize.ValueChanged([this](const auto&, const auto&) {
-            if (!CanEmit() || !std::isfinite(tooltipFontSize.Value())) return;
-            const int size = NormalizeTooltipFontSize(static_cast<int>(std::lround(tooltipFontSize.Value())));
-            EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [size](auto& settings) { settings.tooltipFontSize = size; });
+            ChangeTooltipFontSize(tooltipFontSize.Value());
+        });
+        tooltipFontSizeSliderToken = tooltipFontSizeSlider.ValueChanged([this](const auto&, const auto&) {
+            ChangeTooltipFontSize(tooltipFontSizeSlider.Value());
+        });
+        tooltipFontSizeResetToken = tooltipFontSizeReset.Click([this](const auto&, const auto&) {
+            ChangeTooltipFontSize(kDefaultTooltipFontSize);
         });
         fontSearchToken = fontSearch.TextChanged([this](const auto&, const auto&) {
             if (CanEmit()) FilterFonts();
@@ -1314,9 +1342,27 @@ struct PersonalizationPagePresenter::Impl
         EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
     }
 
+    void SyncTooltipFontSize(int size)
+    {
+        const bool previous = synchronizingPair;
+        synchronizingPair = true;
+        presenter_controls::SyncNumberBoxValue(tooltipFontSize, size);
+        if (tooltipFontSizeSlider.Value() != size) tooltipFontSizeSlider.Value(size);
+        tooltipFontSizeReset.IsEnabled(size != kDefaultTooltipFontSize);
+        synchronizingPair = previous;
+    }
+
+    void ChangeTooltipFontSize(double value)
+    {
+        if (!CanEmit() || !std::isfinite(value)) return;
+        const int size = NormalizeTooltipFontSize(static_cast<int>(std::lround(value)));
+        SyncTooltipFontSize(size);
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [size](auto& settings) { settings.tooltipFontSize = size; });
+    }
+
     void PatchGeneral(const GeneralSettings& settings)
     {
-        presenter_controls::SyncNumberBoxValue(tooltipFontSize, NormalizeTooltipFontSize(settings.tooltipFontSize));
+        SyncTooltipFontSize(NormalizeTooltipFontSize(settings.tooltipFontSize));
         if (selectedFont != settings.font || fonts.empty())
         {
             selectedFont = settings.font;
@@ -1459,6 +1505,9 @@ struct PersonalizationPagePresenter::Impl
         fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
         tooltipFontSizeRow.SetText(L("font.tooltipSize", L"Tooltip font size"), L("font.tooltipSizeHint"));
         muxa::AutomationProperties::SetName(tooltipFontSize, tooltipFontSizeRow.label.Text());
+        muxa::AutomationProperties::SetName(tooltipFontSizeSlider, tooltipFontSizeRow.label.Text());
+        presenter_controls::ConfigureRestoreDefaultButton(tooltipFontSizeReset,
+            L("app.settings.restore_default", L"Restore default") + L" · " + std::wstring(tooltipFontSizeRow.label.Text()));
         muxa::AutomationProperties::SetName(fontPicker, fontRow.label.Text());
         fontSearch.PlaceholderText(L("font.search", L"Search fonts"));
         muxa::AutomationProperties::SetName(fontSearch, fontSearch.PlaceholderText());
@@ -1537,7 +1586,6 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(collectionPopupThemeCombo,
             collectionPopupThemeRow.label.Text());
 
-        presetRow.help.Text(L("appearance.presetHelp", L"")); presetRow.help.Visibility(mux::Visibility::Visible);
         SetColorText(backgroundColor,
             "app.settings.component_bg", L"Widget Background");
         SetColorText(borderColor,
@@ -1603,9 +1651,7 @@ struct PersonalizationPagePresenter::Impl
             L"Lua Widget Row Height");
         widgetTransformCursorsRow.SetText(
             L("app.settings.widget_transform_cursors",
-                L"Show component move and resize cursors"),
-            L("app.settings.widget_transform_cursors_hint",
-                L"Change the pointer when hovering over or dragging component move and resize handles. Turn off to use the standard pointer."));
+                L"Show component move and resize cursors"));
         muxa::AutomationProperties::SetName(
             widgetTransformCursors, widgetTransformCursorsRow.label.Text());
         showGroupTabCountsRow.SetText(
@@ -1617,7 +1663,7 @@ struct PersonalizationPagePresenter::Impl
         popupHoverOpenRow.SetText(
             L("app.settings.popup_hover_open", L"Open popups on hover"),
             L("app.settings.popup_hover_open_hint",
-                L"Hover over a Dock folder or collection, or a collection's expand button, to open its popup after the configured delay."));
+                L"Applies to Dock folders, collections and desktop collection expand buttons."));
         muxa::AutomationProperties::SetName(
             popupHoverOpen, popupHoverOpenRow.label.Text());
         SetContinuousText(popupHoverDelayMs,
@@ -1630,11 +1676,8 @@ struct PersonalizationPagePresenter::Impl
             popupCloseOnMouseLeave, popupCloseOnMouseLeaveRow.label.Text());
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
-        const auto explain = [](auto& row, const std::wstring& text) { row.help.Text(text); row.help.Visibility(mux::Visibility::Visible); };
-        explain(widgetAlpha.row, L("appearance.opacityHelp", L""));
+        const auto explain = [](auto& row, const std::wstring& text) { row.SetText(std::wstring(row.label.Text().c_str()), text); };
         explain(glassRow, L("appearance.glassHelp", L""));
-        explain(edgeHighlightRow, L("appearance.borderHelp", L""));
-        explain(edgeHighlightWidth.row, L("appearance.rimWidthHelp", L""));
         for (auto const& [row, button] : appearanceResets) presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default", L"Restore default") + L" · " + std::wstring(row->label.Text()));
         muxa::AutomationProperties::SetName(
             edgeHighlightToggle, edgeHighlightRow.label.Text());
@@ -1756,7 +1799,7 @@ struct PersonalizationPagePresenter::Impl
             id == "personalization.globalTheme")
             return presetCombo;
         if (id == "personalization.font") return fontPicker;
-        if (id == "personalization.tooltipFontSize") return tooltipFontSize;
+        if (id == "personalization.tooltipFontSize") return tooltipFontSizeSlider;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
         if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
@@ -1893,6 +1936,8 @@ struct PersonalizationPagePresenter::Impl
         quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close();
         quickAppearanceOptions->Close();
         tooltipFontSize.ValueChanged(tooltipFontSizeToken);
+        tooltipFontSizeSlider.ValueChanged(tooltipFontSizeSliderToken);
+        tooltipFontSizeReset.Click(tooltipFontSizeResetToken);
         popupCopyComponent.Click(popupCopyComponentToken);
         dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken); dockLink.Click(dockLinkToken);
         try

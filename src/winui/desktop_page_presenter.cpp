@@ -626,6 +626,8 @@ struct DesktopPagePresenter::Impl
     std::unique_ptr<ColorEditor> outlineColor;
 
     muxc::TextBlock categoryHint{nullptr};
+    muxc::TextBlock categoryFormatHint{nullptr};
+    muxc::Expander categoryRuleHelp{nullptr};
     muxc::TextBlock categoryTypesHeading{nullptr};
     muxc::TextBlock addCategoryHeading{nullptr};
     muxc::StackPanel categoryRulePanel{nullptr};
@@ -1013,8 +1015,18 @@ struct DesktopPagePresenter::Impl
         categoryHint = muxc::TextBlock{};
         categoryHint.Opacity(0.72);
         categoryHint.TextWrapping(mux::TextWrapping::Wrap);
+        categoryHint.Margin({12, 0, 12, 8});
+        categoryFormatHint = muxc::TextBlock{};
+        categoryFormatHint.Opacity(0.72);
+        categoryFormatHint.TextWrapping(mux::TextWrapping::Wrap);
+        categoryRuleHelp = muxc::Expander{};
+        categoryRuleHelp.IsExpanded(false);
+        categoryRuleHelp.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        categoryRuleHelp.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        categoryRuleHelp.Content(categoryHint);
         categoryRulesCard.content.Children().Append(categoryTypesHeading);
-        categoryRulesCard.content.Children().Append(categoryHint);
+        categoryRulesCard.content.Children().Append(categoryFormatHint);
+        categoryRulesCard.content.Children().Append(categoryRuleHelp);
         categoryRulePanel = muxc::StackPanel{};
         categoryRulePanel.Spacing(10.0);
         categoryRulesCard.content.Children().Append(categoryRulePanel);
@@ -1897,10 +1909,14 @@ struct DesktopPagePresenter::Impl
             L("app.settings.cancel", L"Cancel"));
 
         categoryHint.Text(L("app.settings.category_hint",
-            L"Separate extensions with spaces, commas or semicolons. Changes take effect immediately."));
+            L"Changes take effect immediately. Standard extensions also match shortcut file targets; "
+            L".LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, "
+            L".LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links."));
+        categoryFormatHint.Text(L("app.settings.category_format_hint",
+            L"Separate extensions with spaces, commas or semicolons, for example .jpg .png."));
+        categoryRuleHelp.Header(winrt::box_value(L("app.interact.show_details", L"Show details")));
         collectProgramsRow.SetText(
-            L("app.settings.collect_programs", L"Collect programs"),
-            L("app.settings.collect_programs_hint", L"Allow file category widgets to collect programs and shortcuts. Off by default."));
+            L("app.settings.collect_programs", L"Collect programs"));
         muxa::AutomationProperties::SetName(collectPrograms, collectProgramsRow.label.Text());
         categoryTypesHeading.Text(
             L("app.settings.category_type", L"Category type"));

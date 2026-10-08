@@ -50,7 +50,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     ext::ManagementView mode = ext::ManagementView::Objects;
     std::string routeFocus;
     std::vector<ext::ManagementRow> filteredRows;
-    muxc::TextBlock heading, status, refreshStatus;
+    muxc::TextBlock heading, status, refreshStatus, groupHint;
     muxc::StackPanel refreshIndicator;
     muxc::ProgressRing refreshRing;
     mux::DispatcherTimer timer, rowTimer;
@@ -141,6 +141,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Column(toolbar, 1, mux::GridUnitType::Star); Column(toolbar, 1, mux::GridUnitType::Auto);
         search.Margin({0, 0, 8, 0}); toolbar.Children().Append(search);
         muxc::Grid::SetColumn(more, 1); toolbar.Children().Append(more); content.Children().Append(toolbar);
+        groupHint.TextWrapping(mux::TextWrapping::Wrap); groupHint.Opacity(0.72);
+        groupHint.Visibility(mux::Visibility::Collapsed); content.Children().Append(groupHint);
         muxc::MenuFlyout advanced;
         advanced.Items().Append(chooseObject); advanced.Items().Append(chooseFolder); advanced.Items().Append(chooseDesktop);
         advanced.Items().Append(muxc::MenuFlyoutSeparator()); advanced.Items().Append(refresh); more.Flyout(advanced);
@@ -178,8 +180,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Text()
     {
         expandQuickActionsRow.SetText(L("settings.contextMenu.expandQuickActions"));
-        hidePageManagementRow.SetText(L("settings.contextMenu.hidePageManagement"),
-            L("settings.contextMenu.hidePageManagement.description"));
+        hidePageManagementRow.SetText(L("settings.contextMenu.hidePageManagement"));
         mux::Automation::AutomationProperties::SetName(expandQuickActions,
             L("settings.contextMenu.expandQuickActions"));
         mux::Automation::AutomationProperties::SetHelpText(expandQuickActions,
@@ -187,8 +188,9 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         mux::Automation::AutomationProperties::SetName(hidePageManagement,
             L("settings.contextMenu.hidePageManagement"));
         mux::Automation::AutomationProperties::SetHelpText(hidePageManagement,
-            L("settings.contextMenu.hidePageManagement.description"));
+            hidePageManagementRow.help.Text());
         heading.Text(L("settings.contextMenu.extensions"));
+        groupHint.Text(L("settings.contextMenu.groupHint"));
         refreshStatus.Text(L("settings.contextMenu.refreshing"));
         mux::Automation::AutomationProperties::SetName(refreshRing, L("settings.contextMenu.refreshing"));
         objectsTab.Text(L("settings.contextMenu.objects")); backgroundTab.Text(L("settings.contextMenu.background"));
@@ -320,6 +322,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void UpdateCardStates()
     {
         const bool before = std::exchange(updating, true);
+        groupHint.Visibility(cardModels.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         for (auto &[id, card] : sections) if (cardModels.contains(id))
         {
             const auto &model = cardModels.at(id); const auto state = ext::ManagementCardState(prefs, model, category);
@@ -327,6 +330,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             card.toggle.IsEnabled(active && initialized && !model.rows.empty());
             card.mixed.Visibility(state ? mux::Visibility::Collapsed : mux::Visibility::Visible);
             mux::Automation::AutomationProperties::SetName(card.toggle, CardTitle(model) + L" " + L("settings.contextMenu.groupToggle"));
+            mux::Automation::AutomationProperties::SetHelpText(card.toggle, groupHint.Text());
         }
         updating = before;
     }
@@ -349,6 +353,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void ClearRows()
     {
         rowTimer.Stop();
+        groupHint.Visibility(mux::Visibility::Collapsed);
         for (auto &row : rows) RemoveRow(row);
         for (auto &[id, card] : sections) if (card.revoke) card.revoke();
         rows.clear(); groups.Children().Clear(); sections.clear(); cardModels.clear(); rowGroups.clear(); pendingRows.clear(); nextRow = 0;
@@ -392,7 +397,6 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             card.toggle.VerticalAlignment(mux::VerticalAlignment::Center); muxc::Grid::SetColumn(card.toggle, 1);
             // The native switch already includes a 12-DIP trailing content gap.
             header.Children().Append(card.toggle); header.Margin({12, 8, 0, 12}); card.panel.Children().Append(header);
-            muxc::ToolTipService::SetToolTip(card.toggle, winrt::box_value(L("settings.contextMenu.groupHint")));
             const auto changed = card.toggle.Toggled([this, group](auto &&, auto &&) {
                 if (!updating && sections.contains(group)) SetCardResults(group, sections.at(group).toggle.IsOn());
             }); card.revoke = [toggle = card.toggle, changed] { toggle.Toggled(changed); };

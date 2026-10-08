@@ -208,11 +208,9 @@ struct GeneralPagePresenter::Impl
     muxc::TextBlock nextPageHotkeyLabel{nullptr};
     HotkeyRecorder nextPageHotkey;
     muxc::ToggleSwitch desktopPassthroughToggle{nullptr};
-    muxc::TextBlock desktopPassthroughHint{nullptr};
     muxc::TextBlock desktopPassthroughHotkeyLabel{nullptr};
     HotkeyRecorder desktopPassthroughHotkey;
     muxc::ToggleSwitch floatingDockToggle{nullptr};
-    muxc::TextBlock floatingDockHint{nullptr};
     muxc::TextBlock floatingDockHotkeyLabel{nullptr};
     HotkeyRecorder floatingDockHotkey;
 
@@ -506,9 +504,6 @@ struct GeneralPagePresenter::Impl
         desktopPassthroughToggle = muxc::ToggleSwitch{};
         desktopPassthroughToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
-        desktopPassthroughHint = muxc::TextBlock{};
-        desktopPassthroughHint.Opacity(0.72);
-        desktopPassthroughHint.TextWrapping(mux::TextWrapping::Wrap);
         desktopPassthroughToggleRow.Initialize(desktopPassthroughToggle);
         desktopPassthroughToggleRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
@@ -522,9 +517,6 @@ struct GeneralPagePresenter::Impl
         floatingDockToggle = muxc::ToggleSwitch{};
         floatingDockToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
-        floatingDockHint = muxc::TextBlock{};
-        floatingDockHint.Opacity(0.72);
-        floatingDockHint.TextWrapping(mux::TextWrapping::Wrap);
         floatingDockToggleRow.Initialize(floatingDockToggle);
         floatingDockToggleRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
@@ -976,28 +968,23 @@ struct GeneralPagePresenter::Impl
         quickNavigationToggleRow.SetText(
             L("app.settings.enable_global_navigation"));
         quickNavigationHotkeyRow.row.SetText(
-            L("app.settings.hotkey"),
-            L("app.settings.hotkey_capture_help"));
+            L("app.settings.hotkey"));
         pageNavigationToggleRow.SetText(
             L("app.settings.page_navigation_keyboard"));
         previousPageHotkeyRow.row.SetText(
-            L("app.settings.page_navigation_previous"),
-            L("app.settings.hotkey_capture_help"));
+            L("app.settings.page_navigation_previous"));
         nextPageHotkeyRow.row.SetText(
-            L("app.settings.page_navigation_next"),
-            L("app.settings.hotkey_capture_help"));
+            L("app.settings.page_navigation_next"));
         desktopPassthroughToggleRow.SetText(
             L("app.settings.desktop_passthrough_hotkey"),
             L("app.settings.desktop_passthrough_hotkey_hint"));
         desktopPassthroughHotkeyRow.row.SetText(
-            L("app.settings.hotkey"),
-            L("app.settings.hotkey_capture_help"));
+            L("app.settings.hotkey"));
         floatingDockToggleRow.SetText(
             L("app.dock.floating_shortcut_mode"),
             L("app.dock.floating_shortcut_hint"));
         floatingDockHotkeyRow.row.SetText(
-            L("app.settings.hotkey"),
-            L("app.settings.hotkey_capture_help"));
+            L("app.settings.hotkey"));
 
         quickNavigationHotkey.SetText(HotkeyText(
             L("app.settings.quick_navigation") + L" — " +

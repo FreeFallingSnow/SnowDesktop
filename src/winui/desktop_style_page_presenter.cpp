@@ -421,7 +421,7 @@ struct DesktopStylePagePresenter::Impl
             [this](int index) { EmitDock([index](auto& value) { value.monitorScope = static_cast<DockMonitorScope>(index); }); }, DockEnabled);
         AddDockToggle(dockCard, "settings.dock.showOnlyWhenSummoned", "settings.dock.showOnlyWhenSummoned.description",
             "desktopStyle.dock.showOnlyWhenSummoned", &DockSettings::showOnlyWhenSummoned, DockEnabled);
-        AddToggle(dockCard, "app.dock.floating_edge_swipe", "app.dock.floating_edge_swipe_hint",
+        AddToggle(dockCard, "app.dock.floating_edge_swipe", {},
             "desktopStyle.dock.edgeSwipe",
             [](const auto&, const auto& value) {
                 return dock_settings_rules::IsFloatingEdgeSwipeEnabled(value.showOnlyWhenSummoned, value.floatingEdgeSwipeEnabled);

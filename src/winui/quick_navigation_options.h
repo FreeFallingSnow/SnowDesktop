@@ -116,7 +116,7 @@ public:
                         const std::string owner = key.starts_with("search") || key.starts_with("type") ? "search" : key.starts_with("tab") || key.starts_with("header") ? "navigation" : "results";
                         return owner == area;
                     });});
-                }, "quickNav.colorHint.opacity"));
+                }));
                 auto color = std::make_unique<Color>(); color->key = name;
                 color->editor = std::make_unique<presenter_controls::ColorFlyoutEditor>();
                 auto* current = color.get();
@@ -127,7 +127,7 @@ public:
                 current->editor->picker.IsAlphaEnabled(true);
                 current->editor->picker.IsAlphaSliderVisible(true);
                 current->editor->picker.IsAlphaTextInputVisible(true);
-                current->editor->SetText(L(std::string("quickNav.color.") + name), ColorHelp(name), L("app.settings.cancel"));
+                current->editor->SetText(L(std::string("quickNav.color.") + name), {}, L("app.settings.cancel"));
                 presenter_controls::AddRestoreDefaultAction(current->editor->row, L("app.settings.restore_default"), [this, name] {commit_([name](auto& value) {value.colors.erase(name);});});
                 colorGroups.at(area).Children().Append(current->editor->row.root);
                 focus_.emplace("quickNav.color." + name,current->editor->row.root);
@@ -175,7 +175,7 @@ public:
             addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));
             if (hasValues_) BuildEngines();
         }
-        for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), ColorHelp(color->key), L("app.settings.cancel"));
+        for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), {}, L("app.settings.cancel"));
         sync_ = false;
     }
     void Register(const std::function<void(std::string, const winrt::Microsoft::UI::Xaml::FrameworkElement&)>& registrar) const
@@ -199,13 +199,6 @@ private:
     struct Number {std::string key; int QuickNavigationLayout::*field; NumberBox box;};
     struct Color {std::string key; std::unique_ptr<presenter_controls::ColorFlyoutEditor> editor;};
     std::wstring L(std::string_view key) const {return localize_(key);}
-    std::wstring ColorHelp(std::string_view key) const
-    {
-        if (key == "resultFill" || key == "resultBorder" || key == "iconPlateFill" || key == "iconPlateBorder" ||
-            key == "tabDefaultFill" || key == "tabDefaultStroke" || key == "tabActiveStroke" || key == "tabHoverStroke")
-            return L("quickNav.colorHint.transparent");
-        return {};
-    }
     bool Accept(const NavigationSettings& candidate)
     {
         const bool valid = ValidateNavigationSearchConfiguration(candidate);

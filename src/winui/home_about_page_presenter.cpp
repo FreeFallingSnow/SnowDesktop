@@ -115,7 +115,6 @@ struct HomeAboutPagePresenter::Impl
     muxc::Button versionButton{nullptr};
     muxc::Button checkUpdateButton{nullptr};
 
-    Section debugTitleSection;
     Section debugProfileSection;
     controls::SettingRow profileRow;
     controls::SettingRow desktopDirectoryRow;
@@ -133,7 +132,6 @@ struct HomeAboutPagePresenter::Impl
     Section animationSection;
     Section resetUnlockSection;
     Section crashSection;
-    muxc::TextBlock debugPageDescription{nullptr};
     controls::SettingRow demoModeRow;
     muxc::ToggleSwitch demoModeToggle{nullptr};
     controls::SettingRow initializationRow;
@@ -334,10 +332,6 @@ struct HomeAboutPagePresenter::Impl
 
         debugRoot = muxc::StackPanel{};
         debugRoot.Spacing(8.0);
-        InitializeSection(debugTitleSection, cardStyle, debugRoot);
-        debugPageDescription = MakeBodyText(0.72);
-        debugTitleSection.content.Children().Append(debugPageDescription);
-
         InitializeSection(debugProfileSection, cardStyle, debugRoot);
         profileToggle = muxc::ToggleSwitch{};
         profileToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -608,9 +602,7 @@ struct HomeAboutPagePresenter::Impl
             "app.settings.community", L"Community");
         SetSectionTitle(versionSection,
             "app.settings.version", L"Version");
-        versionRow.SetText(L("app.settings.version", L"Version"),
-            L("settings.about.version.description",
-                L"Check the installed version and update status."));
+        versionRow.SetText(L("app.settings.version", L"Version"));
         SetSectionTitle(thirdPartySection,
             "app.settings.third_party_libs", L"Third-Party Libraries");
         SetSectionTitle(referenceSection,
@@ -623,10 +615,6 @@ struct HomeAboutPagePresenter::Impl
             SetAutomation(link.button, text, HomeAboutLinkUri(link.target));
         }
 
-        SetSectionTitle(debugTitleSection,
-            "app.settings.debug_page", L"Debug Page");
-        debugPageDescription.Text(L("settings.page.debug.description",
-            L"Diagnostics available only while Debug is unlocked."));
         SetSectionTitle(debugProfileSection, "settings.debug.profile.title", L"Debug environment");
         profileRow.SetText(L("settings.debug.profile.enabled"), L("settings.debug.profile.description"));
         SetAutomation(profileToggle, profileRow.label.Text(), profileRow.help.Text());

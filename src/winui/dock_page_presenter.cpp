@@ -358,13 +358,11 @@ struct DockPagePresenter::Impl
     muxc::ComboBox layoutCombo{nullptr};
     muxc::ComboBox monitorScopeCombo{nullptr};
     muxc::ToggleSwitch floatingShortcutToggle{nullptr};
-    muxc::TextBlock floatingShortcutHint{nullptr};
     muxc::ToggleSwitch floatingEdgeSwipeToggle{nullptr};
     muxc::ComboBox edgeRevealGesture{nullptr};
     muxc::ToggleSwitch windowPreviews{nullptr};
     muxc::ToggleSwitch singleClickLaunchItems{nullptr};
     muxc::ToggleSwitch fullscreenSwipeToggle{nullptr};
-    muxc::TextBlock floatingEdgeSwipeHint{nullptr};
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
     muxc::ToggleSwitch taskbarSuppressToggle{nullptr};
@@ -591,8 +589,6 @@ struct DockPagePresenter::Impl
         {
             toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         }
-        floatingShortcutHint = NewHint();
-        floatingEdgeSwipeHint = NewHint();
         floatingEdgeSwipeRow.Initialize(floatingEdgeSwipeToggle);
         edgeRevealGestureRow.Initialize(edgeRevealGesture);
         windowPreviewsRow.Initialize(windowPreviews);
@@ -1162,7 +1158,6 @@ struct DockPagePresenter::Impl
             });
         floatingEdgeSwipeToken = floatingEdgeSwipeToggle.Toggled(
             [this](const auto&, const auto&) {
-                UpdateEdgeSwipeHintVisibility();
                 fullscreenSwipeRow.SetEnabled(
                     dockEnabledToggle.IsOn() && floatingEdgeSwipeToggle.IsOn());
                 const bool value = floatingEdgeSwipeToggle.IsOn();
@@ -1860,7 +1855,6 @@ struct DockPagePresenter::Impl
     {
         if (closed)
             return;
-        UpdateEdgeSwipeHintVisibility();
         const bool dockEnabled = dockEnabledToggle.IsOn();
         // Match the legacy BeginDisabled(!dockEnabled_) scope. Border and Grid
         // are FrameworkElements, not Controls, so disable each SettingRow's
@@ -1964,14 +1958,6 @@ struct DockPagePresenter::Impl
                 enabled && custom && control->glass.IsOn());
             RefreshDynamicRuleSummary(*control);
         }
-    }
-
-    void UpdateEdgeSwipeHintVisibility()
-    {
-        floatingEdgeSwipeRow.help.Visibility(
-            floatingEdgeSwipeToggle.IsOn()
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
     }
 
     void RefreshTaskbarRuntimeStatus()
@@ -2454,9 +2440,7 @@ struct DockPagePresenter::Impl
                 L"Adjust dock bar and icon size together."));
 
         floatingEdgeSwipeRow.SetText(
-            L("app.dock.floating_edge_swipe", L"Edge Swipe"),
-            L("app.dock.floating_edge_swipe_hint",
-                L"Reveal the floating Dock from a screen edge."));
+            L("app.dock.floating_edge_swipe", L"Edge Swipe"));
         edgeRevealGestureRow.SetText(L("settings.dock.edgeRevealGesture", L"Reveal gesture"),
             L("settings.dock.edgeRevealGesture.description", L"Dragging an item to the edge reveals the bar immediately."));
         ReplaceComboItems(edgeRevealGesture, {
@@ -2557,7 +2541,7 @@ struct DockPagePresenter::Impl
             L("settings.taskbar.restartExplorer",
                 L"Restart File Explorer"),
             L("settings.taskbar.restartExplorer.description",
-                L"Restart File Explorer to apply Windows shell changes."));
+                L"The desktop and taskbar will briefly disappear."));
         restartExplorerButton.Content(winrt::box_value(
             L("settings.taskbar.restartExplorer",
                 L"Restart File Explorer")));
@@ -2566,7 +2550,7 @@ struct DockPagePresenter::Impl
                 L"Restart File Explorer"));
         muxa::AutomationProperties::SetHelpText(restartExplorerButton,
             L("settings.taskbar.restartExplorer.description",
-                L"Restart File Explorer to apply Windows shell changes."));
+                L"The desktop and taskbar will briefly disappear."));
 
         taskbarThemeRow.SetText(
             L("app.settings.taskbar_theme", L"Taskbar Theme"));

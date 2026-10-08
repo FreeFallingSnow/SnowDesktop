@@ -3068,7 +3068,6 @@ struct WidgetSettingsPresenter::Impl
         updatingControls = true;
         appearanceTitle.Text(L("app.settings.appearance", L"Appearance"));
         restoreBackgroundRow.SetText(L("appearance.restoreBackground", L"Restore panel defaults"), L("appearance.restoreBackground.description", L""));
-        appearanceThemeRow.help.Text(L("appearance.presetHelp", L"")); appearanceThemeRow.help.Visibility(mux::Visibility::Visible);
         followGlobalRow.SetText(
             L("engine.editor.follow_global", L"Follow global settings"));
         appearanceThemeRow.SetText(
@@ -3185,11 +3184,8 @@ struct WidgetSettingsPresenter::Impl
         muxa::AutomationProperties::SetName(
             reset, resetText);
 
-        const auto explain = [](auto& row, const std::wstring& text) { row.help.Text(text); row.help.Visibility(mux::Visibility::Visible); };
-        explain(backgroundOpacity.row, L("appearance.opacityHelp", L""));
+        const auto explain = [](auto& row, const std::wstring& text) { row.SetText(std::wstring(row.label.Text().c_str()), text); };
         explain(glassRow, L("appearance.glassHelp", L""));
-        explain(edgeHighlightRow, L("appearance.borderHelp", L""));
-        explain(edgeHighlightWidth.row, L("appearance.rimWidthHelp", L""));
         for (auto const& [row, button] : appearanceResets) presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default", L"Restore default") + L" · " + std::wstring(row->label.Text()));
         RebuildPresetItems();
         for (auto& field : fields)

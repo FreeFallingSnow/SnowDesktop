@@ -3154,32 +3154,33 @@ struct WidgetsPagePresenter::Impl
             "app.settings.widgets_authoring_workspace",
             L"Development Workspace"));
         developerWorkspaceCard.description.Text(L"");
+        developerWorkspaceCard.description.Visibility(mux::Visibility::Collapsed);
         developerCliCard.title.Text(L(
             "app.settings.widgets_component_cli", L"Component CLI"));
         developerCliCard.description.Text(L"");
+        developerCliCard.description.Visibility(mux::Visibility::Collapsed);
         developerPublishCard.title.Text(L(
             "app.settings.widgets_authoring_publish", L"Publish"));
         developerPublishCard.description.Text(L(
             "app.settings.widgets_authoring_publish_description",
-            L"Open the Steam-only manager to publish a component."));
+            L"Select a preview image and upload the component in Workshop Manager."));
         developerReferenceCard.title.Text(L(
             "app.settings.widgets_authoring_reference",
             L"Development Reference"));
         developerReferenceCard.description.Text(L(
             "app.settings.widgets_authoring_reference_description",
-            L"Icon resources and runtime diagnostics for component "
-                L"development."));
+            L"Browse icon resources and component runtime information."));
         iconReferenceTitle.Text(L(
             "app.settings.widgets_icon_reference", L"Icon Resources"));
         developerToolsCard.title.Text(L(
             "app.settings.widgets_runtime_diagnostics",
             L"Runtime Diagnostics"));
         developerToolsCard.description.Text(L"");
+        developerToolsCard.description.Visibility(mux::Visibility::Collapsed);
         debugRuntimeCard.title.Text(L(
             "settings.debug.runtime", L"Runtime diagnostics"));
-        debugRuntimeCard.description.Text(L(
-            "settings.debug.runtime.description",
-            L"Inspect diagnostic state and traces."));
+        debugRuntimeCard.description.Text(L"");
+        debugRuntimeCard.description.Visibility(mux::Visibility::Collapsed);
 
         searchBox.PlaceholderText(L("app.settings.widgets_search_hint",
             L"Search components"));

@@ -79,7 +79,8 @@ private:
         pair.Children().Append(slider); c::Grid::SetColumn(number, 1); pair.Children().Append(number);
         c::Grid::SetColumn(suffix, 2); pair.Children().Append(suffix); c::Grid::SetColumn(restore, 3); pair.Children().Append(restore);
         presenter_controls::SettingRow row; row.Initialize(pair, presenter_controls::kSettingControlWidth + 40);
-        row.SetText(L(key), L(key + ".description")); parent.Children().Append(row.root);
+        const bool needsHelp = key != "edgeLight.primary" && key != "edgeLight.opposite" && key != "edgeLight.glowStrength";
+        row.SetText(L(key), needsHelp ? L(key + ".description") : std::wstring{}); parent.Children().Append(row.root);
         x::Automation::AutomationProperties::SetName(slider, L(key)); x::Automation::AutomationProperties::SetName(number, L(key));
         std::weak_ptr<EdgeLightEditor> weak = shared_from_this();
         const auto changed = [weak, field, scale, minimum, maximum, step](auto const&, auto const& args) {

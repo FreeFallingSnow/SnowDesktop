@@ -236,12 +236,14 @@ struct StatusBarPagePresenter::Impl
         const auto clockSelection = clockPanel.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = clockPanel.SelectedIndex();
             if (selected >= 0 && selected <= 1) Emit([selected](auto& settings) { settings.clockSystemPanel = selected == 1; });
+            SyncBehaviorHint();
         });
         revoke.push_back([control = clockPanel, clockSelection] { control.SelectionChanged(clockSelection); });
         const auto controlSelection = controlPanel.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = controlPanel.SelectedIndex();
             if (systemQuickSettings && selected >= 0 && selected <= 1)
                 Emit([selected](auto& settings) { settings.controlCenterSystemPanel = selected == 1; });
+            SyncBehaviorHint();
         });
         revoke.push_back([control = controlPanel, controlSelection] { control.SelectionChanged(controlSelection); });
         independentAppearance.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -315,6 +317,12 @@ struct StatusBarPagePresenter::Impl
         control.editor->Content().Visibility(theme.mode == 4 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         control.themes->SaveContent().Visibility(control.editor->Content().Visibility());
     }
+    void SyncBehaviorHint()
+    {
+        const bool usesSystemPanel = value.clockSystemPanel ||
+            (systemQuickSettings && value.controlCenterSystemPanel);
+        behaviorHint.Visibility(usesSystemPanel ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    }
     void Sync(bool force = false)
     {
         syncing = true;
@@ -322,6 +330,7 @@ struct StatusBarPagePresenter::Impl
         edge.SelectedIndex(static_cast<int>(value.position)); monitors.SelectedIndex(static_cast<int>(value.monitorScope));
         clockPanel.SelectedIndex(value.clockSystemPanel ? 1 : 0);
         controlPanel.SelectedIndex(systemQuickSettings && value.controlCenterSystemPanel ? 1 : 0);
+        SyncBehaviorHint();
         if (!scaleDirty)
         {
             const double percent = presenter_controls::QuantizeNumericValue(value.scale * 100., 75, 300, 5);
