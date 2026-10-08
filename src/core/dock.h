@@ -204,6 +204,7 @@ private:
         const RECT& baseRect, const RECT& focusRect,
         POINT pointer) const;
     RECT MagnifyElementRect(const RECT& baseRect, const RECT& focusRect, POINT pointer) const;
+    float TitleTooltipScale() const;
     RECT CalculateTitleTooltipBounds(
         const std::wstring& title,
         const RECT& hoveredBounds,
@@ -242,6 +243,7 @@ private:
     mutable RECT hoveredTitleBoundsCache_{};
     mutable int hoveredTitleBoundsCachePosition_ = -1;
     mutable bool hoveredTitleBoundsCacheLightTheme_ = false;
+    mutable float hoveredTitleBoundsCacheFontSize_ = 0;
     // Magnification is a continuous pointer-distance field, but the semantic
     // hover owner needs spatial hysteresis at item and Dock boundaries.
     mutable RECT magnificationFocusRect_{};

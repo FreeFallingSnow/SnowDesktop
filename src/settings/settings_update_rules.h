@@ -44,6 +44,7 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.globalQuickNavigationAppearance == after.globalQuickNavigationAppearance &&
         before.globalCollectionPopupAppearance == after.globalCollectionPopupAppearance &&
         before.font == after.font &&
+        before.tooltipFontSize == after.tooltipFontSize &&
         before.dockEnabled == after.dockEnabled &&
         before.statusBar == after.statusBar &&
         before.animationMode == after.animationMode &&

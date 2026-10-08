@@ -961,6 +961,7 @@ public:
             // Preview animation and surface appearance only; other General fields
             // retain their commit side effects and old-value comparisons.
             const auto& general = snapshot.values.general;
+            app_.generalSettings_.tooltipFontSize = general.tooltipFontSize;
             app_.generalSettings_.animationMode = general.animationMode;
             if (app_.generalSettings_.statusBar != general.statusBar)
             {
@@ -1897,7 +1898,7 @@ void DesktopApp::ToggleDesktopPassthrough()
     // Never hide the desktop if its visible mouse escape surface failed.
     if (!desktopPassthroughIndicator_.Show(instance_,
             desktopPassthroughHotkeyHwnd_, kDesktopPassthroughExitMessage,
-            _LW("app.desktop_passthrough.exit_hint")))
+            _LW("app.desktop_passthrough.exit_hint"), dcompDevice_.Get(), dwriteFactory_.Get()))
     {
         WriteDiagnosticLogEntry(L"Desktop passthrough edge indicator creation failed");
         return;
@@ -2043,6 +2044,13 @@ void DesktopApp::ApplyCollectionPopupAppearance()
         generalSettings_.collectionPopupTheme, false, &generalSettings_.globalCollectionPopupAppearance);
     // Panel presets control the surface; menus keep the global style.
     collectionPopupAppearance_.contextMenuStyle = globalAppearance.contextMenuStyle;
+    if (snowdesktop::SetNativeTooltipPreferences(generalSettings_.tooltipFontSize, collectionPopupAppearance_))
+    {
+        InvalidateAllWidgetSlots();
+        InvalidateDockContainers();
+        InvalidateFloatingDockWindow(false);
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    }
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =

@@ -569,16 +569,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         RegisterClassExW(&input);
     }
     {
-        WNDCLASSEXW hint{};
-        hint.cbSize = sizeof(hint);
-        hint.lpfnWndProc = DefWindowProcW;
-        hint.hInstance = instance;
-        hint.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        hint.hbrBackground = nullptr;
-        hint.lpszClassName = kHintWindowClassName;
-        RegisterClassExW(&hint);
-    }
-    {
         WNDCLASSEXW nav{};
         nav.cbSize = sizeof(nav);
         nav.style = CS_DBLCLKS;

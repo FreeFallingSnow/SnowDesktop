@@ -22,17 +22,6 @@ struct Rect
     long bottom = 0;
 };
 
-constexpr bool ShouldReuseRaster(
-    bool rasterValid,
-    bool sameText,
-    unsigned cachedDpi,
-    unsigned currentDpi,
-    bool sameStyle = true)
-{
-    return rasterValid && sameText && sameStyle &&
-        cachedDpi != 0 && cachedDpi == currentDpi;
-}
-
 constexpr long ClampAxis(
     long desired,
     long size,

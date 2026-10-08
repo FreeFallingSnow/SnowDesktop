@@ -215,6 +215,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
+    {SettingsPage::AppearanceTheme, "personalization.tooltipFontSize",
+        "font.tooltipSize", "font.tooltipSizeHint"},
     {SettingsPage::ThemeManager, "personalization.savedThemes",
         "themeLibrary.manager", "themeLibrary.transferHint"},
     {SettingsPage::AppearanceTheme, "personalization.backgroundColor",

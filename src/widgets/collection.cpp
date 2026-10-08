@@ -393,75 +393,25 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     }
 }
 
-void Collection::DrawTitlelessTooltip(
-    ID2D1DeviceContext* context,
+void Collection::DrawTitlelessTooltip(ID2D1DeviceContext* context,
     const std::wstring& title, RECT anchor) const
 {
-    if (!app_ || !context || title.empty() ||
-        IsRectEmptyRect(anchor))
-        return;
-
-    RECT frame = GetFrameRect();
-    const int frameInset = Cu(4.0f);
-    const int horizontalPadding = Cu(10.0f);
-    const int verticalPadding = Cu(5.0f);
-    const int maximumTextWidth = std::max(1,
-        std::min(Cu(280.0f),
-            static_cast<int>(frame.right - frame.left) -
-                frameInset * 2 - horizontalPadding * 2));
-    IDWriteTextFormat* format = GetCuTextFormatWeight(
-        app_->itemFontSizeCu_,
-        static_cast<DWRITE_FONT_WEIGHT>(
-            snowdesktop::font_weight_rules::RenderedWeight(
-                app_->itemFontWeight_, app_->IsLightContentTheme())), true);
-    if (!format || !app_->dwriteFactory_) return;
-
-    ComPtr<IDWriteTextLayout> layout;
-    const int measureHeight = std::max(Cu(22.0f),
-        static_cast<int>(std::ceil(
-            GetItemVisualMetrics().fontSize * 1.5f)));
-    if (FAILED(app_->dwriteFactory_->CreateTextLayout(
-            title.c_str(), static_cast<UINT32>(title.size()),
-            format, static_cast<float>(maximumTextWidth),
-            static_cast<float>(measureHeight), &layout)) || !layout)
-        return;
-    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    DWRITE_TEXT_METRICS textMetrics{};
-    if (FAILED(layout->GetMetrics(&textMetrics))) return;
-
-    const int textWidth = std::max(1, std::min(
-        maximumTextWidth,
-        static_cast<int>(std::ceil(
-            textMetrics.widthIncludingTrailingWhitespace))));
-    const int tooltipWidth = textWidth + horizontalPadding * 2;
-    const int tooltipHeight = std::max(
-        Cu(28.0f),
-        static_cast<int>(std::ceil(textMetrics.height)) +
-            verticalPadding * 2);
-    const RECT tooltip =
-        snowdesktop::collection_titleless_rules::
-            ResolveTooltipBounds(anchor, frame,
-                tooltipWidth, tooltipHeight,
-                Cu(2.0f), frameInset);
-    const bool light = app_->IsLightContentTheme();
-    app_->DrawD2DRoundedRectangle(context, tooltip,
-        static_cast<float>(Cu(7.0f)),
-        light
-            ? D2D1::ColorF(0.94f, 0.95f, 0.97f, 0.96f)
-            : D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.96f),
-        light
-            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
-    RECT textRect = tooltip;
-    textRect.left += horizontalPadding;
-    textRect.right -= horizontalPadding;
-    app_->DrawD2DTextEllipsis(context, title, textRect,
-        format,
-        light
-            ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f),
-        DWRITE_TEXT_ALIGNMENT_CENTER,
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER, true);
+    if (!app_ || !context || title.empty() || IsRectEmptyRect(anchor) || !app_->dwriteFactory_) return;
+    const RECT frame = GetFrameRect();
+    const auto* page = app_->GridPageFromPoint({anchor.left, anchor.top});
+    const float scale = page ? static_cast<float>(page->dpiX) / 96.f : 1.f;
+    ComPtr<IDWriteTextFormat> format;
+    if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(app_->dwriteFactory_.Get(), &format, scale, false))) return;
+    snowdesktop::NativeTooltipTextLayout measured;
+    snowdesktop::NativeTooltipLayoutOptions options;
+    options.scale = scale; options.centered = true;
+    if (FAILED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), format.Get(), {}, title,
+        std::max(1.f, std::min(280.f * scale, static_cast<float>(frame.right - frame.left) - 8.f * scale)),
+        std::max(1.f, std::min(96.f * scale, static_cast<float>(frame.bottom - frame.top) - 8.f * scale)), measured, options))) return;
+    const RECT bounds = snowdesktop::collection_titleless_rules::ResolveTooltipBounds(anchor, frame,
+        static_cast<int>(std::ceil(measured.width)), static_cast<int>(std::ceil(measured.height)),
+        static_cast<int>(2.f * scale), static_cast<int>(4.f * scale));
+    app_->DrawInlineTooltip(context, bounds, measured, scale);
 }
 
 /**

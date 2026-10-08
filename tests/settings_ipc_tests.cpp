@@ -269,6 +269,7 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     settings.values.general.font = {"user-package", "中文 Family"};
+    settings.values.general.tooltipFontSize = 22;
     settings.values.desktop.itemFontWeight = 600;
     settings.values.desktop.desktopTitleLines = 1;
     settings.values.desktop.largeFolderTitleLines = 2;
@@ -276,6 +277,7 @@ void TestCodec()
     settings.values.desktop.titleEllipsis = false;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
     Check(restored.values.general.font == settings.values.general.font &&
+        restored.values.general.tooltipFontSize == 22 &&
         restored.values.desktop.itemFontWeight == 600.f &&
         restored.values.desktop.desktopTitleLines == 1 &&
         restored.values.desktop.largeFolderTitleLines == 2 &&

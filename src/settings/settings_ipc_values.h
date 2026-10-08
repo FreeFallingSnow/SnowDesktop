@@ -71,7 +71,7 @@ SD_IPC_FIELDS(GeneralSettings,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
     v.quickNavigationAppearance, v.collectionPopupAppearance, v.globalQuickNavigationAppearance,
     v.globalCollectionPopupAppearance, v.shellExtensions, v.statusBar,
-    v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement);
+    v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement, v.tooltipFontSize);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions, v.enabled);
 SD_IPC_FIELDS(CategorySettings,

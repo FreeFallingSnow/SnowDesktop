@@ -16,6 +16,8 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "ui/render/native_tooltip.h"
+#include "ui/render/native_tooltip_content.h"
 #include "ui/input/text_input_window.h"
 #include "layout/layout_scroll_save.h"
 #include "ui/render/scroll_content_clip.h"
@@ -979,6 +981,7 @@ private:
         bool hiddenMode = false);
     /** @brief 绘制全高翻页热边的悬停提示。 */
     void DrawPageNavHotEdgeHint(ID2D1DeviceContext* ctx);
+    std::wstring GetPageNavHotEdgeHintText(int side) const;
     /** @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。 @param ctx D2D 设备上下文 */
     void DrawPageNotify(
         ID2D1DeviceContext* ctx,
@@ -994,6 +997,9 @@ private:
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 绘制添加组件操作提示。 */
     void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
+    void DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
+        const snowdesktop::NativeTooltipTextLayout& measured, float scale = 1.f);
+    void DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* message);
     /** @brief 绘制组件面板背景（玻璃填充、色调与描边）。 */
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
@@ -4368,17 +4374,9 @@ private:
     /** @{ */
     std::wstring dragHint_;
     HWND hintHwnd_ = nullptr;
-    std::wstring hintTextCache_;
-    SIZE hintRasterSize_{};
-    UINT hintRasterDpi_ = 0;
-    bool hintRasterValid_ = false;
-    bool hintModifierActiveCache_ = false;
-    /** @brief 确保拖拽提示窗口已创建。 @return 成功返回 true */
-    bool EnsureDragHintWindow();
-    /** @brief 使已提交的拖拽提示位图缓存失效。 */
+    snowdesktop::NativeTooltip dragTooltip_;
+    /** @brief 使拖拽提示的文字和绘制缓存失效。 */
     void InvalidateDragHintRaster();
-    /** @brief 同步拖拽提示与悬浮 Dock 的 owner 关系。 */
-    void SyncDragHintWindowOwner();
     /** @brief 在客户端坐标位置显示拖拽提示。 @param clientPoint 客户端坐标 @param text 提示文本 */
     void ShowDragHintWindow(POINT clientPoint, const std::wstring& text,
         bool modifierActive = false);

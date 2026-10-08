@@ -793,6 +793,9 @@ CalculateFloatingDockStableSourceRect(
         ? std::max(appearance.widgetBorderWidth,
             appearance.widgetEdgeHighlightWidth)
         : appearance.widgetBorderWidth;
+    const auto* tooltipPage = GridPageFromPoint({(dockRect.left + dockRect.right) / 2,
+        (dockRect.top + dockRect.bottom) / 2});
+    const float tooltipScale = tooltipPage ? static_cast<float>(tooltipPage->dpiX) / 96.f : 1.f;
     RECT sourceRect =
         snowdesktop::floating_dock_rules::
             ExpandForBorderOverdraw(
@@ -800,7 +803,9 @@ CalculateFloatingDockStableSourceRect(
                     floating_dock_rules::
                         ExpandHostForTitleLayer(
                             dockRect,
-                            dockSettings_.position),
+                            dockSettings_.position,
+                            static_cast<int>(std::ceil(300.f * tooltipScale)),
+                            static_cast<int>(std::ceil(96.f * tooltipScale))),
                 visualEdgeWidth);
 
     if (dockSettings_.showOnlyWhenSummoned || host.container->IsMergedWithStatusBar())

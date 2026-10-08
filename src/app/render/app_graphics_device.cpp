@@ -348,6 +348,8 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
     // Run only at the outer message-pump boundary, after every BeginDraw has
     // unwound. Keep Lua instances, layout and user state intact.
     CancelStatusBarActivation();
+    DestroyDragHintWindow();
+    EndDesktopPassthrough(false);
     systemPanel_.reset();
     if (statusBar_) statusBar_->ReleaseGraphicsResources();
     if (dockWindowTransition_)

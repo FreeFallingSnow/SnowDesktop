@@ -592,16 +592,16 @@ inline RECT UnionNonEmptyRects(const RECT& first, const RECT& second)
 }
 
 inline RECT ExpandHostForTitleLayer(
-    RECT dockRect, DockPosition position)
+    RECT dockRect, DockPosition position, int titleWidth = 300, int titleHeight = 36)
 {
-    // The title chip is at most 300x36 with an 8px gap and a 4px vertical offset. Keep this
+    // Reserve the DPI-scaled title size with its gap and vertical offset. Keep this
     // allocation stable while the pointer moves; only the exact title
     // chip is added to the HWND region, so the transparent reserve never
     // receives input.
-    constexpr int titleWidthAxisPadding = 154;
-    constexpr int titleHeightAxisPadding = 26;
-    constexpr int titleWidthAndGap = 312;
-    constexpr int titleHeightAndGap = 52;
+    const int titleWidthAxisPadding = (titleWidth + 8) / 2;
+    const int titleHeightAxisPadding = (titleHeight + 16) / 2;
+    const int titleWidthAndGap = titleWidth + 12;
+    const int titleHeightAndGap = titleHeight + 16;
     switch (position)
     {
     case DockPosition::Top:

@@ -137,6 +137,9 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
             static_cast<UINT>(hotkeyValue);
     }
     int theme = 0;
+    int tooltipFontSize = snowdesktop::kDefaultTooltipFontSize;
+    if (ReadIntField(text, "tooltipFontSize", tooltipFontSize))
+        settings.tooltipFontSize = snowdesktop::NormalizeTooltipFontSize(tooltipFontSize);
     if (ReadIntField(text, "quickNavTheme", theme))
     {
         if (theme >= 4) theme -= 2;
@@ -256,6 +259,7 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"pageNavigationNextVirtualKey\": "
          << settings.pageNavigationNextVirtualKey << ",\n";
     file << "  \"quickNavTheme\": " << settings.quickNavTheme << ",\n";
+    file << "  \"tooltipFontSize\": " << snowdesktop::NormalizeTooltipFontSize(settings.tooltipFontSize) << ",\n";
     file << "  \"collectionPopupTheme\": "
          << settings.collectionPopupTheme << ",\n";
     file << "  \"widgetDeveloperToolsEnabled\": "

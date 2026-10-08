@@ -1186,50 +1186,31 @@ RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
     return panel;
 }
 
-RECT DockContainer::CalculateTitleTooltipBounds(
-    const std::wstring& title,
-    const RECT& hoveredBounds,
-    IDWriteTextFormat* measurementFormat) const
+float DockContainer::TitleTooltipScale() const
 {
-    if (!app_ || title.empty() ||
-        !app_->dwriteFactory_)
-        return RECT{};
+    const RECT bounds = GetBounds();
+    const auto* page = app_ ? app_->GridPageFromPoint({(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2}) : nullptr;
+    return page ? static_cast<float>(page->dpiX) / 96.f : 1.f;
+}
 
-    ComPtr<IDWriteTextFormat> tooltipFormat;
+RECT DockContainer::CalculateTitleTooltipBounds(const std::wstring& title,
+    const RECT& hoveredBounds, IDWriteTextFormat* measurementFormat) const
+{
+    if (!app_ || title.empty() || !app_->dwriteFactory_) return {};
+    const float scale = TitleTooltipScale();
+    ComPtr<IDWriteTextFormat> format;
     if (!measurementFormat)
     {
-        snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI",
-            (app_->CurrentDockAppearance().contentTheme == 1)
-                ? DWRITE_FONT_WEIGHT_LIGHT
-                : DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL,
-            16.0f, L"zh-CN", &tooltipFormat);
-        measurementFormat = tooltipFormat.Get();
+        if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(app_->dwriteFactory_.Get(), &format, scale, false))) return {};
+        measurementFormat = format.Get();
     }
-    if (!measurementFormat)
-        return RECT{};
-
-    ComPtr<IDWriteTextLayout> layout;
-    DWRITE_TEXT_METRICS metrics{};
-    if (SUCCEEDED(app_->dwriteFactory_->
-            CreateTextLayout(
-                title.c_str(),
-                static_cast<UINT32>(title.size()),
-                measurementFormat,
-                276.0f, 34.0f, &layout)) &&
-        layout)
-    {
-        layout->GetMetrics(&metrics);
-    }
-
-    const int tooltipWidth = std::clamp(
-        static_cast<int>(std::ceil(
-            metrics.widthIncludingTrailingWhitespace)) + 24,
-        56, 300);
-    constexpr int tooltipHeight = 36;
-    return PositionTitleTooltipBounds(
-        hoveredBounds, tooltipWidth, tooltipHeight);
+    snowdesktop::NativeTooltipTextLayout measured;
+    snowdesktop::NativeTooltipLayoutOptions options;
+    options.scale = scale; options.centered = true;
+    if (FAILED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), measurementFormat, {}, title,
+        300.f * scale, 96.f * scale, measured, options))) return {};
+    return PositionTitleTooltipBounds(hoveredBounds, static_cast<int>(std::ceil(measured.width)),
+        static_cast<int>(std::ceil(measured.height)));
 }
 
 RECT DockContainer::PositionTitleTooltipBounds(
@@ -1374,7 +1355,9 @@ RECT DockContainer::GetHoveredTitleBounds(
         app_->dockSettings_.position);
     const bool lightTheme =
         (app_->CurrentDockAppearance().contentTheme == 1);
+    const float tooltipFontSize = snowdesktop::NativeTooltipFontSize() * TitleTooltipScale();
     const bool cachedMeasurement =
+        tooltipFontSize == hoveredTitleBoundsCacheFontSize_ &&
         title == hoveredTitleBoundsCacheText_ &&
         position ==
             hoveredTitleBoundsCachePosition_ &&
@@ -1405,6 +1388,7 @@ RECT DockContainer::GetHoveredTitleBounds(
         return hoveredTitleBoundsCache_;
     }
 
+    hoveredTitleBoundsCacheFontSize_ = tooltipFontSize;
     hoveredTitleBoundsCacheText_ = title;
     hoveredTitleBoundsCacheAnchor_ =
         visualBounds;
@@ -2619,28 +2603,17 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
 
     if (!hoveredTitle.empty() && app_->dwriteFactory_)
     {
-        ComPtr<IDWriteTextFormat> tooltipFormat;
-        snowdesktop::app_fonts::CreateTextFormat(app_->dwriteFactory_, L"Segoe UI",
-            lt ? DWRITE_FONT_WEIGHT_LIGHT : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 16.0f, L"zh-CN", &tooltipFormat);
-        if (tooltipFormat)
-        {
-            tooltipFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            tooltipFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            const RECT tooltip =
-                GetHoveredTitleBounds(
-                    app_->lastMousePoint_);
-            if (IsRectEmpty(&tooltip))
-                return;
-
-            app_->DrawD2DRoundedRectangle(context, tooltip, 7.0f,
-                lt ? D2D1::ColorF(0.94f, 0.95f, 0.97f, 0.94f) : D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.94f),
-                lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.20f));
-            app_->DrawD2DTextEllipsis(context, hoveredTitle, tooltip,
-                tooltipFormat.Get(), lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f) : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f),
-                DWRITE_TEXT_ALIGNMENT_CENTER,
-                DWRITE_PARAGRAPH_ALIGNMENT_CENTER, true);
-        }
+        const RECT bounds = GetHoveredTitleBounds(app_->lastMousePoint_);
+        if (IsRectEmpty(&bounds)) return;
+        const float scale = TitleTooltipScale();
+        ComPtr<IDWriteTextFormat> format;
+        if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(app_->dwriteFactory_.Get(), &format, scale, false))) return;
+        snowdesktop::NativeTooltipTextLayout measured;
+        snowdesktop::NativeTooltipLayoutOptions options;
+        options.scale = scale; options.centered = true;
+        if (SUCCEEDED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), format.Get(), {}, hoveredTitle,
+            static_cast<float>(bounds.right - bounds.left), static_cast<float>(bounds.bottom - bounds.top), measured, options)))
+            app_->DrawInlineTooltip(context, bounds, measured, scale);
     }
 }
 

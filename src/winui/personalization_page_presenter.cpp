@@ -160,6 +160,9 @@ struct PersonalizationPagePresenter::Impl
     muxc::StackPanel managementRoot;
     SettingsCard fontCard;
     SettingRow fontRow;
+    SettingRow tooltipFontSizeRow;
+    muxc::NumberBox tooltipFontSize;
+    winrt::event_token tooltipFontSizeToken{};
     muxc::DropDownButton fontPicker;
     muxc::TextBlock fontPickerLabel;
     muxc::Flyout fontFlyout;
@@ -590,6 +593,13 @@ struct PersonalizationPagePresenter::Impl
         fontPicker.Flyout(fontFlyout);
         fontRow.Initialize(fontPicker);
         fontCard.content.Children().Append(fontRow.root);
+        tooltipFontSize.Minimum(kMinimumTooltipFontSize);
+        tooltipFontSize.Maximum(kMaximumTooltipFontSize);
+        tooltipFontSize.SmallChange(1);
+        tooltipFontSize.LargeChange(2);
+        tooltipFontSize.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        tooltipFontSizeRow.Initialize(tooltipFontSize);
+        fontCard.content.Children().Append(tooltipFontSizeRow.root);
         fontRestart.IsClosable(false);
         fontRestart.IsOpen(false);
         fontRestart.Severity(muxc::InfoBarSeverity::Informational);
@@ -851,6 +861,11 @@ struct PersonalizationPagePresenter::Impl
             fontPopup.Width(std::clamp(fontPicker.ActualWidth(), 240.0, 520.0));
             RefreshFonts();
             fontSearch.Focus(mux::FocusState::Programmatic);
+        });
+        tooltipFontSizeToken = tooltipFontSize.ValueChanged([this](const auto&, const auto&) {
+            if (!CanEmit() || !std::isfinite(tooltipFontSize.Value())) return;
+            const int size = NormalizeTooltipFontSize(static_cast<int>(std::lround(tooltipFontSize.Value())));
+            EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [size](auto& settings) { settings.tooltipFontSize = size; });
         });
         fontSearchToken = fontSearch.TextChanged([this](const auto&, const auto&) {
             if (CanEmit()) FilterFonts();
@@ -1301,6 +1316,7 @@ struct PersonalizationPagePresenter::Impl
 
     void PatchGeneral(const GeneralSettings& settings)
     {
+        presenter_controls::SyncNumberBoxValue(tooltipFontSize, NormalizeTooltipFontSize(settings.tooltipFontSize));
         if (selectedFont != settings.font || fonts.empty())
         {
             selectedFont = settings.font;
@@ -1441,6 +1457,8 @@ struct PersonalizationPagePresenter::Impl
 
         SetCardText(fontCard, "font.title", L"Interface font");
         fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
+        tooltipFontSizeRow.SetText(L("font.tooltipSize", L"Tooltip font size"), L("font.tooltipSizeHint"));
+        muxa::AutomationProperties::SetName(tooltipFontSize, tooltipFontSizeRow.label.Text());
         muxa::AutomationProperties::SetName(fontPicker, fontRow.label.Text());
         fontSearch.PlaceholderText(L("font.search", L"Search fonts"));
         muxa::AutomationProperties::SetName(fontSearch, fontSearch.PlaceholderText());
@@ -1738,6 +1756,7 @@ struct PersonalizationPagePresenter::Impl
             id == "personalization.globalTheme")
             return presetCombo;
         if (id == "personalization.font") return fontPicker;
+        if (id == "personalization.tooltipFontSize") return tooltipFontSize;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
         if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
@@ -1873,6 +1892,7 @@ struct PersonalizationPagePresenter::Impl
         closed = true;
         quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close();
         quickAppearanceOptions->Close();
+        tooltipFontSize.ValueChanged(tooltipFontSizeToken);
         popupCopyComponent.Click(popupCopyComponentToken);
         dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken); dockLink.Click(dockLinkToken);
         try

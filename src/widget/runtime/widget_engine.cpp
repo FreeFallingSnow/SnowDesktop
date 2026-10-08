@@ -19566,23 +19566,26 @@ static void DrawWidgetViewTooltip(D2DState* state,
     if (!state || !state->ctx || !state->dwrite) return;
     const auto* region = regions.Find(regions.HoveredKey());
     if (!region || region->tooltip.empty()) return;
+    const auto context = state->engine ? state->engine->RuntimeGetWidgetContextState(state->currentWidgetId) : LuaWidgetContextState{};
+    const float scale = static_cast<float>(context.surface.dpiX) / 96.f;
 
     const float surfaceWidth = std::max(
         0.0f, state->widgetRect.right - state->widgetRect.left);
     const float surfaceHeight = std::max(
         0.0f, state->widgetRect.bottom - state->widgetRect.top);
     const float maximumWidth = std::max(
-        1.0f, std::min(280.0f, surfaceWidth - 8.0f));
+        1.0f, std::min(280.0f * scale, surfaceWidth - 8.0f * scale));
     const float maximumHeight = std::max(
-        1.0f, std::min(192.0f, surfaceHeight - 8.0f));
-    IDWriteTextFormat* format = GetCachedTextFormat(state, 13.0f,
+        1.0f, std::min(192.0f * scale, surfaceHeight - 8.0f * scale));
+    IDWriteTextFormat* format = GetCachedTextFormat(state, snowdesktop::NativeTooltipFontSize() * scale,
         DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_WRAP);
     const std::wstring title = Utf8ToWideLocal(region->tooltipTitle);
     const std::wstring body = Utf8ToWideLocal(region->tooltip);
     snowdesktop::NativeTooltipTextLayout measured;
+    snowdesktop::NativeTooltipLayoutOptions options;
+    options.scale = scale;
     if (!format || FAILED(snowdesktop::MeasureNativeTooltip(state->dwrite,
-        format, title, body, maximumWidth, maximumHeight, measured))) return;
-    const auto& layout = measured.layout;
+        format, title, body, maximumWidth, maximumHeight, measured, options))) return;
     const float width = measured.width, height = measured.height;
     const auto& shape = region->shape;
     const bool circle = shape.type ==
@@ -19600,23 +19603,15 @@ static void DrawWidgetViewTooltip(D2DState* state,
     }
     // Anchor to the visible region, independent of where the pointer entered it.
     float x = (left + right - width) * 0.5f;
-    float y = bottom + 6.0f;
-    if (y + height > surfaceHeight - 4.0f)
-        y = top - height - 6.0f;
-    x = std::clamp(x, 4.0f, std::max(4.0f, surfaceWidth - width - 4.0f));
-    y = std::clamp(y, 4.0f, std::max(4.0f, surfaceHeight - height - 4.0f));
-    DrawHostRect(state, x, y, width, height,
-        0x20242B, 6.0f, 0.97f);
-    DrawHostStrokeRect(state, x, y, width, height,
-        0xFFFFFF, 6.0f, 1.0f, 0.18f);
-    if (ID2D1SolidColorBrush* brush = GetCachedBrush(
-            state, 0xF4F7FB, 1.0f))
-    {
-        state->ctx->DrawTextLayout(D2D1::Point2F(
-            state->widgetRect.left + x + 8.0f,
-            state->widgetRect.top + y + 6.0f),
-            layout.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    }
+    float y = bottom + 6.0f * scale;
+    if (y + height > surfaceHeight - 4.0f * scale)
+        y = top - height - 6.0f * scale;
+    x = std::clamp(x, 4.0f * scale, std::max(4.0f * scale, surfaceWidth - width - 4.0f * scale));
+    y = std::clamp(y, 4.0f * scale, std::max(4.0f * scale, surfaceHeight - height - 4.0f * scale));
+    snowdesktop::DrawNativeTooltip(state->ctx, D2D1::RectF(
+        state->widgetRect.left + x, state->widgetRect.top + y,
+        state->widgetRect.left + x + width, state->widgetRect.top + y + height),
+        measured, snowdesktop::NativeTooltipAppearance(), scale);
 }
 
 static void DrawWidgetSelectOverlays(D2DState* state,

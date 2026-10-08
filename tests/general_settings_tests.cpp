@@ -5,6 +5,7 @@
 #include "system/status_bar/status_bar_appearance.h"
 #include "widget/view/widget_appearance_presets.h"
 #include "layout/item_title_layout.h"
+#include "ui/render/native_tooltip_content.h"
 #include "../src/winui/font_picker_search.h"
 
 #include <windows.h>
@@ -232,8 +233,79 @@ HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
 }
 
 int RunThemeLibraryTests();
+void TestTooltipPresentation()
+{
+    // Production text layout: short page/drag labels must not inherit a fixed
+    // panel width; increasing the shared font must resize rich titles too.
+    Microsoft::WRL::ComPtr<IDWriteFactory> factory;
+    const auto result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+        reinterpret_cast<IUnknown**>(factory.GetAddressOf()));
+    Check(SUCCEEDED(result), "create tooltip shaping factory");
+    if (FAILED(result)) return;
+    for (const int size : {10, 14, 24})
+    for (const float scale : {1.f, 1.5f, 2.f})
+    {
+        snowdesktop::SetNativeTooltipPreferences(size, PersonalizationSettings::DarkPreset());
+        Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
+        Check(SUCCEEDED(snowdesktop::CreateNativeTooltipTextFormat(factory.Get(), &format, scale)), "create shared tooltip font");
+        if (!format) continue;
+        snowdesktop::NativeTooltipLayoutOptions options;
+        options.scale = scale;
+        const auto tight = [scale](const snowdesktop::NativeTooltipTextLayout& measured) {
+            DWRITE_TEXT_METRICS metrics{};
+            if (!measured.layout || FAILED(measured.layout->GetMetrics(&metrics))) return false;
+            const float left = measured.paddingX + metrics.left;
+            const float right = measured.width - measured.paddingX - metrics.left - metrics.widthIncludingTrailingWhitespace;
+            return left >= 10.f * scale && right >= 10.f * scale && std::abs(left - right) <= 1.f;
+        };
+        snowdesktop::NativeTooltipTextLayout measured;
+        Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), {}, L"Move", 520.f * scale,
+            192.f * scale, measured, options)) && tight(measured),
+            "short drag and page labels retain balanced readable side padding without a blank right tail");
+        auto roundedAppearance = PersonalizationSettings::DarkPreset();
+        roundedAppearance.cornerRadius = 64.f;
+        const float radius = snowdesktop::NativeTooltipCornerRadius(roundedAppearance, measured.width, measured.height, scale);
+        Check(radius <= 8.f * scale && radius <= measured.height * .25f,
+            "large popup corner settings retain a modest curve on small tooltip panels");
+        auto fixedWidth = options;
+        fixedWidth.minimumWidth = 360;
+        snowdesktop::NativeTooltipTextLayout negative;
+        Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), {}, L"Move", 520.f * scale,
+            192.f * scale, negative, fixedWidth)) && !tight(negative),
+            "negative control detects the former fixed-width page tooltip's blank right tail");
+        const std::wstring title = L"Volume";
+        Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), title, L"50%", 280.f * scale,
+            192.f * scale, measured, options)), "measure rich status tooltip");
+        if (measured.layout)
+        {
+            float titleSize = 0, bodySize = 0;
+            measured.layout->GetFontSize(0, &titleSize);
+            measured.layout->GetFontSize(static_cast<UINT32>(title.size() + 1), &bodySize);
+            Check(titleSize == size * scale && bodySize == titleSize,
+                "rich tooltip title and body both follow the shared font setting and DPI");
+            DWRITE_TEXT_METRICS metrics{};
+            measured.layout->GetMetrics(&metrics);
+            Check(measured.height >= metrics.height + 12.f * scale,
+                "larger tooltip text grows the panel rather than clipping against a fixed height");
+        }
+        Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), {},
+            L"Move this item to another page with the keyboard shortcut, or wait at the screen edge.",
+            160.f * scale, 192.f * scale, measured, options)), "measure wrapped long tooltip");
+        if (measured.layout)
+        {
+            DWRITE_TEXT_METRICS metrics{};
+            measured.layout->GetMetrics(&metrics);
+            Check(measured.width <= 160.f * scale && measured.height <= 192.f * scale &&
+                metrics.widthIncludingTrailingWhitespace <= measured.width - measured.paddingX * 2.f + 1.f,
+                "wrapped long translations stay within the constrained tooltip content width");
+        }
+    }
+    snowdesktop::SetNativeTooltipPreferences(snowdesktop::kDefaultTooltipFontSize, PersonalizationSettings::DarkPreset());
+}
+
 int main(int argc, char** argv)
 {
+    TestTooltipPresentation();
     failures += RunThemeLibraryTests();
     using namespace snowdesktop;
     {
@@ -266,10 +338,17 @@ int main(int argc, char** argv)
         saved.font = {"missing-package", "字体 \"name\"\\line\n"};
         Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.font == saved.font,
             "font selection preserves Unicode, quotes, control characters and unavailable packages across restarts");
+        saved.tooltipFontSize = 22;
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.tooltipFontSize == 22,
+            "tooltip font size survives application restart independently of the font family");
+        saved.tooltipFontSize = 400;
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.tooltipFontSize == 24,
+            "out-of-range tooltip sizes cannot make persisted hints unusably large");
         { std::ofstream old(path); old << "{}"; }
         GeneralSettings legacy;
         Check(LoadGeneralSettings(path.c_str(), legacy) && legacy.font.package == "system" && legacy.font.family.empty(),
             "older profiles default to system fonts without migration writes");
+        Check(legacy.tooltipFontSize == 14, "older profiles use the shared tooltip default without migration writes");
         std::error_code ec; std::filesystem::remove(path, ec);
     }
     if (argc > 1)

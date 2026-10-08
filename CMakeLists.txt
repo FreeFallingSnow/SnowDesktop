@@ -192,6 +192,7 @@ set(SNOWDESKTOP_SOURCES
     src/ui/render/native_tooltip.cpp
     src/ui/render/native_tooltip.h
     src/ui/render/native_tooltip_content.h
+    src/ui/render/native_tooltip_preferences.h
     src/ui/render/native_tooltip_state.h
     src/ui/render/native_control_geometry.h
     src/system/tray/tray_model.cpp

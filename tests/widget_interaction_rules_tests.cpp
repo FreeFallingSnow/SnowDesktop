@@ -1199,18 +1199,8 @@ void TestPopupIconLoadCancellationRules()
         "only stale popup results must be rejected by the popup epoch gate");
 }
 
-void TestDragHintRasterRules()
+void TestDragHintPlacementRules()
 {
-    Check(!dragHintRules::ShouldReuseRaster(true, true, 96, 96, false),
-        "arming or releasing a modifier must repaint a cached hint with identical text");
-    Check(dragHintRules::ShouldReuseRaster(true, true, 96, 96),
-        "valid cached text at the same DPI is eligible for raster reuse");
-    Check(
-        !dragHintRules::ShouldReuseRaster(true, false, 96, 96) &&
-            !dragHintRules::ShouldReuseRaster(true, true, 96, 144) &&
-            !dragHintRules::ShouldReuseRaster(false, true, 96, 96),
-        "text, DPI, and raster validity changes must invalidate the drag hint cache");
-
     const auto bottomRight = dragHintRules::ResolveWindowPosition(
         {1910, 1070}, {200, 40}, {0, 0, 1920, 1080},
         48, 22, 8);
@@ -1772,7 +1762,7 @@ int main()
     TestDesktopHoverDeactivation();
     TestDragInputSampling();
     TestPopupIconLoadCancellationRules();
-    TestDragHintRasterRules();
+    TestDragHintPlacementRules();
     TestWidgetPairDrops();
     TestPairGroupsDissolveAndDockOwnership();
     TestGroupRestorationPublishesOnlyTheFinalFrame();

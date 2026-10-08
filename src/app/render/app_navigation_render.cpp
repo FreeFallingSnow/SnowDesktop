@@ -39,6 +39,46 @@ void DesktopApp::GetNavHotEdgeRects(
         outPrev, outNext);
 }
 
+std::wstring DesktopApp::GetPageNavHotEdgeHintText(int side) const
+{
+    const bool dragging = widgetAction_ == WidgetAction::Move ||
+        dragSession_.IsActive() || dragDropController_.IsTransportActive();
+    const UINT modifiers = side < 0
+        ? generalSettings_.pageNavigationPreviousModifiers
+        : generalSettings_.pageNavigationNextModifiers;
+    const UINT virtualKey = side < 0
+        ? generalSettings_.pageNavigationPreviousVirtualKey
+        : generalSettings_.pageNavigationNextVirtualKey;
+    std::wstring message;
+    if (dragging)
+    {
+        message = _LW("app.navigation.edge_drag_dwell");
+    }
+    else if (generalSettings_.pageNavigationKeyboardEnabled &&
+        virtualKey != 0)
+    {
+        NavigationSettings displaySettings;
+        displaySettings.modifiers = modifiers;
+        displaySettings.virtualKey = virtualKey;
+        const std::wstring shortcut =
+            FormatNavigationHotkey(displaySettings);
+        message = _LFW(
+            side < 0
+                ? "app.navigation.edge_previous_with_key"
+                : "app.navigation.edge_next_with_key",
+            shortcut);
+    }
+    else
+    {
+        message = _LW(side < 0
+            ? "app.navigation.edge_previous"
+            : "app.navigation.edge_next");
+    }
+    message.insert(0, side < 0
+        ? L"\u25C0  " : L"\u25B6  ");
+    return message;
+}
+
 RECT DesktopApp::GetPageNavHotEdgeHintBounds(
     int side, POINT point) const
 {
@@ -48,8 +88,18 @@ RECT DesktopApp::GetPageNavHotEdgeHintBounds(
     const float scale = std::max(
         1.0f, static_cast<float>(page->dpiX) /
             static_cast<float>(USER_DEFAULT_SCREEN_DPI));
-    const LONG width = static_cast<LONG>(360.0f * scale);
-    const LONG height = static_cast<LONG>(44.0f * scale);
+    if (!dwriteFactory_) return {};
+    ComPtr<IDWriteTextFormat> format;
+    if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(dwriteFactory_.Get(), &format, scale))) return {};
+    snowdesktop::NativeTooltipTextLayout measured;
+    snowdesktop::NativeTooltipLayoutOptions options;
+    options.scale = scale;
+    if (FAILED(snowdesktop::MeasureNativeTooltip(dwriteFactory_.Get(), format.Get(), {}, GetPageNavHotEdgeHintText(side),
+        std::max(1.f, std::min(520.f * scale, static_cast<float>(page->workArea.right - page->workArea.left) - 8.f * scale)),
+        std::max(1.f, std::min(192.f * scale, static_cast<float>(page->workArea.bottom - page->workArea.top) - 8.f * scale)),
+        measured, options))) return {};
+    const LONG width = static_cast<LONG>(std::ceil(measured.width));
+    const LONG height = static_cast<LONG>(std::ceil(measured.height));
     const LONG gap = static_cast<LONG>(8.0f * scale);
     RECT previousEdge{};
     RECT nextEdge{};
@@ -185,84 +235,17 @@ void DesktopApp::DrawPageNavHotEdgeHint(
         (!dragging && !navHotEdgeHintVisible_))
         return;
 
-    const UINT modifiers = navHoverSide_ < 0
-        ? generalSettings_.pageNavigationPreviousModifiers
-        : generalSettings_.pageNavigationNextModifiers;
-    const UINT virtualKey = navHoverSide_ < 0
-        ? generalSettings_.pageNavigationPreviousVirtualKey
-        : generalSettings_.pageNavigationNextVirtualKey;
-    std::wstring message;
-    if (dragging)
-    {
-        message = _LW("app.navigation.edge_drag_dwell");
-    }
-    else if (generalSettings_.pageNavigationKeyboardEnabled &&
-        virtualKey != 0)
-    {
-        NavigationSettings displaySettings;
-        displaySettings.modifiers = modifiers;
-        displaySettings.virtualKey = virtualKey;
-        const std::wstring shortcut =
-            FormatNavigationHotkey(displaySettings);
-        message = _LFW(
-            navHoverSide_ < 0
-                ? "app.navigation.edge_previous_with_key"
-                : "app.navigation.edge_next_with_key",
-            shortcut);
-    }
-    else
-    {
-        message = _LW(navHoverSide_ < 0
-            ? "app.navigation.edge_previous"
-            : "app.navigation.edge_next");
-    }
-    message.insert(0, navHoverSide_ < 0
-        ? L"\u25C0  " : L"\u25B6  ");
+    const std::wstring message = GetPageNavHotEdgeHintText(navHoverSide_);
 
     const RECT hint = GetPageNavHotEdgeHintBounds(
         navHoverSide_, lastMousePoint_);
     if (IsRectEmptyRect(hint)) return;
-    const D2D1_RECT_F hintRect = ToD2DRect(hint);
-
-    ComPtr<ID2D1SolidColorBrush> backgroundBrush;
-    ComPtr<ID2D1SolidColorBrush> borderBrush;
-    ComPtr<ID2D1SolidColorBrush> textBrush;
-    ctx->CreateSolidColorBrush(
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.94f),
-        &backgroundBrush);
-    ctx->CreateSolidColorBrush(
-        D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.14f),
-        &borderBrush);
-    ctx->CreateSolidColorBrush(
-        D2D1::ColorF(0.08f, 0.12f, 0.18f, 0.92f),
-        &textBrush);
-    const float radius = 8.0f * scale;
-    if (backgroundBrush)
-        ctx->FillRoundedRectangle(
-            D2D1::RoundedRect(hintRect, radius, radius),
-            backgroundBrush.Get());
-    if (borderBrush)
-        ctx->DrawRoundedRectangle(
-            D2D1::RoundedRect(hintRect, radius, radius),
-            borderBrush.Get(), std::max(1.0f, scale));
-
-    if (!dwriteFactory_ || !textBrush) return;
     ComPtr<IDWriteTextFormat> format;
-    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI",
-        DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,
-        14.0f * scale, L"", &format);
-    if (!format) return;
-    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    format->SetParagraphAlignment(
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    D2D1_RECT_F textRect = hintRect;
-    textRect.left += 14.0f * scale;
-    textRect.right -= 14.0f * scale;
-    ctx->DrawTextW(
-        message.c_str(), static_cast<UINT32>(message.size()),
-        format.Get(), textRect, textBrush.Get(),
-        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(dwriteFactory_.Get(), &format, scale))) return;
+    snowdesktop::NativeTooltipTextLayout measured;
+    snowdesktop::NativeTooltipLayoutOptions options;
+    options.scale = scale;
+    if (SUCCEEDED(snowdesktop::MeasureNativeTooltip(dwriteFactory_.Get(), format.Get(), {}, message,
+        static_cast<float>(hint.right - hint.left), static_cast<float>(hint.bottom - hint.top), measured, options)))
+        DrawInlineTooltip(ctx, hint, measured, scale);
 }
