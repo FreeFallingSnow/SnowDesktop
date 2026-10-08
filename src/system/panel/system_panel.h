@@ -26,6 +26,7 @@ public:
     void HideForMonitor(HMONITOR, bool animate = false);
     void CloseThen(std::function<void()>, HWND destinationOwner = nullptr);
     bool IsOpen() const;
+    bool IsInputMethodOpen() const;
     bool IsOpenForMonitor(HMONITOR monitor) const;
     // Includes visible cards and the active prompt/retained tray menu.
     bool ContainsPoint(POINT screen) const;

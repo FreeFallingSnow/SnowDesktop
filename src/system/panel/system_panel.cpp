@@ -740,6 +740,8 @@ void SystemPanel::CloseThen(std::function<void()> next, HWND destinationOwner)
     else if(auto fn=std::move(impl_->afterClose)){impl_->afterClose={};fn();}
 }
 bool SystemPanel::IsOpen()const{return impl_->showing||impl_->modal||impl_->transition.Releasing()||impl_->transition.Pending()||impl_->afterClose;}
+bool SystemPanel::IsInputMethodOpen()const
+{return impl_->showing&&impl_->current&&impl_->current->action==StatusBarAction::InputMethodPanel;}
 bool SystemPanel::IsOpenForMonitor(HMONITOR monitor)const
 {
     if(!monitor)return false;

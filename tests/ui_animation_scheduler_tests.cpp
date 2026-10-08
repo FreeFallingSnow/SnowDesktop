@@ -4,6 +4,7 @@
 #include "layout/popup_animation_rules.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
 #include "system/status_bar/status_bar_activation.h"
+#include "system/status_bar/status_bar_input_method.h"
 #include "system/panel/system_panel_transition.h"
 
 #include <windows.h>
@@ -121,6 +122,123 @@ void TestStatusBarContinuationDispatch()
         "a later explicit click after cancellation remains a new deliverable action");
     DestroyWindow(window);
     UnregisterClassW(name, cls.hInstance);
+}
+
+void TestInputMethodTargetRecovery()
+{
+    namespace input = snowdesktop::status_bar_input_method;
+    // Replace only Windows observations/activation. Use the production request
+    // and real UI scheduler; no desktop host or machine input method is changed.
+    struct Fixture
+    {
+        snowdesktop::UiAnimationScheduler scheduler;
+        input::Snapshot sample, desktop, resolved;
+        double now = 0;
+        bool alive = true, windowsValid = true;
+        HRESULT activation = S_OK, result = E_PENDING;
+        unsigned activations = 0, desktopQueries = 0, completions = 0, selections = 0;
+        snowdesktop::UiScheduleToken token = 0;
+        std::wstring stage;
+        void Start(std::optional<input::Snapshot> target = {})
+        {
+            input::TargetCallbacks callbacks;
+            callbacks.sample = [this] { return sample; };
+            callbacks.desktop = [this] { ++desktopQueries; return desktop; };
+            callbacks.valid = [this](const auto& value) {
+                return windowsValid && value.foreground && value.thread && value.layout;
+            };
+            callbacks.activate = [this](const auto&) { ++activations; return activation; };
+            callbacks.current = [this](auto value) { return alive && token == value; };
+            callbacks.nowMilliseconds = [this] { return now; };
+            callbacks.trace = [this](const wchar_t* value, const auto&, const auto&, HRESULT, unsigned, double) {
+                stage = value;
+            };
+            callbacks.finished = [this](auto, HRESULT value, input::Snapshot valueTarget) {
+                ++completions; result = value; resolved = std::move(valueTarget);
+                // The host can execute selection only after a successful handoff.
+                if (value == S_OK) ++selections;
+            };
+            token = input::ScheduleTarget(scheduler, target, std::move(callbacks));
+        }
+        void Tick(double time) { now = time; WaitAndDispatch(scheduler); }
+    };
+    input::Snapshot app;
+    app.foreground = reinterpret_cast<HWND>(1); app.focus = reinterpret_cast<HWND>(2);
+    app.thread = 10; app.layout = reinterpret_cast<HKL>(0x0804);
+    auto panel = app; panel.foreground = reinterpret_cast<HWND>(3); panel.focus = panel.foreground; panel.thread = 20;
+    auto desktop = app; desktop.foreground = reinterpret_cast<HWND>(4); desktop.focus = nullptr; desktop.thread = 30;
+    {
+        Fixture f; f.desktop = desktop; f.Start(); f.Tick(16);
+        Check(f.completions == 0 && f.desktopQueries == 0,
+            "a transient empty foreground cannot produce an invalid selectable target or immediate desktop fallback");
+        f.sample = app; f.Tick(32);
+        Check(f.result == S_OK && f.resolved == app && f.selections == 1 && f.desktopQueries == 0 && !f.scheduler.HasScheduledWork(),
+            "foreground recovery before the deadline opens the picker for the live app exactly once");
+    }
+    {
+        Fixture f; f.desktop = desktop; f.Start(); f.Tick(249);
+        Check(f.completions == 0, "desktop fallback does not bypass the acquisition deadline");
+        f.Tick(250);
+        Check(f.result == S_OK && f.resolved == desktop && f.stage == L"capture-desktop" && f.desktopQueries == 1,
+            "persistent absence of a foreground uses the current Shell desktop without a cached app");
+    }
+    {
+        Fixture f; f.Start(); f.Tick(250);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_NOT_FOUND) && f.selections == 0,
+            "missing foreground and missing Shell cannot expose a selectable empty target");
+    }
+    {
+        Fixture f; f.sample = app; f.sample.layout = nullptr; f.desktop = desktop; f.Start(); f.Tick(250);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_NOT_FOUND) && f.desktopQueries == 0,
+            "a known but unavailable app is never replaced by the desktop");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.Tick(16);
+        Check(f.activations == 1 && f.completions == 0,
+            "successful asynchronous activation is not mistaken for restored input focus");
+        f.sample = app; f.sample.focus = nullptr; f.Tick(32);
+        Check(f.selections == 0 && f.activations == 1, "missing child focus continues waiting without requesting activation again");
+        f.sample = app; f.sample.layout = reinterpret_cast<HKL>(0x0409); f.Tick(48);
+        Check(f.result == S_OK && f.resolved.layout == reinterpret_cast<HKL>(0x0409) && f.selections == 1 && !f.scheduler.HasScheduledWork(),
+            "selection begins once after focus recovery and receives the current keyboard layout");
+    }
+    {
+        Fixture f; f.sample = panel; f.activation = E_ACCESSDENIED; f.Start(app); f.Tick(16);
+        Check(f.result == E_ACCESSDENIED && f.stage == L"restore-denied" && f.activations == 1 && f.selections == 0,
+            "foreground activation denial has a distinct failure and never executes selection");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.Tick(16); f.windowsValid = false; f.Tick(32);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_INVALID_WINDOW_HANDLE) && f.activations == 1 && f.selections == 0,
+            "destruction or reuse of the saved target cancels restoration before selection");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.Tick(16); f.Tick(750);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_TIMEOUT) && f.stage == L"restore-timeout" && f.activations == 1 && f.selections == 0,
+            "an unresponsive target stops at the bounded deadline without repeated focus stealing");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.Tick(16);
+        f.sample = app; f.sample.foreground = reinterpret_cast<HWND>(5); f.Tick(32);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_CANCELLED) && f.stage == L"restore-focus-moved" && f.selections == 0,
+            "a newly activated third window cancels the old selection instead of stealing its focus");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.alive = false; f.Tick(16);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_CANCELLED) && f.activations == 0 && f.selections == 0,
+            "hidden or destroyed host lifetime cancels before native activation");
+    }
+    {
+        Fixture f; f.Start(); f.scheduler.Cancel(f.token); f.sample = app; f.Start(); f.Tick(16);
+        Check(f.completions == 1 && f.selections == 1,
+            "a replacement bar request removes the old deadline and delivers only the new target");
+    }
+    {
+        Fixture f; f.sample = desktop; f.sample.focus = reinterpret_cast<HWND>(6); f.sample.thread = 40;
+        f.Start(desktop); f.Tick(16);
+        Check(f.result == S_OK && f.resolved.focus == f.sample.focus && f.activations == 0,
+            "a desktop captured without child focus accepts its live child on restoration");
+    }
 }
 
 void TestSystemPanelTransitionHandoff()
@@ -480,6 +598,7 @@ void TestStatusBarShellShortcuts()
 int main()
 {
     TestStatusBarContinuationDispatch();
+    TestInputMethodTargetRecovery();
     TestSystemPanelTransitionHandoff();
     TestTaskViewTransition();
     TestTaskViewMouseHandoff();

@@ -2,10 +2,13 @@
 #include <windows.h>
 #include <imm.h>
 #include <msctf.h>
+#include "ui/render/ui_animation_scheduler.h"
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace snowdesktop::status_bar_input_method
 {
@@ -33,9 +36,98 @@ struct Selection
     Snapshot target;
     std::vector<Choice> choices;
 };
-Selection CaptureSelection();
-bool RestoreTarget(const Snapshot& target);
+Selection CaptureSelection(const Snapshot& target);
 HRESULT Select(const Selection&, const Choice&);
+
+// A live target is separate from the last successful display sample. No cached
+// application becomes a command target when Windows temporarily has no foreground.
+inline bool SameTarget(const Snapshot& expected, const Snapshot& current)
+{
+    return expected.foreground && expected.thread && current.thread && current.layout && !current.menuActive &&
+        expected.foreground == current.foreground &&
+        (!expected.focus || (expected.thread == current.thread && expected.focus == current.focus));
+}
+struct TargetCallbacks
+{
+    std::function<Snapshot()> sample, desktop;
+    std::function<bool(const Snapshot&)> valid;
+    std::function<HRESULT(const Snapshot&)> activate;
+    std::function<bool(UiScheduleToken)> current;
+    std::function<void(UiScheduleToken, HRESULT, Snapshot)> finished;
+    std::function<void(const wchar_t*, const Snapshot&, const Snapshot&, HRESULT, unsigned, double)> trace;
+    std::function<double()> nowMilliseconds = UiAnimationScheduler::MonotonicMilliseconds;
+};
+TargetCallbacks WindowsTargetCallbacks();
+
+// nullopt acquires a target before showing the panel; a supplied snapshot
+// restores that target after closing it. Keep Windows message processing alive
+// while cross-queue activation restores focus. Native calls are the test seam;
+// cancellation, scheduling, deadlines and completion run through this same path.
+inline UiScheduleToken ScheduleTarget(UiAnimationScheduler& scheduler,
+    std::optional<Snapshot> target, TargetCallbacks callbacks)
+{
+    struct Progress { bool requested = false; HWND initial = nullptr; unsigned polls = 0; };
+    const auto progress = std::make_shared<Progress>();
+    const double started = callbacks.nowMilliseconds();
+    const double deadline = started + (target ? 750 : 250);
+    return scheduler.ScheduleInterval(16,
+        [&scheduler, target = std::move(target), callbacks = std::move(callbacks), progress, started, deadline](auto token) {
+            Snapshot observed;
+            const auto trace = [&](const wchar_t* stage, HRESULT result) {
+                if (callbacks.trace) callbacks.trace(stage, target.value_or(Snapshot{}), observed,
+                    result, progress->polls, callbacks.nowMilliseconds() - started);
+            };
+            const auto finish = [&](const wchar_t* stage, HRESULT result, Snapshot resolved = {}) {
+                scheduler.Cancel(token);
+                trace(stage, result);
+                callbacks.finished(token, result, std::move(resolved));
+            };
+            if (!callbacks.current(token))
+            { finish(L"target-cancelled", HRESULT_FROM_WIN32(ERROR_CANCELLED)); return; }
+            observed = callbacks.sample();
+            if (++progress->polls == 1) trace(target ? L"restore-start" : L"capture-start", S_OK);
+            if (!target)
+            {
+                if (callbacks.valid(observed) && !observed.menuActive)
+                { finish(L"capture-ready", S_OK, observed); return; }
+                if (callbacks.nowMilliseconds() < deadline) return;
+                // Persistent absence of a foreground window is a valid desktop
+                // scenario. Never substitute the desktop for a known app/menu.
+                if (!observed.foreground)
+                {
+                    const auto desktop = callbacks.desktop();
+                    if (callbacks.valid(desktop))
+                    { observed = desktop; finish(L"capture-desktop", S_OK, desktop); return; }
+                }
+                finish(L"capture-unavailable", HRESULT_FROM_WIN32(ERROR_NOT_FOUND));
+                return;
+            }
+            if (!callbacks.valid(*target))
+            { finish(L"restore-invalid", HRESULT_FROM_WIN32(ERROR_INVALID_WINDOW_HANDLE)); return; }
+            if (SameTarget(*target, observed))
+            { finish(L"restore-ready", S_OK, observed); return; }
+            if (callbacks.nowMilliseconds() >= deadline)
+            { finish(L"restore-timeout", HRESULT_FROM_WIN32(ERROR_TIMEOUT)); return; }
+            if (!progress->requested)
+            {
+                progress->requested = true;
+                progress->initial = observed.foreground;
+                // A different child focus in the same app may still be settling.
+                // Request activation only once, and do not repeatedly steal focus.
+                if (observed.foreground != target->foreground)
+                {
+                    const HRESULT result = callbacks.activate(*target);
+                    trace(L"restore-activation", result);
+                    if (FAILED(result)) { finish(L"restore-denied", result); return; }
+                    if (!callbacks.current(token))
+                    { finish(L"target-cancelled", HRESULT_FROM_WIN32(ERROR_CANCELLED)); return; }
+                }
+            }
+            else if (observed.foreground && observed.foreground != target->foreground &&
+                observed.foreground != progress->initial)
+                finish(L"restore-focus-moved", HRESULT_FROM_WIN32(ERROR_CANCELLED));
+        });
+}
 
 inline bool SameProfile(const TF_INPUTPROCESSORPROFILE& a, const TF_INPUTPROCESSORPROFILE& b)
 {

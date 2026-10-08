@@ -355,11 +355,17 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (quickNavigationOpen_) CloseQuickNavigation();
         return;
     }
+    if (action == Action::InputMethodPanel && systemPanel_ && systemPanel_->IsInputMethodOpen())
+    {
+        hold->shortcutFinished = true;
+        systemPanel_->Hide();
+        return;
+    }
     const bool externalSurface = action == Action::SystemMenu || action == Action::Menu ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
         action == Action::TaskView || action == Action::SystemCalendar ||
-        action == Action::InputMethod || action == Action::InputMethodMenu;
+        action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel;
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {
         TraceStatusBarShellActivation(action, generation, L"wait-system-panel", hold->shortcutStartedMilliseconds);
@@ -372,47 +378,105 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     {
         ensureSystemPanel();
         namespace input = snowdesktop::status_bar_input_method;
-        const auto selection = input::CaptureSelection();
-        snowdesktop::SystemPanelInputMethodActions actions;
-        actions.choices = selection.choices;
-        actions.menuAvailable = std::any_of(selection.choices.begin(), selection.choices.end(), [](const auto& choice) {
-            return choice.selected && choice.profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR;
-        }) || (selection.target.layout && ImmIsIME(selection.target.layout));
-        actions.select = [this, selection](const input::Choice& choice) {
-            if (exitRequested_ || !systemPanel_) return;
-            systemPanel_->CloseThen([this, selection, choice] {
-                if (exitRequested_) return;
-                const HRESULT result = input::Select(selection, choice);
-                wchar_t message[128]{};
-                swprintf_s(message, L"StatusBar input method profile selection hr=0x%08lX", static_cast<unsigned long>(result));
-                WriteDiagnosticLogEntry(message);
+        auto capture = input::WindowsTargetCallbacks();
+        capture.current = [this, current](auto token) {
+            return current() && token == statusBarActivationToken_;
+        };
+        capture.finished = [this, current, owner, anchor, monitor, generation, hold](auto token, HRESULT result, input::Snapshot target) {
+            if (!current() || token != statusBarActivationToken_) return;
+            statusBarActivationToken_ = 0;
+            // Panel opening/native menus can pump messages. Dispatch completion
+            // through the bar HWND, outside the scheduler's active snapshot.
+            statusBar_->PostActivation(owner, [this, current, owner, anchor, monitor, generation, hold, result, target] {
+                if (!current()) return;
+                hold->shortcutFinished = true;
                 if (result != S_OK)
+                {
                     MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
-            }, selection.target.foreground);
+                    return;
+                }
+                const auto selection = input::CaptureSelection(target);
+                const auto restore = [this, current, owner, monitor, hold](const input::Snapshot& original,
+                    std::function<void(input::Snapshot)> next) {
+                    if (!current()) return;
+                    statusBarActivationMonitor_ = monitor;
+                    auto callbacks = input::WindowsTargetCallbacks();
+                    callbacks.current = [this, current](auto restoreToken) {
+                        return current() && restoreToken == statusBarActivationToken_;
+                    };
+                    callbacks.finished = [this, current, owner, hold, next = std::move(next)](auto restoreToken,
+                        HRESULT restored, input::Snapshot resolved) {
+                        if (!current() || restoreToken != statusBarActivationToken_) return;
+                        statusBarActivationToken_ = 0;
+                        statusBar_->PostActivation(owner, [this, current, hold, next, restored, resolved] {
+                            if (!current()) return;
+                            if (restored == S_OK) next(resolved);
+                            else if (restored != HRESULT_FROM_WIN32(ERROR_CANCELLED))
+                                MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                        });
+                    };
+                    statusBarActivationToken_ = input::ScheduleTarget(uiAnimationScheduler_, original, std::move(callbacks));
+                    if (!statusBarActivationToken_)
+                    {
+                        WriteDiagnosticLogEntry(L"StatusBar input method stage=restore-scheduler-unavailable", DiagnosticLogLevel::Error);
+                        MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                    }
+                };
+                snowdesktop::SystemPanelInputMethodActions actions;
+                actions.choices = selection.choices;
+                actions.menuAvailable = std::any_of(selection.choices.begin(), selection.choices.end(), [](const auto& choice) {
+                    return choice.selected && choice.profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR;
+                }) || (selection.target.layout && ImmIsIME(selection.target.layout));
+                actions.select = [this, current, selection, restore, monitor](const input::Choice& choice) {
+                    if (!current() || !systemPanel_) return;
+                    statusBarActivationMonitor_ = monitor;
+                    systemPanel_->CloseThen([this, current, selection, choice, restore] {
+                        if (!current()) return;
+                        restore(selection.target, [this, selection, choice](input::Snapshot resolved) {
+                            auto ready = selection;
+                            ready.target = resolved;
+                            const HRESULT selected = input::Select(ready, choice);
+                            wchar_t message[128]{};
+                            swprintf_s(message, L"StatusBar input method profile selection hr=0x%08lX", static_cast<unsigned long>(selected));
+                            WriteDiagnosticLogEntry(message);
+                            if (selected != S_OK)
+                                MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+                        });
+                    }, selection.target.foreground);
+                };
+                actions.menu = [this, current, selection, anchor, restore, monitor] {
+                    if (!current() || !systemPanel_) return;
+                    statusBarActivationMonitor_ = monitor;
+                    systemPanel_->CloseThen([this, current, selection, anchor, restore] {
+                        if (!current()) return;
+                        restore(selection.target, [this, anchor](input::Snapshot) {
+                            const HRESULT menuResult = statusBar_->ShowInputMethod(anchor, true);
+                            wchar_t message[128]{};
+                            swprintf_s(message, L"StatusBar input method panel menu hr=0x%08lX", static_cast<unsigned long>(menuResult));
+                            WriteDiagnosticLogEntry(message);
+                        });
+                    }, selection.target.foreground);
+                };
+                actions.settings = [this, current, owner](const wchar_t* uri) {
+                    if (!current() || !systemPanel_) return;
+                    const std::wstring settingsUri(uri);
+                    systemPanel_->CloseThen([this, current, owner, settingsUri] {
+                        if (current()) ShellExecuteW(owner, L"open", settingsUri.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    }, owner);
+                };
+                systemPanel_->ShowInputMethod(std::move(actions), owner, anchor,
+                    collectionPopupAppearance_, generalSettings_.statusBar, systemDataProvider_);
+                TraceStatusBarShellActivation(snowdesktop::StatusBarAction::InputMethodPanel, generation,
+                    L"finished", hold->shortcutStartedMilliseconds, L"panel-requested");
+                statusBarActivationMonitor_ = nullptr;
+            });
         };
-        actions.menu = [this, selection, anchor] {
-            if (exitRequested_ || !systemPanel_) return;
-            systemPanel_->CloseThen([this, selection, anchor] {
-                if (exitRequested_ || !statusBar_ || !input::RestoreTarget(selection.target)) return;
-                const HRESULT result = statusBar_->ShowInputMethod(anchor, true);
-                wchar_t message[128]{};
-                swprintf_s(message, L"StatusBar input method panel menu hr=0x%08lX", static_cast<unsigned long>(result));
-                WriteDiagnosticLogEntry(message);
-            }, selection.target.foreground);
-        };
-        actions.settings = [this, owner](const wchar_t* uri) {
-            if (exitRequested_ || !systemPanel_) return;
-            const std::wstring target(uri);
-            systemPanel_->CloseThen([this, owner, target] {
-                if (!exitRequested_) ShellExecuteW(owner, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-            }, owner);
-        };
-        systemPanel_->ShowInputMethod(std::move(actions), owner, anchor,
-            collectionPopupAppearance_,
-            generalSettings_.statusBar, systemDataProvider_);
-        hold->shortcutFinished = true;
-        TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds, L"panel-requested");
-        statusBarActivationMonitor_ = nullptr;
+        statusBarActivationToken_ = input::ScheduleTarget(uiAnimationScheduler_, std::nullopt, std::move(capture));
+        if (!statusBarActivationToken_)
+        {
+            WriteDiagnosticLogEntry(L"StatusBar input method stage=capture-scheduler-unavailable", DiagnosticLogLevel::Error);
+            MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
+        }
     }
     else if (action == Action::InputMethod || action == Action::InputMethodMenu)
     {
