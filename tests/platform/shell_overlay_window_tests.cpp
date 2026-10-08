@@ -1,4 +1,5 @@
 #include "platform/shell_overlay_window.h"
+#include "dock/dock_window_rules.h"
 
 #include <initializer_list>
 #include <iostream>
@@ -36,7 +37,11 @@ LRESULT CALLBACK ObserveWindow(HWND window, UINT message, WPARAM wp, LPARAM lp)
             reinterpret_cast<LONG_PTR>(observation));
         observation->visibleDuringCreate = (creation->style & WS_VISIBLE) != 0;
     }
-    if (message == WM_SHOWWINDOW && wp)
+    // SetWindowPos(SWP_SHOWWINDOW) need not send WM_SHOWWINDOW. Inspect its
+    // pre-change message too, while the HWND is still about to become visible.
+    const bool positionShows = message == WM_WINDOWPOSCHANGING && lp &&
+        (reinterpret_cast<const WINDOWPOS*>(lp)->flags & SWP_SHOWWINDOW) != 0;
+    if ((message == WM_SHOWWINDOW && wp) || positionShows)
     {
         auto* observation = reinterpret_cast<Observation*>(
             GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -116,9 +121,13 @@ void CheckOnPrivateDesktop()
                 Check(SetWindowPos(overlay.handle, nullptr, 0, 0, 0, 0,
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE,
                     "the existing no-activation placement path can show the overlay");
+                Check(IsWindowVisible(overlay.handle) && observation.shows > 0 &&
+                        observation.unmarkedShows == 0,
+                    "the first SetWindowPos show is observed with the Shell exclusion already present");
+                const unsigned firstShows = observation.shows;
                 ShowWindow(overlay.handle, SW_HIDE);
                 ShowWindow(overlay.handle, SW_SHOWNOACTIVATE);
-                Check(observation.shows >= 2 && observation.unmarkedShows == 0,
+                Check(observation.shows > firstShows && observation.unmarkedShows == 0,
                     "first show and later hide/show cycles retain the Shell exclusion");
                 if (!child && !parent)
                 {
@@ -153,6 +162,14 @@ void CheckOnPrivateDesktop()
 
 int main()
 {
+    using snowdesktop::dock_window_rules::ShouldAbortDockMinimizeOnAnimationFailure;
+    Check(ShouldAbortDockMinimizeOnAnimationFailure(true, false, false),
+        "mandatory live-capture failure keeps its source window visible");
+    Check(!ShouldAbortDockMinimizeOnAnimationFailure(true, false, true),
+        "intentional fullscreen fallback still allows the native minimize command");
+    Check(!ShouldAbortDockMinimizeOnAnimationFailure(true, true, false) &&
+            !ShouldAbortDockMinimizeOnAnimationFailure(false, false, false),
+        "started transitions and ordinary native minimize retain their existing routes");
     const std::wstring desktopName = L"SnowDesktop.ShellOverlay." +
         std::to_wstring(GetCurrentProcessId());
     const HDESK desktop = CreateDesktopW(desktopName.c_str(), nullptr, nullptr,

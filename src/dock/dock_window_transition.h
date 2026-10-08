@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <span>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -78,6 +80,10 @@ RECT InterpolateDockWindowTransitionRect(
     const RECT& from, const RECT& to, double progress) noexcept;
 RECT ResolveDockWindowSnapshotHostRect(
     const RECT& from, const RECT& to) noexcept;
+// Keep temporary animation HWNDs from covering any complete monitor. At most
+// one physical pixel may be clipped; unsafe spanning layouts use native fallback.
+std::optional<RECT> ResolveDockWindowNonFullscreenHostRect(
+    RECT host, std::span<const RECT> monitors) noexcept;
 
 inline constexpr LONG kDockWindowSnapshotMaxWidth = 4096;
 inline constexpr LONG kDockWindowSnapshotMaxHeight = 4096;
@@ -218,6 +224,7 @@ public:
     // Settings changes must not abandon an in-flight restore request.
     void CompleteImmediately();
     bool IsActive() const;
+    bool RequiresNativeAnimationFallback() const noexcept { return nativeFallbackRequested_; }
     bool IsActiveFor(HWND window) const;
     bool IsPresentationWindow(HWND window) const noexcept
     {
@@ -348,6 +355,8 @@ private:
     RECT toRect_{};
     RECT windowRect_{};
     RECT dockRect_{};
+    std::vector<RECT> animationMonitorRects_;
+    bool nativeFallbackRequested_ = false;
     RECT snapshotHostRect_{};
     RECT lastFrameRect_{};
     BYTE lastFrameOpacity_ = 0;

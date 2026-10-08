@@ -1040,6 +1040,7 @@ bool DesktopApp::ActivateOrToggleDockItem(
         if (shouldMinimize)
             snowdesktop::dock_taskbar_diagnostics::Begin(target, L"dock-minimize");
         bool transitionStarted = false;
+        bool nativeFallbackRequested = false;
         if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
@@ -1049,11 +1050,12 @@ bool DesktopApp::ActivateOrToggleDockItem(
                     target, *pressedAnchorScreen,
                     minimizeCapturePolicy,
                     transitionKeepBelowWindow);
+            nativeFallbackRequested = dockWindowTransition_->RequiresNativeAnimationFallback();
         }
-        if (shouldMinimize &&
-            minimizeCapturePolicy ==
-                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
-            !transitionStarted)
+        if (shouldMinimize && snowdesktop::dock_window_rules::ShouldAbortDockMinimizeOnAnimationFailure(
+                minimizeCapturePolicy == DockWindowTransitionCapturePolicy::LiveThumbnailOnly,
+                transitionStarted,
+                nativeFallbackRequested))
         {
             return false;
         }
@@ -1184,6 +1186,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         if (shouldMinimize)
             snowdesktop::dock_taskbar_diagnostics::Begin(target, L"dock-minimize");
         bool transitionStarted = false;
+        bool nativeFallbackRequested = false;
         if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
@@ -1193,11 +1196,12 @@ bool DesktopApp::ActivateOrToggleDockWindow(
                     target, *pressedAnchorScreen,
                     minimizeCapturePolicy,
                     transitionKeepBelowWindow);
+            nativeFallbackRequested = dockWindowTransition_->RequiresNativeAnimationFallback();
         }
-        if (shouldMinimize &&
-            minimizeCapturePolicy ==
-                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
-            !transitionStarted)
+        if (shouldMinimize && snowdesktop::dock_window_rules::ShouldAbortDockMinimizeOnAnimationFailure(
+                minimizeCapturePolicy == DockWindowTransitionCapturePolicy::LiveThumbnailOnly,
+                transitionStarted,
+                nativeFallbackRequested))
         {
             return false;
         }

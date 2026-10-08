@@ -625,6 +625,14 @@ constexpr bool ShouldAnimateDockWindowRestore(
     return minimized && transitionAvailable && anchorAvailable;
 }
 
+// A failed mandatory live capture must not hide its source. An intentional
+// fullscreen-geometry fallback can still execute the normal minimize command.
+constexpr bool ShouldAbortDockMinimizeOnAnimationFailure(
+    bool liveThumbnailOnly, bool transitionStarted, bool nativeFallbackRequested) noexcept
+{
+    return liveThumbnailOnly && !transitionStarted && !nativeFallbackRequested;
+}
+
 /**
  * @brief 判断可见预览是否应跟随悬停锚点漂移而不重建。
  *

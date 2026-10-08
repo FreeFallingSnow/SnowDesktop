@@ -7,6 +7,7 @@
 #include "platform/shell_overlay_window.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cwchar>
 
@@ -15,6 +16,15 @@ namespace
 
 constexpr wchar_t kDockWindowTransitionClassName[] =
     L"SnowDesktopDockWindowTransition";
+
+BOOL CALLBACK CollectAnimationMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM parameter)
+{
+    MONITORINFO info{sizeof(info)};
+    if (!GetMonitorInfoW(monitor, &info)) return FALSE;
+    try { reinterpret_cast<std::vector<RECT>*>(parameter)->push_back(info.rcMonitor); }
+    catch (...) { return FALSE; }
+    return TRUE;
+}
 
 bool IsUsableRect(const RECT& rect)
 {
@@ -246,6 +256,47 @@ RECT ResolveDockWindowSnapshotHostRect(
     };
 }
 
+std::optional<RECT> ResolveDockWindowNonFullscreenHostRect(
+    RECT host, std::span<const RECT> monitors) noexcept
+{
+    const auto valid = [](RECT rect) { return rect.right > rect.left && rect.bottom > rect.top; };
+    if (!valid(host) || monitors.empty()) return std::nullopt;
+    const auto covers = [](RECT rect, RECT monitor) {
+        return rect.left <= monitor.left && rect.top <= monitor.top &&
+            rect.right >= monitor.right && rect.bottom >= monitor.bottom;
+    };
+    std::array<RECT, 4> candidates{host, host, host, host};
+    bool fullscreen = false;
+    for (const RECT monitor : monitors)
+    {
+        if (!valid(monitor)) return std::nullopt;
+        if (!covers(host, monitor)) continue;
+        fullscreen = true;
+        candidates[0].left = std::max(candidates[0].left, monitor.left + 1);
+        candidates[1].top = std::max(candidates[1].top, monitor.top + 1);
+        candidates[2].right = std::min(candidates[2].right, monitor.right - 1);
+        candidates[3].bottom = std::min(candidates[3].bottom, monitor.bottom - 1);
+    }
+    if (!fullscreen) return host;
+    std::optional<RECT> best;
+    std::uint64_t largestArea = 0;
+    for (const RECT candidate : candidates)
+    {
+        if (!valid(candidate) ||
+            static_cast<std::int64_t>(candidate.left) - host.left > 1 ||
+            static_cast<std::int64_t>(candidate.top) - host.top > 1 ||
+            static_cast<std::int64_t>(host.right) - candidate.right > 1 ||
+            static_cast<std::int64_t>(host.bottom) - candidate.bottom > 1)
+            continue;
+        if (std::any_of(monitors.begin(), monitors.end(),
+                [&](RECT monitor) { return covers(candidate, monitor); })) continue;
+        const auto area = static_cast<std::uint64_t>(static_cast<std::int64_t>(candidate.right) - candidate.left) *
+            static_cast<std::uint64_t>(static_cast<std::int64_t>(candidate.bottom) - candidate.top);
+        if (area > largestArea) { best = candidate; largestArea = area; }
+    }
+    return best;
+}
+
 SIZE ConstrainDockWindowSnapshotSize(
     SIZE source, LONG maximumWidth,
     LONG maximumHeight) noexcept
@@ -474,6 +525,7 @@ bool DockWindowTransition::Start(
     DockWindowTransitionCapturePolicy capturePolicy,
     HWND keepBelowWindow)
 {
+    nativeFallbackRequested_ = false;
     if (!SystemWindowAnimationsEnabled() ||
         !sourceWindow || !IsWindow(sourceWindow) ||
         !IsUsableRect(dockRect))
@@ -651,6 +703,24 @@ bool DockWindowTransition::Start(
         ? ResolveDockWindowSnapshotHostRect(
             fromRect_, toRect_)
         : fromRect_;
+    if (!EnumDisplayMonitors(nullptr, nullptr, CollectAnimationMonitor,
+            reinterpret_cast<LPARAM>(&animationMonitorRects_)))
+    {
+        Cancel();
+        nativeFallbackRequested_ = true;
+        return false;
+    }
+    const auto safeHost = ResolveDockWindowNonFullscreenHostRect(
+        snapshotHostRect_, animationMonitorRects_);
+    if (!safeHost)
+    {
+        if (diagnosticCallback_)
+            diagnosticCallback_(L"Dock animation fallback: host would cover a complete monitor");
+        Cancel();
+        nativeFallbackRequested_ = true;
+        return false;
+    }
+    snapshotHostRect_ = *safeHost;
     const int hostWidth = std::max(
         1L, snapshotHostRect_.right -
             snapshotHostRect_.left);
@@ -1580,8 +1650,14 @@ bool DockWindowTransition::ApplyFrame(double progress)
             DockWindowTransitionSurface::None)
         return false;
 
-    const RECT frame = InterpolateDockWindowTransitionRect(
+    RECT frame = InterpolateDockWindowTransitionRect(
         fromRect_, toRect_, progress);
+    if (surface_ == DockWindowTransitionSurface::LiveThumbnail)
+    {
+        const auto safeFrame = ResolveDockWindowNonFullscreenHostRect(frame, animationMonitorRects_);
+        if (!safeFrame) { nativeFallbackRequested_ = true; return false; }
+        frame = *safeFrame;
+    }
     const int width = std::max(1L, frame.right - frame.left);
     const int height =
         std::max(1L, frame.bottom - frame.top);
@@ -1975,6 +2051,7 @@ void DockWindowTransition::Finish()
     windowRect_ = {};
     dockRect_ = {};
     snapshotHostRect_ = {};
+    animationMonitorRects_.clear();
     lastFrameRect_ = {};
     lastFrameOpacity_ = 0;
     hasLastFrame_ = false;
