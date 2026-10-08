@@ -75,7 +75,10 @@ HRESULT STDMETHODCALLTYPE OleDragDropAdapter::Drop(
     // Shell targets receive a synthetic DragEnter/DragOver/Drop sequence from
     // the handler. Entering with no mouse button can show the drag-action menu
     // ("Open with / Cancel") instead of performing a normal left-button drop.
-    keyState |= dragButtons_;
+    // Only modifiers are live at release. Other buttons pressed later must not
+    // change the gesture that the Shell target receives.
+    if (dragButtons_ != 0)
+        keyState = (keyState & ~kDragButtonMask) | dragButtons_;
     // Consume before dispatch: a Shell message pump can reenter this adapter
     // with a new drag, whose state must survive the outer handler's return.
     dragButtons_ = 0;
