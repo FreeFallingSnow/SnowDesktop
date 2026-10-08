@@ -77,6 +77,9 @@ bool DesktopApp::TryHandlePageNavigationKey(
         (navigationSettings_.enabled && conflictsWith(
             navigationSettings_.modifiers,
             navigationSettings_.virtualKey)) ||
+        (generalSettings_.softwareDesktopHotkeyEnabled &&
+            conflictsWith(generalSettings_.softwareDesktopHotkeyModifiers,
+                generalSettings_.softwareDesktopHotkeyVirtualKey)) ||
         (generalSettings_.desktopPassthroughHotkeyEnabled &&
             conflictsWith(
                 generalSettings_.desktopPassthroughHotkeyModifiers,

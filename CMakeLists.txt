@@ -291,6 +291,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/navigation/app_quick_navigation_render.cpp
     src/app/navigation/app_quick_navigation_window.cpp
     src/app/input/app_rename_begin.cpp
+    src/app/input/software_desktop_hotkey.h
     src/app/input/app_rename_commit.cpp
     src/app/input/app_rename_editor.cpp
     src/app/input/app_rename_target.cpp

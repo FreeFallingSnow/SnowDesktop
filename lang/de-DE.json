@@ -2569,5 +2569,6 @@
   "font.tooltipSize": "Schriftgröße der Kurzinfos",
   "font.tooltipSizeHint": "Für Hinweise auf dem Desktop, im Dock, in der Statusleiste, in Widgets und beim Ziehen.",
   "app.settings.category_format_hint": "Trenne Dateiendungen mit Leerzeichen, Kommas oder Semikolons, zum Beispiel .jpg .png.",
-  "font.size": "Schriftgröße"
+  "font.size": "Schriftgröße",
+  "app.settings.software_desktop_hotkey": "Per Tastenkombination zwischen Software-Desktop und Windows-Desktop wechseln"
 }

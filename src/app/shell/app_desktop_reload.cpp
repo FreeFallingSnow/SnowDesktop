@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "shell_icon_request.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_capture.h"
@@ -661,6 +662,18 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             ToggleQuickNavigation();
             return 0;
         }
+        if (static_cast<int>(wp) == kSoftwareDesktopHotkeyId)
+        {
+            // Ignore stale queued shortcuts and preserve active pointer/drag
+            // ownership before the ordinary toggle reloads desktop containers.
+            if (generalSettings_.softwareDesktopHotkeyEnabled &&
+                snowdesktop::SoftwareDesktopHotkey().Matches(LOWORD(lp), HIWORD(lp)) &&
+                !mouseDown_ && !marqueeActive_ && !dragSession_.IsActive() &&
+                !dragDropController_.IsTransportActive() && GetCapture() == nullptr &&
+                !IsDesktopPassthroughPointerDown())
+                SetSoftwareDesktopEnabled(!generalSettings_.softwareDesktopEnabled, true);
+            return 0;
+        }
         if (static_cast<int>(wp) ==
             kFloatingDockHotkeyId)
         {
@@ -681,6 +694,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, kDisplayTopologyRefreshTimerId);
+        snowdesktop::SoftwareDesktopHotkey().Unregister();
         if (floatingDockHotkeyHwnd_ == hwnd)
         {
             floatingDockHotkeyHwnd_ = nullptr;

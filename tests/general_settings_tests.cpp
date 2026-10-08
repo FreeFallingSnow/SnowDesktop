@@ -1,4 +1,5 @@
 #include "settings/general_settings.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "theme/personalization.h"
 #include "dock/dock_gradient_storage.h"
 #include "theme/taskbar_appearance.h"
@@ -311,6 +312,84 @@ void TestTooltipPresentation()
 
 int main(int argc, char** argv)
 {
+    {
+        // Never reserve a shortcut for existing profiles. Preserve a chosen
+        // chord, including clearing it, across application restarts.
+        const auto path = std::filesystem::temp_directory_path() /
+            (L"SnowDesktopSwitchHotkey-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings settings, restored;
+        Check(!settings.softwareDesktopHotkeyEnabled,
+            "desktop switching is opt-in for new profiles");
+        { std::ofstream legacy(path); legacy << "{}"; }
+        Check(LoadGeneralSettings(path.c_str(), restored) &&
+            !restored.softwareDesktopHotkeyEnabled,
+            "existing profiles do not enable desktop switching on upgrade");
+        for (const bool enabled : {true, false})
+        for (const UINT key : {UINT{'Q'}, UINT{0}})
+        {
+            settings.softwareDesktopHotkeyEnabled = enabled;
+            settings.softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_SHIFT;
+            settings.softwareDesktopHotkeyVirtualKey = key;
+            restored = {};
+            Check(SaveGeneralSettings(path.c_str(), settings) &&
+                LoadGeneralSettings(path.c_str(), restored) &&
+                restored.softwareDesktopHotkeyEnabled == enabled &&
+                restored.softwareDesktopHotkeyModifiers == (MOD_CONTROL | MOD_SHIFT) &&
+                restored.softwareDesktopHotkeyVirtualKey == key,
+                "switch shortcut state, custom chord and explicit clearing survive restart");
+        }
+        { std::ofstream malformed(path); malformed <<
+            "{\"softwareDesktopHotkeyModifiers\":65535,\"softwareDesktopHotkeyVirtualKey\":256}"; }
+        restored = {};
+        Check(LoadGeneralSettings(path.c_str(), restored) &&
+            restored.softwareDesktopHotkeyModifiers == (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN) &&
+            restored.softwareDesktopHotkeyVirtualKey == 'S',
+            "invalid persisted keys retain the default and modifiers exclude unsupported flags");
+        std::filesystem::remove(path);
+
+        // Exercise the production registrar against isolated hidden windows;
+        // no keyboard input is sent and the user's desktop is never toggled.
+        HWND owner = CreateWindowExW(0, L"STATIC", L"SnowDesktop hotkey test", WS_POPUP,
+            0, 0, 0, 0, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND probe = CreateWindowExW(0, L"STATIC", L"SnowDesktop hotkey probe", WS_POPUP,
+            0, 0, 0, 0, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Check(owner && probe, "isolated hotkey owner and probe windows can be created");
+        snowdesktop::SoftwareDesktopHotkeyRegistration registration;
+        settings = {};
+        settings.softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT;
+        settings.softwareDesktopHotkeyVirtualKey = VK_F24;
+        registration.Apply(owner, settings);
+        Check(!registration.IsRegistered(), "a disabled switch shortcut never registers");
+        settings.softwareDesktopHotkeyEnabled = true;
+        settings.softwareDesktopEnabled = false;
+        registration.Apply(owner, settings);
+        Check(registration.Matches(settings.softwareDesktopHotkeyModifiers, VK_F24),
+            "the switch shortcut remains available while the native desktop is selected");
+        const bool occupied = RegisterHotKey(probe, 1,
+            settings.softwareDesktopHotkeyModifiers | MOD_NOREPEAT, VK_F24) != FALSE;
+        Check(!occupied, "a registered desktop shortcut reserves its chord globally");
+        if (occupied) UnregisterHotKey(probe, 1);
+        settings.softwareDesktopHotkeyVirtualKey = VK_F23;
+        registration.Apply(owner, settings);
+        Check(registration.Matches(settings.softwareDesktopHotkeyModifiers, VK_F23) &&
+            !registration.Matches(settings.softwareDesktopHotkeyModifiers, VK_F24),
+            "editing the shortcut rejects queued messages for the previous chord");
+        const bool released = RegisterHotKey(probe, 1,
+            settings.softwareDesktopHotkeyModifiers | MOD_NOREPEAT, VK_F24) != FALSE;
+        Check(released, "editing the shortcut releases the previous chord");
+        if (released) UnregisterHotKey(probe, 1);
+        settings.softwareDesktopHotkeyEnabled = false;
+        registration.Apply(owner, settings);
+        Check(!registration.IsRegistered() &&
+            !registration.Matches(settings.softwareDesktopHotkeyModifiers, VK_F23),
+            "disabling the shortcut unregisters it and rejects queued messages");
+        settings.softwareDesktopHotkeyEnabled = true;
+        settings.softwareDesktopHotkeyVirtualKey = 0;
+        registration.Apply(owner, settings);
+        Check(!registration.IsRegistered(), "a cleared shortcut cannot reserve a key");
+        if (probe) DestroyWindow(probe);
+        if (owner) DestroyWindow(owner);
+    }
     TestTooltipPresentation();
     failures += RunThemeLibraryTests();
     using namespace snowdesktop;

@@ -2569,5 +2569,6 @@
   "font.tooltipSize": "Taille du texte des infobulles",
   "font.tooltipSizeHint": "Utilisé pour les indications du bureau, du Dock, de la barre d’état, des widgets et du glisser-déposer.",
   "app.settings.category_format_hint": "Séparez les extensions par des espaces, des virgules ou des points-virgules, par exemple .jpg .png.",
-  "font.size": "Taille de police"
+  "font.size": "Taille de police",
+  "app.settings.software_desktop_hotkey": "Basculer entre le bureau du logiciel et celui de Windows avec un raccourci"
 }

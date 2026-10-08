@@ -1,5 +1,6 @@
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "platform/single_instance.h"
 #include "data/atomic_file.h"
 #include "platform/auto_start_manager.h"
@@ -1087,6 +1088,7 @@ public:
                 app_.generalSettings_, snapshot.values.general))
         {
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             app_.ApplyDesktopPassthroughHotkey();
@@ -1201,6 +1203,7 @@ public:
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
+            snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.ApplyDesktopPassthroughHotkey();
             app_.ApplyFloatingDockHotkey();
             if (dockEnabledChanged)
@@ -1307,6 +1310,7 @@ public:
             app_.ApplyLanguageChange();
             break;
         case Action::RegisterHotkeys:
+            snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
             app_.EnsureQuickNavigationSearchEdit();
@@ -1523,6 +1527,8 @@ private:
             return "app.settings.quick_navigation";
         case HotkeyTarget::DesktopPassthrough:
             return "app.settings.desktop_passthrough_hotkey";
+        case HotkeyTarget::SoftwareDesktop:
+            return "app.settings.software_desktop_hotkey";
         case HotkeyTarget::FloatingDock:
             return "app.settings.dock_bar";
         case HotkeyTarget::PagePrevious:
@@ -1572,6 +1578,11 @@ private:
                 app_.generalSettings_.desktopPassthroughHotkeyModifiers,
                 app_.generalSettings_.desktopPassthroughHotkeyVirtualKey))
             return { false, HotkeyTarget::DesktopPassthrough };
+        if (conflictsWith(HotkeyTarget::SoftwareDesktop,
+                app_.generalSettings_.softwareDesktopHotkeyEnabled,
+                app_.generalSettings_.softwareDesktopHotkeyModifiers,
+                app_.generalSettings_.softwareDesktopHotkeyVirtualKey))
+            return { false, HotkeyTarget::SoftwareDesktop };
         if (conflictsWith(HotkeyTarget::FloatingDock,
                 app_.generalSettings_.dockEnabled &&
                     app_.dockSettings_.floatingShortcutMode,
@@ -1608,6 +1619,13 @@ private:
 
         switch (target)
         {
+        case HotkeyTarget::SoftwareDesktop:
+            if (app_.generalSettings_.softwareDesktopHotkeyEnabled &&
+                matches(app_.generalSettings_.softwareDesktopHotkeyModifiers,
+                    app_.generalSettings_.softwareDesktopHotkeyVirtualKey))
+                return { snowdesktop::SoftwareDesktopHotkey().Matches(modifiers, virtualKey),
+                    HotkeyTarget::None };
+            break;
         case HotkeyTarget::QuickNavigation:
             if (app_.navigationSettings_.enabled &&
                 matches(app_.navigationSettings_.modifiers,

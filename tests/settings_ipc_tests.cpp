@@ -82,6 +82,17 @@ void TestCodec()
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
         "desktop style navigation retains its appended page identity across IPC");
     GeneralSettings extensions;
+    for (const bool enabled : {false, true})
+    {
+        extensions.softwareDesktopHotkeyEnabled = enabled;
+        extensions.softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_SHIFT;
+        extensions.softwareDesktopHotkeyVirtualKey = 'Q';
+        const auto hotkey = Unpack<GeneralSettings>(Pack(extensions));
+        Check(hotkey.softwareDesktopHotkeyEnabled == enabled &&
+            hotkey.softwareDesktopHotkeyModifiers == (MOD_CONTROL | MOD_SHIFT) &&
+            hotkey.softwareDesktopHotkeyVirtualKey == 'Q',
+            "switch shortcut enablement and chosen chord cross the settings-process boundary");
+    }
     // Each option must independently reach the desktop host from settings.
     for (int flags = 0; flags < 4; ++flags)
     {

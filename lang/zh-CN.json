@@ -2569,5 +2569,6 @@
   "font.tooltipSize": "悬浮提示字号",
   "font.tooltipSizeHint": "用于桌面、Dock、状态栏、组件及拖拽提示。",
   "app.settings.category_format_hint": "后缀用空格、逗号或分号分隔，例如 .jpg .png。",
-  "font.size": "字号"
+  "font.size": "字号",
+  "app.settings.software_desktop_hotkey": "用快捷键切换软件桌面和原生桌面"
 }

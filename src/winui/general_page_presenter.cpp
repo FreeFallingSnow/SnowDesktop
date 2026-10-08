@@ -197,6 +197,8 @@ struct GeneralPagePresenter::Impl
     muxc::Expander advancedFeatureErrorExpander{nullptr};
     muxc::TextBlock advancedFeatureErrorDetail{nullptr};
     muxc::ToggleSwitch softwareDesktopToggle{nullptr};
+    muxc::ToggleSwitch softwareDesktopHotkeyToggle{nullptr};
+    HotkeyRecorder softwareDesktopHotkey;
     muxc::ToggleSwitch doubleClickHideToggle{nullptr};
     muxc::ComboBox languageCombo{nullptr};
     muxc::ToggleSwitch quickNavigationToggle{nullptr};
@@ -217,6 +219,8 @@ struct GeneralPagePresenter::Impl
     SettingRow autoStartRow;
     SettingRow advancedFeatureRow;
     SettingRow softwareDesktopRow;
+    SettingRow softwareDesktopHotkeyToggleRow;
+    HotkeySettingRow softwareDesktopHotkeyRow;
     SettingRow doubleClickHideRow;
     SettingRow languageRow;
     SettingRow quickNavigationToggleRow;
@@ -249,6 +253,7 @@ struct GeneralPagePresenter::Impl
     winrt::event_token retryAdvancedFeaturesToken{};
     winrt::event_token themeToken{};
     winrt::event_token softwareDesktopToken{};
+    winrt::event_token softwareDesktopHotkeyToken{};
     winrt::event_token doubleClickHideToken{};
     winrt::event_token languageSelectionToken{};
     winrt::event_token quickNavigationToken{};
@@ -449,6 +454,13 @@ struct GeneralPagePresenter::Impl
         softwareDesktopRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         doubleClickHideRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         desktopBehaviorCard.content.Children().Append(softwareDesktopRow.root);
+        softwareDesktopHotkeyToggle = muxc::ToggleSwitch{};
+        softwareDesktopHotkeyToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        softwareDesktopHotkeyToggleRow.Initialize(softwareDesktopHotkeyToggle);
+        softwareDesktopHotkeyToggleRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        desktopBehaviorCard.content.Children().Append(softwareDesktopHotkeyToggleRow.root);
+        softwareDesktopHotkeyRow.Initialize(softwareDesktopHotkey);
+        desktopBehaviorCard.content.Children().Append(softwareDesktopHotkeyRow.row.root);
         desktopBehaviorCard.content.Children().Append(doubleClickHideRow.root);
 
         InitializeCard(languageCard, cardStyle, root);
@@ -648,6 +660,14 @@ struct GeneralPagePresenter::Impl
                     settings.desktopPassthroughHotkeyEnabled = enabled;
                 });
             });
+        softwareDesktopHotkeyToken = softwareDesktopHotkeyToggle.Toggled(
+            [this](const auto&, const auto&) {
+                UpdateDependentEnabledStates();
+                const bool enabled = softwareDesktopHotkeyToggle.IsOn();
+                CommitGeneral([enabled](GeneralSettings& settings) {
+                    settings.softwareDesktopHotkeyEnabled = enabled;
+                });
+            });
         floatingDockToken = floatingDockToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateDependentEnabledStates();
@@ -685,6 +705,15 @@ struct GeneralPagePresenter::Impl
 
     void BindHotkeyRecorders()
     {
+        softwareDesktopHotkey.SetDefaultValue(Chord(MOD_CONTROL | MOD_ALT, 'S'));
+        BindHotkeyRecorder(softwareDesktopHotkey,
+            SettingsHostActions::HotkeyTarget::SoftwareDesktop,
+            [this](HotkeyChord chord) {
+                CommitGeneral([chord](GeneralSettings& settings) {
+                    settings.softwareDesktopHotkeyModifiers = chord.modifiers;
+                    settings.softwareDesktopHotkeyVirtualKey = chord.virtualKey;
+                });
+            });
         quickNavigationHotkey.SetDefaultValue(
             Chord(MOD_CONTROL | MOD_ALT, VK_SPACE));
         previousPageHotkey.SetDefaultValue(Chord(0, VK_PRIOR));
@@ -743,6 +772,9 @@ struct GeneralPagePresenter::Impl
     {
         autoStartToggle.IsOn(settings.autoStartEnabled);
         softwareDesktopToggle.IsOn(settings.softwareDesktopEnabled);
+        softwareDesktopHotkeyToggle.IsOn(settings.softwareDesktopHotkeyEnabled);
+        softwareDesktopHotkey.SetValue(Chord(settings.softwareDesktopHotkeyModifiers,
+            settings.softwareDesktopHotkeyVirtualKey), generation);
         doubleClickHideToggle.IsOn(settings.doubleClickHideDesktop);
         pageNavigationToggle.IsOn(
             settings.pageNavigationKeyboardEnabled);
@@ -791,6 +823,8 @@ struct GeneralPagePresenter::Impl
     void UpdateDependentEnabledStates()
     {
         UpdateConditionalHintVisibility();
+        SetRecorderEnabled(softwareDesktopHotkey, softwareDesktopHotkeyToggle.IsOn());
+        softwareDesktopHotkeyRow.row.SetEnabled(softwareDesktopHotkeyToggle.IsOn());
         SetRecorderEnabled(
             quickNavigationHotkey, quickNavigationToggle.IsOn());
         quickNavigationHotkeyRow.row.SetEnabled(
@@ -963,6 +997,11 @@ struct GeneralPagePresenter::Impl
         registerAdvancedFeaturesButton.Content(winrt::box_value(
             L("settings.general.advancedFeatures.register")));
         softwareDesktopRow.SetText(L("app.settings.software_desktop"));
+        softwareDesktopHotkeyToggleRow.SetText(L("app.settings.software_desktop_hotkey"));
+        softwareDesktopHotkeyRow.row.SetText(L("app.settings.hotkey"));
+        softwareDesktopHotkey.SetText(HotkeyText(L("app.settings.software_desktop_hotkey")));
+        muxa::AutomationProperties::SetName(softwareDesktopHotkeyToggle,
+            softwareDesktopHotkeyToggleRow.label.Text());
         doubleClickHideRow.SetText(L("app.settings.double_click_hide"));
         languageRow.SetText(L("app.settings.language"));
         quickNavigationToggleRow.SetText(
@@ -1258,6 +1297,7 @@ struct GeneralPagePresenter::Impl
         {
             for (HotkeyRecorder* recorder : {
                      &quickNavigationHotkey,
+                     &softwareDesktopHotkey,
                      &previousPageHotkey,
                      &nextPageHotkey,
                      &desktopPassthroughHotkey,
@@ -1288,6 +1328,7 @@ struct GeneralPagePresenter::Impl
             advancedFeatureInfoFlyout.Hide();
             advancedFeatureUpdateFlyout.Hide();
             softwareDesktopToggle.Toggled(softwareDesktopToken);
+            softwareDesktopHotkeyToggle.Toggled(softwareDesktopHotkeyToken);
             doubleClickHideToggle.Toggled(doubleClickHideToken);
             languageCombo.SelectionChanged(languageSelectionToken);
             quickNavigationToggle.Toggled(quickNavigationToken);
@@ -1300,6 +1341,7 @@ struct GeneralPagePresenter::Impl
         }
         quickOptions->Close();
         quickNavigationHotkey.Close();
+        softwareDesktopHotkey.Close();
         previousPageHotkey.Close();
         nextPageHotkey.Close();
         desktopPassthroughHotkey.Close();
@@ -1389,6 +1431,10 @@ void GeneralPagePresenter::RegisterFocusTargets(
         {"general.advancedFeatures", "general.advancedFeatures.unlockRequired"});
     registerAliases(impl_->softwareDesktopToggle,
         {"desktop.softwareDesktop", "general.softwareDesktop"});
+    registerAliases(impl_->softwareDesktopHotkeyToggle,
+        {"desktop.softwareDesktopHotkey"});
+    registerAliases(impl_->softwareDesktopHotkey.FocusTarget(),
+        {"desktop.softwareDesktopHotkey.hotkey"});
     registerAliases(impl_->languageCombo, {"general.language"});
     impl_->quickOptions->Register(registrar);
     registerAliases(impl_->quickNavigationToggle,
@@ -1463,6 +1509,7 @@ bool GeneralPagePresenter::IsHotkeyCaptureActive() const noexcept
 {
     if (!impl_ || impl_->closed || !impl_->active) return false;
     return impl_->quickNavigationHotkey.IsCapturing() ||
+        impl_->softwareDesktopHotkey.IsCapturing() ||
         impl_->previousPageHotkey.IsCapturing() ||
         impl_->nextPageHotkey.IsCapturing() ||
         impl_->desktopPassthroughHotkey.IsCapturing() ||
@@ -1476,6 +1523,7 @@ void GeneralPagePresenter::CaptureRegisteredHotkey(
     if (!impl_ || impl_->closed || !impl_->active) return;
     for (HotkeyRecorder* recorder : {
              &impl_->quickNavigationHotkey,
+             &impl_->softwareDesktopHotkey,
              &impl_->previousPageHotkey,
              &impl_->nextPageHotkey,
              &impl_->desktopPassthroughHotkey,

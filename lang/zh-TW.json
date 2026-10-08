@@ -2569,5 +2569,6 @@
   "font.tooltipSize": "懸浮提示字級",
   "font.tooltipSizeHint": "用於桌面、Dock、狀態列、元件及拖曳提示。",
   "app.settings.category_format_hint": "副檔名用空格、逗號或分號分隔，例如 .jpg .png。",
-  "font.size": "字級"
+  "font.size": "字級",
+  "app.settings.software_desktop_hotkey": "使用快捷鍵切換軟體桌面與原生桌面"
 }

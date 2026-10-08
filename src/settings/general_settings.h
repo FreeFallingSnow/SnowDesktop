@@ -26,6 +26,9 @@ struct GeneralSettings
     // not serialized into SnowDesktop.general.json.
     bool autoStartEnabled = false;
     bool softwareDesktopEnabled = true;
+    bool softwareDesktopHotkeyEnabled = false;
+    UINT softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_ALT;
+    UINT softwareDesktopHotkeyVirtualKey = 'S';
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
     // The shortcut toggles temporary desktop/Dock passthrough; only this

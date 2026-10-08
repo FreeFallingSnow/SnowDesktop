@@ -2569,5 +2569,6 @@
   "font.tooltipSize": "Tooltip font size",
   "font.tooltipSizeHint": "Used for desktop, Dock, status bar, widget and drag hints.",
   "app.settings.category_format_hint": "Separate extensions with spaces, commas or semicolons, for example .jpg .png.",
-  "font.size": "Font size"
+  "font.size": "Font size",
+  "app.settings.software_desktop_hotkey": "Switch between Software Desktop and Windows desktop with a shortcut"
 }

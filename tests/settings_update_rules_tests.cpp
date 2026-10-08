@@ -56,6 +56,18 @@ int main()
     using snowdesktop::settings_update_rules::IsNavigationShortcutOnlyCommit;
 
     GeneralSettings general;
+    auto desktopShortcut = general;
+    desktopShortcut.softwareDesktopHotkeyEnabled = true;
+    Check(IsGeneralShortcutOnlyCommit(general, desktopShortcut),
+        "enabling the desktop switch registers shortcuts without rebuilding desktop containers");
+    desktopShortcut = general;
+    desktopShortcut.softwareDesktopHotkeyModifiers = MOD_SHIFT | MOD_ALT;
+    desktopShortcut.softwareDesktopHotkeyVirtualKey = 'Q';
+    Check(IsGeneralShortcutOnlyCommit(general, desktopShortcut),
+        "editing the desktop switch chord uses the shortcut-only settings update");
+    desktopShortcut.softwareDesktopEnabled = false;
+    Check(!IsGeneralShortcutOnlyCommit(general, desktopShortcut),
+        "a simultaneous desktop visibility edit still applies presentation changes");
     GeneralSettings generalHotkey = general;
     generalHotkey.pageNavigationPreviousVirtualKey = VK_LEFT;
     Check(IsGeneralShortcutOnlyCommit(general, generalHotkey),

@@ -2569,5 +2569,6 @@
   "font.tooltipSize": "도구 설명 글꼴 크기",
   "font.tooltipSizeHint": "바탕 화면, Dock, 상태 표시줄, 위젯 및 드래그 힌트에 사용됩니다.",
   "app.settings.category_format_hint": "확장자는 공백, 쉼표 또는 세미콜론으로 구분합니다. 예: .jpg .png.",
-  "font.size": "글자 크기"
+  "font.size": "글자 크기",
+  "app.settings.software_desktop_hotkey": "단축키로 소프트웨어 바탕 화면과 Windows 바탕 화면 전환"
 }

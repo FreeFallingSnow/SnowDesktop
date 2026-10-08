@@ -2569,5 +2569,6 @@
   "font.tooltipSize": "Tamanho da fonte das dicas",
   "font.tooltipSizeHint": "Usado nas dicas da área de trabalho, Dock, barra de status, componentes e arraste.",
   "app.settings.category_format_hint": "Separe as extensões com espaços, vírgulas ou ponto e vírgula, por exemplo .jpg .png.",
-  "font.size": "Tamanho da fonte"
+  "font.size": "Tamanho da fonte",
+  "app.settings.software_desktop_hotkey": "Alternar entre a área de trabalho do software e a do Windows com um atalho"
 }

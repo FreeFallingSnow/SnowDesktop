@@ -1,5 +1,6 @@
 #include "settings/settings_search_catalog.h"
 #include "app/app.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "ui/menu/modern_menu.h"
 #include "system/controls/system_control_prompt.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
@@ -729,6 +730,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartRecycleBinWatcher();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
+    snowdesktop::SoftwareDesktopHotkey().Apply(controlHwnd_, generalSettings_);
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();
 

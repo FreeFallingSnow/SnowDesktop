@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "desktop/desktop_keyboard_rules.h"
@@ -14,6 +15,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    snowdesktop::SoftwareDesktopHotkey().Unregister();
     dataCleanupWorker_.Stop();
     if(systemDataProvider_)systemDataProvider_->Controls()->SetWake({});
     systemPanel_.reset();

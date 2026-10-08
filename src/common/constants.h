@@ -315,6 +315,7 @@ constexpr int kQuickNavigationHotkeyId = 101;
 constexpr int kFloatingDockHotkeyId = 102;
 constexpr int kDesktopPassthroughHotkeyId = 103;
 constexpr int kSettingsHotkeyProbeId = 104;
+constexpr int kSoftwareDesktopHotkeyId = 105;
 // DoDragDrop owns a nested message loop, so the waitable animation timer in
 // the outer application pump needs a WM_TIMER bridge while a local drag is
 // visiting another process.

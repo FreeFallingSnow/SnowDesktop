@@ -202,6 +202,7 @@ public:
         FloatingDock,
         PagePrevious,
         PageNext,
+        SoftwareDesktop,
     };
 
     enum class Action : std::uint8_t

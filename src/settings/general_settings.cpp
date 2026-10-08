@@ -81,6 +81,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     bool val = false;
     if (ReadBoolField(text, "softwareDesktopEnabled", val))
         settings.softwareDesktopEnabled = val;
+    if (ReadBoolField(text, "softwareDesktopHotkeyEnabled", val))
+        settings.softwareDesktopHotkeyEnabled = val;
     if (ReadBoolField(text, "demoModeEnabled", val))
         settings.demoModeEnabled = val;
     if (ReadBoolField(text, "doubleClickHideDesktop", val))
@@ -96,6 +98,12 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     if (ReadBoolField(text, "contextMenuHidePageManagement", val))
         settings.contextMenuHidePageManagement = val;
     int hotkeyValue = 0;
+    if (ReadIntField(text, "softwareDesktopHotkeyModifiers", hotkeyValue))
+        settings.softwareDesktopHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN);
+    if (ReadIntField(text, "softwareDesktopHotkeyVirtualKey", hotkeyValue) &&
+        hotkeyValue >= 0 && hotkeyValue <= 0xff)
+        settings.softwareDesktopHotkeyVirtualKey = static_cast<UINT>(hotkeyValue);
     if (ReadIntField(text, "desktopPassthroughHotkeyModifiers",
         hotkeyValue))
     {
@@ -237,6 +245,12 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "  \"animationOnBattery\": " << (settings.animationOnBattery ? "true" : "false") << ",\n";
     file << "  \"softwareDesktopEnabled\": "
          << (settings.softwareDesktopEnabled ? "true" : "false") << ",\n";
+    file << "  \"softwareDesktopHotkeyEnabled\": "
+         << (settings.softwareDesktopHotkeyEnabled ? "true" : "false") << ",\n";
+    file << "  \"softwareDesktopHotkeyModifiers\": "
+         << settings.softwareDesktopHotkeyModifiers << ",\n";
+    file << "  \"softwareDesktopHotkeyVirtualKey\": "
+         << settings.softwareDesktopHotkeyVirtualKey << ",\n";
     file << "  \"demoModeEnabled\": "
          << (settings.demoModeEnabled ? "true" : "false") << ",\n";
     file << "  \"doubleClickHideDesktop\": " << (settings.doubleClickHideDesktop ? "true" : "false") << ",\n";

@@ -2569,5 +2569,6 @@
   "font.tooltipSize": "ツールチップの文字サイズ",
   "font.tooltipSizeHint": "デスクトップ、Dock、ステータスバー、ウィジェット、ドラッグ時のヒントに使用します。",
   "app.settings.category_format_hint": "拡張子はスペース、コンマ、セミコロンで区切ります。例：.jpg .png。",
-  "font.size": "文字サイズ"
+  "font.size": "文字サイズ",
+  "app.settings.software_desktop_hotkey": "ショートカットキーでソフトウェアデスクトップと Windows デスクトップを切り替える"
 }

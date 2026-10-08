@@ -199,6 +199,12 @@ int main()
     const auto find = [&](std::string_view id) {return std::find_if(catalog.staticSettings.begin(),catalog.staticSettings.end(),[&](const auto& descriptor) {return descriptor.focusId == id;});};
     Check(find("personalization.savedThemes")->page == SettingsPage::ThemeManager,
         "theme management search targets the independent page");
+    for (const auto focus : {"desktop.softwareDesktopHotkey", "desktop.softwareDesktopHotkey.hotkey"})
+    {
+        const auto entry = find(focus);
+        Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::Desktop,
+            "desktop switching search results open the Desktop page with a stable focus target");
+    }
     for (const auto focus : {"personalization.font", "personalization.tooltipFontSize"})
     {
         const auto entry = find(focus);
