@@ -845,6 +845,8 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 {
+    const bool rightDrop = rightButtonItemDrag_;
+    if (rightDrop && (wp & MK_RBUTTON) == 0) return;
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
@@ -1356,8 +1358,22 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         return;
     }
 
+    if (rightDrop)
+    {
+        ResolveCurrentDragTargetAt(upPoint);
+        DWORD releaseKeyState = MK_RBUTTON;
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) releaseKeyState |= MK_CONTROL;
+        if (GetAsyncKeyState(VK_MENU) & 0x8000) releaseKeyState |= MK_ALT;
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) releaseKeyState |= MK_SHIFT;
+        if (!ChooseRightDragDropAction(upPoint, releaseKeyState,
+                DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, false))
+            goto cleanup;
+        wp = releaseKeyState;
+        dropPreviewMods = static_cast<int>(releaseKeyState & (MK_CONTROL | MK_ALT | MK_SHIFT));
+    }
+
     // Dock 项轻微拖动后仍落回原项时，按单击处理而不是吞掉本次操作。
-    if (HandleDockClickRelease(upPoint))
+    if (!rightDrop && HandleDockClickRelease(upPoint))
         goto cleanup;
 
     if (IsExternalDropWindowAt(upPoint))
@@ -1374,7 +1390,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         goto cleanup;
     }
 
-    if (TryCommitDockWidgetPairDrop(upPoint,
+    if (TryCommitDockWidgetPairDrop(upPoint, rightDrop ? dropPreviewMods :
             static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)) |
             ((GetAsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
         goto cleanup;
@@ -1403,13 +1419,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         goto cleanup;
     }
 
-    dropPreviewMods = 0;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
-        dropPreviewMods |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)
-        dropPreviewMods |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
-        dropPreviewMods |= MK_SHIFT;
+    if (!rightDrop)
+    {
+        dropPreviewMods = 0;
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) dropPreviewMods |= MK_CONTROL;
+        if (GetAsyncKeyState(VK_MENU) & 0x8000) dropPreviewMods |= MK_ALT;
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) dropPreviewMods |= MK_SHIFT;
+    }
     commitVisualBeforeDrop =
         dragSession_.TargetRegion() == HitRegion::Handoff;
     if (!commitVisualBeforeDrop)
@@ -1564,7 +1580,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                     goto cleanup;
                 }
             }
-            DWORD shellKeyState = MK_LBUTTON;
+            DWORD shellKeyState = rightDrop && (wp & MK_RBUTTON) ? MK_RBUTTON : MK_LBUTTON;
             if (mods & MK_CONTROL) shellKeyState |= MK_CONTROL;
             if (mods & MK_ALT) shellKeyState |= MK_ALT;
             if (mods & MK_SHIFT) shellKeyState |= MK_SHIFT;

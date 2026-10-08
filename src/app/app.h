@@ -1850,9 +1850,13 @@ private:
     /** @brief 处理中键释放，完成组件移动。 */
     void OnMiddleButtonUpAt(WPARAM wp, POINT point);
     /** @brief 记录鼠标右键按下所属的 Dock 输入宿主，并取消边缘手势候选。 */
-    void OnRightButtonDown(PersistentDockHost* dockHost);
+    void OnRightButtonDown(PersistentDockHost* dockHost,
+        POINT point = POINT{LONG_MIN, LONG_MIN});
     /** @brief 处理鼠标右键释放消息（弹出上下文菜单）。 @param lp LPARAM */
     void OnRightButtonUp(LPARAM lp);
+    int PointerGestureVirtualKey() const;
+    bool ChooseRightDragDropAction(POINT point, DWORD& keyState,
+        DWORD allowedEffects, bool externalSource);
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
     bool OnKeyDown(WPARAM key, bool repeated = false);
     /** @brief 在桌面根输入上下文中处理可配置的本地翻页按键。 */
@@ -4130,6 +4134,8 @@ private:
     // 组件统一调度令牌：token -> widgetId（manifest 刷新与命名定时器共用）
     std::unordered_map<UINT_PTR, std::wstring> widgetTimerIds_;
     bool mouseDown_ = false;
+    bool rightButtonItemDrag_ = false;
+    bool suppressRightButtonUp_ = false;
     // Native OLE hand-off releases capture synchronously while retaining the
     // drag session. Its WM_CAPTURECHANGED must not be treated as an abort.
     unsigned expectedCaptureReleaseDepth_ = 0;

@@ -49,9 +49,12 @@ constexpr bool ShouldSampleLivePointer(
 constexpr bool IsPointerGestureButtonDown(
     bool middleButtonWidgetMove,
     bool primaryButtonDown,
-    bool middleButtonDown)
+    bool middleButtonDown,
+    bool rightButtonItemDrag = false,
+    bool rightButtonDown = false)
 {
-    return middleButtonWidgetMove ? middleButtonDown : primaryButtonDown;
+    return middleButtonWidgetMove ? middleButtonDown :
+        rightButtonItemDrag ? rightButtonDown : primaryButtonDown;
 }
 
 constexpr bool IsMarqueePointerGesture(

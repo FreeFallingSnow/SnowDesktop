@@ -333,7 +333,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const bool primaryButtonDown =
             latencySensitivePointerActive &&
             !middleButtonWidgetMove_ &&
-            (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            (GetAsyncKeyState(rightButtonItemDrag_ ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
         const bool middleButtonDown =
             latencySensitivePointerActive &&
             middleButtonWidgetMove_ &&
@@ -552,14 +552,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
         if (IsPointInUsageGuide({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return 0;
-        OnRightButtonDown(nullptr);
+        OnRightButtonDown(nullptr, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
         return 0;
     case WM_RBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        if (IsPointInUsageGuide(pt))
+        if (IsPointInUsageGuide(pt) && !rightButtonItemDrag_ && !suppressRightButtonUp_)
         return 0;
-        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            !rightButtonItemDrag_ && !suppressRightButtonUp_)
         {
             ShowHiddenHint();
             return 0;

@@ -1249,7 +1249,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
         const bool primaryButtonDown =
-            (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) & 0x8000) != 0;
+            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         POINT point{};
         if (snowdesktop::drag_input_rules::
                 ShouldSampleFloatingWindowPointer(
@@ -1379,7 +1379,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
-        OnRightButtonDown(nullptr);
+        OnRightButtonDown(nullptr, desktopPoint());
         return 0;
     case WM_RBUTTONUP:
         OnRightButtonUp(desktopLParam());

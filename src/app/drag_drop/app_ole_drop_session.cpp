@@ -545,6 +545,24 @@ HRESULT DesktopApp::HandleOleDrop(
     navAutoFlipTick_ = 0;
 
     POINT clientPoint = ScreenPointToClient(point);
+    if (keyState & MK_RBUTTON)
+    {
+        ResolveCurrentDragTargetAt(clientPoint);
+        if (!ChooseRightDragDropAction(clientPoint, keyState, *effect,
+                !dragDropController_.IsSelfDragActive()))
+        {
+            if (dragDropController_.IsSelfDragActive())
+                dragDropController_.MarkSelfDragReturned();
+            else
+                dragDropController_.EndExternalDrag();
+            mouseDown_ = false;
+            mouseDownHit_ = nullptr;
+            ReleaseCapturePreservingPointerState();
+            EndDragSession();
+            *effect = DROPEFFECT_NONE;
+            return S_OK;
+        }
+    }
     if (HitTestLuaFileDropTarget(clientPoint) < widgets_.size())
     {
         const bool self = dragDropController_.IsSelfDragActive();
@@ -2282,7 +2300,8 @@ HRESULT DesktopApp::HandleOleQueryContinueDrag(
         escapePressed != FALSE,
         snowdesktop::drag_input_rules::IsPointerGestureButtonDown(
             middleButtonWidgetMove_, (keyState & MK_LBUTTON) != 0,
-            (keyState & MK_MBUTTON) != 0),
+            (keyState & MK_MBUTTON) != 0, rightButtonItemDrag_,
+            (keyState & MK_RBUTTON) != 0),
         pointerOnDesktopSurface);
 }
 

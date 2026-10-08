@@ -50,6 +50,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -250,6 +251,7 @@ public:
         lastPoint = point;
         incomingDropEffect = effect ? *effect : DROPEFFECT_NONE;
         if (effect) *effect = dropEffect;
+        if (onDrop) onDrop();
         return dropResult;
     }
 
@@ -281,6 +283,7 @@ public:
     DWORD incomingDropEffect = DROPEFFECT_NONE;
     DWORD dropEffect = DROPEFFECT_COPY;
     HRESULT dropResult = S_OK;
+    std::function<void()> onDrop;
 };
 
 Item* NonOwningItemToken()
@@ -599,9 +602,16 @@ void TestDragSessionVisualVisibilityFollowsOleOwnership()
             session.HasContext() &&
             session.StaticSceneRevision() != activeRevision,
         "drop execution must cross an inactive revision barrier while preserving commit context");
+    Check(session.ResumeAfterDropDecision() && session.IsActive() &&
+            !session.IsVisualVisible() && session.Items().size() == 1 &&
+            session.CurrentPoint().x == 10 && session.CurrentPoint().y == 20,
+        "accepting a right-drag menu choice must retain the release context without reviving its ghost");
+    session.DeactivateForDrop();
     session.End();
     Check(!session.IsVisualVisible() && !session.HasContext(),
         "ending a drag must clear both visual and commit state");
+    Check(!session.ResumeAfterDropDecision() && !session.IsActive(),
+        "a cancelled or invalidated drop must never be resumed by a late menu choice");
 }
 
 void TestListDragCanAnchorVisualAndLandingToPointer()
@@ -2141,8 +2151,9 @@ void TestOleAdapterOwnsComBoundary()
 
 void TestOleDropCompletionBoundaryMatrix()
 {
-    // Exercise IDropTarget::Drop itself, including negative results. The handler
-    // is a fixture: this does not validate DesktopApp's file-operation dispatch.
+    // Exercise the production OLE boundary after the initiating button is
+    // released. A fixture observes dispatch; actual Shell UI remains a runtime
+    // check. Losing this button caused the unwanted Open with / Cancel menu.
     struct Completion { HRESULT result; DWORD effect; };
     const std::array outcomes{
         Completion{S_OK, DROPEFFECT_COPY}, Completion{S_OK, DROPEFFECT_MOVE},
@@ -2150,6 +2161,7 @@ void TestOleDropCompletionBoundaryMatrix()
         Completion{S_FALSE, DROPEFFECT_NONE}, Completion{E_ABORT, DROPEFFECT_NONE},
         Completion{E_FAIL, DROPEFFECT_NONE},
     };
+    for (const DWORD button : {DWORD{MK_LBUTTON}, DWORD{MK_RBUTTON}})
     for (const auto& outcome : outcomes)
     {
         for (const DWORD allowed : {DWORD{DROPEFFECT_NONE}, DWORD{DROPEFFECT_COPY},
@@ -2163,16 +2175,17 @@ void TestOleDropCompletionBoundaryMatrix()
             auto* dataObject = reinterpret_cast<IDataObject*>(
                 static_cast<std::uintptr_t>(1));
             DWORD effect = allowed;
-            adapter->DragEnter(dataObject, MK_LBUTTON, {-2560, -240}, &effect);
+            adapter->DragEnter(dataObject, button | MK_ALT, {-2560, -240}, &effect);
+            adapter->DragOver(button | MK_SHIFT, {-2501, 432}, &effect);
             effect = allowed;
             const auto result = adapter->Drop(dataObject, MK_CONTROL | MK_SHIFT,
                 {-2501, 432}, &effect);
             Check(result == outcome.result && effect == outcome.effect &&
                     handler.dropCount == 1 && handler.incomingDropEffect == allowed &&
                     handler.lastDataObject == dataObject &&
-                    handler.lastKeyState == (MK_CONTROL | MK_SHIFT) &&
+                    handler.lastKeyState == (button | MK_CONTROL | MK_SHIFT) &&
                     handler.lastPoint.x == -2501 && handler.lastPoint.y == 432,
-                "Drop must forward allowed effects, release coordinates and final outcome exactly once");
+                "Drop must retain the initiating button and latest modifiers while forwarding effects and outcome once");
             adapter->Detach();
             Check(adapter->Drop(dataObject, 0, {}, &effect) == E_UNEXPECTED &&
                     adapter->DragLeave() == E_UNEXPECTED && handler.dropCount == 1,
@@ -2187,6 +2200,49 @@ void TestOleDropCompletionBoundaryMatrix()
     adapter->DragLeave();
     Check(handler.dropCount == 0,
         "leaving a target must not commit a drop");
+    adapter->Release();
+}
+
+void TestOleDropButtonStateEndsWithEachGesture()
+{
+    FakeOleDragDropHandler handler;
+    auto* adapter = new OleDragDropAdapter(&handler);
+    DWORD effect = DROPEFFECT_COPY;
+
+    adapter->DragEnter(nullptr, MK_RBUTTON, {}, &effect);
+    adapter->DragLeave();
+    adapter->DragEnter(nullptr, MK_LBUTTON, {}, &effect);
+    adapter->Drop(nullptr, 0, {}, &effect);
+    Check(handler.lastKeyState == MK_LBUTTON,
+        "a cancelled right drag must not turn the next left drop into an action menu");
+    adapter->Drop(nullptr, MK_SHIFT, {}, &effect);
+    Check(handler.lastKeyState == MK_SHIFT,
+        "a completed drop must consume its button state even when the adapter is reused");
+
+    adapter->DragEnter(nullptr, MK_RBUTTON, {}, &effect);
+    adapter->DragEnter(nullptr, MK_LBUTTON, {}, &effect);
+    adapter->Drop(nullptr, MK_CONTROL, {}, &effect);
+    Check(handler.lastKeyState == (MK_LBUTTON | MK_CONTROL),
+        "a new enter on a shared desktop/Dock adapter must replace the prior gesture's button");
+
+    adapter->DragEnter(nullptr, 0, {}, &effect);
+    adapter->DragOver(MK_RBUTTON | MK_ALT, {}, &effect);
+    adapter->DragOver(0, {}, &effect);
+    adapter->Drop(nullptr, MK_SHIFT, {}, &effect);
+    Check(handler.lastKeyState == (MK_RBUTTON | MK_SHIFT),
+        "the first observed drag button must survive a button-free over and retain release modifiers");
+
+    handler.onDrop = [adapter] {
+        DWORD nestedEffect = DROPEFFECT_COPY;
+        adapter->DragEnter(nullptr, MK_RBUTTON, {}, &nestedEffect);
+    };
+    adapter->DragEnter(nullptr, MK_LBUTTON, {}, &effect);
+    adapter->Drop(nullptr, 0, {}, &effect);
+    handler.onDrop = {};
+    adapter->Drop(nullptr, MK_CONTROL, {}, &effect);
+    Check(handler.lastKeyState == (MK_RBUTTON | MK_CONTROL),
+        "a drag started by a reentrant Shell callback must survive the outer drop's return");
+
     adapter->Release();
 }
 
@@ -3274,6 +3330,7 @@ int wmain(int argc, wchar_t** argv)
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestOleDropCompletionBoundaryMatrix();
+    TestOleDropButtonStateEndsWithEachGesture();
     TestTrayCallbackClassification();
     TestTrayNotificationSourceAndRouting();
     TestTrayNotificationRegistrationPreservesPreferences();

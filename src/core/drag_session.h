@@ -465,6 +465,16 @@ public:
         InvalidateStaticScene();
     }
 
+    /** @brief 恢复菜单决策后的目标解析与提交，不重新显示拖拽虚影。 */
+    bool ResumeAfterDropDecision()
+    {
+        if (!hasContext_) return false;
+        active_ = true;
+        visualVisible_ = false;
+        InvalidateStaticScene();
+        return true;
+    }
+
     /**
      * @brief 使当前静态场景版本号失效（递增版本号）
      *

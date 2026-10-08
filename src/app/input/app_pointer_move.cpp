@@ -589,6 +589,8 @@ void DesktopApp::OnMouseMoveAt(
             PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
+            if (rightButtonItemDrag_)
+                suppressRightButtonUp_ = true;
             if (hwnd_ && IsWindow(hwnd_))
             {
                 SetTimer(
@@ -964,7 +966,7 @@ void DesktopApp::OnMouseMoveAt(
                             resumePoint);
                     const bool primaryButtonDown =
                         nativeResumeRequested &&
-                        (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) &
+                        (GetAsyncKeyState(PointerGestureVirtualKey()) &
                             0x8000) != 0;
                     const auto unwindAction =
                         snowdesktop::ole_drag_rules::
@@ -1044,6 +1046,8 @@ void DesktopApp::OnMouseMoveAt(
                         // Commit exactly once at the live native point without
                         // reacquiring capture or flashing the custom ghost.
                         if (middleButtonWidgetMove_) OnMiddleButtonUpAt(0, resumePoint);
+                        else if (rightButtonItemDrag_)
+                            OnRightButtonUp(MAKELPARAM(resumePoint.x, resumePoint.y));
                         else OnLeftButtonUpAt(0, resumePoint);
                     }
                     PresentPointerInteractionFrame();

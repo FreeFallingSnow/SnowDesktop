@@ -445,6 +445,7 @@ void DesktopApp::ClearPopupDragTarget()
  */
 void DesktopApp::EndDragSession()
 {
+    rightButtonItemDrag_ = false;
     widgetPairTargetIndex_ = static_cast<size_t>(-1);
     widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
     if (hwnd_ && IsWindow(hwnd_))
@@ -527,6 +528,7 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    rightButtonItemDrag_ = false;
     if (auto* view = GetCategorizedPopupView())
     {
         view->EndCategoryTabDrag(false);

@@ -1123,6 +1123,10 @@ void TestDragInputSampling()
             !dragInputRules::IsPointerGestureButtonDown(
                 true, true, false),
         "primary gestures must follow the left button while middle-button widget moves preserve their own release barrier");
+    Check(dragInputRules::IsPointerGestureButtonDown(false, false, false, true, true) &&
+        !dragInputRules::IsPointerGestureButtonDown(false, true, false, true, false) &&
+        dragInputRules::IsPointerGestureButtonDown(true, false, true, true, false),
+        "right drags must follow right-button release without borrowing the left button, while middle gestures retain precedence");
     Check(
         dragInputRules::IsMarqueePointerGesture(
             true, false, true, true, true,
