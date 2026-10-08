@@ -239,6 +239,16 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     }
     if (snowdesktop::performance::Enabled())
     {
+        if (host.container)
+        {
+            const RECT base = host.container->GetBounds();
+            const RECT visual = host.container->GetVisualPanelBounds(lastMousePoint_);
+            const bool vertical = dockSettings_.position == DockPosition::Left ||
+                dockSettings_.position == DockPosition::Right;
+            snowdesktop::performance::Value("dock", "floating.panel_scale", diagnosticOwner,
+                vertical ? static_cast<double>(visual.right - visual.left) / std::max<LONG>(1, base.right - base.left)
+                    : static_cast<double>(visual.bottom - visual.top) / std::max<LONG>(1, base.bottom - base.top), revision);
+        }
         snowdesktop::performance::Value("dock", "floating.frame_ready", diagnosticOwner, 1, revision);
         snowdesktop::performance::Value("dock", "floating.topmost", diagnosticOwner,
             snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd) ? 1 : 0, revision);
@@ -437,6 +447,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     }
     case WM_LBUTTONDOWN:
     {
+        snowdesktop::performance::Scope clickScope("dock.input", "button.down");
         POINT screenPoint{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
         ClientToScreen(hwnd, &screenPoint);
         if (DismissMergedDockBackground(host, desktopPoint(), screenPoint)) return 0;
@@ -455,6 +466,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     }
     case WM_LBUTTONUP:
+    {
+        snowdesktop::performance::Scope clickScope("dock.input", "button.up");
         SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
@@ -464,6 +477,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingPersistentDockHost_ = nullptr;
         UpdateFloatingDockWindowBounds(host);
         return 0;
+    }
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
         if (msg == WM_CANCELMODE) CancelRenameClick();

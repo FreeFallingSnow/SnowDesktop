@@ -207,17 +207,18 @@ void DesktopApp::OnMouseMoveAt(
     bool* dragPreviewSynced)
 {
     // Lua hover invalidations and native chrome can request the same child
-    // several times in one move. Draw the final state once, before returning
-    // to input dispatch; nested paints must not flush an intermediate state.
+    // several times in one move. Merge their final state and subsequent
+    // passive samples within a bounded presentation interval.
     struct WidgetPointerBatch
     {
         DesktopApp& app;
         bool previous;
+        bool passive = false;
         ~WidgetPointerBatch()
         {
             app.desktopWidgetPointerBatchActive_ = previous;
             if (!previous && !app.pendingDesktopWidgetCompositions_.empty())
-                (void)app.PresentQueuedDesktopWidgetComposition();
+                (void)app.PresentQueuedDesktopWidgetComposition(passive);
         }
     } widgetPointerBatch{ *this, desktopWidgetPointerBatchActive_ };
     // Only passive hover is a short transaction. A pressed move may enter
@@ -234,6 +235,7 @@ void DesktopApp::OnMouseMoveAt(
             dragDropController_.IsTransportActive(), GetCapture() != nullptr);
     desktopWidgetPointerBatchActive_ =
         desktopWidgetPointerBatchActive_ || passivePointerMove;
+    widgetPointerBatch.passive = passivePointerMove;
     renameClickController_.Move(current, GetSystemMetrics(SM_CXDRAG),
         GetSystemMetrics(SM_CYDRAG));
     if (dragPreviewSynced)

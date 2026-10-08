@@ -971,6 +971,11 @@ void TestDesktopHoverDeactivation()
             !hoverRules::CanCoalescePassiveMouseMoves(true, false, true, false) &&
             !hoverRules::CanCoalescePassiveMouseMoves(true, false, false, true),
         "passive queue coalescing must exclude pressed, captured and OLE input");
+    Check(!hoverRules::ShouldProbeMouseMoveQueue(false, true, false) &&
+            hoverRules::ShouldProbeMouseMoveQueue(false, true, true) &&
+            hoverRules::ShouldProbeMouseMoveQueue(true, false, false) &&
+            !hoverRules::ShouldProbeMouseMoveQueue(false, false, true),
+        "passive physical input must avoid redundant retrieval while posted moves and active gestures retain compaction");
     Check(
         hoverRules::ShouldPresentRetainedMouseLeave(
             true, true) &&

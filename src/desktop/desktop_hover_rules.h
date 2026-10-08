@@ -70,6 +70,15 @@ constexpr bool CanCoalescePassiveMouseMoves(
         !transportActive && !captureActive;
 }
 
+constexpr bool ShouldProbeMouseMoveQueue(
+    bool nativeGesture, bool passiveHover, bool postedWorkPending)
+{
+    // User32 already merges physical mouse movement on retrieval. A second
+    // PeekMessage can generate another move (and hit testing) instead of
+    // finding an older sample. Explicitly posted work still needs compaction.
+    return nativeGesture || (passiveHover && postedWorkPending);
+}
+
 constexpr bool ShouldPresentRetainedMouseLeave(
     bool passiveHover,
     bool pointerPositionChanged)

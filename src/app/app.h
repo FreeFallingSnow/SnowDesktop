@@ -2864,7 +2864,7 @@ private:
     void ResetWidgetMarqueeComposition();
     bool QueueDesktopWidgetComposition(
         const std::wstring& widgetId);
-    bool PresentQueuedDesktopWidgetComposition();
+    bool PresentQueuedDesktopWidgetComposition(bool passivePointerFrame = false);
     bool FlushPendingDesktopWidgetComposition();
     bool HasDesktopWidgetComposition(
         const std::wstring& widgetId) const;
@@ -3497,6 +3497,8 @@ private:
     bool desktopWidgetCompositionFailurePending_ = false;
     bool desktopWidgetCompositionDrawInProgress_ = false;
     bool desktopWidgetPointerBatchActive_ = false;
+    ULONGLONG desktopWidgetLastPointerPresentTick_ = 0;
+    snowdesktop::UiScheduleToken desktopWidgetHoverTailToken_ = 0;
     bool hiddenWidgetSurfaceMaintenancePending_ = false;
     std::uint64_t widgetSurfaceReclaimCount_ = 0;
     std::uint64_t widgetSurfaceReclaimedBytes_ = 0;

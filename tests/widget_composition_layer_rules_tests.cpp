@@ -206,6 +206,12 @@ int main(int argc, char** argv)
             rules::ShouldDeferWidgetSurfaceDraw(false, false, true) &&
             rules::ShouldDeferWidgetSurfaceDraw(false, false, false, true),
         "a widget child surface must wait for host BeginDraw and the final state of a pointer batch");
+    Check(rules::PassivePointerFrameDelay(100, 0) == 0 &&
+            rules::PassivePointerFrameDelay(101, 100) == 7 &&
+            rules::PassivePointerFrameDelay(107, 100) == 1 &&
+            rules::PassivePointerFrameDelay(108, 100) == 0 &&
+            rules::PassivePointerFrameDelay(99, 100) == 0,
+        "passive hover must merge intervening draws and still present the last sample at an 8 ms deadline");
     Check(rules::SurfaceIncludesDesktop("") &&
             rules::SurfaceIncludesDesktop("desktop") &&
             !rules::SurfaceIncludesDesktop("panel") &&

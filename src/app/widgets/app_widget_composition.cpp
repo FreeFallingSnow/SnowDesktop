@@ -123,7 +123,7 @@ bool DesktopApp::QueueDesktopWidgetComposition(
     return PresentQueuedDesktopWidgetComposition();
 }
 
-bool DesktopApp::PresentQueuedDesktopWidgetComposition()
+bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)
 {
     if (snowdesktop::widget_composition_layer_rules::
             ShouldDeferWidgetSurfaceDraw(
@@ -132,6 +132,28 @@ bool DesktopApp::PresentQueuedDesktopWidgetComposition()
                 floatingPopupCompositionPaintInProgress_,
                 desktopWidgetPointerBatchActive_))
         return true;
+    if (passivePointerFrame && !pendingDesktopWidgetCompositions_.empty())
+    {
+        const UINT delay = snowdesktop::widget_composition_layer_rules::
+            PassivePointerFrameDelay(GetTickCount64(), desktopWidgetLastPointerPresentTick_);
+        if (delay != 0)
+        {
+            if (!desktopWidgetHoverTailToken_)
+                desktopWidgetHoverTailToken_ = uiAnimationScheduler_.ScheduleOnce(
+                    delay, [this](snowdesktop::UiScheduleToken token) {
+                        if (desktopWidgetHoverTailToken_ != token) return;
+                        desktopWidgetHoverTailToken_ = 0;
+                        (void)PresentQueuedDesktopWidgetComposition();
+                    });
+            // A scheduler failure must fall through to the synchronous path.
+            if (desktopWidgetHoverTailToken_) return true;
+        }
+    }
+    if (desktopWidgetHoverTailToken_)
+    {
+        uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
+        desktopWidgetHoverTailToken_ = 0;
+    }
     if (FlushPendingDesktopWidgetComposition() &&
         FlushPendingWidgetMarqueeComposition() &&
         SyncWidgetMarqueeCompositionVisibility() &&
@@ -148,6 +170,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
 {
     if (graphicsDeviceRecovery_.Pending()) return false;
     if (desktopWidgetPointerBatchActive_) return true;
+    if (desktopWidgetHoverTailToken_) return true;
     if (pendingDesktopWidgetCompositions_.empty())
     {
         if (SyncDesktopWidgetCompositionZOrder())
@@ -163,6 +186,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         return false;
     }
 
+    desktopWidgetLastPointerPresentTick_ = GetTickCount64();
     auto pending = std::move(pendingDesktopWidgetCompositions_);
     snowdesktop::performance::Scope performanceScope("composition.shared", "widgets.flush");
     snowdesktop::performance::Value("composition.shared", "batch_widget_count", {},
@@ -781,6 +805,10 @@ bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
 
 void DesktopApp::ResetDesktopWidgetComposition()
 {
+    if (desktopWidgetHoverTailToken_)
+        uiAnimationScheduler_.Cancel(desktopWidgetHoverTailToken_);
+    desktopWidgetHoverTailToken_ = 0;
+    desktopWidgetLastPointerPresentTick_ = 0;
     // Marquee visuals belong to these parents. Retire their cache and queued
     // submissions even when only WM_SIZE/topology (not the device) is reset;
     // otherwise a later draw reuses children detached from the visible tree.

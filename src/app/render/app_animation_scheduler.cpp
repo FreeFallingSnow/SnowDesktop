@@ -521,6 +521,7 @@ void DesktopApp::CancelUiAnimationFrame()
         &pageNotifyAnimationFrameToken_,
         &pointerRecoveryFrameToken_,
         &floatingDockHoverTailToken_,
+        &desktopWidgetHoverTailToken_,
     };
     for (snowdesktop::UiScheduleToken* track : tracks)
     {

@@ -66,6 +66,7 @@ void LogDelayedInputMessage(const MSG& message) noexcept try
     const DWORD now = GetTickCount();
     // MSG::time and GetTickCount share the wrapping 32-bit millisecond clock.
     const DWORD age = now - message.time;
+    snowdesktop::performance::Value("desktop.input", "button.queue_age_ms", {}, age);
     if (age <= 250) return;
     static bool logged = false;
     static DWORD lastLog = 0;
@@ -1733,7 +1734,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     "desktop.input", "mouse.coalesce");
                 const std::size_t coalesced = snowdesktop::drag_input_rules::
                     CoalesceQueuedMouseMoves(
-                        latencySensitivePointerActive || passivePointerMove,
+                        snowdesktop::desktop_hover_rules::ShouldProbeMouseMoveQueue(
+                            latencySensitivePointerActive, passivePointerMove,
+                            (HIWORD(GetQueueStatus(QS_ALLPOSTMESSAGE)) & QS_ALLPOSTMESSAGE) != 0),
                         pointerMessageSurface,
                         msg,
                         [](MSG& next) {
