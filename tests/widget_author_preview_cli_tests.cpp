@@ -1812,9 +1812,20 @@ return widget.define({
         "tooltip stays anchored to the date region regardless of pointer entry");
     Check(PixelAt(outside, 8, 68)[2] > 240,
         "outside the date region no tooltip covers the blue background");
-    const auto bubble = PixelAt(hovered, 8, 68);
-    Check(bubble[0] < 100 && bubble[1] < 100 && bubble[2] < 100,
+    // Popup themes can be translucent. Require a substantial painted area
+    // and visible compositing, rather than the former hardcoded black fill.
+    const auto tooltipPainted = [&outside](const RgbaBitmap& candidate) {
+        const auto bubble = PixelAt(candidate, 8, 68);
+        const auto uncovered = PixelAt(outside, 8, 68);
+        const int colorDifference = std::abs(static_cast<int>(bubble[0]) - uncovered[0]) +
+            std::abs(static_cast<int>(bubble[1]) - uncovered[1]) +
+            std::abs(static_cast<int>(bubble[2]) - uncovered[2]);
+        return colorDifference > 40 && CountDifferingPixels(candidate, outside, RECT{4, 56, 160, 112}) > 500;
+    };
+    Check(tooltipPainted(hovered),
         "hovering an immediate date region paints the tooltip over its content");
+    Check(!tooltipPainted(outside),
+        "negative control rejects the same uncovered content as tooltip painting");
 }
 
 RECT PanelPixels(const RgbaBitmap& bitmap)
@@ -3006,7 +3017,7 @@ int wmain(int argc, wchar_t** argv) try
                 L"audio-spectrum";
         const auto [invalidExit, invalidJson] = Run(snowwidget, {
             L"preview", boundedSource.wstring(), invalidOutput.wstring(),
-            L"--rows", L"2", L"--host", host.wstring() });
+            L"--columns", L"1", L"--host", host.wstring() });
         Check(invalidExit != 0 &&
                 invalidJson.find("\"stage\":\"request.size\"") !=
                     std::string::npos &&

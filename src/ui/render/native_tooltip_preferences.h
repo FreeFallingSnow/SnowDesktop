@@ -7,7 +7,7 @@
 
 namespace snowdesktop
 {
-inline constexpr int kDefaultTooltipFontSize = 14;
+inline constexpr int kDefaultTooltipFontSize = 12;
 inline constexpr int kMinimumTooltipFontSize = 10;
 inline constexpr int kMaximumTooltipFontSize = 24;
 inline int NormalizeTooltipFontSize(int value)

@@ -17,8 +17,8 @@ namespace snowdesktop
 struct NativeTooltipLayoutOptions
 {
     float scale = 1.f;
-    float paddingX = 12.f, paddingY = 7.f;
-    float minimumWidth = 32.f, minimumHeight = 32.f;
+    float paddingXRatio = .85f, paddingYRatio = 1.f / 3.f;
+    float minimumWidth = 0.f, minimumHeight = 0.f;
     bool centered = false;
 };
 inline HRESULT CreateNativeTooltipTextFormat(IDWriteFactory* factory,
@@ -35,7 +35,7 @@ struct NativeTooltipTextLayout
     Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
     float width = 0;
     float height = 0;
-    float paddingX = 12.f, paddingY = 7.f;
+    float paddingX = 0.f, paddingY = 0.f;
 };
 inline HRESULT MeasureNativeTooltip(IDWriteFactory* factory, IDWriteTextFormat* format,
     std::wstring_view title, std::wstring_view body, float maximumWidth,
@@ -45,8 +45,11 @@ inline HRESULT MeasureNativeTooltip(IDWriteFactory* factory, IDWriteTextFormat* 
     if (!factory || !format || body.empty()) return E_INVALIDARG;
     maximumWidth = std::max(1.f, maximumWidth);
     maximumHeight = std::max(1.f, maximumHeight);
-    result.paddingX = std::min(options.paddingX * options.scale, maximumWidth * .25f);
-    result.paddingY = std::min(options.paddingY * options.scale, maximumHeight * .25f);
+    // Derive spacing from the actual format size, rounding in DIP before DPI
+    // scaling so popup and inline hosts retain the same font/padding ratio.
+    const float fontSize = format->GetFontSize() / options.scale;
+    result.paddingX = std::min(std::round(fontSize * options.paddingXRatio) * options.scale, maximumWidth * .25f);
+    result.paddingY = std::min(std::round(fontSize * options.paddingYRatio) * options.scale, maximumHeight * .25f);
     std::wstring content(title);
     if (!content.empty()) content.push_back(L'\n');
     content += body;

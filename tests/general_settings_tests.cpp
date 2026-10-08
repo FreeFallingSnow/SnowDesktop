@@ -242,7 +242,7 @@ void TestTooltipPresentation()
         reinterpret_cast<IUnknown**>(factory.GetAddressOf()));
     Check(SUCCEEDED(result), "create tooltip shaping factory");
     if (FAILED(result)) return;
-    for (const int size : {10, 14, 24})
+    for (const int size : {10, 12, 14, 24})
     for (const float scale : {1.f, 1.5f, 2.f})
     {
         snowdesktop::SetNativeTooltipPreferences(size, PersonalizationSettings::DarkPreset());
@@ -251,12 +251,15 @@ void TestTooltipPresentation()
         if (!format) continue;
         snowdesktop::NativeTooltipLayoutOptions options;
         options.scale = scale;
-        const auto tight = [scale](const snowdesktop::NativeTooltipTextLayout& measured) {
+        const auto tight = [scale, size](const snowdesktop::NativeTooltipTextLayout& measured) {
             DWRITE_TEXT_METRICS metrics{};
             if (!measured.layout || FAILED(measured.layout->GetMetrics(&metrics))) return false;
             const float left = measured.paddingX + metrics.left;
             const float right = measured.width - measured.paddingX - metrics.left - metrics.widthIncludingTrailingWhitespace;
-            return left >= 10.f * scale && right >= 10.f * scale && std::abs(left - right) <= 1.f;
+            const float readableGap = static_cast<float>(size) * .75f * scale;
+            const float compactGap = static_cast<float>(size) * scale + 1.f;
+            return left >= readableGap && right >= readableGap && left <= compactGap &&
+                right <= compactGap && std::abs(left - right) <= 1.f;
         };
         snowdesktop::NativeTooltipTextLayout measured;
         Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), {}, L"Move", 520.f * scale,
@@ -285,8 +288,9 @@ void TestTooltipPresentation()
                 "rich tooltip title and body both follow the shared font setting and DPI");
             DWRITE_TEXT_METRICS metrics{};
             measured.layout->GetMetrics(&metrics);
-            Check(measured.height >= metrics.height + 12.f * scale,
-                "larger tooltip text grows the panel rather than clipping against a fixed height");
+            const float verticalRatio = (measured.height - metrics.height) / (static_cast<float>(size) * scale);
+            Check(verticalRatio >= .55f && verticalRatio <= .85f,
+                "tooltip height grows with the font while keeping compact proportional vertical padding");
         }
         Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), {},
             L"Move this item to another page with the keyboard shortcut, or wait at the screen edge.",
@@ -348,7 +352,7 @@ int main(int argc, char** argv)
         GeneralSettings legacy;
         Check(LoadGeneralSettings(path.c_str(), legacy) && legacy.font.package == "system" && legacy.font.family.empty(),
             "older profiles default to system fonts without migration writes");
-        Check(legacy.tooltipFontSize == 14, "older profiles use the shared tooltip default without migration writes");
+        Check(legacy.tooltipFontSize == 12, "older profiles use the shared tooltip default without migration writes");
         std::error_code ec; std::filesystem::remove(path, ec);
     }
     if (argc > 1)
