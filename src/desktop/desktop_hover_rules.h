@@ -34,6 +34,14 @@ constexpr bool ShouldRetainHoverAcrossMouseLeave(
         pointerOnPairedBackdropWindow;
 }
 
+constexpr bool ShouldClearRejectedDesktopHover(
+    bool hoverPresent, bool pointerOnDockSurface, bool pointerInDockLayer)
+{
+    // A queued desktop move can arrive after the Dock's newer move. Reject
+    // that stale message without clearing the hover owned by the Dock.
+    return hoverPresent && !(pointerOnDockSurface && pointerInDockLayer);
+}
+
 template<typename RearmTracking>
 bool RetainPairedSurfaceMouseLeave(
     bool pointerOnContentWindow,

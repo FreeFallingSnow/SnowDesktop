@@ -392,8 +392,19 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                 pointerOnPairedBackdropWindow))
                     {
                         snowdesktop::performance::Value("desktop.input", "hover.rejected", {}, 1);
-                        if (lastMousePoint_.x != LONG_MIN ||
-                            lastMousePoint_.y != LONG_MIN)
+                        POINT dockPoint = cursorScreen;
+                        const bool pointerInDockLayer =
+                            ScreenToClient(hwnd_, &dockPoint) &&
+                            IsPointInPromotedDockLayer(dockPoint);
+                        const bool pointerOnDockSurface =
+                            IsPersistentDockHostWindow(hitWindow) ||
+                            IsPersistentDockBackdropWindow(hitWindow);
+                        if (snowdesktop::desktop_hover_rules::
+                                ShouldClearRejectedDesktopHover(
+                                    lastMousePoint_.x != LONG_MIN ||
+                                        lastMousePoint_.y != LONG_MIN,
+                                    pointerOnDockSurface,
+                                    pointerInDockLayer))
                         {
                             OnMouseLeave();
                         }

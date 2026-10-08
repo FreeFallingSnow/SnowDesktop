@@ -955,6 +955,11 @@ void TestDesktopHoverDeactivation()
             !hoverRules::ShouldRetainHoverAcrossMouseLeave(
                 false, false),
         "content and paired backdrop windows must form one logical hover surface");
+    Check(!hoverRules::ShouldClearRejectedDesktopHover(true, true, true) &&
+            hoverRules::ShouldClearRejectedDesktopHover(true, false, true) &&
+            hoverRules::ShouldClearRejectedDesktopHover(true, true, false) &&
+            !hoverRules::ShouldClearRejectedDesktopHover(false, false, false),
+        "stale desktop moves must retain hover owned by the live Dock while external and visual-only targets still clear");
     Check(
         hoverRules::ShouldResamplePassiveMouseMove(
             false, false, false) &&
