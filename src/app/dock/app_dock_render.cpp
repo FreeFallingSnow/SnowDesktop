@@ -455,8 +455,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
             ctx->FillEllipse(badgeEllipse, fillBrush.Get());
             ctx->DrawEllipse(badgeEllipse, strokeBrush.Get(), std::max(1.0f, 1.1f * scale));
         }
-        const std::wstring glyph = entry.type == DockEntryType::FileGroup
-            ? snowdesktop::menu_fluent_glyphs::kFileGroup : snowdesktop::menu_fluent_glyphs::kCollectionGroup;
+        const std::wstring glyph = L"\uE192"; // bookmark_multiple_16_regular
         ComPtr<IDWriteTextLayout> layout;
         ComPtr<ID2D1SolidColorBrush> brush;
         if (fluentIconTextFormat_ && dwriteFactory_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(

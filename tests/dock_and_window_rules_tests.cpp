@@ -3122,6 +3122,19 @@ int main(int argc, char** argv)
         popupLayout::ResolveMaximumHeight(standardPopupMetrics, 480, visiblePopupControls) == 456 &&
             popupLayout::ResolveMaximumHeight(standardPopupMetrics, 720, visiblePopupControls) == 696,
         "control compensation must stay within small and partially constrained work areas");
+    const int groupPopupOverhead = standardPopupMetrics.headerHeight + visiblePopupControls +
+        popupLayout::ResolveDetailsHeaderHeight(standardPopupMetrics) + 4 + standardPopupMetrics.bottomPadding;
+    const int groupTabsOnlyOverhead = standardPopupMetrics.headerHeight + 38 + 4 +
+        standardPopupMetrics.bottomPadding;
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, groupPopupOverhead) -
+            groupPopupOverhead == standardPopupMetrics.maximumHeight &&
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, groupTabsOnlyOverhead) -
+            groupTabsOnlyOverhead == standardPopupMetrics.maximumHeight,
+        "group popup budgets must preserve content height after title, group tabs, optional controls and bottom insets");
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 480, groupPopupOverhead) == 456,
+        "complete group popup compensation must still fit a short screen work area");
     Check(
         popupLayout::ResolveGridColumnCount(552, 84, 1.0f) == 5 &&
             popupLayout::ResolveGridColumnCount(300, 84, 1.0f) == 3 &&

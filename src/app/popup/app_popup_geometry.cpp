@@ -496,8 +496,44 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             RequiredListRowCount(itemCount)
         : snowdesktop::collection_popup_layout::
             RequiredRowCount(itemCount, columns);
-    const RECT controlProbe = GetCollectionPopupControlsRect(
-        RECT{0, 0, maxWidth, std::max(1, workHeight - metrics.edgeMargin * 2)});
+    auto* groupView = IsGroupWidgetType(widget.type) && &widget == GetOpenPopupWidget()
+        ? GetGroupPopupView() : nullptr;
+    struct GroupPopupSizing
+    {
+        int contentHeight = 0;
+        int overheadHeight = 0;
+    };
+    const auto measureGroupPopup = [&](int popupWidth) {
+        const RECT probe{work.left + metrics.edgeMargin, work.top + metrics.edgeMargin,
+            work.left + metrics.edgeMargin + popupWidth, work.bottom - metrics.edgeMargin};
+        const RECT frame = GetCategorizedPopupFrame(probe);
+        CategorizedPopupScope scope(groupView, frame);
+        const RECT viewport = groupView->GetContentViewportRect();
+        const auto visual = groupView->GetItemVisualMetrics();
+        const float spacing = GetLayoutSpacingScale();
+        const int nativeColumns = listMode ? 1
+            : snowdesktop::collection_popup_layout::ResolveGridColumnCount(
+                viewport.right - viewport.left, visual.minimumGridWidth, spacing);
+        const auto layout = listMode
+            ? snowdesktop::widget_item_layout::ResolveList(viewport,
+                std::max(groupView->GetItemHeight(), visual.minimumListHeight), spacing)
+            : snowdesktop::widget_item_layout::ResolveGrid(viewport, nativeColumns, 0,
+                visual.minimumGridWidth,
+                std::max(groupView->GetItemHeight(), visual.minimumGridHeight), spacing);
+        const size_t minimumItems = static_cast<size_t>(listMode
+            ? snowdesktop::collection_popup_layout::kMinimumListRows
+            : snowdesktop::collection_popup_layout::kEmptyRows * nativeColumns);
+        // Preserve a content-height budget after all native top rows, the popup
+        // title, metadata header and bottom insets have been accounted for.
+        return GroupPopupSizing{
+            snowdesktop::widget_item_layout::ContentHeight(layout, std::max(itemCount, minimumItems)),
+            metrics.headerHeight + metrics.bottomPadding +
+                static_cast<int>(std::max(0L, viewport.top - frame.top) +
+                    std::max(0L, frame.bottom - viewport.bottom))};
+    };
+    const RECT controlProbe = groupView ? RECT{} : GetCollectionPopupControlsRect(
+        RECT{work.left + metrics.edgeMargin, work.top + metrics.edgeMargin,
+            work.left + metrics.edgeMargin + maxWidth, work.bottom - metrics.edgeMargin});
     const int controlsHeight = std::max(0L, controlProbe.bottom - controlProbe.top);
     const int detailsHeader =
         snowdesktop::collection_popup_layout::DetailsVisible(
@@ -507,7 +543,9 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     const int maxHeight =
         snowdesktop::collection_popup_layout::
             ResolveMaximumHeight(
-                metrics, workHeight, controlsHeight + detailsHeader);
+                metrics, workHeight, groupView
+                    ? measureGroupPopup(maxWidth).overheadHeight
+                    : controlsHeight + detailsHeader);
     auto popupWidthForColumns = [&](int columnCount) {
         if (listMode)
             return maxWidth;
@@ -519,6 +557,11 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             std::max(0, columnCount - 1) * metrics.gapX;
     };
     auto popupHeightForRows = [&](int rowCount) {
+        if (groupView)
+        {
+            const auto sizing = measureGroupPopup(popupWidthForColumns(columns));
+            return sizing.contentHeight + sizing.overheadHeight;
+        }
         if (listMode)
         {
             const RECT viewport{
