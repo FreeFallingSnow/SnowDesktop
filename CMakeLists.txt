@@ -2328,7 +2328,7 @@ if (BUILD_TESTING)
             src/shell/shell_launch_worker.cpp
             src/shell/shell_launch_process.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 uuid
+        LINK_LIBRARIES advapi32 ole32 oleaut32 shell32 shlwapi user32 uuid
         LABELS integration shell interaction)
 
     snowdesktop_add_test(

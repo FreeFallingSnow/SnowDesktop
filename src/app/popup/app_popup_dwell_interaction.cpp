@@ -774,18 +774,18 @@ ShowDockFolderPopupContextMenu(
         selectedPaths.size() == 1;
     const bool hasSelection =
         !selectedPaths.empty();
-    bool administratorShortcutSelected = false;
+    bool administratorLaunchSelected = false;
     for (const auto& path : selectedPaths)
     {
         if (snowdesktop::ShellLaunchWorker::
-                ShortcutRequestsAdministrator(path))
+                PathRequestsAdministrator(path))
         {
-            administratorShortcutSelected = true;
+            administratorLaunchSelected = true;
             break;
         }
     }
     const bool canOpen =
-        hasSelection && !administratorShortcutSelected;
+        hasSelection && !administratorLaunchSelected;
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;

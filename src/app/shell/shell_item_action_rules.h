@@ -1,5 +1,7 @@
 #pragma once
 
+#include "shell/shell_launch_policy.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -37,18 +39,6 @@ constexpr RemovalAction ResolveRemovalAction(
     return RemovalAction::Disabled;
 }
 
-constexpr bool IsAdministratorRunnableExtension(
-    std::wstring_view extension) noexcept
-{
-    return extension == L".exe" ||
-        extension == L".com" ||
-        extension == L".bat" ||
-        extension == L".cmd" ||
-        extension == L".msi" ||
-        extension == L".msc" ||
-        extension == L".cpl" ||
-        extension == L".scr" ||
-        extension == L".lnk";
-}
+using shell_launch_policy::IsAdministratorRunnableExtension;
 
 } // namespace snowdesktop::shell_item_action_rules

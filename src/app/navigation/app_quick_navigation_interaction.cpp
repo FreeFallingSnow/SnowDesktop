@@ -868,18 +868,18 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
         kAppRunAsAdministrator = 4,
     };
 
-    const bool administratorShortcut =
+    const bool administratorLaunch =
         snowdesktop::ShellLaunchWorker::
-            ShortcutRequestsAdministrator(entry.parsingName);
+            PathRequestsAdministrator(entry.parsingName);
 
     HMENU menu = CreatePopupMenu();
     if (!menu)
         return;
 
     AppendMenuW(menu,
-        administratorShortcut ? MF_STRING | MF_GRAYED : MF_STRING,
+        administratorLaunch ? MF_STRING | MF_GRAYED : MF_STRING,
         kAppOpen, _LW("app.nav.open"));
-    if (administratorShortcut)
+    if (administratorLaunch)
     {
         AppendMenuW(menu, MF_STRING, kAppRunAsAdministrator,
             _LW("app.menu.run_as_administrator"));
@@ -910,12 +910,12 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
     {
     case kAppOpen:
     {
-        if (!administratorShortcut)
+        if (!administratorLaunch)
             CloseQuickNavigationThenLaunchApp(entry);
         break;
     }
     case kAppRunAsAdministrator:
-        if (administratorShortcut)
+        if (administratorLaunch)
         {
             const std::wstring launchPath =
                 entry.parsingName;
@@ -954,18 +954,18 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         kEverythingRunAsAdministrator = 5,
     };
 
-    const bool administratorShortcut =
+    const bool administratorLaunch =
         snowdesktop::ShellLaunchWorker::
-            ShortcutRequestsAdministrator(entry.path);
+            PathRequestsAdministrator(entry.path);
 
     HMENU menu = CreatePopupMenu();
     if (!menu)
         return;
 
     AppendMenuW(menu,
-        administratorShortcut ? MF_STRING | MF_GRAYED : MF_STRING,
+        administratorLaunch ? MF_STRING | MF_GRAYED : MF_STRING,
         kEverythingOpen, _LW("app.nav.open"));
-    if (administratorShortcut)
+    if (administratorLaunch)
     {
         AppendMenuW(menu, MF_STRING, kEverythingRunAsAdministrator,
             _LW("app.menu.run_as_administrator"));
@@ -999,7 +999,7 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
     {
     case kEverythingOpen:
     {
-        if (administratorShortcut)
+        if (administratorLaunch)
             break;
         const std::wstring launchPath = entry.path;
         CloseQuickNavigationThen(
@@ -1010,7 +1010,7 @@ void DesktopApp::ShowQuickNavigationEverythingContextMenu(
         break;
     }
     case kEverythingRunAsAdministrator:
-        if (administratorShortcut)
+        if (administratorLaunch)
         {
             const std::wstring launchPath = entry.path;
             CloseQuickNavigationThen(

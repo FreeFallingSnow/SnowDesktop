@@ -1352,7 +1352,7 @@ private:
     bool CanPinExistingDesktopPaths(const std::vector<std::wstring>& paths) const;
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false);
-    /** @brief Open a path, redirecting run-as-user shortcuts to elevation. */
+    /** @brief Open a path, honoring its shortcut, manifest and compatibility elevation marks. */
     bool LaunchPathWithShortcutPolicy(
         HWND owner, const std::wstring& path);
     bool StartDockLaunchBounce(size_t itemIndex);

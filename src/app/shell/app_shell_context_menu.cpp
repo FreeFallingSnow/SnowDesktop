@@ -43,18 +43,18 @@ void DesktopApp::ShowFolderEntryContextMenu(
         GetSelectedFolderEntryPaths();
     const bool hasSelection = !selectedPaths.empty();
     const bool singleSelection = selectedPaths.size() == 1;
-    bool administratorShortcutSelected = false;
+    bool administratorLaunchSelected = false;
     for (const auto& path : selectedPaths)
     {
         if (snowdesktop::ShellLaunchWorker::
-                ShortcutRequestsAdministrator(path))
+                PathRequestsAdministrator(path))
         {
-            administratorShortcutSelected = true;
+            administratorLaunchSelected = true;
             break;
         }
     }
     const bool canOpen =
-        hasSelection && !administratorShortcutSelected;
+        hasSelection && !administratorLaunchSelected;
     const bool canRunAsAdministrator =
         singleSelection &&
         IsAdministratorRunnablePath(selectedPaths.front());

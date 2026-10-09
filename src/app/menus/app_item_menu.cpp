@@ -200,12 +200,12 @@ void DesktopApp::ShowItemContextMenu(
     const bool canRunAsAdministrator =
         selectedCount == 1 &&
         IsAdministratorRunnablePath(itemPath);
-    const bool administratorShortcut =
+    const bool administratorLaunch =
         selectedCount == 1 &&
         snowdesktop::ShellLaunchWorker::
-            ShortcutRequestsAdministrator(itemPath);
+            PathRequestsAdministrator(itemPath);
     const bool canOpen =
-        selectedCount == 1 && !administratorShortcut;
+        selectedCount == 1 && !administratorLaunch;
     const bool protectedDesktopIcon = selectedCount == 1 && IsProtectedDesktopIcon(items_[itemIndex]);
     const bool namespaceItem = selectedCount == 1 &&
         (!items_[itemIndex].desktopIconClsid.empty() || protectedDesktopIcon);
