@@ -10,6 +10,7 @@
 #include <iostream>
 #include <cstring>
 #include <string>
+#include "taskbar_hook/taskbar_hook_lifetime_tests.inc"
 
 namespace
 {
@@ -95,7 +96,7 @@ LRESULT CALLBACK TestConnectionHook(int code, WPARAM wParam, LPARAM lParam)
 int RunNativeTaskbarTests()
 {
     using namespace snowdesktop::taskbar_hook;
-    int failures = 0;
+    int failures = RunTaskbarOwnerLifetimeTests();
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
     };

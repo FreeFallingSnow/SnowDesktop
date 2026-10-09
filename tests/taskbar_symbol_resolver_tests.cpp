@@ -8,6 +8,8 @@
 #include <thread>
 #include <vector>
 
+std::optional<int> TryRunTaskbarOwnerLifetimeHelper();
+
 namespace
 {
 using namespace snowdesktop::taskbar_hook;
@@ -101,6 +103,7 @@ struct ModernFixture : ImageFixture
 // No desktop host, Explorer injection or live taskbar interaction is started.
 std::optional<int> TryRunTaskbarSymbolTestHelper()
 {
+    if (const auto result = TryRunTaskbarOwnerLifetimeHelper()) return result;
     int count = 0;
     auto** args = CommandLineToArgvW(GetCommandLineW(), &count);
     if (!args) return {};
