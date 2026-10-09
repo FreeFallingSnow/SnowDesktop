@@ -783,10 +783,9 @@ struct Host
         // aggregate. Rebind a provider only when that fresh aggregate actually
         // returned its canonical COM identity. Metadata probes and registry
         // discovery still cannot introduce executable menu entries.
-        ComPtr<IShellItemArray> selection;
         ComPtr<IDataObject> data;
-        if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
-            FAILED(selection->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data)))) return {};
+        if (FAILED(selectionFolder->GetUIObjectOf(window, static_cast<UINT>(children.size()), children.data(),
+            IID_IDataObject, nullptr, reinterpret_cast<void **>(data.GetAddressOf())))) return {};
         std::set<std::wstring> rebound;
         for (int i = 0; i < GetMenuItemCount(delegated.menu); ++i)
         {
@@ -960,10 +959,17 @@ struct Host
             }
             else
             {
-                ComPtr<IShellItemArray> selection;
-                if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
-                    FAILED(selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&native->context))))
+                // BHID_SFUIObject only supports a flat, same-folder array.
+                // Desktop-relative PIDLs represent the original objects from
+                // every selected directory without substituting link targets.
+                ComPtr<IShellFolder> desktop;
+                if (FAILED(SHGetDesktopFolder(&desktop))) return {};
+                std::vector<PCUITEMID_CHILD> children;
+                for (auto id : raw) children.push_back(reinterpret_cast<PCUITEMID_CHILD>(id));
+                if (FAILED(desktop->GetUIObjectOf(window, static_cast<UINT>(children.size()), children.data(),
+                    IID_IContextMenu, nullptr, reinterpret_cast<void **>(native->context.GetAddressOf()))))
                     return {};
+                folder = std::move(desktop);
             }
         }
         // View-dependent invocation and deferred cascades need a Shell view.
