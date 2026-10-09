@@ -79,8 +79,8 @@ inline std::vector<modern_menu::Item> BuildItems(const LabelLookup& label)
     for (const auto& row : kRows)
     {
         items.push_back({row.labelCommand, label(row.labelKey), row.glyph});
-        items.push_back({row.ascendingCommand, label("app.menu.sort_asc"), menu_fluent_glyphs::kSortNameAscending});
-        items.push_back({row.descendingCommand, label("app.menu.sort_desc"), menu_fluent_glyphs::kSortNameDescending});
+        items.push_back({row.ascendingCommand, label("app.menu.sort_asc")});
+        items.push_back({row.descendingCommand, label("app.menu.sort_desc")});
     }
     ApplyInlineLayout(items);
     return items;
@@ -106,10 +106,6 @@ template<class SetIcon>
 inline void SetIcons(HMENU menu, const SetIcon& setIcon)
 {
     for (const auto& row : kRows)
-    {
         setIcon(menu, row.labelCommand, row.glyph);
-        setIcon(menu, row.ascendingCommand, menu_fluent_glyphs::kSortNameAscending);
-        setIcon(menu, row.descendingCommand, menu_fluent_glyphs::kSortNameDescending);
-    }
 }
 } // namespace snowdesktop::sort_menu
