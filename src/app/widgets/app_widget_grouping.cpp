@@ -581,7 +581,8 @@ void DesktopApp::AddFileGroupWidgetAt(POINT screenPoint)
     ApplyWidgetPreviewSettings(screenPoint, settings);
 }
 
-size_t DesktopApp::HitTestWidgetPairTarget(POINT point, size_t sourceIndex) const
+size_t DesktopApp::HitTestWidgetPairTarget(POINT point, size_t sourceIndex,
+    std::wstring_view sourceGroupId) const
 {
     if (sourceIndex >= widgets_.size() ||
         IsPointOccludedByOpenPopup(point) || IsExternalDropWindowAt(point))
@@ -594,7 +595,7 @@ size_t DesktopApp::HitTestWidgetPairTarget(POINT point, size_t sourceIndex) cons
         InflateRect(&center, -16, -10);
         if (!PtInRect(&center, point)) return static_cast<size_t>(-1);
         const size_t target = FindWidgetIndexById(item->GetReference());
-        return snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, target)
+        return snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, target, sourceGroupId)
             ? target : static_cast<size_t>(-1);
     }
     for (size_t i = widgets_.size(); i-- > 0;)
@@ -614,16 +615,16 @@ size_t DesktopApp::HitTestWidgetPairTarget(POINT point, size_t sourceIndex) cons
         }
         if (IsRectEmptyRect(frame) || !PtInRect(&frame, point)) continue;
         // An incompatible foreground component blocks targets behind it.
-        return snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, i)
+        return snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, i, sourceGroupId)
             ? i : static_cast<size_t>(-1);
     }
     return static_cast<size_t>(-1);
 }
 
 std::optional<GridSpan> DesktopApp::GetWidgetPairGroupSpan(
-    size_t sourceIndex, size_t targetIndex) const
+    size_t sourceIndex, size_t targetIndex, std::wstring_view sourceGroupId) const
 {
-    if (!snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, targetIndex))
+    if (!snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, targetIndex, sourceGroupId))
         return std::nullopt;
     const auto& target = widgets_[targetIndex];
     DesktopWidget group;
@@ -652,10 +653,10 @@ std::optional<GridSpan> DesktopApp::GetWidgetPairGroupSpan(
 }
 
 bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
-    snowdesktop::widget_pair_drop::Action action)
+    snowdesktop::widget_pair_drop::Action action, std::wstring_view sourceGroupId)
 {
     namespace pair = snowdesktop::widget_pair_drop;
-    if (!pair::CanPair(widgets_, sourceIndex, targetIndex)) return false;
+    if (!pair::CanPair(widgets_, sourceIndex, targetIndex, sourceGroupId)) return false;
     const std::wstring targetId = widgets_[targetIndex].id;
     const std::wstring sourceId = widgets_[sourceIndex].id;
     const auto targetDock = std::find_if(dockEntries_.begin(), dockEntries_.end(),
@@ -678,7 +679,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
     ConfigureWidgetGridLimits(group);
     if (action != pair::Action::Merge)
     {
-        const auto plannedSpan = GetWidgetPairGroupSpan(sourceIndex, targetIndex);
+        const auto plannedSpan = GetWidgetPairGroupSpan(sourceIndex, targetIndex, sourceGroupId);
         if (!plannedSpan) return false;
         group.gridSpan = *plannedSpan;
     }
@@ -692,7 +693,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
         FinalizeCloseCollectionPopup();
     }
     if (!pair::Apply(widgets_, dockEntries_, sourceIndex, targetIndex,
-            action, std::move(group), ToUpperInvariant))
+            action, std::move(group), ToUpperInvariant, sourceGroupId))
         return false;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
     keyboardNavInsideWidget_ = false;
@@ -726,41 +727,31 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
     return true;
 }
 
-size_t DesktopApp::GetDockWidgetPairSourceIndex() const
+snowdesktop::widget_pair_drag::Source DesktopApp::GetWidgetPairDragSource() const
 {
-    const auto& entries = dragSession_.SourceList().entries;
-    if (!dragSession_.IsActive() || entries.size() != 1 ||
-        !entries.front().fromDock || entries.front().kind != DropSourceKind::Widget)
-        return static_cast<size_t>(-1);
-    const auto& source = entries.front();
-    const size_t index = FindWidgetIndexById(source.dockReference);
-    if (index >= widgets_.size() || !IsWidgetDockEntryType(source.dockEntryType) ||
-        DockEntryTypeForWidget(widgets_[index].type) != source.dockEntryType ||
-        std::none_of(dockEntries_.begin(), dockEntries_.end(), [&](const DockEntry& entry) {
-            return entry.type == source.dockEntryType && entry.reference == source.dockReference;
-        }))
-        return static_cast<size_t>(-1);
-    return index;
+    if (!dragSession_.IsActive()) return {};
+    return snowdesktop::widget_pair_drag::ResolveSource(
+        dragSession_.SourceList(), widgets_, dockEntries_);
 }
 
-bool DesktopApp::UpdateDockWidgetPairHint(POINT point, int mods)
+bool DesktopApp::UpdateWidgetPairDragHint(POINT point, int mods)
 {
     namespace pair = snowdesktop::widget_pair_drop;
     const size_t previousTarget = widgetPairTargetIndex_;
     const auto previousAction = widgetPairAction_;
-    const size_t source = GetDockWidgetPairSourceIndex();
-    widgetPairTargetIndex_ = HitTestWidgetPairTarget(point, source);
+    const auto source = GetWidgetPairDragSource();
+    widgetPairTargetIndex_ = HitTestWidgetPairTarget(point, source.widgetIndex, source.groupId);
     widgetPairAction_ = pair::Action::None;
     std::wstring hint;
     if (widgetPairTargetIndex_ < widgets_.size())
     {
-        const auto type = widgets_[source].type;
+        const auto type = widgets_[source.widgetIndex].type;
         const auto options = pair::GetOptions(type, widgets_[widgetPairTargetIndex_].type);
         widgetPairAction_ = pair::ResolveAction(options,
             (mods & MK_CONTROL) != 0, (mods & MK_SHIFT) != 0, (mods & MK_ALT) != 0);
         if ((widgetPairAction_ == pair::Action::CreateCollectionGroup ||
              widgetPairAction_ == pair::Action::CreateFileGroup) &&
-            !GetWidgetPairGroupSpan(source, widgetPairTargetIndex_))
+            !GetWidgetPairGroupSpan(source.widgetIndex, widgetPairTargetIndex_, source.groupId))
             widgetPairAction_ = pair::Action::None;
         const char* key = widgetPairAction_ == pair::Action::Merge
             ? (type == DesktopWidgetType::Collection
@@ -789,10 +780,10 @@ bool DesktopApp::UpdateDockWidgetPairHint(POINT point, int mods)
     return true;
 }
 
-bool DesktopApp::TryCommitDockWidgetPairDrop(POINT point, int mods)
+bool DesktopApp::TryCommitWidgetPairDragDrop(POINT point, int mods)
 {
-    const size_t source = GetDockWidgetPairSourceIndex();
-    UpdateDockWidgetPairHint(point, mods); // Commit uses the release point and keys.
+    const auto source = GetWidgetPairDragSource();
+    UpdateWidgetPairDragHint(point, mods); // Commit uses the release point and keys.
     if (widgetPairAction_ == snowdesktop::widget_pair_drop::Action::None)
         return false;
     const size_t target = widgetPairTargetIndex_;
@@ -800,9 +791,9 @@ bool DesktopApp::TryCommitDockWidgetPairDrop(POINT point, int mods)
     // End the session before erasing widgets or rebuilding Dock item wrappers.
     EndDragSession();
     HideDragHintWindow();
-    if (!CommitWidgetPairDrop(source, target, action))
+    if (!CommitWidgetPairDrop(source.widgetIndex, target, action, source.groupId))
         MessageBeep(MB_ICONWARNING);
-    return true; // A rejected transaction preserves its Dock source as well.
+    return true; // A rejected transaction preserves its Dock or grouped source.
 }
 
 void DesktopApp::FinishWidgetGroupTransitions()

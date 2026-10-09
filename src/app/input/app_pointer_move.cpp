@@ -1254,7 +1254,7 @@ void DesktopApp::OnMouseMoveAt(
             hint = targetContainer->GetDragHint(targetSlot, targetRegion,
                 dragSession_.Items(), dragSession_.Source(), currentMods);
 
-        if (!UpdateDockWidgetPairHint(current, currentMods))
+        if (!UpdateWidgetPairDragHint(current, currentMods))
             ShowDragHintWindow(current, hint);
         return;
     }

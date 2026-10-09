@@ -468,7 +468,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (TryGetNativeDragHoverPointFromCursor(
                 recoveredPoint))
         {
-            if (GetDockWidgetPairSourceIndex() < widgets_.size())
+            if (GetWidgetPairDragSource().widgetIndex < widgets_.size())
                 RefreshDragHintFromKeyboard();
             UpdateCollectionPopupDwell(recoveredPoint);
             UpdateCollectionGroupTabDwell(recoveredPoint);

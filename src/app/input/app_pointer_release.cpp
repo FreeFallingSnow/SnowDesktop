@@ -1408,7 +1408,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         goto cleanup;
     }
 
-    if (TryCommitDockWidgetPairDrop(upPoint, rightDrop ? dropPreviewMods :
+    if (TryCommitWidgetPairDragDrop(upPoint, rightDrop ? dropPreviewMods :
             static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)) |
             ((GetAsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
         goto cleanup;

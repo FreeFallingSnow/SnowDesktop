@@ -42,6 +42,7 @@
 #include "core/dock.h"
 #include "core/widget.h"
 #include "widgets/widget_pair_drop.h"
+#include "app/widgets/widget_pair_drag_source.h"
 #include "app/widgets/widget_group_transition.h"
 #include "core/drop_model.h"
 #include "core/drag_session.h"
@@ -3053,13 +3054,15 @@ private:
      * @param isMove 是否为移动操作
      */
     void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove = false);
-    size_t HitTestWidgetPairTarget(POINT point, size_t sourceIndex) const;
-    std::optional<GridSpan> GetWidgetPairGroupSpan(size_t sourceIndex, size_t targetIndex) const;
+    size_t HitTestWidgetPairTarget(POINT point, size_t sourceIndex,
+        std::wstring_view sourceGroupId = {}) const;
+    std::optional<GridSpan> GetWidgetPairGroupSpan(size_t sourceIndex, size_t targetIndex,
+        std::wstring_view sourceGroupId = {}) const;
     bool CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
-        snowdesktop::widget_pair_drop::Action action);
-    size_t GetDockWidgetPairSourceIndex() const;
-    bool UpdateDockWidgetPairHint(POINT point, int mods);
-    bool TryCommitDockWidgetPairDrop(POINT point, int mods);
+        snowdesktop::widget_pair_drop::Action action, std::wstring_view sourceGroupId = {});
+    snowdesktop::widget_pair_drag::Source GetWidgetPairDragSource() const;
+    bool UpdateWidgetPairDragHint(POINT point, int mods);
+    bool TryCommitWidgetPairDragDrop(POINT point, int mods);
     void DissolveSingleItemWidgetGroups();
     void FinishWidgetGroupTransitions();
     snowdesktop::WidgetGroupTransition widgetGroupTransition_;

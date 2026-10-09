@@ -2,6 +2,15 @@
 
 namespace snowdesktop::drag_hint_rules
 {
+constexpr const char* DockInsertionHintKey(bool sameDock, bool external,
+    bool componentPayload, bool control)
+{
+    if (sameDock) return "core.drag.release_adjust_order";
+    if (componentPayload) return "core.drag.move_widget_dock";
+    return external || control ? "core.dock.release_dock_map_full"
+        : "core.dock.release_move_dock_ctrl";
+}
+
 struct Point
 {
     long x = 0;

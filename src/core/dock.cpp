@@ -5,6 +5,7 @@
 #include "common/constants.h"
 #include "dock/dock_magnification.h"
 #include "dock/merged_dock_presentation.h"
+#include "drag_drop/drag_hint_rules.h"
 #include "system/status_bar/status_bar_appearance.h"
 #include "settings/animation_settings.h"
 #include "slot.h"
@@ -2841,13 +2842,14 @@ std::wstring DockContainer::GetDragHint(Slot* slot, HitRegion region,
         return _LFW("core.drag.release_handle", slot->GetItem()->GetTitle());
     if (origin != this && !HasCapacity(sourceItems.empty() ? 1 : sourceItems.size()))
         return _LW("core.drag.dock_full");
-    if (origin == this) return _LW("core.drag.release_adjust_order");
-    if (app_ && app_->dragDropController_.
-            IsExternalDragActive())
-        return _LW("core.dock.release_dock_map_full");
-    return (mods & MK_CONTROL)
-        ? _LW("core.dock.release_dock_map_full")
-        : _LW("core.dock.release_move_dock_ctrl");
+    const DragSourceList source = app_
+        ? app_->BuildDragSourceList(sourceItems, origin) : DragSourceList{};
+    return _LW(snowdesktop::drag_hint_rules::DockInsertionHintKey(
+        origin == this,
+        app_ && app_->dragDropController_.IsExternalDragActive(),
+        source.hasWidgets || source.hasCollectionGroupEntries ||
+            source.hasFileGroupSourceLabels,
+        (mods & MK_CONTROL) != 0));
 }
 
 void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)

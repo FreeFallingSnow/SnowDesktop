@@ -24,7 +24,7 @@ void DesktopApp::RefreshDragHintFromKeyboard()
             dragDropController_.IsExternalDragActive()
                 ? DropAction::Copy : DropAction::Move);
 
-    if (GetDockWidgetPairSourceIndex() < widgets_.size() &&
+    if (GetWidgetPairDragSource().widgetIndex < widgets_.size() &&
         !dragDropController_.IsTransportActive())
     {
         RefreshDragTargetAt(dragSession_.CurrentPoint(), mods);

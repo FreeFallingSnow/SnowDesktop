@@ -88,7 +88,7 @@ void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
             dragSession_.TargetSlot(), dragSession_.TargetRegion(),
             dragSession_.Items(), dragSession_.Source(), mods);
     }
-    if (!UpdateDockWidgetPairHint(clientPoint, mods))
+    if (!UpdateWidgetPairDragHint(clientPoint, mods))
         ShowDragHintWindow(clientPoint, hint);
     InvalidateFloatingDockWindow(true);
 }

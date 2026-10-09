@@ -1,6 +1,7 @@
 #include "../src/widgets/collection_group_rules.h"
 #include "../src/app/widgets/widget_group_transition.h"
 #include "../src/widgets/widget_pair_drop.h"
+#include "app/widgets/widget_pair_drag_source.h"
 #include "desktop/desktop_hover_rules.h"
 #include "drag_drop/drag_input_rules.h"
 #include "drag_drop/drag_hint_rules.h"
@@ -1436,6 +1437,184 @@ void TestPairGroupsDissolveAndDockOwnership()
     }
 }
 
+void TestGroupedLabelPairDrops()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    namespace drag = snowdesktop::widget_pair_drag;
+    using Type = DesktopWidgetType;
+    // The host resolves a captured label, then calls this ownership transaction.
+    // No Item pointer, active-tab lookup or filesystem operation is substituted.
+    const auto normalize = [](const std::wstring& key) { return key; };
+    struct Case { Type source; Type target; };
+    const Case cases[] = {
+        {Type::Collection, Type::Collection},
+        {Type::FileCategories, Type::FileCategories},
+        {Type::FileCategories, Type::FolderMapping},
+        {Type::FolderMapping, Type::FileCategories},
+        {Type::FolderMapping, Type::FolderMapping},
+    };
+    for (const auto& test : cases)
+        for (const bool targetInDock : {false, true})
+            for (const auto action : {pair::Action::Merge,
+                     pair::GetOptions(test.source, test.target).group})
+            {
+                std::vector<DesktopWidget> widgets(5);
+                widgets[0].id = L"old-group";
+                widgets[0].type = test.source == Type::Collection
+                    ? Type::CollectionGroup : Type::FileGroup;
+                widgets[0].childWidgetIds = {L"before", L"source", L"after"};
+                widgets[0].activeCategoryId = L"source";
+                widgets[0].customTitle = L"Keep original group";
+                widgets[1].id = L"source";
+                widgets[1].type = test.source;
+                widgets[1].itemKeys = {L"shared", L"source-only"};
+                widgets[1].sourceFolderPath = L"C:\\mapped-source";
+                widgets[1].customTitle = L"Keep child settings";
+                widgets[1].showSearchBox = true;
+                widgets[2].id = L"before";
+                widgets[2].type = test.source;
+                widgets[3].id = L"target";
+                widgets[3].type = test.target;
+                widgets[3].itemKeys = {L"target-first", L"shared"};
+                widgets[3].sourceFolderPath = L"C:\\mapped-target";
+                widgets[3].gridCell = {targetInDock ? kDockPageId : L"page-a", 2, 3};
+                widgets[4].id = L"after";
+                widgets[4].type = test.source;
+                std::vector<DockEntry> dock{{DockEntryTypeForWidget(widgets[0].type), L"old-group"}};
+                if (targetInDock)
+                    dock.push_back({DockEntryTypeForWidget(test.target), L"target"});
+                DragSourceList list;
+                list.hasOriginWidget = true;
+                list.originWidgetId = L"old-group";
+                list.originWidgetType = widgets[0].type;
+                list.hasCollectionGroupEntries = test.source == Type::Collection;
+                list.hasFileGroupSourceLabels = test.source != Type::Collection;
+                list.hasFileGroupEntries = test.source == Type::FileCategories;
+                list.hasWidgets = test.source == Type::FolderMapping;
+                DragSourceEntry entry;
+                entry.widgetId = L"source";
+                entry.kind = test.source == Type::Collection ? DropSourceKind::CollectionGroupEntry
+                    : test.source == Type::FileCategories ? DropSourceKind::FileGroupEntry
+                    : DropSourceKind::Widget;
+                entry.dockEntryType = DockEntryTypeForWidget(test.source);
+                list.entries.push_back(entry);
+                // Dwell may switch the visible tab while the child is in flight.
+                widgets[0].activeCategoryId = L"before";
+                const auto source = drag::ResolveSource(list, widgets, dock);
+                Check(source.widgetIndex == 1 && source.groupId == L"old-group",
+                    "collection, desktop-files and folder-mapping labels must resolve the captured child after tab switching");
+                widgets[0].activeCategoryId = L"source";
+                Check(!pair::CanPair(widgets, 1, 3) &&
+                        pair::CanPair(widgets, 1, 3, source.groupId),
+                    "grouped children can pair only through their explicitly captured source owner");
+                DesktopWidget group;
+                group.id = L"new-group";
+                group.gridCell = widgets[3].gridCell;
+                Check(!pair::Apply(widgets, dock, 1, 3, pair::Action::None, group, normalize, source.groupId) &&
+                        widgets[0].childWidgetIds.size() == 3 && widgets[0].activeCategoryId == L"source",
+                    "unarmed label drops must retain source membership and active tab");
+                const bool expected = action != pair::Action::Merge ||
+                    (test.source == test.target && test.source != Type::FolderMapping);
+                Check(pair::Apply(widgets, dock, source.widgetIndex, 3, action, group, normalize, source.groupId) == expected,
+                    "labels must support the same Shift merge and Ctrl group matrix as standalone components");
+                if (!expected)
+                {
+                    Check(widgets.size() == 5 && widgets[0].childWidgetIds.size() == 3 &&
+                            widgets[1].itemKeys.size() == 2 && widgets[0].activeCategoryId == L"source",
+                        "unsupported mapping merges must keep the original group, source and target intact");
+                    continue;
+                }
+                Check(widgets[0].childWidgetIds == std::vector<std::wstring>{L"before", L"after"} &&
+                        widgets[0].activeCategoryId == L"after" && widgets[0].customTitle == L"Keep original group" &&
+                        dock.front().reference == L"old-group",
+                    "successful label drops must detach only the moved child and select its next neighbour in the original group");
+                const auto target = std::find_if(widgets.begin(), widgets.end(),
+                    [](const auto& widget) { return widget.id == L"target"; });
+                if (action == pair::Action::Merge)
+                    Check(widgets.size() == 4 && target != widgets.end() &&
+                            target->itemKeys == std::vector<std::wstring>{L"target-first", L"shared", L"source-only"} &&
+                            dock.size() == (targetInDock ? 2u : 1u),
+                        "label merge must transfer and deduplicate contents before removing the child, preserving the target Dock reference");
+                else
+                    Check(widgets.size() == 6 && widgets.back().childWidgetIds ==
+                            std::vector<std::wstring>{L"target", L"source"} &&
+                            widgets.back().activeCategoryId == L"target" &&
+                            widgets[1].sourceFolderPath == L"C:\\mapped-source" &&
+                            widgets[1].customTitle == L"Keep child settings" && widgets[1].showSearchBox &&
+                            target != widgets.end() && target->sourceFolderPath == L"C:\\mapped-target" && dock.size() == 1,
+                        "label grouping must preserve both children, their mapping paths and settings without leaving duplicate Dock ownership");
+                Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                    "a stale label snapshot cannot consume a merged or reparented child again");
+            }
+
+    std::vector<DesktopWidget> widgets(3);
+    widgets[0].id = L"group";
+    widgets[0].type = Type::CollectionGroup;
+    widgets[0].childWidgetIds = {L"child"};
+    widgets[1].id = L"child";
+    widgets[2].id = L"target";
+    DragSourceList list;
+    list.hasOriginWidget = list.hasCollectionGroupEntries = true;
+    list.originWidgetType = Type::CollectionGroup;
+    list.originWidgetId = L"group";
+    DragSourceEntry entry;
+    entry.kind = DropSourceKind::CollectionGroupEntry;
+    entry.widgetId = L"child";
+    list.entries.push_back(entry);
+    const std::vector<DockEntry> dock;
+    list.originWidgetId = L"wrong-owner";
+    Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+        "labels with stale or mismatched source groups must be rejected");
+    list.originWidgetId = L"group";
+    list.entries.push_back(entry);
+    Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+        "multiple labels must not arm a two-component transaction");
+    list.entries.resize(1);
+    list.entries[0].kind = DropSourceKind::DesktopIcon;
+    Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+        "files inside a group must not be mistaken for the group label");
+    widgets[0].childWidgetIds.push_back(L"target");
+    Check(!pair::CanPair(widgets, 1, 2, L"group"),
+        "a grouped target must not be merged or nested into a new group by label release");
+    widgets[0].childWidgetIds = {L"child", L"child"};
+    Check(!pair::CanUseSource(widgets, 1, L"group"),
+        "duplicate source ownership must reject before detaching any data");
+
+    widgets[0].childWidgetIds.clear();
+    DragSourceList dockList;
+    dockList.hasWidgets = true;
+    entry.kind = DropSourceKind::Widget;
+    entry.fromDock = true;
+    entry.dockEntryType = DockEntryType::Collection;
+    entry.dockReference = L"child";
+    dockList.entries.push_back(entry);
+    std::vector<DockEntry> dockEntries{{DockEntryType::Collection, L"child"}};
+    Check(drag::ResolveSource(dockList, widgets, dockEntries).widgetIndex == 1 &&
+            drag::ResolveSource(dockList, widgets, dockEntries).groupId.empty(),
+        "standalone Dock widget drags must retain their existing pair route");
+    dockEntries.clear();
+    Check(drag::ResolveSource(dockList, widgets, dockEntries).widgetIndex >= widgets.size(),
+        "stale Dock widget entries must not arm a pair drop");
+}
+
+void TestDockComponentInsertionHints()
+{
+    for (const bool control : {false, true})
+    {
+        Check(std::string_view(dragHintRules::DockInsertionHintKey(false, false, true, control)) ==
+                "core.drag.move_widget_dock",
+            "component and grouped-label Dock insertion must never advertise Ctrl file mapping");
+        Check(std::string_view(dragHintRules::DockInsertionHintKey(false, false, false, control)) ==
+                (control ? "core.dock.release_dock_map_full" : "core.dock.release_move_dock_ctrl"),
+            "ordinary file Dock insertion must retain its Ctrl mapping hint");
+    }
+    Check(std::string_view(dragHintRules::DockInsertionHintKey(true, false, true, true)) ==
+            "core.drag.release_adjust_order" &&
+            std::string_view(dragHintRules::DockInsertionHintKey(false, true, false, false)) ==
+            "core.dock.release_dock_map_full",
+        "same-Dock reorder and external file mapping must keep their existing hints");
+}
+
 void TestGroupRestorationPublishesOnlyTheFinalFrame()
 {
     namespace pair = snowdesktop::widget_pair_drop;
@@ -1795,6 +1974,8 @@ int main()
     TestPopupIconLoadCancellationRules();
     TestDragHintPlacementRules();
     TestWidgetPairDrops();
+    TestGroupedLabelPairDrops();
+    TestDockComponentInsertionHints();
     TestPairGroupsDissolveAndDockOwnership();
     TestGroupRestorationPublishesOnlyTheFinalFrame();
     TestNestedWidgetScrolling();
