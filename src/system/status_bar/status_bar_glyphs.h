@@ -29,6 +29,8 @@ inline constexpr wchar_t kBatteryFull[] = L"\uE143"; // battery_10_20_regular
 inline constexpr wchar_t kBatteryPlug[] = L"\uE145"; // battery_checkmark_20_regular
 inline constexpr wchar_t kNotifications[] = L"\uF114"; // alert_20_regular
 inline constexpr wchar_t kNotificationsQuiet[] = L"\uF11C"; // alert_snooze_20_regular
-inline constexpr wchar_t kNotificationsPending[] = L"\uE019"; // alert_badge_24_regular
-inline constexpr wchar_t kNotificationsPresent[] = L"\uE019"; // alert_badge_24_regular
+// Notification states render Alert 24 Filled SVG geometry; these Regular glyphs
+// provide a matching bell fallback if the geometry cannot be created.
+inline constexpr wchar_t kNotificationsPending[] = L"\uF115"; // alert_24_regular
+inline constexpr wchar_t kNotificationsPresent[] = L"\uF115"; // alert_24_regular
 }

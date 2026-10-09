@@ -19,92 +19,52 @@ namespace snowdesktop
 using Microsoft::WRL::ComPtr;
 namespace
 {
-// Microsoft Fluent System Icons: Alert Badge 24 Regular, MIT.
+// Microsoft Fluent System Icons: Alert 24 Filled, MIT.
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Unmodified contours from microsoft/fluentui-system-icons@
 // 21d5d02f724be2aaf586564775fff73a18a76eb6:
-// assets/Alert Badge/SVG/ic_fluent_alert_badge_24_regular.svg
+// assets/Alert/SVG/ic_fluent_alert_24_filled.svg
 // License: third_party/fluentui-system-icons/LICENSE.
-// Separate the existing badge contour only to change its fill color.
-ComPtr<ID2D1PathGeometry> CreateNotificationGlyphGeometry(ID2D1Factory* factory, bool badge)
+ComPtr<ID2D1PathGeometry> CreateNotificationBellGeometry(ID2D1Factory* factory)
 {
     ComPtr<ID2D1PathGeometry> geometry;
     ComPtr<ID2D1GeometrySink> sink;
     if (!factory || FAILED(factory->CreatePathGeometry(&geometry)) || FAILED(geometry->Open(&sink))) return {};
     sink->SetFillMode(D2D1_FILL_MODE_WINDING);
-    if (badge)
-    {
-        sink->BeginFigure(D2D1::Point2F(16.033f, 5.05266f), D2D1_FIGURE_BEGIN_FILLED);
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(16.1282f, 4.52552f), D2D1::Point2F(16.3889f, 4.05584f), D2D1::Point2F(16.7595f, 3.6992f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(17.2097f, 3.26601f), D2D1::Point2F(17.822f, 2.99961f), D2D1::Point2F(18.4966f, 2.99961f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(19.8792f, 2.99961f), D2D1::Point2F(21.f, 4.11859f), D2D1::Point2F(21.f, 5.49893f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(21.f, 6.59182f), D2D1::Point2F(20.2974f, 7.52087f), D2D1::Point2F(19.3185f, 7.86042f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(19.0611f, 7.94973f), D2D1::Point2F(18.7845f, 7.99826f), D2D1::Point2F(18.4966f, 7.99826f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(18.2482f, 7.99826f), D2D1::Point2F(18.0083f, 7.96214f), D2D1::Point2F(17.7818f, 7.89488f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(16.7475f, 7.58775f), D2D1::Point2F(15.9932f, 6.63128f), D2D1::Point2F(15.9932f, 5.49893f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(15.9932f, 5.34661f), D2D1::Point2F(16.0069f, 5.19746f), D2D1::Point2F(16.033f, 5.05266f)));
-        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    }
-    else
-    {
-        sink->BeginFigure(D2D1::Point2F(11.9876f, 1.99609f), D2D1_FIGURE_BEGIN_FILLED);
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(13.4351f, 1.99609f), D2D1::Point2F(14.7878f, 2.40297f), D2D1::Point2F(15.9353f, 3.11058f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(15.5934f, 3.47585f), D2D1::Point2F(15.329f, 3.91431f), D2D1::Point2F(15.1682f, 4.39985f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(14.2457f, 3.82617f), D2D1::Point2F(13.1554f, 3.49569f), D2D1::Point2F(11.9876f, 3.49569f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(8.66297f, 3.49569f), D2D1::Point2F(5.97997f, 6.16922f), D2D1::Point2F(5.97949f, 9.49407f)));
-        sink->AddLine(D2D1::Point2F(5.97949f, 13.9025f));
-        sink->AddLine(D2D1::Point2F(4.63369f, 16.9958f));
-        sink->AddLine(D2D1::Point2F(19.3502f, 16.9958f));
-        sink->AddLine(D2D1::Point2F(17.9958f, 13.9035f));
-        sink->AddLine(D2D1::Point2F(17.9959f, 9.50692f));
-        sink->AddLine(D2D1::Point2F(17.9921f, 9.28178f));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(17.9884f, 9.17344f), D2D1::Point2F(17.9818f, 9.06586f), D2D1::Point2F(17.9725f, 8.95912f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(18.1435f, 8.98472f), D2D1::Point2F(18.3185f, 8.99798f), D2D1::Point2F(18.4966f, 8.99798f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(18.8347f, 8.99798f), D2D1::Point2F(19.1616f, 8.95018f), D2D1::Point2F(19.4709f, 8.86099f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(19.4816f, 8.98748f), D2D1::Point2F(19.4892f, 9.1149f), D2D1::Point2F(19.4936f, 9.24319f)));
-        sink->AddLine(D2D1::Point2F(19.4978f, 9.49407f));
-        sink->AddLine(D2D1::Point2F(19.4978f, 13.5899f));
-        sink->AddLine(D2D1::Point2F(20.8797f, 16.7451f));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(20.9489f, 16.903f), D2D1::Point2F(20.9846f, 17.0734f), D2D1::Point2F(20.9846f, 17.2457f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(20.9846f, 17.9359f), D2D1::Point2F(20.4241f, 18.4954f), D2D1::Point2F(19.7329f, 18.4954f)));
-        sink->AddLine(D2D1::Point2F(14.9917f, 18.4969f));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(14.9917f, 20.1533f), D2D1::Point2F(13.6467f, 21.4961f), D2D1::Point2F(11.9876f, 21.4961f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(10.3878f, 21.4961f), D2D1::Point2F(9.08004f, 20.2475f), D2D1::Point2F(8.98867f, 18.6731f)));
-        sink->AddLine(D2D1::Point2F(8.98312f, 18.4946f));
-        sink->AddLine(D2D1::Point2F(4.25202f, 18.4954f));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(4.08044f, 18.4954f), D2D1::Point2F(3.9107f, 18.4602f), D2D1::Point2F(3.75334f, 18.392f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(3.11928f, 18.117f), D2D1::Point2F(2.82853f, 17.3809f), D2D1::Point2F(3.10394f, 16.7479f)));
-        sink->AddLine(D2D1::Point2F(4.47746f, 13.5909f));
-        sink->AddLine(D2D1::Point2F(4.47746f, 9.49396f));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(4.47805f, 5.34029f), D2D1::Point2F(7.8341f, 1.99609f), D2D1::Point2F(11.9876f, 1.99609f)));
-        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-        sink->BeginFigure(D2D1::Point2F(13.4892f, 18.4946f), D2D1_FIGURE_BEGIN_FILLED);
-        sink->AddLine(D2D1::Point2F(10.4856f, 18.4969f));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(10.4856f, 19.3251f), D2D1::Point2F(11.1581f, 19.9965f), D2D1::Point2F(11.9876f, 19.9965f)));
-        sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(12.7684f, 19.9965f), D2D1::Point2F(13.41f, 19.4018f), D2D1::Point2F(13.4828f, 18.6413f)));
-        sink->AddLine(D2D1::Point2F(13.4892f, 18.4946f));
-        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    }
+    sink->BeginFigure(D2D1::Point2F(9.04173f, 19.003f), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(D2D1::Point2F(14.9583f, 19.003f));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(14.7196f, 20.4211f), D2D1::Point2F(13.486f, 21.5015f), D2D1::Point2F(12.f, 21.5015f)));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(10.514f, 21.5015f), D2D1::Point2F(9.28037f, 20.4211f), D2D1::Point2F(9.04173f, 19.003f)));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->BeginFigure(D2D1::Point2F(12.f, 2.00391f), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(16.1421f, 2.00391f), D2D1::Point2F(19.5f, 5.36177f), D2D1::Point2F(19.5f, 9.50391f)));
+    sink->AddLine(D2D1::Point2F(19.5f, 13.5024f));
+    sink->AddLine(D2D1::Point2F(20.9183f, 16.6625f));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(20.9732f, 16.7848f), D2D1::Point2F(21.0016f, 16.9174f), D2D1::Point2F(21.0016f, 17.0515f)));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(21.0016f, 17.5762f), D2D1::Point2F(20.5763f, 18.0015f), D2D1::Point2F(20.0516f, 18.0015f)));
+    sink->AddLine(D2D1::Point2F(3.95219f, 18.0015f));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(3.8184f, 18.0015f), D2D1::Point2F(3.68613f, 17.9733f), D2D1::Point2F(3.56402f, 17.9186f)));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(3.08515f, 17.7042f), D2D1::Point2F(2.87073f, 17.1422f), D2D1::Point2F(3.08511f, 16.6633f)));
+    sink->AddLine(D2D1::Point2F(4.50001f, 13.5028f));
+    sink->AddLine(D2D1::Point2F(4.50011f, 9.49099f));
+    sink->AddLine(D2D1::Point2F(4.50453f, 9.24107f));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(4.6436f, 5.21035f), D2D1::Point2F(7.95588f, 2.00391f), D2D1::Point2F(12.f, 2.00391f)));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
     if (FAILED(sink->Close())) return {};
     return geometry;
 }
-bool DrawNotificationBadge(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brush, D2D1_RECT_F bounds)
+bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brush, D2D1_RECT_F bounds)
 {
     ComPtr<ID2D1Factory> factory;
     context->GetFactory(&factory);
-    const auto bell = CreateNotificationGlyphGeometry(factory.Get(), false);
-    const auto badge = CreateNotificationGlyphGeometry(factory.Get(), true);
-    if (!bell || !badge) return false;
+    const auto bell = CreateNotificationBellGeometry(factory.Get());
+    if (!bell) return false;
     D2D1_MATRIX_3X2_F originalTransform{};
     context->GetTransform(&originalTransform);
     context->SetTransform(D2D1::Matrix3x2F::Scale((bounds.right - bounds.left) / 24.f,
         (bounds.bottom - bounds.top) / 24.f) *
         D2D1::Matrix3x2F::Translation(bounds.left, bounds.top) * originalTransform);
-    const auto foreground = brush->GetColor();
     context->FillGeometry(bell.Get(), brush);
-    brush->SetColor(D2D1::ColorF(0xe81123));
-    context->FillGeometry(badge.Get(), brush);
-    brush->SetColor(foreground);
     context->SetTransform(originalTransform);
     return true;
 }
@@ -478,11 +438,11 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     const float iconSize = iconFormat->GetFontSize();
                     const float iconLeft = (iconRect.left + iconRect.right - iconSize) / 2;
                     const float iconTop = (iconRect.top + iconRect.bottom - iconSize) / 2;
-                    const bool badgeDrawn = !hc && item.action == StatusBarAction::Notifications &&
+                    const bool bellDrawn = item.action == StatusBarAction::Notifications &&
                         item.glyph == status_bar_glyphs::kNotificationsPending &&
-                        DrawNotificationBadge(context, brush.Get(),
+                        DrawNotificationBell(context, brush.Get(),
                             D2D1::RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize));
-                    if (!badgeDrawn)
+                    if (!bellDrawn)
                         context->DrawText(item.glyph.c_str(), static_cast<UINT32>(item.glyph.size()), iconFormat.Get(), iconRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                     if (item.flipGlyph) context->SetTransform(originalTransform);
                 }
