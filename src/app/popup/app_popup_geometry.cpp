@@ -106,13 +106,12 @@ RECT DesktopApp::GetCategorizedPopupFrame(const RECT& popup) const
         frame.right = right + inset;
         return frame;
     }
-    const int columns = std::max(1, (static_cast<int>(right - left) + metrics.gapX) /
-        std::max(1, metrics.cellWidth + metrics.gapX));
-    // Search and category controls share the outer grid labels' horizontal edges.
+    // Preserve the first label's inset on both sides of the actual popup.
+    // Its minimum width can leave a partial grid track at the trailing edge.
     const RECT firstTitle = GetItemTextRect(
         RECT{left, 0, left + metrics.cellWidth, metrics.cellHeight}, false);
     frame.left = firstTitle.left - inset;
-    frame.right = firstTitle.right + (columns - 1) * (metrics.cellWidth + metrics.gapX) + inset;
+    frame.right = right - (firstTitle.left - left) + inset;
     return frame;
 }
 
