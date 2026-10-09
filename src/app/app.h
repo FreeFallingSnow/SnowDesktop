@@ -1468,6 +1468,27 @@ private:
     bool RemoveDockMappingAt(size_t entryIndex);
     std::optional<size_t> FindDesktopItemForDockRunningApp(
         const DockRunningAppInfo& running);
+    struct DockRunningPinTarget
+    {
+        QuickNavigationAppEntry entry;
+        DockAppIdentity identity;
+        std::wstring folderPath;
+    };
+    struct DockRunningDragState;
+    bool BeginDockRunningDrag(POINT point);
+    void UpdateDockRunningDrag(POINT point);
+    void CommitDockRunningDrag(POINT point, int mods);
+    void ResetDockRunningDrag();
+    bool IsDockRunningDragExplorer() const;
+    void QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state,
+        snowdesktop::dock_running_drag::PinPosition position, int mods, unsigned retry);
+    std::wstring GetDockRunningDragHint() const;
+    void DrawDockRunningDragPreview(ID2D1DeviceContext* context, DockContainer* dock);
+    static std::shared_ptr<DockRunningPinTarget> ReadDockRunningPinTarget(
+        const DockRunningAppInfo& running, bool folder, const std::wstring& explorerName);
+    bool PinDockRunningTarget(const std::wstring& runningKey,
+        const DockRunningPinTarget& target, size_t insertIndex);
+    void AdoptDockRunningPresentation(const std::wstring& runningKey, size_t itemIndex);
     std::vector<size_t> GetFrequentDockItemIndices();
     bool SuppressDesktopWidgetDragTargets() const;
     std::wstring GetDockDragOutRemovalHint(POINT point) const;
@@ -2020,10 +2041,8 @@ private:
      * @return 是否已处理
      */
     bool HandlePageNavClick(POINT point);
-    /** @brief 按名称对桌面图标排序。 @param ascending 是否升序 */
-    void SortIconsByName(bool ascending = true);
-    /** @brief 按类型对桌面图标排序。 @param ascending 是否升序 */
-    void SortIconsByType(bool ascending = true);
+    /** @brief 按名称、类型、修改日期或大小对自由桌面图标排序。 */
+    void SortIcons(int mode, bool ascending);
     /**
      * @brief 对指定部件的内容进行排序。
      * @param widgetIndex 部件索引
@@ -3818,6 +3837,8 @@ private:
     size_t dockPressedEntry_ = static_cast<size_t>(-1);
     size_t dockPressedFrequentItem_ = static_cast<size_t>(-1);
     std::wstring dockPressedRunningAppKey_;
+    std::shared_ptr<DockRunningDragState> dockRunningDrag_;
+    std::uint64_t dockRunningDragSerial_ = 0;
     snowdesktop::dock_window_rules::DockClickAction
         dockPressedWindowAction_ =
             snowdesktop::dock_window_rules::DockClickAction::None;
