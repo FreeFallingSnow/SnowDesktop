@@ -125,7 +125,7 @@ class Presentation
             });
         }
         normalDone_ = !normalNeeded || (cached_.has_value() && !cachedOriginal_ && !refreshState_ &&
-            !service_.MenuAttributionPending(source_, prefs_));
+            !view.attributionPending);
         // Retire any prewarm already in flight as well: it may have captured
         // external pin state before this opening.
         if (normalNeeded)
@@ -205,7 +205,7 @@ class Presentation
                                 progressed = true;
                             }
                         }
-                        normalDone_ = !service_.MenuAttributionPending(normalSource_, prefs_);
+                        normalDone_ = !view.attributionPending;
                         progressed |= normalDone_;
                     }
                 }
@@ -228,7 +228,7 @@ class Presentation
                                 progressed = true;
                             }
                         }
-                        originalDone_ = !service_.MenuAttributionPending(originalSource_, prefs_);
+                        originalDone_ = !view.attributionPending;
                         progressed |= originalDone_;
                     }
                 }

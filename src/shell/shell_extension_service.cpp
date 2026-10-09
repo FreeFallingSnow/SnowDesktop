@@ -190,6 +190,23 @@ struct MenuService::Impl
         if (scan.valid()) scan.wait();
         if (folderScan.valid()) folderScan.wait();
     }
+    // Called while mutex holds the same row and catalogue used for display.
+    bool AttributionPending(const Request &request, const Preferences &fallback) const
+    {
+        if (request.startPinOnly || catalogue.revision || (!scanning && !scanRequested) ||
+            // Inventory attribution enumerates the whole machine and can outlast a
+            // single helper. Known rows remain visible throughout this bounded wait.
+            (scanning && GetTickCount64() - scanStarted >= kInventoryWaitMs)) return false;
+        const auto it = rows.find(SelectionKey(request));
+        const unsigned contexts = it != rows.end() && it->second.view.contexts ? it->second.view.contexts :
+            request.context == Context::Desktop ? ContextBit(Context::Desktop) :
+            request.background ? ContextBit(Context::FolderBackground) : 3u;
+        const auto &prefs = configured ? preferences : fallback;
+        for (int i = 0; i < 4; ++i) if (contexts & (1u << i))
+            for (const auto &id : EffectiveShownIds(prefs, static_cast<Context>(i)))
+                if (id.starts_with("reg:") || id.starts_with("clsid:") || id.starts_with("package:")) return true;
+        return false;
+    }
     bool Enabled(const Request &request, unsigned contexts = 0) const
     {
         if (!configured) return true;
@@ -1073,6 +1090,7 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     auto &row = it->second; row.used = ++impl_->clock;
     auto view = row.view;
+    view.attributionPending = impl_->AttributionPending(request, fallback);
     if (row.expires <= MenuSnapshotCache::Now() || (row.invalid && (!retainPublished || !view.error.empty()))) view.snapshot.reset();
     if (view.snapshot)
     {
@@ -1100,19 +1118,7 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
 bool MenuService::MenuAttributionPending(const Request &request, const Preferences &fallback)
 {
     std::lock_guard lock(impl_->mutex);
-    if (request.startPinOnly || impl_->catalogue.revision || (!impl_->scanning && !impl_->scanRequested) ||
-        // Inventory attribution enumerates the whole machine and can outlast a
-        // single helper. Known rows remain visible throughout this bounded wait.
-        (impl_->scanning && GetTickCount64() - impl_->scanStarted >= kInventoryWaitMs)) return false;
-    const auto it = impl_->rows.find(SelectionKey(request));
-    const unsigned contexts = it != impl_->rows.end() && it->second.view.contexts ? it->second.view.contexts :
-        request.context == Context::Desktop ? ContextBit(Context::Desktop) :
-        request.background ? ContextBit(Context::FolderBackground) : 3u;
-    const auto &prefs = impl_->configured ? impl_->preferences : fallback;
-    for (int i = 0; i < 4; ++i) if (contexts & (1u << i))
-        for (const auto &id : EffectiveShownIds(prefs, static_cast<Context>(i)))
-            if (id.starts_with("reg:") || id.starts_with("clsid:") || id.starts_with("package:")) return true;
-    return false;
+    return impl_->AttributionPending(request, fallback);
 }
 void MenuService::Prewarm(const Request &request)
 {

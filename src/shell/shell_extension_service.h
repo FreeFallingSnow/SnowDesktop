@@ -12,6 +12,8 @@ struct MenuView
     std::uint64_t revision = 0;
     unsigned contexts = 0;
     std::string error;
+    // Transient status captured with MenuDisplay; excluded from IPC/cache data.
+    bool attributionPending = false;
 };
 struct CatalogueView
 {

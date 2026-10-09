@@ -2794,6 +2794,49 @@ void TestInitialDiscoveryDoesNotBlockPopup()
 
 // A management opt-in can name a registration rather than its observed verb.
 // Initial attribution must be allowed to add that row after ordinary rows appear.
+
+void TestMenuDisplayAttributionSnapshot()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    ext::Request selected; selected.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(selected.paths.front()) << "private";
+    std::promise<void> release; auto released = release.get_future().share();
+    std::atomic<bool> entered = false; bool didRelease = false;
+    ext::MenuService service(temp.path / L"cache", [](const ext::Request &) {
+        ext::Entry ordinary, late;
+        ordinary.provider = "verb:ordinary-probe"; ordinary.key = "ordinary-probe"; ordinary.label = L"Ordinary";
+        late.provider = "verb:late-probe"; late.key = "late-probe"; late.label = L"Registered";
+        return ext::QueryWork{[=] { return ext::Reply{true, {ordinary, late}, {}}; }, {}};
+    }, [&] {
+        entered = true;
+        if (released.wait_for(std::chrono::seconds(20)) != std::future_status::ready) return ext::Catalogue{};
+        ext::Catalogue c; c.revision = 17;
+        ext::Registration r; r.id = "reg:late-probe"; r.verbs = {"late-probe"}; r.types = {L"*"};
+        r.contexts = 1; r.revision = 17; c.rows = {r}; return c;
+    });
+    struct Release { std::promise<void> &promise; bool &done; ~Release() { if (!done) promise.set_value(); } }
+        releaseOnFailure{release, didRelease};
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:ordinary-probe", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "reg:late-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    PumpUntil([&] { return entered.load(); }, "initial attribution worker starts");
+    service.Query(selected);
+    PumpUntil([&] { return service.View(selected).snapshot.has_value(); }, "native rows arrive before attribution");
+    const auto before = service.MenuDisplay(selected, prefs, true);
+    Expect(before.attributionPending && before.snapshot && before.snapshot->entries.size() == 1,
+        "a displayed pre-attribution snapshot carries its own waiting state");
+    release.set_value(); didRelease = true;
+    PumpUntil([&] { return !service.MenuAttributionPending(selected, prefs); }, "inventory attribution completes");
+    const auto after = service.MenuDisplay(selected, prefs, true);
+    Expect(!after.attributionPending && after.snapshot && after.snapshot->entries.size() == 2 &&
+        after.snapshot->entries.back().label == L"Registered" && before.attributionPending,
+        "completion and newly visible registration share one immutable snapshot without changing the previous view");
+    const auto restored = snowdesktop::settings_ipc::Unpack<ext::MenuView>(snowdesktop::settings_ipc::Pack(before));
+    Expect(!restored.attributionPending, "live display waiting state is not restored from IPC or cached data");
+}
+
 void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryFailure = false, bool duplicateVerbs = false,
     bool slowInventory = false)
 {
@@ -4566,6 +4609,8 @@ int wmain(int argc, wchar_t **argv)
             TestExtensionSessions();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-shortcut-query-recovery")
         { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); TestSourceScheduler(true); TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-attribution-snapshot")
+        { TestMenuDisplayAttributionSnapshot(); TestLateInitialRegistrationAttribution(); TestLateInitialRegistrationAttribution(true); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
@@ -4586,6 +4631,7 @@ int wmain(int argc, wchar_t **argv)
             TestLateInitialRegistrationAttribution(true, true);
             TestLateInitialRegistrationAttribution(false, false, true);
             TestLateInitialRegistrationAttribution(true, false, true);
+            TestMenuDisplayAttributionSnapshot();
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
@@ -4639,6 +4685,7 @@ int wmain(int argc, wchar_t **argv)
             TestLateInitialRegistrationAttribution(true, true);
             TestLateInitialRegistrationAttribution(false, false, true);
             TestLateInitialRegistrationAttribution(true, false, true);
+            TestMenuDisplayAttributionSnapshot();
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
