@@ -783,32 +783,86 @@ struct TemporaryVerb
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     }
 };
-template<class Wait>
-void TestSystemPolicy(Wait wait, const std::filesystem::path &directory)
+// Exercise the actual popup entry so a supervised query failure follows the
+// production recovery policy. Installed handlers remain real; only catalogue
+// metadata is fixed because system enable/disable is decided by the Shell.
+void TestSystemPolicy(const std::filesystem::path &directory, bool failFirst = false)
 {
-    namespace ext=snowdesktop::shell_extensions;
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
     TemporaryVerb registration;
-    const auto file=directory/(L"sample"+registration.extension);
-    { std::ofstream output(file); output<<"isolated Shell policy sample"; }
-    ext::Request request; request.paths={file.wstring()};
-    const auto probe=[](const auto &list) {
-        return std::find_if(list.begin(),list.end(),[](const auto &e){return e.label==L"SnowDesktop isolated policy probe";});
+    const auto file = directory / (L"sample" + registration.extension);
+    {
+        std::ofstream output(file);
+        output << "isolated Shell policy sample";
+    }
+    ext::Request request;
+    request.paths = {file.wstring()};
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:snowdesktopprobe", ext::Category::Objects, true);
+    auto queryPopup = [&](bool disabled)
+    {
+        std::atomic<unsigned> attempts = 0;
+        std::atomic<bool> forcedFailure = false, invoked = false;
+        ext::MenuService service(
+            directory / (disabled ? L"policy-disabled" : L"policy-enabled"),
+            [&](const ext::Request &target)
+            {
+                const bool selected = target.paths == request.paths && !target.startPinOnly &&
+                                      target.sourceClsid.empty() && target.sourceKey.empty();
+                const auto attempt = selected ? ++attempts : 0u;
+                auto session = std::make_shared<ext::Session>(target);
+                if (failFirst && selected && attempt == 1)
+                {
+                    HANDLE owned = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, session->ProcessId());
+                    if (owned)
+                    {
+                        forcedFailure = TerminateProcess(owned, 19) != FALSE;
+                        WaitForSingleObject(owned, 3000);
+                        CloseHandle(owned);
+                    }
+                }
+                return ext::QueryWork{[session] { return session->Poll(); }, [&](UINT, POINT) { invoked = true; }};
+            },
+            []
+            {
+                ext::Catalogue catalogue;
+                catalogue.revision = 1;
+                return catalogue;
+            });
+        service.Configure(prefs);
+        ext::Presentation popup(request, prefs, L"", L"", service);
+        std::vector<menu::Item> items;
+        menu::Options options;
+        popup.Attach(items, options, 0);
+        const auto deadline = GetTickCount64() + 20000;
+        while (!options.pollItemsFinished() && GetTickCount64() < deadline)
+        {
+            if (auto next = options.pollItems(items, true))
+                items = std::move(*next);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        const auto view = service.View(request);
+        std::cout << "Actual policy popup: disabled=" << disabled << ", fault=" << failFirst
+                  << ", attempts=" << attempts << ", rows=" << items.size() << ", error=" << view.error << std::endl;
+        Expect(options.pollItemsFinished() && view.snapshot && view.error.empty() && !invoked,
+               "system policy is observed through a successful actual popup query without invoking a command");
+        Expect(!failFirst || (forcedFailure && attempts == 2),
+               "the actual popup recovers once after terminating only its own first helper");
+        Expect(disabled ? items.empty()
+                        : items.size() == 1 && items.front().label == L"SnowDesktop isolated policy probe",
+               disabled ? "the actual popup never restores a system-disabled command"
+                        : "the system-enabled private verb appears in the actual popup after bounded recovery");
     };
-    {
-        ext::Session visible(request); const auto reply=wait(visible);
-        if (!reply.ok || probe(reply.entries) == reply.entries.end())
-            std::cerr << "Private policy query: ok=" << reply.ok << ", error=" << reply.error
-                      << ", entries=" << reply.entries.size() << std::endl;
-        Expect(reply.ok&&probe(reply.entries)!=reply.entries.end(),
-            "system-enabled private verb appears through the actual Shell aggregate");
-    }
+    queryPopup(false);
     registration.Disable();
-    {
-        ext::Session disabled(request); const auto reply=wait(disabled);
-        const auto shown=ext::VisibleEntries({},reply.entries,request);
-        Expect(reply.ok&&probe(shown)==shown.end(),
-            "following the Shell never restores a system-disabled command");
-    }
+    queryPopup(true);
 }
 // Real inherited pipes and process supervision; only the third-party query is
 // substituted, so a hung extension cannot be mistaken for a passing UI mock.
@@ -1649,7 +1703,8 @@ void TestExtensionSessions()
         RealQueryMode(){ext::InvalidateMenuCache(); SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",L"1");}
         ~RealQueryMode(){ext::InvalidateMenuCache(); SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",nullptr);}
     } realMode;
-    TestSystemPolicy(wait, directory.path);
+    TestSystemPolicy(directory.path);
+    TestSystemPolicy(directory.path, true);
     // Exercise the same four default queries as the settings tabs, including
     // real installed handler images. Report every scope before failing so one
     // incompatible DLL cannot hide the remaining scope results.
