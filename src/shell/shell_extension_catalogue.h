@@ -36,10 +36,16 @@ struct Catalogue
     std::vector<Registration> rows;
     std::vector<Association> associations;
     std::uint64_t revision = 0;
+    // Transient proof from this process; persisted/IPC catalogues omit it and
+    // use full verification until a live scan establishes the baseline.
+    std::uint64_t folderRevision = 0;
 };
 constexpr unsigned ContextBit(Context context) { return 1u << static_cast<unsigned>(context); }
 // Read-only, intended for the metadata worker. No Shell extension is activated.
 Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+// Same complete folder registration inputs as the full scan, without
+// enumerating unrelated file classes. Metadata only; no handler activation.
+std::uint64_t ReadFolderCatalogueRevision(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
 // Internal menu compatibility path uses the same Blocked/Approved policy as
 // discovery. Alternate roots are for isolated registry policy tests only.
 bool HandlerEnabled(const std::wstring &clsid, HKEY user = HKEY_CURRENT_USER, HKEY machine = HKEY_LOCAL_MACHINE);

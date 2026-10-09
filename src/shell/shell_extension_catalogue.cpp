@@ -305,6 +305,7 @@ struct Scanner
 {
     HKEY classes;
     Catalogue result;
+    std::vector<Registration> folderRows;
     std::map<std::string, size_t> ids;
     // One inventory contains many registrations of the same provider. Reuse
     // their metadata only within this scan; the next scan rechecks files,
@@ -374,11 +375,31 @@ struct Scanner
     {
         return Handler(clsid).application;
     }
+    void Image(Entry &entry, const std::wstring &icon)
+    {
+        if (icon.empty()) return;
+        const auto [image, inserted] = images.try_emplace(icon);
+        if (inserted) LoadIcon(image->second, icon);
+        entry.width = image->second.width; entry.height = image->second.height;
+        entry.pixels = image->second.pixels;
+    }
+    std::uint64_t FolderRevision()
+    {
+        std::sort(folderRows.begin(), folderRows.end(), [](const auto &a, const auto &b) {
+            return std::tie(a.id, a.sources, a.contexts) < std::tie(b.id, b.sources, b.contexts);
+        });
+        return Hash(settings_ipc::Pack(folderRows));
+    }
     void Add(Registration row, const std::wstring &icon)
     {
         if (row.types.empty()) row.types.push_back(L"*");
         if (row.id.empty() || result.rows.size() >= 16384) return;
         row.display.provider = row.id;
+        if (row.contexts & ContextBit(Context::Folder))
+        {
+            auto source = row; Image(source.display, icon);
+            folderRows.push_back(std::move(source));
+        }
         if (const auto it = ids.find(row.id); it != ids.end())
         {
             auto &existing = result.rows[it->second];
@@ -389,13 +410,7 @@ struct Scanner
             existing.systemEnabled |= row.systemEnabled;
             return;
         }
-        if (!icon.empty())
-        {
-            const auto [image, inserted] = images.try_emplace(icon);
-            if (inserted) LoadIcon(image->second, icon);
-            row.display.width = image->second.width; row.display.height = image->second.height;
-            row.display.pixels = image->second.pixels;
-        }
+        Image(row.display, icon);
         ids[row.id] = result.rows.size();
         result.rows.push_back(std::move(row));
     }
@@ -565,8 +580,20 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     }
     std::sort(scanner.result.rows.begin(), scanner.result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
+    scanner.result.folderRevision = scanner.FolderRevision();
     timing.Record("complete", static_cast<unsigned>(scanner.result.rows.size()));
     return std::move(scanner.result);
+}
+std::uint64_t ReadFolderCatalogueRevision(HKEY classes, bool packages)
+{
+    MenuTiming timing("folder.catalogue");
+    Scanner scanner{classes};
+    const auto folders = ContextBit(Context::Folder);
+    scanner.Root(L"AllFilesystemObjects", ContextBit(Context::File) | folders);
+    scanner.Root(L"Directory", folders); scanner.Root(L"Folder", folders); scanner.Root(L"Drive", folders);
+    if (packages) scanner.Packages();
+    timing.Record("complete", static_cast<unsigned>(scanner.folderRows.size()));
+    return scanner.FolderRevision();
 }
 bool HandlerEnabled(const std::wstring &clsid, HKEY user, HKEY machine)
 {

@@ -1342,6 +1342,9 @@ void TestRegistryCatalogue()
     Expect(find("reg:*\\shell\\metadata-case").display.label == L"Mixed metadata caption" &&
         find("reg:*\\shell\\metadata-unicode").display.label == longCaption,
         "metadata lookup preserves mixed-case value names and full Unicode captions");
+    const auto folderProof = catalogue.folderRevision;
+    Expect(folderProof && folderProof == ext::ReadFolderCatalogueRevision(registry.key, false),
+        "full inventory and folder-only verification agree for shared handler registrations");
     const auto metadataRevision = catalogue.revision;
     put(L"*\\shell\\metadata-case", L"MUIVerb", L"Updated metadata caption");
     put(L"*\\shell\\metadata-case", L"LEGACYDISABLE", L"");
@@ -1350,6 +1353,32 @@ void TestRegistryCatalogue()
         find("reg:*\\shell\\metadata-case").display.label == L"Updated metadata caption" &&
         !find("reg:*\\shell\\metadata-case").systemEnabled,
         "a new scan rechecks changed metadata and current case-insensitive disable policy");
+    Expect(catalogue.folderRevision == folderProof && ext::ReadFolderCatalogueRevision(registry.key, false) == folderProof,
+        "file-only metadata changes do not alter proof for an unchanged folder registration");
+    put(L"Directory\\shell\\folder-proof\\command", nullptr, L"unused.exe /proof %1");
+    auto previousProof = ext::ReadFolderCatalogueRevision(registry.key, false);
+    for (const auto &[name, value] : std::vector<std::pair<const wchar_t *, const wchar_t *>>{
+        {L"MUIVerb", L"Folder action"}, {L"AppliesTo", L"System.ItemNameDisplay:proof"},
+        {L"MultiSelectModel", L"Single"}, {L"Extended", L""}, {L"LegacyDisable", L""},
+        {L"ProgrammaticAccessOnly", L""}, {L"SubCommands", L"proof-one;proof-two"},
+        {L"ExtendedSubCommandsKey", L"FolderProof.SubCommands"},
+        {L"ExplorerCommandHandler", L"{B92A9760-188A-44ED-88A5-F9E3D30E33AF}"}})
+    {
+        put(L"Directory\\shell\\folder-proof", name, value);
+        const auto proof = ext::ReadFolderCatalogueRevision(registry.key, false);
+        Expect(proof != previousProof && proof == ext::ReadCatalogue(registry.key, false).folderRevision,
+            "each changed folder command, applicability value and disable policy invalidates scoped proof");
+        previousProof = proof;
+        if (std::wstring_view(name) == L"LegacyDisable" || std::wstring_view(name) == L"ProgrammaticAccessOnly")
+        {
+            Expect(RegDeleteKeyValueW(registry.key, L"Directory\\shell\\folder-proof", name) == ERROR_SUCCESS,
+                "restore the isolated enabled state before checking another disable policy");
+            previousProof = ext::ReadFolderCatalogueRevision(registry.key, false);
+        }
+    }
+    const auto restored = snowdesktop::settings_ipc::Unpack<ext::Catalogue>(snowdesktop::settings_ipc::Pack(catalogue));
+    Expect(!restored.folderRevision, "persisted and IPC catalogue data never carry a live scoped verification proof");
+
 }
 
 void TestNvidiaCompatibility()
@@ -3279,6 +3308,117 @@ void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = 
 }
 // Only the helper boundary fails. The real popup, backoff and scheduler must
 // recover once, and a persistent failure must finish without a retry loop.
+
+// Real registry metadata and notifications drive production publication. Only
+// helper replies and completion order are controlled; no fixture is invoked.
+void TestFolderRegistrationVerification(int mode = 0)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct Registry {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        Registry(std::wstring p) : path(std::move(p)) {
+            DWORD disposition = 0;
+            Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &key, &disposition) == ERROR_SUCCESS, "create isolated folder verification fixture");
+            owned = disposition == REG_CREATED_NEW_KEY;
+            Expect(owned, "folder verification fixture has a unique owner");
+        }
+        ~Registry() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry(L"Software\\SnowDesktopFolderVerification\\" + temp.path.filename().wstring()),
+      noise(L"Software\\Classes\\Local Settings\\SnowDesktopFolderVerification-" + temp.path.filename().wstring());
+    auto put = [&](const wchar_t *key, const wchar_t *name, const wchar_t *value) {
+        HKEY created = nullptr;
+        Expect(RegCreateKeyExW(registry.key, key, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &created, nullptr)
+            == ERROR_SUCCESS, "create isolated menu metadata");
+        const auto status = RegSetValueExW(created, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value),
+            static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
+        RegCloseKey(created); Expect(status == ERROR_SUCCESS, "write isolated menu metadata");
+    };
+    put(L"Directory\\shell\\folder-proof", L"MUIVerb", L"17");
+    put(L"Directory\\shell\\folder-proof\\command", nullptr, L"unused.exe /17 %1");
+    ext::Request selected, barrier;
+    const auto selectedPath = temp.path / L"selected";
+    std::filesystem::create_directory(selectedPath);
+    selected.paths = {selectedPath.wstring()};
+    barrier.paths = {(temp.path / L"barrier.txt").wstring()};
+    std::ofstream(barrier.paths.front()) << "private";
+    if (mode == 4) { selected.paths = barrier.paths; }
+    std::atomic<bool> blocked = false, scopeDone = false, helperReady = false;
+    std::atomic<unsigned> queries = 0, scans = 0, scopeReads = 0, version = 17;
+    std::mutex gateMutex; std::condition_variable gate; bool release = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        if (target.paths != selected.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        const auto query = ++queries; const auto captured = version.load();
+        return ext::QueryWork{[&, query, captured]() -> std::optional<ext::Reply> {
+            if (query == 1 && !helperReady) return {};
+            ext::Entry entry; entry.key = "folder-proof"; entry.provider = "verb:folder-proof";
+            entry.registration = "reg:directory\\shell\\folder-proof"; entry.label = std::to_wstring(captured);
+            return ext::Reply{true, {entry}, {}};
+        }, {}};
+    }, [&] {
+        if (++scans > 1) {
+            blocked = true; std::unique_lock lock(gateMutex);
+            if (!gate.wait_for(lock, std::chrono::seconds(20), [&] { return release; }))
+                throw std::runtime_error("full inventory gate exceeded its bound");
+        }
+        auto catalogue = ext::ReadCatalogue(registry.key, false);
+        if (mode == 3) catalogue.folderRevision = 0; // A persisted/legacy inventory cannot provide proof.
+        return catalogue;
+    }, [&] {
+        ++scopeReads;
+        const auto revision = mode == 2 ? 0 : ext::ReadFolderCatalogueRevision(registry.key, false);
+        scopeDone = true; return revision;
+    });
+    struct Release {
+        std::mutex &mutex; std::condition_variable &gate; bool &released;
+        ~Release() { { std::lock_guard lock(mutex); released = true; } gate.notify_all(); }
+    } releaseOnFailure{gateMutex, gate, release};
+    ext::Preferences preferences;
+    ext::SetCommon(preferences, "reg:directory\\shell\\folder-proof", ext::Category::Objects, true);
+    service.Configure(preferences); service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; }, "initial live folder inventory is ready");
+    service.Query(selected, mode == 4 ? ext::QueryPriority::Execute : ext::QueryPriority::Menu);
+    PumpUntil([&] { return queries.load() == 1; }, "folder native query starts once");
+    const auto before = service.View(selected).revision;
+    if (mode == 1) {
+        version = 18;
+        put(L"Directory\\shell\\folder-proof", L"MUIVerb", L"18");
+        put(L"Directory\\shell\\folder-proof\\command", nullptr, L"unused.exe /18 %1");
+    }
+    DWORD data = 1;
+    Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&data), sizeof(data))
+        == ERROR_SUCCESS, "emit an actual Classes notification while the folder query is pending");
+    PumpUntil([&] { return blocked.load() && service.View(selected).revision > before; },
+        "full registration verification starts and remains blocked");
+    helperReady = true;
+    if (mode < 3) PumpUntil([&] { return scopeDone.load(); }, "folder verification runs independently of the full scan");
+    if (mode == 0) {
+        PumpUntil([&] { return service.View(selected).snapshot.has_value(); },
+            "unchanged folder metadata publishes while unrelated full inventory is still blocked");
+        Expect(service.Inspect().scanning && queries == 1 && scopeReads == 1,
+            "early folder publication keeps full discovery running without querying the helper again");
+    } else {
+        // A second completed helper job supplies a scheduler barrier after scoped
+        // metadata returned; changed, missing and failed proof must stay pending.
+        ext::Request marker; marker.paths = {(temp.path / L"marker.txt").wstring()};
+        std::ofstream(marker.paths.front()) << "private";
+        marker.startPinOnly = true;
+        service.Query(marker, ext::QueryPriority::Execute);
+        PumpUntil([&] { return service.View(marker).snapshot.has_value(); }, "publication barrier completes");
+        Expect(!service.View(selected).snapshot && service.View(selected).pending,
+            "changed, missing or failed folder proof cannot bypass full registration verification");
+        if (mode >= 3) Expect(scopeReads == 0, "unproven inventories and file selections do not start scoped verification");
+    }
+    { std::lock_guard lock(gateMutex); release = true; } gate.notify_all();
+    PumpUntil([&] { return !service.View(selected).pending && service.View(selected).snapshot.has_value(); },
+        "folder publication finishes after the full verification gate opens");
+    const auto view = service.View(selected);
+    Expect(view.snapshot->entries.size() == 1 && view.snapshot->entries.front().label == (mode == 1 ? L"18" : L"17"),
+        "only the current folder action is published");
+    Expect(queries == (mode == 1 ? 2u : 1u), "changed folder registration re-queries exactly once");
+}
+
 void TestWarmFailureRecovery(bool permanent)
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -4420,6 +4560,8 @@ int wmain(int argc, wchar_t **argv)
             TestLateInitialRegistrationAttribution(false, false, false, true);
             TestRegistrationVerificationBeforePopupPublication(true);
         }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-folder-registration-verification")
+        { TestRegistryCatalogue(); for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
             TestExtensionSessions();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-shortcut-query-recovery")
@@ -4456,6 +4598,7 @@ int wmain(int argc, wchar_t **argv)
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
             TestRegistryCatalogue();
+            for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
             TestNvidiaCompatibility();
         }
         else
@@ -4467,6 +4610,7 @@ int wmain(int argc, wchar_t **argv)
             TestDeferredPopups();
             TestCatalogueCache();
             TestRegistryCatalogue();
+            for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
             TestNvidiaCompatibility();
             TestManagementUpdates();
             TestManagementFilters();

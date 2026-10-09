@@ -116,6 +116,7 @@ struct MenuService::Impl
         MenuSnapshotCache::Ticket ticket; QueryWork work;
         std::uint64_t started;
         bool startPinOnly = false;
+        unsigned contexts = 0;
         std::optional<Reply> reply;
         std::uint64_t verificationRevision = 0;
         ULONGLONG replyReadyAt = 0;
@@ -152,23 +153,30 @@ struct MenuService::Impl
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
     std::uint64_t clock = 0;
     std::uint64_t registryRevision = 0, checkedRegistryRevision = 0, failedRegistryRevision = 0, scanRegistryRevision = 0;
+    std::uint64_t folderCheckedRevision = 0, folderCheckedSignature = 0, folderAttemptRevision = 0, folderScanRevision = 0;
     ULONGLONG scanStarted = 0;
     HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     std::thread worker;
     std::filesystem::path directory;
     QueryFactory factory;
     CatalogueReader readCatalogue;
+    FolderVerifier verifyFolder;
     std::vector<Running> running;
     std::future<Catalogue> scan;
-    explicit Impl(std::filesystem::path path, QueryFactory f, CatalogueReader r)
-        : directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r))
+    std::future<std::uint64_t> folderScan;
+    explicit Impl(std::filesystem::path path, QueryFactory f, CatalogueReader r, FolderVerifier v)
+        : directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r)), verifyFolder(std::move(v))
     {
         if (!factory) factory = [](const Request &request) {
             auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000);
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
                 [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); }};
         };
-        if (!readCatalogue) readCatalogue = [] { return ReadCatalogue(); };
+        if (!readCatalogue)
+        {
+            readCatalogue = [] { return ReadCatalogue(); };
+            if (!verifyFolder) verifyFolder = [] { return ReadFolderCatalogueRevision(); };
+        }
         worker = std::thread([this] { Run(); });
     }
     ~Impl() { Stop(); if (wake) CloseHandle(wake); }
@@ -178,8 +186,9 @@ struct MenuService::Impl
         SetEvent(wake);
         if (worker.joinable()) worker.join();
         // The registry scan runs separately from the scheduler. Drain it before
-        // returning to host teardown, while its static metadata caches exist.
+        // returning to host teardown, while their static metadata caches exist.
         if (scan.valid()) scan.wait();
+        if (folderScan.valid()) folderScan.wait();
     }
     bool Enabled(const Request &request, unsigned contexts = 0) const
     {
@@ -652,6 +661,7 @@ struct MenuService::Impl
                     // Keep existing associations and observed icons when only a
                     // registry notification repeated the same inventory. Forced
                     // discovery and source queries remain queued independently.
+                    catalogue.folderRevision = value.folderRevision;
                     scanning = false;
                     sourcePending |= inspected;
                     MenuTrace("catalogue", "unchanged");
@@ -724,6 +734,43 @@ struct MenuService::Impl
             if (SUCCEEDED(ole)) CoUninitialize();
             return result;
         });
+    }
+    // A live scan establishes folder-only proof independently of merged file
+    // associations. It never marks the whole registration inventory checked.
+    void RefreshFolderVerification()
+    {
+        if (folderScan.valid() && folderScan.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
+        {
+            const auto revision = folderScan.get();
+            std::lock_guard lock(mutex);
+            if (revision && revision == catalogue.folderRevision)
+            {
+                folderCheckedRevision = std::max(folderCheckedRevision, folderScanRevision);
+                folderCheckedSignature = revision;
+                MenuTrace("folder.catalogue", "unchanged");
+            }
+            else MenuTrace("folder.catalogue", "changed_or_failed");
+        }
+    }
+    void StartFolderVerification(std::uint64_t required)
+    {
+        if (folderScan.valid() || !verifyFolder) return;
+        {
+            std::lock_guard lock(mutex);
+            if (!catalogue.folderRevision || checkedRegistryRevision >= required ||
+                (folderCheckedRevision >= required && folderCheckedSignature == catalogue.folderRevision) ||
+                registryRevision <= folderAttemptRevision) return;
+            folderScanRevision = folderAttemptRevision = registryRevision;
+        }
+        try { folderScan = std::async(std::launch::async, [read = verifyFolder] {
+            const HRESULT ole = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            if (FAILED(ole)) return std::uint64_t(0);
+            std::uint64_t result = 0;
+            try { result = read(); } catch (...) { MenuTrace("folder.catalogue", "failure"); }
+            if (SUCCEEDED(ole)) CoUninitialize();
+            return result;
+        }); }
+        catch (...) { MenuTrace("folder.catalogue", "start_failed"); }
     }
     void Run()
     {
@@ -810,6 +857,7 @@ struct MenuService::Impl
                 MenuTrace("catalogue", "stale.registry");
             }
             RefreshCatalogue(cache);
+            RefreshFolderVerification();
             Catalogue typeCatalogue; bool discoverTypes = false;
             {
                 std::lock_guard lock(mutex);
@@ -845,11 +893,14 @@ struct MenuService::Impl
                 if (!job.reply) { ++i; continue; }
                 if (job.reply->ok && !job.startPinOnly)
                 {
+                    if (job.contexts == ContextBit(Context::Folder)) StartFolderVerification(job.verificationRevision);
                     std::lock_guard lock(mutex);
                     // Verify notifications observed before this reply became ready.
                     // Initial discovery and later unrelated notifications must not
                     // keep extending an already-captured query's wait indefinitely.
-                    if (checkedRegistryRevision < job.verificationRevision)
+                    if (checkedRegistryRevision < job.verificationRevision &&
+                        !(job.contexts == ContextBit(Context::Folder) && folderCheckedRevision >= job.verificationRevision &&
+                          folderCheckedSignature == catalogue.folderRevision))
                     {
                         if (failedRegistryRevision >= job.verificationRevision ||
                             GetTickCount64() - job.replyReadyAt >= kInventoryWaitMs)
@@ -931,7 +982,7 @@ struct MenuService::Impl
                         MenuTrace("schedule", "snapshot_reused"); continue;
                     }
                 }
-                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, {}, 0, 0};
+                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
@@ -988,8 +1039,8 @@ struct MenuService::Impl
         sourceJob.reset(); running.clear(); Session::ReleaseIdleWorker(); OleUninitialize();
     }
 };
-MenuService::MenuService(std::filesystem::path directory, QueryFactory factory, CatalogueReader reader)
-    : impl_(std::make_unique<Impl>(std::move(directory), std::move(factory), std::move(reader))) {}
+MenuService::MenuService(std::filesystem::path directory, QueryFactory factory, CatalogueReader reader, FolderVerifier verifier)
+    : impl_(std::make_unique<Impl>(std::move(directory), std::move(factory), std::move(reader), std::move(verifier))) {}
 MenuService::~MenuService() = default;
 void MenuService::Shutdown() { impl_->Stop(); }
 MenuService &SharedMenuService() { static MenuService service; return service; }

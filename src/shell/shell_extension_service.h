@@ -33,7 +33,10 @@ class MenuService
   public:
     using QueryFactory = std::function<QueryWork(const Request &)>;
     using CatalogueReader = std::function<Catalogue()>;
-    explicit MenuService(std::filesystem::path directory = {}, QueryFactory factory = {}, CatalogueReader reader = {});
+    // A custom inventory reader must explicitly provide matching live proof.
+    // Persisted inventories and readers without it always use full verification.
+    using FolderVerifier = std::function<std::uint64_t()>;
+    explicit MenuService(std::filesystem::path directory = {}, QueryFactory factory = {}, CatalogueReader reader = {}, FolderVerifier verifier = {});
     ~MenuService();
     MenuService(const MenuService &) = delete;
     // All public methods are memory-only. The worker owns all disk I/O, target
