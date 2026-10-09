@@ -569,8 +569,9 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     size_t itemIndex = FindItemIndexByKey(dockItem->GetReference());
                     if (itemIndex < items_.size())
                     {
-                        items_[itemIndex].selected =
-                            dockItem->IsSelected();
+                        // Menu commands need the launcher as their target even
+                        // when its running indicator suppresses Dock selection.
+                        items_[itemIndex].selected = true;
                         items_[itemIndex].bounds = dockItemBounds;
                         InvalidateRect(hwnd_, nullptr, FALSE);
                         ShowItemContextMenu(
@@ -610,6 +611,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             {
                 ClearSelection();
                 frequentItem->SetSelected(true);
+                items_[itemIndex].selected = true;
                 items_[itemIndex].bounds = dock->GetElementVisualRect(
                     frequentItem->GetBounds(), pt);
                 InvalidateRect(hwnd_, nullptr, FALSE);
