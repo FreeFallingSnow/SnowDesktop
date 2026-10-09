@@ -12,7 +12,7 @@ namespace snowdesktop::shell_extensions
 {
 namespace
 {
-constexpr std::uint32_t Schema = 7;
+constexpr std::uint32_t Schema = 8;
 constexpr std::uint64_t MaximumSnapshotBytes = 2 * 1024 * 1024;
 std::uint64_t Hash(std::span<const std::byte> bytes)
 {

@@ -6,6 +6,21 @@
 
 namespace snowdesktop::shell_extensions
 {
+// Host-owned verbs refer to the selected desktop object only at the aggregate
+// root. The same canonical verb inside a provider's cascade belongs to that
+// provider, for example PowerShell 7's nested "runas" command.
+inline bool IsRootMenuCommand(HMENU root, UINT command)
+{
+    for (int index = 0; index < GetMenuItemCount(root); ++index)
+    {
+        MENUITEMINFOW item{sizeof(item)};
+        item.fMask = MIIM_ID;
+        if (GetMenuItemInfoW(root, index, TRUE, &item) && item.wID == command)
+            return true;
+    }
+    return false;
+}
+
 enum class PopupContents { Readable, Deferred, Native };
 
 // Lazy Shell cascades can contain a dummy command with an ID but no text.

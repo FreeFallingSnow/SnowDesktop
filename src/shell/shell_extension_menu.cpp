@@ -592,7 +592,7 @@ struct Host
             entry.checked = (item.fState & MFS_CHECKED) != 0;
             const auto verb = Verb(source, item.wID);
             entry.key = Utf8(verb);
-            if (OwnedVerb(verb))
+            if (OwnedVerb(verb) && IsRootMenuCommand(source.menu, item.wID))
                 continue;
             if (item.fType & MFT_OWNERDRAW || (!entry.separator && entry.label.empty()))
             {
@@ -910,7 +910,7 @@ struct Host
             item.fMask = MIIM_ID | MIIM_SUBMENU;
             if (!GetMenuItemInfoW(menu, i, TRUE, &item))
                 continue;
-            if (OwnedVerb(Verb(source, item.wID)))
+            if (OwnedVerb(Verb(source, item.wID)) && IsRootMenuCommand(source.menu, item.wID))
                 EnableMenuItem(menu, i, MF_BYPOSITION | MF_GRAYED);
             if (item.hSubMenu)
                 DisableOwned(source, item.hSubMenu, depth + 1);
@@ -971,7 +971,8 @@ struct Host
         }
         // Keep application-owned file operations out of the native fallback.
         // Their desktop/Dock semantics are handled by the existing host menu.
-        if (!source.nvidiaApplication && OwnedVerb(Verb(source, command.offset + 1)))
+        if (!source.nvidiaApplication && OwnedVerb(Verb(source, command.offset + 1)) &&
+            IsRootMenuCommand(source.menu, command.offset + 1))
             return E_ACCESSDENIED;
         std::function<bool(HMENU, int)> enabled = [&](HMENU menu, int depth) {
             if (depth > 16)

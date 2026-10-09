@@ -835,6 +835,17 @@ void TestDeferredPopups()
     Expect(!RequiresNativePopup(menu), "materialized submenu commands retain custom rendering");
     AppendMenuW(menu, MF_OWNERDRAW, 42, nullptr);
     Expect(RequiresNativePopup(menu), "unlabelled owner-drawn children keep their native parent renderer");
+
+    HMENU root = CreatePopupMenu();
+    Expect(root != nullptr, "create aggregate command-scope fixture");
+    Cleanup rootCleanup{root};
+    AppendMenuW(root, MF_STRING, 40, L"Run selected application as administrator");
+    AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(menu), L"Provider tools");
+    Expect(snowdesktop::shell_extensions::IsRootMenuCommand(root, 40) &&
+        !snowdesktop::shell_extensions::IsRootMenuCommand(root, 41),
+        "selected-object root operations remain host-owned while provider children keep their own scope");
+    // Detach before the two independently owned fixtures destroy their menus.
+    RemoveMenu(root, 1, MF_BYPOSITION);
 }
 
 // Opt-in installed-extension evidence through the full supervised Host/Session
@@ -894,6 +905,54 @@ void ProbeArchiveSubmenus()
             winrar |= entry.label == L"WinRAR";
         }
         Expect(winrar, "this opt-in probe requires an enabled installed WinRAR Shell extension");
+    }
+}
+
+// Read installed PowerShell cascades without launching a terminal or UAC.
+void ProbePowerShellSubmenus()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    for (const auto context : {ext::Context::Desktop, ext::Context::FolderBackground})
+    {
+        ext::Request request; request.catalogueOnly = true; request.context = context;
+        ext::Session session(request);
+        std::optional<ext::Reply> reply;
+        const auto deadline = GetTickCount64() + 12000;
+        while (!reply && GetTickCount64() < deadline)
+        {
+            reply = session.Poll();
+            if (reply) break;
+            MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+        Expect(reply && reply->ok, "the real background menu query completes through Session IPC");
+        const auto root = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+            auto key = entry.key;
+            std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
+            return key == "powershell7x64" || key == "powershell7x86";
+        });
+        Expect(root != reply->entries.end(), "this opt-in probe requires enabled installed PowerShell 7 menu registration");
+        std::cout << (context == ext::Context::Desktop ? "Desktop" : "Folder background")
+            << " PowerShell 7: native=" << root->native << ", children=" << root->children.size() << std::endl;
+        Expect(!root->native && !root->children.empty(), "PowerShell 7 is a real custom submenu");
+        bool ordinary = false, administrator = false;
+        for (const auto &child : root->children)
+        {
+            ordinary |= child.key == "openpwsh";
+            administrator |= child.key == "runas";
+            if (child.separator) continue;
+            Expect(child.token && ext::ResolveCommand(*reply,
+                ext::AppendReference(ext::AppendReference({}, *root), child)) == child.token,
+                "each PowerShell child resolves to its current live-session command");
+        }
+        Expect(ordinary && administrator, "PowerShell preserves both ordinary and administrator commands");
+        ext::Preferences visible;
+        ext::SetHidden(visible, root->provider, context, false);
+        const auto shown = ext::VisibleSnapshot(visible, *reply, ext::ContextBit(context));
+        Expect(shown.size() == 1 && shown.front().children.size() == root->children.size(),
+            "the exposed background visibility path preserves the complete enabled PowerShell cascade");
     }
 }
 
@@ -2937,9 +2996,10 @@ void BenchmarkMenus()
 int wmain(int argc, wchar_t **argv)
 {
     const bool archiveProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-archive-submenus";
+    const bool powerShellProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-powershell-submenus";
     const bool nvidiaProbe = argc == 2 && (std::wstring_view(argv[1]) == L"--probe-nvidia-menu" ||
         std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
-    if (nvidiaProbe || archiveProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    if (nvidiaProbe || archiveProbe || powerShellProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
@@ -3026,6 +3086,7 @@ int wmain(int argc, wchar_t **argv)
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
         if (archiveProbe) ProbeArchiveSubmenus();
+        else if (powerShellProbe) ProbePowerShellSubmenus();
         else if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
