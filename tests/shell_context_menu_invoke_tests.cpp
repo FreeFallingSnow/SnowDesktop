@@ -1584,14 +1584,22 @@ void TestExtensionSessions()
                "Shell helpers cannot inherit or write the caller's redirected output stream");
     }
     ext::Request request;request.paths={L"synthetic-success"};
+    struct ObservedHelper
+    {
+        HANDLE process = nullptr;
+        ~ObservedHelper() { if (process) CloseHandle(process); }
+    } firstHelper;
     DWORD firstProcess = 0;
     {ext::Session session(request,2500);auto reply=wait(session); firstProcess = session.ProcessId();
+        firstHelper.process = OpenProcess(SYNCHRONIZE, FALSE, firstProcess);
         Expect(reply.ok&&reply.entries.size()==1&&reply.entries[0].label==L"压缩"&&reply.entries[0].checked&&!reply.entries[0].enabled,
             "isolated query transports Unicode labels and actual menu states");}
+    Expect(firstHelper.process && WaitForSingleObject(firstHelper.process, 2500) == WAIT_OBJECT_0,
+        "closing an ordinary query stops its helper instead of pumping extension callbacks between menus");
     request.paths={L"synthetic-second"};
     {ext::Session session(request,2500);auto reply=wait(session);
-        Expect(session.ProcessId()==firstProcess && reply.ok && reply.entries[0].key=="second",
-            "a warm worker is reused but queries the new selection instead of reusing old commands");}
+        Expect(session.ProcessId()!=firstProcess && reply.ok && reply.entries[0].key=="second",
+            "a fresh ordinary worker queries the new selection without retaining third-party callbacks");}
     {
         ext::Session first(request,2500); Expect(wait(first).ok,"first concurrent query");
         ext::Session second(request,2500); Expect(wait(second).ok,"second concurrent query");
@@ -1611,19 +1619,21 @@ void TestExtensionSessions()
         ext::Request sample; sample.catalogueOnly=true; sample.context=ext::Context::File;
         std::wstring samplePath;
         DWORD sampleWorker=0;
+        ObservedHelper sampleHelper;
         {
             ext::Session session(sample,2500); auto reply=wait(session);
             Expect(reply.ok,"owned catalogue sample query completes");
             samplePath=reply.entries[0].label; sampleWorker=session.ProcessId();
+            sampleHelper.process = OpenProcess(SYNCHRONIZE, FALSE, sampleWorker);
             Expect(GetFileAttributesW(samplePath.c_str())!=INVALID_FILE_ATTRIBUTES,"sample lives through its menu session");
         }
-        // Reacquire immediately to exercise a release acknowledgement arriving
-        // after the next request; it must not remove the current sample.
+        Expect(sampleHelper.process && WaitForSingleObject(sampleHelper.process, 2500) == WAIT_OBJECT_0,
+            "catalogue-only queries also stop their extension host after completion");
         ext::Session next(sample,2500); auto reply=wait(next);
-        Expect(next.ProcessId()==sampleWorker && reply.ok &&
+        Expect(next.ProcessId()!=sampleWorker && reply.ok &&
             GetFileAttributesW(samplePath.c_str())==INVALID_FILE_ATTRIBUTES &&
             GetFileAttributesW(reply.entries[0].label.c_str())!=INVALID_FILE_ATTRIBUTES,
-            "release acknowledgements remove retired samples while preserving the next session's object");
+            "retiring a catalogue helper removes its sample while preserving the next session's object");
     }
     request.paths={L"synthetic-hang"};const auto start=GetTickCount64();
     {ext::Session session(request,250);auto reply=wait(session);Expect(!reply.ok&&GetTickCount64()-start<3000,"hung query is terminated without blocking the parent");}
