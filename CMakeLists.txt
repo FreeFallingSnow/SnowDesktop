@@ -171,6 +171,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/layout/app_desktop_layout.cpp
     src/app/shell/app_desktop_reload.cpp
     src/app/dock/app_dock_drop.cpp
+    src/app/dock/app_dock_running_drag.cpp
+    src/dock/dock_running_drag_rules.h
     src/app/dock/app_dock_launch.cpp
     src/app/dock/app_dock_layout.cpp
     src/dock/dock_appbar.cpp

@@ -4,6 +4,7 @@
 #include "item.h"
 #include "common/types.h"
 #include "dock/dock_magnification.h"
+#include "dock/dock_running_drag_rules.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 
 #include <memory>
@@ -27,13 +28,14 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     ComPtr<IDataObject> CreateDataObject() override { return nullptr; }
 
-    size_t GetRunningIndex() const { return runningIndex_; }
+    size_t GetRunningIndex() const;
     std::wstring GetIdentityKey() const;
 
 private:
     DesktopApp* app_ = nullptr;
     Container* container_ = nullptr;
     size_t runningIndex_ = static_cast<size_t>(-1);
+    std::wstring identityKey_;
     RECT bounds_{};
 };
 
@@ -162,6 +164,7 @@ public:
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
+    snowdesktop::dock_running_drag::Target GetRunningDragTarget(POINT pt) const;
     void DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const;
 
 private:
@@ -183,6 +186,8 @@ private:
     size_t SortableEntryCount() const;
     size_t FolderEntryCount() const;
     size_t FolderEntryBegin() const;
+    size_t EmptyRunningDragFixedSlots() const;
+    size_t EmptyRunningDragFileSlots() const;
     bool HasOnlyRecycleBinDragSource() const;
     bool HasOnlyFolderDragSource() const;
     int ItemIconSize() const;

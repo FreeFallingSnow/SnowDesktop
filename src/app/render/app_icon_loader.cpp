@@ -265,6 +265,10 @@ void DesktopApp::DrainBackgroundShellWork()
     RetryFolderReads();
     if (dragSession_.HasContext() || dragDropController_.IsTransportActive() || mouseDown_)
     {
+        // Running-Dock lookup completions update only this gesture's pin
+        // capability and indicator; actual pin commits retain the idle fence.
+        if (dockRunningDrag_)
+            shellVisualWork_.Drain(std::chrono::milliseconds(4), L"dock-running-drag:");
         // First pixels/refinement update only the current popup's presentation;
         // source containers and all ordinary model deliveries remain fenced.
         if (dockFolderPopupOpen_ && popupAnimation_.IsInteractive())

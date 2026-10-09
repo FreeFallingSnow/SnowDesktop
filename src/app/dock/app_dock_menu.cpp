@@ -363,18 +363,8 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             return;
 
         auto adoptRunning = [this, runningKey = running.identityKey](size_t itemIndex) {
-            auto& item = items_[itemIndex];
-            const auto key = DockItemWindowKey(item);
-            snowdesktop::dock_running_app_pin::AdoptRunningPresentation(
-                item, dockRunningWindows_[key], dockUnpinnedRunningApps_,
-                runningKey, [this](HBITMAP bitmap) {
-                    EraseD2DIconCacheForBitmap(bitmap);
-                    DeleteObject(bitmap);
-                });
-            InvalidateDockContainers();
-            InvalidateDragStaticScene();
+            AdoptDockRunningPresentation(runningKey, itemIndex);
         };
-
         // The native menu pumps messages. Prefer a desktop source that appeared
         // while it was open, rather than creating a second shortcut for that app.
         if (command == kContextDockPinMoveToDock && !explorer)
@@ -419,80 +409,21 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             return;
         }
 
-        auto pinApplication = [this, screenPoint, adoptRunning](
+        auto pinApplication = [this, screenPoint, runningKey = running.identityKey](
             const std::shared_ptr<CatalogApplication>& target) {
-            if (!hwnd_ || !IsWindow(hwnd_) || exitRequested_ || dragSession_.HasContext() ||
-                dragDropController_.IsTransportActive()) return;
             POINT clientPoint = screenPoint;
-            if (!ScreenToClient(hwnd_, &clientPoint)) return;
+            if (!hwnd_ || !ScreenToClient(hwnd_, &clientPoint)) return;
             DockContainer* dock = GetDockContainerAtPoint(clientPoint);
             if (!dock) return;
-            const size_t insertIndex = dock->GetInsertIndexAtPoint(clientPoint);
-            const bool pinned = snowdesktop::dock_running_app_pin::CreateAndPin(
-                [dock] { return dock->HasCapacity(1); },
-                [&] {
-                    return snowdesktop::dock_running_app_pin::CreateShortcut(
-                        snowdesktop::desktop_source::Directory(),
-                        SanitizeShortcutFileStem(target->entry.name),
-                        target->entry.absolutePidl.get());
-                },
-                [&](const std::wstring& path) {
-                    auto item = snowdesktop::dock_running_app_pin::ReadShortcutItem(
-                        path, target->entry.name, target->folderPath.empty());
-                    if (!item) return false;
-                    item->layoutKey = ToUpperInvariant(path);
-                    item->gridCell = { kDockPageId, 0, 0 };
-                    if (!AddMaterializedItemsToDock({ path }, insertIndex, false))
-                        return false;
-                    items_.push_back(std::move(*item));
-                    RefreshDesktopItemIndexCache();
-                    const size_t itemIndex = items_.size() - 1;
-                    const auto key = DockItemWindowKey(items_[itemIndex]);
-                    const auto stamp = snowdesktop::shell_icon_request::Stamp(items_[itemIndex]);
-                    if (!target->folderPath.empty())
-                    {
-                        const auto folderKey = L"I:" + ToUpperInvariant(
-                            snowdesktop::dock_refresh_cache::SourceKey(items_[itemIndex].layoutKey, path));
-                        const auto cached = dockFolderTargetCache_.Read(folderKey, stamp);
-                        dockFolderTargetCache_.Publish(folderKey, cached.ticket,
-                            snowdesktop::item_location::FolderTarget{target->folderPath,
-                                snowdesktop::item_location::FolderTargetKind::Shortcut, true});
-                        // A folder pin belongs to the file area and must leave
-                        // Explorer's running group and all its windows intact.
-                        NormalizeDockRecycleBinPosition();
-                    }
-                    else
-                    {
-                        const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
-                        const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
-                        DockAppIdentity pinnedIdentity;
-                        pinnedIdentity.sourceParsingName = path;
-                        pinnedIdentity.executablePath = target->identity.executablePath;
-                        pinnedIdentity.appUserModelId = target->identity.appUserModelId;
-                        pinnedIdentity.kind = !pinnedIdentity.executablePath.empty()
-                            ? DockAppIdentityKind::Executable : DockAppIdentityKind::Applications;
-                        dockAppIdentityCache_.Publish(cacheKey, cached.ticket, std::move(pinnedIdentity));
-                        adoptRunning(itemIndex);
-                    }
-                    // Appending can relocate every DesktopItem. Rebind all
-                    // wrappers before any layout, persistence or repaint.
-                    RebuildContainersAndItems();
-                    ApplyPageMapping();
-                    LayoutItems();
-                    return true;
-                },
-                [](const std::wstring& path) { DeleteFileW(path.c_str()); },
-                [this] { SaveLayoutSlots(); });
-            if (!pinned)
-            {
+            DockRunningPinTarget pinTarget;
+            pinTarget.entry.name = target->entry.name;
+            pinTarget.entry.parsingName = target->entry.parsingName;
+            pinTarget.entry.absolutePidl.reset(ILCloneFull(target->entry.absolutePidl.get()));
+            pinTarget.identity.executablePath = target->identity.executablePath;
+            pinTarget.identity.appUserModelId = target->identity.appUserModelId;
+            pinTarget.folderPath = target->folderPath;
+            if (!PinDockRunningTarget(runningKey, pinTarget, dock->GetInsertIndexAtPoint(clientPoint)))
                 MessageBeep(MB_ICONWARNING);
-                return;
-            }
-            // Reconcile metadata later while retaining the committed icon and
-            // identity; a full reload would reset every desktop icon first.
-            RequestShellRefresh();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return;
         };
         if (command == kContextDockPinCurrentFolder)
         {

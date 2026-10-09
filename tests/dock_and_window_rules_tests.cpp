@@ -8,6 +8,7 @@
 #include "dock/dock_rename_layout.h"
 #include "ui/input/rename_edit_layout.h"
 #include "dock/dock_drop_rules.h"
+#include "dock/dock_running_drag_rules.h"
 #include "dock/dock_pin_cleanup.h"
 #include <fstream>
 #include "dock/dock_folder_rules.h"
@@ -116,6 +117,69 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void CheckRunningDockDrag()
+{
+    namespace drag = snowdesktop::dock_running_drag;
+    // A running application can own several windows and one bitmap. Sorting
+    // must move that ownership intact, not reconstruct a launcher or a window.
+    struct App
+    {
+        std::wstring identityKey;
+        snowdesktop::dock_running_animation::Presence presence;
+        std::unique_ptr<int> bitmap;
+        std::vector<int> windows;
+    };
+    std::vector<App> apps;
+    for (int i = 0; i < 3; ++i)
+    {
+        App app;
+        app.identityKey = std::wstring(1, static_cast<wchar_t>(L'A' + i));
+        app.presence.SetVisible(true, 0, false);
+        app.bitmap = std::make_unique<int>(10 + i);
+        app.windows = {100 + i, 200 + i};
+        apps.push_back(std::move(app));
+    }
+    const int* bitmapA = apps[0].bitmap.get();
+    Check(drag::Reorder(apps, L"A", 3) && apps[0].identityKey == L"B" &&
+        apps[1].identityKey == L"C" && apps[2].identityKey == L"A",
+        "running application drops after the final running slot");
+    Check(apps[2].bitmap.get() == bitmapA && apps[2].windows == std::vector<int>({100, 200}) && apps.size() == 3,
+        "running reorder preserves icon ownership and every sibling window");
+    Check(drag::Reorder(apps, L"C", 0) && apps[0].identityKey == L"C" &&
+        apps[1].identityKey == L"B" && apps[2].identityKey == L"A",
+        "running application drops before the first running slot");
+    Check(!drag::Reorder(apps, L"B", 1) && !drag::Reorder(apps, L"B", 2) &&
+        !drag::Reorder(apps, L"missing", 0) && !drag::Reorder(apps, L"A", 4),
+        "same-slot drops and stale identities cannot change the running order");
+    apps[0].presence.SetVisible(false, 0, false);
+    Check(!drag::Reorder(apps, L"C", 3) && apps[0].identityKey == L"C",
+        "an exiting running application cannot be reordered");
+
+    Check(drag::AreaAt(99, 100, 250) == drag::Area::Fixed &&
+        drag::AreaAt(100, 100, 250) == drag::Area::Running &&
+        drag::AreaAt(249, 100, 250) == drag::Area::Running &&
+        drag::AreaAt(250, 100, 250) == drag::Area::Files,
+        "running sort and fixed/file pin areas have independent boundaries including empty groups");
+
+    const DockEntry fixedA{DockEntryType::DesktopItem, L"A"};
+    const DockEntry fixedB{DockEntryType::DesktopItem, L"B"};
+    const DockEntry folder{DockEntryType::FolderMapping, L"F"};
+    const DockEntry newPin{DockEntryType::DesktopItem, L"NEW"};
+    const std::vector<DockEntry> entries{newPin, fixedA, fixedB, folder};
+    drag::PinPosition between{drag::Area::Fixed, 1, fixedB, fixedA};
+    drag::PinPosition fileStart{drag::Area::Files, 2, folder, {}};
+    Check(between.Resolve(entries, 3, 4) == 2 && fileStart.Resolve(entries, 3, 4) == 3,
+        "independent asynchronous pin completions retain their actual destination neighbors");
+    const std::vector<DockEntry> removed{fixedA, folder};
+    Check(between.Resolve(removed, 1, 2) == 1,
+        "a removed following pin falls back to the surviving previous neighbor");
+    drag::PinPosition staleFiles{drag::Area::Files, 0, {}, {}};
+    drag::PinPosition staleFixed{drag::Area::Fixed, 99, {}, {}};
+    Check(staleFiles.Resolve(entries, 3, 4) == 3 && staleFixed.Resolve(entries, 3, 4) == 3 &&
+        staleFiles.Resolve({}, 0, 0) == 0,
+        "a stale or empty destination never crosses the fixed/file boundary");
 }
 
 void CheckCatalogOnlyDockPin()
@@ -1854,6 +1918,7 @@ int main(int argc, char** argv)
     if (const auto result = TryRunTaskbarSymbolTestHelper()) return *result;
     if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
     CheckCatalogOnlyDockPin();
+    CheckRunningDockDrag();
     // These are real settings predicates shared by all three entry points.
     // First/last scopes coincide on one display but only partially overlap on two.
     {

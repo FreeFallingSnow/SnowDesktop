@@ -7,6 +7,11 @@
 
 void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
 {
+    if (dockRunningDrag_ && dragSession_.IsActive())
+    {
+        UpdateDockRunningDrag(clientPoint);
+        return;
+    }
     if (HitTestLuaFileDropTarget(clientPoint) < widgets_.size())
     {
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);

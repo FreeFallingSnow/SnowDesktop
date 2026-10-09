@@ -480,6 +480,7 @@ void DesktopApp::EndDragSession()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
+    ResetDockRunningDrag();
     dragIconsOnly_ = false;
     ClearPopupDragTarget();
     presentedDragFeedbackRevision_ = 0;

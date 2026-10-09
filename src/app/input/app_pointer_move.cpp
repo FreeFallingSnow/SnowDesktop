@@ -552,6 +552,14 @@ void DesktopApp::OnMouseMoveAt(
         return;
     }
 
+    if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ &&
+        dynamic_cast<DockRunningItem*>(mouseDownHit_) && !rightButtonItemDrag_ &&
+        (std::abs(current.x - mouseDownPoint_.x) > std::max(8, GetSystemMetrics(SM_CXDRAG)) ||
+         std::abs(current.y - mouseDownPoint_.y) > std::max(8, GetSystemMetrics(SM_CYDRAG))))
+    {
+        (void)BeginDockRunningDrag(current);
+    }
+
     const bool pressedDockEntryWithoutSelection =
         mouseDownHit_ &&
         dynamic_cast<DockEntryItem*>(mouseDownHit_) &&
@@ -924,6 +932,14 @@ void DesktopApp::OnMouseMoveAt(
         }
         ShowDragHintWindow(current, pairHint.empty()
             ? _LW("core.drag.move_widget") : pairHint);
+        return;
+    }
+
+    if (dockRunningDrag_ && dragSession_.IsActive())
+    {
+        UpdateDockRunningDrag(current);
+        SyncDragPreviewWindow();
+        if (dragPreviewSynced) *dragPreviewSynced = true;
         return;
     }
 

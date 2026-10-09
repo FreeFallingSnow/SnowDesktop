@@ -1376,6 +1376,12 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         return;
     }
 
+    if (dockRunningDrag_ && dragSession_.IsActive())
+    {
+        CommitDockRunningDrag(upPoint, static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)));
+        goto cleanup;
+    }
+
     if (rightDrop)
     {
         ResolveCurrentDragTargetAt(upPoint);
