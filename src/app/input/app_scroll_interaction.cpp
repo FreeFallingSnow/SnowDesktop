@@ -156,6 +156,21 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         if (PtInRect(&popup, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
+            if (auto* group = GetGroupPopupView())
+            {
+                const RECT frame = GetCategorizedPopupFrame(popup);
+                group->SetPopupFrame(&frame);
+                if (!group->TryScrollTabs(pt, delta))
+                {
+                    group->GetWidgetData()->scrollOffset = std::clamp(
+                        group->GetScrollOffset() - delta / 2, 0, group->GetMaxScrollOffset());
+                    if (auto* files = dynamic_cast<FileGroup*>(group)) files->InvalidateHostedView();
+                    else group->InvalidateSlots();
+                }
+                (void)refreshDragAfterScroll();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
             if (auto* view = GetCategorizedPopupView())
             {
                 CategorizedPopupScope scope(view, GetCategorizedPopupFrame(popup));

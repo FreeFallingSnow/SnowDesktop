@@ -452,6 +452,7 @@ bool DockContainer::HasOnlyFolderDragSource() const
             app_->mouseDownWidgetIndex_ <
                 app_->widgets_.size() &&
             (app_->widgets_[app_->mouseDownWidgetIndex_].type == DesktopWidgetType::FolderMapping ||
+             app_->widgets_[app_->mouseDownWidgetIndex_].type == DesktopWidgetType::FileGroup ||
              app_->widgets_[app_->mouseDownWidgetIndex_].type == DesktopWidgetType::FileCategories);
     }
     return std::all_of(sourceItems.begin(), sourceItems.end(),
@@ -466,7 +467,8 @@ bool DockContainer::HasOnlyFolderDragSource() const
             {
                 const DesktopWidget* data = widget->GetWidgetData();
                 return data &&
-                    (data->type == DesktopWidgetType::FolderMapping || data->type == DesktopWidgetType::FileCategories);
+                    (data->type == DesktopWidgetType::FolderMapping || data->type == DesktopWidgetType::FileCategories ||
+                     data->type == DesktopWidgetType::FileGroup);
             }
             if (auto* groupEntry =
                     dynamic_cast<FileGroupEntryItem*>(
@@ -2721,7 +2723,15 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                 app_->dockEntries_[
                     folderDockItem->
                         GetEntryIndex()]);
-        const bool dockMetadataReorder =
+        const bool groupTarget = folderDockItem && IsGroupDockEntryType(folderDockItem->GetEntryType());
+        const auto& sourceList = app_->dragSession_.SourceList();
+        const auto groupSurface = folderDockItem && folderDockItem->GetEntryType() == DockEntryType::FileGroup
+            ? snowdesktop::slot_contract::SlotSurfaceKind::FileGroup
+            : snowdesktop::slot_contract::SlotSurfaceKind::CollectionGroup;
+        const bool groupAcceptsSource = groupTarget && (app_->dragDropController_.IsExternalDragActive() ||
+            snowdesktop::slot_contract::AcceptsSlotDrop(sourceList.SourceSurfaceKind(), sourceList.SlotPayloadKind(),
+                groupSurface, snowdesktop::slot_contract::ClassifyRelation(sourceList.SourceSurfaceKind(), groupSurface, false)));
+        const bool dockMetadataReorder = !groupAcceptsSource &&
             snowdesktop::dock_drop_rules::
                 ShouldPreferMetadataReorder(
                     dynamic_cast<DockContainer*>(
@@ -2733,12 +2743,12 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
             IsLogicalDockEntryType(folderDockItem->GetEntryType());
         const bool canHandoff = !dockMetadataReorder &&
             targetItem && !targetItem->IsSelected() &&
-            snowdesktop::dock_drop_rules::
+            (groupAcceptsSource || (!groupTarget && snowdesktop::dock_drop_rules::
                 SupportsHandoffTarget(
                     app_->dragSession_.SourceList().
                         hasWidgets,
                     folderTarget,
-                    collectionTarget) &&
+                    collectionTarget))) &&
             PtInRect(&handoffRect, pt);
         if (canHandoff && app_)
         {
@@ -2807,6 +2817,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                 app_->dockHandoffDwellReady_ = true;
                 return HitRegion::Handoff;
             }
+            if (groupAcceptsSource) return HitRegion::Handoff;
         }
         else
         {

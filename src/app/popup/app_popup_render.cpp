@@ -200,6 +200,19 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
+    if (auto* group = GetGroupPopupView())
+    {
+        const RECT frame = GetCategorizedPopupFrame(popupRect_);
+        group->SetPopupFrame(&frame);
+        ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        group->DrawContent(ctx, frame);
+        group->DrawScrollbar(ctx, PtInRect(&frame, lastMousePoint_) != FALSE);
+        if (dragSession_.TargetContainer() == group)
+            group->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
+        ctx->PopAxisAlignedClip();
+        if (animationApplied) ctx->SetTransform(previousTransform);
+        return;
+    }
     if (auto* view = GetCategorizedPopupView())
     {
         const RECT controls = GetCollectionPopupControlsRect(popupRect_);

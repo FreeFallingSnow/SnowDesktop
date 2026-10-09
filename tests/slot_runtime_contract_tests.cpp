@@ -942,6 +942,41 @@ void TestDesktopFilesDockPayload()
         "a mixed collection selection cannot enter a file group");
 }
 
+void TestDockGroupPayload()
+{
+    namespace contract = snowdesktop::slot_contract;
+    ContractContainer dock(BarStyle::VBar, contract::SlotSurfaceKind::Dock);
+    ContractContainer desktop(BarStyle::VBar, contract::SlotSurfaceKind::Desktop);
+    ContractContainer collections(BarStyle::VBar, contract::SlotSurfaceKind::CollectionGroup);
+    ContractContainer files(BarStyle::VBar, contract::SlotSurfaceKind::FileGroup);
+    for (auto type : {DockEntryType::CollectionGroup, DockEntryType::FileGroup})
+    {
+        DragSourceList source;
+        source.BindRuntimeOrigin(&dock);
+        source.hasWidgets = true;
+        DragSourceEntry entry;
+        entry.kind = DropSourceKind::Widget;
+        entry.fromDock = true;
+        entry.dockEntryType = type;
+        entry.dockReference = L"group";
+        source.entries.push_back(entry);
+        Check(source.SlotPayloadKind() == contract::DragPayloadKind::GroupWidget &&
+                !source.UsesFileGroupSourceInsertion(),
+            "a whole Dock group must remain distinct from child labels and file sources");
+        Check(DragTargetResolver::AcceptsInternal(dock, source) &&
+                DragTargetResolver::AcceptsInternal(desktop, source) &&
+                !DragTargetResolver::AcceptsInternal(collections, source) &&
+                !DragTargetResolver::AcceptsInternal(files, source),
+            "whole groups reorder in Dock or return to desktop, and cannot nest inside either group type");
+        entry.dockEntryType = DockEntryType::DesktopFiles;
+        source.entries.push_back(entry);
+        Check(source.SlotPayloadKind() == contract::DragPayloadKind::OtherWidget &&
+                !DragTargetResolver::AcceptsInternal(files, source) &&
+                !DragTargetResolver::AcceptsInternal(dock, source),
+            "a mixed group/source payload is rejected before any ownership transfer");
+    }
+}
+
 void TestDockPayloadSurvivesPageTurnWithoutSelection()
 {
     using snowdesktop::drag_source_rebind::ResolveRecordedDockItems;
@@ -3458,6 +3493,7 @@ int wmain(int argc, wchar_t** argv)
     TestPrimaryGhostSurvivesLabelDragAndPageTurn();
     TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDesktopFilesDockPayload();
+    TestDockGroupPayload();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
     TestExternalDropContentRegressions();

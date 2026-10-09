@@ -1226,6 +1226,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                         widgetCollectionGroupTargetIndex_,
                         widgetCollectionGroupInsertIndex_);
             }
+            else if (IsPointOccludedByOpenPopup(upPoint))
+                MessageBeep(MB_ICONWARNING);
             else if (canDock)
             {
                 Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);

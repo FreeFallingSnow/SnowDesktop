@@ -720,7 +720,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kDockHandoffDwellTimerId)
     {
-        if (!dragSession_.IsActive() || dockHandoffDwellIndex_ == static_cast<size_t>(-1))
+        if ((!dragSession_.IsActive() && widgetAction_ != WidgetAction::Move) ||
+            dockHandoffDwellIndex_ == static_cast<size_t>(-1))
         {
             ResetDockHandoffDwell();
             return;
@@ -728,7 +729,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (GetTickCount() - dockHandoffDwellStartTick_ >= kDockHandoffDwellDelayMs)
         {
             const POINT dwellPoint =
-                dragSession_.CurrentPoint();
+                widgetAction_ == WidgetAction::Move ? lastMousePoint_ : dragSession_.CurrentPoint();
             DockContainer* dock =
                 GetDockContainerAtPoint(
                     dwellPoint);
@@ -742,6 +743,25 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     ? dockItem->
                         GetEntryIndex()
                     : static_cast<size_t>(-1);
+            if (entryIndex < dockEntries_.size() && IsGroupDockEntryType(dockEntries_[entryIndex].type))
+            {
+                const size_t group = FindWidgetIndexById(dockEntries_[entryIndex].reference);
+                if (group >= widgets_.size() || popupWidgetIndex_ == group)
+                {
+                    ResetDockHandoffDwell();
+                    return;
+                }
+                snowdesktop::popup_animation_rules::OpenAfterClose(
+                    popupAnimation_, GetOpenPopupWidget() != nullptr,
+                    [this] { pendingCollectionPopupOpen_.reset(); BeginCollectionPopupClose(false); },
+                    [this, group, dwellPoint] {
+                        ResetDockHandoffDwell();
+                        OpenCollectionPopupAt(group, dwellPoint);
+                        RefreshDwellDragTarget(dwellPoint);
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    });
+                return;
+            }
             if (entryIndex <
                     dockEntries_.size() &&
                 IsFolderDockEntry(dockEntries_[entryIndex]) &&

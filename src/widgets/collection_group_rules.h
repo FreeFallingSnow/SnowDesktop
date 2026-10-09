@@ -208,9 +208,9 @@ constexpr bool ShouldShowInnerCategoryTabs(
 }
 
 constexpr bool ShouldShowFileGroupSourceTabs(
-    bool searchBoxVisible, bool searchTextEmpty)
+    bool, bool)
 {
-    return !searchBoxVisible || searchTextEmpty;
+    return true;
 }
 
 constexpr int ClampIndependentTabScroll(
@@ -252,9 +252,8 @@ ResolveCategorizedControlMetrics(float tabHeightCu)
 /**
  * @brief 计算分类组件内容区顶部，依次避让可见标签、搜索框和宿主标签行。
  *
- * 标签矩形已包含搜索框与宿主行偏移，因此可见时直接以标签底部为准。
- * 标签隐藏时，仍需从搜索框底部继续预留宿主标签行，避免内容与外层
- * 文件组标签重叠。
+ * 标签和搜索框矩形均已包含前面的宿主行偏移，可见时直接以底部为准。
+ * 两者都隐藏时，仍需预留宿主标签行，避免内容与外层文件组标签重叠。
  */
 constexpr int ResolveCategorizedContentTop(
     int bodyTop, int bodyBottom,
@@ -267,9 +266,7 @@ constexpr int ResolveCategorizedContentTop(
     if (tabsVisible)
         contentTop = tabsBottom + tabsGap;
     else if (searchVisible)
-        contentTop = searchBottom + searchGap +
-            std::max(0, hostedTabRows) *
-                std::max(0, tabRowStride);
+        contentTop = searchBottom + searchGap;
     else
         contentTop += std::max(0, hostedTabRows) *
             std::max(0, tabRowStride);

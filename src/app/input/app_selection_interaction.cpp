@@ -125,6 +125,7 @@ std::vector<SelectionController::Target> DesktopApp::GetPopupSelectionTargets()
     std::vector<SelectionController::Target> targets;
     auto* popup = GetOpenPopupWidget();
     if (!popup) return targets;
+    if (GetGroupPopupView()) return GetWidgetSelectionTargets(popupWidgetIndex_);
     if (dockFolderPopupOpen_)
     {
         for (size_t i = 0; i < GetPopupItemCount(*popup); ++i)
@@ -587,7 +588,7 @@ int DesktopApp::GetMarqueeScrollOffset() const
         return popupScrollOffset_;
     if (marqueeWidgetIndex_ >= widgets_.size())
         return 0;
-    if (popupWidgetIndex_ == marqueeWidgetIndex_)
+    if (popupWidgetIndex_ == marqueeWidgetIndex_ && !GetGroupPopupView())
         return popupScrollOffset_;
 
     for (const auto& container : containers_)
@@ -711,7 +712,7 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
         marqueeRect_ = contentSelectionRect;
         OffsetRect(&marqueeRect_, 0, -currentScroll);
 
-        if (popupWidgetIndex_ == marqueeWidgetIndex_)
+        if (popupWidgetIndex_ == marqueeWidgetIndex_ && !GetGroupPopupView())
         {
             RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
             std::vector<std::wstring> popupKeys =

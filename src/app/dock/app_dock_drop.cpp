@@ -103,11 +103,14 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
 
         auto* widget = dynamic_cast<Widget*>(source);
         DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
-        if (data && data->type == DesktopWidgetType::Collection)
-            additions.push_back({ DockEntryType::Collection, data->id, false });
-        else if (data && (data->type == DesktopWidgetType::FolderMapping ||
-                          data->type == DesktopWidgetType::FileCategories))
+        if (data && IsWidgetDockEntryType(DockEntryTypeForWidget(data->type)))
             additions.push_back({ DockEntryTypeForWidget(data->type), data->id, false });
+        else if (auto* groupEntry = dynamic_cast<CollectionGroupEntryItem*>(source))
+        {
+            const size_t child = FindWidgetIndexById(groupEntry->GetCollectionId());
+            if (child >= widgets_.size() || widgets_[child].type != DesktopWidgetType::Collection) return;
+            additions.push_back({ DockEntryType::Collection, widgets_[child].id, false });
+        }
         else if (auto* groupEntry =
                      dynamic_cast<FileGroupEntryItem*>(source))
         {
@@ -123,7 +126,9 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
                     widgets_[widgetIndex].id,
                     false });
             }
+            else return;
         }
+        else return;
     }
     if (additions.empty()) return;
 
@@ -160,12 +165,14 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
                 size_t widgetIndex = FindWidgetIndexById(addition.reference);
                 if (widgetIndex < widgets_.size())
                 {
-                    if (addition.type == DockEntryType::FolderMapping ||
+                    if (addition.type == DockEntryType::Collection ||
+                        addition.type == DockEntryType::FolderMapping ||
                     addition.type == DockEntryType::DesktopFiles)
                     {
                         for (auto& group : widgets_)
                         {
-                            if (group.type != DesktopWidgetType::FileGroup) continue;
+                            if (group.type != (addition.type == DockEntryType::Collection
+                                    ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup)) continue;
                             std::erase(group.childWidgetIds, addition.reference);
                             group.activeCategoryId =
                                 snowdesktop::collection_group_rules::
@@ -210,12 +217,14 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
             size_t widgetIndex = FindWidgetIndexById(addition.reference);
             if (widgetIndex < widgets_.size())
             {
-                if (addition.type == DockEntryType::FolderMapping ||
+                if (addition.type == DockEntryType::Collection ||
+                    addition.type == DockEntryType::FolderMapping ||
                     addition.type == DockEntryType::DesktopFiles)
                 {
                     for (auto& group : widgets_)
                     {
-                        if (group.type != DesktopWidgetType::FileGroup) continue;
+                        if (group.type != (addition.type == DockEntryType::Collection
+                                ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup)) continue;
                         std::erase(group.childWidgetIds, addition.reference);
                         group.activeCategoryId =
                             snowdesktop::collection_group_rules::
@@ -362,6 +371,24 @@ bool DesktopApp::DropItemsIntoDockCollection(
     if (!targetItem || !IsLogicalDockEntryType(targetItem->GetEntryType()))
         return false;
     size_t widgetIndex = FindWidgetIndexById(targetItem->GetReference());
+    if (widgetIndex < widgets_.size() && IsGroupWidgetType(widgets_[widgetIndex].type))
+    {
+        const DragSourceList sourceList = BuildDragSourceList(sourceItems, origin);
+        const auto payload = sourceList.SlotPayloadKind();
+        if (payload == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||
+            payload == snowdesktop::slot_contract::DragPayloadKind::CollectionGroupLabel ||
+            sourceList.UsesFileGroupSourceInsertion())
+            return MoveWidgetSourcesToGroup(sourceItems, widgetIndex, widgets_[widgetIndex].childWidgetIds.size());
+        for (const auto& container : containers_)
+        {
+            auto* group = dynamic_cast<WidgetContainer*>(container.get());
+            if (!group || group->GetWidgetData() != &widgets_[widgetIndex]) continue;
+            const auto preview = BuildDropPreviewList(sourceList, group, nullptr,
+                HitRegion::Empty, mods, dragSession_.CurrentPoint());
+            return ExecuteDropPipeline(sourceList, preview);
+        }
+        return false;
+    }
     if (widgetIndex >= widgets_.size() ||
         (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
          widgets_[widgetIndex].type != DesktopWidgetType::FileCategories))

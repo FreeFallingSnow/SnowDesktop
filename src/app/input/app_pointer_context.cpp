@@ -214,8 +214,10 @@ void DesktopApp::OnRightButtonDown(
     ClearPopupMouseDownItem();
     Item* pressed = nullptr;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    auto* popupGroup = IsPointOccludedByOpenPopup(point) ? GetGroupPopupView() : nullptr;
     const DesktopWidget* popupWidget = GetOpenPopupWidget();
     if (popupWidget && IsCollectionPopupInteractive() &&
+        !GetGroupPopupView() &&
         (!desktopIconsHidden_ || IsOpenPopupRetained()))
     {
         const RECT popup = GetCollectionPopupRect(*popupWidget);
@@ -260,7 +262,7 @@ void DesktopApp::OnRightButtonDown(
     }
     if (!pressed)
     {
-        if (auto* dock = GetDockContainerAtPoint(point))
+        if (auto* dock = popupGroup ? nullptr : GetDockContainerAtPoint(point))
         {
             pressed = dock->EntryAtPoint(point);
             if (!pressed) return; // Running-app and search buttons are actions.
@@ -271,6 +273,7 @@ void DesktopApp::OnRightButtonDown(
         for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
         {
             auto* widget = dynamic_cast<WidgetContainer*>(it->get());
+            if (popupGroup && widget != popupGroup) continue;
             if (!widget || widget->IsCollapsed() ||
                 (desktopIconsHidden_ && !IsRetainedContainer(widget))) continue;
             const WidgetHit hit = widget->HitTestWidget(point);
@@ -300,7 +303,7 @@ void DesktopApp::OnRightButtonDown(
             break;
         }
     }
-    if (!pressed && !IsPointOverWidgetChrome(point))
+    if (!pressed && !popupGroup && !IsPointOverWidgetChrome(point))
         pressed = HitTestIcon(point);
     if (!pressed || !pressed->GetContainer()) return;
     if (!pressed->IsSelected())
@@ -484,6 +487,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     if (renameController_.IsActive()) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);
 
@@ -520,7 +524,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             return;
     }
 
-    DockContainer* dock = GetDockContainerAtPoint(pt);
+    DockContainer* dock = popupGroup ? nullptr : GetDockContainerAtPoint(pt);
     PersistentDockHost* contextDockHost = dock
         ? FindPersistentDockHost(dock)
         : nullptr;
@@ -648,7 +652,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     }
 
     const size_t standaloneInputWidget =
-        HitTestStandaloneWidgetIndex(pt);
+        popupGroup ? static_cast<size_t>(-1) : HitTestStandaloneWidgetIndex(pt);
     if (standaloneInputWidget < widgets_.size() &&
         widgets_[standaloneInputWidget].type ==
             DesktopWidgetType::LuaScript)
@@ -778,6 +782,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         }
     }
     else if (popupWidgetIndex_ < widgets_.size() &&
+        !GetGroupPopupView() &&
         popupOccludesPoint)
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -822,6 +827,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         auto* group =
             dynamic_cast<FileGroup*>(it->get());
         if (!group) continue;
+        if (popupGroup && group != popupGroup) continue;
         const std::wstring childId =
             group->SourceIdAtPoint(pt);
         if (childId.empty()) continue;
@@ -873,6 +879,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         auto* group =
             dynamic_cast<CollectionGroup*>(it->get());
         if (!group) continue;
+        if (popupGroup && group != popupGroup) continue;
         const std::wstring collectionId =
             group->CategoryIdAtPoint(pt);
         if (collectionId.empty()) continue;
@@ -934,6 +941,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         auto* logicalSlot =
             dynamic_cast<LuaLogicalSlotContainer*>(it->get());
         if (!logicalSlot) continue;
+        if (popupGroup) continue;
         const auto itemHit = logicalSlot->ItemAtPoint(pt);
         if (!itemHit) continue;
         if (snowdesktop::right_click_contract::ResolveSlotItemMenu(
@@ -966,6 +974,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             continue;
         auto* wc = dynamic_cast<WidgetContainer*>(it->get());
         if (!wc || wc->IsCollapsed()) continue;
+        if (popupGroup && wc != popupGroup) continue;
 
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::MoveHandle || wh == WidgetHit::ResizeHandle)
@@ -1114,6 +1123,14 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
             return;
         }
+    }
+
+    if (popupGroup)
+    {
+        SelectWidgetOnly(popupWidgetIndex_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        ShowWidgetContextMenu(screenPt, popupWidgetIndex_);
+        return;
     }
 
     // Check widget hit after member items.

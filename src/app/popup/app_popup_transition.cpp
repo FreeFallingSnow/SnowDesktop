@@ -145,7 +145,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     }
     if (widgetIndex >= widgets_.size() ||
         (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
-         widgets_[widgetIndex].type != DesktopWidgetType::FileCategories))
+         widgets_[widgetIndex].type != DesktopWidgetType::FileCategories &&
+         !IsGroupWidgetType(widgets_[widgetIndex].type)))
         return;
 
     CancelCollectionPopupDwell();
@@ -326,6 +327,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         }
     }
     popupRect_ = GetCollectionPopupRect(widgets_[widgetIndex]);
+    GetCategorizedPopupView();
     popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
         GetCollectionPopupMaxScrollOffset(widgets_[widgetIndex], popupRect_));
     StartCollectionPopupAnimation();

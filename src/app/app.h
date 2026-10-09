@@ -3074,6 +3074,8 @@ private:
         size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
     bool AddWidgetToFileGroup(size_t childIndex, size_t groupIndex,
         size_t insertIndex = static_cast<size_t>(-1));
+    bool MoveWidgetSourcesToGroup(
+        const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex);
     bool MoveFileSourcesToFileGroup(
         const std::vector<Item*>& sourceItems,
         size_t groupIndex, size_t insertIndex);
@@ -3141,6 +3143,7 @@ private:
     const DesktopWidget* GetOpenPopupWidget() const;
     size_t GetPopupItemCount(const DesktopWidget& widget) const;
     ScrollingItemWidget* GetCategorizedPopupView() const;
+    ScrollingItemWidget* GetGroupPopupView() const;
     bool UsesCategorizedPopupControls(const DesktopWidget& widget) const;
     size_t GetPopupFolderEntryIndex(const DesktopWidget& widget, size_t visibleIndex) const;
     RECT GetCollectionPopupControlsRect(const RECT& popup) const;

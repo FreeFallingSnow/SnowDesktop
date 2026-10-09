@@ -25,6 +25,7 @@ inline constexpr std::array payloads{
     Payload::CollectionWidget, Payload::FolderMappingWidget,
     Payload::FileSourceWidget, Payload::OtherWidget,
     Payload::CollectionGroupLabel, Payload::FileGroupLabel,
+    Payload::GroupWidget,
 };
 inline constexpr std::array relations{
     Relation::SameInstance, Relation::SameSurface, Relation::CrossSurface,
@@ -36,9 +37,9 @@ static_assert(payloads.size() == contract::ToIndex(Payload::Count),
     "New payloads need explicit drag expectations");
 
 // Columns follow payloads above; rows follow surfaces above.
-inline constexpr bool emits[10][9]{
-    {true, false, false, true, true, true, true, false, false},
-    {true, true, false, true, true, true, false, false, false},
+inline constexpr bool emits[10][10]{
+    {true, false, false, true, true, true, true, false, false, true},
+    {true, true, false, true, true, true, false, false, false, true},
     {true, false, false, false, false, false, false, false, false},
     {true, false, false, false, false, false, false, false, false},
     {false, true, false, false, false, false, false, false, false},
@@ -52,7 +53,7 @@ inline constexpr bool emits[10][9]{
 // Different-instance destinations, including external ingress/egress.
 // Each row names an entire payload's destination policy, not implementation
 // branches. Same-instance exceptions below preserve local reorder semantics.
-inline constexpr Route destinationRoutes[9][10]{
+inline constexpr Route destinationRoutes[10][10]{
     {Route::PlaceOnDesktop, Route::AddToDock, Route::InsertLogicalItem,
      Route::InsertLogicalItem, Route::TransferFile,
      Route::RouteThroughCollectionGroup, Route::RouteThroughFileGroup,
@@ -77,17 +78,20 @@ inline constexpr Route destinationRoutes[9][10]{
     {Route::PlaceOnDesktop, Route::Reject, Route::Reject, Route::Reject,
      Route::Reject, Route::Reject, Route::Reject,
      Route::Reject, Route::Reject, Route::Reject},
-    {Route::ReleaseGroupedChild, Route::Reject, Route::Reject, Route::Reject,
+    {Route::ReleaseGroupedChild, Route::AddToDock, Route::Reject, Route::Reject,
      Route::Reject, Route::TransferGroupedLabel, Route::Reject,
      Route::Reject, Route::Reject, Route::Reject},
     {Route::ReleaseGroupedChild, Route::AddToDock, Route::Reject, Route::Reject,
      Route::Reject, Route::Reject, Route::TransferGroupedLabel,
      Route::Reject, Route::Reject, Route::Reject},
+    {Route::PlaceOnDesktop, Route::AddToDock, Route::Reject, Route::Reject,
+     Route::Reject, Route::Reject, Route::Reject,
+     Route::Reject, Route::Reject, Route::Reject},
 };
 
-inline constexpr bool reordersInSameInstance[10][9]{
+inline constexpr bool reordersInSameInstance[10][10]{
     {true, false, false, false, false, false, false, false, false},
-    {true, false, false, true, true, true, false, false, false},
+    {true, false, false, true, true, true, false, false, false, true},
     {true, false, false, false, false, false, false, false, false},
     {true, false, false, false, false, false, false, false, false},
     {false, true, false, false, false, false, false, false, false},

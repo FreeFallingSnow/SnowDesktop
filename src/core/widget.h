@@ -933,6 +933,7 @@ public:
     void ApplyMarqueeSelection(const RECT& contentRect) override;
 
     const std::vector<std::wstring>& GetVisibleSourceIds() const;
+    void DrawSourceTabs(ID2D1DeviceContext* context);
     std::wstring GetActiveSourceId() const;
     std::wstring SourceIdAtPoint(POINT pt) const;
     FileGroupEntryItem* GetSourceTabItemAtPoint(POINT pt) const;

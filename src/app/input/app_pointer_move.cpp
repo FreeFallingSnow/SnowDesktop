@@ -798,6 +798,14 @@ void DesktopApp::OnMouseMoveAt(
                 : static_cast<size_t>(-1));
         if (groupTarget < widgets_.size())
         {
+            if (auto* dock = GetDockContainerAtPoint(current))
+                if (auto* entry = dock->EntryAtPoint(current); entry && IsGroupDockEntryType(entry->GetEntryType()) &&
+                    dockHandoffDwellIndex_ != entry->GetEntryIndex())
+                {
+                    dockHandoffDwellIndex_ = entry->GetEntryIndex();
+                    dockHandoffDwellStartTick_ = GetTickCount();
+                    SetTimer(hwnd_, kDockHandoffDwellTimerId, kDockHandoffDwellIntervalMs, nullptr);
+                }
             widgetCollectionGroupTargetIndex_ = groupTarget;
             widgetCollectionGroupInsertIndex_ =
                 widgets_[groupTarget].childWidgetIds.size();
@@ -818,9 +826,10 @@ void DesktopApp::OnMouseMoveAt(
                             CategoryIdAtPoint(current).empty()
                         : !dynamic_cast<FileGroup*>(group)->
                             SourceIdAtPoint(current).empty();
-                if (overTab)
+                if (overTab && slot)
                     widgetCollectionGroupInsertIndex_ =
-                        group->GetDropInsertIndex(slot, region);
+                        std::min(slot->GetIndex() + (region == HitRegion::SortAfter ? 1 : 0),
+                            widgets_[groupTarget].childWidgetIds.size());
                 break;
             }
             widgetDockTarget_ = false;
@@ -833,8 +842,19 @@ void DesktopApp::OnMouseMoveAt(
         }
         widgetCollectionGroupTargetIndex_ =
             static_cast<size_t>(-1);
+        ResetDockHandoffDwell();
         widgetCollectionGroupInsertIndex_ =
             static_cast<size_t>(-1);
+
+        if (IsPointOccludedByOpenPopup(current))
+        {
+            widgetDockTarget_ = false;
+            widgetDockTargetContainer_ = nullptr;
+            widgetPreviewCell_ = widgetDragOriginalCell_;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            ShowDragHintWindow(current, L"");
+            return;
+        }
 
         widgetPairTargetIndex_ = HitTestWidgetPairTarget(current, mouseDownWidgetIndex_);
         std::wstring pairHint;
@@ -1172,7 +1192,7 @@ void DesktopApp::OnMouseMoveAt(
         HitRegion targetRegion = HitRegion::None;
         const bool popupHit =
             !suppressDesktopWidgetTargets &&
-            !groupedEntryDrag &&
+            (!groupedEntryDrag || GetGroupPopupView()) &&
             HitTestPopupForDrag(current, targetContainer, targetSlot, targetRegion);
         if (!popupHit)
         {

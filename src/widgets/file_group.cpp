@@ -59,13 +59,9 @@ RECT FileGroupSourceTabsRect(FileGroup* group)
 {
     return group
         ? group->GetCategorizedTabsRect(
-            snowdesktop::collection_group_rules::
-                ShouldShowFileGroupSourceTabs(
-                    group->GetWidgetData() &&
-                        group->GetWidgetData()->
-                            showSearchBox,
-                    group->GetSearchText().empty()) &&
-            !group->GetVisibleSourceIds().empty())
+            snowdesktop::collection_group_rules::ShouldShowFileGroupSourceTabs(
+                group->GetWidgetData() && group->GetWidgetData()->showSearchBox,
+                group->GetSearchText().empty()) && !group->GetVisibleSourceIds().empty())
         : RECT{};
 }
 
@@ -328,7 +324,8 @@ public:
             group_->GetSearchCompositionCursor());
 
         RECT frame = group_->GetLayoutFrameRect();
-        source_->SetHostedFrame(&frame);
+        if (group_->IsPopupHosted()) source_->SetPopupFrame(&frame);
+        else source_->SetHostedFrame(&frame);
         const bool searching =
             groupData_->showSearchBox &&
             !group_->GetSearchText().empty();
@@ -351,7 +348,7 @@ public:
         groupData_->scrollOffset = std::max(
             0, sourceData_->scrollOffset);
         source_->ClearCategorizedHostOptions();
-        source_->SetHostedFrame(nullptr);
+        source_->SetPopupFrame(nullptr);
         sourceData_->gridSpan = savedGridSpan_;
         sourceData_->gridCell = savedGridCell_;
         sourceData_->bounds = savedBounds_;
@@ -1222,17 +1219,6 @@ std::vector<Item*> FileGroup::GetSelectedItems() const
     if (!data_ || !app_) return result;
 
     const auto& sources = GetVisibleSourceIds();
-    if (IsGroupSearchActive())
-    {
-        const auto& results = GetGroupSearchResults();
-        for (size_t i = 0; i < results.size(); ++i)
-        {
-            Item* item = CreateGroupSearchItem(i, true);
-            if (item && item->IsSelected())
-                result.push_back(item);
-        }
-        return result;
-    }
     for (size_t i = 0; i < sources.size(); ++i)
     {
         const size_t childIndex =
@@ -1251,6 +1237,17 @@ std::vector<Item*> FileGroup::GetSelectedItems() const
         result.push_back(raw);
     }
     if (!result.empty()) return result;
+
+    if (IsGroupSearchActive())
+    {
+        const auto& results = GetGroupSearchResults();
+        for (size_t i = 0; i < results.size(); ++i)
+        {
+            Item* item = CreateGroupSearchItem(i, true);
+            if (item && item->IsSelected()) result.push_back(item);
+        }
+        return result;
+    }
 
     auto* source = GetActiveSourceContainer();
     if (!source) return result;
@@ -1278,6 +1275,14 @@ FileGroup::GetSelectedMemberIndices() const
 {
     std::vector<size_t> result;
     if (!data_ || !app_) return result;
+    const auto& sources = GetVisibleSourceIds();
+    for (size_t i = 0; i < sources.size(); ++i)
+    {
+        const size_t childIndex = app_->FindWidgetIndexById(sources[i]);
+        if (childIndex < app_->widgets_.size() && app_->widgets_[childIndex].selected)
+            result.push_back(i);
+    }
+    if (!result.empty()) return result;
     if (IsGroupSearchActive())
     {
         const auto& results = GetGroupSearchResults();
@@ -1290,15 +1295,6 @@ FileGroup::GetSelectedMemberIndices() const
         }
         return result;
     }
-    const auto& sources = GetVisibleSourceIds();
-    for (size_t i = 0; i < sources.size(); ++i)
-    {
-        const size_t childIndex =
-            app_->FindWidgetIndexById(sources[i]);
-        if (childIndex < app_->widgets_.size() &&
-            app_->widgets_[childIndex].selected)
-            result.push_back(i);
-    }
     return result;
 }
 
@@ -1307,7 +1303,6 @@ void FileGroup::ReorderMembers(
     size_t insertBefore)
 {
     if (!data_ || indices.empty()) return;
-    if (IsGroupSearchActive()) return;
     data_->childWidgetIds =
         snowdesktop::collection_group_rules::ReorderItems(
             data_->childWidgetIds, indices, insertBefore);
@@ -1431,7 +1426,7 @@ RECT FileGroup::GetContentViewportRect() const
             const_cast<FileGroup*>(this));
         if (!IsRectEmptyRect(tabs))
             body.top = std::min<LONG>(
-                body.bottom, tabs.bottom + Cu(8.0f));
+                body.bottom, std::max(body.top, tabs.bottom + Cu(8.0f)));
         return ApplyDetailsHeaderToViewport(body);
     }
     HostedFileSourceScope hosted(
@@ -1892,7 +1887,8 @@ void FileGroup::OnItemsDropped(
         return;
     }
 
-    auto* source = GetActiveSourceContainer();
+    const std::wstring targetSourceId = SourceIdAtPoint(app_->dragSession_.CurrentPoint());
+    auto* source = targetSourceId.empty() ? GetActiveSourceContainer() : GetSourceContainerById(targetSourceId);
     if (!source)
     {
         const auto& session = app_->dragSession_.SourceList();
@@ -1929,9 +1925,9 @@ void FileGroup::OnItemsDropped(
         preview =
             app->BuildDropPreviewList(
                 sourceList, source,
-                IsGroupSearchActive()
+                IsGroupSearchActive() || !targetSourceId.empty()
                     ? nullptr : targetSlot,
-                region, mods,
+                targetSourceId.empty() ? region : HitRegion::SortAfter, mods,
                 app->dragSession_.CurrentPoint());
     }
     // This must remain the final operation: executing can invalidate source,
@@ -1945,13 +1941,13 @@ void FileGroup::DrawContent(
     if (!data_ || !app_ || !context) return;
     if (IsGroupSearchActive())
     {
+        DrawSourceTabs(context);
         DrawSearchBox(context);
         const auto& results =
             GetGroupSearchResults();
         RECT content = GetContentViewportRect();
         DrawDetailsHeader(context, content);
-        const bool light =
-            app_->IsLightContentTheme();
+        const bool light = UsesLightContentTheme();
         if (results.empty())
         {
             IDWriteTextFormat* centered =
@@ -2109,12 +2105,17 @@ void FileGroup::DrawContent(
             content,
             centered ? centered :
                 app_->listItemTextFormat_.Get(),
-            app_->IsLightContentTheme()
+            UsesLightContentTheme()
                 ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.68f)
                 : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.66f),
             DWRITE_WORD_WRAPPING_WRAP);
     }
 
+    DrawSourceTabs(context);
+}
+
+void FileGroup::DrawSourceTabs(ID2D1DeviceContext* context)
+{
     const auto& sources = GetVisibleSourceIds();
     RECT tabs = FileGroupSourceTabsRect(this);
     if (IsRectEmptyRect(tabs)) return;

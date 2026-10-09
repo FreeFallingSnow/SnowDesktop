@@ -653,11 +653,11 @@ void TestFileGroupRules()
             true, true, true),
         "clearing search must restore the category row");
     Check(
-        !rules::ShouldShowFileGroupSourceTabs(
+        rules::ShouldShowFileGroupSourceTabs(
             true, false) &&
         !rules::ShouldShowInnerCategoryTabs(
             true, true, false),
-        "file-group search results must hide both tab rows");
+        "file-group search results retain source tabs and hide inner categories");
     Check(
         rules::ShouldShowFileGroupSourceTabs(
             true, true),
@@ -676,9 +676,8 @@ void TestFileGroupRules()
             false, 0,
             true, 142,
             1, 38,
-            8, 4) == 184,
-        "hidden inner categories must reserve the search box "
-        "and the file-group source row");
+            8, 4) == 146,
+        "search already includes the preceding source row and must not reserve it twice");
     Check(
         rules::ResolveCategorizedContentTop(
             108, 500,

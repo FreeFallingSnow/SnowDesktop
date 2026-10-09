@@ -591,6 +591,8 @@ WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt)) return WidgetHit::None;
 
+    if (IsPopupHosted()) return WidgetHit::Content;
+
     if (HitResizeHandle(pt)) return WidgetHit::ResizeHandle;
 
     RECT collapse = GetCollapseButtonRect();
@@ -847,6 +849,8 @@ BarStyle ScrollingItemWidget::GetInsertionStyle() const
 
 void WidgetContainer::SetHostedFrame(const RECT* frame)
 {
+    if (hostedFrameActive_ == (frame != nullptr) &&
+        (!frame || EqualRect(&hostedFrame_, frame))) return;
     hostedFrameActive_ = frame != nullptr;
     hostedFrame_ = frame ? *frame : RECT{};
     InvalidateSlots();
@@ -866,6 +870,9 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     if (!visible) return {};
     RECT body = snowdesktop::storage_title_bar::InsetContent(
         GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(12.0f), Cu(4.0f));
+    if ((data_ && IsGroupWidgetType(data_->type) && !data_->childWidgetIds.empty()) ||
+        categorizedTabRowOffset_ > 0)
+        body.top += Cu(GetCategorizedTabRowPitch());
     if (IsRectEmptyRect(body)) return {};
     if (!IsPopupHosted()) InflateRect(&body, -Cu(2.0f), 0);
     if (IsRectEmptyRect(body)) return {};
@@ -887,11 +894,13 @@ RECT ScrollingItemWidget::GetCategorizedTabsRect(
     RECT body = snowdesktop::storage_title_bar::InsetContent(
         GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(8.0f), Cu(4.0f));
     if (IsRectEmptyRect(body)) return {};
-    const RECT search = GetSearchBoxRect();
+    const bool groupTabs = data_ && IsGroupWidgetType(data_->type);
+    const RECT search = groupTabs ? RECT{} : GetSearchBoxRect();
     LONG top = IsRectEmptyRect(search)
         ? body.top
         : search.bottom + Cu(5.0f);
-    top += categorizedTabRowOffset_ * Cu(GetCategorizedTabRowPitch());
+    if (IsRectEmptyRect(search))
+        top += categorizedTabRowOffset_ * Cu(GetCategorizedTabRowPitch());
     const LONG bottom = std::min<LONG>(
         body.bottom, top + Cu(GetCategorizedTabHeight()));
     return bottom > top

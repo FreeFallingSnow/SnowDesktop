@@ -14,7 +14,8 @@ DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
             label, item.selected};
     };
 
-    if (IsPointOccludedByOpenPopup(point))
+    auto* popupGroup = IsPointOccludedByOpenPopup(point) ? GetGroupPopupView() : nullptr;
+    if (IsPointOccludedByOpenPopup(point) && !popupGroup)
     {
         const auto* popupWidget = GetOpenPopupWidget();
         if (!popupWidget || !IsCollectionPopupInteractive()) return {};
@@ -43,14 +44,15 @@ DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
         return {};
     }
     // Dock icons have launch/switch semantics and no persistent name label.
-    if (GetDockContainerAtPoint(point)) return {};
+    if (!popupGroup && GetDockContainerAtPoint(point)) return {};
     for (size_t n = widgets_.size(); n > 0; --n)
-        if (HitTestStandaloneWidget(n - 1, point) != WidgetHit::None)
+        if (!popupGroup && HitTestStandaloneWidget(n - 1, point) != WidgetHit::None)
             return {};
 
     // Use the same widget ordering, chrome and clipped slots as pointer-down.
     for (const auto& widget : widgets_)
     {
+        if (popupGroup && popupGroup->GetWidgetData() != &widget) continue;
         if (desktopIconsHidden_ && !widget.keepWhenDesktopHidden) continue;
         for (const auto& container : containers_)
         {
@@ -72,14 +74,20 @@ DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
                 if (const auto* icon = dynamic_cast<const DesktopIcon*>(item))
                     return desktopHit(*icon->GetDesktopItem(), label, widget.id);
                 if (const auto* icon = dynamic_cast<const FolderEntryIcon*>(item))
+                {
+                    const auto* group = dynamic_cast<const FileGroup*>(wc);
+                    const auto* source = group ? group->GetSourceContainerForItem(icon) : nullptr;
+                    const auto* owner = source ? source->GetWidgetData() : &widget;
                     return {{RenameTargetKind::FolderEntry,
-                        icon->GetFolderEntry()->fullPath, widget.id},
+                        icon->GetFolderEntry()->fullPath, owner->id},
                         label, item->IsSelected()};
+                }
                 return {};
             }
             return {};
         }
     }
+    if (popupGroup) return {};
     if (const auto* icon = HitTestIcon(point))
     {
         // Large cards render effect-specific inner titles, not the ordinary

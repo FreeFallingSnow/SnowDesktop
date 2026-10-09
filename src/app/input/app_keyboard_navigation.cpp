@@ -1414,7 +1414,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 
     // 弹窗滚动跟随（若弹窗仍打开）
     if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
-        popupWidgetIndex_ < widgets_.size())
+        popupWidgetIndex_ < widgets_.size() && !GetGroupPopupView())
     {
         RECT rPopup = popupRect_;
         RECT content = GetCollectionPopupContentRect(rPopup);

@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "dock_platform_helpers.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 
 // Dock controls, entries and running-application rendering.
 
@@ -380,9 +381,37 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     DrawDockControlBackground(
         ctx, collectionLayout.background,
         0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
-    for (size_t i = 0; i < std::min<size_t>(4, widget.itemKeys.size()); ++i)
+    struct PreviewItem { const DesktopWidget* owner; const std::wstring* key; const FolderEntry* folder; };
+    std::vector<PreviewItem> previewItems;
+    auto appendPreview = [&](const DesktopWidget& source) {
+        if (source.type == DesktopWidgetType::FolderMapping)
+        {
+            for (const auto& folder : source.folderEntries)
+            {
+                if (previewItems.size() == 4) break;
+                previewItems.push_back({ &source, nullptr, &folder });
+            }
+        }
+        else
+            for (const auto& key : source.itemKeys)
+            {
+                if (previewItems.size() == 4) break;
+                if (FindItemIndexByKey(key) < items_.size() || initialShellReadPending_)
+                    previewItems.push_back({ &source, &key, nullptr });
+            }
+    };
+    if (IsGroupWidgetType(widget.type))
+        for (const auto& id : widget.childWidgetIds)
+        {
+            const size_t child = FindWidgetIndexById(id);
+            if (child < widgets_.size()) appendPreview(widgets_[child]);
+            if (previewItems.size() == 4) break;
+        }
+    else appendPreview(widget);
+    for (size_t i = 0; i < previewItems.size(); ++i)
     {
-        size_t itemIndex = FindItemIndexByKey(widget.itemKeys[i]);
+        const auto& preview = previewItems[i];
+        size_t itemIndex = preview.key ? FindItemIndexByKey(*preview.key) : items_.size();
         int col = static_cast<int>(i % 2);
         int row = static_cast<int>(i / 2);
         const RECT cell =
@@ -391,9 +420,43 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     collectionLayout,
                     col, row);
         if (itemIndex < items_.size())
-            drawDesktopItem(items_[itemIndex], cell, &widget);
+            drawDesktopItem(items_[itemIndex], cell, preview.owner);
+        else if (preview.folder && preview.folder->iconBitmap)
+        {
+            if (auto* bitmap = GetOrCreateD2DBitmap(ctx, preview.folder->iconBitmap,
+                    ShouldBeautifyIconBitmap(preview.folder->iconIsMediaThumbnail)))
+                DrawIconBitmap(ctx, bitmap, cell);
+        }
+        else if (preview.folder)
+            DrawPlaceholderIcon(ctx, preview.folder->sysIconIndex, cell, 1.0f);
         else if (initialShellReadPending_)
             DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
+    }
+    if (IsGroupDockEntryType(entry.type))
+    {
+        const int badgeSize = std::max(10, static_cast<int>(iconSize * 0.29f));
+        const int inset = std::max(2, static_cast<int>(iconSize * 0.055f));
+        const RECT badge{iconRect.right - inset - badgeSize, iconRect.bottom - inset - badgeSize,
+            iconRect.right - inset, iconRect.bottom - inset};
+        DrawD2DRoundedRectangle(ctx, badge, badgeSize * 0.23f,
+            lt ? D2D1::ColorF(0.98f, 0.98f, 0.99f, 0.95f) : D2D1::ColorF(0.18f, 0.19f, 0.21f, 0.95f),
+            lt ? D2D1::ColorF(0, 0, 0, 0.18f) : D2D1::ColorF(1, 1, 1, 0.25f));
+        const std::wstring glyph = entry.type == DockEntryType::FileGroup
+            ? snowdesktop::menu_fluent_glyphs::kFileGroup : snowdesktop::menu_fluent_glyphs::kCollectionGroup;
+        ComPtr<IDWriteTextLayout> layout;
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (fluentIconTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                glyph.c_str(), static_cast<UINT32>(glyph.size()), fluentIconTextFormat_.Get(),
+                static_cast<float>(badgeSize), static_cast<float>(badgeSize), &layout)) &&
+            SUCCEEDED(ctx->CreateSolidColorBrush(lt ? D2D1::ColorF(0.16f, 0.22f, 0.30f)
+                : D2D1::ColorF(0.91f, 0.94f, 0.98f), &brush)))
+        {
+            layout->SetFontSize(badgeSize * 0.78f, {0, static_cast<UINT32>(glyph.size())});
+            layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            ctx->DrawTextLayout(D2D1::Point2F(static_cast<float>(badge.left), static_cast<float>(badge.top)),
+                layout.Get(), brush.Get());
+        }
     }
     if (state == 2)
         DrawDockSelectionIndicator(ctx, iconRect, lt);

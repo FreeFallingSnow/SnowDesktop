@@ -680,12 +680,13 @@ void DesktopApp::LoadLayoutSlots()
             entry.type = DockEntryType::DesktopItem;
         entry.reference = Utf8ToWide(saved.reference);
         // Preserve the existing on-disk "collection" reference token. The
-        // referenced widget supplies its precise runtime type, including desktop files.
+        // referenced widget supplies its precise runtime type, including groups.
         if (entry.type == DockEntryType::Collection)
         {
             const size_t index = FindWidgetIndexById(entry.reference);
-            if (index < widgets_.size() && widgets_[index].type == DesktopWidgetType::FileCategories)
-                entry.type = DockEntryType::DesktopFiles;
+            if (index < widgets_.size() &&
+                DockEntryTypeForWidget(widgets_[index].type) != DockEntryType::DesktopItem)
+                entry.type = DockEntryTypeForWidget(widgets_[index].type);
         }
         if (entry.type == DockEntryType::DesktopItem)
             entry.reference = ToUpperInvariant(entry.reference);
@@ -740,13 +741,13 @@ void DesktopApp::LoadLayoutSlots()
             FindWidgetIndexById(entry.reference);
         if (widgetIndex >= widgets_.size())
             return true;
-        if (entry.type == DockEntryType::FolderMapping ||
+        if (entry.type == DockEntryType::Collection || entry.type == DockEntryType::FolderMapping ||
             entry.type == DockEntryType::DesktopFiles)
         {
             for (auto& group : widgets_)
             {
-                if (group.type !=
-                        DesktopWidgetType::FileGroup)
+                if (group.type != (entry.type == DockEntryType::Collection
+                        ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup))
                     continue;
                 std::erase(
                     group.childWidgetIds,

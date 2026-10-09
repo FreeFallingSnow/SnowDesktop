@@ -7,6 +7,7 @@
 
 bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
 {
+    if (IsGroupWidgetType(widget.type)) return true;
     const bool dockFolder = dockFolderPopupOpen_ && &widget == &dockFolderPopupWidget_;
     const size_t sourceCount = widget.type == DesktopWidgetType::FolderMapping
         ? widget.folderEntries.size() : widget.itemKeys.size();
@@ -23,11 +24,29 @@ bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
 
 ScrollingItemWidget* DesktopApp::GetCategorizedPopupView() const
 {
+    if (auto* group = GetGroupPopupView())
+    {
+        const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+        const RECT frame{popupRect_.left, popupRect_.top + metrics.headerHeight,
+            popupRect_.right, popupRect_.bottom - metrics.bottomPadding};
+        group->SetPopupFrame(&frame);
+        return group;
+    }
     const auto* widget = GetOpenPopupWidget();
     if (!widget || !UsesCategorizedPopupControls(*widget)) return nullptr;
     if (dockFolderPopupOpen_) return dockFolderPopupContainer_.get();
     for (const auto& container : containers_)
         if (auto* view = dynamic_cast<FileCategories*>(container.get());
+            view && view->GetWidgetData() == widget) return view;
+    return nullptr;
+}
+
+ScrollingItemWidget* DesktopApp::GetGroupPopupView() const
+{
+    const auto* widget = GetOpenPopupWidget();
+    if (!widget || !IsGroupWidgetType(widget->type)) return nullptr;
+    for (const auto& container : containers_)
+        if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
             view && view->GetWidgetData() == widget) return view;
     return nullptr;
 }
@@ -46,6 +65,16 @@ RECT DesktopApp::GetCollectionPopupControlsRect(const RECT& popup) const
     auto* view = GetCategorizedPopupView();
     if (!view) return {};
     const RECT frame = GetCategorizedPopupFrame(popup);
+    if (IsGroupWidgetType(view->GetWidgetData()->type))
+    {
+        const auto* data = view->GetWidgetData();
+        LONG bottom = frame.top + view->Cu(8.0f);
+        if (!data->childWidgetIds.empty()) bottom += view->Cu(view->GetCategorizedTabRowPitch());
+        if (data->showSearchBox) bottom += view->Cu(view->GetCategorizedSearchBoxHeight() + 5.0f);
+        if (data->type == DesktopWidgetType::FileGroup && data->showFileCategories && !data->childWidgetIds.empty())
+            bottom += view->Cu(view->GetCategorizedTabRowPitch());
+        return {frame.left, frame.top, frame.right, bottom};
+    }
     CategorizedPopupScope scope(view, frame);
     const auto* widget = view->GetWidgetData();
     LONG bottom = frame.top;
@@ -60,6 +89,11 @@ RECT DesktopApp::GetCategorizedPopupFrame(const RECT& popup) const
 {
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT frame{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom};
+    if (const auto* widget = GetOpenPopupWidget(); widget && IsGroupWidgetType(widget->type))
+    {
+        frame.bottom -= metrics.bottomPadding;
+        return frame;
+    }
     const auto* view = GetCategorizedPopupView();
     if (!view) return frame;
     const LONG left = popup.left + metrics.paddingX;
@@ -174,6 +208,7 @@ RECT DesktopApp::GetCollectionPopupFanWorkArea(const DesktopWidget& widget) cons
 
 bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
+    if (IsGroupWidgetType(widget.type)) return false;
     namespace layout = snowdesktop::collection_popup_layout;
     // The fan always previews the full source. Search/category preferences
     // apply to its Show all view and must not change the chosen presentation.
@@ -199,6 +234,7 @@ bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 
 bool DesktopApp::UsesCollectionPopupList(const DesktopWidget& widget) const
 {
+    if (IsGroupWidgetType(widget.type)) return widget.listMode;
     namespace layout = snowdesktop::collection_popup_layout;
     return layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
         widget.listMode, popupFanShowAll_) == layout::View::List;
@@ -335,6 +371,7 @@ void DesktopApp::EnsureCollectionPopupFanItemVisible(size_t index)
 
 void DesktopApp::ShowAllCollectionPopupItems()
 {
+    if (GetGroupPopupView()) return;
     const auto* widget = GetOpenPopupWidget();
     if (!widget || !UsesCollectionPopupFan(*widget) || GetPopupItemCount(*widget) == 0) return;
     // This is a change of the same popup, not an outside click. Retire queued
@@ -392,6 +429,15 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     // Dock popup or shrink its search and tab controls.
     size_t allItemCount = widget.type == DesktopWidgetType::FolderMapping
         ? widget.folderEntries.size() : widget.itemKeys.size();
+    if (IsGroupWidgetType(widget.type))
+        for (const auto& id : widget.childWidgetIds)
+        {
+            const size_t child = FindWidgetIndexById(id);
+            if (child < widgets_.size())
+                allItemCount = std::max(allItemCount,
+                    widgets_[child].type == DesktopWidgetType::FolderMapping
+                        ? widgets_[child].folderEntries.size() : widgets_[child].itemKeys.size());
+        }
     if (&widget == GetOpenPopupWidget())
         if (auto* categories = dynamic_cast<FileCategories*>(GetCategorizedPopupView()))
             allItemCount = categories->CachedCategoryKeys(L"all").size();
@@ -637,6 +683,12 @@ DesktopApp::GetOpenCollectionPopupLayoutMetrics() const
 
 RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
 {
+    if (auto* group = GetGroupPopupView())
+    {
+        const RECT frame = GetCategorizedPopupFrame(popup);
+        group->SetPopupFrame(&frame);
+        return group->GetContentViewportRect();
+    }
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     if (const auto* widget = GetOpenPopupWidget(); widget && UsesCollectionPopupFan(*widget))
         return popup;

@@ -518,6 +518,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
         view->EndCategoryTabDrag(false);
         view->EndSearchPointerSelection();
         view->SetSearchFocused(false);
+        if (IsGroupWidgetType(view->GetWidgetData()->type)) view->SetPopupFrame(nullptr);
     }
     auto pendingOpen =
         std::move(pendingCollectionPopupOpen_);

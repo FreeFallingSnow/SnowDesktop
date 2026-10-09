@@ -6,6 +6,7 @@
 #include <objbase.h>
 
 #include <set>
+#include <limits>
 #include <thread>
 
 // Widget creation, collection/file-group membership and release operations.
@@ -582,9 +583,20 @@ void DesktopApp::AddFileGroupWidgetAt(POINT screenPoint)
 
 size_t DesktopApp::HitTestWidgetPairTarget(POINT point, size_t sourceIndex) const
 {
-    if (sourceIndex >= widgets_.size() || GetDockContainerAtPoint(point) ||
+    if (sourceIndex >= widgets_.size() ||
         IsPointOccludedByOpenPopup(point) || IsExternalDropWindowAt(point))
         return static_cast<size_t>(-1);
+    if (auto* dock = GetDockContainerAtPoint(point))
+    {
+        const auto* item = dock->EntryAtPoint(point);
+        if (!item || !IsWidgetDockEntryType(item->GetEntryType())) return static_cast<size_t>(-1);
+        RECT center = item->GetBounds();
+        InflateRect(&center, -16, -10);
+        if (!PtInRect(&center, point)) return static_cast<size_t>(-1);
+        const size_t target = FindWidgetIndexById(item->GetReference());
+        return snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, target)
+            ? target : static_cast<size_t>(-1);
+    }
     for (size_t i = widgets_.size(); i-- > 0;)
     {
         if (i == sourceIndex || IsGroupedWidget(widgets_[i]) ||
@@ -614,11 +626,14 @@ std::optional<GridSpan> DesktopApp::GetWidgetPairGroupSpan(
     if (!snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, targetIndex))
         return std::nullopt;
     const auto& target = widgets_[targetIndex];
-    const auto* page = FindGridPage(gridPages_, target.gridCell.pageId);
-    if (!page) return std::nullopt;
     DesktopWidget group;
     group.type = DesktopWidgetType::FileGroup;
     ConfigureWidgetGridLimits(group);
+    if (IsDockExclusiveWidgetId(target.id))
+        return ClampWidgetGridSpan(group, target.gridSpan,
+            std::numeric_limits<int>::max(), std::numeric_limits<int>::max());
+    const auto* page = FindGridPage(gridPages_, target.gridCell.pageId);
+    if (!page) return std::nullopt;
     const auto span = ClampWidgetGridSpan(group, target.gridSpan,
         page->columns - target.gridCell.column, page->rows - target.gridCell.row);
     for (size_t i = 0; i < widgets_.size(); ++i)
@@ -641,6 +656,15 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
 {
     namespace pair = snowdesktop::widget_pair_drop;
     if (!pair::CanPair(widgets_, sourceIndex, targetIndex)) return false;
+    const std::wstring targetId = widgets_[targetIndex].id;
+    const std::wstring sourceId = widgets_[sourceIndex].id;
+    const auto targetDock = std::find_if(dockEntries_.begin(), dockEntries_.end(),
+        [&](const DockEntry& entry) { return IsWidgetDockEntryType(entry.type) && entry.reference == targetId; });
+    const bool targetInDock = targetDock != dockEntries_.end();
+    size_t dockInsert = 0;
+    if (targetInDock)
+        for (auto entry = dockEntries_.begin(); entry != targetDock; ++entry)
+            if (entry->reference != sourceId) ++dockInsert;
     DesktopWidget group;
     group.id = MakeNewWidgetId();
     group.type = action == pair::Action::CreateCollectionGroup
@@ -660,6 +684,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
     }
     const GridCell landing = group.gridCell;
     const GridSpan span = group.gridSpan;
+    const std::wstring groupId = group.id;
     // Vector insertion/erasure invalidates every popup's widget pointer/index.
     if (GetOpenPopupWidget())
     {
@@ -677,7 +702,18 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
         // Small collections can form a group with a larger minimum span;
         // use the existing placement transaction to resolve its neighbours.
         EnsureNavTabOrder();
-        PlaceWidgetWithDisplacement(widgets_.size() - 1, landing, span, true);
+        if (targetInDock)
+        {
+            auto& created = widgets_.back();
+            created.gridCell = {kDockPageId, 0, 0};
+            dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(std::min(dockInsert, dockEntries_.size())),
+                {DockEntryTypeForWidget(created.type), groupId, false});
+            NormalizeDockRecycleBinPosition();
+            LayoutItems();
+            RebuildContainersAndItems();
+            SaveLayoutSlots();
+        }
+        else PlaceWidgetWithDisplacement(widgets_.size() - 1, landing, span, true);
     }
     else
     {
@@ -802,6 +838,11 @@ void DesktopApp::DissolveSingleItemWidgetGroups()
         if (index >= widgets_.size() || !pair::ShouldDissolve(widgets_[index])) continue;
         const auto& group = widgets_[index];
         GridCell landing = group.gridCell;
+        const auto dock = std::find_if(dockEntries_.begin(), dockEntries_.end(),
+            [&](const DockEntry& entry) { return IsGroupDockEntryType(entry.type) && entry.reference == id; });
+        const bool dockHosted = dock != dockEntries_.end();
+        const std::wstring survivingChild = group.childWidgetIds.empty() ? L"" : group.childWidgetIds.front();
+        const size_t dockIndex = static_cast<size_t>(std::distance(dockEntries_.begin(), dock));
         if (!group.childWidgetIds.empty())
         {
             const size_t child = FindWidgetIndexById(group.childWidgetIds.front());
@@ -816,7 +857,7 @@ void DesktopApp::DissolveSingleItemWidgetGroups()
                 if (!item.name.empty() && item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item))
                     MarkGridArea(used, item.gridCell, item.gridSpan);
             const auto* page = FindGridPage(gridPages_, landing.pageId);
-            if ((!page || !GridAreaFitsPage(*page, landing, span) ||
+            if (!dockHosted && (!page || !GridAreaFitsPage(*page, landing, span) ||
                     AreGridSlotsMarked(used, landing, span)) &&
                 !FindDockReturnCell(used, landing.pageId, 0, span, landing))
                 continue;
@@ -826,7 +867,19 @@ void DesktopApp::DissolveSingleItemWidgetGroups()
             CloseCollectionPopup();
             FinalizeCloseCollectionPopup();
         }
-        changed = pair::Dissolve(widgets_, index, landing) || changed;
+        if (pair::Dissolve(widgets_, index, landing))
+        {
+            if (dockHosted)
+            {
+                const size_t child = FindWidgetIndexById(survivingChild);
+                if (child < widgets_.size())
+                    dockEntries_[dockIndex] = { DockEntryTypeForWidget(widgets_[child].type), survivingChild, false };
+                else
+                    dockEntries_.erase(dockEntries_.begin() + static_cast<std::ptrdiff_t>(dockIndex));
+                NormalizeDockRecycleBinPosition();
+            }
+            changed = true;
+        }
     }
     if (!changed) return;
     mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -842,12 +895,28 @@ void DesktopApp::DissolveSingleItemWidgetGroups()
 size_t DesktopApp::HitTestCollectionGroupIndex(
     POINT point, size_t excludeWidgetIndex) const
 {
+    if (IsPointOccludedByOpenPopup(point))
+    {
+        auto* group = GetGroupPopupView();
+        const RECT frame = group ? group->GetFrameRect() : RECT{};
+        return group && group->GetWidgetData()->type == DesktopWidgetType::CollectionGroup &&
+                popupWidgetIndex_ != excludeWidgetIndex && PtInRect(&frame, point)
+            ? popupWidgetIndex_ : static_cast<size_t>(-1);
+    }
+    if (auto* dock = GetDockContainerAtPoint(point))
+        if (auto* item = dock->EntryAtPoint(point); item && item->GetEntryType() == DockEntryType::CollectionGroup)
+        {
+            RECT center = item->GetBounds();
+            InflateRect(&center, -16, -10);
+            if (PtInRect(&center, point)) return FindWidgetIndexById(item->GetReference());
+        }
     for (size_t i = widgets_.size(); i-- > 0;)
     {
         if (i == excludeWidgetIndex ||
             widgets_[i].type != DesktopWidgetType::CollectionGroup)
             continue;
         RECT bounds = widgets_[i].bounds;
+        if (popupWidgetIndex_ == i && GetGroupPopupView()) bounds = GetGroupPopupView()->GetFrameRect();
         if (!IsRectEmptyRect(bounds) && PtInRect(&bounds, point))
             return i;
     }
@@ -857,12 +926,28 @@ size_t DesktopApp::HitTestCollectionGroupIndex(
 size_t DesktopApp::HitTestFileGroupIndex(
     POINT point, size_t excludeWidgetIndex) const
 {
+    if (IsPointOccludedByOpenPopup(point))
+    {
+        auto* group = GetGroupPopupView();
+        const RECT frame = group ? group->GetFrameRect() : RECT{};
+        return group && group->GetWidgetData()->type == DesktopWidgetType::FileGroup &&
+                popupWidgetIndex_ != excludeWidgetIndex && PtInRect(&frame, point)
+            ? popupWidgetIndex_ : static_cast<size_t>(-1);
+    }
+    if (auto* dock = GetDockContainerAtPoint(point))
+        if (auto* item = dock->EntryAtPoint(point); item && item->GetEntryType() == DockEntryType::FileGroup)
+        {
+            RECT center = item->GetBounds();
+            InflateRect(&center, -16, -10);
+            if (PtInRect(&center, point)) return FindWidgetIndexById(item->GetReference());
+        }
     for (size_t i = widgets_.size(); i-- > 0;)
     {
         if (i == excludeWidgetIndex ||
             widgets_[i].type != DesktopWidgetType::FileGroup)
             continue;
         RECT bounds = widgets_[i].bounds;
+        if (popupWidgetIndex_ == i && GetGroupPopupView()) bounds = GetGroupPopupView()->GetFrameRect();
         if (!IsRectEmptyRect(bounds) && PtInRect(&bounds, point))
             return i;
     }
@@ -927,11 +1012,24 @@ bool DesktopApp::MoveFileSourcesToFileGroup(
     const std::vector<Item*>& sourceItems,
     size_t groupIndex, size_t insertIndex)
 {
+    return groupIndex < widgets_.size() && widgets_[groupIndex].type == DesktopWidgetType::FileGroup &&
+        MoveWidgetSourcesToGroup(sourceItems, groupIndex, insertIndex);
+}
+
+bool DesktopApp::MoveWidgetSourcesToGroup(
+    const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex)
+{
     if (sourceItems.empty() ||
         groupIndex >= widgets_.size() ||
-        widgets_[groupIndex].type !=
-            DesktopWidgetType::FileGroup)
+        !IsGroupWidgetType(widgets_[groupIndex].type))
         return false;
+
+    const auto groupType = widgets_[groupIndex].type;
+    const auto acceptsChild = [groupType](DesktopWidgetType type) {
+        return groupType == DesktopWidgetType::CollectionGroup
+            ? type == DesktopWidgetType::Collection
+            : type == DesktopWidgetType::FolderMapping || type == DesktopWidgetType::FileCategories;
+    };
 
     std::vector<std::wstring> movingIds;
     for (Item* source : sourceItems)
@@ -940,9 +1038,6 @@ bool DesktopApp::MoveFileSourcesToFileGroup(
         if (auto* dockItem =
                 dynamic_cast<DockEntryItem*>(source))
         {
-            if ((dockItem->GetEntryType() != DockEntryType::FolderMapping &&
-                 dockItem->GetEntryType() != DockEntryType::DesktopFiles))
-                return false;
             id = dockItem->GetReference();
         }
         else if (auto* groupEntry =
@@ -952,14 +1047,16 @@ bool DesktopApp::MoveFileSourcesToFileGroup(
         {
             id = groupEntry->GetChildWidgetId();
         }
+        else if (auto* groupEntry = dynamic_cast<CollectionGroupEntryItem*>(source))
+        {
+            id = groupEntry->GetCollectionId();
+        }
         else if (auto* widget =
                      dynamic_cast<Widget*>(source))
         {
             DesktopWidget* data =
                 widget->GetWidgetData();
-            if (!data ||
-                (data->type != DesktopWidgetType::FolderMapping &&
-                 data->type != DesktopWidgetType::FileCategories))
+            if (!data || !acceptsChild(data->type))
                 return false;
             id = data->id;
         }
@@ -971,8 +1068,10 @@ bool DesktopApp::MoveFileSourcesToFileGroup(
         const size_t childIndex =
             FindWidgetIndexById(id);
         if (childIndex >= widgets_.size() ||
-            (widgets_[childIndex].type != DesktopWidgetType::FolderMapping &&
-             widgets_[childIndex].type != DesktopWidgetType::FileCategories))
+            !acceptsChild(widgets_[childIndex].type))
+            return false;
+        if (const auto* dockItem = dynamic_cast<DockEntryItem*>(source);
+            dockItem && dockItem->GetEntryType() != DockEntryTypeForWidget(widgets_[childIndex].type))
             return false;
         if (std::find(
                 movingIds.begin(),
@@ -1010,8 +1109,7 @@ bool DesktopApp::MoveFileSourcesToFileGroup(
 
     for (auto& group : widgets_)
     {
-        if (group.type !=
-                DesktopWidgetType::FileGroup)
+        if (group.type != groupType)
             continue;
         for (const auto& id : movingIds)
             std::erase(
@@ -1048,7 +1146,8 @@ bool DesktopApp::MoveFileSourcesToFileGroup(
     std::erase_if(
         dockEntries_,
         [&](const DockEntry& entry) {
-            return (entry.type == DockEntryType::FolderMapping ||
+            return (entry.type == DockEntryType::Collection ||
+                    entry.type == DockEntryType::FolderMapping ||
                     entry.type == DockEntryType::DesktopFiles) &&
                 movingSet.contains(
                     entry.reference);

@@ -48,7 +48,7 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
                 hasFileGroupEntries;
         const bool popupHit =
             !suppressDesktopWidgetTargets &&
-            !groupedEntryDrag &&
+            (!groupedEntryDrag || GetGroupPopupView()) &&
             HitTestPopupForDrag(
                 clientPoint, targetContainer,
                 targetSlot, targetRegion);
@@ -258,6 +258,24 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         return false;
     if (desktopIconsHidden_ && !IsOpenPopupRetained())
         return false;
+
+    if (auto* group = GetGroupPopupView())
+    {
+        const RECT popup = GetCollectionPopupRect(*group->GetWidgetData());
+        if (!PtInRect(&popup, client)) return false;
+        const RECT frame = GetCategorizedPopupFrame(popup);
+        group->SetPopupFrame(&frame);
+        targetContainer = group;
+        targetSlot = nullptr;
+        if (!dragDropController_.IsExternalDragActive() &&
+            !DragTargetResolver::AcceptsInternal(*group, dragSession_.SourceList()))
+        {
+            targetRegion = HitRegion::Blocked;
+            return true;
+        }
+        targetRegion = group->HitTestDrag(client, targetSlot);
+        return true;
+    }
 
     if (dockFolderPopupOpen_ &&
         dockFolderPopupContainer_)

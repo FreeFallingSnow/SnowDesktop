@@ -512,7 +512,7 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
         return;
     }
 
-    if (IsPointInsideOpenPopup(point))
+    if (IsPointInsideOpenPopup(point) && !GetGroupPopupView())
     {
         clearDwell();
         return;
@@ -617,7 +617,7 @@ bool DesktopApp::TryActivateCollectionGroupTab(
             kCollectionGroupTabDwellDelayMs)
         return false;
 
-    if (IsPointInsideOpenPopup(lastMousePoint_))
+    if (IsPointInsideOpenPopup(lastMousePoint_) && !GetGroupPopupView())
     {
         CancelCollectionGroupTabDwell();
         return false;

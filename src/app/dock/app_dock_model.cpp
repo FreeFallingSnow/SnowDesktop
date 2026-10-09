@@ -200,6 +200,7 @@ void DesktopApp::PruneDockShellMetadata()
 bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const
 {
     return entry.type == DockEntryType::DesktopFiles ||
+        entry.type == DockEntryType::FileGroup ||
         entry.type == DockEntryType::FolderMapping ||
         ResolveDockFolderTarget(entry).kind !=
             snowdesktop::item_location::FolderTargetKind::None;
