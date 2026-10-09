@@ -7,6 +7,7 @@
 #include "widget/view/widget_appearance_presets.h"
 #include "layout/item_title_layout.h"
 #include "ui/render/native_tooltip_content.h"
+#include "ui/render/icon_font_glyphs.h"
 #include "../src/winui/font_picker_search.h"
 
 #include <windows.h>
@@ -439,6 +440,21 @@ int main(int argc, char** argv)
     if (argc > 1)
     {
         const auto assets = std::filesystem::path(argv[1]) / "assets";
+        // Settings is a separate process without the host's GDI font
+        // registration. The actual bundled cmap must supply its icon picker.
+        const auto icons = icon_fonts::PrivateUseCodepoints(assets / "fonts" / "fa-solid-900.ttf");
+        for (const std::uint32_t codepoint : {0xF000u, 0xF007u, 0xF013u, 0xF0C2u})
+            Check(std::binary_search(icons.begin(), icons.end(), codepoint),
+                "Font Awesome picker includes glass, user, gear and cloud without GDI registration");
+        Check(!std::binary_search(icons.begin(), icons.end(), 0xEFFFu),
+            "Font Awesome picker excludes codepoints missing from the bundled face");
+        Check(icon_fonts::PrivateUseCodepoints(assets / "fonts" / "missing-icon-font.ttf").empty() &&
+            icon_fonts::PrivateUseCodepoints(assets / "fonts" / "README.md").empty(),
+            "missing or invalid icon fonts never populate the picker with system fallback glyphs");
+        const auto fluentIcons = icon_fonts::PrivateUseCodepoints(assets / "fonts" / "FluentSystemIcons-Regular.ttf");
+        Check(!fluentIcons.empty() && std::any_of(fluentIcons.begin(), fluentIcons.end(),
+                [](std::uint32_t codepoint) { return codepoint > 0xFFFF; }),
+            "Fluent picker retains supplementary-plane icons for UTF-16 surrogate pair rendering");
         const auto data = std::filesystem::temp_directory_path() / (L"SnowDesktopFontPackageTests-" + std::to_wstring(GetCurrentProcessId()));
         const auto choices = app_fonts::List(assets, data);
         Check(std::count_if(choices.begin(), choices.end(), [](const auto& choice) { return choice.selection.package != "installed"; }) == 3,

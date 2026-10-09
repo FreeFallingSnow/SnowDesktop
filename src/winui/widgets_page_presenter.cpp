@@ -2,6 +2,8 @@
 
 #include "settings_presenter_controls.h"
 #include "widgets_page_presenter.h"
+#include "data/data_paths.h"
+#include "ui/render/icon_font_glyphs.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
@@ -501,57 +503,16 @@ struct WidgetsPagePresenter::Impl
 
     winrt::Windows::Foundation::Collections::
         IObservableVector<winrt::Windows::Foundation::IInspectable>
-    FluentGlyphItems() const
+    IconGlyphItems(const wchar_t* filename) const
     {
         auto values = winrt::single_threaded_observable_vector<
             winrt::Windows::Foundation::IInspectable>();
-        for (std::uint32_t codepoint = 0xE000; codepoint <= 0xF8FF;
-             ++codepoint)
+        const auto path = std::filesystem::path(GetExecutableDirectoryPath()) /
+            L"Assets" / L"Fonts" / filename;
+        for (const auto codepoint : icon_fonts::PrivateUseCodepoints(path))
         {
             values.Append(winrt::box_value(CodepointText(codepoint)));
         }
-        for (std::uint32_t codepoint = 0xF0000; codepoint <= 0xF0CCE;
-             ++codepoint)
-        {
-            values.Append(winrt::box_value(CodepointText(codepoint)));
-        }
-        return values;
-    }
-
-    winrt::Windows::Foundation::Collections::
-        IObservableVector<winrt::Windows::Foundation::IInspectable>
-    FontAwesomeGlyphItems() const
-    {
-        auto values = winrt::single_threaded_observable_vector<
-            winrt::Windows::Foundation::IInspectable>();
-        const HFONT font = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE,
-            FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH,
-            L"Font Awesome 6 Free Solid");
-        const HDC dc = CreateCompatibleDC(nullptr);
-        if (!font || !dc)
-        {
-            if (dc) DeleteDC(dc);
-            if (font) DeleteObject(font);
-            return values;
-        }
-        const HGDIOBJ previous = SelectObject(dc, font);
-        for (std::uint32_t codepoint = 0xE000; codepoint <= 0xF8FF;
-             ++codepoint)
-        {
-            const wchar_t character = static_cast<wchar_t>(codepoint);
-            WORD glyph = 0xFFFF;
-            if (GetGlyphIndicesW(dc, &character, 1, &glyph,
-                    GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR &&
-                glyph != 0xFFFF)
-            {
-                values.Append(winrt::box_value(
-                    std::wstring(1, character)));
-            }
-        }
-        SelectObject(dc, previous);
-        DeleteDC(dc);
-        DeleteObject(font);
         return values;
     }
 
@@ -770,7 +731,7 @@ struct WidgetsPagePresenter::Impl
             "app.settings.fluent_icon_hint",
             L"Click an icon to copy it. Set iconFont = \"fluent\" on the "
                 L"Lua menu item that uses it.",
-            fluentGlyphTemplate, FluentGlyphItems());
+            fluentGlyphTemplate, IconGlyphItems(L"FluentSystemIcons-Regular.ttf"));
         developerReferenceCard.content.Children().Append(
             fluentIconsExpander);
         InitializeIconReference(fontAwesomeIconsExpander,
@@ -779,7 +740,7 @@ struct WidgetsPagePresenter::Impl
             "app.settings.fa_icon_hint",
             L"Click an icon to copy its character, then paste it into a Lua "
                 L"menu item's icon field.",
-            fontAwesomeGlyphTemplate, FontAwesomeGlyphItems());
+            fontAwesomeGlyphTemplate, IconGlyphItems(L"fa-solid-900.ttf"));
         developerReferenceCard.content.Children().Append(
             fontAwesomeIconsExpander);
 
