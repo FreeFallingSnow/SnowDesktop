@@ -246,7 +246,8 @@ int RunDockWindowPinTests()
             do
             {
                 MSG pending{};
-                if (PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE))
+                unsigned retrieved = 0;
+                while (retrieved++ < 512 && PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE))
                 {
                     if (pending.hwnd == manager)
                         deferredWork.push_back(pending);
