@@ -7,10 +7,18 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace snowdesktop::icon_fonts
 {
+enum class BundledFont
+{
+    FluentRegular,
+    FontAwesomeSolid,
+};
+
 // Read the same file used by the XAML FontFamily URI. A family-name lookup
 // can silently select a system font in the independent settings process.
 // Missing or invalid assets must produce an empty list, never fallback glyphs.
@@ -69,5 +77,27 @@ inline std::vector<std::uint32_t> PrivateUseCodepoints(
     std::sort(codepoints.begin(), codepoints.end());
     codepoints.erase(std::unique(codepoints.begin(), codepoints.end()), codepoints.end());
     return codepoints;
+}
+
+// UI callers select a fixed resource; file paths and font-file IO stay in
+// the rendering service rather than the settings presenter.
+inline std::vector<std::uint32_t> BundledPrivateUseCodepoints(
+    std::wstring_view executableDirectory, BundledFont font)
+{
+    const wchar_t* filename = nullptr;
+    switch (font)
+    {
+    case BundledFont::FluentRegular:
+        filename = L"FluentSystemIcons-Regular.ttf";
+        break;
+    case BundledFont::FontAwesomeSolid:
+        filename = L"fa-solid-900.ttf";
+        break;
+    default:
+        return {};
+    }
+    return PrivateUseCodepoints(
+        std::filesystem::path(std::wstring(executableDirectory)) /
+        L"Assets" / L"Fonts" / filename);
 }
 } // namespace snowdesktop::icon_fonts

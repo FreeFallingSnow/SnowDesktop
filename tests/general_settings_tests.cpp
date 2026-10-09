@@ -442,7 +442,8 @@ int main(int argc, char** argv)
         const auto assets = std::filesystem::path(argv[1]) / "assets";
         // Settings is a separate process without the host's GDI font
         // registration. The actual bundled cmap must supply its icon picker.
-        const auto icons = icon_fonts::PrivateUseCodepoints(assets / "fonts" / "fa-solid-900.ttf");
+        const auto icons = icon_fonts::BundledPrivateUseCodepoints(
+            std::filesystem::path(argv[1]).wstring(), icon_fonts::BundledFont::FontAwesomeSolid);
         for (const std::uint32_t codepoint : {0xF000u, 0xF007u, 0xF013u, 0xF0C2u})
             Check(std::binary_search(icons.begin(), icons.end(), codepoint),
                 "Font Awesome picker includes glass, user, gear and cloud without GDI registration");
@@ -451,7 +452,8 @@ int main(int argc, char** argv)
         Check(icon_fonts::PrivateUseCodepoints(assets / "fonts" / "missing-icon-font.ttf").empty() &&
             icon_fonts::PrivateUseCodepoints(assets / "fonts" / "README.md").empty(),
             "missing or invalid icon fonts never populate the picker with system fallback glyphs");
-        const auto fluentIcons = icon_fonts::PrivateUseCodepoints(assets / "fonts" / "FluentSystemIcons-Regular.ttf");
+        const auto fluentIcons = icon_fonts::BundledPrivateUseCodepoints(
+            std::filesystem::path(argv[1]).wstring(), icon_fonts::BundledFont::FluentRegular);
         Check(!fluentIcons.empty() && std::any_of(fluentIcons.begin(), fluentIcons.end(),
                 [](std::uint32_t codepoint) { return codepoint > 0xFFFF; }),
             "Fluent picker retains supplementary-plane icons for UTF-16 surrogate pair rendering");

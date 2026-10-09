@@ -503,13 +503,12 @@ struct WidgetsPagePresenter::Impl
 
     winrt::Windows::Foundation::Collections::
         IObservableVector<winrt::Windows::Foundation::IInspectable>
-    IconGlyphItems(const wchar_t* filename) const
+    IconGlyphItems(icon_fonts::BundledFont font) const
     {
         auto values = winrt::single_threaded_observable_vector<
             winrt::Windows::Foundation::IInspectable>();
-        const auto path = std::filesystem::path(GetExecutableDirectoryPath()) /
-            L"Assets" / L"Fonts" / filename;
-        for (const auto codepoint : icon_fonts::PrivateUseCodepoints(path))
+        for (const auto codepoint : icon_fonts::BundledPrivateUseCodepoints(
+                 GetExecutableDirectoryPath(), font))
         {
             values.Append(winrt::box_value(CodepointText(codepoint)));
         }
@@ -731,7 +730,8 @@ struct WidgetsPagePresenter::Impl
             "app.settings.fluent_icon_hint",
             L"Click an icon to copy it. Set iconFont = \"fluent\" on the "
                 L"Lua menu item that uses it.",
-            fluentGlyphTemplate, IconGlyphItems(L"FluentSystemIcons-Regular.ttf"));
+            fluentGlyphTemplate,
+            IconGlyphItems(icon_fonts::BundledFont::FluentRegular));
         developerReferenceCard.content.Children().Append(
             fluentIconsExpander);
         InitializeIconReference(fontAwesomeIconsExpander,
@@ -740,7 +740,8 @@ struct WidgetsPagePresenter::Impl
             "app.settings.fa_icon_hint",
             L"Click an icon to copy its character, then paste it into a Lua "
                 L"menu item's icon field.",
-            fontAwesomeGlyphTemplate, IconGlyphItems(L"fa-solid-900.ttf"));
+            fontAwesomeGlyphTemplate,
+            IconGlyphItems(icon_fonts::BundledFont::FontAwesomeSolid));
         developerReferenceCard.content.Children().Append(
             fontAwesomeIconsExpander);
 
