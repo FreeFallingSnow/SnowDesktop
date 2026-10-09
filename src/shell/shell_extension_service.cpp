@@ -780,8 +780,15 @@ struct MenuService::Impl
                 catalogueStale = true;
                 for (auto &[key, row] : rows)
                 {
-                    row.invalid = true; ++row.dependency; ++row.view.revision;
+                    row.invalid = true; ++row.view.revision;
                     row.view.snapshot.reset(); row.bytes = 0;
+                    // Classes includes Shell caches written by the query itself.
+                    // Verify registration changes before retiring in-flight work;
+                    // otherwise every successful reply can trigger another query.
+                    if (row.view.pending)
+                        scanRequested |= row.priority <= QueryPriority::Menu;
+                    else
+                        ++row.dependency;
                 }
                 MenuTrace("catalogue", "stale.registry");
             }

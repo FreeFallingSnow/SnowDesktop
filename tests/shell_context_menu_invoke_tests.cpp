@@ -2582,6 +2582,39 @@ void TestQueryScheduler()
     Expect(maximum <= 2, "scheduler never runs more than two query workers");
 }
 
+// A real Classes cache notification at each child-query boundary must not
+// starve an open popup when the registration inventory remains unchanged.
+void TestUnrelatedRegistryChangesDuringPopup() {
+ namespace ext=snowdesktop::shell_extensions; namespace menu=snowdesktop::modern_menu;
+ TemporaryDirectory temp;
+ const auto path=L"Software\\Classes\\Local Settings\\SnowDesktopNoiseProbe-"+temp.path.filename().wstring();
+ struct Fixture {HKEY key=nullptr; std::wstring path; bool owned=false; ~Fixture(){if(key)RegCloseKey(key);if(owned)RegDeleteTreeW(HKEY_CURRENT_USER,path.c_str());}} fixture{nullptr,path};
+ DWORD disposition=0;
+ Expect(RegCreateKeyExW(HKEY_CURRENT_USER,path.c_str(),0,nullptr,0,KEY_ALL_ACCESS,nullptr,&fixture.key,&disposition)==ERROR_SUCCESS,"create unrelated Classes cache fixture");
+ fixture.owned=disposition==REG_CREATED_NEW_KEY; Expect(fixture.owned,"Classes cache fixture is privately owned");
+ ext::Request request; request.paths={(temp.path/L"selected.txt").wstring()}; std::ofstream(temp.path/L"selected.txt")<<"private";
+ std::atomic<unsigned> queries=0;
+ ext::MenuService *observed=nullptr;
+ ext::MenuService service(temp.path/L"cache",[&](const ext::Request &target){
+  const unsigned query=++queries;
+  auto touched=std::make_shared<bool>(false); auto before=std::make_shared<std::uint64_t>(0);
+  return ext::QueryWork{[&,target,query,touched,before]() -> std::optional<ext::Reply> {
+   if(query<=5) {
+    if(!*touched) { *before=observed->View(target).revision; const DWORD data=query;
+     Expect(RegSetValueExW(fixture.key,L"UnrelatedCacheValue",0,REG_DWORD,reinterpret_cast<const BYTE*>(&data),sizeof(data))==ERROR_SUCCESS,"emit real unrelated cache notification"); *touched=true; return {}; }
+    if(observed->View(target).revision<=*before) return {};
+   }
+   ext::Reply reply;reply.ok=true;ext::Entry entry;entry.provider="verb:noise-probe";entry.key="noise-probe";entry.label=L"Extra action";reply.entries={entry};return reply;
+  },{}};
+ },[]{ext::Catalogue c;c.revision=17;ext::Registration r;r.id="reg:noise-probe";r.types={L"*"};r.verbs={"noise-probe"};r.contexts=1;r.revision=17;c.rows={r};return c;});
+ observed=&service;
+ ext::Preferences prefs;ext::SetCommon(prefs,"verb:noise-probe",ext::Category::Objects,true);service.Configure(prefs);
+ ext::Presentation popup(request,prefs,L"",L"",service);std::vector<menu::Item> items;menu::Options options;popup.Attach(items,options,0);
+ PumpUntil([&]{if(options.pollItems)if(auto next=options.pollItems(items,true))items=std::move(*next);return !items.empty() && options.pollItemsFinished && options.pollItemsFinished();},"popup eventually receives the real scheduler publication after noise stops");
+
+ Expect(queries==1,"unrelated Classes cache changes must not discard and repeat the same pending popup query");
+}
+
 void TestMenuPromotesQueuedPrewarm()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -3380,6 +3413,7 @@ int wmain(int argc, wchar_t **argv)
         {
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
+            TestUnrelatedRegistryChangesDuringPopup();
             TestBackgroundQueriesReserveMenuSlot();
             TestMenuPromotesQueuedPrewarm();
             TestVisibilityScheduling();
@@ -3410,6 +3444,9 @@ int wmain(int argc, wchar_t **argv)
             TestPendingCachedClick();
             TestInvocationOwnerHandoff();
             TestQueryScheduler();
+            TestUnrelatedRegistryChangesDuringPopup();
+            TestBackgroundQueriesReserveMenuSlot();
+            TestMenuPromotesQueuedPrewarm();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
