@@ -3514,9 +3514,11 @@ void TestShortcutQueryRecovery(bool permanent = false)
         if (auto next = warmOptions.pollItems(warm, true)) warm = std::move(*next);
         return warmOptions.pollItemsFinished();
     }, "a healthy complete result supplements recovered original rows");
-    Expect(warm.size() == 2 && warm[0].label == L"Original file" && warm[1].label == L"Modern provider",
+    const auto modern = std::find_if(warm.begin(), warm.end(), [](const auto &item) { return item.label == L"Modern provider"; });
+    Expect(std::count_if(warm.begin(), warm.end(), [](const auto &item) { return !item.separator; }) == 2 &&
+        warm[0].label == L"Original file" && modern != warm.end(),
         "complete discovery retains additional providers without duplicating recovered roots");
-    Expect(second.Invoke(warm[1].command, {}), "additional complete-query provider remains executable");
+    Expect(second.Invoke(modern->command, {}), "additional complete-query provider remains executable");
     PumpUntil([&] { return invoked == 2; }, "additional provider invokes through a fresh complete query");
     Expect(fullQueries == 3 && originalQueries == 2, "recovered and complete commands keep independent execution identities");
     ext::Presentation third(request, prefs, L"", L"", service);
