@@ -1991,6 +1991,12 @@ if (BUILD_TESTING)
         LABELS authoring integration lua preview render widget host-runtime)
     add_dependencies(SnowDesktopWidgetAuthorPreviewCliTests
         snowwidget SnowDesktop)
+    # Both tests invoke the original host/tool paths supplied above. Copying
+    # their referenced outputs into tests/ is unnecessary and makes parallel
+    # MSBuild projects contend for the same SnowDesktop.pdb destination.
+    set_target_properties(
+        SnowDesktopThemeWorkflowTests SnowDesktopWidgetAuthorPreviewCliTests
+        PROPERTIES VS_GLOBAL_UseCommonOutputDirectory "true")
     # One executable, five independently bounded scenes. Every child deadline
     # is below its 80-second suite budget and CTest's 90-second outer watchdog.
     set_tests_properties(widget_author_preview_cli PROPERTIES TIMEOUT 90)
