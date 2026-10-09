@@ -3174,6 +3174,98 @@ void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = 
 }
 // Only the helper boundary fails. The real popup, backoff and scheduler must
 // recover once, and a persistent failure must finish without a retry loop.
+void TestWarmFailureRecovery(bool permanent)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    auto path = L"Software\\Classes\\Local Settings\\SnowDesktopWarmFailure-" + temp.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        ~Fixture()
+        {
+            if (key)
+                RegCloseKey(key);
+            if (owned)
+                RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } fixture{nullptr, path, false};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.key,
+                           &disposition) == ERROR_SUCCESS &&
+               disposition == REG_CREATED_NEW_KEY,
+           "create private warm-failure registry fixture");
+    fixture.owned = true;
+    ext::Request request;
+    request.paths = {(temp.path / L"target.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private";
+    std::atomic<unsigned> queries = 0;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            if (target.paths != request.paths)
+                return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+            unsigned n = ++queries;
+            return ext::QueryWork{[n, permanent]
+                                  {
+                                      ext::Reply r;
+                                      if (n == 2 || (permanent && n > 1))
+                                      {
+                                          r.error = "controlled failure after stale warm cache";
+                                          return r;
+                                      }
+                                      r.ok = true;
+                                      ext::Entry e;
+                                      e.provider = "verb:warm-failure";
+                                      e.key = "warm-failure";
+                                      e.label = n == 1 ? L"Old" : L"Recovered";
+                                      r.entries = {e};
+                                      return r;
+                                  },
+                                  {}};
+        },
+        []
+        {
+            ext::Catalogue c;
+            c.revision = 17;
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:warm-failure", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(request);
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); },
+              "seed a real service cache before invalidation");
+    service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; }, "settle initial inventory before warm-cache notification");
+    auto before = service.View(request).revision;
+    DWORD value = 1;
+    Expect(RegSetValueExW(fixture.key, L"Cache", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value)) ==
+               ERROR_SUCCESS,
+           "notify stale warm cache");
+    PumpUntil([&] { return service.View(request).revision > before; },
+              "real Classes notification invalidates cache reuse");
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil(
+        [&]
+        {
+            if (auto next = options.pollItems(items, true))
+                items = std::move(*next);
+            return options.pollItemsFinished();
+        },
+        "popup finishes its stale-cache failure recovery");
+    std::wcout << L"Warm-cache failure recovery: queries=" << queries << L" items=" << items.size() << L" label="
+               << (items.empty() ? L"" : items.front().label) << std::endl;
+    Expect(queries == 3 && (permanent ? items.empty() : items.size() == 1 && items.front().label == L"Recovered"),
+           "new popup must recover once rather than treating a failed stale-cache refresh as successful publication");
+}
 void TestPopupQueryFailureRecovery(bool background, bool permanent)
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -4035,6 +4127,13 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-state-commands")
         { TestPairedCommandVisibility(); TestPairedCommandRefresh(); TestStartQueryScheduling(); TestExposedStartPinHelper(); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-loading-deadlines")
+        {
+            TestLateInitialRegistrationAttribution(false, false, false, true);
+            TestRegistrationVerificationBeforePopupPublication(true);
+        }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
+            TestExtensionSessions();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
@@ -4043,17 +4142,17 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, false);
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
+            TestWarmFailureRecovery(false);
+            TestWarmFailureRecovery(true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
             TestLateInitialRegistrationAttribution(true, true);
             TestLateInitialRegistrationAttribution(false, false, true);
             TestLateInitialRegistrationAttribution(true, false, true);
-            TestLateInitialRegistrationAttribution(false, false, false, true);
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
-            TestRegistrationVerificationBeforePopupPublication(true);
             TestUnrelatedRegistryChangesDuringPopup();
             TestUnrelatedRegistryChangesDuringPopup(true, false);
             TestUnrelatedRegistryChangesDuringPopup(true, true);
@@ -4078,7 +4177,6 @@ int wmain(int argc, wchar_t **argv)
             TestManagementUpdates();
             TestManagementFilters();
             TestSourceAttribution();
-            TestExtensionSessions();
             TestExposedStartPinHelper();
             TestPairedCommandVisibility();
             TestPairedCommandRefresh();
@@ -4091,17 +4189,17 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, false);
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
+            TestWarmFailureRecovery(false);
+            TestWarmFailureRecovery(true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
             TestLateInitialRegistrationAttribution(true, true);
             TestLateInitialRegistrationAttribution(false, false, true);
             TestLateInitialRegistrationAttribution(true, false, true);
-            TestLateInitialRegistrationAttribution(false, false, false, true);
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
-            TestRegistrationVerificationBeforePopupPublication(true);
             TestUnrelatedRegistryChangesDuringPopup();
             TestUnrelatedRegistryChangesDuringPopup(true, false);
             TestUnrelatedRegistryChangesDuringPopup(true, true);

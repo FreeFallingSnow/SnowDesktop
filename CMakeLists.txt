@@ -2325,6 +2325,17 @@ if (BUILD_TESTING)
         LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid version
         LABELS integration contract shell)
 
+    # Keep slow inventory boundaries and real helper lifetimes independent of
+    # the ordinary menu cases; every entry retains the shell resource lock below.
+    add_test(NAME shell_menu_loading_deadlines
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-loading-deadlines)
+    add_test(NAME shell_extension_session_lifetime
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-extension-sessions)
+    set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime PROPERTIES
+        TIMEOUT 60
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests>"
+        LABELS "integration;contract;shell")
+
     snowdesktop_add_test(
         SnowDesktopShellIntegrationContractTests
         shell_integration_contract

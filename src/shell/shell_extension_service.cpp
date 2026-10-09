@@ -1019,7 +1019,7 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     auto &row = it->second; row.used = ++impl_->clock;
     auto view = row.view;
-    if (row.expires <= MenuSnapshotCache::Now() || (row.invalid && !retainPublished)) view.snapshot.reset();
+    if (row.expires <= MenuSnapshotCache::Now() || (row.invalid && (!retainPublished || !view.error.empty()))) view.snapshot.reset();
     if (view.snapshot)
     {
         // Snapshots created before attribution still use provider IDs. Apply
