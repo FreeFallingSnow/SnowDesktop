@@ -17,6 +17,7 @@ namespace snowdesktop::shell_extensions
 namespace
 {
 using Key = settings_ipc::Bytes;
+constexpr ULONGLONG kInventoryWaitMs = 30000;
 Key SelectionKey(Request request)
 {
     request.catalogueOnly = false;
@@ -117,6 +118,7 @@ struct MenuService::Impl
         bool startPinOnly = false;
         std::optional<Reply> reply;
         std::uint64_t verificationRevision = 0;
+        ULONGLONG replyReadyAt = 0;
     };
     struct SourceJob
     {
@@ -832,6 +834,7 @@ struct MenuService::Impl
                     {
                         std::lock_guard lock(mutex);
                         job.verificationRevision = registryRevision;
+                        job.replyReadyAt = GetTickCount64();
                     }
                     if (!job.reply && GetTickCount64() - job.started >= 8000)
                         job.reply = Reply{false, {}, "query timeout"};
@@ -845,7 +848,8 @@ struct MenuService::Impl
                     // keep extending an already-captured query's wait indefinitely.
                     if (checkedRegistryRevision < job.verificationRevision)
                     {
-                        if (failedRegistryRevision >= job.verificationRevision || GetTickCount64() - job.started >= 8000)
+                        if (failedRegistryRevision >= job.verificationRevision ||
+                            GetTickCount64() - job.replyReadyAt >= kInventoryWaitMs)
                             job.reply = Reply{false, {}, "registration verification failed or timed out"};
                         else
                         {
@@ -924,7 +928,7 @@ struct MenuService::Impl
                         MenuTrace("schedule", "snapshot_reused"); continue;
                     }
                 }
-                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, {}, 0};
+                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, {}, 0, 0};
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
@@ -1045,7 +1049,7 @@ bool MenuService::MenuAttributionPending(const Request &request, const Preferenc
     if (request.startPinOnly || impl_->catalogue.revision || (!impl_->scanning && !impl_->scanRequested) ||
         // Inventory attribution enumerates the whole machine and can outlast a
         // single helper. Known rows remain visible throughout this bounded wait.
-        (impl_->scanning && GetTickCount64() - impl_->scanStarted >= 30000)) return false;
+        (impl_->scanning && GetTickCount64() - impl_->scanStarted >= kInventoryWaitMs)) return false;
     const auto it = impl_->rows.find(SelectionKey(request));
     const unsigned contexts = it != impl_->rows.end() && it->second.view.contexts ? it->second.view.contexts :
         request.context == Context::Desktop ? ContextBit(Context::Desktop) :
