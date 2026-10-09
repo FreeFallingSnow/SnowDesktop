@@ -6,6 +6,7 @@
 #include "icons/large_icon_preset_rules.h"
 #include "settings/settings_process.h"
 #include "shell/shell_extension_service.h"
+#include "app/lifecycle/settings_external_state_refresh.h"
 
 #include <atomic>
 #include <future>
@@ -707,6 +708,46 @@ void TestAsyncOpening()
     }
 }
 
+void TestOverlappingSettingsRefresh()
+{
+    // Real child nested RPCs reproduce activation refresh A, then navigation
+    // refresh B while A waits. Dropping A's responder used to strand the outer
+    // wait, eventually closing an otherwise successfully opened settings UI.
+    AsyncPeer peer;
+    auto refresh = std::make_shared<snowdesktop::SettingsExternalStateRefresh>();
+    int requests = 0, queries = 0, replies = 0;
+    bool desktopDispatched = false;
+    DesktopMessageProbe desktop([&] { desktopDispatched = true; });
+    peer.parent.BindDeferredRaw("host.query", [&](auto, auto reply) {
+        ++requests;
+        if (refresh->Request([reply = std::move(reply)] { reply(Pack(42), {}); })) ++queries;
+    });
+    const auto completed = [&](Bytes reply, std::exception_ptr error) {
+        ++replies;
+        Check(!error && Unpack<int>(reply) == 42, "each overlapping settings request receives the authoritative query result");
+    };
+    peer.parent.RequestAsync("ui.open", {}, completed, 1000);
+    peer.parent.RequestAsync("ui.open", {}, completed, 1000);
+    desktop.Post();
+    Check(PumpUntil([&] { return requests == 2; }) && queries == 1 && replies == 0 && desktopDispatched,
+        "activation and navigation share one query while the desktop continues dispatching messages");
+    refresh->Complete();
+    Check(PumpUntil([&] { return replies == 2; }) && peer.parent.Connected(),
+        "both nested refresh waits finish without a lost acknowledgement or retired connection");
+    peer.parent.RequestAsync("ui.open", {}, completed, 1000);
+    Check(PumpUntil([&] { return requests == 3; }) && queries == 2,
+        "a later settings session queries Windows again instead of reusing a completed query");
+    refresh->Complete();
+    Check(PumpUntil([&] { return replies == 3; }), "the later refresh also completes exactly once");
+
+    int afterDestruction = 0;
+    {
+        snowdesktop::SettingsExternalStateRefresh abandoned;
+        abandoned.Request([&] { ++afterDestruction; });
+    }
+    Check(afterDestruction == 0, "destroying settings infrastructure cancels unfulfilled query acknowledgements");
+}
+
 void TestStalledPeer()
 {
     HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
@@ -902,6 +943,7 @@ int RunSettingsIpcTests()
     TestLargeIconEditing();
     TestChannel();
     TestAsyncOpening();
+    TestOverlappingSettingsRefresh();
     TestRetiredUpdateProtocol();
     TestStalledPeer();
     TestProcessLifecycle();

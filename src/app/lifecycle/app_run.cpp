@@ -6,6 +6,7 @@
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
 #include "startup_diagnostics.h"
+#include "settings_external_state_refresh.h"
 #include "data/data_paths.h"
 #include "platform/deployment_context.h"
 #include "platform/shell_overlay_window.h"
@@ -855,7 +856,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         std::uint64_t expectedRevision) {
         return AddPageFromSettings(expectedRevision);
     };
-    settingsHostOptions.refreshExternalStateAsync = [this](std::function<void()> complete) {
+    const auto settingsExternalRefresh = std::make_shared<snowdesktop::SettingsExternalStateRefresh>();
+    settingsHostOptions.refreshExternalStateAsync = [this, settingsExternalRefresh](std::function<void()> complete) {
         if (!settingsController_)
         {
             complete();
@@ -863,23 +865,23 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         // Task Scheduler RPC and legacy registration reconciliation own only
         // platform state. Never lend a worker the application or controller.
-        // Retire an earlier disconnected session's delivery before reusing
-        // the coalescing key; its responder cannot complete this connection.
-        shellModelWork_.Cancel(L"settings-auto-start");
-        const bool submitted = shellModelWork_.Submit(L"settings-auto-start",
-            [] { return QueryAutoStartState(); },
-            [this, complete](snowdesktop::AutoStartQueryResult state) {
-                settingsAutoStartState_ = std::move(state);
-                if (settingsController_ && settingsAutoStartState_.stateKnown)
-                {
-                    GeneralSettings general = generalSettings_;
-                    general.autoStartEnabled = settingsAutoStartState_.enabled;
-                    if (settingsController_->SynchronizeGeneral(general))
-                        generalSettings_.autoStartEnabled = general.autoStartEnabled;
-                }
-                complete();
-            }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage);
-        if (!submitted) complete();
+        if (settingsExternalRefresh->Request(std::move(complete)))
+        {
+            const bool submitted = shellModelWork_.Submit(L"settings-auto-start",
+                [] { return QueryAutoStartState(); },
+                [this, settingsExternalRefresh](snowdesktop::AutoStartQueryResult state) {
+                    settingsAutoStartState_ = std::move(state);
+                    if (settingsController_ && settingsAutoStartState_.stateKnown)
+                    {
+                        GeneralSettings general = generalSettings_;
+                        general.autoStartEnabled = settingsAutoStartState_.enabled;
+                        if (settingsController_->SynchronizeGeneral(general))
+                            generalSettings_.autoStartEnabled = general.autoStartEnabled;
+                    }
+                    settingsExternalRefresh->Complete();
+                }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage);
+            if (!submitted) settingsExternalRefresh->Complete();
+        }
 
         snowdesktop::DesktopDisplaySettings desktop;
         desktop.dockEnabled = generalSettings_.dockEnabled;
