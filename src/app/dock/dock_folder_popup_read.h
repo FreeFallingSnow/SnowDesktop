@@ -30,6 +30,14 @@ inline bool HasFanContent(bool folderMapping, std::size_t count)
     return folderMapping || count != 0;
 }
 
+inline bool HasCategorizedContent(std::size_t sourceCount, bool loading,
+    std::size_t knownCount)
+{
+    // Reserve the search/tab footprint alongside known files before the first
+    // read arrives. A confirmed empty source must not keep these controls.
+    return sourceCount != 0 || (loading && knownCount != 0);
+}
+
 // Availability comes from the directory read, not the independently queued
 // Shell target classification. A pending classification must not gate the read.
 template<class QueueRead, class ApplyEntries>

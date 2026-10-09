@@ -44,6 +44,45 @@ void TestPopupTargetRebinding()
         "direct mappings and unchanged cached source versions keep their independent read path");
 }
 
+void TestFolderPopupControlReservation()
+{
+    using namespace snowdesktop::dock_folder_popup_read;
+    using snowdesktop::shell_refresh::FolderSnapshot;
+    const std::wstring path = L"C:\\popup";
+    bool available = false, loading = false;
+    std::size_t count = 0;
+    constexpr std::size_t knownCount = 13;
+    const auto apply = [&](const auto& result) { count = result.entries.size(); };
+    Check(Refresh(path, nullptr, available, loading, [](const auto&) {}, apply) &&
+        HasCategorizedContent(count, loading, knownCount),
+        "a known nonempty folder reserves search and tabs before the opening snapshot is sized");
+
+    FolderSnapshot listing;
+    listing.path = path;
+    listing.complete = true;
+    listing.entries.resize(knownCount);
+    Check(Refresh(path, &listing, available, loading, [](const auto&) {}, apply) &&
+        !loading && HasCategorizedContent(count, loading, knownCount),
+        "the loaded folder keeps the same control footprint at animation handoff");
+    Check(HasCategorizedContent(count, false, 0),
+        "a full nonempty source keeps search accessible when filtering has no results");
+
+    listing.complete = false;
+    listing.error = ERROR_ACCESS_DENIED;
+    Check(Refresh(path, &listing, available, loading, [](const auto&) {}, apply) &&
+        !available && count == knownCount && HasCategorizedContent(count, loading, knownCount),
+        "a failed refresh retains the existing source and its controls");
+
+    listing.complete = true;
+    listing.error = ERROR_SUCCESS;
+    listing.entries.clear();
+    Check(Refresh(path, &listing, available, loading, [](const auto&) {}, apply) &&
+        available && !loading && !HasCategorizedContent(count, loading, knownCount),
+        "a confirmed empty folder releases search and tab space despite an older known count");
+    Check(!HasCategorizedContent(0, true, 0) && !HasCategorizedContent(0, false, 0),
+        "an unknown or confirmed empty source does not create control placeholders");
+}
+
 void TestFolderFirstListing()
 {
     using namespace snowdesktop::dock_folder_popup_read;
@@ -118,6 +157,7 @@ void TestFolderFirstListing()
 
 void TestFolderRefreshScopeAndReads()
 {
+    TestFolderPopupControlReservation();
     TestFolderFirstListing();
     TestPopupTargetRebinding();
     using namespace snowdesktop::shell_refresh;

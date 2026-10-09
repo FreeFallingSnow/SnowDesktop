@@ -7,13 +7,17 @@
 
 bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
 {
+    const bool dockFolder = dockFolderPopupOpen_ && &widget == &dockFolderPopupWidget_;
+    const size_t sourceCount = widget.type == DesktopWidgetType::FolderMapping
+        ? widget.folderEntries.size() : widget.itemKeys.size();
     return popupAnchoredToDock_ &&
         (widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping) &&
         (widget.showSearchBox || widget.showFileCategories) &&
-        // Empty sources have no search or category controls to lay out. Use
+        // Match the known-file reservation used by the opening geometry. Use
         // the full source so filtering to no results keeps search accessible.
-        (widget.type == DesktopWidgetType::FolderMapping
-            ? !widget.folderEntries.empty() : !widget.itemKeys.empty()) &&
+        snowdesktop::dock_folder_popup_read::HasCategorizedContent(
+            sourceCount, dockFolder && dockFolderPopupLoading_,
+            dockFolder ? dockFolderPopupKnownItemCount_ : 0) &&
         !UsesCollectionPopupFan(widget);
 }
 
