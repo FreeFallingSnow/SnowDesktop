@@ -30,9 +30,11 @@ SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
     v.enabled, v.themeMode, v.contentTheme, v.appearance);
+SD_IPC_FIELDS(DockFullscreenException, v.executable, v.policy);
+SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.floatingShortcutMode, v.floatingHotkeyModifiers,
-    v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.edgeRevealGesture, v.floatingEdgeSwipeBlockFullscreen, v.monitorScope, v.showWindowsButton,
+    v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.edgeRevealGesture, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
     v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.reserveScreenSpace, v.lastMonitorUseHomeSize, v.mergedBarHeight, v.frequentItemCount, v.thicknessScale,
     v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
@@ -100,7 +102,7 @@ SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, 
     v.frameWidth, v.frameHeight, v.frameColumns, v.frameRows, v.frameLimit, v.unitScale, v.durationScale, v.frameWidths, v.frameHeights, v.animations, v.neutral,
     v.defaultConfig, v.imageWidth, v.imageHeight, v.hasEdgeColor, v.loading, v.edgeColor, v.itemCount, v.anyFill, v.mixedFields);
 SD_IPC_FIELDS(SettingsActionResult,
-    v.status, v.completedDomains, v.failedDomains, v.message);
+    v.status, v.completedDomains, v.failedDomains, v.message, v.dockApplications);
 SD_IPC_FIELDS(SettingsValues,
     v.personalization, v.dock, v.navigation, v.general,
     v.category, v.desktop);

@@ -1323,6 +1323,23 @@ public:
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
             break;
+        case Action::GetDockRunningApplications:
+        {
+            auto result = snowdesktop::SettingsActionResult::Success();
+            // Reuse the Dock's actual running-zone identities and executable
+            // paths. Do not run a second, differently filtered enumeration.
+            for (const auto& running : app_.dockUnpinnedRunningApps_)
+            {
+                if (running.presence.IsHidden() || !running.window || !IsWindow(running.window)) continue;
+                const auto path = snowdesktop::dock_fullscreen::NormalizeExecutable(running.executablePath);
+                if (path.empty()) continue;
+                const bool duplicate = std::any_of(result.dockApplications.begin(), result.dockApplications.end(),
+                    [&](const auto& item) { return snowdesktop::dock_fullscreen::SameExecutable(item.executable, path); });
+                if (!duplicate && result.dockApplications.size() < 128)
+                    result.dockApplications.push_back({running.title, path});
+            }
+            return result;
+        }
         case Action::ApplyTaskbar:
             app_.RefreshSystemTaskbarAppearance(true);
             break;

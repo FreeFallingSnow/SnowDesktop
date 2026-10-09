@@ -2571,5 +2571,14 @@
   "font.tooltipSizeHint": "Used for desktop, Dock, status bar, widget and drag hints.",
   "app.settings.category_format_hint": "Separate extensions with spaces, commas or semicolons, for example .jpg .png.",
   "font.size": "Font size",
-  "app.settings.software_desktop_hotkey": "Switch between Software Desktop and Windows desktop with a shortcut"
+  "app.settings.software_desktop_hotkey": "Switch between Software Desktop and Windows desktop with a shortcut",
+  "settings.dock.fullscreenPolicy": "Fullscreen protection",
+  "settings.dock.fullscreenPolicy.description": "Full protection blocks Dock invocation and keyboard focus takeover. Automatic focus restoration never interrupts a foreground fullscreen app.",
+  "settings.dock.fullscreenAllow": "Allow",
+  "settings.dock.fullscreenBlockGestures": "Block gestures only",
+  "settings.dock.fullscreenBlockAll": "Full protection",
+  "settings.dock.fullscreenExceptions": "Application exceptions",
+  "settings.dock.fullscreenExceptions.description": "Applies to every fullscreen window of the selected executable, including browser games.",
+  "settings.dock.fullscreenExceptionAdd": "Add application",
+  "settings.dock.fullscreenFromRunning": "Choose from running apps"
 }

@@ -42,7 +42,6 @@ struct DockPageActions
 
     /** Opens Windows taskbar settings through the owning desktop window. */
     std::function<void(std::uint64_t generation)> openTaskbarSettings;
-    std::function<void(std::uint64_t, std::string target)> previewAppearance;
 
     /**
      * Shows the host-owned ContentDialog used for dangerous actions.

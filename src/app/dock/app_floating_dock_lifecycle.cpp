@@ -1,32 +1,30 @@
 #include "app/app.h"
+#include "platform/foreground_fullscreen.h"
 #include <algorithm>
 
 // Floating-Dock hotkey and edge-swipe lifecycle.
 
-namespace
+bool DesktopApp::FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR monitor) const
 {
-bool ForegroundFullscreenBlocksEdgeSwipe(bool enabled, const RECT& monitor)
-{
-    if (!enabled) return false;
-    const HWND foreground = GetForegroundWindow();
-    if (!foreground || !IsWindowVisible(foreground) || IsIconic(foreground))
-        return false;
-    DWORD processId = 0;
-    GetWindowThreadProcessId(foreground, &processId);
-    if (processId == GetCurrentProcessId()) return false;
-    wchar_t className[256]{};
-    GetClassNameW(foreground, className, 256);
-    if (_wcsicmp(className, L"Progman") == 0 ||
-        _wcsicmp(className, L"WorkerW") == 0)
-        return false;
-    RECT client{};
-    if (!GetClientRect(foreground, &client)) return false;
-    POINT origin{};
-    if (!ClientToScreen(foreground, &origin)) return false;
-    OffsetRect(&client, origin.x, origin.y);
-    return snowdesktop::floating_dock_rules::ShouldBlockFullscreenEdgeSwipe(
-        enabled, client, monitor);
-}
+    const auto fullscreen = snowdesktop::fullscreen::ObserveForeground();
+    auto policy = dockSettings_.fullscreenPolicy;
+    if (fullscreen && !dockSettings_.fullscreenExceptions.empty())
+    {
+        const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, fullscreen->process);
+        if (process)
+        {
+            wchar_t path[32768]{};
+            DWORD length = static_cast<DWORD>(std::size(path));
+            if (QueryFullProcessImageNameW(process, 0, path, &length))
+                policy = snowdesktop::dock_fullscreen::SelectPolicy(policy, dockSettings_.fullscreenExceptions, path);
+            CloseHandle(process);
+        }
+        // A failed process query retains the global protection level.
+    }
+    // Never apply a stale player/browser exception to a newly foreground game.
+    if (fullscreen && GetForegroundWindow() != fullscreen->window) return true;
+    return snowdesktop::dock_fullscreen::BlocksReveal(policy,
+        source, fullscreen.has_value(), fullscreen && fullscreen->monitor == monitor);
 }
 
 LRESULT CALLBACK DesktopApp::FloatingDockEdgeSwipeMouseHookProc(
@@ -222,6 +220,18 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
             continue;
         }
         PersistentDockHost& host = *ownedHost;
+        if (FullscreenBlocksDockReveal(DockRevealSource::Gesture, host.monitor))
+        {
+            host.edgeHoverRequested = false;
+            if (host.passivelyRevealed)
+            {
+                host.passivelyRevealed = false;
+                host.passiveRevealTick = host.passiveLeaveStartTick = 0;
+                RefreshFloatingDockVisibilityState();
+                UpdatePersistentDockHostVisibility(host);
+            }
+            continue;
+        }
         MONITORINFO monitorInfo{ sizeof(monitorInfo) };
         if (!host.monitor ||
             !GetMonitorInfoW(host.monitor, &monitorInfo))
@@ -415,6 +425,19 @@ bool DesktopApp::DismissMergedDockBackground(PersistentDockHost& host, POINT des
 
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
+    if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr))
+    {
+        // Also applies with both invocation triggers disabled. Relinquish an
+        // existing session without restoring its previous foreground window.
+        if (floatingDockVisible_ || floatingDockKeyboardSessionActive_)
+            CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        if (dockWindowPreview_ && dockWindowPreview_->IsVisible()) HideDockWindowPreview();
+        POINT cursor{};
+        if (GetCursorPos(&cursor)) UpdatePassiveDragRevealHosts(cursor);
+        floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+        floatingDockExternalPointerDrag_.Reset();
+        return;
+    }
     // Poll only cheap, already-owned surface state. Hold release does not
     // require another physical button-down or a fullscreen/window scan.
     for (const auto& ownedHost : persistentDockHosts_)
@@ -681,9 +704,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         return;
     }
 
-    if (ForegroundFullscreenBlocksEdgeSwipe(
-            dockSettings_.floatingEdgeSwipeBlockFullscreen,
-            monitorInfo.rcMonitor))
+    if (FullscreenBlocksDockReveal(DockRevealSource::Gesture, monitor))
     {
         // A fresh edge entry is required after leaving fullscreen.
         floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
@@ -751,6 +772,6 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             targetHost->edgeHoverRequested = true;
             UpdatePassiveDragRevealHosts(cursor);
         }
-        else ShowFloatingDock(monitor);
+        else ShowFloatingDock(monitor, DockRevealSource::Gesture);
     }
 }

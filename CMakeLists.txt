@@ -2382,6 +2382,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/dock_and_window_rules_tests.cpp
             tests/dock/dock_window_pin_tests.cpp
+            tests/dock/fullscreen_focus_tests.cpp
             tests/taskbar_native_tests.cpp
             tests/taskbar_symbol_resolver_tests.cpp
             src/taskbar_hook/taskbar_symbol_resolver.cpp
@@ -2457,7 +2458,7 @@ if (BUILD_TESTING)
             src/ui/menu/menu_builtin_icon.cpp
             src/ui/menu/modern_menu.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES comctl32 gdi32 imm32 ole32 user32 windowscodecs
+        LINK_LIBRARIES comctl32 dwmapi gdi32 imm32 ole32 user32 windowscodecs
         LABELS integration ui)
 
     snowdesktop_add_test(
@@ -2551,13 +2552,32 @@ if (BUILD_TESTING)
     target_compile_features(SnowDesktopModernMenuPreview PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopModernMenuPreview PRIVATE src)
     target_link_libraries(SnowDesktopModernMenuPreview PRIVATE
-        gdi32 imm32 ole32 user32 windowscodecs)
+        dwmapi gdi32 imm32 ole32 user32 windowscodecs)
     if (MSVC)
         set_property(TARGET SnowDesktopModernMenuPreview PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         target_compile_options(SnowDesktopModernMenuPreview PRIVATE
             /W4 /permissive- /EHsc /utf-8)
         target_compile_definitions(SnowDesktopModernMenuPreview PRIVATE
+            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+
+    # Fullscreen/focus diagnostic is built for delivery but is never launched
+    # by CTest. Changing display modes is an explicit interactive operation.
+    add_executable(SnowDesktopFullscreenProbe WIN32 tests/dock/fullscreen_probe.cpp)
+    set_target_properties(SnowDesktopFullscreenProbe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+    target_compile_features(SnowDesktopFullscreenProbe PRIVATE cxx_std_20)
+    target_link_libraries(SnowDesktopFullscreenProbe PRIVATE d3d11 dxgi gdi32 shell32 user32)
+    add_dependencies(SnowDesktopDockAndWindowRulesTests SnowDesktopFullscreenProbe)
+    if (MSVC)
+        set_property(TARGET SnowDesktopFullscreenProbe PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(SnowDesktopFullscreenProbe PRIVATE /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(SnowDesktopFullscreenProbe PRIVATE
             _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()
 

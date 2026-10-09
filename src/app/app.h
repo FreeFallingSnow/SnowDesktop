@@ -882,7 +882,7 @@ private:
     /** @brief 让当前线程拥有指定键盘窗口的焦点，必要时短暂附加前台输入队列。 */
     bool FocusKeyboardWindow(
         HWND target, bool requestForeground,
-        const wchar_t* diagnosticLabel);
+        const wchar_t* diagnosticLabel, bool deliberateFullscreenExit = false);
     /** @brief 请求 Explorer 桌面显示 Windows 关闭对话框。 @return 请求成功入队返回 true */
     bool RequestWindowsShutdownDialog();
     /** @brief 将输入法组合文本和候选窗口定位到自绘输入框光标。 */
@@ -1237,7 +1237,9 @@ private:
     void ApplyMergedDockPresentationFrame(PersistentDockHost& host);
     void ResetMergedDockPresentation(PersistentDockHost& host);
     void ShowFloatingDock(
-        HMONITOR preferredMonitor = nullptr);
+        HMONITOR preferredMonitor = nullptr,
+        DockRevealSource source = DockRevealSource::AssociatedSurface);
+    bool FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR monitor) const;
     bool EnsureFloatingDockVisibleForAssociatedSurface(
         POINT anchorScreen);
     void CloseFloatingDock(
@@ -1260,8 +1262,8 @@ private:
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
     bool EnsureFloatingDockInputWindow();
-    void BeginFloatingDockKeyboardSession();
-    void RefocusFloatingDockKeyboardSession();
+    void BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit = false);
+    void RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExit = false);
     void EndFloatingDockKeyboardSession(
         FloatingDockCloseFocusPolicy focusPolicy);
     void RestoreInteractionInputFocus();

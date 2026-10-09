@@ -15,14 +15,14 @@ struct ImmediateDockPaintDeferral
 // Floating-Dock visibility, pointer mapping and interaction state.
 
 void DesktopApp::ShowFloatingDock(
-    HMONITOR preferredMonitor)
+    HMONITOR preferredMonitor, DockRevealSource source)
 {
     if (desktopPassthroughActive_)
         return;
     WriteDiagnosticLogEntry(
-        preferredMonitor
-            ? L"Floating Dock associated surface reveal received"
-            : L"Floating Dock shortcut received");
+        source == DockRevealSource::Hotkey ? L"Floating Dock shortcut received" :
+        source == DockRevealSource::Gesture ? L"Floating Dock edge gesture received" :
+        L"Floating Dock associated surface reveal received");
     if (!generalSettings_.dockEnabled)
     {
         WriteDiagnosticLogEntry(
@@ -39,6 +39,11 @@ void DesktopApp::ShowFloatingDock(
         GetCursorPos(&cursorScreen);
         targetMonitor = MonitorFromPoint(
             cursorScreen, MONITOR_DEFAULTTONEAREST);
+    }
+    if (FullscreenBlocksDockReveal(source, targetMonitor))
+    {
+        WriteDiagnosticLogEntry(L"Floating Dock reveal suppressed: foreground fullscreen");
+        return;
     }
     // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
     // the keyboard proxy can change foreground ownership. The independently
@@ -115,6 +120,15 @@ void DesktopApp::ShowFloatingDock(
             return;
         }
     }
+    // Rendering/host synchronization can pump work; recheck before promotion.
+    if (FullscreenBlocksDockReveal(source, targetMonitor))
+    {
+        floatingDockHost_->promoted = false;
+        RefreshFloatingDockVisibilityState();
+        if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
+        UpdatePersistentDockHostVisibility(*floatingDockHost_);
+        return;
+    }
     UpdatePersistentDockHostVisibility(
         *floatingDockHost_);
     if (hostWasVisible)
@@ -124,7 +138,10 @@ void DesktopApp::ShowFloatingDock(
         InvalidateFloatingDockWindow(
             *floatingDockHost_, true);
     }
-    BeginFloatingDockKeyboardSession();
+    // Pointer gestures reveal a NOACTIVATE surface, never a keyboard proxy.
+    if (snowdesktop::dock_fullscreen::StartsKeyboardSession(source))
+        BeginFloatingDockKeyboardSession(source == DockRevealSource::Hotkey &&
+            !FullscreenBlocksDockReveal(source, targetMonitor));
 }
 
 bool DesktopApp::
@@ -135,6 +152,8 @@ EnsureFloatingDockVisibleForAssociatedSurface(
         return false;
     const HMONITOR monitor = MonitorFromPoint(
         anchorScreen, MONITOR_DEFAULTTONEAREST);
+    if (FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, monitor))
+        return false;
     if (!SyncPersistentDockHost(monitor) ||
         !floatingDockHost_)
     {
@@ -330,13 +349,18 @@ void DesktopApp::ToggleFloatingDock()
     GetCursorPos(&cursorScreen);
     const HMONITOR monitor = MonitorFromPoint(
         cursorScreen, MONITOR_DEFAULTTONEAREST);
+    if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, monitor))
+    {
+        CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        return;
+    }
     if (!SyncPersistentDockHost(monitor) ||
         !floatingDockHost_)
         return;
     if (IsPersistentDockHostPromoted(*floatingDockHost_))
         CloseFloatingDock(*floatingDockHost_);
     else
-        ShowFloatingDock(monitor);
+        ShowFloatingDock(monitor, DockRevealSource::Hotkey);
 }
 
 void DesktopApp::InvalidateFloatingDockWindow(

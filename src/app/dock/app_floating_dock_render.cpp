@@ -310,6 +310,15 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     PersistentDockHost& host,
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if ((msg == WM_MOUSEACTIVATE || msg == WM_NCHITTEST ||
+            (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_CONTEXTMENU ||
+            msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_CHAR) &&
+        FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, host.monitor))
+    {
+        if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATEANDEAT;
+        if (msg == WM_NCHITTEST) return HTTRANSPARENT;
+        return 0;
+    }
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;

@@ -2571,5 +2571,14 @@
   "font.tooltipSizeHint": "Se usa en los avisos del escritorio, Dock, barra de estado, componentes y arrastre.",
   "app.settings.category_format_hint": "Separa las extensiones con espacios, comas o puntos y coma, por ejemplo .jpg .png.",
   "font.size": "Tamaño de fuente",
-  "app.settings.software_desktop_hotkey": "Alternar entre el escritorio del software y el de Windows con un atajo"
+  "app.settings.software_desktop_hotkey": "Alternar entre el escritorio del software y el de Windows con un atajo",
+  "settings.dock.fullscreenPolicy": "Protección en pantalla completa",
+  "settings.dock.fullscreenPolicy.description": "La protección completa impide mostrar el Dock y tomar el foco del teclado. La restauración automática del foco no interrumpe las aplicaciones en pantalla completa en primer plano.",
+  "settings.dock.fullscreenAllow": "No bloquear",
+  "settings.dock.fullscreenBlockGestures": "Bloquear solo gestos",
+  "settings.dock.fullscreenBlockAll": "Protección completa",
+  "settings.dock.fullscreenExceptions": "Excepciones de aplicaciones",
+  "settings.dock.fullscreenExceptions.description": "Se aplica a todas las ventanas en pantalla completa del ejecutable seleccionado, incluidos los juegos del navegador.",
+  "settings.dock.fullscreenExceptionAdd": "Agregar aplicación",
+  "settings.dock.fullscreenFromRunning": "Elegir una aplicación en ejecución"
 }

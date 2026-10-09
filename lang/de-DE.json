@@ -2571,5 +2571,14 @@
   "font.tooltipSizeHint": "Für Hinweise auf dem Desktop, im Dock, in der Statusleiste, in Widgets und beim Ziehen.",
   "app.settings.category_format_hint": "Trenne Dateiendungen mit Leerzeichen, Kommas oder Semikolons, zum Beispiel .jpg .png.",
   "font.size": "Schriftgröße",
-  "app.settings.software_desktop_hotkey": "Per Tastenkombination zwischen Software-Desktop und Windows-Desktop wechseln"
+  "app.settings.software_desktop_hotkey": "Per Tastenkombination zwischen Software-Desktop und Windows-Desktop wechseln",
+  "settings.dock.fullscreenPolicy": "Vollbildschutz",
+  "settings.dock.fullscreenPolicy.description": "Vollständiger Schutz verhindert das Einblenden des Docks und die Übernahme des Tastaturfokus. Die automatische Fokuswiederherstellung unterbricht keine Vollbild-App im Vordergrund.",
+  "settings.dock.fullscreenAllow": "Nicht blockieren",
+  "settings.dock.fullscreenBlockGestures": "Nur Gesten blockieren",
+  "settings.dock.fullscreenBlockAll": "Vollständiger Schutz",
+  "settings.dock.fullscreenExceptions": "App-Ausnahmen",
+  "settings.dock.fullscreenExceptions.description": "Gilt für alle Vollbildfenster der ausgewählten Programmdatei, einschließlich Browserspielen.",
+  "settings.dock.fullscreenExceptionAdd": "App hinzufügen",
+  "settings.dock.fullscreenFromRunning": "Laufende App auswählen"
 }

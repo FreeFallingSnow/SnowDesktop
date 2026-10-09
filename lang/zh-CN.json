@@ -2571,5 +2571,14 @@
   "font.tooltipSizeHint": "用于桌面、Dock、状态栏、组件及拖拽提示。",
   "app.settings.category_format_hint": "后缀用空格、逗号或分号分隔，例如 .jpg .png。",
   "font.size": "字号",
-  "app.settings.software_desktop_hotkey": "用快捷键切换软件桌面和原生桌面"
+  "app.settings.software_desktop_hotkey": "用快捷键切换软件桌面和原生桌面",
+  "settings.dock.fullscreenAllow": "不屏蔽",
+  "settings.dock.fullscreenBlockGestures": "仅屏蔽手势",
+  "settings.dock.fullscreenBlockAll": "完全保护",
+  "settings.dock.fullscreenPolicy": "全屏保护",
+  "settings.dock.fullscreenPolicy.description": "完全保护会禁止 Dock 唤起和键盘焦点接管。自动恢复焦点不会打断前台全屏应用。",
+  "settings.dock.fullscreenExceptions": "应用例外",
+  "settings.dock.fullscreenExceptions.description": "所选程序的所有全屏窗口均使用例外设置，包括网页游戏。",
+  "settings.dock.fullscreenExceptionAdd": "添加应用",
+  "settings.dock.fullscreenFromRunning": "从运行区选择"
 }

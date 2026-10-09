@@ -1,6 +1,7 @@
 #include "ui/render/app_font.h"
 #include "modern_menu.h"
 #include "ui/input/text_input_state.h"
+#include "platform/foreground_fullscreen.h"
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
@@ -413,8 +414,11 @@ public:
         if (!superseded_ && !externalActivation_ && options_.owner &&
             IsWindow(options_.owner) && IsWindowVisible(options_.owner))
         {
-            SetForegroundWindow(options_.owner);
-            SetFocus(options_.owner);
+            snowdesktop::fullscreen::GuardFocusRequest(false,
+                snowdesktop::fullscreen::ObserveForeground, [this]() {
+                    SetForegroundWindow(options_.owner);
+                    SetFocus(options_.owner);
+                });
         }
         TraceOwnedPopupZOrder(L"after-focus-restore", nullptr, true);
         // Destroying the popup and restoring focus can synchronously repaint

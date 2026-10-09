@@ -247,7 +247,9 @@ void TestCodec()
     settings.values.dock.followComponentAppearance = false;
     settings.values.dock.appearancePreset = kAppearancePresetGlassLight;
     settings.values.dock.customAppearance.widgetBgR = .2f;
-    settings.values.dock.floatingEdgeSwipeBlockFullscreen = false;
+    settings.values.dock.fullscreenPolicy = DockFullscreenPolicy::FullProtection;
+    settings.values.dock.fullscreenExceptions = {{L"C:\\Apps\\播放器\\Player.exe", DockFullscreenPolicy::Allow},
+        {L"D:\\Browser\\browser.exe", DockFullscreenPolicy::BlockGestures}};
     settings.values.dock.edgeRevealGesture = 1;
     settings.values.dock.showWindowPreviews = false;
     settings.values.dock.hoverEffect = 1;
@@ -312,8 +314,15 @@ void TestCodec()
     }
     Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
         "hover reveal and disabled task thumbnails survive settings IPC");
-    Check(!restored.values.dock.floatingEdgeSwipeBlockFullscreen,
-        "an explicit fullscreen gesture opt-out survives IPC despite the enabled default");
+    Check(restored.values.dock.fullscreenPolicy == settings.values.dock.fullscreenPolicy &&
+        restored.values.dock.fullscreenExceptions == settings.values.dock.fullscreenExceptions,
+        "fullscreen policies and Unicode executable exceptions survive IPC");
+    snowdesktop::SettingsActionResult runningApplications;
+    runningApplications.dockApplications = {{L"播放器", L"C:\\Apps\\播放器\\Player.exe"},
+        {L"Browser", L"D:\\Browser\\browser.exe"}};
+    const auto runningCopy = Unpack<snowdesktop::SettingsActionResult>(Pack(runningApplications));
+    Check(runningCopy.dockApplications == runningApplications.dockApplications,
+        "existing Dock running-zone names and executable paths reach the exception selector through private IPC");
     Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
         "suppression crosses private settings IPC without replacing the base Windows button preference");
     for (const int theme : {-1, 0, 1})

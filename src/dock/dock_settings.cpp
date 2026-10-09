@@ -1,6 +1,8 @@
 #include "dock_settings.h"
 #include "theme/taskbar_appearance.h"
 #include "dock_gradient_storage.h"
+#include "dock_fullscreen_storage.h"
+#include "common/utils.h"
 #include "theme/surface_theme.h"
 
 #include "data/data_paths.h"
@@ -1092,8 +1094,6 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.floatingEdgeSwipeEnabled);
     if (ReadDoubleField(text, "edgeRevealGesture", value))
         settings.edgeRevealGesture = value == 1 ? 1 : 0;
-    ReadBoolField(text, "floatingEdgeSwipeBlockFullscreen",
-        settings.floatingEdgeSwipeBlockFullscreen);
     if (ReadDoubleField(text, "monitorScope", value))
     {
         settings.monitorScope = static_cast<DockMonitorScope>(
@@ -1206,12 +1206,22 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
     if (const auto* appearance = gradientDocument.Find("customAppearance"))
         if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
+    settings.fullscreenPolicy = snowdesktop::dock_fullscreen::DecodePolicy(gradientDocument);
+    if (!snowdesktop::dock_fullscreen::DecodeExceptions(gradientDocument, settings.fullscreenExceptions)) return false;
     NormalizeDockSettings(settings);
     return true;
 }
 
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
 {
+    const auto validPolicy = [](DockFullscreenPolicy policy) {
+        const int value = static_cast<int>(policy);
+        return value >= 0 && value <= 2;
+    };
+    if (!validPolicy(settings.fullscreenPolicy) || settings.fullscreenExceptions.size() > 128) return false;
+    for (const auto& entry : settings.fullscreenExceptions)
+        if (!validPolicy(entry.policy) || snowdesktop::dock_fullscreen::NormalizeExecutable(entry.executable).empty())
+            return false;
     std::ostringstream gradientFields;
     if (!snowdesktop::WriteTaskbarGradients(gradientFields, settings)) return false;
     const auto customAppearance = snowdesktop::EncodePanelAppearance(settings.customAppearance);
@@ -1235,8 +1245,19 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
          << ",\n";
     file << "  \"edgeRevealGesture\": " << settings.edgeRevealGesture << ",\n";
+    file << "  \"fullscreenPolicy\": " << static_cast<int>(settings.fullscreenPolicy) << ",\n";
+    file << "  \"fullscreenExceptions\": [";
+    for (size_t i = 0; i < settings.fullscreenExceptions.size(); ++i)
+    {
+        const auto& entry = settings.fullscreenExceptions[i];
+        if (i) file << ',';
+        file << "{\"executable\":\"" << JsonEscapeUtf8(entry.executable)
+            << "\",\"policy\":" << static_cast<int>(entry.policy) << '}';
+    }
+    file << "],\n";
+    // Older builds can still honor the gesture portion of the preference.
     file << "  \"floatingEdgeSwipeBlockFullscreen\": "
-         << (settings.floatingEdgeSwipeBlockFullscreen ? "true" : "false")
+         << (settings.fullscreenPolicy != DockFullscreenPolicy::Allow ? "true" : "false")
          << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";

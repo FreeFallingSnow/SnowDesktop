@@ -2571,5 +2571,14 @@
   "font.tooltipSizeHint": "바탕 화면, Dock, 상태 표시줄, 위젯 및 드래그 힌트에 사용됩니다.",
   "app.settings.category_format_hint": "확장자는 공백, 쉼표 또는 세미콜론으로 구분합니다. 예: .jpg .png.",
   "font.size": "글자 크기",
-  "app.settings.software_desktop_hotkey": "단축키로 소프트웨어 바탕 화면과 Windows 바탕 화면 전환"
+  "app.settings.software_desktop_hotkey": "단축키로 소프트웨어 바탕 화면과 Windows 바탕 화면 전환",
+  "settings.dock.fullscreenPolicy": "전체 화면 보호",
+  "settings.dock.fullscreenPolicy.description": "완전 보호는 Dock 호출과 키보드 포커스 전환을 차단합니다. 자동 포커스 복원은 전경의 전체 화면 앱을 방해하지 않습니다.",
+  "settings.dock.fullscreenAllow": "차단 안 함",
+  "settings.dock.fullscreenBlockGestures": "제스처만 차단",
+  "settings.dock.fullscreenBlockAll": "완전 보호",
+  "settings.dock.fullscreenExceptions": "앱 예외",
+  "settings.dock.fullscreenExceptions.description": "브라우저 게임을 포함하여 선택한 실행 파일의 모든 전체 화면 창에 적용됩니다.",
+  "settings.dock.fullscreenExceptionAdd": "앱 추가",
+  "settings.dock.fullscreenFromRunning": "실행 중인 앱에서 선택"
 }

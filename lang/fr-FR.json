@@ -2571,5 +2571,14 @@
   "font.tooltipSizeHint": "Utilisé pour les indications du bureau, du Dock, de la barre d’état, des widgets et du glisser-déposer.",
   "app.settings.category_format_hint": "Séparez les extensions par des espaces, des virgules ou des points-virgules, par exemple .jpg .png.",
   "font.size": "Taille de police",
-  "app.settings.software_desktop_hotkey": "Basculer entre le bureau du logiciel et celui de Windows avec un raccourci"
+  "app.settings.software_desktop_hotkey": "Basculer entre le bureau du logiciel et celui de Windows avec un raccourci",
+  "settings.dock.fullscreenPolicy": "Protection du plein écran",
+  "settings.dock.fullscreenPolicy.description": "La protection complète empêche l’affichage du Dock et la prise du focus clavier. Le rétablissement automatique du focus n’interrompt jamais une application au premier plan en plein écran.",
+  "settings.dock.fullscreenAllow": "Ne pas bloquer",
+  "settings.dock.fullscreenBlockGestures": "Bloquer uniquement les gestes",
+  "settings.dock.fullscreenBlockAll": "Protection complète",
+  "settings.dock.fullscreenExceptions": "Exceptions par application",
+  "settings.dock.fullscreenExceptions.description": "S’applique à toutes les fenêtres en plein écran de l’exécutable choisi, y compris aux jeux dans le navigateur.",
+  "settings.dock.fullscreenExceptionAdd": "Ajouter une application",
+  "settings.dock.fullscreenFromRunning": "Choisir une application en cours"
 }

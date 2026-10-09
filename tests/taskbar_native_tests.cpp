@@ -12,6 +12,8 @@
 #include <string>
 #include "taskbar_hook/taskbar_hook_lifetime_tests.inc"
 
+int RunFullscreenFocusTests();
+
 namespace
 {
 UINT_PTR appBarState = 0;
@@ -96,7 +98,7 @@ LRESULT CALLBACK TestConnectionHook(int code, WPARAM wParam, LPARAM lParam)
 int RunNativeTaskbarTests()
 {
     using namespace snowdesktop::taskbar_hook;
-    int failures = RunTaskbarOwnerLifetimeTests();
+    int failures = RunTaskbarOwnerLifetimeTests() + RunFullscreenFocusTests();
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
     };
@@ -232,7 +234,8 @@ int RunNativeTaskbarTests()
         ResolveClassicTaskbarSystemLightTheme(0, false, 0) == true &&
         ResolveClassicTaskbarSystemLightTheme(1, false, 1) == false,
         "manual light or dark shell theme survives scene changes and disabled styling");
-    check(settings.floatingEdgeSwipeBlockFullscreen, "new Dock preferences block edge swipes over fullscreen apps");
+    check(settings.fullscreenPolicy == DockFullscreenPolicy::FullProtection &&
+        settings.fullscreenExceptions.empty(), "new Dock preferences fully protect fullscreen without guessed app exceptions");
     settings.showWindowsButton = false;
     check(!ShowDockWindowsButton(settings), "Windows button follows base preference outside suppression");
     settings.suppressSystemTaskbar = true;

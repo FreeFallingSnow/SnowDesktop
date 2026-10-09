@@ -2571,5 +2571,14 @@
   "font.tooltipSizeHint": "Usado nas dicas da área de trabalho, Dock, barra de status, componentes e arraste.",
   "app.settings.category_format_hint": "Separe as extensões com espaços, vírgulas ou ponto e vírgula, por exemplo .jpg .png.",
   "font.size": "Tamanho da fonte",
-  "app.settings.software_desktop_hotkey": "Alternar entre a área de trabalho do software e a do Windows com um atalho"
+  "app.settings.software_desktop_hotkey": "Alternar entre a área de trabalho do software e a do Windows com um atalho",
+  "settings.dock.fullscreenPolicy": "Proteção de tela cheia",
+  "settings.dock.fullscreenPolicy.description": "A proteção completa impede a exibição do Dock e a captura do foco do teclado. A restauração automática do foco nunca interrompe aplicativos em tela cheia em primeiro plano.",
+  "settings.dock.fullscreenAllow": "Não bloquear",
+  "settings.dock.fullscreenBlockGestures": "Bloquear apenas gestos",
+  "settings.dock.fullscreenBlockAll": "Proteção completa",
+  "settings.dock.fullscreenExceptions": "Exceções de aplicativos",
+  "settings.dock.fullscreenExceptions.description": "Aplica-se a todas as janelas em tela cheia do executável selecionado, incluindo jogos no navegador.",
+  "settings.dock.fullscreenExceptionAdd": "Adicionar aplicativo",
+  "settings.dock.fullscreenFromRunning": "Escolher um aplicativo em execução"
 }

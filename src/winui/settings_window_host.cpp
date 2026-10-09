@@ -2232,13 +2232,6 @@ struct SettingsWindowHost::Impl
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
                 state->owner->BeginThemeTask(generation, std::move(request), std::move(completed));
         };
-        dock.previewAppearance = [weak](std::uint64_t generation, std::string target) {
-            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
-            {
-                ThemeLibraryRequest request; request.command = ThemeLibraryCommand::Preview; request.target = std::move(target);
-                state->owner->BeginThemeTask(generation, std::move(request), {});
-            }
-        };
         dock.updateGeneral = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,
