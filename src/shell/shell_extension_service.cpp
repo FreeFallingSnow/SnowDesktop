@@ -436,6 +436,9 @@ struct MenuService::Impl
                 sourceAttempts.insert(attempts.begin(), attempts.end());
                 auto job = std::make_unique<SourceJob>();
                 job->key = key; job->request = row.request; job->source = source; job->actual = *row.view.snapshot;
+                // Attribution is metadata-only, independent of the original-file
+                // executable recovery lane that produced these observed rows.
+                job->request.originalShortcutOnly = false;
                 job->request.sourceClsid.assign(source.verbs.front().begin(), source.verbs.front().end());
                 job->request.sourceKey = std::move(typeKey);
                 job->revision = catalogue.revision; job->menuRevision = row.view.revision;

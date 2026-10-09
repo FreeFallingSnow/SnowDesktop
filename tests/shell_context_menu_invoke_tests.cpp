@@ -2525,14 +2525,14 @@ void TestInvocationOwnerHandoff()
     DestroyWindow(owner);
     Expect(!captured.Resolve(), "a destroyed menu owner is rejected before invocation");
 }
-void TestSourceScheduler()
+void TestSourceScheduler(bool recovery = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory directory;
-    const auto file = directory.path / L"source.snowattribution"; std::ofstream(file) << "private";
-    ext::Request request; request.paths = {file.wstring()};
+    const auto file = directory.path / (recovery ? L"source.lnk" : L"source.snowattribution"); std::ofstream(file) << "private";
+    ext::Request request; request.paths = {file.wstring()}; request.originalShortcutOnly = recovery;
     ext::Registration handler; handler.id = "clsid:{00000000-0000-0000-0000-000000000001}";
-    handler.kind = ext::RegistrationKind::Handler; handler.contexts = 1; handler.types = {L".snowattribution"};
+    handler.kind = ext::RegistrationKind::Handler; handler.contexts = 1; handler.types = {recovery ? L".lnk" : L".snowattribution"};
     handler.sources = {L"Test.Type\\shellex\\ContextMenuHandlers\\Provider"};
     handler.verbs = {"{00000000-0000-0000-0000-000000000001}"}; handler.application = {"test-app", L"Test app"};
     handler.revision = 1;
@@ -2540,11 +2540,12 @@ void TestSourceScheduler()
     ext::Entry action; action.provider = "verb:runtime-only"; action.key = "runtime-only"; action.label = L"Runtime action"; action.token = 72;
     std::atomic<int> probes = 0, invokes = 0, active = 0, maximum = 0;
     std::atomic<bool> release = false;
+    std::atomic<bool> wrongSourceMode = false;
     auto factory = [&](const ext::Request &target) -> ext::QueryWork {
         auto lease = std::shared_ptr<int>(new int, [&](int *p) { --active; delete p; });
         const auto count = ++active; maximum.store(std::max(maximum.load(), count));
         const bool source = !target.sourceClsid.empty();
-        if (source) ++probes;
+        if (source) { wrongSourceMode = target.originalShortcutOnly; ++probes; }
         ext::Reply reply; reply.ok = true;
         if (target.paths == request.paths) reply.entries = {action};
         if (source) { auto hidden = action; hidden.key = "probe-only"; hidden.provider = "verb:probe-only"; reply.entries.push_back(hidden); }
@@ -2556,6 +2557,7 @@ void TestSourceScheduler()
         ext::MenuService service(cache, factory, [catalogue] { return catalogue; });
         service.Inspect(request);
         PumpUntil([&] { return probes > 0; }, "unattributed actual item schedules a separate provider query");
+        Expect(!wrongSourceMode, "metadata attribution must not inherit original shortcut executable mode");
         const auto first = service.View(request);
         Expect(first.snapshot && first.snapshot->entries.size() == 1 && !first.pending, "slow source discovery does not delay or add items to the actual menu");
         bool completed = false;
@@ -4329,7 +4331,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
             TestExtensionSessions();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-shortcut-query-recovery")
-        { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); }
+        { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); TestSourceScheduler(true); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
@@ -4342,6 +4344,7 @@ int wmain(int argc, wchar_t **argv)
             TestWarmFailureRecovery(true);
             TestShortcutQueryRecovery();
             TestShortcutQueryRecovery(true);
+            TestSourceScheduler(true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
@@ -4391,6 +4394,7 @@ int wmain(int argc, wchar_t **argv)
             TestWarmFailureRecovery(true);
             TestShortcutQueryRecovery();
             TestShortcutQueryRecovery(true);
+            TestSourceScheduler(true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
