@@ -40,7 +40,9 @@ class MenuService
     // checks, Shell sessions and the immutable snapshot publication boundary.
     MenuView View(const Request &request);
     // The raw cache is shared; visibility is always projected from current host rules.
-    MenuView MenuDisplay(const Request &request, const Preferences &fallback);
+    // An open popup may finish consuming its published payload while an unrelated
+    // registry notification is being verified. New popups use only a current cache.
+    MenuView MenuDisplay(const Request &request, const Preferences &fallback, bool retainPublished = false);
     bool MenuEnabled(const Request &request, const Preferences &fallback);
     void Query(const Request &request, QueryPriority priority = QueryPriority::Menu, bool force = false);
     void Prewarm(const Request &request);

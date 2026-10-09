@@ -2215,8 +2215,11 @@ void TestIdleCatalogueInvalidation()
         Expect(RegSetValueExW(fixture.key, L"Sequence", 0, REG_DWORD,
             reinterpret_cast<const BYTE *>(&data), sizeof(data)) == ERROR_SUCCESS, "emit real registry value notification");
     };
+    const auto firstRevision = service.View(request).revision;
     notify();
-    PumpUntil([&] { return !service.View(request).snapshot.has_value(); }, "a registry notification retires the old menu snapshot");
+    PumpUntil([&] { return service.View(request).revision > firstRevision; }, "a registry notification marks the cached menu stale");
+    Expect(service.View(request).snapshot && !service.MenuDisplay(request, prefs).snapshot,
+        "an open popup retains published data while a new popup cannot reuse the stale cache");
     Sleep(100);
     Expect(scans == baseline, "an idle registry notification does not start a complete catalogue scan");
     service.Query(request);
@@ -2225,8 +2228,11 @@ void TestIdleCatalogueInvalidation()
     PumpUntil([&] { return !service.Inspect().scanning; },
         "background discovery settles before the next idle notification");
     const auto afterQuery = scans.load();
+    const auto secondRevision = service.View(request).revision;
     notify();
-    PumpUntil([&] { return !service.View(request).snapshot.has_value(); }, "a subsequent notification still retires the current snapshot");
+    PumpUntil([&] { return service.View(request).revision > secondRevision; }, "a subsequent notification still marks the cache stale");
+    Expect(service.View(request).snapshot && !service.MenuDisplay(request, prefs).snapshot,
+        "subsequent notifications preserve open-popup data and invalidate new-popup cache reuse");
     Expect(scans == afterQuery, "a subsequent idle notification remains lazy");
     service.Inspect();
     PumpUntil([&] { return scans > afterQuery && !service.Inspect().scanning; }, "settings inspection refreshes the stale catalogue without an explicit refresh button");
@@ -2584,9 +2590,227 @@ void TestQueryScheduler()
     Expect(maximum <= 2, "scheduler never runs more than two query workers");
 }
 
+// A query can finish while unrelated initial discovery remains blocked.
+void TestInitialDiscoveryDoesNotBlockPopup()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    std::promise<void> entered, release;
+    auto started = entered.get_future();
+    auto released = release.get_future().share();
+    std::atomic<bool> timedOut = false, proofEntered = false, replyReady = false;
+    ext::Request selected, proof;
+    selected.paths = {(temp.path / L"selected.txt").wstring()};
+    proof.paths = {(temp.path / L"proof.txt").wstring()};
+    std::ofstream(selected.paths.front()) << "private";
+    std::ofstream(proof.paths.front()) << "private";
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            if (target.paths == proof.paths)
+                proofEntered = true;
+            ext::Reply reply;
+            reply.ok = true;
+            ext::Entry entry;
+            entry.provider = "verb:initial-probe";
+            entry.key = "initial-probe";
+            entry.label = L"Extra action";
+            reply.entries = {entry};
+            return ext::QueryWork{[&, reply, target]
+                                  {
+                                      if (target.paths == selected.paths)
+                                          replyReady = true;
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        [&]
+        {
+            entered.set_value();
+            timedOut = released.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
+            ext::Catalogue c;
+            c.revision = 17;
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:initial-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    const bool scanning = started.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    service.Query(selected);
+    PumpUntil([&] { return replyReady.load(); }, "selected helper has returned its ready reply");
+    service.Query(proof);
+    PumpUntil([&] { return proofEntered.load(); }, "a later dispatch crosses the initial query publication boundary");
+    const auto view = service.View(selected);
+    release.set_value();
+    service.Shutdown();
+    Expect(scanning && !timedOut && view.snapshot && !view.pending,
+           "a ready menu publishes without waiting for unrelated initial inventory discovery");
+}
+
+// Hold a later unrelated verification behind a ready query's captured boundary.
+// The reserved Start lane proves that the ordinary scheduler has crossed it.
+void TestLaterRegistryNoiseDoesNotExtendPublication()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopBoundaryProbe-" + temp.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        ~Fixture()
+        {
+            if (key)
+                RegCloseKey(key);
+            if (owned)
+                RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } fixture{nullptr, path};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.key,
+                           &disposition) == ERROR_SUCCESS,
+           "create private publication-boundary cache fixture");
+    fixture.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(fixture.owned, "publication-boundary fixture is newly owned");
+    auto notify = [&](DWORD value)
+    {
+        Expect(RegSetValueExW(fixture.key, L"Cache", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value),
+                              sizeof(value)) == ERROR_SUCCESS,
+               "emit real cache notification");
+    };
+    ext::Request selected, proof, observer, start;
+    selected.paths = {(temp.path / L"selected.txt").wstring()};
+    proof.paths = {(temp.path / L"proof.txt").wstring()};
+    observer.paths = {(temp.path / L"observer.txt").wstring()};
+    start.paths = {(temp.path / L"start.txt").wstring()};
+    start.startPinOnly = true;
+    for (const auto &request : {selected, proof, observer, start})
+        std::ofstream(request.paths.front()) << "private";
+    std::promise<void> firstRelease, secondRelease;
+    const auto firstGate = firstRelease.get_future().share(), secondGate = secondRelease.get_future().share();
+    std::atomic<unsigned> reads = 0, queries = 0;
+    std::atomic<bool> noisy = false, firstEntered = false, secondEntered = false, replyReady = false;
+    std::atomic<bool> proofEntered = false, proofReleased = false, observerEntered = false, startEntered = false;
+    std::atomic<bool> observerBeforeStart = false, readerTimedOut = false;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            if (target.paths == proof.paths)
+            {
+                proofEntered = true;
+                return ext::QueryWork{[&]() -> std::optional<ext::Reply>
+                                      {
+                                          if (!proofReleased)
+                                              return {};
+                                          return ext::Reply{true, {}, {}};
+                                      },
+                                      {}};
+            }
+            if (target.paths == observer.paths)
+                observerEntered = true;
+            if (target.startPinOnly)
+            {
+                observerBeforeStart = observerEntered.load();
+                startEntered = true;
+            }
+            if (target.paths != selected.paths)
+                return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+            ++queries;
+            auto stage = std::make_shared<unsigned>(0);
+            return ext::QueryWork{[&, stage]() -> std::optional<ext::Reply>
+                                  {
+                                      if (*stage == 0)
+                                      {
+                                          noisy = true;
+                                          notify(1);
+                                          ++*stage;
+                                          return {};
+                                      }
+                                      if (*stage == 2 || !firstEntered)
+                                          return {};
+                                      ++*stage;
+                                      replyReady = true;
+                                      ext::Reply reply;
+                                      reply.ok = true;
+                                      ext::Entry entry;
+                                      entry.provider = "verb:boundary-probe";
+                                      entry.key = "boundary-probe";
+                                      entry.label = L"Extra action";
+                                      reply.entries = {entry};
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        [&]
+        {
+            if (noisy)
+            {
+                const unsigned read = ++reads;
+                if (read == 1)
+                {
+                    firstEntered = true;
+                    readerTimedOut = firstGate.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
+                }
+                else if (read == 2)
+                {
+                    secondEntered = true;
+                    readerTimedOut = secondGate.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
+                }
+            }
+            ext::Catalogue c;
+            c.revision = 17;
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:boundary-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; },
+              "initial inventory settles before the noise-boundary experiment");
+    ext::Presentation popup(selected, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil([&] { return replyReady.load(); }, "first helper reply is ready under the blocked verification");
+    service.Query(proof, ext::QueryPriority::Menu, true);
+    PumpUntil([&] { return proofEntered.load(); }, "second ordinary slot crosses the ready reply boundary");
+    const auto capturedRevision = service.View(selected).revision;
+    notify(2);
+    PumpUntil([&] { return service.View(selected).revision > capturedRevision; },
+              "later notification arrives after the ready reply was captured");
+    firstRelease.set_value();
+    PumpUntil([&] { return secondEntered.load(); }, "a later cache notification starts its own blocked verification");
+    service.Query(observer, ext::QueryPriority::Execute, true);
+    service.Query(start, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return startEntered.load(); },
+              "reserved Start dispatch proves the publication and ordinary dispatch pass");
+    const bool progressed = observerBeforeStart.load();
+    const auto published = service.View(selected);
+    // Notify again between publication and UI polling, as real extensions can.
+    notify(3);
+    PumpUntil([&] { return service.View(selected).revision > published.revision; },
+              "post-publication notification reaches the current popup");
+    if (auto next = options.pollItems(items, true))
+        items = std::move(*next);
+    const bool visible = items.size() == 1 && items.front().label == L"Extra action";
+    const bool newPopupMisses = !service.MenuDisplay(selected, prefs).snapshot;
+    secondRelease.set_value();
+    proofReleased = true;
+    noisy = false;
+    service.Shutdown();
+    Expect(!readerTimedOut && progressed && queries == 1 && published.snapshot && !published.pending,
+           "later unrelated notifications cannot extend an already captured query verification boundary");
+    Expect(visible && newPopupMisses, "a post-publication cache notification preserves the current popup payload but "
+                                      "invalidates reuse by new popups");
+}
+
 // A real Classes cache notification at each child-query boundary must not
 // starve an open popup when the registration inventory remains unchanged.
-void TestUnrelatedRegistryChangesDuringPopup()
+void TestUnrelatedRegistryChangesDuringPopup(bool failedScan = false, bool permanentFailure = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
@@ -2652,9 +2876,11 @@ void TestUnrelatedRegistryChangesDuringPopup()
                                   },
                                   {}};
         },
-        []
+        [&]
         {
             ext::Catalogue c;
+            if (failedScan && queries > 0 && (permanentFailure || queries == 1))
+                return c;
             c.revision = 17;
             ext::Registration r;
             r.id = "reg:noise-probe";
@@ -2679,13 +2905,16 @@ void TestUnrelatedRegistryChangesDuringPopup()
             if (options.pollItems)
                 if (auto next = options.pollItems(items, true))
                     items = std::move(*next);
-            return !items.empty() && options.pollItemsFinished && options.pollItemsFinished();
+            return options.pollItemsFinished && options.pollItemsFinished() &&
+                   ((failedScan && permanentFailure) || !items.empty());
         },
         "popup eventually receives the real scheduler publication after noise stops");
 
-    Expect(queries == 1, "unrelated Classes cache changes must not discard and repeat the same pending popup query");
+    Expect(queries == (failedScan ? 2u : 1u), "unrelated cache verification does not repeat successful queries and "
+                                              "failed verification receives one bounded recovery");
+    Expect(items.empty() == (failedScan && permanentFailure),
+           "transient inventory failure recovers visible items and permanent failure finishes without unbounded retry");
 }
-
 // A later dispatch proves the ready reply has reached its publication boundary.
 // Real registration verification is held there; the popup must remain pending.
 void TestRegistrationVerificationBeforePopupPublication()
@@ -3691,8 +3920,12 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, false);
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
+            TestInitialDiscoveryDoesNotBlockPopup();
+            TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
             TestUnrelatedRegistryChangesDuringPopup();
+            TestUnrelatedRegistryChangesDuringPopup(true, false);
+            TestUnrelatedRegistryChangesDuringPopup(true, true);
             TestBackgroundQueriesReserveMenuSlot();
             TestMenuPromotesQueuedPrewarm();
             TestVisibilityScheduling();
@@ -3727,8 +3960,12 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, false);
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
+            TestInitialDiscoveryDoesNotBlockPopup();
+            TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
             TestUnrelatedRegistryChangesDuringPopup();
+            TestUnrelatedRegistryChangesDuringPopup(true, false);
+            TestUnrelatedRegistryChangesDuringPopup(true, true);
             TestBackgroundQueriesReserveMenuSlot();
             TestMenuPromotesQueuedPrewarm();
             TestVisibilityScheduling();

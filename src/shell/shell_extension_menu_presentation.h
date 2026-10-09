@@ -150,7 +150,7 @@ class Presentation
                 bool progressed = false;
                 if (!normalDone_)
                 {
-                    auto view = service_.MenuDisplay(source_, prefs_);
+                    auto view = service_.MenuDisplay(source_, prefs_, true);
                     if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
                     {
                         // A failed prewarm may still be in backoff, or the helper
@@ -177,7 +177,7 @@ class Presentation
                 }
                 if (!startDone_)
                 {
-                    auto view = service_.MenuDisplay(startSource_, prefs_);
+                    auto view = service_.MenuDisplay(startSource_, prefs_, true);
                     if (!view.pending)
                     {
                         if (view.snapshot && view.revision > startRevision_ && view.error.empty())

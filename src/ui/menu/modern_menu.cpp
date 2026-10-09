@@ -6,6 +6,7 @@
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
 #include "modern_menu_scroll_hint.h"
+#include "modern_menu_dynamic_items_rules.h"
 
 #include <dwmapi.h>
 #include <imm.h>
@@ -273,14 +274,8 @@ public:
                 const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;
                 if (pendingItems && hovered >= 0)
                 {
-                    const auto prefix = static_cast<size_t>(hovered) + 1;
-                    const auto &item = rootItems_[hovered];
-                    stable = options_.pollItemsStablePrefix && !item.quickAction && !item.inlineAction && !item.textInput &&
-                        pendingItems->size() >= prefix &&
-                        std::equal(rootItems_.begin(), rootItems_.begin() + prefix, pendingItems->begin()) &&
-                        std::none_of(pendingItems->begin() + prefix, pendingItems->end(), [](const auto &row) {
-                            return row.quickAction;
-                        });
+                    stable = options_.pollItemsStablePrefix &&
+                        PreservesHoveredRow(rootItems_, *pendingItems, hovered);
                 }
                 if (pendingItems && canApply && stable)
                 {

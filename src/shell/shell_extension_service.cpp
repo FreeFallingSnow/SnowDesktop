@@ -116,6 +116,7 @@ struct MenuService::Impl
         std::uint64_t started;
         bool startPinOnly = false;
         std::optional<Reply> reply;
+        std::uint64_t verificationRevision = 0;
     };
     struct SourceJob
     {
@@ -148,6 +149,7 @@ struct MenuService::Impl
     Key inspectedSelection;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
     std::uint64_t clock = 0;
+    std::uint64_t registryRevision = 0, checkedRegistryRevision = 0, failedRegistryRevision = 0, scanRegistryRevision = 0;
     HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     std::thread worker;
     std::filesystem::path directory;
@@ -630,11 +632,13 @@ struct MenuService::Impl
             auto value = scan.get(); std::vector<Request> affected;
             if (!value.revision)
             {
-                std::lock_guard lock(mutex); scanning = false; typesRequested = false;
+                std::lock_guard lock(mutex); scanning = false; typesRequested = false; catalogueStale = true;
+                failedRegistryRevision = std::max(failedRegistryRevision, scanRegistryRevision);
                 return; // An unsuccessful scan cannot masquerade as an empty registry.
             }
             {
                 std::lock_guard lock(mutex);
+                checkedRegistryRevision = std::max(checkedRegistryRevision, scanRegistryRevision);
                 const bool initial = !catalogue.revision;
                 if (!initial && value.revision == catalogue.revision)
                 {
@@ -698,7 +702,12 @@ struct MenuService::Impl
         bool requested = false;
         {
             std::lock_guard lock(mutex);
-            if (!scan.valid() && scanRequested) { scanRequested = catalogueStale = false; scanning = requested = true; }
+            if (!scan.valid() && scanRequested)
+            {
+                scanRegistryRevision = registryRevision;
+                failedRegistryRevision = 0;
+                scanRequested = catalogueStale = false; scanning = requested = true;
+            }
         }
         if (requested) scan = std::async(std::launch::async, [read = readCatalogue] {
             MenuTrace("catalogue", "scan.start");
@@ -776,13 +785,13 @@ struct MenuService::Impl
             {
                 std::lock_guard lock(mutex);
                 // Classes notifications also include unrelated Shell caches.
-                // Retire snapshots immediately, but read the complete inventory
-                // only when a menu or its settings actually needs it again.
+                // Mark cached views stale, but retain published payloads for an open
+                // popup until the inventory confirms an actual registration change.
                 catalogueStale = true;
+                ++registryRevision;
                 for (auto &[key, row] : rows)
                 {
                     row.invalid = true; ++row.view.revision;
-                    row.view.snapshot.reset(); row.bytes = 0;
                     // Classes includes Shell caches written by the query itself.
                     // Verify registration changes before retiring in-flight work;
                     // otherwise every successful reply can trigger another query.
@@ -817,6 +826,11 @@ struct MenuService::Impl
                 if (!job.reply)
                 {
                     try { job.reply = job.work.poll(); } catch (...) { job.reply = Reply{false, {}, "query exception"}; }
+                    if (job.reply && job.reply->ok)
+                    {
+                        std::lock_guard lock(mutex);
+                        job.verificationRevision = registryRevision;
+                    }
                     if (!job.reply && GetTickCount64() - job.started >= 8000)
                         job.reply = Reply{false, {}, "query timeout"};
                 }
@@ -824,11 +838,19 @@ struct MenuService::Impl
                 if (job.reply->ok && !job.startPinOnly)
                 {
                     std::lock_guard lock(mutex);
-                    // A ready reply must not finish the popup while registration
-                    // verification can still retire it. Keep one-shot replies and
-                    // the helper session until the inventory settles.
-                    scanRequested |= catalogueStale;
-                    if (scanning || scanRequested) { ++i; continue; }
+                    // Verify notifications observed before this reply became ready.
+                    // Initial discovery and later unrelated notifications must not
+                    // keep extending an already-captured query's wait indefinitely.
+                    if (checkedRegistryRevision < job.verificationRevision)
+                    {
+                        if (failedRegistryRevision >= job.verificationRevision || GetTickCount64() - job.started >= 8000)
+                            job.reply = Reply{false, {}, "registration verification failed or timed out"};
+                        else
+                        {
+                            scanRequested |= catalogueStale;
+                            ++i; continue;
+                        }
+                    }
                 }
                 Complete(job, std::move(*job.reply), cache);
                 running.erase(running.begin() + i);
@@ -900,7 +922,7 @@ struct MenuService::Impl
                         MenuTrace("schedule", "snapshot_reused"); continue;
                     }
                 }
-                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, {}};
+                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, {}, 0};
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
@@ -983,7 +1005,7 @@ bool MenuService::MenuEnabled(const Request &request, const Preferences &fallbac
     return impl_->configured ? impl_->Enabled(request) : HasOptIns(fallback,
         request.context == Context::Desktop ? Context::Desktop : request.background ? Context::FolderBackground : Context::Automatic);
 }
-MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fallback)
+MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fallback, bool retainPublished)
 {
     MenuTiming timing("first_screen");
     std::lock_guard lock(impl_->mutex);
@@ -991,7 +1013,7 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     auto &row = it->second; row.used = ++impl_->clock;
     auto view = row.view;
-    if (row.expires <= MenuSnapshotCache::Now()) view.snapshot.reset();
+    if (row.expires <= MenuSnapshotCache::Now() || (row.invalid && !retainPublished)) view.snapshot.reset();
     if (view.snapshot)
     {
         // Snapshots created before attribution still use provider IDs. Apply

@@ -2629,8 +2629,12 @@ int wmain(int argc, wchar_t** argv)
         const auto incrementalResult = snowdesktop::modern_menu::Show(stationaryItems, incremental);
         KillTimer(owner, kWatchdogTimer); KillTimer(owner, kDriveTimer); gMenuScript = {};
         if (!movesHoveredRow)
+        {
+            if (streams != 2 || gWatchdogFired || incrementalResult.command != 8270 || !EqualRect(&original, &after))
+                std::cerr << "stationary row kind=" << rowKind << " streams=" << streams << " watchdog=" << gWatchdogFired << '\n';
             Expect(streams == 2 && !gWatchdogFired && incrementalResult.command == 8270 && EqualRect(&original, &after),
                 "ordinary rows, quick actions and inline groups load both streams under a stationary pointer without moving its click target");
+        }
         else
             Expect(!gWatchdogFired && incrementalResult.command == 8271 && waited,
                 "an update that shifts the pointed row remains pending until the pointer leaves");
