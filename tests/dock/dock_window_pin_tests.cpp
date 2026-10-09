@@ -10,6 +10,18 @@
 namespace
 {
 constexpr wchar_t kPinProperty[] = L"SnowDesktop.DockWindowPin";
+constexpr wchar_t kFixtureClass[] = L"SnowDesktopDockPinFixture";
+
+struct ScopedDpiContext
+{
+    explicit ScopedDpiContext(DPI_AWARENESS_CONTEXT context)
+        : previous(SetThreadDpiAwarenessContext(context)) {}
+    ~ScopedDpiContext()
+    {
+        if (previous) SetThreadDpiAwarenessContext(previous);
+    }
+    DPI_AWARENESS_CONTEXT previous;
+};
 thread_local HWND observedWindow = nullptr;
 thread_local unsigned observedLocations = 0;
 thread_local LONG observedObject = 0;
@@ -32,9 +44,16 @@ void PrintRect(const char* name, const RECT& rect)
 
 HWND MakeWindow()
 {
-    // Native module fixtures stay off-screen and never activate the desktop host.
-    return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"pin-fixture",
-        WS_POPUP | WS_THICKFRAME, -32000, -32000, 300, 180,
+    WNDCLASSW cls{};
+    cls.lpfnWndProc = DefWindowProcW;
+    cls.hInstance = GetModuleHandleW(nullptr);
+    cls.hbrBackground = static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
+    cls.lpszClassName = kFixtureClass;
+    RegisterClassW(&cls);
+    // Fixtures default off-screen. The aspect test briefly composes only its
+    // own nonactivating windows; it never operates the desktop host.
+    return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kFixtureClass, L"pin-fixture",
+        WS_OVERLAPPEDWINDOW, -12000, -12000, 300, 180,
         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
 }
 
@@ -46,7 +65,7 @@ void MovePreviewOffScreen(DockWindowPreview& preview)
         RECT rect{};
         if (!GetWindowRect(window, &rect)) continue;
         SetWindowPos(window, nullptr,
-            -32000 + rect.left - group.left, -32000 + rect.top - group.top,
+            -12000 + rect.left - group.left, -12000 + rect.top - group.top,
             0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
@@ -80,6 +99,7 @@ HWND FindFixtureManager()
 
 int RunDockWindowPinTests()
 {
+    const ScopedDpiContext physicalCoordinates(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     int failures = 0;
     const auto check = [&](bool passed, const char* message) {
         if (!passed)
@@ -123,8 +143,11 @@ int RunDockWindowPinTests()
     const HWND foreground = GetForegroundWindow();
     DockWindowPin pins;
     check(!pins.Toggle(nullptr), "invalid handles cannot create a pin");
-    check(pins.Toggle(target) && DockWindowPin::IsPinned(target),
-        "pinning promotes the selected native window into TOPMOST");
+    {
+        const ScopedDpiContext unawareCaller(DPI_AWARENESS_CONTEXT_UNAWARE);
+        check(pins.Toggle(target) && DockWindowPin::IsPinned(target),
+            "pinning promotes TOPMOST even when invoked by a DPI-unaware caller");
+    }
     HWND border = static_cast<HWND>(GetPropW(target, kPinProperty));
     check(border && IsWindowVisible(border), "a pinned visible window has a live border");
     check(!DockWindowPin::IsPinned(other) && GetForegroundWindow() == foreground,
@@ -152,7 +175,7 @@ int RunDockWindowPinTests()
         observedLocations = 0;
         const HWINEVENTHOOK observation = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE,
             EVENT_OBJECT_LOCATIONCHANGE, nullptr, ObserveLocation, 0, 0, WINEVENT_OUTOFCONTEXT);
-        SetWindowPos(target, nullptr, -31000, -31500, 380, 240,
+        SetWindowPos(target, nullptr, -11000, -11500, 380, 240,
             SWP_NOZORDER | SWP_NOACTIVATE);
         RECT frame{};
         DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame));
@@ -285,8 +308,15 @@ int RunDockWindowPinTests()
 
         closed = nullptr;
         activated = nullptr;
-        SetWindowPos(other, nullptr, -32000, -32000, 120, 300,
-            SWP_NOZORDER | SWP_NOACTIVATE);
+        RECT work{};
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+        SetWindowPos(target, nullptr, work.left + 16, work.top + 16, 380, 240,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        SetWindowPos(other, nullptr, work.left + 420, work.top + 16, 120, 300,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        UpdateWindow(target);
+        UpdateWindow(other);
+        DwmFlush();
         const auto showGroup = [&] {
             preview.Show({{target, L"landscape"}, {other, L"portrait"}},
                 {0, 0, 20, 20}, DockPosition::Bottom, false);
@@ -357,5 +387,6 @@ int RunDockWindowPinTests()
     check(!IsWindow(border), "destroyed application windows retire their border");
     pins.Clear();
     DestroyWindow(other);
+    UnregisterClassW(kFixtureClass, GetModuleHandleW(nullptr));
     return failures;
 }

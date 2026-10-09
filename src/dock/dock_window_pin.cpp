@@ -22,6 +22,21 @@ constexpr UINT32 kBorderRgb = 0x0078D7;
 constexpr UINT kPositionFlags =
     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
 
+class ScopedPhysicalCoordinates
+{
+public:
+    ScopedPhysicalCoordinates()
+        : previous_(SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {}
+    ~ScopedPhysicalCoordinates()
+    {
+        if (previous_) SetThreadDpiAwarenessContext(previous_);
+    }
+    ScopedPhysicalCoordinates(const ScopedPhysicalCoordinates&) = delete;
+    ScopedPhysicalCoordinates& operator=(const ScopedPhysicalCoordinates&) = delete;
+private:
+    DPI_AWARENESS_CONTEXT previous_;
+};
+
 bool ChangeTopmost(HWND window, bool pinned)
 {
     return SetWindowPos(window, pinned ? HWND_TOPMOST : HWND_NOTOPMOST,
@@ -139,6 +154,9 @@ struct DockWindowPin::State
 
         void UpdateBorder()
         {
+            // DWM frame bounds are physical pixels even for DPI-unaware apps.
+            // Both layered-window placement and fallback queries use that space.
+            const ScopedPhysicalCoordinates physicalCoordinates;
             DWORD cloaked = 0;
             DwmGetWindowAttribute(target, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
             RECT frame{};
@@ -151,7 +169,10 @@ struct DockWindowPin::State
                 return;
             }
 
-            const UINT dpi = std::max<UINT>(96, GetDpiForWindow(target));
+            const auto awareness = GetAwarenessFromDpiAwarenessContext(
+                GetWindowDpiAwarenessContext(target));
+            const UINT dpi = std::max<UINT>(96, GetDpiForWindow(
+                awareness == DPI_AWARENESS_PER_MONITOR_AWARE ? target : border));
             const int nextThickness = std::max(1, MulDiv(6, static_cast<int>(dpi), 96));
             const bool maximized = IsZoomed(target) != FALSE;
             DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_DEFAULT;
@@ -394,6 +415,7 @@ void DockWindowPin::Clear()
 
 bool DockWindowPin::Toggle(HWND window)
 {
+    const ScopedPhysicalCoordinates physicalCoordinates;
     if (!IsWindow(window) || GetAncestor(window, GA_ROOT) != window) return false;
     Refresh();
     if (IsPinned(window))
@@ -412,9 +434,11 @@ bool DockWindowPin::Toggle(HWND window)
     auto entry = std::make_unique<State::Entry>();
     entry->target = window;
     entry->thread = GetWindowThreadProcessId(window, &entry->process);
+    RECT initialFrame{};
+    GetWindowRect(window, &initialFrame);
     entry->border = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST,
-        kBorderClass, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr,
+        kBorderClass, L"", WS_POPUP, initialFrame.left, initialFrame.top, 1, 1, nullptr, nullptr,
         GetModuleHandleW(nullptr), nullptr);
     if (!entry->border || GetPropW(window, kPinProperty) ||
         !SetPropW(window, kPinProperty, entry->border)) return false;
