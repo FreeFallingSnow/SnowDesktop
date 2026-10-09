@@ -113,7 +113,8 @@ class Presentation
                 return pair && (refreshState_ || (startLane_ && pair->id == "state:start-pin"));
             });
         }
-        normalDone_ = !normalNeeded || (cached_.has_value() && !refreshState_);
+        normalDone_ = !normalNeeded || (cached_.has_value() && !refreshState_ &&
+            !service_.MenuAttributionPending(source_, prefs_));
         // Retire any prewarm already in flight as well: it may have captured
         // external pin state before this opening.
         if (normalNeeded)
@@ -139,7 +140,7 @@ class Presentation
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
         MoveMoreToBottom(items, moreCommand);
-        if (cached_) Insert(items, Convert(cached_->entries), moreCommand);
+        if (cached_) Insert(items, Convert(NewNormalEntries(cached_->entries)), moreCommand);
         if ((!normalDone_ || !startDone_) && !source_.paths.empty())
         {
             options.pollItemsFinished = [this] { return normalDone_ && startDone_; };
@@ -170,9 +171,15 @@ class Presentation
                                 return (startLane_ && pair && pair->id == "state:start-pin") ||
                                     (warm && refreshState_ && !pair);
                             });
-                            Insert(updated, Convert(additions), moreCommand);
+                            additions = NewNormalEntries(std::move(additions));
+                            if (!additions.empty())
+                            {
+                                Insert(updated, Convert(additions), moreCommand);
+                                progressed = true;
+                            }
                         }
-                        normalDone_ = progressed = true;
+                        normalDone_ = !service_.MenuAttributionPending(source_, prefs_);
+                        progressed |= normalDone_;
                     }
                 }
                 if (!startDone_)
@@ -223,6 +230,31 @@ class Presentation
         }
         InsertBeforeMore(items, additions, moreCommand, false);
     }
+std::vector<Entry> NewNormalEntries(std::vector<Entry> entries)
+{
+    std::vector<Entry> result;
+    const auto previous = displayedNormal_;
+    std::vector<CommandReference> observed;
+    for (auto &entry : entries)
+    {
+        if (entry.separator)
+        {
+            if (!result.empty() && !result.back().separator)
+                result.push_back(std::move(entry));
+            continue;
+        }
+        const auto reference = AppendReference({}, entry);
+        observed.push_back(reference);
+        if (std::count(observed.begin(), observed.end(), reference) <=
+            std::count(previous.begin(), previous.end(), reference))
+            continue;
+        displayedNormal_.push_back(reference);
+        result.push_back(std::move(entry));
+    }
+    while (!result.empty() && result.back().separator)
+        result.pop_back();
+    return result;
+}
     std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries,
                                            const CommandReference &parent = {})
     {
@@ -279,6 +311,7 @@ class Presentation
     UINT nextCommand_ = FirstCommand;
     std::map<UINT, CommandReference> commands_;
     std::set<UINT> converting_;
+    std::vector<CommandReference> displayedNormal_;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
     bool normalRetried_ = false;

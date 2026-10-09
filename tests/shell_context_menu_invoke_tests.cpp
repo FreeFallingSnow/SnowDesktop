@@ -2650,7 +2650,7 @@ void TestInitialDiscoveryDoesNotBlockPopup()
 
 // A management opt-in can name a registration rather than its observed verb.
 // Initial attribution must be allowed to add that row after ordinary rows appear.
-void TestLateInitialRegistrationAttribution()
+void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryFailure = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
@@ -2684,6 +2684,7 @@ void TestLateInitialRegistrationAttribution()
             entered.set_value();
             timedOut = released.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
             ext::Catalogue c;
+            if (inventoryFailure) return c;
             c.revision = 17;
             ext::Registration r;
             r.id = "reg:late-probe";
@@ -2699,6 +2700,11 @@ void TestLateInitialRegistrationAttribution()
     ext::SetCommon(prefs, "reg:late-probe", ext::Category::Objects, true);
     service.Configure(prefs);
     const bool scanning = started.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    if (warmed)
+    {
+        service.Query(request);
+        PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "prewarm completes while initial attribution remains blocked");
+    }
     ext::Presentation popup(request, prefs, L"", L"", service);
     std::vector<menu::Item> items;
     menu::Options options;
@@ -2720,11 +2726,11 @@ void TestLateInitialRegistrationAttribution()
         {
             if (auto next = options.pollItems(items, true))
                 items = std::move(*next);
-            return options.pollItemsFinished() && items.size() == 2;
+            return options.pollItemsFinished() && items.size() == (inventoryFailure ? 1u : 2u);
         },
         "initial registration attribution adds the management opt-in to the same popup");
     Expect(scanning && !timedOut && ordinaryFirst && items.front().label == L"Ordinary" &&
-               items.back().label == L"Registered",
+               (inventoryFailure || items.back().label == L"Registered"),
            "known verbs appear immediately and later registration attribution adds exactly one remaining row");
 }
 // Hold a later unrelated verification behind a ready query's captured boundary.
@@ -4000,6 +4006,9 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
             TestLateInitialRegistrationAttribution();
+            TestLateInitialRegistrationAttribution(true, false);
+            TestLateInitialRegistrationAttribution(false, true);
+            TestLateInitialRegistrationAttribution(true, true);
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
@@ -4041,6 +4050,9 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
             TestLateInitialRegistrationAttribution();
+            TestLateInitialRegistrationAttribution(true, false);
+            TestLateInitialRegistrationAttribution(false, true);
+            TestLateInitialRegistrationAttribution(true, true);
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();

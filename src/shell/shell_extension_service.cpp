@@ -150,6 +150,7 @@ struct MenuService::Impl
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
     std::uint64_t clock = 0;
     std::uint64_t registryRevision = 0, checkedRegistryRevision = 0, failedRegistryRevision = 0, scanRegistryRevision = 0;
+    ULONGLONG scanStarted = 0;
     HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     std::thread worker;
     std::filesystem::path directory;
@@ -705,6 +706,7 @@ struct MenuService::Impl
             if (!scan.valid() && scanRequested)
             {
                 scanRegistryRevision = registryRevision;
+                scanStarted = GetTickCount64();
                 failedRegistryRevision = 0;
                 scanRequested = catalogueStale = false; scanning = requested = true;
             }
@@ -1036,6 +1038,21 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
     }
     timing.Record(view.snapshot ? "memory_hit" : "memory_miss");
     return view;
+}
+bool MenuService::MenuAttributionPending(const Request &request, const Preferences &fallback)
+{
+    std::lock_guard lock(impl_->mutex);
+    if (request.startPinOnly || impl_->catalogue.revision || (!impl_->scanning && !impl_->scanRequested) ||
+        (impl_->scanning && GetTickCount64() - impl_->scanStarted >= 8000)) return false;
+    const auto it = impl_->rows.find(SelectionKey(request));
+    const unsigned contexts = it != impl_->rows.end() && it->second.view.contexts ? it->second.view.contexts :
+        request.context == Context::Desktop ? ContextBit(Context::Desktop) :
+        request.background ? ContextBit(Context::FolderBackground) : 3u;
+    const auto &prefs = impl_->configured ? impl_->preferences : fallback;
+    for (int i = 0; i < 4; ++i) if (contexts & (1u << i))
+        for (const auto &id : EffectiveShownIds(prefs, static_cast<Context>(i)))
+            if (id.starts_with("reg:") || id.starts_with("clsid:") || id.starts_with("package:")) return true;
+    return false;
 }
 void MenuService::Prewarm(const Request &request)
 {
