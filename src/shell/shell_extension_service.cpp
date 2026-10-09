@@ -115,6 +115,7 @@ struct MenuService::Impl
         MenuSnapshotCache::Ticket ticket; QueryWork work;
         std::uint64_t started;
         bool startPinOnly = false;
+        std::optional<Reply> reply;
     };
     struct SourceJob
     {
@@ -786,7 +787,7 @@ struct MenuService::Impl
                     // Verify registration changes before retiring in-flight work;
                     // otherwise every successful reply can trigger another query.
                     if (row.view.pending)
-                        scanRequested |= row.priority <= QueryPriority::Menu;
+                        scanRequested |= !row.request.startPinOnly;
                     else
                         ++row.dependency;
                 }
@@ -812,11 +813,24 @@ struct MenuService::Impl
             }
             for (size_t i = 0; i < running.size();)
             {
-                auto &job = running[i]; std::optional<Reply> reply;
-                try { reply = job.work.poll(); } catch (...) { reply = Reply{false, {}, "query exception"}; }
-                if (!reply && GetTickCount64() - job.started >= 8000) reply = Reply{false, {}, "query timeout"};
-                if (!reply) { ++i; continue; }
-                Complete(job, std::move(*reply), cache);
+                auto &job = running[i];
+                if (!job.reply)
+                {
+                    try { job.reply = job.work.poll(); } catch (...) { job.reply = Reply{false, {}, "query exception"}; }
+                    if (!job.reply && GetTickCount64() - job.started >= 8000)
+                        job.reply = Reply{false, {}, "query timeout"};
+                }
+                if (!job.reply) { ++i; continue; }
+                if (job.reply->ok && !job.startPinOnly)
+                {
+                    std::lock_guard lock(mutex);
+                    // A ready reply must not finish the popup while registration
+                    // verification can still retire it. Keep one-shot replies and
+                    // the helper session until the inventory settles.
+                    scanRequested |= catalogueStale;
+                    if (scanning || scanRequested) { ++i; continue; }
+                }
+                Complete(job, std::move(*job.reply), cache);
                 running.erase(running.begin() + i);
                 SaveCatalogue(cache);
             }
@@ -886,7 +900,7 @@ struct MenuService::Impl
                         MenuTrace("schedule", "snapshot_reused"); continue;
                     }
                 }
-                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly};
+                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, {}};
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }

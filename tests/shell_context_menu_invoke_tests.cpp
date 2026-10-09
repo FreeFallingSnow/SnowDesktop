@@ -2222,6 +2222,8 @@ void TestIdleCatalogueInvalidation()
     service.Query(request);
     PumpUntil([&] { return scans > baseline && service.View(request).snapshot &&
         service.View(request).snapshot->entries.front().label == L"2"; }, "the next menu query refreshes the stale catalogue and command snapshot");
+    PumpUntil([&] { return !service.Inspect().scanning; },
+        "background discovery settles before the next idle notification");
     const auto afterQuery = scans.load();
     notify();
     PumpUntil([&] { return !service.View(request).snapshot.has_value(); }, "a subsequent notification still retires the current snapshot");
@@ -2584,37 +2586,240 @@ void TestQueryScheduler()
 
 // A real Classes cache notification at each child-query boundary must not
 // starve an open popup when the registration inventory remains unchanged.
-void TestUnrelatedRegistryChangesDuringPopup() {
- namespace ext=snowdesktop::shell_extensions; namespace menu=snowdesktop::modern_menu;
- TemporaryDirectory temp;
- const auto path=L"Software\\Classes\\Local Settings\\SnowDesktopNoiseProbe-"+temp.path.filename().wstring();
- struct Fixture {HKEY key=nullptr; std::wstring path; bool owned=false; ~Fixture(){if(key)RegCloseKey(key);if(owned)RegDeleteTreeW(HKEY_CURRENT_USER,path.c_str());}} fixture{nullptr,path};
- DWORD disposition=0;
- Expect(RegCreateKeyExW(HKEY_CURRENT_USER,path.c_str(),0,nullptr,0,KEY_ALL_ACCESS,nullptr,&fixture.key,&disposition)==ERROR_SUCCESS,"create unrelated Classes cache fixture");
- fixture.owned=disposition==REG_CREATED_NEW_KEY; Expect(fixture.owned,"Classes cache fixture is privately owned");
- ext::Request request; request.paths={(temp.path/L"selected.txt").wstring()}; std::ofstream(temp.path/L"selected.txt")<<"private";
- std::atomic<unsigned> queries=0;
- ext::MenuService *observed=nullptr;
- ext::MenuService service(temp.path/L"cache",[&](const ext::Request &target){
-  const unsigned query=++queries;
-  auto touched=std::make_shared<bool>(false); auto before=std::make_shared<std::uint64_t>(0);
-  return ext::QueryWork{[&,target,query,touched,before]() -> std::optional<ext::Reply> {
-   if(query<=5) {
-    if(!*touched) { *before=observed->View(target).revision; const DWORD data=query;
-     Expect(RegSetValueExW(fixture.key,L"UnrelatedCacheValue",0,REG_DWORD,reinterpret_cast<const BYTE*>(&data),sizeof(data))==ERROR_SUCCESS,"emit real unrelated cache notification"); *touched=true; return {}; }
-    if(observed->View(target).revision<=*before) return {};
-   }
-   ext::Reply reply;reply.ok=true;ext::Entry entry;entry.provider="verb:noise-probe";entry.key="noise-probe";entry.label=L"Extra action";reply.entries={entry};return reply;
-  },{}};
- },[]{ext::Catalogue c;c.revision=17;ext::Registration r;r.id="reg:noise-probe";r.types={L"*"};r.verbs={"noise-probe"};r.contexts=1;r.revision=17;c.rows={r};return c;});
- observed=&service;
- ext::Preferences prefs;ext::SetCommon(prefs,"verb:noise-probe",ext::Category::Objects,true);service.Configure(prefs);
- ext::Presentation popup(request,prefs,L"",L"",service);std::vector<menu::Item> items;menu::Options options;popup.Attach(items,options,0);
- PumpUntil([&]{if(options.pollItems)if(auto next=options.pollItems(items,true))items=std::move(*next);return !items.empty() && options.pollItemsFinished && options.pollItemsFinished();},"popup eventually receives the real scheduler publication after noise stops");
+void TestUnrelatedRegistryChangesDuringPopup()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopNoiseProbe-" + temp.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        ~Fixture()
+        {
+            if (key)
+                RegCloseKey(key);
+            if (owned)
+                RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } fixture{nullptr, path};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.key,
+                           &disposition) == ERROR_SUCCESS,
+           "create unrelated Classes cache fixture");
+    fixture.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(fixture.owned, "Classes cache fixture is privately owned");
+    ext::Request request;
+    request.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(temp.path / L"selected.txt") << "private";
+    std::atomic<unsigned> queries = 0;
+    ext::MenuService *observed = nullptr;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            const unsigned query = ++queries;
+            auto touched = std::make_shared<bool>(false);
+            auto before = std::make_shared<std::uint64_t>(0);
+            return ext::QueryWork{[&, target, query, touched, before]() -> std::optional<ext::Reply>
+                                  {
+                                      if (query <= 5)
+                                      {
+                                          if (!*touched)
+                                          {
+                                              *before = observed->View(target).revision;
+                                              const DWORD data = query;
+                                              Expect(RegSetValueExW(fixture.key, L"UnrelatedCacheValue", 0, REG_DWORD,
+                                                                    reinterpret_cast<const BYTE *>(&data),
+                                                                    sizeof(data)) == ERROR_SUCCESS,
+                                                     "emit real unrelated cache notification");
+                                              *touched = true;
+                                              return {};
+                                          }
+                                          if (observed->View(target).revision <= *before)
+                                              return {};
+                                      }
+                                      ext::Reply reply;
+                                      reply.ok = true;
+                                      ext::Entry entry;
+                                      entry.provider = "verb:noise-probe";
+                                      entry.key = "noise-probe";
+                                      entry.label = L"Extra action";
+                                      reply.entries = {entry};
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        []
+        {
+            ext::Catalogue c;
+            c.revision = 17;
+            ext::Registration r;
+            r.id = "reg:noise-probe";
+            r.types = {L"*"};
+            r.verbs = {"noise-probe"};
+            r.contexts = 1;
+            r.revision = 17;
+            c.rows = {r};
+            return c;
+        });
+    observed = &service;
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:noise-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil(
+        [&]
+        {
+            if (options.pollItems)
+                if (auto next = options.pollItems(items, true))
+                    items = std::move(*next);
+            return !items.empty() && options.pollItemsFinished && options.pollItemsFinished();
+        },
+        "popup eventually receives the real scheduler publication after noise stops");
 
- Expect(queries==1,"unrelated Classes cache changes must not discard and repeat the same pending popup query");
+    Expect(queries == 1, "unrelated Classes cache changes must not discard and repeat the same pending popup query");
 }
 
+// A later dispatch proves the ready reply has reached its publication boundary.
+// Real registration verification is held there; the popup must remain pending.
+void TestRegistrationVerificationBeforePopupPublication()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopVerifyProbe-" + temp.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        ~Fixture()
+        {
+            if (key)
+                RegCloseKey(key);
+            if (owned)
+                RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } fixture{nullptr, path};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.key,
+                           &disposition) == ERROR_SUCCESS,
+           "create verification fixture");
+    fixture.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(fixture.owned, "own verification fixture");
+    ext::Request selected, proof;
+    selected.paths = {(temp.path / L"selected.txt").wstring()};
+    proof.paths = {(temp.path / L"proof.txt").wstring()};
+    std::ofstream(temp.path / L"selected.txt") << "private";
+    std::ofstream(temp.path / L"proof.txt") << "private";
+    std::atomic<unsigned> version = 17, queries = 0;
+    std::atomic<bool> scanStarted = false, scanTimedOut = false, firstReplyReady = false, proofEntered = false;
+    bool release = false;
+    std::mutex gateMutex;
+    std::condition_variable gate;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            if (target.paths == proof.paths)
+                proofEntered = true;
+            if (target.paths != selected.paths)
+                return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+            const unsigned query = ++queries;
+            const unsigned captured = version.load();
+            auto notified = std::make_shared<bool>(false);
+            return ext::QueryWork{[&, target, query, captured, notified]() -> std::optional<ext::Reply>
+                                  {
+                                      if (query == 1)
+                                      {
+                                          if (!*notified)
+                                          {
+                                              version = 18;
+                                              const DWORD data = 18;
+                                              Expect(RegSetValueExW(fixture.key, L"Sequence", 0, REG_DWORD,
+                                                                    reinterpret_cast<const BYTE *>(&data),
+                                                                    sizeof(data)) == ERROR_SUCCESS,
+                                                     "emit actual registration revision notification");
+                                              *notified = true;
+                                              return {};
+                                          }
+                                          if (!scanStarted || firstReplyReady.exchange(true))
+                                              return {};
+                                      }
+                                      ext::Reply reply;
+                                      reply.ok = true;
+                                      ext::Entry entry;
+                                      entry.provider = "verb:verify-probe";
+                                      entry.key = "verify-probe";
+                                      entry.label = std::to_wstring(captured);
+                                      reply.entries = {entry};
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        [&]
+        {
+            const auto revision = version.load();
+            if (revision == 18)
+            {
+                scanStarted = true;
+                std::unique_lock lock(gateMutex);
+                if (!gate.wait_for(lock, std::chrono::seconds(10), [&] { return release; }))
+                    scanTimedOut = true;
+            }
+            ext::Catalogue c;
+            c.revision = revision;
+            ext::Registration r;
+            r.id = "reg:verify-probe";
+            r.types = {L"*"};
+            r.verbs = {"verify-probe"};
+            r.contexts = 1;
+            r.revision = revision;
+            c.rows = {r};
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:verify-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; },
+              "initial inventory/discovery completes before a revision changes");
+    ext::Presentation popup(selected, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil([&] { return firstReplyReady.load(); },
+              "old helper result becomes available during blocked verification");
+    service.Query(proof);
+    PumpUntil([&] { return proofEntered.load(); }, "later dispatch provides a causal publication barrier");
+    const auto before = service.View(selected);
+    if (auto updated = options.pollItems(items, true))
+        items = std::move(*updated);
+    {
+        std::lock_guard lock(gateMutex);
+        release = true;
+    }
+    gate.notify_one();
+    PumpUntil(
+        [&]
+        {
+            if (auto updated = options.pollItems(items, true))
+                items = std::move(*updated);
+            return options.pollItemsFinished();
+        },
+        "popup completes after registration verification");
+    Expect(!scanTimedOut, "verification gate completes without a timeout");
+    Expect(!before.snapshot && before.pending,
+           "a ready helper result must await registration verification before completing a popup");
+    Expect(queries == 2 && items.size() == 1 && items.front().label == L"18",
+           "a changed registration re-queries once and publishes the current action in the same popup");
+}
 void TestMenuPromotesQueuedPrewarm()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -3413,6 +3618,7 @@ int wmain(int argc, wchar_t **argv)
         {
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
+            TestRegistrationVerificationBeforePopupPublication();
             TestUnrelatedRegistryChangesDuringPopup();
             TestBackgroundQueriesReserveMenuSlot();
             TestMenuPromotesQueuedPrewarm();
@@ -3444,6 +3650,7 @@ int wmain(int argc, wchar_t **argv)
             TestPendingCachedClick();
             TestInvocationOwnerHandoff();
             TestQueryScheduler();
+            TestRegistrationVerificationBeforePopupPublication();
             TestUnrelatedRegistryChangesDuringPopup();
             TestBackgroundQueriesReserveMenuSlot();
             TestMenuPromotesQueuedPrewarm();
