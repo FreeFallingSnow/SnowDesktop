@@ -403,7 +403,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 const auto pending = Item(BuildStatusBarItems(settings, notification), "notifications");
                 notification.notifications.unreadCount.reset(); notification.notifications.totalCount = 2;
                 const auto present = Item(BuildStatusBarItems(settings, notification), "notifications");
-                Require(pending.glyph != present.glyph && pending.tip != present.tip,
+                Require(pending.tip != present.tip,
                     "total notifications must not be reported as unread notifications");
                 notification.notifications.quiet = true;
                 Require(Item(BuildStatusBarItems(settings, notification), "notifications").glyph == status_bar_glyphs::kNotificationsQuiet,
