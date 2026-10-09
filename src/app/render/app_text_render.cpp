@@ -410,9 +410,19 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     }
     if (isSingleLine && selected)
     {
-        RECT cr = GetItemTextRect(bounds, false, componentTitleLines);
-        float collapsedH = static_cast<float>(cr.bottom - cr.top);
-        ty = cr.top + (collapsedH - th) * 0.5f;
+        // Match TrimItemTitle's exact layout height, rather than the rounded
+        // clipping rectangle with its extra anti-aliasing pixel. Otherwise
+        // selecting a short title shifts its centered baseline by a fraction
+        // of a pixel even though the visible text has not changed.
+        const float collapsedLayoutHeight = lineHeight * static_cast<float>(titleLines);
+        ty += (collapsedLayoutHeight - layoutIt->second->GetMaxHeight()) * 0.5f;
+        if (componentPanel && titleLines == 1)
+        {
+            const float collapsedClipHeight = static_cast<float>(
+                snowdesktop::item_layout_rules::TextHeightForLineCount(lineHeight, titleLines));
+            ty += std::max(0.0f,
+                (static_cast<float>(visualMetrics.titleHeight) - collapsedClipHeight) * 0.5f);
+        }
     }
 
     DrawStyledItemTextLayout(
