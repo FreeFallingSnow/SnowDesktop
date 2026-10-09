@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -15,6 +16,17 @@ enum class DockAppIdentityKind
 
 namespace snowdesktop::dock_app_identity_rules
 {
+
+// Missing process metadata must not remove a protected broker's task window.
+inline std::wstring RunningWindowIdentity(const std::wstring& executable,
+    const std::wstring& appId, std::uintptr_t window, unsigned long process, unsigned long thread)
+{
+    if (!appId.empty()) return L"AUMID:" + appId;
+    if (!executable.empty()) return L"EXE:" + executable;
+    if (!window || !process || !thread) return {};
+    return L"WINDOW:" + std::to_wstring(process) + L":" + std::to_wstring(thread) +
+        L":" + std::to_wstring(window);
+}
 
 inline bool IsPathInsideDirectory(
     const std::wstring& path, const std::wstring& directory)

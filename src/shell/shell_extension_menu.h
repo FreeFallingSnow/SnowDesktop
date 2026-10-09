@@ -57,7 +57,7 @@ class Session
     static void ReleaseIdleWorker();
     // Transfers ownership to a bounded invocation monitor; modeless dialogs
     // remain alive after the custom popup closes.
-    void Invoke(UINT token, POINT position);
+    void Invoke(UINT token, POINT position, HWND owner = nullptr);
 
   private:
     struct Impl;

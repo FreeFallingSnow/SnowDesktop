@@ -26,6 +26,7 @@ struct QueryWork
 {
     std::function<std::optional<Reply>()> poll;
     std::function<void(UINT, POINT)> invoke;
+    std::function<void(UINT, POINT, HWND)> invokeWithOwner;
 };
 class MenuService
 {
@@ -46,7 +47,7 @@ class MenuService
     void Configure(Preferences preferences);
     void Manage(const Request &request);
     CatalogueView Inspect(const Request &request = {}, bool refresh = false);
-    void Execute(const Request &request, CommandReference reference, POINT point, std::function<void(bool)> completed = {});
+    void Execute(const Request &request, CommandReference reference, POINT point, std::function<void(bool)> completed = {}, HWND owner = nullptr);
     void Invalidate(const Request &request);
     void Shutdown();
   private:

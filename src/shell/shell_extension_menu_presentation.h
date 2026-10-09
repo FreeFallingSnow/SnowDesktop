@@ -184,13 +184,13 @@ class Presentation
             };
         }
     }
-    bool Invoke(UINT command, POINT point)
+    bool Invoke(UINT command, POINT point, HWND owner = nullptr)
     {
         const auto found = commands_.find(command);
         if (found == commands_.end()) return false;
         const auto *pair = found->second.empty() ? nullptr : StatePairForVerb(std::get<1>(found->second.back()));
         service_.Execute(startLane_ && pair && pair->id == "state:start-pin" ? startSource_ : source_,
-            found->second, point, completed_);
+            found->second, point, completed_, owner);
         return true;
     }
 

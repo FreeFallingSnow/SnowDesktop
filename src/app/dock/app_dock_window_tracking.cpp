@@ -538,7 +538,7 @@ void DesktopApp::RefreshDockRunningWindows(
                 return TRUE;
 
             DWORD processId = 0;
-            GetWindowThreadProcessId(window, &processId);
+            const DWORD threadId = GetWindowThreadProcessId(window, &processId);
             const bool ownedByCurrentProcess =
                 processId == GetCurrentProcessId();
             const bool applicationLevelWindow =
@@ -605,7 +605,6 @@ void DesktopApp::RefreshDockRunningWindows(
                 target.score = score;
             }
 
-            if (pathIt->second.empty()) return TRUE;
             bool fixed = false;
             for (const DockAppIdentity& identity : *context->fixedIdentities)
             {
@@ -626,8 +625,9 @@ void DesktopApp::RefreshDockRunningWindows(
             // The first running presentation must not wait for a Shell query.
             // Executable identity is usable now; refine its ID/artwork later
             // without restarting the same window's entrance animation.
-            const std::wstring identityKey = !appUserModelId.empty()
-                ? L"AUMID:" + appUserModelId : L"EXE:" + pathIt->second;
+            const std::wstring identityKey = snowdesktop::dock_app_identity_rules::RunningWindowIdentity(
+                pathIt->second, appUserModelId, reinterpret_cast<UINT_PTR>(window), processId, threadId);
+            if (identityKey.empty()) return TRUE;
             wchar_t titleBuffer[512]{};
             GetWindowTextW(window, titleBuffer, static_cast<int>(std::size(titleBuffer)));
             std::wstring title = titleBuffer;
@@ -757,13 +757,15 @@ void DesktopApp::RefreshDockRunningWindows(
         for (size_t i = 0; i < dockUnpinnedRunningApps_.size(); ++i)
         {
             DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
-            const bool sameWindow = old.executablePath == info.executablePath &&
+            const bool sameWindow = (old.executablePath == info.executablePath ||
+                old.executablePath.empty() || info.executablePath.empty()) &&
                 std::find(old.trackedWindows.begin(), old.trackedWindows.end(), info.window) !=
                     old.trackedWindows.end();
             if (reused[i] || (old.identityKey != info.identityKey && !sameWindow)) continue;
             info.presence = old.presence;
-            refineIdentityArtwork = old.appUserModelId != info.appUserModelId &&
-                !info.appUserModelId.empty();
+            refineIdentityArtwork = (old.appUserModelId != info.appUserModelId &&
+                !info.appUserModelId.empty()) ||
+                (old.executablePath.empty() && !info.executablePath.empty());
             if (old.iconBitmap &&
                 (old.iconRequestedSize >= requiredIconSize ||
                  snowdesktop::icon_render_rules::

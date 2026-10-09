@@ -806,7 +806,12 @@ UINT DesktopApp::ShowModernMenu(
             TryShowPendingSettingsWindow();
         return 0;
     }
-    if (extensions && extensions->Invoke(result.command, screenPoint)) return 0;
+    if (extensions && result.command >= snowdesktop::shell_extensions::Presentation::FirstCommand)
+    {
+        const HWND invocationOwner = ShellLaunchOwnerHwnd();
+        FocusKeyboardWindow(invocationOwner, true, L"Exposed Shell command owner");
+        if (extensions->Invoke(result.command, screenPoint, invocationOwner)) return 0;
+    }
 
     return result.command;
 }

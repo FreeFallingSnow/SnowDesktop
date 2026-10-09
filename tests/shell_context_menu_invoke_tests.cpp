@@ -908,6 +908,153 @@ void ProbeArchiveSubmenus()
     }
 }
 
+// Unlike metadata-only archive probes, this opt-in exercises a real WinRAR
+// compression of private files and checks the archive's independently listed
+// contents. It never uses a real user's shortcut or target.
+void ProbeShortcutArchives()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    std::filesystem::create_directory(directory.path / L"target");
+    const auto target = directory.path / L"target" / L"RealTarget.txt";
+    std::ofstream(target) << "referenced target must stay outside the archive";
+    const auto shortcut = directory.path / L"ActualShortcut.lnk";
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    Microsoft::WRL::ComPtr<IPersistFile> persist;
+    Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+        SUCCEEDED(link.As(&persist)) && SUCCEEDED(link->SetPath(target.c_str())) &&
+        SUCCEEDED(persist->Save(shortcut.c_str(), TRUE)), "create an isolated shortcut with a distinct target");
+    link.Reset(); persist.Reset();
+    ext::Request request; request.paths = {shortcut.wstring()};
+    ext::MenuSnapshotCache cache(directory.path / L"cache");
+    const auto ticket = cache.Capture(request);
+    ext::Session session(request);
+    std::optional<ext::Reply> reply;
+    const auto deadline = GetTickCount64() + 12000;
+    while (!reply && GetTickCount64() < deadline)
+    {
+        reply = session.Poll();
+        if (reply) break;
+        MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        { TranslateMessage(&message); DispatchMessageW(&message); }
+    }
+    if (reply && !reply->ok) std::cout << reply->error << std::endl;
+    Expect(reply && reply->ok, "shortcut query completes through the production helper");
+    const auto root = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+        return entry.label == L"WinRAR";
+    });
+    Expect(root != reply->entries.end() && !root->native, "enabled installed WinRAR exposes a real shortcut submenu");
+    const auto compress = std::find_if(root->children.begin(), root->children.end(), [](const auto &entry) {
+        return entry.key == "WinRAR.AddArchive" && entry.label.find(L"ActualShortcut.rar") != std::wstring::npos;
+    });
+    Expect(compress != root->children.end(), "WinRAR compression names the selected shortcut, never RealTarget.rar");
+    Expect(cache.Store(ticket, *reply) && cache.Find(cache.Capture(request)).has_value(),
+        "the original shortcut keeps a reusable display snapshot");
+    const auto token = ext::ResolveCommand(*reply, ext::AppendReference(ext::AppendReference({}, *root), *compress));
+    Expect(token != 0, "actual shortcut command resolves against its live session");
+    session.Invoke(token, {});
+    const auto archive = directory.path / L"ActualShortcut.rar";
+    const auto archiveDeadline = GetTickCount64() + 15000;
+    bool ready = false;
+    while (!ready && GetTickCount64() < archiveDeadline)
+    {
+        WIN32_FILE_ATTRIBUTE_DATA info{};
+        if (GetFileAttributesExW(archive.c_str(), GetFileExInfoStandard, &info) && info.nFileSizeLow)
+        {
+            HANDLE file = CreateFileW(archive.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file != INVALID_HANDLE_VALUE) { ready = true; CloseHandle(file); }
+        }
+        if (ready) break;
+        MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        { TranslateMessage(&message); DispatchMessageW(&message); }
+    }
+    Expect(ready && !std::filesystem::exists(target.parent_path() / L"RealTarget.rar"),
+        "WinRAR creates the archive beside the shortcut instead of its referenced target");
+    wchar_t module[32768]{}; DWORD bytes = sizeof(module);
+    Expect(RegGetValueW(HKEY_CLASSES_ROOT,
+        L"CLSID\\{B41DB860-64E4-11D2-9906-E49FADC173CA}\\InProcServer32", nullptr,
+        RRF_RT_REG_SZ, nullptr, module, &bytes) == ERROR_SUCCESS, "read the registered installed WinRAR module");
+    const auto rar = std::filesystem::path(module).parent_path() / L"Rar.exe";
+    Expect(std::filesystem::is_regular_file(rar), "installed Rar CLI is available for independent content validation");
+    const auto listing = directory.path / L"archive-list.txt";
+    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+    HANDLE output = CreateFileW(listing.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &security,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(output != INVALID_HANDLE_VALUE && input != INVALID_HANDLE_VALUE, "create isolated CLI streams");
+    std::wstring command = L"\"" + rar.wstring() + L"\" lb -idq \"" + archive.wstring() + L"\"";
+    STARTUPINFOW startup{sizeof(startup)}; startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = input; startup.hStdOutput = startup.hStdError = output;
+    PROCESS_INFORMATION process{};
+    const bool launched = CreateProcessW(rar.c_str(), command.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, directory.path.c_str(), &startup, &process) != FALSE;
+    CloseHandle(input); CloseHandle(output);
+    Expect(launched, "list only the private archive through installed Rar CLI");
+    const DWORD waited = WaitForSingleObject(process.hProcess, 10000);
+    DWORD exit = 1; GetExitCodeProcess(process.hProcess, &exit);
+    if (waited != WAIT_OBJECT_0)
+    {
+        // This is our own bounded CLI child, never a user's WinRAR process.
+        TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+        WaitForSingleObject(process.hProcess, 1000);
+    }
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    Expect(waited == WAIT_OBJECT_0 && exit == 0, "independent Rar content listing completes successfully");
+    std::ifstream contents(listing, std::ios::binary);
+    const std::string names{std::istreambuf_iterator<char>(contents), std::istreambuf_iterator<char>()};
+    Expect(names.find("ActualShortcut.lnk") != std::string::npos && names.find("RealTarget.txt") == std::string::npos,
+        "the actual archive contains the shortcut file and excludes its referenced target");
+    std::cout << "WinRAR shortcut archive contents: " << names << std::endl;
+    Expect(std::filesystem::exists(shortcut) && std::filesystem::exists(target), "compression preserves both original files");
+
+    // Target delegation also affects folder links, broken links and mixed
+    // selections. Query these real objects without invoking another archive.
+    auto makeLink = [&](const std::filesystem::path &path, const std::filesystem::path &destination) {
+        Microsoft::WRL::ComPtr<IShellLinkW> value;
+        Microsoft::WRL::ComPtr<IPersistFile> file;
+        Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&value))) &&
+            SUCCEEDED(value.As(&file)) && SUCCEEDED(value->SetPath(destination.c_str())) &&
+            SUCCEEDED(file->Save(path.c_str(), TRUE)), "create a private shortcut selection variant");
+    };
+    const auto folderLink = directory.path / L"FolderShortcut.lnk";
+    const auto brokenLink = directory.path / L"BrokenShortcut.lnk";
+    const auto otherLink = target.parent_path() / L"OtherShortcut.lnk";
+    makeLink(folderLink, target.parent_path());
+    makeLink(brokenLink, target.parent_path() / L"MissingTarget.txt");
+    makeLink(otherLink, target);
+    for (const auto &paths : std::vector<std::vector<std::wstring>>{
+        {folderLink.wstring()}, {brokenLink.wstring()}, {shortcut.wstring(), otherLink.wstring(), archive.wstring()}})
+    {
+        ext::Request variant; variant.paths = paths;
+        ext::Session query(variant);
+        std::optional<ext::Reply> result;
+        const auto end = GetTickCount64() + 12000;
+        while (!result && GetTickCount64() < end)
+        {
+            result = query.Poll();
+            if (result) break;
+            MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+        Expect(result && result->ok, "real folder, broken and cross-folder shortcut queries succeed");
+        const auto winrar = std::find_if(result->entries.begin(), result->entries.end(), [](const auto &entry) {
+            return entry.label == L"WinRAR";
+        });
+        Expect(winrar != result->entries.end() && !winrar->native && !winrar->children.empty(),
+            "shortcut variants preserve a real installed WinRAR submenu");
+        for (const auto &child : winrar->children)
+            Expect(child.label.find(L"RealTarget") == std::wstring::npos &&
+                child.label.find(L"MissingTarget") == std::wstring::npos,
+                "WinRAR variant menus never describe an unselected referenced file");
+        std::cout << "WinRAR original shortcut selection: " << paths.size() << " object(s), children="
+            << winrar->children.size() << std::endl;
+    }
+}
+
 // Read installed PowerShell cascades without launching a terminal or UAC.
 void ProbePowerShellSubmenus()
 {
@@ -2217,6 +2364,39 @@ void TestPendingCachedClick()
     }
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE", nullptr);
 }
+
+void TestInvocationOwnerHandoff()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    const auto file = directory.path / L"owner.txt"; std::ofstream(file) << "isolated";
+    const HWND owner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Invocation owner",
+        WS_POPUP, -12000, -12000, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Expect(owner != nullptr, "create a private persistent invocation owner");
+    const auto captured = snowdesktop::ShellInvocationOwner::Capture(owner);
+    Expect(captured.Resolve() == owner, "real top-level owner survives an asynchronous command handoff");
+    auto stale = captured; ++stale.thread;
+    Expect(!stale.Resolve(), "owner thread mismatch rejects a stale invocation identity");
+    ext::Request request; request.paths = {file.wstring()};
+    ext::Reply reply; reply.ok = true;
+    ext::Entry command; command.key = "test-owner"; command.provider = "verb:test-owner";
+    command.label = L"Private owner handoff"; command.token = 42; reply.entries = {command};
+    std::atomic<HWND> received = nullptr;
+    std::atomic<bool> done = false;
+    ext::MenuService service(directory.path / L"cache", [&, reply](const auto &) {
+        return ext::QueryWork{[reply] { return reply; }, [](UINT, POINT) {
+            Expect(false, "a real owner must reach the owner-aware execution boundary");
+        }, [&](UINT token, POINT point, HWND window) {
+            Expect(token == 42 && point.x == 12 && point.y == 34, "handoff preserves the fresh command and click position");
+            received = window;
+        }};
+    }, [] { return ext::Catalogue{}; });
+    service.Execute(request, ext::AppendReference({}, command), {12, 34}, [&](bool ok) { done = ok; }, owner);
+    PumpUntil([&] { return done.load(); }, "the real service completes an owner-aware click");
+    Expect(received == owner, "cached/fresh-query scheduling preserves the host owner instead of a hidden query window");
+    DestroyWindow(owner);
+    Expect(!captured.Resolve(), "a destroyed menu owner is rejected before invocation");
+}
 void TestSourceScheduler()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -2997,9 +3177,10 @@ int wmain(int argc, wchar_t **argv)
 {
     const bool archiveProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-archive-submenus";
     const bool powerShellProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-powershell-submenus";
+    const bool shortcutProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-shortcut-archives";
     const bool nvidiaProbe = argc == 2 && (std::wstring_view(argv[1]) == L"--probe-nvidia-menu" ||
         std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
-    if (nvidiaProbe || archiveProbe || powerShellProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    if (nvidiaProbe || archiveProbe || powerShellProbe || shortcutProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
@@ -3085,7 +3266,8 @@ int wmain(int argc, wchar_t **argv)
     {
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
-        if (archiveProbe) ProbeArchiveSubmenus();
+        if (shortcutProbe) ProbeShortcutArchives();
+        else if (archiveProbe) ProbeArchiveSubmenus();
         else if (powerShellProbe) ProbePowerShellSubmenus();
         else if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
@@ -3123,6 +3305,7 @@ int wmain(int argc, wchar_t **argv)
             TestStartQueryScheduling();
             TestSnapshotPresentation();
             TestPendingCachedClick();
+            TestInvocationOwnerHandoff();
             TestQueryScheduler();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();

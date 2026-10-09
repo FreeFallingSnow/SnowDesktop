@@ -472,6 +472,12 @@ inline HBITMAP CreateDockWindowIconBitmap(
         bitmapSize = executableBitmapSize;
         return executableBitmap;
     }
+    if (executablePath.empty())
+    {
+        // Protected windows can reject process and WM_GETICON queries.
+        const HICON icon = LoadIconW(nullptr, IDI_APPLICATION);
+        if (icon) return CreateAlphaBitmapFromIcon(icon, requestedSize, requestedSize, bitmapSize);
+    }
     return nullptr;
 }
 
@@ -573,8 +579,9 @@ inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
         _wcsicmp(className, L"Shell_SecondaryTrayWnd") == 0)
         return false;
     const LONG_PTR exStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    const HWND owner = GetWindow(window, GW_OWNER);
     if (!snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
-            exStyle, GetWindow(window, GW_OWNER) != nullptr))
+            exStyle, owner && IsWindowVisible(owner)))
         return false;
     return true;
 }

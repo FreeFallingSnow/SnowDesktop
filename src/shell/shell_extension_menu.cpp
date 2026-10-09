@@ -274,6 +274,7 @@ struct Native
     std::wstring directory;
     std::vector<std::wstring> paths;
     bool metadataOnly = false;
+    bool shortcutObjects = false;
     ComPtr<IShellItem> nvidiaApplication;
     ~Native()
     {
@@ -611,7 +612,7 @@ struct Host
                     if (depth == 0)
                         entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(kMenuSignatureSeed);
                     progress("initialize deferred popup: " + Utf8(entry.label));
-                    if (!source.site.HostWindow() && source.site.Initialize(source.folder.Get(), window))
+                    if (!source.shortcutObjects && !source.site.HostWindow() && source.site.Initialize(source.folder.Get(), window))
                         source.site.Attach(source.context.Get());
                     auto *previous = tracking;
                     tracking = &source;
@@ -734,6 +735,93 @@ struct Host
             reply = QueryOnce(request);
             catalogueInitialized = reply.ok;
         }
+        return reply;
+    }
+    Reply QueryShortcutObjects(const Request &request, Native &delegated,
+        IShellFolder *selectionFolder, PCIDLIST_ABSOLUTE folderId,
+        std::vector<PCIDLIST_ABSOLUTE> raw)
+    {
+        // ShellLink contributes a target menu to the usual aggregate. Build
+        // file operations from the original selection instead. Do not load
+        // lnkfile's ShellLink context handler back into this aggregate.
+        auto actual = std::make_unique<Native>();
+        actual->directory = delegated.directory; actual->paths = request.paths;
+        actual->shortcutObjects = true;
+        actual->folder = selectionFolder;
+        ComPtr<IShellFolder> desktop;
+        Pidl desktopId;
+        const bool sameFolder = std::all_of(request.paths.begin(), request.paths.end(), [&](const auto &path) {
+            return Lower(std::filesystem::path(path).parent_path().wstring()) == Lower(delegated.directory);
+        });
+        if (!sameFolder)
+        {
+            if (FAILED(SHGetDesktopFolder(&desktop)) ||
+                FAILED(SHGetSpecialFolderLocation(nullptr, CSIDL_DESKTOP, &desktopId.value))) return {};
+            selectionFolder = desktop.Get(); folderId = desktopId.value;
+            actual->folder = desktop;
+        }
+        std::vector<PCUITEMID_CHILD> children;
+        for (auto id : raw) children.push_back(sameFolder ? ILFindLastID(id) : reinterpret_cast<PCUITEMID_CHILD>(id));
+        ASSOCIATIONELEMENT classes[] = {
+            {ASSOCCLASS_STAR, nullptr, nullptr},
+            {ASSOCCLASS_PROGID_STR, nullptr, L"AllFilesystemObjects"},
+        };
+        ComPtr<IQueryAssociations> associations;
+        if (FAILED(AssocCreateForClasses(classes, static_cast<ULONG>(std::size(classes)), IID_PPV_ARGS(&associations)))) return {};
+        DEFCONTEXTMENU description{};
+        description.hwnd = window; description.psf = selectionFolder; description.pidlFolder = folderId;
+        description.cidl = static_cast<UINT>(children.size()); description.apidl = children.data();
+        description.punkAssociationInfo = associations.Get();
+        if (FAILED(SHCreateDefaultContextMenu(&description, IID_PPV_ARGS(&actual->context))) ||
+            FAILED(actual->context->QueryContextMenu(actual->menu, 0, 1, 0x7fff,
+                CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) return {};
+        Reply reply; reply.entries = Read(*actual, actual->menu, "");
+        IdentifyEntries(reply.entries);
+        menus.push_back(std::move(actual));
+
+        // Packaged/modern providers may be present only in the delegated
+        // aggregate. Rebind a provider only when that fresh aggregate actually
+        // returned its canonical COM identity. Metadata probes and registry
+        // discovery still cannot introduce executable menu entries.
+        ComPtr<IShellItemArray> selection;
+        ComPtr<IDataObject> data;
+        if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
+            FAILED(selection->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data)))) return {};
+        std::set<std::wstring> rebound;
+        for (int i = 0; i < GetMenuItemCount(delegated.menu); ++i)
+        {
+            MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_ID;
+            if (!GetMenuItemInfoW(delegated.menu, i, TRUE, &item)) continue;
+            const auto identity = Verb(delegated, item.wID);
+            CLSID clsid{};
+            if (identity.empty() || FAILED(CLSIDFromString(identity.c_str(), &clsid)) ||
+                !HandlerEnabled(identity) || !rebound.insert(Lower(identity)).second ||
+                std::any_of(reply.entries.begin(), reply.entries.end(), [&](const auto &entry) {
+                    return Lower(Wide(entry.key)) == Lower(identity);
+                })) continue;
+            auto provider = std::make_unique<Native>();
+            provider->directory = delegated.directory; provider->paths = request.paths;
+            provider->folder = selectionFolder; provider->shortcutObjects = true;
+            ComPtr<IShellExtInit> initialize;
+            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&provider->context))) ||
+                FAILED(provider->context.As(&initialize)) || FAILED(initialize->Initialize(nullptr, data.Get(), nullptr)) ||
+                FAILED(provider->context->QueryContextMenu(provider->menu, 0, 1, 0x7fff,
+                    CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) continue;
+            auto entries = Read(*provider, provider->menu, "");
+            std::erase_if(entries, [](const auto &entry) { return entry.separator; });
+            if (entries.size() == 1)
+            {
+                auto &entry = entries.front();
+                entry.key = Utf8(identity); entry.provider = "verb:" + Utf8(Lower(identity));
+                reply.entries.push_back(std::move(entry));
+                menus.push_back(std::move(provider));
+            }
+            else
+                std::erase_if(commands, [&](const auto &command) { return command.second.source == provider.get(); });
+        }
+        for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
+        if (count >= kMaximumEntries) return {};
+        IdentifyEntries(reply.entries); reply.ok = true;
         return reply;
     }
     Reply QueryOnce(const Request &request)
@@ -881,6 +969,11 @@ struct Host
                                                      CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
+        if (!request.background && !request.startPinOnly && request.sourceClsid.empty() &&
+            std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+                return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+            }))
+            return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
         Reply reply;
         if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
             fileAssociationsReady = true;
@@ -922,7 +1015,7 @@ struct Host
         return found != commands.end() && !found->second.native &&
             StatePairForVerb(Utf8(Verb(*found->second.source, found->second.offset + 1)));
     }
-    HRESULT Invoke(UINT token, POINT point)
+    HRESULT Invoke(UINT token, POINT point, ShellInvocationOwner invocationOwner = {})
     {
         auto found = commands.find(token);
         if (found == commands.end() || invoked)
@@ -948,7 +1041,7 @@ struct Host
             if (!refreshed) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
             command.offset = *refreshed;
         }
-        else if (command.native || !shell_start_pin::CommandAction(source.context.Get(), command.offset))
+        else if (!source.shortcutObjects && (command.native || !shell_start_pin::CommandAction(source.context.Get(), command.offset)))
         {
             // Deferred children already belong to this live view/menu session.
             // Do not detach their site and recreate it between read and click.
@@ -1002,11 +1095,26 @@ struct Host
         {
             return *result; // A rejected/failed Start request must never invoke locally.
         }
-        source.site.SetInvocationOwner(window);
+        const HWND owner = invocationOwner.Resolve();
+        const HWND commandOwner = owner ? owner : window;
+        if (owner)
+        {
+            DWORD foregroundProcess = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
+            // A slow fresh query must not steal focus after the user switches
+            // apps. With the originating app still active, hand off to the
+            // persistent input owner and consent broker immediately at click.
+            if (foregroundProcess == invocationOwner.process || foregroundProcess == GetCurrentProcessId())
+            {
+                SetForegroundWindow(owner);
+                AllowSetForegroundWindow(ASFW_ANY);
+            }
+        }
+        source.site.SetInvocationOwner(commandOwner);
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE | CMIC_MASK_NOASYNC;
-        invoke.hwnd = window;
+        invoke.hwnd = commandOwner;
         invoke.lpVerb = MAKEINTRESOURCEA(command.offset);
         invoke.lpVerbW = MAKEINTRESOURCEW(command.offset);
         invoke.nShow = SW_SHOWNORMAL;
@@ -1180,19 +1288,20 @@ std::optional<Reply> Session::Poll()
     MenuTrace("query", impl_->succeeded ? "success" : "failure", double(GetTickCount64() - impl_->started), static_cast<unsigned>(impl_->reply->entries.size()));
     return std::move(impl_->reply);
 }
-void Session::Invoke(UINT token, POINT position)
+void Session::Invoke(UINT token, POINT position, HWND owner)
 {
     if (!impl_->delivered || !impl_->process->Running())
         throw settings_ipc::ProtocolError("Shell command session is no longer available");
     MenuTiming timing("invoke_ack");
     AllowSetForegroundWindow(impl_->process->ProcessId());
+    const auto invocationOwner = ShellInvocationOwner::Capture(owner);
     impl_->succeeded = false; // An invoked or failed session can never return to the query pool.
     if (impl_->statefulTokens.contains(token))
     {
         // This STA is the service worker, never the desktop UI thread. Observe
         // completion of these bounded state changes before retiring the cache.
         const auto result = impl_->channel.CallWithTimeout<HRESULT>(12000, "menu.invoke-stateful",
-            token, position.x, position.y);
+            token, position.x, position.y, invocationOwner.window, invocationOwner.process, invocationOwner.thread);
         timing.Record("completed");
         if (FAILED(result)) throw settings_ipc::ProtocolError("Shell state command failed: " +
             std::to_string(static_cast<unsigned long>(result)));
@@ -1201,7 +1310,8 @@ void Session::Invoke(UINT token, POINT position)
     // code is dispatched afterwards, so this does not wait for a dialog.
     else
     {
-        impl_->channel.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y);
+        impl_->channel.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y,
+            invocationOwner.window, invocationOwner.process, invocationOwner.thread);
         timing.Record("acknowledged");
     }
     auto process = impl_->process;
@@ -1242,24 +1352,26 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
             host.ReleaseMenu();
             channel.Notify("menu.released");
         });
-        channel.Bind<void, UINT, LONG, LONG>("menu.invoke", [&](UINT token, LONG x, LONG y) {
+        channel.Bind<void, UINT, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.invoke",
+            [&](UINT token, LONG x, LONG y, std::uint64_t ownerWindow, DWORD ownerProcess, DWORD ownerThread) {
             if (invocationQueued)
                 return;
             invocationQueued = true;
             dispatchedAt = GetTickCount64();
-            channel.Post([&, token, x, y] {
+            channel.Post([&, token, x, y, ownerWindow, ownerProcess, ownerThread] {
                 if (invoke) invoke(token, {x, y});
-                else host.Invoke(token, {x, y});
+                else host.Invoke(token, {x, y}, {ownerWindow, ownerProcess, ownerThread});
                 invokedAt = GetTickCount64();
             });
         });
-        channel.Bind<HRESULT, UINT, LONG, LONG>("menu.invoke-stateful", [&](UINT token, LONG x, LONG y) {
+        channel.Bind<HRESULT, UINT, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.invoke-stateful",
+            [&](UINT token, LONG x, LONG y, std::uint64_t ownerWindow, DWORD ownerProcess, DWORD ownerThread) {
             if (invocationQueued || (!invoke && !host.Stateful(token))) return E_INVALIDARG;
             invocationQueued = true;
             dispatchedAt = GetTickCount64();
             HRESULT execution = S_OK;
             if (invoke) invoke(token, {x, y});
-            else execution = host.Invoke(token, {x, y});
+            else execution = host.Invoke(token, {x, y}, {ownerWindow, ownerProcess, ownerThread});
             invokedAt = GetTickCount64();
             return execution;
         });

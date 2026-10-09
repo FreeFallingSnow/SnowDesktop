@@ -1,6 +1,7 @@
 #include "dock/dock_window_pin.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_preview_layout.h"
+#include "dock/dock_app_identity_rules.h"
 
 #include <dwmapi.h>
 #include <windowsx.h>
@@ -109,6 +110,20 @@ int RunDockWindowPinTests()
             std::cerr << "FAIL: " << message << '\n';
         }
     };
+    // A protected consent broker can reject process-path reads while exposing
+    // a normal task window. The discovery identity must retain each such window
+    // separately, and later metadata must refine it to a normal app identity.
+    namespace identity = snowdesktop::dock_app_identity_rules;
+    const auto consent = identity::RunningWindowIdentity(L"", L"", 101, 42, 43);
+    check(!consent.empty() && consent != identity::RunningWindowIdentity(L"", L"", 102, 42, 43) &&
+        consent != identity::RunningWindowIdentity(L"", L"", 101, 44, 43),
+        "unreadable process paths retain distinct live task-window identities");
+    check(identity::RunningWindowIdentity(L"C:\\app.exe", L"", 101, 42, 43) == L"EXE:C:\\app.exe" &&
+        identity::RunningWindowIdentity(L"", L"Package!App", 101, 42, 43) == L"AUMID:Package!App",
+        "available executable and package metadata refine the protected-window identity");
+    check(identity::RunningWindowIdentity(L"", L"", 0, 42, 43).empty() &&
+        identity::RunningWindowIdentity(L"", L"", 101, 0, 43).empty(),
+        "invalid task windows cannot become running Dock entries");
     const DockWindowPreviewLayout aspectLayout = CalculateDockWindowPreviewLayout(
         {{1600, 900}, {800, 1200}}, 1200, 700, 96);
     const auto aspectCards = CalculateDockWindowPreviewLayoutCardRects(aspectLayout, 96);

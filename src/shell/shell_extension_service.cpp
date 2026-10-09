@@ -2,6 +2,7 @@
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_discovery.h"
 #include "shell_extension_attribution.h"
+#include "shell_context_menu_invoke.h"
 #include <condition_variable>
 #include <fstream>
 #include <future>
@@ -96,7 +97,7 @@ std::vector<Entry> VisibleSnapshot(const Preferences &prefs, const Reply &reply,
 }
 struct MenuService::Impl
 {
-    struct Click { CommandReference reference; POINT point; std::function<void(bool)> completed; };
+    struct Click { CommandReference reference; POINT point; std::function<void(bool)> completed; ShellInvocationOwner owner; };
     struct Row
     {
         Request request;
@@ -158,7 +159,8 @@ struct MenuService::Impl
     {
         if (!factory) factory = [](const Request &request) {
             auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000);
-            return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); }};
+            return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
+                [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); }};
         };
         if (!readCatalogue) readCatalogue = [] { return ReadCatalogue(); };
         worker = std::thread([this] { Run(); });
@@ -511,7 +513,13 @@ struct MenuService::Impl
             if (token)
             {
                 if (!click.reference.empty() && StatePairForVerb(std::get<1>(click.reference.back()))) invoked = true;
-                try { job.work.invoke(token, click.point); succeeded = invoked = true; } catch (...) {}
+                try
+                {
+                    if (job.work.invokeWithOwner) job.work.invokeWithOwner(token, click.point, click.owner.Resolve());
+                    else job.work.invoke(token, click.point);
+                    succeeded = invoked = true;
+                }
+                catch (...) {}
             }
             // A stateful invocation has completed in the helper before invoke
             // returns. Retire its pre-action snapshot for every menu variant.
@@ -1060,11 +1068,11 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     }
     SetEvent(impl_->wake); return result;
 }
-void MenuService::Execute(const Request &request, CommandReference reference, POINT point, std::function<void(bool)> completed)
+void MenuService::Execute(const Request &request, CommandReference reference, POINT point, std::function<void(bool)> completed, HWND owner)
 {
     std::lock_guard lock(impl_->mutex);
     impl_->Queue(request, QueryPriority::Execute, true);
-    impl_->rows[SelectionKey(request)].clicks.push_back({std::move(reference), point, std::move(completed)});
+    impl_->rows[SelectionKey(request)].clicks.push_back({std::move(reference), point, std::move(completed), ShellInvocationOwner::Capture(owner)});
 }
 void MenuService::Invalidate(const Request &request)
 {
