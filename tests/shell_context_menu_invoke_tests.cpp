@@ -3453,6 +3453,7 @@ void TestShortcutQueryRecovery(bool permanent = false)
     std::atomic<unsigned> fullQueries = 0, originalQueries = 0, invoked = 0;
     std::atomic<bool> releaseFull = false, firstPopupComplete = false;
     ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        if (target.paths != request.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
         const auto n = target.originalShortcutOnly ? ++originalQueries : ++fullQueries;
         const bool recovery = target.originalShortcutOnly;
         return ext::QueryWork{[&, n, recovery]() -> std::optional<ext::Reply> {
@@ -3482,6 +3483,13 @@ void TestShortcutQueryRecovery(bool permanent = false)
     service.Configure(prefs);
     ext::Presentation first(request, prefs, L"", L"", service);
     std::vector<menu::Item> items; menu::Options options; first.Attach(items, options, 0);
+    PumpUntil([&] { auto v = service.View(request); return !v.pending && !v.error.empty(); }, "controlled full query fails before blocked-display polling");
+    Expect(!options.pollItems(items, false) && items.empty(), "blocked display must not return visible row mutations");
+    ext::Request barrier; barrier.paths = {(temp.path / L"barrier.txt").wstring()};
+    std::ofstream(barrier.paths.front()) << "private scheduler observation";
+    service.Query(barrier, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return service.View(barrier).snapshot.has_value(); }, "lower-priority barrier observes any recovery started by blocked-display polling");
+    Expect(originalQueries == 1, "query recovery must start while root display updates are deferred");
     PumpUntil([&] {
         if (auto next = options.pollItems(items, true)) items = std::move(*next);
         return options.pollItemsFinished();

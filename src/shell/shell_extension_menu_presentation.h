@@ -156,7 +156,18 @@ class Presentation
             options.pollItemsFinished = [this] { return normalDone_ && startDone_; };
             options.pollItemsStablePrefix = true;
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
-                if (!canApply) return {};
+                if (!canApply)
+                {
+                    // A held button, open child or scroll position defers UI
+                    // changes, but must not stop supervised query recovery.
+                    if (!normalDone_)
+                    {
+                        auto view = service_.MenuDisplay(normalSource_, prefs_, true);
+                        if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
+                            RetryNormalQuery();
+                    }
+                    return {};
+                }
                 auto updated = current;
                 bool progressed = false;
                 if (!normalDone_)
@@ -169,13 +180,7 @@ class Presentation
                         // a fresh query while this popup remains subscribed.
                         // Shortcut recovery isolates original file handlers from
                         // the delegated target aggregate that just failed.
-                        normalRetried_ = true;
-                        if (originalSource_.originalShortcutOnly)
-                        {
-                            normalSource_ = originalSource_;
-                            initialRevision_ = service_.View(normalSource_).revision;
-                        }
-                        service_.Query(normalSource_, QueryPriority::Menu, true);
+                        RetryNormalQuery();
                     }
                     else if (!view.pending)
                     {
@@ -229,6 +234,16 @@ class Presentation
     }
 
   private:
+    void RetryNormalQuery()
+    {
+        normalRetried_ = true;
+        if (originalSource_.originalShortcutOnly)
+        {
+            normalSource_ = originalSource_;
+            initialRevision_ = service_.View(normalSource_).revision;
+        }
+        service_.Query(normalSource_, QueryPriority::Menu, true);
+    }
     static bool IsOurCommand(UINT command)
     {
         return command >= FirstCommand && command < FirstCommand + 65536;
