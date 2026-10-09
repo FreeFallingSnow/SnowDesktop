@@ -988,7 +988,7 @@ void ProbeShortcutArchives()
     HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     Expect(output != INVALID_HANDLE_VALUE && input != INVALID_HANDLE_VALUE, "create isolated CLI streams");
-    std::wstring command = L"\"" + rar.wstring() + L"\" lb -idq \"" + archive.wstring() + L"\"";
+    std::wstring command = L"\"" + rar.wstring() + L"\" lb \"" + archive.wstring() + L"\"";
     STARTUPINFOW startup{sizeof(startup)}; startup.dwFlags = STARTF_USESTDHANDLES;
     startup.hStdInput = input; startup.hStdOutput = startup.hStdError = output;
     PROCESS_INFORMATION process{};
