@@ -222,11 +222,13 @@ void DesktopApp::DrawDesktopForeground(
     bool hiddenMode)
 {
     if (hiddenMode)
-        navHotEdgeHintBackdrop_.Clear(desktopBackdropCompositor_);
+        navHotEdgeHintBackdrop_.Clear([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     snowdesktop::performance::Scope performanceScope("dock", "desktop.foreground");
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (dock && hiddenMode && !dockSettings_.keepWhenDesktopHidden)
+            dock->ClearTitleTooltipBackdrop();
         if (!dock ||
             (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
             IsDockHostedByPersistentHost(dock))
@@ -239,10 +241,8 @@ void DesktopApp::DrawDesktopForeground(
 
     DrawDynamicOverlays(ctx, hiddenMode);
     DrawLargeIconInteractionOverlay(ctx);
-    if (desktopIconsHidden_ && showHiddenHint_)
-        DrawHiddenHintOverlay(ctx);
-    if (showWidgetAddedHint_ && !IsUsageGuideVisible())
-        DrawWidgetAddedHintOverlay(ctx);
+    DrawHiddenHintOverlay(ctx);
+    DrawWidgetAddedHintOverlay(ctx);
     DrawUsageGuideHintOverlay(ctx);
     // Independent Dock content and backdrop HWNDs must expose the guide's
     // desktop hit area as well as its pixels. Native menus stay above both.

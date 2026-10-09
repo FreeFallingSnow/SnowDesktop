@@ -191,6 +191,7 @@ set(SNOWDESKTOP_SOURCES
     src/system/tray/tray_menu_placement.h
     src/ui/render/native_tooltip.cpp
     src/ui/render/native_tooltip.h
+    src/ui/render/inline_tooltip_backdrop.h
     src/ui/render/native_tooltip_content.h
     src/ui/render/native_tooltip_preferences.h
     src/ui/render/native_tooltip_state.h
@@ -2376,6 +2377,8 @@ if (BUILD_TESTING)
             src/taskbar_hook/taskbar_classic_surface.cpp
             ${MINHOOK64_SOURCES}
             tests/desktop_backdrop_compositor_tests.cpp
+            src/ui/render/native_tooltip.cpp
+            src/theme/personalization.cpp
             tests/tray_model_tests.cpp
             tests/tray_live_tests.cpp
             src/system/tray/tray_model.cpp
@@ -2388,7 +2391,7 @@ if (BUILD_TESTING)
             src/dock/dock_window_transition.cpp
             src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 runtimeobject shell32 shcore shlwapi user32 windowsapp winhttp
+        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 oleaut32 runtimeobject shell32 shcore shlwapi uiautomationcore user32 windowsapp winhttp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)

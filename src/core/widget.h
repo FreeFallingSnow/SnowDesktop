@@ -19,6 +19,7 @@
 
 #pragma once
 #include "ui/input/text_input_state.h"
+#include "ui/render/inline_tooltip_backdrop.h"
 #include "item.h"
 #include "container.h"
 #include "slot.h"
@@ -552,8 +553,9 @@ private:
     RECT GetThumbnailIconRect(RECT rect) const;
     void DrawThumbnail(ID2D1DeviceContext* context, const DesktopItem& item,
         RECT rect, bool selected) const;
-    void DrawTitlelessTooltip(ID2D1DeviceContext* context,
+    bool DrawTitlelessTooltip(ID2D1DeviceContext* context,
         const std::wstring& title, RECT anchor) const;
+    mutable snowdesktop::InlineTooltipBackdrop titleTooltipBackdrop_;
 };
 
 /**

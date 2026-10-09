@@ -93,7 +93,7 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(ToD2DRect(frame), radius, radius);
 
     // 原生毛玻璃由下层 CompositionBackdropBrush 提供，本层只绘制色调和装饰。
-    if (p.glassEnabled && desktopWidgetCompositionDrawInProgress_)
+    if (p.glassEnabled && registerBackdrop && desktopWidgetCompositionDrawInProgress_)
     {
         desktopWidgetBackdropRequestedDuringDraw_ = true;
         desktopWidgetBackdropCornerRadiusDuringDraw_ = radius;

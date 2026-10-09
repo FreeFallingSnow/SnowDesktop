@@ -97,13 +97,6 @@ std::optional<int> TryRunTaskbarSymbolTestHelper();
 #include <vector>
 #include <unordered_map>
 
-// As in settings_update_rules_tests, replace only the unrelated appearance
-// value factory; the actual DockSettings type and protection decision run.
-PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
-{
-    return {};
-}
-
 namespace rules = snowdesktop::dock_window_rules;
 namespace identityRules = snowdesktop::dock_app_identity_rules;
 

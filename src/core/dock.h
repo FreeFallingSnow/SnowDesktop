@@ -4,6 +4,7 @@
 #include "item.h"
 #include "common/types.h"
 #include "dock/dock_magnification.h"
+#include "ui/render/inline_tooltip_backdrop.h"
 
 #include <memory>
 #include <vector>
@@ -109,6 +110,7 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
     void DrawContents(ID2D1DeviceContext* context) override;
+    void ClearTitleTooltipBackdrop();
     RECT GetBounds() const override;
     BarStyle GetInsertionStyle() const override;
     std::vector<Item*> GetSelectedItems() const override;
@@ -244,6 +246,7 @@ private:
     mutable int hoveredTitleBoundsCachePosition_ = -1;
     mutable bool hoveredTitleBoundsCacheLightTheme_ = false;
     mutable float hoveredTitleBoundsCacheFontSize_ = 0;
+    snowdesktop::InlineTooltipBackdrop titleTooltipBackdrop_;
     // Magnification is a continuous pointer-distance field, but the semantic
     // hover owner needs spatial hysteresis at item and Dock boundaries.
     mutable RECT magnificationFocusRect_{};

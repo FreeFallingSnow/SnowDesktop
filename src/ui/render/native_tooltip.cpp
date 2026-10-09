@@ -124,7 +124,7 @@ struct NativeTooltip::Impl
     UINT width = 0, height = 0;
     float measuredWidth = 0, measuredHeight = 0;
     bool contentDirty = true, paintDirty = true, highContrast = false, visible = false;
-    bool dragFeedback = false;
+    bool dragFeedback = false, hidingWindow = false;
     HRESULT lastError = S_OK;
     std::shared_ptr<AccessibleState> accessible = std::make_shared<AccessibleState>();
     ComPtr<IRawElementProviderSimple> provider;
@@ -155,16 +155,19 @@ struct NativeTooltip::Impl
     }
     void HideWindow()
     {
+        if (hidingWindow) return;
+        hidingWindow = true;
         if (window) KillTimer(window, kHoverTimer);
-        if (visible)
+        const bool wasVisible = std::exchange(visible, false);
+        if (wasVisible)
         {
             backdrop.HidePopupWindowPair(window);
-            visible = false;
             { std::lock_guard guard(accessible->mutex); accessible->visible = false; }
             if (provider && UiaClientsAreListening()) UiaRaiseAutomationEvent(provider.Get(), UIA_ToolTipClosedEventId);
         }
         // No hidden popup keeps a glass composition target alive.
         backdrop.Reset();
+        hidingWindow = false;
     }
     void Hide() { HideWindow(); state.Leave(); }
     void Close()
@@ -367,6 +370,22 @@ struct NativeTooltip::Impl
         if (!self) return DefWindowProcW(window, message, wp, lp);
         switch (message)
         {
+        case WM_SHOWWINDOW:
+            if (!wp && !self->hidingWindow) self->Hide();
+            break;
+        case WM_WINDOWPOSCHANGED:
+            if ((reinterpret_cast<WINDOWPOS*>(lp)->flags & SWP_HIDEWINDOW) && !self->hidingWindow)
+                self->Hide();
+            break;
+        case WM_NCDESTROY:
+            // The owner can destroy its owned windows before Close is called.
+            self->window = nullptr;
+            self->Hide();
+            { std::lock_guard guard(self->accessible->mutex); self->accessible->window = nullptr; }
+            std::erase(nativeTooltipWindows, window);
+            self->provider.Reset(); self->ReleaseGraphics();
+            SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+            break;
         case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
         case WM_NCHITTEST: return HTTRANSPARENT;
         case WM_ERASEBKGND: return 1;

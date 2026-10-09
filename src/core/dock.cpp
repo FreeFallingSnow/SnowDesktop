@@ -2106,8 +2106,18 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 }
 
+void DockContainer::ClearTitleTooltipBackdrop()
+{
+    titleTooltipBackdrop_.Clear([this](std::uintptr_t key) {
+        if (app_) app_->ClearInlineTooltipBackdrop(key);
+    });
+}
+
 void DockContainer::DrawContents(ID2D1DeviceContext* context)
 {
+    auto tooltipPaint = titleTooltipBackdrop_.BeginPaint([this](std::uintptr_t key) {
+        if (app_) app_->ClearInlineTooltipBackdrop(key);
+    });
     if (!context) return;
     const auto& slots = GetSlots();
     const size_t count = entries_ ? entries_->size() : 0;
@@ -2613,7 +2623,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         options.scale = scale; options.centered = true;
         if (SUCCEEDED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), format.Get(), {}, hoveredTitle,
             static_cast<float>(bounds.right - bounds.left), static_cast<float>(bounds.bottom - bounds.top), measured, options)))
-            app_->DrawInlineTooltip(context, bounds, measured, scale);
+            tooltipPaint.Keep(app_->DrawInlineTooltip(context, bounds, measured, scale, titleTooltipBackdrop_));
     }
 }
 

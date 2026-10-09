@@ -393,25 +393,25 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     }
 }
 
-void Collection::DrawTitlelessTooltip(ID2D1DeviceContext* context,
+bool Collection::DrawTitlelessTooltip(ID2D1DeviceContext* context,
     const std::wstring& title, RECT anchor) const
 {
-    if (!app_ || !context || title.empty() || IsRectEmptyRect(anchor) || !app_->dwriteFactory_) return;
+    if (!app_ || !context || title.empty() || IsRectEmptyRect(anchor) || !app_->dwriteFactory_) return false;
     const RECT frame = GetFrameRect();
     const auto* page = app_->GridPageFromPoint({anchor.left, anchor.top});
     const float scale = page ? static_cast<float>(page->dpiX) / 96.f : 1.f;
     ComPtr<IDWriteTextFormat> format;
-    if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(app_->dwriteFactory_.Get(), &format, scale, false))) return;
+    if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(app_->dwriteFactory_.Get(), &format, scale, false))) return false;
     snowdesktop::NativeTooltipTextLayout measured;
     snowdesktop::NativeTooltipLayoutOptions options;
     options.scale = scale; options.centered = true;
     if (FAILED(snowdesktop::MeasureNativeTooltip(app_->dwriteFactory_.Get(), format.Get(), {}, title,
         std::max(1.f, std::min(280.f * scale, static_cast<float>(frame.right - frame.left) - 8.f * scale)),
-        std::max(1.f, std::min(96.f * scale, static_cast<float>(frame.bottom - frame.top) - 8.f * scale)), measured, options))) return;
+        std::max(1.f, std::min(96.f * scale, static_cast<float>(frame.bottom - frame.top) - 8.f * scale)), measured, options))) return false;
     const RECT bounds = snowdesktop::collection_titleless_rules::ResolveTooltipBounds(anchor, frame,
         static_cast<int>(std::ceil(measured.width)), static_cast<int>(std::ceil(measured.height)),
         static_cast<int>(2.f * scale), static_cast<int>(4.f * scale));
-    app_->DrawInlineTooltip(context, bounds, measured, scale);
+    return app_->DrawInlineTooltip(context, bounds, measured, scale, titleTooltipBackdrop_);
 }
 
 /**
@@ -426,6 +426,9 @@ void Collection::DrawTitlelessTooltip(ID2D1DeviceContext* context,
  */
 void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 {
+    auto tooltipPaint = titleTooltipBackdrop_.BeginPaint([this](std::uintptr_t key) {
+        if (app_) app_->ClearInlineTooltipBackdrop(key);
+    });
     if (!data_ || !app_) return;
     if (data_->itemKeys.empty())
     {
@@ -554,8 +557,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 context, bounds, true, 1.0f, lt, data_);
         if (canShowTitlelessTooltip &&
             !hoveredTooltipTitle.empty())
-            DrawTitlelessTooltip(context,
-                hoveredTooltipTitle, hoveredTooltipAnchor);
+            tooltipPaint.Keep(DrawTitlelessTooltip(context,
+                hoveredTooltipTitle, hoveredTooltipAnchor));
     };
 
     for (size_t i = 0; i < inlineCapacity && i < slots.size(); ++i)

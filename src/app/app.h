@@ -17,6 +17,7 @@
  */
 #pragma once
 #include "ui/render/native_tooltip.h"
+#include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_content.h"
 #include "ui/input/text_input_window.h"
 #include "layout/layout_scroll_save.h"
@@ -776,6 +777,7 @@ private:
         RECT animationVisualRect{};
         RECT popupRect{};
         RECT tooltipRect{};
+        snowdesktop::InlineTooltipPaintDamage tooltipPaintDamage;
         RECT guideOcclusionRect{};
         bool active = false;
         // Promotion is per monitor. Selection only identifies the Host that
@@ -998,10 +1000,12 @@ private:
     void DrawHiddenHintOverlay(ID2D1DeviceContext* ctx);
     /** @brief 绘制添加组件操作提示。 */
     void DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx);
-    void DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
-        const snowdesktop::NativeTooltipTextLayout& measured, float scale = 1.f,
-        bool registerBackdrop = true);
-    void DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* message);
+    bool DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
+        const snowdesktop::NativeTooltipTextLayout& measured, float scale,
+        snowdesktop::InlineTooltipBackdrop& backdrop);
+    void ClearInlineTooltipBackdrop(std::uintptr_t ownerKey);
+    bool DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* message,
+        snowdesktop::InlineTooltipBackdrop& backdrop);
     /** @brief 绘制组件面板背景（玻璃填充、色调与描边）。 */
     void DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
@@ -3477,6 +3481,7 @@ private:
     ComPtr<IDCompositionSurface> dcompSurface_;
     ComPtr<IDCompositionVisual2> desktopForegroundCompositionVisual_;
     ComPtr<IDCompositionSurface> desktopForegroundCompositionSurface_;
+    snowdesktop::InlineTooltipPaintDamage desktopForegroundTooltipDamage_;
     UINT desktopForegroundCompositionWidth_ = 0;
     UINT desktopForegroundCompositionHeight_ = 0;
     ComPtr<IDCompositionVisual2> desktopWidgetCompositionLayer_;
@@ -3885,7 +3890,9 @@ private:
     int navHoverSide_ = 0;
     bool navHotEdgeHover_ = false;
     bool navHotEdgeHintVisible_ = false;
-    snowdesktop::desktop_backdrop_update_rules::TransientPanel navHotEdgeHintBackdrop_;
+    snowdesktop::InlineTooltipBackdrop navHotEdgeHintBackdrop_;
+    snowdesktop::InlineTooltipBackdrop hiddenHintBackdrop_;
+    snowdesktop::InlineTooltipBackdrop widgetAddedHintBackdrop_;
     snowdesktop::UiScheduleToken navHotEdgeHintToken_ = 0;
     DWORD navAutoFlipTick_ = 0;
     int navAutoFlipDir_ = 0;
