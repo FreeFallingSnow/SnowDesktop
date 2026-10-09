@@ -349,9 +349,11 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         }
         else if (auto* luaWidget = dynamic_cast<LuaScript*>(widgetItem))
         {
+            // The child draw captures its base material request; the owning
+            // surface registers the native panel after EndDraw succeeds.
             luaWidget->DrawCompositionSurface(
                 context.Get(), widgetData->bounds,
-                widgetData->selected ? 2 : 0, false);
+                widgetData->selected ? 2 : 0, true);
         }
         else
         {

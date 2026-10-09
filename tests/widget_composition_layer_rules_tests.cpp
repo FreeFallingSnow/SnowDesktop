@@ -376,6 +376,17 @@ int main(int argc, char** argv)
                 engine.find("realtimeCompositionCallback_") ==
                 std::string::npos,
             "the widget runtime must not contain subscription-based composition promotion");
+        // Lua material capture must survive the child-surface boundary.
+        // Suppressing this request leaves content visible with no glass.
+        // This guards the wiring; it does not certify the eventual DWM pixels.
+        Check(snowdesktop::test::CheckSourceBoundaries(root, {
+            {"src/app/widgets/app_widget_composition.cpp",
+             "bool DesktopApp::FlushPendingDesktopWidgetComposition()",
+             "bool DesktopApp::HasDesktopWidgetComposition(",
+             {"luaWidget->DrawCompositionSurface(context.Get(), "
+              "widgetData->bounds, widgetData->selected ? 2 : 0, false)"}},
+        }), "retained Lua surface rendering must not suppress its native material request");
+
         const std::size_t materialPass = luaWidget.find(
             "materialEffects, !preview && registerBackdrop");
         const std::size_t componentBackground = luaWidget.find(
