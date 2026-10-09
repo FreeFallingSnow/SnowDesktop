@@ -240,6 +240,8 @@ struct DockWindowPin::State
             {
                 UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW;
                 if (previous == border) flags |= SWP_NOZORDER;
+                if (!shapeChanged) flags |= SWP_NOSIZE | SWP_NOREDRAW;
+                if (!move) flags |= SWP_NOMOVE;
                 if (!SetWindowPos(border, previous ? previous : HWND_TOPMOST,
                         frame.left, frame.top, width, height, flags))
                 {
@@ -266,6 +268,33 @@ struct DockWindowPin::State
         if (!PostMessageW(manager, kRefreshMessage, 0, 0)) refreshQueued = false;
     }
 
+    Entry* FindEntry(HWND window)
+    {
+        const auto found = std::find_if(entries.begin(), entries.end(),
+            [window](const auto& entry) { return entry && entry->target == window; });
+        return found == entries.end() ? nullptr : found->get();
+    }
+
+    void UpdateTrackedBorder(HWND window)
+    {
+        if (refreshing)
+        {
+            // A native call can reenter the hook while entries are being
+            // updated or erased. Defer that exceptional case, not every move.
+            QueueRefresh();
+            return;
+        }
+        Entry* entry = FindEntry(window);
+        if (!entry) return;
+        refreshing = true;
+        if (entry->OwnsTarget() && DockWindowPin::IsPinned(window))
+            entry->UpdateBorder();
+        else
+            QueueRefresh();
+        // Keep ownership changes and vector erasure in the manager handler.
+        refreshing = false;
+    }
+
     static auto& ActiveHooks()
     {
         // OUTOFCONTEXT callbacks run on the registering message-loop thread.
@@ -283,16 +312,24 @@ struct DockWindowPin::State
         hooks.clear();
     }
 
-    static void CALLBACK WinEventProc(HWINEVENTHOOK hook, DWORD event, HWND,
+    static void CALLBACK WinEventProc(HWINEVENTHOOK hook, DWORD event, HWND window,
         LONG object, LONG child, DWORD, DWORD)
     {
         const auto found = ActiveHooks().find(hook);
         if (found == ActiveHooks().end()) return;
         State* state = found->second;
-        // WinEvent callbacks may reenter during native calls. Only enqueue a
-        // coalesced update here; entry ownership is inspected in the message loop.
-        if (event == EVENT_SYSTEM_FOREGROUND ||
-                (object == OBJID_WINDOW && child == CHILDID_SELF))
+        if (event == EVENT_SYSTEM_FOREGROUND)
+        {
+            state->QueueRefresh();
+            return;
+        }
+        if (object != OBJID_WINDOW || child != CHILDID_SELF) return;
+        // Match PowerToys' motion path: update this window inside the native
+        // event callback rather than behind another posted application message.
+        // Border and unrelated-window motion must not trigger a full refresh.
+        if (event == EVENT_OBJECT_LOCATIONCHANGE)
+            state->UpdateTrackedBorder(window);
+        else if (state->refreshing || state->FindEntry(window))
             state->QueueRefresh();
     }
 
