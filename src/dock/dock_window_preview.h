@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dock_settings.h"
+#include "dock_window_pin.h"
 
 #include <dwmapi.h>
 #include <windows.h>
@@ -41,6 +42,8 @@ DockWindowPreviewGrid CalculateDockWindowPreviewGrid(
 std::vector<RECT> CalculateDockWindowPreviewCardRects(
     size_t itemCount, const DockWindowPreviewGrid& grid, UINT dpi);
 RECT CalculateDockWindowPreviewCloseButtonRect(
+    const RECT& cardRect, UINT dpi);
+RECT CalculateDockWindowPreviewPinButtonRect(
     const RECT& cardRect, UINT dpi);
 bool IsPointInDockWindowPreviewCloseButton(
     POINT point, const RECT& cardRect, UINT dpi);
@@ -140,15 +143,18 @@ private:
     void OnMouseMove(POINT point);
     void OnMouseLeave();
     void OnLeftButtonUp(POINT point);
+    void OnMiddleButtonUp(POINT point);
     void HideIfPointerOutside();
     bool IsPointerInTransitionRegion(POINT screenPoint) const;
     int CardIndexAtPoint(POINT point) const;
     int CloseButtonIndexAtPoint(POINT point) const;
+    int PinButtonIndexAtPoint(POINT point) const;
 
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
     ActivateCallback activateCallback_;
     CloseCallback closeCallback_;
+    DockWindowPin windowPins_;
     std::function<void()> visibilityChanged_;
     std::vector<DockWindowPreviewItem> items_;
     std::vector<RECT> cardRects_;
@@ -161,6 +167,7 @@ private:
     bool trackingMouse_ = false;
     int hoveredIndex_ = -1;
     int hoveredCloseIndex_ = -1;
+    int hoveredPinIndex_ = -1;
     UINT dpi_ = 96;
     POINT transitionOriginScreen_{};
     bool hasTransitionOrigin_ = false;

@@ -103,6 +103,7 @@ namespace identityRules = snowdesktop::dock_app_identity_rules;
 int RunDesktopBackdropCompositorTests();
 int RunNativeTaskbarTests();
 int RunTrayModelTests();
+int RunDockWindowPinTests();
 int TryRunTrayLiveTests();
 
 namespace
@@ -2121,6 +2122,7 @@ int main(int argc, char** argv)
     failures += RunDesktopBackdropCompositorTests();
     failures += RunNativeTaskbarTests();
     failures += RunTrayModelTests();
+    failures += RunDockWindowPinTests();
     CheckSingleLineRenameEditor();
     CheckMenuProtectedHostPositionChanges();
     CheckDockWindowPreviewLateOwnerPromotion();
@@ -7493,6 +7495,15 @@ int main(int argc, char** argv)
             },
             singleCards.front(), 96),
         "thumbnail content must not be mistaken for the close button");
+    const RECT previewPinButton = CalculateDockWindowPreviewPinButtonRect(singleCards.front(), 96);
+    Check(!IsRectEmpty(&previewPinButton) && previewPinButton.right < previewCloseButton.left &&
+            previewPinButton.top == previewCloseButton.top &&
+            previewPinButton.bottom == previewCloseButton.bottom,
+        "pin and close actions have separate aligned title-bar hit targets");
+    const POINT previewPinCenter{(previewPinButton.left + previewPinButton.right) / 2,
+        (previewPinButton.top + previewPinButton.bottom) / 2};
+    Check(!IsPointInDockWindowPreviewCloseButton(previewPinCenter, singleCards.front(), 96),
+        "clicking the pin must not request application close");
 
     const DockWindowPreviewGrid multi =
         CalculateDockWindowPreviewGrid(2, 1200, 700, 96);
@@ -7548,6 +7559,11 @@ int main(int argc, char** argv)
             previewCloseButton.right -
                 previewCloseButton.left,
         "the preview close target must scale with monitor DPI");
+    const RECT highDpiPinButton = CalculateDockWindowPreviewPinButtonRect(highDpiCards.front(), 144);
+    Check(highDpiPinButton.right < highDpiCloseButton.left &&
+            highDpiPinButton.right - highDpiPinButton.left >
+                previewPinButton.right - previewPinButton.left,
+        "pin hit targets stay separate from close and scale at higher DPI");
 
     DockWindowPreview clearedPreview;
     Check(clearedPreview.IsCleared(),

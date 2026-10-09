@@ -333,6 +333,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/wallpaper_engine_capture.cpp
     src/data/atomic_file.cpp
     src/dock/dock_window_preview.cpp
+    src/dock/dock_window_pin.cpp
     src/dock/dock_window_transition.cpp
     src/core/item.cpp
     src/core/drag_target_resolver.cpp
@@ -2371,6 +2372,7 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/dock/dock_window_pin_tests.cpp
             tests/taskbar_native_tests.cpp
             tests/taskbar_symbol_resolver_tests.cpp
             src/taskbar_hook/taskbar_symbol_resolver.cpp
@@ -2389,6 +2391,7 @@ if (BUILD_TESTING)
             src/icons/icon_beautify.cpp
             src/common/l10n.cpp
             src/dock/dock_window_preview.cpp
+            src/dock/dock_window_pin.cpp
             src/dock/dock_window_transition.cpp
             src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src

@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "dock_window_preview.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 
 #include <shellscalingapi.h>
 #include <windowsx.h>
@@ -15,6 +16,8 @@ namespace
 
 constexpr wchar_t kDockWindowPreviewClassName[] =
     L"SnowDesktopDockWindowPreview";
+// dismiss_20_regular from the same pinned Fluent Regular font as kPin.
+constexpr wchar_t kCloseGlyph[] = L"\uF369";
 
 int ScaleForDpi(int value, UINT dpi)
 {
@@ -158,7 +161,7 @@ DockWindowPreviewGrid CalculateDockWindowPreviewGrid(
     if (itemCount == 0 || maximumWidth <= 0 || maximumHeight <= 0)
         return result;
 
-    const int padding = std::max(1, ScaleForDpi(10, dpi));
+    const int padding = 0;
     const int gap = std::max(1, ScaleForDpi(8, dpi));
     const int desiredCardWidth = std::max(1, ScaleForDpi(210, dpi));
     const int desiredCardHeight = std::max(1, ScaleForDpi(156, dpi));
@@ -225,7 +228,7 @@ std::vector<RECT> CalculateDockWindowPreviewCardRects(
         return cards;
 
     const int gap = std::max(1, ScaleForDpi(8, dpi));
-    const int padding = std::max(1, ScaleForDpi(10, dpi));
+    const int padding = 0;
     cards.reserve(itemCount);
     size_t rowStartIndex = 0;
     for (int row = 0; row < grid.rows &&
@@ -296,6 +299,17 @@ RECT CalculateDockWindowPreviewCloseButtonRect(
             static_cast<int>(cardRect.bottom),
             top + buttonSize)
     };
+}
+
+RECT CalculateDockWindowPreviewPinButtonRect(
+    const RECT& cardRect, UINT dpi)
+{
+    RECT pin = CalculateDockWindowPreviewCloseButtonRect(cardRect, dpi);
+    const int width = pin.right - pin.left;
+    if (width <= 0) return {};
+    OffsetRect(&pin, -width - std::max(1, ScaleForDpi(4, dpi)), 0);
+    if (pin.left < cardRect.left + std::max(1, ScaleForDpi(6, dpi))) return {};
+    return pin;
 }
 
 bool IsPointInDockWindowPreviewCloseButton(
@@ -568,6 +582,7 @@ void DockWindowPreview::Show(
     lightTheme_ = lightTheme;
     hoveredIndex_ = -1;
     hoveredCloseIndex_ = -1;
+    hoveredPinIndex_ = -1;
     const POINT anchorCenter{
         (anchorScreen.left + anchorScreen.right) / 2,
         (anchorScreen.top + anchorScreen.bottom) / 2
@@ -804,6 +819,7 @@ void DockWindowPreview::Hide()
     panelSize_ = {};
     hoveredIndex_ = -1;
     hoveredCloseIndex_ = -1;
+    hoveredPinIndex_ = -1;
     trackingMouse_ = false;
     hasTransitionOrigin_ = false;
     if (wasVisible && visibilityChanged_) visibilityChanged_();
@@ -863,6 +879,7 @@ bool DockWindowPreview::IsCleared() const
         panelSize_.cy == 0 &&
         hoveredIndex_ == -1 &&
         hoveredCloseIndex_ == -1 &&
+        hoveredPinIndex_ == -1 &&
         !trackingMouse_ &&
         !hasTransitionOrigin_ &&
         !hideTimerArmed_;
@@ -924,6 +941,11 @@ void DockWindowPreview::Paint()
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
+    HFONT actionFont = CreateFontW(
+        -ScaleForDpi(16, dpi_), 0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
     HGDIOBJ oldFont = SelectObject(dc, font);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text);
@@ -952,13 +974,37 @@ void DockWindowPreview::Paint()
         const RECT closeRect =
             CalculateDockWindowPreviewCloseButtonRect(
                 bounds, dpi_);
+        RECT pinRect = CalculateDockWindowPreviewPinButtonRect(bounds, dpi_);
         titleRect.right = std::max(
             titleRect.left,
-            closeRect.left -
+            (IsRectEmpty(&pinRect) ? closeRect.left : pinRect.left) -
                 std::max(2, ScaleForDpi(4, dpi_)));
+        SetTextColor(dc, text);
         DrawTextW(dc, items_[index].title.c_str(), -1, &titleRect,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS |
             DT_NOPREFIX);
+
+        const bool pinned = DockWindowPin::IsPinned(items_[index].window);
+        const bool pinHovered = static_cast<int>(index) == hoveredPinIndex_;
+        if (!IsRectEmpty(&pinRect))
+        {
+            if (pinned || pinHovered)
+            {
+                HBRUSH pinFill = CreateSolidBrush(pinned ? RGB(0, 120, 215) : hovered);
+                HGDIOBJ previousBrush = SelectObject(dc, pinFill);
+                HGDIOBJ previousPen = SelectObject(dc, GetStockObject(NULL_PEN));
+                RoundRect(dc, pinRect.left, pinRect.top, pinRect.right, pinRect.bottom,
+                    ScaleForDpi(5, dpi_), ScaleForDpi(5, dpi_));
+                SelectObject(dc, previousPen);
+                SelectObject(dc, previousBrush);
+                DeleteObject(pinFill);
+            }
+            SetTextColor(dc, pinned ? RGB(255, 255, 255) : closeIdle);
+            SelectObject(dc, actionFont);
+            DrawTextW(dc, snowdesktop::menu_fluent_glyphs::kPin, -1, &pinRect,
+                DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
+            SelectObject(dc, font);
+        }
 
         const bool closeHoveredForItem =
             static_cast<int>(index) ==
@@ -985,40 +1031,17 @@ void DockWindowPreview::Paint()
             closeHoveredForItem
             ? RGB(255, 255, 255)
             : closeIdle;
-        HPEN closePen = CreatePen(
-            PS_SOLID,
-            std::max(1, ScaleForDpi(2, dpi_)),
-            closeColor);
-        HGDIOBJ oldClosePen =
-            SelectObject(dc, closePen);
-        const int crossInset = std::max(
-            2, static_cast<int>(
-                closeRect.right -
-                closeRect.left) / 3);
-        MoveToEx(
-            dc,
-            closeRect.left + crossInset,
-            closeRect.top + crossInset,
-            nullptr);
-        LineTo(
-            dc,
-            closeRect.right - crossInset,
-            closeRect.bottom - crossInset);
-        MoveToEx(
-            dc,
-            closeRect.right - crossInset - 1,
-            closeRect.top + crossInset,
-            nullptr);
-        LineTo(
-            dc,
-            closeRect.left + crossInset - 1,
-            closeRect.bottom - crossInset);
-        SelectObject(dc, oldClosePen);
-        DeleteObject(closePen);
+        SetTextColor(dc, closeColor);
+        SelectObject(dc, actionFont);
+        RECT closeGlyphRect = closeRect;
+        DrawTextW(dc, kCloseGlyph, -1, &closeGlyphRect,
+            DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
+        SelectObject(dc, font);
     }
 
     SelectObject(dc, oldFont);
     DeleteObject(font);
+    DeleteObject(actionFont);
     EndPaint(hwnd_, &paint);
 }
 
@@ -1043,6 +1066,16 @@ int DockWindowPreview::CloseButtonIndexAtPoint(
     return -1;
 }
 
+int DockWindowPreview::PinButtonIndexAtPoint(POINT point) const
+{
+    for (size_t index = 0; index < cardRects_.size(); ++index)
+    {
+        const RECT pin = CalculateDockWindowPreviewPinButtonRect(cardRects_[index], dpi_);
+        if (PtInRect(&pin, point)) return static_cast<int>(index);
+    }
+    return -1;
+}
+
 void DockWindowPreview::OnMouseMove(POINT point)
 {
     KeepVisible();
@@ -1057,11 +1090,13 @@ void DockWindowPreview::OnMouseMove(POINT point)
     const int hovered = CardIndexAtPoint(point);
     const int hoveredClose =
         CloseButtonIndexAtPoint(point);
+    const int hoveredPin = PinButtonIndexAtPoint(point);
     if (hovered != hoveredIndex_ ||
-        hoveredClose != hoveredCloseIndex_)
+        hoveredClose != hoveredCloseIndex_ || hoveredPin != hoveredPinIndex_)
     {
         hoveredIndex_ = hovered;
         hoveredCloseIndex_ = hoveredClose;
+        hoveredPinIndex_ = hoveredPin;
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 }
@@ -1071,12 +1106,21 @@ void DockWindowPreview::OnMouseLeave()
     trackingMouse_ = false;
     hoveredIndex_ = -1;
     hoveredCloseIndex_ = -1;
+    hoveredPinIndex_ = -1;
     InvalidateRect(hwnd_, nullptr, FALSE);
     ScheduleHide();
 }
 
 void DockWindowPreview::OnLeftButtonUp(POINT point)
 {
+    const int pinIndex = PinButtonIndexAtPoint(point);
+    if (pinIndex >= 0 && static_cast<size_t>(pinIndex) < items_.size())
+    {
+        KeepVisible();
+        windowPins_.Toggle(items_[pinIndex].window);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     const int closeIndex =
         CloseButtonIndexAtPoint(point);
     if (closeIndex >= 0 &&
@@ -1099,6 +1143,15 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
     Hide();
     if (activateCallback_ && target && IsWindow(target))
         activateCallback_(target);
+}
+
+void DockWindowPreview::OnMiddleButtonUp(POINT point)
+{
+    const int index = CardIndexAtPoint(point);
+    if (index < 0 || static_cast<size_t>(index) >= items_.size()) return;
+    const HWND target = items_[index].window;
+    Hide();
+    if (closeCallback_ && target && IsWindow(target)) closeCallback_(target);
 }
 
 void DockWindowPreview::HideIfPointerOutside()
@@ -1184,6 +1237,11 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         return 0;
     case WM_LBUTTONUP:
         preview->OnLeftButtonUp({
+            GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
+        });
+        return 0;
+    case WM_MBUTTONUP:
+        preview->OnMiddleButtonUp({
             GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
         });
         return 0;
