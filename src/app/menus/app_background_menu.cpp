@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
+#include "sort_menu.h"
 #include "navigation/search_match.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "widget/runtime/widget_menu_catalogue.h"
@@ -1417,26 +1418,10 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    HMENU sortMenu = CreatePopupMenu();
-    HMENU nameSortMenu = nullptr, typeSortMenu = nullptr;
+    HMENU sortMenu = snowdesktop::sort_menu::Create(
+        [](const char* key) { return _LW(key); });
     if (sortMenu)
-    {
-        nameSortMenu = CreatePopupMenu();
-        if (nameSortMenu)
-        {
-            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameCommand,     _LW("app.menu.sort_asc"));
-            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameDescCommand,     _LW("app.menu.sort_desc"));
-            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(nameSortMenu), _LW("app.menu.sort_name"));
-        }
-        typeSortMenu = CreatePopupMenu();
-        if (typeSortMenu)
-        {
-            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeCommand, _LW("app.menu.sort_asc"));
-            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeDescCommand, _LW("app.menu.sort_desc"));
-            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(typeSortMenu), _LW("app.menu.sort_type"));
-        }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
-    }
 
     POINT clientPoint = screenPoint;
     ScreenToClient(hwnd_, &clientPoint);
@@ -1766,32 +1751,10 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu),
             snowdesktop::menu_fluent_glyphs::kSort,
             MenuIconFont::FluentRegular, BuiltinIcon::Sort);
-        if (nameSortMenu)
-        {
-            SetMenuItemIcon(sortMenu,
-                reinterpret_cast<UINT_PTR>(nameSortMenu),
-                snowdesktop::menu_fluent_glyphs::kSortName,
-                MenuIconFont::FluentRegular);
-            SetMenuItemIcon(nameSortMenu, kContextSortByNameCommand,
-                snowdesktop::menu_fluent_glyphs::kSortNameAscending,
-                MenuIconFont::FluentRegular);
-            SetMenuItemIcon(nameSortMenu, kContextSortByNameDescCommand,
-                snowdesktop::menu_fluent_glyphs::kSortNameDescending,
-                MenuIconFont::FluentRegular);
-        }
-        if (typeSortMenu)
-        {
-            SetMenuItemIcon(sortMenu,
-                reinterpret_cast<UINT_PTR>(typeSortMenu),
-                snowdesktop::menu_fluent_glyphs::kSortType,
-                MenuIconFont::FluentRegular);
-            SetMenuItemIcon(typeSortMenu, kContextSortByTypeCommand,
-                snowdesktop::menu_fluent_glyphs::kSortTypeAscending,
-                MenuIconFont::FluentRegular);
-            SetMenuItemIcon(typeSortMenu, kContextSortByTypeDescCommand,
-                snowdesktop::menu_fluent_glyphs::kSortTypeDescending,
-                MenuIconFont::FluentRegular);
-        }
+        snowdesktop::sort_menu::SetIcons(sortMenu,
+            [this](HMENU target, UINT commandId, const wchar_t* glyph) {
+                SetMenuItemIcon(target, commandId, glyph, MenuIconFont::FluentRegular);
+            });
     }
     if (widgetMenu)
     {
@@ -2051,7 +2014,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
 
     bool needsDesktopFocus = true;
-    if (command >= kContextAddLuaWidgetFirst &&
+    if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
+    {
+        SortIcons(sort->mode, sort->ascending);
+    }
+    else if (command >= kContextAddLuaWidgetFirst &&
         command < kContextAddLuaWidgetFirst +
             static_cast<UINT>(kLuaWidgetMenuPageSize))
     {
@@ -2081,10 +2048,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         switch (command)
         {
         case kContextRefreshCommand: ReloadItems(); break;
-        case kContextSortByNameCommand: SortIconsByName(true); break;
-        case kContextSortByNameDescCommand: SortIconsByName(false); break;
-        case kContextSortByTypeCommand: SortIconsByType(true); break;
-        case kContextSortByTypeDescCommand: SortIconsByType(false); break;
         case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
         case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
         case kContextPinFirstPage: ToggleFirstPagePin(screenPoint); break;

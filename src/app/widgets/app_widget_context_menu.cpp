@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/menus/sort_menu.h"
 #include "platform/demo_collection_rules.h"
 #include "layout/collection_titleless_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -697,51 +698,17 @@ void DesktopApp::ShowWidgetContextMenu(
         }
     }
 
-    HMENU sortMenu = nullptr, wNameMenu = nullptr, wTypeMenu = nullptr,
-        wDateMenu = nullptr, wSizeMenu = nullptr;
-    if ((widget.type == DesktopWidgetType::FileCategories ||
+    HMENU sortMenu = nullptr;
+    if (widget.type == DesktopWidgetType::FileCategories ||
         widget.type == DesktopWidgetType::FolderMapping ||
         widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::CollectionGroup ||
-        widget.type == DesktopWidgetType::FileGroup))
+        widget.type == DesktopWidgetType::FileGroup)
     {
-        sortMenu = CreatePopupMenu();
+        sortMenu = snowdesktop::sort_menu::Create(
+            [](const char* key) { return _LW(key); });
         if (sortMenu)
-        {
-            wNameMenu = CreatePopupMenu();
-            if (wNameMenu)
-            {
-                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByName, _LW("app.menu.sort_asc"));
-                AppendMenuW(wNameMenu, MF_STRING, kContextWidgetSortByNameDesc, _LW("app.menu.sort_desc"));
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wNameMenu), _LW("app.menu.sort_name"));
-            }
-            wTypeMenu = CreatePopupMenu();
-            if (wTypeMenu)
-            {
-                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByType, _LW("app.menu.sort_asc"));
-                AppendMenuW(wTypeMenu, MF_STRING, kContextWidgetSortByTypeDesc, _LW("app.menu.sort_desc"));
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wTypeMenu), _LW("app.menu.sort_type"));
-            }
-            wDateMenu = CreatePopupMenu();
-            if (wDateMenu)
-            {
-                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDate, _LW("app.menu.sort_asc"));
-                AppendMenuW(wDateMenu, MF_STRING, kContextWidgetSortByDateDesc, _LW("app.menu.sort_desc"));
-                AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(wDateMenu), _LW("app.interact.sort_date"));
-            }
-            wSizeMenu = CreatePopupMenu();
-            if (wSizeMenu)
-            {
-                AppendMenuW(wSizeMenu, MF_STRING,
-                    kContextWidgetSortBySize, _LW("app.menu.sort_asc"));
-                AppendMenuW(wSizeMenu, MF_STRING,
-                    kContextWidgetSortBySizeDesc, _LW("app.menu.sort_desc"));
-                AppendMenuW(sortMenu, MF_POPUP,
-                    reinterpret_cast<UINT_PTR>(wSizeMenu),
-                    _LW("app.menu.sort_size"));
-            }
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
-        }
     }
 
     const UINT hoverToggleCommand = widget.showOnHoverOnly
@@ -872,54 +839,10 @@ void DesktopApp::ShowWidgetContextMenu(
     {
         setFluentIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu),
             snowdesktop::menu_fluent_glyphs::kSort);
-        if (wNameMenu)
-        {
-            setFluentIcon(sortMenu,
-                reinterpret_cast<UINT_PTR>(wNameMenu),
-                snowdesktop::menu_fluent_glyphs::kSortName);
-            setFluentIcon(wNameMenu,
-                kContextWidgetSortByName,
-                snowdesktop::menu_fluent_glyphs::kSortNameAscending);
-            setFluentIcon(wNameMenu,
-                kContextWidgetSortByNameDesc,
-                snowdesktop::menu_fluent_glyphs::kSortNameDescending);
-        }
-        if (wTypeMenu)
-        {
-            setFluentIcon(sortMenu,
-                reinterpret_cast<UINT_PTR>(wTypeMenu),
-                snowdesktop::menu_fluent_glyphs::kSortType);
-            setFluentIcon(wTypeMenu,
-                kContextWidgetSortByType,
-                snowdesktop::menu_fluent_glyphs::kSortTypeAscending);
-            setFluentIcon(wTypeMenu,
-                kContextWidgetSortByTypeDesc,
-                snowdesktop::menu_fluent_glyphs::kSortTypeDescending);
-        }
-        if (wDateMenu)
-        {
-            setFluentIcon(sortMenu,
-                reinterpret_cast<UINT_PTR>(wDateMenu),
-                snowdesktop::menu_fluent_glyphs::kSortDate);
-            setFluentIcon(wDateMenu,
-                kContextWidgetSortByDate,
-                snowdesktop::menu_fluent_glyphs::kSortDateAscending);
-            setFluentIcon(wDateMenu,
-                kContextWidgetSortByDateDesc,
-                snowdesktop::menu_fluent_glyphs::kSortDateDescending);
-        }
-        if (wSizeMenu)
-        {
-            setFluentIcon(sortMenu,
-                reinterpret_cast<UINT_PTR>(wSizeMenu),
-                snowdesktop::menu_fluent_glyphs::kSort);
-            setFluentIcon(wSizeMenu,
-                kContextWidgetSortBySize,
-                snowdesktop::menu_fluent_glyphs::kSortNameAscending);
-            setFluentIcon(wSizeMenu,
-                kContextWidgetSortBySizeDesc,
-                snowdesktop::menu_fluent_glyphs::kSortNameDescending);
-        }
+        snowdesktop::sort_menu::SetIcons(sortMenu,
+            [this](HMENU target, UINT commandId, const wchar_t* glyph) {
+                SetMenuItemIcon(target, commandId, glyph, MenuIconFont::FluentRegular);
+            });
     }
     if (widget.type == DesktopWidgetType::Collection)
         setFluentIcon(menu, kContextWidgetToggleCollectionMode,
@@ -1051,6 +974,9 @@ void DesktopApp::ShowWidgetContextMenu(
     };
 
     bool needsDesktopFocus = true;
+    if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
+        SortWidgetContents(contentSortTargetIndex, sort->mode, sort->ascending);
+
     switch (command)
     {
     case kContextWidgetOpen:
@@ -1472,30 +1398,6 @@ void DesktopApp::ShowWidgetContextMenu(
                 widgets_[effectiveSourceIndex].
                     sourceFolderPath, screenPoint);
         }
-        break;
-    case kContextWidgetSortByName:
-        SortWidgetContents(contentSortTargetIndex, 0, true);
-        break;
-    case kContextWidgetSortByNameDesc:
-        SortWidgetContents(contentSortTargetIndex, 0, false);
-        break;
-    case kContextWidgetSortByType:
-        SortWidgetContents(contentSortTargetIndex, 1, true);
-        break;
-    case kContextWidgetSortByTypeDesc:
-        SortWidgetContents(contentSortTargetIndex, 1, false);
-        break;
-    case kContextWidgetSortByDate:
-        SortWidgetContents(contentSortTargetIndex, 2, true);
-        break;
-    case kContextWidgetSortByDateDesc:
-        SortWidgetContents(contentSortTargetIndex, 2, false);
-        break;
-    case kContextWidgetSortBySize:
-        SortWidgetContents(contentSortTargetIndex, 3, true);
-        break;
-    case kContextWidgetSortBySizeDesc:
-        SortWidgetContents(contentSortTargetIndex, 3, false);
         break;
     case kContextWidgetShowOnHoverOn:
         widgets_[widgetIndex].showOnHoverOnly = true;

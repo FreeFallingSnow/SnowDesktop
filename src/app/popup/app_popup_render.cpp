@@ -175,6 +175,9 @@ void DesktopApp::DrawCollectionPopup(
                 sortLabel =
                     _LW("app.interact.sort_date");
                 break;
+            case snowdesktop::folder_sort_rules::kSize:
+                sortLabel = _LW("app.menu.sort_size");
+                break;
             default:
                 break;
             }

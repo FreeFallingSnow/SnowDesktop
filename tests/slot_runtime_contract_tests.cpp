@@ -36,6 +36,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "desktop/desktop_hover_rules.h"
 #include "layout/floating_popup_rules.h"
+#include "layout/desktop_item_sort_rules.h"
 #include "layout/popup_animation_rules.h"
 #include "drag_drop/ole_drag_rules.h"
 
@@ -3457,9 +3458,52 @@ void TestNewItemsRetainTheirDesktopFilesOwner()
     }
 }
 
+// The host uses this comparator for free-desktop icons and collection contents.
+// Unknown metadata must remain last, and zero bytes must remain a known value.
+void TestDesktopMetadataSorting(bool negativeControl = false)
+{
+    using namespace snowdesktop::folder_sort_rules;
+    std::vector<DesktopItem> input(5);
+    input[0].name = L"A"; input[0].fileSize = 9; input[0].modifiedTime = FILETIME{100, 0};
+    input[1].name = L"Z"; input[1].fileSize = 1; input[1].modifiedTime = FILETIME{300, 0};
+    input[2].name = L"B"; input[2].fileSize = 0; input[2].modifiedTime = FILETIME{200, 0};
+    input[3].name = L"D"; input[3].fileSize = 9; input[3].modifiedTime = FILETIME{100, 0};
+    input[4].name = L"C";
+    for (auto& item : input) item.typeName = L"Text";
+    input[1].typeName = L"Image";
+    input[4].typeName.clear();
+    const auto names = [&](int mode, bool ascending) {
+        std::vector<const DesktopItem*> items;
+        for (const auto& item : input) items.push_back(&item);
+        std::stable_sort(items.begin(), items.end(), [&](const auto* a, const auto* b) {
+            return snowdesktop::desktop_item_sort_rules::LessOnDesktop(
+                *a, *b, negativeControl ? kName : mode, ascending);
+        });
+        std::wstring result;
+        for (const auto* item : items) result += item->name;
+        return result;
+    };
+    Check(names(kSize, true) == L"BZADC", "size ascending includes zero bytes and keeps unknown metadata last");
+    Check(names(kSize, false) == L"ADZBC", "size descending reverses values, with name ties and unknown metadata last");
+    Check(names(kModified, true) == L"ADBZC", "modified ascending follows timestamps, with deterministic ties");
+    Check(names(kModified, false) == L"ZBADC", "modified descending puts the newest first and unavailable times last");
+    Check(names(kName, true) == L"ABCDZ" && names(kName, false) == L"ZDCBA",
+        "name sorting retains both directions");
+    Check(names(kType, true) == L"CZABD" && names(kType, false) == L"DBAZC",
+        "desktop type sorting preserves empty types and direction-sensitive name ties");
+    // Negative control: the former name-only behavior cannot satisfy metadata expectations.
+    Check(names(kName, true) != L"BZADC" && names(kName, false) != L"ZBADC",
+        "metadata fixtures distinguish unsupported size/date sorting from a correct result");
+}
+
 int RunDropStagingTests();
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--desktop-sort-negative-control")
+    {
+        TestDesktopMetadataSorting(true);
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 4 && std::wstring(argv[1]) == L"--register-notification-shortcut")
     {
         const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -3477,6 +3521,7 @@ int wmain(int argc, wchar_t** argv)
     }
     if (argc == 2 && std::wstring(argv[1]) == L"--notification-identity-probe")
         return RunTrayNotificationIdentityProbe();
+    TestDesktopMetadataSorting();
     TestIndependentDropCompletions();
     TestNewItemsRetainTheirDesktopFilesOwner();
     TestSlotCacheAndIdentity();

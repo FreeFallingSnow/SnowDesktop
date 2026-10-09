@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "sort_menu.h"
 #include "desktop/desktop_input_activation.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "ui/menu/menu_icon_render.h"
@@ -634,6 +635,7 @@ UINT DesktopApp::ShowModernMenu(
             }
             result.push_back(std::move(item));
         }
+        snowdesktop::sort_menu::ApplyInlineLayout(result);
         return result;
     };
 

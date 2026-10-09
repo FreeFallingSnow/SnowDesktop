@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "app/lifecycle/startup_diagnostics.h"
+#include "layout/desktop_item_sort_rules.h"
 
 // Desktop and widget sorting plus clipboard cut-state updates.
 
@@ -21,54 +22,9 @@ snowdesktop::list_detail_rules::Column ContentSortColumnForMode(int mode)
         return snowdesktop::list_detail_rules::Column::None;
     }
 }
-
-bool DesktopItemLess(
-    const DesktopItem& a,
-    const DesktopItem& b,
-    int mode,
-    bool ascending)
-{
-    int comparison = 0;
-    if (mode == snowdesktop::folder_sort_rules::kType)
-    {
-        const bool hasA = !a.typeName.empty();
-        const bool hasB = !b.typeName.empty();
-        if (hasA != hasB)
-            return hasA;
-        if (hasA)
-            comparison = _wcsicmp(
-                a.typeName.c_str(), b.typeName.c_str());
-    }
-    else if (mode == snowdesktop::folder_sort_rules::kModified)
-    {
-        const bool hasA = a.modifiedTime.has_value();
-        const bool hasB = b.modifiedTime.has_value();
-        if (hasA != hasB)
-            return hasA;
-        if (hasA)
-            comparison = CompareFileTime(&*a.modifiedTime,
-                &*b.modifiedTime);
-    }
-    else if (mode == snowdesktop::folder_sort_rules::kSize)
-    {
-        const bool hasA = a.fileSize.has_value();
-        const bool hasB = b.fileSize.has_value();
-        if (hasA != hasB)
-            return hasA;
-        if (hasA && *a.fileSize != *b.fileSize)
-            comparison = *a.fileSize < *b.fileSize ? -1 : 1;
-    }
-    else
-        comparison = _wcsicmp(a.name.c_str(), b.name.c_str());
-
-    if (comparison != 0)
-        return ascending ? comparison < 0 : comparison > 0;
-    comparison = _wcsicmp(a.name.c_str(), b.name.c_str());
-    return comparison < 0;
-}
 }
 
-void DesktopApp::SortIconsByName(bool ascending)
+void DesktopApp::SortIcons(int mode, bool ascending)
 {
     auto sortForPage = [&](const GridPage& page) {
         const GridPage* firstPage = GetFirstPageGridPage();
@@ -82,73 +38,9 @@ void DesktopApp::SortIconsByName(bool ascending)
                 order.push_back(i);
         }
 
-        std::sort(order.begin(), order.end(), [this, ascending](size_t a, size_t b) {
-            int cmp = ToUpperInvariant(items_[a].name).compare(ToUpperInvariant(items_[b].name));
-            return ascending ? (cmp < 0) : (cmp > 0);
-        });
-
-        std::unordered_set<std::wstring> usedSlots;
-        for (const auto& widget : widgets_)
-            if (!IsGroupedWidget(widget) &&
-                widget.gridCell.pageId == page.id)
-                MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
-
-        std::vector<PendingGridMove> placements;
-        for (size_t itemIndex : order)
-        {
-            const auto span = items_[itemIndex].gridSpan;
-            bool placed = false;
-            for (int slot = 0; slot < page.columns * page.rows; ++slot)
-            {
-                GridCell cell{page.id, slot / std::max(1, page.rows), slot % std::max(1, page.rows)};
-                if (cell.column + span.columns > page.columns || cell.row + span.rows > page.rows) continue;
-                if (AreGridSlotsMarked(usedSlots, cell, span)) continue;
-                placements.push_back({itemIndex, cell});
-                MarkGridArea(usedSlots, cell, span);
-                placed = true;
-                break;
-            }
-            // Sorting is transactional: a packed page may have no valid new
-            // arrangement. Preserve every original position in that case.
-            if (!placed) return;
-        }
-        for (const auto& placement : placements)
-        {
-            items_[placement.index].gridCell = placement.cell;
-            items_[placement.index].slot = SlotFromCell(gridPages_, placement.cell);
-        }
-    };
-
-    for (const auto& page : gridPages_)
-        sortForPage(page);
-
-    LayoutItems();
-    SaveLayoutSlots();
-    InvalidateRect(hwnd_, nullptr, TRUE);
-}
-
-/**
- * @brief 按类型名称对桌面图标排序，相同类型内按名称排序。
- */
-void DesktopApp::SortIconsByType(bool ascending)
-{
-    auto sortForPage = [&](const GridPage& page) {
-        const GridPage* firstPage = GetFirstPageGridPage();
-        std::vector<size_t> order;
-        for (size_t i = 0; i < items_.size(); ++i)
-        {
-            if (items_[i].name.empty() || IsItemInAnyWidget(items_[i])) continue;
-            if (items_[i].gridCell.pageId.empty())
-                items_[i].gridCell.pageId = firstPage ? firstPage->id : L"";
-            if (items_[i].gridCell.pageId == page.id)
-                order.push_back(i);
-        }
-
-        std::sort(order.begin(), order.end(), [this, ascending](size_t a, size_t b) {
-            int cmp = ToUpperInvariant(items_[a].typeName).compare(ToUpperInvariant(items_[b].typeName));
-            if (cmp != 0) return ascending ? (cmp < 0) : (cmp > 0);
-            cmp = ToUpperInvariant(items_[a].name).compare(ToUpperInvariant(items_[b].name));
-            return ascending ? (cmp < 0) : (cmp > 0);
+        std::stable_sort(order.begin(), order.end(), [this, mode, ascending](size_t a, size_t b) {
+            return snowdesktop::desktop_item_sort_rules::LessOnDesktop(
+                items_[a], items_[b], mode, ascending);
         });
 
         std::unordered_set<std::wstring> usedSlots;
@@ -194,7 +86,7 @@ void DesktopApp::SortIconsByType(bool ascending)
 /**
  * @brief 对指定组件（文件夹映射/桌面文件/集合）中的内容排序。
  * @param widgetIndex 组件索引。
- * @param mode 排序模式：0 按名称，1 按类型，2 按修改时间。
+ * @param mode 排序模式：0 按名称，1 按类型，2 按修改时间，3 按大小。
  */
 void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending)
 {
@@ -284,7 +176,7 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
                 size_t ia = FindItemIndexByKey(ka);
                 size_t ib = FindItemIndexByKey(kb);
                 if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
-                return DesktopItemLess(
+                return snowdesktop::desktop_item_sort_rules::Less(
                     items_[ia], items_[ib], mode, ascending);
             });
 
@@ -310,7 +202,7 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
                 size_t ia = FindItemIndexByKey(ka);
                 size_t ib = FindItemIndexByKey(kb);
                 if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
-                return DesktopItemLess(
+                return snowdesktop::desktop_item_sort_rules::Less(
                     items_[ia], items_[ib], mode, ascending);
             });
 

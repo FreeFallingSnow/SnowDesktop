@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app/dock/dock_folder_popup_read.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "app/menus/sort_menu.h"
 
 // Collection and Dock-folder popup transitions.
 
@@ -360,174 +361,34 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
 
     PrepareMenuIconsForPoint(screenPoint);
 
-    HMENU menu = CreatePopupMenu();
-    HMENU nameMenu = CreatePopupMenu();
-    HMENU typeMenu = CreatePopupMenu();
-    HMENU dateMenu = CreatePopupMenu();
-    if (!menu || !nameMenu ||
-        !typeMenu || !dateMenu)
+    HMENU menu = snowdesktop::sort_menu::Create(
+        [](const char* key) { return _LW(key); });
+    if (!menu)
     {
-        if (menu) DestroyMenu(menu);
-        if (nameMenu) DestroyMenu(nameMenu);
-        if (typeMenu) DestroyMenu(typeMenu);
-        if (dateMenu) DestroyMenu(dateMenu);
+        ClearMenuIcons();
         return;
     }
 
-    auto appendDirectionMenu = [](
-        HMENU parent, HMENU child,
-        UINT ascendingCommand,
-        UINT descendingCommand,
-        const wchar_t* label) {
-        AppendMenuW(
-            child, MF_STRING,
-            ascendingCommand,
-            _LW("app.menu.sort_asc"));
-        AppendMenuW(
-            child, MF_STRING,
-            descendingCommand,
-            _LW("app.menu.sort_desc"));
-        AppendMenuW(
-            parent, MF_POPUP,
-            reinterpret_cast<UINT_PTR>(
-                child),
-            label);
-    };
-    appendDirectionMenu(
-        menu, nameMenu,
-        kContextWidgetSortByName,
-        kContextWidgetSortByNameDesc,
-        _LW("app.menu.sort_name"));
-    appendDirectionMenu(
-        menu, typeMenu,
-        kContextWidgetSortByType,
-        kContextWidgetSortByTypeDesc,
-        _LW("app.menu.sort_type"));
-    appendDirectionMenu(
-        menu, dateMenu,
-        kContextWidgetSortByDate,
-        kContextWidgetSortByDateDesc,
-        _LW("app.interact.sort_date"));
+    const int mode = snowdesktop::folder_sort_rules::NormalizeMode(
+        dockFolderPopupWidget_.folderSortMode);
+    for (const auto& row : snowdesktop::sort_menu::kRows)
+        if (row.mode == mode)
+            CheckMenuItem(menu,
+                dockFolderPopupWidget_.folderSortAscending
+                    ? row.ascendingCommand : row.descendingCommand,
+                MF_BYCOMMAND | MF_CHECKED);
 
-    const int mode =
-        snowdesktop::folder_sort_rules::
-            NormalizeMode(
-                dockFolderPopupWidget_.
-                    folderSortMode);
-    HMENU checkedMenu = nullptr;
-    UINT checkedCommand = 0;
-    if (mode ==
-        snowdesktop::folder_sort_rules::kName)
-    {
-        checkedMenu = nameMenu;
-        checkedCommand =
-            dockFolderPopupWidget_.
-                    folderSortAscending
-                ? kContextWidgetSortByName
-                : kContextWidgetSortByNameDesc;
-    }
-    else if (mode ==
-        snowdesktop::folder_sort_rules::kType)
-    {
-        checkedMenu = typeMenu;
-        checkedCommand =
-            dockFolderPopupWidget_.
-                    folderSortAscending
-                ? kContextWidgetSortByType
-                : kContextWidgetSortByTypeDesc;
-    }
-    else if (mode ==
-        snowdesktop::folder_sort_rules::
-            kModified)
-    {
-        checkedMenu = dateMenu;
-        checkedCommand =
-            dockFolderPopupWidget_.
-                    folderSortAscending
-                ? kContextWidgetSortByDate
-                : kContextWidgetSortByDateDesc;
-    }
-    if (checkedMenu && checkedCommand != 0)
-        CheckMenuItem(
-            checkedMenu, checkedCommand,
-            MF_BYCOMMAND | MF_CHECKED);
-
-    SetMenuItemIcon(
-        menu,
-        reinterpret_cast<UINT_PTR>(
-            nameMenu),
-        snowdesktop::menu_fluent_glyphs::kSortName,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(nameMenu, kContextWidgetSortByName,
-        snowdesktop::menu_fluent_glyphs::kSortNameAscending,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(nameMenu, kContextWidgetSortByNameDesc,
-        snowdesktop::menu_fluent_glyphs::kSortNameDescending,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(
-        menu,
-        reinterpret_cast<UINT_PTR>(
-            typeMenu),
-        snowdesktop::menu_fluent_glyphs::kSortType,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(typeMenu, kContextWidgetSortByType,
-        snowdesktop::menu_fluent_glyphs::kSortTypeAscending,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(typeMenu, kContextWidgetSortByTypeDesc,
-        snowdesktop::menu_fluent_glyphs::kSortTypeDescending,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(
-        menu,
-        reinterpret_cast<UINT_PTR>(
-            dateMenu),
-        snowdesktop::menu_fluent_glyphs::kSortDate,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(dateMenu, kContextWidgetSortByDate,
-        snowdesktop::menu_fluent_glyphs::kSortDateAscending,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(dateMenu, kContextWidgetSortByDateDesc,
-        snowdesktop::menu_fluent_glyphs::kSortDateDescending,
-        MenuIconFont::FluentRegular);
+    snowdesktop::sort_menu::SetIcons(menu,
+        [this](HMENU target, UINT commandId, const wchar_t* glyph) {
+            SetMenuItemIcon(target, commandId, glyph, MenuIconFont::FluentRegular);
+        });
     RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
 
-    switch (command)
-    {
-    case kContextWidgetSortByName:
-        SortDockFolderPopupContents(
-            snowdesktop::folder_sort_rules::
-                kName, true);
-        break;
-    case kContextWidgetSortByNameDesc:
-        SortDockFolderPopupContents(
-            snowdesktop::folder_sort_rules::
-                kName, false);
-        break;
-    case kContextWidgetSortByType:
-        SortDockFolderPopupContents(
-            snowdesktop::folder_sort_rules::
-                kType, true);
-        break;
-    case kContextWidgetSortByTypeDesc:
-        SortDockFolderPopupContents(
-            snowdesktop::folder_sort_rules::
-                kType, false);
-        break;
-    case kContextWidgetSortByDate:
-        SortDockFolderPopupContents(
-            snowdesktop::folder_sort_rules::
-                kModified, true);
-        break;
-    case kContextWidgetSortByDateDesc:
-        SortDockFolderPopupContents(
-            snowdesktop::folder_sort_rules::
-                kModified, false);
-        break;
-    default:
-        break;
-    }
+    if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
+        SortDockFolderPopupContents(sort->mode, sort->ascending);
     RestoreDesktopWindowLayer();
     RestoreInteractionInputFocus();
 }

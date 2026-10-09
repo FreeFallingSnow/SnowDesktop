@@ -1,4 +1,5 @@
 #include "ui/menu/modern_menu.h"
+#include "app/menus/sort_menu.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "ui/menu/menu_label.h"
@@ -961,9 +962,100 @@ void CheckPreviewCompanionOrder(HWND owner)
 
 } // namespace
 
+// Exercise the same rows and layout metadata as the host, on an isolated desktop.
+// This catches vertical direction buttons, third-level cascades and wrong hit targets.
+void CheckSortRows(HWND owner, bool negativeControl)
+{
+    using namespace snowdesktop::modern_menu;
+    for (const UINT dpi : {96U, 192U})
+    {
+        for (size_t row = 0; row < 4; ++row)
+        {
+            for (const bool ascending : {true, false})
+            {
+                const auto labels = [dpi](const char* key) -> std::wstring {
+                    const std::string_view value(key);
+                    if (value == "app.menu.sort_name") return L"Name";
+                    if (value == "app.menu.sort_type") return L"Type";
+                    if (value == "app.menu.sort_size") return L"Size";
+                    if (value == "app.interact.sort_date") return dpi == 96 ? L"Date Modified" : L"Änderungsdatum";
+                    if (value == "app.menu.sort_asc") return dpi == 96 ? L"Ascending" : L"Aufsteigend";
+                    return dpi == 96 ? L"Descending" : L"Absteigend";
+                };
+                Item sort;
+                sort.command = 9000;
+                sort.label = L"Sort by";
+                sort.children = snowdesktop::sort_menu::BuildItems(labels);
+                if (negativeControl)
+                    for (auto& item : sort.children) item.inlineAction = false;
+                std::array<RECT, 12> rectangles{};
+                std::array<bool, 12> observed{};
+                Options options;
+                options.owner = owner;
+                options.anchor = {80, 80};
+                options.dpi = dpi;
+                options.appearance = dpi == 96 ? Appearance::OpaqueLight : Appearance::OpaqueDark;
+                options.onHover = [&](const HoverInfo& hover) {
+                    for (size_t i = 0; i < sort.children.size(); ++i)
+                        if (hover.command == sort.children[i].command)
+                        {
+                            Expect(hover.depth == 1, "sorting actions stay in the second menu panel");
+                            rectangles[i] = hover.itemScreenRect;
+                            observed[i] = true;
+                        }
+                };
+                const size_t target = row * 3 + (ascending ? 1 : 2);
+                gDriveMode = DriveMode::Script;
+                gInputPosted = false;
+                gWatchdogFired = false;
+                gMenuScript = [&](HWND root) {
+                    SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                    SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                    MenuWindows windows;
+                    EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows, reinterpret_cast<LPARAM>(&windows));
+                    Expect(windows.child != nullptr, "sorting has one child panel");
+                    SendMessageW(windows.child, WM_KEYDOWN, VK_HOME, 0);
+                    for (size_t i = 1; i < rectangles.size(); ++i)
+                        SendMessageW(windows.child, WM_KEYDOWN, VK_DOWN, 0);
+                    for (size_t i = 0; i < 4; ++i)
+                    {
+                        const auto& name = rectangles[i * 3];
+                        const auto& asc = rectangles[i * 3 + 1];
+                        const auto& desc = rectangles[i * 3 + 2];
+                        Expect(observed[i * 3] && observed[i * 3 + 1] && observed[i * 3 + 2],
+                            "keyboard navigation reaches both direction buttons for every field");
+                        Expect(name.top == asc.top && asc.top == desc.top &&
+                            name.bottom == asc.bottom && asc.bottom == desc.bottom &&
+                            asc.left >= name.right && desc.left >= asc.right,
+                            "ascending and descending buttons sit to the right of each field on the same row");
+                    }
+                    const auto& rectangle = rectangles[target];
+                    POINT point{(rectangle.left + rectangle.right) / 2, (rectangle.top + rectangle.bottom) / 2};
+                    ScreenToClient(windows.child, &point);
+                    const auto position = MAKELPARAM(point.x, point.y);
+                    SendMessageW(windows.child, WM_MOUSEMOVE, 0, position);
+                    SendMessageW(windows.child, WM_LBUTTONDOWN, MK_LBUTTON, position);
+                    SendMessageW(windows.child, WM_LBUTTONUP, 0, position);
+                };
+                SetTimer(owner, kDriveTimer, 10, nullptr);
+                SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+                const auto result = Show({sort}, options);
+                KillTimer(owner, kWatchdogTimer);
+                Expect(!gWatchdogFired && result.command == sort.children[target].command,
+                    "a right-hand sorting button executes its own field and direction");
+                const auto selection = snowdesktop::sort_menu::ResolveCommand(result.command);
+                const int expectedModes[] = {0, 1, 3, 2};
+                Expect(selection && selection->mode == expectedModes[row] && selection->ascending == ascending,
+                    "all four fields route both directions to the intended sorting mode");
+            }
+        }
+    }
+    gMenuScript = {};
+}
+
 void RunTrayFocusWindowTests();
 
-int wmain()
+int wmain(int argc, wchar_t** argv)
 {
     // Regression: asynchronous Shell entries belong immediately above More,
     // in a final group after all ordinary host actions.
@@ -1047,6 +1139,9 @@ int wmain()
     SetForegroundWindow(owner);
     SetFocus(owner);
 
+    const bool sortNegativeControl = argc == 2 && std::wstring_view(argv[1]) == L"--sort-layout-negative-control";
+    CheckSortRows(owner, sortNegativeControl);
+    if (sortNegativeControl) return 2; // Expected to fail the same geometry assertion above.
     CheckCascadeWorkArea(owner);
     CheckPreviewCompanionOrder(owner);
     CheckDockRunningMenuTransition(owner);
