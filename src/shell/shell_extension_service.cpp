@@ -235,7 +235,9 @@ struct MenuService::Impl
         {
             row.priority = std::min(row.priority, priority);
             row.force |= force;
-            if (priority == QueryPriority::Execute) row.due = now;
+            // An explicit popup must not inherit the selection prewarm debounce.
+            // Joined work keeps its session and sequence; only queued dispatch advances.
+            if (priority == QueryPriority::Execute || priority == QueryPriority::Menu) row.due = now;
             MenuTrace("schedule", "joined"); return;
         }
         row.checkRequested = true;
@@ -830,9 +832,9 @@ struct MenuService::Impl
                 Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
-                    // Dispatch only one background sample at a time into the
-                    // shared scheduler; interactive queries keep their priority.
-                    if (normalJobs < 2 && nextType < typeDiscovery.size())
+                    // Background queries share one slot, including metadata probes.
+                    // Keep the second slot available for an explicit popup or click.
+                    if (normalJobs < 1 && nextType < typeDiscovery.size())
                     {
                         const auto &target = typeDiscovery[nextType++];
                         Queue(target, QueryPriority::Inspect, typeBatchForce);
@@ -841,7 +843,8 @@ struct MenuService::Impl
                     auto best = rows.end(); const auto now = GetTickCount64();
                     for (auto it = rows.begin(); it != rows.end(); ++it)
                         if (it->second.queued && it->second.due <= now &&
-                            (it->second.request.startPinOnly ? startJobs < 1 : normalJobs < 2) &&
+                            (it->second.request.startPinOnly ? startJobs < 1 :
+                                normalJobs < (it->second.priority <= QueryPriority::Menu ? 2 : 1)) &&
                             (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
                     if (best == rows.end()) break;
                     auto &row = best->second; key = best->first; request = row.request; priority = row.priority;
@@ -882,7 +885,7 @@ struct MenuService::Impl
             }
             if (!sourceJob && std::count_if(running.begin(), running.end(), [](const auto &job) {
                     return !job.startPinOnly;
-                }) < 2)
+                }) == 0)
                 if (auto job = NextSource())
                 {
                     job->started = GetTickCount64();

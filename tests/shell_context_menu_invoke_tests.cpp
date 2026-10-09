@@ -17,6 +17,7 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -2581,6 +2582,99 @@ void TestQueryScheduler()
     Expect(maximum <= 2, "scheduler never runs more than two query workers");
 }
 
+void TestMenuPromotesQueuedPrewarm()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    ext::Request blocker, selected, later;
+    blocker.paths = {(temp.path / L"blocker.txt").wstring()};
+    selected.paths = {(temp.path / L"selected.txt").wstring()};
+    later.paths = {(temp.path / L"later.txt").wstring()};
+    for (const auto &request : {blocker, selected, later})
+        std::ofstream(std::filesystem::path(request.paths.front())) << "private scheduler target";
+    std::atomic<bool> entered = false;
+    bool release = false;
+    std::mutex gateMutex;
+    std::condition_variable gate;
+    std::mutex mutex;
+    std::vector<ext::Request> launched;
+    ext::Reply reply; reply.ok = true;
+    ext::Entry entry; entry.provider = "verb:inspect"; entry.key = "inspect"; entry.label = L"Inspect";
+    reply.entries = {entry};
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &request) {
+        if (request.paths == blocker.paths)
+        {
+            entered = true;
+            std::unique_lock lock(gateMutex);
+            if (!gate.wait_for(lock, std::chrono::seconds(5), [&] { return release; }))
+                throw std::runtime_error("scheduler gate timed out");
+        }
+        { std::lock_guard lock(mutex); launched.push_back(request); }
+        return ext::QueryWork{[reply] { return reply; }, {}};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs; ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(blocker, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return entered.load(); }, "hold the process boundary while queuing selection and popup requests");
+    service.Prewarm(selected);
+    service.Query(selected);
+    service.Query(later);
+    { std::lock_guard lock(gateMutex); release = true; }
+    gate.notify_one();
+    PumpUntil([&] { return service.View(selected).snapshot && service.View(later).snapshot &&
+        !service.View(selected).pending && !service.View(later).pending; }, "both interactive menus complete through the scheduler");
+    std::lock_guard lock(mutex);
+    Expect(launched.size() == 3 && launched[1].paths == selected.paths && launched[2].paths == later.paths,
+        "a popup promotes its queued prewarm ahead of a later popup and queries that selection exactly once");
+}
+
+void TestBackgroundQueriesReserveMenuSlot()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    ext::Request first, second, interactive, start;
+    first.paths = {(temp.path / L"first.txt").wstring()};
+    second.paths = {(temp.path / L"second.txt").wstring()};
+    interactive.paths = {(temp.path / L"interactive.txt").wstring()};
+    start.paths = {(temp.path / L"start.lnk").wstring()}; start.startPinOnly = true;
+    for (const auto &request : {first, second, interactive, start})
+        std::ofstream(std::filesystem::path(request.paths.front())) << "private scheduler target";
+    std::atomic<bool> release = false;
+    std::mutex mutex;
+    std::vector<ext::Request> launched;
+    ext::Reply reply; reply.ok = true;
+    ext::Entry entry; entry.provider = "verb:inspect"; entry.key = "inspect"; entry.label = L"Inspect";
+    reply.entries = {entry};
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &request) {
+        if (!request.startPinOnly) { std::lock_guard lock(mutex); launched.push_back(request); }
+        return ext::QueryWork{[&, reply, background = request.paths == first.paths || request.paths == second.paths]() -> std::optional<ext::Reply> {
+            if (background && !release) return {};
+            return reply;
+        }, {}};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "state:start-pin", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(first, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { std::lock_guard lock(mutex); return launched.size() == 1; }, "first background query occupies the shared worker lane");
+    service.Query(second, ext::QueryPriority::Inspect, true);
+    service.Query(start);
+    // A completed reserved-lane query proves that the worker has processed the
+    // dispatch loop. No latency threshold or sleep is used to infer absence.
+    PumpUntil([&] { const auto view = service.View(start); return view.snapshot && !view.pending; },
+        "reserved Start query provides a causal scheduler barrier");
+    service.Query(interactive);
+    PumpUntil([&] { const auto view = service.View(interactive);
+        std::lock_guard lock(mutex);
+        return (view.snapshot && !view.pending) || launched.size() >= 2; }, "observe which request received the second arbitrary-extension slot");
+    bool reserved = false;
+    { std::lock_guard lock(mutex); reserved = launched.size() == 2 && launched[1].paths == interactive.paths; }
+    release = true;
+    PumpUntil([&] { const auto view = service.View(second); return view.snapshot && !view.pending; }, "queued background discovery resumes after interactive work");
+    Expect(reserved, "background inspection cannot occupy both workers and delay an explicit popup");
+}
+
 void TestVisibilityScheduling()
 {
     // Exercise production configuration, popup projection and scheduler. Only
@@ -3285,6 +3379,8 @@ int wmain(int argc, wchar_t **argv)
         {
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
+            TestBackgroundQueriesReserveMenuSlot();
+            TestMenuPromotesQueuedPrewarm();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
