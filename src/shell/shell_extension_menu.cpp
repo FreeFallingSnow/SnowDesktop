@@ -27,6 +27,7 @@ using Microsoft::WRL::ComPtr;
 namespace
 {
 constexpr size_t kMaximumEntries = 2048;
+constexpr std::uint64_t kMenuSignatureSeed = 14695981039346656037ull;
 std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
@@ -190,7 +191,7 @@ void IdentifyEntries(std::vector<Entry> &entries)
         const auto verb = Utf8(Lower(Wide(entry.key)));
         if (!verb.empty() && counts[verb] == 1)
             entry.provider = "verb:" + verb;
-        else
+        else if (entry.provider.empty())
         {
             // Prefer canonical verbs; unidentified commands use their visible
             // label and submenu verb signature, scoped to the selected context.
@@ -204,7 +205,7 @@ void IdentifyEntries(std::vector<Entry> &entries)
                 }
             };
             collect(entry.children);
-            std::uint64_t signature = 14695981039346656037ull;
+            std::uint64_t signature = kMenuSignatureSeed;
             for (const auto &key : verbs)
             {
                 for (unsigned char c : key)
@@ -567,9 +568,9 @@ struct Host
             progress("initialize root menu");
             MenuMessage(source, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(menu), 0);
         }
-        // Read only materialized entries. Initializing every Shell cascade here
-        // can synchronously enumerate network/cloud providers before the user
-        // ever opens them. Deferred popups retain their native menu session.
+        // Already materialized cascades need no initialization. Placeholder
+        // popups are prepared in this supervised helper's STA menu state;
+        // unsupported owner-drawn popups retain their native menu session.
         progress("read popup: " + Utf8(title));
         for (int i = 0; i < GetMenuItemCount(menu) && count < kMaximumEntries; ++i)
         {
@@ -602,6 +603,21 @@ struct Host
             }
             else if (item.hSubMenu)
             {
+                if (depth < 8 && InspectPopup(item.hSubMenu) == PopupContents::Deferred)
+                {
+                    // Keep the original placeholder root's identity so an
+                    // existing opt-in still applies after adding its children.
+                    // IdentifyEntries still prefers a unique canonical verb.
+                    if (depth == 0)
+                        entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(kMenuSignatureSeed);
+                    progress("initialize deferred popup: " + Utf8(entry.label));
+                    if (!source.site.HostWindow() && source.site.Initialize(source.folder.Get(), window))
+                        source.site.Attach(source.context.Get());
+                    auto *previous = tracking;
+                    tracking = &source;
+                    TryMaterializePopup(item.hSubMenu, window, static_cast<UINT>(i));
+                    tracking = previous;
+                }
                 if (!RequiresNativePopup(item.hSubMenu))
                     entry.children = Read(source, item.hSubMenu, provider, depth + 1, entry.label);
                 const bool placeholder = entry.children.empty() ||
@@ -713,8 +729,8 @@ struct Host
             // On a cold process it can return success before Terminal and other
             // IExplorerCommand registrations become visible. Rebind once before
             // publishing that first menu; all tokens belong to this final query.
-            // This stays inside the same supervised deadline, without sleeps or
-            // eagerly expanding third-party cascades. Warm requests query once.
+            // This stays inside the same supervised deadline without sleeps.
+            // Warm requests query once.
             reply = QueryOnce(request);
             catalogueInitialized = reply.ok;
         }
@@ -855,9 +871,10 @@ struct Host
                     return {};
             }
         }
-        // A Shell view is needed for invoking view-dependent verbs, not for
-        // enumerating the aggregate. Creating it before loading extensions can
-        // make Shell window hooks re-enter item binding from a handler's DllMain.
+        // View-dependent invocation and deferred cascades need a Shell view.
+        // Ordinary aggregate enumeration does not. Attach only after loading
+        // handlers: an earlier view can make Shell window hooks re-enter item
+        // binding from a handler's DllMain.
         native->folder = folder;
         progress("query context menu");
         if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
@@ -933,7 +950,10 @@ struct Host
         }
         else if (command.native || !shell_start_pin::CommandAction(source.context.Get(), command.offset))
         {
-            source.site.Initialize(source.folder.Get(), window);
+            // Deferred children already belong to this live view/menu session.
+            // Do not detach their site and recreate it between read and click.
+            if (!source.site.HostWindow())
+                source.site.Initialize(source.folder.Get(), window);
             source.site.Attach(source.context.Get());
         }
         if (command.native)

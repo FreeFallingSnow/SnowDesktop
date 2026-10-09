@@ -523,6 +523,111 @@ void TestNativeCascadeOnPrivateDesktop()
     Expect(rejectedForeign, "a real top-level HWND on another thread cannot join the menu's input queue");
 }
 
+thread_local unsigned preparedPopupShows = 0;
+LRESULT CALLBACK ObservePreparedPopup(int code, WPARAM wp, LPARAM lp)
+{
+    if (code >= 0)
+    {
+        const auto &message = *reinterpret_cast<CWPSTRUCT *>(lp);
+        if (message.message == WM_WINDOWPOSCHANGED && IsWindowVisible(message.hwnd) &&
+            (reinterpret_cast<WINDOWPOS *>(message.lParam)->flags & SWP_SHOWWINDOW))
+        {
+            wchar_t name[32]{};
+            if (GetClassNameW(message.hwnd, name, 32) && wcscmp(name, L"#32768") == 0)
+                ++preparedPopupShows;
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
+void TestPopupMaterializationOnPrivateDesktop()
+{
+    // Keep the production User32 loop/forwarding/cancellation. Only substitute
+    // the extension callback: like a deferred IExplorerCommand adapter, it
+    // provides children exclusively while its own STA has an active menu.
+    struct Fixture
+    {
+        HMENU menu = CreatePopupMenu();
+        HWND window = nullptr;
+        unsigned calls = 0, commands = 0;
+        bool activeMenu = false, correctPosition = false;
+        bool leaveDeferred = false;
+        ~Fixture()
+        {
+            if (window) DestroyWindow(window);
+            if (menu) DestroyMenu(menu);
+        }
+        static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+        {
+            auto *self = reinterpret_cast<Fixture *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+            if (message == WM_NCCREATE)
+            {
+                self = static_cast<Fixture *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);
+                SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+            }
+            if (self && message == WM_INITMENUPOPUP && reinterpret_cast<HMENU>(wp) == self->menu)
+            {
+                ++self->calls;
+                GUITHREADINFO info{sizeof(info)};
+                self->activeMenu = GetGUIThreadInfo(GetCurrentThreadId(), &info) &&
+                    (info.flags & GUI_INMENUMODE) && info.hwndMenuOwner &&
+                    GetWindowThreadProcessId(info.hwndMenuOwner, nullptr) == GetCurrentThreadId();
+                self->correctPosition = LOWORD(lp) == 3 && HIWORD(lp) == FALSE;
+                if (self->activeMenu && !self->leaveDeferred)
+                {
+                    DeleteMenu(self->menu, 0, MF_BYPOSITION);
+                    AppendMenuW(self->menu, MF_STRING, 51, L"Add to archive");
+                    AppendMenuW(self->menu, MF_STRING | MF_GRAYED, 52, L"Extract files");
+                }
+                return 0;
+            }
+            if (self && message == WM_COMMAND) ++self->commands;
+            return DefWindowProcW(window, message, wp, lp);
+        }
+    } fixture;
+    namespace ext = snowdesktop::shell_extensions;
+    Expect(fixture.menu != nullptr, "create the deferred archive fixture menu");
+    AppendMenuW(fixture.menu, MF_STRING, 50, L"");
+    WNDCLASSW cls{};
+    cls.lpfnWndProc = Fixture::Proc;
+    cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpszClassName = L"SnowDesktopPopupReaderFixture";
+    Expect(RegisterClassW(&cls) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS,
+        "register the deferred archive callback owner");
+    fixture.window = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, L"", WS_POPUP,
+        -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, &fixture);
+    Expect(fixture.window != nullptr, "create the callback window on the Shell STA");
+
+    SendMessageW(fixture.window, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(fixture.menu), MAKELPARAM(3, FALSE));
+    Expect(!fixture.activeMenu && ext::RequiresNativePopup(fixture.menu),
+        "standalone initialization reproduces the unmaterialized archive popup");
+    preparedPopupShows = 0;
+    HHOOK observer = SetWindowsHookExW(WH_CALLWNDPROC, ObservePreparedPopup, nullptr, GetCurrentThreadId());
+    Expect(observer != nullptr, "observe actual native popup visibility during preparation");
+    const HWND foreground = GetForegroundWindow();
+    const bool ready = ext::TryMaterializePopup(fixture.menu, fixture.window, 3);
+    UnhookWindowsHookEx(observer);
+    Expect(ready && fixture.activeMenu && fixture.correctPosition && GetMenuItemCount(fixture.menu) == 2,
+        "DEFERRED_ARCHIVE_MUST_MATERIALIZE: the real same-STA menu state generates both children at the original parent position");
+    Expect(preparedPopupShows == 0 && GetForegroundWindow() == foreground && fixture.commands == 0,
+        "background preparation displays no native popup, changes no foreground and invokes no command");
+    Expect(GetMenuState(fixture.menu, 52, MF_BYCOMMAND) & MF_GRAYED,
+        "materialization retains the extension's disabled command state");
+    const auto calls = fixture.calls;
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3) && fixture.calls == calls,
+        "already readable cascades such as 7-Zip never initialize a second time");
+
+    while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
+    AppendMenuW(fixture.menu, MF_OWNERDRAW, 50, nullptr);
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3) && fixture.calls == calls &&
+        ext::RequiresNativePopup(fixture.menu), "owner-drawn popups retain native rendering without being probed");
+    ModifyMenuW(fixture.menu, 0, MF_BYPOSITION | MF_STRING, 50, L"...");
+    fixture.leaveDeferred = true;
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3) && ext::RequiresNativePopup(fixture.menu),
+        "an extension that still returns placeholders retains its native fallback");
+    Expect(!ext::TryMaterializePopup(fixture.menu, nullptr, 3), "an invalid callback owner cannot prepare a popup");
+}
+
 void TestNativeCascadeOwnerThread()
 {
     const std::wstring name = L"SnowDesktop.ShellTrackerTests." + std::to_wstring(GetCurrentProcessId());
@@ -535,7 +640,7 @@ void TestNativeCascadeOwnerThread()
             Expect(SetThreadDesktop(desktop) != FALSE, "attach the tracker test thread to its private desktop");
             Expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
                 "the private tracker thread preserves the Shell owner STA");
-            try { TestNativeCascadeOnPrivateDesktop(); }
+            try { TestPopupMaterializationOnPrivateDesktop(); TestNativeCascadeOnPrivateDesktop(); }
             catch (...) { CoUninitialize(); throw; }
             CoUninitialize();
         }
@@ -730,6 +835,66 @@ void TestDeferredPopups()
     Expect(!RequiresNativePopup(menu), "materialized submenu commands retain custom rendering");
     AppendMenuW(menu, MF_OWNERDRAW, 42, nullptr);
     Expect(RequiresNativePopup(menu), "unlabelled owner-drawn children keep their native parent renderer");
+}
+
+// Opt-in installed-extension evidence through the full supervised Host/Session
+// path. This reads only isolated files and never invokes archive commands.
+void ProbeArchiveSubmenus()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    for (const bool archive : {false, true})
+    {
+        const auto path = directory.path / (archive ? L"Sample.zip" : L"Sample.txt");
+        {
+            std::ofstream file(path, std::ios::binary);
+            if (archive)
+            {
+                const char emptyZip[22] = {'P', 'K', 5, 6};
+                file.write(emptyZip, sizeof(emptyZip));
+            }
+            else file << "isolated archive submenu probe";
+        }
+        ext::Request request; request.paths = {path.wstring()};
+        ext::Session session(request);
+        std::optional<ext::Reply> reply;
+        const auto deadline = GetTickCount64() + 12000;
+        while (!reply && GetTickCount64() < deadline)
+        {
+            reply = session.Poll();
+            if (reply) break;
+            MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+        if (reply && !reply->ok) std::cout << "Archive query failed: " << reply->error << std::endl;
+        Expect(reply && reply->ok, "the real archive query completes through supervised Session IPC");
+        bool winrar = false;
+        for (const auto &entry : reply->entries)
+        {
+            if (entry.label != L"WinRAR" && entry.label != L"7-Zip") continue;
+            std::cout << (archive ? "ZIP " : "TXT ") << (entry.label == L"WinRAR" ? "WinRAR" : "7-Zip")
+                << ": native=" << entry.native << ", children=" << entry.children.size() << std::endl;
+            Expect(!entry.native && !entry.children.empty(), "installed archive handlers return a real custom submenu tree");
+            unsigned commands = 0;
+            for (const auto &child : entry.children)
+            {
+                if (child.separator) continue;
+                Expect(!child.label.empty() && child.label != L"…" && child.label != L"...",
+                    "the archive submenu contains no dummy or ellipsis commands");
+                if (child.enabled && child.children.empty())
+                {
+                    Expect(ext::ResolveCommand(*reply, ext::AppendReference(ext::AppendReference({}, entry), child)) == child.token && child.token,
+                        "each archive command resolves to its fresh live-session token");
+                    ++commands;
+                }
+            }
+            Expect(commands > 0, "the real archive submenu exposes executable children");
+            winrar |= entry.label == L"WinRAR";
+        }
+        Expect(winrar, "this opt-in probe requires an enabled installed WinRAR Shell extension");
+    }
 }
 
 void TestRegistryCatalogue()
@@ -2771,9 +2936,10 @@ void BenchmarkMenus()
 
 int wmain(int argc, wchar_t **argv)
 {
+    const bool archiveProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-archive-submenus";
     const bool nvidiaProbe = argc == 2 && (std::wstring_view(argv[1]) == L"--probe-nvidia-menu" ||
         std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
-    if (nvidiaProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    if (nvidiaProbe || archiveProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
@@ -2859,7 +3025,8 @@ int wmain(int argc, wchar_t **argv)
     {
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
-        if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
+        if (archiveProbe) ProbeArchiveSubmenus();
+        else if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
