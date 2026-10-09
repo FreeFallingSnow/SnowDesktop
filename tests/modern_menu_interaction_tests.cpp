@@ -2543,8 +2543,11 @@ int wmain(int argc, wchar_t** argv)
     // Native popup regression: independent Shell streams may append below a
     // stationary pointer. The original action must keep its screen bounds and
     // click identity after both updates, while shifted footer updates wait.
-    for (const bool movesHoveredRow : {false, true})
+    for (const auto scenario : {std::pair{false, 0}, std::pair{true, 0},
+                               std::pair{false, 1}, std::pair{false, 2}})
     {
+        const bool movesHoveredRow = scenario.first;
+        const int rowKind = scenario.second;
         auto incremental = options;
         incremental.dpi = 96; incremental.anchor = {200, 200};
         incremental.rootPlacement = snowdesktop::modern_menu::RootPlacement::Default;
@@ -2609,12 +2612,25 @@ int wmain(int argc, wchar_t** argv)
         };
         gMenuScript = [&](HWND) { incremental.eventPump.flushPresentation(); };
         Item stable; stable.command = 8270; stable.label = L"Open";
+        std::vector<Item> stationaryItems{stable};
+        if (rowKind)
+        {
+            Item peer; peer.command = 8279; peer.label = L"Copy";
+            if (rowKind == 1)
+                stationaryItems.front().quickAction = peer.quickAction = true;
+            else
+            {
+                stationaryItems.front().inlineAction = peer.inlineAction = true;
+                stationaryItems.front().inlineGroup = peer.inlineGroup = 8270;
+            }
+            stationaryItems.push_back(peer);
+        }
         gWatchdogFired = false; SetTimer(owner, kWatchdogTimer, 3000, nullptr);
-        const auto incrementalResult = snowdesktop::modern_menu::Show({stable}, incremental);
+        const auto incrementalResult = snowdesktop::modern_menu::Show(stationaryItems, incremental);
         KillTimer(owner, kWatchdogTimer); KillTimer(owner, kDriveTimer); gMenuScript = {};
         if (!movesHoveredRow)
             Expect(streams == 2 && !gWatchdogFired && incrementalResult.command == 8270 && EqualRect(&original, &after),
-                "both independent updates appear under a stationary pointer without moving its original click target");
+                "ordinary rows, quick actions and inline groups load both streams under a stationary pointer without moving its click target");
         else
             Expect(!gWatchdogFired && incrementalResult.command == 8271 && waited,
                 "an update that shifts the pointed row remains pending until the pointer leaves");
