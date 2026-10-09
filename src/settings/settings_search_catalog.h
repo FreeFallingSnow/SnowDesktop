@@ -464,7 +464,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.dock.singleClickLaunchItems",
         "settings.dock.singleClickLaunchItems.description"},
     {SettingsPage::Dock, "dock.fullscreenPolicy",
-        "settings.dock.fullscreenPolicy", "settings.dock.fullscreenPolicy.description"},
+        "settings.dock.fullscreenDefaultPolicy", "settings.dock.fullscreenPolicy.description"},
     {SettingsPage::Dock, "dock.fullscreenExceptions",
         "settings.dock.fullscreenExceptions", "settings.dock.fullscreenExceptions.description"},
     {SettingsPage::Taskbar, "taskbar.displayMode",

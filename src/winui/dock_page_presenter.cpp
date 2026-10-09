@@ -370,8 +370,9 @@ struct DockPagePresenter::Impl
     winrt::event_token fullscreenRunningOpenToken{}, fullscreenRunningSelectToken{};
     muxc::StackPanel fullscreenExceptionList{nullptr};
     muxc::ContentControl fullscreenExceptionListHost{nullptr};
-    muxc::Border fullscreenExceptionListBorder{nullptr};
-    SettingRow fullscreenExceptionsRow;
+    muxc::Expander fullscreenExceptionsExpander{nullptr};
+    muxc::TextBlock fullscreenExceptionsTitle{nullptr};
+    muxc::TextBlock fullscreenExceptionsDescription{nullptr};
     winrt::event_token fullscreenExceptionAddToken{};
     struct FullscreenExceptionRow
     {
@@ -557,8 +558,6 @@ struct DockPagePresenter::Impl
         InitializeCard(layoutCard, cardStyle, dockRoot);
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
         InitializeCard(fullscreenCard, cardStyle, dockRoot);
-        // The policy row supplies this card's visible heading and selector.
-        fullscreenCard.title.Visibility(mux::Visibility::Collapsed);
         InitializeCard(behaviorCard, cardStyle, dockRoot);
         positionCombo = NewCombo();
         layoutCombo = NewCombo();
@@ -617,9 +616,6 @@ struct DockPagePresenter::Impl
         singleClickLaunchItemsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenPolicyRow.Initialize(fullscreenPolicyCombo);
         fullscreenPolicyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        fullscreenPolicyRow.label.FontWeight(
-            winrt::Windows::UI::Text::FontWeights::SemiBold());
-        fullscreenPolicyRow.label.FontSize(16);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
         suppressTaskbarRow.Initialize(suppressTaskbarToggle);
         suppressTaskbarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -655,21 +651,33 @@ struct DockPagePresenter::Impl
         exceptionActions.Children().Append(fullscreenRunningApps);
         muxc::Grid::SetColumn(fullscreenExceptionAdd, 1);
         exceptionActions.Children().Append(fullscreenExceptionAdd);
-        fullscreenExceptionsRow.Initialize(exceptionActions);
-        fullscreenExceptionsRow.root.Margin({0, 8, 0, 0});
-        fullscreenExceptionsRow.label.FontWeight(
+        exceptionActions.MaxWidth(520);
+        exceptionActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        fullscreenExceptionsExpander = mux::Markup::XamlReader::Load(
+            LR"(<Expander xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource SubtleFillColorTransparentBrush}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False" />)")
+            .as<muxc::Expander>();
+        muxc::StackPanel exceptionHeader{};
+        exceptionHeader.Spacing(3);
+        fullscreenExceptionsTitle = muxc::TextBlock{};
+        fullscreenExceptionsTitle.TextWrapping(mux::TextWrapping::Wrap);
+        fullscreenExceptionsTitle.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
+        fullscreenExceptionsDescription = NewHint();
+        exceptionHeader.Children().Append(fullscreenExceptionsTitle);
+        exceptionHeader.Children().Append(fullscreenExceptionsDescription);
+        fullscreenExceptionsExpander.Header(exceptionHeader);
+        muxc::StackPanel exceptionContent{};
+        exceptionContent.Spacing(12);
+        exceptionContent.Children().Append(exceptionActions);
         fullscreenExceptionList = muxc::StackPanel{};
         fullscreenExceptionList.Spacing(12);
         fullscreenExceptionListHost = muxc::ContentControl{};
         fullscreenExceptionListHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         fullscreenExceptionListHost.Content(fullscreenExceptionList);
-        fullscreenExceptionListBorder = mux::Markup::XamlReader::Load(
-            LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource SolidBackgroundFillColorSecondaryBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="12" Margin="12,0,0,0" Visibility="Collapsed" />)")
-            .as<muxc::Border>();
-        fullscreenExceptionListBorder.Child(fullscreenExceptionListHost);
-        fullscreenCard.content.Children().Append(fullscreenExceptionsRow.root);
-        fullscreenCard.content.Children().Append(fullscreenExceptionListBorder);
+        fullscreenExceptionListHost.Visibility(mux::Visibility::Collapsed);
+        exceptionContent.Children().Append(fullscreenExceptionListHost);
+        fullscreenExceptionsExpander.Content(exceptionContent);
+        fullscreenCard.content.Children().Append(fullscreenExceptionsExpander);
         edgeSwipeCard.content.Children().InsertAt(0, showOnlyWhenSummonedRow.root);
         edgeSwipeCard.content.Children().InsertAt(2, edgeRevealGestureRow.root);
         reserveScreenSpaceRow.Initialize(reserveScreenSpaceToggle);
@@ -1937,9 +1945,8 @@ struct DockPagePresenter::Impl
         // ContentControl host to remove its descendants from keyboard/Tab
         // input. IsHitTestVisible on the card remains the pointer guard.
         floatingEdgeSwipeRow.SetEnabled(dockEnabled);
-        fullscreenPolicyRow.SetEnabled(dockEnabledToggle.IsOn());
-        fullscreenExceptionsRow.SetEnabled(dockEnabledToggle.IsOn());
-        fullscreenExceptionListHost.IsEnabled(dockEnabledToggle.IsOn());
+        fullscreenPolicyRow.SetEnabled(dockEnabled);
+        fullscreenExceptionsExpander.IsEnabled(dockEnabled);
         positionRow.SetEnabled(dockEnabled);
         monitorScopeRow.SetEnabled(dockEnabled);
         layoutRow.SetEnabled(dockEnabled);
@@ -2222,7 +2229,7 @@ struct DockPagePresenter::Impl
         }
         fullscreenExceptionRows.clear();
         fullscreenExceptionList.Children().Clear();
-        fullscreenExceptionListBorder.Visibility(mux::Visibility::Collapsed);
+        fullscreenExceptionListHost.Visibility(mux::Visibility::Collapsed);
     }
 
     void RebuildFullscreenExceptions()
@@ -2284,7 +2291,7 @@ struct DockPagePresenter::Impl
             fullscreenExceptionList.Children().Append(item.row.root);
             fullscreenExceptionRows.push_back(std::move(item));
         }
-        fullscreenExceptionListBorder.Visibility(fullscreenExceptionRows.empty()
+        fullscreenExceptionListHost.Visibility(fullscreenExceptionRows.empty()
             ? mux::Visibility::Collapsed : mux::Visibility::Visible);
     }
 
@@ -2648,12 +2655,14 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
         muxa::AutomationProperties::SetName(windowPreviews, windowPreviewsRow.label.Text());
         fullscreenPolicyRow.SetText(
-            L("settings.dock.fullscreenPolicy", L"Fullscreen protection"),
+            L("settings.dock.fullscreenDefaultPolicy", L"Default protection"),
             L("settings.dock.fullscreenPolicy.description",
                 L"Full protection blocks Dock invocation and keyboard focus takeover. Automatic focus restoration never interrupts a foreground fullscreen app."));
         SetFullscreenChoices(fullscreenPolicyCombo);
-        fullscreenExceptionsRow.SetText(L("settings.dock.fullscreenExceptions", L"Application exceptions"),
-            L("settings.dock.fullscreenExceptions.description", L"Applies to every fullscreen window of the selected executable, including browser games."));
+        fullscreenExceptionsTitle.Text(L("settings.dock.fullscreenExceptions", L"Application exceptions"));
+        fullscreenExceptionsDescription.Text(L("settings.dock.fullscreenExceptions.description", L"Applies to every fullscreen window of the selected executable, including browser games."));
+        muxa::AutomationProperties::SetName(fullscreenExceptionsExpander, fullscreenExceptionsTitle.Text());
+        muxa::AutomationProperties::SetHelpText(fullscreenExceptionsExpander, fullscreenExceptionsDescription.Text());
         fullscreenExceptionAdd.Content(winrt::box_value(L("settings.dock.fullscreenExceptionAdd", L"Add application")));
         const bool previousFullscreenUpdate = updatingControls;
         updatingControls = true;
@@ -2934,7 +2943,11 @@ struct DockPagePresenter::Impl
         if (id == "dock.singleClickLaunchItems") return singleClickLaunchItems;
         if (id == "dock.fullscreenPolicy" || id == "dock.floatingEdgeSwipeBlockFullscreen")
             return fullscreenPolicyCombo;
-        if (id == "dock.fullscreenExceptions") return fullscreenExceptionAdd;
+        if (id == "dock.fullscreenExceptions")
+        {
+            fullscreenExceptionsExpander.IsExpanded(true);
+            return fullscreenExceptionAdd;
+        }
         if (id == "dock.floatingEdgeSwipe" ||
             id == "dock.floatingEdgeSwipeEnabled")
             return floatingEdgeSwipeToggle;

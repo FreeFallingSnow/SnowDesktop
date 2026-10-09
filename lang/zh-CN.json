@@ -2580,5 +2580,6 @@
   "settings.dock.fullscreenExceptions": "应用例外",
   "settings.dock.fullscreenExceptions.description": "所选程序的所有全屏窗口均使用例外设置，包括网页游戏。",
   "settings.dock.fullscreenExceptionAdd": "添加应用",
-  "settings.dock.fullscreenFromRunning": "从运行区选择"
+  "settings.dock.fullscreenFromRunning": "从运行区选择",
+  "settings.dock.fullscreenDefaultPolicy": "默认保护"
 }

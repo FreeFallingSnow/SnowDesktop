@@ -2580,5 +2580,6 @@
   "settings.dock.fullscreenExceptions": "Exceções de aplicativos",
   "settings.dock.fullscreenExceptions.description": "Aplica-se a todas as janelas em tela cheia do executável selecionado, incluindo jogos no navegador.",
   "settings.dock.fullscreenExceptionAdd": "Adicionar aplicativo",
-  "settings.dock.fullscreenFromRunning": "Escolher um aplicativo em execução"
+  "settings.dock.fullscreenFromRunning": "Escolher um aplicativo em execução",
+  "settings.dock.fullscreenDefaultPolicy": "Proteção padrão"
 }

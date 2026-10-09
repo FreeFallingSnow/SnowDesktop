@@ -2580,5 +2580,6 @@
   "settings.dock.fullscreenExceptions": "앱 예외",
   "settings.dock.fullscreenExceptions.description": "브라우저 게임을 포함하여 선택한 실행 파일의 모든 전체 화면 창에 적용됩니다.",
   "settings.dock.fullscreenExceptionAdd": "앱 추가",
-  "settings.dock.fullscreenFromRunning": "실행 중인 앱에서 선택"
+  "settings.dock.fullscreenFromRunning": "실행 중인 앱에서 선택",
+  "settings.dock.fullscreenDefaultPolicy": "기본 보호"
 }
