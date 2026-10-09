@@ -863,12 +863,19 @@ struct Host
         auto native = std::make_unique<Native>();
         native->directory = directory;
         native->paths = request.paths;
+        const bool shortcutSelection = !request.background &&
+            std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+                return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+            });
         std::unique_ptr<TemporaryMenuFile> warmFile;
         std::unique_ptr<Native> warmMenu;
-        if (!request.startPinOnly && request.sourceClsid.empty() && !fileAssociationsReady && ResolveContext(request) == Context::Folder)
+        if (!request.startPinOnly && request.sourceClsid.empty() && !fileAssociationsReady &&
+            (ResolveContext(request) == Context::Folder || shortcutSelection))
         {
             // File-menu initialization primes Shell association handlers before
             // folder-only extensions create windows from their DLL entry point.
+            // A folder shortcut reaches those handlers through ShellLink even
+            // though the selected .lnk is itself classified as a file.
             // The sample is private, never invoked, and deleted by the kernel
             // even if this supervised process is terminated on timeout.
             progress("initialize file associations");
@@ -969,10 +976,7 @@ struct Host
                                                      CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
-        if (!request.background && !request.startPinOnly && request.sourceClsid.empty() &&
-            std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
-                return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-            }))
+        if (shortcutSelection && !request.startPinOnly && request.sourceClsid.empty())
             return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
         Reply reply;
         if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
