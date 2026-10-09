@@ -219,8 +219,8 @@ int RunDockWindowPinTests()
             PrintRect("ring", bounds);
             std::cerr << "events=" << observedLocations << " object=" << observedObject << '\n';
         }
-        // Deliver native WinEvents without dispatching the posted application
-        // backlog. A second PostMessage hop must not gate each motion sample.
+        // Retrieve messages to deliver native WinEvents, but withhold manager
+        // application work. A second PostMessage hop must not gate each sample.
         constexpr UINT backlogMessage = WM_APP + 42;
         bool backlogCreated = manager != nullptr;
         if (manager)
@@ -230,6 +230,7 @@ int RunDockWindowPinTests()
         int samplesFollowed = 0;
         int samplesDelivered = 0;
         unsigned slowestSampleMs = 0;
+        std::vector<MSG> deferredWork;
         for (int sample = 1; sample <= 8; ++sample)
         {
             const unsigned locationsBefore = observedLocations;
@@ -245,7 +246,16 @@ int RunDockWindowPinTests()
             do
             {
                 MSG pending{};
-                PeekMessageW(&pending, nullptr, 0, 0, PM_NOREMOVE);
+                if (PeekMessageW(&pending, nullptr, 0, 0, PM_REMOVE))
+                {
+                    if (pending.hwnd == manager)
+                        deferredWork.push_back(pending);
+                    else
+                    {
+                        TranslateMessage(&pending);
+                        DispatchMessageW(&pending);
+                    }
+                }
                 GetWindowRect(border, &actual);
                 aligned = observedLocations > locationsBefore && EqualRect(&actual, &expected);
                 if (!aligned) MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_SENDMESSAGE, MWMO_INPUTAVAILABLE);
@@ -262,8 +272,10 @@ int RunDockWindowPinTests()
                 static_cast<unsigned>(GetTickCount64() - started));
         }
         MSG backlog{};
-        check(PeekMessageW(&backlog, manager, backlogMessage, backlogMessage, PM_NOREMOVE) != FALSE,
-            "motion checks leave ordinary posted application work queued");
+        check(std::any_of(deferredWork.begin(), deferredWork.end(),
+                [](const MSG& message) { return message.message == backlogMessage; }) ||
+                PeekMessageW(&backlog, manager, backlogMessage, backlogMessage, PM_NOREMOVE) != FALSE,
+            "motion checks leave ordinary posted application work undispatched");
         check(samplesFollowed == 8,
             "each native motion sample aligns the ring before posted application work is dispatched");
         check(samplesDelivered == 8,
@@ -271,6 +283,11 @@ int RunDockWindowPinTests()
         std::cout << "Pin motion samples before posted dispatch: " << samplesFollowed
             << "/8; native event samples delivered: " << samplesDelivered
             << "/8; maximum native sample wait: " << slowestSampleMs << " ms\n";
+        for (const MSG& work : deferredWork)
+        {
+            TranslateMessage(&work);
+            DispatchMessageW(&work);
+        }
         while (PeekMessageW(&backlog, nullptr, 0, 0, PM_REMOVE))
         {
             TranslateMessage(&backlog);
