@@ -70,8 +70,7 @@ void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
     if (!settingsWindow_ || widgetIndex >= widgets_.size()) return;
     const auto& widget = widgets_[widgetIndex];
     if (widget.type != DesktopWidgetType::LuaScript) return;
-    settingsWindow_->ShowWidgetEditor(widgetIndex, widget.id.c_str(),
-        widget.title.c_str(), widget.packageId.c_str());
+    ShowSettingsWindow(snowdesktop::SettingsRoute::ForWidget(widget.id));
 }
 
 /**

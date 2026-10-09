@@ -787,7 +787,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
         GeneralStartupConflict conflict;
         const snowdesktop::AutoStartQueryResult state =
-            QueryAutoStartState();
+            settingsAutoStartState_;
         const snowdesktop::AutoStartOwnershipNotice notice =
             snowdesktop::ClassifyAutoStartOwnershipNotice(
                 state.stateKnown, state.taskStatus,
@@ -855,13 +855,31 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         std::uint64_t expectedRevision) {
         return AddPageFromSettings(expectedRevision);
     };
-    settingsHostOptions.refreshExternalState = [this]() {
+    settingsHostOptions.refreshExternalStateAsync = [this](std::function<void()> complete) {
         if (!settingsController_)
+        {
+            complete();
             return;
-        GeneralSettings general = generalSettings_;
-        general.autoStartEnabled = QueryAutoStartEnabled();
-        if (settingsController_->SynchronizeGeneral(general))
-            generalSettings_.autoStartEnabled = general.autoStartEnabled;
+        }
+        // Task Scheduler RPC and legacy registration reconciliation own only
+        // platform state. Never lend a worker the application or controller.
+        // Retire an earlier disconnected session's delivery before reusing
+        // the coalescing key; its responder cannot complete this connection.
+        shellModelWork_.Cancel(L"settings-auto-start");
+        const bool submitted = shellModelWork_.Submit(L"settings-auto-start",
+            [] { return QueryAutoStartState(); },
+            [this, complete](snowdesktop::AutoStartQueryResult state) {
+                settingsAutoStartState_ = std::move(state);
+                if (settingsController_ && settingsAutoStartState_.stateKnown)
+                {
+                    GeneralSettings general = generalSettings_;
+                    general.autoStartEnabled = settingsAutoStartState_.enabled;
+                    if (settingsController_->SynchronizeGeneral(general))
+                        generalSettings_.autoStartEnabled = general.autoStartEnabled;
+                }
+                complete();
+            }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage);
+        if (!submitted) complete();
 
         snowdesktop::DesktopDisplaySettings desktop;
         desktop.dockEnabled = generalSettings_.dockEnabled;
@@ -993,7 +1011,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         if (settingsWindow_)
         {
-            (void)settingsWindow_->Open(
+            ShowSettingsWindow(
                 snowdesktop::SettingsRoute::ForPage(
                     snowdesktop::SettingsPage::DeveloperTools));
         }

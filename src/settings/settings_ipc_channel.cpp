@@ -13,6 +13,7 @@ namespace snowdesktop::settings_ipc
 namespace
 {
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
+constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
 // Font settings extend the snapshot; restart state queries the host's active font.
 constexpr std::uint32_t Version = 31;
@@ -75,8 +76,17 @@ struct Channel::Impl
     std::deque<std::function<void()>> tasks;
     std::size_t queuedBytes = 0;
     std::unordered_map<std::string, Handler> handlers;
+    std::unordered_map<std::string, DeferredHandler> deferredHandlers;
+    std::uint64_t connectionEpoch = 0;
     std::unordered_map<std::uint64_t, Frame> replies;
     std::unordered_set<std::uint64_t> pending;
+    struct AsyncRequest
+    {
+        Completion completion;
+        std::uint64_t deadline;
+        std::string name;
+    };
+    std::unordered_map<std::uint64_t, AsyncRequest> asynchronous;
     std::uint64_t nextId = 0;
     bool disconnectDelivered = true;
     std::function<void()> disconnected;
@@ -120,6 +130,11 @@ struct Channel::Impl
             self->Dispatch();
             return 0;
         }
+        if (self && message == WM_TIMER && wp == AsyncTimerId)
+        {
+            self->CheckAsyncTimeouts();
+            return 0;
+        }
         return DefWindowProcW(hwnd, message, wp, lp);
     }
     void Signal() noexcept
@@ -138,6 +153,9 @@ struct Channel::Impl
     }
     void Close() noexcept
     {
+        ++connectionEpoch;
+        KillTimer(window, AsyncTimerId);
+        asynchronous.clear();
         {
             // Change the wait predicate under the writer's mutex. An atomic
             // store alone can lose the notification just before it waits.
@@ -237,6 +255,33 @@ struct Channel::Impl
         catch (...) {}
         Fail();
     }
+    void FailAsync(std::exception_ptr error) noexcept
+    {
+        auto requests = std::move(asynchronous);
+        asynchronous.clear();
+        KillTimer(window, AsyncTimerId);
+        for (const auto& [id, request] : requests) pending.erase(id);
+        for (auto& [id, request] : requests)
+        {
+            try { request.completion({}, error); } catch (...) {}
+        }
+    }
+    void CheckAsyncTimeouts() noexcept
+    {
+        const auto now = GetTickCount64();
+        for (const auto& [id, request] : asynchronous)
+        {
+            if (now < request.deadline) continue;
+            const auto error = std::make_exception_ptr(ProtocolError(
+                "settings IPC response timed out: " + request.name));
+            // A timed-out operation has an unknown outcome. Retire this
+            // connection before invoking a callback that might reopen it.
+            Fail();
+            FailAsync(error);
+            Dispatch();
+            return;
+        }
+    }
     void Dispatch() noexcept
     {
         // Pop before invoking. Nested RPC waits are allowed to dispatch the
@@ -267,6 +312,19 @@ struct Channel::Impl
                 {
                     if (!pending.contains(frame.id) || replies.contains(frame.id))
                         throw ProtocolError("unexpected settings IPC reply");
+                    if (const auto found = asynchronous.find(frame.id);
+                        found != asynchronous.end())
+                    {
+                        auto completion = std::move(found->second.completion);
+                        asynchronous.erase(found);
+                        pending.erase(frame.id);
+                        if (asynchronous.empty()) KillTimer(window, AsyncTimerId);
+                        std::exception_ptr error;
+                        if (frame.kind == Kind::Error)
+                            error = std::make_exception_ptr(ProtocolError(Unpack<std::string>(frame.data)));
+                        completion(std::move(frame.data), error);
+                        continue;
+                    }
                     replies.emplace(frame.id, std::move(frame));
                     continue;
                 }
@@ -277,6 +335,39 @@ struct Channel::Impl
                 std::string payload;
                 input(name, payload);
                 input.Finish();
+                if (const auto deferred = deferredHandlers.find(name); deferred != deferredHandlers.end())
+                {
+                    auto handler = deferred->second;
+                    const auto epoch = connectionEpoch;
+                    const auto id = frame.id;
+                    std::weak_ptr<Gate> weak = gate;
+                    auto replied = std::make_shared<std::atomic<bool>>(false);
+                    Completion respond = [weak, epoch, id, replied](Bytes reply, std::exception_ptr error) {
+                            if (replied->exchange(true) || !id) return;
+                            const auto lifetime = weak.lock();
+                            if (!lifetime) return;
+                            std::lock_guard lock(lifetime->mutex);
+                            if (!lifetime->owner) return;
+                            auto* endpoint = lifetime->owner->impl_.get();
+                            lifetime->owner->Post([endpoint, epoch, id, reply = std::move(reply), error]() {
+                                if (!endpoint->connected || endpoint->connectionEpoch != epoch) return;
+                                try
+                                {
+                                    if (error) std::rethrow_exception(error);
+                                    endpoint->Send(Kind::Reply, id, reply);
+                                }
+                                catch (const std::exception& failure)
+                                {
+                                    try { endpoint->Send(Kind::Error, id, Pack(std::string(failure.what()))); }
+                                    catch (...) { endpoint->Fail(); }
+                                }
+                                catch (...) { endpoint->Fail(); }
+                            });
+                        };
+                    try { handler(std::as_bytes(std::span(payload.data(), payload.size())), respond); }
+                    catch (...) { respond({}, std::current_exception()); }
+                    continue;
+                }
                 const auto found = handlers.find(name);
                 if (found == handlers.end()) throw ProtocolError("unknown settings IPC operation");
                 // A callback may unbind itself; retain the callable by value.
@@ -298,7 +389,11 @@ struct Channel::Impl
         }
         if (!connected && !disconnectDelivered)
         {
+            const auto epoch = connectionEpoch;
             disconnectDelivered = true;
+            FailAsync(std::make_exception_ptr(ProtocolError("settings process disconnected")));
+            // Completion may have explicitly closed or replaced the connection.
+            if (connected || connectionEpoch != epoch) return;
             try { if (disconnected) disconnected(); } catch (...) {}
         }
     }
@@ -377,13 +472,51 @@ void Channel::BindRaw(std::string name, Handler handler)
 {
     if (name.empty() || name.size() > 128 || !handler)
         throw ProtocolError("invalid settings IPC handler");
+    impl_->deferredHandlers.erase(name);
     impl_->handlers.insert_or_assign(std::move(name), std::move(handler));
 }
-void Channel::Unbind(std::string_view name) { impl_->handlers.erase(std::string(name)); }
+void Channel::BindDeferredRaw(std::string name, DeferredHandler handler)
+{
+    if (name.empty() || name.size() > 128 || !handler)
+        throw ProtocolError("invalid settings IPC handler");
+    impl_->handlers.erase(name);
+    impl_->deferredHandlers.insert_or_assign(std::move(name), std::move(handler));
+}
+void Channel::Unbind(std::string_view name)
+{
+    impl_->handlers.erase(std::string(name));
+    impl_->deferredHandlers.erase(std::string(name));
+}
 void Channel::NotifyRaw(std::string_view name, Bytes arguments)
 {
     impl_->Send(Kind::Request, 0, Pack(std::string(name), std::string(
         reinterpret_cast<const char*>(arguments.data()), arguments.size())));
+}
+void Channel::RequestAsync(std::string_view name, Bytes arguments,
+    Completion completion, DWORD timeoutMs)
+{
+    if (GetCurrentThreadId() != impl_->ownerThread || !completion ||
+        impl_->pending.size() >= 32)
+        throw ProtocolError("invalid settings IPC call context");
+    const auto id = ++impl_->nextId;
+    impl_->pending.insert(id);
+    try
+    {
+        impl_->asynchronous.emplace(id, Impl::AsyncRequest{std::move(completion),
+            timeoutMs == INFINITE ? UINT64_MAX : GetTickCount64() + timeoutMs, std::string(name)});
+        if (impl_->asynchronous.size() == 1 && !SetTimer(impl_->window, AsyncTimerId, 50, nullptr))
+            throw ProtocolError("cannot schedule settings IPC timeout");
+        impl_->Send(Kind::Request, id, Pack(std::string(name), std::string(
+            reinterpret_cast<const char*>(arguments.data()), arguments.size())));
+    }
+    catch (...)
+    {
+        impl_->asynchronous.erase(id);
+        impl_->pending.erase(id);
+        if (impl_->asynchronous.empty()) KillTimer(impl_->window, AsyncTimerId);
+        impl_->Fail();
+        throw;
+    }
 }
 Bytes Channel::Request(std::string_view name, Bytes arguments, DWORD timeoutMs)
 {

@@ -46,7 +46,11 @@ public:
         snowdesktop::winui::SettingsWindowHostOptions options = {});
     void Shutdown() noexcept;
 
-    [[nodiscard]] bool Open(const snowdesktop::SettingsRoute& route);
+    using OpenCompleted = std::function<void(bool)>;
+    /** Queue initialization/navigation without waiting for the child UI.
+     * True means accepted; completion reports actual visibility on the STA. */
+    [[nodiscard]] bool Open(const snowdesktop::SettingsRoute& route,
+        OpenCompleted completed = {});
     [[nodiscard]] bool Show();
     [[nodiscard]] bool ShowDockSettings();
     [[nodiscard]] bool ShowAppearanceSettings();

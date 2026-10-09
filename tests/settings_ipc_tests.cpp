@@ -504,6 +504,209 @@ void TestRetiredUpdateProtocol()
     CloseHandle(uiRead);
 }
 
+bool PumpUntil(const std::function<bool()>& done, DWORD timeout = 3000)
+{
+    const auto deadline = GetTickCount64() + timeout;
+    while (!done() && GetTickCount64() < deadline)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            DispatchMessageW(&message);
+        if (!done()) MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    }
+    return done();
+}
+
+struct DesktopMessageProbe
+{
+    std::function<void()> apply;
+    HWND window = nullptr;
+    explicit DesktopMessageProbe(std::function<void()> callback) : apply(std::move(callback))
+    {
+        WNDCLASSW type{};
+        type.hInstance = GetModuleHandleW(nullptr);
+        type.lpszClassName = L"SnowDesktop.Test.SettingsDesktopProbe";
+        type.lpfnWndProc = [](HWND hwnd, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+            if (message == WM_NCCREATE)
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                    reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+            if (message == WM_APP + 1)
+            {
+                reinterpret_cast<DesktopMessageProbe*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA))->apply();
+                return 0;
+            }
+            return DefWindowProcW(hwnd, message, wp, lp);
+        };
+        RegisterClassW(&type);
+        window = CreateWindowExW(0, type.lpszClassName, L"", 0, 0, 0, 0, 0,
+            HWND_MESSAGE, nullptr, type.hInstance, this);
+        if (!window) throw std::runtime_error("cannot create desktop message probe");
+    }
+    ~DesktopMessageProbe() { DestroyWindow(window); }
+    void Post() { PostMessageW(window, WM_APP + 1, 0, 0); }
+};
+
+struct AsyncPeer
+{
+    Channel parent;
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::thread worker;
+    AsyncPeer()
+    {
+        if (!release) throw std::runtime_error("cannot create settings peer gate");
+        HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+        if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) || !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+            throw std::runtime_error("cannot create settings peer pipes");
+        parent.Open(mainRead, mainWrite, CurrentProcessHandle());
+        auto ready = std::make_shared<std::promise<bool>>();
+        auto started = ready->get_future();
+        worker = std::thread([this, uiRead, uiWrite, ready] {
+            try
+            {
+                Channel child;
+                child.Open(uiRead, uiWrite, CurrentProcessHandle());
+                child.SetDisconnected([] { PostQuitMessage(0); });
+                child.Bind<int>("ui.initialize", [this, &child] {
+                    if (WaitForSingleObject(release, 3000) != WAIT_OBJECT_0)
+                        throw ProtocolError("desktop did not release settings initialization");
+                    return child.Call<int>("host.state");
+                });
+                child.Bind<int>("ui.open", [&child] { return child.Call<int>("host.query"); });
+                child.Bind<int>("ui.error", []() -> int { throw ProtocolError("startup rejected"); });
+                child.Bind<void>("ui.exit", [] { PostQuitMessage(0); });
+                ready->set_value(true);
+                MSG message{};
+                while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+            }
+            catch (...) { try { ready->set_value(false); } catch (...) {} }
+        });
+        if (!started.get())
+        {
+            worker.join();
+            CloseHandle(release);
+            throw std::runtime_error("settings peer startup failed");
+        }
+    }
+    ~AsyncPeer()
+    {
+        SetEvent(release);
+        parent.Close();
+        PostThreadMessageW(GetThreadId(worker.native_handle()), WM_QUIT, 0, 0);
+        worker.join();
+        CloseHandle(release);
+    }
+};
+
+void TestAsyncOpening()
+{
+    // Negative control for the reported production failure: even a separate
+    // settings process starves an unrelated desktop window during Request.
+    {
+        AsyncPeer peer;
+        bool desktopDispatched = false;
+        DesktopMessageProbe desktop([&] { desktopDispatched = true; SetEvent(peer.release); });
+        peer.parent.Bind<int>("host.state", [] { return 41; });
+        desktop.Post();
+        Reject([&] { (void)peer.parent.Request("ui.initialize", {}, 100); },
+            "synchronous startup stalls until its deadline while desktop work is queued");
+        Check(!desktopDispatched, "the old synchronous wait leaves desktop input/render messages undispatched");
+        PumpUntil([&] { return desktopDispatched; });
+    }
+    {
+        AsyncPeer peer;
+        bool desktopDispatched = false, initialized = false, opened = false;
+        bool failed = false;
+        const auto owner = GetCurrentThreadId();
+        Channel::Completion queryReply;
+        DesktopMessageProbe desktop([&] { desktopDispatched = true; SetEvent(peer.release); });
+        peer.parent.Bind<int>("host.state", [] { return 41; });
+        peer.parent.BindDeferredRaw("host.query", [&](auto arguments, auto reply) {
+            Reader(arguments).Finish();
+            queryReply = std::move(reply);
+        });
+        desktop.Post();
+        peer.parent.RequestAsync("ui.initialize", {}, [&](Bytes reply, std::exception_ptr error) {
+            initialized = true;
+            failed = error != nullptr;
+            Check(GetCurrentThreadId() == owner && !error && Unpack<int>(reply) == 41,
+                "delayed initialization and nested host requests complete on the desktop owner STA");
+            if (error) return;
+            peer.parent.RequestAsync("ui.open", {}, [&](Bytes result, std::exception_ptr failure) {
+                opened = true;
+                failed = failure != nullptr;
+                Check(!failure && Unpack<int>(result) == 42,
+                    "navigation waits for a deferred system-state reply without blocking the desktop");
+            });
+        });
+        Check(!initialized && !desktopDispatched,
+            "queuing startup returns before either the child or desktop messages execute");
+        Check(PumpUntil([&] { return static_cast<bool>(queryReply); }) && desktopDispatched && initialized && !opened,
+            "desktop messages run during delayed initialization and deferred navigation");
+        if (queryReply)
+        {
+            // The responder is also usable by a real background worker.
+            std::thread systemQuery([reply = std::move(queryReply)] { reply(Pack(42), {}); });
+            systemQuery.join();
+        }
+        Check(PumpUntil([&] { return opened; }) && !failed, "deferred system query resumes the pending open once");
+        int errors = 0;
+        peer.parent.RequestAsync("ui.error", {}, [&](Bytes, std::exception_ptr error) {
+            Check(error != nullptr, "child startup rejection reaches the asynchronous caller");
+            ++errors;
+        });
+        Check(PumpUntil([&] { return errors == 1; }), "remote startup failure completes without a synchronous wait");
+        Channel::Completion staleReply;
+        peer.parent.BindDeferredRaw("host.query", [&](auto, auto reply) { staleReply = std::move(reply); });
+        int cancelled = 0;
+        peer.parent.RequestAsync("ui.open", {}, [&](Bytes, std::exception_ptr) { ++cancelled; });
+        Check(PumpUntil([&] { return static_cast<bool>(staleReply); }), "a deferred query is active before connection cancellation");
+        peer.parent.Close();
+        if (staleReply) staleReply(Pack(99), {});
+        bool staleDrained = false;
+        peer.parent.Post([&] { staleDrained = true; });
+        Check(PumpUntil([&] { return staleDrained; }) && cancelled == 0,
+            "a late background reply cannot acknowledge an explicitly cancelled open");
+    }
+    {
+        AsyncPeer peer;
+        int disconnected = 0;
+        peer.parent.RequestAsync("ui.exit", {}, [&](Bytes, std::exception_ptr) { ++disconnected; });
+        Check(PumpUntil([&] { return disconnected == 1; }), "peer exit retires each pending open exactly once");
+    }
+    Channel::Completion orphanedReply;
+    {
+        AsyncPeer peer;
+        peer.parent.BindDeferredRaw("host.query", [&](auto, auto reply) { orphanedReply = std::move(reply); });
+        peer.parent.RequestAsync("ui.open", {}, [](Bytes, std::exception_ptr) {});
+        Check(PumpUntil([&] { return static_cast<bool>(orphanedReply); }),
+            "a pending system query retains a safe responder before endpoint destruction");
+    }
+    if (orphanedReply) orphanedReply(Pack(42), {});
+    for (const bool explicitClose : {false, true})
+    {
+        AsyncPeer peer;
+        int completed = 0;
+        peer.parent.RequestAsync("ui.initialize", {}, [&](Bytes, std::exception_ptr error) {
+            Check(error != nullptr, "stalled asynchronous startup reports a timeout");
+            ++completed;
+        }, 100);
+        if (explicitClose)
+        {
+            peer.parent.Close();
+            // Includes stale dispatch messages already queued before Close.
+            bool drained = false;
+            peer.parent.Post([&] { drained = true; });
+            Check(PumpUntil([&] { return drained; }) && completed == 0,
+                "explicit shutdown cancels open delivery instead of calling a destroyed facade");
+        }
+        else
+        {
+            Check(PumpUntil([&] { return completed == 1; }) && !peer.parent.Connected(),
+                "startup timeout disconnects the session while the desktop message loop keeps running");
+        }
+    }
+}
+
 void TestStalledPeer()
 {
     HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
@@ -698,6 +901,7 @@ int RunSettingsIpcTests()
     TestCodec();
     TestLargeIconEditing();
     TestChannel();
+    TestAsyncOpening();
     TestRetiredUpdateProtocol();
     TestStalledPeer();
     TestProcessLifecycle();

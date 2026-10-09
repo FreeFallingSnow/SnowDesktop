@@ -208,6 +208,15 @@ int main(int argc, char** argv)
         "completed requests cannot schedule retries");
 
     state.Request({}, PostOpenAction::ShowExitConfirmation);
+    const auto exitRevision = state.Revision();
+    Check(state.IsCurrent(exitRevision), "the current open acknowledgement owns the exit action");
+    state.Request(widgetRoute);
+    Check(!state.IsCurrent(exitRevision) && state.Route() == widgetRoute,
+        "a delayed exit-open acknowledgement cannot consume a newer component route");
+    const auto widgetRevision = state.Revision();
+    state.Cancel();
+    Check(!state.IsCurrent(widgetRevision), "cancellation rejects an in-flight open acknowledgement");
+    state.Request({}, PostOpenAction::ShowExitConfirmation);
     Check(state.RecordFailure(3),
         "post-open actions survive an automatic open retry");
     Check(state.MarkShown() == PostOpenAction::ShowExitConfirmation,
@@ -334,16 +343,6 @@ int main(int argc, char** argv)
                 markSettingsShown < refreshDockAfterShow &&
                 refreshDockAfterShow < logSettingsShown,
             "showing settings refreshes the Dock immediately after the window becomes visible");
-        const std::size_t openFacadeBegin = source.find(
-            "bool SettingsWindow::Open(");
-        const std::size_t openFacadeEnd = source.find(
-            "bool SettingsWindow::Show()", openFacadeBegin);
-        const std::string_view openFacade =
-            openFacadeBegin != std::string::npos &&
-                    openFacadeEnd != std::string::npos
-                ? std::string_view(source).substr(
-                      openFacadeBegin, openFacadeEnd - openFacadeBegin)
-                : std::string_view{};
         const std::string entry = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "main.cpp");
         const std::string child = ReadFile(
@@ -352,9 +351,16 @@ int main(int argc, char** argv)
         Check(source.find("std::unique_ptr<winui::SettingsWindowHost>") == std::string::npos &&
                 source.find("SettingsWindowHost>();") == std::string::npos &&
                 source.find("process.Start(*channel)") != std::string::npos &&
-                openFacade.find("ui.open") != std::string_view::npos &&
+                source.find("RequestAsync(\"ui.open\"") != std::string::npos &&
                 child.find("SettingsWindowHost>();") != std::string::npos,
             "only the child entry creates the XAML host; the application facade opens routes over IPC");
+        const auto initializeBegin = source.find("void EnsureInitialized()");
+        const auto initializeEnd = source.find("template<class... A> void Notify", initializeBegin);
+        const auto initialization = source.substr(initializeBegin, initializeEnd - initializeBegin);
+        Check(initialization.find("->Call") == std::string::npos &&
+                source.find("Call<std::pair<bool, std::wstring>>(\"ui.open\"") == std::string::npos &&
+                source.find("RequestAsync(\"ui.initialize\"") != std::string::npos,
+            "desktop-side initialization and route opening cannot synchronously wait for the XAML process");
         const auto settingsEntry = entry.find("return snowdesktop::settings_ipc::RunSettingsProcess(instance)");
         Check(settingsEntry != std::string::npos &&
                 settingsEntry < entry.find("snowdesktop::single_instance::Guard singleInstance") &&

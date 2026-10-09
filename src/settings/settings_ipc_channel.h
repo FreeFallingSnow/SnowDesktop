@@ -2,6 +2,7 @@
 
 #include "settings_ipc_codec.h"
 #include <windows.h>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <string_view>
@@ -20,6 +21,8 @@ class Channel final
 {
 public:
     using Handler = std::function<Bytes(std::span<const std::byte>)>;
+    using Completion = std::function<void(Bytes, std::exception_ptr)>;
+    using DeferredHandler = std::function<void(std::span<const std::byte>, Completion)>;
     Channel();
     ~Channel();
     Channel(const Channel&) = delete;
@@ -37,8 +40,15 @@ public:
     std::function<HWND()> WindowProvider();
     void SetDisconnected(std::function<void()> callback);
     void BindRaw(std::string name, Handler handler);
+    // Handler starts owner work and acknowledges it later. The responder is
+    // lifetime/connection safe and may be called from a worker thread.
+    void BindDeferredRaw(std::string name, DeferredHandler handler);
     void Unbind(std::string_view name);
     Bytes Request(std::string_view name, Bytes arguments, DWORD timeoutMs = 30000);
+    // Returns after queueing. Completion runs on the owner STA, including on
+    // peer failure or timeout. Explicit Close/destruction cancels delivery.
+    void RequestAsync(std::string_view name, Bytes arguments, Completion completion,
+        DWORD timeoutMs = 30000);
     void NotifyRaw(std::string_view name, Bytes arguments);
 
     template<class R, class... A, class F> void Bind(std::string name, F function)

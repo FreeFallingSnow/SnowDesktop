@@ -451,7 +451,7 @@ ReconciledAutoStart ReconcileAutoStart() noexcept
 // Settings application, desktop passthrough and retained-surface visibility.
 
 snowdesktop::AutoStartQueryResult DesktopApp::QueryAutoStartState()
-    const noexcept
+    noexcept
 {
     snowdesktop::AutoStartQueryResult result;
     result.packaged = snowdesktop::deployment::IsPackaged();
@@ -467,12 +467,6 @@ snowdesktop::AutoStartQueryResult DesktopApp::QueryAutoStartState()
             snowdesktop::UnifiedAutoStartTaskState::Enabled;
     result.ownerCommand = reconciled.task.target.executable;
     return result;
-}
-
-bool DesktopApp::QueryAutoStartEnabled() const noexcept
-{
-    const snowdesktop::AutoStartQueryResult result = QueryAutoStartState();
-    return result.stateKnown && result.enabled;
 }
 
 snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
@@ -499,6 +493,7 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
     result.state.enabled = result.state.taskOwnedByCurrentDeployment &&
         task.status == snowdesktop::UnifiedAutoStartTaskState::Enabled;
     result.state.ownerCommand = task.target.executable;
+    settingsAutoStartState_ = result.state;
     if (applied && result.state.stateKnown && result.state.enabled == enabled &&
         result.state.taskOwnedByCurrentDeployment)
     {
@@ -1760,13 +1755,32 @@ bool DesktopApp::IsSettingsApplicationWindow(HWND window) const noexcept
 void DesktopApp::TryShowPendingSettingsWindow()
 {
     if (!settingsWindowOpenRequest_.Pending() ||
-        !startupInitializationComplete_)
+        !startupInitializationComplete_ || settingsWindowOpening_)
         return;
 
     const snowdesktop::SettingsRoute route =
         settingsWindowOpenRequest_.Route();
+    const auto revision = settingsWindowOpenRequest_.Revision();
     CloseQuickNavigation(false);
-    const bool shown = settingsWindow_ && settingsWindow_->Open(route);
+    settingsWindowOpening_ = true;
+    if (!settingsWindow_ || !settingsWindow_->Open(route,
+        [this, route, revision](bool shown) {
+            CompleteSettingsWindowOpen(route, revision, shown);
+        }))
+        CompleteSettingsWindowOpen(route, revision, false);
+}
+
+void DesktopApp::CompleteSettingsWindowOpen(const snowdesktop::SettingsRoute& route,
+    std::uint64_t revision, bool shown)
+{
+    settingsWindowOpening_ = false;
+    // A later click owns both its destination and its post-open action. An
+    // older acknowledgement must not consume an exit confirmation or route.
+    if (!settingsWindowOpenRequest_.IsCurrent(revision))
+    {
+        TryShowPendingSettingsWindow();
+        return;
+    }
     if (shown)
     {
         if (route.page == snowdesktop::SettingsPage::General &&

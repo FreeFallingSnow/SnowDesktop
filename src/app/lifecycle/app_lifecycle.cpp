@@ -103,6 +103,9 @@ DesktopApp::~DesktopApp()
 
 void DesktopApp::ShutdownSettingsInfrastructure() noexcept
 {
+    shellModelWork_.Cancel(L"settings-auto-start");
+    settingsWindowOpening_ = false;
+    settingsWindowOpenRequest_.Cancel();
     steamEntitlementService_.reset();
     settingsWindow_.reset();
     if (widgetSettingsService_)

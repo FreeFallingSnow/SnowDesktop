@@ -3,6 +3,7 @@
 #include "settings_route.h"
 
 #include <utility>
+#include <cstdint>
 
 namespace snowdesktop::settings_window_open_rules
 {
@@ -19,13 +20,16 @@ public:
         SettingsRoute route = {},
         PostOpenAction postOpenAction = PostOpenAction::None)
     {
+        ++revision_;
         pending_ = true;
         retryCount_ = 0;
         route_ = std::move(route);
         postOpenAction_ = postOpenAction;
     }
 
-    void Cancel() { pending_ = false; retryCount_ = 0; postOpenAction_ = PostOpenAction::None; }
+    void Cancel() { ++revision_; pending_ = false; retryCount_ = 0; postOpenAction_ = PostOpenAction::None; }
+    std::uint64_t Revision() const { return revision_; }
+    bool IsCurrent(std::uint64_t revision) const { return pending_ && revision_ == revision; }
     bool Pending() const { return pending_; }
     unsigned RetryCount() const { return retryCount_; }
     const SettingsRoute& Route() const { return route_; }
@@ -49,6 +53,7 @@ public:
 
 private:
     bool pending_ = false;
+    std::uint64_t revision_ = 0;
     unsigned retryCount_ = 0;
     SettingsRoute route_;
     PostOpenAction postOpenAction_ = PostOpenAction::None;

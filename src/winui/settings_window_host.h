@@ -80,6 +80,9 @@ struct SettingsWindowHostOptions
 
     /** Reconcile host-owned system state after a persisted-state reload. */
     std::function<void()> refreshExternalState;
+    /** Parent IPC can defer the acknowledgement while system queries run on
+     * a worker. The child still waits before showing authoritative state. */
+    std::function<void(std::function<void()>)> refreshExternalStateAsync;
     std::function<bool()> developerToolsVisible;
     std::function<bool()> debugVisible;
 

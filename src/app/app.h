@@ -1515,9 +1515,7 @@ private:
     snowdesktop::SettingsActionResult SetTemporaryGridInitialization(bool enabled);
     snowdesktop::SettingsActionResult ChangeDebugProfile(const snowdesktop::SettingsHostActions::Request& request);
     std::wstring GetActiveWidgetStoragePath() const;
-    [[nodiscard]] snowdesktop::AutoStartQueryResult QueryAutoStartState()
-        const noexcept;
-    [[nodiscard]] bool QueryAutoStartEnabled() const noexcept;
+    [[nodiscard]] static snowdesktop::AutoStartQueryResult QueryAutoStartState() noexcept;
     [[nodiscard]] snowdesktop::AutoStartApplyResult ApplyAutoStartEnabled(
         bool enabled);
     snowdesktop::SettingsActionResult OpenStoreUpdates();
@@ -1526,6 +1524,8 @@ private:
     [[nodiscard]] std::wstring BuildAnimationDiagnosticsStatus() const;
     /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
     void TryShowPendingSettingsWindow();
+    void CompleteSettingsWindowOpen(const snowdesktop::SettingsRoute& route,
+        std::uint64_t revision, bool shown);
     /** @brief 加载导航设置并应用（注册热键等）。 */
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
@@ -4127,6 +4127,8 @@ private:
     bool desktopStartupPresentationPending_ = true;
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;
+    bool settingsWindowOpening_ = false;
+    snowdesktop::AutoStartQueryResult settingsAutoStartState_;
     bool customDesktopVisible_ = true;
     bool dockDragDesktopRevealed_ = false;
     bool dockDragPreviousIconsHidden_ = false;
