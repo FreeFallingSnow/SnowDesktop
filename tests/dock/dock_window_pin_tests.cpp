@@ -10,6 +10,25 @@
 namespace
 {
 constexpr wchar_t kPinProperty[] = L"SnowDesktop.DockWindowPin";
+thread_local HWND observedWindow = nullptr;
+thread_local unsigned observedLocations = 0;
+thread_local LONG observedObject = 0;
+
+void CALLBACK ObserveLocation(HWINEVENTHOOK, DWORD, HWND window,
+    LONG object, LONG, DWORD, DWORD)
+{
+    if (window == observedWindow)
+    {
+        ++observedLocations;
+        observedObject = object;
+    }
+}
+
+void PrintRect(const char* name, const RECT& rect)
+{
+    std::cerr << name << '=' << rect.left << ',' << rect.top << ','
+        << rect.right << ',' << rect.bottom << ' ';
+}
 
 HWND MakeWindow()
 {
@@ -129,6 +148,10 @@ int RunDockWindowPinTests()
         // Disable the safety poll so a missing LOCATIONCHANGE subscription
         // cannot pass this regression after the next timer tick.
         if (manager) KillTimer(manager, 1);
+        observedWindow = target;
+        observedLocations = 0;
+        const HWINEVENTHOOK observation = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE,
+            EVENT_OBJECT_LOCATIONCHANGE, nullptr, ObserveLocation, 0, 0, WINEVENT_OUTOFCONTEXT);
         SetWindowPos(target, nullptr, -31000, -31500, 380, 240,
             SWP_NOZORDER | SWP_NOACTIVATE);
         RECT frame{};
@@ -150,6 +173,17 @@ int RunDockWindowPinTests()
             if (!followed) MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         } while (!followed && GetTickCount64() < deadline);
         check(followed, "native location events move and resize the ring with timer fallback disabled");
+        if (!followed)
+        {
+            RECT native{};
+            GetWindowRect(target, &native);
+            PrintRect("native", native);
+            PrintRect("dwm", frame);
+            PrintRect("ring", bounds);
+            std::cerr << "events=" << observedLocations << " object=" << observedObject << '\n';
+        }
+        if (observation) UnhookWinEvent(observation);
+        observedWindow = nullptr;
         if (manager) SetTimer(manager, 1, 100, nullptr);
 
         ShowWindow(target, SW_SHOWMINNOACTIVE);
@@ -274,6 +308,29 @@ int RunDockWindowPinTests()
             check(first.bottom == second.bottom && first.right > second.right &&
                     secondScreen.left > firstScreen.right,
                 "independent landscape and portrait cards have equal heights, distinct widths and a background-free gap");
+            if (!(first.bottom == second.bottom && first.right > second.right &&
+                    secondScreen.left > firstScreen.right))
+            {
+                PrintRect("first-client", first);
+                PrintRect("second-client", second);
+                PrintRect("first-screen", firstScreen);
+                PrintRect("second-screen", secondScreen);
+                std::cerr << '\n';
+                for (const HWND source : {target, other})
+                {
+                    RECT native{};
+                    GetWindowRect(source, &native);
+                    PrintRect("source", native);
+                    HTHUMBNAIL thumbnail = nullptr;
+                    SIZE size{};
+                    if (SUCCEEDED(DwmRegisterThumbnail(groupWindows[0], source, &thumbnail)))
+                    {
+                        DwmQueryThumbnailSourceSize(thumbnail, &size);
+                        DwmUnregisterThumbnail(thumbnail);
+                    }
+                    std::cerr << "dwm-source=" << size.cx << 'x' << size.cy << '\n';
+                }
+            }
             check(preview.ContainsInteractionPoint(Center(secondScreen)),
                 "the second popup participates in preview interaction retention");
             const POINT secondPin = Center(CalculateDockWindowPreviewPinButtonRect(second, dpi));
