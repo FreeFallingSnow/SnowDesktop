@@ -3686,7 +3686,9 @@ void TestUsefulManagementItems()
     }, registry);
     const auto cold = service.Inspect();
     Expect(cold.catalogue.rows.empty() && cold.scanning, "uncached settings return immediately and start background discovery");
-    PumpUntil([&] { return queries >= 2; }, "uncached settings actively query real baseline objects without requiring opt-ins");
+    // Observe discovery while its first response is held. Background queries
+    // reserve the other slot for a popup, so the gate cannot require a second dispatch.
+    PumpUntil([&] { return queries >= 1; }, "uncached settings actively query a real baseline object without requiring opt-ins");
     const auto pending = service.Inspect();
     Expect(pending.catalogue.rows.empty(), "three thousand unassociated registry records never become disabled settings controls");
     release = true;
