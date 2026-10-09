@@ -230,31 +230,31 @@ class Presentation
         }
         InsertBeforeMore(items, additions, moreCommand, false);
     }
-std::vector<Entry> NewNormalEntries(std::vector<Entry> entries)
-{
-    std::vector<Entry> result;
-    const auto previous = displayedNormal_;
-    std::vector<CommandReference> observed;
-    for (auto &entry : entries)
+    std::vector<Entry> NewNormalEntries(std::vector<Entry> entries)
     {
-        if (entry.separator)
+        std::vector<Entry> result;
+        const auto previous = displayedNormal_;
+        std::vector<CommandReference> observed;
+        for (auto &entry : entries)
         {
-            if (!result.empty() && !result.back().separator)
-                result.push_back(std::move(entry));
-            continue;
+            if (entry.separator)
+            {
+                if (!result.empty() && !result.back().separator)
+                    result.push_back(std::move(entry));
+                continue;
+            }
+            const auto reference = AppendReference({}, entry);
+            observed.push_back(reference);
+            if (std::count(observed.begin(), observed.end(), reference) <=
+                std::count(previous.begin(), previous.end(), reference))
+                continue;
+            displayedNormal_.push_back(reference);
+            result.push_back(std::move(entry));
         }
-        const auto reference = AppendReference({}, entry);
-        observed.push_back(reference);
-        if (std::count(observed.begin(), observed.end(), reference) <=
-            std::count(previous.begin(), previous.end(), reference))
-            continue;
-        displayedNormal_.push_back(reference);
-        result.push_back(std::move(entry));
+        while (!result.empty() && result.back().separator)
+            result.pop_back();
+        return result;
     }
-    while (!result.empty() && result.back().separator)
-        result.pop_back();
-    return result;
-}
     std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries,
                                            const CommandReference &parent = {})
     {

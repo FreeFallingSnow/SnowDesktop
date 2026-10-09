@@ -2650,7 +2650,7 @@ void TestInitialDiscoveryDoesNotBlockPopup()
 
 // A management opt-in can name a registration rather than its observed verb.
 // Initial attribution must be allowed to add that row after ordinary rows appear.
-void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryFailure = false)
+void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryFailure = false, bool duplicateVerbs = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
@@ -2664,7 +2664,7 @@ void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryF
     std::ofstream(request.paths.front()) << "private";
     ext::MenuService service(
         temp.path / L"cache",
-        [](const auto &)
+        [&](const auto &)
         {
             ext::Reply reply;
             reply.ok = true;
@@ -2676,7 +2676,7 @@ void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryF
             late.provider = "verb:late-probe";
             late.key = "late-probe";
             late.label = L"Registered";
-            reply.entries = {ordinary, late};
+            reply.entries = duplicateVerbs ? std::vector<ext::Entry>{ordinary, ordinary, late} : std::vector<ext::Entry>{ordinary, late};
             return ext::QueryWork{[reply] { return reply; }, {}};
         },
         [&]
@@ -2713,7 +2713,8 @@ void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryF
               "native result is ready before initial registration attribution");
     if (auto next = options.pollItems(items, true))
         items = std::move(*next);
-    const bool ordinaryFirst = items.size() == 1 && items.front().label == L"Ordinary";
+    const size_t ordinaryCount = duplicateVerbs ? 2u : 1u;
+    const bool ordinaryFirst = items.size() == ordinaryCount && items.front().label == L"Ordinary";
     const bool subscribed = options.pollItemsFinished && !options.pollItemsFinished();
     release.set_value();
     if (!subscribed)
@@ -2726,7 +2727,8 @@ void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryF
         {
             if (auto next = options.pollItems(items, true))
                 items = std::move(*next);
-            return options.pollItemsFinished() && items.size() == (inventoryFailure ? 1u : 2u);
+            return options.pollItemsFinished() && static_cast<size_t>(std::count_if(items.begin(), items.end(),
+                [](const auto &item) { return !item.separator; })) == ordinaryCount + (inventoryFailure ? 0u : 1u);
         },
         "initial registration attribution adds the management opt-in to the same popup");
     Expect(scanning && !timedOut && ordinaryFirst && items.front().label == L"Ordinary" &&
@@ -4009,6 +4011,8 @@ int wmain(int argc, wchar_t **argv)
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
             TestLateInitialRegistrationAttribution(true, true);
+            TestLateInitialRegistrationAttribution(false, false, true);
+            TestLateInitialRegistrationAttribution(true, false, true);
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
@@ -4053,6 +4057,8 @@ int wmain(int argc, wchar_t **argv)
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
             TestLateInitialRegistrationAttribution(true, true);
+            TestLateInitialRegistrationAttribution(false, false, true);
+            TestLateInitialRegistrationAttribution(true, false, true);
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
