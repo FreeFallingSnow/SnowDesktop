@@ -117,6 +117,19 @@ int RunDockWindowPinTests()
             aspectCards[0].right - aspectCards[0].left == 211 &&
             aspectCards[1].right - aspectCards[1].left == 85,
         "equal-height landscape and portrait previews retain proportional widths with five-pixel insets");
+    for (const UINT actionDpi : {96U, 120U, 144U})
+    {
+        const RECT portrait{0, 0, MulDiv(55, actionDpi, 96), MulDiv(152, actionDpi, 96)};
+        const RECT close = CalculateDockWindowPreviewCloseButtonRect(portrait, actionDpi);
+        const RECT pin = CalculateDockWindowPreviewPinButtonRect(portrait, actionDpi);
+        check(!IsRectEmpty(&pin) && !IsRectEmpty(&close) &&
+                pin.left >= MulDiv(6, actionDpi, 96) && close.right < portrait.right &&
+                pin.right < close.left && pin.top == close.top && pin.bottom == close.bottom &&
+                pin.right - pin.left == pin.bottom - pin.top &&
+                close.right - close.left == close.bottom - close.top &&
+                !IsPointInDockWindowPreviewCloseButton(Center(pin), portrait, actionDpi),
+            "narrow portrait cards keep separate square pin and close hit regions without widening the card");
+    }
     const DockWindowPreviewLayout boundedLayout = CalculateDockWindowPreviewLayout(
         {{1600, 900}, {800, 1200}, {1200, 800}}, 600, 300, 96);
     check(boundedLayout.panelWidth <= 600 && boundedLayout.panelHeight <= 300 &&

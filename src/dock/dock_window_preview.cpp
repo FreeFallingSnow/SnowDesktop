@@ -25,6 +25,12 @@ int ScaleForDpi(int value, UINT dpi)
     return MulDiv(value, static_cast<int>(dpi), 96);
 }
 
+int PreviewActionGap(const RECT& cardRect, UINT dpi)
+{
+    const int width = std::max(0L, cardRect.right - cardRect.left);
+    return std::min(std::max(1, ScaleForDpi(4, dpi)), std::max(1, width / 4));
+}
+
 void DrawCenteredActionGlyph(HDC dc, HFONT font, const wchar_t* glyph, const RECT& bounds)
 {
     const HGDIOBJ previousFont = SelectObject(dc, font);
@@ -391,12 +397,16 @@ RECT CalculateDockWindowPreviewCloseButtonRect(
         std::max(1, width / 4));
     const int verticalPadding =
         std::max(1, ScaleForDpi(6, dpi));
+    // Budget both square actions before choosing their size. Portrait cards
+    // keep their proportional width rather than gaining extra side padding.
+    const int actionWidth = std::max(
+        1, (width - inset * 2 - PreviewActionGap(cardRect, dpi)) / 2);
     const int buttonSize = std::max(
         1, std::min({
             ScaleForDpi(20, dpi),
             std::max(1, titleHeight -
                 verticalPadding * 2),
-            std::max(1, width - inset * 2)
+            actionWidth
         }));
     const int right =
         static_cast<int>(cardRect.right) - inset;
@@ -423,8 +433,9 @@ RECT CalculateDockWindowPreviewPinButtonRect(
     RECT pin = CalculateDockWindowPreviewCloseButtonRect(cardRect, dpi);
     const int width = pin.right - pin.left;
     if (width <= 0) return {};
-    OffsetRect(&pin, -width - std::max(1, ScaleForDpi(4, dpi)), 0);
-    if (pin.left < cardRect.left + std::max(1, ScaleForDpi(6, dpi))) return {};
+    const int inset = cardRect.right - pin.right;
+    OffsetRect(&pin, -width - PreviewActionGap(cardRect, dpi), 0);
+    if (pin.left < cardRect.left + inset) return {};
     return pin;
 }
 
@@ -1089,13 +1100,16 @@ void DockWindowPreview::Paint(HWND window)
     const int corner = std::max(4, ScaleForDpi(8, dpi_));
     const int titleInset = ScaleForDpi(10, dpi_);
     const int titleHeight = ScaleForDpi(34, dpi_);
+    const RECT closeRect = CalculateDockWindowPreviewCloseButtonRect(client, dpi_);
+    const int actionFontSize = std::min(ScaleForDpi(16, dpi_),
+        std::max(1, static_cast<int>(closeRect.right - closeRect.left) - ScaleForDpi(4, dpi_)));
     HFONT font = CreateFontW(
         -ScaleForDpi(14, dpi_), 0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, snowdesktop::app_fonts::GdiFamily().c_str());
     HFONT actionFont = CreateFontW(
-        -ScaleForDpi(16, dpi_), 0, 0, 0, FW_NORMAL,
+        -actionFontSize, 0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
@@ -1126,9 +1140,6 @@ void DockWindowPreview::Paint(HWND window)
             bounds.right - titleInset,
             std::min(bounds.bottom, bounds.top + titleHeight)
         };
-        const RECT closeRect =
-            CalculateDockWindowPreviewCloseButtonRect(
-                bounds, dpi_);
         RECT pinRect = CalculateDockWindowPreviewPinButtonRect(bounds, dpi_);
         titleRect.right = std::max(
             titleRect.left,
