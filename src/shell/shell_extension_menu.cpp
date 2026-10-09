@@ -737,7 +737,7 @@ struct Host
         }
         return reply;
     }
-    Reply QueryShortcutObjects(const Request &request, Native &delegated,
+    Reply QueryShortcutObjects(const Request &request, const std::wstring &directory,
         IShellFolder *selectionFolder, PCIDLIST_ABSOLUTE folderId,
         std::vector<PCIDLIST_ABSOLUTE> raw)
     {
@@ -745,13 +745,13 @@ struct Host
         // file operations from the original selection instead. Do not load
         // lnkfile's ShellLink context handler back into this aggregate.
         auto actual = std::make_unique<Native>();
-        actual->directory = delegated.directory; actual->paths = request.paths;
+        actual->directory = directory; actual->paths = request.paths;
         actual->shortcutObjects = true;
         actual->folder = selectionFolder;
         ComPtr<IShellFolder> desktop;
         Pidl desktopId;
         const bool sameFolder = std::all_of(request.paths.begin(), request.paths.end(), [&](const auto &path) {
-            return Lower(std::filesystem::path(path).parent_path().wstring()) == Lower(delegated.directory);
+            return Lower(std::filesystem::path(path).parent_path().wstring()) == Lower(directory);
         });
         if (!sameFolder)
         {
@@ -779,46 +779,6 @@ struct Host
         IdentifyEntries(reply.entries);
         menus.push_back(std::move(actual));
 
-        // Packaged/modern providers may be present only in the delegated
-        // aggregate. Rebind a provider only when that fresh aggregate actually
-        // returned its canonical COM identity. Metadata probes and registry
-        // discovery still cannot introduce executable menu entries.
-        ComPtr<IShellItemArray> selection;
-        ComPtr<IDataObject> data;
-        if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
-            FAILED(selection->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data)))) return {};
-        std::set<std::wstring> rebound;
-        for (int i = 0; i < GetMenuItemCount(delegated.menu); ++i)
-        {
-            MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_ID;
-            if (!GetMenuItemInfoW(delegated.menu, i, TRUE, &item)) continue;
-            const auto identity = Verb(delegated, item.wID);
-            CLSID clsid{};
-            if (identity.empty() || FAILED(CLSIDFromString(identity.c_str(), &clsid)) ||
-                !HandlerEnabled(identity) || !rebound.insert(Lower(identity)).second ||
-                std::any_of(reply.entries.begin(), reply.entries.end(), [&](const auto &entry) {
-                    return Lower(Wide(entry.key)) == Lower(identity);
-                })) continue;
-            auto provider = std::make_unique<Native>();
-            provider->directory = delegated.directory; provider->paths = request.paths;
-            provider->folder = selectionFolder; provider->shortcutObjects = true;
-            ComPtr<IShellExtInit> initialize;
-            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&provider->context))) ||
-                FAILED(provider->context.As(&initialize)) || FAILED(initialize->Initialize(nullptr, data.Get(), nullptr)) ||
-                FAILED(provider->context->QueryContextMenu(provider->menu, 0, 1, 0x7fff,
-                    CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) continue;
-            auto entries = Read(*provider, provider->menu, "");
-            std::erase_if(entries, [](const auto &entry) { return entry.separator; });
-            if (entries.size() == 1)
-            {
-                auto &entry = entries.front();
-                entry.key = Utf8(identity); entry.provider = "verb:" + Utf8(Lower(identity));
-                reply.entries.push_back(std::move(entry));
-                menus.push_back(std::move(provider));
-            }
-            else
-                std::erase_if(commands, [&](const auto &command) { return command.second.source == provider.get(); });
-        }
         for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
         if (count >= kMaximumEntries) return {};
         IdentifyEntries(reply.entries); reply.ok = true;
@@ -860,6 +820,18 @@ struct Host
             FAILED(SHCreateItemFromIDList(folderId.value, IID_PPV_ARGS(&folderItem))) ||
             FAILED(folderItem->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&folder))))
             return {};
+        if (!request.background && !request.startPinOnly && request.sourceClsid.empty() &&
+            std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+                return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+            }))
+        {
+            // Never bind or query ShellLink's target aggregate, even as a
+            // discovery step: folder/broken links can resolve or block there.
+            // The original objects' aggregate supplies both classic and
+            // modern installed file handlers and their live command tokens.
+            progress("query shortcut objects");
+            return QueryShortcutObjects(request, directory, folder.Get(), folderId.value, raw);
+        }
         auto native = std::make_unique<Native>();
         native->directory = directory;
         native->paths = request.paths;
@@ -969,11 +941,6 @@ struct Host
                                                      CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
-        if (!request.background && !request.startPinOnly && request.sourceClsid.empty() &&
-            std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
-                return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-            }))
-            return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
         Reply reply;
         if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
             fileAssociationsReady = true;
