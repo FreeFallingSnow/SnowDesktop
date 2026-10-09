@@ -12,6 +12,7 @@
 #include <future>
 #include <iostream>
 #include <limits>
+#include <string_view>
 #include <thread>
 
 namespace
@@ -812,14 +813,38 @@ void TestProcessLifecycle()
 }
 }
 
+void TestMenuHelperStartupFeedback()
+{
+    using namespace snowdesktop::settings_ipc;
+    for (const auto command : {L"--settings-ui", L"--shell-menu-helper"})
+    {
+        Channel channel;
+        SettingsProcess process;
+        process.Start(channel, command);
+        const auto flags = channel.Call<DWORD>("test.startup-flags");
+        const bool menuHelper = std::wstring_view(command) == L"--shell-menu-helper";
+        Check(((flags & STARTF_FORCEOFFFEEDBACK) != 0) == menuHelper,
+            "the real launcher suppresses startup cursor feedback only for background menu helpers");
+        channel.Close();
+        process.Stop();
+    }
+}
+
 int RunSettingsIpcChildIfRequested()
 {
     using namespace snowdesktop::settings_ipc;
-    if (!IsSettingsProcessCommand()) return -1;
+    const bool menuHelper = IsSettingsProcessCommand(L"--shell-menu-helper");
+    if (!menuHelper && !IsSettingsProcessCommand()) return -1;
     try
     {
         Channel channel;
-        OpenInheritedSettingsChannel(channel);
+        OpenInheritedSettingsChannel(channel, menuHelper ? L"--shell-menu-helper" : L"--settings-ui");
+        channel.Bind<DWORD>("test.startup-flags", [] {
+            STARTUPINFOW startup{};
+            startup.cb = sizeof(startup);
+            GetStartupInfoW(&startup);
+            return startup.dwFlags;
+        });
         channel.Bind<bool, std::string>("test.identity", [](const std::string& identity) {
             return identity == ExecutableIdentity();
         });
@@ -956,5 +981,6 @@ int RunSettingsIpcTests()
     TestRetiredUpdateProtocol();
     TestStalledPeer();
     TestProcessLifecycle();
+    TestMenuHelperStartupFeedback();
     return failures;
 }
