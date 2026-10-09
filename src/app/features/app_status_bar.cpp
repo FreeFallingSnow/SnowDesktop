@@ -5,6 +5,7 @@
 #include "ui/menu/modern_menu.h"
 #include "system/status_bar/status_bar_view.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
+#include "system/status_bar/status_bar_task_view_input.h"
 #include "dock/dock_settings_rules.h"
 #include "platform/taskbar_monitor.h"
 #include "taskbar_hook/taskbar_native.h"
@@ -372,7 +373,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         systemPanel_->CloseThen(resume, owner);
         return;
     }
-    const auto chord = snowdesktop::ResolveStatusBarShellChord(action,
+    auto chord = snowdesktop::ResolveStatusBarShellChord(action,
         snowdesktop::StatusBarSupportsSystemQuickSettings(), IsClassicSystemTaskbar());
     if (action == Action::InputMethodPanel)
     {
@@ -500,19 +501,30 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();
         const HWND foreground = GetForegroundWindow();
+        const auto mouseHandoff = action == Action::TaskView ?
+            snowdesktop::StatusBarTaskViewInputHandoff::Create(uiAnimationScheduler_, anchor, GetDoubleClickTime()) : nullptr;
+        if (action == Action::TaskView && !mouseHandoff)
+        {
+            // Preserve the previous safe gesture handoff if the temporary
+            // input shield cannot be installed; never open unprotected.
+            chord.pointerQuietMilliseconds = GetDoubleClickTime();
+            WriteDiagnosticLogEntry(L"StatusBar Task View pointer shield unavailable; using double-click wait");
+        }
         // Shell shortcut activation has no supported custom popup anchor. Let
         // Windows place its own surface; never move or reparent its window.
         statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, chord, {
             [](int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; },
-            [this, action, generation, started = hold->shortcutStartedMilliseconds](UINT count, INPUT* input, int size) {
+            [this, action, generation, mouseHandoff, started = hold->shortcutStartedMilliseconds](UINT count, INPUT* input, int size) {
                 TraceStatusBarShellActivation(action, generation, L"send-input-begin", started);
                 const double before = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
                 const bool taskViewChord = action == Action::TaskView && count == 4 &&
                     !(input[0].ki.dwFlags & KEYEVENTF_KEYUP);
                 if (taskViewChord && !statusBarTaskViewTransition_.Begin(before, systemTaskbarTaskViewActive_))
                     return 0u;
+                if (taskViewChord && mouseHandoff) mouseHandoff->Begin();
                 const UINT sent = SendInput(count, input, size);
                 if (taskViewChord && sent == 0) statusBarTaskViewTransition_.Reset();
+                if (taskViewChord && sent == 0 && mouseHandoff) mouseHandoff->Cancel();
                 const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - before;
                 TraceStatusBarShellActivation(action, generation, L"send-input", started,
                     sent == count ? L"accepted" : L"incomplete", elapsed, count, sent);
@@ -523,7 +535,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     (action != Action::TaskView || statusBarTaskViewTransition_.CanBegin(
                         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), systemTaskbarTaskViewActive_));
             },
-            [this, lifetime, generation, action, hold](auto token, snowdesktop::StatusBarShortcutResult result) {
+            [this, lifetime, generation, action, hold, mouseHandoff](auto token, snowdesktop::StatusBarShortcutResult result) {
+                if (mouseHandoff) mouseHandoff->ReleaseIfUnused();
                 const wchar_t* outcome = result == snowdesktop::StatusBarShortcutResult::Sent ? L"sent" :
                     result == snowdesktop::StatusBarShortcutResult::Cancelled ? L"canceled" :
                     result == snowdesktop::StatusBarShortcutResult::TimedOut ? L"timed-out" : L"failed";
@@ -541,6 +554,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     MessageBeep(MB_ICONWARNING);
                 }
             }});
+        if (!statusBarActivationToken_ && mouseHandoff) mouseHandoff->Cancel();
     }
     else if (action == Action::SystemMenu)
     {

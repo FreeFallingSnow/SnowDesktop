@@ -37,12 +37,18 @@ inline StatusBarAction ResolveStatusBarClick(StatusBarAction action, bool contro
     return action;
 }
 
-struct StatusBarShellChord { WORD key = 0; bool alt = false; UINT pointerQuietMilliseconds = 0; };
+struct StatusBarShellChord
+{
+    WORD key = 0;
+    bool alt = false;
+    UINT pointerQuietMilliseconds = 0;
+    bool waitForPointerRelease = false;
+};
 inline StatusBarShellChord ResolveStatusBarShellChord(StatusBarAction action, bool windows11, bool classicTaskbar)
 {
-    // Finish the mouse gesture before opening a surface that can cover the
-    // button. Otherwise the second press can land in Shell's opening view.
-    if (action == StatusBarAction::TaskView) return {VK_TAB, false, GetDoubleClickTime()};
+    // The caller shields repeated presses at the opening button before sending
+    // Win+Tab. Wait only for held input, not the full double-click interval.
+    if (action == StatusBarAction::TaskView) return {VK_TAB, false, 0, true};
     if (action == StatusBarAction::SystemCalendar) return windows11 ? StatusBarShellChord{'N'} : StatusBarShellChord{'D', true};
     if (action == StatusBarAction::SystemControlCenter) return windows11 ? StatusBarShellChord{'A'} : StatusBarShellChord{};
     if (action == StatusBarAction::Notifications) return {static_cast<WORD>(classicTaskbar ? 'A' : 'N')};
@@ -132,7 +138,7 @@ inline UiScheduleToken ScheduleStatusBarShellShortcut(UiAnimationScheduler& sche
             const double now = callbacks.nowMilliseconds();
             if (now >= deadline)
             { finish(StatusBarShortcutResult::TimedOut); return; }
-            if (chord.pointerQuietMilliseconds)
+            if (chord.waitForPointerRelease || chord.pointerQuietMilliseconds)
             {
                 for (const int button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2})
                     if (callbacks.keyDown(button))
