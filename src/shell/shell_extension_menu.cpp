@@ -772,7 +772,18 @@ struct Host
         description.hwnd = window; description.psf = selectionFolder; description.pidlFolder = folderId;
         description.cidl = static_cast<UINT>(children.size()); description.apidl = children.data();
         description.punkAssociationInfo = associations.Get();
-        if (FAILED(SHCreateDefaultContextMenu(&description, IID_PPV_ARGS(&actual->context))) ||
+        std::array<HKEY, 2> registrationKeys{};
+        UINT registrationCount = 0;
+        for (const auto *name : {L"*", L"AllFilesystemObjects"})
+        {
+            HKEY key = nullptr;
+            if (RegOpenKeyExW(HKEY_CLASSES_ROOT, name, 0, KEY_READ, &key) == ERROR_SUCCESS)
+                registrationKeys[registrationCount++] = key;
+        }
+        description.cKeys = registrationCount; description.aKeys = registrationKeys.data();
+        const HRESULT created = SHCreateDefaultContextMenu(&description, IID_PPV_ARGS(&actual->context));
+        for (const auto key : registrationKeys) if (key) RegCloseKey(key);
+        if (FAILED(created) ||
             FAILED(actual->context->QueryContextMenu(actual->menu, 0, 1, 0x7fff,
                 CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) return {};
         Reply reply; reply.entries = Read(*actual, actual->menu, "");
