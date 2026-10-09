@@ -722,7 +722,7 @@ void RunTests()
 }
 } // namespace
 
-// Own uniquely named HKCU file-type keys only; never modify real handlers.
+// Own uniquely named HKCU file-type keys and common verbs; never modify real handlers.
 struct TemporaryVerb
 {
     std::wstring extension, progId;
@@ -766,16 +766,16 @@ struct TemporaryVerb
             const auto name = common ? std::wstring(L"snowdesktopprobe-") + id : L"SnowDesktopProbe";
             if (common)
             {
-                verbId.assign(name.begin(), name.end());
-                std::transform(verbId.begin(), verbId.end(), verbId.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
+                verbId.clear();
+                for (const auto c : name) verbId.push_back(static_cast<char>(towlower(c)));
             }
             const auto path = common ? L"Software\\Classes\\*\\shell\\" + name : owned[1]+L"\\shell\\"+name;
             if (common)
             {
-                HKEY key = nullptr; DWORD disposition = 0;
+                HKEY commonKey = nullptr; DWORD disposition = 0;
                 Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_READ|KEY_WRITE,
-                    nullptr, &key, &disposition) == ERROR_SUCCESS, "create uniquely owned common verb");
-                RegCloseKey(key);
+                    nullptr, &commonKey, &disposition) == ERROR_SUCCESS, "create uniquely owned common verb");
+                RegCloseKey(commonKey);
                 Expect(disposition == REG_CREATED_NEW_KEY, "never replace an existing common verb");
                 owned.push_back(path);
             }
@@ -4326,6 +4326,8 @@ int wmain(int argc, wchar_t **argv)
         }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
             TestExtensionSessions();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-shortcut-query-recovery")
+        { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
