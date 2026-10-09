@@ -105,9 +105,9 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
         if (data && IsWidgetDockEntryType(DockEntryTypeForWidget(data->type)))
             additions.push_back({ DockEntryTypeForWidget(data->type), data->id, false });
-        else if (auto* groupEntry = dynamic_cast<CollectionGroupEntryItem*>(source))
+        else if (auto* collectionEntry = dynamic_cast<CollectionGroupEntryItem*>(source))
         {
-            const size_t child = FindWidgetIndexById(groupEntry->GetCollectionId());
+            const size_t child = FindWidgetIndexById(collectionEntry->GetCollectionId());
             if (child >= widgets_.size() || widgets_[child].type != DesktopWidgetType::Collection) return;
             additions.push_back({ DockEntryType::Collection, widgets_[child].id, false });
         }

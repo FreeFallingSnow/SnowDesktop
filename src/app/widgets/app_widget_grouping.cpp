@@ -1047,9 +1047,9 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
         {
             id = groupEntry->GetChildWidgetId();
         }
-        else if (auto* groupEntry = dynamic_cast<CollectionGroupEntryItem*>(source))
+        else if (auto* collectionEntry = dynamic_cast<CollectionGroupEntryItem*>(source))
         {
-            id = groupEntry->GetCollectionId();
+            id = collectionEntry->GetCollectionId();
         }
         else if (auto* widget =
                      dynamic_cast<Widget*>(source))
