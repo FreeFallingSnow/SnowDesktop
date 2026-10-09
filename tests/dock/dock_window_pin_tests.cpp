@@ -21,8 +21,15 @@ HWND MakeWindow()
 
 void MovePreviewOffScreen(DockWindowPreview& preview)
 {
-    SetWindowPos(preview.GetWindow(), nullptr, -32000, -32000, 0, 0,
-        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    const RECT group = preview.GetBounds();
+    for (const HWND window : preview.GetWindows())
+    {
+        RECT rect{};
+        if (!GetWindowRect(window, &rect)) continue;
+        SetWindowPos(window, nullptr,
+            -32000 + rect.left - group.left, -32000 + rect.top - group.top,
+            0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 POINT Center(const RECT& rect)
@@ -65,15 +72,24 @@ int RunDockWindowPinTests()
     const DockWindowPreviewLayout aspectLayout = CalculateDockWindowPreviewLayout(
         {{1600, 900}, {800, 1200}}, 1200, 700, 96);
     const auto aspectCards = CalculateDockWindowPreviewLayoutCardRects(aspectLayout, 96);
-    check(aspectCards.size() == 2 && aspectLayout.cardWidth == 210 &&
+    check(aspectCards.size() == 2 &&
             aspectCards[0].bottom - aspectCards[0].top == 152 &&
-            aspectCards[1].bottom - aspectCards[1].top == 339,
-        "equal-width landscape and portrait thumbnails retain their source ratio with five-pixel insets");
+            aspectCards[1].bottom - aspectCards[1].top == 152 &&
+            aspectCards[0].right - aspectCards[0].left == 211 &&
+            aspectCards[1].right - aspectCards[1].left == 85,
+        "equal-height landscape and portrait previews retain proportional widths with five-pixel insets");
     const DockWindowPreviewLayout boundedLayout = CalculateDockWindowPreviewLayout(
         {{1600, 900}, {800, 1200}, {1200, 800}}, 600, 300, 96);
     check(boundedLayout.panelWidth <= 600 && boundedLayout.panelHeight <= 300 &&
-            boundedLayout.cardHeights.size() == 3,
-        "aspect-preserving previews fit the work area without imposing a common card height");
+            boundedLayout.cardWidths.size() == 3,
+        "aspect-preserving previews fit the work area without imposing a common card width");
+    const auto wrappedLayout = CalculateDockWindowPreviewLayout(
+        {{1600, 900}, {800, 1200}, {1200, 800}}, 300, 400, 96);
+    check(wrappedLayout.rows == 2 && wrappedLayout.cardHeight == 152 &&
+            wrappedLayout.cardRects.size() == 3 &&
+            wrappedLayout.cardRects[1].top > wrappedLayout.cardRects[0].bottom &&
+            wrappedLayout.cardRects[2].left > wrappedLayout.cardRects[1].right,
+        "variable-width independent cards wrap into separated rows while retaining their common height");
     HWND target = MakeWindow();
     HWND other = MakeWindow();
     check(target && other, "native window pin fixtures are created");
@@ -232,6 +248,50 @@ int RunDockWindowPinTests()
         show();
         SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, MAKELPARAM(20, card.bottom - 20));
         check(activated == target && !closed, "left-clicking the thumbnail content still activates it");
+
+        closed = nullptr;
+        activated = nullptr;
+        SetWindowPos(other, nullptr, -32000, -32000, 120, 300,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        const auto showGroup = [&] {
+            preview.Show({{target, L"landscape"}, {other, L"portrait"}},
+                {0, 0, 20, 20}, DockPosition::Bottom, false);
+            MovePreviewOffScreen(preview);
+        };
+        showGroup();
+        const auto groupWindows = preview.GetWindows();
+        check(groupWindows.size() == 2 && groupWindows[0] != groupWindows[1] &&
+                GetAncestor(groupWindows[0], GA_ROOT) == groupWindows[0] &&
+                GetAncestor(groupWindows[1], GA_ROOT) == groupWindows[1],
+            "two application windows have separate top-level thumbnail popups");
+        if (groupWindows.size() == 2)
+        {
+            RECT first{}, second{}, firstScreen{}, secondScreen{};
+            GetClientRect(groupWindows[0], &first);
+            GetClientRect(groupWindows[1], &second);
+            GetWindowRect(groupWindows[0], &firstScreen);
+            GetWindowRect(groupWindows[1], &secondScreen);
+            check(first.bottom == second.bottom && first.right > second.right &&
+                    secondScreen.left > firstScreen.right,
+                "independent landscape and portrait cards have equal heights, distinct widths and a background-free gap");
+            check(preview.ContainsInteractionPoint(Center(secondScreen)),
+                "the second popup participates in preview interaction retention");
+            const POINT secondPin = Center(CalculateDockWindowPreviewPinButtonRect(second, dpi));
+            SendMessageW(groupWindows[1], WM_LBUTTONUP, 0, MAKELPARAM(secondPin.x, secondPin.y));
+            check(DockWindowPin::IsPinned(other) && !DockWindowPin::IsPinned(target) &&
+                    IsAbove(groupWindows[0], other) && IsAbove(groupWindows[1], other),
+                "pinning the second popup targets only its source and keeps all preview controls above it");
+            show();
+            check(!IsWindow(groupWindows[1]) && DockWindowPin::IsPinned(other),
+                "shrinking the preview group retires surplus popups without dropping their application's pin");
+            showGroup();
+            const HWND secondPopup = preview.GetWindows()[1];
+            SendMessageW(secondPopup, WM_LBUTTONUP, 0, MAKELPARAM(secondPin.x, secondPin.y));
+            check(!DockWindowPin::IsPinned(other), "a recreated second popup can cancel the retained source pin");
+            SendMessageW(secondPopup, WM_MBUTTONUP, 0, MAKELPARAM(20, second.bottom - 20));
+            check(closed == other && !activated && preview.IsCleared(),
+                "middle-click coordinates in the second popup close its source and hide the complete group");
+        }
     }
     check(pins.Toggle(target), "prepare destroyed-window cleanup fixture");
     border = static_cast<HWND>(GetPropW(target, kPinProperty));

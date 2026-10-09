@@ -537,10 +537,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             dockWindowPreview_->IsVisible() &&
             hwnd_ && IsWindow(hwnd_))
         {
-            RECT previewScreenRect{};
-            if (GetWindowRect(
-                    dockWindowPreview_->GetWindow(),
-                    &previewScreenRect))
+            RECT previewScreenRect = dockWindowPreview_->GetBounds();
+            if (!IsRectEmpty(&previewScreenRect))
             {
                 MapWindowPoints(
                     nullptr, hwnd_,

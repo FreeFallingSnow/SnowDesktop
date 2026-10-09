@@ -247,57 +247,71 @@ DockWindowPreviewLayout CalculateDockWindowPreviewLayout(
     const int gap = std::max(1, ScaleForDpi(8, dpi));
     const int padding = std::max(1, ScaleForDpi(5, dpi));
     const int title = std::max(1, ScaleForDpi(34, dpi));
-    const int desiredWidth = std::max(1, ScaleForDpi(210, dpi));
-    const int count = static_cast<int>(sourceSizes.size());
-    DockWindowPreviewLayout best;
-    const auto heightsAtWidth = [&](int width) {
-        std::vector<int> heights;
-        heights.reserve(sourceSizes.size());
+    const int desiredHeight = std::max(1, ScaleForDpi(113, dpi));
+    const auto atHeight = [&](int height) {
+        DockWindowPreviewLayout layout;
+        layout.cardHeight = title + padding + height;
+        int rowWidth = 0;
+        int row = 0;
+        int columns = 0;
         for (const SIZE size : sourceSizes)
         {
             const double ratio = size.cx > 0 && size.cy > 0
-                ? static_cast<double>(size.cy) / size.cx : 9.0 / 16.0;
-            heights.push_back(static_cast<int>(std::min<double>(maximumHeight + 1.0,
-                title + padding + std::max(1.0, std::round((width - padding * 2) * ratio)))));
+                ? static_cast<double>(size.cx) / size.cy : 16.0 / 9.0;
+            const int width = padding * 2 + static_cast<int>(std::min<double>(
+                maximumWidth + 1.0, std::max(1.0, std::round(height * ratio))));
+            if (width > maximumWidth) return DockWindowPreviewLayout{};
+            if (rowWidth && rowWidth + gap + width > maximumWidth)
+            {
+                layout.columns = std::max(layout.columns, columns);
+                columns = 0;
+                rowWidth = 0;
+                ++row;
+            }
+            const int left = rowWidth ? rowWidth + gap : 0;
+            const int top = row * (layout.cardHeight + gap);
+            layout.cardWidths.push_back(width);
+            layout.cardRects.push_back({left, top, left + width, top + layout.cardHeight});
+            layout.cardWidth = std::max(layout.cardWidth, width);
+            rowWidth = left + width;
+            layout.panelWidth = std::max(layout.panelWidth, rowWidth);
+            ++columns;
         }
-        return heights;
-    };
-    const auto panelHeight = [&](const std::vector<int>& heights, int columns) {
-        int64_t height = 0;
-        for (int first = 0; first < count; first += columns)
+        layout.columns = std::max(layout.columns, columns);
+        layout.rows = row + 1;
+        layout.panelHeight = layout.rows * layout.cardHeight + row * gap;
+        for (size_t first = 0; first < layout.cardRects.size();)
         {
-            height += *std::max_element(heights.begin() + first,
-                heights.begin() + std::min(count, first + columns));
-            if (first) height += gap;
+            size_t end = first + 1;
+            while (end < layout.cardRects.size() &&
+                    layout.cardRects[end].top == layout.cardRects[first].top) ++end;
+            const int offset = (layout.panelWidth - layout.cardRects[end - 1].right) / 2;
+            for (size_t index = first; index < end; ++index)
+                OffsetRect(&layout.cardRects[index], offset, 0);
+            first = end;
         }
-        return height;
+        return layout;
     };
-    for (int columns = 1; columns <= count; ++columns)
+    DockWindowPreviewLayout best;
+    int low = 1;
+    int high = std::min(desiredHeight, maximumHeight - title - padding);
+    while (low <= high)
     {
-        int high = std::min(desiredWidth, (maximumWidth - gap * (columns - 1)) / columns);
-        int low = padding * 2 + 1;
-        if (high < low || panelHeight(heightsAtWidth(low), columns) > maximumHeight) continue;
-        while (low < high)
+        const int middle = low + (high - low) / 2;
+        auto candidate = atHeight(middle);
+        if (!candidate.cardWidths.empty() && candidate.panelHeight <= maximumHeight)
         {
-            const int middle = low + (high - low + 1) / 2;
-            if (panelHeight(heightsAtWidth(middle), columns) <= maximumHeight) low = middle;
-            else high = middle - 1;
+            best = std::move(candidate);
+            low = middle + 1;
         }
-        const int rows = (count + columns - 1) / columns;
-        if (low < best.cardWidth || (low == best.cardWidth && rows >= best.rows)) continue;
-        best.columns = columns;
-        best.rows = rows;
-        best.cardWidth = low;
-        best.cardHeights = heightsAtWidth(low);
-        best.cardHeight = *std::max_element(best.cardHeights.begin(), best.cardHeights.end());
-        best.panelWidth = low * columns + gap * (columns - 1);
-        best.panelHeight = static_cast<int>(panelHeight(best.cardHeights, columns));
+        else high = middle - 1;
     }
-    if (!best.columns)
+    if (best.cardWidths.empty())
     {
         static_cast<DockWindowPreviewGrid&>(best) = CalculateDockWindowPreviewGrid(
             sourceSizes.size(), maximumWidth, maximumHeight, dpi);
-        best.cardHeights.assign(sourceSizes.size(), best.cardHeight);
+        best.cardWidths.assign(sourceSizes.size(), best.cardWidth);
+        best.cardRects = CalculateDockWindowPreviewCardRects(sourceSizes.size(), best, dpi);
     }
     return best;
 }
@@ -354,9 +368,9 @@ std::vector<RECT> CalculateDockWindowPreviewCardRects(
 }
 
 std::vector<RECT> CalculateDockWindowPreviewLayoutCardRects(
-    const DockWindowPreviewLayout& layout, UINT dpi)
+    const DockWindowPreviewLayout& layout, UINT)
 {
-    return CalculatePreviewCardRects(layout.cardHeights.size(), layout, dpi, layout.cardHeights);
+    return layout.cardRects;
 }
 
 RECT CalculateDockWindowPreviewCloseButtonRect(
@@ -611,8 +625,9 @@ void DockPreviewHoverController::Reset()
 DockWindowPreview::~DockWindowPreview()
 {
     UnregisterThumbnails();
-    if (hwnd_)
-        DestroyWindow(hwnd_);
+    for (const HWND window : windows_)
+        if (window) DestroyWindow(window);
+    windows_.clear();
     hwnd_ = nullptr;
     if (instance_)
         UnregisterClassW(kDockWindowPreviewClassName, instance_);
@@ -642,16 +657,37 @@ bool DockWindowPreview::Initialize(
 
 bool DockWindowPreview::EnsureWindow()
 {
-    if (hwnd_ && IsWindow(hwnd_))
-        return true;
-    if (!instance_)
-        return false;
+    return EnsureWindows(std::max<size_t>(1, windows_.size()));
+}
 
-    hwnd_ = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        kDockWindowPreviewClassName, L"Dock Window Preview",
-        WS_POPUP | WS_CLIPCHILDREN,
-        0, 0, 1, 1, nullptr, nullptr, instance_, this);
+bool DockWindowPreview::EnsureWindows(size_t count)
+{
+    if (!instance_ || !count)
+        return false;
+    if (count == windows_.size() && std::all_of(windows_.begin(), windows_.end(),
+            [](HWND window) { return window && IsWindow(window); }))
+    {
+        hwnd_ = windows_.front();
+        return true;
+    }
+    UnregisterThumbnails();
+    while (windows_.size() > count)
+    {
+        if (windows_.back()) DestroyWindow(windows_.back());
+        windows_.pop_back();
+    }
+    windows_.resize(count, nullptr);
+    for (HWND& window : windows_)
+    {
+        if (window && IsWindow(window)) continue;
+        window = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            kDockWindowPreviewClassName, L"Dock Window Preview",
+            WS_POPUP | WS_CLIPCHILDREN,
+            0, 0, 1, 1, nullptr, nullptr, instance_, this);
+        if (!window) return false;
+    }
+    hwnd_ = windows_.empty() ? nullptr : windows_.front();
     return hwnd_ != nullptr;
 }
 
@@ -703,83 +739,64 @@ void DockWindowPreview::Show(
         ResolveDockWindowPreviewMonitorContext(anchorCenter);
     dpi_ = context.dpi;
     Layout(context.workArea, dpi_);
-
-    const int panelWidth = std::max(1L, panelSize_.cx);
-    const int panelHeight = std::max(1L, panelSize_.cy);
+    if (!EnsureWindows(items_.size()))
+    {
+        Hide();
+        return;
+    }
     const RECT panelRect = ResolveDockWindowPreviewPanelPlacement(
         anchorScreen_, dockPosition_, panelSize_,
         context.workArea, dpi_);
 
     const BOOL darkMode = lightTheme_ ? FALSE : TRUE;
-    DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE,
-        &darkMode, sizeof(darkMode));
     const DWM_WINDOW_CORNER_PREFERENCE corner =
         DWMWCP_ROUNDSMALL;
-    DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE,
-        &corner, sizeof(corner));
-
-    const bool wasVisible = IsWindowVisible(hwnd_) != FALSE;
+    const bool wasVisible = IsVisible();
     const bool useDockLayer =
         dockLayerOwner &&
         IsWindow(dockLayerOwner);
     const HWND requestedOwner =
         useDockLayer ? dockLayerOwner : nullptr;
-    const HWND currentOwner = reinterpret_cast<HWND>(
-        GetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT));
-    const bool ownerChanging =
-        currentOwner != requestedOwner;
-    if (ownerChanging && wasVisible)
-        ShowWindow(hwnd_, SW_HIDE);
-    if (ownerChanging)
+    // Each card has its own native popup. Prepare owners, geometry and DWM
+    // surfaces before revealing any new card, without moving the Dock owner.
+    for (size_t index = 0; index < windows_.size(); ++index)
     {
-        SetWindowLongPtrW(
-            hwnd_, GWLP_HWNDPARENT,
-            reinterpret_cast<LONG_PTR>(requestedOwner));
+        const HWND window = windows_[index];
+        const RECT& card = cardRects_[index];
+        DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &darkMode, sizeof(darkMode));
+        DwmSetWindowAttribute(window, DWMWA_WINDOW_CORNER_PREFERENCE,
+            &corner, sizeof(corner));
+        const HWND currentOwner = reinterpret_cast<HWND>(
+            GetWindowLongPtrW(window, GWLP_HWNDPARENT));
+        if (currentOwner != requestedOwner)
+        {
+            ShowWindow(window, SW_HIDE);
+            SetWindowLongPtrW(window, GWLP_HWNDPARENT,
+                reinterpret_cast<LONG_PTR>(requestedOwner));
+        }
+        const bool visibleForUpdate = IsWindowVisible(window) != FALSE;
+        const auto zOrder = ResolveDockWindowPreviewZOrderPolicy(useDockLayer, visibleForUpdate);
+        const int width = card.right - card.left;
+        const int height = card.bottom - card.top;
+        SetWindowPos(window, zOrder.insertAfter,
+            panelRect.left + card.left, panelRect.top + card.top,
+            width, height, zOrder.flags);
+        HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
+            ScaleForDpi(14, dpi_), ScaleForDpi(14, dpi_));
+        if (region && !SetWindowRgn(window, region, visibleForUpdate ? TRUE : FALSE))
+            DeleteObject(region);
     }
-    const bool visibleForUpdate =
-        IsWindowVisible(hwnd_) != FALSE;
-
-    // Prepare the complete preview while it is still hidden. Showing the
-    // HWND before applying its region and registering the DWM thumbnails
-    // exposes one empty rectangular frame; the floating Dock made that frame
-    // especially noticeable because it also performed a second visible
-    // Z-order transition.
-    // A reused popup does not reliably inherit TOPMOST when its owner is
-    // assigned after the DockHost has already been promoted. Reassert the
-    // preview's own band while SWP_NOOWNERZORDER keeps that owner stationary.
-    // Never pass HWND_NOTOPMOST here: Windows would demote the owner and every
-    // window in the owned chain, burying the promoted DockHost as well.
-    const DockWindowPreviewZOrderPolicy zOrder =
-        ResolveDockWindowPreviewZOrderPolicy(
-            useDockLayer, visibleForUpdate);
-    SetWindowPos(
-        hwnd_, zOrder.insertAfter,
-        panelRect.left, panelRect.top,
-        panelWidth, panelHeight,
-        zOrder.flags);
-    HRGN region = CreateRoundRectRgn(
-        0, 0, panelWidth + 1, panelHeight + 1,
-        ScaleForDpi(14, dpi_), ScaleForDpi(14, dpi_));
-    if (region)
-        SetWindowRgn(
-            hwnd_, region,
-            visibleForUpdate ? TRUE : FALSE);
-
     RegisterThumbnails();
-    InvalidateRect(hwnd_, nullptr, TRUE);
-    if (!visibleForUpdate)
+    for (const HWND window : windows_)
     {
-        // Ownership already keeps the preview above the floating Dock. Reveal
-        // it without another Z-order mutation so the Dock and preview enter
-        // the compositor as one stable layer pair.
-        SetWindowPos(
-            hwnd_, nullptr,
-            0, 0, 0, 0,
+        InvalidateRect(window, nullptr, TRUE);
+        if (!IsWindowVisible(window)) SetWindowPos(window, nullptr, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                 SWP_NOOWNERZORDER | SWP_NOACTIVATE |
                 SWP_SHOWWINDOW);
+        UpdateWindow(window);
     }
-    UpdateWindow(hwnd_);
     if (!wasVisible && IsVisible() && visibilityChanged_) visibilityChanged_();
 }
 
@@ -840,14 +857,15 @@ void DockWindowPreview::RegisterThumbnails()
     {
         HTHUMBNAIL thumbnail = nullptr;
         if (FAILED(DwmRegisterThumbnail(
-                hwnd_, items_[index].window, &thumbnail)) ||
+                windows_[index], items_[index].window, &thumbnail)) ||
             !thumbnail)
             continue;
 
         SIZE sourceSize{};
         DwmQueryThumbnailSourceSize(thumbnail, &sourceSize);
-        const RECT destination = FitThumbnailRect(
+        RECT destination = FitThumbnailRect(
             thumbnailRects_[index], sourceSize);
+        OffsetRect(&destination, -cardRects_[index].left, -cardRects_[index].top);
         DWM_THUMBNAIL_PROPERTIES properties{};
         properties.dwFlags =
             DWM_TNP_RECTDESTINATION |
@@ -910,13 +928,20 @@ void DockWindowPreview::UpdateAnchor(
     const RECT panelRect = ResolveDockWindowPreviewPanelPlacement(
         anchorScreen_, dockPosition_, panelSize_,
         context.workArea, dpi_);
-    SetWindowPos(
-        hwnd_, nullptr,
-        panelRect.left, panelRect.top,
-        panelSize_.cx, panelSize_.cy,
-        SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER |
-            SWP_NOSENDCHANGING | SWP_NOREDRAW);
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    for (size_t index = 0; index < windows_.size(); ++index)
+    {
+        const RECT& card = cardRects_[index];
+        SetWindowPos(windows_[index], nullptr,
+            panelRect.left + card.left, panelRect.top + card.top,
+            card.right - card.left, card.bottom - card.top,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+                SWP_NOSENDCHANGING | SWP_NOREDRAW);
+        HRGN region = CreateRoundRectRgn(0, 0,
+            card.right - card.left + 1, card.bottom - card.top + 1,
+            ScaleForDpi(14, dpi_), ScaleForDpi(14, dpi_));
+        if (region && !SetWindowRgn(windows_[index], region, FALSE)) DeleteObject(region);
+    }
+    InvalidatePopups();
 }
 
 void DockWindowPreview::Hide()
@@ -925,10 +950,9 @@ void DockWindowPreview::Hide()
         return;
     const bool wasVisible = IsVisible();
     if (hwnd_)
-    {
         KillTimer(hwnd_, kHideTimerId);
-        ShowWindow(hwnd_, SW_HIDE);
-    }
+    for (const HWND window : windows_)
+        if (window) ShowWindow(window, SW_HIDE);
     hideTimerArmed_ = false;
     UnregisterThumbnails();
     items_.clear();
@@ -939,6 +963,7 @@ void DockWindowPreview::Hide()
     hoveredCloseIndex_ = -1;
     hoveredPinIndex_ = -1;
     trackingMouse_ = false;
+    trackingWindow_ = nullptr;
     hasTransitionOrigin_ = false;
     if (wasVisible && visibilityChanged_) visibilityChanged_();
 }
@@ -949,8 +974,7 @@ void DockWindowPreview::ScheduleHide()
         return;
     POINT pointer{};
     GetCursorPos(&pointer);
-    RECT preview{};
-    GetWindowRect(hwnd_, &preview);
+    const RECT preview = GetBounds();
     if (RectContainsScreenPoint(anchorScreen_, pointer) ||
         RectContainsScreenPoint(preview, pointer))
     {
@@ -983,7 +1007,20 @@ void DockWindowPreview::KeepVisible()
 
 bool DockWindowPreview::IsVisible() const
 {
-    return hwnd_ && IsWindowVisible(hwnd_);
+    return std::any_of(windows_.begin(), windows_.end(),
+        [](HWND window) { return window && IsWindowVisible(window); });
+}
+
+RECT DockWindowPreview::GetBounds() const
+{
+    RECT bounds{};
+    for (const HWND window : windows_)
+    {
+        RECT rect{};
+        if (window && IsWindowVisible(window) && GetWindowRect(window, &rect))
+            UnionRect(&bounds, &bounds, &rect);
+    }
+    return bounds;
 }
 
 bool DockWindowPreview::IsCleared() const
@@ -1016,23 +1053,21 @@ bool DockWindowPreview::ContainsInteractionPoint(
 {
     if (!IsVisible())
         return false;
-    RECT preview{};
-    if (!GetWindowRect(hwnd_, &preview))
-        return false;
+    const RECT preview = GetBounds();
     return RectContainsScreenPoint(anchorScreen_, screenPoint) ||
         RectContainsScreenPoint(preview, screenPoint) ||
         IsPointerInTransitionRegion(screenPoint);
 }
 
-void DockWindowPreview::Paint()
+void DockWindowPreview::Paint(HWND window)
 {
     PAINTSTRUCT paint{};
-    HDC dc = BeginPaint(hwnd_, &paint);
+    HDC dc = BeginPaint(window, &paint);
     if (!dc)
         return;
 
     RECT client{};
-    GetClientRect(hwnd_, &client);
+    GetClientRect(window, &client);
     const COLORREF background = lightTheme_
         ? RGB(244, 246, 249) : RGB(30, 32, 37);
     const COLORREF card = lightTheme_
@@ -1068,9 +1103,11 @@ void DockWindowPreview::Paint()
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text);
 
-    for (size_t index = 0; index < cardRects_.size(); ++index)
+    const auto found = std::find(windows_.begin(), windows_.end(), window);
+    const size_t index = static_cast<size_t>(found - windows_.begin());
+    if (index < cardRects_.size() && index < items_.size())
     {
-        const RECT& bounds = cardRects_[index];
+        const RECT& bounds = client;
         HBRUSH fill = CreateSolidBrush(
             static_cast<int>(index) == hoveredIndex_ ? hovered : card);
         HPEN outline = CreatePen(PS_SOLID, 1, border);
@@ -1156,7 +1193,24 @@ void DockWindowPreview::Paint()
     SelectObject(dc, oldFont);
     DeleteObject(font);
     DeleteObject(actionFont);
-    EndPaint(hwnd_, &paint);
+    EndPaint(window, &paint);
+}
+
+void DockWindowPreview::InvalidatePopups()
+{
+    for (const HWND window : windows_)
+        if (window) InvalidateRect(window, nullptr, FALSE);
+}
+
+POINT DockWindowPreview::ToLayoutPoint(HWND window, POINT point) const
+{
+    const auto found = std::find(windows_.begin(), windows_.end(), window);
+    if (found == windows_.end()) return {-1, -1};
+    const size_t index = static_cast<size_t>(found - windows_.begin());
+    if (index >= cardRects_.size()) return {-1, -1};
+    point.x += cardRects_[index].left;
+    point.y += cardRects_[index].top;
+    return point;
 }
 
 int DockWindowPreview::CardIndexAtPoint(POINT point) const
@@ -1190,16 +1244,17 @@ int DockWindowPreview::PinButtonIndexAtPoint(POINT point) const
     return -1;
 }
 
-void DockWindowPreview::OnMouseMove(POINT point)
+void DockWindowPreview::OnMouseMove(HWND window, POINT point)
 {
     KeepVisible();
-    if (!trackingMouse_)
+    if (!trackingMouse_ || trackingWindow_ != window)
     {
         TRACKMOUSEEVENT tracking{
-            sizeof(tracking), TME_LEAVE, hwnd_, 0
+            sizeof(tracking), TME_LEAVE, window, 0
         };
         TrackMouseEvent(&tracking);
         trackingMouse_ = true;
+        trackingWindow_ = window;
     }
     const int hovered = CardIndexAtPoint(point);
     const int hoveredClose =
@@ -1211,17 +1266,19 @@ void DockWindowPreview::OnMouseMove(POINT point)
         hoveredIndex_ = hovered;
         hoveredCloseIndex_ = hoveredClose;
         hoveredPinIndex_ = hoveredPin;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidatePopups();
     }
 }
 
-void DockWindowPreview::OnMouseLeave()
+void DockWindowPreview::OnMouseLeave(HWND window)
 {
+    if (trackingWindow_ != window) return;
     trackingMouse_ = false;
+    trackingWindow_ = nullptr;
     hoveredIndex_ = -1;
     hoveredCloseIndex_ = -1;
     hoveredPinIndex_ = -1;
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    InvalidatePopups();
     ScheduleHide();
 }
 
@@ -1236,10 +1293,11 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
             // Promoting the target inserts it above other topmost windows.
             // Keep its still-open controls available without activating either
             // the preview or its floating Dock owner.
-            SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            for (const HWND window : windows_)
+                SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         }
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidatePopups();
         return;
     }
     const int closeIndex =
@@ -1279,9 +1337,7 @@ void DockWindowPreview::HideIfPointerOutside()
 {
     POINT pointer{};
     GetCursorPos(&pointer);
-    RECT preview{};
-    if (hwnd_)
-        GetWindowRect(hwnd_, &preview);
+    const RECT preview = GetBounds();
     if (RectContainsScreenPoint(anchorScreen_, pointer) ||
         RectContainsScreenPoint(preview, pointer))
     {
@@ -1303,9 +1359,8 @@ bool DockWindowPreview::IsPointerInTransitionRegion(
 {
     if (!hwnd_ || IsRectEmpty(&anchorScreen_))
         return false;
-    RECT preview{};
-    if (!GetWindowRect(hwnd_, &preview))
-        return false;
+    const RECT preview = GetBounds();
+    if (IsRectEmpty(&preview)) return false;
     const POINT origin = hasTransitionOrigin_
         ? transitionOriginScreen_
         : POINT{
@@ -1342,29 +1397,29 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
     switch (message)
     {
     case WM_PAINT:
-        preview->Paint();
+        preview->Paint(window);
         return 0;
     case WM_ERASEBKGND:
         return 1;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
     case WM_MOUSEMOVE:
-        preview->OnMouseMove({
+        preview->OnMouseMove(window, preview->ToLayoutPoint(window, {
             GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
-        });
+        }));
         return 0;
     case WM_MOUSELEAVE:
-        preview->OnMouseLeave();
+        preview->OnMouseLeave(window);
         return 0;
     case WM_LBUTTONUP:
-        preview->OnLeftButtonUp({
+        preview->OnLeftButtonUp(preview->ToLayoutPoint(window, {
             GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
-        });
+        }));
         return 0;
     case WM_MBUTTONUP:
-        preview->OnMiddleButtonUp({
+        preview->OnMiddleButtonUp(preview->ToLayoutPoint(window, {
             GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)
-        });
+        }));
         return 0;
     case WM_TIMER:
         if (wParam == kHideTimerId)
@@ -1375,6 +1430,8 @@ LRESULT CALLBACK DockWindowPreview::WindowProc(
         break;
     case WM_NCDESTROY:
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        for (HWND& popup : preview->windows_)
+            if (popup == window) popup = nullptr;
         if (preview->hwnd_ == window)
         {
             preview->hwnd_ = nullptr;
