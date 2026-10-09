@@ -345,6 +345,7 @@ struct DockPagePresenter::Impl
 
     SettingsCard enableCard;
     SettingsCard edgeSwipeCard;
+    SettingsCard fullscreenCard;
     SettingsCard layoutCard;
     SettingsCard behaviorCard;
     SettingsCard taskbarCard;
@@ -369,6 +370,7 @@ struct DockPagePresenter::Impl
     winrt::event_token fullscreenRunningOpenToken{}, fullscreenRunningSelectToken{};
     muxc::StackPanel fullscreenExceptionList{nullptr};
     muxc::ContentControl fullscreenExceptionListHost{nullptr};
+    muxc::Border fullscreenExceptionListBorder{nullptr};
     SettingRow fullscreenExceptionsRow;
     winrt::event_token fullscreenExceptionAddToken{};
     struct FullscreenExceptionRow
@@ -554,6 +556,9 @@ struct DockPagePresenter::Impl
 
         InitializeCard(layoutCard, cardStyle, dockRoot);
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
+        InitializeCard(fullscreenCard, cardStyle, dockRoot);
+        // The policy row supplies this card's visible heading and selector.
+        fullscreenCard.title.Visibility(mux::Visibility::Collapsed);
         InitializeCard(behaviorCard, cardStyle, dockRoot);
         positionCombo = NewCombo();
         layoutCombo = NewCombo();
@@ -612,6 +617,9 @@ struct DockPagePresenter::Impl
         singleClickLaunchItemsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenPolicyRow.Initialize(fullscreenPolicyCombo);
         fullscreenPolicyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        fullscreenPolicyRow.label.FontWeight(
+            winrt::Windows::UI::Text::FontWeights::SemiBold());
+        fullscreenPolicyRow.label.FontSize(16);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
         suppressTaskbarRow.Initialize(suppressTaskbarToggle);
         suppressTaskbarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -633,7 +641,7 @@ struct DockPagePresenter::Impl
             ContinuousField::FrequentItemCount, 1.0, 8.0, 1.0);
         // Floating shortcut mode/hotkey is rendered once by General.
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
-        edgeSwipeCard.content.Children().Append(fullscreenPolicyRow.root);
+        fullscreenCard.content.Children().Append(fullscreenPolicyRow.root);
         fullscreenExceptionAdd = muxc::Button{};
         fullscreenExceptionAdd.HorizontalAlignment(mux::HorizontalAlignment::Right);
         fullscreenRunningApps = NewCombo();
@@ -648,13 +656,20 @@ struct DockPagePresenter::Impl
         muxc::Grid::SetColumn(fullscreenExceptionAdd, 1);
         exceptionActions.Children().Append(fullscreenExceptionAdd);
         fullscreenExceptionsRow.Initialize(exceptionActions);
+        fullscreenExceptionsRow.root.Margin({0, 8, 0, 0});
+        fullscreenExceptionsRow.label.FontWeight(
+            winrt::Windows::UI::Text::FontWeights::SemiBold());
         fullscreenExceptionList = muxc::StackPanel{};
-        fullscreenExceptionList.Spacing(8);
+        fullscreenExceptionList.Spacing(12);
         fullscreenExceptionListHost = muxc::ContentControl{};
         fullscreenExceptionListHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         fullscreenExceptionListHost.Content(fullscreenExceptionList);
-        edgeSwipeCard.content.Children().Append(fullscreenExceptionsRow.root);
-        edgeSwipeCard.content.Children().Append(fullscreenExceptionListHost);
+        fullscreenExceptionListBorder = mux::Markup::XamlReader::Load(
+            LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource SolidBackgroundFillColorSecondaryBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="6" Padding="12" Margin="12,0,0,0" Visibility="Collapsed" />)")
+            .as<muxc::Border>();
+        fullscreenExceptionListBorder.Child(fullscreenExceptionListHost);
+        fullscreenCard.content.Children().Append(fullscreenExceptionsRow.root);
+        fullscreenCard.content.Children().Append(fullscreenExceptionListBorder);
         edgeSwipeCard.content.Children().InsertAt(0, showOnlyWhenSummonedRow.root);
         edgeSwipeCard.content.Children().InsertAt(2, edgeRevealGestureRow.root);
         reserveScreenSpaceRow.Initialize(reserveScreenSpaceToggle);
@@ -671,7 +686,7 @@ struct DockPagePresenter::Impl
         behaviorCard.content.Children().Append(showWindowsButtonRow.root);
         behaviorCard.content.Children().Append(showFrequentItemsRow.root);
         behaviorCard.content.Children().Append(frequentItemCount.root);
-        for (auto* card : {&edgeSwipeCard, &behaviorCard})
+        for (auto* card : {&edgeSwipeCard, &fullscreenCard, &behaviorCard})
         {
             auto overlay = mux::Markup::XamlReader::Load(
                 LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="8" IsHitTestVisible="False" Opacity="0" />)")
@@ -1087,7 +1102,7 @@ struct DockPagePresenter::Impl
             if (highlightTimer) highlightTimer.Stop();
             if (cardHighlightAnimation) cardHighlightAnimation.Stop();
             cardHighlightAnimation = nullptr;
-            for (auto* card : {&edgeSwipeCard, &behaviorCard})
+            for (auto* card : {&edgeSwipeCard, &fullscreenCard, &behaviorCard})
                 if (card->highlight) card->highlight.Opacity(0);
         }
         catch (...) {}
@@ -1100,7 +1115,7 @@ struct DockPagePresenter::Impl
         namespace animation = mux::Media::Animation;
         const bool animate = winrt::Windows::UI::ViewManagement::UISettings{}.AnimationsEnabled();
         cardHighlightAnimation = animation::Storyboard{};
-        for (auto* card : {&edgeSwipeCard, &behaviorCard})
+        for (auto* card : {&edgeSwipeCard, &fullscreenCard, &behaviorCard})
         {
             if (!animate) { card->highlight.Opacity(1); continue; }
             animation::DoubleAnimation pulse;
@@ -1946,9 +1961,11 @@ struct DockPagePresenter::Impl
         frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         showOnlyWhenSummonedRow.SetEnabled(dockEnabled);
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
+        fullscreenCard.root.IsHitTestVisible(dockEnabled);
         layoutCard.root.IsHitTestVisible(dockEnabled);
         behaviorCard.root.IsHitTestVisible(dockEnabled);
         edgeSwipeCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
+        fullscreenCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         layoutCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         behaviorCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         frequentItemCount.slider.IsEnabled(
@@ -2205,6 +2222,7 @@ struct DockPagePresenter::Impl
         }
         fullscreenExceptionRows.clear();
         fullscreenExceptionList.Children().Clear();
+        fullscreenExceptionListBorder.Visibility(mux::Visibility::Collapsed);
     }
 
     void RebuildFullscreenExceptions()
@@ -2231,6 +2249,11 @@ struct DockPagePresenter::Impl
             item.row.Initialize(editors);
             const auto name = std::filesystem::path(entry.executable).filename().wstring();
             item.row.SetText(name, entry.executable);
+            item.row.help.FontSize(12);
+            item.row.help.TextWrapping(mux::TextWrapping::NoWrap);
+            item.row.help.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+            muxc::ToolTipService::SetToolTip(
+                item.row.text, winrt::box_value(entry.executable));
             muxa::AutomationProperties::SetName(item.policy, name + L" — " + L("settings.dock.fullscreenPolicy", L"Fullscreen protection"));
             muxa::AutomationProperties::SetName(item.remove, L("app.settings.delete", L"Delete") + L" " + name);
             const std::wstring path = entry.executable;
@@ -2251,9 +2274,18 @@ struct DockPagePresenter::Impl
                     });
                 });
             });
+            if (!fullscreenExceptionRows.empty())
+            {
+                auto divider = mux::Markup::XamlReader::Load(
+                    LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />)")
+                    .as<muxc::Border>();
+                fullscreenExceptionList.Children().Append(divider);
+            }
             fullscreenExceptionList.Children().Append(item.row.root);
             fullscreenExceptionRows.push_back(std::move(item));
         }
+        fullscreenExceptionListBorder.Visibility(fullscreenExceptionRows.empty()
+            ? mux::Visibility::Collapsed : mux::Visibility::Visible);
     }
 
     void PickFullscreenException()
@@ -2535,6 +2567,8 @@ struct DockPagePresenter::Impl
             "app.settings.dock_bar", L"Dock and Taskbar");
         SetCardText(edgeSwipeCard,
             "settings.dock.edgeSwipe", L"Floating Dock edge gesture");
+        SetCardText(fullscreenCard,
+            "settings.dock.fullscreenPolicy", L"Fullscreen protection");
         SetCardText(layoutCard,
             "settings.dock.layoutAndPosition", L"Position and layout");
         SetCardText(behaviorCard,
