@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <iostream>
 #include <optional>
 #include <vector>
 
@@ -106,14 +107,19 @@ int RunLifetimeChild(const std::filesystem::path& root,
         const HMODULE library = LoadLibraryW(path.c_str());
         if (!library) return false;
         const auto hookProc = reinterpret_cast<HOOKPROC>(GetProcAddress(library, "SnowDesktopTaskbarHookProc"));
-        const HHOOK hook = hookProc ? SetWindowsHookExW(WH_CALLWNDPROC, hookProc, library, GetCurrentThreadId()) : nullptr;
-        if (!hook) { FreeLibrary(library); return false; }
-        SendMessageW(window, WM_NULL, 0, 0);
+        if (!hookProc) { FreeLibrary(library); return false; }
+        // Deliver the real entry's WH_CALLWNDPROC payload directly. User32 can
+        // cache a module after UnhookWindowsHookEx; that incidental reference
+        // masked the old DLL's defect. Only caller/worker references are owned
+        // here, so their release deterministically checks the subclass lifetime.
+        CWPSTRUCT message{};
+        message.hwnd = window;
+        message.message = WM_NULL;
+        hookProc(HC_ACTION, 0, reinterpret_cast<LPARAM>(&message));
         const bool failedSafely = WaitForSingleObject(ready, 5000) == WAIT_OBJECT_0 &&
             shared->status == kStatusFailed && shared->lastError == ERROR_ALREADY_EXISTS &&
             GetPropW(window, kHookOwnerProperty) == library;
         const bool workerStopped = WaitForLifetimeWorkers(library);
-        UnhookWindowsHookEx(hook);
         FreeLibrary(library);
         resident = GetModuleHandleW(path.c_str());
         report << "ATTACH " << path.filename().string() << ": failure_status_and_owner=" << failedSafely
@@ -122,7 +128,7 @@ int RunLifetimeChild(const std::filesystem::path& root,
     };
     HMODULE first = nullptr;
     if (!attach(root / L"SnowDesktopTaskbarHook.dll", first))
-        return fail("failed TAP must retain owner callback code after temporary hook/worker references are released");
+        return fail("failed TAP must retain owner callback code after caller/worker references are released");
     RECT rect{};
     const auto query = [&] {
         rect = {};
