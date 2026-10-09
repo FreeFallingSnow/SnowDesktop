@@ -779,6 +779,14 @@ struct Host
         IdentifyEntries(reply.entries);
         menus.push_back(std::move(actual));
 
+        if (request.originalShortcutOnly)
+        {
+            for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
+            if (count >= kMaximumEntries) return {};
+            IdentifyEntries(reply.entries); reply.ok = true;
+            return reply;
+        }
+
         // Packaged/modern providers may be present only in the delegated
         // aggregate. Rebind a provider only when that fresh aggregate actually
         // returned its canonical COM identity. Metadata probes and registry
@@ -837,6 +845,7 @@ struct Host
             return {};
         if (request.startPinOnly && (request.background || request.catalogueOnly || request.paths.size() != 1 ||
             !request.sourceClsid.empty() || !request.sourceKey.empty())) return {};
+        if (request.originalShortcutOnly && !CanQueryOriginalShortcutObjects(request)) return {};
         std::vector<std::unique_ptr<Pidl>> pidls;
         std::vector<PCIDLIST_ABSOLUTE> raw;
         for (const auto &path : request.paths)
@@ -886,6 +895,11 @@ struct Host
                 SUCCEEDED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&warmMenu->context))))
                 fileAssociationsReady = SUCCEEDED(warmMenu->context->QueryContextMenu(
                     warmMenu->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU));
+        }
+        if (request.originalShortcutOnly)
+        {
+            progress("query original shortcut objects");
+            return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
         }
         // Source probes only supply metadata for commands already returned by
         // the real aggregate. They never contribute displayed/executable items.
@@ -1430,6 +1444,14 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
     }
     OleUninitialize();
     return result;
+}
+bool CanQueryOriginalShortcutObjects(const Request &request)
+{
+    return !request.background && !request.catalogueOnly && !request.startPinOnly &&
+        request.context != Context::Desktop && request.sourceClsid.empty() && request.sourceKey.empty() &&
+        std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+            return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+        });
 }
 Context ResolveContext(const Request &request)
 {

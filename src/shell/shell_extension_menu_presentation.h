@@ -84,7 +84,7 @@ class Presentation
     static constexpr UINT FirstCommand = 0x71000000;
     Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring,
                  MenuService &service = SharedMenuService(), std::function<void(bool)> completed = {})
-        : prefs_(std::move(prefs)), source_(source), service_(service), completed_(std::move(completed))
+        : prefs_(std::move(prefs)), source_(source), normalSource_(source), service_(service), completed_(std::move(completed))
     {
         if (source.paths.empty() || !service_.MenuEnabled(source_, prefs_)) return;
         auto view = service_.MenuDisplay(source_, prefs_);
@@ -103,6 +103,16 @@ class Presentation
             }
         startLane_ = startShown && !source.background && source.context != Context::Desktop && source.paths.size() == 1;
         if (startShown && !startLane_) { normalNeeded = true; refreshState_ = true; }
+        if (normalNeeded && CanQueryOriginalShortcutObjects(source_))
+        {
+            originalSource_ = source_; originalSource_.originalShortcutOnly = true;
+            if (!cached_)
+            {
+                auto original = service_.MenuDisplay(originalSource_, prefs_);
+                cached_ = std::move(original.snapshot);
+                cachedOriginal_ = cached_.has_value();
+            }
+        }
         if (cached_)
         {
             // Pin state is external to the shortcut's timestamp. Display the
@@ -113,14 +123,14 @@ class Presentation
                 return pair && (refreshState_ || (startLane_ && pair->id == "state:start-pin"));
             });
         }
-        normalDone_ = !normalNeeded || (cached_.has_value() && !refreshState_ &&
+        normalDone_ = !normalNeeded || (cached_.has_value() && !cachedOriginal_ && !refreshState_ &&
             !service_.MenuAttributionPending(source_, prefs_));
         // Retire any prewarm already in flight as well: it may have captured
         // external pin state before this opening.
         if (normalNeeded)
         {
             if (refreshState_) service_.Invalidate(source_);
-            service_.Query(source_, QueryPriority::Menu, refreshState_);
+            service_.Query(source_, QueryPriority::Menu, refreshState_ || cachedOriginal_);
         }
         startDone_ = !startLane_;
         if (startLane_)
@@ -140,7 +150,7 @@ class Presentation
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
         MoveMoreToBottom(items, moreCommand);
-        if (cached_) Insert(items, Convert(NewNormalEntries(cached_->entries)), moreCommand);
+        if (cached_) Insert(items, Convert(NewNormalEntries(cached_->entries), {}, cachedOriginal_), moreCommand);
         if ((!normalDone_ || !startDone_) && !source_.paths.empty())
         {
             options.pollItemsFinished = [this] { return normalDone_ && startDone_; };
@@ -151,14 +161,21 @@ class Presentation
                 bool progressed = false;
                 if (!normalDone_)
                 {
-                    auto view = service_.MenuDisplay(source_, prefs_, true);
+                    auto view = service_.MenuDisplay(normalSource_, prefs_, true);
                     if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
                     {
                         // A failed prewarm may still be in backoff, or the helper
                         // may have exited during this opening. Recover once with
                         // a fresh query while this popup remains subscribed.
+                        // Shortcut recovery isolates original file handlers from
+                        // the delegated target aggregate that just failed.
                         normalRetried_ = true;
-                        service_.Query(source_, QueryPriority::Menu, true);
+                        if (originalSource_.originalShortcutOnly)
+                        {
+                            normalSource_ = originalSource_;
+                            initialRevision_ = service_.View(normalSource_).revision;
+                        }
+                        service_.Query(normalSource_, QueryPriority::Menu, true);
                     }
                     else if (!view.pending)
                     {
@@ -169,16 +186,16 @@ class Presentation
                             std::erase_if(additions, [&](const auto &e) {
                                 const auto *pair = StatePairForVerb(e.key);
                                 return (startLane_ && pair && pair->id == "state:start-pin") ||
-                                    (warm && refreshState_ && !pair);
+                                    (warm && !cachedOriginal_ && refreshState_ && !pair);
                             });
                             additions = NewNormalEntries(std::move(additions));
                             if (!additions.empty())
                             {
-                                Insert(updated, Convert(additions), moreCommand);
+                                Insert(updated, Convert(additions, {}, normalSource_.originalShortcutOnly), moreCommand);
                                 progressed = true;
                             }
                         }
-                        normalDone_ = !service_.MenuAttributionPending(source_, prefs_);
+                        normalDone_ = !service_.MenuAttributionPending(normalSource_, prefs_);
                         progressed |= normalDone_;
                     }
                 }
@@ -204,7 +221,9 @@ class Presentation
         const auto found = commands_.find(command);
         if (found == commands_.end()) return false;
         const auto *pair = found->second.empty() ? nullptr : StatePairForVerb(std::get<1>(found->second.back()));
-        service_.Execute(startLane_ && pair && pair->id == "state:start-pin" ? startSource_ : source_,
+        const auto &query = startLane_ && pair && pair->id == "state:start-pin" ? startSource_ :
+            originalCommands_.contains(command) ? originalSource_ : source_;
+        service_.Execute(query,
             found->second, point, completed_, owner);
         return true;
     }
@@ -256,7 +275,7 @@ class Presentation
         return result;
     }
     std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries,
-                                           const CommandReference &parent = {})
+                                           const CommandReference &parent = {}, bool original = false)
     {
         if (parent.empty())
             converting_.clear();
@@ -270,13 +289,15 @@ class Presentation
             });
             item.command = existing == commands_.end() ? ++nextCommand_ : existing->first;
             commands_[item.command] = reference;
+            if (original) originalCommands_.insert(item.command);
+            else originalCommands_.erase(item.command);
             converting_.insert(item.command);
             item.label = e.label;
             item.accessKey = e.accessKey;
             item.enabled = e.enabled;
             item.checked = e.checked;
             item.separator = e.separator;
-            item.children = Convert(e.children, reference);
+            item.children = Convert(e.children, reference, original);
             if (e.width > 0 && e.height > 0 && e.width <= 128 && e.height <= 128 &&
                 e.pixels.size() == static_cast<size_t>(e.width * e.height * 4))
             {
@@ -305,16 +326,19 @@ class Presentation
     Preferences prefs_;
     Request source_;
     Request startSource_;
+    Request normalSource_, originalSource_;
     MenuService &service_;
     std::function<void(bool)> completed_;
     unsigned contexts_ = 0;
     UINT nextCommand_ = FirstCommand;
     std::map<UINT, CommandReference> commands_;
     std::set<UINT> converting_;
+    std::set<UINT> originalCommands_;
     std::vector<CommandReference> displayedNormal_;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
     bool normalRetried_ = false;
+    bool cachedOriginal_ = false;
     bool startLane_ = false, normalDone_ = true, startDone_ = true;
     std::uint64_t initialRevision_ = 0;
     std::uint64_t startRevision_ = 0;

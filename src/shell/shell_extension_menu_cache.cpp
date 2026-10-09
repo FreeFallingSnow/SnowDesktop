@@ -12,7 +12,7 @@ namespace snowdesktop::shell_extensions
 {
 namespace
 {
-constexpr std::uint32_t Schema = 9;
+constexpr std::uint32_t Schema = 10;
 constexpr std::uint64_t MaximumSnapshotBytes = 2 * 1024 * 1024;
 std::uint64_t Hash(std::span<const std::byte> bytes)
 {
@@ -343,7 +343,7 @@ bool MenuSnapshotCache::Store(const Ticket &ticket, const Reply &reply, std::uin
 {
     try
     {
-        if (!ticket || !reply.ok || (ticket.sequence && issued_[ticket.identity] != ticket.sequence) || ticket.epoch != Epoch() ||
+        if (!ticket || ticket.request.originalShortcutOnly || !reply.ok || (ticket.sequence && issued_[ticket.identity] != ticket.sequence) || ticket.epoch != Epoch() ||
             Capture(ticket.request).identity != ticket.identity)
             return false;
         auto snapshot = reply;

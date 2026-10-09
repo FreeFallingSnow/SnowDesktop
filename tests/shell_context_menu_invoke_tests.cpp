@@ -726,6 +726,7 @@ void RunTests()
 struct TemporaryVerb
 {
     std::wstring extension, progId;
+    std::string verbId = "snowdesktopprobe";
     HKEY verb = nullptr;
     std::vector<std::wstring> owned;
     void Clear() noexcept
@@ -740,7 +741,7 @@ struct TemporaryVerb
         Expect(RegSetValueExW(key,name,0,REG_SZ,reinterpret_cast<const BYTE*>(text.c_str()),
             static_cast<DWORD>((text.size()+1)*sizeof(wchar_t)))==ERROR_SUCCESS,"write owned test metadata");
     }
-    TemporaryVerb()
+    explicit TemporaryVerb(bool common = false)
     {
         GUID guid{}; Expect(SUCCEEDED(CoCreateGuid(&guid)),"unique association ID");
         wchar_t id[40]{}; StringFromGUID2(guid,id,40);
@@ -762,7 +763,22 @@ struct TemporaryVerb
             const auto status=RegSetValueExW(key,nullptr,0,REG_SZ,reinterpret_cast<const BYTE*>(progId.c_str()),
                 static_cast<DWORD>((progId.size()+1)*sizeof(wchar_t)));
             RegCloseKey(key); Expect(status==ERROR_SUCCESS,"associate test file");
-            const auto path=owned[1]+L"\\shell\\SnowDesktopProbe";
+            const auto name = common ? std::wstring(L"snowdesktopprobe-") + id : L"SnowDesktopProbe";
+            if (common)
+            {
+                verbId.assign(name.begin(), name.end());
+                std::transform(verbId.begin(), verbId.end(), verbId.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
+            }
+            const auto path = common ? L"Software\\Classes\\*\\shell\\" + name : owned[1]+L"\\shell\\"+name;
+            if (common)
+            {
+                HKEY key = nullptr; DWORD disposition = 0;
+                Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_READ|KEY_WRITE,
+                    nullptr, &key, &disposition) == ERROR_SUCCESS, "create uniquely owned common verb");
+                RegCloseKey(key);
+                Expect(disposition == REG_CREATED_NEW_KEY, "never replace an existing common verb");
+                owned.push_back(path);
+            }
             Expect(RegCreateKeyExW(HKEY_CURRENT_USER,path.c_str(),0,nullptr,0,KEY_READ|KEY_WRITE,nullptr,
                 &verb,nullptr)==ERROR_SUCCESS,"create private verb");
             Value(verb,nullptr,L"SnowDesktop isolated policy probe");
@@ -786,11 +802,11 @@ struct TemporaryVerb
 // Exercise the actual popup entry so a supervised query failure follows the
 // production recovery policy. Installed handlers remain real; only catalogue
 // metadata is fixed because system enable/disable is decided by the Shell.
-void TestSystemPolicy(const std::filesystem::path &directory, bool failFirst = false)
+void TestSystemPolicy(const std::filesystem::path &directory, bool failFirst = false, bool shortcut = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
-    TemporaryVerb registration;
+    TemporaryVerb registration(shortcut);
     const auto file = directory / (L"sample" + registration.extension);
     {
         std::ofstream output(file);
@@ -798,8 +814,18 @@ void TestSystemPolicy(const std::filesystem::path &directory, bool failFirst = f
     }
     ext::Request request;
     request.paths = {file.wstring()};
+    if (shortcut)
+    {
+        const auto path = directory / L"policy-shortcut.lnk";
+        Microsoft::WRL::ComPtr<IShellLinkW> link;
+        Microsoft::WRL::ComPtr<IPersistFile> persist;
+        Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+            SUCCEEDED(link.As(&persist)) && SUCCEEDED(link->SetPath(file.c_str())) &&
+            SUCCEEDED(persist->Save(path.c_str(), TRUE)), "create private policy shortcut");
+        request.paths = {path.wstring()};
+    }
     ext::Preferences prefs;
-    ext::SetCommon(prefs, "verb:snowdesktopprobe", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:" + registration.verbId, ext::Category::Objects, true);
     auto queryPopup = [&](bool disabled)
     {
         std::atomic<unsigned> attempts = 0;
@@ -848,7 +874,8 @@ void TestSystemPolicy(const std::filesystem::path &directory, bool failFirst = f
                 DispatchMessageW(&message);
             }
         }
-        const auto view = service.View(request);
+        auto published = request; published.originalShortcutOnly = shortcut && failFirst;
+        const auto view = service.View(published);
         std::cout << "Actual policy popup: disabled=" << disabled << ", fault=" << failFirst
                   << ", attempts=" << attempts << ", rows=" << items.size() << ", error=" << view.error << std::endl;
         Expect(options.pollItemsFinished() && view.snapshot && view.error.empty() && !invoked,
@@ -1725,6 +1752,7 @@ void TestExtensionSessions()
     } realMode;
     TestSystemPolicy(directory.path);
     TestSystemPolicy(directory.path, true);
+    TestSystemPolicy(directory.path, true, true);
     // Exercise the same four default queries as the settings tabs, including
     // real installed handler images. Report every scope before failing so one
     // incompatible DLL cannot hide the remaining scope results.
@@ -3408,6 +3436,93 @@ void TestPopupQueryFailureRecovery(bool background, bool permanent)
     Expect(queries == 2 && (permanent ? items.empty() : items.size() == 1 && items[0].label == L"Recovered action"),
            "a transient helper failure must not leave the popup permanently empty or suppressed by prewarm backoff");
 }
+// A failed delegated target query must not trap both display and fresh invocation.
+// Only the native process boundary is controlled; projection, caching, scheduling,
+// command resolution and popup subscription are the production implementation.
+void TestShortcutQueryRecovery(bool permanent = false)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    ext::Request request;
+    request.paths = {(temp.path / L"original.lnk").wstring()};
+    std::ofstream(request.paths.front()) << "private selection";
+    auto original = request; original.originalShortcutOnly = true;
+    std::atomic<unsigned> fullQueries = 0, originalQueries = 0, invoked = 0;
+    std::atomic<bool> releaseFull = false, firstPopupComplete = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        const auto n = target.originalShortcutOnly ? ++originalQueries : ++fullQueries;
+        const bool recovery = target.originalShortcutOnly;
+        return ext::QueryWork{[&, n, recovery]() -> std::optional<ext::Reply> {
+            ext::Reply reply;
+            if ((!recovery && (n == 1 || !firstPopupComplete)) || (recovery && permanent))
+            { reply.error = "controlled query failure"; return reply; }
+            if (!recovery && n == 2 && !releaseFull) return {};
+            reply.ok = true;
+            ext::Entry group; group.provider = "verb:inspect"; group.key = "inspect"; group.label = L"Original file";
+            ext::Entry child; child.provider = group.provider; child.key = "details"; child.label = L"Details";
+            child.token = recovery && n > 1 ? 101 : 12;
+            group.children = {child}; reply.entries = {group};
+            if (!recovery) {
+                ext::Entry modern; modern.provider = "verb:modern"; modern.key = "modern"; modern.label = L"Modern provider";
+                modern.token = n > 2 ? 203 : 13; reply.entries.push_back(modern);
+            }
+            return reply;
+        }, [&, recovery](UINT token, POINT) {
+            Expect((recovery && token == 101) || (!recovery && token == 203),
+                "popup invocation resolves a fresh token in the displayed command's query lane");
+            ++invoked;
+        }};
+    }, [] { ext::Catalogue c; c.revision = 17; return c; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:modern", ext::Category::Objects, true);
+    service.Configure(prefs);
+    ext::Presentation first(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items; menu::Options options; first.Attach(items, options, 0);
+    PumpUntil([&] {
+        if (auto next = options.pollItems(items, true)) items = std::move(*next);
+        return options.pollItemsFinished();
+    }, "shortcut recovery publishes after the delegated query fails");
+    if (permanent)
+    {
+        Expect(fullQueries == 1 && originalQueries == 1 && items.empty() && !service.View(original).error.empty(),
+            "a failed original shortcut recovery finishes without an unbounded retry loop");
+        return;
+    }
+    firstPopupComplete = true;
+    Expect(fullQueries == 1 && originalQueries == 1 && items.size() == 1 && items[0].label == L"Original file",
+        "a popup recovers original shortcut commands without repeating the failed target query");
+    Expect(!service.View(request).snapshot && service.View(original).snapshot,
+        "a partial shortcut recovery does not masquerade as a complete query");
+    ext::MenuSnapshotCache disk(temp.path / L"disk");
+    ext::Reply partial; partial.ok = true;
+    Expect(!disk.Store(disk.Capture(original), partial) && !disk.Find(disk.Capture(request)),
+        "partial original shortcut snapshots cannot replace complete disk snapshots");
+    Expect(disk.Store(disk.Capture(request), partial) && !disk.Find(disk.Capture(original)),
+        "recovery requests cannot borrow complete snapshots with a different query identity");
+    ext::Presentation second(request, prefs, L"", L"", service);
+    std::vector<menu::Item> warm; menu::Options warmOptions; second.Attach(warm, warmOptions, 0);
+    Expect(warm.size() == 1 && warm[0].children.size() == 1 && warmOptions.pollItems && !warmOptions.pollItemsFinished(),
+        "the next opening displays recovered rows immediately while remaining subscribed to the complete query");
+    PumpUntil([&] { return fullQueries == 2; }, "complete query refresh starts behind recovered rows");
+    Expect(second.Invoke(warm[0].children[0].command, {}), "recovered child command remains executable");
+    PumpUntil([&] { return invoked == 1; }, "recovered invocation avoids the blocked delegated target");
+    Expect(originalQueries == 2 && !releaseFull, "recovery invocation refreshes independently of a pending complete query");
+    releaseFull = true;
+    PumpUntil([&] {
+        if (auto next = warmOptions.pollItems(warm, true)) warm = std::move(*next);
+        return warmOptions.pollItemsFinished();
+    }, "a healthy complete result supplements recovered original rows");
+    Expect(warm.size() == 2 && warm[0].label == L"Original file" && warm[1].label == L"Modern provider",
+        "complete discovery retains additional providers without duplicating recovered roots");
+    Expect(second.Invoke(warm[1].command, {}), "additional complete-query provider remains executable");
+    PumpUntil([&] { return invoked == 2; }, "additional provider invokes through a fresh complete query");
+    Expect(fullQueries == 3 && originalQueries == 2, "recovered and complete commands keep independent execution identities");
+    ext::Presentation third(request, prefs, L"", L"", service);
+    std::vector<menu::Item> complete; menu::Options completeOptions; third.Attach(complete, completeOptions, 0);
+    Expect(complete.size() == 2 && !completeOptions.pollItems, "a healthy complete cache supersedes partial recovery on later openings");
+}
 void TestMenuPromotesQueuedPrewarm()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -4221,6 +4336,8 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, true);
             TestWarmFailureRecovery(false);
             TestWarmFailureRecovery(true);
+            TestShortcutQueryRecovery();
+            TestShortcutQueryRecovery(true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
@@ -4268,6 +4385,8 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, true);
             TestWarmFailureRecovery(false);
             TestWarmFailureRecovery(true);
+            TestShortcutQueryRecovery();
+            TestShortcutQueryRecovery(true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);

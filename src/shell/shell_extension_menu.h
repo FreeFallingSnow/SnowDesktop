@@ -21,6 +21,9 @@ struct Request
     // Private executable query of Microsoft's Start handler, isolated from
     // arbitrary extension discovery and its worker pool.
     bool startPinOnly = false;
+    // Recovery query for the original shortcut files after target discovery fails.
+    // It has its own service identity and never replaces a complete disk snapshot.
+    bool originalShortcutOnly = false;
     friend bool operator==(const Request &, const Request &) = default;
 };
 struct Entry
@@ -76,6 +79,7 @@ using InvokeExecutor = std::function<void(UINT, POINT)>;
 // Explorer transport; tests can substitute only that final execution boundary.
 using StartPinExecutor = std::function<HRESULT(shell_start_pin::Action, const std::wstring &, HWND, POINT)>;
 std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {}, StartPinExecutor startPin = {});
+bool CanQueryOriginalShortcutObjects(const Request &);
 Context ResolveContext(const Request &);
 std::vector<Entry> VisibleEntries(const Preferences &, const std::vector<Entry> &, const Request &);
 } // namespace snowdesktop::shell_extensions
@@ -87,7 +91,7 @@ template <> struct Fields<shell_extensions::Request>
     template <class T> static auto Tie(T &v)
     {
         return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey,
-                        v.startPinOnly);
+                        v.startPinOnly, v.originalShortcutOnly);
     }
 };
 template <> struct Fields<shell_extensions::Entry>
