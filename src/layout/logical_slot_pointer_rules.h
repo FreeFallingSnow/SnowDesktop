@@ -1,5 +1,7 @@
 #pragma once
 
+#include "widget/runtime/widget_item_layout.h"
+
 #include <windows.h>
 
 #include <algorithm>
@@ -86,16 +88,24 @@ ResolveLogicalSlotInsertionTarget(std::span<const RECT> items,
     RECT indicator{};
     if (horizontal)
     {
-        const LONG x = insertionIndex < items.size()
+        LONG x = insertionIndex < items.size()
             ? anchor.left : anchor.right;
+        if (insertionIndex > 0 && insertionIndex < items.size() &&
+            widget_item_layout::SharesInsertionBoundary(
+                items[insertionIndex - 1], anchor, true))
+            x -= (anchor.left - items[insertionIndex - 1].right) / 2;
         indicator = { x - halfThickness,
             std::max(surface.top, anchor.top), x + halfThickness,
             std::min(surface.bottom, anchor.bottom) };
     }
     else
     {
-        const LONG y = insertionIndex < items.size()
+        LONG y = insertionIndex < items.size()
             ? anchor.top : anchor.bottom;
+        if (insertionIndex > 0 && insertionIndex < items.size() &&
+            widget_item_layout::SharesInsertionBoundary(
+                items[insertionIndex - 1], anchor, false))
+            y -= (anchor.top - items[insertionIndex - 1].bottom) / 2;
         indicator = { std::max(surface.left, anchor.left),
             y - halfThickness, std::min(surface.right, anchor.right),
             y + halfThickness };

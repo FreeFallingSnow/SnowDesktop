@@ -516,13 +516,29 @@ void TestPointerReorderTargets()
         vertical, 0, POINT{ 150, 190 }, surface);
     Check(moveDown && moveDown->insertionIndex == 2 &&
             moveDown->targetIndex == 1 && !moveDown->horizontal &&
-            moveDown->indicator.top == 208,
+            moveDown->indicator.top == 203,
         "dragging below another vertical item must account for source removal");
     const auto moveUp = ResolveLogicalSlotPointerTarget(
         vertical, 2, POINT{ 150, 115 }, surface);
     Check(moveUp && moveUp->insertionIndex == 0 &&
             moveUp->targetIndex == 0 && moveUp->indicator.top == 108,
         "dragging above the first vertical item must target index zero");
+
+    const auto afterUpper = ResolveLogicalSlotInsertionTarget(
+        vertical, POINT{ 150, 145 }, surface);
+    const auto beforeLower = ResolveLogicalSlotInsertionTarget(
+        vertical, POINT{ 150, 165 }, surface);
+    const auto inGap = ResolveLogicalSlotInsertionTarget(
+        vertical, POINT{ 150, 155 }, surface);
+    Check(afterUpper && beforeLower && inGap &&
+            afterUpper->insertionIndex == 1 &&
+            beforeLower->insertionIndex == 1 &&
+            inGap->insertionIndex == 1 &&
+            afterUpper->indicator.top == 153 &&
+            afterUpper->indicator.bottom == 157 &&
+            EqualRect(&afterUpper->indicator, &beforeLower->indicator) &&
+            EqualRect(&afterUpper->indicator, &inGap->indicator),
+        "both row halves and their gap must show one indicator centered between rows");
 
     const std::vector<RECT> horizontal{
         { 110, 110, 150, 190 },
