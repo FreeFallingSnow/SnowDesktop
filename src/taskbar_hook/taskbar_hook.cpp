@@ -92,6 +92,29 @@ bool IsCurrentHookInstance()
         GetPropW(primary, kHookOwnerProperty) == g_module;
 }
 
+DWORD AttachHookOwner(HWND window)
+{
+    // The temporary WH_CALLWNDPROC hook and TAP worker can both release their
+    // references after initialization fails. Window subclasses outlive those
+    // references, including callbacks already in flight during a handoff.
+    // Pin before publishing any callback, as native/tray attachment already do.
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_PIN,
+            reinterpret_cast<LPCWSTR>(&HookOwnerSubclass), &pinned))
+        return GetLastError();
+    const HANDLE previous = GetPropW(window, kHookOwnerProperty);
+    if (!SetPropW(window, kHookOwnerProperty, g_module)) return GetLastError();
+    if (!SetWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId, 0))
+    {
+        const DWORD error = GetLastError();
+        if (previous) SetPropW(window, kHookOwnerProperty, previous);
+        else RemovePropW(window, kHookOwnerProperty);
+        return error ? error : ERROR_INVALID_FUNCTION;
+    }
+    return ERROR_SUCCESS;
+}
+
 DWORD ClaimHookInstance(HWND primary)
 {
     if (!g_applyMessage) g_applyMessage = RegisterWindowMessageW(kApplyMessageName);
@@ -158,13 +181,7 @@ DWORD ClaimHookInstance(HWND primary)
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &stopped) || stopped != 1)
             return ERROR_BUSY;
     }
-    if (!SetPropW(primary, kHookOwnerProperty, g_module)) return GetLastError();
-    if (!SetWindowSubclass(primary, HookOwnerSubclass, kHookOwnerSubclassId, 0))
-    {
-        const DWORD error = GetLastError();
-        RemovePropW(primary, kHookOwnerProperty);
-        return error ? error : ERROR_INVALID_FUNCTION;
-    }
+    if (const DWORD error = AttachHookOwner(primary)) return error;
     g_primaryTaskbar.store(primary);
     return ERROR_SUCCESS;
 }
@@ -1385,8 +1402,7 @@ private:
                 info.nativeRequestedTheme = info.rootElement.RequestedTheme();
             if (taskbar && subclassedTaskbars_.insert(taskbar).second)
             {
-                if (!SetPropW(taskbar, kHookOwnerProperty, g_module) ||
-                    !SetWindowSubclass(taskbar, HookOwnerSubclass, kHookOwnerSubclassId, 0) ||
+                if (AttachHookOwner(taskbar) != ERROR_SUCCESS ||
                     !SetWindowSubclass(taskbar, TaskbarSubclassProc,
                         kTaskbarSubclassId, reinterpret_cast<DWORD_PTR>(this)))
                 {
@@ -1530,7 +1546,8 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
                 stopped = revealStopped && nativeStopped;
             }
             if (!stopped) return 0;
-            RemoveWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId);
+            if (!RemoveWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId))
+                return 0;
             if (GetPropW(window, kHookOwnerProperty) == g_module)
             {
                 RemovePropW(window, autohide_observer::kActivationProtectionProperty);
@@ -1612,11 +1629,11 @@ public:
 
 using InitializeXamlDiagnosticsExProc = decltype(&InitializeXamlDiagnosticsEx);
 
-DWORD WINAPI InstallTaskbarTap(void*)
+DWORD WINAPI InstallTaskbarTap(void* parameter)
 {
-    HMODULE selfReference = nullptr;
-    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-        reinterpret_cast<LPCWSTR>(&InstallTaskbarTap), &selfReference);
+    const HMODULE selfReference = static_cast<HMODULE>(parameter);
+    // Failure leaves only the passive owner subclass, which must remain
+    // callable until retirement on its window thread. Its module is pinned.
     const auto finish = [selfReference](DWORD result, bool keepLoaded) -> DWORD {
         if (selfReference && !keepLoaded)
             FreeLibraryAndExitThread(selfReference, result);
@@ -1687,7 +1704,8 @@ DWORD WINAPI InstallTaskbarTap(void*)
     if (HANDLE taskViewThread = CreateThread(nullptr, 0, MonitorTaskView,
         nullptr, 0, nullptr))
         CloseHandle(taskViewThread);
-    // InitializeXamlDiagnosticsEx pins the TAP module. Keep our explicit
+    // Owner attachment has already pinned the module, even on failure.
+    // InitializeXamlDiagnosticsEx also pins the TAP. Keep our explicit
     // reference too so a hook timeout can never unmap code still used by the
     // visual-tree callback or its owner-process watcher.
     return finish(static_cast<DWORD>(result), true);
@@ -1714,12 +1732,25 @@ void StartTaskbarTapIfNeeded()
     bool expected = false;
     if (!g_taskbarTapStarted.compare_exchange_strong(expected, true))
         return;
+    // Acquire the worker's reference before publishing its entry point.
+    HMODULE selfReference = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCWSTR>(&InstallTaskbarTap), &selfReference))
+    {
+        const DWORD error = GetLastError();
+        g_taskbarTapStarted.store(false);
+        SetHookStatus(kStatusFailed, error);
+        SignalReady();
+        return;
+    }
     HANDLE thread = CreateThread(
-        nullptr, 0, InstallTaskbarTap, nullptr, 0, nullptr);
+        nullptr, 0, InstallTaskbarTap, selfReference, 0, nullptr);
     if (!thread)
     {
+        const DWORD error = GetLastError();
+        FreeLibrary(selfReference);
         g_taskbarTapStarted.store(false);
-        SetHookStatus(kStatusFailed, GetLastError());
+        SetHookStatus(kStatusFailed, error);
         SignalReady();
         return;
     }
@@ -1753,10 +1784,9 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
         }
         if (!IsCurrentHookInstance())
             return CallNextHookEx(nullptr, code, wParam, lParam);
-        if (!SetPropW(message->hwnd, kHookOwnerProperty, g_module) ||
-            !SetWindowSubclass(message->hwnd, HookOwnerSubclass, kHookOwnerSubclassId, 0))
+        if (const DWORD error = AttachHookOwner(message->hwnd))
         {
-            SetHookStatus(kStatusFailed, ERROR_INVALID_FUNCTION);
+            SetHookStatus(kStatusFailed, error);
             SignalReady();
             return CallNextHookEx(nullptr, code, wParam, lParam);
         }
