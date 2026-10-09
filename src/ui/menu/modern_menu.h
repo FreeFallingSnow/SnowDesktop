@@ -80,6 +80,8 @@ struct Item
     /** 为行内按钮组按文字和图标预留宽度，避免短操作的翻译被截断。 */
     bool measureInlineAction = false;
     menu_icon::BuiltinIcon builtinIcon = menu_icon::BuiltinIcon::None;
+    /** 紧凑行内按钮按内容与绘制留白收窄，其余空间留给主操作。 */
+    bool fitInlineActionToContent = false;
     friend bool operator==(const Item&, const Item&) = default;
 };
 

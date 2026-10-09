@@ -68,6 +68,7 @@ inline void ApplyInlineLayout(std::vector<modern_menu::Item>& items)
             first[i].inlineGroup = row.labelCommand;
             first[i].compactInlineAction = i != 0;
             first[i].measureInlineAction = true;
+            first[i].fitInlineActionToContent = i != 0;
         }
     }
 }

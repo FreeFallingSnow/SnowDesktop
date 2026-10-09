@@ -964,7 +964,8 @@ private:
                             ? metrics_.leftPadding + metrics_.iconColumnWidth + metrics_.textGap
                             : metrics_.outerInset * 2;
                     inlineWidths[i] =
-                        std::max(metrics_.rowHeight * (item.compactInlineAction ? 2 : 1),
+                        std::max(metrics_.rowHeight *
+                                     (item.compactInlineAction && !item.fitInlineActionToContent ? 2 : 1),
                                  static_cast<int>(labelSize.cx) + leading + metrics_.outerInset * 2);
                 }
                 continue;
@@ -1114,6 +1115,11 @@ private:
                 }
                 const int narrowWidth = metrics_.rowHeight;
                 const int compactWidth = metrics_.rowHeight * 2;
+                const auto compactActionWidth = [&](int actionIndex) {
+                    const auto& action = (*popup.items)[actionIndex];
+                    return action.measureInlineAction && inlineWidths[actionIndex] > 0
+                        ? inlineWidths[actionIndex] : compactWidth;
+                };
                 int flexibleCount = 0;
                 int fixedWidth = 0;
                 for (size_t i = position; i <= runEnd; ++i)
@@ -1123,9 +1129,7 @@ private:
                     if (action.label.empty())
                         fixedWidth += narrowWidth;
                     else if (action.compactInlineAction)
-                        fixedWidth += action.measureInlineAction
-                                          ? std::max(compactWidth, inlineWidths[regularIndices[i]])
-                                          : compactWidth;
+                        fixedWidth += compactActionWidth(regularIndices[i]);
                     else
                         ++flexibleCount;
                 }
@@ -1143,9 +1147,7 @@ private:
                     const int requestedWidth =
                         action.label.empty() ? narrowWidth
                                              : (action.compactInlineAction
-                                                    ? (action.measureInlineAction
-                                                           ? std::max(compactWidth, inlineWidths[actionIndex])
-                                                           : compactWidth)
+                                                    ? compactActionWidth(actionIndex)
                                                     : flexibleWidth);
                     const int actionWidth = i == runEnd
                         ? shadowSize_ + width - editorInset - left
