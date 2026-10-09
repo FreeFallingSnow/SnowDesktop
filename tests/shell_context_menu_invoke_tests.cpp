@@ -2648,6 +2648,85 @@ void TestInitialDiscoveryDoesNotBlockPopup()
            "a ready menu publishes without waiting for unrelated initial inventory discovery");
 }
 
+// A management opt-in can name a registration rather than its observed verb.
+// Initial attribution must be allowed to add that row after ordinary rows appear.
+void TestLateInitialRegistrationAttribution()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    std::promise<void> entered, release;
+    auto started = entered.get_future();
+    auto released = release.get_future().share();
+    std::atomic<bool> timedOut = false;
+    ext::Request request;
+    request.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private";
+    ext::MenuService service(
+        temp.path / L"cache",
+        [](const auto &)
+        {
+            ext::Reply reply;
+            reply.ok = true;
+            ext::Entry ordinary;
+            ordinary.provider = "verb:ordinary-probe";
+            ordinary.key = "ordinary-probe";
+            ordinary.label = L"Ordinary";
+            ext::Entry late;
+            late.provider = "verb:late-probe";
+            late.key = "late-probe";
+            late.label = L"Registered";
+            reply.entries = {ordinary, late};
+            return ext::QueryWork{[reply] { return reply; }, {}};
+        },
+        [&]
+        {
+            entered.set_value();
+            timedOut = released.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
+            ext::Catalogue c;
+            c.revision = 17;
+            ext::Registration r;
+            r.id = "reg:late-probe";
+            r.verbs = {"late-probe"};
+            r.types = {L"*"};
+            r.contexts = 1;
+            r.revision = 17;
+            c.rows = {r};
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:ordinary-probe", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "reg:late-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    const bool scanning = started.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); },
+              "native result is ready before initial registration attribution");
+    if (auto next = options.pollItems(items, true))
+        items = std::move(*next);
+    const bool ordinaryFirst = items.size() == 1 && items.front().label == L"Ordinary";
+    const bool subscribed = options.pollItemsFinished && !options.pollItemsFinished();
+    release.set_value();
+    if (!subscribed)
+    {
+        service.Shutdown();
+        Expect(false, "popup must remain subscribed for initial registration attribution after ordinary rows appear");
+    }
+    PumpUntil(
+        [&]
+        {
+            if (auto next = options.pollItems(items, true))
+                items = std::move(*next);
+            return options.pollItemsFinished() && items.size() == 2;
+        },
+        "initial registration attribution adds the management opt-in to the same popup");
+    Expect(scanning && !timedOut && ordinaryFirst && items.front().label == L"Ordinary" &&
+               items.back().label == L"Registered",
+           "known verbs appear immediately and later registration attribution adds exactly one remaining row");
+}
 // Hold a later unrelated verification behind a ready query's captured boundary.
 // The reserved Start lane proves that the ordinary scheduler has crossed it.
 void TestLaterRegistryNoiseDoesNotExtendPublication()
@@ -3920,6 +3999,7 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, false);
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
+            TestLateInitialRegistrationAttribution();
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
@@ -3960,6 +4040,7 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, false);
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
+            TestLateInitialRegistrationAttribution();
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
