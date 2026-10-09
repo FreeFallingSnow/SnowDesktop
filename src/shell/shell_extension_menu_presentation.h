@@ -151,7 +151,15 @@ class Presentation
                 if (!normalDone_)
                 {
                     auto view = service_.MenuDisplay(source_, prefs_);
-                    if (!view.pending)
+                    if (!view.pending && !view.snapshot && !view.error.empty() && !normalRetried_)
+                    {
+                        // A failed prewarm may still be in backoff, or the helper
+                        // may have exited during this opening. Recover once with
+                        // a fresh query while this popup remains subscribed.
+                        normalRetried_ = true;
+                        service_.Query(source_, QueryPriority::Menu, true);
+                    }
+                    else if (!view.pending)
                     {
                         if (view.snapshot && (!refreshState_ || (view.revision > initialRevision_ && view.error.empty())))
                         {
@@ -273,6 +281,7 @@ class Presentation
     std::set<UINT> converting_;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
+    bool normalRetried_ = false;
     bool startLane_ = false, normalDone_ = true, startDone_ = true;
     std::uint64_t initialRevision_ = 0;
     std::uint64_t startRevision_ = 0;

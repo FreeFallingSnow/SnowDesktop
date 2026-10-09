@@ -2820,6 +2820,75 @@ void TestRegistrationVerificationBeforePopupPublication()
     Expect(queries == 2 && items.size() == 1 && items.front().label == L"18",
            "a changed registration re-queries once and publishes the current action in the same popup");
 }
+// Only the helper boundary fails. The real popup, backoff and scheduler must
+// recover once, and a persistent failure must finish without a retry loop.
+void TestPopupQueryFailureRecovery(bool background, bool permanent)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    ext::Request request;
+    request.paths = {(temp.path / L"target.txt").wstring()};
+    std::ofstream(temp.path / L"target.txt") << "private";
+    std::atomic<unsigned> queries = 0;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const auto &)
+        {
+            const auto query = ++queries;
+            return ext::QueryWork{[query, permanent]
+                                  {
+                                      ext::Reply reply;
+                                      if (query == 1 || permanent)
+                                      {
+                                          reply.error = "transient helper failure";
+                                          return reply;
+                                      }
+                                      reply.ok = true;
+                                      ext::Entry e;
+                                      e.provider = "verb:recovery";
+                                      e.key = "recovery";
+                                      e.label = L"Recovered action";
+                                      reply.entries = {e};
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        []
+        {
+            ext::Catalogue c;
+            c.revision = 17;
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:recovery", ext::Category::Objects, true);
+    service.Configure(prefs);
+    if (background)
+    {
+        service.Query(request, ext::QueryPriority::Prewarm, true);
+        PumpUntil(
+            [&]
+            {
+                auto view = service.View(request);
+                return !view.pending && !view.error.empty();
+            },
+            "background query fails before popup opens");
+    }
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil(
+        [&]
+        {
+            if (auto updated = options.pollItems(items, true))
+                items = std::move(*updated);
+            return options.pollItemsFinished();
+        },
+        "popup finishes after transient child failure");
+    Expect(queries == 2 && (permanent ? items.empty() : items.size() == 1 && items[0].label == L"Recovered action"),
+           "a transient helper failure must not leave the popup permanently empty or suppressed by prewarm backoff");
+}
 void TestMenuPromotesQueuedPrewarm()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -3618,6 +3687,10 @@ int wmain(int argc, wchar_t **argv)
         {
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
+            TestPopupQueryFailureRecovery(false, false);
+            TestPopupQueryFailureRecovery(true, false);
+            TestPopupQueryFailureRecovery(false, true);
+            TestPopupQueryFailureRecovery(true, true);
             TestRegistrationVerificationBeforePopupPublication();
             TestUnrelatedRegistryChangesDuringPopup();
             TestBackgroundQueriesReserveMenuSlot();
@@ -3650,6 +3723,10 @@ int wmain(int argc, wchar_t **argv)
             TestPendingCachedClick();
             TestInvocationOwnerHandoff();
             TestQueryScheduler();
+            TestPopupQueryFailureRecovery(false, false);
+            TestPopupQueryFailureRecovery(true, false);
+            TestPopupQueryFailureRecovery(false, true);
+            TestPopupQueryFailureRecovery(true, true);
             TestRegistrationVerificationBeforePopupPublication();
             TestUnrelatedRegistryChangesDuringPopup();
             TestBackgroundQueriesReserveMenuSlot();
