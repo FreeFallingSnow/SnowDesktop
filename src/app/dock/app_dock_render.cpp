@@ -434,24 +434,37 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     }
     if (IsGroupDockEntryType(entry.type))
     {
-        const int badgeSize = std::max(10, static_cast<int>(iconSize * 0.29f));
-        const int inset = std::max(2, static_cast<int>(iconSize * 0.055f));
-        const RECT badge{iconRect.right - inset - badgeSize, iconRect.bottom - inset - badgeSize,
-            iconRect.right - inset, iconRect.bottom - inset};
-        DrawD2DRoundedRectangle(ctx, badge, badgeSize * 0.23f,
-            lt ? D2D1::ColorF(0.98f, 0.98f, 0.99f, 0.95f) : D2D1::ColorF(0.18f, 0.19f, 0.21f, 0.95f),
-            lt ? D2D1::ColorF(0, 0, 0, 0.18f) : D2D1::ColorF(1, 1, 1, 0.25f));
+        // Match the beautified shortcut badge's geometry and palette.
+        const int iconHeight = std::max(1, static_cast<int>(iconRect.bottom - iconRect.top));
+        const int iconWidth = std::max(1, static_cast<int>(iconRect.right - iconRect.left));
+        const float scale = static_cast<float>(iconHeight) / 64.0f;
+        const int pad = std::max(1, static_cast<int>(std::round(2.0f * scale)));
+        const int badgeSize = std::clamp(static_cast<int>(std::round(17.0f * scale)),
+            9, std::max(9, iconWidth));
+        const RECT badge{iconRect.left + pad, iconRect.bottom - badgeSize - pad,
+            iconRect.left + pad + badgeSize, iconRect.bottom - pad};
+        const D2D1_ELLIPSE badgeEllipse = D2D1::Ellipse(
+            D2D1::Point2F((badge.left + badge.right) * 0.5f, (badge.top + badge.bottom) * 0.5f),
+            badgeSize * 0.5f, badgeSize * 0.5f);
+        ComPtr<ID2D1SolidColorBrush> fillBrush;
+        ComPtr<ID2D1SolidColorBrush> strokeBrush;
+        if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.86f, 0.89f, 0.94f, 0.96f), &fillBrush)) &&
+            fillBrush && SUCCEEDED(ctx->CreateSolidColorBrush(
+                D2D1::ColorF(0.54f, 0.61f, 0.72f, 0.58f), &strokeBrush)) && strokeBrush)
+        {
+            ctx->FillEllipse(badgeEllipse, fillBrush.Get());
+            ctx->DrawEllipse(badgeEllipse, strokeBrush.Get(), std::max(1.0f, 1.1f * scale));
+        }
         const std::wstring glyph = entry.type == DockEntryType::FileGroup
             ? snowdesktop::menu_fluent_glyphs::kFileGroup : snowdesktop::menu_fluent_glyphs::kCollectionGroup;
         ComPtr<IDWriteTextLayout> layout;
         ComPtr<ID2D1SolidColorBrush> brush;
-        if (fluentIconTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
+        if (fluentIconTextFormat_ && dwriteFactory_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
                 glyph.c_str(), static_cast<UINT32>(glyph.size()), fluentIconTextFormat_.Get(),
                 static_cast<float>(badgeSize), static_cast<float>(badgeSize), &layout)) &&
-            SUCCEEDED(ctx->CreateSolidColorBrush(lt ? D2D1::ColorF(0.16f, 0.22f, 0.30f)
-                : D2D1::ColorF(0.91f, 0.94f, 0.98f), &brush)))
+            SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.30f, 0.48f, 0.92f), &brush)) && brush)
         {
-            layout->SetFontSize(badgeSize * 0.78f, {0, static_cast<UINT32>(glyph.size())});
+            layout->SetFontSize(badgeSize * 0.66f, {0, static_cast<UINT32>(glyph.size())});
             layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             ctx->DrawTextLayout(D2D1::Point2F(static_cast<float>(badge.left), static_cast<float>(badge.top)),
