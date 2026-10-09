@@ -254,7 +254,12 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 data.traffic->downloadBytesPerSecond = data.traffic->uploadBytesPerSecond = 999ull << 40;
                 data.clock = L"2026/09/26   11:59";
             }
-            if (preset == "full") { data.power->batteryPercent = 100; data.power->acPower = true; data.network->transport = "ethernet"; }
+            if (preset == "full")
+            {
+                data.power->batteryPercent = 100; data.power->acPower = true; data.network->transport = "ethernet";
+                data.notifications.unreadCount = 2;
+            }
+            if (preset == "merged") data.notifications.totalCount = 2;
             if (preset == "charging" || preset == "charging-low") { data.power->charging = true; data.power->acPower = true; }
             if (preset == "charging-low" || preset == "low-battery") data.power->batteryPercent = 10;
             if (preset == "low-battery") data.wifi = WifiFixture(true, 14);

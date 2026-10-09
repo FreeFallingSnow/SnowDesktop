@@ -15,3 +15,9 @@ Filled** SVG geometry from the same commit. `src/status_bar_battery.h` retains
 the original path for WinUI and an equivalent sequence of Direct2D path commands
 for native rendering. Only its fill color changes to indicate charging. This
 geometry remains covered by the Microsoft copyright and MIT license above.
+
+The status bar uses the unmodified **Alert Badge 24 Regular** SVG contours from
+the same commit in `src/system/status_bar/status_bar_view.cpp`. The bell keeps
+the bar foreground color and the existing badge contour is filled red. High
+contrast mode keeps the embedded font glyph with system colors. The geometry
+remains covered by the Microsoft copyright and MIT license above.
