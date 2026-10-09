@@ -1031,6 +1031,8 @@ void ProbeShortcutArchives()
     for (const auto &paths : std::vector<std::vector<std::wstring>>{
         {folderLink.wstring()}, {brokenLink.wstring()}, {shortcut.wstring(), otherLink.wstring(), archive.wstring()}})
     {
+        std::cout << "Query shortcut variant: " << std::filesystem::path(paths.front()).filename().string()
+            << ", objects=" << paths.size() << std::endl;
         ext::Request variant; variant.paths = paths;
         ext::Session query(variant);
         std::optional<ext::Reply> result;
@@ -1043,6 +1045,7 @@ void ProbeShortcutArchives()
             MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
             { TranslateMessage(&message); DispatchMessageW(&message); }
         }
+        if (result && !result->ok) std::cout << result->error << std::endl;
         Expect(result && result->ok, "real folder, broken and cross-folder shortcut queries succeed");
         const auto winrar = std::find_if(result->entries.begin(), result->entries.end(), [](const auto &entry) {
             return entry.label == L"WinRAR";
