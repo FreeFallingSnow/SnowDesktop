@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "dock_window_preview.h"
+#include "dock_window_preview_layout.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 
 #include <shellscalingapi.h>
@@ -22,6 +23,27 @@ constexpr wchar_t kCloseGlyph[] = L"\uF369";
 int ScaleForDpi(int value, UINT dpi)
 {
     return MulDiv(value, static_cast<int>(dpi), 96);
+}
+
+void DrawCenteredActionGlyph(HDC dc, HFONT font, const wchar_t* glyph, const RECT& bounds)
+{
+    const HGDIOBJ previousFont = SelectObject(dc, font);
+    MAT2 transform{};
+    transform.eM11.value = 1;
+    transform.eM22.value = 1;
+    GLYPHMETRICS metrics{};
+    // Center the visible ink, not the font's advance width and line box.
+    if (GetGlyphOutlineW(dc, glyph[0], GGO_METRICS, &metrics, 0, nullptr, &transform) != GDI_ERROR)
+    {
+        const int x = bounds.left + (bounds.right - bounds.left -
+            static_cast<int>(metrics.gmBlackBoxX)) / 2 - metrics.gmptGlyphOrigin.x;
+        const int baseline = bounds.top + (bounds.bottom - bounds.top -
+            static_cast<int>(metrics.gmBlackBoxY)) / 2 + metrics.gmptGlyphOrigin.y;
+        const UINT previousAlign = SetTextAlign(dc, TA_LEFT | TA_BASELINE);
+        ExtTextOutW(dc, x, baseline, ETO_CLIPPED, &bounds, glyph, 1, nullptr);
+        SetTextAlign(dc, previousAlign);
+    }
+    SelectObject(dc, previousFont);
 }
 
 bool RectContainsScreenPoint(const RECT& rect, POINT point)
@@ -218,8 +240,71 @@ DockWindowPreviewGrid CalculateDockWindowPreviewGrid(
     return result;
 }
 
-std::vector<RECT> CalculateDockWindowPreviewCardRects(
-    size_t itemCount, const DockWindowPreviewGrid& grid, UINT dpi)
+DockWindowPreviewLayout CalculateDockWindowPreviewLayout(
+    const std::vector<SIZE>& sourceSizes, int maximumWidth, int maximumHeight, UINT dpi)
+{
+    if (sourceSizes.empty() || maximumWidth <= 0 || maximumHeight <= 0) return {};
+    const int gap = std::max(1, ScaleForDpi(8, dpi));
+    const int padding = std::max(1, ScaleForDpi(5, dpi));
+    const int title = std::max(1, ScaleForDpi(34, dpi));
+    const int desiredWidth = std::max(1, ScaleForDpi(210, dpi));
+    const int count = static_cast<int>(sourceSizes.size());
+    DockWindowPreviewLayout best;
+    const auto heightsAtWidth = [&](int width) {
+        std::vector<int> heights;
+        heights.reserve(sourceSizes.size());
+        for (const SIZE size : sourceSizes)
+        {
+            const double ratio = size.cx > 0 && size.cy > 0
+                ? static_cast<double>(size.cy) / size.cx : 9.0 / 16.0;
+            heights.push_back(static_cast<int>(std::min<double>(maximumHeight + 1.0,
+                title + padding + std::max(1.0, std::round((width - padding * 2) * ratio)))));
+        }
+        return heights;
+    };
+    const auto panelHeight = [&](const std::vector<int>& heights, int columns) {
+        int64_t height = 0;
+        for (int first = 0; first < count; first += columns)
+        {
+            height += *std::max_element(heights.begin() + first,
+                heights.begin() + std::min(count, first + columns));
+            if (first) height += gap;
+        }
+        return height;
+    };
+    for (int columns = 1; columns <= count; ++columns)
+    {
+        int high = std::min(desiredWidth, (maximumWidth - gap * (columns - 1)) / columns);
+        int low = padding * 2 + 1;
+        if (high < low || panelHeight(heightsAtWidth(low), columns) > maximumHeight) continue;
+        while (low < high)
+        {
+            const int middle = low + (high - low + 1) / 2;
+            if (panelHeight(heightsAtWidth(middle), columns) <= maximumHeight) low = middle;
+            else high = middle - 1;
+        }
+        const int rows = (count + columns - 1) / columns;
+        if (low < best.cardWidth || (low == best.cardWidth && rows >= best.rows)) continue;
+        best.columns = columns;
+        best.rows = rows;
+        best.cardWidth = low;
+        best.cardHeights = heightsAtWidth(low);
+        best.cardHeight = *std::max_element(best.cardHeights.begin(), best.cardHeights.end());
+        best.panelWidth = low * columns + gap * (columns - 1);
+        best.panelHeight = static_cast<int>(panelHeight(best.cardHeights, columns));
+    }
+    if (!best.columns)
+    {
+        static_cast<DockWindowPreviewGrid&>(best) = CalculateDockWindowPreviewGrid(
+            sourceSizes.size(), maximumWidth, maximumHeight, dpi);
+        best.cardHeights.assign(sourceSizes.size(), best.cardHeight);
+    }
+    return best;
+}
+
+static std::vector<RECT> CalculatePreviewCardRects(
+    size_t itemCount, const DockWindowPreviewGrid& grid, UINT dpi,
+    const std::vector<int>& heights)
 {
     std::vector<RECT> cards;
     if (itemCount == 0 || grid.columns <= 0 || grid.rows <= 0 ||
@@ -231,6 +316,7 @@ std::vector<RECT> CalculateDockWindowPreviewCardRects(
     const int padding = 0;
     cards.reserve(itemCount);
     size_t rowStartIndex = 0;
+    int top = padding;
     for (int row = 0; row < grid.rows &&
         rowStartIndex < itemCount; ++row)
     {
@@ -241,20 +327,36 @@ std::vector<RECT> CalculateDockWindowPreviewCardRects(
             std::max(0, itemsInRow - 1) * gap;
         const int rowLeft = std::max(
             padding, (grid.panelWidth - rowWidth) / 2);
-        const int top = padding + row * (grid.cardHeight + gap);
+        int rowHeight = 0;
         for (int column = 0; column < itemsInRow; ++column)
         {
             const int left =
                 rowLeft + column * (grid.cardWidth + gap);
+            const size_t index = rowStartIndex + static_cast<size_t>(column);
+            const int height = index < heights.size() ? heights[index] : grid.cardHeight;
+            rowHeight = std::max(rowHeight, height);
             cards.push_back({
                 left, top,
                 left + grid.cardWidth,
-                top + grid.cardHeight
+                top + height
             });
         }
         rowStartIndex += static_cast<size_t>(itemsInRow);
+        top += rowHeight + gap;
     }
     return cards;
+}
+
+std::vector<RECT> CalculateDockWindowPreviewCardRects(
+    size_t itemCount, const DockWindowPreviewGrid& grid, UINT dpi)
+{
+    return CalculatePreviewCardRects(itemCount, grid, dpi, {});
+}
+
+std::vector<RECT> CalculateDockWindowPreviewLayoutCardRects(
+    const DockWindowPreviewLayout& layout, UINT dpi)
+{
+    return CalculatePreviewCardRects(layout.cardHeights.size(), layout, dpi, layout.cardHeights);
 }
 
 RECT CalculateDockWindowPreviewCloseButtonRect(
@@ -269,7 +371,7 @@ RECT CalculateDockWindowPreviewCloseButtonRect(
 
     const int titleHeight = std::min(
         ScaleForDpi(34, dpi),
-        std::max(1, height / 3));
+        height);
     const int inset = std::min(
         std::max(1, ScaleForDpi(6, dpi)),
         std::max(1, width / 4));
@@ -691,16 +793,32 @@ void DockWindowPreview::Layout(RECT monitorWorkArea, UINT dpi)
         static_cast<int>(std::floor(workWidth * 0.90)));
     const int maximumHeight = std::max(1,
         static_cast<int>(std::floor(workHeight * 0.78)));
-    const DockWindowPreviewGrid grid = CalculateDockWindowPreviewGrid(
-        items_.size(), maximumWidth, maximumHeight, dpi);
+    std::vector<SIZE> sourceSizes;
+    sourceSizes.reserve(items_.size());
+    for (const auto& item : items_)
+    {
+        SIZE size{};
+        HTHUMBNAIL thumbnail = nullptr;
+        if (SUCCEEDED(DwmRegisterThumbnail(hwnd_, item.window, &thumbnail)))
+        {
+            DwmQueryThumbnailSourceSize(thumbnail, &size);
+            DwmUnregisterThumbnail(thumbnail);
+        }
+        if (size.cx <= 0 || size.cy <= 0)
+        {
+            RECT frame{};
+            if (GetWindowRect(item.window, &frame))
+                size = {frame.right - frame.left, frame.bottom - frame.top};
+        }
+        sourceSizes.push_back(size);
+    }
+    const DockWindowPreviewLayout grid = CalculateDockWindowPreviewLayout(
+        sourceSizes, maximumWidth, maximumHeight, dpi);
     panelSize_ = { grid.panelWidth, grid.panelHeight };
 
-    const int titleHeight = std::min(
-        ScaleForDpi(34, dpi),
-        std::max(1, grid.cardHeight / 3));
+    const int titleHeight = ScaleForDpi(34, dpi);
     const int contentPadding = std::max(1, ScaleForDpi(5, dpi));
-    cardRects_ = CalculateDockWindowPreviewCardRects(
-        items_.size(), grid, dpi);
+    cardRects_ = CalculateDockWindowPreviewLayoutCardRects(grid, dpi);
     thumbnailRects_.clear();
     thumbnailRects_.reserve(items_.size());
     for (const RECT& card : cardRects_)
@@ -935,7 +1053,7 @@ void DockWindowPreview::Paint()
 
     const int corner = std::max(4, ScaleForDpi(8, dpi_));
     const int titleInset = ScaleForDpi(10, dpi_);
-    const int titleHeight = ScaleForDpi(32, dpi_);
+    const int titleHeight = ScaleForDpi(34, dpi_);
     HFONT font = CreateFontW(
         -ScaleForDpi(14, dpi_), 0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -990,7 +1108,10 @@ void DockWindowPreview::Paint()
         {
             if (pinned || pinHovered)
             {
-                HBRUSH pinFill = CreateSolidBrush(pinned ? RGB(0, 120, 215) : hovered);
+                const COLORREF pinColor = pinned
+                    ? (pinHovered ? RGB(0, 95, 180) : RGB(0, 120, 215))
+                    : (lightTheme_ ? RGB(190, 215, 245) : RGB(70, 105, 145));
+                HBRUSH pinFill = CreateSolidBrush(pinColor);
                 HGDIOBJ previousBrush = SelectObject(dc, pinFill);
                 HGDIOBJ previousPen = SelectObject(dc, GetStockObject(NULL_PEN));
                 RoundRect(dc, pinRect.left, pinRect.top, pinRect.right, pinRect.bottom,
@@ -1000,10 +1121,7 @@ void DockWindowPreview::Paint()
                 DeleteObject(pinFill);
             }
             SetTextColor(dc, pinned ? RGB(255, 255, 255) : closeIdle);
-            SelectObject(dc, actionFont);
-            DrawTextW(dc, snowdesktop::menu_fluent_glyphs::kPin, -1, &pinRect,
-                DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
-            SelectObject(dc, font);
+            DrawCenteredActionGlyph(dc, actionFont, snowdesktop::menu_fluent_glyphs::kPin, pinRect);
         }
 
         const bool closeHoveredForItem =
@@ -1032,11 +1150,7 @@ void DockWindowPreview::Paint()
             ? RGB(255, 255, 255)
             : closeIdle;
         SetTextColor(dc, closeColor);
-        SelectObject(dc, actionFont);
-        RECT closeGlyphRect = closeRect;
-        DrawTextW(dc, kCloseGlyph, -1, &closeGlyphRect,
-            DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
-        SelectObject(dc, font);
+        DrawCenteredActionGlyph(dc, actionFont, kCloseGlyph, closeRect);
     }
 
     SelectObject(dc, oldFont);
@@ -1117,7 +1231,14 @@ void DockWindowPreview::OnLeftButtonUp(POINT point)
     if (pinIndex >= 0 && static_cast<size_t>(pinIndex) < items_.size())
     {
         KeepVisible();
-        windowPins_.Toggle(items_[pinIndex].window);
+        if (windowPins_.Toggle(items_[pinIndex].window))
+        {
+            // Promoting the target inserts it above other topmost windows.
+            // Keep its still-open controls available without activating either
+            // the preview or its floating Dock owner.
+            SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }

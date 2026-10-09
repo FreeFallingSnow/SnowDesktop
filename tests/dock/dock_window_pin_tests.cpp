@@ -1,5 +1,6 @@
 #include "dock/dock_window_pin.h"
 #include "dock/dock_window_preview.h"
+#include "dock/dock_window_preview_layout.h"
 
 #include <dwmapi.h>
 #include <windowsx.h>
@@ -28,6 +29,27 @@ POINT Center(const RECT& rect)
 {
     return {(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
 }
+
+bool IsAbove(HWND window, HWND target)
+{
+    for (HWND previous = GetWindow(target, GW_HWNDPREV); previous;
+            previous = GetWindow(previous, GW_HWNDPREV))
+        if (previous == window) return true;
+    return false;
+}
+
+HWND FindFixtureManager()
+{
+    HWND manager = nullptr;
+    while ((manager = FindWindowExW(HWND_MESSAGE, manager,
+                L"SnowDesktopDockWindowPinManager", nullptr)) != nullptr)
+    {
+        DWORD process = 0;
+        if (GetWindowThreadProcessId(manager, &process) == GetCurrentThreadId() &&
+                process == GetCurrentProcessId()) return manager;
+    }
+    return nullptr;
+}
 }
 
 int RunDockWindowPinTests()
@@ -40,6 +62,18 @@ int RunDockWindowPinTests()
             std::cerr << "FAIL: " << message << '\n';
         }
     };
+    const DockWindowPreviewLayout aspectLayout = CalculateDockWindowPreviewLayout(
+        {{1600, 900}, {800, 1200}}, 1200, 700, 96);
+    const auto aspectCards = CalculateDockWindowPreviewLayoutCardRects(aspectLayout, 96);
+    check(aspectCards.size() == 2 && aspectLayout.cardWidth == 210 &&
+            aspectCards[0].bottom - aspectCards[0].top == 152 &&
+            aspectCards[1].bottom - aspectCards[1].top == 339,
+        "equal-width landscape and portrait thumbnails retain their source ratio with five-pixel insets");
+    const DockWindowPreviewLayout boundedLayout = CalculateDockWindowPreviewLayout(
+        {{1600, 900}, {800, 1200}, {1200, 800}}, 600, 300, 96);
+    check(boundedLayout.panelWidth <= 600 && boundedLayout.panelHeight <= 300 &&
+            boundedLayout.cardHeights.size() == 3,
+        "aspect-preserving previews fit the work area without imposing a common card height");
     HWND target = MakeWindow();
     HWND other = MakeWindow();
     check(target && other, "native window pin fixtures are created");
@@ -74,15 +108,33 @@ int RunDockWindowPinTests()
                     (bounds.bottom - bounds.top) / 2),
             "the border region excludes the application content");
         DeleteObject(region);
+        const HWND manager = FindFixtureManager();
+        check(manager != nullptr, "the pin session has its own native event dispatcher");
+        // Disable the safety poll so a missing LOCATIONCHANGE subscription
+        // cannot pass this regression after the next timer tick.
+        if (manager) KillTimer(manager, 1);
         SetWindowPos(target, nullptr, -31000, -31500, 380, 240,
             SWP_NOZORDER | SWP_NOACTIVATE);
-        pins.Refresh();
         RECT frame{};
         DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame));
-        GetWindowRect(border, &bounds);
-        check(bounds.left < frame.left && bounds.top < frame.top &&
-                bounds.right > frame.right && bounds.bottom > frame.bottom,
-            "the ring follows the native window after moving and resizing");
+        const ULONGLONG deadline = GetTickCount64() + 500;
+        bool followed = false;
+        do
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            GetWindowRect(border, &bounds);
+            followed = bounds.left < frame.left && bounds.top < frame.top &&
+                bounds.right > frame.right && bounds.bottom > frame.bottom &&
+                bounds.left > frame.left - 100 && bounds.top > frame.top - 100;
+            if (!followed) MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        } while (!followed && GetTickCount64() < deadline);
+        check(followed, "native location events move and resize the ring with timer fallback disabled");
+        if (manager) SetTimer(manager, 1, 100, nullptr);
 
         ShowWindow(target, SW_SHOWMINNOACTIVE);
         pins.Refresh();
@@ -149,6 +201,18 @@ int RunDockWindowPinTests()
         SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, MAKELPARAM(pin.x, pin.y));
         check(DockWindowPin::IsPinned(target) && preview.IsVisible() && !closed && !activated,
             "left-clicking the pin changes TOPMOST without closing or activating the thumbnail");
+        check(IsAbove(preview.GetWindow(), target),
+            "pinning must keep the preview above its target so the unpin button remains available");
+        // Negative control: recreating promotion without the panel handoff
+        // must expose the obscured-controls failure to the same native oracle.
+        SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        check(!IsAbove(preview.GetWindow(), target),
+            "the layer regression detects native target promotion without a preview handoff");
+        SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, MAKELPARAM(pin.x, pin.y));
+        SendMessageW(preview.GetWindow(), WM_LBUTTONUP, 0, MAKELPARAM(pin.x, pin.y));
+        check(DockWindowPin::IsPinned(target) && IsAbove(preview.GetWindow(), target),
+            "repeated unpin/pin through the production entry restores accessible controls");
         preview.Hide();
         check(DockWindowPin::IsPinned(target) && preview.IsCleared(),
             "closing the thumbnail panel retains the pinned application");

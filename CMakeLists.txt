@@ -333,6 +333,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/wallpaper_engine_capture.cpp
     src/data/atomic_file.cpp
     src/dock/dock_window_preview.cpp
+    src/dock/dock_window_preview_layout.h
     src/dock/dock_window_pin.cpp
     src/dock/dock_window_transition.cpp
     src/core/item.cpp

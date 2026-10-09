@@ -1,8 +1,12 @@
 #include "dock_window_pin.h"
 
 #include <dwmapi.h>
+#include <d2d1.h>
+#include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -12,8 +16,9 @@ constexpr wchar_t kManagerClass[] = L"SnowDesktopDockWindowPinManager";
 constexpr wchar_t kBorderClass[] = L"SnowDesktopDockWindowPinBorder";
 constexpr wchar_t kPinProperty[] = L"SnowDesktop.DockWindowPin";
 constexpr UINT_PTR kRefreshTimer = 1;
-constexpr UINT kRefreshIntervalMs = 50;
-constexpr COLORREF kBorderColor = RGB(0, 120, 215);
+constexpr UINT kRefreshIntervalMs = 100;
+constexpr UINT kRefreshMessage = WM_APP + 1;
+constexpr UINT32 kBorderRgb = 0x0078D7;
 constexpr UINT kPositionFlags =
     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
 
@@ -37,6 +42,81 @@ struct DockWindowPin::State
         int thickness = 0;
         int radius = -1;
         bool restoreTopmost = false;
+        Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+        Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> renderTarget;
+
+        bool DrawBorder(const RECT& frame, int stroke, int corner)
+        {
+            if (!factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                    factory.GetAddressOf()))) return false;
+            if (!renderTarget)
+            {
+                const auto properties = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
+                if (FAILED(factory->CreateDCRenderTarget(&properties, renderTarget.GetAddressOf())))
+                    return false;
+            }
+            const int width = frame.right - frame.left;
+            const int height = frame.bottom - frame.top;
+            BITMAPINFO info{};
+            info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            info.bmiHeader.biWidth = width;
+            info.bmiHeader.biHeight = -height;
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            info.bmiHeader.biCompression = BI_RGB;
+            void* pixels = nullptr;
+            const HDC dc = CreateCompatibleDC(nullptr);
+            const HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+            if (!dc || !bitmap)
+            {
+                if (bitmap) DeleteObject(bitmap);
+                if (dc) DeleteDC(dc);
+                return false;
+            }
+            const HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
+            const RECT client{0, 0, width, height};
+            const float outerRadius = corner ? static_cast<float>(corner + stroke) : 0.0f;
+            Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> outer, inner;
+            Microsoft::WRL::ComPtr<ID2D1GeometryGroup> ring;
+            Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+            const float inset = static_cast<float>(stroke);
+            HRESULT result = factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(
+                D2D1::RectF(0, 0, static_cast<float>(width), static_cast<float>(height)),
+                outerRadius, outerRadius), outer.GetAddressOf());
+            if (SUCCEEDED(result)) result = factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(
+                D2D1::RectF(inset, inset, static_cast<float>(width) - inset, static_cast<float>(height) - inset),
+                static_cast<float>(corner), static_cast<float>(corner)), inner.GetAddressOf());
+            ID2D1Geometry* geometries[]{outer.Get(), inner.Get()};
+            if (SUCCEEDED(result)) result = factory->CreateGeometryGroup(
+                D2D1_FILL_MODE_ALTERNATE, geometries, 2, ring.GetAddressOf());
+            if (SUCCEEDED(result)) result = renderTarget->BindDC(dc, &client);
+            if (SUCCEEDED(result)) result = renderTarget->CreateSolidColorBrush(
+                D2D1::ColorF(kBorderRgb, 0.5f), brush.GetAddressOf());
+            if (SUCCEEDED(result))
+            {
+                renderTarget->BeginDraw();
+                renderTarget->Clear(D2D1::ColorF(0, 0, 0, 0));
+                renderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                renderTarget->FillGeometry(ring.Get(), brush.Get());
+                result = renderTarget->EndDraw();
+            }
+            bool updated = false;
+            if (SUCCEEDED(result))
+            {
+                POINT destination{frame.left, frame.top};
+                POINT source{};
+                SIZE size{width, height};
+                BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+                updated = UpdateLayeredWindow(border, nullptr, &destination, &size,
+                    dc, &source, 0, &blend, ULW_ALPHA) != FALSE;
+            }
+            if (result == D2DERR_RECREATE_TARGET) renderTarget.Reset();
+            SelectObject(dc, oldBitmap);
+            DeleteObject(bitmap);
+            DeleteDC(dc);
+            return updated;
+        }
 
         bool OwnsTarget() const
         {
@@ -72,7 +152,7 @@ struct DockWindowPin::State
             }
 
             const UINT dpi = std::max<UINT>(96, GetDpiForWindow(target));
-            const int nextThickness = std::max(1, MulDiv(3, static_cast<int>(dpi), 96));
+            const int nextThickness = std::max(1, MulDiv(6, static_cast<int>(dpi), 96));
             const bool maximized = IsZoomed(target) != FALSE;
             DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_DEFAULT;
             const bool hasCornerPreference = SUCCEEDED(DwmGetWindowAttribute(target,
@@ -100,16 +180,15 @@ struct DockWindowPin::State
                 radius != nextRadius;
             if (shapeChanged)
             {
-                const int outerCorner = nextRadius ? (nextRadius + nextThickness) * 2 : 0;
-                HRGN outer = nextRadius
-                    ? CreateRoundRectRgn(0, 0, width + 1, height + 1, outerCorner, outerCorner)
-                    : CreateRectRgn(0, 0, width, height);
+                // Leave one transparent pixel around the inner geometry so
+                // the safety hole does not clip the antialiased edge.
+                HRGN outer = CreateRectRgn(0, 0, width, height);
                 HRGN inner = nextRadius
-                    ? CreateRoundRectRgn(nextThickness, nextThickness,
-                        width - nextThickness + 1, height - nextThickness + 1,
+                    ? CreateRoundRectRgn(nextThickness + 1, nextThickness + 1,
+                        width - nextThickness, height - nextThickness,
                         nextRadius * 2, nextRadius * 2)
-                    : CreateRectRgn(nextThickness, nextThickness,
-                        width - nextThickness, height - nextThickness);
+                    : CreateRectRgn(nextThickness + 1, nextThickness + 1,
+                        width - nextThickness - 1, height - nextThickness - 1);
                 if (!outer || !inner || CombineRgn(outer, outer, inner, RGN_DIFF) == ERROR)
                 {
                     if (outer) DeleteObject(outer);
@@ -121,6 +200,11 @@ struct DockWindowPin::State
                 if (!SetWindowRgn(border, outer, FALSE))
                 {
                     DeleteObject(outer);
+                    ShowWindow(border, SW_HIDE);
+                    return;
+                }
+                if (!DrawBorder(frame, nextThickness, nextRadius))
+                {
                     ShowWindow(border, SW_HIDE);
                     return;
                 }
@@ -144,16 +228,75 @@ struct DockWindowPin::State
                 bounds = frame;
                 thickness = nextThickness;
                 radius = nextRadius;
-                if (shapeChanged || show) InvalidateRect(border, nullptr, FALSE);
             }
         }
     };
 
     HWND manager = nullptr;
     std::vector<std::unique_ptr<Entry>> entries;
+    std::vector<HWINEVENTHOOK> hooks;
+    bool refreshQueued = false;
+    bool refreshing = false;
+
+    void QueueRefresh()
+    {
+        if (refreshQueued) return;
+        refreshQueued = true;
+        if (!PostMessageW(manager, kRefreshMessage, 0, 0)) refreshQueued = false;
+    }
+
+    static auto& ActiveHooks()
+    {
+        // OUTOFCONTEXT callbacks run on the registering message-loop thread.
+        static thread_local std::unordered_map<HWINEVENTHOOK, State*> active;
+        return active;
+    }
+
+    void Unsubscribe()
+    {
+        for (const auto hook : hooks)
+        {
+            ActiveHooks().erase(hook);
+            UnhookWinEvent(hook);
+        }
+        hooks.clear();
+    }
+
+    static void CALLBACK WinEventProc(HWINEVENTHOOK hook, DWORD event, HWND,
+        LONG object, LONG child, DWORD, DWORD)
+    {
+        const auto found = ActiveHooks().find(hook);
+        if (found == ActiveHooks().end()) return;
+        State* state = found->second;
+        // WinEvent callbacks may reenter during native calls. Only enqueue a
+        // coalesced update here; entry ownership is inspected in the message loop.
+        if (event == EVENT_SYSTEM_FOREGROUND ||
+                (object == OBJID_WINDOW && child == CHILDID_SELF))
+            state->QueueRefresh();
+    }
+
+    void Subscribe()
+    {
+        if (!hooks.empty()) return;
+        constexpr std::array<DWORD, 8> events{
+            EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE,
+            EVENT_OBJECT_DESTROY, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND,
+            EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_FOREGROUND};
+        for (const DWORD event : events)
+        {
+            const HWINEVENTHOOK hook = SetWinEventHook(event, event, nullptr, WinEventProc,
+                0, 0, WINEVENT_OUTOFCONTEXT);
+            if (hook)
+            {
+                ActiveHooks().emplace(hook, this);
+                hooks.push_back(hook);
+            }
+        }
+    }
 
     ~State()
     {
+        Unsubscribe();
         entries.clear();
         if (manager) DestroyWindow(manager);
     }
@@ -167,14 +310,8 @@ struct DockWindowPin::State
         {
             PAINTSTRUCT paint{};
             const HDC dc = BeginPaint(window, &paint);
-            if (dc)
-            {
-                RECT client{};
-                GetClientRect(window, &client);
-                HBRUSH brush = CreateSolidBrush(kBorderColor);
-                FillRect(dc, &client, brush);
-                DeleteObject(brush);
-            }
+            // UpdateLayeredWindow owns the premultiplied surface.
+            (void)dc;
             EndPaint(window, &paint);
             return 0;
         }
@@ -187,6 +324,12 @@ struct DockWindowPin::State
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
                 reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
         auto* state = reinterpret_cast<State*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (state && message == kRefreshMessage)
+        {
+            state->refreshQueued = false;
+            state->Refresh();
+            return 0;
+        }
         if (state && message == WM_TIMER && wp == kRefreshTimer)
         {
             state->Refresh();
@@ -216,11 +359,18 @@ struct DockWindowPin::State
 
     void Refresh()
     {
+        if (refreshing) return;
+        refreshing = true;
         std::erase_if(entries, [](const auto& entry) {
             return !entry->OwnsTarget() || !DockWindowPin::IsPinned(entry->target);
         });
         for (const auto& entry : entries) entry->UpdateBorder();
-        if (entries.empty()) KillTimer(manager, kRefreshTimer);
+        if (entries.empty())
+        {
+            KillTimer(manager, kRefreshTimer);
+            Unsubscribe();
+        }
+        refreshing = false;
     }
 };
 
@@ -267,7 +417,6 @@ bool DockWindowPin::Toggle(HWND window)
         kBorderClass, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr,
         GetModuleHandleW(nullptr), nullptr);
     if (!entry->border || GetPropW(window, kPinProperty) ||
-        !SetLayeredWindowAttributes(entry->border, 0, 255, LWA_ALPHA) ||
         !SetPropW(window, kPinProperty, entry->border)) return false;
     const BOOL excluded = TRUE;
     DwmSetWindowAttribute(entry->border, DWMWA_EXCLUDED_FROM_PEEK, &excluded, sizeof(excluded));
@@ -276,5 +425,6 @@ bool DockWindowPin::Toggle(HWND window)
     if (!SetTimer(state_->manager, kRefreshTimer, kRefreshIntervalMs, nullptr)) return false;
     entry->UpdateBorder();
     state_->entries.push_back(std::move(entry));
+    state_->Subscribe();
     return true;
 }
