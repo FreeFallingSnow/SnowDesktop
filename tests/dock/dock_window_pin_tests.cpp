@@ -5,6 +5,7 @@
 #include <dwmapi.h>
 #include <windowsx.h>
 
+#include <algorithm>
 #include <iostream>
 
 namespace
@@ -217,6 +218,52 @@ int RunDockWindowPinTests()
             PrintRect("dwm", frame);
             PrintRect("ring", bounds);
             std::cerr << "events=" << observedLocations << " object=" << observedObject << '\n';
+        }
+        // Deliver native WinEvents without dispatching the posted application
+        // backlog. A second PostMessage hop must not gate each motion sample.
+        constexpr UINT backlogMessage = WM_APP + 42;
+        bool backlogCreated = manager != nullptr;
+        if (manager)
+            for (int index = 0; index < 256; ++index)
+                backlogCreated = PostMessageW(manager, backlogMessage, 0, 0) != FALSE && backlogCreated;
+        check(backlogCreated, "the native follow regression creates a real posted-message backlog");
+        int samplesFollowed = 0;
+        unsigned slowestSampleMs = 0;
+        for (int sample = 1; sample <= 8; ++sample)
+        {
+            const unsigned locationsBefore = observedLocations;
+            SetWindowPos(target, nullptr, -11000 + sample * 37, -11500 + sample * 19,
+                0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            RECT expected{};
+            DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &expected, sizeof(expected));
+            const int stroke = MulDiv(6, static_cast<int>(GetDpiForWindow(target)), 96);
+            InflateRect(&expected, stroke, stroke);
+            const ULONGLONG started = GetTickCount64();
+            bool aligned = false;
+            do
+            {
+                MSG pending{};
+                PeekMessageW(&pending, nullptr, WM_NULL, WM_NULL, PM_NOREMOVE);
+                RECT actual{};
+                GetWindowRect(border, &actual);
+                aligned = observedLocations > locationsBefore && EqualRect(&actual, &expected);
+                if (!aligned) MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_SENDMESSAGE, MWMO_INPUTAVAILABLE);
+            } while (!aligned && GetTickCount64() - started < 500);
+            if (aligned) ++samplesFollowed;
+            slowestSampleMs = std::max(slowestSampleMs,
+                static_cast<unsigned>(GetTickCount64() - started));
+        }
+        MSG backlog{};
+        check(PeekMessageW(&backlog, manager, backlogMessage, backlogMessage, PM_NOREMOVE) != FALSE,
+            "motion checks leave ordinary posted application work queued");
+        check(samplesFollowed == 8,
+            "each native motion sample aligns the ring before posted application work is dispatched");
+        std::cout << "Pin motion samples before posted dispatch: " << samplesFollowed
+            << "/8; maximum native sample wait: " << slowestSampleMs << " ms\n";
+        while (PeekMessageW(&backlog, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&backlog);
+            DispatchMessageW(&backlog);
         }
         if (observation) UnhookWinEvent(observation);
         observedWindow = nullptr;
