@@ -769,6 +769,7 @@
   "app.menu.file_group": "Grupo de arquivos",
   "app.menu.file_categories": "Arquivos da área de trabalho",
   "app.menu.folder_mapping": "Mapeamento de pasta",
+  "app.menu.convert_folder_mapping": "Converter em mapeamento de pasta",
   "app.menu.preview": "Visualização",
   "app.menu.lua_widgets_page": "Componentes Lua {0}/{1}",
   "app.widget_preview.size": "{0} × {1}",

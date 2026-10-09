@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "desktop/folder_mapping_visibility_rules.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "icons/large_icon_backup.h"
 #include "platform/operation_recovery_dialog.h"
@@ -345,6 +346,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.demoIconCategory = Utf8ToWide(
             saved.demoIconCategory);
         widget.sourceFolderPath = Utf8ToWide(saved.sourceFolderPath);
+        widget.sourceDesktopItemKey = Utf8ToWide(saved.sourceDesktopItemKey);
         widget.packageId = Utf8ToWide(saved.packageId);
         widget.packageSourceProvider = Utf8ToWide(
             saved.packageSourceProvider);
@@ -920,7 +922,8 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     // changes membership and therefore never reaches this conversion.
     RefreshCollectedKeysCache();
     for (auto& item : items_)
-        if (item.largeIcon && (IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId))
+        if (item.largeIcon && (snowdesktop::folder_mapping_visibility::HasExplicitOwner(
+                item, widgets_, dockEntries_) || item.gridCell.pageId == kDockPageId))
         {
             item.largeIcon.reset();
             item.gridSpan = {1, 1};
@@ -1098,9 +1101,12 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     // to the desktop items array (they belong to their widget's items list)
     std::unordered_set<std::wstring> widgetOwnedKeys;
     for (auto& w : widgets_)
+    {
+        if (w.type == DesktopWidgetType::FolderMapping) continue;
         for (auto& k : w.itemKeys)
             if (!k.empty())
                 widgetOwnedKeys.insert(ToUpperInvariant(k));
+    }
 
     bool firstItem = true;
     for (size_t i = 0; i < sorted.size(); ++i)
@@ -1136,6 +1142,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
              << "\", \"demoIconCategory\": \""
              << JsonEscapeUtf8(w.demoIconCategory)
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
+             << "\", \"sourceDesktopItemKey\": \"" << JsonEscapeUtf8(w.sourceDesktopItemKey)
              << "\", \"packageId\": \"" << JsonEscapeUtf8(w.packageId)
              << "\", \"packageSourceProvider\": \""
              << JsonEscapeUtf8(w.packageSourceProvider)

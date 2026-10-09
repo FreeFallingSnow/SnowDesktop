@@ -9,6 +9,8 @@
 #include "shell/shell_context_menu_site.h"
 #include "shell/shell_start_pin.h"
 #include "shell/namespace_menu_actions.h"
+#include "desktop/folder_mapping_visibility_rules.h"
+#include "app/shell/shell_icon_request.h"
 
 namespace { constexpr UINT kContextNamespaceActionFirst = 42000; }
 
@@ -256,6 +258,29 @@ void DesktopApp::ShowItemContextMenu(
             static_cast<size_t>(itemIndex)) !=
             DockWindowVisualState::Closed;
 
+    const auto canConvertFolder = [&](size_t index, const std::wstring& path) {
+        if (index >= items_.size() || path.empty()) return false;
+        const auto& item = items_[index];
+        const bool pinnedDock = dockEntryIndex && *dockEntryIndex < dockEntries_.size() &&
+            dockEntries_[*dockEntryIndex].type == DockEntryType::DesktopItem &&
+            snowdesktop::folder_mapping_visibility::EqualInsensitive(
+                dockEntries_[*dockEntryIndex].reference, item.layoutKey);
+        const DWORD attributes = item.isShortcut ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
+        const bool folderTarget = item.isShortcut ? item.shortcutTarget.directory :
+            attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        return snowdesktop::folder_mapping_visibility::CanConvert(
+            static_cast<size_t>(std::count_if(items_.begin(), items_.end(),
+                [](const DesktopItem& candidate) { return candidate.selected; })),
+            folderTarget, !item.desktopIconClsid.empty() || IsProtectedDesktopIcon(item),
+            pinnedDock || (!dockFrequentItem && !dockApplicationItem && !dockMapping && !dockEntryIndex &&
+                !keepQuickNavigationOpen && item.gridCell.pageId != kDockPageId &&
+                !IsItemInAnyWidget(item)),
+            snowdesktop::folder_mapping_visibility::HasMappingForItem(item, widgets_));
+    };
+    const bool canConvertFolderMapping = canFile &&
+        canConvertFolder(static_cast<size_t>(itemIndex), itemPath);
+    const std::wstring folderMappingSourceKey = items_[itemIndex].layoutKey;
+
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
     const auto largeIconKey = items_[itemIndex].layoutKey;
@@ -336,6 +361,9 @@ void DesktopApp::ShowItemContextMenu(
     }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
+    if (canConvertFolderMapping)
+        AppendMenuW(menu, MF_STRING, kContextAddFolderMappingWidget,
+            _LW("app.menu.convert_folder_mapping"));
     if (!namespaceItem)
     {
         AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -481,6 +509,9 @@ void DesktopApp::ShowItemContextMenu(
     }
     if (namespaceItem && namespaceProperty == namespaceActions.end()) DeleteMenu(menu, kContextPropertiesCommand, MF_BYCOMMAND);
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
+    if (canConvertFolderMapping)
+        SetMenuItemIcon(menu, kContextAddFolderMappingWidget,
+            snowdesktop::menu_fluent_glyphs::kFolderMapping, MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextLargeIconCreate, L"\uF0B2");
     SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
     SetMenuItemIcon(menu, kContextLargeIconRestore,
@@ -708,6 +739,80 @@ void DesktopApp::ShowItemContextMenu(
     applyLargeIconCommand(command);
     switch (command)
     {
+    case kContextAddFolderMappingWidget:
+    {
+        // The menu pumps messages. Re-resolve the source identity rather than
+        // trusting an index retained across Shell notifications or another menu.
+        const size_t sourceIndex = FindItemIndexByKey(folderMappingSourceKey);
+        if (!canConvertFolderMapping || !canConvertFolder(sourceIndex, itemPath))
+            break;
+        const std::wstring sourceStamp = snowdesktop::shell_icon_request::Stamp(items_[sourceIndex]);
+        const std::optional<DockEntry> pinnedEntry = dockEntryIndex && *dockEntryIndex < dockEntries_.size()
+            ? std::optional<DockEntry>(dockEntries_[*dockEntryIndex]) : std::nullopt;
+        // Resolve .lnk targets and verify filesystem availability on the Shell
+        // worker. A slow provider must not block the desktop input thread.
+        const bool submitted = shellVisualWork_.Submit(L"folder-convert:" + folderMappingSourceKey,
+            [itemPath] { return snowdesktop::item_location::ResolveFolderTarget(itemPath); },
+            [this, key = folderMappingSourceKey, itemPath, sourceStamp, pinnedEntry, screenPoint](
+                snowdesktop::item_location::FolderTarget target) {
+                const size_t index = FindItemIndexByKey(key);
+                if (!hwnd_ || exitRequested_ || index >= items_.size() ||
+                    !snowdesktop::folder_mapping_visibility::EqualInsensitive(items_[index].parsingName, itemPath) ||
+                    snowdesktop::shell_icon_request::Stamp(items_[index]) != sourceStamp ||
+                    snowdesktop::folder_mapping_visibility::HasMappingForItem(items_[index], widgets_)) return;
+                if (!target) { MessageBeep(MB_ICONWARNING); return; }
+                DesktopWidget widget;
+                widget.id = MakeNewWidgetId();
+                widget.type = DesktopWidgetType::FolderMapping;
+                widget.title = items_[index].name;
+                widget.showTitle = true;
+                widget.sourceFolderPath = target.path;
+                widget.sourceDesktopItemKey = key;
+                const std::wstring createdId = widget.id;
+                if (pinnedEntry)
+                {
+                    auto entry = std::find_if(dockEntries_.begin(), dockEntries_.end(), [&](const DockEntry& current) {
+                        return current.type == pinnedEntry->type && current.keepOnDesktop == pinnedEntry->keepOnDesktop &&
+                            snowdesktop::folder_mapping_visibility::EqualInsensitive(current.reference, pinnedEntry->reference);
+                    });
+                    if (entry == dockEntries_.end()) return;
+                    DockEntry replacement = *entry;
+                    if (!snowdesktop::folder_mapping_visibility::ReplaceDockEntry(replacement, widget)) return;
+                    ConfigureWidgetGridLimits(widget);
+                    widget.gridSpan = {3, 3};
+                    widgets_.push_back(std::move(widget));
+                    *entry = std::move(replacement);
+                    // Retire the direct-folder popup before rebuilding its source.
+                    if (dockFolderPopupOpen_)
+                    {
+                        CloseCollectionPopup();
+                        FinalizeCloseCollectionPopup();
+                    }
+                    EnsureNavTabOrder();
+                    LayoutItems();
+                    SaveLayoutSlots();
+                    InvalidateDockShellMetadata();
+                    InvalidateDockContainers();
+                    InvalidateDragStaticScene();
+                    InvalidateDockRects();
+                }
+                else
+                {
+                    if (IsItemInAnyWidget(items_[index]) || items_[index].gridCell.pageId == kDockPageId) return;
+                    lastContextMenuScreenPoint_ = screenPoint;
+                    AddWidgetToGrid(std::move(widget), {3, 3});
+                }
+                const size_t createdIndex = FindWidgetIndexById(createdId);
+                if (createdIndex < widgets_.size())
+                {
+                    EnumerateFolderMappingEntries(widgets_[createdIndex]);
+                    ClearWidgetAddedHint();
+                    ShowWidgetAddedHint();
+                }
+            }, hwnd_, kBackgroundShellReadyMessage);
+        if (!submitted) MessageBeep(MB_ICONWARNING);
+        break;
+    }
     case kContextLargeIconCreate:
         if (largeIconMenu && largeIconAccess != EntryAccess::Hidden)
         {

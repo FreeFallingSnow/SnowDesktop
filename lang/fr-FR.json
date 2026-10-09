@@ -769,6 +769,7 @@
   "app.menu.file_group": "Groupe de fichiers",
   "app.menu.file_categories": "Fichiers de bureau",
   "app.menu.folder_mapping": "Mappage de dossiers",
+  "app.menu.convert_folder_mapping": "Convertir en mappage de dossier",
   "app.menu.preview": "Aperçu",
   "app.menu.lua_widgets_page": "Composants Lua {0}/{1}",
   "app.widget_preview.size": "{0} × {1}",

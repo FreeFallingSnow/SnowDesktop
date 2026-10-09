@@ -769,6 +769,7 @@
   "app.menu.file_group": "Dateigruppe",
   "app.menu.file_categories": "Desktop-Dateien",
   "app.menu.folder_mapping": "Ordnerzuordnung",
+  "app.menu.convert_folder_mapping": "In Ordnerzuordnung umwandeln",
   "app.menu.preview": "Vorschau",
   "app.menu.lua_widgets_page": "Lua-Komponenten {0}/{1}",
   "app.widget_preview.size": "{0} × {1}",

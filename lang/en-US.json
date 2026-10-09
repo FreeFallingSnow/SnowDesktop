@@ -769,6 +769,7 @@
     "app.menu.file_group": "File Group",
     "app.menu.file_categories": "Desktop Files",
     "app.menu.folder_mapping": "Folder Mapping",
+    "app.menu.convert_folder_mapping": "Convert to Folder Mapping",
     "app.menu.preview": "Preview",
     "app.menu.lua_widgets_page": "Lua Components {0}/{1}",
     "app.widget_preview.size": "{0} × {1}",

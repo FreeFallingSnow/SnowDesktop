@@ -769,6 +769,7 @@
   "app.menu.file_group": "Grupo de archivos",
   "app.menu.file_categories": "Archivos de escritorio",
   "app.menu.folder_mapping": "Asignación de carpetas",
+  "app.menu.convert_folder_mapping": "Convertir en asignación de carpeta",
   "app.menu.preview": "Vista previa",
   "app.menu.lua_widgets_page": "Componentes Lua {0}/{1}",
   "app.widget_preview.size": "{0} × {1}",

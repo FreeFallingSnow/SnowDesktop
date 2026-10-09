@@ -769,6 +769,7 @@
   "app.menu.file_group": "ファイル グループ",
   "app.menu.file_categories": "デスクトップ ファイル",
   "app.menu.folder_mapping": "フォルダーのマッピング",
+  "app.menu.convert_folder_mapping": "フォルダーのマッピングに変換",
   "app.menu.preview": "プレビュー",
   "app.menu.lua_widgets_page": "Lua コンポーネント {0}/{1}",
   "app.widget_preview.size": "{0} × {1}",

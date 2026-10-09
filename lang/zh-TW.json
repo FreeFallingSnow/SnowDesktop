@@ -769,6 +769,7 @@
   "app.menu.file_group": "檔案群組",
   "app.menu.file_categories": "桌面檔案",
   "app.menu.folder_mapping": "資料夾對應",
+  "app.menu.convert_folder_mapping": "轉為資料夾對應",
   "app.menu.preview": "預覽",
   "app.menu.lua_widgets_page": "Lua 元件 {0}/{1}",
   "app.widget_preview.size": "{0} × {1}",

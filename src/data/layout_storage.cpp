@@ -405,6 +405,9 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadString(object, "sourceFolderPath",
                 path + ".sourceFolderPath", record.sourceFolderPath,
                 error) ||
+            !ReadString(object, "sourceDesktopItemKey",
+                path + ".sourceDesktopItemKey", record.sourceDesktopItemKey,
+                error) ||
             !ReadString(object, "packageId", path + ".packageId",
                 record.packageId, error) ||
             !ReadString(object, "packageSourceProvider",

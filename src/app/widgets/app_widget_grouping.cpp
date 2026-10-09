@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"
 #include "steam/steam_app_identity.h"
 
@@ -366,6 +367,13 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
         cell.column = GetGridAxisIndexFromPoint(*page, clientPoint.x, true);
         cell.row = GetGridAxisIndexFromPoint(*page, clientPoint.y, false);
     }
+    if (widget.type == DesktopWidgetType::FolderMapping && !widget.sourceDesktopItemKey.empty())
+    {
+        const size_t sourceIndex = FindItemIndexByKey(widget.sourceDesktopItemKey);
+        if (sourceIndex < items_.size() && items_[sourceIndex].gridCell.pageId != kDockPageId &&
+            FindGridPage(gridPages_, items_[sourceIndex].gridCell.pageId))
+            cell = items_[sourceIndex].gridCell;
+    }
     if (cell.pageId.empty())
     {
         if (const GridPage* firstPage = GetFirstPageGridPage())
@@ -381,7 +389,11 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
             MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
     for (const auto& item : items_)
     {
-        if (item.name.empty() || IsItemInAnyWidget(item)) continue;
+        if (item.name.empty() || IsItemInAnyWidget(item) ||
+            (widget.type == DesktopWidgetType::FolderMapping &&
+                (snowdesktop::folder_mapping_visibility::IsSourceFolder(item, widget.sourceFolderPath) ||
+                    snowdesktop::folder_mapping_visibility::EqualInsensitive(
+                        item.layoutKey, widget.sourceDesktopItemKey)))) continue;
         MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
     }
 
@@ -1567,13 +1579,15 @@ void DesktopApp::ReleaseDesktopItemsFromWidget(
 
     const DesktopWidget& source = widgets_[widgetIndex];
     if (source.type != DesktopWidgetType::Collection &&
-        source.type != DesktopWidgetType::FileCategories)
+        source.type != DesktopWidgetType::FileCategories &&
+        source.type != DesktopWidgetType::FolderMapping)
         return;
 
     std::vector<std::wstring> claimedKeys;
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         if (i == widgetIndex) continue;
+        if (widgets_[i].type == DesktopWidgetType::FolderMapping) continue;
         for (const auto& key : widgets_[i].itemKeys)
         {
             if (!key.empty())
@@ -1592,12 +1606,27 @@ void DesktopApp::ReleaseDesktopItemsFromWidget(
                 ToUpperInvariant(entry.reference));
         }
     }
+    for (const auto& item : items_)
+        if (snowdesktop::folder_mapping_visibility::HasMappingForItem(
+                item, widgets_, source.id))
+            claimedKeys.push_back(ToUpperInvariant(item.layoutKey));
 
     std::vector<std::wstring> sourceKeys;
-    sourceKeys.reserve(source.itemKeys.size());
-    for (const auto& key : source.itemKeys)
-        sourceKeys.push_back(
-            ToUpperInvariant(key));
+    if (source.type == DesktopWidgetType::FolderMapping)
+    {
+        for (const auto& item : items_)
+            if (snowdesktop::folder_mapping_visibility::IsSourceFolder(
+                    item, source.sourceFolderPath) ||
+                snowdesktop::folder_mapping_visibility::EqualInsensitive(
+                    item.layoutKey, source.sourceDesktopItemKey))
+                sourceKeys.push_back(ToUpperInvariant(item.layoutKey));
+    }
+    else
+    {
+        sourceKeys.reserve(source.itemKeys.size());
+        for (const auto& key : source.itemKeys)
+            sourceKeys.push_back(ToUpperInvariant(key));
+    }
     const std::vector<std::wstring> releasedKeys =
         snowdesktop::collection_group_rules::
             ClaimUniqueAllowedItems(
@@ -1691,6 +1720,15 @@ void DesktopApp::ReleaseDesktopItemsFromWidget(
                 std::max(0, cell.row);
         };
 
+    const auto sourcePositionFits = [&](const DesktopItem& item) {
+        if (!isKnownPage(item.gridCell.pageId)) return false;
+        if (const GridPage* page = FindGridPage(gridPages_, item.gridCell.pageId))
+            return GridAreaFitsPage(*page, item.gridCell, item.gridSpan);
+        return item.gridCell.column >= 0 && item.gridCell.row >= 0 &&
+            item.gridCell.column + item.gridSpan.columns <= savedPageColumns_.at(item.gridCell.pageId) &&
+            item.gridCell.row + item.gridSpan.rows <= savedPageRows_.at(item.gridCell.pageId);
+    };
+
     std::wstring preferredPage =
         preferredCell.pageId;
     int startSlot = slotForCell(preferredCell);
@@ -1708,7 +1746,13 @@ void DesktopApp::ReleaseDesktopItemsFromWidget(
             std::max(1, item.gridSpan.rows);
 
         GridCell landing;
-        if (!FindDockReturnCell(
+        // Prefer the saved source-folder position if it is still free. The
+        // mapping itself is excluded above, so its old cells can be reused.
+        if (source.type == DesktopWidgetType::FolderMapping &&
+            sourcePositionFits(item) &&
+            !AreGridSlotsMarked(usedSlots, item.gridCell, item.gridSpan))
+            landing = item.gridCell;
+        else if (!FindDockReturnCell(
                 usedSlots, preferredPage,
                 startSlot, item.gridSpan,
                 landing))

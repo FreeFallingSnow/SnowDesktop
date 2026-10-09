@@ -51,6 +51,9 @@ inline MigrationResult MigrateReferences(
 
     for (DesktopWidget& widget : widgets)
     {
+        if (widget.type == DesktopWidgetType::FolderMapping &&
+            ReplaceMatchingKey(widget.sourceDesktopItemKey, oldKey, newKey))
+            ++result.widgetReferences;
         for (std::wstring& key : widget.itemKeys)
         {
             if (ReplaceMatchingKey(key, oldKey, newKey))

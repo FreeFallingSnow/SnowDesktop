@@ -479,6 +479,9 @@ struct DesktopWidget
     // Empty means Demo Mode infers a category from the collection contents.
     std::wstring demoIconCategory;
     std::wstring sourceFolderPath;
+    // Original icon replaced by an explicit folder/shortcut conversion. This
+    // is separate from itemKeys, which orders the mapped directory contents.
+    std::wstring sourceDesktopItemKey;
     GridCell gridCell;
     GridSpan gridSpan;
     GridSpan minGridSpan{ 1, 1 };

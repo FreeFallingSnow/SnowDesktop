@@ -1093,6 +1093,23 @@ int main()
                 std::vector<std::string>({"programs", "others", "all", "folders"}),
         "restart preserves the position of All and program category tabs");
     Expect(typedLayout.widgets[0].categoryTabOrder.empty(), "old layouts keep their default category tab order");
+    {
+        snowdesktop::layout_storage::Document converted;
+        const std::string convertedText = R"({"widgets":[{"id":"folder-map","page":"__snowdesktop_dock__","x":0,"y":0,"type":"folderMapping","sourceFolderPath":"D:\\Projects","sourceDesktopItemKey":"C:\\Desktop\\Projects.lnk","items":["D:\\Projects\\notes.txt"]}]})";
+        const auto convertedPath = root / L"layout-storage" / L"converted-folder.layout.json";
+        Expect(snowdesktop::layout_storage::SaveDocument(convertedPath, convertedText, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(convertedPath, converted).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary && converted.widgets.size() == 1 &&
+                converted.widgets[0].sourceDesktopItemKey == "C:\\Desktop\\Projects.lnk" &&
+                converted.widgets[0].sourceFolderPath == "D:\\Projects" && converted.widgets[0].items.size() == 1,
+            "restart preserves converted shortcut identity separately from mapped-content order");
+        Expect(typedLayout.widgets[0].sourceDesktopItemKey.empty(),
+            "legacy widgets default to having no explicitly converted desktop source");
+        Expect(!snowdesktop::layout_storage::ParseDocument(
+            R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"sourceDesktopItemKey":3}]})",
+            converted, &layoutError) && layoutError.find("sourceDesktopItemKey") != std::string::npos,
+            "invalid converted source identities cannot replace saved layouts");
+    }
     Expect(!snowdesktop::layout_storage::ParseDocument(
         R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"categoryTabOrder":[3]}]})", categoryTabs, &layoutError) &&
             layoutError.find("categoryTabOrder[0]") != std::string::npos,

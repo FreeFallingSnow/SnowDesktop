@@ -769,6 +769,7 @@
     "app.menu.file_group": "文件组",
     "app.menu.file_categories": "桌面文件",
     "app.menu.folder_mapping": "文件夹映射",
+    "app.menu.convert_folder_mapping": "转为文件夹映射",
     "app.menu.preview": "预览",
     "app.menu.lua_widgets_page": "Lua 组件 {0}/{1}",
     "app.widget_preview.size": "{0} × {1}",

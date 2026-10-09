@@ -769,6 +769,7 @@
   "app.menu.file_group": "파일 그룹",
   "app.menu.file_categories": "데스크톱 파일",
   "app.menu.folder_mapping": "폴더 매핑",
+  "app.menu.convert_folder_mapping": "폴더 매핑으로 전환",
   "app.menu.preview": "미리보기",
   "app.menu.lua_widgets_page": "루아 구성 요소 {0}/{1}",
   "app.widget_preview.size": "{0} × {1}",

@@ -46,6 +46,7 @@ struct WidgetRecord
     std::optional<std::string> titleMode;
     std::string demoIconCategory;
     std::string sourceFolderPath;
+    std::string sourceDesktopItemKey;
     std::string packageId;
     std::string packageSourceProvider;
     std::string packageSourceExternalItemId;
