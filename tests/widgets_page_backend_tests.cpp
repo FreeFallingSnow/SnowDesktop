@@ -104,6 +104,48 @@ void TestBoundedLibraryIo()
         "the retained result remains valid after the caller/cache is destroyed");
 }
 
+void TestLateFileQueryResults()
+{
+    using Query = snowdesktop::BoundedFileQuery<int>;
+    const auto completedAndAged = [](const Query::Ticket& ticket, Query::Clock::duration age) {
+        std::unique_lock lock(ticket->mutex);
+        const bool completed = ticket->changed.wait_for(lock, std::chrono::seconds(2), [&] { return ticket->done; });
+        Check(completed, "late file query completes before the simulated retry interval");
+        if (completed) ticket->completedAt -= age;
+    };
+    Query cache;
+    std::promise<void> release;
+    auto gate = release.get_future().share();
+    auto late = cache.Request(L"late-workshop-package", [gate] { gate.wait(); return 7; });
+    Check(!Query::Wait(late, Query::Clock::now() + std::chrono::milliseconds(10)),
+        "a late archive result does not extend the caller's wait budget");
+    cache.Request(L"late-workshop-package", [] { return 99; }, std::chrono::minutes(2));
+    release.set_value();
+    completedAndAged(late, std::chrono::seconds(60));
+    auto healthy = cache.Request(L"other-library", [] { return 11; });
+    Check(Query::Wait(healthy, Query::Clock::now() + std::chrono::seconds(2)) == 11,
+        "another library remains usable while an undelivered completion is retained");
+    auto retry = cache.Request(L"late-workshop-package", [] { return 99; });
+    Check(Query::Wait(retry, Query::Clock::now() + std::chrono::seconds(2)) == 7,
+        "a retry after one minute receives the completed archive instead of restarting validation");
+    auto fresh = cache.Request(L"late-workshop-package", [] { return 99; });
+    Check(Query::Wait(fresh, Query::Clock::now() + std::chrono::seconds(2)) == 99,
+        "delivery forces the next query to refresh even within the retention interval");
+
+    auto expired = cache.Request(L"expired-completion", [] { return 13; }, std::chrono::minutes(2));
+    completedAndAged(expired, std::chrono::minutes(3));
+    auto replacement = cache.Request(L"expired-completion", [] { return 17; });
+    Check(Query::Wait(replacement, Query::Clock::now() + std::chrono::seconds(2)) == 17,
+        "an unconsumed completion eventually expires instead of returning indefinitely stale data");
+    // Negative control: the former five-second retention loses a completion
+    // before the once-a-minute Workshop retry, even though validation finished.
+    auto shortLived = cache.Request(L"short-retention-control", [] { return 7; });
+    completedAndAged(shortLived, std::chrono::seconds(60));
+    auto restarted = cache.Request(L"short-retention-control", [] { return 99; });
+    Check(Query::Wait(restarted, Query::Clock::now() + std::chrono::seconds(2)) == 99,
+        "the five-second negative control reproduces loss before the fallback retry");
+}
+
 struct SearchResult { bool cancelled = false; };
 struct ExitSignal
 {
@@ -181,6 +223,7 @@ int main(int argc, char** argv)
 {
     TestOutstandingOperationLedgerBehavior();
     TestBoundedLibraryIo();
+    TestLateFileQueryResults();
     TestSearchCloseAndCancellation();
     Check(argc == 2, "source root is supplied");
     if (argc == 2)
