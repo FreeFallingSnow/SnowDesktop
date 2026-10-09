@@ -13,6 +13,14 @@ namespace
 
 constexpr UINT kDockWindowActivationObservationIntervalMs = 100;
 
+bool IsDockConsentActivationProxy(HWND window)
+{
+    if (!window || !IsWindow(window)) return false;
+    wchar_t className[128]{};
+    return GetClassNameW(window, className, static_cast<int>(std::size(className))) &&
+        wcscmp(className, L"$$$Secure UAP Dummy Window Class For Interim Dialog") == 0;
+}
+
 void LogDockWindowActivation(HWND target, const wchar_t* phase,
     int showCommand = 0, BOOL accepted = TRUE, DWORD error = ERROR_SUCCESS)
 {
@@ -159,6 +167,38 @@ DesktopApp::RequestDockWindowActivation(
     HWND target, bool wasMinimized)
 {
     CancelAllDockWindowActivationObservations();
+    if (IsDockConsentActivationProxy(target))
+    {
+        // Restoring this normal-desktop proxy through DefWindowProc only
+        // foregrounds an empty window. The task-switch request lets Windows
+        // reveal its consent UI. Issue it once for the exact clicked window,
+        // outside the UI thread; never treat the proxy's foreground as proof
+        // that the secure-desktop dialog was shown.
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(target, &process);
+        const HWND requestForeground = GetForegroundWindow();
+        const ULONGLONG queuedAt = GetTickCount64();
+        const std::wstring key = L"dock-consent-activate:" + std::to_wstring(process) + L":" +
+            std::to_wstring(thread) + L":" + std::to_wstring(reinterpret_cast<UINT_PTR>(target));
+        const bool queued = shellModelWork_.Submit(key,
+            [target, process, thread, requestForeground, queuedAt] {
+                DWORD currentProcess = 0;
+                const DWORD currentThread = GetWindowThreadProcessId(target, &currentProcess);
+                if (!process || !thread || currentProcess != process || currentThread != thread ||
+                    !IsDockConsentActivationProxy(target) || !IsWindowVisible(target) ||
+                    IsHungAppWindow(target) || GetTickCount64() - queuedAt > 1000 ||
+                    GetForegroundWindow() != requestForeground)
+                    return false;
+                LogDockWindowActivation(target, L"consent-task-switch-request");
+                SwitchToThisWindow(target, TRUE);
+                LogDockWindowActivation(target, L"consent-task-switch-returned");
+                return true;
+            }, [](bool) {}, hwnd_, kBackgroundShellReadyMessage);
+        LogDockWindowActivation(target, queued ? L"consent-task-switch-queued" : L"consent-task-switch-not-queued");
+        DockWindowActivationOutcome outcome;
+        outcome.restored = !wasMinimized;
+        return outcome;
+    }
     BeginDockWindowActivationObservation(
         target, wasMinimized);
     RequestDockWindowShow(target, wasMinimized);
@@ -1131,6 +1171,11 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         return true;
     HWND target = GetAncestor(requestedTarget, GA_ROOT);
     if (!target) target = requestedTarget;
+    if (IsDockConsentActivationProxy(target))
+    {
+        RequestDockWindowActivation(target, IsIconic(target) != FALSE);
+        return true;
+    }
     if (dockWindowTransition_ &&
         dockWindowTransition_->IsActive() &&
         !dockWindowTransition_->IsActiveFor(
