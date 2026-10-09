@@ -4294,6 +4294,33 @@ int main(int argc, char** argv)
             collectionLastCell.bottom <=
                 collectionIconLayout.content.bottom,
         "all four collection cells must stay inside the inset content area");
+    // At 64 px the old two-stage rounding left 9/11 px margins. Odd
+    // sizes also need equal margins as Dock magnification changes the frame.
+    for (const int side : {40, 52, 63, 64, 65, 68, 69, 72, 91, 92, 96, 128})
+    {
+        const RECT bounds{100, -80, 100 + side, -80 + side};
+        const auto layout =
+            snowdesktop::dock_collection_icon_rules::CalculateLayout(bounds);
+        const auto first =
+            snowdesktop::dock_collection_icon_rules::CellRect(layout, 0, 0);
+        const auto last =
+            snowdesktop::dock_collection_icon_rules::CellRect(layout, 1, 1);
+        Check(first.left - bounds.left == bounds.right - last.right &&
+                first.top - bounds.top == bounds.bottom - last.bottom,
+            "Dock collection previews must have equal opposite margins at odd and even icon sizes");
+        Check(last.left - first.right == last.top - first.bottom &&
+                last.left > first.right && last.top > first.bottom,
+            "centered Dock collection previews must retain equal positive row and column gaps");
+    }
+    int previousCollectionCellSize = 0;
+    for (int side = 8; side <= 256; ++side)
+    {
+        const auto layout =
+            snowdesktop::dock_collection_icon_rules::CalculateLayout({0, 0, side, side});
+        Check(layout.cellSize >= previousCollectionCellSize,
+            "Dock collection thumbnails must not shrink as magnification enlarges their frame");
+        previousCollectionCellSize = layout.cellSize;
+    }
     constexpr float compactScale =
         92.0f / 116.0f;
     Check(

@@ -38,19 +38,6 @@ constexpr Layout CalculateLayout(
         1,
         (outerSide * kContentPercent + 50) /
             100);
-    const int contentLeft =
-        static_cast<int>(iconRect.left) +
-        (width - contentSide) / 2;
-    const int contentTop =
-        static_cast<int>(iconRect.top) +
-        (height - contentSide) / 2;
-    result.content = {
-        contentLeft,
-        contentTop,
-        contentLeft + contentSide,
-        contentTop + contentSide
-    };
-
     const int preferredGap = std::clamp(
         (contentSide * 4 + 50) / 100,
         2, 4);
@@ -59,8 +46,26 @@ constexpr Layout CalculateLayout(
         std::max(0, contentSide - 2));
     result.cellSize = std::max(
         1, (contentSide - result.gap) / 2);
+    // Retain thumbnail sizes as the Dock grows. Adjust only the gap's
+    // parity so two equal cells can have equal integer outer margins.
+    if (outerSide > 1 && (outerSide - result.gap) % 2 != 0)
+        result.gap += result.gap >= 3 ? -1 : 1;
     result.groupSize =
         result.cellSize * 2 + result.gap;
+    // Center the actual group once, rather than truncating both an inner
+    // frame's inset and the group's offset within that frame.
+    const int contentLeft =
+        static_cast<int>(iconRect.left) +
+        (width - result.groupSize) / 2;
+    const int contentTop =
+        static_cast<int>(iconRect.top) +
+        (height - result.groupSize) / 2;
+    result.content = {
+        contentLeft,
+        contentTop,
+        contentLeft + result.groupSize,
+        contentTop + result.groupSize
+    };
     return result;
 }
 
