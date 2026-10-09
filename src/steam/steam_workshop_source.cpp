@@ -158,18 +158,33 @@ bool HasReparsePoint(const std::filesystem::path& path)
         (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 }
 
-bool ContainsReparsePoint(const std::filesystem::path& absolutePath)
+std::string DiagnosticPath(const std::filesystem::path& path)
+{
+    const auto utf8 = path.generic_u8string();
+    return std::string(utf8.begin(), utf8.end());
+}
+
+bool CheckWorkshopPath(const std::filesystem::path& absolutePath, std::string& error)
 {
     std::filesystem::path current = absolutePath.root_path();
     for (const auto& component : absolutePath.relative_path())
     {
         current /= component;
         const DWORD attributes = GetFileAttributesW(current.c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES ||
-            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
-            return true;
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD code = GetLastError();
+            error = "cannot access Steam Workshop install path: " + DiagnosticPath(current) +
+                " (Windows error " + std::to_string(code) + ")";
+            return false;
+        }
+        if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            error = "Steam Workshop install path contains a reparse point: " + DiagnosticPath(current);
+            return false;
+        }
     }
-    return false;
+    return true;
 }
 
 std::string LowerAscii(std::string value)
@@ -453,21 +468,28 @@ SteamWorkshopSource::ResolveInstalledFolder(
     std::error_code filesystemError;
     const auto absoluteFolder = std::filesystem::absolute(
         folder, filesystemError);
-    if (filesystemError || absoluteFolder.empty() ||
-        ContainsReparsePoint(absoluteFolder))
+    if (filesystemError || absoluteFolder.empty())
     {
-        error = "Steam Workshop install folder is unsafe or unavailable";
+        error = "cannot resolve Steam Workshop install folder: " + DiagnosticPath(folder) +
+            " (filesystem error " + std::to_string(filesystemError.value()) + ")";
         return std::nullopt;
     }
+    if (!CheckWorkshopPath(absoluteFolder, error)) return std::nullopt;
     const auto canonicalFolder = std::filesystem::canonical(
         absoluteFolder, filesystemError);
-    if (filesystemError ||
-        !std::filesystem::is_directory(canonicalFolder, filesystemError) ||
-        HasReparsePoint(canonicalFolder))
+    if (filesystemError)
     {
-        error = "Steam Workshop install folder is unsafe or unavailable";
+        error = "cannot canonicalize Steam Workshop install folder: " + DiagnosticPath(absoluteFolder) +
+            " (filesystem error " + std::to_string(filesystemError.value()) + ")";
         return std::nullopt;
     }
+    if (!std::filesystem::is_directory(canonicalFolder, filesystemError))
+    {
+        error = "Steam Workshop install path is not an accessible directory: " + DiagnosticPath(canonicalFolder) +
+            " (filesystem error " + std::to_string(filesystemError.value()) + ")";
+        return std::nullopt;
+    }
+    if (!CheckWorkshopPath(canonicalFolder, error)) return std::nullopt;
 
     std::filesystem::path artifact;
     std::size_t entryCount = 0;
@@ -486,7 +508,13 @@ SteamWorkshopSource::ResolveInstalledFolder(
             !HasReparsePoint(entry.path()))
             artifact = entry.path();
     }
-    if (filesystemError || entryCount != 1 || artifact.empty())
+    if (filesystemError)
+    {
+        error = "cannot enumerate Steam Workshop install folder: " + DiagnosticPath(canonicalFolder) +
+            " (filesystem error " + std::to_string(filesystemError.value()) + ")";
+        return std::nullopt;
+    }
+    if (entryCount != 1 || artifact.empty())
     {
         error = "Workshop content must contain exactly one package.snowwidget file";
         return std::nullopt;
@@ -660,6 +688,9 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
         validationKey += L"\n" + Utf8ToWide(item.publishedFileId).value() + L":" +
             item.contentDirectory.lexically_normal().native();
     }
+    // Subscription fallback retries once a minute. A completion that missed
+    // the 500 ms budget must remain available for those retries; delivering it
+    // still forces the next request to validate afresh.
     const auto job = packageQueries.Request(std::move(validationKey),
         [paths = validationPaths_, items = cache.readyItems] {
             SteamWorkshopSubscriptionSnapshot validated;
@@ -688,7 +719,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
                 validated.installable.push_back(std::move(resolved->details));
             }
             return validated;
-        });
+        }, std::chrono::minutes(5));
     auto validated = packageQueries.Wait(job,
         std::chrono::steady_clock::now() + std::chrono::milliseconds(500));
     if (!validated)
