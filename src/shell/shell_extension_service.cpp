@@ -1043,7 +1043,9 @@ bool MenuService::MenuAttributionPending(const Request &request, const Preferenc
 {
     std::lock_guard lock(impl_->mutex);
     if (request.startPinOnly || impl_->catalogue.revision || (!impl_->scanning && !impl_->scanRequested) ||
-        (impl_->scanning && GetTickCount64() - impl_->scanStarted >= 8000)) return false;
+        // Inventory attribution enumerates the whole machine and can outlast a
+        // single helper. Known rows remain visible throughout this bounded wait.
+        (impl_->scanning && GetTickCount64() - impl_->scanStarted >= 30000)) return false;
     const auto it = impl_->rows.find(SelectionKey(request));
     const unsigned contexts = it != impl_->rows.end() && it->second.view.contexts ? it->second.view.contexts :
         request.context == Context::Desktop ? ContextBit(Context::Desktop) :

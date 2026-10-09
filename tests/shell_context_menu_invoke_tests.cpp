@@ -2650,7 +2650,8 @@ void TestInitialDiscoveryDoesNotBlockPopup()
 
 // A management opt-in can name a registration rather than its observed verb.
 // Initial attribution must be allowed to add that row after ordinary rows appear.
-void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryFailure = false, bool duplicateVerbs = false)
+void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryFailure = false, bool duplicateVerbs = false,
+    bool slowInventory = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
@@ -2682,7 +2683,7 @@ void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryF
         [&]
         {
             entered.set_value();
-            timedOut = released.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
+            timedOut = released.wait_for(std::chrono::seconds(slowInventory ? 30 : 10)) != std::future_status::ready;
             ext::Catalogue c;
             if (inventoryFailure) return c;
             c.revision = 17;
@@ -2715,6 +2716,20 @@ void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryF
         items = std::move(*next);
     const size_t ordinaryCount = duplicateVerbs ? 2u : 1u;
     const bool ordinaryFirst = items.size() == ordinaryCount && items.front().label == L"Ordinary";
+    if (slowInventory)
+    {
+        // Exercise the actual timing boundary that truncated the real 8-12 s
+        // inventory. This is a timeout-contract check, not a scheduling sleep.
+        const auto until = GetTickCount64() + 8500;
+        while (GetTickCount64() < until)
+        {
+            if (auto next = options.pollItems(items, true)) items = std::move(*next);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+    }
     const bool subscribed = options.pollItemsFinished && !options.pollItemsFinished();
     release.set_value();
     if (!subscribed)
@@ -4013,6 +4028,7 @@ int wmain(int argc, wchar_t **argv)
             TestLateInitialRegistrationAttribution(true, true);
             TestLateInitialRegistrationAttribution(false, false, true);
             TestLateInitialRegistrationAttribution(true, false, true);
+            TestLateInitialRegistrationAttribution(false, false, false, true);
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
@@ -4059,6 +4075,7 @@ int wmain(int argc, wchar_t **argv)
             TestLateInitialRegistrationAttribution(true, true);
             TestLateInitialRegistrationAttribution(false, false, true);
             TestLateInitialRegistrationAttribution(true, false, true);
+            TestLateInitialRegistrationAttribution(false, false, false, true);
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
