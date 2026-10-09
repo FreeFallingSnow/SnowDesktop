@@ -834,6 +834,15 @@ void TestAdministratorExecutableAndCompatibilityMarks()
     fixture.directory = std::filesystem::temp_directory_path() /
         (std::wstring(L"SnowDesktopElevation-") + identifierText);
     std::filesystem::create_directory(fixture.directory);
+    // Windows compatibility properties and IShellLink use long paths, while
+    // TEMP on the test machine may itself contain an 8.3 user-directory alias.
+    wchar_t longDirectory[32768]{};
+    const DWORD longLength = GetLongPathNameW(fixture.directory.c_str(), longDirectory,
+        static_cast<DWORD>(std::size(longDirectory)));
+    Check(longLength > 0 && longLength < std::size(longDirectory),
+        "compatibility fixtures must use full long-path property keys");
+    if (!longLength || longLength >= std::size(longDirectory)) return;
+    fixture.directory = longDirectory;
     const auto ordinary = fixture.directory / L"ordinary.exe";
     Check(CopyFileW(module, ordinary.c_str(), TRUE) != FALSE,
         "an ordinary executable fixture must be copied");
@@ -958,6 +967,12 @@ void TestAdministratorExecutableAndCompatibilityMarks()
                         else CheckElevationDispatch(marked.wstring(), process::Action::OpenWithShortcutPolicy);
                         Check(ShellLaunchWorker::PathRequestsAdministrator(L"\\\\?\\" + marked.wstring()),
                             "extended paths must find ordinary full-path compatibility marks");
+                        wchar_t shortPath[32768]{};
+                        const DWORD shortLength = GetShortPathNameW(marked.c_str(), shortPath,
+                            static_cast<DWORD>(std::size(shortPath)));
+                        if (shortLength > 0 && shortLength < std::size(shortPath))
+                            Check(ShellLaunchWorker::PathRequestsAdministrator(shortPath),
+                                "8.3 aliases must find the same compatibility administrator marks");
                     }
                     else CheckOrdinaryDispatch(marked.wstring());
                 }

@@ -82,6 +82,13 @@ std::wstring NormalizeLaunchPath(const std::wstring& path)
         normalized = L"\\\\" + normalized.substr(8);
     else if (normalized.starts_with(L"\\\\?\\"))
         normalized.erase(0, 4);
+    // Shell links may expand 8.3 aliases while callers still carry them.
+    // Compatibility properties are keyed by the full executable path.
+    wchar_t longPath[32768]{};
+    const DWORD longLength = GetLongPathNameW(normalized.c_str(), longPath,
+        static_cast<DWORD>(std::size(longPath)));
+    if (longLength > 0 && longLength < std::size(longPath))
+        normalized.assign(longPath, longLength);
     return normalized;
 }
 
