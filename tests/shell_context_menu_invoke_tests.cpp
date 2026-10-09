@@ -3019,7 +3019,7 @@ void TestUnrelatedRegistryChangesDuringPopup(bool failedScan = false, bool perma
 }
 // A later dispatch proves the ready reply has reached its publication boundary.
 // Real registration verification is held there; the popup must remain pending.
-void TestRegistrationVerificationBeforePopupPublication()
+void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = false)
 {
     namespace ext = snowdesktop::shell_extensions;
     namespace menu = snowdesktop::modern_menu;
@@ -3101,7 +3101,7 @@ void TestRegistrationVerificationBeforePopupPublication()
             {
                 scanStarted = true;
                 std::unique_lock lock(gateMutex);
-                if (!gate.wait_for(lock, std::chrono::seconds(10), [&] { return release; }))
+                if (!gate.wait_for(lock, std::chrono::seconds(slowVerification ? 30 : 10), [&] { return release; }))
                     scanTimedOut = true;
             }
             ext::Catalogue c;
@@ -3129,6 +3129,17 @@ void TestRegistrationVerificationBeforePopupPublication()
               "old helper result becomes available during blocked verification");
     service.Query(proof);
     PumpUntil([&] { return proofEntered.load(); }, "later dispatch provides a causal publication barrier");
+    if (slowVerification)
+    {
+        const auto until = GetTickCount64() + 8500;
+        while (GetTickCount64() < until)
+        {
+            MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+    }
     const auto before = service.View(selected);
     if (auto updated = options.pollItems(items, true))
         items = std::move(*updated);
@@ -4032,6 +4043,7 @@ int wmain(int argc, wchar_t **argv)
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
+            TestRegistrationVerificationBeforePopupPublication(true);
             TestUnrelatedRegistryChangesDuringPopup();
             TestUnrelatedRegistryChangesDuringPopup(true, false);
             TestUnrelatedRegistryChangesDuringPopup(true, true);
@@ -4079,6 +4091,7 @@ int wmain(int argc, wchar_t **argv)
             TestInitialDiscoveryDoesNotBlockPopup();
             TestLaterRegistryNoiseDoesNotExtendPublication();
             TestRegistrationVerificationBeforePopupPublication();
+            TestRegistrationVerificationBeforePopupPublication(true);
             TestUnrelatedRegistryChangesDuringPopup();
             TestUnrelatedRegistryChangesDuringPopup(true, false);
             TestUnrelatedRegistryChangesDuringPopup(true, true);
