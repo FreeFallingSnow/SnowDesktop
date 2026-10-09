@@ -3535,6 +3535,90 @@ void TestShortcutQueryRecovery(bool permanent = false)
     std::vector<menu::Item> complete; menu::Options completeOptions; third.Attach(complete, completeOptions, 0);
     Expect(complete.size() == 2 && !completeOptions.pollItems, "a healthy complete cache supersedes partial recovery on later openings");
 }
+void TestSlowShortcutQueryRecovery(bool fullFailure = false, bool originalFailure = false)
+{
+    // Real production presentation and scheduling; only helper completion is
+    // controlled. A slow delegated target must not withhold original rows,
+    // drop late providers, or start duplicate recovery queries after failure.
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    ext::Request request; request.paths = {(temp.path / L"slow.lnk").wstring()};
+    std::ofstream(request.paths.front()) << "private selection";
+    auto original = request; original.originalShortcutOnly = true;
+    std::atomic<unsigned> fullQueries = 0, originalQueries = 0, invoked = 0;
+    std::atomic<bool> releaseFull = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        const bool recovery = target.originalShortcutOnly;
+        const auto n = recovery ? ++originalQueries : ++fullQueries;
+        return ext::QueryWork{[&, n, recovery]() -> std::optional<ext::Reply> {
+            if (!recovery && n == 1 && !releaseFull) return {};
+            ext::Reply reply;
+            if (n == 1 && (recovery ? originalFailure : fullFailure))
+            { reply.error = "controlled query failure"; return reply; }
+            reply.ok = true;
+            ext::Entry group; group.provider = "verb:inspect"; group.key = "inspect"; group.label = L"Original file";
+            ext::Entry child; child.provider = group.provider; child.key = "details"; child.label = L"Details";
+            child.token = recovery && n > 1 ? 101 : 12;
+            group.children = {child}; reply.entries = {group};
+            if (!recovery) {
+                ext::Entry extra = child; extra.key = "expanded"; extra.label = L"Late child"; extra.token = n > 1 ? 202 : 14;
+                reply.entries[0].children.push_back(extra);
+                ext::Entry modern; modern.provider = "verb:modern"; modern.key = "modern"; modern.label = L"Modern provider";
+                modern.token = n > 1 ? 203 : 13; reply.entries.push_back(modern);
+            }
+            return reply;
+        }, [&, recovery](UINT token, POINT) {
+            Expect((recovery && token == 101) || (!recovery && (token == 202 || token == 203)),
+                "early rows and late providers invoke fresh tokens through their own query identities");
+            ++invoked;
+        }};
+    }, [] { ext::Catalogue c; c.revision = 17; return c; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:modern", ext::Category::Objects, true);
+    service.Configure(prefs);
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
+    PumpUntil([&] {
+        Expect(!options.pollItems(items, false) && items.empty(), "deferred display cannot publish early shortcut rows");
+        const auto view = service.View(original);
+        return originalQueries == 1 && !view.pending && (view.snapshot || !view.error.empty());
+    }, "a pending delegated target starts isolated original discovery while display updates are deferred");
+    Expect(fullQueries == 1 && !releaseFull && !options.pollItemsFinished(),
+        "original discovery preserves the in-flight complete query and its subscription");
+    if (auto next = options.pollItems(items, true)) items = std::move(*next);
+    Expect(originalFailure ? items.empty() : items.size() == 1 && items[0].label == L"Original file",
+        "only a successful isolated result is displayed ahead of the blocked complete query");
+    if (!originalFailure) {
+        Expect(popup.Invoke(items[0].children[0].command, {}), "early original child is executable before target completion");
+        PumpUntil([&] { return invoked == 1; }, "early original invocation uses an independent fresh query");
+        Expect(originalQueries == 2 && !releaseFull, "executing an early child does not wait for the delegated aggregate");
+    }
+    releaseFull = true;
+    PumpUntil([&] {
+        if (auto next = options.pollItems(items, true)) items = std::move(*next);
+        return options.pollItemsFinished();
+    }, "both success and failure finish the subscribed shortcut streams");
+    Expect(fullQueries == 1 && originalQueries == (originalFailure ? 1u : 2u),
+        "a delegated failure after early recovery does not start duplicate or unbounded queries");
+    const auto modern = std::find_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"Modern provider"; });
+    const auto expected = fullFailure ? (originalFailure ? 0 : 1) : 2;
+    Expect(std::count_if(items.begin(), items.end(), [](const auto &item) { return !item.separator; }) == expected &&
+        (fullFailure ? modern == items.end() : modern != items.end()),
+        "late complete discovery retains extra providers without duplicating early roots");
+    if (!fullFailure) {
+        const auto group = std::find_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"Original file"; });
+        Expect(group != items.end() && group->children.size() == 2 && group->children[0].label == L"Details" && group->children[1].label == L"Late child",
+            "late complete discovery supplements children inside an already displayed original group");
+        Expect(popup.Invoke(group->children[1].command, {}), "a late child inside an early group is executable");
+        PumpUntil([&] { return invoked == (originalFailure ? 1u : 2u); }, "late child uses the complete-query identity");
+        Expect(popup.Invoke(modern->command, {}), "a late complete provider remains executable");
+        PumpUntil([&] { return invoked == (originalFailure ? 2u : 3u); }, "late provider execution refreshes the complete query");
+        Expect(fullQueries == 3, "late provider execution uses the complete request rather than original-only discovery");
+    }
+}
+
 void TestMenuPromotesQueuedPrewarm()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -4339,7 +4423,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
             TestExtensionSessions();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-shortcut-query-recovery")
-        { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); TestSourceScheduler(true); }
+        { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); TestSourceScheduler(true); TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestUnchangedCataloguePersistence();
@@ -4353,6 +4437,7 @@ int wmain(int argc, wchar_t **argv)
             TestShortcutQueryRecovery();
             TestShortcutQueryRecovery(true);
             TestSourceScheduler(true);
+            TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
@@ -4403,6 +4488,7 @@ int wmain(int argc, wchar_t **argv)
             TestShortcutQueryRecovery();
             TestShortcutQueryRecovery(true);
             TestSourceScheduler(true);
+            TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true);
             TestLateInitialRegistrationAttribution();
             TestLateInitialRegistrationAttribution(true, false);
             TestLateInitialRegistrationAttribution(false, true);
