@@ -2588,8 +2588,9 @@ void TestMenuPromotesQueuedPrewarm()
     TemporaryDirectory temp;
     ext::Request blocker, selected, later;
     blocker.paths = {(temp.path / L"blocker.txt").wstring()};
-    selected.paths = {(temp.path / L"selected.txt").wstring()};
-    later.paths = {(temp.path / L"later.txt").wstring()};
+    // Equal-length ordered names make equal due ticks deterministic as well.
+    selected.paths = {(temp.path / L"aa-popup.txt").wstring()};
+    later.paths = {(temp.path / L"zz-popup.txt").wstring()};
     for (const auto &request : {blocker, selected, later})
         std::ofstream(std::filesystem::path(request.paths.front())) << "private scheduler target";
     std::atomic<bool> entered = false;
