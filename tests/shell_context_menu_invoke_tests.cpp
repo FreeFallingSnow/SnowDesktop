@@ -946,7 +946,10 @@ void ProbeShortcutArchives()
     });
     Expect(root != reply->entries.end() && !root->native, "enabled installed WinRAR exposes a real shortcut submenu");
     const auto compress = std::find_if(root->children.begin(), root->children.end(), [](const auto &entry) {
-        return entry.key == "WinRAR.AddArchive" && entry.label.find(L"ActualShortcut.rar") != std::wstring::npos;
+        // The aggregate may expose this provider through IExplorerCommand,
+        // whose child lacks a verb. Its actual label and live token identify
+        // the installed command; the referenced target's name must fail here.
+        return entry.label == L"Add to \"ActualShortcut.rar\"";
     });
     Expect(compress != root->children.end(), "WinRAR compression names the selected shortcut, never RealTarget.rar");
     Expect(cache.Store(ticket, *reply) && cache.Find(cache.Capture(request)).has_value(),
