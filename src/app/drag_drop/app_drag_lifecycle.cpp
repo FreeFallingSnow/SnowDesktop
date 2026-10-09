@@ -470,6 +470,7 @@ void DesktopApp::ClearPopupDragTarget()
  */
 void DesktopApp::EndDragSession()
 {
+    HideDragHintWindow();
     rightButtonItemDrag_ = false;
     widgetPairTargetIndex_ = static_cast<size_t>(-1);
     widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
