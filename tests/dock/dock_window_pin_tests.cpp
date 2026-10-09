@@ -228,6 +228,7 @@ int RunDockWindowPinTests()
                 backlogCreated = PostMessageW(manager, backlogMessage, 0, 0) != FALSE && backlogCreated;
         check(backlogCreated, "the native follow regression creates a real posted-message backlog");
         int samplesFollowed = 0;
+        int samplesDelivered = 0;
         unsigned slowestSampleMs = 0;
         for (int sample = 1; sample <= 8; ++sample)
         {
@@ -240,16 +241,23 @@ int RunDockWindowPinTests()
             InflateRect(&expected, stroke, stroke);
             const ULONGLONG started = GetTickCount64();
             bool aligned = false;
+            RECT actual{};
             do
             {
                 MSG pending{};
-                PeekMessageW(&pending, nullptr, WM_NULL, WM_NULL, PM_NOREMOVE);
-                RECT actual{};
+                PeekMessageW(&pending, nullptr, 0, 0, PM_NOREMOVE);
                 GetWindowRect(border, &actual);
                 aligned = observedLocations > locationsBefore && EqualRect(&actual, &expected);
                 if (!aligned) MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_SENDMESSAGE, MWMO_INPUTAVAILABLE);
             } while (!aligned && GetTickCount64() - started < 500);
             if (aligned) ++samplesFollowed;
+            if (observedLocations > locationsBefore) ++samplesDelivered;
+            if (!aligned && sample == 1)
+            {
+                PrintRect("motion-expected", expected);
+                PrintRect("motion-actual", actual);
+                std::cerr << "motion-events=" << observedLocations - locationsBefore << '\n';
+            }
             slowestSampleMs = std::max(slowestSampleMs,
                 static_cast<unsigned>(GetTickCount64() - started));
         }
@@ -258,7 +266,10 @@ int RunDockWindowPinTests()
             "motion checks leave ordinary posted application work queued");
         check(samplesFollowed == 8,
             "each native motion sample aligns the ring before posted application work is dispatched");
+        check(samplesDelivered == 8,
+            "the posted-backlog fixture delivers native location events for every motion sample");
         std::cout << "Pin motion samples before posted dispatch: " << samplesFollowed
+            << "/8; native event samples delivered: " << samplesDelivered
             << "/8; maximum native sample wait: " << slowestSampleMs << " ms\n";
         while (PeekMessageW(&backlog, nullptr, 0, 0, PM_REMOVE))
         {
