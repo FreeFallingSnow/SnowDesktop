@@ -921,7 +921,37 @@ ShowDockFolderPopupContextMenu(
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
     }
 
+    SetMenuItemIcon(menu, kContextOpenCommand, L"\uF08E");
+    SetMenuItemIcon(menu, kContextRevealLocationCommand, L"\uF07C");
+    SetMenuItemIcon(menu, kContextCopyPathCommand,
+        snowdesktop::menu_fluent_glyphs::kCopy,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextRunAsAdministratorCommand,
+        snowdesktop::menu_fluent_glyphs::kShield,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextPropertiesCommand,
+        snowdesktop::menu_fluent_glyphs::kInfo,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextRenameCommand, L"\uF044");
+    SetMenuItemIcon(menu, kContextCutCommand, L"\uF0C4");
+    SetMenuItemIcon(menu, kContextCopyCommand, L"\uF0C5");
+    SetMenuItemIcon(menu, kContextDeleteCommand, L"\uF2ED");
+    SetMenuItemQuickAction(menu, kContextRenameCommand);
+    SetMenuItemQuickAction(menu, kContextCutCommand);
+    SetMenuItemQuickAction(menu, kContextCopyCommand);
+    SetMenuItemQuickAction(menu, kContextDeleteCommand);
+    SetMenuItemIcon(menu, kContextPasteCommand, L"\uF0EA",
+        MenuIconFont::BuiltinFluentFromLegacy,
+        snowdesktop::menu_icon::BuiltinIcon::Paste);
+    SetMenuItemIcon(menu, kContextNewMenu,
+        snowdesktop::menu_fluent_glyphs::kNewItem,
+        MenuIconFont::FluentRegular,
+        snowdesktop::menu_icon::BuiltinIcon::NewItem);
+    SetMenuItemQuickAction(menu, kContextPasteCommand);
     SetMenuItemQuickAction(menu, kContextNewMenu);
+    SetMenuItemIcon(menu, kContextMoreCommand,
+        snowdesktop::menu_fluent_glyphs::kMoreOptions,
+        MenuIconFont::FluentRegular);
     if (sortMenu)
     {
         SetMenuItemIcon(
@@ -937,7 +967,15 @@ ShowDockFolderPopupContextMenu(
     }
 
     RestoreInteractionInputFocus();
-    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    snowdesktop::shell_extensions::Request shellRequest;
+    if (itemMenu)
+        shellRequest.paths = selectedPaths;
+    else if (dockFolderPopupAvailable_)
+        shellRequest.paths.push_back(dockFolderPopupWidget_.sourceFolderPath);
+    shellRequest.background = !itemMenu;
+    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const UINT command = ShowModernMenu(
+        menu, screenPoint, hwnd_, false, false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
 
