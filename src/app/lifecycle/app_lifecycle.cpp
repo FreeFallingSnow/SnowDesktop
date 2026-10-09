@@ -747,7 +747,19 @@ HWND DesktopApp::ResolveDockSemanticForegroundWindow()
  */
 void DesktopApp::UpdateHostInputImePosition()
 {
-    if (!inputHwnd_ || !IsWindow(inputHwnd_))
+    // IMM positioning must use the same proxy that receives the composition
+    // messages. Floating Dock keyboard sessions focus their own input window.
+    HWND imeInputHwnd = GetFocus();
+    if (!imeInputHwnd || (imeInputHwnd != inputHwnd_ &&
+        imeInputHwnd != floatingDockInputHwnd_))
+    {
+        imeInputHwnd = floatingDockKeyboardSessionActive_ &&
+                floatingDockVisible_ && floatingDockInputHwnd_ &&
+                IsWindow(floatingDockInputHwnd_)
+            ? floatingDockInputHwnd_
+            : inputHwnd_;
+    }
+    if (!imeInputHwnd || !IsWindow(imeInputHwnd))
         return;
 
     RECT caret{};
@@ -777,23 +789,23 @@ void DesktopApp::UpdateHostInputImePosition()
     }
     if (!hasCaret || !hwnd_ || !IsWindow(hwnd_))
     {
-        SetWindowPos(inputHwnd_, nullptr, -32000, -32000, 1, 1,
+        SetWindowPos(imeInputHwnd, nullptr, -32000, -32000, 1, 1,
             SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
         return;
     }
 
     POINT origin{ caret.left, caret.top };
     ClientToScreen(hwnd_, &origin);
-    HWND parent = GetParent(inputHwnd_);
+    HWND parent = GetParent(imeInputHwnd);
     if (parent && IsWindow(parent))
         ScreenToClient(parent, &origin);
 
-    SetWindowPos(inputHwnd_, HWND_TOP, origin.x, origin.y, 1, 1,
+    SetWindowPos(imeInputHwnd, HWND_TOP, origin.x, origin.y, 1, 1,
         SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
     const LONG caretHeight = std::max<LONG>(
         1, caret.bottom - caret.top);
-    HIMC context = ImmGetContext(inputHwnd_);
+    HIMC context = ImmGetContext(imeInputHwnd);
     if (!context)
         return;
 
@@ -804,10 +816,11 @@ void DesktopApp::UpdateHostInputImePosition()
 
     CANDIDATEFORM candidate{};
     candidate.dwIndex = 0;
-    candidate.dwStyle = CFS_CANDIDATEPOS;
+    candidate.dwStyle = CFS_EXCLUDE;
     candidate.ptCurrentPos = { 0, caretHeight };
+    candidate.rcArea = { 0, 0, 1, caretHeight };
     ImmSetCandidateWindow(context, &candidate);
-    ImmReleaseContext(inputHwnd_, context);
+    ImmReleaseContext(imeInputHwnd, context);
 }
 
 HWND DesktopApp::ShellDialogOwnerHwnd() const

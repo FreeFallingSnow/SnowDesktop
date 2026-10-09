@@ -236,7 +236,10 @@ snowdesktop::widget_item_layout::Layout CollectionGroupLocalLayout(
             std::max(widget->GetListRowHeight(),
                 metrics.minimumListHeight), spacing);
     return snowdesktop::widget_item_layout::ResolveGrid(
-        content, std::max(1, data->gridSpan.columns), 0,
+        content, widget->IsPopupHosted()
+            ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
+                content.right - content.left, metrics.minimumGridWidth, spacing)
+            : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
 }

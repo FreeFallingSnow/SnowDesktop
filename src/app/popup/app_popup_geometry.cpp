@@ -67,12 +67,12 @@ RECT DesktopApp::GetCollectionPopupControlsRect(const RECT& popup) const
     const RECT frame = GetCategorizedPopupFrame(popup);
     if (IsGroupWidgetType(view->GetWidgetData()->type))
     {
-        const auto* data = view->GetWidgetData();
-        LONG bottom = frame.top + view->Cu(8.0f);
-        if (!data->childWidgetIds.empty()) bottom += view->Cu(view->GetCategorizedTabRowPitch());
-        if (data->showSearchBox) bottom += view->Cu(view->GetCategorizedSearchBoxHeight() + 5.0f);
-        if (data->type == DesktopWidgetType::FileGroup && data->showFileCategories && !data->childWidgetIds.empty())
-            bottom += view->Cu(view->GetCategorizedTabRowPitch());
+        CategorizedPopupScope scope(view, frame);
+        // Use the current source/search layout so hidden category rows do not
+        // reserve space. Metadata headers are accounted for by the caller.
+        const RECT content = view->GetContentViewportRect();
+        const LONG bottom = std::max<LONG>(frame.top,
+            content.top - (view->IsDetailsVisible() ? view->GetDetailsHeaderHeight() : 0));
         return {frame.left, frame.top, frame.right, bottom};
     }
     CategorizedPopupScope scope(view, frame);
@@ -496,10 +496,18 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             RequiredListRowCount(itemCount)
         : snowdesktop::collection_popup_layout::
             RequiredRowCount(itemCount, columns);
+    const RECT controlProbe = GetCollectionPopupControlsRect(
+        RECT{0, 0, maxWidth, std::max(1, workHeight - metrics.edgeMargin * 2)});
+    const int controlsHeight = std::max(0L, controlProbe.bottom - controlProbe.top);
+    const int detailsHeader =
+        snowdesktop::collection_popup_layout::DetailsVisible(
+            listMode, widget.detailShowModified, widget.detailShowType, widget.detailShowSize)
+        ? snowdesktop::collection_popup_layout::ResolveDetailsHeaderHeight(metrics)
+        : 0;
     const int maxHeight =
         snowdesktop::collection_popup_layout::
             ResolveMaximumHeight(
-                metrics, workHeight);
+                metrics, workHeight, controlsHeight + detailsHeader);
     auto popupWidthForColumns = [&](int columnCount) {
         if (listMode)
             return maxWidth;
@@ -511,8 +519,6 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             std::max(0, columnCount - 1) * metrics.gapX;
     };
     auto popupHeightForRows = [&](int rowCount) {
-        const RECT controlProbe = GetCollectionPopupControlsRect(RECT{0, 0, maxWidth, maxHeight});
-        const int controlsHeight = controlProbe.bottom - controlProbe.top;
         if (listMode)
         {
             const RECT viewport{
@@ -525,16 +531,6 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
                         ResolveListRowHeight(
                             metrics, listItemFontSizeCu_),
                     GetLayoutSpacingScale());
-            const int detailsHeader =
-                snowdesktop::collection_popup_layout::
-                    DetailsVisible(
-                        UsesCollectionPopupList(widget),
-                        widget.detailShowModified,
-                        widget.detailShowType,
-                        widget.detailShowSize)
-                ? snowdesktop::collection_popup_layout::
-                    ResolveDetailsHeaderHeight(metrics)
-                : 0;
             return metrics.headerHeight + controlsHeight + detailsHeader +
                 snowdesktop::widget_item_layout::ContentHeight(
                     layout, static_cast<size_t>(rowCount)) +

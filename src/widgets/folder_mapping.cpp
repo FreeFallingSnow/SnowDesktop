@@ -161,24 +161,15 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
             widget->GetScrollContentBottom()));
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FolderMappingTabsRect(widget);
-    if (!IsRectEmptyRect(tabs))
-        body.top = std::min<LONG>(body.bottom, tabs.bottom + widget->Cu(8.0f));
-    else
-    {
-        RECT search = widget->GetSearchBoxRect();
-        if (!IsRectEmptyRect(search))
-            body.top = std::min<LONG>(
-                body.bottom,
-                search.bottom + widget->Cu(4.0f) +
-                    widget->GetCategorizedTabRowOffset() *
-                        widget->Cu(widget->GetCategorizedTabRowPitch()));
-        else if (widget->GetCategorizedTabRowOffset() > 0)
-            body.top = std::min<LONG>(
-                body.bottom,
-                body.top +
-                    widget->GetCategorizedTabRowOffset() *
-                        widget->Cu(widget->GetCategorizedTabRowPitch()));
-    }
+    RECT search = widget->GetSearchBoxRect();
+    body.top = static_cast<LONG>(
+        snowdesktop::collection_group_rules::ResolveCategorizedContentTop(
+            body.top, body.bottom,
+            !IsRectEmptyRect(tabs), tabs.bottom,
+            !IsRectEmptyRect(search), search.bottom,
+            widget->GetCategorizedTabRowOffset(),
+            widget->Cu(widget->GetCategorizedTabRowPitch()),
+            widget->Cu(8.0f), widget->Cu(4.0f)));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
@@ -502,7 +493,10 @@ static snowdesktop::widget_item_layout::Layout FolderMappingLocalLayout(
             std::max(widget->GetListRowHeight(),
                 metrics.minimumListHeight), spacing);
     return snowdesktop::widget_item_layout::ResolveGrid(
-        content, std::max(1, data->gridSpan.columns), 0,
+        content, widget->IsPopupHosted()
+            ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
+                content.right - content.left, metrics.minimumGridWidth, spacing)
+            : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
 }

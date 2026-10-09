@@ -631,6 +631,64 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 return 0;
         }
 
+        if (IsCollectionPopupInteractive() && IsPointOccludedByOpenPopup(pt))
+        {
+            if (auto* popupGroup = GetGroupPopupView())
+            {
+                const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+                const RECT frame = GetCategorizedPopupFrame(popup);
+                popupGroup->SetPopupFrame(&frame);
+                const auto finishPopupOpen = [&](bool accepted) {
+                    if (!accepted) return;
+                    clearSelectionAfterAcceptedOpen(true);
+                    CloseCollectionPopup();
+                };
+                if (auto* fileGroup = dynamic_cast<FileGroup*>(popupGroup);
+                    fileGroup && fileGroup->HitTestWidget(pt) == WidgetHit::SourceTab)
+                {
+                    const size_t sourceIndex = FindWidgetIndexById(fileGroup->SourceIdAtPoint(pt));
+                    if (sourceIndex < widgets_.size())
+                    {
+                        const auto& source = widgets_[sourceIndex];
+                        const std::wstring path = source.type == DesktopWidgetType::FolderMapping
+                            ? source.sourceFolderPath
+                            : (source.type == DesktopWidgetType::FileCategories
+                                ? snowdesktop::desktop_source::Directory() : L"");
+                        if (!path.empty()) finishPopupOpen(shellLaunchWorker_.Enqueue(hwnd_, path));
+                    }
+                    return 0;
+                }
+                const RECT content = popupGroup->GetContentViewportRect();
+                if (PtInRect(&content, pt))
+                {
+                    for (const auto& slot : popupGroup->GetSlots())
+                    {
+                        if (!slot) continue;
+                        const RECT bounds = slot->GetBounds();
+                        if (!PtInRect(&bounds, pt)) continue;
+                        if (auto* desktopIcon = dynamic_cast<DesktopIcon*>(slot->GetItem()))
+                        {
+                            if (const auto* item = desktopIcon->GetDesktopItem())
+                            {
+                                const size_t itemIndex = FindItemIndexByKey(item->layoutKey);
+                                if (itemIndex < items_.size()) finishPopupOpen(LaunchDesktopItem(itemIndex));
+                            }
+                        }
+                        else if (auto* folderIcon = dynamic_cast<FolderEntryIcon*>(slot->GetItem()))
+                        {
+                            if (const auto* entry = folderIcon->GetFolderEntry())
+                                finishPopupOpen(LaunchPathWithShortcutPolicy(hwnd_, entry->fullPath));
+                        }
+                        return 0;
+                    }
+                }
+                // WM_LBUTTONDBLCLK replaces the second press. Keep controls and
+                // empty-space selection in the native group input path.
+                OnLeftButtonDown(wp, lp);
+                return 0;
+            }
+        }
+
         if (DockContainer* dock = GetDockContainerAtPoint(pt))
         {
             RECT dockBounds = dock->GetInteractiveBounds();

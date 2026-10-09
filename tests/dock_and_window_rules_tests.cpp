@@ -3109,6 +3109,25 @@ int main(int argc, char** argv)
             popupLayout::ResolveMaximumHeight(
                 standardPopupMetrics, 480) == 456,
         "collection popups must scroll at a scaled 640-pixel cap while still fitting smaller work areas");
+    const int visiblePopupControls = 38 + 35 + 38;
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, visiblePopupControls) -
+            visiblePopupControls == popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080),
+        "source, search and category rows must preserve the baseline scrolling height when space permits");
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, 0) == 640 &&
+            popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, -38) == 640,
+        "hidden controls must not reserve extra popup height");
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 480, visiblePopupControls) == 456 &&
+            popupLayout::ResolveMaximumHeight(standardPopupMetrics, 720, visiblePopupControls) == 696,
+        "control compensation must stay within small and partially constrained work areas");
+    Check(
+        popupLayout::ResolveGridColumnCount(552, 84, 1.0f) == 5 &&
+            popupLayout::ResolveGridColumnCount(300, 84, 1.0f) == 3 &&
+            popupLayout::ResolveGridColumnCount(40, 84, 1.0f) == 1 &&
+            popupLayout::ResolveGridColumnCount(828, 126, 1.0f) == 5,
+        "native popup grids must fit their own width and scaled icon metrics instead of desktop widget spans");
     Check(
         popupLayout::DetailsVisible(
             true, true, false, false) &&
