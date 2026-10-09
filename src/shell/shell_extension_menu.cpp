@@ -1249,7 +1249,11 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
 Session::~Session()
 {
     const bool startPinOnly = impl_->startPinOnly;
-    if (impl_ && impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
+    // Arbitrary extensions can keep timers/windows alive after releasing their
+    // COM menu. Retire the query process with the session so those callbacks
+    // cannot run between menus. Invoked helpers retain their detached lifetime.
+    // Only the dedicated system Start-pin handler is eligible for reuse.
+    if (startPinOnly && impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
         impl_->generation == Caches().generation)
     {
         try
@@ -1260,7 +1264,7 @@ Session::~Session()
                 impl_->retiredSamples.push_back(std::move(impl_->sampleDirectory));
                 impl_->sampleDirectory.clear();
             }
-            // Keep loaded modules, not menus/COM objects that may hold a file.
+            // Keep the system handler loaded, not its menu/COM selection.
             // The ordered release acknowledgement retires only prior samples,
             // even if the next query has already acquired this worker.
             impl_->channel.Notify("menu.release");
@@ -1268,7 +1272,7 @@ Session::~Session()
             const auto pooled = std::count_if(Impl::idle.begin(), Impl::idle.end(), [=](const auto &worker) {
                 return worker->startPinOnly == startPinOnly;
             });
-            if (pooled < (startPinOnly ? 1 : 2)) Impl::idle.push_back(std::move(impl_));
+            if (pooled < 1) Impl::idle.push_back(std::move(impl_));
         }
         catch (...) { /* A disconnected worker is destroyed instead of pooled. */ }
     }
