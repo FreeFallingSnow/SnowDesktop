@@ -1303,6 +1303,26 @@ void TestRegistryCatalogue()
         "a fresh catalogue observes changed provider registration and label");
     Expect(find("reg:*\\shell\\library").application.name == L"Provider Shell.dll",
         "a fresh catalogue rechecks previously missing command modules after their restoration");
+
+    // Real registry lookups are case-insensitive. Metadata indexing must keep
+    // captions intact and stay local to each scan; policy is never inferred
+    // from a cached absence. Unknown Unicode value names use direct reads.
+    const std::wstring longCaption(1024, L'界');
+    put(L"*\\shell\\metadata-case", L"mUiVeRb", L"Mixed metadata caption");
+    put(L"*\\shell\\metadata-unicode", L"MUIVerb", longCaption.c_str());
+    put(L"*\\shell\\metadata-unicode", L"其他元数据", L"保留未知字段");
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(find("reg:*\\shell\\metadata-case").display.label == L"Mixed metadata caption" &&
+        find("reg:*\\shell\\metadata-unicode").display.label == longCaption,
+        "metadata lookup preserves mixed-case value names and full Unicode captions");
+    const auto metadataRevision = catalogue.revision;
+    put(L"*\\shell\\metadata-case", L"MUIVerb", L"Updated metadata caption");
+    put(L"*\\shell\\metadata-case", L"LEGACYDISABLE", L"");
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(catalogue.revision != metadataRevision &&
+        find("reg:*\\shell\\metadata-case").display.label == L"Updated metadata caption" &&
+        !find("reg:*\\shell\\metadata-case").systemEnabled,
+        "a new scan rechecks changed metadata and current case-insensitive disable policy");
 }
 
 void TestNvidiaCompatibility()

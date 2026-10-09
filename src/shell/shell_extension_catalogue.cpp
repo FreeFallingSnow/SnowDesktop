@@ -265,6 +265,42 @@ Application ModuleApplication(const std::wstring &module)
     cache[key] = {stamp, result};
     return result;
 }
+// Index small ASCII value lists only for this verb. Missing metadata fields do
+// not need individual registry queries. Unicode, large or unsuccessful lists
+// retain direct reads; policy presence checks always use the live registry.
+struct KeyValues
+{
+    HKEY key; bool indexed = false; std::vector<std::wstring> names;
+    explicit KeyValues(HKEY source) : key(source)
+    {
+        DWORD count = 0, maximumName = 0;
+        if (!key || RegQueryInfoKeyW(key, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            &count, &maximumName, nullptr, nullptr, nullptr) != ERROR_SUCCESS || count > 32 || maximumName >= 256) return;
+        for (DWORD index = 0; index < count; ++index)
+        {
+            wchar_t name[256]; DWORD length = 256;
+            if (RegEnumValueW(key, index, name, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) return;
+            std::wstring normal(name, length);
+            for (auto &letter : normal)
+            {
+                if (letter > 127) return;
+                if (letter >= L'A' && letter <= L'Z') letter += L'a' - L'A';
+            }
+            names.push_back(std::move(normal));
+        }
+        indexed = true;
+    }
+    std::wstring String(const wchar_t *name = nullptr) const
+    {
+        if (indexed)
+        {
+            std::wstring normal = name ? name : L"";
+            for (auto &letter : normal) if (letter >= L'A' && letter <= L'Z') letter += L'a' - L'A';
+            if (std::find(names.begin(), names.end(), normal) == names.end()) return {};
+        }
+        return Read(key, L"", name);
+    }
+};
 struct Scanner
 {
     HKEY classes;
@@ -371,7 +407,8 @@ struct Scanner
             Key key(classes, path, KEY_QUERY_VALUE);
             if (!key.value) continue;
             Key commandKey(classes, path + L"\\command", KEY_QUERY_VALUE);
-            const auto handler = Read(key.value, L"", L"ExplorerCommandHandler");
+            KeyValues values(key.value);
+            const auto handler = values.String(L"ExplorerCommandHandler");
             Registration row;
             row.kind = RegistrationKind::Verb;
             row.id = "reg:" + Utf8(Lower(path));
@@ -379,13 +416,13 @@ struct Scanner
             row.verbs = {Utf8(Lower(verb))};
             if (!handler.empty()) row.verbs.push_back(Utf8(Lower(handler)));
             row.systemEnabled = !Has(key.value, L"", L"LegacyDisable") && !Has(key.value, L"", L"ProgrammaticAccessOnly") && !IsBlocked(handler);
-            auto label = Read(key.value, L"", L"MUIVerb");
-            if (label.empty()) label = Read(key.value, L"");
+            auto label = values.String(L"MUIVerb");
+            if (label.empty()) label = values.String();
             if (label.empty()) label = verb;
             row.display.label = DecodeMenuLabel(Label(label)).text;
             const auto command = Read(commandKey.value, L"");
             const auto delegate = Read(commandKey.value, L"", L"DelegateExecute");
-            const auto subCommands = Read(key.value, L"", L"SubCommands");
+            const auto subCommands = values.String(L"SubCommands");
             row.application = !handler.empty() ? HandlerApplication(handler) :
                 !delegate.empty() ? HandlerApplication(delegate) : CommandApplication(command);
             // Never infer equivalence from the caption, verb alone, or a bare
@@ -394,17 +431,17 @@ struct Scanner
             if (!command.empty() || !handler.empty() || !delegate.empty())
             {
                 const auto identity = settings_ipc::Pack(Lower(verb), command, Lower(handler), Lower(delegate),
-                    subCommands, Read(key.value, L"", L"ExtendedSubCommandsKey"));
+                    subCommands, values.String(L"ExtendedSubCommandsKey"));
                 row.commandIdentity.assign(reinterpret_cast<const char *>(identity.data()), identity.size());
             }
-            auto icon = Read(key.value, L"", L"Icon");
+            auto icon = values.String(L"Icon");
             if (icon.empty() && !handler.empty()) icon = Handler(handler).module;
             if (icon.empty())
             {
                 if (!command.empty()) { wchar_t exe[32768]{}; wcsncpy_s(exe, command.c_str(), _TRUNCATE); PathRemoveArgsW(exe); PathUnquoteSpacesW(exe); icon = exe; }
             }
             // Include values that affect applicability, not volatile registry write times.
-            row.revision = Hash(settings_ipc::Pack(command, handler, Read(key.value, L"", L"AppliesTo"), Read(key.value, L"", L"MultiSelectModel"), Has(key.value, L"", L"Extended"), subCommands));
+            row.revision = Hash(settings_ipc::Pack(command, handler, values.String(L"AppliesTo"), values.String(L"MultiSelectModel"), Has(key.value, L"", L"Extended"), subCommands));
             Add(std::move(row), icon);
         }
         for (const auto &name : Children(classes, root + L"\\shellex\\ContextMenuHandlers"))
