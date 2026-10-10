@@ -1,6 +1,7 @@
 #include "shell_extension_catalogue.h"
 #include <atomic>
 #include <future>
+#include <thread>
 #include <stdexcept>
 #include "shell_extension_diagnostics.h"
 #include "ui/menu/menu_label.h"
@@ -618,15 +619,16 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots)
 {
     const auto files = ContextBit(Context::File);
     auto serial = [&] { for (const auto &root : roots) scanner.Root(root.path, files, root.types); };
-    // Small/private inventories avoid thread setup. Two workers bound the
-    // extra work while the host and native extension helpers remain active.
+    // Small/private inventories avoid thread setup. Use at most half the
+    // reported cores and four workers while native menu helpers remain active.
     if (roots.size() < 64) { serial(); return; }
     std::vector<std::vector<std::pair<Registration, std::wstring>>> results(roots.size());
     std::atomic_size_t next = 0;
     std::vector<std::future<void>> workers;
+    const unsigned workerCount = std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 4u);
     try
     {
-        for (unsigned i = 0; i < 2; ++i)
+        for (unsigned i = 0; i < workerCount; ++i)
             workers.push_back(std::async(std::launch::async, [&] {
                 const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
                 if (FAILED(initialized)) throw std::runtime_error("metadata COM initialization");
