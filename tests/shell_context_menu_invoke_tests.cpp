@@ -49,7 +49,10 @@ void TestAggregateCataloguePriming()
     unsigned calls = 0, materializations = 0;
     auto bind = [&](const ext::Request &target, bool priming) {
         if (!priming) ++materializations;
-        Expect(target == request, "priming preserves the original selection and request flags");
+        auto expected = request;
+        if (priming && expected.background && expected.context == ext::Context::Desktop)
+            expected.context = ext::Context::FolderBackground;
+        Expect(target == expected, "priming preserves the selection and flags while final binding retains the original scope");
         ext::Entry item;
         item.key = ++calls == 1 ? "partial" : "ModernArchive";
         item.label = calls == 1 ? L"Unprimed placeholder" : L"Modern archive";
@@ -69,6 +72,35 @@ void TestAggregateCataloguePriming()
     Expect(calls == 5 && backgroundReady, "file priming cannot suppress independent background priming");
     ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
     Expect(calls == 6, "a primed background still queries once");
+
+    // The real desktop-only command fixture is absent from a filesystem
+    // background. Model only that COM boundary: publishing the first menu or
+    // forgetting the original scope must lose this independent command.
+    for (bool extended : {false, true})
+    {
+        ext::Request desktop; desktop.background = true; desktop.context = ext::Context::Desktop;
+        desktop.paths = {L"C:\\Private\\Desktop"}; desktop.extended = extended;
+        bool bg = false, file = false; unsigned bindings = 0;
+        auto complete = ext::QueryWithCataloguePriming(desktop, bg, file,
+            [&](const ext::Request &target, bool priming) {
+                ++bindings;
+                Expect(target.paths == desktop.paths && target.background && target.extended == extended,
+                    "desktop initialization retains the original directory and Shift flag");
+                ext::Entry item; item.token = priming ? 31u : 73u;
+                if (target.context == ext::Context::Desktop)
+                {
+                    item.key = "DesktopOnlyCommand"; item.label = L"Desktop-only command";
+                }
+                else
+                {
+                    item.key = "DirectoryBackground"; item.label = L"Unpublished background command";
+                }
+                return ext::Reply{true, {item}, {}};
+            });
+        Expect(complete.ok && bg && bindings == 2 && complete.entries.size() == 1 &&
+            complete.entries.front().key == "DesktopOnlyCommand" && complete.entries.front().token == 73u,
+            "DESKTOP_ONLY_COMMAND_MUST_SURVIVE: the final desktop scope and its executable tokens must be published");
+    }
 
     request.background = false; request.context = ext::Context::File; request.extended = true;
     filesReady = false;

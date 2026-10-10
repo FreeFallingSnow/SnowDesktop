@@ -27,7 +27,13 @@ Reply QueryWithCataloguePriming(const Request &request, bool &backgroundReady, b
     const bool file = NeedsFileCataloguePriming(request);
     bool &ready = background ? backgroundReady : filesReady;
     const bool priming = (background || file) && !ready;
-    auto reply = queryOnce(request, priming);
+    auto initial = request;
+    // Directory background shares desktop providers without paying for the
+    // virtual desktop aggregate twice. Only this unpublished pass changes
+    // scope; the final bind retains desktop-only verbs and the exact selection.
+    if (priming && background && initial.context == Context::Desktop)
+        initial.context = Context::FolderBackground;
+    auto reply = queryOnce(initial, priming);
     if (!reply.ok) return reply;
     if (priming)
     {
