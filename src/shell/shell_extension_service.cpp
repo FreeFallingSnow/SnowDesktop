@@ -68,6 +68,12 @@ bool Local(const Request &request)
     }
     return !request.paths.empty();
 }
+bool ShortcutSelection(const Request &request)
+{
+    return !request.background && std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+        return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+    });
+}
 bool DependsOn(const Registration &row, const Request &request, unsigned contexts)
 {
     if (!(row.contexts & contexts)) return false;
@@ -84,9 +90,7 @@ std::uint64_t Dependency(const Catalogue &catalogue, const Request &request, uns
     // ShellLink can expose commands belonging to its target's type. The .lnk
     // suffix alone cannot prove those dependencies without resolving targets
     // (which may be offline), so shortcuts retain the full inventory proof.
-    if (!request.background && std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
-        return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
-    })) return catalogue.revision;
+    if (ShortcutSelection(request)) return catalogue.revision;
     std::uint64_t hash = 14695981039346656037ull;
     for (const auto &row : catalogue.rows)
         if (DependsOn(row, request, contexts))
@@ -137,6 +141,8 @@ struct MenuService::Impl
         Key identity, snapshotIdentity;
         std::uint64_t snapshotSignature = 0, snapshotDependency = 0;
         bool snapshotTargetChecked = false, registryInvalid = false;
+        std::optional<MenuSnapshotCache::Ticket> provisionalTicket;
+        std::uint64_t provisionalRegistryRevision = 0;
         std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
         bool queued = false, force = false, invalid = false, inspection = false;
         std::vector<Click> clicks;
@@ -544,6 +550,7 @@ struct MenuService::Impl
         row.bytes = settings_ipc::Pack(reply).size();
         if (row.bytes > 2 * 1024 * 1024) { row.bytes = 0; return; }
         row.snapshotIdentity = row.identity;
+        row.provisionalTicket.reset();
         row.snapshotDependency = Dependency(catalogue, row.request, contexts);
         const int scope = VerificationIndex(contexts);
         row.snapshotSignature = scope > 0 ? VerificationSignature(scope) : 0;
@@ -657,6 +664,15 @@ struct MenuService::Impl
                     // Completion and display publication are one observable state.
                     // Settings must not stop polling before the snapshot appears.
                     Publish(job.key, reply, contexts);
+                    job.ticket.dependency = row.snapshotDependency;
+                    if (job.ticket && !job.ticket.dependency)
+                    {
+                        // Known verbs can appear before initial attribution.
+                        // Retain this exact issued ticket until the initial live
+                        // inventory proves the same registry generation.
+                        row.provisionalTicket = job.ticket;
+                        row.provisionalRegistryRevision = job.verificationRevision;
+                    }
                 }
                 else
                 {
@@ -666,7 +682,7 @@ struct MenuService::Impl
                 }
             }
         }
-        if (current && reply.ok)
+        if (current && reply.ok && job.ticket.dependency)
         {
             cache.Store(job.ticket, reply);
         }
@@ -846,7 +862,10 @@ struct MenuService::Impl
                         if (inspected) typesRequested = true;
                     }
                     for (auto &[key, row] : rows)
-                        if (!initial && std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return DependsOn(r, row.request, row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u)); }))
+                        if (!initial && std::any_of(changed.begin(), changed.end(), [&](const auto &r) {
+                            return ShortcutSelection(row.request) || DependsOn(r, row.request,
+                                row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u));
+                        }))
                         {
                             row.invalid = true; ++row.dependency; row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
                             affected.push_back(row.request);
@@ -891,6 +910,36 @@ struct MenuService::Impl
             if (SUCCEEDED(ole)) CoUninitialize();
             return result;
         });
+    }
+    void StoreProvisionalSnapshots(MenuSnapshotCache &cache)
+    {
+        std::vector<std::pair<MenuSnapshotCache::Ticket, Reply>> stores;
+        {
+            std::lock_guard lock(mutex);
+            if (!catalogue.revision) return;
+            for (auto &[key, row] : rows)
+            {
+                if (!row.provisionalTicket) continue;
+                if (checkedRegistryRevision < row.provisionalRegistryRevision) continue;
+                auto ticket = std::move(*row.provisionalTicket);
+                row.provisionalTicket.reset();
+                // A notification, newer query, explicit invalidation or failure
+                // prevents an unproven first result from acquiring new proof.
+                if (registryRevision != row.provisionalRegistryRevision || row.invalid ||
+                    row.view.pending || !row.view.snapshot || !row.view.error.empty() ||
+                    row.snapshotIdentity != ticket.identity || row.expires <= MenuSnapshotCache::Now()) continue;
+                ticket.dependency = Dependency(catalogue, row.request, row.view.contexts);
+                if (!ticket.dependency) continue;
+                row.snapshotDependency = ticket.dependency;
+                const int scope = VerificationIndex(row.view.contexts);
+                row.snapshotSignature = scope > 0 ? VerificationSignature(scope) : 0;
+                stores.emplace_back(std::move(ticket), *row.view.snapshot);
+            }
+        }
+        // Store checks current target identity, cache epoch and issued sequence
+        // again; a changed object or superseding query cannot become durable.
+        for (auto &[ticket, reply] : stores)
+            if (cache.Store(ticket, reply)) MenuTrace("schedule", "initial_snapshot_verified");
     }
     static int VerificationIndex(unsigned contexts)
     {
@@ -1046,6 +1095,7 @@ struct MenuService::Impl
                 MenuTrace("catalogue", "stale.registry");
             }
             RefreshCatalogue(cache);
+            StoreProvisionalSnapshots(cache);
             RefreshScopeVerification();
             Catalogue typeCatalogue; bool discoverTypes = false;
             {

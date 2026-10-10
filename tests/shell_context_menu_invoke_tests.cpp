@@ -2915,6 +2915,100 @@ void TestStartQueryScheduling()
 // Real Classes notifications and live private registration scans reproduce the
 // repeated file/shortcut loading defect. Only the final Shell query is replaced;
 // unchanged popups must not dispatch it, while real changes must dispatch once.
+// Hold initial catalogue completion behind a published native result. Service
+// reconstruction must restore that result without another Shell query; a real
+// notification, changed target or superseding query must not certify old data.
+void TestInitialSnapshotPersistence(int mode = 0)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct Fixture {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } noise{nullptr, L"Software\\Classes\\Local Settings\\SnowDesktopInitialSnapshot-" + temp.path.filename().wstring()};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, noise.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &noise.key, &disposition) == ERROR_SUCCESS, "create first snapshot notification fixture");
+    noise.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(noise.owned, "first snapshot notification fixture has a unique owner");
+    const auto file = temp.path / L"selected.txt";
+    std::ofstream(file) << "private";
+    ext::Request selected; selected.paths = {file.wstring()};
+    std::atomic<unsigned> queries = 0, reads = 0, polls = 0;
+    std::atomic<std::uint64_t> version = 17;
+    auto inventory = [&] {
+        ext::Catalogue c; c.revision = version.load();
+        ext::Registration r; r.id = "reg:persistence-proof"; r.verbs = {"persistence-proof"};
+        r.types = {L"*"}; r.contexts = ext::ContextBit(ext::Context::File); r.revision = c.revision;
+        c.rows = {r}; return c;
+    };
+    auto factory = [&](const ext::Request &request) {
+        if (request.paths != selected.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        ++queries;
+        ext::Entry e; e.key = "persistence-proof"; e.provider = "verb:persistence-proof";
+        e.label = std::to_wstring(version.load()); e.token = 42;
+        return ext::QueryWork{[&, e] { ++polls; return ext::Reply{true, {e}, {}}; }, {}};
+    };
+    ext::Preferences preferences;
+    ext::SetCommon(preferences, "verb:persistence-proof", ext::Category::Objects, true);
+    {
+        std::promise<void> release;
+        auto gate = release.get_future().share();
+        ext::MenuService service(temp.path / L"cache", factory, [&] {
+            ++reads;
+            if (gate.wait_for(std::chrono::seconds(15)) != std::future_status::ready)
+                throw std::runtime_error("initial snapshot catalogue gate exceeded its bound");
+            return inventory();
+        });
+        struct Release {
+            std::promise<void> &promise; bool released = false;
+            void Now() { if (!released) { released = true; promise.set_value(); } }
+            ~Release() { Now(); }
+        } cleanup{release};
+        service.Configure(preferences); service.Query(selected);
+        PumpUntil([&] { return reads > 0 && polls > 0 && service.View(selected).snapshot.has_value(); },
+            "known commands publish while initial inventory is still blocked");
+        Expect(queries == 1 && !service.View(selected).pending,
+            "initial inventory does not delay an already usable ordinary command");
+        if (mode == 1) {
+            const auto oldRevision = service.View(selected).revision;
+            version = 18;
+            const DWORD sequence = 1;
+            Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD,
+                reinterpret_cast<const BYTE *>(&sequence), sizeof(sequence)) == ERROR_SUCCESS,
+                "emit a registration mutation before initial proof completes");
+            PumpUntil([&] { return service.View(selected).revision > oldRevision; },
+                "observe a newer registry generation than the provisional snapshot");
+            service.Query(selected);
+        } else if (mode == 2) {
+            std::ofstream(file, std::ios::app) << "changed while attribution was blocked";
+        } else if (mode == 3) {
+            service.Invalidate(selected);
+            PumpUntil([&] { return queries == 2 && service.View(selected).snapshot.has_value(); },
+                "a newer issued query replaces the provisional snapshot");
+        }
+        cleanup.Now();
+        PumpUntil([&] { return !service.Inspect().scanning; }, "initial live inventory and durable catalogue settle");
+        if (mode == 2) service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return view.snapshot && !view.pending &&
+            queries == (mode ? 2u : 1u); }, "finish only the queries required by real changes");
+        Expect(service.View(selected).snapshot->entries.front().label == (mode == 1 ? L"18" : L"17"),
+            "registration mutations cannot promote a provisional stale command");
+        service.Shutdown();
+    }
+    const auto beforeReload = queries.load();
+    {
+        ext::MenuService restored(temp.path / L"cache", factory, inventory);
+        restored.Configure(preferences); restored.Query(selected);
+        PumpUntil([&] { auto view = restored.View(selected); return view.snapshot && !view.pending; },
+            "reload a verified exact-object snapshot from the durable cache");
+        Expect(queries == beforeReload && restored.MenuDisplay(selected, preferences).snapshot.has_value(),
+            "a first query preceding catalogue completion remains reusable after service reconstruction");
+        restored.Shutdown();
+    }
+    std::cout << "Initial snapshot persistence mode=" << mode << " queries=" << queries.load() << std::endl;
+}
+
 void TestFileSnapshotNotificationReuse()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -5692,6 +5786,8 @@ int wmain(int argc, wchar_t **argv)
                 for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-registry-catalogue")
             TestRegistryCatalogue();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-initial-snapshot-persistence")
+        { for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-file-snapshot-reuse")
             TestFileSnapshotNotificationReuse();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
@@ -5709,6 +5805,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestAggregateCataloguePriming();
+            for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
             TestFileSnapshotNotificationReuse();
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
@@ -5756,6 +5853,7 @@ int wmain(int argc, wchar_t **argv)
         else
         {
             TestAggregateCataloguePriming();
+            for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
             TestFileSnapshotNotificationReuse();
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
