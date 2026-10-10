@@ -46,8 +46,11 @@ class MenuService
     MenuService(const MenuService &) = delete;
     // All public methods are memory-only. The worker owns all disk I/O, target
     // checks, Shell sessions and the immutable snapshot publication boundary.
+    // Raw state follows the latest explicit query for this selection. Full
+    // inspections and omitted optional-source popup queries keep separate rows.
     MenuView View(const Request &request);
-    // The raw cache is shared; visibility is always projected from current host rules.
+    // Visibility uses current host rules. A verified full cache can also serve
+    // an ordinary popup without making it wait for an inspection refresh.
     // An open popup may finish consuming its published payload while an unrelated
     // registry notification is being verified. New popups use only a current cache.
     MenuView MenuDisplay(const Request &request, const Preferences &fallback, bool retainPublished = false);

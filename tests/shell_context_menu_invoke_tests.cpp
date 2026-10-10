@@ -2515,6 +2515,74 @@ void TestNvidiaCompatibilityQueryPolicy(bool olderCompletesFirst)
         "a retired omitted query cannot overwrite the replacement complete reply");
 }
 
+// Hold only the supervised query boundary; real Inspect, Presentation and fresh
+// click resolution must remain independent, with and without a prior full cache.
+void TestInspectionIndependentPopup(bool cached)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    const auto selected = temp.path / L"selected";
+    std::filesystem::create_directory(selected);
+    ext::Request request; request.paths = {selected.wstring()}; request.background = true; request.context = ext::Context::Desktop;
+    ext::Reply ordinary; ordinary.ok = true;
+    ext::Entry entry; entry.provider = "verb:ordinary"; entry.key = "ordinary"; entry.label = L"Ordinary command"; entry.token = 11;
+    ordinary.entries = {entry};
+    ext::Catalogue catalogue; catalogue.revision = 1; catalogue.folderRevision = 2; catalogue.backgroundRevisions = {3,3};
+    std::atomic<unsigned> fullStarted=0, popupStarted=0, invoked=0;
+    std::atomic<bool> releaseFull=false, completed=false, succeeded=false, staleToken=false;
+    ext::MenuService service(temp.path/L"cache", [&](const ext::Request &target) {
+        const bool selectedQuery = target.paths == request.paths && target.sourceClsid.empty();
+        const bool popup = target.omitNvidiaCompatibility;
+        unsigned token = 11;
+        if(selectedQuery){if(popup)token=100+ ++popupStarted;else ++fullStarted;}
+        const bool held = selectedQuery && !popup && (!cached || fullStarted.load() > 1);
+        auto fresh=ordinary;fresh.entries.front().token=token;
+        return ext::QueryWork{[&, held, fresh]() -> std::optional<ext::Reply> {
+            if(held){if(!releaseFull)return {};return ext::Reply{false,{},"optional inspection failure"};}
+            return fresh;
+        },[&, selectedQuery, popup, token](UINT actual,POINT point){
+            if(selectedQuery&&popup){staleToken=actual!=token||point.x!=13||point.y!=23; ++invoked;}
+        }};
+    },[catalogue]{return catalogue;},[]{return std::uint64_t(2);},[](ext::Context){return std::uint64_t(3);});
+    ext::Preferences prefs;
+    ext::SetCommon(prefs,"verb:ordinary",ext::Category::Background,true);
+    ext::SetCommon(prefs,ext::NvidiaControlPanelRegistration,ext::Category::Background,false);
+    service.Configure(prefs);
+    if(cached){
+        service.Query(request,ext::QueryPriority::Inspect);
+        PumpUntil([&]{auto view=service.View(request);return fullStarted==1&&view.snapshot&&!view.pending;},
+            "prepare a complete full snapshot before management refresh");
+    }
+    service.Inspect(request,cached);
+    PumpUntil([&]{return fullStarted.load()==(cached?2u:1u);},"actual Inspect dispatches its full desktop query");
+    const auto opened=GetTickCount64();
+    ext::Presentation popup(request,prefs,L"",L"",service);
+    std::vector<snowdesktop::modern_menu::Item> items;
+    snowdesktop::modern_menu::Options options;popup.Attach(items,options,7);
+    while(GetTickCount64()-opened<2000 && options.pollItemsFinished && !options.pollItemsFinished()){
+        MSG msg{};while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}
+        if(auto update=options.pollItems(items,true))items=std::move(*update);
+        MsgWaitForMultipleObjectsEx(0,nullptr,1,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+    }
+    const auto readyMs=GetTickCount64()-opened;
+    Expect(popupStarted==(cached?0u:1u)&&items.size()==1&&items.front().label==L"Ordinary command"&&
+        (!options.pollItemsFinished||options.pollItemsFinished())&&!releaseFull,
+        "a held full inspection cannot block the actual popup Presentation or mark its ordinary stream pending");
+    const auto click=GetTickCount64();
+    service.Execute(request,ext::AppendReference({},ordinary.entries.front()),{13,23},[&](bool ok){succeeded=ok;completed=true;});
+    while(!completed&&GetTickCount64()-click<2000){MSG msg{};while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}MsgWaitForMultipleObjectsEx(0,nullptr,1,QS_ALLINPUT,MWMO_INPUTAVAILABLE);}
+    const auto clickMs=GetTickCount64()-click;
+    Expect(completed&&succeeded&&popupStarted==(cached?1u:2u)&&invoked==1&&!staleToken&&!releaseFull,
+        "click resolves a fresh ordinary token and completes while full inspection is still held");
+    releaseFull=true;
+    PumpUntil([&]{auto view=service.Inspect(request);return !view.menu.pending&&view.menu.error=="optional inspection failure";},
+        "optional failure completes in the management lane");
+    const auto shown=service.MenuDisplay(request,prefs);
+    Expect(shown.snapshot&&shown.snapshot->entries.size()==1&&!shown.pending&&shown.error.empty(),
+        "optional management failure does not clear or back off a complete ordinary menu");
+    std::cout<<"inspection isolation cached="<<cached<<" popup_ms="<<readyMs<<" click_ms="<<clickMs<<" fresh_queries="<<popupStarted<<" invoked="<<invoked<<std::endl;
+}
+
 
 void TestExposedStartPinHelper()
 {
@@ -5423,6 +5491,8 @@ int wmain(int argc, wchar_t **argv)
             TestNvidiaCompatibility();
             TestNvidiaCompatibilityQueryPolicy(false);
             TestNvidiaCompatibilityQueryPolicy(true);
+            TestInspectionIndependentPopup(false);
+            TestInspectionIndependentPopup(true);
         }
         else
         {
@@ -5440,6 +5510,8 @@ int wmain(int argc, wchar_t **argv)
             TestNvidiaCompatibility();
             TestNvidiaCompatibilityQueryPolicy(false);
             TestNvidiaCompatibilityQueryPolicy(true);
+            TestInspectionIndependentPopup(false);
+            TestInspectionIndependentPopup(true);
             TestManagementUpdates();
             TestManagementFilters();
             TestSourceAttribution();

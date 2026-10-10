@@ -22,13 +22,17 @@ constexpr ULONGLONG kInventoryWaitMs = 30000;
 Key SelectionKey(Request request)
 {
     request.catalogueOnly = false;
-    // Popup/management variants share the same selection row. The disk ticket
-    // still includes this option and never aliases complete/omitted snapshots.
-    request.omitNvidiaCompatibility = false;
+    // Preserve the optional-source mode in memory as well as on disk.
+    // A full inspection cannot claim or overwrite the ordinary popup lane.
     // File/Folder is an attribute of the actual selection, resolved off the UI.
     if (!request.background && request.context != Context::Desktop) request.context = Context::Automatic;
     for (auto &p : request.paths) p = std::filesystem::path(p).lexically_normal().wstring();
     return settings_ipc::Pack(request);
+}
+Key SelectionBaseKey(Request request)
+{
+    request.omitNvidiaCompatibility = false;
+    return SelectionKey(std::move(request));
 }
 bool NetworkSelection(const Request &request)
 {
@@ -124,7 +128,6 @@ struct MenuService::Impl
         QueryPriority priority = QueryPriority::Inspect;
         std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0;
         unsigned failures = 0;
-        std::uint64_t queryVariant = 0;
         Key identity, snapshotIdentity;
         std::uint64_t snapshotSignature = 0; bool snapshotTargetChecked = false;
         std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
@@ -141,7 +144,6 @@ struct MenuService::Impl
         std::optional<Reply> reply;
         std::uint64_t verificationRevision = 0;
         ULONGLONG replyReadyAt = 0;
-        std::uint64_t queryVariant = 0;
     };
     struct SourceJob
     {
@@ -158,6 +160,7 @@ struct MenuService::Impl
     bool sourcePending = false;
     std::mutex mutex;
     std::map<Key, Row> rows;
+    std::map<Key, Key> requestedViews;
     Catalogue catalogue;
     Catalogue available;
     std::map<std::string, Registration> observed;
@@ -272,41 +275,78 @@ struct MenuService::Impl
             }
         return start;
     }
-    void Queue(const Request &request, QueryPriority priority, bool force, unsigned delay = 0)
+    Request PopupRequest(Request request) const
     {
-        if (request.paths.empty() || request.paths.size() > 256) return;
+        request.catalogueOnly = false;
+        request.omitNvidiaCompatibility = configured && request.background &&
+            request.context == Context::Desktop && request.sourceClsid.empty() &&
+            !NvidiaCompatibilityShown(shown[static_cast<int>(Context::Desktop)]);
+        return request;
+    }
+    bool VerifiedBackgroundSnapshot(const Row &row) const
+    {
+        const int scope = VerificationIndex(row.view.contexts);
+        return row.invalid && !row.force && scope > 0 && row.snapshotTargetChecked &&
+            row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope) &&
+            (checkedRegistryRevision >= registryRevision || ScopeChecked(row.view.contexts, registryRevision));
+    }
+    Key PopupKey(const Request &request, bool retainPublished = false) const
+    {
+        auto popup = PopupRequest(request);
+        if (popup.omitNvidiaCompatibility)
+        {
+            auto full = popup; full.omitNvidiaCompatibility = false;
+            const auto found = rows.find(SelectionKey(full));
+            if (found != rows.end())
+            {
+                const auto &row = found->second;
+                if (row.view.snapshot && row.view.error.empty() && row.expires > MenuSnapshotCache::Now() &&
+                    (!row.invalid || VerifiedBackgroundSnapshot(row) ||
+                        (retainPublished && row.view.error.empty()))) return found->first;
+            }
+        }
+        return SelectionKey(popup);
+    }
+    void RememberView(const Request &request, const Key &key)
+    {
+        if (key.empty()) return;
+        const auto base = SelectionBaseKey(request);
+        if (key != SelectionKey(request) || requestedViews.contains(base)) requestedViews[base] = key;
+    }
+    Key ViewKey(const Request &request) const
+    {
+        const auto found = requestedViews.find(SelectionBaseKey(request));
+        if (found != requestedViews.end() && rows.contains(found->second)) return found->second;
+        return PopupKey(request);
+    }
+    Key Queue(const Request &request, QueryPriority priority, bool force, unsigned delay = 0)
+    {
+        if (request.paths.empty() || request.paths.size() > 256) return {};
         // Opening/refreshing a Start-only popup is served by its dedicated
         // request. Inspection and explicit execution still retain full queries.
-        if (priority == QueryPriority::Menu && !request.startPinOnly && OnlyStartShown(request)) return;
-        if ((priority == QueryPriority::Menu || priority == QueryPriority::Prewarm) && !Enabled(request)) return;
+        if (priority == QueryPriority::Menu && !request.startPinOnly && OnlyStartShown(request)) return {};
+        if ((priority == QueryPriority::Menu || priority == QueryPriority::Prewarm) && !Enabled(request)) return {};
         if (catalogueStale && !scanRequested)
         {
             scanRequested = true;
             MenuTrace("catalogue", "request.stale_query");
         }
-        const auto key = SelectionKey(request);
-        auto &row = rows[key];
-        auto target = request;
+        auto target = priority == QueryPriority::Inspect ? request : PopupRequest(request);
         target.catalogueOnly = false;
-        const bool inspection = row.inspection || priority == QueryPriority::Inspect;
-        target.omitNvidiaCompatibility = configured && !inspection && target.background &&
-            target.context == Context::Desktop && target.sourceClsid.empty() &&
-            !NvidiaCompatibilityShown(shown[static_cast<int>(Context::Desktop)]);
-        // A complete cached menu is a valid superset of the popup. Keep its
-        // identity and live scoped verification rather than throwing it away
-        // just to omit an optional source from a query we do not need to run.
-        if (target.omitNvidiaCompatibility && !row.request.omitNvidiaCompatibility &&
-            row.view.snapshot && row.view.error.empty() && row.expires > MenuSnapshotCache::Now())
-            target.omitNvidiaCompatibility = false;
-        if (!row.request.paths.empty() && row.request.omitNvidiaCompatibility != target.omitNvidiaCompatibility)
+        if (priority == QueryPriority::Inspect) target.omitNvidiaCompatibility = false;
+        // Reuse an already complete full snapshot, but never make a fresh
+        // popup/click inherit the optional resolver of an in-flight inspection.
+        if (target.omitNvidiaCompatibility && !force && priority != QueryPriority::Execute)
         {
-            // A newly enabled source or management inspection needs a complete
-            // query. Retire any older in-flight variant before it can overwrite
-            // the replacement; do not inherit its failure backoff or disk key.
-            row.invalid = true; ++row.dependency; ++row.sequence; ++row.queryVariant;
-            row.queued = row.view.pending = false; row.view.snapshot.reset();
-            row.bytes = 0; row.retryAt = 0; ++row.view.revision; force = true;
+            auto full = target; full.omitNvidiaCompatibility = false;
+            const auto old = rows.find(SelectionKey(full));
+            if (old != rows.end() && old->second.view.snapshot && !old->second.invalid &&
+                old->second.view.error.empty() && old->second.expires > MenuSnapshotCache::Now())
+                target = std::move(full);
         }
+        const auto key = SelectionKey(target);
+        auto &row = rows[key];
+        const bool inspection = row.inspection || priority == QueryPriority::Inspect;
         row.request = std::move(target); row.used = ++clock;
         const auto now = GetTickCount64();
         row.inspection = inspection;
@@ -317,7 +357,7 @@ struct MenuService::Impl
             // An explicit popup must not inherit the selection prewarm debounce.
             // Joined work keeps its session and sequence; only queued dispatch advances.
             if (priority == QueryPriority::Execute || priority == QueryPriority::Menu) row.due = now;
-            MenuTrace("schedule", "joined"); return;
+            MenuTrace("schedule", "joined"); return key;
         }
         row.checkRequested = true;
         row.checkInspection |= priority == QueryPriority::Inspect;
@@ -325,11 +365,12 @@ struct MenuService::Impl
         if (!force && (now < row.retryAt || (row.view.snapshot && !row.invalid && row.expires > MenuSnapshotCache::Now())))
         {
             row.inspection = false;
-            return;
+            return key;
         }
         row.priority = priority; row.force = force; row.due = now + delay; row.queued = true;
         row.view.pending = true; ++row.sequence;
         SetEvent(wake);
+        return key;
     }
     void Trim()
     {
@@ -343,7 +384,9 @@ struct MenuService::Impl
                 if (victim == rows.end() || std::pair{it->second.request.context == Context::Desktop, it->second.used} < std::pair{victim->second.request.context == Context::Desktop, victim->second.used}) victim = it;
             }
             if (victim == rows.end()) break;
-            bytes -= victim->second.bytes; rows.erase(victim);
+            bytes -= victim->second.bytes;
+            std::erase_if(requestedViews, [&](const auto &view) { return view.second == victim->first; });
+            rows.erase(victim);
         }
     }
     void RebuildAvailable()
@@ -556,9 +599,6 @@ struct MenuService::Impl
             const auto it = rows.find(job.key);
             if (it == rows.end()) return;
             auto &row = it->second; request = row.request;
-            // A retired query mode must not clear the replacement pending state,
-            // consume its clicks, or downgrade a completed management snapshot.
-            if (job.queryVariant != row.queryVariant) return;
             current = targetCurrent && row.sequence == job.sequence && row.dependency == job.dependency;
             clicks = std::move(row.clicks);
             if (!current)
@@ -1040,7 +1080,7 @@ struct MenuService::Impl
                     return job.startPinOnly;
                 });
                 const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs + (sourceJob ? 1 : 0);
-                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, variant = 0; bool invalid = false;
+                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
                     // Background queries share one slot, including metadata probes.
@@ -1059,7 +1099,7 @@ struct MenuService::Impl
                             (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
                     if (best == rows.end()) break;
                     auto &row = best->second; key = best->first; request = row.request; priority = row.priority;
-                    sequence = row.sequence; dependency = row.dependency; variant = row.queryVariant; invalid = row.invalid; row.queued = false;
+                    sequence = row.sequence; dependency = row.dependency; invalid = row.invalid; row.queued = false;
                 }
                 if (priority == QueryPriority::Prewarm && !Local(request))
                 {
@@ -1101,7 +1141,7 @@ struct MenuService::Impl
                         MenuTrace("schedule", "snapshot_reused"); continue;
                     }
                 }
-                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0, variant};
+                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
@@ -1182,7 +1222,7 @@ MenuView MenuService::View(const Request &request)
 {
     MenuTiming timing("first_screen");
     std::lock_guard lock(impl_->mutex);
-    const auto it = impl_->rows.find(SelectionKey(request));
+    const auto it = impl_->rows.find(impl_->ViewKey(request));
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     it->second.used = ++impl_->clock;
     if (it->second.expires && MenuSnapshotCache::Now() >= it->second.expires) { it->second.view.snapshot.reset(); it->second.bytes = 0; }
@@ -1191,7 +1231,8 @@ MenuView MenuService::View(const Request &request)
 }
 void MenuService::Query(const Request &request, QueryPriority priority, bool force)
 {
-    std::lock_guard lock(impl_->mutex); impl_->Queue(request, priority, force);
+    std::lock_guard lock(impl_->mutex);
+    impl_->RememberView(request, impl_->Queue(request, priority, force));
 }
 bool MenuService::MenuEnabled(const Request &request, const Preferences &fallback)
 {
@@ -1203,18 +1244,17 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
 {
     MenuTiming timing("first_screen");
     std::lock_guard lock(impl_->mutex);
-    const auto it = impl_->rows.find(SelectionKey(request));
+    const auto it = impl_->rows.find(impl_->PopupKey(request, retainPublished));
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     auto &row = it->second; row.used = ++impl_->clock;
     auto view = row.view;
     view.attributionPending = impl_->AttributionPending(request, fallback);
-    const int scope = Impl::VerificationIndex(view.contexts);
-    const bool verifiedBackground = row.invalid && !row.force && scope > 0 && row.snapshotTargetChecked &&
-        row.snapshotSignature && row.snapshotSignature == impl_->VerificationSignature(scope) &&
-        (impl_->checkedRegistryRevision >= impl_->registryRevision || impl_->ScopeChecked(view.contexts, impl_->registryRevision));
+    const bool verifiedBackground = impl_->VerifiedBackgroundSnapshot(row);
     if (row.expires <= MenuSnapshotCache::Now() ||
         (row.invalid && !verifiedBackground && (!retainPublished || !view.error.empty()))) view.snapshot.reset();
-    if (view.snapshot && verifiedBackground)
+    const bool fullPopupSuperset = impl_->PopupRequest(request).omitNvidiaCompatibility &&
+        !row.request.omitNvidiaCompatibility;
+    if (view.snapshot && (verifiedBackground || fullPopupSuperset))
     {
         // Only the display projection is ready. Service/management state keeps
         // supervising the fresh query, and execution always resolves new tokens.
@@ -1257,7 +1297,7 @@ void MenuService::Prewarm(const Request &request)
         if (row.queued && row.priority == QueryPriority::Prewarm && !row.inspection) row.queued = row.view.pending = false;
     auto target = request;
     if (impl_->OnlyStartShown(request)) target.startPinOnly = true;
-    impl_->Queue(target, QueryPriority::Prewarm, false, 150);
+    impl_->RememberView(target, impl_->Queue(target, QueryPriority::Prewarm, false, 150));
 }
 void MenuService::Configure(Preferences preferences)
 {
@@ -1301,8 +1341,9 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     if (request.context == Context::Desktop && request.paths.empty() && impl_->management.context != Context::Desktop) impl_->desktopInspection = true;
     // Keep an explicit desktop inspection selected while its path is resolved
     // on the worker; returning the previous file here reroutes the settings UI.
-    const auto selection = request.context == Context::Desktop && request.paths.empty() && impl_->desktopInspection
+    auto selection = request.context == Context::Desktop && request.paths.empty() && impl_->desktopInspection
         ? request : request.paths.empty() ? impl_->management : request;
+    selection.omitNvidiaCompatibility = false;
     const auto selectionKey = SelectionKey(selection);
     const auto previous = impl_->rows.find(selectionKey);
     const bool invalidated = previous != impl_->rows.end() && previous->second.invalid;
@@ -1311,7 +1352,7 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     if (!selection.paths.empty() && (refresh || selectionKey != impl_->inspectedSelection || invalidated))
     {
         impl_->inspectedSelection = selectionKey;
-        impl_->Queue(selection, QueryPriority::Inspect, refresh);
+        impl_->RememberView(selection, impl_->Queue(selection, QueryPriority::Inspect, refresh));
     }
     CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
     result.scanning = impl_->sourcePending || impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested ||
@@ -1327,16 +1368,34 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
 }
 void MenuService::Execute(const Request &request, CommandReference reference, POINT point, std::function<void(bool)> completed, HWND owner)
 {
-    std::lock_guard lock(impl_->mutex);
-    impl_->Queue(request, QueryPriority::Execute, true);
-    impl_->rows[SelectionKey(request)].clicks.push_back({std::move(reference), point, std::move(completed), ShellInvocationOwner::Capture(owner)});
+    bool queued = false;
+    {
+        std::lock_guard lock(impl_->mutex);
+        const auto key = impl_->Queue(request, QueryPriority::Execute, true);
+        impl_->RememberView(request, key);
+        if (!key.empty())
+        {
+            impl_->rows[key].clicks.push_back({std::move(reference), point, std::move(completed), ShellInvocationOwner::Capture(owner)});
+            queued = true;
+        }
+    }
+    if (!queued && completed) completed(false);
 }
 void MenuService::Invalidate(const Request &request)
 {
     std::lock_guard lock(impl_->mutex);
-    auto &row = impl_->rows[SelectionKey(request)]; row.request = request; row.invalid = true; ++row.dependency;
-    row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
+    const auto base = SelectionBaseKey(request);
+    for (auto &[key, row] : impl_->rows)
+        if (SelectionBaseKey(row.request) == base)
+        {
+            row.invalid = true; ++row.dependency;
+            row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
+        }
+    auto target = impl_->PopupRequest(request);
+    auto &row = impl_->rows[SelectionKey(target)]; row.request = target;
+    row.invalid = true;
     impl_->RebuildAvailable();
-    if (!row.view.pending) impl_->Queue(request, QueryPriority::Menu, true);
+    if (!row.view.pending) impl_->RememberView(request, impl_->Queue(request, QueryPriority::Menu, true));
+    else impl_->RememberView(request, SelectionKey(target));
 }
 }
