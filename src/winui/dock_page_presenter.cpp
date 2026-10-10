@@ -653,6 +653,7 @@ struct DockPagePresenter::Impl
         exceptionActions.Children().Append(fullscreenExceptionAdd);
         exceptionActions.MaxWidth(520);
         exceptionActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        exceptionActions.VerticalAlignment(mux::VerticalAlignment::Center);
         fullscreenExceptionsExpander = mux::Markup::XamlReader::Load(
             LR"(<Expander xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource SubtleFillColorTransparentBrush}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False" />)")
             .as<muxc::Expander>();
@@ -665,18 +666,24 @@ struct DockPagePresenter::Impl
         fullscreenExceptionsDescription = NewHint();
         exceptionHeader.Children().Append(fullscreenExceptionsTitle);
         exceptionHeader.Children().Append(fullscreenExceptionsDescription);
-        fullscreenExceptionsExpander.Header(exceptionHeader);
-        muxc::StackPanel exceptionContent{};
-        exceptionContent.Spacing(12);
-        exceptionContent.Children().Append(exceptionActions);
+        muxc::Grid exceptionHeaderLayout{};
+        muxc::ColumnDefinition exceptionLabelColumn{}, exceptionActionsColumn{};
+        exceptionLabelColumn.Width({1, mux::GridUnitType::Star});
+        exceptionActionsColumn.Width({1, mux::GridUnitType::Auto});
+        exceptionHeaderLayout.ColumnDefinitions().Append(exceptionLabelColumn);
+        exceptionHeaderLayout.ColumnDefinitions().Append(exceptionActionsColumn);
+        exceptionHeaderLayout.ColumnSpacing(16);
+        exceptionHeaderLayout.Children().Append(exceptionHeader);
+        muxc::Grid::SetColumn(exceptionActions, 1);
+        exceptionHeaderLayout.Children().Append(exceptionActions);
+        fullscreenExceptionsExpander.Header(exceptionHeaderLayout);
         fullscreenExceptionList = muxc::StackPanel{};
         fullscreenExceptionList.Spacing(12);
         fullscreenExceptionListHost = muxc::ContentControl{};
         fullscreenExceptionListHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         fullscreenExceptionListHost.Content(fullscreenExceptionList);
         fullscreenExceptionListHost.Visibility(mux::Visibility::Collapsed);
-        exceptionContent.Children().Append(fullscreenExceptionListHost);
-        fullscreenExceptionsExpander.Content(exceptionContent);
+        fullscreenExceptionsExpander.Content(fullscreenExceptionListHost);
         fullscreenCard.content.Children().Append(fullscreenExceptionsExpander);
         edgeSwipeCard.content.Children().InsertAt(0, showOnlyWhenSummonedRow.root);
         edgeSwipeCard.content.Children().InsertAt(2, edgeRevealGestureRow.root);
