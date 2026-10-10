@@ -3,6 +3,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <wrl/client.h>
+#include <set>
 
 namespace snowdesktop::shell_extensions
 {
@@ -39,8 +40,16 @@ inline bool NvidiaControlPanelRegistered(HKEY classes = HKEY_CLASSES_ROOT)
 }
 inline bool NvidiaCompatibilityRequired(const Request &request, bool registered, bool enabled, HRESULT factory)
 {
-    return request.background && ResolveContext(request) == Context::Desktop && request.sourceClsid.empty() &&
+    return !request.omitNvidiaCompatibility && request.background && ResolveContext(request) == Context::Desktop && request.sourceClsid.empty() &&
         registered && enabled && factory == CLASS_E_CLASSNOTAVAILABLE;
+}
+
+inline bool NvidiaCompatibilityShown(const std::set<std::string> &shown)
+{
+    // Match proven command/provider identities, independently of the NVIDIA App.
+    return shown.contains(NvidiaControlPanelRegistration) ||
+        shown.contains("verb:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}") ||
+        shown.contains("handler:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}");
 }
 
 // Do not guess a command by position or translated caption. AppsFolder may

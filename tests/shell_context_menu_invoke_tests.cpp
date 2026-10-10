@@ -1795,6 +1795,15 @@ void TestNvidiaCompatibility()
         Expect(!ext::NvidiaCompatibilityRequired(request, true, true, CLASS_E_CLASSNOTAVAILABLE),
             "NVIDIA compatibility does not add application launchers to object or folder menus");
     }
+    auto omitted = desktop; omitted.omitNvidiaCompatibility = true;
+    Expect(!ext::NvidiaCompatibilityRequired(omitted, true, true, CLASS_E_CLASSNOTAVAILABLE),
+        "an explicitly omitted compatibility source never enters the installed application resolver");
+    Expect(!ext::NvidiaCompatibilityShown({}) &&
+        !ext::NvidiaCompatibilityShown({"menu:nvidia app:14695981039346656037"}) &&
+        ext::NvidiaCompatibilityShown({ext::NvidiaControlPanelRegistration}) &&
+        ext::NvidiaCompatibilityShown({"verb:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}"}) &&
+        ext::NvidiaCompatibilityShown({"handler:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}"}),
+        "the compatibility opt-in recognizes exact provider identities without matching NVIDIA App captions");
     auto probe = desktop; probe.sourceClsid = ext::NvidiaControlPanelClsid;
     Expect(!ext::NvidiaCompatibilityRequired(probe, true, true, CLASS_E_CLASSNOTAVAILABLE),
         "metadata attribution probes never contribute executable compatibility entries");
@@ -2392,6 +2401,112 @@ void PumpUntil(Condition condition, const char *message)
     }
     Expect(condition(),message);
 }
+
+void TestNvidiaCompatibilityQueryPolicy(bool olderCompletesFirst)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    const auto first = temp.path / L"first", pending = temp.path / L"pending", barrier = temp.path / L"barrier";
+    for (const auto &path : {first, pending, barrier}) std::filesystem::create_directory(path);
+    ext::Request request; request.paths = {first.wstring()}; request.background = true; request.context = ext::Context::Desktop;
+    auto omitted = request; omitted.omitNvidiaCompatibility = true;
+    Expect(snowdesktop::settings_ipc::Unpack<ext::Request>(snowdesktop::settings_ipc::Pack(omitted)) == omitted,
+        "private omission option survives the actual helper request codec");
+    ext::MenuSnapshotCache cache(temp.path / L"identity");
+    const auto completeTicket = cache.Capture(request), omittedTicket = cache.Capture(omitted);
+    Expect(completeTicket && omittedTicket && completeTicket.identity != omittedTicket.identity,
+        "complete and omitted source variants have different disk identities");
+    ext::Reply ordinary; ordinary.ok = true;
+    ext::Entry entry; entry.provider = "verb:ordinary"; entry.key = "ordinary"; entry.label = L"Ordinary command"; entry.token = 7;
+    ordinary.entries = {entry};
+    Expect(cache.Store(omittedTicket, ordinary) && cache.Find(omittedTicket).has_value() && !cache.Find(completeTicket),
+        "a cached omitted reply cannot masquerade as full management output");
+    auto full = ordinary;
+    entry.provider = "verb:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
+    entry.key = "{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
+    entry.registration = ext::NvidiaControlPanelRegistration; entry.label = L"Control Panel"; entry.token = 9;
+    full.entries.push_back(entry);
+    ext::Catalogue catalogue; catalogue.revision = 1; catalogue.folderRevision = 2; catalogue.backgroundRevisions = {3, 3};
+    ext::Registration registration; registration.id = ext::NvidiaControlPanelRegistration;
+    registration.contexts = ext::ContextBit(ext::Context::Desktop); registration.verbs = {entry.key}; registration.revision = 4;
+    catalogue.rows.push_back(registration);
+    std::mutex launchedMutex; std::vector<ext::Request> launched;
+    std::atomic<bool> fullReady = false, holdOmitted = false;
+    std::atomic<unsigned> retiredOmittedCompleted = 0;
+    auto count = [&](const std::filesystem::path &path, bool omit) {
+        std::lock_guard lock(launchedMutex);
+        return std::count_if(launched.begin(), launched.end(), [&](const auto &r) {
+            return r.paths == std::vector<std::wstring>{path.wstring()} && r.omitNvidiaCompatibility == omit;
+        });
+    };
+    ext::MenuService service(temp.path / L"service", [&](const ext::Request &target) {
+        const bool selected = target.paths == std::vector<std::wstring>{first.wstring()} ||
+            target.paths == std::vector<std::wstring>{pending.wstring()};
+        if (selected) { std::lock_guard lock(launchedMutex); launched.push_back(target); }
+        return ext::QueryWork{[&, target, selected]() -> std::optional<ext::Reply> {
+            if (!selected) return ordinary;
+            if (target.omitNvidiaCompatibility ? holdOmitted.load() : !fullReady.load()) return {};
+            if (target.omitNvidiaCompatibility && target.paths == std::vector<std::wstring>{pending.wstring()}) ++retiredOmittedCompleted;
+            return target.omitNvidiaCompatibility ? ordinary : full;
+        }, {}};
+    }, [catalogue] { return catalogue; }, [] { return std::uint64_t(2); }, [](ext::Context) { return std::uint64_t(3); });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:ordinary", ext::Category::Background, true);
+    ext::SetCommon(prefs, "menu:nvidia app:14695981039346656037", ext::Category::Background, true);
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, false);
+    service.Configure(prefs); service.Query(request);
+    PumpUntil([&] { auto view = service.View(request); return count(first, true) == 1 && view.snapshot && !view.pending; },
+        "an exposed NVIDIA App does not require the hidden Control Panel compatibility resolver");
+    Expect(service.MenuDisplay(request, prefs).snapshot->entries.size() == 1,
+        "ordinary exposed commands are published without waiting on the hidden compatibility source");
+    service.Query(request, ext::QueryPriority::Inspect);
+    PumpUntil([&] { return count(first, false) == 1; }, "management upgrades the omitted selection to a full query");
+    Expect(service.View(request).pending && !service.View(request).snapshot,
+        "management does not finish from an omitted in-memory or disk snapshot");
+    fullReady = true;
+    PumpUntil([&] { auto view = service.View(request); return view.snapshot && !view.pending; }, "complete management query finishes");
+    Expect(service.View(request).snapshot->entries.size() == 2, "management retains the compatibility command and its proven registration");
+    service.Query(request);
+    auto cachedBarrier = request; cachedBarrier.paths = {barrier.wstring()};
+    service.Query(cachedBarrier, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { auto view = service.View(cachedBarrier); return view.snapshot && !view.pending; },
+        "a later inspection barrier observes the complete cache reuse check");
+    Expect(count(first, false) == 1 && count(first, true) == 1 &&
+        service.View(request).snapshot->entries.size() == 2 && !service.View(request).pending &&
+        service.MenuDisplay(request, prefs).snapshot->entries.size() == 1,
+        "a complete cached superset serves hidden-source popups without requerying or discarding management data");
+    auto pendingRequest = request; pendingRequest.paths = {pending.wstring()}; holdOmitted = true;
+    service.Query(pendingRequest);
+    PumpUntil([&] { return count(pending, true) == 1; }, "hold an older omitted query at its external boundary");
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, true);
+    service.Configure(prefs);
+    if (olderCompletesFirst) fullReady = false;
+    service.Query(pendingRequest);
+    PumpUntil([&] { return count(pending, false) == 1; }, "replacement full query has been dispatched");
+    if (olderCompletesFirst)
+    {
+        holdOmitted = false;
+        auto before = request; before.paths = {barrier.wstring()};
+        service.Query(before, ext::QueryPriority::Inspect, true);
+        PumpUntil([&] { auto view = service.View(before); return retiredOmittedCompleted && view.snapshot && !view.pending; },
+            "retired omitted query finishes before the replacement full reply");
+        Expect(service.View(pendingRequest).pending && !service.View(pendingRequest).snapshot,
+            "an older omitted reply cannot clear or replace a newer full query still pending");
+        fullReady = true;
+    }
+    PumpUntil([&] { auto view = service.View(pendingRequest); return count(pending, false) == 1 && view.snapshot && !view.pending; },
+        "enabling compatibility replaces an in-flight omitted query in the reserved popup slot");
+    Expect(service.MenuDisplay(pendingRequest, prefs).snapshot->entries.size() == 2,
+        "the newly enabled compatibility command is visible without inheriting omission or backoff");
+    const auto revision = service.View(pendingRequest).revision;
+    holdOmitted = false;
+    auto barrierRequest = request; barrierRequest.paths = {barrier.wstring()};
+    service.Query(barrierRequest, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { auto view = service.View(barrierRequest); return view.snapshot && !view.pending; }, "drain the late omitted reply before a management barrier");
+    Expect(service.View(pendingRequest).revision == revision && service.View(pendingRequest).snapshot->entries.size() == 2,
+        "a retired omitted query cannot overwrite the replacement complete reply");
+}
+
 
 void TestExposedStartPinHelper()
 {
@@ -5298,6 +5413,8 @@ int wmain(int argc, wchar_t **argv)
             for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
                 for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context);
             TestNvidiaCompatibility();
+            TestNvidiaCompatibilityQueryPolicy(false);
+            TestNvidiaCompatibilityQueryPolicy(true);
         }
         else
         {
@@ -5313,6 +5430,8 @@ int wmain(int argc, wchar_t **argv)
             for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
                 for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context);
             TestNvidiaCompatibility();
+            TestNvidiaCompatibilityQueryPolicy(false);
+            TestNvidiaCompatibilityQueryPolicy(true);
             TestManagementUpdates();
             TestManagementFilters();
             TestSourceAttribution();

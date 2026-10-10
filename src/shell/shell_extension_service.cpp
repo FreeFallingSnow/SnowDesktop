@@ -2,6 +2,7 @@
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_discovery.h"
 #include "shell_extension_attribution.h"
+#include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
 #include <condition_variable>
 #include <fstream>
@@ -21,6 +22,9 @@ constexpr ULONGLONG kInventoryWaitMs = 30000;
 Key SelectionKey(Request request)
 {
     request.catalogueOnly = false;
+    // Popup/management variants share the same selection row. The disk ticket
+    // still includes this option and never aliases complete/omitted snapshots.
+    request.omitNvidiaCompatibility = false;
     // File/Folder is an attribute of the actual selection, resolved off the UI.
     if (!request.background && request.context != Context::Desktop) request.context = Context::Automatic;
     for (auto &p : request.paths) p = std::filesystem::path(p).lexically_normal().wstring();
@@ -120,6 +124,7 @@ struct MenuService::Impl
         QueryPriority priority = QueryPriority::Inspect;
         std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0;
         unsigned failures = 0;
+        std::uint64_t queryVariant = 0;
         Key identity, snapshotIdentity;
         std::uint64_t snapshotSignature = 0; bool snapshotTargetChecked = false;
         std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
@@ -136,6 +141,7 @@ struct MenuService::Impl
         std::optional<Reply> reply;
         std::uint64_t verificationRevision = 0;
         ULONGLONG replyReadyAt = 0;
+        std::uint64_t queryVariant = 0;
     };
     struct SourceJob
     {
@@ -279,9 +285,31 @@ struct MenuService::Impl
             MenuTrace("catalogue", "request.stale_query");
         }
         const auto key = SelectionKey(request);
-        auto &row = rows[key]; row.request = request; row.request.catalogueOnly = false; row.used = ++clock;
+        auto &row = rows[key];
+        auto target = request;
+        target.catalogueOnly = false;
+        const bool inspection = row.inspection || priority == QueryPriority::Inspect;
+        target.omitNvidiaCompatibility = configured && !inspection && target.background &&
+            target.context == Context::Desktop && target.sourceClsid.empty() &&
+            !NvidiaCompatibilityShown(shown[static_cast<int>(Context::Desktop)]);
+        // A complete cached menu is a valid superset of the popup. Keep its
+        // identity and live scoped verification rather than throwing it away
+        // just to omit an optional source from a query we do not need to run.
+        if (target.omitNvidiaCompatibility && !row.request.omitNvidiaCompatibility &&
+            row.view.snapshot && row.view.error.empty() && row.expires > MenuSnapshotCache::Now())
+            target.omitNvidiaCompatibility = false;
+        if (!row.request.paths.empty() && row.request.omitNvidiaCompatibility != target.omitNvidiaCompatibility)
+        {
+            // A newly enabled source or management inspection needs a complete
+            // query. Retire any older in-flight variant before it can overwrite
+            // the replacement; do not inherit its failure backoff or disk key.
+            row.invalid = true; ++row.dependency; ++row.sequence; ++row.queryVariant;
+            row.queued = row.view.pending = false; row.view.snapshot.reset();
+            row.bytes = 0; row.retryAt = 0; ++row.view.revision; force = true;
+        }
+        row.request = std::move(target); row.used = ++clock;
         const auto now = GetTickCount64();
-        row.inspection |= priority == QueryPriority::Inspect;
+        row.inspection = inspection;
         if (row.view.pending)
         {
             row.priority = std::min(row.priority, priority);
@@ -528,6 +556,9 @@ struct MenuService::Impl
             const auto it = rows.find(job.key);
             if (it == rows.end()) return;
             auto &row = it->second; request = row.request;
+            // A retired query mode must not clear the replacement pending state,
+            // consume its clicks, or downgrade a completed management snapshot.
+            if (job.queryVariant != row.queryVariant) return;
             current = targetCurrent && row.sequence == job.sequence && row.dependency == job.dependency;
             clicks = std::move(row.clicks);
             if (!current)
@@ -1009,7 +1040,7 @@ struct MenuService::Impl
                     return job.startPinOnly;
                 });
                 const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs + (sourceJob ? 1 : 0);
-                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0; bool invalid = false;
+                Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0, variant = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
                     // Background queries share one slot, including metadata probes.
@@ -1028,7 +1059,7 @@ struct MenuService::Impl
                             (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
                     if (best == rows.end()) break;
                     auto &row = best->second; key = best->first; request = row.request; priority = row.priority;
-                    sequence = row.sequence; dependency = row.dependency; invalid = row.invalid; row.queued = false;
+                    sequence = row.sequence; dependency = row.dependency; variant = row.queryVariant; invalid = row.invalid; row.queued = false;
                 }
                 if (priority == QueryPriority::Prewarm && !Local(request))
                 {
@@ -1070,7 +1101,7 @@ struct MenuService::Impl
                         MenuTrace("schedule", "snapshot_reused"); continue;
                     }
                 }
-                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
+                Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0, variant};
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }

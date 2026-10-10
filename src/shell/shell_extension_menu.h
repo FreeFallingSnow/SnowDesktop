@@ -24,6 +24,10 @@ struct Request
     // Recovery query for the original shortcut files after target discovery fails.
     // It has its own service identity and never replaces a complete disk snapshot.
     bool originalShortcutOnly = false;
+    // Private popup optimization: full management/default queries keep this false.
+    // It forms part of the disk cache identity so an omitted compatibility
+    // source cannot be reused after the source is enabled.
+    bool omitNvidiaCompatibility = false;
     friend bool operator==(const Request &, const Request &) = default;
 };
 struct Entry
@@ -93,7 +97,7 @@ template <> struct Fields<shell_extensions::Request>
     template <class T> static auto Tie(T &v)
     {
         return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey,
-                        v.startPinOnly, v.originalShortcutOnly);
+                        v.startPinOnly, v.originalShortcutOnly, v.omitNvidiaCompatibility);
     }
 };
 template <> struct Fields<shell_extensions::Entry>

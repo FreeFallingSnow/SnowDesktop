@@ -684,13 +684,15 @@ struct Host
     bool catalogueInitialized = false, fileCatalogueInitialized = false;
     void NvidiaCompatibility(const Request &request, Reply &reply)
     {
-        if (!request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
+        if (request.omitNvidiaCompatibility || !request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
             !NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return;
+        progress("activate NVIDIA compatibility factory");
         CLSID clsid{};
         if (FAILED(CLSIDFromString(NvidiaControlPanelClsid, &clsid))) return;
         ComPtr<IContextMenu> extension;
         const auto factory = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&extension));
         if (!NvidiaCompatibilityRequired(request, true, true, factory)) return;
+        progress("bind NVIDIA compatibility application");
         auto item = NvidiaControlPanelApplication();
         if (!item) return;
         auto source = std::make_unique<Native>();
@@ -701,10 +703,12 @@ struct Host
             source->directory = std::filesystem::path(filePath).parent_path().wstring();
             CoTaskMemFree(filePath);
         }
+        progress("query NVIDIA compatibility default menu");
         if (!source->menu || FAILED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&source->context))) ||
             FAILED(source->context->QueryContextMenu(source->menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return;
         const auto command = DefaultApplicationOpen(source->context.Get(), source->menu);
         if (!command) return;
+        progress("read NVIDIA compatibility name");
         PWSTR name = nullptr;
         if (FAILED(item->GetDisplayName(SIGDN_NORMALDISPLAY, &name)) || !name) return;
         Entry entry;
@@ -712,6 +716,7 @@ struct Host
         if (entry.label.empty()) return;
         entry.key = "{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
         entry.registration = NvidiaControlPanelRegistration;
+        progress("read NVIDIA compatibility image");
         ComPtr<IShellItemImageFactory> image;
         HBITMAP bitmap = nullptr;
         if (SUCCEEDED(item.As(&image)) && SUCCEEDED(image->GetImage({20, 20}, SIIGBF_ICONONLY, &bitmap)))
