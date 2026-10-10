@@ -647,6 +647,7 @@ struct MenuService::Impl
                     catalogueDirty |= associations != catalogue.associations.size();
                     row.failures = 0; row.retryAt = 0; row.completed = GetTickCount64();
                     row.invalid = row.registryInvalid = false;
+                    row.force = false;
                     // Completion and display publication are one observable state.
                     // Settings must not stop polling before the snapshot appears.
                     Publish(job.key, reply, contexts);

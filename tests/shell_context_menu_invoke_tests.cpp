@@ -2912,6 +2912,140 @@ void TestStartQueryScheduling()
     Expect(ordinaryQueries == previousOrdinary, "Start-only selection prewarming does not enumerate unrelated extensions");
 }
 
+// Real Classes notifications and live private registration scans reproduce the
+// repeated file/shortcut loading defect. Only the final Shell query is replaced;
+// unchanged popups must not dispatch it, while real changes must dispatch once.
+void TestFileSnapshotNotificationReuse()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct Registry {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        explicit Registry(std::wstring p) : path(std::move(p)) {
+            DWORD disposition = 0;
+            Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &key, &disposition) == ERROR_SUCCESS, "create cache reuse registry fixture");
+            owned = disposition == REG_CREATED_NEW_KEY;
+            Expect(owned, "cache reuse registry fixture has a unique owner");
+        }
+        ~Registry() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry(L"Software\\SnowDesktopFileCacheReuse\\" + temp.path.filename().wstring()),
+      noise(L"Software\\Classes\\Local Settings\\SnowDesktopFileCacheReuse-" + temp.path.filename().wstring());
+    auto caption = [&](const wchar_t *value) {
+        for (const wchar_t *root : {L"*", L"Directory"}) {
+            HKEY action = nullptr;
+            const auto path = std::wstring(root) + L"\\shell\\cache-reuse";
+            Expect(RegCreateKeyExW(registry.key, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &action, nullptr) == ERROR_SUCCESS, "create private cache reuse action");
+            const auto status = RegSetValueExW(action, L"MUIVerb", 0, REG_SZ,
+                reinterpret_cast<const BYTE *>(value), static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
+            RegCloseKey(action);
+            Expect(status == ERROR_SUCCESS, "change private cache reuse action");
+            HKEY command = nullptr;
+            const auto commandPath = path + L"\\command";
+            Expect(RegCreateKeyExW(registry.key, commandPath.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &command, nullptr) == ERROR_SUCCESS, "create private cache reuse command");
+            constexpr wchar_t commandValue[] = L"unused.exe %1";
+            const auto commandStatus = RegSetValueExW(command, nullptr, 0, REG_SZ,
+                reinterpret_cast<const BYTE *>(commandValue), sizeof(commandValue));
+            RegCloseKey(command);
+            Expect(commandStatus == ERROR_SUCCESS, "write private cache reuse command");
+        }
+    };
+    caption(L"Initial action");
+    const auto text = temp.path / L"one.txt", image = temp.path / L"two.png";
+    const auto shortcut = temp.path / L"one.lnk", folder = temp.path / L"folder";
+    std::ofstream(text) << "private"; std::ofstream(image) << "private";
+    std::filesystem::create_directory(folder);
+    auto saveLink = [&](const std::filesystem::path &target) {
+        Microsoft::WRL::ComPtr<IShellLinkW> link;
+        Microsoft::WRL::ComPtr<IPersistFile> persistence;
+        Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&link))) && SUCCEEDED(link->SetPath(target.c_str())) &&
+            SUCCEEDED(link.As(&persistence)) && SUCCEEDED(persistence->Save(shortcut.c_str(), TRUE)),
+            "save private shortcut for cache identity verification");
+    };
+    saveLink(text);
+    std::atomic<unsigned> scans = 0, queries = 0;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        if (target.paths.empty() || std::filesystem::path(target.paths.front()).parent_path() != temp.path)
+            return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        ++queries;
+        ext::Entry entry; entry.key = "cache-reuse"; entry.provider = "verb:cache-reuse";
+        entry.label = L"Cached action"; entry.token = 42;
+        return ext::QueryWork{[entry] { return ext::Reply{true, {entry}, {}}; }, {}};
+    }, [&] { ++scans; return ext::ReadCatalogue(registry.key, false); });
+    ext::Preferences preferences;
+    ext::SetCommon(preferences, "verb:cache-reuse", ext::Category::Objects, true);
+    service.Configure(preferences); service.Inspect();
+    PumpUntil([&] { return scans != 0 && !service.Inspect().scanning; }, "establish a live file cache registration baseline");
+    DWORD sequence = 0;
+    auto notify = [&] {
+        ++sequence;
+        Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD,
+            reinterpret_cast<const BYTE *>(&sequence), sizeof(sequence)) == ERROR_SUCCESS,
+            "emit an unrelated real Classes notification");
+    };
+    const std::vector<std::vector<std::wstring>> selections = {
+        {text.wstring()}, {image.wstring()}, {shortcut.wstring()}, {folder.wstring()},
+        {text.wstring(), image.wstring()}, {shortcut.wstring(), folder.wstring()}};
+    unsigned caseNumber = 0;
+    for (const auto &paths : selections) {
+        ext::Request selected; selected.paths = paths;
+        const auto before = queries.load();
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return view.snapshot && !view.pending; }, "warm an exact file selection");
+        Expect(queries == before + 1, "first exact selection performs one native query");
+        for (int i = 0; i < 20; ++i) {
+            ext::Presentation popup(selected, preferences, L"", L"", service);
+            std::vector<snowdesktop::modern_menu::Item> items; snowdesktop::modern_menu::Options options;
+            popup.Attach(items, options, 0);
+            Expect(items.size() == 1 && items.front().label == L"Cached action" && !options.pollItems,
+                "unchanged files and shortcut selections appear immediately from memory");
+        }
+        const auto revision = service.View(selected).revision;
+        const auto previousScans = scans.load();
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > revision; }, "observe notification invalidation before reopening");
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return scans > previousScans &&
+            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verify unchanged registrations before reusing file cache");
+        Expect(queries == before + 1 && service.MenuDisplay(selected, preferences).snapshot.has_value(),
+            "unrelated Classes noise never launches another file or shortcut query");
+        caption((++caseNumber % 2) ? L"Changed action A" : L"Changed action B");
+        const auto currentRevision = service.View(selected).revision;
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > currentRevision; }, "observe real relevant registration mutation");
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return queries >= before + 2 && view.snapshot && !view.pending; },
+            "a relevant registration mutation refreshes the menu");
+        Expect(queries == before + 2, "relevant registration mutation dispatches exactly one fresh query");
+        if (paths.front() == shortcut.wstring()) saveLink(caseNumber % 2 ? folder : image);
+        else {
+            const auto attributes = GetFileAttributesW(paths.front().c_str());
+            Expect(attributes != INVALID_FILE_ATTRIBUTES && SetFileAttributesW(paths.front().c_str(), attributes ^ FILE_ATTRIBUTE_HIDDEN),
+                "change a private selected file or folder attribute");
+        }
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return queries >= before + 3 && view.snapshot && !view.pending; },
+            "changed file attributes or shortcut contents refresh the exact menu");
+        Expect(queries == before + 3, "target mutation dispatches exactly one fresh query");
+        service.Invalidate(selected);
+        PumpUntil([&] { auto view = service.View(selected); return queries >= before + 4 && view.snapshot && !view.pending; },
+            "explicit invalidation still refreshes the exact selection");
+        Expect(queries == before + 4, "explicit invalidation cannot be cancelled by unchanged registration proof");
+        const auto forcedRevision = service.View(selected).revision;
+        const auto forcedScans = scans.load();
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > forcedRevision; }, "observe noise after an explicit refresh");
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return scans > forcedScans &&
+            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verified snapshots remain reusable after an explicit refresh");
+        Expect(queries == before + 4, "a completed forced refresh cannot permanently disable notification cache reuse");
+    }
+    service.Shutdown();
+}
+
 void TestUnchangedCataloguePersistence()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -5523,6 +5657,8 @@ int wmain(int argc, wchar_t **argv)
                 for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-registry-catalogue")
             TestRegistryCatalogue();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-file-snapshot-reuse")
+            TestFileSnapshotNotificationReuse();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
             TestExtensionSessions();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-shortcut-query-recovery")
@@ -5538,6 +5674,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
             TestAggregateCataloguePriming();
+            TestFileSnapshotNotificationReuse();
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
             TestPopupQueryFailureRecovery(false, false);
@@ -5584,6 +5721,7 @@ int wmain(int argc, wchar_t **argv)
         else
         {
             TestAggregateCataloguePriming();
+            TestFileSnapshotNotificationReuse();
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
             TestCatalogueShutdown();
