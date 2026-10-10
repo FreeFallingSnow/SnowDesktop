@@ -552,7 +552,7 @@ void TestPopupMaterializationOnPrivateDesktop()
         HWND window = nullptr;
         unsigned calls = 0, commands = 0;
         bool activeMenu = false, correctPosition = false;
-        bool leaveDeferred = false, viewRequired = false, viewReady = false;
+        bool leaveDeferred = false, viewRequired = false, viewReady = false, partialWithoutView = false;
         ~Fixture()
         {
             if (window) DestroyWindow(window);
@@ -579,6 +579,12 @@ void TestPopupMaterializationOnPrivateDesktop()
                     DeleteMenu(self->menu, 0, MF_BYPOSITION);
                     AppendMenuW(self->menu, MF_STRING, 51, L"Add to archive");
                     AppendMenuW(self->menu, MF_STRING | MF_GRAYED, 52, L"Extract files");
+                }
+                else if (self->activeMenu && !self->leaveDeferred && self->partialWithoutView)
+                {
+                    while (GetMenuItemCount(self->menu) > 0) DeleteMenu(self->menu, 0, MF_BYPOSITION);
+                    AppendMenuW(self->menu, MF_STRING, 50, L"...");
+                    AppendMenuW(self->menu, MF_STRING, 53, L"Partial command");
                 }
                 return 0;
             }
@@ -642,7 +648,14 @@ void TestPopupMaterializationOnPrivateDesktop()
         "a genuinely view-dependent popup prepares its site once and retains both children");
     while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
     AppendMenuW(fixture.menu, MF_STRING, 50, L"...");
-    fixture.viewReady = false;
+    fixture.viewReady = false; fixture.partialWithoutView = true;
+    const auto beforePartial = fixture.calls;
+    Expect(ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView) && viewPreparations == 2 &&
+        fixture.calls == beforePartial + 2 && GetMenuItemCount(fixture.menu) == 2 && !ext::RequiresNativePopup(fixture.menu),
+        "PARTIAL_POPUP_RETAINS_CHILDREN: partial placeholder/command mixtures retry in the real menu loop after preparing the view");
+    while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
+    AppendMenuW(fixture.menu, MF_STRING, 50, L"...");
+    fixture.viewReady = false; fixture.partialWithoutView = false;
     const auto beforeFailure = fixture.calls;
     unsigned failedViews = 0;
     Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3, [&] { ++failedViews; return false; }) &&

@@ -129,9 +129,12 @@ inline LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wp, LPARAM lp)
 // Some IExplorerCommand adapters require the calling STA's real active menu
 // state as well as WM_INITMENUPOPUP. Materialize only placeholder popups in the
 // supervised helper; already readable and owner-drawn menus are left alone.
-inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentIndex)
+namespace popup_reader_detail
 {
-    if (!menu || InspectPopup(menu) != PopupContents::Deferred || !IsWindow(forwardingOwner) ||
+inline bool MaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentIndex, bool retryPartial)
+{
+    const auto contents = InspectPopup(menu);
+    if (!IsMenu(menu) || (contents != PopupContents::Deferred && !(retryPartial && contents == PopupContents::Native)) || !IsWindow(forwardingOwner) ||
         GetWindowThreadProcessId(forwardingOwner, nullptr) != GetCurrentThreadId()) return false;
     const HINSTANCE instance = GetModuleHandleW(nullptr);
     constexpr wchar_t className[] = L"SnowDesktopShellPopupReader";
@@ -160,16 +163,22 @@ inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentInd
     DestroyWindow(window);
     return context.initialized && !RequiresNativePopup(menu);
 }
+} // namespace popup_reader_detail
+inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentIndex)
+{
+    return popup_reader_detail::MaterializePopup(menu, forwardingOwner, parentIndex, false);
+}
 // Most deferred handlers only need the STA menu loop. Creating a ShellView
 // first can enumerate unavailable network resources even for a local file.
-// Retain the live-view fallback exclusively for a popup that remains deferred.
+// Retain the live-view fallback for a popup that remains deferred or only
+// partially materializes. Initially readable/owner-drawn menus are never probed.
 template <class PrepareSite>
 inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentIndex, PrepareSite &&prepareSite)
 {
     if (InspectPopup(menu) != PopupContents::Deferred || !IsWindow(forwardingOwner) ||
         GetWindowThreadProcessId(forwardingOwner, nullptr) != GetCurrentThreadId()) return false;
     if (TryMaterializePopup(menu, forwardingOwner, parentIndex)) return true;
-    if (InspectPopup(menu) != PopupContents::Deferred || !prepareSite()) return false;
-    return TryMaterializePopup(menu, forwardingOwner, parentIndex);
+    if (!RequiresNativePopup(menu) || !prepareSite()) return false;
+    return popup_reader_detail::MaterializePopup(menu, forwardingOwner, parentIndex, true);
 }
 } // namespace snowdesktop::shell_extensions
